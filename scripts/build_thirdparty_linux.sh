@@ -160,6 +160,7 @@ fi
 cd "${FFMPEG_SRC}"
 ./configure \
     --prefix="${FFMPEG_INSTALL}" \
+    --tmpdir="${BUILD_DIR}" \
     --enable-gpl \
     --enable-libx264 \
     --enable-muxer=mpegts \
