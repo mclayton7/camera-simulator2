@@ -171,7 +171,7 @@ TMPDIR="${BUILD_DIR}" PKG_CONFIG_PATH="${X264_INSTALL}/lib/pkgconfig${PKG_CONFIG
     --disable-doc \
     --disable-programs \
     --disable-x86asm \
-    --extra-cflags="-I${X264_INSTALL}/include" \
+    --extra-cflags="-I${X264_INSTALL}/include -fvisibility=hidden" \
     --extra-ldflags="-L${X264_INSTALL}/lib" \
     ${CC:+--cc="${CC}"} \
     ${CXX:+--cxx="${CXX}"}
