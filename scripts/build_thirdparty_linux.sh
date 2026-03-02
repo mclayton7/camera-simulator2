@@ -56,24 +56,39 @@ if [ -z "${CC:-}" ] && [ -z "${CXX:-}" ]; then
             # UE uses libc++ (not libstdc++) — compile CCL against it so C++
             # stdlib symbols match what UE's linker provides.
             CCL_CXX_FLAGS="-stdlib=libc++"
-            echo "==> Compiler: UE bundled clang (libc++)"
+            # Use UE's bundled CentOS 7 sysroot (glibc 2.17) for C headers.
+            # glibc 2.38+ (Ubuntu 22.04+) maps _GNU_SOURCE -> _ISOC2X_SOURCE,
+            # redirecting strtol/sscanf to __isoc23_* symbols that don't exist
+            # in UE's older runtime. The sysroot headers don't have this issue.
+            UE_SYSROOT="${_TC_DIR}/x86_64-unknown-linux-gnu"
+            if [ -d "${UE_SYSROOT}/usr/include" ]; then
+                C_SYSROOT_FLAGS="--sysroot=${UE_SYSROOT}"
+                echo "==> Compiler: UE bundled clang (libc++, glibc 2.17 sysroot)"
+            else
+                C_SYSROOT_FLAGS=""
+                echo "==> Compiler: UE bundled clang (libc++) — sysroot not found, C headers from system"
+                echo "    [WARN] Build may fail with glibc 2.38+ due to __isoc23_* symbol redirects"
+            fi
             echo "    CC=${CC}"
         else
             echo "[WARN] UE install found at ${UE_ROOT} but bundled clang not found at:"
             echo "       ${_TC_BASE}/v*_clang-*/x86_64-unknown-linux-gnu/bin/clang"
             echo "       Falling back to system compiler — binaries may not be ABI-compatible."
             CCL_CXX_FLAGS=""
+            C_SYSROOT_FLAGS=""
         fi
     else
         echo "[WARN] UE_ROOT not set and UnrealEditor not found in standard locations."
         echo "       Falling back to system compiler — binaries may not be ABI-compatible."
         echo "       Fix: export UE_ROOT=/path/to/UE_5.7"
         CCL_CXX_FLAGS=""
+        C_SYSROOT_FLAGS=""
     fi
 else
     echo "==> Compiler: using CC/CXX from environment"
     echo "    CC=${CC:-<unset>}  CXX=${CXX:-<unset>}"
     CCL_CXX_FLAGS=""
+    C_SYSROOT_FLAGS=""
 fi
 
 # =========================================================================
@@ -103,6 +118,7 @@ cmake -S "${CCL_SRC}" -B "${CCL_SRC}/build" \
     ${CC:+-DCMAKE_C_COMPILER="${CC}"} \
     ${CXX:+-DCMAKE_CXX_COMPILER="${CXX}"} \
     ${CCL_CXX_FLAGS:+-DCMAKE_CXX_FLAGS="${CCL_CXX_FLAGS}"} \
+    ${UE_SYSROOT:+-DCMAKE_SYSROOT="${UE_SYSROOT}"} \
     -GNinja
 
 # Build only the static target — skips the shared lib
@@ -145,7 +161,7 @@ cd "${X264_SRC}"
     --disable-shared \
     --enable-pic \
     --disable-cli \
-    --extra-cflags="-std=gnu11" \
+    ${C_SYSROOT_FLAGS:+--extra-cflags="${C_SYSROOT_FLAGS}"} \
     ${CC:+--cc="${CC}"}
 make -j"$(nproc)"
 make install
@@ -179,7 +195,7 @@ TMPDIR="${BUILD_DIR}" PKG_CONFIG_PATH="${X264_INSTALL}/lib/pkgconfig${PKG_CONFIG
     --disable-doc \
     --disable-programs \
     --disable-x86asm \
-    --extra-cflags="-I${X264_INSTALL}/include -fvisibility=hidden -std=gnu11" \
+    --extra-cflags="-I${X264_INSTALL}/include -fvisibility=hidden ${C_SYSROOT_FLAGS}" \
     --extra-ldflags="-L${X264_INSTALL}/lib" \
     ${CC:+--cc="${CC}"} \
     ${CXX:+--cxx="${CXX}"}
