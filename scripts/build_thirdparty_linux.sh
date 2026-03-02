@@ -145,6 +145,7 @@ cd "${X264_SRC}"
     --disable-shared \
     --enable-pic \
     --disable-cli \
+    --extra-cflags="-std=gnu11" \
     ${CC:+--cc="${CC}"}
 make -j"$(nproc)"
 make install
@@ -178,7 +179,7 @@ TMPDIR="${BUILD_DIR}" PKG_CONFIG_PATH="${X264_INSTALL}/lib/pkgconfig${PKG_CONFIG
     --disable-doc \
     --disable-programs \
     --disable-x86asm \
-    --extra-cflags="-I${X264_INSTALL}/include -fvisibility=hidden" \
+    --extra-cflags="-I${X264_INSTALL}/include -fvisibility=hidden -std=gnu11" \
     --extra-ldflags="-L${X264_INSTALL}/lib" \
     ${CC:+--cc="${CC}"} \
     ${CXX:+--cxx="${CXX}"}
