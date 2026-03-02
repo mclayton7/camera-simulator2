@@ -158,9 +158,8 @@ if [ ! -d "${FFMPEG_SRC}" ]; then
 fi
 
 cd "${FFMPEG_SRC}"
-./configure \
+TMPDIR="${BUILD_DIR}" ./configure \
     --prefix="${FFMPEG_INSTALL}" \
-    --tmpdir="${BUILD_DIR}" \
     --enable-gpl \
     --enable-libx264 \
     --enable-muxer=mpegts \
