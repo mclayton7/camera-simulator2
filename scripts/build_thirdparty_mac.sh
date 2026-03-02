@@ -191,6 +191,7 @@ fi
     --disable-programs \
     --extra-cflags="${ARCH_CFLAGS} -I${X264_INSTALL}/include" \
     --extra-ldflags="${ARCH_CFLAGS} -L${X264_INSTALL}/lib" \
+    --extra-asmflags="-DPIC" \
     ${HOST_TRIPLE} \
     ${FFMPEG_EXTRA}
 

@@ -172,6 +172,7 @@ TMPDIR="${BUILD_DIR}" PKG_CONFIG_PATH="${X264_INSTALL}/lib/pkgconfig${PKG_CONFIG
     --disable-programs \
     --extra-cflags="-I${X264_INSTALL}/include" \
     --extra-ldflags="-L${X264_INSTALL}/lib" \
+    --extra-asmflags="-DPIC" \
     ${CC:+--cc="${CC}"} \
     ${CXX:+--cxx="${CXX}"}
 make -j"$(nproc)"
