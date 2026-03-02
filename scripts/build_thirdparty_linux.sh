@@ -56,33 +56,19 @@ if [ -z "${CC:-}" ] && [ -z "${CXX:-}" ]; then
             # UE uses libc++ (not libstdc++) — compile CCL against it so C++
             # stdlib symbols match what UE's linker provides.
             CCL_CXX_FLAGS="-stdlib=libc++"
-            # Use UE's bundled CentOS 7 sysroot (glibc 2.17) for C headers.
-            # glibc 2.38+ (Ubuntu 22.04+) maps _GNU_SOURCE -> _ISOC2X_SOURCE,
-            # redirecting strtol/sscanf to __isoc23_* symbols that don't exist
-            # in UE's older runtime. The sysroot headers don't have this issue.
-            UE_SYSROOT="${_TC_DIR}/x86_64-unknown-linux-gnu"
-            if [ -d "${UE_SYSROOT}/usr/include" ]; then
-                C_SYSROOT_FLAGS="--sysroot=${UE_SYSROOT}"
-                echo "==> Compiler: UE bundled clang (libc++, glibc 2.17 sysroot)"
-            else
-                C_SYSROOT_FLAGS=""
-                echo "==> Compiler: UE bundled clang (libc++) — sysroot not found, C headers from system"
-                echo "    [WARN] Build may fail with glibc 2.38+ due to __isoc23_* symbol redirects"
-            fi
+            echo "==> Compiler: UE bundled clang (libc++)"
             echo "    CC=${CC}"
         else
             echo "[WARN] UE install found at ${UE_ROOT} but bundled clang not found at:"
             echo "       ${_TC_BASE}/v*_clang-*/x86_64-unknown-linux-gnu/bin/clang"
             echo "       Falling back to system compiler — binaries may not be ABI-compatible."
             CCL_CXX_FLAGS=""
-            C_SYSROOT_FLAGS=""
         fi
     else
         echo "[WARN] UE_ROOT not set and UnrealEditor not found in standard locations."
         echo "       Falling back to system compiler — binaries may not be ABI-compatible."
         echo "       Fix: export UE_ROOT=/path/to/UE_5.7"
         CCL_CXX_FLAGS=""
-        C_SYSROOT_FLAGS=""
     fi
 else
     echo "==> Compiler: using CC/CXX from environment"
@@ -118,7 +104,6 @@ cmake -S "${CCL_SRC}" -B "${CCL_SRC}/build" \
     ${CC:+-DCMAKE_C_COMPILER="${CC}"} \
     ${CXX:+-DCMAKE_CXX_COMPILER="${CXX}"} \
     ${CCL_CXX_FLAGS:+-DCMAKE_CXX_FLAGS="${CCL_CXX_FLAGS}"} \
-    ${UE_SYSROOT:+-DCMAKE_SYSROOT="${UE_SYSROOT}"} \
     -GNinja
 
 # Build only the static target — skips the shared lib
@@ -161,14 +146,28 @@ cd "${X264_SRC}"
     --disable-shared \
     --enable-pic \
     --disable-cli \
-    ${C_SYSROOT_FLAGS:+--extra-cflags="${C_SYSROOT_FLAGS}"} \
     ${CC:+--cc="${CC}"}
 make -j"$(nproc)"
 make install
 cd -
 
-# =========================================================================
-# 3. FFmpeg (GPL, with libx264)
+# -------------------------------------------------------------------------
+# glibc 2.38+ compatibility: inject __isoc23_* stubs into libx264.a
+#
+# glibc 2.38+ makes _GNU_SOURCE imply _ISOC2X_SOURCE, redirecting strtol,
+# sscanf etc. to __isoc23_* symbols.  x264 always adds -D_GNU_SOURCE, so
+# its objects reference these symbols.  UE's Linux runtime targets glibc
+# 2.17 which does not have them.
+#
+# Compile the compat shim WITHOUT _GNU_SOURCE (so strtol inside the wrapper
+# is the real strtol, not __isoc23_strtol) and inject into the archive.
+# -------------------------------------------------------------------------
+echo "==> Injecting glibc C23 compat stubs into libx264.a ..."
+${CC:-cc} -O2 -fPIC -fvisibility=hidden -std=c11 \
+    -c "${REPO_ROOT}/scripts/isoc23_compat.c" \
+    -o "${BUILD_DIR}/isoc23_compat.o"
+ar r "${X264_INSTALL}/lib/libx264.a" "${BUILD_DIR}/isoc23_compat.o"
+echo "[isoc23_compat] done"
 # =========================================================================
 FFMPEG_SRC="${BUILD_DIR}/ffmpeg"
 FFMPEG_INSTALL="${BUILD_DIR}/ffmpeg_install"
@@ -195,7 +194,7 @@ TMPDIR="${BUILD_DIR}" PKG_CONFIG_PATH="${X264_INSTALL}/lib/pkgconfig${PKG_CONFIG
     --disable-doc \
     --disable-programs \
     --disable-x86asm \
-    --extra-cflags="-I${X264_INSTALL}/include -fvisibility=hidden ${C_SYSROOT_FLAGS}" \
+    --extra-cflags="-I${X264_INSTALL}/include -fvisibility=hidden" \
     --extra-ldflags="-L${X264_INSTALL}/lib" \
     ${CC:+--cc="${CC}"} \
     ${CXX:+--cxx="${CXX}"}
@@ -210,6 +209,11 @@ cp "${FFMPEG_INSTALL}/lib/libavutil.a"    "${FFMPEG_DST}/"
 cp "${FFMPEG_INSTALL}/lib/libswscale.a"   "${FFMPEG_DST}/"
 cp "${FFMPEG_INSTALL}/lib/libswresample.a" "${FFMPEG_DST}/"
 cp "${X264_INSTALL}/lib/libx264.a"        "${FFMPEG_DST}/"
+
+# Inject compat stubs into FFmpeg archives too (same glibc 2.38+ issue)
+for _LIB in "${FFMPEG_DST}"/lib{avcodec,avformat,avutil}.a "${FFMPEG_DST}/libx264.a"; do
+    [ -f "${_LIB}" ] && ar r "${_LIB}" "${BUILD_DIR}/isoc23_compat.o"
+done
 
 mkdir -p "${FFMPEG_INC}"
 cp -r "${FFMPEG_INSTALL}/include/"* "${FFMPEG_INC}/"
