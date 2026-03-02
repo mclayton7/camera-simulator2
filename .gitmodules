@@ -1,0 +1,3 @@
+[submodule "unreal_project/CamSimTest/Plugins/glTFRuntime"]
+	path = unreal_project/CamSimTest/Plugins/glTFRuntime
+	url = https://github.com/rdeioris/glTFRuntime.git

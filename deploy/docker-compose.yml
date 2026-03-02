@@ -1,0 +1,65 @@
+version: "3.9"
+
+# CamSim Docker Compose
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.yml up
+#
+# To verify output:
+#   ffplay udp://239.1.1.1:5004          ← live H.264 video
+#   ffprobe udp://239.1.1.1:5004         ← stream info
+
+services:
+  camsim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: camsim:latest
+    container_name: camsim
+
+    # ------------------------------------------------------------------
+    # network_mode: host is required so that:
+    #   1. UDP multicast frames reach the host network (239.x.x.x)
+    #   2. CIGI UDP packets from the host can reach the container socket
+    #
+    # On macOS Docker Desktop use "bridge" + port mapping instead:
+    #   network_mode: bridge
+    #   ports:
+    #     - "8888:8888/udp"
+    #     - "5004:5004/udp"
+    # ------------------------------------------------------------------
+    network_mode: host
+
+    # ------------------------------------------------------------------
+    # NVIDIA GPU (optional — omit deploy section for CPU-only)
+    # ------------------------------------------------------------------
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    environment:
+      # Pass NVIDIA_VISIBLE_DEVICES so entrypoint.sh can detect GPU presence
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-}
+      # Optional config overrides (comment out to use camsim_config.json defaults)
+      # - CAMSIM_CIGI_PORT=8888
+      # - CAMSIM_MULTICAST_ADDR=239.1.1.1
+      # - CAMSIM_MULTICAST_PORT=5004
+      # - CAMSIM_VIDEO_BITRATE=4000000
+      # - CAMSIM_H264_PRESET=ultrafast
+
+    # Mount a custom config without rebuilding the image
+    # volumes:
+    #   - ./my_camsim_config.json:/opt/camsim/camsim_config.json:ro
+
+    # Allow UE to map enough GPU/CPU memory
+    shm_size: "1gb"
+
+    # Allow the process to set real-time scheduling priority (optional)
+    cap_add:
+      - SYS_NICE
+
+    restart: "no"

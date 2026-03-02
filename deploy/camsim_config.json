@@ -1,0 +1,75 @@
+{
+  "_comment": "CamSim default configuration. All values can be overridden via environment variables.",
+  "cigi_bind_addr":     "0.0.0.0",
+  "cigi_port":          8888,
+  "cigi_response_addr": "127.0.0.1",
+  "cigi_response_port": 8889,
+  "multicast_addr":  "239.1.1.1",
+  "multicast_port":  5004,
+  "video_bitrate":   4000000,
+  "h264_preset":     "ultrafast",
+  "h264_tune":       "zerolatency",
+  "capture_width":   1920,
+  "capture_height":  1080,
+  "frame_rate":      30.0,
+  "hfov_deg":        60.0,
+  "tile_preload_fov_scale":     2.0,
+  "max_simultaneous_tile_loads": 40,
+  "start_latitude":  38.8977,
+  "start_longitude": -77.0365,
+  "start_altitude":  500.0,
+  "start_yaw":       0.0,
+  "start_pitch":     0.0,
+  "start_roll":      0.0,
+
+  "_comment_entity": "camera_entity_id: CIGI entity ID that controls the camera. All others are scene entities.",
+  "camera_entity_id": 0,
+
+  "_comment_gimbal": "Gimbal parameters. slew_rate: max °/s (0=snap). pitch/yaw min/max: physical axis limits in degrees.",
+  "gimbal_max_slew_rate": 0.0,
+  "gimbal_pitch_min": -90.0,
+  "gimbal_pitch_max":  30.0,
+  "gimbal_yaw_min":  -180.0,
+  "gimbal_yaw_max":   180.0,
+
+  "_comment_sensor_fov": "sensor_fov_presets: ordered wide→narrow FOV values (degrees) mapped from Sensor Control Gain (0.0=wide, 1.0=narrow). Empty array = ignore Gain, use ViewDef FOV only.",
+  "sensor_fov_presets": [60.0, 20.0, 5.0],
+
+  "_comment_sensor_modes": "sensor_modes: per-waveband CPU-side post-processing parameters. SensorId 0=EO, 1=IR, 2=NVG.",
+  "sensor_modes": {
+    "eo": {
+      "noise_netd":          0.0,
+      "fixed_pattern_noise": 0.0,
+      "vignetting":          0.10,
+      "scan_lines":          false,
+      "scan_line_strength":  0.0,
+      "ir_extinction_coeff": 0.0
+    },
+    "ir": {
+      "noise_netd":          0.01,
+      "fixed_pattern_noise": 0.005,
+      "vignetting":          0.20,
+      "scan_lines":          false,
+      "scan_line_strength":  0.0,
+      "ir_extinction_coeff": 0.00001
+    },
+    "nvg": {
+      "noise_netd":          0.03,
+      "fixed_pattern_noise": 0.0,
+      "vignetting":          0.35,
+      "scan_lines":          false,
+      "scan_line_strength":  0.05,
+      "ir_extinction_coeff": 0.0
+    }
+  },
+
+  "_comment_types": "entity_types: maps CIGI EntityType uint16 to asset paths. Use .gltf/.glb paths (relative to entities/) for runtime loading, or /Game/... UE content paths for cooked assets. 'scale' is a uniform scale factor (default 1.0). 'rotation' is a pitch/yaw/roll offset in degrees applied to the mesh component to correct model-space orientation.",
+  "entity_types": {
+    "1001": {
+      "mesh":     "f16/f16-c_falcon.glb",
+      "skeletal": false,
+      "scale":    1.0,
+      "rotation": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0 }
+    }
+  }
+}

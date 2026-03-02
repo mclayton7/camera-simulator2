@@ -1,0 +1,100 @@
+// Copyright CamSim Contributors. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Dom/JsonObject.h"
+#include "Sensor/SensorPostProcess.h"   // ESensorMode, FSensorModeConfig
+
+/**
+ * Runtime configuration for CamSim.
+ *
+ * Values are loaded from camsim_config.json in the binary directory.
+ * Individual fields may be overridden via environment variables at startup.
+ *
+ * Env vars:
+ *   CAMSIM_CIGI_PORT              – UDP port to listen for CIGI packets        (default 8888)
+ *   CAMSIM_CIGI_BIND_ADDR         – Local address to bind the CIGI socket       (default 0.0.0.0)
+ *   CAMSIM_CIGI_RESPONSE_ADDR     – Host IP for IG→host response packets        (default 127.0.0.1)
+ *   CAMSIM_CIGI_RESPONSE_PORT     – Host's incoming CIGI port for responses     (default 8889)
+ *   CAMSIM_MULTICAST_ADDR         – Multicast group for output stream            (default 239.1.1.1)
+ *   CAMSIM_MULTICAST_PORT         – UDP port for output stream                   (default 5004)
+ *   CAMSIM_VIDEO_BITRATE          – Target H.264 bitrate in bps                  (default 4000000)
+ *   CAMSIM_H264_PRESET            – libx264 preset string                        (default ultrafast)
+ *   CAMSIM_START_HOUR             – Fallback time-of-day (0-24)                  (default 12.0)
+ */
+struct FCamSimConfig
+{
+	// CIGI input
+	FString CigiBindAddr    = TEXT("0.0.0.0");
+	int32   CigiPort        = 8888;
+
+	// CIGI response output (IG → host: SOF heartbeat + HAT/HOT + LOS responses)
+	FString CigiResponseAddr = TEXT("127.0.0.1");
+	int32   CigiResponsePort = 8889;
+
+	// Video output
+	FString MulticastAddr   = TEXT("239.1.1.1");
+	int32   MulticastPort   = 5004;
+	int32   VideoBitrate    = 4'000'000;   // bps
+	FString H264Preset      = TEXT("ultrafast");
+	FString H264Tune        = TEXT("zerolatency");
+
+	// Capture resolution
+	int32   CaptureWidth    = 1920;
+	int32   CaptureHeight   = 1080;
+	float   FrameRate       = 30.0f;
+
+	// Horizontal field of view in degrees (used for KLV metadata)
+	float   HFovDeg         = 60.0f;
+
+	// Cesium tile streaming tuning
+	// TilePreloadFovScale inflates the FOV reported to Cesium so tiles beyond
+	// the visible frustum are pre-fetched (1.0 = exact FOV, 2.0 = double).
+	float   TilePreloadFovScale = 2.0f;
+	// Maximum simultaneous tile HTTP requests (Cesium default is 20)
+	int32   MaxSimultaneousTileLoads = 40;
+
+	// Default camera start position (WGS-84) — used before first CIGI packet
+	double  StartLatitude   = 38.8977;     // Washington DC
+	double  StartLongitude  = -77.0365;
+	double  StartAltitude   = 500.0;       // metres above WGS-84 ellipsoid
+	float   StartYaw        = 0.0f;
+	float   StartPitch      = -45.0f;      // look downward
+	float   StartRoll       = 0.0f;
+
+	// Default time-of-day (hours 0-24) used before first CIGI celestial packet
+	float   StartHour       = 12.0f;
+
+	// CIGI entity ID that drives the camera (all others → entity manager)
+	int32   CameraEntityId  = 0;
+
+	// Gimbal slew rate limit in degrees/second (0 = unlimited / instantaneous snap)
+	float   GimbalMaxSlewRateDegPerSec = 0.0f;
+
+	// Gimbal axis limits (degrees). Applied after every slew update.
+	float   GimbalPitchMin = -90.0f;
+	float   GimbalPitchMax =  30.0f;
+	float   GimbalYawMin   = -180.0f;
+	float   GimbalYawMax   =  180.0f;
+
+	// FOV presets driven by Sensor Control Gain field (0.0=wide → 1.0=narrow).
+	// Index is selected by linear mapping: idx = floor(gain * N), clamped to [0, N-1].
+	// Empty = ignore Gain; use ViewDef FOV only.
+	TArray<float> SensorFovPresets;
+
+	// Per-waveband sensor simulation parameters (Phase 11).
+	// Populated from "sensor_modes" JSON block; defaults applied if block is absent.
+	TMap<ESensorMode, FSensorModeConfig> SensorModeConfigs;
+
+	/**
+	 * Load from JSON file, then apply env var overrides.
+	 * If OutJsonRoot is non-null the parsed JSON root is written to it so the
+	 * caller can load auxiliary tables (e.g. FEntityTypeTable) from the same
+	 * document without re-reading the file.
+	 */
+	static FCamSimConfig Load(TSharedPtr<FJsonObject>* OutJsonRoot = nullptr);
+
+private:
+	static void ApplyEnvOverrides(FCamSimConfig& Cfg);
+};

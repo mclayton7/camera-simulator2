@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CamSim CIGI Control</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+:root {
+  --bg:      #1a1a1a;
+  --panel:   #252525;
+  --border:  #333;
+  --accent:  #4a9eff;
+  --text:    #e0e0e0;
+  --dim:     #888;
+  --success: #52c752;
+  --danger:  #e05252;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- Top bar ---- */
+#topbar {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+#topbar h1 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+  margin-right: 4px;
+}
+
+.top-label { color: var(--dim); font-size: 11px; white-space: nowrap; }
+
+/* ---- Inputs ---- */
+input[type=text],
+input[type=number] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+input[type=text]:focus,
+input[type=number]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+input[type=range] { accent-color: var(--accent); cursor: pointer; }
+input[type=checkbox],
+input[type=radio]  { accent-color: var(--accent); }
+
+/* ---- Buttons ---- */
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+button:hover { filter: brightness(1.15); }
+button.sec   { background: #3a3a3a; color: var(--text); }
+button.sec:hover { background: #484848; }
+button.dng   { background: var(--danger); }
+button.sm    { padding: 3px 9px; font-size: 11px; }
+
+/* ---- Status dot ---- */
+#status-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #555;
+  flex-shrink: 0;
+}
+#status-dot.ok  { background: var(--success); }
+#status-dot.err { background: var(--danger); }
+
+#frame-ctr {
+  color: var(--dim);
+  font-size: 11px;
+  font-family: monospace;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* ---- Tab bar ---- */
+#tabs {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--dim);
+  padding: 8px 20px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 0;
+  transition: color 0.15s;
+}
+.tab-btn:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ---- Content area ---- */
+#content { flex: 1; overflow: hidden; }
+
+.tab-pane { display: none; height: 100%; }
+.tab-pane.active { display: flex; }
+
+/* ==== CAMERA TAB ==== */
+#tab-camera { flex-direction: row; }
+
+#map-wrap { flex: 1; position: relative; min-width: 0; }
+#map { width: 100%; height: 100%; }
+
+#cam-form {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  padding: 14px 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sect-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.frow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.frow label { font-size: 11px; color: var(--dim); }
+.frow input[type=number],
+.frow input[type=text]  { width: 100%; }
+
+/* ==== GIMBAL / SENSOR TAB ==== */
+#tab-gimbal {
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 16px;
+  gap: 16px;
+}
+
+/* ==== ENVIRONMENT TAB ==== */
+#tab-environment {
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 16px;
+  gap: 16px;
+}
+
+/* ==== ENTITIES TAB ==== */
+#tab-entities {
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 16px;
+  gap: 16px;
+}
+
+/* ---- Cards ---- */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+}
+.card h3 {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ---- Sliders ---- */
+.srow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.srow label { width: 44px; font-size: 11px; color: var(--dim); flex-shrink: 0; }
+.srow input[type=range] { flex: 1; }
+.sval {
+  width: 56px;
+  text-align: right;
+  font-family: monospace;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* ---- Radio / check groups ---- */
+.rgroup { display: flex; gap: 14px; flex-wrap: wrap; }
+.rgroup label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; cursor: pointer;
+}
+
+/* ---- Entity grid ---- */
+.ent-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* ---- Entity table ---- */
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th {
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-family: monospace;
+}
+#entity-tbody tr:last-child td { border-bottom: none; }
+
+/* ---- Component button rows ---- */
+.comp-row { margin-bottom: 10px; }
+.comp-row .comp-lbl {
+  font-size: 10px; font-weight: 700;
+  color: var(--dim); text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 5px;
+}
+.comp-btns { display: flex; gap: 6px; }
+
+/* ---- Misc ---- */
+.hint { font-size: 11px; color: var(--dim); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     TOP BAR
+     ============================================================ -->
+<div id="topbar">
+  <h1>CamSim CIGI</h1>
+
+  <span class="top-label">Host</span>
+  <input type="text"   id="cfg-host" value="127.0.0.1" style="width:100px">
+
+  <span class="top-label">CIGI&nbsp;Port</span>
+  <input type="number" id="cfg-port" value="8888"  min="1" max="65535" style="width:62px">
+
+  <span class="top-label">Rate</span>
+  <input type="number" id="cfg-rate" value="10"    min="1" max="60"    style="width:46px">
+  <span class="top-label">Hz</span>
+
+  <button onclick="connect()">Connect</button>
+  <button class="sec" onclick="disconnect()">Disconnect</button>
+
+  <div id="status-dot"></div>
+  <span id="status-txt" style="font-size:11px;color:var(--dim)">Disconnected</span>
+  <span id="frame-ctr">Frame: 0</span>
+</div>
+
+<!-- ============================================================
+     TAB BAR
+     ============================================================ -->
+<div id="tabs">
+  <button class="tab-btn active" data-tab="camera"      onclick="switchTab(this)">Camera</button>
+  <button class="tab-btn"        data-tab="gimbal"      onclick="switchTab(this)">Gimbal &amp; Sensor</button>
+  <button class="tab-btn"        data-tab="environment" onclick="switchTab(this)">Environment</button>
+  <button class="tab-btn"        data-tab="entities"    onclick="switchTab(this)">Entities</button>
+</div>
+
+<!-- ============================================================
+     CONTENT
+     ============================================================ -->
+<div id="content">
+
+  <!-- ==================== CAMERA TAB ==================== -->
+  <div id="tab-camera" class="tab-pane active">
+
+    <div id="map-wrap">
+      <div id="map"></div>
+    </div>
+
+    <div id="cam-form">
+      <div class="sect-title">Camera Entity</div>
+
+      <div class="frow">
+        <label>Entity ID</label>
+        <input type="number" id="cam-eid" value="0" min="0" max="65535" oninput="sendCamera()">
+      </div>
+
+      <div class="sect-title">Position</div>
+
+      <div class="frow">
+        <label>Latitude (°)</label>
+        <input type="number" id="cam-lat" value="37.7749"   step="0.0001" oninput="onLatLonInput()">
+      </div>
+      <div class="frow">
+        <label>Longitude (°)</label>
+        <input type="number" id="cam-lon" value="-122.4194" step="0.0001" oninput="onLatLonInput()">
+      </div>
+      <div class="frow">
+        <label>Altitude (m)</label>
+        <input type="number" id="cam-alt" value="1000" step="10" oninput="sendCamera()">
+      </div>
+
+      <div class="sect-title">Attitude</div>
+
+      <div class="frow">
+        <label>Yaw (°)</label>
+        <input type="number" id="cam-yaw"   value="0"   step="1" oninput="sendCamera()">
+      </div>
+      <div class="frow">
+        <label>Pitch (°)</label>
+        <input type="number" id="cam-pitch" value="0" step="1" oninput="sendCamera()">
+      </div>
+      <div class="frow">
+        <label>Roll (°)</label>
+        <input type="number" id="cam-roll"  value="0"   step="1" oninput="sendCamera()">
+      </div>
+
+      <p class="hint">Click map to set position.<br>Drag marker to adjust.</p>
+    </div>
+  </div><!-- /tab-camera -->
+
+  <!-- ==================== GIMBAL & SENSOR TAB ==================== -->
+  <div id="tab-gimbal" class="tab-pane">
+
+    <div class="card">
+      <h3>Gimbal</h3>
+      <div class="srow">
+        <label>Yaw</label>
+        <input type="range" id="gim-yaw" min="-180" max="180" value="0" step="0.5" oninput="onGimbalChange()">
+        <span class="sval" id="gim-yaw-v">0.0°</span>
+      </div>
+      <div class="srow">
+        <label>Pitch</label>
+        <input type="range" id="gim-pitch" min="-90" max="30" value="0" step="0.5" oninput="onGimbalChange()">
+        <span class="sval" id="gim-pitch-v">0.0°</span>
+      </div>
+      <div class="srow">
+        <label>Roll</label>
+        <input type="range" id="gim-roll" min="-180" max="180" value="0" step="0.5" oninput="onGimbalChange()">
+        <span class="sval" id="gim-roll-v">0.0°</span>
+      </div>
+      <button class="sec sm" onclick="centerGimbal()">Center Gimbal</button>
+    </div>
+
+    <div class="card">
+      <h3>Sensor</h3>
+
+      <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="sens-on" checked onchange="sendSensor()">
+          Sensor On
+        </label>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:var(--dim);margin-bottom:6px">Mode</div>
+        <div class="rgroup">
+          <label><input type="radio" name="sensor-mode" value="0" checked onchange="onSensorModeChange()"> EO</label>
+          <label><input type="radio" name="sensor-mode" value="1"         onchange="onSensorModeChange()"> IR</label>
+          <label><input type="radio" name="sensor-mode" value="2"         onchange="onSensorModeChange()"> NVG</label>
+        </div>
+      </div>
+
+      <div id="polarity-row" style="margin-bottom:12px;display:none">
+        <div style="font-size:11px;color:var(--dim);margin-bottom:6px">Polarity</div>
+        <div class="rgroup">
+          <label><input type="radio" name="polarity" value="0" checked onchange="sendSensor()"> White Hot</label>
+          <label><input type="radio" name="polarity" value="1"         onchange="sendSensor()"> Black Hot</label>
+        </div>
+      </div>
+
+      <div class="srow">
+        <label>Gain</label>
+        <input type="range" id="sens-gain" min="0" max="1" step="0.01" value="0" oninput="onGainChange()">
+        <span class="sval" id="sens-gain-v">0.00</span>
+      </div>
+      <div class="hint" id="gain-preset">FOV preset: Wide (60°)</div>
+    </div>
+
+    <div class="card">
+      <h3>View Definition</h3>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="frow" style="flex-direction:row;align-items:center;gap:6px">
+          <label style="white-space:nowrap;color:var(--dim);font-size:11px">H-FOV (°)</label>
+          <input type="number" id="hfov" value="60" min="5" max="120" step="1" style="width:70px">
+        </div>
+        <button onclick="sendViewDef()">Send View Def</button>
+      </div>
+      <p class="hint">Sets SceneCapture2D FOV angle immediately.</p>
+    </div>
+
+  </div><!-- /tab-gimbal -->
+
+  <!-- ==================== ENVIRONMENT TAB ==================== -->
+  <div id="tab-environment" class="tab-pane">
+
+    <div class="card">
+      <h3>Time of Day</h3>
+      <div class="srow">
+        <label>Time</label>
+        <input type="range" id="env-time" min="0" max="1439" value="720" step="1" oninput="onTimeChange()">
+        <span class="sval" id="env-time-v">12:00</span>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:8px;align-items:flex-end">
+        <div class="frow">
+          <label>Month</label>
+          <input type="number" id="env-month" value="6"    min="1" max="12"   style="width:58px">
+        </div>
+        <div class="frow">
+          <label>Day</label>
+          <input type="number" id="env-day"   value="21"   min="1" max="31"   style="width:58px">
+        </div>
+        <div class="frow">
+          <label>Year</label>
+          <input type="number" id="env-year"  value="2024" min="2000" max="2099" style="width:74px">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Atmosphere</h3>
+      <div class="srow">
+        <label>Visibility</label>
+        <input type="range" id="env-vis" min="500" max="50000" step="500" value="50000" oninput="onVisChange()">
+        <span class="sval" id="env-vis-v">50.0 km</span>
+      </div>
+      <p class="hint">Range 0.5 km (dense fog) – 50 km (clear day)</p>
+    </div>
+
+    <div class="card">
+      <h3>Weather</h3>
+      <div style="margin-bottom:12px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="env-wx"> Enable Cloud Layer
+        </label>
+      </div>
+      <div style="display:flex;gap:12px;align-items:flex-end">
+        <div class="frow">
+          <label>Cloud Base (m)</label>
+          <input type="number" id="env-cbase" value="2000" step="100" style="width:88px">
+        </div>
+        <div class="frow">
+          <label>Thickness (m)</label>
+          <input type="number" id="env-cthick" value="500" step="100" style="width:88px">
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <button onclick="sendEnv()">Send Environment</button>
+      <span class="hint" style="display:inline;margin-left:10px">One-shot — sends Celestial + Atmosphere + Weather packets</span>
+    </div>
+
+  </div><!-- /tab-environment -->
+
+  <!-- ==================== ENTITIES TAB ==================== -->
+  <div id="tab-entities" class="tab-pane">
+
+    <div class="card">
+      <h3>Spawn / Update Entity</h3>
+      <div class="ent-grid">
+        <div class="frow"><label>Entity ID</label>   <input type="number" id="ent-id"    value="1"         min="1"></div>
+        <div class="frow"><label>Entity Type</label> <input type="number" id="ent-type"  value="1001"      min="0"></div>
+        <div class="frow"><label>Latitude (°)</label><input type="number" id="ent-lat"   value="37.7749"   step="0.0001"></div>
+        <div class="frow"><label>Longitude (°)</label><input type="number" id="ent-lon"  value="-122.4194" step="0.0001"></div>
+        <div class="frow"><label>Altitude (m)</label><input type="number" id="ent-alt"   value="50"        step="10"></div>
+        <div class="frow"><label>Yaw (°)</label>     <input type="number" id="ent-yaw"   value="0"         step="1"></div>
+        <div class="frow"><label>Pitch (°)</label>   <input type="number" id="ent-pitch" value="0"         step="1"></div>
+        <div class="frow"><label>Roll (°)</label>    <input type="number" id="ent-roll"  value="0"         step="1"></div>
+      </div>
+      <button onclick="spawnEntity()">Spawn / Update</button>
+    </div>
+
+    <div class="card">
+      <h3>Active Entities</h3>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Type</th><th>Lat</th><th>Lon</th><th>Alt (m)</th><th>Yaw (°)</th><th></th></tr>
+        </thead>
+        <tbody id="entity-tbody">
+          <tr id="no-entities-row">
+            <td colspan="7" style="color:var(--dim);text-align:center;padding:14px">No entities spawned</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Component Control</h3>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <span style="font-size:11px;color:var(--dim);white-space:nowrap">Entity ID</span>
+        <input type="number" id="comp-eid" value="1" min="1" max="65535" style="width:70px">
+      </div>
+
+      <div class="comp-row">
+        <div class="comp-lbl">Nav Lights (CompId 0)</div>
+        <div class="comp-btns">
+          <button class="sm" onclick="sendComp(0,1)">On</button>
+          <button class="sm sec" onclick="sendComp(0,0)">Off</button>
+        </div>
+      </div>
+
+      <div class="comp-row">
+        <div class="comp-lbl">Strobe (CompId 1)</div>
+        <div class="comp-btns">
+          <button class="sm" onclick="sendComp(1,1)">On</button>
+          <button class="sm sec" onclick="sendComp(1,0)">Off</button>
+        </div>
+      </div>
+
+      <div class="comp-row">
+        <div class="comp-lbl">Landing Lights (CompId 2)</div>
+        <div class="comp-btns">
+          <button class="sm" onclick="sendComp(2,1)">On</button>
+          <button class="sm sec" onclick="sendComp(2,0)">Off</button>
+        </div>
+      </div>
+
+      <div class="comp-row" style="margin-bottom:0">
+        <div class="comp-lbl">Damage State (CompId 10)</div>
+        <div class="comp-btns">
+          <button class="sm" onclick="sendComp(10,0)">Intact</button>
+          <button class="sm sec" onclick="sendComp(10,1)">Damaged</button>
+          <button class="sm dng" onclick="sendComp(10,2)">Destroyed</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /tab-entities -->
+
+</div><!-- #content -->
+
+<!-- Leaflet JS (graceful offline: map won't load tiles but page still works) -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLs=" crossorigin=""></script>
+
+<script>
+'use strict';
+
+// =============================================================
+// WebSocket client
+// =============================================================
+
+let ws = null;
+
+function connect() {
+  if (ws) ws.close();
+  const host = document.getElementById('cfg-host').value.trim();
+  const port = +document.getElementById('cfg-port').value;
+  const rate  = +document.getElementById('cfg-rate').value;
+
+  ws = new WebSocket(`ws://${host}:8081`);
+
+  ws.onopen = () => {
+    setStatus(true);
+    send({ type: 'config', host, port, rate });
+    sendCamera();
+    sendGimbal();
+    sendSensor();
+    sendEnv();          // push initial environment state on connect
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const m = JSON.parse(e.data);
+      if (m.type === 'status') onStatus(m);
+    } catch (_) {}
+  };
+
+  ws.onclose = () => { ws = null; setStatus(false); };
+  ws.onerror = () => setStatus(false);
+}
+
+function disconnect() {
+  if (ws) { ws.close(); ws = null; }
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  }
+}
+
+function setStatus(ok) {
+  document.getElementById('status-dot').className = ok ? 'ok' : 'err';
+  document.getElementById('status-txt').textContent = ok ? 'Connected' : 'Disconnected';
+}
+
+function onStatus(m) {
+  document.getElementById('frame-ctr').textContent = `Frame: ${m.frame}`;
+  updateEntityTable(m.entities || []);
+}
+
+// =============================================================
+// Tab switching
+// =============================================================
+
+function switchTab(btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  const name = btn.dataset.tab;
+  document.getElementById('tab-' + name).classList.add('active');
+  // Leaflet needs a size hint when its container becomes visible
+  if (name === 'camera' && map) setTimeout(() => map.invalidateSize(), 10);
+}
+
+// =============================================================
+// Camera tab
+// =============================================================
+
+let map, marker;
+
+function initMap() {
+  map = L.map('map').setView([37.7749, -122.4194], 10);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 19,
+  }).addTo(map);
+
+  marker = L.marker([37.7749, -122.4194], { draggable: true }).addTo(map);
+
+  marker.on('dragend', () => {
+    const ll = marker.getLatLng();
+    document.getElementById('cam-lat').value = ll.lat.toFixed(5);
+    document.getElementById('cam-lon').value = ll.lng.toFixed(5);
+    sendCamera();
+  });
+
+  map.on('click', (e) => {
+    marker.setLatLng(e.latlng);
+    document.getElementById('cam-lat').value = e.latlng.lat.toFixed(5);
+    document.getElementById('cam-lon').value = e.latlng.lng.toFixed(5);
+    sendCamera();
+  });
+}
+
+function onLatLonInput() {
+  const lat = parseFloat(document.getElementById('cam-lat').value) || 0;
+  const lon = parseFloat(document.getElementById('cam-lon').value) || 0;
+  if (marker) marker.setLatLng([lat, lon]);
+  sendCamera();
+}
+
+function sendCamera() {
+  send({
+    type:      'camera',
+    entity_id: +document.getElementById('cam-eid').value,
+    lat:       parseFloat(document.getElementById('cam-lat').value)   || 0,
+    lon:       parseFloat(document.getElementById('cam-lon').value)   || 0,
+    alt:       parseFloat(document.getElementById('cam-alt').value)   || 0,
+    yaw:       parseFloat(document.getElementById('cam-yaw').value)   || 0,
+    pitch:     parseFloat(document.getElementById('cam-pitch').value) || 0,
+    roll:      parseFloat(document.getElementById('cam-roll').value)  || 0,
+  });
+}
+
+// =============================================================
+// Gimbal & Sensor tab
+// =============================================================
+
+function onGimbalChange() {
+  const yaw   = parseFloat(document.getElementById('gim-yaw').value);
+  const pitch = parseFloat(document.getElementById('gim-pitch').value);
+  const roll  = parseFloat(document.getElementById('gim-roll').value);
+  document.getElementById('gim-yaw-v').textContent   = yaw.toFixed(1)   + '°';
+  document.getElementById('gim-pitch-v').textContent = pitch.toFixed(1) + '°';
+  document.getElementById('gim-roll-v').textContent  = roll.toFixed(1)  + '°';
+  sendGimbal();
+}
+
+function sendGimbal() {
+  send({
+    type:  'gimbal',
+    yaw:   parseFloat(document.getElementById('gim-yaw').value)   || 0,
+    pitch: parseFloat(document.getElementById('gim-pitch').value) || 0,
+    roll:  parseFloat(document.getElementById('gim-roll').value)  || 0,
+  });
+}
+
+function centerGimbal() {
+  ['gim-yaw', 'gim-pitch', 'gim-roll'].forEach(id => {
+    document.getElementById(id).value = 0;
+  });
+  onGimbalChange();
+}
+
+// Gain → FOV preset label (0=Wide 60°, 0.5=Medium 20°, 1.0=Narrow 5°)
+function gainLabel(g) {
+  if (g < 0.34) return 'Wide (60°)';
+  if (g < 0.67) return 'Medium (20°)';
+  return 'Narrow (5°)';
+}
+
+function onGainChange() {
+  const g = parseFloat(document.getElementById('sens-gain').value);
+  document.getElementById('sens-gain-v').textContent = g.toFixed(2);
+  document.getElementById('gain-preset').textContent = 'FOV preset: ' + gainLabel(g);
+  sendSensor();
+}
+
+function onSensorModeChange() {
+  const mode = document.querySelector('input[name="sensor-mode"]:checked');
+  const sensorId = mode ? +mode.value : 0;
+  // Show polarity only for IR
+  document.getElementById('polarity-row').style.display = sensorId === 1 ? '' : 'none';
+  sendSensor();
+}
+
+function sendSensor() {
+  const mode = document.querySelector('input[name="sensor-mode"]:checked');
+  const pol  = document.querySelector('input[name="polarity"]:checked');
+  send({
+    type:      'sensor',
+    on:        document.getElementById('sens-on').checked,
+    sensor_id: mode ? +mode.value : 0,
+    polarity:  pol  ? +pol.value  : 0,
+    gain:      parseFloat(document.getElementById('sens-gain').value) || 0,
+    view_id:   0,
+  });
+}
+
+function sendViewDef() {
+  send({
+    type: 'view_def',
+    hfov: parseFloat(document.getElementById('hfov').value) || 60,
+  });
+}
+
+// =============================================================
+// Environment tab
+// =============================================================
+
+function onTimeChange() {
+  const mins = +document.getElementById('env-time').value;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  document.getElementById('env-time-v').textContent =
+    String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+function onVisChange() {
+  const v = +document.getElementById('env-vis').value;
+  document.getElementById('env-vis-v').textContent = (v / 1000).toFixed(1) + ' km';
+}
+
+function envData() {
+  const mins = +document.getElementById('env-time').value;
+  return {
+    hour:             Math.floor(mins / 60),
+    minute:           mins % 60,
+    month:            +document.getElementById('env-month').value,
+    day:              +document.getElementById('env-day').value,
+    year:             +document.getElementById('env-year').value,
+    visibility:       +document.getElementById('env-vis').value,
+    weather_en:       document.getElementById('env-wx').checked,
+    cloud_base:       +document.getElementById('env-cbase').value,
+    cloud_thickness:  +document.getElementById('env-cthick').value,
+  };
+}
+
+function sendEnv() {
+  send({ type: 'environment', ...envData() });
+}
+
+// =============================================================
+// Entities tab
+// =============================================================
+
+function spawnEntity() {
+  send({
+    type:        'entity_spawn',
+    id:          +document.getElementById('ent-id').value,
+    entity_type: +document.getElementById('ent-type').value,
+    lat:         parseFloat(document.getElementById('ent-lat').value)   || 0,
+    lon:         parseFloat(document.getElementById('ent-lon').value)   || 0,
+    alt:         parseFloat(document.getElementById('ent-alt').value)   || 0,
+    yaw:         parseFloat(document.getElementById('ent-yaw').value)   || 0,
+    pitch:       parseFloat(document.getElementById('ent-pitch').value) || 0,
+    roll:        parseFloat(document.getElementById('ent-roll').value)  || 0,
+  });
+}
+
+function removeEntity(id) {
+  send({ type: 'entity_remove', id });
+}
+
+function updateEntityTable(entities) {
+  const tbody = document.getElementById('entity-tbody');
+  if (!entities.length) {
+    tbody.innerHTML =
+      '<tr id="no-entities-row"><td colspan="7" style="color:var(--dim);text-align:center;padding:14px">No entities spawned</td></tr>';
+    return;
+  }
+  tbody.innerHTML = entities.map(e => `
+    <tr>
+      <td>${e.id}</td>
+      <td>${e.entity_type}</td>
+      <td>${e.lat.toFixed(4)}</td>
+      <td>${e.lon.toFixed(4)}</td>
+      <td>${e.alt.toFixed(0)}</td>
+      <td>${e.yaw.toFixed(1)}</td>
+      <td><button class="sm dng" onclick="removeEntity(${e.id})">Remove</button></td>
+    </tr>`).join('');
+}
+
+function sendComp(compId, compState) {
+  send({
+    type:       'component',
+    entity_id:  +document.getElementById('comp-eid').value,
+    comp_id:    compId,
+    comp_state: compState,
+  });
+}
+
+// =============================================================
+// Init
+// =============================================================
+
+document.addEventListener('DOMContentLoaded', () => {
+  initMap();
+  onTimeChange();
+  onVisChange();
+  onGainChange();
+  onGimbalChange();
+  onSensorModeChange();  // initialize polarity-row visibility
+});
+</script>
+</body>
+</html>
