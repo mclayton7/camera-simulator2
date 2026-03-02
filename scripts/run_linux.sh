@@ -193,6 +193,27 @@ elif [ ! -f "${CONFIG_DST}" ]; then
 fi
 
 # -------------------------------------------------------------------------
+# Headless: start a virtual X11 display so SDL can initialise
+# SDL2 requires a valid DISPLAY even when UE uses -RenderOffScreen;
+# Xvfb provides a throwaway framebuffer that is never actually rendered to.
+# -------------------------------------------------------------------------
+XVFB_PID=""
+if [ "${HEADLESS}" -eq 1 ] && [ -z "${DISPLAY:-}" ]; then
+    if command -v Xvfb >/dev/null 2>&1; then
+        XVFB_DISPLAY=":99"
+        Xvfb "${XVFB_DISPLAY}" -screen 0 1280x720x24 -nolisten tcp &
+        XVFB_PID=$!
+        export DISPLAY="${XVFB_DISPLAY}"
+        echo "==> Xvfb started on ${DISPLAY} (PID ${XVFB_PID})"
+    else
+        echo "[WARN] --headless requested but Xvfb not found and DISPLAY is unset."
+        echo "       SDL will fail to initialise. Install xvfb:"
+        echo "         sudo apt-get install -y xvfb"
+        echo "       Or start your own X server and set DISPLAY before running."
+    fi
+fi
+
+# -------------------------------------------------------------------------
 # Vulkan ICD selection
 # -------------------------------------------------------------------------
 if [ -z "${VK_ICD_FILENAMES:-}" ]; then
@@ -251,9 +272,10 @@ if [ "${FOLLOW_LOG}" -eq 1 ]; then
         tail -F "${LOG_FILE}" \
             | grep --line-buffered -E '(LogCamSim|Error|Warning)' &
         TAIL_PID=$!
-        trap 'kill "${TAIL_PID}" 2>/dev/null || true; echo' INT TERM
+        trap 'kill "${TAIL_PID}" 2>/dev/null || true; [ -n "${XVFB_PID}" ] && kill "${XVFB_PID}" 2>/dev/null || true; echo' INT TERM
         wait "${UE_PID}" 2>/dev/null || true
         kill "${TAIL_PID}" 2>/dev/null || true
+        [ -n "${XVFB_PID}" ] && kill "${XVFB_PID}" 2>/dev/null || true
     else
         echo "[WARN] Log not found after 20s: ${LOG_FILE}"
     fi

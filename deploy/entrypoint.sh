@@ -32,6 +32,16 @@ else
 fi
 
 # -----------------------------------------------------------------------
+# Virtual display — SDL2 requires an X11 display even in -RenderOffScreen
+# mode.  Start Xvfb so SDL can initialise; UE renders via Vulkan offscreen
+# and never actually draws to the framebuffer.
+# -----------------------------------------------------------------------
+Xvfb :1 -screen 0 1280x720x24 -nolisten tcp &
+XVFB_PID=$!
+export DISPLAY=:1
+echo "[entrypoint] Xvfb started (PID ${XVFB_PID}, DISPLAY=${DISPLAY})"
+
+# -----------------------------------------------------------------------
 # SIGTERM → clean shutdown
 # -----------------------------------------------------------------------
 _term() {
@@ -59,4 +69,5 @@ echo "[entrypoint] UE PID = ${UE_PID}"
 wait "${UE_PID}"
 EXIT_CODE=$?
 echo "[entrypoint] UE exited with code ${EXIT_CODE}"
+kill "${XVFB_PID}" 2>/dev/null || true
 exit "${EXIT_CODE}"

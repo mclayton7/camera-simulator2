@@ -37,6 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx11-6 \
     libxext6 \
     libxrender1 \
+    # Xvfb — virtual X11 display so SDL can initialise on headless machines
+    xvfb \
     # SDL2 (UE5 Linux ships its own but this satisfies the loader)
     libsdl2-2.0-0 \
     # Audio stub (we pass -nosound but the audio subsystem still links)
