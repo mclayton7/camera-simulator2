@@ -53,21 +53,27 @@ if [ -z "${CC:-}" ] && [ -z "${CXX:-}" ]; then
         if [ -f "${_TC_CLANG}" ]; then
             export CC="${_TC_CLANG}"
             export CXX="${_TC_CLANG}++"
-            echo "==> Compiler: UE bundled clang"
+            # UE uses libc++ (not libstdc++) — compile CCL against it so C++
+            # stdlib symbols match what UE's linker provides.
+            CCL_CXX_FLAGS="-stdlib=libc++"
+            echo "==> Compiler: UE bundled clang (libc++)"
             echo "    CC=${CC}"
         else
             echo "[WARN] UE install found at ${UE_ROOT} but bundled clang not found at:"
             echo "       ${_TC_BASE}/v*_clang-*/x86_64-unknown-linux-gnu/bin/clang"
             echo "       Falling back to system compiler — binaries may not be ABI-compatible."
+            CCL_CXX_FLAGS=""
         fi
     else
         echo "[WARN] UE_ROOT not set and UnrealEditor not found in standard locations."
         echo "       Falling back to system compiler — binaries may not be ABI-compatible."
         echo "       Fix: export UE_ROOT=/path/to/UE_5.7"
+        CCL_CXX_FLAGS=""
     fi
 else
     echo "==> Compiler: using CC/CXX from environment"
     echo "    CC=${CC:-<unset>}  CXX=${CXX:-<unset>}"
+    CCL_CXX_FLAGS=""
 fi
 
 # =========================================================================
@@ -96,6 +102,7 @@ cmake -S "${CCL_SRC}" -B "${CCL_SRC}/build" \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     ${CC:+-DCMAKE_C_COMPILER="${CC}"} \
     ${CXX:+-DCMAKE_CXX_COMPILER="${CXX}"} \
+    ${CCL_CXX_FLAGS:+-DCMAKE_CXX_FLAGS="${CCL_CXX_FLAGS}"} \
     -GNinja
 
 # Build only the static target — skips the shared lib
