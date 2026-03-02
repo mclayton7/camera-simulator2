@@ -158,7 +158,7 @@ if [ ! -d "${FFMPEG_SRC}" ]; then
 fi
 
 cd "${FFMPEG_SRC}"
-TMPDIR="${BUILD_DIR}" ./configure \
+TMPDIR="${BUILD_DIR}" PKG_CONFIG_PATH="${X264_INSTALL}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" ./configure \
     --prefix="${FFMPEG_INSTALL}" \
     --enable-gpl \
     --enable-libx264 \
