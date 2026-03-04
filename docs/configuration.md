@@ -3,6 +3,12 @@
 CamSim reads `camsim_config.json` from the project directory (or the binary
 directory as a fallback). Environment variables override any JSON value.
 
+**Canonical file:** `deploy/camsim_config.json` is the single source of truth
+for all three deployment modes. `run.sh` copies it into the UE project
+directory before launch; the container `entrypoint.sh` copies it into the
+binary directory. Edit only `deploy/camsim_config.json`; the project-dir copy
+is generated and is listed in `.gitignore`.
+
 ## Full Example
 
 ```json
@@ -22,6 +28,8 @@ directory as a fallback). Environment variables override any JSON value.
   "capture_width":   1920,
   "capture_height":  1080,
   "frame_rate":      30.0,
+  "swap_rb_readback": false,
+  "readback_format": "auto",
   "hfov_deg":        60.0,
 
   "tile_preload_fov_scale":      2.0,
@@ -86,6 +94,8 @@ directory as a fallback). Environment variables override any JSON value.
 | `capture_width` | int | `1920` | Render target width in pixels. |
 | `capture_height` | int | `1080` | Render target height in pixels. |
 | `frame_rate` | float | `30.0` | Fixed tick rate (must match `DefaultEngine.ini` `FixedFrameRate`). |
+| `swap_rb_readback` | bool | `false` | `CAMSIM_SWAP_RB_READBACK` | Force a red/blue swap on GPU readback if the platform reports BGRA but delivers RGBA. |
+| `readback_format` | string | `"auto"` | `CAMSIM_READBACK_FORMAT` | Override readback byte order: `bgra`, `rgba`, `argb`, `abgr`, or `auto` (use render target format). |
 | `hfov_deg` | float | `60.0` | Horizontal field of view in degrees. Used for KLV metadata and Cesium tile preloading. Overridden per-frame by CIGI View Definition packets. |
 
 ### Cesium Tile Streaming
@@ -160,6 +170,8 @@ CAMSIM_MULTICAST_ADDR=239.1.1.1   # or 127.0.0.1 for unicast loopback test
 CAMSIM_MULTICAST_PORT=5004
 CAMSIM_VIDEO_BITRATE=4000000
 CAMSIM_H264_PRESET=ultrafast
+CAMSIM_SWAP_RB_READBACK=0
+CAMSIM_READBACK_FORMAT=auto
 
 # Start position
 CAMSIM_START_LAT=38.8977

@@ -61,11 +61,15 @@ CIGI 3.3 UDP ──► FCigiReceiver ──► UE5 Game Thread ──► SceneCa
 ### macOS (development)
 
 ```bash
+# One-time: install Homebrew dependencies and fetch plugins
+./scripts/repo_setup.sh
+brew install cmake ninja nasm git pkg-config
+
 # Build third-party libraries (CCL + FFmpeg with libx264)
-./scripts/build_thirdparty_mac.sh
+./scripts/build_thirdparty.sh
 
 # Run the UE5 editor build in game mode
-./scripts/run_mac.sh
+./scripts/run.sh
 
 # In another terminal — send a static camera pose
 python3 scripts/send_cigi_test.py --lat 37.6213 --lon -122.379 --alt 1000 --pitch -30
@@ -74,12 +78,31 @@ python3 scripts/send_cigi_test.py --lat 37.6213 --lon -122.379 --alt 1000 --pitc
 ./scripts/test_video_output.sh
 ```
 
-### Linux (Docker)
+### Linux (native development)
+
+```bash
+# One-time: install build tools and fetch plugins
+sudo apt-get install -y cmake ninja-build nasm git build-essential
+./scripts/repo_setup.sh
+
+# Build third-party libraries (CCL + FFmpeg with libx264)
+# Set UE_ROOT if you want to use UE's bundled clang toolchain
+export UE_ROOT=/path/to/UE_5.7
+./scripts/build_thirdparty.sh
+
+# Run the UE5 editor build in game mode (headless + unicast for dev)
+./scripts/run.sh --local --headless --log
+
+# Send CIGI and validate
+python3 scripts/send_cigi_test.py
+./scripts/test_video_output.sh
+```
+
+### Linux container
 
 ```bash
 # Build and start the container
-cd deploy/
-docker compose up --build
+docker compose -f deploy/docker-compose.yml up --build
 
 # Send CIGI from the host machine
 python3 scripts/send_cigi_test.py --host <container-ip>
@@ -93,30 +116,34 @@ Multicast on macOS loopback requires a route:
 sudo route add -net 239.0.0.0/8 -interface lo0
 ```
 
+### Shader compilation (first run)
+
+UE5 will compile shaders the first time a new machine or build runs. To avoid repeated compiles, set up a shared Derived Data Cache (DDC) or run from a cooked build that has shaders precompiled and the DDC bundled/distributed.
+
 ## Documentation
 
 | Document | Contents |
 |----------|----------|
 | [docs/architecture.md](docs/architecture.md) | System architecture, threading model, data flow |
 | [docs/configuration.md](docs/configuration.md) | `camsim_config.json` field reference, environment variables |
-| [docs/entity-rendering.md](docs/entity-rendering.md) | Phase 8: entity lifecycle, dead-reckoning, articulated parts, lights |
-| [docs/terrain-feedback.md](docs/terrain-feedback.md) | Phase 10: HAT/HOT and LOS queries, SOF heartbeat |
-| [Plan.md](Plan.md) | Full roadmap for Phases 7–12 |
+| [docs/entity-rendering.md](docs/entity-rendering.md) | Entity lifecycle, dead-reckoning, articulated parts, lights |
+| [docs/terrain-feedback.md](docs/terrain-feedback.md) | HAT/HOT and LOS queries, SOF heartbeat |
+| [Plan.md](Plan.md) | Feature roadmap |
 
 ## Directory Structure
 
 ```
 camsim/
-├── deploy/                         Docker deployment
+├── deploy/                         Linux container deployment
 │   ├── Dockerfile
 │   ├── docker-compose.yml
 │   ├── entrypoint.sh
-│   └── camsim_config.json          Runtime configuration
+│   └── camsim_config.json          Canonical runtime configuration (source of truth)
 ├── docs/                           Documentation
 ├── scripts/                        Development and test utilities
-│   ├── build_thirdparty_linux.sh   Build CCL + FFmpeg (Linux)
-│   ├── build_thirdparty_mac.sh     Build CCL + FFmpeg (macOS)
-│   ├── run_mac.sh                  Launch UE5 in game mode
+│   ├── repo_setup.sh               One-time: fetch glTFRuntime + Cesium plugins
+│   ├── build_thirdparty.sh         Build CCL + FFmpeg (macOS and Linux)
+│   ├── run.sh                      Launch UE5 in game mode (macOS and Linux)
 │   ├── send_cigi_test.py           CIGI camera/environment test sender
 │   ├── test_entity_rendering.py    CIGI entity/lights/DR test sender
 │   ├── test_video_output.sh        ffprobe + ffplay stream validation
@@ -127,10 +154,11 @@ camsim/
         ├── CIGI/                   FCigiReceiver, FCigiSender, FCigiQueryHandler, packet structs
         ├── Config/                 FCamSimConfig — JSON + env var loading
         ├── Encoder/                FVideoEncoder — FFmpeg H.264 + MPEG-TS
-        ├── Entity/                 ACamSimEntity, FCamSimEntityManager (Phase 8)
-        ├── Environment/            ACamSimEnvironment — sky/fog/weather (Phase 7)
+        ├── Entity/                 ACamSimEntity, FCamSimEntityManager
+        ├── Environment/            ACamSimEnvironment — sky/fog/weather
         ├── GameMode/               ACamSimGameMode
         ├── Metadata/               FKlvBuilder — MISB ST 0601
+        ├── Sensor/                 FSensorPostProcess — EO/IR/NVG post-processing
         ├── Subsystem/              UCamSimSubsystem — lifecycle owner
         └── ThirdParty/
             ├── CCL/                CIGI Class Library headers + static lib

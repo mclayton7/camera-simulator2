@@ -3,6 +3,7 @@
 #include "Camera/CamSimCamera.h"
 #include "Camera/CamSimGimbalComponent.h"
 #include "Camera/CamSimSensorComponent.h"
+#include "Camera/CamSimPixelConvert.h"
 #include "CamSimTest.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "CIGI/CigiReceiver.h"
@@ -17,6 +18,7 @@
 #include "RenderingThread.h"
 #include "RHICommandList.h"
 #include "RHIGPUReadback.h"
+#include "PixelFormat.h"
 #include "Async/Async.h"
 
 // Cesium
@@ -212,11 +214,14 @@ void ACamSimCamera::Tick(float DeltaTime)
 	{
 		const uint64           WaitFrame     = PendingFrameIndex;
 		const FCamSimTelemetry WaitTelemetry = PendingTelemetry;
+		const FCamSimConfig&   Cfg           = Subsystem->GetConfig();
+		const bool            bForceSwap     = Cfg.bSwapRBReadback;
+		const FCamSimConfig::EReadbackFormat DesiredFormat = Cfg.ReadbackFormat;
 		UTextureRenderTarget2D* RT            = RenderTarget;
 		FRHIGPUTextureReadback* Readback      = GPUReadback;
 
 		ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
-			[this, WaitFrame, WaitTelemetry, RT, Readback](FRHICommandListImmediate& RHICmdList)
+			[this, WaitFrame, WaitTelemetry, bForceSwap, DesiredFormat, RT, Readback](FRHICommandListImmediate& RHICmdList)
 		{
 			// Guard against multiple poll commands queued for the same readback:
 			// IsReady() returns true persistently once the GPU fence fires, so if several
@@ -228,36 +233,35 @@ void ACamSimCamera::Tick(float DeltaTime)
 			if (!Readback || !Readback->IsReady()) return;  // GPU still transferring — try next tick
 			bReadbackClaimed = true;
 
-			int32 RowPitchInPixels = 0;
-			void* RawData = Readback->Lock(RowPitchInPixels);
+			int32 RowPitch = 0;
+			void* RawData = Readback->Lock(RowPitch);
 
 			if (RawData && RT)
 			{
 				const int32 W = RT->SizeX;
 				const int32 H = RT->SizeY;
 
+				const EPixelFormat PixelFormat = RT->GetFormat();
+				const bool bIsBgra = (PixelFormat == PF_B8G8R8A8);
+				const bool bIsRgba = (PixelFormat == PF_R8G8B8A8);
+				if (!bIsBgra && !bIsRgba)
+				{
+					UE_LOG(LogCamSim, Warning,
+						TEXT("CamSimReadback frame %llu: unsupported pixel format %s"),
+						WaitFrame, GetPixelFormatString(PixelFormat));
+					Readback->Unlock();
+					bReadbackPending = false;
+					bEncoderBusy     = false;
+					return;
+				}
+
 				TArray<FColor> Pixels;
 				Pixels.SetNumUninitialized(W * H);
-
-				// Account for GPU row pitch (may be > W due to alignment)
-				const int32 BytesPerPixel = 4; // BGRA8
-				const uint8* Src          = static_cast<const uint8*>(RawData);
-				for (int32 Y = 0; Y < H; ++Y)
-				{
-					FMemory::Memcpy(
-						&Pixels[Y * W],
-						Src + static_cast<SIZE_T>(Y) * RowPitchInPixels * BytesPerPixel,
-						W * BytesPerPixel);
-				}
+				CamSimConvertReadbackPixels(RawData, RowPitch, W, H,
+					PixelFormat, DesiredFormat, bForceSwap, Pixels, WaitFrame);
 
 				Readback->Unlock();
 				bReadbackPending = false;
-
-				if (WaitFrame < 3)
-				{
-					UE_LOG(LogCamSim, Log, TEXT("CamSimReadback frame %llu: %d pixels (rowpitch=%d)"),
-						WaitFrame, Pixels.Num(), RowPitchInPixels);
-				}
 
 				SubmitFrameToEncoder(MoveTemp(Pixels), WaitTelemetry, WaitFrame);
 			}

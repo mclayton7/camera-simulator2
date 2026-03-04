@@ -36,6 +36,16 @@ static float GetEnvFloat(const TCHAR* Key, float Default)
 	return Value.IsEmpty() ? Default : FCString::Atof(*Value);
 }
 
+static FCamSimConfig::EReadbackFormat ParseReadbackFormat(const FString& Value)
+{
+	const FString Lower = Value.ToLower();
+	if (Lower == TEXT("bgra")) return FCamSimConfig::EReadbackFormat::BGRA;
+	if (Lower == TEXT("rgba")) return FCamSimConfig::EReadbackFormat::RGBA;
+	if (Lower == TEXT("argb")) return FCamSimConfig::EReadbackFormat::ARGB;
+	if (Lower == TEXT("abgr")) return FCamSimConfig::EReadbackFormat::ABGR;
+	return FCamSimConfig::EReadbackFormat::Auto;
+}
+
 // ---------------------------------------------------------------------------
 // FCamSimConfig
 // ---------------------------------------------------------------------------
@@ -98,6 +108,14 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 			Root->TryGetNumberField(TEXT("capture_width"),    Cfg.CaptureWidth);
 			Root->TryGetNumberField(TEXT("capture_height"),   Cfg.CaptureHeight);
 			Root->TryGetNumberField(TEXT("frame_rate"),       Cfg.FrameRate);
+			Root->TryGetBoolField  (TEXT("swap_rb_readback"), Cfg.bSwapRBReadback);
+			{
+				FString ReadbackFmt;
+				if (Root->TryGetStringField(TEXT("readback_format"), ReadbackFmt))
+				{
+					Cfg.ReadbackFormat = ParseReadbackFormat(ReadbackFmt);
+				}
+			}
 			Root->TryGetNumberField(TEXT("hfov_deg"),         Cfg.HFovDeg);
 			Root->TryGetNumberField(TEXT("tile_preload_fov_scale"),     Cfg.TilePreloadFovScale);
 			Root->TryGetNumberField(TEXT("max_simultaneous_tile_loads"), Cfg.MaxSimultaneousTileLoads);
@@ -186,6 +204,15 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.MulticastPort  = GetEnvInt(TEXT("CAMSIM_MULTICAST_PORT"),Cfg.MulticastPort);
 	Cfg.VideoBitrate   = GetEnvInt(TEXT("CAMSIM_VIDEO_BITRATE"),  Cfg.VideoBitrate);
 	Cfg.H264Preset     = GetEnv(TEXT("CAMSIM_H264_PRESET"),      Cfg.H264Preset);
+	Cfg.bSwapRBReadback = GetEnvInt(TEXT("CAMSIM_SWAP_RB_READBACK"),
+		Cfg.bSwapRBReadback ? 1 : 0) != 0;
+	{
+		const FString ReadbackEnv = GetEnv(TEXT("CAMSIM_READBACK_FORMAT"), TEXT(""));
+		if (!ReadbackEnv.IsEmpty())
+		{
+			Cfg.ReadbackFormat = ParseReadbackFormat(ReadbackEnv);
+		}
+	}
 	Cfg.TilePreloadFovScale     = GetEnvFloat(TEXT("CAMSIM_TILE_FOV_SCALE"),       Cfg.TilePreloadFovScale);
 	Cfg.MaxSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_MAX_TILE_LOADS"),        Cfg.MaxSimultaneousTileLoads);
 	Cfg.StartLatitude  = GetEnvDouble(TEXT("CAMSIM_START_LAT"),   Cfg.StartLatitude);

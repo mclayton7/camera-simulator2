@@ -54,94 +54,42 @@ public:
 	void Stop();
 
 	// -----------------------------------------------------------------------
-	// Game-thread accessors (SPSC — no locking needed)
+	// Game-thread SPSC accessors — one per queue.
+	// Each method pops the oldest item from the named queue into Out and
+	// returns true, or returns false immediately if the queue is empty.
 	// -----------------------------------------------------------------------
 
+#define CAMSIM_DEQUEUE(MethodName, QueueMember, OutType) \
+	bool MethodName(OutType& Out) { return QueueMember.Dequeue(Out); }
+
 	/** Camera entity states (EntityId == CameraEntityId). Consumed by ACamSimCamera. */
-	bool DequeueCameraEntityState(FCigiEntityState& OutState)
-	{
-		return CameraEntityQueue.Dequeue(OutState);
-	}
-
+	CAMSIM_DEQUEUE(DequeueCameraEntityState, CameraEntityQueue,   FCigiEntityState)
 	/** Non-camera entity states. Consumed by FCamSimEntityManager. */
-	bool DequeueEntityState(FCigiEntityState& OutState)
-	{
-		return EntityStateQueue.Dequeue(OutState);
-	}
-
-	bool DequeueViewDefinition(FCigiViewDefinition& OutView)
-	{
-		return ViewDefQueue.Dequeue(OutView);
-	}
-
+	CAMSIM_DEQUEUE(DequeueEntityState,       EntityStateQueue,    FCigiEntityState)
+	CAMSIM_DEQUEUE(DequeueViewDefinition,    ViewDefQueue,        FCigiViewDefinition)
 	/** Sensor control packets (opcode 17). Consumed by ACamSimCamera. */
-	bool DequeueSensorControl(FCigiSensorControl& OutSensor)
-	{
-		return SensorCtrlQueue.Dequeue(OutSensor);
-	}
-
+	CAMSIM_DEQUEUE(DequeueSensorControl,     SensorCtrlQueue,     FCigiSensorControl)
 	/** View control packets (opcode 16). Consumed by ACamSimCamera. */
-	bool DequeueViewControl(FCigiViewControl& OutView)
-	{
-		return ViewCtrlQueue.Dequeue(OutView);
-	}
-
-	/** Art part packets targeting the camera entity. Consumed by ACamSimCamera for gimbal. */
-	bool DequeueCameraArtPart(FCigiArtPartControl& OutArt)
-	{
-		return CameraArtPartQueue.Dequeue(OutArt);
-	}
-
-	bool DequeueCelestialState(FCigiCelestialState& OutState)
-	{
-		return CelestialQueue.Dequeue(OutState);
-	}
-
-	bool DequeueAtmosphereState(FCigiAtmosphereState& OutState)
-	{
-		return AtmosphereQueue.Dequeue(OutState);
-	}
-
-	bool DequeueWeatherState(FCigiWeatherState& OutState)
-	{
-		return WeatherQueue.Dequeue(OutState);
-	}
-
+	CAMSIM_DEQUEUE(DequeueViewControl,       ViewCtrlQueue,       FCigiViewControl)
+	/** Art part packets for the camera entity. Consumed by ACamSimCamera (gimbal). */
+	CAMSIM_DEQUEUE(DequeueCameraArtPart,     CameraArtPartQueue,  FCigiArtPartControl)
+	CAMSIM_DEQUEUE(DequeueCelestialState,    CelestialQueue,      FCigiCelestialState)
+	CAMSIM_DEQUEUE(DequeueAtmosphereState,   AtmosphereQueue,     FCigiAtmosphereState)
+	CAMSIM_DEQUEUE(DequeueWeatherState,      WeatherQueue,        FCigiWeatherState)
 	/** Rate control packets. Consumed by FCamSimEntityManager. */
-	bool DequeueRateControl(FCigiRateControl& OutRate)
-	{
-		return RateCtrlQueue.Dequeue(OutRate);
-	}
-
+	CAMSIM_DEQUEUE(DequeueRateControl,       RateCtrlQueue,       FCigiRateControl)
 	/** Articulated part control packets. Consumed by FCamSimEntityManager. */
-	bool DequeueArtPart(FCigiArtPartControl& OutArt)
-	{
-		return ArtPartQueue.Dequeue(OutArt);
-	}
-
+	CAMSIM_DEQUEUE(DequeueArtPart,           ArtPartQueue,        FCigiArtPartControl)
 	/** Component control packets. Consumed by FCamSimEntityManager. */
-	bool DequeueCompCtrl(FCigiComponentControl& OutComp)
-	{
-		return CompCtrlQueue.Dequeue(OutComp);
-	}
-
+	CAMSIM_DEQUEUE(DequeueCompCtrl,          CompCtrlQueue,       FCigiComponentControl)
 	/** HAT/HOT request packets (opcode 24). Consumed by FCigiQueryHandler. */
-	bool DequeueHatHotRequest(FCigiHatHotRequest& Out)
-	{
-		return HatHotReqQueue.Dequeue(Out);
-	}
-
+	CAMSIM_DEQUEUE(DequeueHatHotRequest,     HatHotReqQueue,      FCigiHatHotRequest)
 	/** LOS segment request packets (opcode 25). Consumed by FCigiQueryHandler. */
-	bool DequeueLosSegRequest(FCigiLosSegRequest& Out)
-	{
-		return LosSegReqQueue.Dequeue(Out);
-	}
-
+	CAMSIM_DEQUEUE(DequeueLosSegRequest,     LosSegReqQueue,      FCigiLosSegRequest)
 	/** LOS vector request packets (opcode 26). Consumed by FCigiQueryHandler. */
-	bool DequeueLosVectRequest(FCigiLosVectRequest& Out)
-	{
-		return LosVectReqQueue.Dequeue(Out);
-	}
+	CAMSIM_DEQUEUE(DequeueLosVectRequest,    LosVectReqQueue,     FCigiLosVectRequest)
+
+#undef CAMSIM_DEQUEUE
 
 	// FRunnable interface
 	virtual bool   Init() override;

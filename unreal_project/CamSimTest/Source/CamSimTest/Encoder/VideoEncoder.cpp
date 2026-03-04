@@ -85,12 +85,17 @@ bool FVideoEncoder::Open()
 
 bool FVideoEncoder::OpenVideoStream()
 {
-	const AVCodec* Codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+	const AVCodec* Codec = avcodec_find_encoder_by_name("libx264");
+	if (!Codec)
+	{
+		Codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+	}
 	if (!Codec)
 	{
 		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: H.264 encoder not found"));
 		return false;
 	}
+	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: using encoder %s"), ANSI_TO_TCHAR(Codec->name));
 
 	VideoStream = avformat_new_stream(FmtCtx, nullptr);
 	if (!VideoStream)

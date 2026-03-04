@@ -21,5 +21,9 @@ __pycache__/
 *.dSYM/
 *.app/
 
-  unreal_project/CamSimTest/Plugins/CesiumForUnreal/Binaries/
-  unreal_project/CamSimTest/Plugins/CesiumForUnreal/Intermediate/
+unreal_project/CamSimTest/Plugins/CesiumForUnreal/Binaries/
+unreal_project/CamSimTest/Plugins/CesiumForUnreal/Intermediate/
+
+# Runtime copy of the config — generated from deploy/camsim_config.json by run.sh
+unreal_project/CamSimTest/camsim_config.json
+

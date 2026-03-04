@@ -21,10 +21,19 @@
  *   CAMSIM_MULTICAST_PORT         – UDP port for output stream                   (default 5004)
  *   CAMSIM_VIDEO_BITRATE          – Target H.264 bitrate in bps                  (default 4000000)
  *   CAMSIM_H264_PRESET            – libx264 preset string                        (default ultrafast)
+ *   CAMSIM_SWAP_RB_READBACK       – Force red/blue swap on GPU readback          (default 0)
  *   CAMSIM_START_HOUR             – Fallback time-of-day (0-24)                  (default 12.0)
  */
 struct FCamSimConfig
 {
+	enum class EReadbackFormat : uint8
+	{
+		Auto = 0,
+		BGRA,
+		RGBA,
+		ARGB,
+		ABGR
+	};
 	// CIGI input
 	FString CigiBindAddr    = TEXT("0.0.0.0");
 	int32   CigiPort        = 8888;
@@ -44,6 +53,8 @@ struct FCamSimConfig
 	int32   CaptureWidth    = 1920;
 	int32   CaptureHeight   = 1080;
 	float   FrameRate       = 30.0f;
+	bool    bSwapRBReadback = false;
+	EReadbackFormat ReadbackFormat = EReadbackFormat::Auto;
 
 	// Horizontal field of view in degrees (used for KLV metadata)
 	float   HFovDeg         = 60.0f;
