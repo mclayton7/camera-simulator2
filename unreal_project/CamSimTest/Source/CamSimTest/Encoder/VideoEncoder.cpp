@@ -171,16 +171,88 @@ bool FVideoEncoder::OpenVideoStream()
 		return false;
 	}
 
-	// Configure the color space conversion to match the VUI we stamped above:
-	//   src: full-range sRGB (GPU readback 0-255 per channel), BT.709 primaries
-	//   dst: limited-range YUV (16-235 Y, 16-240 Cb/Cr), BT.709 matrix
-	// Without this, sws_scale defaults to full-range output, which VLC and hardware
-	// decoders interpret as out-of-range chroma → pink/green banding artifacts.
-	sws_setColorspaceDetails(
+	// CRITICAL: sws_getContext defaults to srcRange=0 (limited-range 16-235 RGB),
+	// but GPU readback delivers full-range 0-255 RGB.  Without correcting this,
+	// values below 16 or above 235 cause chroma overflow → pink/green banding.
+	const int* BT709Coeffs = sws_getCoefficients(SWS_CS_ITU709);
+	int ScsRet = sws_setColorspaceDetails(
 		SwsCtx,
-		sws_getCoefficients(SWS_CS_ITU709), /*srcRange=*/1,  // full-range RGB in
-		sws_getCoefficients(SWS_CS_ITU709), /*dstRange=*/0,  // limited-range YUV out
+		BT709Coeffs, /*srcRange=*/1,   // full-range RGB in (0-255)
+		BT709Coeffs, /*dstRange=*/0,   // limited-range YUV out (16-235/16-240)
 		0, 1 << 16, 1 << 16);
+
+	if (ScsRet < 0)
+	{
+		UE_LOG(LogCamSim, Error,
+			TEXT("FVideoEncoder: sws_setColorspaceDetails FAILED (ret=%d). "
+			     "Pink/green artifacts are likely."), ScsRet);
+	}
+
+	// Verify the color parameters actually took effect
+	{
+		int *InvTbl = nullptr, *Tbl = nullptr;
+		int VerifySrcRange = -1, VerifyDstRange = -1;
+		int Bri = 0, Con = 0, Sat = 0;
+		sws_getColorspaceDetails(SwsCtx, &InvTbl, &VerifySrcRange,
+		                         &Tbl, &VerifyDstRange, &Bri, &Con, &Sat);
+
+		UE_LOG(LogCamSim, Log,
+			TEXT("FVideoEncoder: sws colorspace verified → srcRange=%d dstRange=%d "
+			     "(expected srcRange=1 dstRange=0)"),
+			VerifySrcRange, VerifyDstRange);
+
+		if (VerifySrcRange != 1 || VerifyDstRange != 0)
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FVideoEncoder: sws color params NOT applied correctly! "
+				     "srcRange=%d (want 1) dstRange=%d (want 0). "
+				     "Retrying with context reinit..."),
+				VerifySrcRange, VerifyDstRange);
+
+			// Fallback: recreate the context using the explicit init path
+			sws_freeContext(SwsCtx);
+			SwsCtx = sws_alloc_context();
+			if (SwsCtx)
+			{
+				av_opt_set_int(SwsCtx, "srcw",       Config.CaptureWidth,   0);
+				av_opt_set_int(SwsCtx, "srch",       Config.CaptureHeight,  0);
+				av_opt_set_int(SwsCtx, "src_format",  AV_PIX_FMT_BGRA,     0);
+				av_opt_set_int(SwsCtx, "dstw",       Config.CaptureWidth,   0);
+				av_opt_set_int(SwsCtx, "dsth",       Config.CaptureHeight,  0);
+				av_opt_set_int(SwsCtx, "dst_format",  AV_PIX_FMT_YUV420P,  0);
+				av_opt_set_int(SwsCtx, "sws_flags",   SWS_BILINEAR,        0);
+
+				int InitRet = sws_init_context(SwsCtx, nullptr, nullptr);
+				if (InitRet < 0)
+				{
+					UE_LOG(LogCamSim, Error,
+						TEXT("FVideoEncoder: sws_init_context fallback failed (ret=%d)"), InitRet);
+					sws_freeContext(SwsCtx);
+					SwsCtx = nullptr;
+					return false;
+				}
+
+				// Re-apply color space details on the freshly initialized context
+				ScsRet = sws_setColorspaceDetails(
+					SwsCtx,
+					BT709Coeffs, /*srcRange=*/1,
+					BT709Coeffs, /*dstRange=*/0,
+					0, 1 << 16, 1 << 16);
+
+				sws_getColorspaceDetails(SwsCtx, &InvTbl, &VerifySrcRange,
+				                         &Tbl, &VerifyDstRange, &Bri, &Con, &Sat);
+				UE_LOG(LogCamSim, Log,
+					TEXT("FVideoEncoder: sws fallback → srcRange=%d dstRange=%d ret=%d"),
+					VerifySrcRange, VerifyDstRange, ScsRet);
+			}
+		}
+	}
+
+	// Stamp color properties on the YUV frame to match VUI and sws output
+	YuvFrame->color_range     = AVCOL_RANGE_MPEG;
+	YuvFrame->colorspace      = AVCOL_SPC_BT709;
+	YuvFrame->color_primaries = AVCOL_PRI_BT709;
+	YuvFrame->color_trc       = AVCOL_TRC_IEC61966_2_1;
 
 	return true;
 }
@@ -234,6 +306,25 @@ void FVideoEncoder::EncodeFrame(
 		SrcData, SrcLinesize,
 		0, Config.CaptureHeight,
 		YuvFrame->data, YuvFrame->linesize);
+
+	// Diagnostic: dump sample pixel values for first frame to verify conversion
+	if (FrameIdx == 0 && PixelData.Num() > 0)
+	{
+		// Sample a pixel from near the center of the frame
+		const int32 CX = Config.CaptureWidth / 2;
+		const int32 CY = Config.CaptureHeight / 2;
+		const int32 Idx = CY * Config.CaptureWidth + CX;
+		const FColor& P = PixelData[Idx];
+		const uint8 Y_val  = YuvFrame->data[0][CY * YuvFrame->linesize[0] + CX];
+		const uint8 Cb_val = YuvFrame->data[1][(CY/2) * YuvFrame->linesize[1] + (CX/2)];
+		const uint8 Cr_val = YuvFrame->data[2][(CY/2) * YuvFrame->linesize[2] + (CX/2)];
+		UE_LOG(LogCamSim, Log,
+			TEXT("FVideoEncoder: frame 0 center pixel (%d,%d): "
+			     "BGRA=[B=%u G=%u R=%u A=%u] → YCbCr=[Y=%u Cb=%u Cr=%u]  "
+			     "(linesize Y=%d U=%d V=%d)"),
+			CX, CY, P.B, P.G, P.R, P.A, Y_val, Cb_val, Cr_val,
+			YuvFrame->linesize[0], YuvFrame->linesize[1], YuvFrame->linesize[2]);
+	}
 
 	// Set PTS in {1, fps} timebase
 	YuvFrame->pts = static_cast<int64>(FrameIdx);
