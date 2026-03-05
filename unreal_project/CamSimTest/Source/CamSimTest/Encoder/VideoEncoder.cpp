@@ -121,6 +121,14 @@ bool FVideoEncoder::OpenVideoStream()
 	VideoCodecCtx->gop_size    = 30;
 	VideoCodecCtx->max_b_frames = 0; // zero-latency
 
+	// Explicitly signal the color space so all decoders (VLC, ffplay, hardware) agree.
+	// sws_scale converts sRGB→YUV using BT.709 limited-range coefficients (see below),
+	// so we stamp the matching values into the H.264 VUI / SPS here.
+	VideoCodecCtx->color_range      = AVCOL_RANGE_MPEG;        // limited (16-235/16-240)
+	VideoCodecCtx->color_primaries  = AVCOL_PRI_BT709;
+	VideoCodecCtx->color_trc        = AVCOL_TRC_IEC61966_2_1;  // sRGB gamma (matches SCS_FinalColorLDR)
+	VideoCodecCtx->colorspace       = AVCOL_SPC_BT709;
+
 	if (FmtCtx->oformat->flags & AVFMT_GLOBALHEADER)
 		VideoCodecCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
@@ -151,7 +159,7 @@ bool FVideoEncoder::OpenVideoStream()
 	YuvFrame->height = Config.CaptureHeight;
 	av_frame_get_buffer(YuvFrame, 0);
 
-	// Create sws context: BGRA → YUV420P
+	// Create sws context: BGRA → YUV420P (BT.709, limited range)
 	SwsCtx = sws_getContext(
 		Config.CaptureWidth, Config.CaptureHeight, AV_PIX_FMT_BGRA,
 		Config.CaptureWidth, Config.CaptureHeight, AV_PIX_FMT_YUV420P,
@@ -162,6 +170,17 @@ bool FVideoEncoder::OpenVideoStream()
 		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: sws_getContext failed"));
 		return false;
 	}
+
+	// Configure the color space conversion to match the VUI we stamped above:
+	//   src: full-range sRGB (GPU readback 0-255 per channel), BT.709 primaries
+	//   dst: limited-range YUV (16-235 Y, 16-240 Cb/Cr), BT.709 matrix
+	// Without this, sws_scale defaults to full-range output, which VLC and hardware
+	// decoders interpret as out-of-range chroma → pink/green banding artifacts.
+	sws_setColorspaceDetails(
+		SwsCtx,
+		sws_getCoefficients(SWS_CS_ITU709), /*srcRange=*/1,  // full-range RGB in
+		sws_getCoefficients(SWS_CS_ITU709), /*dstRange=*/0,  // limited-range YUV out
+		0, 1 << 16, 1 << 16);
 
 	return true;
 }

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "CamSimTest.h"
 #include "Config/CamSimConfig.h"
 #include "PixelFormat.h"
 
