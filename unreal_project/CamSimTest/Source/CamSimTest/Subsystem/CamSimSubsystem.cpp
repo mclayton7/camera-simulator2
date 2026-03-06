@@ -10,8 +10,31 @@
 #include "CamSimTest.h"
 #include "Dom/JsonObject.h"
 #include "Engine/World.h"
+#include "DynamicRHI.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+
+extern "C"
+{
+#include "libavcodec/version.h"
+#include "libswscale/version.h"
+}
+
+namespace
+{
+const TCHAR* ReadbackFormatToString(FCamSimConfig::EReadbackFormat Fmt)
+{
+	switch (Fmt)
+	{
+		case FCamSimConfig::EReadbackFormat::BGRA: return TEXT("bgra");
+		case FCamSimConfig::EReadbackFormat::RGBA: return TEXT("rgba");
+		case FCamSimConfig::EReadbackFormat::ARGB: return TEXT("argb");
+		case FCamSimConfig::EReadbackFormat::ABGR: return TEXT("abgr");
+		case FCamSimConfig::EReadbackFormat::Auto:
+		default: return TEXT("auto");
+	}
+}
+}
 
 void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -26,7 +49,21 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		EntityTypeTable.LoadFromConfig(JsonRoot);
 	}
 
+	const FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: initializing"));
+	UE_LOG(LogCamSim, Log,
+		TEXT("CamSim startup diagnostics: platform=%s rhi=%s ffmpeg(libavcodec=%d.%d.%d libswscale=%d.%d.%d) ")
+		TEXT("video=udp://%s:%d cigi_in=%s:%d cigi_resp=%s:%d capture=%dx%d@%.1ffps ")
+		TEXT("readback=%s swap_rb=%d bitrate=%d preset=%s tune=%s"),
+		ANSI_TO_TCHAR(FPlatformProperties::IniPlatformName()), *RHIName,
+		LIBAVCODEC_VERSION_MAJOR, LIBAVCODEC_VERSION_MINOR, LIBAVCODEC_VERSION_MICRO,
+		LIBSWSCALE_VERSION_MAJOR, LIBSWSCALE_VERSION_MINOR, LIBSWSCALE_VERSION_MICRO,
+		*Config.MulticastAddr, Config.MulticastPort,
+		*Config.CigiBindAddr, Config.CigiPort,
+		*Config.CigiResponseAddr, Config.CigiResponsePort,
+		Config.CaptureWidth, Config.CaptureHeight, Config.FrameRate,
+		ReadbackFormatToString(Config.ReadbackFormat), Config.bSwapRBReadback ? 1 : 0,
+		Config.VideoBitrate, *Config.H264Preset, *Config.H264Tune);
 
 	// Start CIGI receiver thread
 	CigiReceiver = new FCigiReceiver(Config);
