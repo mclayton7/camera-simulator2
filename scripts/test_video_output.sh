@@ -52,7 +52,7 @@ fi
 #   sudo route add -net 239.0.0.0/8 -interface lo0
 #
 # Alternatively use unicast for local testing:
-#   CAMSIM_MULTICAST_ADDR=127.0.0.1 ./scripts/run_mac.sh
+#   CAMSIM_MULTICAST_ADDR=127.0.0.1 ./scripts/run.sh
 #   ./scripts/test_video_output.sh --addr 127.0.0.1
 
 UDP_URL="udp://@${ADDR}:${PORT}"

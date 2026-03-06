@@ -239,7 +239,7 @@ subsystem:
 |--------|-----------|-----------------|
 | 0 | Navigation lights (red/green/white point lights) | `0` = off, `1` = on |
 | 1 | Anti-collision strobe | `0` = off, `1` = on (1 Hz, 50% duty cycle) |
-| 2 | Landing lights | `0` = off, `1` = on (placeholder — no light component yet) |
+| 2 | Landing light | `0` = off, `1` = on |
 | 10 | Damage state | `0` = intact, `1` = damaged, `2` = destroyed |
 
 ### Navigation lights
@@ -258,6 +258,11 @@ StrobeAccum += DeltaTime
 if StrobeAccum >= 1.0: StrobeAccum -= 1.0
 StrobeLight.SetVisible(StrobeAccum < 0.5)
 ```
+
+### Landing light
+
+CompId=2 toggles a dedicated white landing light component. This is an immediate
+on/off control (no blink pattern) and is independent of nav/strobe states.
 
 ### Damage state
 

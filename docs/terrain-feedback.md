@@ -92,7 +92,8 @@ If the trace finds no hit, `Valid = false` is returned.
 |-------|---------|-----------------|
 | 0 | HAT query | Returns both HAT and HOT; response `ReqType = 0` |
 | 1 | HOT query | Returns both HAT and HOT; response `ReqType = 1` |
-| 2 | Extended | Treated as HOT; extended response not implemented |
+| 2 | Extended | Downgraded to basic response (returns HAT/HOT values; response tagged as HOT) |
+| >2 | Invalid | Returns `Valid = false` (request rejected) |
 
 ---
 

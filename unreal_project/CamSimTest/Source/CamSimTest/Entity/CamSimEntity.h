@@ -93,6 +93,10 @@ private:
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UPointLightComponent> StrobeLight;
 
+	// Landing lights (component control CompId=2)
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UPointLightComponent> LandingLight;
+
 	// Dead-reckoning state
 	struct FDRState
 	{

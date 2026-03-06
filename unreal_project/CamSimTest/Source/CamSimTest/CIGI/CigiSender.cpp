@@ -162,8 +162,11 @@ void FCigiSender::EnqueueHatHotResponse(uint16 HatHotId, bool bValid,
 	CigiHatHotRespV3* Resp = new CigiHatHotRespV3();
 	Resp->SetHatHotID(static_cast<Cigi_uint16>(HatHotId));
 	Resp->SetValid(bValid);
-	// ReqType 0=HAT, 1=HOT — CigiBaseHatHotResp::ReqTypeGrp
-	Resp->SetReqType(static_cast<CigiBaseHatHotResp::ReqTypeGrp>(ReqType & 0x01));
+	// ReqType: 0=HAT, 1=HOT, 2=Extended.
+	// CIGI v3.3 HAT/HOT response supports only basic HAT/HOT tagging; map
+	// extended (2) to HOT semantics in the response.
+	const uint8 ResponseReqType = (ReqType == 1 || ReqType == 2) ? 1 : 0;
+	Resp->SetReqType(static_cast<CigiBaseHatHotResp::ReqTypeGrp>(ResponseReqType));
 	if (bValid)
 	{
 		Resp->SetHat(Hat);

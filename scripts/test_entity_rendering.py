@@ -25,7 +25,7 @@ Modes:
     remove      Send Remove state to destroy a previously spawned entity.
     deadreckon  Spawn entity with velocity → watch it glide without further packets.
     artpart     Animate landing gear (ArtPart_00) open/close over 5 seconds.
-    lights      Toggle nav lights and strobe on/off.
+    lights      Toggle nav, strobe, and landing lights on/off.
     damage      Cycle through intact → damaged → destroyed states.
 
 Options:
@@ -48,7 +48,7 @@ Examples:
     # Spawn F-16 moving north at 200 m/s; watch dead-reckoning:
     python3 scripts/test_entity_rendering.py deadreckon --entity-type 1001 --duration 20
 
-    # Toggle nav lights and strobe:
+    # Toggle nav, strobe, and landing lights:
     python3 scripts/test_entity_rendering.py lights --duration 10
 
     # Cycle damage states every 5 seconds:
@@ -457,9 +457,10 @@ def mode_artpart(sock, addr, args):
 
 def mode_lights(sock, addr, args):
     """
-    8E test: Toggle nav lights (CompId=0) and strobe (CompId=1) every 3 seconds.
+    8E test: Toggle nav lights (CompId=0), strobe (CompId=1), and landing lights
+    (CompId=2) every 3 seconds.
     """
-    print(f"[lights] entity_id={args.entity_id} — nav lights + strobe toggle every 3s")
+    print(f"[lights] entity_id={args.entity_id} — nav + strobe + landing lights toggle every 3s")
 
     entity_pkt = pack_entity_control(
         args.entity_id, args.lat, args.lon, args.alt,
@@ -473,21 +474,24 @@ def mode_lights(sock, addr, args):
     def builder(elapsed, frame_ctr):
         nonlocal prev_phase
         # Toggle every 3 seconds
-        phase = int(elapsed / 3.0) % 4  # 4 phases: lights off/on, strobe off/on
+        phase = int(elapsed / 3.0) % 4  # 4 phases: all off, nav, strobe+landing, all on
         lights_on = (phase in (1, 3))
         strobe_on = (phase in (2, 3))
+        landing_on = (phase in (2, 3))
 
         if phase != prev_phase:
             prev_phase = phase
             print(f"  [{elapsed:5.1f}s] nav lights={'ON ' if lights_on else 'OFF'}  "
-                  f"strobe={'ON' if strobe_on else 'OFF'}")
+                  f"strobe={'ON' if strobe_on else 'OFF'}  landing={'ON' if landing_on else 'OFF'}")
 
         comp_nav = pack_component_control(
             args.entity_id, comp_id=0, comp_state=1 if lights_on else 0)
         comp_strobe = pack_component_control(
             args.entity_id, comp_id=1, comp_state=1 if strobe_on else 0)
+        comp_landing = pack_component_control(
+            args.entity_id, comp_id=2, comp_state=1 if landing_on else 0)
 
-        return [entity_pkt, comp_nav, comp_strobe]
+        return [entity_pkt, comp_nav, comp_strobe, comp_landing]
 
     run_loop(sock, addr, args, builder)
 

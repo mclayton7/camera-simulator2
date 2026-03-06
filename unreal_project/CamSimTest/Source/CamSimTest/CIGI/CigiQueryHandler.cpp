@@ -61,6 +61,24 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, ACesiumGeoreference
 	FCigiHatHotRequest Req;
 	while (Receiver->DequeueHatHotRequest(Req))
 	{
+		if (Req.ReqType > 2)
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FCigiQueryHandler: unsupported HAT/HOT ReqType=%u (id=%u) -> invalid response"),
+				static_cast<uint32>(Req.ReqType), static_cast<uint32>(Req.HatHotId));
+			Sender->EnqueueHatHotResponse(Req.HatHotId, false, 0, 0.0, 0.0);
+			continue;
+		}
+
+		if (Req.ReqType == 2)
+		{
+			// CIGI v3.3 response packet does not provide extended fields.
+			// We downgrade to basic semantics and return HAT/HOT values.
+			UE_LOG(LogCamSim, Verbose,
+				TEXT("FCigiQueryHandler: HAT/HOT ReqType=2 (extended) downgraded to basic response (id=%u)"),
+				static_cast<uint32>(Req.HatHotId));
+		}
+
 		// Trace from high above the query point straight down to below sea level.
 		// The query altitude is the reference point; we start the trace above any
 		// possible terrain regardless of query alt.

@@ -10,7 +10,7 @@
 //       Mac/                  ← libcigicl.a
 //       Win64/                ← cigicl.lib  (OUTPUT_NAME cigicl_static on Windows → cigicl_static.lib; verify on first Win64 build)
 //
-// Build via: scripts/build_thirdparty_mac.sh  (or _linux.sh)
+// Build via: scripts/build_thirdparty.sh
 
 using UnrealBuildTool;
 using System.IO;

@@ -13,7 +13,7 @@
 !/Config/**
 !/Plugins/**
 
-# ThirdParty compiled binaries are generated locally by scripts/build_thirdparty_linux.sh
+# ThirdParty compiled binaries are generated locally by scripts/build_thirdparty.sh
 # — do not commit them, but do commit Build.cs files and .gitkeep placeholders.
 Source/ThirdParty/**/*.a
 Source/ThirdParty/**/*.lib

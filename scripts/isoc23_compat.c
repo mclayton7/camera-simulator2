@@ -12,7 +12,7 @@
  * would call themselves recursively.
  *
  * Built and injected into libx264.a and libavcodec.a by
- * build_thirdparty_linux.sh.
+ * scripts/build_thirdparty.sh.
  */
 
 /* No _GNU_SOURCE, _POSIX_SOURCE, or _ISOC2X_SOURCE — intentional. */

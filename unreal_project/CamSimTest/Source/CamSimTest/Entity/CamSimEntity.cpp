@@ -109,6 +109,12 @@ ACamSimEntity::ACamSimEntity()
 	StrobeLight->SetVisibility(false);
 	StrobeLight->SetLightColor(FLinearColor::White);
 	StrobeLight->Intensity = 20000.0f;
+
+	LandingLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("LandingLight"));
+	LandingLight->SetupAttachment(Root);
+	LandingLight->SetVisibility(false);
+	LandingLight->SetLightColor(FLinearColor::White);
+	LandingLight->Intensity = 30000.0f;
 }
 
 // -------------------------------------------------------------------------
@@ -296,7 +302,12 @@ void ACamSimEntity::ApplyComponentControl(const FCigiComponentControl& C)
 		break;
 
 	case 2: // Landing lights
-		// TODO: add landing light component and toggle here
+		{
+			const bool bOn = (C.CompState == 1);
+			if (LandingLight) LandingLight->SetVisibility(bOn);
+			UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: landing lights %s"),
+				EntityId, bOn ? TEXT("ON") : TEXT("OFF"));
+		}
 		break;
 
 	case 10: // Damage state — swap mesh asset
