@@ -29,7 +29,10 @@ is generated and is listed in `.gitignore`.
   "capture_height":  1080,
   "frame_rate":      30.0,
   "swap_rb_readback": false,
+  "readback_ready_polls": 2,
   "readback_format": "auto",
+  "encoder_watchdog_policy": "reconnect",
+  "encoder_watchdog_interval_ticks": 150,
   "hfov_deg":        60.0,
 
   "tile_preload_fov_scale":      2.0,
@@ -95,8 +98,16 @@ is generated and is listed in `.gitignore`.
 | `capture_height` | int | `1080` | Render target height in pixels. |
 | `frame_rate` | float | `30.0` | Fixed tick rate (must match `DefaultEngine.ini` `FixedFrameRate`). |
 | `swap_rb_readback` | bool | `false` | `CAMSIM_SWAP_RB_READBACK` | Force a red/blue swap on GPU readback if the platform reports BGRA but delivers RGBA. |
+| `readback_ready_polls` | int | `2` | `CAMSIM_READBACK_READY_POLLS` | Number of consecutive `FRHIGPUTextureReadback::IsReady()` polls required before `Lock()`. Increase on Linux/Vulkan if occasional partial-row tearing appears. |
 | `readback_format` | string | `"auto"` | `CAMSIM_READBACK_FORMAT` | Override readback byte order: `bgra`, `rgba`, `argb`, `abgr`, or `auto` (use render target format). |
 | `hfov_deg` | float | `60.0` | Horizontal field of view in degrees. Used for KLV metadata and Cesium tile preloading. Overridden per-frame by CIGI View Definition packets. |
+
+### Runtime Hardening
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `encoder_watchdog_policy` | string | `"reconnect"` | `CAMSIM_ENCODER_WATCHDOG_POLICY` | Encoder watchdog action when no frames are written for `encoder_watchdog_interval_ticks`: `reconnect`, `log_only`, or `fail_fast`. |
+| `encoder_watchdog_interval_ticks` | int | `150` | `CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS` | Tick interval used by the encoder watchdog and runtime health checks. |
 
 ### Cesium Tile Streaming
 
@@ -171,7 +182,10 @@ CAMSIM_MULTICAST_PORT=5004
 CAMSIM_VIDEO_BITRATE=4000000
 CAMSIM_H264_PRESET=ultrafast
 CAMSIM_SWAP_RB_READBACK=0
+CAMSIM_READBACK_READY_POLLS=2
 CAMSIM_READBACK_FORMAT=auto
+CAMSIM_ENCODER_WATCHDOG_POLICY=reconnect
+CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS=150
 
 # Start position
 CAMSIM_START_LAT=38.8977

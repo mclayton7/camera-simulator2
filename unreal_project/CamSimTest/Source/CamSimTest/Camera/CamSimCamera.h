@@ -67,9 +67,15 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")
 	TObjectPtr<UCamSimSensorComponent> SensorComp;
 
-	/** Render target shared between SceneCapture and the GPU readback. */
+	/** Ping-pong render targets used for capture/readback isolation. */
 	UPROPERTY(Transient)
-	TObjectPtr<UTextureRenderTarget2D> RenderTarget;
+	TArray<TObjectPtr<UTextureRenderTarget2D>> RenderTargets;
+
+	/** Index of the render target used for the next SceneCapture. */
+	int32 CaptureTargetIndex = 0;
+
+	/** Index of the render target currently in-flight for readback. */
+	int32 PendingReadbackTargetIndex = INDEX_NONE;
 
 	/** Cached pointer to our subsystem (set in BeginPlay). */
 	UPROPERTY(Transient)
@@ -103,11 +109,10 @@ private:
 	bool bReadbackClaimed = false;
 
 	/**
-	 * RENDER THREAD ONLY — requires IsReady() to be true in two consecutive poll
-	 * commands before Lock(). This mitigates occasional early-ready signaling on
-	 * some Vulkan drivers that can present as bottom-half tearing.
+	 * RENDER THREAD ONLY — count of consecutive IsReady()==true polls before Lock().
+	 * Required threshold is configurable via Config.ReadbackReadyPolls.
 	 */
-	bool bReadbackReadySeen = false;
+	uint8 ReadbackReadyStreak = 0;
 
 	/** RENDER THREAD ONLY — current readback session ID for stale poll suppression. */
 	uint64 ReadbackSessionIdRT = 0;

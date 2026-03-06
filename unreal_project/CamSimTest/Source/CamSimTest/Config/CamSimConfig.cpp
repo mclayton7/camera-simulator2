@@ -46,6 +46,14 @@ static FCamSimConfig::EReadbackFormat ParseReadbackFormat(const FString& Value)
 	return FCamSimConfig::EReadbackFormat::Auto;
 }
 
+static FCamSimConfig::EEncoderWatchdogPolicy ParseWatchdogPolicy(const FString& Value)
+{
+	const FString Lower = Value.ToLower();
+	if (Lower == TEXT("log_only")) return FCamSimConfig::EEncoderWatchdogPolicy::LogOnly;
+	if (Lower == TEXT("fail_fast")) return FCamSimConfig::EEncoderWatchdogPolicy::FailFast;
+	return FCamSimConfig::EEncoderWatchdogPolicy::Reconnect;
+}
+
 // ---------------------------------------------------------------------------
 // FCamSimConfig
 // ---------------------------------------------------------------------------
@@ -109,6 +117,7 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 			Root->TryGetNumberField(TEXT("capture_height"),   Cfg.CaptureHeight);
 			Root->TryGetNumberField(TEXT("frame_rate"),       Cfg.FrameRate);
 			Root->TryGetBoolField  (TEXT("swap_rb_readback"), Cfg.bSwapRBReadback);
+			Root->TryGetNumberField(TEXT("readback_ready_polls"), Cfg.ReadbackReadyPolls);
 			{
 				FString ReadbackFmt;
 				if (Root->TryGetStringField(TEXT("readback_format"), ReadbackFmt))
@@ -116,6 +125,14 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 					Cfg.ReadbackFormat = ParseReadbackFormat(ReadbackFmt);
 				}
 			}
+			{
+				FString WatchdogPolicy;
+				if (Root->TryGetStringField(TEXT("encoder_watchdog_policy"), WatchdogPolicy))
+				{
+					Cfg.EncoderWatchdogPolicy = ParseWatchdogPolicy(WatchdogPolicy);
+				}
+			}
+			Root->TryGetNumberField(TEXT("encoder_watchdog_interval_ticks"), Cfg.EncoderWatchdogIntervalTicks);
 			Root->TryGetNumberField(TEXT("hfov_deg"),         Cfg.HFovDeg);
 			Root->TryGetNumberField(TEXT("tile_preload_fov_scale"),     Cfg.TilePreloadFovScale);
 			Root->TryGetNumberField(TEXT("max_simultaneous_tile_loads"), Cfg.MaxSimultaneousTileLoads);
@@ -213,6 +230,16 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 			Cfg.ReadbackFormat = ParseReadbackFormat(ReadbackEnv);
 		}
 	}
+	Cfg.ReadbackReadyPolls = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_READBACK_READY_POLLS"), Cfg.ReadbackReadyPolls));
+	{
+		const FString WatchdogPolicy = GetEnv(TEXT("CAMSIM_ENCODER_WATCHDOG_POLICY"), TEXT(""));
+		if (!WatchdogPolicy.IsEmpty())
+		{
+			Cfg.EncoderWatchdogPolicy = ParseWatchdogPolicy(WatchdogPolicy);
+		}
+	}
+	Cfg.EncoderWatchdogIntervalTicks = FMath::Max(30, GetEnvInt(
+		TEXT("CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS"), Cfg.EncoderWatchdogIntervalTicks));
 	Cfg.TilePreloadFovScale     = GetEnvFloat(TEXT("CAMSIM_TILE_FOV_SCALE"),       Cfg.TilePreloadFovScale);
 	Cfg.MaxSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_MAX_TILE_LOADS"),        Cfg.MaxSimultaneousTileLoads);
 	Cfg.StartLatitude  = GetEnvDouble(TEXT("CAMSIM_START_LAT"),   Cfg.StartLatitude);
@@ -224,8 +251,9 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.StartHour      = GetEnvFloat(TEXT("CAMSIM_START_HOUR"),   Cfg.StartHour);
 
 	UE_LOG(LogCamSim, Log,
-		TEXT("Config: CIGI=%s:%d  Out=udp://%s:%d  Bitrate=%d  Preset=%s"),
+		TEXT("Config: CIGI=%s:%d  Out=udp://%s:%d  Bitrate=%d  Preset=%s  ReadbackReadyPolls=%d  WatchdogInterval=%d"),
 		*Cfg.CigiBindAddr, Cfg.CigiPort,
 		*Cfg.MulticastAddr, Cfg.MulticastPort,
-		Cfg.VideoBitrate, *Cfg.H264Preset);
+		Cfg.VideoBitrate, *Cfg.H264Preset,
+		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks);
 }

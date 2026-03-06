@@ -554,6 +554,8 @@ uint32 FCigiReceiver::Run()
 		int32 BytesRead = 0;
 		if (Socket && Socket->Recv(RecvBuf, RecvBufSize, BytesRead) && BytesRead > 0)
 		{
+			++ReceivedPacketCount;
+
 			// Pre-parse environment packets directly from raw buffer
 			// (bypasses CCL's hold mechanism for celestial/atmos/weather)
 			FCigiRawEnvParser::PreParseEnvPackets(RecvBuf, BytesRead, this);

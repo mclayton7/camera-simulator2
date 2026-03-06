@@ -22,6 +22,9 @@
  *   CAMSIM_VIDEO_BITRATE          – Target H.264 bitrate in bps                  (default 4000000)
  *   CAMSIM_H264_PRESET            – libx264 preset string                        (default ultrafast)
  *   CAMSIM_SWAP_RB_READBACK       – Force red/blue swap on GPU readback          (default 0)
+ *   CAMSIM_READBACK_READY_POLLS   – Consecutive IsReady polls before Lock         (default 2)
+ *   CAMSIM_ENCODER_WATCHDOG_POLICY – reconnect|log_only|fail_fast                 (default reconnect)
+ *   CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS – watchdog check interval              (default 150)
  *   CAMSIM_START_HOUR             – Fallback time-of-day (0-24)                  (default 12.0)
  */
 struct FCamSimConfig
@@ -33,6 +36,13 @@ struct FCamSimConfig
 		RGBA,
 		ARGB,
 		ABGR
+	};
+
+	enum class EEncoderWatchdogPolicy : uint8
+	{
+		Reconnect = 0,
+		LogOnly,
+		FailFast
 	};
 	// CIGI input
 	FString CigiBindAddr    = TEXT("0.0.0.0");
@@ -55,6 +65,7 @@ struct FCamSimConfig
 	float   FrameRate       = 30.0f;
 	bool    bSwapRBReadback = false;
 	EReadbackFormat ReadbackFormat = EReadbackFormat::Auto;
+	int32   ReadbackReadyPolls = 2; // require N consecutive IsReady() polls before Lock()
 
 	// Horizontal field of view in degrees (used for KLV metadata)
 	float   HFovDeg         = 60.0f;
@@ -76,6 +87,10 @@ struct FCamSimConfig
 
 	// Default time-of-day (hours 0-24) used before first CIGI celestial packet
 	float   StartHour       = 12.0f;
+
+	// Encoder watchdog behavior
+	EEncoderWatchdogPolicy EncoderWatchdogPolicy = EEncoderWatchdogPolicy::Reconnect;
+	int32   EncoderWatchdogIntervalTicks = 150;
 
 	// CIGI entity ID that drives the camera (all others → entity manager)
 	int32   CameraEntityId  = 0;

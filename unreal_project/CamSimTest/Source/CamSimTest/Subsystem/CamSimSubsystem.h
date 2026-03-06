@@ -68,4 +68,10 @@ private:
 	// (avio_open succeeds but UDP sends silently fail after network change)
 	uint64                WatchdogLastSuccessFrame = 0;   // snapshot of encoder's counter
 	uint32                WatchdogLastCheckTick    = 0;   // tick when snapshot was taken
+	uint32                WatchdogReconnectCount   = 0;
+
+	// Runtime health snapshot counters (periodic diagnostics log)
+	uint32                HealthLastTick           = 0;
+	uint64                HealthLastSuccessFrame   = 0;
+	uint64                HealthLastRxPacketCount  = 0;
 };

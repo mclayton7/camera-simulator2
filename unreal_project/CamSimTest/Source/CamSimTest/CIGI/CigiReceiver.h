@@ -53,6 +53,9 @@ public:
 	/** Signals the thread to exit and waits for it to finish. */
 	void Stop();
 
+	/** Number of UDP datagrams successfully read from the CIGI socket. */
+	uint64 GetReceivedPacketCount() const { return ReceivedPacketCount.Load(); }
+
 	// -----------------------------------------------------------------------
 	// Game-thread SPSC accessors — one per queue.
 	// Each method pops the oldest item from the named queue into Out and
@@ -118,6 +121,7 @@ private:
 	FRunnableThread* Thread    = nullptr;
 	FSocket*         Socket    = nullptr;
 	TAtomic<bool>    bShouldRun;
+	TAtomic<uint64>  ReceivedPacketCount { 0 };
 
 	// SPSC queues: receiver thread produces, game thread consumes.
 	// Camera entity is routed separately so ACamSimCamera and FCamSimEntityManager

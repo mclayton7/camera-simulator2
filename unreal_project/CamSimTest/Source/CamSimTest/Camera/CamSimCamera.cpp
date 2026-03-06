@@ -81,21 +81,34 @@ void ACamSimCamera::BeginPlay()
 
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 
-	// Log the RHI backend — critical for diagnosing byte-order differences
-	// between Metal (macOS, native BGRA) and Vulkan (Linux, may deliver RGBA).
+	// Log the RHI backend for platform-specific diagnostics.
 	FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: RHI=%s  Platform=%s"),
 		*RHIName, ANSI_TO_TCHAR(FPlatformProperties::IniPlatformName()));
 
-	// Create render target
-	RenderTarget = NewObject<UTextureRenderTarget2D>(this, TEXT("CamSimRT"));
-	RenderTarget->InitCustomFormat(
-		Cfg.CaptureWidth, Cfg.CaptureHeight,
-		PF_B8G8R8A8,
-		/*bInForceLinearGamma=*/false);
-	RenderTarget->UpdateResource();
+	// Create ping-pong render targets so capture never writes to the same surface
+	// currently being read back by the GPU DMA path.
+	RenderTargets.Reset();
+	for (int32 Idx = 0; Idx < 2; ++Idx)
+	{
+		UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(
+			this, *FString::Printf(TEXT("CamSimRT_%d"), Idx));
+		if (!RT)
+		{
+			UE_LOG(LogCamSim, Error, TEXT("ACamSimCamera: failed to create render target %d"), Idx);
+			return;
+		}
+		RT->InitCustomFormat(
+			Cfg.CaptureWidth, Cfg.CaptureHeight,
+			PF_B8G8R8A8,
+			/*bInForceLinearGamma=*/false);
+		RT->UpdateResource();
+		RenderTargets.Add(RT);
+	}
 
-	SceneCapture->TextureTarget = RenderTarget;
+	CaptureTargetIndex = 0;
+	PendingReadbackTargetIndex = INDEX_NONE;
+	SceneCapture->TextureTarget = RenderTargets[CaptureTargetIndex];
 	SceneCapture->FOVAngle = Cfg.HFovDeg;
 
 	// Move camera to configured start position
@@ -203,9 +216,11 @@ void ACamSimCamera::Tick(float DeltaTime)
 	static uint64 TickCount = 0;
 	if (++TickCount % 150 == 0)
 	{
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tick=%llu busy=%d readback=%d sensor=%d frames_encoded=%llu dropped=%llu"),
+		const int32 ReadyPollsRequired = FMath::Max(1, Subsystem->GetConfig().ReadbackReadyPolls);
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tick=%llu busy=%d readback=%d sensor=%d frames_encoded=%llu dropped=%llu cap_idx=%d pending_idx=%d ready_polls=%d"),
 			TickCount, (int)(bool)bEncoderBusy, (int)(bool)bReadbackPending,
-			(int)(SensorComp && SensorComp->IsOn()), FrameIndex, (uint64)DroppedFrameCount);
+			(int)(SensorComp && SensorComp->IsOn()), FrameIndex, (uint64)DroppedFrameCount,
+			CaptureTargetIndex, PendingReadbackTargetIndex, ReadyPollsRequired);
 	}
 
 	// Apply pending CIGI state first (CIGI queue drain runs every tick,
@@ -225,11 +240,13 @@ void ACamSimCamera::Tick(float DeltaTime)
 		const FCamSimConfig&   Cfg           = Subsystem->GetConfig();
 		const bool            bForceSwap     = Cfg.bSwapRBReadback;
 		const FCamSimConfig::EReadbackFormat DesiredFormat = Cfg.ReadbackFormat;
-		UTextureRenderTarget2D* RT            = RenderTarget;
+		const int32           ReadyPollsRequired = FMath::Max(1, Cfg.ReadbackReadyPolls);
+		UTextureRenderTarget2D* RT            =
+			RenderTargets.IsValidIndex(PendingReadbackTargetIndex) ? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
 		FRHIGPUTextureReadback* Readback      = GPUReadback;
 
 		ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
-			[this, WaitFrame, WaitTelemetry, WaitSessionId, bForceSwap, DesiredFormat, RT, Readback](FRHICommandListImmediate& RHICmdList)
+			[this, WaitFrame, WaitTelemetry, WaitSessionId, bForceSwap, DesiredFormat, ReadyPollsRequired, RT, Readback](FRHICommandListImmediate& RHICmdList)
 		{
 			// Ignore stale poll commands from prior capture sessions.
 			if (WaitSessionId != ReadbackSessionIdRT) return;
@@ -245,15 +262,18 @@ void ACamSimCamera::Tick(float DeltaTime)
 			if (!Readback) return;
 			if (!Readback->IsReady())
 			{
-				bReadbackReadySeen = false;
+				ReadbackReadyStreak = 0;
 				return;  // GPU still transferring — try next tick
 			}
 
 			// Some Vulkan drivers occasionally report "ready" slightly early; require
-			// two consecutive ready polls before locking to avoid partial-row artifacts.
-			if (!bReadbackReadySeen)
+			// configurable consecutive ready polls before locking to avoid partial-row artifacts.
+			if (ReadbackReadyStreak < 255)
 			{
-				bReadbackReadySeen = true;
+				++ReadbackReadyStreak;
+			}
+			if (ReadbackReadyStreak < ReadyPollsRequired)
+			{
 				return;
 			}
 
@@ -278,6 +298,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 					Readback->Unlock();
 					bReadbackPending = false;
 					bEncoderBusy     = false;
+					PendingReadbackTargetIndex = INDEX_NONE;
 					return;
 				}
 
@@ -288,6 +309,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 
 				Readback->Unlock();
 				bReadbackPending = false;
+				PendingReadbackTargetIndex = INDEX_NONE;
 
 				SubmitFrameToEncoder(MoveTemp(Pixels), WaitTelemetry, WaitFrame);
 			}
@@ -296,6 +318,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 				Readback->Unlock();
 				bReadbackPending = false;
 				bEncoderBusy     = false;
+				PendingReadbackTargetIndex = INDEX_NONE;
 				UE_LOG(LogCamSim, Warning, TEXT("CamSimPollReadback frame %llu: lock returned null"), WaitFrame);
 			}
 		});
@@ -539,13 +562,19 @@ void ACamSimCamera::UpdateCesiumCamera()
 
 void ACamSimCamera::CaptureAndEncode()
 {
-	if (!RenderTarget || !SceneCapture || !GPUReadback) return;
+	if (!SceneCapture || !GPUReadback) return;
+	if (!RenderTargets.IsValidIndex(CaptureTargetIndex) || !RenderTargets[CaptureTargetIndex]) return;
+
+	UTextureRenderTarget2D* CaptureRT = RenderTargets[CaptureTargetIndex].Get();
+	SceneCapture->TextureTarget = CaptureRT;
 
 	// Snapshot telemetry immediately before capture so KLV timestamp is accurate
 	CurrentTelemetry.TimestampUs =
 		static_cast<uint64>(FPlatformTime::Seconds() * 1'000'000.0);
 
 	SceneCapture->CaptureScene();
+	PendingReadbackTargetIndex = CaptureTargetIndex;
+	CaptureTargetIndex = (CaptureTargetIndex + 1) % RenderTargets.Num();
 
 	PendingFrameIndex = FrameIndex++;
 	PendingTelemetry  = CurrentTelemetry;
@@ -558,8 +587,16 @@ void ACamSimCamera::CaptureAndEncode()
 	bEncoderBusy     = true;
 
 	// Enqueue the async GPU→CPU DMA on the render thread (returns immediately)
-	UTextureRenderTarget2D*  RT       = RenderTarget;
+	UTextureRenderTarget2D*  RT       =
+		RenderTargets.IsValidIndex(PendingReadbackTargetIndex) ? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
 	FRHIGPUTextureReadback*  Readback = GPUReadback;
+	if (!RT)
+	{
+		bReadbackPending = false;
+		bEncoderBusy     = false;
+		PendingReadbackTargetIndex = INDEX_NONE;
+		return;
+	}
 
 	ENQUEUE_RENDER_COMMAND(CamSimEnqueueReadback)(
 		[this, RT, Readback, SessionId](FRHICommandListImmediate& RHICmdList)
@@ -569,7 +606,7 @@ void ACamSimCamera::CaptureAndEncode()
 		// Reset the claim flag so the first CamSimPollReadback that fires can claim it.
 		// Subsequent poll commands from the same session will see bReadbackClaimed=true and bail.
 		bReadbackClaimed   = false;
-		bReadbackReadySeen = false;
+		ReadbackReadyStreak = 0;
 
 		FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
 		if (!Resource) return;
