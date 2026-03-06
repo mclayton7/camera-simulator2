@@ -93,7 +93,16 @@ else
     ARCH_CFLAGS=""
     HOST_TRIPLE=""
     X264_NASM_OPT=""
-    FFMPEG_EXTRA="--disable-x86asm"
+
+    # Enable x86 SIMD in FFmpeg when nasm is available (recommended for correct
+    # sws_scale code paths); fall back to C-only if nasm is missing.
+    if command -v nasm &>/dev/null; then
+        FFMPEG_EXTRA=""
+        echo "==> nasm found — FFmpeg x86asm ENABLED (recommended)"
+    else
+        FFMPEG_EXTRA="--disable-x86asm"
+        echo "[WARN] nasm not found — FFmpeg x86asm DISABLED (may cause color issues)"
+    fi
 
     SED_INPLACE() { sed -i "$@"; }
 

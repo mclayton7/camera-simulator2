@@ -18,6 +18,7 @@
 #include "RenderingThread.h"
 #include "RHICommandList.h"
 #include "RHIGPUReadback.h"
+#include "DynamicRHI.h"
 #include "PixelFormat.h"
 #include "Async/Async.h"
 
@@ -79,6 +80,12 @@ void ACamSimCamera::BeginPlay()
 	}
 
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+
+	// Log the RHI backend — critical for diagnosing byte-order differences
+	// between Metal (macOS, native BGRA) and Vulkan (Linux, may deliver RGBA).
+	FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
+	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: RHI=%s  Platform=%s"),
+		*RHIName, ANSI_TO_TCHAR(FPlatformProperties::IniPlatformName()));
 
 	// Create render target
 	RenderTarget = NewObject<UTextureRenderTarget2D>(this, TEXT("CamSimRT"));

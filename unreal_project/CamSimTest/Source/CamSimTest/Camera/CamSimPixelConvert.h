@@ -44,6 +44,10 @@ inline void CamSimConvertReadbackPixels(
 	FCamSimConfig::EReadbackFormat EffectiveFormat = DesiredFormat;
 	if (EffectiveFormat == FCamSimConfig::EReadbackFormat::Auto)
 	{
+		// Both Metal and Vulkan deliver BGRA bytes for PF_B8G8R8A8:
+		//   Metal: MTLPixelFormatBGRA8Unorm_sRGB — native BGRA
+		//   Vulkan: VK_FORMAT_B8G8R8A8_SRGB — native BGRA
+		// vkCmdCopyImageToBuffer / Metal readback both copy raw memory bytes.
 		if      (bIsBgra) EffectiveFormat = FCamSimConfig::EReadbackFormat::BGRA;
 		else if (bIsRgba) EffectiveFormat = FCamSimConfig::EReadbackFormat::RGBA;
 		// else: stays Auto — memcpy fallback below
@@ -127,9 +131,28 @@ inline void CamSimConvertReadbackPixels(
 			case FCamSimConfig::EReadbackFormat::ABGR: FmtStr = TEXT("abgr"); break;
 			default: break;
 		}
+
+		// Log raw readback bytes BEFORE conversion — critical for diagnosing
+		// BGRA vs RGBA byte order differences between Metal and Vulkan.
+		const uint8* RawBytes = static_cast<const uint8*>(RawData);
 		UE_LOG(LogCamSim, Log,
-			TEXT("CamSimReadback frame %llu: %d pixels (rowpitch_bytes=%d format=%s readback=%s force_swap=%d)"),
-			FrameIdx, OutPixels.Num(), RowPitchBytes,
+			TEXT("CamSimReadback frame %llu: raw bytes[0..7]=[%u %u %u %u | %u %u %u %u] "
+			     "rowpitch_raw=%d rowpitch_bytes=%d format=%s readback=%s force_swap=%d"),
+			FrameIdx,
+			RawBytes[0], RawBytes[1], RawBytes[2], RawBytes[3],
+			RawBytes[4], RawBytes[5], RawBytes[6], RawBytes[7],
+			RowPitch, RowPitchBytes,
 			GetPixelFormatString(PixelFormat), FmtStr, bForceSwap ? 1 : 0);
+
+		// Also log the converted FColor fields for the first pixel
+		if (OutPixels.Num() > 0)
+		{
+			const FColor& P0 = OutPixels[0];
+			UE_LOG(LogCamSim, Log,
+				TEXT("CamSimReadback frame %llu: pixel[0] FColor(B=%u G=%u R=%u A=%u) "
+				     "raw_byte0123=(%u,%u,%u,%u)"),
+				FrameIdx, P0.B, P0.G, P0.R, P0.A,
+				RawBytes[0], RawBytes[1], RawBytes[2], RawBytes[3]);
+		}
 	}
 }

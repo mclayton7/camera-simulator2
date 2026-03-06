@@ -97,6 +97,12 @@ bool FVideoEncoder::OpenVideoStream()
 	}
 	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: using encoder %s"), ANSI_TO_TCHAR(Codec->name));
 
+	// Log library versions — helps diagnose system-vs-ThirdParty lib conflicts
+	UE_LOG(LogCamSim, Log,
+		TEXT("FVideoEncoder: libswscale %d.%d.%d  libavcodec %d.%d.%d"),
+		LIBSWSCALE_VERSION_MAJOR, LIBSWSCALE_VERSION_MINOR, LIBSWSCALE_VERSION_MICRO,
+		LIBAVCODEC_VERSION_MAJOR, LIBAVCODEC_VERSION_MINOR, LIBAVCODEC_VERSION_MICRO);
+
 	VideoStream = avformat_new_stream(FmtCtx, nullptr);
 	if (!VideoStream)
 	{
@@ -246,6 +252,15 @@ bool FVideoEncoder::OpenVideoStream()
 					VerifySrcRange, VerifyDstRange, ScsRet);
 			}
 		}
+
+		// Final determination of whether color space settings were applied
+		bSwsColorSpaceApplied = (VerifySrcRange == 1 && VerifyDstRange == 0);
+		if (!bSwsColorSpaceApplied)
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FVideoEncoder: sws color space NOT active — EncodeFrame will "
+				     "pre-compress BGRA to limited range (16-235) to avoid pink/green"));
+		}
 	}
 
 	// Stamp color properties on the YUV frame to match VUI and sws output
@@ -299,7 +314,25 @@ void FVideoEncoder::EncodeFrame(
 	// Convert BGRA → YUV420P via sws_scale
 	av_frame_make_writable(YuvFrame);
 
-	const uint8* SrcData[1] = { reinterpret_cast<const uint8*>(PixelData.GetData()) };
+	const uint8* SrcPtr = reinterpret_cast<const uint8*>(PixelData.GetData());
+	TArray<uint8> CompressedBuf;
+
+	// If sws color space details didn't take, sws_scale treats input as
+	// limited-range RGB [16-235].  Pre-compress full-range [0-255] → [16-235]
+	// to prevent chroma overflow that causes pink/green banding.
+	if (!bSwsColorSpaceApplied)
+	{
+		const int32 NumBytes = PixelData.Num() * 4;
+		CompressedBuf.SetNumUninitialized(NumBytes);
+		for (int32 i = 0; i < NumBytes; ++i)
+		{
+			// Map [0,255] → [16,235]: out = 16 + in * 219/255
+			CompressedBuf[i] = static_cast<uint8>(16 + (SrcPtr[i] * 219 + 127) / 255);
+		}
+		SrcPtr = CompressedBuf.GetData();
+	}
+
+	const uint8* SrcData[1] = { SrcPtr };
 	int SrcLinesize[1]      = { Config.CaptureWidth * 4 };  // 4 bytes per BGRA pixel
 
 	sws_scale(SwsCtx,

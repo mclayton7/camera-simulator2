@@ -66,6 +66,11 @@ private:
 	AVFrame*         YuvFrame    = nullptr;
 	SwsContext*      SwsCtx      = nullptr;
 
+	/** True when sws_setColorspaceDetails successfully set srcRange=1.
+	 *  When false, sws_scale treats input as limited-range RGB, so EncodeFrame
+	 *  must pre-compress pixel data to [16,235] before conversion. */
+	bool bSwsColorSpaceApplied = false;
+
 	// KLV data stream (SMPTE 336M / KLVA)
 	AVStream*        KlvStream   = nullptr;
 
