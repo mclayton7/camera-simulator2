@@ -135,6 +135,21 @@ void ACamSimEntity::SetEntityTypeTable(const FEntityTypeTable* Table)
 	TypeTable = Table;
 }
 
+void ACamSimEntity::ApplyScaleControls(float MaxDrawDistanceM, float TickRateHz)
+{
+	const float MaxDistCm = (MaxDrawDistanceM > 0.0f) ? MaxDrawDistanceM * 100.0f : 0.0f;
+	if (StaticMeshComp) StaticMeshComp->LDMaxDrawDistance = MaxDistCm;
+	if (SkelMeshComp)   SkelMeshComp->LDMaxDrawDistance = MaxDistCm;
+	if (NavLightRed)    NavLightRed->SetMaxDrawDistance(MaxDistCm);
+	if (NavLightGreen)  NavLightGreen->SetMaxDrawDistance(MaxDistCm);
+	if (NavLightWhite)  NavLightWhite->SetMaxDrawDistance(MaxDistCm);
+	if (StrobeLight)    StrobeLight->SetMaxDrawDistance(MaxDistCm);
+	if (LandingLight)   LandingLight->SetMaxDrawDistance(MaxDistCm);
+
+	const float TickInterval = (TickRateHz > 0.0f) ? (1.0f / TickRateHz) : 0.0f;
+	SetActorTickInterval(TickInterval);
+}
+
 // -------------------------------------------------------------------------
 // SetEntityType — load mesh by type ID
 // -------------------------------------------------------------------------

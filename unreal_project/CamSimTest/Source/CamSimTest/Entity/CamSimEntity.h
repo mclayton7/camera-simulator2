@@ -60,6 +60,9 @@ public:
 	/** Handle component control (lights, damage state, etc.). */
 	void ApplyComponentControl(const FCigiComponentControl& C);
 
+	/** Apply runtime culling and tick-rate controls for large scene scaling. */
+	void ApplyScaleControls(float MaxDrawDistanceM, float TickRateHz);
+
 	// AActor interface
 	virtual void Tick(float DeltaTime) override;
 

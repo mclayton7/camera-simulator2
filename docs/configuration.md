@@ -93,6 +93,41 @@ is generated and is listed in `.gitignore`.
     "interval_frames": 1
   },
 
+  "entity_scale": {
+    "max_draw_distance_m": 0.0,
+    "tick_rate_hz": 0.0,
+    "default_max_update_rate_hz": 0.0,
+    "max_update_rate_hz_overrides": {
+      "1": 30.0
+    }
+  },
+
+  "scenario": {
+    "enabled": false,
+    "time_scale": 1.0,
+    "entities": [
+      {
+        "entity_id": 2001,
+        "entity_type": 1001,
+        "start_latitude": 38.8977,
+        "start_longitude": -77.0365,
+        "start_altitude": 900.0,
+        "start_yaw": 90.0,
+        "start_pitch": 0.0,
+        "start_roll": 0.0,
+        "spawn_time_sec": 0.0,
+        "despawn_time_sec": 0.0,
+        "update_rate_hz": 10.0,
+        "north_rate_mps": 50.0,
+        "east_rate_mps": 0.0,
+        "up_rate_mps": 0.0,
+        "yaw_rate_dps": 0.0,
+        "pitch_rate_dps": 0.0,
+        "roll_rate_dps": 0.0
+      }
+    ]
+  },
+
   "entity_types": {
     "1001": {
       "mesh":           "/Game/Models/F16/F16.F16",
@@ -237,6 +272,44 @@ state, and active view routes) for analytics and dataset generation workflows.
 | `ground_truth.output_path` | string | `camsim_groundtruth.jsonl` | `CAMSIM_GROUND_TRUTH_PATH` | Output path (relative paths resolve from binary directory). |
 | `ground_truth.interval_frames` | int | `1` | `CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES` | Emit every N frames. |
 
+### Entity Runtime Scale Controls (Phase C3)
+
+`entity_scale` applies runtime throttles for dense scenes:
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `entity_scale.max_draw_distance_m` | float | `0.0` | `CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M` | Draw/cull distance in metres for entity meshes/lights. `0` disables culling by distance. |
+| `entity_scale.tick_rate_hz` | float | `0.0` | `CAMSIM_ENTITY_TICK_RATE_HZ` | Tick rate applied to `ACamSimEntity`. `0` means every frame. |
+| `entity_scale.default_max_update_rate_hz` | float | `0.0` | `CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ` | Global cap for pose-apply rate (reduces transform churn). `0` means uncapped. |
+| `entity_scale.max_update_rate_hz_overrides` | object | `{}` | — | Per-entity overrides keyed by `EntityId` string. |
+
+Legacy flat keys (`entity_max_draw_distance_m`, `entity_tick_rate_hz`, `entity_default_max_update_rate_hz`) are still accepted.
+
+### Scenario Orchestration (Phase C1)
+
+`scenario` enables deterministic entity spawn/update/despawn behavior directly in
+CamSim (without an external CIGI controller). This is useful for repeatable
+scenario authoring and CI smoke scenes.
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `scenario.enabled` | bool | `false` | `CAMSIM_SCENARIO_ENABLED` | Enable built-in scenario entity orchestration. |
+| `scenario.time_scale` | float | `1.0` | `CAMSIM_SCENARIO_TIME_SCALE` | Multiplier for scenario time progression. |
+| `scenario.entities` | array | `[]` | — | Scripted entity definitions. |
+
+Per-entry fields in `scenario.entities[]`:
+
+- `entity_id`, `entity_type`
+- `start_latitude`, `start_longitude`, `start_altitude`
+- `start_yaw`, `start_pitch`, `start_roll`
+- `spawn_time_sec`, `despawn_time_sec`
+- `update_rate_hz`
+- `north_rate_mps`, `east_rate_mps`, `up_rate_mps`
+- `yaw_rate_dps`, `pitch_rate_dps`, `roll_rate_dps`
+
+`despawn_time_sec <= spawn_time_sec` means the entity persists for the full run.
+`update_rate_hz = 0` applies updates every manager tick.
+
 ### Entity Types
 
 The `entity_types` object maps CIGI Entity Type IDs (uint16, as JSON string keys)
@@ -251,6 +324,13 @@ to asset paths and flags:
 
 Entity type IDs are defined by the host simulation. CamSim does not reserve any
 specific IDs — the mapping is entirely user-configured.
+
+At startup, CamSim now performs preflight validation for each entry:
+
+- Verifies `mesh` exists.
+- Validates static vs skeletal compatibility for `/Game/...` assets.
+- Validates optional `mesh_damaged` / `mesh_destroyed` paths and ignores invalid variants with warnings.
+- Skips invalid entity type entries instead of failing later at spawn time.
 
 **Example:** To add a helicopter (type 3001) and an armoured vehicle (type 4001):
 
@@ -293,6 +373,11 @@ CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS=0.0
 CAMSIM_GROUND_TRUTH_ENABLED=0
 CAMSIM_GROUND_TRUTH_PATH=camsim_groundtruth.jsonl
 CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES=1
+CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M=0
+CAMSIM_ENTITY_TICK_RATE_HZ=0
+CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ=0
+CAMSIM_SCENARIO_ENABLED=0
+CAMSIM_SCENARIO_TIME_SCALE=1.0
 
 # Start position
 CAMSIM_START_LAT=38.8977

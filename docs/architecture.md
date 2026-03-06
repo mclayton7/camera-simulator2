@@ -26,6 +26,7 @@ Four threads collaborate with explicit ownership boundaries:
 │                                   RateCtrlQueue                 │
 │                                   ArtPartQueue                  │
 │                                   CompCtrlQueue                 │
+│                                   scenario.entities             │
 │  • ACamSimEnvironment::Tick() — drains Celestial/Atmos/Weather  │
 │  • FCigiQueryHandler::Tick() — drains HatHotReqQueue            │
 │                                        LosSegReqQueue           │
@@ -116,7 +117,7 @@ ACamSimEntity  (AActor — spawned at runtime by FCamSimEntityManager)
 └── UCesiumGlobeAnchorComponent
 └── UStaticMeshComponent   (static entities)
 └── UPoseableMeshComponent (articulated entities — allows per-bone transforms)
-└── UPointLightComponent × 4 (NavLightRed/Green/White, StrobeLight)
+└── UPointLightComponent × 5 (NavLightRed/Green/White, StrobeLight, LandingLight)
 ```
 
 `FCamSimEntityManager` is a `FTickableGameObject` — it registers with UE's

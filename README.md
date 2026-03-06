@@ -146,6 +146,9 @@ camsim/
 │   ├── run.sh                      Launch UE5 in game mode (macOS and Linux)
 │   ├── send_cigi_test.py           CIGI camera/environment test sender
 │   ├── test_entity_rendering.py    CIGI entity/lights/DR test sender
+│   ├── stress_entity_rendering.py  Bulk entity spawn/update stress sender
+│   ├── capture_cigi_stream.py      Capture raw CIGI UDP datagrams to JSONL
+│   ├── replay_cigi_stream.py       Deterministic replay of captured CIGI JSONL
 │   ├── test_video_output.sh        ffprobe + ffplay stream validation
 │   └── validate_klv.py             MPEG-TS KLV packet decoder
 └── unreal_project/CamSimTest/

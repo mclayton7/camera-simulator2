@@ -400,6 +400,134 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 				}
 			}
 
+			// Entity runtime scale controls (LOD/culling/update throttling).
+			{
+				const TSharedPtr<FJsonObject>* ScaleObj = nullptr;
+				if (Root->TryGetObjectField(TEXT("entity_scale"), ScaleObj) && ScaleObj)
+				{
+					double TmpD = 0.0;
+					if ((*ScaleObj)->TryGetNumberField(TEXT("max_draw_distance_m"), TmpD))
+						Cfg.EntityScale.MaxDrawDistanceM = static_cast<float>(TmpD);
+					if ((*ScaleObj)->TryGetNumberField(TEXT("tick_rate_hz"), TmpD))
+						Cfg.EntityScale.TickRateHz = static_cast<float>(TmpD);
+					if ((*ScaleObj)->TryGetNumberField(TEXT("default_max_update_rate_hz"), TmpD))
+						Cfg.EntityScale.DefaultMaxUpdateRateHz = static_cast<float>(TmpD);
+
+					const TSharedPtr<FJsonObject>* OverridesObj = nullptr;
+					if ((*ScaleObj)->TryGetObjectField(TEXT("max_update_rate_hz_overrides"), OverridesObj) && OverridesObj)
+					{
+						for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*OverridesObj)->Values)
+						{
+							int32 EntityId = FCString::Atoi(*Pair.Key);
+							double RateHz = 0.0;
+							if (Pair.Value.IsValid() && Pair.Value->TryGetNumber(RateHz))
+							{
+								Cfg.EntityScale.MaxUpdateRateHzOverrides.Add(EntityId, static_cast<float>(RateHz));
+							}
+						}
+					}
+				}
+
+				// Legacy flat keys (kept for backwards compatibility).
+				{
+					double TmpD = Cfg.EntityScale.MaxDrawDistanceM;
+					if (Root->TryGetNumberField(TEXT("entity_max_draw_distance_m"), TmpD))
+					{
+						Cfg.EntityScale.MaxDrawDistanceM = static_cast<float>(TmpD);
+					}
+				}
+				{
+					double TmpD = Cfg.EntityScale.TickRateHz;
+					if (Root->TryGetNumberField(TEXT("entity_tick_rate_hz"), TmpD))
+					{
+						Cfg.EntityScale.TickRateHz = static_cast<float>(TmpD);
+					}
+				}
+				{
+					double TmpD = Cfg.EntityScale.DefaultMaxUpdateRateHz;
+					if (Root->TryGetNumberField(TEXT("entity_default_max_update_rate_hz"), TmpD))
+					{
+						Cfg.EntityScale.DefaultMaxUpdateRateHz = static_cast<float>(TmpD);
+					}
+				}
+			}
+
+			// Optional scenario entity orchestration block.
+			{
+				const TSharedPtr<FJsonObject>* ScenarioObj = nullptr;
+				if (Root->TryGetObjectField(TEXT("scenario"), ScenarioObj) && ScenarioObj)
+				{
+					bool TmpB = false;
+					double TmpD = 0.0;
+					if ((*ScenarioObj)->TryGetBoolField(TEXT("enabled"), TmpB))
+						Cfg.bScenarioEnabled = TmpB;
+					if ((*ScenarioObj)->TryGetNumberField(TEXT("time_scale"), TmpD))
+						Cfg.ScenarioTimeScale = static_cast<float>(TmpD);
+
+					const TArray<TSharedPtr<FJsonValue>>* EntitiesArr = nullptr;
+					if ((*ScenarioObj)->TryGetArrayField(TEXT("entities"), EntitiesArr) && EntitiesArr)
+					{
+						Cfg.ScenarioEntities.Reset();
+						for (const TSharedPtr<FJsonValue>& EntityVal : *EntitiesArr)
+						{
+							if (!EntityVal.IsValid()) continue;
+							const TSharedPtr<FJsonObject> EntityObj = EntityVal->AsObject();
+							if (!EntityObj.IsValid()) continue;
+
+							FCamSimConfig::FScenarioEntityConfig Spec;
+							if (EntityObj->TryGetNumberField(TEXT("entity_id"), TmpD))
+								Spec.EntityId = static_cast<int32>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("entity_type"), TmpD))
+								Spec.EntityType = static_cast<int32>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("start_latitude"), TmpD))
+								Spec.StartLatitude = TmpD;
+							if (EntityObj->TryGetNumberField(TEXT("start_longitude"), TmpD))
+								Spec.StartLongitude = TmpD;
+							if (EntityObj->TryGetNumberField(TEXT("start_altitude"), TmpD))
+								Spec.StartAltitude = TmpD;
+							if (EntityObj->TryGetNumberField(TEXT("start_yaw"), TmpD))
+								Spec.StartYaw = static_cast<float>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("start_pitch"), TmpD))
+								Spec.StartPitch = static_cast<float>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("start_roll"), TmpD))
+								Spec.StartRoll = static_cast<float>(TmpD);
+
+							if (EntityObj->TryGetNumberField(TEXT("spawn_time_sec"), TmpD))
+								Spec.SpawnTimeSec = static_cast<float>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("despawn_time_sec"), TmpD))
+								Spec.DespawnTimeSec = static_cast<float>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("update_rate_hz"), TmpD))
+								Spec.UpdateRateHz = static_cast<float>(TmpD);
+
+							if (EntityObj->TryGetNumberField(TEXT("north_rate_mps"), TmpD))
+								Spec.NorthRateMps = static_cast<float>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("east_rate_mps"), TmpD))
+								Spec.EastRateMps = static_cast<float>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("up_rate_mps"), TmpD))
+								Spec.UpRateMps = static_cast<float>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("yaw_rate_dps"), TmpD))
+								Spec.YawRateDegPerSec = static_cast<float>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("pitch_rate_dps"), TmpD))
+								Spec.PitchRateDegPerSec = static_cast<float>(TmpD);
+							if (EntityObj->TryGetNumberField(TEXT("roll_rate_dps"), TmpD))
+								Spec.RollRateDegPerSec = static_cast<float>(TmpD);
+
+							Cfg.ScenarioEntities.Add(Spec);
+						}
+					}
+				}
+
+				// Legacy flat keys.
+				Root->TryGetBoolField(TEXT("scenario_enabled"), Cfg.bScenarioEnabled);
+				{
+					double TmpD = Cfg.ScenarioTimeScale;
+					if (Root->TryGetNumberField(TEXT("scenario_time_scale"), TmpD))
+					{
+						Cfg.ScenarioTimeScale = static_cast<float>(TmpD);
+					}
+				}
+			}
+
 			UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *JsonPath);
 		}
 		else
@@ -474,12 +602,21 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.GroundTruth.bEnabled = GetEnvInt(TEXT("CAMSIM_GROUND_TRUTH_ENABLED"), Cfg.GroundTruth.bEnabled ? 1 : 0) != 0;
 	Cfg.GroundTruth.OutputPath = GetEnv(TEXT("CAMSIM_GROUND_TRUTH_PATH"), Cfg.GroundTruth.OutputPath);
 	Cfg.GroundTruth.IntervalFrames = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES"), Cfg.GroundTruth.IntervalFrames));
+	Cfg.EntityScale.MaxDrawDistanceM = GetEnvFloat(TEXT("CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M"), Cfg.EntityScale.MaxDrawDistanceM);
+	Cfg.EntityScale.TickRateHz = GetEnvFloat(TEXT("CAMSIM_ENTITY_TICK_RATE_HZ"), Cfg.EntityScale.TickRateHz);
+	Cfg.EntityScale.DefaultMaxUpdateRateHz = GetEnvFloat(
+		TEXT("CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ"), Cfg.EntityScale.DefaultMaxUpdateRateHz);
+	Cfg.bScenarioEnabled = GetEnvInt(TEXT("CAMSIM_SCENARIO_ENABLED"), Cfg.bScenarioEnabled ? 1 : 0) != 0;
+	Cfg.ScenarioTimeScale = GetEnvFloat(TEXT("CAMSIM_SCENARIO_TIME_SCALE"), Cfg.ScenarioTimeScale);
 
 	UE_LOG(LogCamSim, Log,
-		TEXT("Config: CIGI=%s:%d  Out=udp://%s:%d  Bitrate=%d  Preset=%s  ReadbackReadyPolls=%d  WatchdogInterval=%d  SensorQuality=%s  GroundTruth=%d"),
+		TEXT("Config: CIGI=%s:%d Out=udp://%s:%d Bitrate=%d Preset=%s ReadbackReadyPolls=%d WatchdogInterval=%d ")
+		TEXT("SensorQuality=%s GroundTruth=%d EntityScale(draw=%.1fm tick=%.1fHz pose_cap=%.1fHz) Scenario=%d entities=%d time_scale=%.2f"),
 		*Cfg.CigiBindAddr, Cfg.CigiPort,
 		*Cfg.MulticastAddr, Cfg.MulticastPort,
 		Cfg.VideoBitrate, *Cfg.H264Preset,
 		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks,
-		*Cfg.SensorQualityPreset, Cfg.GroundTruth.bEnabled ? 1 : 0);
+		*Cfg.SensorQualityPreset, Cfg.GroundTruth.bEnabled ? 1 : 0,
+		Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz, Cfg.EntityScale.DefaultMaxUpdateRateHz,
+		Cfg.bScenarioEnabled ? 1 : 0, Cfg.ScenarioEntities.Num(), Cfg.ScenarioTimeScale);
 }

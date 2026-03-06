@@ -30,6 +30,11 @@
  *   CAMSIM_GROUND_TRUTH_ENABLED   – write JSONL sidecar telemetry                  (default 0)
  *   CAMSIM_GROUND_TRUTH_PATH      – sidecar output path                            (default empty)
  *   CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES – sidecar cadence                          (default 1)
+ *   CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M – entity culling distance                    (default 0=disabled)
+ *   CAMSIM_ENTITY_TICK_RATE_HZ    – entity actor tick rate                          (default 0=unlimited)
+ *   CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ – default pose apply cap               (default 0=unlimited)
+ *   CAMSIM_SCENARIO_ENABLED       – enable scenario_entities                        (default 0)
+ *   CAMSIM_SCENARIO_TIME_SCALE    – scenario time multiplier                        (default 1.0)
  */
 struct FCamSimConfig
 {
@@ -145,6 +150,47 @@ struct FCamSimConfig
 		int32   IntervalFrames = 1;
 	};
 	FGroundTruthConfig GroundTruth;
+
+	struct FEntityScaleConfig
+	{
+		// 0 disables distance culling.
+		float MaxDrawDistanceM = 0.0f;
+		// 0 means tick every frame.
+		float TickRateHz = 0.0f;
+		// 0 means apply every incoming pose update.
+		float DefaultMaxUpdateRateHz = 0.0f;
+		// Optional per-entity max update-rate overrides by EntityId.
+		TMap<int32, float> MaxUpdateRateHzOverrides;
+	};
+	FEntityScaleConfig EntityScale;
+
+	struct FScenarioEntityConfig
+	{
+		int32 EntityId = 1;
+		int32 EntityType = 1001;
+		double StartLatitude = 38.8977;
+		double StartLongitude = -77.0365;
+		double StartAltitude = 500.0;
+		float StartYaw = 0.0f;
+		float StartPitch = 0.0f;
+		float StartRoll = 0.0f;
+
+		float SpawnTimeSec = 0.0f;
+		float DespawnTimeSec = 0.0f; // <= SpawnTimeSec means persistent
+		float UpdateRateHz = 10.0f;  // 0 = every manager tick
+
+		// Scripted trajectory rates.
+		float NorthRateMps = 0.0f;
+		float EastRateMps = 0.0f;
+		float UpRateMps = 0.0f;
+		float YawRateDegPerSec = 0.0f;
+		float PitchRateDegPerSec = 0.0f;
+		float RollRateDegPerSec = 0.0f;
+	};
+
+	bool bScenarioEnabled = false;
+	float ScenarioTimeScale = 1.0f;
+	TArray<FScenarioEntityConfig> ScenarioEntities;
 
 	/**
 	 * Load from JSON file, then apply env var overrides.

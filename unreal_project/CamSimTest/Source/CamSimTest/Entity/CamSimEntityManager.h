@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Tickable.h"
+#include "Containers/Set.h"
+#include "Config/CamSimConfig.h"
 #include "CIGI/CigiPacketTypes.h"
 
 class UCamSimSubsystem;
@@ -51,10 +53,21 @@ private:
 	void ProcessRateControls();
 	void ProcessArtPartControls();
 	void ProcessComponentControls();
+	void ProcessScenarioEntities();
+	void ApplyEntityState(const FCigiEntityState& S, double NowSeconds, bool bBypassRateLimit = false);
+	float GetEntityMaxUpdateRateHz(uint16 EntityId) const;
+	FCigiEntityState BuildScenarioState(const FCamSimConfig::FScenarioEntityConfig& Spec,
+	                                    double ScenarioElapsedSeconds) const;
 
 	// Spawn a new ACamSimEntity with the given initial state
 	ACamSimEntity* SpawnEntity(const FCigiEntityState& S);
 
 	// Remove a stale (pending-kill) entry from EntityMap
 	void PurgeStaleEntities();
+
+	// Runtime update throttling to reduce transform churn under large-entity loads.
+	TMap<uint16, double> LastPoseApplySeconds;
+	TMap<uint16, double> LastScenarioUpdateSeconds;
+	double ScenarioStartSeconds = 0.0;
+	TSet<uint16> ScenarioRemovedEntities;
 };

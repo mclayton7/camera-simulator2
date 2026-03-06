@@ -73,6 +73,43 @@
     "interval_frames": 1
   },
 
+  "_comment_entity_scale": "entity_scale: runtime controls for large-scene scaling. max_draw_distance_m=0 disables culling. default_max_update_rate_hz=0 applies every update.",
+  "entity_scale": {
+    "max_draw_distance_m": 0.0,
+    "tick_rate_hz": 0.0,
+    "default_max_update_rate_hz": 0.0,
+    "max_update_rate_hz_overrides": {
+      "1": 30.0
+    }
+  },
+
+  "_comment_scenario": "scenario: optional deterministic entity orchestration layer. When enabled, entities are spawned/updated by this table in addition to incoming CIGI traffic.",
+  "scenario": {
+    "enabled": false,
+    "time_scale": 1.0,
+    "entities": [
+      {
+        "entity_id": 2001,
+        "entity_type": 1001,
+        "start_latitude": 38.8977,
+        "start_longitude": -77.0365,
+        "start_altitude": 900.0,
+        "start_yaw": 90.0,
+        "start_pitch": 0.0,
+        "start_roll": 0.0,
+        "spawn_time_sec": 0.0,
+        "despawn_time_sec": 0.0,
+        "update_rate_hz": 10.0,
+        "north_rate_mps": 50.0,
+        "east_rate_mps": 0.0,
+        "up_rate_mps": 0.0,
+        "yaw_rate_dps": 0.0,
+        "pitch_rate_dps": 0.0,
+        "roll_rate_dps": 0.0
+      }
+    ]
+  },
+
   "_comment_sensor_modes": "sensor_modes: per-waveband CPU-side post-processing parameters. SensorId 0=EO, 1=IR, 2=NVG.",
   "sensor_modes": {
     "eo": {

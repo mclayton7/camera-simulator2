@@ -11,6 +11,7 @@ control (lights, damage), and removal.
 - [Entity routing](#entity-routing)
 - [Entity lifecycle](#entity-lifecycle)
 - [Configuration](#configuration)
+- [Phase C scale and scenario controls](#phase-c-scale-and-scenario-controls)
 - [Dead-reckoning](#dead-reckoning)
 - [Articulated parts](#articulated-parts)
 - [Component control](#component-control)
@@ -76,6 +77,7 @@ On every tick `FCamSimEntityManager`:
 3. **Purges** stale entries where the actor has been externally invalidated.
 4. **Drains** rate control, art part, and component control queues, forwarding
    each packet to the matching entity by ID.
+5. **Applies** optional scenario-orchestrated entity states from `scenario.entities`.
 
 ### Spawn
 
@@ -127,7 +129,7 @@ Entity types are configured in `camsim_config.json`:
 
 Keys are CIGI EntityType values as strings. The type table is loaded once at
 startup inside `FCamSimConfig::Load()`. Adding a type without a corresponding
-cooked asset produces a log warning at spawn time but does not crash.
+cooked asset now fails preflight validation and that specific type is skipped.
 
 **Asset paths** follow UE's content browser path format:
 `"/Game/Path/To/Asset.AssetName"`. The asset must be included in the packaged
@@ -139,6 +141,50 @@ control. `skeletal: false` (default) loads a `UStaticMesh`.
 
 Both components are always created; only one is visible at a time based on the
 type's `skeletal` flag.
+
+### Startup preflight validation
+
+On startup, `EntityTypeTable` validates each `entity_types` entry:
+
+- Type key range (`1..65535`)
+- Primary `mesh` path format and existence
+- `/Game/...` mesh type compatibility (`skeletal` vs `static`)
+- Optional damage variants (`mesh_damaged`, `mesh_destroyed`)
+
+Invalid primary entries are skipped; invalid damage variants are cleared with
+warnings.
+
+---
+
+## Phase C Scale and Scenario Controls
+
+### Runtime scale controls (`entity_scale`)
+
+`entity_scale` config reduces cost in dense scenes:
+
+- `max_draw_distance_m`: applies distance culling to mesh and light components
+- `tick_rate_hz`: sets per-entity actor tick interval
+- `default_max_update_rate_hz`: global pose apply-rate cap
+- `max_update_rate_hz_overrides`: per-entity pose-rate caps
+
+These controls are applied when entities spawn, and pose throttling is enforced
+in `FCamSimEntityManager::ApplyEntityState()`.
+
+### Scenario orchestration (`scenario`)
+
+When `scenario.enabled=true`, `FCamSimEntityManager` synthesizes entity states
+from `scenario.entities` using deterministic monotonic time
+(`FPlatformTime::Seconds`) with `scenario.time_scale`.
+
+Per scripted entity:
+
+- spawn at `spawn_time_sec`
+- update at `update_rate_hz` (or every tick if `0`)
+- move/rotate using configured linear and angular rates
+- despawn after `despawn_time_sec` (if greater than spawn time)
+
+Scenario entities coexist with live CIGI traffic and are processed each manager
+tick.
 
 ---
 
@@ -276,6 +322,11 @@ empty in config, the swap is silently skipped.
 ## Testing
 
 The `scripts/test_entity_rendering.py` script covers all Phase 8 scenarios.
+Phase C adds stress and deterministic replay tooling:
+
+- `scripts/stress_entity_rendering.py`
+- `scripts/capture_cigi_stream.py`
+- `scripts/replay_cigi_stream.py`
 
 ### Prerequisites
 
@@ -345,7 +396,7 @@ Cycles through four phases every 3 seconds:
 3. Strobe on
 4. Both on
 
-### 8E — Damage state
+### 8F — Damage state
 
 ```bash
 python3 scripts/test_entity_rendering.py damage \
@@ -355,6 +406,25 @@ python3 scripts/test_entity_rendering.py damage \
 Cycles intact → damaged → destroyed every 5 seconds. Requires `mesh_damaged`
 and `mesh_destroyed` paths in `entity_types` config. Check log for the state
 transitions.
+
+### Phase C1/C2/C3 — Stress and deterministic replay
+
+```bash
+# 1) Stress entity throughput (spawn+update many entities)
+python3 scripts/stress_entity_rendering.py \
+    --host 127.0.0.1 --port 8888 \
+    --count 200 --entity-type 1001 \
+    --pattern ring --rate 10 --duration 60 --remove-on-exit
+
+# 2) Capture a real CIGI stream for deterministic replay
+python3 scripts/capture_cigi_stream.py \
+    --bind-host 0.0.0.0 --bind-port 8888 \
+    --output /tmp/cigi_capture.jsonl --duration 30
+
+# 3) Replay the capture at 1x (or adjust --speed, --loops)
+python3 scripts/replay_cigi_stream.py \
+    --input /tmp/cigi_capture.jsonl --host 127.0.0.1 --port 8888 --speed 1.0 --loops 1
+```
 
 ### Regression — camera unaffected
 
@@ -379,7 +449,7 @@ should be no frame drops.
 | Message | Meaning |
 |---------|---------|
 | `FCigiReceiver: listening on ... (camera entity id=N)` | Routing configured correctly |
-| `EntityTypeTable: loaded N entries` | `entity_types` config was parsed |
+| `EntityTypeTable: loaded N entries (M skipped by preflight)` | `entity_types` config parsed with startup validation |
 | `EntityTypeTable: type 1001 -> /Game/... (skeletal)` | One type entry loaded |
 | `EntityManager: spawned entity N (type T)` | Active packet, new entity |
 | `EntityManager: removed entity N` | Remove packet received |
