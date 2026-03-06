@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
-#include "Sensor/SensorPostProcess.h"   // ESensorMode, FSensorModeConfig
+#include "Sensor/SensorTypes.h"         // ESensorMode, sensor config structs
 
 /**
  * Runtime configuration for CamSim.
@@ -26,6 +26,10 @@
  *   CAMSIM_ENCODER_WATCHDOG_POLICY – reconnect|log_only|fail_fast                 (default reconnect)
  *   CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS – watchdog check interval              (default 150)
  *   CAMSIM_START_HOUR             – Fallback time-of-day (0-24)                  (default 12.0)
+ *   CAMSIM_SENSOR_QUALITY_PRESET  – low|medium|high|ultra|custom                 (default medium)
+ *   CAMSIM_GROUND_TRUTH_ENABLED   – write JSONL sidecar telemetry                  (default 0)
+ *   CAMSIM_GROUND_TRUTH_PATH      – sidecar output path                            (default empty)
+ *   CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES – sidecar cadence                          (default 1)
  */
 struct FCamSimConfig
 {
@@ -112,6 +116,35 @@ struct FCamSimConfig
 	// Per-waveband sensor simulation parameters (Phase 11).
 	// Populated from "sensor_modes" JSON block; defaults applied if block is absent.
 	TMap<ESensorMode, FSensorModeConfig> SensorModeConfigs;
+
+	// Global quality profile applied to the sensor post-process pipeline.
+	FString SensorQualityPreset = TEXT("medium");
+	TMap<FString, FSensorQualityConfig> SensorQualityProfiles;
+	FSensorQualityConfig ActiveSensorQuality;
+
+	struct FOutputViewConfig
+	{
+		int32   ViewId = 0;
+		bool    bEnabled = true;
+		FString MulticastAddr;
+		int32   MulticastPort = 5004;
+		int32   VideoBitrate = 4'000'000;
+		FString H264Preset = TEXT("ultrafast");
+		FString H264Tune = TEXT("zerolatency");
+		float   HFovDeg = 0.0f; // 0 = use live capture HFOV
+	};
+
+	// Optional multi-stream output views. If empty, CamSim emits one stream
+	// using the root multicast/video settings above.
+	TArray<FOutputViewConfig> OutputViews;
+
+	struct FGroundTruthConfig
+	{
+		bool    bEnabled = false;
+		FString OutputPath;
+		int32   IntervalFrames = 1;
+	};
+	FGroundTruthConfig GroundTruth;
 
 	/**
 	 * Load from JSON file, then apply env var overrides.

@@ -14,11 +14,13 @@ static constexpr int32 kParallelBands = 8;
 // ---------------------------------------------------------------------------
 
 void FSensorPostProcess::Initialize(int32 InWidth, int32 InHeight,
-                                    const TMap<ESensorMode, FSensorModeConfig>& InConfigs)
+                                    const TMap<ESensorMode, FSensorModeConfig>& InConfigs,
+                                    const FSensorQualityConfig& InQualityConfig)
 {
 	Width   = InWidth;
 	Height  = InHeight;
 	Configs = InConfigs;
+	Quality = InQualityConfig;
 
 	const int32 NumPixels  = Width * Height;
 	const int32 RingSize   = 2 * NumPixels;
@@ -99,11 +101,13 @@ void FSensorPostProcess::Initialize(int32 InWidth, int32 InHeight,
 	}
 
 	UE_LOG(LogCamSim, Log,
-		TEXT("FSensorPostProcess: initialized %dx%d  ring=%d  EO/IR/NVG configs loaded=%d/%d/%d"),
+		TEXT("FSensorPostProcess: initialized %dx%d ring=%d EO/IR/NVG=%d/%d/%d quality(noise=%.2f vignette=%.2f scan=%.2f atmos=%.2f blur=%d contrast=%.2f bias=%.2f)"),
 		Width, Height, RingSize,
 		Configs.Contains(ESensorMode::EO) ? 1 : 0,
 		Configs.Contains(ESensorMode::IR) ? 1 : 0,
-		Configs.Contains(ESensorMode::NVG) ? 1 : 0);
+		Configs.Contains(ESensorMode::NVG) ? 1 : 0,
+		Quality.NoiseScale, Quality.VignettingScale, Quality.ScanLineScale,
+		Quality.AtmosphereScale, Quality.BlurRadius, Quality.Contrast, Quality.BrightnessBias);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,34 +150,72 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 			break;
 	}
 
-	// Step 2: IR atmospheric extinction (scene-wide haze proxy via slant range)
+	// Step 2: optional color-temperature shift
+	if (Cfg.ColorTemperatureK > 1000.0f)
+	{
+		ApplyColorTemperature(Pixels, Cfg.ColorTemperatureK);
+	}
+
+	// Step 3: mode-level + quality-level tone controls
+	const float EffectiveContrast = FMath::Clamp(Cfg.Contrast * Quality.Contrast, 0.1f, 4.0f);
+	const float EffectiveBias = FMath::Clamp(Cfg.BrightnessBias + Quality.BrightnessBias, -1.0f, 1.0f);
+	if (!FMath::IsNearlyEqual(EffectiveContrast, 1.0f, KINDA_SMALL_NUMBER) ||
+		!FMath::IsNearlyZero(EffectiveBias, KINDA_SMALL_NUMBER))
+	{
+		ApplyContrastBrightness(Pixels, EffectiveContrast, EffectiveBias);
+	}
+
+	// Step 4: visibility-based attenuation for all wavebands
+	if (Cfg.AtmosphericVisibilityM > 0.0f && Telemetry.SlantRangeM > 0.0)
+	{
+		const float Strength = FMath::Clamp(Cfg.AtmosphereStrength * Quality.AtmosphereScale, 0.0f, 2.0f);
+		if (Strength > 0.0f)
+		{
+			ApplyAtmosphericAttenuation(Pixels, Cfg.AtmosphericVisibilityM,
+				static_cast<float>(Telemetry.SlantRangeM), Strength);
+		}
+	}
+
+	// Step 5: legacy IR extinction model (kept for backwards compatibility)
 	if (Mode == ESensorMode::IR && Cfg.IRExtinctionCoeff > 0.0f && Telemetry.SlantRangeM > 0.0)
 	{
-		ApplyIRExtinction(Pixels, Cfg.IRExtinctionCoeff, static_cast<float>(Telemetry.SlantRangeM));
+		ApplyIRExtinction(Pixels, Cfg.IRExtinctionCoeff * Quality.AtmosphereScale,
+			static_cast<float>(Telemetry.SlantRangeM));
 	}
 
-	// Step 3: Temporal NETD noise (from pre-baked ring buffer)
-	if (Cfg.NETD > 0.0f)
+	// Step 6: Temporal NETD noise (from pre-baked ring buffer)
+	const float EffectiveNETD = Cfg.NETD * Quality.NoiseScale;
+	if (EffectiveNETD > 0.0f)
 	{
-		ApplyNoise(Pixels, Cfg.NETD, FrameIndex);
+		ApplyNoise(Pixels, EffectiveNETD, FrameIndex);
 	}
 
-	// Step 4: Fixed pattern noise (static per-pixel bias)
-	if (Cfg.FixedPatternNoise > 0.0f)
+	// Step 7: Fixed pattern noise (static per-pixel bias)
+	const float EffectiveFPN = Cfg.FixedPatternNoise * Quality.NoiseScale;
+	if (EffectiveFPN > 0.0f)
 	{
-		ApplyFixedPatternNoise(Pixels, Cfg.FixedPatternNoise);
+		ApplyFixedPatternNoise(Pixels, EffectiveFPN);
 	}
 
-	// Step 5: Vignetting (radial corner darkening)
-	if (Cfg.Vignetting > 0.0f)
+	// Step 8: Vignetting (radial corner darkening)
+	const float EffectiveVignette = FMath::Clamp(Cfg.Vignetting * Quality.VignettingScale, 0.0f, 1.0f);
+	if (EffectiveVignette > 0.0f)
 	{
-		ApplyVignetting(Pixels, Cfg.Vignetting);
+		ApplyVignetting(Pixels, EffectiveVignette);
 	}
 
-	// Step 6: Scan-line modulation
-	if (Cfg.bScanLines && Cfg.ScanLineStrength > 0.0f)
+	// Step 9: Scan-line modulation
+	const float EffectiveScanLine = FMath::Clamp(Cfg.ScanLineStrength * Quality.ScanLineScale, 0.0f, 1.0f);
+	if (Cfg.bScanLines && EffectiveScanLine > 0.0f)
 	{
-		ApplyScanLines(Pixels, Cfg.ScanLineStrength);
+		ApplyScanLines(Pixels, EffectiveScanLine);
+	}
+
+	// Step 10: blur (mode + quality)
+	const int32 EffectiveBlur = FMath::Clamp(Cfg.BlurRadius + Quality.BlurRadius, 0, 8);
+	if (EffectiveBlur > 0)
+	{
+		ApplyBoxBlur(Pixels, EffectiveBlur);
 	}
 }
 
@@ -380,6 +422,180 @@ void FSensorPostProcess::ApplyScanLines(TArray<FColor>& Pixels, float Strength)
 				P.R = static_cast<uint8>(FMath::RoundToInt(P.R * DimFactor));
 				P.G = static_cast<uint8>(FMath::RoundToInt(P.G * DimFactor));
 				P.B = static_cast<uint8>(FMath::RoundToInt(P.B * DimFactor));
+			}
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyAtmosphericAttenuation — visibility-distance attenuation toward mid-gray
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyAtmosphericAttenuation(TArray<FColor>& Pixels,
+                                                     float VisibilityM,
+                                                     float SlantRangeM,
+                                                     float Strength)
+{
+	if (VisibilityM <= 0.0f || SlantRangeM <= 0.0f || Strength <= 0.0f) return;
+	const float NormalizedRange = SlantRangeM / VisibilityM;
+	const float Atten = FMath::Clamp((1.0f - FMath::Exp(-NormalizedRange)) * Strength, 0.0f, 1.0f);
+	if (Atten <= 0.0f) return;
+
+	constexpr uint8 FogVal = 128;
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+
+		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
+		{
+			FColor& P = Pixels[i];
+			P.R = static_cast<uint8>(P.R + (FogVal - P.R) * Atten);
+			P.G = static_cast<uint8>(P.G + (FogVal - P.G) * Atten);
+			P.B = static_cast<uint8>(P.B + (FogVal - P.B) * Atten);
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyColorTemperature — Kelvin-based white balance shift
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyColorTemperature(TArray<FColor>& Pixels, float Kelvin)
+{
+	const float K = FMath::Clamp(Kelvin, 1000.0f, 40000.0f) / 100.0f;
+	float Red = 255.0f;
+	float Green = 0.0f;
+	float Blue = 0.0f;
+
+	if (K <= 66.0f)
+	{
+		Green = 99.4708025861f * FMath::Loge(K) - 161.1195681661f;
+		Blue  = (K <= 19.0f) ? 0.0f : 138.5177312231f * FMath::Loge(K - 10.0f) - 305.0447927307f;
+	}
+	else
+	{
+		Red   = 329.698727446f * FMath::Pow(K - 60.0f, -0.1332047592f);
+		Green = 288.1221695283f * FMath::Pow(K - 60.0f, -0.0755148492f);
+		Blue  = 255.0f;
+	}
+
+	const float RScale = FMath::Clamp(Red / 255.0f, 0.0f, 2.0f);
+	const float GScale = FMath::Clamp(Green / 255.0f, 0.0f, 2.0f);
+	const float BScale = FMath::Clamp(Blue / 255.0f, 0.0f, 2.0f);
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+
+		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
+		{
+			FColor& P = Pixels[i];
+			P.R = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.R * RScale), 0, 255));
+			P.G = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.G * GScale), 0, 255));
+			P.B = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.B * BScale), 0, 255));
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyContrastBrightness — linear contrast and brightness in RGB space
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyContrastBrightness(TArray<FColor>& Pixels,
+                                                 float Contrast,
+                                                 float BrightnessBias)
+{
+	const float Bias = BrightnessBias * 255.0f;
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+
+		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
+		{
+			FColor& P = Pixels[i];
+			const auto Adjust = [Contrast, Bias](uint8 V) -> uint8
+			{
+				const float Centered = (static_cast<float>(V) - 127.5f) * Contrast + 127.5f + Bias;
+				return static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(Centered), 0, 255));
+			};
+			P.R = Adjust(P.R);
+			P.G = Adjust(P.G);
+			P.B = Adjust(P.B);
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyBoxBlur — separable box blur (horizontal then vertical)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyBoxBlur(TArray<FColor>& Pixels, int32 Radius)
+{
+	if (Radius <= 0 || Pixels.Num() != Width * Height) return;
+
+	TArray<FColor> Temp;
+	Temp.SetNumUninitialized(Pixels.Num());
+
+	const int32 Kernel = Radius * 2 + 1;
+
+	// Horizontal pass
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 Y = RowStart; Y < RowEnd; ++Y)
+		{
+			for (int32 X = 0; X < Width; ++X)
+			{
+				int32 SumR = 0, SumG = 0, SumB = 0;
+				for (int32 K = -Radius; K <= Radius; ++K)
+				{
+					const int32 SX = FMath::Clamp(X + K, 0, Width - 1);
+					const FColor& S = Pixels[Y * Width + SX];
+					SumR += S.R;
+					SumG += S.G;
+					SumB += S.B;
+				}
+				FColor& D = Temp[Y * Width + X];
+				D.R = static_cast<uint8>(SumR / Kernel);
+				D.G = static_cast<uint8>(SumG / Kernel);
+				D.B = static_cast<uint8>(SumB / Kernel);
+				D.A = 255;
+			}
+		}
+	}, EParallelForFlags::BackgroundPriority);
+
+	// Vertical pass
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 Y = RowStart; Y < RowEnd; ++Y)
+		{
+			for (int32 X = 0; X < Width; ++X)
+			{
+				int32 SumR = 0, SumG = 0, SumB = 0;
+				for (int32 K = -Radius; K <= Radius; ++K)
+				{
+					const int32 SY = FMath::Clamp(Y + K, 0, Height - 1);
+					const FColor& S = Temp[SY * Width + X];
+					SumR += S.R;
+					SumG += S.G;
+					SumB += S.B;
+				}
+				FColor& D = Pixels[Y * Width + X];
+				D.R = static_cast<uint8>(SumR / Kernel);
+				D.G = static_cast<uint8>(SumG / Kernel);
+				D.B = static_cast<uint8>(SumB / Kernel);
+				D.A = 255;
 			}
 		}
 	}, EParallelForFlags::BackgroundPriority);

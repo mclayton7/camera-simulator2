@@ -40,6 +40,39 @@
   "_comment_sensor_fov": "sensor_fov_presets: ordered wide→narrow FOV values (degrees) mapped from Sensor Control Gain (0.0=wide, 1.0=narrow). Empty array = ignore Gain, use ViewDef FOV only.",
   "sensor_fov_presets": [60.0, 20.0, 5.0],
 
+  "_comment_sensor_quality": "sensor_quality: global quality profile for sensor post-processing. Preset can be low|medium|high|ultra|custom; numeric values override the selected preset.",
+  "sensor_quality": {
+    "preset": "medium",
+    "noise_scale": 1.0,
+    "vignetting_scale": 1.0,
+    "scan_line_scale": 1.0,
+    "atmosphere_scale": 1.0,
+    "blur_radius": 0,
+    "contrast": 1.0,
+    "brightness_bias": 0.0
+  },
+
+  "_comment_output_views": "output_views: optional multi-stream fan-out. Empty/omitted = single stream using multicast_addr/multicast_port/video settings above. hfov_deg uses digital zoom crop (must be <= live HFOV).",
+  "output_views": [
+    {
+      "view_id": 0,
+      "enabled": true,
+      "multicast_addr": "239.1.1.1",
+      "multicast_port": 5004,
+      "video_bitrate": 4000000,
+      "h264_preset": "ultrafast",
+      "h264_tune": "zerolatency",
+      "hfov_deg": 0.0
+    }
+  ],
+
+  "_comment_ground_truth": "ground_truth: optional per-frame JSONL sidecar output for analytics/dataset workflows.",
+  "ground_truth": {
+    "enabled": false,
+    "output_path": "camsim_groundtruth.jsonl",
+    "interval_frames": 1
+  },
+
   "_comment_sensor_modes": "sensor_modes: per-waveband CPU-side post-processing parameters. SensorId 0=EO, 1=IR, 2=NVG.",
   "sensor_modes": {
     "eo": {
@@ -48,7 +81,13 @@
       "vignetting":          0.10,
       "scan_lines":          false,
       "scan_line_strength":  0.0,
-      "ir_extinction_coeff": 0.0
+      "ir_extinction_coeff": 0.0,
+      "atmospheric_visibility_m": 0.0,
+      "atmosphere_strength": 1.0,
+      "color_temperature_k": 6500.0,
+      "contrast": 1.0,
+      "brightness_bias": 0.0,
+      "blur_radius": 0
     },
     "ir": {
       "noise_netd":          0.01,
@@ -56,7 +95,13 @@
       "vignetting":          0.20,
       "scan_lines":          false,
       "scan_line_strength":  0.0,
-      "ir_extinction_coeff": 0.00001
+      "ir_extinction_coeff": 0.00001,
+      "atmospheric_visibility_m": 12000.0,
+      "atmosphere_strength": 0.75,
+      "color_temperature_k": 0.0,
+      "contrast": 1.1,
+      "brightness_bias": -0.03,
+      "blur_radius": 0
     },
     "nvg": {
       "noise_netd":          0.03,
@@ -64,7 +109,13 @@
       "vignetting":          0.35,
       "scan_lines":          false,
       "scan_line_strength":  0.05,
-      "ir_extinction_coeff": 0.0
+      "ir_extinction_coeff": 0.0,
+      "atmospheric_visibility_m": 8000.0,
+      "atmosphere_strength": 0.9,
+      "color_temperature_k": 5200.0,
+      "contrast": 1.2,
+      "brightness_bias": 0.02,
+      "blur_radius": 0
     }
   },
 

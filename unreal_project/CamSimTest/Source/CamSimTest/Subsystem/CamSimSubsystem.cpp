@@ -5,7 +5,7 @@
 #include "CIGI/CigiReceiver.h"
 #include "CIGI/CigiSender.h"
 #include "CIGI/CigiQueryHandler.h"
-#include "Encoder/VideoEncoder.h"   // FVideoEncoder (concrete IFrameSink)
+#include "Encoder/MultiViewFrameSink.h" // FMultiViewFrameSink (concrete IFrameSink)
 #include "Encoder/IFrameSink.h"
 #include "CamSimTest.h"
 #include "Dom/JsonObject.h"
@@ -65,7 +65,8 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	UE_LOG(LogCamSim, Log,
 		TEXT("CamSim startup diagnostics: platform=%s rhi=%s ffmpeg(libavcodec=%d.%d.%d libswscale=%d.%d.%d) ")
 		TEXT("video=udp://%s:%d cigi_in=%s:%d cigi_resp=%s:%d capture=%dx%d@%.1ffps ")
-		TEXT("readback=%s swap_rb=%d ready_polls=%d bitrate=%d preset=%s tune=%s watchdog_policy=%s watchdog_ticks=%d"),
+		TEXT("readback=%s swap_rb=%d ready_polls=%d bitrate=%d preset=%s tune=%s watchdog_policy=%s watchdog_ticks=%d ")
+		TEXT("sensor_quality=%s views=%d ground_truth=%d"),
 		ANSI_TO_TCHAR(FPlatformProperties::IniPlatformName()), *RHIName,
 		LIBAVCODEC_VERSION_MAJOR, LIBAVCODEC_VERSION_MINOR, LIBAVCODEC_VERSION_MICRO,
 		LIBSWSCALE_VERSION_MAJOR, LIBSWSCALE_VERSION_MINOR, LIBSWSCALE_VERSION_MICRO,
@@ -76,7 +77,8 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		ReadbackFormatToString(Config.ReadbackFormat), Config.bSwapRBReadback ? 1 : 0,
 		Config.ReadbackReadyPolls,
 		Config.VideoBitrate, *Config.H264Preset, *Config.H264Tune,
-		WatchdogPolicyToString(Config.EncoderWatchdogPolicy), Config.EncoderWatchdogIntervalTicks);
+		WatchdogPolicyToString(Config.EncoderWatchdogPolicy), Config.EncoderWatchdogIntervalTicks,
+		*Config.SensorQualityPreset, Config.OutputViews.Num(), Config.GroundTruth.bEnabled ? 1 : 0);
 
 	// Start CIGI receiver thread
 	CigiReceiver = new FCigiReceiver(Config);
@@ -85,8 +87,8 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: failed to start CIGI receiver"));
 	}
 
-	// Start FFmpeg encoder / MPEG-TS muxer
-	VideoEncoder = new FVideoEncoder(Config);
+	// Start FFmpeg encoder / MPEG-TS muxer(s)
+	VideoEncoder = new FMultiViewFrameSink(Config);
 	if (!VideoEncoder->Open())
 	{
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: failed to open video encoder"));

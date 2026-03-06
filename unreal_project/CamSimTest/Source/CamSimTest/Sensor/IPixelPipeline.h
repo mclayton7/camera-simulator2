@@ -25,7 +25,8 @@ public:
 	 * Must be called once before any Process() calls.
 	 */
 	virtual void Initialize(int32 Width, int32 Height,
-	                        const TMap<ESensorMode, FSensorModeConfig>& Configs) = 0;
+	                        const TMap<ESensorMode, FSensorModeConfig>& Configs,
+	                        const FSensorQualityConfig& QualityConfig) = 0;
 
 	/**
 	 * Apply the sensor pipeline in-place.

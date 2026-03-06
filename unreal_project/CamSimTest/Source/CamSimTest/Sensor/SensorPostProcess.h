@@ -18,7 +18,8 @@ public:
 
 	// IPixelPipeline interface
 	virtual void Initialize(int32 InWidth, int32 InHeight,
-	                        const TMap<ESensorMode, FSensorModeConfig>& InConfigs) override;
+	                        const TMap<ESensorMode, FSensorModeConfig>& InConfigs,
+	                        const FSensorQualityConfig& InQualityConfig) override;
 
 	/**
 	 * Apply the sensor pipeline in-place.
@@ -41,6 +42,7 @@ private:
 	int32  Width  = 0;
 	int32  Height = 0;
 	TMap<ESensorMode, FSensorModeConfig> Configs;
+	FSensorQualityConfig Quality;
 
 	/** Precomputed radial vignetting weights [W*H], range [0, 1]. */
 	TArray<float>  VignetteWeights;
@@ -83,4 +85,16 @@ private:
 
 	/** Alternating row brightness reduction. */
 	void ApplyScanLines(TArray<FColor>& Pixels, float Strength);
+
+	/** Scene-wide attenuation toward mid-gray based on visibility distance. */
+	void ApplyAtmosphericAttenuation(TArray<FColor>& Pixels, float VisibilityM, float SlantRangeM, float Strength);
+
+	/** Adjust white balance toward a target color temperature (Kelvin). */
+	void ApplyColorTemperature(TArray<FColor>& Pixels, float Kelvin);
+
+	/** Apply global contrast and brightness adjustment. */
+	void ApplyContrastBrightness(TArray<FColor>& Pixels, float Contrast, float BrightnessBias);
+
+	/** Apply a separable box blur with clamped edges. */
+	void ApplyBoxBlur(TArray<FColor>& Pixels, int32 Radius);
 };

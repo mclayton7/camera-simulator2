@@ -9,7 +9,8 @@
  * IFrameSink
  *
  * Pure-virtual interface for encoded video output destinations.
- * FVideoEncoder implements this for H.264/MPEG-TS UDP multicast.
+ * FVideoEncoder implements per-view H.264/MPEG-TS output and
+ * FMultiViewFrameSink composes one or more FVideoEncoder instances.
  *
  * Having this interface enables:
  *   - FNullFrameSink  : no-op sink for unit tests

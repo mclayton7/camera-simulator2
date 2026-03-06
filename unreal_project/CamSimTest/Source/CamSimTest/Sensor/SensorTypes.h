@@ -36,4 +36,49 @@ struct FSensorModeConfig
 
 	/** Koschmieder-style IR haze coefficient per metre (0 = off). */
 	float IRExtinctionCoeff  = 0.0f;
+
+	/** Additional scene attenuation model: visibility distance in metres (0 = off). */
+	float AtmosphericVisibilityM = 0.0f;
+
+	/** Blend strength for the atmospheric attenuation model [0, 2]. */
+	float AtmosphereStrength = 1.0f;
+
+	/** Optional color-temperature shift in Kelvin (0 = disabled). */
+	float ColorTemperatureK = 0.0f;
+
+	/** Contrast multiplier applied after waveband conversion (1 = neutral). */
+	float Contrast = 1.0f;
+
+	/** Brightness bias in normalized range [-1, 1]. */
+	float BrightnessBias = 0.0f;
+
+	/** Post-effect blur radius in pixels (0 = off). */
+	int32 BlurRadius = 0;
+};
+
+// ---------------------------------------------------------------------------
+// FSensorQualityConfig — global quality profile applied across sensor modes
+// ---------------------------------------------------------------------------
+struct FSensorQualityConfig
+{
+	/** Scales NETD and fixed-pattern noise amplitudes. */
+	float NoiseScale = 1.0f;
+
+	/** Scales vignetting strength. */
+	float VignettingScale = 1.0f;
+
+	/** Scales scan-line strength. */
+	float ScanLineScale = 1.0f;
+
+	/** Scales atmospheric attenuation terms. */
+	float AtmosphereScale = 1.0f;
+
+	/** Additional blur radius (pixels) added on top of per-mode blur. */
+	int32 BlurRadius = 0;
+
+	/** Global contrast multiplier applied after mode-level contrast. */
+	float Contrast = 1.0f;
+
+	/** Global brightness bias in normalized range [-1, 1]. */
+	float BrightnessBias = 0.0f;
 };

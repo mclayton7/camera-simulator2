@@ -25,7 +25,7 @@ class FRHIGPUTextureReadback;  // forward-declare async readback helper
  *   1. Receives geospatial pose updates from the CIGI receiver (via Tick).
  *   2. Triggers a SceneCapture2D render.
  *   3. Reads back BGRA pixels from the GPU and dispatches them to the
- *      FVideoEncoder running on a background task thread.
+ *      configured IFrameSink running on a background task thread.
  *
  * Place one instance in the persistent level.  The actor self-registers with
  * UCamSimSubsystem so the subsystem can drive it without hard coupling.

@@ -54,6 +54,27 @@ static FCamSimConfig::EEncoderWatchdogPolicy ParseWatchdogPolicy(const FString& 
 	return FCamSimConfig::EEncoderWatchdogPolicy::Reconnect;
 }
 
+static FString NormalizeQualityPreset(const FString& Value)
+{
+	return Value.TrimStartAndEnd().ToLower();
+}
+
+static void ResolveActiveSensorQuality(FCamSimConfig& Cfg)
+{
+	const FString Key = NormalizeQualityPreset(Cfg.SensorQualityPreset);
+	if (const FSensorQualityConfig* Found = Cfg.SensorQualityProfiles.Find(Key))
+	{
+		Cfg.ActiveSensorQuality = *Found;
+		return;
+	}
+
+	UE_LOG(LogCamSim, Warning,
+		TEXT("Config: unknown sensor_quality.preset '%s' (known: low|medium|high|ultra|custom) — using medium"),
+		*Cfg.SensorQualityPreset);
+	Cfg.SensorQualityPreset = TEXT("medium");
+	Cfg.ActiveSensorQuality = Cfg.SensorQualityProfiles.FindRef(TEXT("medium"));
+}
+
 // ---------------------------------------------------------------------------
 // FCamSimConfig
 // ---------------------------------------------------------------------------
@@ -69,6 +90,10 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 		EoCfg.FixedPatternNoise = 0.0f;
 		EoCfg.Vignetting        = 0.10f;
 		EoCfg.bScanLines        = false;
+		EoCfg.Contrast          = 1.0f;
+		EoCfg.BrightnessBias    = 0.0f;
+		EoCfg.BlurRadius        = 0;
+		EoCfg.ColorTemperatureK = 6500.0f;
 		Cfg.SensorModeConfigs.Add(ESensorMode::EO, EoCfg);
 
 		FSensorModeConfig IrCfg;
@@ -77,6 +102,10 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 		IrCfg.Vignetting        = 0.20f;
 		IrCfg.bScanLines        = false;
 		IrCfg.IRExtinctionCoeff = 1e-5f;
+		IrCfg.AtmosphericVisibilityM = 12000.0f;
+		IrCfg.AtmosphereStrength = 0.75f;
+		IrCfg.Contrast          = 1.1f;
+		IrCfg.BrightnessBias    = -0.03f;
 		Cfg.SensorModeConfigs.Add(ESensorMode::IR, IrCfg);
 
 		FSensorModeConfig NvgCfg;
@@ -85,7 +114,57 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 		NvgCfg.Vignetting        = 0.35f;
 		NvgCfg.bScanLines        = false;
 		NvgCfg.ScanLineStrength  = 0.05f;
+		NvgCfg.AtmosphericVisibilityM = 8000.0f;
+		NvgCfg.AtmosphereStrength = 0.9f;
+		NvgCfg.Contrast          = 1.2f;
+		NvgCfg.BrightnessBias    = 0.02f;
+		NvgCfg.ColorTemperatureK = 5200.0f;
 		Cfg.SensorModeConfigs.Add(ESensorMode::NVG, NvgCfg);
+	}
+
+	{
+		FSensorQualityConfig Low;
+		Low.NoiseScale      = 0.75f;
+		Low.VignettingScale = 0.8f;
+		Low.ScanLineScale   = 0.8f;
+		Low.AtmosphereScale = 0.7f;
+		Low.BlurRadius      = 0;
+		Low.Contrast        = 0.95f;
+		Low.BrightnessBias  = 0.0f;
+		Cfg.SensorQualityProfiles.Add(TEXT("low"), Low);
+
+		FSensorQualityConfig Medium;
+		Medium.NoiseScale      = 1.0f;
+		Medium.VignettingScale = 1.0f;
+		Medium.ScanLineScale   = 1.0f;
+		Medium.AtmosphereScale = 1.0f;
+		Medium.BlurRadius      = 0;
+		Medium.Contrast        = 1.0f;
+		Medium.BrightnessBias  = 0.0f;
+		Cfg.SensorQualityProfiles.Add(TEXT("medium"), Medium);
+
+		FSensorQualityConfig High;
+		High.NoiseScale      = 1.25f;
+		High.VignettingScale = 1.15f;
+		High.ScanLineScale   = 1.15f;
+		High.AtmosphereScale = 1.15f;
+		High.BlurRadius      = 1;
+		High.Contrast        = 1.05f;
+		High.BrightnessBias  = 0.0f;
+		Cfg.SensorQualityProfiles.Add(TEXT("high"), High);
+
+		FSensorQualityConfig Ultra;
+		Ultra.NoiseScale      = 1.5f;
+		Ultra.VignettingScale = 1.25f;
+		Ultra.ScanLineScale   = 1.25f;
+		Ultra.AtmosphereScale = 1.25f;
+		Ultra.BlurRadius      = 2;
+		Ultra.Contrast        = 1.1f;
+		Ultra.BrightnessBias  = 0.0f;
+		Cfg.SensorQualityProfiles.Add(TEXT("ultra"), Ultra);
+
+		Cfg.SensorQualityProfiles.Add(TEXT("custom"), Medium);
+		Cfg.ActiveSensorQuality = Medium;
 	}
 
 	// Attempt to read JSON config from binary dir
@@ -187,11 +266,137 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 						if ((*ModeObj)->TryGetBoolField  (TEXT("scan_lines"),           TmpB)) MC.bScanLines        = TmpB;
 						if ((*ModeObj)->TryGetNumberField(TEXT("scan_line_strength"),   TmpD)) MC.ScanLineStrength  = static_cast<float>(TmpD);
 						if ((*ModeObj)->TryGetNumberField(TEXT("ir_extinction_coeff"),  TmpD)) MC.IRExtinctionCoeff = static_cast<float>(TmpD);
+						if ((*ModeObj)->TryGetNumberField(TEXT("atmospheric_visibility_m"), TmpD)) MC.AtmosphericVisibilityM = static_cast<float>(TmpD);
+						if ((*ModeObj)->TryGetNumberField(TEXT("atmosphere_strength"),   TmpD)) MC.AtmosphereStrength = static_cast<float>(TmpD);
+						if ((*ModeObj)->TryGetNumberField(TEXT("color_temperature_k"),   TmpD)) MC.ColorTemperatureK = static_cast<float>(TmpD);
+						if ((*ModeObj)->TryGetNumberField(TEXT("contrast"),              TmpD)) MC.Contrast = static_cast<float>(TmpD);
+						if ((*ModeObj)->TryGetNumberField(TEXT("brightness_bias"),       TmpD)) MC.BrightnessBias = static_cast<float>(TmpD);
+						if ((*ModeObj)->TryGetNumberField(TEXT("blur_radius"),           TmpD)) MC.BlurRadius = FMath::Max(0, static_cast<int32>(TmpD));
 					};
 
 					ParseMode(TEXT("eo"),  ESensorMode::EO);
 					ParseMode(TEXT("ir"),  ESensorMode::IR);
 					ParseMode(TEXT("nvg"), ESensorMode::NVG);
+				}
+			}
+
+			// Optional user-defined sensor quality profiles.
+			{
+				const TSharedPtr<FJsonObject>* ProfilesObj = nullptr;
+				if (Root->TryGetObjectField(TEXT("sensor_quality_profiles"), ProfilesObj) && ProfilesObj)
+				{
+					for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*ProfilesObj)->Values)
+					{
+						const FString PresetKey = NormalizeQualityPreset(Pair.Key);
+						const TSharedPtr<FJsonObject>* ProfileObj = nullptr;
+						if (!(*ProfilesObj)->TryGetObjectField(Pair.Key, ProfileObj) || !ProfileObj) continue;
+
+						FSensorQualityConfig Profile = Cfg.SensorQualityProfiles.FindRef(TEXT("medium"));
+						double TmpD = 0.0;
+						if ((*ProfileObj)->TryGetNumberField(TEXT("noise_scale"),      TmpD)) Profile.NoiseScale = static_cast<float>(TmpD);
+						if ((*ProfileObj)->TryGetNumberField(TEXT("vignetting_scale"), TmpD)) Profile.VignettingScale = static_cast<float>(TmpD);
+						if ((*ProfileObj)->TryGetNumberField(TEXT("scan_line_scale"),  TmpD)) Profile.ScanLineScale = static_cast<float>(TmpD);
+						if ((*ProfileObj)->TryGetNumberField(TEXT("atmosphere_scale"), TmpD)) Profile.AtmosphereScale = static_cast<float>(TmpD);
+						if ((*ProfileObj)->TryGetNumberField(TEXT("blur_radius"),      TmpD)) Profile.BlurRadius = FMath::Max(0, static_cast<int32>(TmpD));
+						if ((*ProfileObj)->TryGetNumberField(TEXT("contrast"),         TmpD)) Profile.Contrast = static_cast<float>(TmpD);
+						if ((*ProfileObj)->TryGetNumberField(TEXT("brightness_bias"),  TmpD)) Profile.BrightnessBias = static_cast<float>(TmpD);
+						Cfg.SensorQualityProfiles.Add(PresetKey, Profile);
+					}
+				}
+			}
+
+			// Active sensor quality preset and optional inline overrides.
+			{
+				const TSharedPtr<FJsonObject>* QualityObj = nullptr;
+				if (Root->TryGetObjectField(TEXT("sensor_quality"), QualityObj) && QualityObj)
+				{
+					FString Preset;
+					if ((*QualityObj)->TryGetStringField(TEXT("preset"), Preset))
+					{
+						Cfg.SensorQualityPreset = NormalizeQualityPreset(Preset);
+					}
+					ResolveActiveSensorQuality(Cfg);
+
+					double TmpD = 0.0;
+					if ((*QualityObj)->TryGetNumberField(TEXT("noise_scale"), TmpD))
+						Cfg.ActiveSensorQuality.NoiseScale = static_cast<float>(TmpD);
+					if ((*QualityObj)->TryGetNumberField(TEXT("vignetting_scale"), TmpD))
+						Cfg.ActiveSensorQuality.VignettingScale = static_cast<float>(TmpD);
+					if ((*QualityObj)->TryGetNumberField(TEXT("scan_line_scale"), TmpD))
+						Cfg.ActiveSensorQuality.ScanLineScale = static_cast<float>(TmpD);
+					if ((*QualityObj)->TryGetNumberField(TEXT("atmosphere_scale"), TmpD))
+						Cfg.ActiveSensorQuality.AtmosphereScale = static_cast<float>(TmpD);
+					if ((*QualityObj)->TryGetNumberField(TEXT("blur_radius"), TmpD))
+						Cfg.ActiveSensorQuality.BlurRadius = FMath::Max(0, static_cast<int32>(TmpD));
+					if ((*QualityObj)->TryGetNumberField(TEXT("contrast"), TmpD))
+						Cfg.ActiveSensorQuality.Contrast = static_cast<float>(TmpD);
+					if ((*QualityObj)->TryGetNumberField(TEXT("brightness_bias"), TmpD))
+						Cfg.ActiveSensorQuality.BrightnessBias = static_cast<float>(TmpD);
+				}
+				else
+				{
+					ResolveActiveSensorQuality(Cfg);
+				}
+			}
+
+			// Optional multi-stream output views.
+			{
+				const TArray<TSharedPtr<FJsonValue>>* ViewsArr = nullptr;
+				if (Root->TryGetArrayField(TEXT("output_views"), ViewsArr) && ViewsArr)
+				{
+					Cfg.OutputViews.Reset();
+					int32 DefaultViewId = 0;
+					for (const TSharedPtr<FJsonValue>& ViewVal : *ViewsArr)
+					{
+						if (!ViewVal.IsValid()) continue;
+						const TSharedPtr<FJsonObject> ViewObj = ViewVal->AsObject();
+						if (!ViewObj.IsValid()) continue;
+
+						FCamSimConfig::FOutputViewConfig ViewCfg;
+						ViewCfg.ViewId = DefaultViewId++;
+						ViewCfg.MulticastAddr = Cfg.MulticastAddr;
+						ViewCfg.MulticastPort = Cfg.MulticastPort;
+						ViewCfg.VideoBitrate = Cfg.VideoBitrate;
+						ViewCfg.H264Preset = Cfg.H264Preset;
+						ViewCfg.H264Tune = Cfg.H264Tune;
+						ViewCfg.HFovDeg = 0.0f;
+
+						double TmpNum = 0.0;
+						bool TmpBool = true;
+						if (ViewObj->TryGetNumberField(TEXT("view_id"), TmpNum)) ViewCfg.ViewId = static_cast<int32>(TmpNum);
+						if (ViewObj->TryGetBoolField(TEXT("enabled"), TmpBool)) ViewCfg.bEnabled = TmpBool;
+						ViewObj->TryGetStringField(TEXT("multicast_addr"), ViewCfg.MulticastAddr);
+						if (ViewObj->TryGetNumberField(TEXT("multicast_port"), TmpNum)) ViewCfg.MulticastPort = static_cast<int32>(TmpNum);
+						if (ViewObj->TryGetNumberField(TEXT("video_bitrate"), TmpNum)) ViewCfg.VideoBitrate = static_cast<int32>(TmpNum);
+						ViewObj->TryGetStringField(TEXT("h264_preset"), ViewCfg.H264Preset);
+						ViewObj->TryGetStringField(TEXT("h264_tune"), ViewCfg.H264Tune);
+						if (ViewObj->TryGetNumberField(TEXT("hfov_deg"), TmpNum)) ViewCfg.HFovDeg = static_cast<float>(TmpNum);
+
+						Cfg.OutputViews.Add(ViewCfg);
+					}
+				}
+			}
+
+			// Optional ground-truth sidecar output.
+			{
+				const TSharedPtr<FJsonObject>* GTObj = nullptr;
+				if (Root->TryGetObjectField(TEXT("ground_truth"), GTObj) && GTObj)
+				{
+					bool TmpB = false;
+					double TmpD = 0.0;
+					if ((*GTObj)->TryGetBoolField(TEXT("enabled"), TmpB)) Cfg.GroundTruth.bEnabled = TmpB;
+					(*GTObj)->TryGetStringField(TEXT("output_path"), Cfg.GroundTruth.OutputPath);
+					if ((*GTObj)->TryGetNumberField(TEXT("interval_frames"), TmpD))
+						Cfg.GroundTruth.IntervalFrames = FMath::Max(1, static_cast<int32>(TmpD));
+				}
+				Root->TryGetBoolField(TEXT("ground_truth_enabled"), Cfg.GroundTruth.bEnabled);
+				Root->TryGetStringField(TEXT("ground_truth_path"), Cfg.GroundTruth.OutputPath);
+				{
+					double GTInterval = Cfg.GroundTruth.IntervalFrames;
+					if (Root->TryGetNumberField(TEXT("ground_truth_interval_frames"), GTInterval))
+					{
+						Cfg.GroundTruth.IntervalFrames = FMath::Max(1, static_cast<int32>(GTInterval));
+					}
 				}
 			}
 
@@ -250,10 +455,31 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.StartRoll      = GetEnvFloat(TEXT("CAMSIM_START_ROLL"),   Cfg.StartRoll);
 	Cfg.StartHour      = GetEnvFloat(TEXT("CAMSIM_START_HOUR"),   Cfg.StartHour);
 
+	{
+		const FString Preset = GetEnv(TEXT("CAMSIM_SENSOR_QUALITY_PRESET"), TEXT(""));
+		if (!Preset.IsEmpty())
+		{
+			Cfg.SensorQualityPreset = NormalizeQualityPreset(Preset);
+		}
+	}
+	ResolveActiveSensorQuality(Cfg);
+	Cfg.ActiveSensorQuality.NoiseScale = GetEnvFloat(TEXT("CAMSIM_SENSOR_QUALITY_NOISE_SCALE"), Cfg.ActiveSensorQuality.NoiseScale);
+	Cfg.ActiveSensorQuality.VignettingScale = GetEnvFloat(TEXT("CAMSIM_SENSOR_QUALITY_VIGNETTING_SCALE"), Cfg.ActiveSensorQuality.VignettingScale);
+	Cfg.ActiveSensorQuality.ScanLineScale = GetEnvFloat(TEXT("CAMSIM_SENSOR_QUALITY_SCANLINE_SCALE"), Cfg.ActiveSensorQuality.ScanLineScale);
+	Cfg.ActiveSensorQuality.AtmosphereScale = GetEnvFloat(TEXT("CAMSIM_SENSOR_QUALITY_ATMOSPHERE_SCALE"), Cfg.ActiveSensorQuality.AtmosphereScale);
+	Cfg.ActiveSensorQuality.BlurRadius = FMath::Max(0, GetEnvInt(TEXT("CAMSIM_SENSOR_QUALITY_BLUR_RADIUS"), Cfg.ActiveSensorQuality.BlurRadius));
+	Cfg.ActiveSensorQuality.Contrast = GetEnvFloat(TEXT("CAMSIM_SENSOR_QUALITY_CONTRAST"), Cfg.ActiveSensorQuality.Contrast);
+	Cfg.ActiveSensorQuality.BrightnessBias = GetEnvFloat(TEXT("CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS"), Cfg.ActiveSensorQuality.BrightnessBias);
+
+	Cfg.GroundTruth.bEnabled = GetEnvInt(TEXT("CAMSIM_GROUND_TRUTH_ENABLED"), Cfg.GroundTruth.bEnabled ? 1 : 0) != 0;
+	Cfg.GroundTruth.OutputPath = GetEnv(TEXT("CAMSIM_GROUND_TRUTH_PATH"), Cfg.GroundTruth.OutputPath);
+	Cfg.GroundTruth.IntervalFrames = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES"), Cfg.GroundTruth.IntervalFrames));
+
 	UE_LOG(LogCamSim, Log,
-		TEXT("Config: CIGI=%s:%d  Out=udp://%s:%d  Bitrate=%d  Preset=%s  ReadbackReadyPolls=%d  WatchdogInterval=%d"),
+		TEXT("Config: CIGI=%s:%d  Out=udp://%s:%d  Bitrate=%d  Preset=%s  ReadbackReadyPolls=%d  WatchdogInterval=%d  SensorQuality=%s  GroundTruth=%d"),
 		*Cfg.CigiBindAddr, Cfg.CigiPort,
 		*Cfg.MulticastAddr, Cfg.MulticastPort,
 		Cfg.VideoBitrate, *Cfg.H264Preset,
-		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks);
+		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks,
+		*Cfg.SensorQualityPreset, Cfg.GroundTruth.bEnabled ? 1 : 0);
 }

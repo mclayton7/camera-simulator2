@@ -165,7 +165,7 @@ void ACamSimCamera::BeginPlay()
 	// so that a NullPixelPipeline or alternate waveband implementation can
 	// be substituted without touching the camera actor.
 	auto* Pipeline = new FSensorPostProcess();
-	Pipeline->Initialize(Cfg.CaptureWidth, Cfg.CaptureHeight, Cfg.SensorModeConfigs);
+	Pipeline->Initialize(Cfg.CaptureWidth, Cfg.CaptureHeight, Cfg.SensorModeConfigs, Cfg.ActiveSensorQuality);
 	SensorFX.Reset(Pipeline);
 
 	// Allocate async GPU readback helper (non-blocking DMA: EnqueueCopy → IsReady → Lock)
@@ -433,6 +433,8 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 	if (SensorComp)
 	{
 		SensorComp->TickSensor(Receiver, Cfg, SceneCapture);
+		CurrentTelemetry.SensorMode = static_cast<uint8>(SensorComp->GetMode());
+		CurrentTelemetry.SensorPolarity = SensorComp->GetPolarity();
 	}
 
 	// -----------------------------------------------------------------------

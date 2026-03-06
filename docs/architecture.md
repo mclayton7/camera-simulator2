@@ -4,8 +4,8 @@
 
 CamSim is a headless Unreal Engine 5 application. The UE5 rendering pipeline is
 driven by CIGI 3.3 packets arriving over UDP. Each rendered frame is read back
-from the GPU, encoded to H.264, and emitted as MPEG-TS over UDP multicast with
-MISB ST 0601 KLV metadata.
+from the GPU, encoded to H.264, and emitted as one or more MPEG-TS UDP outputs
+with MISB ST 0601 KLV metadata.
 
 ## Thread Model
 
@@ -44,11 +44,10 @@ Four threads collaborate with explicit ownership boundaries:
                            │ AsyncTask(AnyBackgroundThreadNormalTask)
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  Task Thread (pool)                                             │
-│  • sws_scale: BGRA8 → YUV420P                                   │
-│  • libx264 encode → H.264 NAL units                             │
-│  • FKlvBuilder::BuildMisbST0601() → KLV packet                  │
-│  • avformat mux → MPEG-TS                                       │
-│  • UDP socket send → 239.1.1.1:5004                             │
+│  • Sensor post-process (EO/IR/NVG + quality profile)            │
+│  • Fan-out to one or more output views                          │
+│  • Per-view: sws_scale + libx264 + KLV + MPEG-TS UDP send       │
+│  • Optional JSONL ground-truth sidecar write                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -99,7 +98,7 @@ UCamSimSubsystem  (UGameInstanceSubsystem — created with GameInstance)
 │
 ├── FCamSimConfig          (value — loaded once in Initialize)
 ├── FCigiReceiver*         (raw ptr — started in Initialize, stopped in Deinitialize)
-├── FVideoEncoder*         (raw ptr — opened in Initialize, closed in Deinitialize)
+├── FMultiViewFrameSink*   (raw ptr — opened in Initialize, closed in Deinitialize)
 ├── FCamSimEntityManager*  (raw ptr — created in Initialize, deleted in Deinitialize)
 │   └── TMap<uint16, ACamSimEntity*>  (actors owned by UWorld)
 ├── FCigiSender*           (raw ptr — opened in Initialize; FlushFrame() called via Tick())
@@ -137,7 +136,8 @@ receives `Tick()` calls without being an `AActor`.
 | `Entity/CamSimEntity.h/.cpp` | Per-entity actor, DR, art parts, lights |
 | `Entity/EntityTypeTable.h/.cpp` | Type ID → asset path lookup |
 | `Environment/CamSimEnvironment.h/.cpp` | Sky, fog, weather from CIGI |
-| `Encoder/VideoEncoder.h/.cpp` | FFmpeg H.264 + MPEG-TS |
+| `Encoder/MultiViewFrameSink.h/.cpp` | Multi-view fan-out and optional ground-truth sidecar |
+| `Encoder/VideoEncoder.h/.cpp` | Per-view FFmpeg H.264 + MPEG-TS + KLV |
 | `Metadata/KlvBuilder.h/.cpp` | MISB ST 0601 KLV |
 | `Config/CamSimConfig.h/.cpp` | JSON + env var config |
 | `Subsystem/CamSimSubsystem.h/.cpp` | Lifetime owner for all subsystems |

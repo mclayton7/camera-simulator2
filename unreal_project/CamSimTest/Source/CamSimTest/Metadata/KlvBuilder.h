@@ -33,6 +33,10 @@ struct FCamSimTelemetry
 	double SlantRangeM    = 0.0;  // metres — Tag 23 (0 = sensor at/above horizon)
 	double FrameCenterLat = 0.0;  // WGS-84 decimal degrees — Tag 24
 	double FrameCenterLon = 0.0;  // WGS-84 decimal degrees — Tag 25
+
+	// Active sensor state snapshot (for optional sidecar ground-truth output).
+	uint8 SensorMode      = 0;    // 0=EO, 1=IR, 2=NVG
+	uint8 SensorPolarity  = 0;    // 0=white-hot, 1=black-hot (IR)
 };
 
 /**

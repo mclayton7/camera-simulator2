@@ -53,6 +53,46 @@ is generated and is listed in `.gitignore`.
   "gimbal_yaw_max":      180.0,
   "sensor_fov_presets":  [60.0, 30.0, 10.0, 3.0],
 
+  "sensor_quality": {
+    "preset": "medium",
+    "noise_scale": 1.0,
+    "vignetting_scale": 1.0,
+    "scan_line_scale": 1.0,
+    "atmosphere_scale": 1.0,
+    "blur_radius": 0,
+    "contrast": 1.0,
+    "brightness_bias": 0.0
+  },
+
+  "output_views": [
+    {
+      "view_id": 0,
+      "enabled": true,
+      "multicast_addr": "239.1.1.1",
+      "multicast_port": 5004,
+      "video_bitrate": 4000000,
+      "h264_preset": "ultrafast",
+      "h264_tune": "zerolatency",
+      "hfov_deg": 0.0
+    },
+    {
+      "view_id": 1,
+      "enabled": false,
+      "multicast_addr": "239.1.1.2",
+      "multicast_port": 5005,
+      "video_bitrate": 2500000,
+      "h264_preset": "ultrafast",
+      "h264_tune": "zerolatency",
+      "hfov_deg": 20.0
+    }
+  ],
+
+  "ground_truth": {
+    "enabled": false,
+    "output_path": "camsim_groundtruth.jsonl",
+    "interval_frames": 1
+  },
+
   "entity_types": {
     "1001": {
       "mesh":           "/Game/Models/F16/F16.F16",
@@ -141,6 +181,62 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 | `gimbal_yaw_max` | float | `180.0` | Right yaw limit in degrees relative to platform heading. |
 | `sensor_fov_presets` | float[] | `[60.0, 30.0, 10.0, 3.0]` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0–1.0) selects the preset by index. |
 
+### Sensor Quality (Phase D1)
+
+`sensor_quality` is a global profile applied on top of per-waveband `sensor_modes`
+parameters. Use it to quickly shift output quality/fidelity without editing each
+mode.
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `sensor_quality.preset` | string | `"medium"` | `CAMSIM_SENSOR_QUALITY_PRESET` | One of `low`, `medium`, `high`, `ultra`, `custom`. |
+| `sensor_quality.noise_scale` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_NOISE_SCALE` | Multiplier for NETD + fixed-pattern noise amplitudes. |
+| `sensor_quality.vignetting_scale` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_VIGNETTING_SCALE` | Multiplier for vignette strength. |
+| `sensor_quality.scan_line_scale` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_SCANLINE_SCALE` | Multiplier for scan-line effect strength. |
+| `sensor_quality.atmosphere_scale` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_ATMOSPHERE_SCALE` | Multiplier for atmospheric attenuation/extinction terms. |
+| `sensor_quality.blur_radius` | int | `0` | `CAMSIM_SENSOR_QUALITY_BLUR_RADIUS` | Additional post-effect box-blur radius in pixels. |
+| `sensor_quality.contrast` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_CONTRAST` | Global contrast multiplier. |
+| `sensor_quality.brightness_bias` | float | `0.0` | `CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS` | Global brightness offset in normalized range `[-1, 1]`. |
+
+Per-waveband `sensor_modes` now also supports:
+
+- `atmospheric_visibility_m`
+- `atmosphere_strength`
+- `color_temperature_k`
+- `contrast`
+- `brightness_bias`
+- `blur_radius`
+
+### Multi-stream Output Views (Phase D2)
+
+`output_views` optionally fans out the same captured frame to multiple MPEG-TS
+outputs. Each view can use an independent route and output HFOV metadata.
+When `hfov_deg` is narrower than the live HFOV, CamSim applies a center crop
+digital zoom before encoding that view.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `output_views` | array | `[]` | If empty/omitted, CamSim uses the root `multicast_*` and encoder fields as a single output. |
+| `output_views[].view_id` | int | array index | Identifier used in logs and ground-truth sidecar. |
+| `output_views[].enabled` | bool | `true` | Enables/disables this view at startup. |
+| `output_views[].multicast_addr` | string | root `multicast_addr` | Destination multicast/unicast IP for this view. |
+| `output_views[].multicast_port` | int | root `multicast_port` | Destination UDP port for this view. |
+| `output_views[].video_bitrate` | int | root `video_bitrate` | H.264 bitrate for this view. |
+| `output_views[].h264_preset` | string | root `h264_preset` | x264 preset for this view. |
+| `output_views[].h264_tune` | string | root `h264_tune` | x264 tune for this view. |
+| `output_views[].hfov_deg` | float | `0.0` | `0` = use live HFOV; otherwise narrow HFOV (digital zoom) for this stream. |
+
+### Ground-truth Sidecar (Phase D3)
+
+Ground-truth sidecar writes per-frame JSONL records (pose, gimbal, LOS, sensor
+state, and active view routes) for analytics and dataset generation workflows.
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `ground_truth.enabled` | bool | `false` | `CAMSIM_GROUND_TRUTH_ENABLED` | Enable JSONL sidecar writes. |
+| `ground_truth.output_path` | string | `camsim_groundtruth.jsonl` | `CAMSIM_GROUND_TRUTH_PATH` | Output path (relative paths resolve from binary directory). |
+| `ground_truth.interval_frames` | int | `1` | `CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES` | Emit every N frames. |
+
 ### Entity Types
 
 The `entity_types` object maps CIGI Entity Type IDs (uint16, as JSON string keys)
@@ -186,6 +282,17 @@ CAMSIM_READBACK_READY_POLLS=2
 CAMSIM_READBACK_FORMAT=auto
 CAMSIM_ENCODER_WATCHDOG_POLICY=reconnect
 CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS=150
+CAMSIM_SENSOR_QUALITY_PRESET=medium
+CAMSIM_SENSOR_QUALITY_NOISE_SCALE=1.0
+CAMSIM_SENSOR_QUALITY_VIGNETTING_SCALE=1.0
+CAMSIM_SENSOR_QUALITY_SCANLINE_SCALE=1.0
+CAMSIM_SENSOR_QUALITY_ATMOSPHERE_SCALE=1.0
+CAMSIM_SENSOR_QUALITY_BLUR_RADIUS=0
+CAMSIM_SENSOR_QUALITY_CONTRAST=1.0
+CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS=0.0
+CAMSIM_GROUND_TRUTH_ENABLED=0
+CAMSIM_GROUND_TRUTH_PATH=camsim_groundtruth.jsonl
+CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES=1
 
 # Start position
 CAMSIM_START_LAT=38.8977
