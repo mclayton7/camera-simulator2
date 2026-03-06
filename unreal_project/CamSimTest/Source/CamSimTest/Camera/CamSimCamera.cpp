@@ -549,8 +549,27 @@ void ACamSimCamera::CaptureAndEncode()
 
 		FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
 		if (!Resource) return;
+
+		FRHITexture* SourceTexture = Resource->GetRenderTargetTexture();
+
+		// Explicit transition: ensure all render target writes from CaptureScene()
+		// are visible before the copy.  Metal handles this implicitly via resource
+		// tracking, but Vulkan requires an explicit pipeline barrier.  Without this,
+		// vkCmdCopyImageToBuffer may race with the fragment shader writes, producing
+		// tearing in the bottom half of the frame (the last rows rendered).
+		RHICmdList.Transition(FRHITransitionInfo(
+			SourceTexture,
+			ERHIAccess::RTV,       // prior: render target view (color attachment write)
+			ERHIAccess::CopySrc)); // next:  copy source (transfer read)
+
 		// Non-blocking: kicks off DMA; IsReady() polled in subsequent Tick(s)
-		Readback->EnqueueCopy(RHICmdList, Resource->GetRenderTargetTexture());
+		Readback->EnqueueCopy(RHICmdList, SourceTexture);
+
+		// Transition back to render target so the next CaptureScene can write to it
+		RHICmdList.Transition(FRHITransitionInfo(
+			SourceTexture,
+			ERHIAccess::CopySrc,
+			ERHIAccess::RTV));
 	});
 }
 
