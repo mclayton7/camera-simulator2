@@ -221,6 +221,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 	{
 		const uint64           WaitFrame     = PendingFrameIndex;
 		const FCamSimTelemetry WaitTelemetry = PendingTelemetry;
+		const uint64           WaitSessionId = ActiveReadbackSessionId;
 		const FCamSimConfig&   Cfg           = Subsystem->GetConfig();
 		const bool            bForceSwap     = Cfg.bSwapRBReadback;
 		const FCamSimConfig::EReadbackFormat DesiredFormat = Cfg.ReadbackFormat;
@@ -228,8 +229,11 @@ void ACamSimCamera::Tick(float DeltaTime)
 		FRHIGPUTextureReadback* Readback      = GPUReadback;
 
 		ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
-			[this, WaitFrame, WaitTelemetry, bForceSwap, DesiredFormat, RT, Readback](FRHICommandListImmediate& RHICmdList)
+			[this, WaitFrame, WaitTelemetry, WaitSessionId, bForceSwap, DesiredFormat, RT, Readback](FRHICommandListImmediate& RHICmdList)
 		{
+			// Ignore stale poll commands from prior capture sessions.
+			if (WaitSessionId != ReadbackSessionIdRT) return;
+
 			// Guard against multiple poll commands queued for the same readback:
 			// IsReady() returns true persistently once the GPU fence fires, so if several
 			// CamSimPollReadback commands accumulated while the GPU was busy, all of them
@@ -237,7 +241,22 @@ void ACamSimCamera::Tick(float DeltaTime)
 			// producing non-monotonic DTS in the muxer.  bReadbackClaimed ensures only the
 			// first one proceeds; it is reset by CamSimEnqueueReadback each new capture.
 			if (bReadbackClaimed) return;
-			if (!Readback || !Readback->IsReady()) return;  // GPU still transferring — try next tick
+
+			if (!Readback) return;
+			if (!Readback->IsReady())
+			{
+				bReadbackReadySeen = false;
+				return;  // GPU still transferring — try next tick
+			}
+
+			// Some Vulkan drivers occasionally report "ready" slightly early; require
+			// two consecutive ready polls before locking to avoid partial-row artifacts.
+			if (!bReadbackReadySeen)
+			{
+				bReadbackReadySeen = true;
+				return;
+			}
+
 			bReadbackClaimed = true;
 
 			int32 RowPitch = 0;
@@ -530,6 +549,8 @@ void ACamSimCamera::CaptureAndEncode()
 
 	PendingFrameIndex = FrameIndex++;
 	PendingTelemetry  = CurrentTelemetry;
+	ActiveReadbackSessionId = ++ReadbackSessionCounter;
+	const uint64 SessionId = ActiveReadbackSessionId;
 
 	// Flag both readback and encoder as busy; bEncoderBusy is cleared only
 	// when the async encode task finishes (not when the readback completes).
@@ -541,11 +562,14 @@ void ACamSimCamera::CaptureAndEncode()
 	FRHIGPUTextureReadback*  Readback = GPUReadback;
 
 	ENQUEUE_RENDER_COMMAND(CamSimEnqueueReadback)(
-		[this, RT, Readback](FRHICommandListImmediate& RHICmdList)
+		[this, RT, Readback, SessionId](FRHICommandListImmediate& RHICmdList)
 	{
+		ReadbackSessionIdRT = SessionId;
+
 		// Reset the claim flag so the first CamSimPollReadback that fires can claim it.
 		// Subsequent poll commands from the same session will see bReadbackClaimed=true and bail.
-		bReadbackClaimed = false;
+		bReadbackClaimed   = false;
+		bReadbackReadySeen = false;
 
 		FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
 		if (!Resource) return;

@@ -102,8 +102,24 @@ private:
 	 */
 	bool bReadbackClaimed = false;
 
+	/**
+	 * RENDER THREAD ONLY — requires IsReady() to be true in two consecutive poll
+	 * commands before Lock(). This mitigates occasional early-ready signaling on
+	 * some Vulkan drivers that can present as bottom-half tearing.
+	 */
+	bool bReadbackReadySeen = false;
+
+	/** RENDER THREAD ONLY — current readback session ID for stale poll suppression. */
+	uint64 ReadbackSessionIdRT = 0;
+
 	/** Frame index in-flight through the GPU readback pipeline. */
 	uint64 PendingFrameIndex = 0;
+
+	/** Monotonic session counter for each EnqueueCopy issued on the game thread. */
+	uint64 ReadbackSessionCounter = 0;
+
+	/** Current readback session ID captured by poll commands (game thread only). */
+	uint64 ActiveReadbackSessionId = 0;
 
 	/** Telemetry snapshot captured at the same time as the in-flight frame. */
 	FCamSimTelemetry PendingTelemetry;
