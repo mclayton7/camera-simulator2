@@ -5,8 +5,8 @@
 #include "CoreMinimal.h"
 
 class UCamSimSubsystem;
-class ACesiumGeoreference;
 class FCigiSender;
+class FCamSimGeospatialProvider;
 
 /**
  * FCigiQueryHandler
@@ -26,15 +26,17 @@ public:
 	void Tick(float DeltaTime);
 
 private:
-	void ProcessHatHotRequests(UWorld* World, ACesiumGeoreference* GeoRef);
-	void ProcessLosSegRequests(UWorld* World, ACesiumGeoreference* GeoRef);
-	void ProcessLosVectRequests(UWorld* World, ACesiumGeoreference* GeoRef);
+	void ProcessHatHotRequests(UWorld* World, const FCamSimGeospatialProvider& GeoProvider);
+	void ProcessLosSegRequests(UWorld* World, const FCamSimGeospatialProvider& GeoProvider);
+	void ProcessLosVectRequests(UWorld* World, const FCamSimGeospatialProvider& GeoProvider);
 
-	/** Geodetic (Lon, Lat, AltM) → UE world position (cm). */
-	FVector GeoToWorld(ACesiumGeoreference* GeoRef, double Lat, double Lon, double AltM) const;
+	/** Geodetic (Lat, Lon, AltM) → UE world position (cm). */
+	bool GeoToWorld(UWorld* World, const FCamSimGeospatialProvider& GeoProvider,
+		double Lat, double Lon, double AltM, FVector& OutWorld) const;
 
-	/** Convert UE hit world position back to geodetic, return altitude in metres. */
-	double WorldToAlt(ACesiumGeoreference* GeoRef, const FVector& WorldPos) const;
+	/** Convert UE world position back to geodetic. */
+	bool WorldToGeo(UWorld* World, const FCamSimGeospatialProvider& GeoProvider,
+		const FVector& WorldPos, double& OutLat, double& OutLon, double& OutAltM) const;
 
 	/** If HitActor is an ACamSimEntity, return its EntityId; otherwise 0. */
 	uint16 ResolveEntityId(const AActor* HitActor) const;

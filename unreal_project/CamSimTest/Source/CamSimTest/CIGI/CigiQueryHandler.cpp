@@ -6,10 +6,10 @@
 #include "CIGI/CigiReceiver.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "Entity/CamSimEntity.h"
+#include "Geospatial/CamSimGeospatialProvider.h"
 #include "CamSimTest.h"
 
 #include "Engine/World.h"
-#include "CesiumGeoreference.h"
 
 // 1 metre in UE units (UE default: 1 unit = 1 cm → 100 units/metre)
 static constexpr double UE_CM_PER_METRE = 100.0;
@@ -40,20 +40,19 @@ void FCigiQueryHandler::Tick(float DeltaTime)
 	UWorld* World = Subsystem->GetGameInstance()->GetWorld();
 	if (!World) return;
 
-	ACesiumGeoreference* GeoRef =
-		ACesiumGeoreference::GetDefaultGeoreference(World);
-	if (!GeoRef) return;
+	const FCamSimGeospatialProvider* GeoProvider = Subsystem->GetGeospatialProvider();
+	if (!GeoProvider || !GeoProvider->IsAvailable(World)) return;
 
-	ProcessHatHotRequests(World, GeoRef);
-	ProcessLosSegRequests(World, GeoRef);
-	ProcessLosVectRequests(World, GeoRef);
+	ProcessHatHotRequests(World, *GeoProvider);
+	ProcessLosSegRequests(World, *GeoProvider);
+	ProcessLosVectRequests(World, *GeoProvider);
 }
 
 // -------------------------------------------------------------------------
 // HAT/HOT (opcode 24)
 // -------------------------------------------------------------------------
 
-void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, ACesiumGeoreference* GeoRef)
+void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospatialProvider& GeoProvider)
 {
 	FCigiReceiver* Receiver = Subsystem->GetCigiReceiver();
 	if (!Receiver) return;
@@ -82,8 +81,17 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, ACesiumGeoreference
 		// Trace from high above the query point straight down to below sea level.
 		// The query altitude is the reference point; we start the trace above any
 		// possible terrain regardless of query alt.
-		const FVector TopPt = GeoToWorld(GeoRef, Req.Lat, Req.Lon, HATHOT_TRACE_TOP_M);
-		const FVector BotPt = GeoToWorld(GeoRef, Req.Lat, Req.Lon, HATHOT_TRACE_BOTTOM_M);
+		FVector TopPt = FVector::ZeroVector;
+		FVector BotPt = FVector::ZeroVector;
+		if (!GeoToWorld(World, GeoProvider, Req.Lat, Req.Lon, HATHOT_TRACE_TOP_M, TopPt) ||
+		    !GeoToWorld(World, GeoProvider, Req.Lat, Req.Lon, HATHOT_TRACE_BOTTOM_M, BotPt))
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FCigiQueryHandler: failed geo->world for HAT/HOT id=%u lat=%.6f lon=%.6f"),
+				static_cast<uint32>(Req.HatHotId), Req.Lat, Req.Lon);
+			Sender->EnqueueHatHotResponse(Req.HatHotId, false, 0, 0.0, 0.0);
+			continue;
+		}
 
 		FHitResult HitResult;
 		FCollisionQueryParams QueryParams;
@@ -99,7 +107,15 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, ACesiumGeoreference
 		if (bHit)
 		{
 			// HOT = terrain altitude above WGS-84 ellipsoid at the hit point
-			HOT    = WorldToAlt(GeoRef, HitResult.Location);
+			double HitLat = 0.0;
+			double HitLon = 0.0;
+			if (!WorldToGeo(World, GeoProvider, HitResult.Location, HitLat, HitLon, HOT))
+			{
+				UE_LOG(LogCamSim, Warning, TEXT("FCigiQueryHandler: failed world->geo transform for HAT/HOT id=%u"),
+					static_cast<uint32>(Req.HatHotId));
+				Sender->EnqueueHatHotResponse(Req.HatHotId, false, 0, 0.0, 0.0);
+				continue;
+			}
 			HAT    = Req.Alt - HOT;  // height above terrain
 			bValid = true;
 		}
@@ -112,7 +128,7 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, ACesiumGeoreference
 // LOS Segment (opcode 25)
 // -------------------------------------------------------------------------
 
-void FCigiQueryHandler::ProcessLosSegRequests(UWorld* World, ACesiumGeoreference* GeoRef)
+void FCigiQueryHandler::ProcessLosSegRequests(UWorld* World, const FCamSimGeospatialProvider& GeoProvider)
 {
 	FCigiReceiver* Receiver = Subsystem->GetCigiReceiver();
 	if (!Receiver) return;
@@ -120,8 +136,17 @@ void FCigiQueryHandler::ProcessLosSegRequests(UWorld* World, ACesiumGeoreference
 	FCigiLosSegRequest Req;
 	while (Receiver->DequeueLosSegRequest(Req))
 	{
-		const FVector SrcWorld = GeoToWorld(GeoRef, Req.SrcLat, Req.SrcLon, Req.SrcAlt);
-		const FVector DstWorld = GeoToWorld(GeoRef, Req.DstLat, Req.DstLon, Req.DstAlt);
+		FVector SrcWorld = FVector::ZeroVector;
+		FVector DstWorld = FVector::ZeroVector;
+		if (!GeoToWorld(World, GeoProvider, Req.SrcLat, Req.SrcLon, Req.SrcAlt, SrcWorld) ||
+		    !GeoToWorld(World, GeoProvider, Req.DstLat, Req.DstLon, Req.DstAlt, DstWorld))
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FCigiQueryHandler: failed geo->world for LOS seg id=%u"),
+				static_cast<uint32>(Req.LosId));
+			Sender->EnqueueLosResponse(Req.LosId, false, false, 0.0, 0.0, 0.0, 0.0, 0, false);
+			continue;
+		}
 
 		FHitResult HitResult;
 		FCollisionQueryParams QueryParams;
@@ -146,14 +171,23 @@ void FCigiQueryHandler::ProcessLosSegRequests(UWorld* World, ACesiumGeoreference
 			        / UE_CM_PER_METRE;
 
 			// Convert hit back to geodetic
-			const FVector LLH = GeoRef->TransformUnrealPositionToLongitudeLatitudeHeight(
-				HitResult.Location);
-			HitLon = LLH.X;
-			HitLat = LLH.Y;
-			HitAlt = LLH.Z;
-
-			EntityId     = ResolveEntityId(HitResult.GetActor());
-			bEntityValid = (EntityId != 0);
+			const bool bGeoOk = WorldToGeo(World, GeoProvider, HitResult.Location, HitLat, HitLon, HitAlt);
+			if (!bGeoOk)
+			{
+				UE_LOG(LogCamSim, Warning, TEXT("FCigiQueryHandler: failed world->geo transform for LOS seg id=%u"),
+					static_cast<uint32>(Req.LosId));
+				bValid = false;
+				bVisible = false;
+				Range = 0.0;
+				HitLat = 0.0;
+				HitLon = 0.0;
+				HitAlt = 0.0;
+			}
+			else
+			{
+				EntityId     = ResolveEntityId(HitResult.GetActor());
+				bEntityValid = (EntityId != 0);
+			}
 		}
 
 		Sender->EnqueueLosResponse(Req.LosId, bValid, bVisible,
@@ -165,7 +199,7 @@ void FCigiQueryHandler::ProcessLosSegRequests(UWorld* World, ACesiumGeoreference
 // LOS Vector (opcode 26)
 // -------------------------------------------------------------------------
 
-void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, ACesiumGeoreference* GeoRef)
+void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, const FCamSimGeospatialProvider& GeoProvider)
 {
 	FCigiReceiver* Receiver = Subsystem->GetCigiReceiver();
 	if (!Receiver) return;
@@ -196,8 +230,17 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, ACesiumGeoreferenc
 		const double EndLon = Req.SrcLon + DeltaLon;
 		const double EndAlt = Req.SrcAlt + UpM;
 
-		const FVector SrcWorld = GeoToWorld(GeoRef, Req.SrcLat, Req.SrcLon, Req.SrcAlt);
-		const FVector EndWorld = GeoToWorld(GeoRef, EndLat, EndLon, EndAlt);
+		FVector SrcWorld = FVector::ZeroVector;
+		FVector EndWorld = FVector::ZeroVector;
+		if (!GeoToWorld(World, GeoProvider, Req.SrcLat, Req.SrcLon, Req.SrcAlt, SrcWorld) ||
+		    !GeoToWorld(World, GeoProvider, EndLat, EndLon, EndAlt, EndWorld))
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FCigiQueryHandler: failed geo->world for LOS vect id=%u"),
+				static_cast<uint32>(Req.LosId));
+			Sender->EnqueueLosResponse(Req.LosId, false, false, 0.0, 0.0, 0.0, 0.0, 0, false);
+			continue;
+		}
 
 		// Skip minimum-range portion by starting trace at min-range offset if needed
 		FVector TraceStart = SrcWorld;
@@ -229,14 +272,23 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, ACesiumGeoreferenc
 			Range = static_cast<double>(FVector::Dist(SrcWorld, HitResult.Location))
 			        / UE_CM_PER_METRE;
 
-			const FVector LLH = GeoRef->TransformUnrealPositionToLongitudeLatitudeHeight(
-				HitResult.Location);
-			HitLon = LLH.X;
-			HitLat = LLH.Y;
-			HitAlt = LLH.Z;
-
-			EntityId     = ResolveEntityId(HitResult.GetActor());
-			bEntityValid = (EntityId != 0);
+			const bool bGeoOk = WorldToGeo(World, GeoProvider, HitResult.Location, HitLat, HitLon, HitAlt);
+			if (!bGeoOk)
+			{
+				UE_LOG(LogCamSim, Warning, TEXT("FCigiQueryHandler: failed world->geo transform for LOS vect id=%u"),
+					static_cast<uint32>(Req.LosId));
+				bValid = false;
+				bVisible = false;
+				Range = 0.0;
+				HitLat = 0.0;
+				HitLon = 0.0;
+				HitAlt = 0.0;
+			}
+			else
+			{
+				EntityId     = ResolveEntityId(HitResult.GetActor());
+				bEntityValid = (EntityId != 0);
+			}
 		}
 
 		Sender->EnqueueLosResponse(Req.LosId, bValid, bVisible,
@@ -248,20 +300,24 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, ACesiumGeoreferenc
 // Helpers
 // -------------------------------------------------------------------------
 
-FVector FCigiQueryHandler::GeoToWorld(ACesiumGeoreference* GeoRef,
-                                      double Lat, double Lon, double AltM) const
+bool FCigiQueryHandler::GeoToWorld(
+	UWorld* World, const FCamSimGeospatialProvider& GeoProvider,
+	double Lat, double Lon, double AltM, FVector& OutWorld) const
 {
-	// Cesium expects (Longitude, Latitude, Height) in that order
-	return GeoRef->TransformLongitudeLatitudeHeightPositionToUnreal(
-		FVector(Lon, Lat, AltM));
+	if (!GeoProvider.GeoToWorld(World, Lat, Lon, AltM, OutWorld))
+	{
+		UE_LOG(LogCamSim, Warning, TEXT("FCigiQueryHandler: geospatial GeoToWorld failed (lat=%.6f lon=%.6f alt=%.2f)"),
+			Lat, Lon, AltM);
+		return false;
+	}
+	return true;
 }
 
-double FCigiQueryHandler::WorldToAlt(ACesiumGeoreference* GeoRef,
-                                     const FVector& WorldPos) const
+bool FCigiQueryHandler::WorldToGeo(
+	UWorld* World, const FCamSimGeospatialProvider& GeoProvider,
+	const FVector& WorldPos, double& OutLat, double& OutLon, double& OutAltM) const
 {
-	// TransformUnrealPositionToLongitudeLatitudeHeight returns (Lon, Lat, AltM)
-	const FVector LLH = GeoRef->TransformUnrealPositionToLongitudeLatitudeHeight(WorldPos);
-	return LLH.Z;  // altitude in metres
+	return GeoProvider.WorldToGeo(World, WorldPos, OutLat, OutLon, OutAltM);
 }
 
 uint16 FCigiQueryHandler::ResolveEntityId(const AActor* HitActor) const

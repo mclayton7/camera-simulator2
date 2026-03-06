@@ -9,6 +9,7 @@
 #include "CIGI/CigiReceiver.h"
 #include "Encoder/VideoEncoder.h"
 #include "Sensor/SensorPostProcess.h"  // FSensorPostProcess concrete type
+#include "Geospatial/CamSimGeospatialProvider.h"
 
 #include "Encoder/IFrameSink.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -26,7 +27,6 @@
 #include "CesiumGlobeAnchorComponent.h"
 #include "CesiumCameraManager.h"
 #include "CesiumCamera.h"
-#include "CesiumGeoreference.h"
 #include "Cesium3DTileset.h"
 #include "EngineUtils.h"
 
@@ -489,14 +489,18 @@ void ACamSimCamera::ComputeGeometricLOS()
 			// UE units are centimetres — convert to metres
 			CurrentTelemetry.SlantRangeM = static_cast<double>(Hit.Distance) / 100.0;
 
-			// Convert UE world-space hit point to geodetic via Cesium georeference
-			ACesiumGeoreference* GeoRef = ACesiumGeoreference::GetDefaultGeoreference(World);
-			if (GeoRef)
+			// Convert UE world-space hit point to geodetic via configured geospatial provider
+			const FCamSimGeospatialProvider* GeoProvider = Subsystem ? Subsystem->GetGeospatialProvider() : nullptr;
+			if (GeoProvider)
 			{
-				// Returns FVector(Longitude, Latitude, HeightM)
-				const FVector LLH = GeoRef->TransformUnrealPositionToLongitudeLatitudeHeight(Hit.Location);
-				CurrentTelemetry.FrameCenterLon = LLH.X;
-				CurrentTelemetry.FrameCenterLat = LLH.Y;
+				double HitLat = 0.0;
+				double HitLon = 0.0;
+				double HitAlt = 0.0;
+				if (GeoProvider->WorldToGeo(World, Hit.Location, HitLat, HitLon, HitAlt))
+				{
+					CurrentTelemetry.FrameCenterLon = HitLon;
+					CurrentTelemetry.FrameCenterLat = HitLat;
+				}
 			}
 			return;
 		}

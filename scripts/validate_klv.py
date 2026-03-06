@@ -356,7 +356,12 @@ def find_klv_pid_from_pat_pmt(ts_buffer: bytes) -> int | None:
 # UDP / file reader
 # ---------------------------------------------------------------------------
 
-def read_udp_chunks(addr: str, port: int, chunk_size: int = 65536) -> Iterator[bytes]:
+def read_udp_chunks(
+    addr: str,
+    port: int,
+    chunk_size: int = 65536,
+    max_wait_seconds: float | None = None,
+) -> Iterator[bytes]:
     """Receive UDP datagrams indefinitely."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -373,8 +378,13 @@ def read_udp_chunks(addr: str, port: int, chunk_size: int = 65536) -> Iterator[b
     sock.settimeout(5.0)
     print(f"  Listening on udp://@{addr}:{port} …")
 
+    start = time.monotonic()
     try:
         while True:
+            if max_wait_seconds is not None and (time.monotonic() - start) >= max_wait_seconds:
+                raise TimeoutError(
+                    f"No UDP stream data received within {max_wait_seconds:.1f}s on {addr}:{port}"
+                )
             try:
                 data, _ = sock.recvfrom(chunk_size)
                 yield data
@@ -407,6 +417,12 @@ def main():
     ap.add_argument("--port",    type=int, default=5004)
     ap.add_argument("--file",    default=None, help="Read from .ts file")
     ap.add_argument("--count",   type=int, default=5, help="KLV packets to decode")
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="Max seconds to wait for UDP stream data before failing (UDP mode only)",
+    )
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -421,98 +437,102 @@ def main():
     source = (
         read_file_chunks(args.file)
         if args.file
-        else read_udp_chunks(args.addr, args.port)
+        else read_udp_chunks(args.addr, args.port, max_wait_seconds=args.timeout)
     )
 
     print(f"    Looking for KLVA data PID …")
 
-    for chunk in source:
-        ts_buffer += chunk
+    try:
+        for chunk in source:
+            ts_buffer += chunk
 
-        # Try to identify the KLV PID once we have ~8 KB
-        if klv_pid is None and len(ts_buffer) >= 8192:
-            klv_pid = find_klv_pid_from_pat_pmt(ts_buffer)
-            if klv_pid is not None:
-                print(f"    Found KLV PID: 0x{klv_pid:04X} ({klv_pid})")
-            else:
-                # Fallback: scan all PIDs not 0x0000, 0x0001, 0x1FFF
-                # and try to parse each as KLV
-                print("    Could not identify KLV PID via PAT/PMT — scanning all PIDs")
-
-        # Process buffered TS packets
-        for pkt in iter_ts_packets(ts_buffer):
-            hdr = parse_ts_header(pkt)
-            pid = hdr["pid"]
-
-            # Skip known non-data PIDs
-            if pid in (0x0000, 0x0001, 0x1FFF, 0x0011):
-                continue
-            # Skip video PID 0 (usually) — focus on data streams
-            if pid == 0x0100 or pid == 256:
-                continue
-
-            if klv_pid is not None and pid != klv_pid:
-                continue
-
-            payload = extract_pes_payload(pkt)
-            if not payload:
-                continue
-
-            if hdr["pusi"]:
-                # New PES packet starts — check for KLV UL directly in payload
-                # (some muxers put KLV directly in the TS payload without a PES wrapper)
-                if ST0601_UL in payload:
-                    ul_offset = payload.index(ST0601_UL)
-                    klv_pes_buf[pid] = payload[ul_offset:]
+            # Try to identify the KLV PID once we have ~8 KB
+            if klv_pid is None and len(ts_buffer) >= 8192:
+                klv_pid = find_klv_pid_from_pat_pmt(ts_buffer)
+                if klv_pid is not None:
+                    print(f"    Found KLV PID: 0x{klv_pid:04X} ({klv_pid})")
                 else:
-                    klv_pes_buf[pid] = payload
-            else:
-                klv_pes_buf[pid] = klv_pes_buf.get(pid, b"") + payload
+                    # Fallback: scan all PIDs not 0x0000, 0x0001, 0x1FFF
+                    # and try to parse each as KLV
+                    print("    Could not identify KLV PID via PAT/PMT — scanning all PIDs")
 
-            # Check if we have a complete KLV packet
-            buf = klv_pes_buf.get(pid, b"")
-            if len(buf) < 16:
-                continue
+            # Process buffered TS packets
+            for pkt in iter_ts_packets(ts_buffer):
+                hdr = parse_ts_header(pkt)
+                pid = hdr["pid"]
 
-            # Look for the ST 0601 UL in buffer
-            if ST0601_UL not in buf:
-                # Not ST 0601 data — ignore this PID
-                continue
+                # Skip known non-data PIDs
+                if pid in (0x0000, 0x0001, 0x1FFF, 0x0011):
+                    continue
+                # Skip video PID 0 (usually) — focus on data streams
+                if pid == 0x0100 or pid == 256:
+                    continue
 
-            ul_pos = buf.index(ST0601_UL)
-            klv_start = ul_pos
+                if klv_pid is not None and pid != klv_pid:
+                    continue
 
-            if klv_start + 17 > len(buf):
-                continue
+                payload = extract_pes_payload(pkt)
+                if not payload:
+                    continue
 
-            # Decode BER length
-            try:
-                value_len, ber_bytes = decode_ber_length(buf, klv_start + 16)
-            except ValueError:
-                continue
+                if hdr["pusi"]:
+                    # New PES packet starts — check for KLV UL directly in payload
+                    # (some muxers put KLV directly in the TS payload without a PES wrapper)
+                    if ST0601_UL in payload:
+                        ul_offset = payload.index(ST0601_UL)
+                        klv_pes_buf[pid] = payload[ul_offset:]
+                    else:
+                        klv_pes_buf[pid] = payload
+                else:
+                    klv_pes_buf[pid] = klv_pes_buf.get(pid, b"") + payload
 
-            total_len = 16 + ber_bytes + value_len
-            if klv_start + total_len > len(buf):
-                continue  # not yet complete
+                # Check if we have a complete KLV packet
+                buf = klv_pes_buf.get(pid, b"")
+                if len(buf) < 16:
+                    continue
 
-            klv_packet = buf[klv_start: klv_start + total_len]
-            klv_pes_buf[pid] = buf[klv_start + total_len:]
+                # Look for the ST 0601 UL in buffer
+                if ST0601_UL not in buf:
+                    # Not ST 0601 data — ignore this PID
+                    continue
 
-            if klv_pid is None:
-                klv_pid = pid
-                print(f"    Auto-detected KLV PID: 0x{pid:04X} ({pid})")
+                ul_pos = buf.index(ST0601_UL)
+                klv_start = ul_pos
 
-            result = parse_klv_local_set(klv_packet, verbose=args.verbose)
-            klv_count += 1
-            print_klv_result(result, klv_count)
+                if klv_start + 17 > len(buf):
+                    continue
 
-            if klv_count >= args.count:
-                print(f"\n==> Decoded {klv_count} KLV packets — done.")
-                return
+                # Decode BER length
+                try:
+                    value_len, ber_bytes = decode_ber_length(buf, klv_start + 16)
+                except ValueError:
+                    continue
 
-        # Keep only the last partial TS packet in the buffer
-        remainder = len(ts_buffer) % TS_PACKET_SIZE
-        ts_buffer = ts_buffer[-remainder:] if remainder else b""
+                total_len = 16 + ber_bytes + value_len
+                if klv_start + total_len > len(buf):
+                    continue  # not yet complete
+
+                klv_packet = buf[klv_start: klv_start + total_len]
+                klv_pes_buf[pid] = buf[klv_start + total_len:]
+
+                if klv_pid is None:
+                    klv_pid = pid
+                    print(f"    Auto-detected KLV PID: 0x{pid:04X} ({pid})")
+
+                result = parse_klv_local_set(klv_packet, verbose=args.verbose)
+                klv_count += 1
+                print_klv_result(result, klv_count)
+
+                if klv_count >= args.count:
+                    print(f"\n==> Decoded {klv_count} KLV packets — done.")
+                    return
+
+            # Keep only the last partial TS packet in the buffer
+            remainder = len(ts_buffer) % TS_PACKET_SIZE
+            ts_buffer = ts_buffer[-remainder:] if remainder else b""
+    except TimeoutError as e:
+        print(f"\n[FAIL] {e}")
+        sys.exit(1)
 
     if klv_count == 0:
         print("\n[FAIL] No MISB ST 0601 KLV packets found.")

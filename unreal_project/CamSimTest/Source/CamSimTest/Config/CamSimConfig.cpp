@@ -213,6 +213,22 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 			}
 			Root->TryGetNumberField(TEXT("encoder_watchdog_interval_ticks"), Cfg.EncoderWatchdogIntervalTicks);
 			Root->TryGetNumberField(TEXT("hfov_deg"),         Cfg.HFovDeg);
+			Root->TryGetStringField(TEXT("terrain_provider"), Cfg.TerrainProvider);
+			Root->TryGetStringField(TEXT("imagery_provider"), Cfg.ImageryProvider);
+			{
+				const TSharedPtr<FJsonObject>* TerrainObj = nullptr;
+				if (Root->TryGetObjectField(TEXT("terrain"), TerrainObj) && TerrainObj)
+				{
+					(*TerrainObj)->TryGetStringField(TEXT("provider"), Cfg.TerrainProvider);
+				}
+			}
+			{
+				const TSharedPtr<FJsonObject>* ImageryObj = nullptr;
+				if (Root->TryGetObjectField(TEXT("imagery"), ImageryObj) && ImageryObj)
+				{
+					(*ImageryObj)->TryGetStringField(TEXT("provider"), Cfg.ImageryProvider);
+				}
+			}
 			Root->TryGetNumberField(TEXT("tile_preload_fov_scale"),     Cfg.TilePreloadFovScale);
 			Root->TryGetNumberField(TEXT("max_simultaneous_tile_loads"), Cfg.MaxSimultaneousTileLoads);
 			Root->TryGetNumberField(TEXT("start_latitude"),   Cfg.StartLatitude);
@@ -546,6 +562,11 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 
 void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 {
+	const FString MulticastAddrEnv = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_MULTICAST_ADDR"));
+	const FString MulticastPortEnv = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_MULTICAST_PORT"));
+	const bool bHasMulticastAddrEnv = !MulticastAddrEnv.IsEmpty();
+	const bool bHasMulticastPortEnv = !MulticastPortEnv.IsEmpty();
+
 	Cfg.CigiBindAddr     = GetEnv(TEXT("CAMSIM_CIGI_BIND_ADDR"),      Cfg.CigiBindAddr);
 	Cfg.CigiPort         = GetEnvInt(TEXT("CAMSIM_CIGI_PORT"),        Cfg.CigiPort);
 	Cfg.CigiResponseAddr = GetEnv(TEXT("CAMSIM_CIGI_RESPONSE_ADDR"),  Cfg.CigiResponseAddr);
@@ -575,6 +596,8 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		TEXT("CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS"), Cfg.EncoderWatchdogIntervalTicks));
 	Cfg.TilePreloadFovScale     = GetEnvFloat(TEXT("CAMSIM_TILE_FOV_SCALE"),       Cfg.TilePreloadFovScale);
 	Cfg.MaxSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_MAX_TILE_LOADS"),        Cfg.MaxSimultaneousTileLoads);
+	Cfg.TerrainProvider = GetEnv(TEXT("CAMSIM_TERRAIN_PROVIDER"), Cfg.TerrainProvider).TrimStartAndEnd().ToLower();
+	Cfg.ImageryProvider = GetEnv(TEXT("CAMSIM_IMAGERY_PROVIDER"), Cfg.ImageryProvider).TrimStartAndEnd().ToLower();
 	Cfg.StartLatitude  = GetEnvDouble(TEXT("CAMSIM_START_LAT"),   Cfg.StartLatitude);
 	Cfg.StartLongitude = GetEnvDouble(TEXT("CAMSIM_START_LON"),   Cfg.StartLongitude);
 	Cfg.StartAltitude  = GetEnvDouble(TEXT("CAMSIM_START_ALT"),   Cfg.StartAltitude);
@@ -609,14 +632,31 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.bScenarioEnabled = GetEnvInt(TEXT("CAMSIM_SCENARIO_ENABLED"), Cfg.bScenarioEnabled ? 1 : 0) != 0;
 	Cfg.ScenarioTimeScale = GetEnvFloat(TEXT("CAMSIM_SCENARIO_TIME_SCALE"), Cfg.ScenarioTimeScale);
 
+	if (Cfg.OutputViews.Num() > 0 && (bHasMulticastAddrEnv || bHasMulticastPortEnv))
+	{
+		for (FOutputViewConfig& ViewCfg : Cfg.OutputViews)
+		{
+			if (bHasMulticastAddrEnv)
+			{
+				ViewCfg.MulticastAddr = Cfg.MulticastAddr;
+			}
+			if (bHasMulticastPortEnv)
+			{
+				ViewCfg.MulticastPort = Cfg.MulticastPort;
+			}
+		}
+	}
+
 	UE_LOG(LogCamSim, Log,
 		TEXT("Config: CIGI=%s:%d Out=udp://%s:%d Bitrate=%d Preset=%s ReadbackReadyPolls=%d WatchdogInterval=%d ")
-		TEXT("SensorQuality=%s GroundTruth=%d EntityScale(draw=%.1fm tick=%.1fHz pose_cap=%.1fHz) Scenario=%d entities=%d time_scale=%.2f"),
+		TEXT("SensorQuality=%s TerrainProvider=%s ImageryProvider=%s GroundTruth=%d ")
+		TEXT("EntityScale(draw=%.1fm tick=%.1fHz pose_cap=%.1fHz) Scenario=%d entities=%d time_scale=%.2f"),
 		*Cfg.CigiBindAddr, Cfg.CigiPort,
 		*Cfg.MulticastAddr, Cfg.MulticastPort,
 		Cfg.VideoBitrate, *Cfg.H264Preset,
 		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks,
-		*Cfg.SensorQualityPreset, Cfg.GroundTruth.bEnabled ? 1 : 0,
+		*Cfg.SensorQualityPreset, *Cfg.TerrainProvider, *Cfg.ImageryProvider,
+		Cfg.GroundTruth.bEnabled ? 1 : 0,
 		Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz, Cfg.EntityScale.DefaultMaxUpdateRateHz,
 		Cfg.bScenarioEnabled ? 1 : 0, Cfg.ScenarioEntities.Num(), Cfg.ScenarioTimeScale);
 }

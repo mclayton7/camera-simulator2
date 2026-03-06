@@ -130,7 +130,8 @@ receives `Tick()` calls without being an `AActor`.
 |------|------|
 | `CIGI/CigiReceiver.h/.cpp` | UDP thread, CCL parsing, queue routing |
 | `CIGI/CigiSender.h/.cpp` | IG→Host UDP: SOF heartbeat + HAT/HOT + LOS responses |
-| `CIGI/CigiQueryHandler.h/.cpp` | Drain query queues, run UE line traces, stage responses |
+| `CIGI/CigiQueryHandler.h/.cpp` | Drain query queues, run UE line traces, stage responses via provider-neutral geospatial transforms |
+| `Geospatial/CamSimGeospatialProvider.h/.cpp` | Geospatial provider facade (Phase F foundation, Cesium adapter) |
 | `CIGI/CigiPacketTypes.h` | All CIGI struct definitions |
 | `Camera/CamSimCamera.h/.cpp` | Capture, GPU readback, encoder dispatch |
 | `Entity/CamSimEntityManager.h/.cpp` | Entity lifecycle management |

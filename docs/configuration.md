@@ -34,6 +34,8 @@ is generated and is listed in `.gitignore`.
   "encoder_watchdog_policy": "reconnect",
   "encoder_watchdog_interval_ticks": 150,
   "hfov_deg":        60.0,
+  "terrain_provider": "cesium",
+  "imagery_provider": "cesium",
 
   "tile_preload_fov_scale":      2.0,
   "max_simultaneous_tile_loads": 40,
@@ -184,6 +186,13 @@ is generated and is listed in `.gitignore`.
 | `encoder_watchdog_policy` | string | `"reconnect"` | `CAMSIM_ENCODER_WATCHDOG_POLICY` | Encoder watchdog action when no frames are written for `encoder_watchdog_interval_ticks`: `reconnect`, `log_only`, or `fail_fast`. |
 | `encoder_watchdog_interval_ticks` | int | `150` | `CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS` | Tick interval used by the encoder watchdog and runtime health checks. |
 
+### Geospatial Providers (Phase F1 foundation)
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `terrain_provider` | string | `"cesium"` | `CAMSIM_TERRAIN_PROVIDER` | Terrain/georeference provider selector. Currently supported: `cesium` (unsupported values fall back to `cesium` with warning). |
+| `imagery_provider` | string | `"cesium"` | `CAMSIM_IMAGERY_PROVIDER` | Imagery provider selector (currently informational; `cesium` supported). |
+
 ### Cesium Tile Streaming
 
 | Field | Type | Default | Env var | Description |
@@ -248,6 +257,11 @@ Per-waveband `sensor_modes` now also supports:
 outputs. Each view can use an independent route and output HFOV metadata.
 When `hfov_deg` is narrower than the live HFOV, CamSim applies a center crop
 digital zoom before encoding that view.
+
+When `CAMSIM_MULTICAST_ADDR` and/or `CAMSIM_MULTICAST_PORT` are set in the
+environment (for example via `./scripts/run.sh --local`), CamSim applies those
+route overrides to all configured `output_views` so local unicast testing
+does not silently keep per-view multicast routes from JSON.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -373,6 +387,8 @@ CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS=0.0
 CAMSIM_GROUND_TRUTH_ENABLED=0
 CAMSIM_GROUND_TRUTH_PATH=camsim_groundtruth.jsonl
 CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES=1
+CAMSIM_TERRAIN_PROVIDER=cesium
+CAMSIM_IMAGERY_PROVIDER=cesium
 CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M=0
 CAMSIM_ENTITY_TICK_RATE_HZ=0
 CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ=0

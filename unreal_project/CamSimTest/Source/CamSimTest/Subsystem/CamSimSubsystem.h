@@ -13,6 +13,7 @@ class IFrameSink;
 class FCamSimEntityManager;
 class FCigiSender;
 class FCigiQueryHandler;
+class FCamSimGeospatialProvider;
 
 /**
  * UCamSimSubsystem
@@ -43,6 +44,7 @@ public:
 	FCamSimEntityManager* GetEntityManager() const { return EntityManager; }
 	FCigiSender*          GetCigiSender()    const { return CigiSender; }
 	FCigiQueryHandler*    GetQueryHandler()  const { return QueryHandler; }
+	FCamSimGeospatialProvider* GetGeospatialProvider() const { return GeospatialProvider; }
 
 	const FCamSimConfig&    GetConfig()        const { return Config; }
 	const FEntityTypeTable& GetEntityTypeTable() const { return EntityTypeTable; }
@@ -60,6 +62,7 @@ private:
 	FCamSimEntityManager* EntityManager  = nullptr;
 	FCigiSender*          CigiSender     = nullptr;
 	FCigiQueryHandler*    QueryHandler   = nullptr;
+	FCamSimGeospatialProvider* GeospatialProvider = nullptr;
 
 	// IG frame counter — incremented each tick; sent in every SOF packet
 	uint32                FrameCntr      = 0;

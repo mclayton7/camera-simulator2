@@ -111,6 +111,18 @@ python3 scripts/send_cigi_test.py --host <container-ip>
 ffplay udp://239.1.1.1:5004
 ```
 
+### Cross-platform smoke matrix
+
+```bash
+# Run native Linux smoke checks (video + KLV + CIGI responses)
+./scripts/test_matrix.sh --profile linux-native --build
+
+# Run every supported profile on the current machine (unsupported profiles auto-skip)
+./scripts/test_matrix.sh --profile all
+```
+
+Requires `ffprobe`/`ffmpeg` for video integrity checks; use `--skip-video` when validating only CIGI/KLV in constrained environments.
+
 Multicast on macOS loopback requires a route:
 ```bash
 sudo route add -net 239.0.0.0/8 -interface lo0
@@ -119,6 +131,7 @@ sudo route add -net 239.0.0.0/8 -interface lo0
 ### Shader compilation (first run)
 
 UE5 will compile shaders the first time a new machine or build runs. To avoid repeated compiles, set up a shared Derived Data Cache (DDC) or run from a cooked build that has shaders precompiled and the DDC bundled/distributed.
+`scripts/run.sh` now defaults the local DDC/Zen cache to `./.cache/ue-ddc` (repo-local) instead of your home directory; override with `CAMSIM_DDC_DIR=/path`.
 
 ## Documentation
 
@@ -149,7 +162,9 @@ camsim/
 │   ├── stress_entity_rendering.py  Bulk entity spawn/update stress sender
 │   ├── capture_cigi_stream.py      Capture raw CIGI UDP datagrams to JSONL
 │   ├── replay_cigi_stream.py       Deterministic replay of captured CIGI JSONL
+│   ├── check_cigi_responses.py     Validates IG→Host CIGI response heartbeat traffic
 │   ├── test_video_output.sh        ffprobe + ffplay stream validation
+│   ├── test_matrix.sh              Cross-platform smoke matrix runner
 │   └── validate_klv.py             MPEG-TS KLV packet decoder
 └── unreal_project/CamSimTest/
     └── Source/CamSimTest/

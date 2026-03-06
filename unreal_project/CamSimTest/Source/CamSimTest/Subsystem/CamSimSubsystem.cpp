@@ -5,6 +5,7 @@
 #include "CIGI/CigiReceiver.h"
 #include "CIGI/CigiSender.h"
 #include "CIGI/CigiQueryHandler.h"
+#include "Geospatial/CamSimGeospatialProvider.h"
 #include "Encoder/MultiViewFrameSink.h" // FMultiViewFrameSink (concrete IFrameSink)
 #include "Encoder/IFrameSink.h"
 #include "CamSimTest.h"
@@ -98,6 +99,17 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	EntityManager = new FCamSimEntityManager(this, &EntityTypeTable);
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: entity manager created"));
 
+	GeospatialProvider = new FCamSimGeospatialProvider(Config);
+	if (GeospatialProvider)
+	{
+		const FCamSimGeospatialCapabilities& Caps = GeospatialProvider->GetCapabilities();
+		UE_LOG(LogCamSim, Log,
+			TEXT("UCamSimSubsystem: geospatial provider=%s caps(transforms=%d terrain_queries=%d)"),
+			*GeospatialProvider->GetProviderName(),
+			Caps.bSupportsGeoreferenceTransforms ? 1 : 0,
+			Caps.bSupportsTerrainLineTraceQueries ? 1 : 0);
+	}
+
 	// Start CIGI sender (IG → host: SOF heartbeat + HAT/HOT + LOS responses)
 	CigiSender = new FCigiSender();
 	if (!CigiSender->Open(Config))
@@ -118,6 +130,12 @@ void UCamSimSubsystem::Deinitialize()
 	{
 		delete QueryHandler;
 		QueryHandler = nullptr;
+	}
+
+	if (GeospatialProvider)
+	{
+		delete GeospatialProvider;
+		GeospatialProvider = nullptr;
 	}
 
 	if (CigiSender)

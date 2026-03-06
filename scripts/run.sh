@@ -19,6 +19,8 @@
 #   --cigi-port PORT    Override CIGI listen port (default: 8888)
 #   --log               Tail the UE log after launch, filtered to LogCamSim
 #   --help              Show this message
+# Environment:
+#   CAMSIM_DDC_DIR      Override local UE DDC/Zen cache root (default: <repo>/.cache/ue-ddc)
 #
 # Typical dev workflow:
 #   ./scripts/run.sh --build --local --log
@@ -82,6 +84,31 @@ while [[ $# -gt 0 ]]; do
         *)  EXTRA_ARGS+=("$1");                               shift   ;;
     esac
 done
+
+# -------------------------------------------------------------------------
+# Local DDC/Zen cache (default inside repo, not user home)
+# -------------------------------------------------------------------------
+DDC_LOCAL_ROOT="${CAMSIM_DDC_DIR:-${REPO_ROOT}/.cache/ue-ddc}"
+DDC_ZEN_ROOT="${DDC_LOCAL_ROOT}/Zen"
+mkdir -p "${DDC_LOCAL_ROOT}"
+mkdir -p "${DDC_ZEN_ROOT}"
+echo "==> DDC local cache: ${DDC_LOCAL_ROOT}"
+echo "==> Zen data cache:  ${DDC_ZEN_ROOT}"
+
+DDC_ENV=(
+    "UE-LocalDataCachePath=${DDC_LOCAL_ROOT}"
+    "UE_LocalDataCachePath=${DDC_LOCAL_ROOT}"
+    "UE-SharedDataCachePath=None"
+    "UE_SharedDataCachePath=None"
+    "UE-ZenDataPath=${DDC_ZEN_ROOT}"
+    "UE_ZenDataPath=${DDC_ZEN_ROOT}"
+    "UE-ZenSubprocessDataPath=${DDC_ZEN_ROOT}"
+    "UE_ZenSubprocessDataPath=${DDC_ZEN_ROOT}"
+)
+
+run_with_ddc() {
+    env "${DDC_ENV[@]}" "$@"
+}
 
 # -------------------------------------------------------------------------
 # Locate UE installation
@@ -161,7 +188,7 @@ if [ "${DO_BUILD}" -eq 1 ]; then
         echo "==> Packaging CamSimTest Shipping (compile + cook + stage + pak) …"
         echo "    Output: ${STAGE_DIR}/${UBT_PLATFORM}"
         echo "    (first run takes several minutes)"
-        "${UAT}" BuildCookRun \
+        run_with_ddc "${UAT}" BuildCookRun \
             -project="${UE_PROJECT}" \
             -platform="${UBT_PLATFORM}" \
             -clientconfig=Shipping \
@@ -174,7 +201,7 @@ if [ "${DO_BUILD}" -eq 1 ]; then
             exit 1
         fi
         echo "==> Building CamSimTestEditor (Development) …"
-        "${UBT}" \
+        run_with_ddc "${UBT}" \
             CamSimTestEditor \
             "${UBT_PLATFORM}" \
             Development \
@@ -234,10 +261,32 @@ fi
 # Linux: Xvfb virtual display and Vulkan ICD selection
 # -------------------------------------------------------------------------
 XVFB_PID=""
+pick_xvfb_display() {
+    local n lockfile lockpid
+    for n in $(seq 99 130); do
+        lockfile="/tmp/.X${n}-lock"
+        if [ -f "${lockfile}" ]; then
+            lockpid="$(cat "${lockfile}" 2>/dev/null || true)"
+            if [ -n "${lockpid}" ] && ! kill -0 "${lockpid}" 2>/dev/null; then
+                rm -f "${lockfile}"
+            fi
+        fi
+        if [ ! -f "${lockfile}" ]; then
+            echo ":${n}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 if [ "${PLATFORM}" = "linux" ]; then
     if [ "${HEADLESS}" -eq 1 ] && [ -z "${DISPLAY:-}" ]; then
         if command -v Xvfb >/dev/null 2>&1; then
-            XVFB_DISPLAY=":99"
+            XVFB_DISPLAY="$(pick_xvfb_display || true)"
+            if [ -z "${XVFB_DISPLAY}" ]; then
+                echo "[ERROR] Unable to find a free Xvfb display in :99-:130"
+                exit 1
+            fi
             Xvfb "${XVFB_DISPLAY}" -screen 0 1280x720x24 -nolisten tcp &
             XVFB_PID=$!
             export DISPLAY="${XVFB_DISPLAY}"
@@ -278,7 +327,14 @@ fi
 # -------------------------------------------------------------------------
 # Common UE arguments
 # -------------------------------------------------------------------------
-UE_COMMON_ARGS=( "/Game/Main?game=/Script/CamSimTest.CamSimGameMode" "-nosound" "-unattended" "-log" )
+UE_COMMON_ARGS=(
+    "/Game/Main?game=/Script/CamSimTest.CamSimGameMode"
+    "-nosound"
+    "-unattended"
+    "-log"
+    "-LocalDataCachePath=${DDC_LOCAL_ROOT}"
+    "-ZenDataPath=${DDC_ZEN_ROOT}"
+)
 [ "${PLATFORM}" = "linux" ] && UE_COMMON_ARGS+=("-vulkan")
 [ "${HEADLESS}" -eq 1 ]     && UE_COMMON_ARGS+=("-RenderOffScreen")
 
@@ -303,11 +359,11 @@ if [ "${MODE}" = "packaged" ]; then
         exit 1
     }
     echo "    Binary: ${BINARY}"
-    "${BINARY}" "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
+    env "${DDC_ENV[@]}" "${BINARY}" "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
 else
     LOG_FILE="${LOG_DIR}/CamSimTest.log"
     echo "    Editor: ${UE_BINARY}"
-    "${UE_BINARY}" "${UE_PROJECT}" -game "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
+    env "${DDC_ENV[@]}" "${UE_BINARY}" "${UE_PROJECT}" -game "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
 fi
 UE_PID=$!
 
@@ -337,6 +393,10 @@ if [ "${FOLLOW_LOG}" -eq 1 ]; then
         echo "[WARN] Log not found after 20s: ${LOG_FILE}"
     fi
 else
+    if [ -n "${XVFB_PID}" ]; then
+        nohup bash -c "while kill -0 ${UE_PID} 2>/dev/null; do sleep 1; done; kill ${XVFB_PID} 2>/dev/null || true" \
+            >/dev/null 2>&1 &
+    fi
     echo "    Tip: rerun with --log, or:"
     echo "    grep LogCamSim '${LOG_FILE}'"
 fi

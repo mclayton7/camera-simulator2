@@ -17,8 +17,8 @@
  *   CAMSIM_CIGI_BIND_ADDR         – Local address to bind the CIGI socket       (default 0.0.0.0)
  *   CAMSIM_CIGI_RESPONSE_ADDR     – Host IP for IG→host response packets        (default 127.0.0.1)
  *   CAMSIM_CIGI_RESPONSE_PORT     – Host's incoming CIGI port for responses     (default 8889)
- *   CAMSIM_MULTICAST_ADDR         – Multicast group for output stream            (default 239.1.1.1)
- *   CAMSIM_MULTICAST_PORT         – UDP port for output stream                   (default 5004)
+ *   CAMSIM_MULTICAST_ADDR         – Multicast group for output stream; also overrides output_views routes when set (default 239.1.1.1)
+ *   CAMSIM_MULTICAST_PORT         – UDP port for output stream; also overrides output_views routes when set (default 5004)
  *   CAMSIM_VIDEO_BITRATE          – Target H.264 bitrate in bps                  (default 4000000)
  *   CAMSIM_H264_PRESET            – libx264 preset string                        (default ultrafast)
  *   CAMSIM_SWAP_RB_READBACK       – Force red/blue swap on GPU readback          (default 0)
@@ -27,6 +27,8 @@
  *   CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS – watchdog check interval              (default 150)
  *   CAMSIM_START_HOUR             – Fallback time-of-day (0-24)                  (default 12.0)
  *   CAMSIM_SENSOR_QUALITY_PRESET  – low|medium|high|ultra|custom                 (default medium)
+ *   CAMSIM_TERRAIN_PROVIDER       – geospatial terrain provider                    (default cesium)
+ *   CAMSIM_IMAGERY_PROVIDER       – imagery provider                               (default cesium)
  *   CAMSIM_GROUND_TRUTH_ENABLED   – write JSONL sidecar telemetry                  (default 0)
  *   CAMSIM_GROUND_TRUTH_PATH      – sidecar output path                            (default empty)
  *   CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES – sidecar cadence                          (default 1)
@@ -78,6 +80,11 @@ struct FCamSimConfig
 
 	// Horizontal field of view in degrees (used for KLV metadata)
 	float   HFovDeg         = 60.0f;
+
+	// Geospatial provider selection (Phase F foundation).
+	// Currently supported: "cesium".
+	FString TerrainProvider = TEXT("cesium");
+	FString ImageryProvider = TEXT("cesium");
 
 	// Cesium tile streaming tuning
 	// TilePreloadFovScale inflates the FOV reported to Cesium so tiles beyond
