@@ -20,6 +20,7 @@ __pycache__/
 *.log
 *.dSYM/
 *.app/
+.venv/
 
 unreal_project/CamSimTest/Plugins/CesiumForUnreal/Binaries/
 unreal_project/CamSimTest/Plugins/CesiumForUnreal/Intermediate/
