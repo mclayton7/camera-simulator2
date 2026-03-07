@@ -116,6 +116,7 @@ void ACamSimCamera::BeginPlay()
 	{
 		GlobeAnchor->MoveToLongitudeLatitudeHeight(
 			FVector(Cfg.StartLongitude, Cfg.StartLatitude, Cfg.StartAltitude));
+		SetActorScale3D(FVector::OneVector);
 		SetActorRotation(FRotator(Cfg.StartPitch, Cfg.StartYaw, Cfg.StartRoll));
 
 		// Seed telemetry with start position
@@ -388,13 +389,10 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 
 			GlobeAnchor->MoveToLongitudeLatitudeHeight(
 				FVector(EntityState.Longitude, EntityState.Latitude, EntityState.Altitude));
+			// Cesium's ENU transform can emit a NaN world scale during origin rebasing;
+			// unconditionally reset to (1,1,1) to prevent the UE SetRelativeScale3D warning.
+			SetActorScale3D(FVector::OneVector);
 			SetActorRotation(FRotator(EntityState.Pitch, EntityState.Yaw, EntityState.Roll));
-
-			FVector ActorScale = GetActorScale3D();
-			if (ActorScale.ContainsNaN())
-			{
-				SetActorScale3D(FVector::OneVector);
-			}
 
 			CurrentTelemetry.Latitude  = EntityState.Latitude;
 			CurrentTelemetry.Longitude = EntityState.Longitude;

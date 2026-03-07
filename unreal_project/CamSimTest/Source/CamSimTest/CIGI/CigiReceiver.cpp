@@ -358,8 +358,8 @@ static void PreParseEnvPackets(const uint8* Buf, int32 Len, FCigiReceiver* Recei
 			//              [6]month [7]day [8-9]year [10-13]starInt [14-15]rsvd
 			const uint8* P = Buf + Pos;
 			FCigiCelestialState State;
-			State.Hour         = P[2];
-			State.Minute       = P[3];
+			State.Hour         = FMath::Clamp((int32)P[2], 0, 23);
+			State.Minute       = FMath::Clamp((int32)P[3], 0, 59);
 			const uint8 Flags  = P[4];
 			State.bEphemerisEn = (Flags & 0x01) != 0;
 			State.bSunEn       = (Flags & 0x02) != 0;

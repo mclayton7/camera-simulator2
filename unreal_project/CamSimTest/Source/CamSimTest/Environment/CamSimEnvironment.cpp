@@ -238,9 +238,21 @@ void ACamSimEnvironment::ApplyCelestial()
 	if (CesiumSunSkyActor)
 	{
 		CesiumSunSkyActor->SolarTime = static_cast<double>(HourDecimal);
-		CesiumSunSkyActor->Month     = FMath::Clamp(static_cast<int32>(CurrentCelestial.Month), 1, 12);
-		CesiumSunSkyActor->Day       = FMath::Clamp(static_cast<int32>(CurrentCelestial.Day),   1, 31);
-		CesiumSunSkyActor->Year      = static_cast<int32>(CurrentCelestial.Year);
+		if (CurrentCelestial.bDateVld)
+		{
+			CesiumSunSkyActor->Month = FMath::Clamp(static_cast<int32>(CurrentCelestial.Month), 1, 12);
+			CesiumSunSkyActor->Day   = FMath::Clamp(static_cast<int32>(CurrentCelestial.Day),   1, 31);
+			const int32 Year = static_cast<int32>(CurrentCelestial.Year);
+			if (Year >= 1800 && Year <= 2200)
+			{
+				CesiumSunSkyActor->Year = Year;
+			}
+			else
+			{
+				UE_LOG(LogCamSim, Warning,
+					TEXT("ACamSimEnvironment: celestial packet has invalid year %d — skipping date update"), Year);
+			}
+		}
 		CesiumSunSkyActor->UpdateSun();
 	}
 	else if (SunLight)
