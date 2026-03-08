@@ -496,8 +496,9 @@ void ACamSimCamera::ComputeGeometricLOS()
 				double HitAlt = 0.0;
 				if (GeoProvider->WorldToGeo(World, Hit.Location, HitLat, HitLon, HitAlt))
 				{
-					CurrentTelemetry.FrameCenterLon = HitLon;
-					CurrentTelemetry.FrameCenterLat = HitLat;
+					CurrentTelemetry.FrameCenterLon  = HitLon;
+					CurrentTelemetry.FrameCenterLat  = HitLat;
+					CurrentTelemetry.FrameCenterElev = HitAlt;
 				}
 			}
 			return;

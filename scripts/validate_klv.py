@@ -88,23 +88,89 @@ def decode_fov(v: bytes) -> str:
     return f"{deg:.3f}°"
 
 
-def decode_angle360(v: bytes) -> str:
-    raw = int.from_bytes(v, "big", signed=True)
-    deg = raw * 360.0 / 0x7FFF_FFFF
+def decode_azimuth360(v: bytes) -> str:
+    """Unsigned uint32, 0..360° (used for azimuth and roll per ST 0601.8)."""
+    raw = int.from_bytes(v, "big")
+    deg = raw * 360.0 / 0xFFFF_FFFF
     return f"{deg:.3f}°"
 
 
+def decode_elevation180(v: bytes) -> str:
+    """Signed int32, ±180° (sensor relative elevation per ST 0601.8)."""
+    raw = int.from_bytes(v, "big", signed=True)
+    deg = raw * 180.0 / 0x7FFF_FFFF
+    return f"{deg:.3f}°"
+
+
+def decode_heading(v: bytes) -> str:
+    """Unsigned uint16, 0..360° (platform heading/pitch/roll tags)."""
+    raw = int.from_bytes(v, "big")
+    deg = raw * 360.0 / 65535.0
+    return f"{deg:.3f}°"
+
+
+def decode_platform_pitch(v: bytes) -> str:
+    """Signed int16, ±20°."""
+    raw = int.from_bytes(v, "big", signed=True)
+    deg = raw * 20.0 / 32767.0
+    return f"{deg:.3f}°"
+
+
+def decode_platform_roll(v: bytes) -> str:
+    """Signed int16, ±50°."""
+    raw = int.from_bytes(v, "big", signed=True)
+    deg = raw * 50.0 / 32767.0
+    return f"{deg:.3f}°"
+
+
+def decode_slant_range(v: bytes) -> str:
+    """Unsigned uint32, 0..5 000 000 m."""
+    raw = int.from_bytes(v, "big")
+    metres = raw * 5_000_000.0 / 0xFFFF_FFFF
+    return f"{metres:.1f} m"
+
+
+def decode_flag_data_01(v: bytes) -> str:
+    """Generic Flag Data 01 bitmask: bit5=IR polarity, bit3=slant range valid."""
+    b = v[0]
+    parts = []
+    parts.append(f"IR polarity={'BlackHot' if (b >> 5) & 1 else 'WhiteHot'}")
+    parts.append(f"slant_range_valid={bool((b >> 3) & 1)}")
+    return f"0x{b:02X} ({', '.join(parts)})"
+
+
+def decode_string(v: bytes) -> str:
+    """ISO 646 / ASCII string."""
+    return v.decode("ascii", "replace")
+
+
+def decode_version(v: bytes) -> str:
+    """uint8 LS version number."""
+    return str(v[0])
+
+
 TAG_DECODERS = {
-    1:  ("Checksum",           lambda v: f"0x{int.from_bytes(v,'big'):04X}"),
-    2:  ("UNIX Timestamp",     decode_timestamp),
-    13: ("Sensor Latitude",    lambda v: decode_lat_lon(v,  90.0)),
-    14: ("Sensor Longitude",   lambda v: decode_lat_lon(v, 180.0)),
-    15: ("Sensor Altitude",    decode_altitude),
-    18: ("Sensor HFOV",        decode_fov),
-    19: ("Sensor VFOV",        decode_fov),
-    26: ("Sensor Azimuth",     decode_angle360),
-    27: ("Sensor Elevation",   decode_angle360),
-    28: ("Sensor Roll",        decode_angle360),
+    1:  ("Checksum",                  lambda v: f"0x{int.from_bytes(v,'big'):04X}"),
+    2:  ("UNIX Timestamp",            decode_timestamp),
+    5:  ("Platform Heading",          decode_heading),
+    6:  ("Platform Pitch",            decode_platform_pitch),
+    7:  ("Platform Roll",             decode_platform_roll),
+    11: ("Image Source Sensor",       decode_string),
+    12: ("Image Coordinate System",   decode_string),
+    13: ("Sensor Latitude",           lambda v: decode_lat_lon(v,  90.0)),
+    14: ("Sensor Longitude",          lambda v: decode_lat_lon(v, 180.0)),
+    15: ("Sensor Altitude",           decode_altitude),
+    16: ("Sensor HFOV",               decode_fov),
+    17: ("Sensor VFOV",               decode_fov),
+    18: ("Sensor Azimuth",            decode_azimuth360),
+    19: ("Sensor Elevation",          decode_elevation180),
+    20: ("Sensor Roll",               decode_azimuth360),
+    21: ("Slant Range",               decode_slant_range),
+    23: ("Frame Center Latitude",     lambda v: decode_lat_lon(v,  90.0)),
+    24: ("Frame Center Longitude",    lambda v: decode_lat_lon(v, 180.0)),
+    25: ("Frame Center Elevation",    decode_altitude),
+    47: ("Generic Flag Data 01",      decode_flag_data_01),
+    65: ("UAS LS Version",            decode_version),
 }
 
 

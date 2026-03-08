@@ -257,10 +257,11 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 	}
 
 	// Write Docker HEALTHCHECK file every 90 ticks (~3s at 30fps)
-	if (FrameCntr % 90 == 0)
+	if (FrameCntr > 0 && (FrameCntr - HealthFileTick) >= 90)
 	{
 		const FString HealthPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health"));
 		FFileHelper::SaveStringToFile(FString::FromInt(static_cast<int32>(FrameCntr)), *HealthPath);
+		HealthFileTick = FrameCntr;
 	}
 
 	++FrameCntr;

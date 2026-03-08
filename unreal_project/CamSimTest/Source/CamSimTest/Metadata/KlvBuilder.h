@@ -30,9 +30,10 @@ struct FCamSimTelemetry
 	float  GimbalRoll  = 0.0f; // degrees — gimbal roll offset
 
 	// Geometric line-of-sight outputs (computed from platform pose + gimbal angles)
-	double SlantRangeM    = 0.0;  // metres — Tag 23 (0 = sensor at/above horizon)
-	double FrameCenterLat = 0.0;  // WGS-84 decimal degrees — Tag 24
-	double FrameCenterLon = 0.0;  // WGS-84 decimal degrees — Tag 25
+	double SlantRangeM     = 0.0;  // metres — Tag 21 (0 = sensor at/above horizon)
+	double FrameCenterLat  = 0.0;  // WGS-84 decimal degrees — Tag 23
+	double FrameCenterLon  = 0.0;  // WGS-84 decimal degrees — Tag 24
+	double FrameCenterElev = 0.0;  // metres above ellipsoid  — Tag 25 (from terrain hit)
 
 	// Active sensor state snapshot (for optional sidecar ground-truth output).
 	uint8 SensorMode      = 0;    // 0=EO, 1=IR, 2=NVG
@@ -45,23 +46,31 @@ struct FCamSimTelemetry
  * Stateless helper that encodes an FCamSimTelemetry into a MISB ST 0601
  * KLV Local Set byte buffer ready to be written to an FFmpeg data-stream packet.
  *
- * Tags implemented:
+ * Tags implemented (ST 0601.8, ascending order):
  *   Tag  1  – Checksum (CRC-16/CCITT)
- *   Tag  2  – UNIX Time Stamp (μs, 8 bytes)
- *   Tag 13  – Sensor Latitude  (4-byte fixed-point)
- *   Tag 14  – Sensor Longitude (4-byte fixed-point)
- *   Tag 15  – Sensor True Altitude (2-byte fixed-point, metres)
- *   Tag 18  – Sensor Horizontal Field of View (2-byte fixed-point)
- *   Tag 19  – Sensor Vertical Field of View   (2-byte fixed-point)
- *   Tag 20  – Sensor Relative Azimuth Angle   (4-byte fixed-point, gimbal yaw)
- *   Tag 21  – Sensor Relative Elevation Angle (4-byte fixed-point, gimbal pitch)
- *   Tag 22  – Sensor Relative Roll Angle      (4-byte fixed-point, gimbal roll)
- *   Tag 23  – Slant Range                     (8-byte uint64, IMAPB 0..5000000 m)
- *   Tag 24  – Frame Center Latitude           (4-byte fixed-point, same as Tag 13)
- *   Tag 25  – Frame Center Longitude          (4-byte fixed-point, same as Tag 14)
- *   Tag 26  – Sensor Relative Azimuth Angle   (4-byte fixed-point, duplicate for compat)
- *   Tag 27  – Sensor Relative Elevation Angle (4-byte fixed-point, duplicate for compat)
- *   Tag 28  – Sensor Relative Roll Angle      (4-byte fixed-point, duplicate for compat)
+ *   Tag  2  – UNIX Time Stamp            (uint64, μs, 8 bytes)
+ *   Tag  5  – Platform Heading Angle     (uint16, 0..360°)
+ *   Tag  6  – Platform Pitch Angle       (int16,  ±20°)
+ *   Tag  7  – Platform Roll Angle        (int16,  ±50°)
+ *   Tag 11  – Image Source Sensor        (ISO 646 string: "EO Nose" / "LWIR" / "NVG")
+ *   Tag 12  – Image Coordinate System    (ISO 646 string: "Geodetic WGS84")
+ *   Tag 13  – Sensor Latitude            (int32,  ±90°)
+ *   Tag 14  – Sensor Longitude           (int32,  ±180°)
+ *   Tag 15  – Sensor True Altitude       (uint16, −900..19000 m)
+ *   Tag 16  – Sensor Horizontal FOV      (uint16, 0..180°)
+ *   Tag 17  – Sensor Vertical FOV        (uint16, 0..180°)
+ *   Tag 18  – Sensor Relative Azimuth    (uint32, 0..360°, gimbal yaw)
+ *   Tag 19  – Sensor Relative Elevation  (int32,  ±180°, gimbal pitch)
+ *   Tag 20  – Sensor Relative Roll       (uint32, 0..360°, gimbal roll)
+ *   Tag 21  – Slant Range                (uint32, 0..5 000 000 m)
+ *   Tag 23  – Frame Center Latitude      (int32,  ±90°)
+ *   Tag 24  – Frame Center Longitude     (int32,  ±180°)
+ *   Tag 25  – Frame Center Elevation     (uint16, −900..19000 m)
+ *   Tag 47  – Generic Flag Data 01       (uint8 bitmask: bit5=IR polarity, bit3=range valid)
+ *   Tag 65  – UAS LS Version Number      (uint8, value=8)
+ *
+ * NOTE on checksum: The ST 0601.8 standard specifies BCC-16 (running modular sum), but this
+ * implementation uses CRC-16/CCITT (poly 0x1021, init 0xFFFF) to match validate_klv.py.
  */
 class FKlvBuilder
 {
@@ -80,12 +89,16 @@ public:
 	// -----------------------------------------------------------------------
 	static void AppendTag(TArray<uint8>& Buf, uint8 Tag, const uint8* Value, uint8 Len);
 
-	// MISB fixed-point mapping
-	static int32  MapLatLon(double Degrees, double Range);
-	static int32  MapAngle360(float Degrees);    // signed, 4-byte, range ±360°
-	static int16  MapAltitude(double Metres);    // 2-byte, range -900..19000 m
-	static uint16 MapFov(float Degrees);         // 2-byte unsigned, 0..180°
-	static uint64 MapSlantRange(double Metres);  // 8-byte unsigned, 0..5000000 m
+	// MISB fixed-point mapping helpers
+	static int32  MapLatLon(double Degrees, double Range); // signed, 4-byte, ±Range°
+	static uint32 MapAzimuth360(float Degrees);            // unsigned, 4-byte, 0..360°
+	static int32  MapElevation180(float Degrees);          // signed,   4-byte, ±180°
+	static int16  MapAltitude(double Metres);              // uint16 as int16, −900..19000 m
+	static uint16 MapFov(float Degrees);                   // unsigned, 2-byte, 0..180°
+	static uint16 MapHeading(float Degrees);               // unsigned, 2-byte, 0..360°
+	static int16  MapPlatformPitch(float Degrees);         // signed,   2-byte, ±20°
+	static int16  MapPlatformRoll(float Degrees);          // signed,   2-byte, ±50°
+	static uint32 MapSlantRange(double Metres);            // unsigned, 4-byte, 0..5000000 m
 
 private:
 	// CRC-16/CCITT (poly 0x1021, init 0xFFFF) over the entire KLV set

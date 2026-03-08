@@ -20,7 +20,6 @@ static const uint8 kST0601_UL[16] = {
 // Each entry describes one TLV field.  The encoder lambda appends the
 // encoded bytes for that tag into the supplied Value buffer.
 // Tags are written in ascending tag-number order (ST 0601 requirement).
-// Tags 26/27/28 are intentional duplicates of 20/21/22 for legacy consumers.
 // -------------------------------------------------------------------------
 
 struct FKlvTagDescriptor
@@ -29,6 +28,7 @@ struct FKlvTagDescriptor
 	TFunction<void(TArray<uint8>&, const FCamSimTelemetry&)> Encode;
 };
 
+// Append a 4-byte signed lat/lon fixed-point tag
 static void AppendLatLon4(TArray<uint8>& V, uint8 Tag, double Degrees, double Range)
 {
 	int32 Mapped = FKlvBuilder::MapLatLon(Degrees, Range);
@@ -39,14 +39,11 @@ static void AppendLatLon4(TArray<uint8>& V, uint8 Tag, double Degrees, double Ra
 	FKlvBuilder::AppendTag(V, Tag, Tmp, 4);
 }
 
-static void AppendAngle360(TArray<uint8>& V, uint8 Tag, float Degrees)
+// Append a variable-length ISO 646 string tag
+static void AppendStringTag(TArray<uint8>& V, uint8 Tag, const char* Str)
 {
-	int32 Mapped = FKlvBuilder::MapAngle360(Degrees);
-	uint8 Tmp[4] = {
-		uint8((Mapped >> 24) & 0xFF), uint8((Mapped >> 16) & 0xFF),
-		uint8((Mapped >>  8) & 0xFF), uint8(Mapped & 0xFF)
-	};
-	FKlvBuilder::AppendTag(V, Tag, Tmp, 4);
+	const uint8 Len = static_cast<uint8>(FCStringAnsi::Strlen(Str));
+	FKlvBuilder::AppendTag(V, Tag, reinterpret_cast<const uint8*>(Str), Len);
 }
 
 static const TArray<FKlvTagDescriptor> KlvTagTable = {
@@ -57,6 +54,45 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		uint64 Ts = T.TimestampUs;
 		for (int i = 7; i >= 0; --i) { Tmp[i] = Ts & 0xFF; Ts >>= 8; }
 		FKlvBuilder::AppendTag(V, 2, Tmp, 8);
+	}},
+
+	// Tag 5 – Platform Heading Angle, 2-byte unsigned, 0..360°
+	{ 5, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		uint16 H = FKlvBuilder::MapHeading(T.Yaw);
+		uint8 Tmp[2] = { uint8((H >> 8) & 0xFF), uint8(H & 0xFF) };
+		FKlvBuilder::AppendTag(V, 5, Tmp, 2);
+	}},
+
+	// Tag 6 – Platform Pitch Angle, 2-byte signed, ±20°
+	{ 6, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		int16 P = FKlvBuilder::MapPlatformPitch(T.Pitch);
+		uint8 Tmp[2] = { uint8((P >> 8) & 0xFF), uint8(P & 0xFF) };
+		FKlvBuilder::AppendTag(V, 6, Tmp, 2);
+	}},
+
+	// Tag 7 – Platform Roll Angle, 2-byte signed, ±50°
+	{ 7, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		int16 R = FKlvBuilder::MapPlatformRoll(T.Roll);
+		uint8 Tmp[2] = { uint8((R >> 8) & 0xFF), uint8(R & 0xFF) };
+		FKlvBuilder::AppendTag(V, 7, Tmp, 2);
+	}},
+
+	// Tag 11 – Image Source Sensor, ISO 646 string
+	{ 11, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		const char* Name = (T.SensorMode == 1) ? "LWIR"
+		                 : (T.SensorMode == 2) ? "NVG"
+		                 :                       "EO Nose";
+		AppendStringTag(V, 11, Name);
+	}},
+
+	// Tag 12 – Image Coordinate System, ISO 646 string (static)
+	{ 12, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		AppendStringTag(V, 12, "Geodetic WGS84");
 	}},
 
 	// Tag 13 – Sensor Latitude, 4-byte signed ±90°
@@ -79,53 +115,104 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		FKlvBuilder::AppendTag(V, 15, Tmp, 2);
 	}},
 
-	// Tag 18 – Sensor Horizontal FOV, 2-byte unsigned 0..180°
-	{ 18, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	// Tag 16 – Sensor Horizontal FOV, 2-byte unsigned 0..180°
+	{ 16, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
 		uint16 Fov = FKlvBuilder::MapFov(T.HFovDeg);
 		uint8 Tmp[2] = { uint8((Fov >> 8) & 0xFF), uint8(Fov & 0xFF) };
-		FKlvBuilder::AppendTag(V, 18, Tmp, 2);
+		FKlvBuilder::AppendTag(V, 16, Tmp, 2);
 	}},
 
-	// Tag 19 – Sensor Vertical FOV, 2-byte unsigned 0..180°
-	{ 19, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	// Tag 17 – Sensor Vertical FOV, 2-byte unsigned 0..180°
+	{ 17, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
 		uint16 Fov = FKlvBuilder::MapFov(T.VFovDeg > 0.0f ? T.VFovDeg : T.HFovDeg * (9.0f / 16.0f));
 		uint8 Tmp[2] = { uint8((Fov >> 8) & 0xFF), uint8(Fov & 0xFF) };
-		FKlvBuilder::AppendTag(V, 19, Tmp, 2);
+		FKlvBuilder::AppendTag(V, 17, Tmp, 2);
 	}},
 
-	// Tags 20/21/22 – Sensor Relative Azimuth/Elevation/Roll (gimbal vs platform)
-	{ 20, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendAngle360(V, 20, T.GimbalYaw);   }},
-	{ 21, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendAngle360(V, 21, T.GimbalPitch); }},
-	{ 22, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendAngle360(V, 22, T.GimbalRoll);  }},
+	// Tag 18 – Sensor Relative Azimuth Angle, 4-byte unsigned 0..360° (gimbal yaw)
+	{ 18, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		uint32 Az = FKlvBuilder::MapAzimuth360(T.GimbalYaw);
+		uint8 Tmp[4] = {
+			uint8((Az >> 24) & 0xFF), uint8((Az >> 16) & 0xFF),
+			uint8((Az >>  8) & 0xFF), uint8(Az & 0xFF)
+		};
+		FKlvBuilder::AppendTag(V, 18, Tmp, 4);
+	}},
 
-	// Tag 23 – Slant Range, 8-byte uint64, IMAPB 0..5000000 m (omit if 0)
-	{ 23, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	// Tag 19 – Sensor Relative Elevation Angle, 4-byte signed ±180° (gimbal pitch)
+	{ 19, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		int32 El = FKlvBuilder::MapElevation180(T.GimbalPitch);
+		uint8 Tmp[4] = {
+			uint8((El >> 24) & 0xFF), uint8((El >> 16) & 0xFF),
+			uint8((El >>  8) & 0xFF), uint8(El & 0xFF)
+		};
+		FKlvBuilder::AppendTag(V, 19, Tmp, 4);
+	}},
+
+	// Tag 20 – Sensor Relative Roll Angle, 4-byte unsigned 0..360° (gimbal roll)
+	{ 20, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		uint32 Ro = FKlvBuilder::MapAzimuth360(T.GimbalRoll);
+		uint8 Tmp[4] = {
+			uint8((Ro >> 24) & 0xFF), uint8((Ro >> 16) & 0xFF),
+			uint8((Ro >>  8) & 0xFF), uint8(Ro & 0xFF)
+		};
+		FKlvBuilder::AppendTag(V, 20, Tmp, 4);
+	}},
+
+	// Tag 21 – Slant Range, 4-byte unsigned 0..5000000 m (omit if 0)
+	{ 21, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
 		if (T.SlantRangeM <= 0.0) return;
-		uint64 SR = FKlvBuilder::MapSlantRange(T.SlantRangeM);
-		uint8 Tmp[8];
-		for (int i = 7; i >= 0; --i) { Tmp[i] = SR & 0xFF; SR >>= 8; }
-		FKlvBuilder::AppendTag(V, 23, Tmp, 8);
+		uint32 SR = FKlvBuilder::MapSlantRange(T.SlantRangeM);
+		uint8 Tmp[4] = {
+			uint8((SR >> 24) & 0xFF), uint8((SR >> 16) & 0xFF),
+			uint8((SR >>  8) & 0xFF), uint8(SR & 0xFF)
+		};
+		FKlvBuilder::AppendTag(V, 21, Tmp, 4);
 	}},
 
-	// Tag 24 – Frame Center Latitude, 4-byte signed ±90°
+	// Tag 23 – Frame Center Latitude, 4-byte signed ±90°
+	{ 23, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		AppendLatLon4(V, 23, T.FrameCenterLat, 90.0);
+	}},
+
+	// Tag 24 – Frame Center Longitude, 4-byte signed ±180°
 	{ 24, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		AppendLatLon4(V, 24, T.FrameCenterLat, 90.0);
+		AppendLatLon4(V, 24, T.FrameCenterLon, 180.0);
 	}},
 
-	// Tag 25 – Frame Center Longitude, 4-byte signed ±180°
+	// Tag 25 – Frame Center Elevation, 2-byte unsigned −900..19000 m
 	{ 25, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		AppendLatLon4(V, 25, T.FrameCenterLon, 180.0);
+		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.FrameCenterElev));
+		uint8 Tmp[2] = { uint8((Alt >> 8) & 0xFF), uint8(Alt & 0xFF) };
+		FKlvBuilder::AppendTag(V, 25, Tmp, 2);
 	}},
 
-	// Tags 26/27/28 – duplicated gimbal angles for backwards-compat consumers
-	{ 26, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendAngle360(V, 26, T.GimbalYaw);   }},
-	{ 27, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendAngle360(V, 27, T.GimbalPitch); }},
-	{ 28, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendAngle360(V, 28, T.GimbalRoll);  }},
+	// Tag 47 – Generic Flag Data 01, 1-byte bitmask
+	//   Bit 5 (0x20): IR Polarity — 1 = black-hot
+	//   Bit 3 (0x08): Slant Range valid — 1 = range is computed
+	{ 47, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		uint8 Flags = 0;
+		if (T.SensorPolarity == 1) Flags |= 0x20;
+		if (T.SlantRangeM   >  0) Flags |= 0x08;
+		FKlvBuilder::AppendTag(V, 47, &Flags, 1);
+	}},
+
+	// Tag 65 – UAS LS Version Number, 1-byte unsigned, value=8 (ST 0601.8)
+	{ 65, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		constexpr uint8 Version = 8;
+		FKlvBuilder::AppendTag(V, 65, &Version, 1);
+	}},
 };
 
 // -------------------------------------------------------------------------
@@ -136,7 +223,7 @@ TArray<uint8> FKlvBuilder::BuildMisbST0601(const FCamSimTelemetry& T)
 {
 	// Build value payload by iterating the descriptor table
 	TArray<uint8> Value;
-	Value.Reserve(160);
+	Value.Reserve(200);
 
 	for (const FKlvTagDescriptor& Desc : KlvTagTable)
 	{
@@ -204,13 +291,23 @@ int32 FKlvBuilder::MapLatLon(double Degrees, double Range)
 	return static_cast<int32>(FMath::RoundToInt(Clamped * Scale));
 }
 
-int32 FKlvBuilder::MapAngle360(float Degrees)
+// Tag 18/20: Sensor Relative Azimuth/Roll — unsigned uint32, 0..360°
+uint32 FKlvBuilder::MapAzimuth360(float Degrees)
 {
-	const double Scale   = static_cast<double>(0x7FFFFFFF) / 360.0;
-	const double Clamped = FMath::Clamp(static_cast<double>(Degrees), -360.0, 360.0);
+	// Normalize to [0, 360) then map to full uint32 range
+	const double Norm = FMath::Fmod(static_cast<double>(Degrees) + 360.0, 360.0);
+	return static_cast<uint32>(Norm / 360.0 * static_cast<double>(TNumericLimits<uint32>::Max()));
+}
+
+// Tag 19: Sensor Relative Elevation — signed int32, ±180°
+int32 FKlvBuilder::MapElevation180(float Degrees)
+{
+	const double Scale   = static_cast<double>(0x7FFFFFFF) / 180.0;
+	const double Clamped = FMath::Clamp(static_cast<double>(Degrees), -180.0, 180.0);
 	return static_cast<int32>(FMath::RoundToInt(Clamped * Scale));
 }
 
+// Tags 15/25: Altitude, 2-byte unsigned mapped from −900..19000 m
 int16 FKlvBuilder::MapAltitude(double Metres)
 {
 	constexpr double MinAlt = -900.0;
@@ -220,6 +317,7 @@ int16 FKlvBuilder::MapAltitude(double Metres)
 	return static_cast<int16>(static_cast<uint16>(FMath::RoundToInt((Clamped - MinAlt) * Scale)));
 }
 
+// Tags 16/17: FOV, 2-byte unsigned, 0..180°
 uint16 FKlvBuilder::MapFov(float Degrees)
 {
 	const double Scale   = 65535.0 / 180.0;
@@ -227,11 +325,35 @@ uint16 FKlvBuilder::MapFov(float Degrees)
 	return static_cast<uint16>(FMath::RoundToInt(static_cast<double>(Clamped) * Scale));
 }
 
-uint64 FKlvBuilder::MapSlantRange(double Metres)
+// Tag 5: Platform Heading, 2-byte unsigned, 0..360°
+uint16 FKlvBuilder::MapHeading(float Degrees)
+{
+	const double Norm = FMath::Fmod(static_cast<double>(Degrees) + 360.0, 360.0);
+	return static_cast<uint16>(Norm / 360.0 * 65535.0);
+}
+
+// Tag 6: Platform Pitch, 2-byte signed, ±20°
+int16 FKlvBuilder::MapPlatformPitch(float Degrees)
+{
+	const double Scale   = static_cast<double>(0x7FFF) / 20.0;
+	const double Clamped = FMath::Clamp(static_cast<double>(Degrees), -20.0, 20.0);
+	return static_cast<int16>(FMath::RoundToInt(Clamped * Scale));
+}
+
+// Tag 7: Platform Roll, 2-byte signed, ±50°
+int16 FKlvBuilder::MapPlatformRoll(float Degrees)
+{
+	const double Scale   = static_cast<double>(0x7FFF) / 50.0;
+	const double Clamped = FMath::Clamp(static_cast<double>(Degrees), -50.0, 50.0);
+	return static_cast<int16>(FMath::RoundToInt(Clamped * Scale));
+}
+
+// Tag 21: Slant Range, 4-byte unsigned, 0..5000000 m
+uint32 FKlvBuilder::MapSlantRange(double Metres)
 {
 	constexpr double Max     = 5000000.0;
 	const double     Clamped = FMath::Clamp(Metres, 0.0, Max);
-	return static_cast<uint64>(Clamped / Max * static_cast<double>(TNumericLimits<uint64>::Max()));
+	return static_cast<uint32>(Clamped / Max * static_cast<double>(TNumericLimits<uint32>::Max()));
 }
 
 // -------------------------------------------------------------------------

@@ -72,6 +72,7 @@ private:
 	uint64                WatchdogLastSuccessFrame = 0;   // snapshot of encoder's counter
 	uint32                WatchdogLastCheckTick    = 0;   // tick when snapshot was taken
 	uint32                WatchdogReconnectCount   = 0;
+	uint32                HealthFileTick           = 0;   // tick when health file was last written
 
 	// Runtime health snapshot counters (periodic diagnostics log)
 	uint32                HealthLastTick           = 0;

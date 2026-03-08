@@ -582,67 +582,27 @@ uint32 FCigiReceiver::Run()
 
 void FCigiReceiver::Exit()
 {
-	// Unregister processors before destroying them
-	if (IncomingMsg && EntityCtrlProc)
+	// Unregister each processor and reset its unique ptr in one step.
+	auto Unreg = [&](auto& Proc, int PacketId)
 	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_ENTITY_CTRL_PACKET_ID_V3, EntityCtrlProc.Get());
-	}
-	if (IncomingMsg && ViewDefProc)
-	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_VIEW_DEF_PACKET_ID_V3, ViewDefProc.Get());
-	}
-	if (IncomingMsg && RateCtrlProc)
-	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_RATE_CTRL_PACKET_ID_V3, RateCtrlProc.Get());
-	}
-	if (IncomingMsg && ArtPartProc)
-	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_ART_PART_CTRL_PACKET_ID_V3, ArtPartProc.Get());
-	}
-	if (IncomingMsg && CompCtrlProc)
-	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_COMP_CTRL_PACKET_ID_V3, CompCtrlProc.Get());
-	}
-	if (IncomingMsg && SensorCtrlProc)
-	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_SENSOR_CTRL_PACKET_ID_V3, SensorCtrlProc.Get());
-	}
-	if (IncomingMsg && ViewCtrlProc)
-	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_VIEW_CTRL_PACKET_ID_V3, ViewCtrlProc.Get());
-	}
-	if (IncomingMsg && HatHotReqProc)
-	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_HAT_HOT_REQ_PACKET_ID_V3, HatHotReqProc.Get());
-	}
-	if (IncomingMsg && LosSegReqProc)
-	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_LOS_SEG_REQ_PACKET_ID_V3, LosSegReqProc.Get());
-	}
-	if (IncomingMsg && LosVectReqProc)
-	{
-		IncomingMsg->UnregisterEventProcessor(
-			CIGI_LOS_VECT_REQ_PACKET_ID_V3, LosVectReqProc.Get());
-	}
-	EntityCtrlProc.Reset();
-	ViewDefProc.Reset();
-	RateCtrlProc.Reset();
-	ArtPartProc.Reset();
-	CompCtrlProc.Reset();
-	SensorCtrlProc.Reset();
-	ViewCtrlProc.Reset();
-	HatHotReqProc.Reset();
-	LosSegReqProc.Reset();
-	LosVectReqProc.Reset();
+		if (IncomingMsg && Proc)
+		{
+			IncomingMsg->UnregisterEventProcessor(PacketId, Proc.Get());
+			Proc.Reset();
+		}
+	};
+
+	Unreg(EntityCtrlProc,  CIGI_ENTITY_CTRL_PACKET_ID_V3);
+	Unreg(ViewDefProc,     CIGI_VIEW_DEF_PACKET_ID_V3);
+	Unreg(RateCtrlProc,    CIGI_RATE_CTRL_PACKET_ID_V3);
+	Unreg(ArtPartProc,     CIGI_ART_PART_CTRL_PACKET_ID_V3);
+	Unreg(CompCtrlProc,    CIGI_COMP_CTRL_PACKET_ID_V3);
+	Unreg(SensorCtrlProc,  CIGI_SENSOR_CTRL_PACKET_ID_V3);
+	Unreg(ViewCtrlProc,    CIGI_VIEW_CTRL_PACKET_ID_V3);
+	Unreg(HatHotReqProc,   CIGI_HAT_HOT_REQ_PACKET_ID_V3);
+	Unreg(LosSegReqProc,   CIGI_LOS_SEG_REQ_PACKET_ID_V3);
+	Unreg(LosVectReqProc,  CIGI_LOS_VECT_REQ_PACKET_ID_V3);
+
 	IncomingMsg = nullptr;   // non-owning; session owns and will destroy it
 	CigiSession.Reset();
 }
