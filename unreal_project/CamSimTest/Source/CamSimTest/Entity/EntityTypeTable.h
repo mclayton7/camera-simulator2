@@ -40,6 +40,9 @@ struct FEntityTypeEntry
  *     "2001": { "mesh": "/Game/...", "skeletal": false }
  *   }
  */
+class UStaticMesh;
+class USkeletalMesh;
+
 class FEntityTypeTable
 {
 public:
@@ -49,6 +52,18 @@ public:
 	/** Returns the entry for the given type ID, or nullptr if not found. */
 	const FEntityTypeEntry* FindEntry(uint16 TypeId) const;
 
+	/** Retrieve or store a cached static mesh for the given type ID. */
+	UStaticMesh* GetCachedStaticMesh(uint16 TypeId) const;
+	void SetCachedStaticMesh(uint16 TypeId, UStaticMesh* Mesh);
+
+	/** Retrieve or store a cached skeletal mesh for the given type ID. */
+	USkeletalMesh* GetCachedSkeletalMesh(uint16 TypeId) const;
+	void SetCachedSkeletalMesh(uint16 TypeId, USkeletalMesh* Mesh);
+
 private:
 	TMap<uint16, FEntityTypeEntry> TypeMap;
+
+	// Mesh cache: avoids re-parsing glTF for the same type (Phase 4)
+	mutable TMap<uint16, TWeakObjectPtr<UStaticMesh>> StaticMeshCache;
+	mutable TMap<uint16, TWeakObjectPtr<USkeletalMesh>> SkeletalMeshCache;
 };

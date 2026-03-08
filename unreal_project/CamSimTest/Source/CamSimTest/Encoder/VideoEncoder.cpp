@@ -85,7 +85,32 @@ bool FVideoEncoder::Open()
 
 bool FVideoEncoder::OpenVideoStream()
 {
-	const AVCodec* Codec = avcodec_find_encoder_by_name("libx264");
+	const AVCodec* Codec = nullptr;
+	const FString EncoderPref = Config.Encoder.ToLower().TrimStartAndEnd();
+
+	// Encoder selection: try NVENC first if "auto" or "nvenc", fall back to libx264
+	if (EncoderPref == TEXT("nvenc") || EncoderPref == TEXT("auto"))
+	{
+		Codec = avcodec_find_encoder_by_name("h264_nvenc");
+		if (Codec)
+		{
+			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder h264_nvenc"));
+		}
+		else if (EncoderPref == TEXT("nvenc"))
+		{
+			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but h264_nvenc not available"));
+			return false;
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: NVENC not available, falling back to libx264"));
+		}
+	}
+
+	if (!Codec)
+	{
+		Codec = avcodec_find_encoder_by_name("libx264");
+	}
 	if (!Codec)
 	{
 		Codec = avcodec_find_encoder(AV_CODEC_ID_H264);
@@ -95,6 +120,8 @@ bool FVideoEncoder::OpenVideoStream()
 		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: H.264 encoder not found"));
 		return false;
 	}
+
+	bUsingNvenc = (FCStringAnsi::Strcmp(Codec->name, "h264_nvenc") == 0);
 	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: using encoder %s"), ANSI_TO_TCHAR(Codec->name));
 
 	// Log library versions — helps diagnose system-vs-ThirdParty lib conflicts
@@ -138,9 +165,19 @@ bool FVideoEncoder::OpenVideoStream()
 	if (FmtCtx->oformat->flags & AVFMT_GLOBALHEADER)
 		VideoCodecCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-	// libx264 options
-	av_opt_set(VideoCodecCtx->priv_data, "preset", TCHAR_TO_ANSI(*Config.H264Preset), 0);
-	av_opt_set(VideoCodecCtx->priv_data, "tune",   TCHAR_TO_ANSI(*Config.H264Tune),   0);
+	// Encoder-specific options
+	if (bUsingNvenc)
+	{
+		av_opt_set(VideoCodecCtx->priv_data, "preset", "p4",  0);
+		av_opt_set(VideoCodecCtx->priv_data, "tune",   "ll",  0); // low latency
+		av_opt_set(VideoCodecCtx->priv_data, "rc",     "cbr", 0);
+		av_opt_set(VideoCodecCtx->priv_data, "gpu",    "0",   0);
+	}
+	else
+	{
+		av_opt_set(VideoCodecCtx->priv_data, "preset", TCHAR_TO_ANSI(*Config.H264Preset), 0);
+		av_opt_set(VideoCodecCtx->priv_data, "tune",   TCHAR_TO_ANSI(*Config.H264Tune),   0);
+	}
 
 	int Ret = avcodec_open2(VideoCodecCtx, Codec, nullptr);
 	if (Ret < 0)
@@ -359,8 +396,12 @@ void FVideoEncoder::EncodeFrame(
 			YuvFrame->linesize[0], YuvFrame->linesize[1], YuvFrame->linesize[2]);
 	}
 
-	// Set PTS in {1, fps} timebase
-	YuvFrame->pts = static_cast<int64>(FrameIdx);
+	// Wall-clock PTS relative to first frame (Phase 6)
+	{
+		const double NowSec = FPlatformTime::Seconds();
+		if (StartTimeSec == 0.0) StartTimeSec = NowSec;
+		YuvFrame->pts = static_cast<int64>((NowSec - StartTimeSec) * Config.FrameRate);
+	}
 
 	// Send frame to encoder
 	int Ret = avcodec_send_frame(VideoCodecCtx, YuvFrame);
@@ -409,11 +450,12 @@ void FVideoEncoder::WriteKlvPacket(const FCamSimTelemetry& Telemetry, uint64 Fra
 	av_new_packet(KlvPkt, KlvData.Num());
 	FMemory::Memcpy(KlvPkt->data, KlvData.GetData(), KlvData.Num());
 
-	// KLV PTS in 90 kHz timebase: frame_idx * 3000 (= 90000/30)
-	const int64 KlvPts = static_cast<int64>(FrameIdx) * 3000;
+	// KLV PTS derived from video PTS via av_rescale_q (Phase 6)
+	const int64 VideoPts = YuvFrame ? YuvFrame->pts : static_cast<int64>(FrameIdx);
+	const int64 KlvPts = av_rescale_q(VideoPts, VideoCodecCtx->time_base, KlvStream->time_base);
 	KlvPkt->pts          = KlvPts;
 	KlvPkt->dts          = KlvPts;
-	KlvPkt->duration     = 3000;
+	KlvPkt->duration     = av_rescale_q(1, VideoCodecCtx->time_base, KlvStream->time_base);
 	KlvPkt->stream_index = KlvStream->index;
 
 	av_interleaved_write_frame(FmtCtx, KlvPkt);

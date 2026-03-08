@@ -212,6 +212,11 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 				}
 			}
 			Root->TryGetNumberField(TEXT("encoder_watchdog_interval_ticks"), Cfg.EncoderWatchdogIntervalTicks);
+			Root->TryGetNumberField(TEXT("watchdog_max_reconnects"), Cfg.WatchdogMaxReconnects);
+			Root->TryGetStringField(TEXT("encoder"), Cfg.Encoder);
+			Root->TryGetNumberField(TEXT("max_entities"), Cfg.MaxEntities);
+			Root->TryGetBoolField(TEXT("use_instanced_rendering"), Cfg.bUseInstancedRendering);
+			Root->TryGetBoolField(TEXT("gpu_sensor_effects"), Cfg.bGpuSensorEffects);
 			Root->TryGetNumberField(TEXT("hfov_deg"),         Cfg.HFovDeg);
 			Root->TryGetStringField(TEXT("terrain_provider"), Cfg.TerrainProvider);
 			Root->TryGetStringField(TEXT("imagery_provider"), Cfg.ImageryProvider);
@@ -231,6 +236,8 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 			}
 			Root->TryGetNumberField(TEXT("tile_preload_fov_scale"),     Cfg.TilePreloadFovScale);
 			Root->TryGetNumberField(TEXT("max_simultaneous_tile_loads"), Cfg.MaxSimultaneousTileLoads);
+			Root->TryGetNumberField(TEXT("maximum_screen_space_error"), Cfg.MaximumScreenSpaceError);
+			Root->TryGetNumberField(TEXT("maximum_cached_bytes_mb"),    Cfg.MaximumCachedBytesMB);
 			Root->TryGetNumberField(TEXT("start_latitude"),   Cfg.StartLatitude);
 			Root->TryGetNumberField(TEXT("start_longitude"),  Cfg.StartLongitude);
 			Root->TryGetNumberField(TEXT("start_altitude"),   Cfg.StartAltitude);
@@ -596,6 +603,10 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		TEXT("CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS"), Cfg.EncoderWatchdogIntervalTicks));
 	Cfg.TilePreloadFovScale     = GetEnvFloat(TEXT("CAMSIM_TILE_FOV_SCALE"),       Cfg.TilePreloadFovScale);
 	Cfg.MaxSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_MAX_TILE_LOADS"),        Cfg.MaxSimultaneousTileLoads);
+	Cfg.MaximumScreenSpaceError = GetEnvFloat(TEXT("CAMSIM_MAX_SSE"),             Cfg.MaximumScreenSpaceError);
+	Cfg.MaximumCachedBytesMB    = GetEnvInt(TEXT("CAMSIM_MAX_CACHED_MB"),         Cfg.MaximumCachedBytesMB);
+	Cfg.Encoder = GetEnv(TEXT("CAMSIM_ENCODER"), Cfg.Encoder);
+	Cfg.MaxEntities = GetEnvInt(TEXT("CAMSIM_MAX_ENTITIES"), Cfg.MaxEntities);
 	Cfg.TerrainProvider = GetEnv(TEXT("CAMSIM_TERRAIN_PROVIDER"), Cfg.TerrainProvider).TrimStartAndEnd().ToLower();
 	Cfg.ImageryProvider = GetEnv(TEXT("CAMSIM_IMAGERY_PROVIDER"), Cfg.ImageryProvider).TrimStartAndEnd().ToLower();
 	Cfg.StartLatitude  = GetEnvDouble(TEXT("CAMSIM_START_LAT"),   Cfg.StartLatitude);
@@ -648,13 +659,15 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	}
 
 	UE_LOG(LogCamSim, Log,
-		TEXT("Config: CIGI=%s:%d Out=udp://%s:%d Bitrate=%d Preset=%s ReadbackReadyPolls=%d WatchdogInterval=%d ")
+		TEXT("Config: CIGI=%s:%d Out=udp://%s:%d Bitrate=%d Preset=%s Encoder=%s ReadbackReadyPolls=%d WatchdogInterval=%d ")
+		TEXT("SSE=%.1f CacheMB=%d MaxEntities=%d GpuSensorFX=%d ")
 		TEXT("SensorQuality=%s TerrainProvider=%s ImageryProvider=%s GroundTruth=%d ")
 		TEXT("EntityScale(draw=%.1fm tick=%.1fHz pose_cap=%.1fHz) Scenario=%d entities=%d time_scale=%.2f"),
 		*Cfg.CigiBindAddr, Cfg.CigiPort,
 		*Cfg.MulticastAddr, Cfg.MulticastPort,
-		Cfg.VideoBitrate, *Cfg.H264Preset,
+		Cfg.VideoBitrate, *Cfg.H264Preset, *Cfg.Encoder,
 		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks,
+		Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB, Cfg.MaxEntities, Cfg.bGpuSensorEffects ? 1 : 0,
 		*Cfg.SensorQualityPreset, *Cfg.TerrainProvider, *Cfg.ImageryProvider,
 		Cfg.GroundTruth.bEnabled ? 1 : 0,
 		Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz, Cfg.EntityScale.DefaultMaxUpdateRateHz,

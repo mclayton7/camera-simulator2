@@ -271,6 +271,13 @@ FFMPEG_CONFIGURE_EXTRA=(
     --extra-cflags="-I${X264_INSTALL}/include ${ARCH_CFLAGS:+${ARCH_CFLAGS}} -fvisibility=hidden"
     --extra-ldflags="-L${X264_INSTALL}/lib ${ARCH_CFLAGS:+${ARCH_CFLAGS}}"
 )
+
+# Enable NVENC if CUDA headers are available (Linux only)
+if [ "${PLATFORM}" = "linux" ] && [ -d "/usr/local/cuda/include" ]; then
+    FFMPEG_CONFIGURE_EXTRA+=(--enable-nvenc --enable-encoder=h264_nvenc)
+    FFMPEG_CONFIGURE_EXTRA+=(--extra-cflags="-I/usr/local/cuda/include")
+    echo "==> NVENC support enabled (CUDA headers found)"
+fi
 [ -n "${FFMPEG_EXTRA}" ] && FFMPEG_CONFIGURE_EXTRA+=("${FFMPEG_EXTRA}")
 [ -n "${HOST_TRIPLE}"  ] && FFMPEG_CONFIGURE_EXTRA+=("${HOST_TRIPLE}")
 [ -n "${CC:-}"         ] && FFMPEG_CONFIGURE_EXTRA+=(--cc="${CC}")

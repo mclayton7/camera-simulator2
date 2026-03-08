@@ -23,6 +23,7 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiHatHotReqV3.h"     // opcode 24
 #include "cigicl/CigiLosSegReqV3.h"     // opcode 25
 #include "cigicl/CigiLosVectReqV3.h"    // opcode 26
+#include "cigicl/CigiIGCtrlV3.h"       // opcode 1 (IG Control — host frame counter)
 // CigiCelestialCtrl.h, CigiAtmosCtrl.h, CigiWeatherCtrlV3.h are NOT included
 // here — we parse those packet types directly from raw bytes in
 // FCigiRawEnvParser to bypass CCL's CigiHoldEnvCtrl merge mechanism.
@@ -314,6 +315,22 @@ public:
 	}
 };
 
+class FIGCtrlProcessor : public CigiBaseEventProcessor
+{
+	FCigiReceiver* Receiver;
+public:
+	explicit FIGCtrlProcessor(FCigiReceiver* R) : Receiver(R) {}
+
+	void OnPacketReceived(CigiBasePacket* Packet) override
+	{
+		auto* Pkt = static_cast<CigiIGCtrlV3*>(Packet);
+		if (!Receiver || !Pkt) return;
+
+		Receiver->LastHostFrameCntr.Store(
+			static_cast<uint32>(Pkt->GetFrameCntr()));
+	}
+};
+
 // -------------------------------------------------------------------------
 // Direct packet parsing for environment packets (opcodes 9, 10, 12).
 //
@@ -536,6 +553,10 @@ bool FCigiReceiver::Init()
 	IncomingMsg->RegisterEventProcessor(
 		CIGI_LOS_VECT_REQ_PACKET_ID_V3, LosVectReqProc.Get());
 
+	IGCtrlProc = MakeUnique<FIGCtrlProcessor>(this);
+	IncomingMsg->RegisterEventProcessor(
+		CIGI_IG_CTRL_PACKET_ID_V3, IGCtrlProc.Get());
+
 	// Note: Celestial (9), Atmosphere (10), and Weather (12) packets are parsed
 	// directly from the raw buffer in Run() via CigiRawParse::PreParseEnvPackets(),
 	// bypassing CCL's CigiHoldEnvCtrl merge mechanism which prevents reliable
@@ -602,6 +623,7 @@ void FCigiReceiver::Exit()
 	Unreg(HatHotReqProc,   CIGI_HAT_HOT_REQ_PACKET_ID_V3);
 	Unreg(LosSegReqProc,   CIGI_LOS_SEG_REQ_PACKET_ID_V3);
 	Unreg(LosVectReqProc,  CIGI_LOS_VECT_REQ_PACKET_ID_V3);
+	Unreg(IGCtrlProc,      CIGI_IG_CTRL_PACKET_ID_V3);
 
 	IncomingMsg = nullptr;   // non-owning; session owns and will destroy it
 	CigiSession.Reset();

@@ -51,6 +51,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# NVENC runtime library (optional — only present on NVIDIA GPU hosts)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnvidia-encode-535 2>/dev/null \
+    || true \
+    && rm -rf /var/lib/apt/lists/*
+
 # -----------------------------------------------------------------------
 # Non-root runtime user (uid/gid 1000)
 # -----------------------------------------------------------------------
@@ -72,6 +78,19 @@ RUN chmod +x /opt/camsim/entrypoint.sh \
 # 8888/udp — CIGI input
 # 5004/udp  — MPEG-TS / H.264 multicast output
 EXPOSE 8888/udp 5004/udp
+
+# -----------------------------------------------------------------------
+# Health check
+# -----------------------------------------------------------------------
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=3 \
+    CMD test -f /opt/camsim/CamSimTest/Binaries/Linux/camsim_health.json \
+    && find /opt/camsim/CamSimTest/Binaries/Linux/camsim_health.json -mmin -1 | grep -q .
+
+# OCI labels
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.title="CamSim" \
+      org.opencontainers.image.version="1.0.0" \
+      org.opencontainers.image.revision="${GIT_SHA}"
 
 # -----------------------------------------------------------------------
 # Runtime

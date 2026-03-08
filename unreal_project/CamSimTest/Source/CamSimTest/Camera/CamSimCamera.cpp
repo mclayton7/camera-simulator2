@@ -62,6 +62,11 @@ ACamSimCamera::ACamSimCamera()
 	SceneCapture->bCaptureOnMovement   = false;
 	SceneCapture->CaptureSource        = SCS_FinalColorLDR;
 	SceneCapture->bAlwaysPersistRenderingState = true;
+
+	// Enable TSR / temporal AA on the scene capture for clean anti-aliasing.
+	// bAlwaysPersistRenderingState (above) is required for TSR history accumulation.
+	SceneCapture->ShowFlags.SetTemporalAA(true);
+	SceneCapture->ShowFlags.SetAntiAliasing(true);
 }
 
 // -------------------------------------------------------------------------
@@ -149,16 +154,22 @@ void ACamSimCamera::BeginPlay()
 			CesiumCameraId, PreloadFov);
 	}
 
-	// Tune Cesium3DTileset actors for smoother streaming
+	// Tune Cesium3DTileset actors for smoother streaming and LOD quality
 	for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
 	{
 		It->MaximumSimultaneousTileLoads = Cfg.MaxSimultaneousTileLoads;
+		It->MaximumScreenSpaceError = Cfg.MaximumScreenSpaceError;
+		if (Cfg.MaximumCachedBytesMB > 0)
+		{
+			It->MaximumCachedBytes = static_cast<int64>(Cfg.MaximumCachedBytesMB) * 1024LL * 1024LL;
+		}
 		It->PreloadAncestors = true;
 		It->PreloadSiblings  = true;
 		It->ForbidHoles      = true;
 		It->LoadingDescendantLimit = 40;
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tuned tileset '%s' (maxLoads=%d, ForbidHoles=true)"),
-			*It->GetName(), Cfg.MaxSimultaneousTileLoads);
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tuned tileset '%s' (maxLoads=%d SSE=%.1f cacheMB=%d ForbidHoles=true)"),
+			*It->GetName(), Cfg.MaxSimultaneousTileLoads,
+			Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB);
 	}
 
 	// Initialize CPU-side sensor post-processing pipeline (Phase 11)
@@ -656,7 +667,11 @@ void ACamSimCamera::SubmitFrameToEncoder(
 	// Capture sensor state for the lambda (game-thread variables, safe to read here).
 	const ESensorMode  Mode     = SensorComp ? SensorComp->GetMode()     : ESensorMode::EO;
 	const uint8        Polarity = SensorComp ? SensorComp->GetPolarity() : 0;
-	IPixelPipeline*    FX       = SensorFX.Get();
+
+	// When GPU sensor effects are active (Phase 5), the post-process materials
+	// already ran on the GPU before readback — skip the CPU pipeline.
+	const bool bSkipCpuFX = Subsystem && Subsystem->GetConfig().bGpuSensorEffects;
+	IPixelPipeline* FX = bSkipCpuFX ? nullptr : SensorFX.Get();
 
 	// Move pixel buffer into async task to avoid copy
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,

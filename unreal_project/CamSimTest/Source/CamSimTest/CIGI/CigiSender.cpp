@@ -114,8 +114,9 @@ void FCigiSender::FlushFrame(uint32 FrameCntr, uint8 LastHostFrame)
 {
 	if (!bOpen || !OutgoingMsg || !SofPacket) return;
 
-	// Update SOF frame counter
+	// Update SOF frame counter and echo host frame
 	SofPacket->SetFrameCntr(static_cast<Cigi_uint32>(FrameCntr));
+	SofPacket->SetLastRcvdIGFrame(static_cast<Cigi_uint32>(LastHostFrame));
 
 	// Begin message assembly
 	OutgoingMsg->BeginMsg();

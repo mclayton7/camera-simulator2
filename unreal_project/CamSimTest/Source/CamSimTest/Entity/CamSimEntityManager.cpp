@@ -223,6 +223,19 @@ void FCamSimEntityManager::ProcessComponentControls()
 
 ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
 {
+	// Enforce entity budget (Phase 4)
+	if (Subsystem)
+	{
+		const int32 MaxEntities = Subsystem->GetConfig().MaxEntities;
+		if (MaxEntities > 0 && EntityMap.Num() >= MaxEntities)
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("EntityManager: entity budget exhausted (%d/%d), rejecting entity %u"),
+				EntityMap.Num(), MaxEntities, S.EntityId);
+			return nullptr;
+		}
+	}
+
 	UWorld* World = Subsystem ? Subsystem->GetGameInstance()->GetWorld() : nullptr;
 	if (!World || !World->GetCurrentLevel()) return nullptr;
 

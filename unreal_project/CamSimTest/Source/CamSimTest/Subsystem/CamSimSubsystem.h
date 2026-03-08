@@ -78,4 +78,7 @@ private:
 	uint32                HealthLastTick           = 0;
 	uint64                HealthLastSuccessFrame   = 0;
 	uint64                HealthLastRxPacketCount  = 0;
+
+	// Wall-clock start time for uptime calculation (Phase 2)
+	double                StartTimeSec             = 0.0;
 };

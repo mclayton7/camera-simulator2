@@ -167,7 +167,16 @@ void ACamSimEntity::SetEntityType(uint16 Type)
 
 	if (Entry->bSkeletal)
 	{
-		USkeletalMesh* Mesh = LoadSkeletalMeshFromPath(Entry->AssetPath);
+		// Check mesh cache first (Phase 4)
+		USkeletalMesh* Mesh = TypeTable ? TypeTable->GetCachedSkeletalMesh(Type) : nullptr;
+		if (!Mesh)
+		{
+			Mesh = LoadSkeletalMeshFromPath(Entry->AssetPath);
+			if (Mesh && TypeTable)
+			{
+				const_cast<FEntityTypeTable*>(TypeTable)->SetCachedSkeletalMesh(Type, Mesh);
+			}
+		}
 		if (Mesh)
 		{
 			SkelMeshComp->SetSkinnedAsset(Mesh);
@@ -186,7 +195,16 @@ void ACamSimEntity::SetEntityType(uint16 Type)
 	}
 	else
 	{
-		UStaticMesh* Mesh = LoadStaticMeshFromPath(Entry->AssetPath);
+		// Check mesh cache first (Phase 4)
+		UStaticMesh* Mesh = TypeTable ? TypeTable->GetCachedStaticMesh(Type) : nullptr;
+		if (!Mesh)
+		{
+			Mesh = LoadStaticMeshFromPath(Entry->AssetPath);
+			if (Mesh && TypeTable)
+			{
+				const_cast<FEntityTypeTable*>(TypeTable)->SetCachedStaticMesh(Type, Mesh);
+			}
+		}
 		if (Mesh)
 		{
 			StaticMeshComp->SetStaticMesh(Mesh);

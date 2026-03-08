@@ -173,3 +173,31 @@ const FEntityTypeEntry* FEntityTypeTable::FindEntry(uint16 TypeId) const
 {
 	return TypeMap.Find(TypeId);
 }
+
+UStaticMesh* FEntityTypeTable::GetCachedStaticMesh(uint16 TypeId) const
+{
+	if (const TWeakObjectPtr<UStaticMesh>* Ptr = StaticMeshCache.Find(TypeId))
+	{
+		return Ptr->Get();
+	}
+	return nullptr;
+}
+
+void FEntityTypeTable::SetCachedStaticMesh(uint16 TypeId, UStaticMesh* Mesh)
+{
+	StaticMeshCache.Add(TypeId, Mesh);
+}
+
+USkeletalMesh* FEntityTypeTable::GetCachedSkeletalMesh(uint16 TypeId) const
+{
+	if (const TWeakObjectPtr<USkeletalMesh>* Ptr = SkeletalMeshCache.Find(TypeId))
+	{
+		return Ptr->Get();
+	}
+	return nullptr;
+}
+
+void FEntityTypeTable::SetCachedSkeletalMesh(uint16 TypeId, USkeletalMesh* Mesh)
+{
+	SkeletalMeshCache.Add(TypeId, Mesh);
+}

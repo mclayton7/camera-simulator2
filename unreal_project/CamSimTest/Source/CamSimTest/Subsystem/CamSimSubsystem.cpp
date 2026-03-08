@@ -120,6 +120,26 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	// Create query handler (drains HAT/HOT + LOS queues, runs line traces)
 	QueryHandler = new FCigiQueryHandler(this, CigiSender);
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: CIGI query handler created"));
+
+	// Register for graceful shutdown on SIGTERM (Phase 2)
+	FCoreDelegates::ApplicationWillTerminateDelegate.AddLambda([this]()
+	{
+		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: ApplicationWillTerminate — flushing encoder"));
+		if (VideoEncoder)
+		{
+			VideoEncoder->Close();
+		}
+		if (CigiSender)
+		{
+			CigiSender->Close();
+		}
+		if (CigiReceiver)
+		{
+			CigiReceiver->Stop();
+		}
+	});
+
+	StartTimeSec = FPlatformTime::Seconds();
 }
 
 void UCamSimSubsystem::Deinitialize()
@@ -179,7 +199,8 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 	// Flush SOF + all staged responses into one UDP datagram
 	if (CigiSender)
 	{
-		CigiSender->FlushFrame(FrameCntr, 0);
+		const uint32 LastHostFrame = CigiReceiver ? CigiReceiver->GetLastHostFrame() : 0;
+		CigiSender->FlushFrame(FrameCntr, static_cast<uint8>(LastHostFrame));
 	}
 
 	// -----------------------------------------------------------------------
@@ -211,10 +232,19 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 
 					case FCamSimConfig::EEncoderWatchdogPolicy::Reconnect:
 					default:
-						UE_LOG(LogCamSim, Warning,
-							TEXT("UCamSimSubsystem: encoder watchdog — no frames written in %u ticks, reconnecting"),
-							WatchdogInterval);
 						++WatchdogReconnectCount;
+						if (Config.WatchdogMaxReconnects > 0 &&
+							static_cast<int32>(WatchdogReconnectCount) >= Config.WatchdogMaxReconnects)
+						{
+							UE_LOG(LogCamSim, Error,
+								TEXT("UCamSimSubsystem: encoder watchdog — %u reconnects exhausted, failing fast"),
+								WatchdogReconnectCount);
+							FPlatformMisc::RequestExit(true);
+							break;
+						}
+						UE_LOG(LogCamSim, Warning,
+							TEXT("UCamSimSubsystem: encoder watchdog — no frames written in %u ticks, reconnecting (%u/%d)"),
+							WatchdogInterval, WatchdogReconnectCount, Config.WatchdogMaxReconnects);
 						VideoEncoder->Close();
 						if (!VideoEncoder->Open())
 						{
@@ -240,27 +270,45 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		const uint64 RxPackets = CigiReceiver ? CigiReceiver->GetReceivedPacketCount() : 0;
 		const uint64 RxDelta = RxPackets - HealthLastRxPacketCount;
 
+		const uint32 HostFrame = CigiReceiver ? CigiReceiver->GetLastHostFrame() : 0;
+
 		UE_LOG(LogCamSim, Log,
 			TEXT("CamSimHealth: frame=%u encoder_open=%d enc_ok_total=%llu enc_ok_delta=%llu ")
-			TEXT("cigi_rx_total=%llu cigi_rx_delta=%llu watchdog_reconnects=%u sender=%d query=%d"),
+			TEXT("cigi_rx_total=%llu cigi_rx_delta=%llu watchdog_reconnects=%u sender=%d query=%d host_frame=%u"),
 			FrameCntr,
 			(VideoEncoder && VideoEncoder->IsOpen()) ? 1 : 0,
 			EncoderSuccess, EncoderDelta,
 			RxPackets, RxDelta,
 			WatchdogReconnectCount,
 			CigiSender ? 1 : 0,
-			QueryHandler ? 1 : 0);
+			QueryHandler ? 1 : 0,
+			HostFrame);
 
 		HealthLastTick = FrameCntr;
 		HealthLastSuccessFrame = EncoderSuccess;
 		HealthLastRxPacketCount = RxPackets;
 	}
 
-	// Write Docker HEALTHCHECK file every 90 ticks (~3s at 30fps)
+	// Write structured health JSON every 90 ticks (~3s at 30fps) for Docker HEALTHCHECK
 	if (FrameCntr > 0 && (FrameCntr - HealthFileTick) >= 90)
 	{
-		const FString HealthPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health"));
-		FFileHelper::SaveStringToFile(FString::FromInt(static_cast<int32>(FrameCntr)), *HealthPath);
+		const uint64 EncOk = (VideoEncoder && VideoEncoder->IsOpen())
+			? VideoEncoder->GetSuccessfulFrameCount() : 0;
+		const uint64 CigiRx = CigiReceiver ? CigiReceiver->GetReceivedPacketCount() : 0;
+		const uint32 LastHost = CigiReceiver ? CigiReceiver->GetLastHostFrame() : 0;
+		const double UptimeSec = FPlatformTime::Seconds() - StartTimeSec;
+
+		const FString HealthJson = FString::Printf(
+			TEXT("{\"frame\":%u,\"encoder_ok\":%s,\"cigi_rx\":%llu,\"dropped\":%u,\"uptime_s\":%.1f,\"last_host_frame\":%u}"),
+			FrameCntr,
+			(VideoEncoder && VideoEncoder->IsOpen()) ? TEXT("true") : TEXT("false"),
+			EncOk,
+			WatchdogReconnectCount,
+			UptimeSec,
+			LastHost);
+
+		const FString HealthPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health.json"));
+		FFileHelper::SaveStringToFile(HealthJson, *HealthPath);
 		HealthFileTick = FrameCntr;
 	}
 

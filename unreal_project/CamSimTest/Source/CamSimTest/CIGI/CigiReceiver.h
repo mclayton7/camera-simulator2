@@ -56,6 +56,9 @@ public:
 	/** Number of UDP datagrams successfully read from the CIGI socket. */
 	uint64 GetReceivedPacketCount() const { return ReceivedPacketCount.Load(); }
 
+	/** Last host frame counter received from IG Control (opcode 1). */
+	uint32 GetLastHostFrame() const { return LastHostFrameCntr.Load(); }
+
 	// -----------------------------------------------------------------------
 	// Game-thread SPSC accessors — one per queue.
 	// Each method pops the oldest item from the named queue into Out and
@@ -111,6 +114,7 @@ private:
 	friend class FHatHotReqProcessor;
 	friend class FLosSegReqProcessor;
 	friend class FLosVectReqProcessor;
+	friend class FIGCtrlProcessor;
 
 	// CigiRawParse needs queue access for direct env packet parsing
 	// (bypasses CCL's hold mechanism for celestial/atmos/weather packets)
@@ -122,6 +126,7 @@ private:
 	FSocket*         Socket    = nullptr;
 	TAtomic<bool>    bShouldRun;
 	TAtomic<uint64>  ReceivedPacketCount { 0 };
+	TAtomic<uint32>  LastHostFrameCntr { 0 };
 
 	// SPSC queues: receiver thread produces, game thread consumes.
 	// Camera entity is routed separately so ACamSimCamera and FCamSimEntityManager
@@ -158,6 +163,7 @@ private:
 	TUniquePtr<CigiBaseEventProcessor> HatHotReqProc;
 	TUniquePtr<CigiBaseEventProcessor> LosSegReqProc;
 	TUniquePtr<CigiBaseEventProcessor> LosVectReqProc;
+	TUniquePtr<CigiBaseEventProcessor> IGCtrlProc;
 
 	bool CreateSocket();
 };

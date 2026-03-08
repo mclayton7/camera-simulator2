@@ -53,6 +53,7 @@ public:
 private:
 	const FCamSimConfig& Config;
 	bool bIsOpen = false;
+	bool bUsingNvenc = false;
 
 	/** Incremented after each successful av_interleaved_write_frame call. */
 	TAtomic<uint64> SuccessfulFrameCount { 0 };
@@ -76,6 +77,9 @@ private:
 
 	// Scratch packet for av_interleaved_write_frame
 	AVPacket*        Pkt         = nullptr;
+
+	// Wall-clock start time for PTS (Phase 6)
+	double StartTimeSec = 0.0;
 
 	// Helpers
 	bool OpenVideoStream();

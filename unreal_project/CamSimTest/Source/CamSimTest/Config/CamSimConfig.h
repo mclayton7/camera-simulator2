@@ -37,6 +37,10 @@
  *   CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ – default pose apply cap               (default 0=unlimited)
  *   CAMSIM_SCENARIO_ENABLED       – enable scenario_entities                        (default 0)
  *   CAMSIM_SCENARIO_TIME_SCALE    – scenario time multiplier                        (default 1.0)
+ *   CAMSIM_MAX_SSE                – Cesium MaximumScreenSpaceError                  (default 4.0)
+ *   CAMSIM_MAX_CACHED_MB          – Cesium tile cache budget in MB                  (default 2048)
+ *   CAMSIM_ENCODER                – H.264 encoder: auto|nvenc|libx264               (default auto)
+ *   CAMSIM_MAX_ENTITIES           – Max simultaneous entities                        (default 500)
  */
 struct FCamSimConfig
 {
@@ -92,6 +96,10 @@ struct FCamSimConfig
 	float   TilePreloadFovScale = 2.0f;
 	// Maximum simultaneous tile HTTP requests (Cesium default is 20)
 	int32   MaxSimultaneousTileLoads = 40;
+	// Cesium LOD quality: lower = sharper terrain (Cesium default 16; 4 = high quality ISR)
+	float   MaximumScreenSpaceError = 4.0f;
+	// Tile cache budget in MB (0 = Cesium default / uncapped)
+	int32   MaximumCachedBytesMB = 2048;
 
 	// Default camera start position (WGS-84) — used before first CIGI packet
 	double  StartLatitude   = 38.8977;     // Washington DC
@@ -107,6 +115,20 @@ struct FCamSimConfig
 	// Encoder watchdog behavior
 	EEncoderWatchdogPolicy EncoderWatchdogPolicy = EEncoderWatchdogPolicy::Reconnect;
 	int32   EncoderWatchdogIntervalTicks = 150;
+	int32   WatchdogMaxReconnects = 3;
+
+	// Encoder selection: "auto" tries NVENC first, falls back to libx264.
+	// Explicit values: "nvenc", "libx264".
+	FString Encoder = TEXT("auto");
+
+	// Entity scalability
+	int32   MaxEntities = 500;
+	bool    bUseInstancedRendering = true;
+
+	// GPU sensor post-processing (Phase 5). When true, sensor effects run as
+	// post-process materials on the GPU before readback — CPU pipeline is skipped.
+	// Set false for Mesa llvmpipe compatibility (CPU fallback).
+	bool    bGpuSensorEffects = false;
 
 	// CIGI entity ID that drives the camera (all others → entity manager)
 	int32   CameraEntityId  = 0;

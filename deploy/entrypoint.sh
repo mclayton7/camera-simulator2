@@ -66,6 +66,25 @@ echo "[entrypoint] Launching: ${GAME_BINARY}"
 
 UE_PID=$!
 echo "[entrypoint] UE PID = ${UE_PID}"
+
+# Wait for readiness: health file signals the engine is encoding frames
+HEALTH_FILE="${BINARY_DIR}/CamSimTest/Binaries/Linux/camsim_health.json"
+READY_TIMEOUT=120
+READY_ELAPSED=0
+while [ "${READY_ELAPSED}" -lt "${READY_TIMEOUT}" ]; do
+    if [ -f "${HEALTH_FILE}" ]; then
+        echo "[entrypoint] CamSim ready (health file present after ${READY_ELAPSED}s)"
+        break
+    fi
+    # Check if UE process is still alive
+    if ! kill -0 "${UE_PID}" 2>/dev/null; then
+        echo "[entrypoint] UE process exited before becoming ready"
+        break
+    fi
+    sleep 2
+    READY_ELAPSED=$((READY_ELAPSED + 2))
+done
+
 wait "${UE_PID}"
 EXIT_CODE=$?
 echo "[entrypoint] UE exited with code ${EXIT_CODE}"
