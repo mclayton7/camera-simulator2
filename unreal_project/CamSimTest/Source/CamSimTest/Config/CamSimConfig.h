@@ -36,7 +36,7 @@
  *   CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ - default pose apply cap               (default 0=unlimited)
  *   CAMSIM_SCENARIO_ENABLED       - enable scenario_entities                        (default 0)
  *   CAMSIM_SCENARIO_TIME_SCALE    - scenario time multiplier                        (default 1.0)
- *   CAMSIM_MAX_SSE                - Cesium MaximumScreenSpaceError                  (default 4.0)
+ *   CAMSIM_MAX_SSE                - Cesium MaximumScreenSpaceError                  (default 2.0)
  *   CAMSIM_MAX_CACHED_MB          - Cesium tile cache budget in MB                  (default 2048)
  *   CAMSIM_ENCODER                - H.264 encoder: auto|nvenc|libx264               (default auto)
  *   CAMSIM_MAX_ENTITIES           - Max simultaneous entities                        (default 500)
@@ -95,8 +95,8 @@ struct FCamSimConfig
 	float   TilePreloadFovScale = 2.0f;
 	// Maximum simultaneous tile HTTP requests (Cesium default is 20)
 	int32   MaxSimultaneousTileLoads = 40;
-	// Cesium LOD quality: lower = sharper terrain (Cesium default 16; 4 = high quality ISR)
-	float   MaximumScreenSpaceError = 4.0f;
+	// Cesium LOD quality: lower = sharper terrain (Cesium default 16; 2 = high quality ISR)
+	float   MaximumScreenSpaceError = 2.0f;
 	// Tile cache budget in MB (0 = Cesium default / uncapped)
 	int32   MaximumCachedBytesMB = 2048;
 
@@ -219,6 +219,33 @@ struct FCamSimConfig
 	bool bScenarioEnabled = false;
 	float ScenarioTimeScale = 1.0f;
 	TArray<FScenarioEntityConfig> ScenarioEntities;
+
+	// Security metadata for MISB ST 0102 (Phase 12A)
+	struct FSecurityMetadataConfig
+	{
+		FString Classification     = TEXT("UNCLASSIFIED");
+		FString ClassifyingCountry = TEXT("//US");
+		FString ObjectCountryCodes = TEXT("US");
+		FString Caveats;
+		FString ReleasingInstructions;
+	};
+	FSecurityMetadataConfig SecurityMetadata;
+
+	// Video codec: "h264" or "h265" (Phase 12B)
+	FString VideoCodec = TEXT("h264");
+
+	// Prometheus metrics file path (empty = disabled). Phase 12D.
+	// A Prometheus node_exporter textfile-collector compatible .prom file.
+	FString PrometheusMetricsPath;
+
+	// Recording & Playback (Phase 12E)
+	struct FRecordingConfig
+	{
+		FString CigiRecordPath;      // empty = no CIGI recording
+		FString VideoRecordPath;     // empty = no local .ts recording
+		FString CigiPlaybackPath;    // empty = live UDP input
+	};
+	FRecordingConfig Recording;
 
 	/** Load from YAML file, then apply env var overrides. */
 	static FCamSimConfig Load();

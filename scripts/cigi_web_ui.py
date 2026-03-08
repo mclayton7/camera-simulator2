@@ -272,7 +272,7 @@ class IGState:
         self.sensor_on: bool = True
         self.sensor_id: int = 0         # 0=EO, 1=IR, 2=NVG
         self.sensor_polarity: int = 0   # 0=white hot, 1=black hot (IR only)
-        self.sensor_gain: float = 0.0
+        self.sensor_zoom: float = 0.0
         self.sensor_view_id: int = 0
 
         # View definition — one-shot, resent when True
@@ -327,7 +327,7 @@ async def frame_send_task(state: IGState):
             # Sensor control
             dgram += pack_sensor_control(
                 state.sensor_view_id, state.sensor_id,
-                state.sensor_on, state.sensor_polarity, state.sensor_gain,
+                state.sensor_on, state.sensor_polarity, state.sensor_zoom,
             )
 
             # View definition (one-shot)
@@ -451,8 +451,10 @@ async def ws_handler(websocket, state: IGState):
                     state.sensor_on       = bool(m.get("on",        state.sensor_on))
                     state.sensor_id       = int(m.get("sensor_id",  state.sensor_id))
                     state.sensor_polarity = int(m.get("polarity",   state.sensor_polarity))
-                    state.sensor_gain     = float(m.get("gain",     state.sensor_gain))
+                    state.sensor_zoom     = float(m.get("zoom",     state.sensor_zoom))
                     state.sensor_view_id  = int(m.get("view_id",    state.sensor_view_id))
+                    print(f"[ws] sensor → on={state.sensor_on} id={state.sensor_id} "
+                          f"zoom={state.sensor_zoom:.2f} polarity={state.sensor_polarity}")
 
                 elif t == "view_def":
                     state.hfov = float(m.get("hfov", state.hfov))

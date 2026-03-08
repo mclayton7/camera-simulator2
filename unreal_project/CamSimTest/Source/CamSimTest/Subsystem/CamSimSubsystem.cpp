@@ -8,6 +8,7 @@
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Encoder/MultiViewFrameSink.h" // FMultiViewFrameSink (concrete IFrameSink)
 #include "Encoder/IFrameSink.h"
+#include "Metadata/KlvBuilder.h"        // FKlvBuilder::SetSecurityMetadata (Phase 12A)
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -74,6 +75,14 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Config.VideoBitrate, *Config.H264Preset, *Config.H264Tune,
 		WatchdogPolicyToString(Config.EncoderWatchdogPolicy), Config.EncoderWatchdogIntervalTicks,
 		*Config.SensorQualityPreset, Config.OutputViews.Num(), Config.GroundTruth.bEnabled ? 1 : 0);
+
+	// Initialise MISB ST 0102 security metadata for KLV output (Phase 12A)
+	FKlvBuilder::SetSecurityMetadata(
+		Config.SecurityMetadata.Classification,
+		Config.SecurityMetadata.ClassifyingCountry,
+		Config.SecurityMetadata.ObjectCountryCodes,
+		Config.SecurityMetadata.Caveats,
+		Config.SecurityMetadata.ReleasingInstructions);
 
 	// Start CIGI receiver thread
 	CigiReceiver = new FCigiReceiver(Config);
@@ -190,11 +199,19 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		QueryHandler->Tick(DeltaTime);
 	}
 
+	// Determine IG operating mode (Phase 12D):
+	// 0=Standby (no CIGI packets received yet), 1=Operate
+	if (IGMode == 0 && CigiReceiver && CigiReceiver->GetReceivedPacketCount() > 0)
+	{
+		IGMode = 1; // transition to Operate on first CIGI packet
+		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: IG mode -> Operate (first CIGI packet received)"));
+	}
+
 	// Flush SOF + all staged responses into one UDP datagram
 	if (CigiSender)
 	{
 		const uint32 LastHostFrame = CigiReceiver ? CigiReceiver->GetLastHostFrame() : 0;
-		CigiSender->FlushFrame(FrameCntr, static_cast<uint8>(LastHostFrame));
+		CigiSender->FlushFrame(FrameCntr, static_cast<uint8>(LastHostFrame), IGMode);
 	}
 
 	// -----------------------------------------------------------------------
@@ -304,6 +321,50 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		const FString HealthPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health.json"));
 		FFileHelper::SaveStringToFile(HealthJson, *HealthPath);
 		HealthFileTick = FrameCntr;
+	}
+
+	// Write Prometheus-compatible metrics file (Phase 12D)
+	// Updated every 90 ticks alongside the health file, for node_exporter textfile collector.
+	if (!Config.PrometheusMetricsPath.IsEmpty() && FrameCntr > 0
+		&& (FrameCntr - PrometheusLastTick) >= 90)
+	{
+		const uint64 EncOk = (VideoEncoder && VideoEncoder->IsOpen())
+			? VideoEncoder->GetSuccessfulFrameCount() : 0;
+		const uint64 CigiRx = CigiReceiver ? CigiReceiver->GetReceivedPacketCount() : 0;
+		const double UptimeSec = FPlatformTime::Seconds() - StartTimeSec;
+
+		const FString Prom = FString::Printf(
+			TEXT("# HELP camsim_frame_count Total game ticks\n"
+			     "# TYPE camsim_frame_count counter\n"
+			     "camsim_frame_count %u\n"
+			     "# HELP camsim_encoder_frames_total Total successfully encoded frames\n"
+			     "# TYPE camsim_encoder_frames_total counter\n"
+			     "camsim_encoder_frames_total %llu\n"
+			     "# HELP camsim_encoder_ok Whether encoder is open\n"
+			     "# TYPE camsim_encoder_ok gauge\n"
+			     "camsim_encoder_ok %d\n"
+			     "# HELP camsim_cigi_rx_total Total CIGI packets received\n"
+			     "# TYPE camsim_cigi_rx_total counter\n"
+			     "camsim_cigi_rx_total %llu\n"
+			     "# HELP camsim_uptime_seconds Uptime in seconds\n"
+			     "# TYPE camsim_uptime_seconds gauge\n"
+			     "camsim_uptime_seconds %.1f\n"
+			     "# HELP camsim_watchdog_reconnects_total Total encoder watchdog reconnects\n"
+			     "# TYPE camsim_watchdog_reconnects_total counter\n"
+			     "camsim_watchdog_reconnects_total %u\n"
+			     "# HELP camsim_ig_mode IG operating mode (0=Standby 1=Operate)\n"
+			     "# TYPE camsim_ig_mode gauge\n"
+			     "camsim_ig_mode %u\n"),
+			FrameCntr,
+			EncOk,
+			(VideoEncoder && VideoEncoder->IsOpen()) ? 1 : 0,
+			CigiRx,
+			UptimeSec,
+			WatchdogReconnectCount,
+			static_cast<uint32>(IGMode));
+
+		FFileHelper::SaveStringToFile(Prom, *Config.PrometheusMetricsPath);
+		PrometheusLastTick = FrameCntr;
 	}
 
 	++FrameCntr;

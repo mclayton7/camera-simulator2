@@ -224,6 +224,9 @@ FCamSimConfig FCamSimConfig::Load()
 		Cfg.SensorModeConfigs.Add(ESensorMode::NVG, NvgCfg);
 	}
 
+	// Default FOV presets (wide → narrow); YAML values replace these if present
+	Cfg.SensorFovPresets = { 60.0f, 20.0f, 5.0f };
+
 	{
 		FSensorQualityConfig Low;
 		Low.NoiseScale      = 0.75f;
@@ -361,11 +364,13 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlFloat (Root, "gimbal_yaw_max",             Cfg.GimbalYawMax);
 
 		// FOV presets: optional YAML array of floats (wide -> narrow)
+		// Replaces the defaults set above when present in config.
 		if (Root.has_child("sensor_fov_presets"))
 		{
 			ryml::ConstNodeRef PresetsNode = Root["sensor_fov_presets"];
 			if (PresetsNode.is_seq())
 			{
+				Cfg.SensorFovPresets.Empty();
 				for (ryml::ConstNodeRef Val : PresetsNode)
 				{
 					if (Val.has_val())
@@ -607,6 +612,32 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlBool (Root, "scenario_enabled",    Cfg.bScenarioEnabled);
 		YamlFloat(Root, "scenario_time_scale", Cfg.ScenarioTimeScale);
 
+		// Security metadata (MISB ST 0102, Phase 12A)
+		if (Root.has_child("security_metadata"))
+		{
+			ryml::ConstNodeRef SecNode = Root["security_metadata"];
+			YamlString(SecNode, "classification",       Cfg.SecurityMetadata.Classification);
+			YamlString(SecNode, "classifying_country",   Cfg.SecurityMetadata.ClassifyingCountry);
+			YamlString(SecNode, "object_country_codes",  Cfg.SecurityMetadata.ObjectCountryCodes);
+			YamlString(SecNode, "caveats",               Cfg.SecurityMetadata.Caveats);
+			YamlString(SecNode, "releasing_instructions", Cfg.SecurityMetadata.ReleasingInstructions);
+		}
+
+		// Video codec (Phase 12B)
+		YamlString(Root, "video_codec", Cfg.VideoCodec);
+
+		// Prometheus metrics (Phase 12D)
+		YamlString(Root, "prometheus_metrics_path", Cfg.PrometheusMetricsPath);
+
+		// Recording & playback (Phase 12E)
+		if (Root.has_child("recording"))
+		{
+			ryml::ConstNodeRef RecNode = Root["recording"];
+			YamlString(RecNode, "cigi_record_path",   Cfg.Recording.CigiRecordPath);
+			YamlString(RecNode, "video_record_path",  Cfg.Recording.VideoRecordPath);
+			YamlString(RecNode, "cigi_playback_path", Cfg.Recording.CigiPlaybackPath);
+		}
+
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
 	}
 	else
@@ -694,6 +725,22 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.bScenarioEnabled = GetEnvInt(TEXT("CAMSIM_SCENARIO_ENABLED"), Cfg.bScenarioEnabled ? 1 : 0) != 0;
 	Cfg.ScenarioTimeScale = GetEnvFloat(TEXT("CAMSIM_SCENARIO_TIME_SCALE"), Cfg.ScenarioTimeScale);
 
+	// Phase 12A: security metadata env overrides
+	Cfg.SecurityMetadata.Classification = GetEnv(TEXT("CAMSIM_SECURITY_CLASSIFICATION"), Cfg.SecurityMetadata.Classification);
+	Cfg.SecurityMetadata.ClassifyingCountry = GetEnv(TEXT("CAMSIM_SECURITY_CLASSIFYING_COUNTRY"), Cfg.SecurityMetadata.ClassifyingCountry);
+	Cfg.SecurityMetadata.ObjectCountryCodes = GetEnv(TEXT("CAMSIM_SECURITY_OBJECT_COUNTRY"), Cfg.SecurityMetadata.ObjectCountryCodes);
+
+	// Phase 12B: video codec
+	Cfg.VideoCodec = GetEnv(TEXT("CAMSIM_VIDEO_CODEC"), Cfg.VideoCodec);
+
+	// Phase 12D: Prometheus
+	Cfg.PrometheusMetricsPath = GetEnv(TEXT("CAMSIM_PROMETHEUS_METRICS_PATH"), Cfg.PrometheusMetricsPath);
+
+	// Phase 12E: recording/playback
+	Cfg.Recording.CigiRecordPath = GetEnv(TEXT("CAMSIM_CIGI_RECORD_PATH"), Cfg.Recording.CigiRecordPath);
+	Cfg.Recording.VideoRecordPath = GetEnv(TEXT("CAMSIM_VIDEO_RECORD_PATH"), Cfg.Recording.VideoRecordPath);
+	Cfg.Recording.CigiPlaybackPath = GetEnv(TEXT("CAMSIM_CIGI_PLAYBACK_PATH"), Cfg.Recording.CigiPlaybackPath);
+
 	if (Cfg.OutputViews.Num() > 0 && (bHasMulticastAddrEnv || bHasMulticastPortEnv))
 	{
 		for (FOutputViewConfig& ViewCfg : Cfg.OutputViews)
@@ -723,4 +770,17 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		Cfg.GroundTruth.bEnabled ? 1 : 0,
 		Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz, Cfg.EntityScale.DefaultMaxUpdateRateHz,
 		Cfg.bScenarioEnabled ? 1 : 0, Cfg.ScenarioEntities.Num(), Cfg.ScenarioTimeScale);
+
+	// Log FOV presets so operators can confirm sensor gain→zoom mapping
+	if (Cfg.SensorFovPresets.Num() > 0)
+	{
+		FString PresetStr;
+		for (int32 i = 0; i < Cfg.SensorFovPresets.Num(); ++i)
+		{
+			if (i > 0) PresetStr += TEXT(", ");
+			PresetStr += FString::Printf(TEXT("%.1f"), Cfg.SensorFovPresets[i]);
+		}
+		UE_LOG(LogCamSim, Log, TEXT("Config: SensorFovPresets=[%s] (%d levels)"),
+			*PresetStr, Cfg.SensorFovPresets.Num());
+	}
 }

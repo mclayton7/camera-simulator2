@@ -57,6 +57,20 @@ bool FVideoEncoder::Open()
 	if (!OpenVideoStream()) return false;
 	if (!OpenKlvStream())   return false;
 
+	// Open optional local recording context (Phase 12E)
+	if (!Config.Recording.VideoRecordPath.IsEmpty())
+	{
+		if (OpenRecordingContext())
+		{
+			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: local recording enabled -> %s"),
+				*Config.Recording.VideoRecordPath);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("FVideoEncoder: local recording failed to open, continuing without"));
+		}
+	}
+
 	// Open UDP output
 	Ret = avio_open(&FmtCtx->pb, UrlAnsi, AVIO_FLAG_WRITE);
 	if (Ret < 0)
@@ -74,9 +88,11 @@ bool FVideoEncoder::Open()
 	}
 
 	bIsOpen = true;
+	const TCHAR* CodecLabel = Config.VideoCodec.ToLower().Contains(TEXT("265"))
+		? TEXT("H.265") : TEXT("H.264");
 	UE_LOG(LogCamSim, Log,
-		TEXT("FVideoEncoder: H.264 %dx%d @ %.0ffps  bitrate=%d bps  preset=%s  tune=%s  -> %s"),
-		Config.CaptureWidth, Config.CaptureHeight, Config.FrameRate,
+		TEXT("FVideoEncoder: %s %dx%d @ %.0ffps  bitrate=%d bps  preset=%s  tune=%s  -> %s"),
+		CodecLabel, Config.CaptureWidth, Config.CaptureHeight, Config.FrameRate,
 		Config.VideoBitrate, *Config.H264Preset, *Config.H264Tune, *UdpUrl);
 	return true;
 }
@@ -89,42 +105,81 @@ bool FVideoEncoder::OpenVideoStream()
 {
 	const AVCodec* Codec = nullptr;
 	const FString EncoderPref = Config.Encoder.ToLower().TrimStartAndEnd();
+	const FString CodecPref   = Config.VideoCodec.ToLower().TrimStartAndEnd();
+	const bool bWantH265      = (CodecPref == TEXT("h265") || CodecPref == TEXT("hevc"));
 
-	// Encoder selection: try NVENC first if "auto" or "nvenc", fall back to libx264
-	if (EncoderPref == TEXT("nvenc") || EncoderPref == TEXT("auto"))
+	if (bWantH265)
 	{
-		Codec = avcodec_find_encoder_by_name("h264_nvenc");
-		if (Codec)
+		// H.265/HEVC encoder selection
+		if (EncoderPref == TEXT("nvenc") || EncoderPref == TEXT("auto"))
 		{
-			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder h264_nvenc"));
+			Codec = avcodec_find_encoder_by_name("hevc_nvenc");
+			if (Codec)
+			{
+				UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder hevc_nvenc"));
+			}
+			else if (EncoderPref == TEXT("nvenc"))
+			{
+				UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but hevc_nvenc not available"));
+				return false;
+			}
+			else
+			{
+				UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: hevc_nvenc not available, trying libx265"));
+			}
 		}
-		else if (EncoderPref == TEXT("nvenc"))
+		if (!Codec)
 		{
-			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but h264_nvenc not available"));
+			Codec = avcodec_find_encoder_by_name("libx265");
+		}
+		if (!Codec)
+		{
+			Codec = avcodec_find_encoder(AV_CODEC_ID_HEVC);
+		}
+		if (!Codec)
+		{
+			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: H.265/HEVC encoder not found"));
 			return false;
 		}
-		else
+	}
+	else
+	{
+		// H.264 encoder selection (default)
+		if (EncoderPref == TEXT("nvenc") || EncoderPref == TEXT("auto"))
 		{
-			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: NVENC not available, falling back to libx264"));
+			Codec = avcodec_find_encoder_by_name("h264_nvenc");
+			if (Codec)
+			{
+				UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder h264_nvenc"));
+			}
+			else if (EncoderPref == TEXT("nvenc"))
+			{
+				UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but h264_nvenc not available"));
+				return false;
+			}
+			else
+			{
+				UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: NVENC not available, falling back to libx264"));
+			}
+		}
+		if (!Codec)
+		{
+			Codec = avcodec_find_encoder_by_name("libx264");
+		}
+		if (!Codec)
+		{
+			Codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+		}
+		if (!Codec)
+		{
+			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: H.264 encoder not found"));
+			return false;
 		}
 	}
 
-	if (!Codec)
-	{
-		Codec = avcodec_find_encoder_by_name("libx264");
-	}
-	if (!Codec)
-	{
-		Codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-	}
-	if (!Codec)
-	{
-		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: H.264 encoder not found"));
-		return false;
-	}
-
-	bUsingNvenc = (FCStringAnsi::Strcmp(Codec->name, "h264_nvenc") == 0);
-	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: using encoder %s"), ANSI_TO_TCHAR(Codec->name));
+	bUsingNvenc = (FCStringAnsi::Strstr(Codec->name, "nvenc") != nullptr);
+	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: using encoder %s (codec=%s)"),
+		ANSI_TO_TCHAR(Codec->name), bWantH265 ? TEXT("H.265") : TEXT("H.264"));
 
 	// Log library versions — helps diagnose system-vs-ThirdParty lib conflicts
 	UE_LOG(LogCamSim, Log,
@@ -174,6 +229,18 @@ bool FVideoEncoder::OpenVideoStream()
 		av_opt_set(VideoCodecCtx->priv_data, "tune",   "ll",  0); // low latency
 		av_opt_set(VideoCodecCtx->priv_data, "rc",     "cbr", 0);
 		av_opt_set(VideoCodecCtx->priv_data, "gpu",    "0",   0);
+	}
+	else if (bWantH265)
+	{
+		// libx265 options
+		av_opt_set(VideoCodecCtx->priv_data, "preset", TCHAR_TO_ANSI(*Config.H264Preset), 0);
+		// libx265 uses x265-params for tune instead of top-level tune
+		FString X265Params = FString::Printf(TEXT("log-level=warning"));
+		if (!Config.H264Tune.IsEmpty())
+		{
+			X265Params += FString::Printf(TEXT(":tune=%s"), *Config.H264Tune);
+		}
+		av_opt_set(VideoCodecCtx->priv_data, "x265-params", TCHAR_TO_ANSI(*X265Params), 0);
 	}
 	else
 	{
@@ -334,6 +401,61 @@ bool FVideoEncoder::OpenKlvStream()
 }
 
 // -------------------------------------------------------------------------
+// OpenRecordingContext — local .ts file recording (Phase 12E)
+// -------------------------------------------------------------------------
+
+bool FVideoEncoder::OpenRecordingContext()
+{
+	auto PathAnsi = StringCast<ANSICHAR>(*Config.Recording.VideoRecordPath);
+	const char* PathStr = PathAnsi.Get();
+
+	int Ret = avformat_alloc_output_context2(&RecordFmtCtx, nullptr, "mpegts", PathStr);
+	if (Ret < 0 || !RecordFmtCtx)
+	{
+		LogFfmpegError(Ret, TEXT("recording avformat_alloc_output_context2"));
+		return false;
+	}
+
+	// Video stream — copy codec params from the primary stream
+	RecordVideoStream = avformat_new_stream(RecordFmtCtx, nullptr);
+	if (!RecordVideoStream) return false;
+	RecordVideoStream->id = 0;
+	avcodec_parameters_from_context(RecordVideoStream->codecpar, VideoCodecCtx);
+	RecordVideoStream->time_base = VideoCodecCtx->time_base;
+
+	// KLV data stream — mirror the primary KLV stream
+	RecordKlvStream = avformat_new_stream(RecordFmtCtx, nullptr);
+	if (!RecordKlvStream) return false;
+	RecordKlvStream->id = 1;
+	RecordKlvStream->codecpar->codec_type = AVMEDIA_TYPE_DATA;
+	RecordKlvStream->codecpar->codec_id   = AV_CODEC_ID_SMPTE_KLV;
+	RecordKlvStream->codecpar->codec_tag  = MKTAG('K','L','V','A');
+	RecordKlvStream->time_base            = AVRational{1, 90000};
+
+	Ret = avio_open(&RecordFmtCtx->pb, PathStr, AVIO_FLAG_WRITE);
+	if (Ret < 0)
+	{
+		LogFfmpegError(Ret, TEXT("recording avio_open"));
+		avformat_free_context(RecordFmtCtx);
+		RecordFmtCtx = nullptr;
+		return false;
+	}
+
+	Ret = avformat_write_header(RecordFmtCtx, nullptr);
+	if (Ret < 0)
+	{
+		LogFfmpegError(Ret, TEXT("recording avformat_write_header"));
+		avio_closep(&RecordFmtCtx->pb);
+		avformat_free_context(RecordFmtCtx);
+		RecordFmtCtx = nullptr;
+		return false;
+	}
+
+	bRecording = true;
+	return true;
+}
+
+// -------------------------------------------------------------------------
 // EncodeFrame – called from background task thread
 // -------------------------------------------------------------------------
 
@@ -424,6 +546,19 @@ void FVideoEncoder::EncodeFrame(
 
 		Pkt->stream_index = VideoStream->index;
 		av_packet_rescale_ts(Pkt, VideoCodecCtx->time_base, VideoStream->time_base);
+
+		// Duplicate to local recording before writing (write_frame takes ownership of timing)
+		if (bRecording && RecordFmtCtx)
+		{
+			AVPacket* RecPkt = av_packet_clone(Pkt);
+			if (RecPkt)
+			{
+				RecPkt->stream_index = RecordVideoStream->index;
+				av_interleaved_write_frame(RecordFmtCtx, RecPkt);
+				av_packet_free(&RecPkt);
+			}
+		}
+
 		av_interleaved_write_frame(FmtCtx, Pkt);
 		av_packet_unref(Pkt);
 	}
@@ -458,6 +593,18 @@ void FVideoEncoder::WriteKlvPacket(const FCamSimTelemetry& Telemetry, uint64 Fra
 	KlvPkt->duration     = av_rescale_q(1, VideoCodecCtx->time_base, KlvStream->time_base);
 	KlvPkt->stream_index = KlvStream->index;
 
+	// Duplicate KLV to local recording
+	if (bRecording && RecordFmtCtx)
+	{
+		AVPacket* RecPkt = av_packet_clone(KlvPkt);
+		if (RecPkt)
+		{
+			RecPkt->stream_index = RecordKlvStream->index;
+			av_interleaved_write_frame(RecordFmtCtx, RecPkt);
+			av_packet_free(&RecPkt);
+		}
+	}
+
 	av_interleaved_write_frame(FmtCtx, KlvPkt);
 	av_packet_free(&KlvPkt);
 }
@@ -483,6 +630,19 @@ void FVideoEncoder::Close()
 	}
 
 	av_write_trailer(FmtCtx);
+
+	// Close local recording context (Phase 12E)
+	if (bRecording && RecordFmtCtx)
+	{
+		av_write_trailer(RecordFmtCtx);
+		if (RecordFmtCtx->pb) avio_closep(&RecordFmtCtx->pb);
+		avformat_free_context(RecordFmtCtx);
+		RecordFmtCtx = nullptr;
+		RecordVideoStream = nullptr;
+		RecordKlvStream = nullptr;
+		bRecording = false;
+		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: local recording closed"));
+	}
 
 	// Free resources
 	if (SwsCtx)        { sws_freeContext(SwsCtx); SwsCtx = nullptr; }

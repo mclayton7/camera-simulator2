@@ -43,8 +43,9 @@ public:
 	 * Pack SOF + all pending responses into one datagram and send it.
 	 * @param FrameCntr      IG frame counter (incremented by caller each tick)
 	 * @param LastHostFrame  Least-significant nibble of last host frame received
+	 * @param IGMode         IG operating mode: 0=Standby, 1=Operate, 2=Debug
 	 */
-	void FlushFrame(uint32 FrameCntr, uint8 LastHostFrame);
+	void FlushFrame(uint32 FrameCntr, uint8 LastHostFrame, uint8 IGMode = 1);
 
 	/** Stage a HAT/HOT response for the current frame. */
 	void EnqueueHatHotResponse(uint16 HatHotId, bool bValid, uint8 ReqType,

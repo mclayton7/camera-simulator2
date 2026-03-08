@@ -15,6 +15,14 @@ static const uint8 kST0601_UL[16] = {
 };
 
 // -------------------------------------------------------------------------
+// Cached MISB ST 0102 Security Local Set payload (Phase 12A)
+//
+// Initialised once via FKlvBuilder::SetSecurityMetadata() at startup.
+// If non-empty, embedded as ST 0601 Tag 48 in every KLV packet.
+// -------------------------------------------------------------------------
+static TArray<uint8> CachedST0102Payload;
+
+// -------------------------------------------------------------------------
 // Tag descriptor table
 //
 // Each entry describes one TLV field.  The encoder lambda appends the
@@ -207,6 +215,26 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		FKlvBuilder::AppendTag(V, 47, &Flags, 1);
 	}},
 
+	// Tag 48 – Security Local Metadata Set (MISB ST 0102, Phase 12A)
+	// Nested TLV content built by FKlvBuilder::SetSecurityMetadata().
+	{ 48, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		if (CachedST0102Payload.Num() == 0) return;
+		// Tag 48 may exceed 127 bytes — use BER long-form length if needed
+		V.Add(48);
+		const int32 PayloadLen = CachedST0102Payload.Num();
+		if (PayloadLen < 128)
+		{
+			V.Add(static_cast<uint8>(PayloadLen));
+		}
+		else
+		{
+			V.Add(0x81);
+			V.Add(static_cast<uint8>(PayloadLen));
+		}
+		V.Append(CachedST0102Payload);
+	}},
+
 	// Tag 65 – UAS LS Version Number, 1-byte unsigned, value=8 (ST 0601.8)
 	{ 65, [](TArray<uint8>& V, const FCamSimTelemetry&)
 	{
@@ -354,6 +382,89 @@ uint32 FKlvBuilder::MapSlantRange(double Metres)
 	constexpr double Max     = 5000000.0;
 	const double     Clamped = FMath::Clamp(Metres, 0.0, Max);
 	return static_cast<uint32>(Clamped / Max * static_cast<double>(TNumericLimits<uint32>::Max()));
+}
+
+// -------------------------------------------------------------------------
+// SetSecurityMetadata — build cached MISB ST 0102 nested TLV payload
+//
+// ST 0102 tags (nested inside ST 0601 Tag 48 as raw TLV pairs):
+//   Tag  1 – Security Classification  (1 byte enum)
+//   Tag  2 – CC/RI Coding Method      (1 byte, 1=ISO-3166 Two Letter)
+//   Tag  3 – Classifying Country      (variable string, e.g. "//US")
+//   Tag  5 – Caveats                  (variable string, optional)
+//   Tag  6 – Releasing Instructions   (variable string, optional)
+//   Tag 12 – Object Country Codes     (variable string, e.g. "US")
+//   Tag 22 – ST 0102 Version Number   (2 bytes, uint16, value=12)
+// -------------------------------------------------------------------------
+
+static uint8 ClassificationStringToLevel(const FString& Cls)
+{
+	const FString Lower = Cls.ToLower().TrimStartAndEnd();
+	if (Lower == TEXT("restricted"))   return 2;
+	if (Lower == TEXT("confidential")) return 3;
+	if (Lower == TEXT("secret"))       return 4;
+	if (Lower == TEXT("top secret") || Lower == TEXT("topsecret")) return 5;
+	return 1; // UNCLASSIFIED
+}
+
+void FKlvBuilder::SetSecurityMetadata(const FString& Classification,
+                                      const FString& ClassifyingCountry,
+                                      const FString& ObjectCountryCodes,
+                                      const FString& Caveats,
+                                      const FString& ReleasingInstructions)
+{
+	CachedST0102Payload.Reset();
+
+	// Tag 1 – Security Classification (1 byte)
+	const uint8 Level = ClassificationStringToLevel(Classification);
+	AppendTag(CachedST0102Payload, 1, &Level, 1);
+
+	// Tag 2 – CC/RI Coding Method (1 byte, 1 = ISO-3166 Two Letter)
+	constexpr uint8 CcMethod = 1;
+	AppendTag(CachedST0102Payload, 2, &CcMethod, 1);
+
+	// Tag 3 – Classifying Country (variable string)
+	{
+		auto Ansi = StringCast<ANSICHAR>(*ClassifyingCountry);
+		AppendTag(CachedST0102Payload, 3,
+		          reinterpret_cast<const uint8*>(Ansi.Get()),
+		          static_cast<uint8>(FMath::Min(Ansi.Length(), 255)));
+	}
+
+	// Tag 5 – Caveats (optional)
+	if (!Caveats.IsEmpty())
+	{
+		auto Ansi = StringCast<ANSICHAR>(*Caveats);
+		AppendTag(CachedST0102Payload, 5,
+		          reinterpret_cast<const uint8*>(Ansi.Get()),
+		          static_cast<uint8>(FMath::Min(Ansi.Length(), 255)));
+	}
+
+	// Tag 6 – Releasing Instructions (optional)
+	if (!ReleasingInstructions.IsEmpty())
+	{
+		auto Ansi = StringCast<ANSICHAR>(*ReleasingInstructions);
+		AppendTag(CachedST0102Payload, 6,
+		          reinterpret_cast<const uint8*>(Ansi.Get()),
+		          static_cast<uint8>(FMath::Min(Ansi.Length(), 255)));
+	}
+
+	// Tag 12 – Object Country Codes (variable string)
+	{
+		auto Ansi = StringCast<ANSICHAR>(*ObjectCountryCodes);
+		AppendTag(CachedST0102Payload, 12,
+		          reinterpret_cast<const uint8*>(Ansi.Get()),
+		          static_cast<uint8>(FMath::Min(Ansi.Length(), 255)));
+	}
+
+	// Tag 22 – ST 0102 Version Number (2 bytes, uint16 = 12)
+	constexpr uint16 Version = 12;
+	uint8 VerBuf[2] = { uint8((Version >> 8) & 0xFF), uint8(Version & 0xFF) };
+	AppendTag(CachedST0102Payload, 22, VerBuf, 2);
+
+	UE_LOG(LogCamSim, Log,
+		TEXT("FKlvBuilder: ST 0102 security metadata initialised (%d bytes, classification=%s country=%s)"),
+		CachedST0102Payload.Num(), *Classification, *ClassifyingCountry);
 }
 
 // -------------------------------------------------------------------------

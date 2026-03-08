@@ -18,43 +18,43 @@ CIGI 3.3 UDP ──► FCigiReceiver ──► UE5 Game Thread ──► SceneCa
 
 ## Output
 
-| Parameter | Value |
-|-----------|-------|
-| Codec | H.264 (libx264, configurable preset) |
-| Resolution | 1920 × 1080 (configurable) |
-| Frame rate | 30 fps fixed |
-| Container | MPEG-TS |
-| Metadata | MISB ST 0601 KLV (embedded as KLVA data stream) |
-| Transport | UDP multicast (default `239.1.1.1:5004`) |
+| Parameter  | Value                                           |
+| ---------- | ----------------------------------------------- |
+| Codec      | H.264 (libx264, configurable preset)            |
+| Resolution | 1920 × 1080 (configurable)                      |
+| Frame rate | 30 fps fixed                                    |
+| Container  | MPEG-TS                                         |
+| Metadata   | MISB ST 0601 KLV (embedded as KLVA data stream) |
+| Transport  | UDP multicast (default `239.1.1.1:5004`)        |
 
 ## CIGI Packet Support
 
 ### Host → IG (received)
 
-| Opcode | Packet | Status |
-|--------|--------|--------|
-| 1 | IG Control | Consumed (sync) |
-| 2 | Entity Control | Camera entity + scene entities (Phase 8) |
-| 4 | Component Control | Lights, strobe, damage state (Phase 8) |
-| 6 | Articulated Part Control | Skeletal mesh bones (Phase 8) |
-| 8 | Rate Control | Dead-reckoning (Phase 8) |
-| 9 | Celestial Sphere Control | Time of day, sun/moon (Phase 7) |
-| 10 | Atmosphere Control | Fog, visibility (Phase 7) |
-| 12 | Weather Control | Cloud layers (Phase 7) |
-| 16 | View Control | Gimbal orientation (Phase 9) |
-| 17 | Sensor Control | Sensor on/off, polarity, FOV preset (Phase 9) |
-| 21 | View Definition | Camera FOV |
-| 24 | HAT/HOT Request | Height above/of terrain query (Phase 10) |
-| 25 | LOS Segment Request | Line-of-sight between two geodetic points (Phase 10) |
-| 26 | LOS Vector Request | Line-of-sight along azimuth/elevation vector (Phase 10) |
+| Opcode | Packet                   | Status                                                  |
+| ------ | ------------------------ | ------------------------------------------------------- |
+| 1      | IG Control               | Consumed (sync)                                         |
+| 2      | Entity Control           | Camera entity + scene entities (Phase 8)                |
+| 4      | Component Control        | Lights, strobe, damage state (Phase 8)                  |
+| 6      | Articulated Part Control | Skeletal mesh bones (Phase 8)                           |
+| 8      | Rate Control             | Dead-reckoning (Phase 8)                                |
+| 9      | Celestial Sphere Control | Time of day, sun/moon (Phase 7)                         |
+| 10     | Atmosphere Control       | Fog, visibility (Phase 7)                               |
+| 12     | Weather Control          | Cloud layers (Phase 7)                                  |
+| 16     | View Control             | Gimbal orientation (Phase 9)                            |
+| 17     | Sensor Control           | Sensor on/off, polarity, FOV preset (Phase 9)           |
+| 21     | View Definition          | Camera FOV                                              |
+| 24     | HAT/HOT Request          | Height above/of terrain query (Phase 10)                |
+| 25     | LOS Segment Request      | Line-of-sight between two geodetic points (Phase 10)    |
+| 26     | LOS Vector Request       | Line-of-sight along azimuth/elevation vector (Phase 10) |
 
 ### IG → Host (sent)
 
-| Opcode | Packet | Status |
-|--------|--------|--------|
-| 101 | Start of Frame | Sent every tick (SOF heartbeat) |
-| 102 | HAT/HOT Response | Terrain height reply to opcode 24 |
-| 104 | LOS Response | Line-of-sight reply to opcodes 25/26 |
+| Opcode | Packet           | Status                               |
+| ------ | ---------------- | ------------------------------------ |
+| 101    | Start of Frame   | Sent every tick (SOF heartbeat)      |
+| 102    | HAT/HOT Response | Terrain height reply to opcode 24    |
+| 104    | LOS Response     | Line-of-sight reply to opcodes 25/26 |
 
 ## Quick Start
 
@@ -135,13 +135,13 @@ UE5 will compile shaders the first time a new machine or build runs. To avoid re
 
 ## Documentation
 
-| Document | Contents |
-|----------|----------|
-| [docs/architecture.md](docs/architecture.md) | System architecture, threading model, data flow |
-| [docs/configuration.md](docs/configuration.md) | `camsim_config.yaml` field reference, environment variables |
+| Document                                             | Contents                                                    |
+| ---------------------------------------------------- | ----------------------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md)         | System architecture, threading model, data flow             |
+| [docs/configuration.md](docs/configuration.md)       | `camsim_config.yaml` field reference, environment variables |
 | [docs/entity-rendering.md](docs/entity-rendering.md) | Entity lifecycle, dead-reckoning, articulated parts, lights |
-| [docs/terrain-feedback.md](docs/terrain-feedback.md) | HAT/HOT and LOS queries, SOF heartbeat |
-| [Plan.md](Plan.md) | Feature roadmap |
+| [docs/terrain-feedback.md](docs/terrain-feedback.md) | HAT/HOT and LOS queries, SOF heartbeat                      |
+| [Plan.md](Plan.md)                                   | Feature roadmap                                             |
 
 ## Directory Structure
 

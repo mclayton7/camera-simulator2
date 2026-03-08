@@ -12,6 +12,7 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiIGSession.h"
 #include "cigicl/CigiOutgoingMsg.h"
 #include "cigicl/CigiSOFV3_2.h"
+#include "cigicl/CigiBaseSOF.h"        // CigiBaseSOF::IGModeGrp (Phase 12D)
 #include "cigicl/CigiHatHotRespV3.h"
 #include "cigicl/CigiLosRespV3.h"
 THIRD_PARTY_INCLUDES_END
@@ -110,13 +111,14 @@ void FCigiSender::Close()
 // Per-frame flush
 // -------------------------------------------------------------------------
 
-void FCigiSender::FlushFrame(uint32 FrameCntr, uint8 LastHostFrame)
+void FCigiSender::FlushFrame(uint32 FrameCntr, uint8 LastHostFrame, uint8 IGMode)
 {
 	if (!bOpen || !OutgoingMsg || !SofPacket) return;
 
-	// Update SOF frame counter and echo host frame
+	// Update SOF frame counter, host frame echo, and IG operating mode (Phase 12D)
 	SofPacket->SetFrameCntr(static_cast<Cigi_uint32>(FrameCntr));
 	SofPacket->SetLastRcvdHostFrame(static_cast<Cigi_uint32>(LastHostFrame));
+	SofPacket->SetIGMode(static_cast<CigiBaseSOF::IGModeGrp>(FMath::Clamp((int)IGMode, 0, 2)));
 
 	// Begin message assembly
 	OutgoingMsg->BeginMsg();

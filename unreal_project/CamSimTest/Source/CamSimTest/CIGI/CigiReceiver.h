@@ -166,4 +166,11 @@ private:
 	TUniquePtr<CigiBaseEventProcessor> IGCtrlProc;
 
 	bool CreateSocket();
+
+	// Phase 12E: CIGI input recording
+	// Raw UDP datagrams written as [uint64 timestamp_us][uint32 length][bytes...]
+	IFileHandle* RecordFileHandle = nullptr;
+
+	// Phase 12E: CIGI playback from recorded file
+	bool          bPlaybackMode = false;
 };

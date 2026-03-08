@@ -29,6 +29,7 @@ multicast_port: 5004
 video_bitrate: 4000000
 h264_preset: ultrafast
 h264_tune: zerolatency
+video_codec: h264
 encoder: auto
 
 capture_width: 1920
@@ -46,7 +47,7 @@ imagery_provider: cesium
 
 tile_preload_fov_scale: 2.0
 max_simultaneous_tile_loads: 40
-maximum_screen_space_error: 4.0
+maximum_screen_space_error: 2.0
 maximum_cached_bytes_mb: 2048
 
 start_latitude: 32.9768
@@ -166,6 +167,20 @@ sensor_modes:
     brightness_bias: 0.02
     blur_radius: 0
 
+security_metadata:
+  classification: "UNCLASSIFIED"
+  classifying_country: "//US"
+  object_country_codes: "US"
+  caveats: ""
+  releasing_instructions: ""
+
+prometheus_metrics_path: ""
+
+recording:
+  cigi_record_path: ""
+  video_record_path: ""
+  cigi_playback_path: ""
+
 entity_types:
   "1001":
     mesh: f16/f16-c_falcon.glb
@@ -215,7 +230,8 @@ entity_types:
 
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
-| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | H.264 encoder selection: `auto` (tries NVENC first, falls back to libx264), `nvenc`, or `libx264`. |
+| `video_codec` | string | `"h264"` | `CAMSIM_VIDEO_CODEC` | Video codec: `h264` or `h265`/`hevc` (STANAG 4609 Ed4). |
+| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | Encoder implementation: `auto` (tries NVENC first, falls back to libx264/libx265), `nvenc`, `libx264`, or `libx265`. |
 | `encoder_watchdog_policy` | string | `"reconnect"` | `CAMSIM_ENCODER_WATCHDOG_POLICY` | Encoder watchdog action when no frames are written for `encoder_watchdog_interval_ticks`: `reconnect`, `log_only`, or `fail_fast`. |
 | `encoder_watchdog_interval_ticks` | int | `150` | `CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS` | Tick interval used by the encoder watchdog and runtime health checks. |
 | `watchdog_max_reconnects` | int | `3` | -- | Maximum encoder reconnect attempts before `RequestExit`. `0` = unlimited retries. |
@@ -236,7 +252,7 @@ entity_types:
 |-------|------|---------|---------|-------------|
 | `tile_preload_fov_scale` | float | `2.0` | `CAMSIM_TILE_FOV_SCALE` | Multiplier applied to `hfov_deg` when registering with `ACesiumCameraManager`. Values above 1.0 pre-fetch tiles outside the visible frustum to reduce pop-in when the camera pans. |
 | `max_simultaneous_tile_loads` | int | `40` | `CAMSIM_MAX_TILE_LOADS` | Maximum concurrent Cesium tile HTTP requests. Higher values speed up initial scene load at the cost of network/CPU. |
-| `maximum_screen_space_error` | float | `4.0` | `CAMSIM_MAX_SSE` | Cesium LOD quality: lower = sharper terrain. Cesium default is 16; 4.0 is high quality for ISR imagery. |
+| `maximum_screen_space_error` | float | `2.0` | `CAMSIM_MAX_SSE` | Cesium LOD quality: lower = sharper terrain. Cesium default is 16; 2.0 is high quality for ISR imagery. |
 | `maximum_cached_bytes_mb` | int | `2048` | `CAMSIM_MAX_CACHED_MB` | Cesium tile cache budget in MB. `0` = Cesium default (uncapped). |
 
 ### Camera Start Position
@@ -374,6 +390,39 @@ Per-entry fields in `scenario.entities[]`:
 `despawn_time_sec <= spawn_time_sec` means the entity persists for the full run.
 `update_rate_hz = 0` applies updates every manager tick.
 
+### Encoder (Phase 12B)
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `video_codec` | string | `"h264"` | `CAMSIM_VIDEO_CODEC` | Video codec: `h264` or `h265`/`hevc` (STANAG 4609 Ed4). |
+| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | Encoder implementation: `auto` (tries NVENC, falls back to libx264/libx265), `nvenc`, `libx264`, or `libx265`. |
+
+### Security Metadata (Phase 12A, MISB ST 0102)
+
+Embedded in every KLV packet as ST 0601 Tag 48. Required for STANAG 4609 compliance.
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `security_metadata.classification` | string | `"UNCLASSIFIED"` | `CAMSIM_SECURITY_CLASSIFICATION` | Classification level: `UNCLASSIFIED`, `RESTRICTED`, `CONFIDENTIAL`, `SECRET`, `TOP SECRET`. |
+| `security_metadata.classifying_country` | string | `"//US"` | `CAMSIM_SECURITY_CLASSIFYING_COUNTRY` | Classifying country code in ISO-3166 format with `//` prefix. |
+| `security_metadata.object_country_codes` | string | `"US"` | `CAMSIM_SECURITY_OBJECT_COUNTRY` | Object country codes (ISO-3166). |
+| `security_metadata.caveats` | string | `""` | -- | Security caveats (optional). |
+| `security_metadata.releasing_instructions` | string | `""` | -- | Releasing instructions (optional). |
+
+### Prometheus Metrics (Phase 12D)
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `prometheus_metrics_path` | string | `""` | `CAMSIM_PROMETHEUS_METRICS_PATH` | Path for Prometheus node_exporter textfile-collector compatible `.prom` file. Empty = disabled. |
+
+### Recording & Playback (Phase 12E)
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `recording.cigi_record_path` | string | `""` | `CAMSIM_CIGI_RECORD_PATH` | Binary file: raw CIGI UDP datagrams with timestamps for deterministic replay. Empty = disabled. |
+| `recording.video_record_path` | string | `""` | `CAMSIM_VIDEO_RECORD_PATH` | Local MPEG-TS file: H.264/H.265 video + KLV metadata mirror of the UDP stream. Empty = disabled. |
+| `recording.cigi_playback_path` | string | `""` | `CAMSIM_CIGI_PLAYBACK_PATH` | When set, CigiReceiver reads from this file instead of UDP socket (playback mode). Empty = live UDP input. |
+
 ### Entity Types
 
 The `entity_types` map uses CIGI Entity Type IDs (uint16, as YAML string keys)
@@ -462,6 +511,22 @@ CAMSIM_START_HOUR=12.0
 # Cesium
 CAMSIM_TILE_FOV_SCALE=2.0
 CAMSIM_MAX_TILE_LOADS=40
-CAMSIM_MAX_SSE=4.0
+CAMSIM_MAX_SSE=2.0
 CAMSIM_MAX_CACHED_MB=2048
+
+# Encoder (Phase 12B)
+CAMSIM_VIDEO_CODEC=h264
+
+# Security metadata (Phase 12A)
+CAMSIM_SECURITY_CLASSIFICATION=UNCLASSIFIED
+CAMSIM_SECURITY_CLASSIFYING_COUNTRY=//US
+CAMSIM_SECURITY_OBJECT_COUNTRY=US
+
+# Prometheus metrics (Phase 12D)
+CAMSIM_PROMETHEUS_METRICS_PATH=
+
+# Recording & playback (Phase 12E)
+CAMSIM_CIGI_RECORD_PATH=
+CAMSIM_VIDEO_RECORD_PATH=
+CAMSIM_CIGI_PLAYBACK_PATH=
 ```

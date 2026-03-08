@@ -78,6 +78,12 @@ private:
 	// Scratch packet for av_interleaved_write_frame
 	AVPacket*        Pkt         = nullptr;
 
+	// Local recording (Phase 12E) — optional second output to a local .ts file
+	AVFormatContext* RecordFmtCtx      = nullptr;
+	AVStream*        RecordVideoStream = nullptr;
+	AVStream*        RecordKlvStream   = nullptr;
+	bool             bRecording        = false;
+
 	// Monotonic count of successfully encoded frames — used as PTS base so
 	// the output stream has uniform frame spacing regardless of wall-clock
 	// jitter or dropped frames on the capture side.
@@ -86,6 +92,7 @@ private:
 	// Helpers
 	bool OpenVideoStream();
 	bool OpenKlvStream();
+	bool OpenRecordingContext();
 	void WriteKlvPacket(const FCamSimTelemetry& Telemetry, uint64 FrameIdx);
 	void LogFfmpegError(int Err, const TCHAR* Context);
 };

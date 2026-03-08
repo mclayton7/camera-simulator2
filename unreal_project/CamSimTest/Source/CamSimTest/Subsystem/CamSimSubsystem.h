@@ -81,4 +81,10 @@ private:
 
 	// Wall-clock start time for uptime calculation (Phase 2)
 	double                StartTimeSec             = 0.0;
+
+	// IG operating mode: 0=Standby (no CIGI yet), 1=Operate (Phase 12D)
+	uint8                 IGMode                   = 0;
+
+	// Prometheus metrics file write tick
+	uint32                PrometheusLastTick       = 0;
 };

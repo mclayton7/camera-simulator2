@@ -80,8 +80,23 @@ public:
 	 * The returned buffer starts with the 16-byte Universal Label key,
 	 * followed by a BER-OID length, followed by tag-length-value triplets,
 	 * ending with the CRC-16 checksum (Tag 1).
+	 *
+	 * If security metadata has been initialised via SetSecurityMetadata(),
+	 * Tag 48 (Security Local Metadata Set / ST 0102) is included automatically.
 	 */
 	static TArray<uint8> BuildMisbST0601(const FCamSimTelemetry& Telemetry);
+
+	/**
+	 * Initialise the static ST 0102 security metadata payload.
+	 * Called once at startup from UCamSimSubsystem::Initialize().
+	 * The pre-built TLV content is embedded as ST 0601 Tag 48 in every
+	 * subsequent call to BuildMisbST0601().
+	 */
+	static void SetSecurityMetadata(const FString& Classification,
+	                                const FString& ClassifyingCountry,
+	                                const FString& ObjectCountryCodes,
+	                                const FString& Caveats = FString(),
+	                                const FString& ReleasingInstructions = FString());
 
 	// -----------------------------------------------------------------------
 	// Public helpers used by the tag-descriptor table in KlvBuilder.cpp.

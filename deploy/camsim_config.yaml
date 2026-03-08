@@ -76,8 +76,12 @@ hfov_deg: 60.0
 
 # --- Encoder ---
 
-# H.264 encoder selection: "auto" tries NVENC first, falls back to
-# libx264. Explicit values: "nvenc", "libx264".
+# Video codec: "h264" (default) or "h265" (STANAG 4609 Ed4).
+# Env: CAMSIM_VIDEO_CODEC
+video_codec: h264
+
+# Encoder implementation: "auto" tries NVENC first, falls back to
+# libx264/libx265. Explicit values: "nvenc", "libx264", "libx265".
 # Env: CAMSIM_ENCODER
 encoder: auto
 
@@ -111,9 +115,9 @@ tile_preload_fov_scale: 2.0
 max_simultaneous_tile_loads: 40
 
 # Cesium LOD quality: lower = sharper terrain. Cesium default is 16;
-# 4.0 is high quality for ISR imagery.
+# 2.0 is high quality for ISR imagery (1.0 = maximum sharpness).
 # Env: CAMSIM_MAX_SSE
-maximum_screen_space_error: 4.0
+maximum_screen_space_error: 2.0
 
 # Cesium tile cache budget in MB. 0 = Cesium default (uncapped).
 # Env: CAMSIM_MAX_CACHED_MB
@@ -309,6 +313,35 @@ sensor_modes:
     contrast: 1.2
     brightness_bias: 0.02
     blur_radius: 0
+
+# --- Security Metadata (MISB ST 0102) ---
+# Embedded in every KLV packet as ST 0601 Tag 48.
+# Required for STANAG 4609 compliance even for unclassified output.
+# Env: CAMSIM_SECURITY_CLASSIFICATION, CAMSIM_SECURITY_CLASSIFYING_COUNTRY,
+#      CAMSIM_SECURITY_OBJECT_COUNTRY
+security_metadata:
+  classification: "UNCLASSIFIED"
+  classifying_country: "//US"
+  object_country_codes: "US"
+  caveats: ""
+  releasing_instructions: ""
+
+# --- Prometheus Metrics ---
+# Path to write Prometheus node_exporter textfile-collector compatible metrics.
+# Empty = disabled.
+# Env: CAMSIM_PROMETHEUS_METRICS_PATH
+prometheus_metrics_path: ""
+
+# --- Recording & Playback ---
+# Record CIGI input and/or video output for offline analysis and replay.
+# Env: CAMSIM_CIGI_RECORD_PATH, CAMSIM_VIDEO_RECORD_PATH, CAMSIM_CIGI_PLAYBACK_PATH
+recording:
+  # Binary file: raw CIGI UDP datagrams with timestamps for deterministic replay.
+  cigi_record_path: ""
+  # Local MPEG-TS file: H.264/H.265 video + KLV metadata mirror of the UDP stream.
+  video_record_path: ""
+  # When set, CigiReceiver reads from this file instead of UDP socket (playback mode).
+  cigi_playback_path: ""
 
 # --- Entity Types ---
 # Maps CIGI EntityType uint16 to asset paths.

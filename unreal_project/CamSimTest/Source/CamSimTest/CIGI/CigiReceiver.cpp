@@ -7,6 +7,7 @@
 #include "Common/UdpSocketBuilder.h"
 #include "Interfaces/IPv4/IPv4Address.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"
+#include "HAL/PlatformFileManager.h"     // Phase 12E: CIGI recording/playback
 
 // CCL headers (static lib, drop-in) — wrapped to suppress third-party warnings
 THIRD_PARTY_INCLUDES_START
@@ -465,18 +466,43 @@ FCigiReceiver::~FCigiReceiver()
 
 bool FCigiReceiver::Start()
 {
-	if (!CreateSocket())
+	// Phase 12E: Playback mode — read from file instead of UDP
+	bPlaybackMode = !Config.Recording.CigiPlaybackPath.IsEmpty();
+
+	if (!bPlaybackMode)
 	{
-		UE_LOG(LogCamSim, Error, TEXT("FCigiReceiver: failed to create UDP socket on port %d"), Config.CigiPort);
-		return false;
+		if (!CreateSocket())
+		{
+			UE_LOG(LogCamSim, Error, TEXT("FCigiReceiver: failed to create UDP socket on port %d"), Config.CigiPort);
+			return false;
+		}
+	}
+	else
+	{
+		UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: playback mode from %s"), *Config.Recording.CigiPlaybackPath);
+	}
+
+	// Phase 12E: Open recording file if configured
+	if (!Config.Recording.CigiRecordPath.IsEmpty() && !bPlaybackMode)
+	{
+		RecordFileHandle = FPlatformFileManager::Get().GetPlatformFile().OpenWrite(*Config.Recording.CigiRecordPath);
+		if (RecordFileHandle)
+		{
+			UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: recording CIGI input to %s"), *Config.Recording.CigiRecordPath);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("FCigiReceiver: failed to open recording file %s"), *Config.Recording.CigiRecordPath);
+		}
 	}
 
 	bShouldRun = true;
 	Thread = FRunnableThread::Create(this, TEXT("CigiReceiverThread"), 128 * 1024,
 		TPri_Normal, FPlatformAffinity::GetTaskGraphBackgroundTaskMask());
 
-	UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: listening on %s:%d (camera entity id=%d)"),
-		*Config.CigiBindAddr, Config.CigiPort, Config.CameraEntityId);
+	UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: %s (camera entity id=%d)"),
+		bPlaybackMode ? TEXT("playback mode") : *FString::Printf(TEXT("listening on %s:%d"), *Config.CigiBindAddr, Config.CigiPort),
+		Config.CameraEntityId);
 	return Thread != nullptr;
 }
 
@@ -493,6 +519,13 @@ void FCigiReceiver::Stop()
 	{
 		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket);
 		Socket = nullptr;
+	}
+	// Phase 12E: close recording file
+	if (RecordFileHandle)
+	{
+		delete RecordFileHandle;
+		RecordFileHandle = nullptr;
+		UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: recording file closed"));
 	}
 	UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: stopped"));
 }
@@ -570,12 +603,71 @@ uint32 FCigiReceiver::Run()
 	static constexpr int32 RecvBufSize = 32768;
 	uint8 RecvBuf[RecvBufSize];
 
+	// Phase 12E: Playback mode — read from recorded file
+	if (bPlaybackMode)
+	{
+		IFileHandle* PlaybackFile = FPlatformFileManager::Get().GetPlatformFile()
+			.OpenRead(*Config.Recording.CigiPlaybackPath);
+		if (!PlaybackFile)
+		{
+			UE_LOG(LogCamSim, Error, TEXT("FCigiReceiver: cannot open playback file %s"),
+				*Config.Recording.CigiPlaybackPath);
+			return 1;
+		}
+
+		uint64 PrevTimestamp = 0;
+		while (bShouldRun)
+		{
+			// Record format: [uint64 timestamp_us] [uint32 length] [bytes...]
+			uint64 Timestamp = 0;
+			uint32 Length = 0;
+			if (!PlaybackFile->Read(reinterpret_cast<uint8*>(&Timestamp), sizeof(Timestamp))) break;
+			if (!PlaybackFile->Read(reinterpret_cast<uint8*>(&Length), sizeof(Length))) break;
+			if (Length == 0 || Length > RecvBufSize) break;
+			if (!PlaybackFile->Read(RecvBuf, Length)) break;
+
+			// Pace playback using inter-packet timing
+			if (PrevTimestamp > 0 && Timestamp > PrevTimestamp)
+			{
+				const double DelayMs = static_cast<double>(Timestamp - PrevTimestamp) / 1000.0;
+				if (DelayMs > 0.0 && DelayMs < 5000.0)
+				{
+					FPlatformProcess::SleepNoStats(static_cast<float>(DelayMs / 1000.0));
+				}
+			}
+			PrevTimestamp = Timestamp;
+
+			++ReceivedPacketCount;
+			FCigiRawEnvParser::PreParseEnvPackets(RecvBuf, static_cast<int32>(Length), this);
+			try
+			{
+				IncomingMsg->ProcessIncomingMsg(reinterpret_cast<Cigi_uint8*>(RecvBuf), static_cast<int>(Length));
+			}
+			catch (...) {}
+		}
+		delete PlaybackFile;
+		UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: playback complete"));
+		return 0;
+	}
+
+	// Normal UDP receive mode
 	while (bShouldRun)
 	{
 		int32 BytesRead = 0;
 		if (Socket && Socket->Recv(RecvBuf, RecvBufSize, BytesRead) && BytesRead > 0)
 		{
 			++ReceivedPacketCount;
+
+			// Phase 12E: Record raw datagram to file
+			if (RecordFileHandle)
+			{
+				const uint64 Ts = static_cast<uint64>(FPlatformTime::Seconds() * 1000000.0);
+				const uint32 Len = static_cast<uint32>(BytesRead);
+				RecordFileHandle->Write(reinterpret_cast<const uint8*>(&Ts), sizeof(Ts));
+				RecordFileHandle->Write(reinterpret_cast<const uint8*>(&Len), sizeof(Len));
+				RecordFileHandle->Write(RecvBuf, BytesRead);
+				RecordFileHandle->Flush();
+			}
 
 			// Pre-parse environment packets directly from raw buffer
 			// (bypasses CCL's hold mechanism for celestial/atmos/weather)
