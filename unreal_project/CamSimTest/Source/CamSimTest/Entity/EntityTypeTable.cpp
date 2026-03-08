@@ -1,11 +1,30 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Entity/EntityTypeTable.h"
+#include "Config/CamSimConfig.h"
 #include "CamSimTest.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "UObject/SoftObjectPath.h"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshadow"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wold-style-cast"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wundef"
+#endif
+// UE5 CoreDefines.h defines DEFAULTS as 0, which collides with a ryml enum member.
+#pragma push_macro("DEFAULTS")
+#undef DEFAULTS
+#include "Config/ryml/ryml_all.hpp"
+#pragma pop_macro("DEFAULTS")
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 namespace
 {
@@ -83,57 +102,126 @@ bool ValidateMeshAssetPath(const FString& Path, bool bSkeletal, uint16 TypeId, c
 
 	return true;
 }
+
+// Thin ryml helpers (duplicated from CamSimConfig.cpp to avoid leaking ryml into headers)
+static FString RymlToFString(c4::csubstr S)
+{
+	return FString(static_cast<int32>(S.len), UTF8_TO_TCHAR(S.str));
 }
 
-void FEntityTypeTable::LoadFromConfig(const TSharedPtr<FJsonObject>& Root)
+static bool YamlString(ryml::ConstNodeRef Node, c4::csubstr Key, FString& Out)
 {
-	if (!Root.IsValid()) return;
+	if (!Node.has_child(Key)) return false;
+	ryml::ConstNodeRef Child = Node[Key];
+	if (!Child.has_val()) return false;
+	Out = RymlToFString(Child.val());
+	return true;
+}
 
-	const TSharedPtr<FJsonObject>* TypesObj = nullptr;
-	if (!Root->TryGetObjectField(TEXT("entity_types"), TypesObj) || !TypesObj) return;
+static bool YamlBool(ryml::ConstNodeRef Node, c4::csubstr Key, bool& Out)
+{
+	if (!Node.has_child(Key)) return false;
+	ryml::ConstNodeRef Child = Node[Key];
+	if (!Child.has_val()) return false;
+	c4::csubstr Val = Child.val();
+	Out = (Val == "true" || Val == "True" || Val == "TRUE" ||
+	       Val == "yes"  || Val == "Yes"  || Val == "YES"  ||
+	       Val == "on"   || Val == "On"   || Val == "ON"   ||
+	       Val == "1");
+	return true;
+}
+
+static bool YamlFloat(ryml::ConstNodeRef Node, c4::csubstr Key, float& Out)
+{
+	if (!Node.has_child(Key)) return false;
+	ryml::ConstNodeRef Child = Node[Key];
+	if (!Child.has_val()) return false;
+	FString Str = RymlToFString(Child.val());
+	Out = FCString::Atof(*Str);
+	return true;
+}
+
+static bool YamlDouble(ryml::ConstNodeRef Node, c4::csubstr Key, double& Out)
+{
+	if (!Node.has_child(Key)) return false;
+	ryml::ConstNodeRef Child = Node[Key];
+	if (!Child.has_val()) return false;
+	FString Str = RymlToFString(Child.val());
+	Out = FCString::Atod(*Str);
+	return true;
+}
+}
+
+void FEntityTypeTable::LoadFromConfig()
+{
+	const FString YamlPath = FCamSimConfig::GetConfigFilePath();
+
+	FString YamlContent;
+	if (!FFileHelper::LoadFileToString(YamlContent, *YamlPath))
+	{
+		UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: config file not found: %s"), *YamlPath);
+		return;
+	}
+
+	FTCHARToUTF8 Utf8(*YamlContent);
+	c4::csubstr Src(Utf8.Get(), Utf8.Length());
+
+	ryml::Tree Tree;
+	try
+	{
+		Tree = ryml::parse_in_arena(Src);
+	}
+	catch (const std::exception& Ex)
+	{
+		UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: failed to parse %s: %hs"), *YamlPath, Ex.what());
+		return;
+	}
+
+	ryml::ConstNodeRef Root = Tree.rootref();
+	if (!Root.has_child("entity_types")) return;
+
+	ryml::ConstNodeRef TypesNode = Root["entity_types"];
+	if (!TypesNode.is_map()) return;
 
 	TypeMap.Empty();
 
 	int32 SkippedEntries = 0;
-	for (const auto& Pair : (*TypesObj)->Values)
+	for (ryml::ConstNodeRef EntryNode : TypesNode)
 	{
 		// Key is the type ID string (e.g. "1001")
-		const int32 ParsedTypeId = FCString::Atoi(*Pair.Key);
+		FString KeyStr = RymlToFString(EntryNode.key());
+		const int32 ParsedTypeId = FCString::Atoi(*KeyStr);
 		if (ParsedTypeId <= 0 || ParsedTypeId > 65535)
 		{
 			++SkippedEntries;
-			UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: invalid type key '%s' (must be 1..65535)"), *Pair.Key);
+			UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: invalid type key '%s' (must be 1..65535)"), *KeyStr);
 			continue;
 		}
 		const uint16 TypeId = static_cast<uint16>(ParsedTypeId);
 
-		const TSharedPtr<FJsonObject>* EntryObj = nullptr;
-		if (!Pair.Value->TryGetObject(EntryObj) || !EntryObj)
+		if (!EntryNode.is_map())
 		{
 			++SkippedEntries;
-			UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: type %u entry is not a JSON object"), TypeId);
+			UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: type %u entry is not a YAML map"), TypeId);
 			continue;
 		}
 
 		FEntityTypeEntry Entry;
-		(*EntryObj)->TryGetStringField(TEXT("mesh"),            Entry.AssetPath);
-		(*EntryObj)->TryGetStringField(TEXT("mesh_damaged"),    Entry.DamagedAssetPath);
-		(*EntryObj)->TryGetStringField(TEXT("mesh_destroyed"),  Entry.DestroyedAssetPath);
-		(*EntryObj)->TryGetBoolField(TEXT("skeletal"),          Entry.bSkeletal);
+		YamlString(EntryNode, "mesh",            Entry.AssetPath);
+		YamlString(EntryNode, "mesh_damaged",    Entry.DamagedAssetPath);
+		YamlString(EntryNode, "mesh_destroyed",  Entry.DestroyedAssetPath);
+		YamlBool  (EntryNode, "skeletal",        Entry.bSkeletal);
 
 		// Optional model-space correction for glTF assets
-		double ScaleVal = 1.0;
-		if ((*EntryObj)->TryGetNumberField(TEXT("scale"), ScaleVal))
+		YamlFloat(EntryNode, "scale", Entry.ModelScale);
+
+		if (EntryNode.has_child("rotation"))
 		{
-			Entry.ModelScale = static_cast<float>(ScaleVal);
-		}
-		const TSharedPtr<FJsonObject>* RotObj = nullptr;
-		if ((*EntryObj)->TryGetObjectField(TEXT("rotation"), RotObj) && RotObj)
-		{
+			ryml::ConstNodeRef RotNode = EntryNode["rotation"];
 			double P = 0.0, Y = 0.0, R = 0.0;
-			(*RotObj)->TryGetNumberField(TEXT("pitch"), P);
-			(*RotObj)->TryGetNumberField(TEXT("yaw"),   Y);
-			(*RotObj)->TryGetNumberField(TEXT("roll"),  R);
+			YamlDouble(RotNode, "pitch", P);
+			YamlDouble(RotNode, "yaw",   Y);
+			YamlDouble(RotNode, "roll",  R);
 			Entry.ModelRotation = FRotator(P, Y, R);
 		}
 

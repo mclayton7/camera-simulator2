@@ -78,8 +78,10 @@ private:
 	// Scratch packet for av_interleaved_write_frame
 	AVPacket*        Pkt         = nullptr;
 
-	// Wall-clock start time for PTS (Phase 6)
-	double StartTimeSec = 0.0;
+	// Monotonic count of successfully encoded frames — used as PTS base so
+	// the output stream has uniform frame spacing regardless of wall-clock
+	// jitter or dropped frames on the capture side.
+	int64 EncodedFrameCount = 0;
 
 	// Helpers
 	bool OpenVideoStream();

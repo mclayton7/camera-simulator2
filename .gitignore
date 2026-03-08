@@ -25,8 +25,8 @@ __pycache__/
 unreal_project/CamSimTest/Plugins/CesiumForUnreal/Binaries/
 unreal_project/CamSimTest/Plugins/CesiumForUnreal/Intermediate/
 
-# Runtime copy of the config — generated from deploy/camsim_config.json by run.sh
-unreal_project/CamSimTest/camsim_config.json
+# Runtime copy of the config — generated from deploy/camsim_config.yaml by run.sh
+unreal_project/CamSimTest/camsim_config.yaml
 
 # Local Unreal DDC/Zen cache rooted in repo by scripts/run.sh
 .cache/ue-ddc/

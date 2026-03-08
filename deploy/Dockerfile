@@ -66,7 +66,7 @@ RUN groupadd -g 1000 camsim && useradd -u 1000 -g camsim -m -s /bin/bash camsim
 # Game binary
 # -----------------------------------------------------------------------
 COPY staged/LinuxNoEditor/ /opt/camsim/
-COPY camsim_config.json    /opt/camsim/camsim_config.json
+COPY camsim_config.yaml    /opt/camsim/camsim_config.yaml
 COPY entrypoint.sh         /opt/camsim/entrypoint.sh
 
 RUN chmod +x /opt/camsim/entrypoint.sh \

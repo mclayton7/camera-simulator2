@@ -28,6 +28,8 @@ bool FVideoEncoder::Open()
 {
 	if (bIsOpen) return true;
 
+	EncodedFrameCount = 0;
+
 	// Build UDP URL:  udp://239.x.x.x:5004?pkt_size=1316&ttl=4
 	FString UdpUrl = FString::Printf(
 		TEXT("udp://%s:%d?pkt_size=1316&ttl=4"),
@@ -396,12 +398,10 @@ void FVideoEncoder::EncodeFrame(
 			YuvFrame->linesize[0], YuvFrame->linesize[1], YuvFrame->linesize[2]);
 	}
 
-	// Wall-clock PTS relative to first frame (Phase 6)
-	{
-		const double NowSec = FPlatformTime::Seconds();
-		if (StartTimeSec == 0.0) StartTimeSec = NowSec;
-		YuvFrame->pts = static_cast<int64>((NowSec - StartTimeSec) * Config.FrameRate);
-	}
+	// Monotonic PTS — one tick per encoded frame so the MPEG-TS stream has
+	// uniform frame spacing.  Wall-clock PTS caused stutter when frames were
+	// dropped (the gap in wall time produced uneven PTS deltas in the mux).
+	YuvFrame->pts = EncodedFrameCount++;
 
 	// Send frame to encoder
 	int Ret = avcodec_send_frame(VideoCodecCtx, YuvFrame);

@@ -4,9 +4,23 @@
 #include "CamSimTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "JsonObjectConverter.h"
-#include "Serialization/JsonReader.h"
-#include "Serialization/JsonSerializer.h"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshadow"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wold-style-cast"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wundef"
+#endif
+// UE5 CoreDefines.h defines DEFAULTS as 0, which collides with a ryml enum member.
+#pragma push_macro("DEFAULTS")
+#undef DEFAULTS
+#include "ryml/ryml_all.hpp"
+#pragma pop_macro("DEFAULTS")
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -76,96 +90,102 @@ static void ResolveActiveSensorQuality(FCamSimConfig& Cfg)
 }
 
 // ---------------------------------------------------------------------------
-// JSONC comment stripper — removes // and /* */ comments while respecting
-// JSON string boundaries (so URLs like udp://... survive intact).
+// ryml YAML helpers — mirror the old TryGet*Field call pattern
 // ---------------------------------------------------------------------------
 
-static FString StripJsonComments(const FString& Input)
+static FString RymlToFString(c4::csubstr S)
 {
-	enum class EState { Normal, InString, BlockComment };
+	return FString(static_cast<int32>(S.len), UTF8_TO_TCHAR(S.str));
+}
 
-	FString Out;
-	Out.Reserve(Input.Len());
+static bool YamlString(ryml::ConstNodeRef Node, c4::csubstr Key, FString& Out)
+{
+	if (!Node.has_child(Key)) return false;
+	ryml::ConstNodeRef Child = Node[Key];
+	if (!Child.has_val()) return false;
+	Out = RymlToFString(Child.val());
+	return true;
+}
 
-	EState State = EState::Normal;
-	const int32 Len = Input.Len();
+static bool YamlInt(ryml::ConstNodeRef Node, c4::csubstr Key, int32& Out)
+{
+	if (!Node.has_child(Key)) return false;
+	ryml::ConstNodeRef Child = Node[Key];
+	if (!Child.has_val()) return false;
+	FString Str = RymlToFString(Child.val());
+	Out = FCString::Atoi(*Str);
+	return true;
+}
 
-	for (int32 I = 0; I < Len; ++I)
+static bool YamlFloat(ryml::ConstNodeRef Node, c4::csubstr Key, float& Out)
+{
+	if (!Node.has_child(Key)) return false;
+	ryml::ConstNodeRef Child = Node[Key];
+	if (!Child.has_val()) return false;
+	FString Str = RymlToFString(Child.val());
+	Out = FCString::Atof(*Str);
+	return true;
+}
+
+static bool YamlDouble(ryml::ConstNodeRef Node, c4::csubstr Key, double& Out)
+{
+	if (!Node.has_child(Key)) return false;
+	ryml::ConstNodeRef Child = Node[Key];
+	if (!Child.has_val()) return false;
+	FString Str = RymlToFString(Child.val());
+	Out = FCString::Atod(*Str);
+	return true;
+}
+
+static bool YamlBool(ryml::ConstNodeRef Node, c4::csubstr Key, bool& Out)
+{
+	if (!Node.has_child(Key)) return false;
+	ryml::ConstNodeRef Child = Node[Key];
+	if (!Child.has_val()) return false;
+	c4::csubstr Val = Child.val();
+	// YAML booleans: true/false/yes/no/on/off (case insensitive)
+	Out = (Val == "true" || Val == "True" || Val == "TRUE" ||
+	       Val == "yes"  || Val == "Yes"  || Val == "YES"  ||
+	       Val == "on"   || Val == "On"   || Val == "ON"   ||
+	       Val == "1");
+	return true;
+}
+
+static float YamlFloatVal(ryml::ConstNodeRef Node)
+{
+	FString Str = RymlToFString(Node.val());
+	return FCString::Atof(*Str);
+}
+
+static double YamlDoubleVal(ryml::ConstNodeRef Node)
+{
+	FString Str = RymlToFString(Node.val());
+	return FCString::Atod(*Str);
+}
+
+// ---------------------------------------------------------------------------
+// Config file path resolution
+// ---------------------------------------------------------------------------
+
+FString FCamSimConfig::GetConfigFilePath()
+{
+	FString YamlPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("camsim_config.yaml"));
+	if (!FPaths::FileExists(YamlPath))
 	{
-		const TCHAR C = Input[I];
-		const TCHAR Next = (I + 1 < Len) ? Input[I + 1] : 0;
-
-		switch (State)
-		{
-		case EState::Normal:
-			if (C == TEXT('"'))
-			{
-				Out.AppendChar(C);
-				State = EState::InString;
-			}
-			else if (C == TEXT('/') && Next == TEXT('/'))
-			{
-				// Skip to end of line
-				while (I < Len && Input[I] != TEXT('\n'))
-				{
-					++I;
-				}
-				// Keep the newline itself so line numbers stay meaningful
-				if (I < Len)
-				{
-					Out.AppendChar(TEXT('\n'));
-				}
-			}
-			else if (C == TEXT('/') && Next == TEXT('*'))
-			{
-				I += 1; // skip the '*'
-				State = EState::BlockComment;
-			}
-			else
-			{
-				Out.AppendChar(C);
-			}
-			break;
-
-		case EState::InString:
-			Out.AppendChar(C);
-			if (C == TEXT('\\'))
-			{
-				// Escaped character — copy the next char too
-				if (I + 1 < Len)
-				{
-					Out.AppendChar(Input[++I]);
-				}
-			}
-			else if (C == TEXT('"'))
-			{
-				State = EState::Normal;
-			}
-			break;
-
-		case EState::BlockComment:
-			if (C == TEXT('*') && Next == TEXT('/'))
-			{
-				I += 1; // skip the '/'
-				State = EState::Normal;
-			}
-			// else: skip character
-			break;
-		}
+		YamlPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_config.yaml"));
 	}
-
-	return Out;
+	return YamlPath;
 }
 
 // ---------------------------------------------------------------------------
 // FCamSimConfig
 // ---------------------------------------------------------------------------
 
-FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
+FCamSimConfig FCamSimConfig::Load()
 {
 	FCamSimConfig Cfg; // default values from member initialisers
 
-	// Apply default sensor mode configs (overwritten by JSON if present)
+	// Apply default sensor mode configs (overwritten by YAML if present)
 	{
 		FSensorModeConfig EoCfg;
 		EoCfg.NETD              = 0.0f;
@@ -249,403 +269,349 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 		Cfg.ActiveSensorQuality = Medium;
 	}
 
-	// Attempt to read JSON config from binary dir
-	FString JsonPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("camsim_config.json"));
-	if (!FPaths::FileExists(JsonPath))
-	{
-		// Fall back to the directory the binary lives in
-		JsonPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_config.json"));
-	}
+	// Attempt to read YAML config
+	FString YamlPath = GetConfigFilePath();
 
-	FString JsonContent;
-	if (FFileHelper::LoadFileToString(JsonContent, *JsonPath))
+	FString YamlContent;
+	if (FFileHelper::LoadFileToString(YamlContent, *YamlPath))
 	{
-		// Strip // and /* */ comments so the config file can use JSONC format.
-		JsonContent = StripJsonComments(JsonContent);
+		// Convert FString (UTF-16) to UTF-8 std::string for ryml
+		FTCHARToUTF8 Utf8(*YamlContent);
+		c4::csubstr Src(Utf8.Get(), Utf8.Length());
 
-		TSharedPtr<FJsonObject> Root;
-		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonContent);
-		if (FJsonSerializer::Deserialize(Reader, Root) && Root.IsValid())
+		ryml::Tree Tree;
+		try
 		{
-			if (OutJsonRoot) *OutJsonRoot = Root;
-			Root->TryGetStringField(TEXT("cigi_bind_addr"),      Cfg.CigiBindAddr);
-			Root->TryGetNumberField(TEXT("cigi_port"),           Cfg.CigiPort);
-			Root->TryGetStringField(TEXT("cigi_response_addr"),  Cfg.CigiResponseAddr);
-			Root->TryGetNumberField(TEXT("cigi_response_port"),  Cfg.CigiResponsePort);
-			Root->TryGetStringField(TEXT("multicast_addr"),   Cfg.MulticastAddr);
-			Root->TryGetNumberField(TEXT("multicast_port"),   Cfg.MulticastPort);
-			Root->TryGetNumberField(TEXT("video_bitrate"),    Cfg.VideoBitrate);
-			Root->TryGetStringField(TEXT("h264_preset"),      Cfg.H264Preset);
-			Root->TryGetStringField(TEXT("h264_tune"),        Cfg.H264Tune);
-			Root->TryGetNumberField(TEXT("capture_width"),    Cfg.CaptureWidth);
-			Root->TryGetNumberField(TEXT("capture_height"),   Cfg.CaptureHeight);
-			Root->TryGetNumberField(TEXT("frame_rate"),       Cfg.FrameRate);
-			Root->TryGetBoolField  (TEXT("swap_rb_readback"), Cfg.bSwapRBReadback);
-			Root->TryGetNumberField(TEXT("readback_ready_polls"), Cfg.ReadbackReadyPolls);
-			{
-				FString ReadbackFmt;
-				if (Root->TryGetStringField(TEXT("readback_format"), ReadbackFmt))
-				{
-					Cfg.ReadbackFormat = ParseReadbackFormat(ReadbackFmt);
-				}
-			}
-			{
-				FString WatchdogPolicy;
-				if (Root->TryGetStringField(TEXT("encoder_watchdog_policy"), WatchdogPolicy))
-				{
-					Cfg.EncoderWatchdogPolicy = ParseWatchdogPolicy(WatchdogPolicy);
-				}
-			}
-			Root->TryGetNumberField(TEXT("encoder_watchdog_interval_ticks"), Cfg.EncoderWatchdogIntervalTicks);
-			Root->TryGetNumberField(TEXT("watchdog_max_reconnects"), Cfg.WatchdogMaxReconnects);
-			Root->TryGetStringField(TEXT("encoder"), Cfg.Encoder);
-			Root->TryGetNumberField(TEXT("max_entities"), Cfg.MaxEntities);
-			Root->TryGetBoolField(TEXT("use_instanced_rendering"), Cfg.bUseInstancedRendering);
-			Root->TryGetBoolField(TEXT("gpu_sensor_effects"), Cfg.bGpuSensorEffects);
-			Root->TryGetNumberField(TEXT("hfov_deg"),         Cfg.HFovDeg);
-			Root->TryGetStringField(TEXT("terrain_provider"), Cfg.TerrainProvider);
-			Root->TryGetStringField(TEXT("imagery_provider"), Cfg.ImageryProvider);
-			{
-				const TSharedPtr<FJsonObject>* TerrainObj = nullptr;
-				if (Root->TryGetObjectField(TEXT("terrain"), TerrainObj) && TerrainObj)
-				{
-					(*TerrainObj)->TryGetStringField(TEXT("provider"), Cfg.TerrainProvider);
-				}
-			}
-			{
-				const TSharedPtr<FJsonObject>* ImageryObj = nullptr;
-				if (Root->TryGetObjectField(TEXT("imagery"), ImageryObj) && ImageryObj)
-				{
-					(*ImageryObj)->TryGetStringField(TEXT("provider"), Cfg.ImageryProvider);
-				}
-			}
-			Root->TryGetNumberField(TEXT("tile_preload_fov_scale"),     Cfg.TilePreloadFovScale);
-			Root->TryGetNumberField(TEXT("max_simultaneous_tile_loads"), Cfg.MaxSimultaneousTileLoads);
-			Root->TryGetNumberField(TEXT("maximum_screen_space_error"), Cfg.MaximumScreenSpaceError);
-			Root->TryGetNumberField(TEXT("maximum_cached_bytes_mb"),    Cfg.MaximumCachedBytesMB);
-			Root->TryGetNumberField(TEXT("start_latitude"),   Cfg.StartLatitude);
-			Root->TryGetNumberField(TEXT("start_longitude"),  Cfg.StartLongitude);
-			Root->TryGetNumberField(TEXT("start_altitude"),   Cfg.StartAltitude);
-			Root->TryGetNumberField(TEXT("start_yaw"),        Cfg.StartYaw);
-			Root->TryGetNumberField(TEXT("start_pitch"),      Cfg.StartPitch);
-			Root->TryGetNumberField(TEXT("start_roll"),       Cfg.StartRoll);
-			Root->TryGetNumberField(TEXT("start_hour"),       Cfg.StartHour);
-			Root->TryGetNumberField(TEXT("camera_entity_id"),           Cfg.CameraEntityId);
-			Root->TryGetNumberField(TEXT("gimbal_max_slew_rate"),       Cfg.GimbalMaxSlewRateDegPerSec);
-			Root->TryGetNumberField(TEXT("gimbal_pitch_min"),           Cfg.GimbalPitchMin);
-			Root->TryGetNumberField(TEXT("gimbal_pitch_max"),           Cfg.GimbalPitchMax);
-			Root->TryGetNumberField(TEXT("gimbal_yaw_min"),             Cfg.GimbalYawMin);
-			Root->TryGetNumberField(TEXT("gimbal_yaw_max"),             Cfg.GimbalYawMax);
+			Tree = ryml::parse_in_arena(Src);
+		}
+		catch (const std::exception& Ex)
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("Failed to parse %s: %hs - using defaults"), *YamlPath, Ex.what());
+			ApplyEnvOverrides(Cfg);
+			return Cfg;
+		}
 
-			// FOV presets: optional JSON array of floats (wide → narrow)
-			const TArray<TSharedPtr<FJsonValue>>* PresetsArr = nullptr;
-			if (Root->TryGetArrayField(TEXT("sensor_fov_presets"), PresetsArr) && PresetsArr)
+		ryml::ConstNodeRef Root = Tree.rootref();
+
+		YamlString(Root, "cigi_bind_addr",      Cfg.CigiBindAddr);
+		YamlInt   (Root, "cigi_port",           Cfg.CigiPort);
+		YamlString(Root, "cigi_response_addr",  Cfg.CigiResponseAddr);
+		YamlInt   (Root, "cigi_response_port",  Cfg.CigiResponsePort);
+		YamlString(Root, "multicast_addr",   Cfg.MulticastAddr);
+		YamlInt   (Root, "multicast_port",   Cfg.MulticastPort);
+		YamlInt   (Root, "video_bitrate",    Cfg.VideoBitrate);
+		YamlString(Root, "h264_preset",      Cfg.H264Preset);
+		YamlString(Root, "h264_tune",        Cfg.H264Tune);
+		YamlInt   (Root, "capture_width",    Cfg.CaptureWidth);
+		YamlInt   (Root, "capture_height",   Cfg.CaptureHeight);
+		YamlFloat (Root, "frame_rate",       Cfg.FrameRate);
+		YamlBool  (Root, "swap_rb_readback", Cfg.bSwapRBReadback);
+		YamlInt   (Root, "readback_ready_polls", Cfg.ReadbackReadyPolls);
+		{
+			FString ReadbackFmt;
+			if (YamlString(Root, "readback_format", ReadbackFmt))
 			{
-				for (const TSharedPtr<FJsonValue>& Val : *PresetsArr)
+				Cfg.ReadbackFormat = ParseReadbackFormat(ReadbackFmt);
+			}
+		}
+		{
+			FString WatchdogPolicy;
+			if (YamlString(Root, "encoder_watchdog_policy", WatchdogPolicy))
+			{
+				Cfg.EncoderWatchdogPolicy = ParseWatchdogPolicy(WatchdogPolicy);
+			}
+		}
+		YamlInt   (Root, "encoder_watchdog_interval_ticks", Cfg.EncoderWatchdogIntervalTicks);
+		YamlInt   (Root, "watchdog_max_reconnects", Cfg.WatchdogMaxReconnects);
+		YamlString(Root, "encoder", Cfg.Encoder);
+		YamlInt   (Root, "max_entities", Cfg.MaxEntities);
+		YamlBool  (Root, "use_instanced_rendering", Cfg.bUseInstancedRendering);
+		YamlBool  (Root, "gpu_sensor_effects", Cfg.bGpuSensorEffects);
+		YamlFloat (Root, "hfov_deg",         Cfg.HFovDeg);
+		YamlString(Root, "terrain_provider", Cfg.TerrainProvider);
+		YamlString(Root, "imagery_provider", Cfg.ImageryProvider);
+
+		if (Root.has_child("terrain"))
+		{
+			ryml::ConstNodeRef TerrainNode = Root["terrain"];
+			YamlString(TerrainNode, "provider", Cfg.TerrainProvider);
+		}
+		if (Root.has_child("imagery"))
+		{
+			ryml::ConstNodeRef ImageryNode = Root["imagery"];
+			YamlString(ImageryNode, "provider", Cfg.ImageryProvider);
+		}
+
+		YamlFloat (Root, "tile_preload_fov_scale",     Cfg.TilePreloadFovScale);
+		YamlInt   (Root, "max_simultaneous_tile_loads", Cfg.MaxSimultaneousTileLoads);
+		YamlFloat (Root, "maximum_screen_space_error", Cfg.MaximumScreenSpaceError);
+		YamlInt   (Root, "maximum_cached_bytes_mb",    Cfg.MaximumCachedBytesMB);
+		YamlDouble(Root, "start_latitude",   Cfg.StartLatitude);
+		YamlDouble(Root, "start_longitude",  Cfg.StartLongitude);
+		YamlDouble(Root, "start_altitude",   Cfg.StartAltitude);
+		YamlFloat (Root, "start_yaw",        Cfg.StartYaw);
+		YamlFloat (Root, "start_pitch",      Cfg.StartPitch);
+		YamlFloat (Root, "start_roll",       Cfg.StartRoll);
+		YamlFloat (Root, "start_hour",       Cfg.StartHour);
+		YamlInt   (Root, "camera_entity_id",           Cfg.CameraEntityId);
+		YamlFloat (Root, "gimbal_max_slew_rate",       Cfg.GimbalMaxSlewRateDegPerSec);
+		YamlFloat (Root, "gimbal_pitch_min",           Cfg.GimbalPitchMin);
+		YamlFloat (Root, "gimbal_pitch_max",           Cfg.GimbalPitchMax);
+		YamlFloat (Root, "gimbal_yaw_min",             Cfg.GimbalYawMin);
+		YamlFloat (Root, "gimbal_yaw_max",             Cfg.GimbalYawMax);
+
+		// FOV presets: optional YAML array of floats (wide -> narrow)
+		if (Root.has_child("sensor_fov_presets"))
+		{
+			ryml::ConstNodeRef PresetsNode = Root["sensor_fov_presets"];
+			if (PresetsNode.is_seq())
+			{
+				for (ryml::ConstNodeRef Val : PresetsNode)
 				{
-					double V = 60.0;
-					if (Val.IsValid() && Val->TryGetNumber(V))
+					if (Val.has_val())
 					{
-						Cfg.SensorFovPresets.Add(static_cast<float>(V));
+						Cfg.SensorFovPresets.Add(YamlFloatVal(Val));
 					}
 				}
 			}
+		}
 
-			// -----------------------------------------------------------------------
-			// sensor_modes: per-waveband simulation parameters (Phase 11)
-			// Overwrites the defaults set above with JSON values where present.
-			// -----------------------------------------------------------------------
+		// -------------------------------------------------------------------
+		// sensor_modes: per-waveband simulation parameters (Phase 11)
+		// Overwrites the defaults set above with YAML values where present.
+		// -------------------------------------------------------------------
+		if (Root.has_child("sensor_modes"))
+		{
+			ryml::ConstNodeRef ModesNode = Root["sensor_modes"];
+
+			auto ParseMode = [&](c4::csubstr Key, ESensorMode M)
 			{
-				const TSharedPtr<FJsonObject>* ModesObj = nullptr;
-				if (Root->TryGetObjectField(TEXT("sensor_modes"), ModesObj) && ModesObj)
+				if (!ModesNode.has_child(Key)) return;
+				ryml::ConstNodeRef ModeNode = ModesNode[Key];
+
+				FSensorModeConfig& MC = Cfg.SensorModeConfigs.FindOrAdd(M);
+				YamlFloat(ModeNode, "noise_netd",          MC.NETD);
+				YamlFloat(ModeNode, "fixed_pattern_noise",  MC.FixedPatternNoise);
+				YamlFloat(ModeNode, "vignetting",           MC.Vignetting);
+				YamlBool (ModeNode, "scan_lines",           MC.bScanLines);
+				YamlFloat(ModeNode, "scan_line_strength",   MC.ScanLineStrength);
+				YamlFloat(ModeNode, "ir_extinction_coeff",  MC.IRExtinctionCoeff);
+				YamlFloat(ModeNode, "atmospheric_visibility_m", MC.AtmosphericVisibilityM);
+				YamlFloat(ModeNode, "atmosphere_strength",   MC.AtmosphereStrength);
+				YamlFloat(ModeNode, "color_temperature_k",   MC.ColorTemperatureK);
+				YamlFloat(ModeNode, "contrast",              MC.Contrast);
+				YamlFloat(ModeNode, "brightness_bias",       MC.BrightnessBias);
 				{
-					auto ParseMode = [&](const FString& Key, ESensorMode M)
+					int32 BlurVal = MC.BlurRadius;
+					if (YamlInt(ModeNode, "blur_radius", BlurVal))
 					{
-						const TSharedPtr<FJsonObject>* ModeObj = nullptr;
-						if (!(*ModesObj)->TryGetObjectField(Key, ModeObj) || !ModeObj) return;
+						MC.BlurRadius = FMath::Max(0, BlurVal);
+					}
+				}
+			};
 
-						FSensorModeConfig& MC = Cfg.SensorModeConfigs.FindOrAdd(M);
-						double TmpD = 0.0;
-						bool   TmpB = false;
+			ParseMode("eo",  ESensorMode::EO);
+			ParseMode("ir",  ESensorMode::IR);
+			ParseMode("nvg", ESensorMode::NVG);
+		}
 
-						if ((*ModeObj)->TryGetNumberField(TEXT("noise_netd"),          TmpD)) MC.NETD              = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetNumberField(TEXT("fixed_pattern_noise"),  TmpD)) MC.FixedPatternNoise = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetNumberField(TEXT("vignetting"),           TmpD)) MC.Vignetting        = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetBoolField  (TEXT("scan_lines"),           TmpB)) MC.bScanLines        = TmpB;
-						if ((*ModeObj)->TryGetNumberField(TEXT("scan_line_strength"),   TmpD)) MC.ScanLineStrength  = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetNumberField(TEXT("ir_extinction_coeff"),  TmpD)) MC.IRExtinctionCoeff = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetNumberField(TEXT("atmospheric_visibility_m"), TmpD)) MC.AtmosphericVisibilityM = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetNumberField(TEXT("atmosphere_strength"),   TmpD)) MC.AtmosphereStrength = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetNumberField(TEXT("color_temperature_k"),   TmpD)) MC.ColorTemperatureK = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetNumberField(TEXT("contrast"),              TmpD)) MC.Contrast = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetNumberField(TEXT("brightness_bias"),       TmpD)) MC.BrightnessBias = static_cast<float>(TmpD);
-						if ((*ModeObj)->TryGetNumberField(TEXT("blur_radius"),           TmpD)) MC.BlurRadius = FMath::Max(0, static_cast<int32>(TmpD));
-					};
+		// Optional user-defined sensor quality profiles.
+		if (Root.has_child("sensor_quality_profiles"))
+		{
+			ryml::ConstNodeRef ProfilesNode = Root["sensor_quality_profiles"];
+			if (ProfilesNode.is_map())
+			{
+				for (ryml::ConstNodeRef ProfileChild : ProfilesNode)
+				{
+					const FString PresetKey = NormalizeQualityPreset(RymlToFString(ProfileChild.key()));
+					if (!ProfileChild.is_map()) continue;
 
-					ParseMode(TEXT("eo"),  ESensorMode::EO);
-					ParseMode(TEXT("ir"),  ESensorMode::IR);
-					ParseMode(TEXT("nvg"), ESensorMode::NVG);
+					FSensorQualityConfig Profile = Cfg.SensorQualityProfiles.FindRef(TEXT("medium"));
+					YamlFloat(ProfileChild, "noise_scale",      Profile.NoiseScale);
+					YamlFloat(ProfileChild, "vignetting_scale", Profile.VignettingScale);
+					YamlFloat(ProfileChild, "scan_line_scale",  Profile.ScanLineScale);
+					YamlFloat(ProfileChild, "atmosphere_scale", Profile.AtmosphereScale);
+					{
+						int32 BlurVal = Profile.BlurRadius;
+						if (YamlInt(ProfileChild, "blur_radius", BlurVal))
+							Profile.BlurRadius = FMath::Max(0, BlurVal);
+					}
+					YamlFloat(ProfileChild, "contrast",         Profile.Contrast);
+					YamlFloat(ProfileChild, "brightness_bias",  Profile.BrightnessBias);
+					Cfg.SensorQualityProfiles.Add(PresetKey, Profile);
 				}
 			}
+		}
 
-			// Optional user-defined sensor quality profiles.
+		// Active sensor quality preset and optional inline overrides.
+		if (Root.has_child("sensor_quality"))
+		{
+			ryml::ConstNodeRef QualityNode = Root["sensor_quality"];
+
+			FString Preset;
+			if (YamlString(QualityNode, "preset", Preset))
 			{
-				const TSharedPtr<FJsonObject>* ProfilesObj = nullptr;
-				if (Root->TryGetObjectField(TEXT("sensor_quality_profiles"), ProfilesObj) && ProfilesObj)
-				{
-					for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*ProfilesObj)->Values)
-					{
-						const FString PresetKey = NormalizeQualityPreset(Pair.Key);
-						const TSharedPtr<FJsonObject>* ProfileObj = nullptr;
-						if (!(*ProfilesObj)->TryGetObjectField(Pair.Key, ProfileObj) || !ProfileObj) continue;
-
-						FSensorQualityConfig Profile = Cfg.SensorQualityProfiles.FindRef(TEXT("medium"));
-						double TmpD = 0.0;
-						if ((*ProfileObj)->TryGetNumberField(TEXT("noise_scale"),      TmpD)) Profile.NoiseScale = static_cast<float>(TmpD);
-						if ((*ProfileObj)->TryGetNumberField(TEXT("vignetting_scale"), TmpD)) Profile.VignettingScale = static_cast<float>(TmpD);
-						if ((*ProfileObj)->TryGetNumberField(TEXT("scan_line_scale"),  TmpD)) Profile.ScanLineScale = static_cast<float>(TmpD);
-						if ((*ProfileObj)->TryGetNumberField(TEXT("atmosphere_scale"), TmpD)) Profile.AtmosphereScale = static_cast<float>(TmpD);
-						if ((*ProfileObj)->TryGetNumberField(TEXT("blur_radius"),      TmpD)) Profile.BlurRadius = FMath::Max(0, static_cast<int32>(TmpD));
-						if ((*ProfileObj)->TryGetNumberField(TEXT("contrast"),         TmpD)) Profile.Contrast = static_cast<float>(TmpD);
-						if ((*ProfileObj)->TryGetNumberField(TEXT("brightness_bias"),  TmpD)) Profile.BrightnessBias = static_cast<float>(TmpD);
-						Cfg.SensorQualityProfiles.Add(PresetKey, Profile);
-					}
-				}
+				Cfg.SensorQualityPreset = NormalizeQualityPreset(Preset);
 			}
+			ResolveActiveSensorQuality(Cfg);
 
-			// Active sensor quality preset and optional inline overrides.
+			YamlFloat(QualityNode, "noise_scale",      Cfg.ActiveSensorQuality.NoiseScale);
+			YamlFloat(QualityNode, "vignetting_scale",  Cfg.ActiveSensorQuality.VignettingScale);
+			YamlFloat(QualityNode, "scan_line_scale",   Cfg.ActiveSensorQuality.ScanLineScale);
+			YamlFloat(QualityNode, "atmosphere_scale",  Cfg.ActiveSensorQuality.AtmosphereScale);
 			{
-				const TSharedPtr<FJsonObject>* QualityObj = nullptr;
-				if (Root->TryGetObjectField(TEXT("sensor_quality"), QualityObj) && QualityObj)
-				{
-					FString Preset;
-					if ((*QualityObj)->TryGetStringField(TEXT("preset"), Preset))
-					{
-						Cfg.SensorQualityPreset = NormalizeQualityPreset(Preset);
-					}
-					ResolveActiveSensorQuality(Cfg);
-
-					double TmpD = 0.0;
-					if ((*QualityObj)->TryGetNumberField(TEXT("noise_scale"), TmpD))
-						Cfg.ActiveSensorQuality.NoiseScale = static_cast<float>(TmpD);
-					if ((*QualityObj)->TryGetNumberField(TEXT("vignetting_scale"), TmpD))
-						Cfg.ActiveSensorQuality.VignettingScale = static_cast<float>(TmpD);
-					if ((*QualityObj)->TryGetNumberField(TEXT("scan_line_scale"), TmpD))
-						Cfg.ActiveSensorQuality.ScanLineScale = static_cast<float>(TmpD);
-					if ((*QualityObj)->TryGetNumberField(TEXT("atmosphere_scale"), TmpD))
-						Cfg.ActiveSensorQuality.AtmosphereScale = static_cast<float>(TmpD);
-					if ((*QualityObj)->TryGetNumberField(TEXT("blur_radius"), TmpD))
-						Cfg.ActiveSensorQuality.BlurRadius = FMath::Max(0, static_cast<int32>(TmpD));
-					if ((*QualityObj)->TryGetNumberField(TEXT("contrast"), TmpD))
-						Cfg.ActiveSensorQuality.Contrast = static_cast<float>(TmpD);
-					if ((*QualityObj)->TryGetNumberField(TEXT("brightness_bias"), TmpD))
-						Cfg.ActiveSensorQuality.BrightnessBias = static_cast<float>(TmpD);
-				}
-				else
-				{
-					ResolveActiveSensorQuality(Cfg);
-				}
+				int32 BlurVal = Cfg.ActiveSensorQuality.BlurRadius;
+				if (YamlInt(QualityNode, "blur_radius", BlurVal))
+					Cfg.ActiveSensorQuality.BlurRadius = FMath::Max(0, BlurVal);
 			}
-
-			// Optional multi-stream output views.
-			{
-				const TArray<TSharedPtr<FJsonValue>>* ViewsArr = nullptr;
-				if (Root->TryGetArrayField(TEXT("output_views"), ViewsArr) && ViewsArr)
-				{
-					Cfg.OutputViews.Reset();
-					int32 DefaultViewId = 0;
-					for (const TSharedPtr<FJsonValue>& ViewVal : *ViewsArr)
-					{
-						if (!ViewVal.IsValid()) continue;
-						const TSharedPtr<FJsonObject> ViewObj = ViewVal->AsObject();
-						if (!ViewObj.IsValid()) continue;
-
-						FCamSimConfig::FOutputViewConfig ViewCfg;
-						ViewCfg.ViewId = DefaultViewId++;
-						ViewCfg.MulticastAddr = Cfg.MulticastAddr;
-						ViewCfg.MulticastPort = Cfg.MulticastPort;
-						ViewCfg.VideoBitrate = Cfg.VideoBitrate;
-						ViewCfg.H264Preset = Cfg.H264Preset;
-						ViewCfg.H264Tune = Cfg.H264Tune;
-						ViewCfg.HFovDeg = 0.0f;
-
-						double TmpNum = 0.0;
-						bool TmpBool = true;
-						if (ViewObj->TryGetNumberField(TEXT("view_id"), TmpNum)) ViewCfg.ViewId = static_cast<int32>(TmpNum);
-						if (ViewObj->TryGetBoolField(TEXT("enabled"), TmpBool)) ViewCfg.bEnabled = TmpBool;
-						ViewObj->TryGetStringField(TEXT("multicast_addr"), ViewCfg.MulticastAddr);
-						if (ViewObj->TryGetNumberField(TEXT("multicast_port"), TmpNum)) ViewCfg.MulticastPort = static_cast<int32>(TmpNum);
-						if (ViewObj->TryGetNumberField(TEXT("video_bitrate"), TmpNum)) ViewCfg.VideoBitrate = static_cast<int32>(TmpNum);
-						ViewObj->TryGetStringField(TEXT("h264_preset"), ViewCfg.H264Preset);
-						ViewObj->TryGetStringField(TEXT("h264_tune"), ViewCfg.H264Tune);
-						if (ViewObj->TryGetNumberField(TEXT("hfov_deg"), TmpNum)) ViewCfg.HFovDeg = static_cast<float>(TmpNum);
-
-						Cfg.OutputViews.Add(ViewCfg);
-					}
-				}
-			}
-
-			// Optional ground-truth sidecar output.
-			{
-				const TSharedPtr<FJsonObject>* GTObj = nullptr;
-				if (Root->TryGetObjectField(TEXT("ground_truth"), GTObj) && GTObj)
-				{
-					bool TmpB = false;
-					double TmpD = 0.0;
-					if ((*GTObj)->TryGetBoolField(TEXT("enabled"), TmpB)) Cfg.GroundTruth.bEnabled = TmpB;
-					(*GTObj)->TryGetStringField(TEXT("output_path"), Cfg.GroundTruth.OutputPath);
-					if ((*GTObj)->TryGetNumberField(TEXT("interval_frames"), TmpD))
-						Cfg.GroundTruth.IntervalFrames = FMath::Max(1, static_cast<int32>(TmpD));
-				}
-				Root->TryGetBoolField(TEXT("ground_truth_enabled"), Cfg.GroundTruth.bEnabled);
-				Root->TryGetStringField(TEXT("ground_truth_path"), Cfg.GroundTruth.OutputPath);
-				{
-					double GTInterval = Cfg.GroundTruth.IntervalFrames;
-					if (Root->TryGetNumberField(TEXT("ground_truth_interval_frames"), GTInterval))
-					{
-						Cfg.GroundTruth.IntervalFrames = FMath::Max(1, static_cast<int32>(GTInterval));
-					}
-				}
-			}
-
-			// Entity runtime scale controls (LOD/culling/update throttling).
-			{
-				const TSharedPtr<FJsonObject>* ScaleObj = nullptr;
-				if (Root->TryGetObjectField(TEXT("entity_scale"), ScaleObj) && ScaleObj)
-				{
-					double TmpD = 0.0;
-					if ((*ScaleObj)->TryGetNumberField(TEXT("max_draw_distance_m"), TmpD))
-						Cfg.EntityScale.MaxDrawDistanceM = static_cast<float>(TmpD);
-					if ((*ScaleObj)->TryGetNumberField(TEXT("tick_rate_hz"), TmpD))
-						Cfg.EntityScale.TickRateHz = static_cast<float>(TmpD);
-					if ((*ScaleObj)->TryGetNumberField(TEXT("default_max_update_rate_hz"), TmpD))
-						Cfg.EntityScale.DefaultMaxUpdateRateHz = static_cast<float>(TmpD);
-
-					const TSharedPtr<FJsonObject>* OverridesObj = nullptr;
-					if ((*ScaleObj)->TryGetObjectField(TEXT("max_update_rate_hz_overrides"), OverridesObj) && OverridesObj)
-					{
-						for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*OverridesObj)->Values)
-						{
-							int32 EntityId = FCString::Atoi(*Pair.Key);
-							double RateHz = 0.0;
-							if (Pair.Value.IsValid() && Pair.Value->TryGetNumber(RateHz))
-							{
-								Cfg.EntityScale.MaxUpdateRateHzOverrides.Add(EntityId, static_cast<float>(RateHz));
-							}
-						}
-					}
-				}
-
-				// Legacy flat keys (kept for backwards compatibility).
-				{
-					double TmpD = Cfg.EntityScale.MaxDrawDistanceM;
-					if (Root->TryGetNumberField(TEXT("entity_max_draw_distance_m"), TmpD))
-					{
-						Cfg.EntityScale.MaxDrawDistanceM = static_cast<float>(TmpD);
-					}
-				}
-				{
-					double TmpD = Cfg.EntityScale.TickRateHz;
-					if (Root->TryGetNumberField(TEXT("entity_tick_rate_hz"), TmpD))
-					{
-						Cfg.EntityScale.TickRateHz = static_cast<float>(TmpD);
-					}
-				}
-				{
-					double TmpD = Cfg.EntityScale.DefaultMaxUpdateRateHz;
-					if (Root->TryGetNumberField(TEXT("entity_default_max_update_rate_hz"), TmpD))
-					{
-						Cfg.EntityScale.DefaultMaxUpdateRateHz = static_cast<float>(TmpD);
-					}
-				}
-			}
-
-			// Optional scenario entity orchestration block.
-			{
-				const TSharedPtr<FJsonObject>* ScenarioObj = nullptr;
-				if (Root->TryGetObjectField(TEXT("scenario"), ScenarioObj) && ScenarioObj)
-				{
-					bool TmpB = false;
-					double TmpD = 0.0;
-					if ((*ScenarioObj)->TryGetBoolField(TEXT("enabled"), TmpB))
-						Cfg.bScenarioEnabled = TmpB;
-					if ((*ScenarioObj)->TryGetNumberField(TEXT("time_scale"), TmpD))
-						Cfg.ScenarioTimeScale = static_cast<float>(TmpD);
-
-					const TArray<TSharedPtr<FJsonValue>>* EntitiesArr = nullptr;
-					if ((*ScenarioObj)->TryGetArrayField(TEXT("entities"), EntitiesArr) && EntitiesArr)
-					{
-						Cfg.ScenarioEntities.Reset();
-						for (const TSharedPtr<FJsonValue>& EntityVal : *EntitiesArr)
-						{
-							if (!EntityVal.IsValid()) continue;
-							const TSharedPtr<FJsonObject> EntityObj = EntityVal->AsObject();
-							if (!EntityObj.IsValid()) continue;
-
-							FCamSimConfig::FScenarioEntityConfig Spec;
-							if (EntityObj->TryGetNumberField(TEXT("entity_id"), TmpD))
-								Spec.EntityId = static_cast<int32>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("entity_type"), TmpD))
-								Spec.EntityType = static_cast<int32>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("start_latitude"), TmpD))
-								Spec.StartLatitude = TmpD;
-							if (EntityObj->TryGetNumberField(TEXT("start_longitude"), TmpD))
-								Spec.StartLongitude = TmpD;
-							if (EntityObj->TryGetNumberField(TEXT("start_altitude"), TmpD))
-								Spec.StartAltitude = TmpD;
-							if (EntityObj->TryGetNumberField(TEXT("start_yaw"), TmpD))
-								Spec.StartYaw = static_cast<float>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("start_pitch"), TmpD))
-								Spec.StartPitch = static_cast<float>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("start_roll"), TmpD))
-								Spec.StartRoll = static_cast<float>(TmpD);
-
-							if (EntityObj->TryGetNumberField(TEXT("spawn_time_sec"), TmpD))
-								Spec.SpawnTimeSec = static_cast<float>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("despawn_time_sec"), TmpD))
-								Spec.DespawnTimeSec = static_cast<float>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("update_rate_hz"), TmpD))
-								Spec.UpdateRateHz = static_cast<float>(TmpD);
-
-							if (EntityObj->TryGetNumberField(TEXT("north_rate_mps"), TmpD))
-								Spec.NorthRateMps = static_cast<float>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("east_rate_mps"), TmpD))
-								Spec.EastRateMps = static_cast<float>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("up_rate_mps"), TmpD))
-								Spec.UpRateMps = static_cast<float>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("yaw_rate_dps"), TmpD))
-								Spec.YawRateDegPerSec = static_cast<float>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("pitch_rate_dps"), TmpD))
-								Spec.PitchRateDegPerSec = static_cast<float>(TmpD);
-							if (EntityObj->TryGetNumberField(TEXT("roll_rate_dps"), TmpD))
-								Spec.RollRateDegPerSec = static_cast<float>(TmpD);
-
-							Cfg.ScenarioEntities.Add(Spec);
-						}
-					}
-				}
-
-				// Legacy flat keys.
-				Root->TryGetBoolField(TEXT("scenario_enabled"), Cfg.bScenarioEnabled);
-				{
-					double TmpD = Cfg.ScenarioTimeScale;
-					if (Root->TryGetNumberField(TEXT("scenario_time_scale"), TmpD))
-					{
-						Cfg.ScenarioTimeScale = static_cast<float>(TmpD);
-					}
-				}
-			}
-
-			UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *JsonPath);
+			YamlFloat(QualityNode, "contrast",         Cfg.ActiveSensorQuality.Contrast);
+			YamlFloat(QualityNode, "brightness_bias",  Cfg.ActiveSensorQuality.BrightnessBias);
 		}
 		else
 		{
-			UE_LOG(LogCamSim, Warning, TEXT("Failed to parse %s - using defaults"), *JsonPath);
+			ResolveActiveSensorQuality(Cfg);
 		}
+
+		// Optional multi-stream output views.
+		if (Root.has_child("output_views"))
+		{
+			ryml::ConstNodeRef ViewsNode = Root["output_views"];
+			if (ViewsNode.is_seq())
+			{
+				Cfg.OutputViews.Reset();
+				int32 DefaultViewId = 0;
+				for (ryml::ConstNodeRef ViewNode : ViewsNode)
+				{
+					if (!ViewNode.is_map()) continue;
+
+					FCamSimConfig::FOutputViewConfig ViewCfg;
+					ViewCfg.ViewId = DefaultViewId++;
+					ViewCfg.MulticastAddr = Cfg.MulticastAddr;
+					ViewCfg.MulticastPort = Cfg.MulticastPort;
+					ViewCfg.VideoBitrate = Cfg.VideoBitrate;
+					ViewCfg.H264Preset = Cfg.H264Preset;
+					ViewCfg.H264Tune = Cfg.H264Tune;
+					ViewCfg.HFovDeg = 0.0f;
+
+					YamlInt   (ViewNode, "view_id",        ViewCfg.ViewId);
+					YamlBool  (ViewNode, "enabled",        ViewCfg.bEnabled);
+					YamlString(ViewNode, "multicast_addr", ViewCfg.MulticastAddr);
+					YamlInt   (ViewNode, "multicast_port", ViewCfg.MulticastPort);
+					YamlInt   (ViewNode, "video_bitrate",  ViewCfg.VideoBitrate);
+					YamlString(ViewNode, "h264_preset",    ViewCfg.H264Preset);
+					YamlString(ViewNode, "h264_tune",      ViewCfg.H264Tune);
+					YamlFloat (ViewNode, "hfov_deg",       ViewCfg.HFovDeg);
+
+					Cfg.OutputViews.Add(ViewCfg);
+				}
+			}
+		}
+
+		// Optional ground-truth sidecar output.
+		if (Root.has_child("ground_truth"))
+		{
+			ryml::ConstNodeRef GTNode = Root["ground_truth"];
+			YamlBool  (GTNode, "enabled",         Cfg.GroundTruth.bEnabled);
+			YamlString(GTNode, "output_path",     Cfg.GroundTruth.OutputPath);
+			{
+				int32 IntervalVal = Cfg.GroundTruth.IntervalFrames;
+				if (YamlInt(GTNode, "interval_frames", IntervalVal))
+					Cfg.GroundTruth.IntervalFrames = FMath::Max(1, IntervalVal);
+			}
+		}
+		YamlBool  (Root, "ground_truth_enabled", Cfg.GroundTruth.bEnabled);
+		YamlString(Root, "ground_truth_path",    Cfg.GroundTruth.OutputPath);
+		{
+			int32 GTInterval = Cfg.GroundTruth.IntervalFrames;
+			if (YamlInt(Root, "ground_truth_interval_frames", GTInterval))
+			{
+				Cfg.GroundTruth.IntervalFrames = FMath::Max(1, GTInterval);
+			}
+		}
+
+		// Entity runtime scale controls (LOD/culling/update throttling).
+		if (Root.has_child("entity_scale"))
+		{
+			ryml::ConstNodeRef ScaleNode = Root["entity_scale"];
+			YamlFloat(ScaleNode, "max_draw_distance_m",      Cfg.EntityScale.MaxDrawDistanceM);
+			YamlFloat(ScaleNode, "tick_rate_hz",              Cfg.EntityScale.TickRateHz);
+			YamlFloat(ScaleNode, "default_max_update_rate_hz", Cfg.EntityScale.DefaultMaxUpdateRateHz);
+
+			if (ScaleNode.has_child("max_update_rate_hz_overrides"))
+			{
+				ryml::ConstNodeRef OverridesNode = ScaleNode["max_update_rate_hz_overrides"];
+				if (OverridesNode.is_map())
+				{
+					for (ryml::ConstNodeRef Override : OverridesNode)
+					{
+						FString KeyStr = RymlToFString(Override.key());
+						int32 EntityId = FCString::Atoi(*KeyStr);
+						if (Override.has_val())
+						{
+							float RateHz = YamlFloatVal(Override);
+							Cfg.EntityScale.MaxUpdateRateHzOverrides.Add(EntityId, RateHz);
+						}
+					}
+				}
+			}
+		}
+
+		// Legacy flat keys (kept for backwards compatibility).
+		YamlFloat(Root, "entity_max_draw_distance_m",         Cfg.EntityScale.MaxDrawDistanceM);
+		YamlFloat(Root, "entity_tick_rate_hz",                Cfg.EntityScale.TickRateHz);
+		YamlFloat(Root, "entity_default_max_update_rate_hz",  Cfg.EntityScale.DefaultMaxUpdateRateHz);
+
+		// Optional scenario entity orchestration block.
+		if (Root.has_child("scenario"))
+		{
+			ryml::ConstNodeRef ScenarioNode = Root["scenario"];
+			YamlBool (ScenarioNode, "enabled",    Cfg.bScenarioEnabled);
+			YamlFloat(ScenarioNode, "time_scale", Cfg.ScenarioTimeScale);
+
+			if (ScenarioNode.has_child("entities"))
+			{
+				ryml::ConstNodeRef EntitiesNode = ScenarioNode["entities"];
+				if (EntitiesNode.is_seq())
+				{
+					Cfg.ScenarioEntities.Reset();
+					for (ryml::ConstNodeRef EntityNode : EntitiesNode)
+					{
+						if (!EntityNode.is_map()) continue;
+
+						FCamSimConfig::FScenarioEntityConfig Spec;
+						YamlInt   (EntityNode, "entity_id",       Spec.EntityId);
+						YamlInt   (EntityNode, "entity_type",     Spec.EntityType);
+						YamlDouble(EntityNode, "start_latitude",  Spec.StartLatitude);
+						YamlDouble(EntityNode, "start_longitude", Spec.StartLongitude);
+						YamlDouble(EntityNode, "start_altitude",  Spec.StartAltitude);
+						YamlFloat (EntityNode, "start_yaw",       Spec.StartYaw);
+						YamlFloat (EntityNode, "start_pitch",     Spec.StartPitch);
+						YamlFloat (EntityNode, "start_roll",      Spec.StartRoll);
+						YamlFloat (EntityNode, "spawn_time_sec",  Spec.SpawnTimeSec);
+						YamlFloat (EntityNode, "despawn_time_sec", Spec.DespawnTimeSec);
+						YamlFloat (EntityNode, "update_rate_hz",  Spec.UpdateRateHz);
+						YamlFloat (EntityNode, "north_rate_mps",  Spec.NorthRateMps);
+						YamlFloat (EntityNode, "east_rate_mps",   Spec.EastRateMps);
+						YamlFloat (EntityNode, "up_rate_mps",     Spec.UpRateMps);
+						YamlFloat (EntityNode, "yaw_rate_dps",    Spec.YawRateDegPerSec);
+						YamlFloat (EntityNode, "pitch_rate_dps",  Spec.PitchRateDegPerSec);
+						YamlFloat (EntityNode, "roll_rate_dps",   Spec.RollRateDegPerSec);
+
+						Cfg.ScenarioEntities.Add(Spec);
+					}
+				}
+			}
+		}
+
+		// Legacy flat keys.
+		YamlBool (Root, "scenario_enabled",    Cfg.bScenarioEnabled);
+		YamlFloat(Root, "scenario_time_scale", Cfg.ScenarioTimeScale);
+
+		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
 	}
 	else
 	{
-		UE_LOG(LogCamSim, Log, TEXT("No config file found at %s - using defaults"), *JsonPath);
+		UE_LOG(LogCamSim, Log, TEXT("No config file found at %s - using defaults"), *YamlPath);
 	}
 
 	ApplyEnvOverrides(Cfg);

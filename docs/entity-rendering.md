@@ -46,11 +46,11 @@ FEntityCtrlProcessor::OnPacketReceived()
         └─ all other EntityIds          ──► EntityStateQueue  ──► FCamSimEntityManager
 ```
 
-`camera_entity_id` is read from `camsim_config.json` (default `0`). Set it to
+`camera_entity_id` is read from `camsim_config.yaml` (default `0`). Set it to
 match the entity ID your host uses for the camera:
 
-```json
-"camera_entity_id": 0
+```yaml
+camera_entity_id: 0
 ```
 
 The three other queues (Rate Control, Art Part, Component Control) are consumed
@@ -110,21 +110,18 @@ wastes GPU memory and draw calls.
 
 ## Configuration
 
-Entity types are configured in `camsim_config.json`:
+Entity types are configured in `camsim_config.yaml`:
 
-```json
-"entity_types": {
-  "1001": {
-    "mesh":           "/Game/Models/F16/F16.F16",
-    "mesh_damaged":   "/Game/Models/F16/F16_Damaged.F16_Damaged",
-    "mesh_destroyed": "/Game/Models/F16/F16_Destroyed.F16_Destroyed",
-    "skeletal":       true
-  },
-  "2001": {
-    "mesh":     "/Game/Models/Truck/Truck.Truck",
-    "skeletal": false
-  }
-}
+```yaml
+entity_types:
+  "1001":
+    mesh: "/Game/Models/F16/F16.F16"
+    mesh_damaged: "/Game/Models/F16/F16_Damaged.F16_Damaged"
+    mesh_destroyed: "/Game/Models/F16/F16_Destroyed.F16_Destroyed"
+    skeletal: true
+  "2001":
+    mesh: "/Game/Models/Truck/Truck.Truck"
+    skeletal: false
 ```
 
 Keys are CIGI EntityType values as strings. The type table is loaded once at

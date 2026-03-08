@@ -15,7 +15,7 @@ enum class ESensorMode : uint8
 };
 
 // ---------------------------------------------------------------------------
-// FSensorModeConfig — per-mode tuning, loaded from camsim_config.json
+// FSensorModeConfig — per-mode tuning, loaded from camsim_config.yaml
 // ---------------------------------------------------------------------------
 struct FSensorModeConfig
 {

@@ -9,7 +9,6 @@
 #include "Encoder/MultiViewFrameSink.h" // FMultiViewFrameSink (concrete IFrameSink)
 #include "Encoder/IFrameSink.h"
 #include "CamSimTest.h"
-#include "Dom/JsonObject.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
 #include "Misc/FileHelper.h"
@@ -52,14 +51,9 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 
-	// Load config — also return the parsed JSON root so we can load entity types
-	// from the same document without re-reading the file.
-	TSharedPtr<FJsonObject> JsonRoot;
-	Config = FCamSimConfig::Load(&JsonRoot);
-	if (JsonRoot.IsValid())
-	{
-		EntityTypeTable.LoadFromConfig(JsonRoot);
-	}
+	// Load config (YAML parse + env var overrides)
+	Config = FCamSimConfig::Load();
+	EntityTypeTable.LoadFromConfig();
 
 	const FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: initializing"));

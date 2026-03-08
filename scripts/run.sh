@@ -244,16 +244,16 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# Config file — copy deploy/camsim_config.json into the project directory
+# Config file — copy deploy/camsim_config.yaml into the project directory
 # so FCamSimConfig::Load() finds it via FPaths::ProjectDir()
 # -------------------------------------------------------------------------
-CONFIG_SRC="${REPO_ROOT}/deploy/camsim_config.json"
-CONFIG_DST="${REPO_ROOT}/unreal_project/CamSimTest/camsim_config.json"
+CONFIG_SRC="${REPO_ROOT}/deploy/camsim_config.yaml"
+CONFIG_DST="${REPO_ROOT}/unreal_project/CamSimTest/camsim_config.yaml"
 if [ -f "${CONFIG_SRC}" ]; then
     cp -f "${CONFIG_SRC}" "${CONFIG_DST}"
     echo "==> Config: ${CONFIG_DST}"
 elif [ ! -f "${CONFIG_DST}" ]; then
-    echo "[WARN] No camsim_config.json found — entity types will not be loaded."
+    echo "[WARN] No camsim_config.yaml found — entity types will not be loaded."
     echo "       Expected: ${CONFIG_SRC}"
 fi
 

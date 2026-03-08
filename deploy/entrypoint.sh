@@ -5,8 +5,8 @@ set -euo pipefail
 
 BINARY_DIR=/opt/camsim
 GAME_BINARY="${BINARY_DIR}/CamSimTest/Binaries/Linux/CamSimTest-Linux-Shipping"
-CONFIG_SRC="${BINARY_DIR}/camsim_config.json"
-CONFIG_DST="${BINARY_DIR}/CamSimTest/Binaries/Linux/camsim_config.json"
+CONFIG_SRC="${BINARY_DIR}/camsim_config.yaml"
+CONFIG_DST="${BINARY_DIR}/CamSimTest/Binaries/Linux/camsim_config.yaml"
 
 # -----------------------------------------------------------------------
 # Copy default config if not already present (allows volume-mount override)

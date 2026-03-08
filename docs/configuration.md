@@ -1,170 +1,180 @@
 # Configuration Reference
 
-CamSim reads `camsim_config.json` from the project directory (or the binary
-directory as a fallback). Environment variables override any JSON value.
+CamSim reads `camsim_config.yaml` from the project directory (or the binary
+directory as a fallback). Environment variables override any YAML value.
 
-**JSONC support:** The config file supports `//` line comments and `/* */`
-block comments (stripped before JSON parsing). Comments inside JSON strings
-(e.g. URLs) are preserved. Pure JSON files load without modification.
+**YAML format:** The config file uses YAML with native `#` comments for clean,
+readable configuration. Keys are unquoted; string values only need quotes when
+they contain special YAML characters.
 
-**Canonical file:** `deploy/camsim_config.json` is the single source of truth
+**Canonical file:** `deploy/camsim_config.yaml` is the single source of truth
 for all three deployment modes. `run.sh` copies it into the UE project
 directory before launch; the container `entrypoint.sh` copies it into the
-binary directory. Edit only `deploy/camsim_config.json`; the project-dir copy
+binary directory. Edit only `deploy/camsim_config.yaml`; the project-dir copy
 is generated and is listed in `.gitignore`.
 
 ## Full Example
 
-```json
-{
-  "cigi_bind_addr":      "0.0.0.0",
-  "cigi_port":           8888,
-  "cigi_response_addr":  "127.0.0.1",
-  "cigi_response_port":  8889,
-  "camera_entity_id":    0,
+```yaml
+# CamSim Configuration
 
-  "multicast_addr":  "239.1.1.1",
-  "multicast_port":  5004,
-  "video_bitrate":   4000000,
-  "h264_preset":     "ultrafast",
-  "h264_tune":       "zerolatency",
-  "encoder":         "auto",
+cigi_bind_addr: "0.0.0.0"
+cigi_port: 8888
+cigi_response_addr: "127.0.0.1"
+cigi_response_port: 8889
+camera_entity_id: 0
 
-  "capture_width":   1920,
-  "capture_height":  1080,
-  "frame_rate":      30.0,
-  "swap_rb_readback": false,
-  "readback_ready_polls": 2,
-  "readback_format": "auto",
-  "encoder_watchdog_policy": "reconnect",
-  "encoder_watchdog_interval_ticks": 150,
-  "watchdog_max_reconnects": 3,
-  "hfov_deg":        60.0,
-  "terrain_provider": "cesium",
-  "imagery_provider": "cesium",
+multicast_addr: "239.1.1.1"
+multicast_port: 5004
+video_bitrate: 4000000
+h264_preset: ultrafast
+h264_tune: zerolatency
+encoder: auto
 
-  "tile_preload_fov_scale":      2.0,
-  "max_simultaneous_tile_loads": 40,
-  "maximum_screen_space_error":  4.0,
-  "maximum_cached_bytes_mb":     2048,
+capture_width: 1920
+capture_height: 1080
+frame_rate: 30.0
+swap_rb_readback: false
+readback_ready_polls: 2
+readback_format: auto
+encoder_watchdog_policy: reconnect
+encoder_watchdog_interval_ticks: 150
+watchdog_max_reconnects: 3
+hfov_deg: 60.0
+terrain_provider: cesium
+imagery_provider: cesium
 
-  "start_latitude":  32.9768,
-  "start_longitude": -114.2665,
-  "start_altitude":  1500.0,
-  "start_yaw":       200.0,
-  "start_pitch":     0.0,
-  "start_roll":      0.0,
-  "start_hour":      12.0,
+tile_preload_fov_scale: 2.0
+max_simultaneous_tile_loads: 40
+maximum_screen_space_error: 4.0
+maximum_cached_bytes_mb: 2048
 
-  "gimbal_max_slew_rate": 0.0,
-  "gimbal_pitch_min":    -90.0,
-  "gimbal_pitch_max":     30.0,
-  "gimbal_yaw_min":     -180.0,
-  "gimbal_yaw_max":      180.0,
-  "sensor_fov_presets":  [60.0, 20.0, 5.0],
+start_latitude: 32.9768
+start_longitude: -114.2665
+start_altitude: 1500.0
+start_yaw: 200.0
+start_pitch: 0.0
+start_roll: 0.0
+start_hour: 12.0
 
-  "max_entities":          500,
-  "use_instanced_rendering": true,
-  "gpu_sensor_effects":    false,
+gimbal_max_slew_rate: 0.0
+gimbal_pitch_min: -90.0
+gimbal_pitch_max: 30.0
+gimbal_yaw_min: -180.0
+gimbal_yaw_max: 180.0
+sensor_fov_presets:
+  - 60.0
+  - 20.0
+  - 5.0
 
-  "sensor_quality": {
-    "preset": "medium",
-    "noise_scale": 1.0,
-    "vignetting_scale": 1.0,
-    "scan_line_scale": 1.0,
-    "atmosphere_scale": 1.0,
-    "blur_radius": 0,
-    "contrast": 1.0,
-    "brightness_bias": 0.0
-  },
+max_entities: 500
+use_instanced_rendering: true
+gpu_sensor_effects: false
 
-  "output_views": [
-    {
-      "view_id": 0,
-      "enabled": true,
-      "multicast_addr": "239.1.1.1",
-      "multicast_port": 5004,
-      "video_bitrate": 4000000,
-      "h264_preset": "ultrafast",
-      "h264_tune": "zerolatency",
-      "hfov_deg": 0.0
-    }
-  ],
+sensor_quality:
+  preset: medium
+  noise_scale: 1.0
+  vignetting_scale: 1.0
+  scan_line_scale: 1.0
+  atmosphere_scale: 1.0
+  blur_radius: 0
+  contrast: 1.0
+  brightness_bias: 0.0
 
-  "ground_truth": {
-    "enabled": false,
-    "output_path": "camsim_groundtruth.jsonl",
-    "interval_frames": 1
-  },
+output_views:
+  - view_id: 0
+    enabled: true
+    multicast_addr: "239.1.1.1"
+    multicast_port: 5004
+    video_bitrate: 4000000
+    h264_preset: ultrafast
+    h264_tune: zerolatency
+    hfov_deg: 0.0
 
-  "entity_scale": {
-    "max_draw_distance_m": 0.0,
-    "tick_rate_hz": 0.0,
-    "default_max_update_rate_hz": 0.0,
-    "max_update_rate_hz_overrides": {
-      "1": 30.0
-    }
-  },
+ground_truth:
+  enabled: false
+  output_path: camsim_groundtruth.jsonl
+  interval_frames: 1
 
-  "scenario": {
-    "enabled": false,
-    "time_scale": 1.0,
-    "entities": [
-      {
-        "entity_id": 2001,
-        "entity_type": 1001,
-        "start_latitude": 38.8977,
-        "start_longitude": -77.0365,
-        "start_altitude": 900.0,
-        "start_yaw": 90.0,
-        "start_pitch": 0.0,
-        "start_roll": 0.0,
-        "spawn_time_sec": 0.0,
-        "despawn_time_sec": 0.0,
-        "update_rate_hz": 10.0,
-        "north_rate_mps": 50.0,
-        "east_rate_mps": 0.0,
-        "up_rate_mps": 0.0,
-        "yaw_rate_dps": 0.0,
-        "pitch_rate_dps": 0.0,
-        "roll_rate_dps": 0.0
-      }
-    ]
-  },
+entity_scale:
+  max_draw_distance_m: 0.0
+  tick_rate_hz: 0.0
+  default_max_update_rate_hz: 0.0
+  max_update_rate_hz_overrides:
+    "1": 30.0
 
-  "sensor_modes": {
-    "eo": {
-      "noise_netd": 0.0, "fixed_pattern_noise": 0.0,
-      "vignetting": 0.10, "scan_lines": false, "scan_line_strength": 0.0,
-      "ir_extinction_coeff": 0.0, "atmospheric_visibility_m": 0.0,
-      "atmosphere_strength": 1.0, "color_temperature_k": 6500.0,
-      "contrast": 1.0, "brightness_bias": 0.0, "blur_radius": 0
-    },
-    "ir": {
-      "noise_netd": 0.01, "fixed_pattern_noise": 0.005,
-      "vignetting": 0.20, "scan_lines": false, "scan_line_strength": 0.0,
-      "ir_extinction_coeff": 0.00001, "atmospheric_visibility_m": 12000.0,
-      "atmosphere_strength": 0.75, "color_temperature_k": 0.0,
-      "contrast": 1.1, "brightness_bias": -0.03, "blur_radius": 0
-    },
-    "nvg": {
-      "noise_netd": 0.03, "fixed_pattern_noise": 0.0,
-      "vignetting": 0.35, "scan_lines": false, "scan_line_strength": 0.05,
-      "ir_extinction_coeff": 0.0, "atmospheric_visibility_m": 8000.0,
-      "atmosphere_strength": 0.9, "color_temperature_k": 5200.0,
-      "contrast": 1.2, "brightness_bias": 0.02, "blur_radius": 0
-    }
-  },
+scenario:
+  enabled: false
+  time_scale: 1.0
+  entities:
+    - entity_id: 2001
+      entity_type: 1001
+      start_latitude: 38.8977
+      start_longitude: -77.0365
+      start_altitude: 900.0
+      start_yaw: 90.0
+      start_pitch: 0.0
+      start_roll: 0.0
+      spawn_time_sec: 0.0
+      despawn_time_sec: 0.0
+      update_rate_hz: 10.0
+      north_rate_mps: 50.0
+      east_rate_mps: 0.0
+      up_rate_mps: 0.0
+      yaw_rate_dps: 0.0
+      pitch_rate_dps: 0.0
+      roll_rate_dps: 0.0
 
-  "entity_types": {
-    "1001": {
-      "mesh": "f16/f16-c_falcon.glb",
-      "skeletal": false,
-      "scale": 1.0,
-      "rotation": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0 }
-    }
-  }
-}
+sensor_modes:
+  eo:
+    noise_netd: 0.0
+    fixed_pattern_noise: 0.0
+    vignetting: 0.10
+    scan_lines: false
+    scan_line_strength: 0.0
+    ir_extinction_coeff: 0.0
+    atmospheric_visibility_m: 0.0
+    atmosphere_strength: 1.0
+    color_temperature_k: 6500.0
+    contrast: 1.0
+    brightness_bias: 0.0
+    blur_radius: 0
+  ir:
+    noise_netd: 0.01
+    fixed_pattern_noise: 0.005
+    vignetting: 0.20
+    scan_lines: false
+    scan_line_strength: 0.0
+    ir_extinction_coeff: 0.00001
+    atmospheric_visibility_m: 12000.0
+    atmosphere_strength: 0.75
+    color_temperature_k: 0.0
+    contrast: 1.1
+    brightness_bias: -0.03
+    blur_radius: 0
+  nvg:
+    noise_netd: 0.03
+    fixed_pattern_noise: 0.0
+    vignetting: 0.35
+    scan_lines: false
+    scan_line_strength: 0.05
+    ir_extinction_coeff: 0.0
+    atmospheric_visibility_m: 8000.0
+    atmosphere_strength: 0.9
+    color_temperature_k: 5200.0
+    contrast: 1.2
+    brightness_bias: 0.02
+    blur_radius: 0
+
+entity_types:
+  "1001":
+    mesh: f16/f16-c_falcon.glb
+    skeletal: false
+    scale: 1.0
+    rotation:
+      pitch: 0.0
+      yaw: 0.0
+      roll: 0.0
 ```
 
 ## Field Reference
@@ -174,10 +184,10 @@ is generated and is listed in `.gitignore`.
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
 | `cigi_bind_addr` | string | `"0.0.0.0"` | `CAMSIM_CIGI_BIND_ADDR` | Local address to bind the CIGI UDP socket. Use `"0.0.0.0"` to listen on all interfaces. |
-| `cigi_port` | int | `8888` | `CAMSIM_CIGI_PORT` | UDP port for incoming CIGI 3.3 packets (Host → IG). |
-| `cigi_response_addr` | string | `"127.0.0.1"` | `CAMSIM_CIGI_RESPONSE_ADDR` | Destination IP address for IG → Host packets (SOF heartbeat, HAT/HOT responses, LOS responses). Set to the host simulation's IP. |
-| `cigi_response_port` | int | `8889` | `CAMSIM_CIGI_RESPONSE_PORT` | Destination UDP port for IG → Host packets. |
-| `camera_entity_id` | int | `0` | — | CIGI Entity ID that controls the camera. All other entity IDs are managed by the entity renderer. Must match the `--entity-id` value passed to `send_cigi_test.py`. |
+| `cigi_port` | int | `8888` | `CAMSIM_CIGI_PORT` | UDP port for incoming CIGI 3.3 packets (Host -> IG). |
+| `cigi_response_addr` | string | `"127.0.0.1"` | `CAMSIM_CIGI_RESPONSE_ADDR` | Destination IP address for IG -> Host packets (SOF heartbeat, HAT/HOT responses, LOS responses). Set to the host simulation's IP. |
+| `cigi_response_port` | int | `8889` | `CAMSIM_CIGI_RESPONSE_PORT` | Destination UDP port for IG -> Host packets. |
+| `camera_entity_id` | int | `0` | -- | CIGI Entity ID that controls the camera. All other entity IDs are managed by the entity renderer. Must match the `--entity-id` value passed to `send_cigi_test.py`. |
 
 ### Video Output
 
@@ -187,7 +197,7 @@ is generated and is listed in `.gitignore`.
 | `multicast_port` | int | `5004` | `CAMSIM_MULTICAST_PORT` | Destination UDP port. |
 | `video_bitrate` | int | `4000000` | `CAMSIM_VIDEO_BITRATE` | Target H.264 bitrate in bits per second. |
 | `h264_preset` | string | `"ultrafast"` | `CAMSIM_H264_PRESET` | libx264 encoding preset. Slower presets (`fast`, `medium`) give better quality at higher CPU cost. |
-| `h264_tune` | string | `"zerolatency"` | — | libx264 tune parameter. `"zerolatency"` minimises encode latency. |
+| `h264_tune` | string | `"zerolatency"` | -- | libx264 tune parameter. `"zerolatency"` minimises encode latency. |
 
 ### Capture
 
@@ -208,10 +218,10 @@ is generated and is listed in `.gitignore`.
 | `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | H.264 encoder selection: `auto` (tries NVENC first, falls back to libx264), `nvenc`, or `libx264`. |
 | `encoder_watchdog_policy` | string | `"reconnect"` | `CAMSIM_ENCODER_WATCHDOG_POLICY` | Encoder watchdog action when no frames are written for `encoder_watchdog_interval_ticks`: `reconnect`, `log_only`, or `fail_fast`. |
 | `encoder_watchdog_interval_ticks` | int | `150` | `CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS` | Tick interval used by the encoder watchdog and runtime health checks. |
-| `watchdog_max_reconnects` | int | `3` | — | Maximum encoder reconnect attempts before `RequestExit`. `0` = unlimited retries. |
+| `watchdog_max_reconnects` | int | `3` | -- | Maximum encoder reconnect attempts before `RequestExit`. `0` = unlimited retries. |
 | `max_entities` | int | `500` | `CAMSIM_MAX_ENTITIES` | Maximum simultaneous entities managed by the entity renderer. |
-| `use_instanced_rendering` | bool | `true` | — | Use instanced rendering for entities with the same mesh type. |
-| `gpu_sensor_effects` | bool | `false` | — | Use GPU post-process materials for sensor effects instead of CPU pipeline. Set `false` for Mesa llvmpipe compatibility. |
+| `use_instanced_rendering` | bool | `true` | -- | Use instanced rendering for entities with the same mesh type. |
+| `gpu_sensor_effects` | bool | `false` | -- | Use GPU post-process materials for sensor effects instead of CPU pipeline. Set `false` for Mesa llvmpipe compatibility. |
 
 ### Geospatial Providers (Phase F1 foundation)
 
@@ -241,7 +251,7 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 | `start_yaw` | float | `200.0` | `CAMSIM_START_YAW` | Initial heading in degrees [0, 360). |
 | `start_pitch` | float | `0.0` | `CAMSIM_START_PITCH` | Initial pitch in degrees. Negative = looking down. |
 | `start_roll` | float | `0.0` | `CAMSIM_START_ROLL` | Initial roll in degrees. |
-| `start_hour` | float | `12.0` | `CAMSIM_START_HOUR` | Initial time of day (0–24). Used to set sun position before a CIGI Celestial Control packet is received. |
+| `start_hour` | float | `12.0` | `CAMSIM_START_HOUR` | Initial time of day (0-24). Used to set sun position before a CIGI Celestial Control packet is received. |
 
 ### Gimbal and Sensor (Phase 9)
 
@@ -252,7 +262,7 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 | `gimbal_pitch_max` | float | `30.0` | Upper pitch limit in degrees. |
 | `gimbal_yaw_min` | float | `-180.0` | Left yaw limit in degrees relative to platform heading. |
 | `gimbal_yaw_max` | float | `180.0` | Right yaw limit in degrees relative to platform heading. |
-| `sensor_fov_presets` | float[] | `[60.0, 20.0, 5.0]` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0–1.0) selects the preset by index. |
+| `sensor_fov_presets` | float[] | `[60.0, 20.0, 5.0]` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0-1.0) selects the preset by index. |
 
 ### Sensor Quality (Phase D1)
 
@@ -301,7 +311,7 @@ digital zoom before encoding that view.
 When `CAMSIM_MULTICAST_ADDR` and/or `CAMSIM_MULTICAST_PORT` are set in the
 environment (for example via `./scripts/run.sh --local`), CamSim applies those
 route overrides to all configured `output_views` so local unicast testing
-does not silently keep per-view multicast routes from JSON.
+does not silently keep per-view multicast routes from the config.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -335,7 +345,7 @@ state, and active view routes) for analytics and dataset generation workflows.
 | `entity_scale.max_draw_distance_m` | float | `0.0` | `CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M` | Draw/cull distance in metres for entity meshes/lights. `0` disables culling by distance. |
 | `entity_scale.tick_rate_hz` | float | `0.0` | `CAMSIM_ENTITY_TICK_RATE_HZ` | Tick rate applied to `ACamSimEntity`. `0` means every frame. |
 | `entity_scale.default_max_update_rate_hz` | float | `0.0` | `CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ` | Global cap for pose-apply rate (reduces transform churn). `0` means uncapped. |
-| `entity_scale.max_update_rate_hz_overrides` | object | `{}` | — | Per-entity overrides keyed by `EntityId` string. |
+| `entity_scale.max_update_rate_hz_overrides` | object | `{}` | -- | Per-entity overrides keyed by `EntityId` string. |
 
 Legacy flat keys (`entity_max_draw_distance_m`, `entity_tick_rate_hz`, `entity_default_max_update_rate_hz`) are still accepted.
 
@@ -349,7 +359,7 @@ scenario authoring and CI smoke scenes.
 |-------|------|---------|---------|-------------|
 | `scenario.enabled` | bool | `false` | `CAMSIM_SCENARIO_ENABLED` | Enable built-in scenario entity orchestration. |
 | `scenario.time_scale` | float | `1.0` | `CAMSIM_SCENARIO_TIME_SCALE` | Multiplier for scenario time progression. |
-| `scenario.entities` | array | `[]` | — | Scripted entity definitions. |
+| `scenario.entities` | array | `[]` | -- | Scripted entity definitions. |
 
 Per-entry fields in `scenario.entities[]`:
 
@@ -366,7 +376,7 @@ Per-entry fields in `scenario.entities[]`:
 
 ### Entity Types
 
-The `entity_types` object maps CIGI Entity Type IDs (uint16, as JSON string keys)
+The `entity_types` map uses CIGI Entity Type IDs (uint16, as YAML string keys)
 to asset paths and flags:
 
 | Field | Type | Required | Description |
@@ -377,7 +387,7 @@ to asset paths and flags:
 | `mesh_destroyed` | string | No | Alternative mesh for damage state 2 (Component Control CompId=10, state=2). Falls back to `mesh` if omitted. |
 
 Entity type IDs are defined by the host simulation. CamSim does not reserve any
-specific IDs — the mapping is entirely user-configured.
+specific IDs -- the mapping is entirely user-configured.
 
 At startup, CamSim now performs preflight validation for each entry:
 
@@ -388,21 +398,24 @@ At startup, CamSim now performs preflight validation for each entry:
 
 **Example:** To add a helicopter (type 3001) and an armoured vehicle (type 4001):
 
-```json
-"entity_types": {
-  "3001": { "mesh": "/Game/Models/Helo/UH60.UH60", "skeletal": true },
-  "4001": { "mesh": "/Game/Models/Vehicles/M1A2.M1A2", "skeletal": false }
-}
+```yaml
+entity_types:
+  "3001":
+    mesh: "/Game/Models/Helo/UH60.UH60"
+    skeletal: true
+  "4001":
+    mesh: "/Game/Models/Vehicles/M1A2.M1A2"
+    skeletal: false
 ```
 
 ## Environment Variable Quick Reference
 
 ```bash
-# CIGI input (Host → IG)
+# CIGI input (Host -> IG)
 CAMSIM_CIGI_BIND_ADDR=0.0.0.0
 CAMSIM_CIGI_PORT=8888
 
-# CIGI output (IG → Host: SOF, HAT/HOT, LOS)
+# CIGI output (IG -> Host: SOF, HAT/HOT, LOS)
 CAMSIM_CIGI_RESPONSE_ADDR=127.0.0.1
 CAMSIM_CIGI_RESPONSE_PORT=8889
 

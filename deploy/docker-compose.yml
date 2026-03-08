@@ -44,7 +44,7 @@ services:
     environment:
       # Pass NVIDIA_VISIBLE_DEVICES so entrypoint.sh can detect GPU presence
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-}
-      # Optional config overrides (comment out to use camsim_config.json defaults)
+      # Optional config overrides (comment out to use camsim_config.yaml defaults)
       # - CAMSIM_CIGI_PORT=8888
       # - CAMSIM_MULTICAST_ADDR=239.1.1.1
       # - CAMSIM_MULTICAST_PORT=5004
@@ -54,7 +54,7 @@ services:
 
     # Mount a custom config without rebuilding the image
     # volumes:
-    #   - ./my_camsim_config.json:/opt/camsim/camsim_config.json:ro
+    #   - ./my_camsim_config.yaml:/opt/camsim/camsim_config.yaml:ro
 
     # Allow UE to map enough GPU/CPU memory
     shm_size: "1gb"

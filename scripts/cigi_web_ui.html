@@ -340,11 +340,11 @@ td {
 
       <div class="frow">
         <label>Latitude (°)</label>
-        <input type="number" id="cam-lat" value="37.7749"   step="0.0001" oninput="onLatLonInput()">
+        <input type="number" id="cam-lat" value="32.97679168129847"   step="0.0001" oninput="onLatLonInput()">
       </div>
       <div class="frow">
         <label>Longitude (°)</label>
-        <input type="number" id="cam-lon" value="-122.4194" step="0.0001" oninput="onLatLonInput()">
+        <input type="number" id="cam-lon" value="-114.26653388625711" step="0.0001" oninput="onLatLonInput()">
       </div>
       <div class="frow">
         <label>Altitude (m)</label>
@@ -512,8 +512,8 @@ td {
       <div class="ent-grid">
         <div class="frow"><label>Entity ID</label>   <input type="number" id="ent-id"    value="1"         min="1"></div>
         <div class="frow"><label>Entity Type</label> <input type="number" id="ent-type"  value="1001"      min="0"></div>
-        <div class="frow"><label>Latitude (°)</label><input type="number" id="ent-lat"   value="37.7749"   step="0.0001"></div>
-        <div class="frow"><label>Longitude (°)</label><input type="number" id="ent-lon"  value="-122.4194" step="0.0001"></div>
+        <div class="frow"><label>Latitude (°)</label><input type="number" id="ent-lat"   value="32.97679168129847"   step="0.0001"></div>
+        <div class="frow"><label>Longitude (°)</label><input type="number" id="ent-lon"  value="-114.26653388625711" step="0.0001"></div>
         <div class="frow"><label>Altitude (m)</label><input type="number" id="ent-alt"   value="50"        step="10"></div>
         <div class="frow"><label>Yaw (°)</label>     <input type="number" id="ent-yaw"   value="0"         step="1"></div>
         <div class="frow"><label>Pitch (°)</label>   <input type="number" id="ent-pitch" value="0"         step="1"></div>
@@ -583,7 +583,7 @@ td {
 
 <!-- Leaflet JS (graceful offline: map won't load tiles but page still works) -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLs=" crossorigin=""></script>
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
 <script>
 'use strict';
@@ -663,13 +663,13 @@ function switchTab(btn) {
 let map, marker;
 
 function initMap() {
-  map = L.map('map').setView([37.7749, -122.4194], 10);
+  map = L.map('map').setView([32.97679168129847, -114.26653388625711], 10);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 19,
   }).addTo(map);
 
-  marker = L.marker([37.7749, -122.4194], { draggable: true }).addTo(map);
+  marker = L.marker([32.97679168129847, -114.26653388625711], { draggable: true }).addTo(map);
 
   marker.on('dragend', () => {
     const ll = marker.getLatLng();

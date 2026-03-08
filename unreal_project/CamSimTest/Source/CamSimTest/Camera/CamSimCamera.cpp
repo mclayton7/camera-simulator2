@@ -416,7 +416,6 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 				static_cast<float>(Cfg.CaptureHeight) /
 				static_cast<float>(Cfg.CaptureWidth);
 
-			UpdateCesiumCamera();
 		}
 	}
 
@@ -464,6 +463,10 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 		CurrentTelemetry.GimbalPitch = GimbalComp->GetGimbalPitch();
 		CurrentTelemetry.GimbalRoll  = GimbalComp->GetGimbalRoll();
 	}
+
+	// Update Cesium tile streaming camera *after* all state (position, gimbal,
+	// FOV) has been applied this frame so LOD decisions use the true frustum.
+	UpdateCesiumCamera();
 
 	// Compute slant range and frame centre from current pose + gimbal
 	ComputeGeometricLOS();
@@ -558,8 +561,11 @@ void ACamSimCamera::UpdateCesiumCamera()
 	if (!CamMgr) return;
 
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
-	// Inflate FOV so Cesium preloads tiles beyond the visible frustum
-	const float PreloadFov = FMath::Clamp(Cfg.HFovDeg * Cfg.TilePreloadFovScale, Cfg.HFovDeg, 179.0f);
+	// Use the live SceneCapture FOV (updated by ViewDef / sensor presets)
+	// instead of the static config default, so Cesium streams tiles at the
+	// correct resolution for the current zoom level.
+	const float LiveHFov = SceneCapture ? SceneCapture->FOVAngle : Cfg.HFovDeg;
+	const float PreloadFov = FMath::Clamp(LiveHFov * Cfg.TilePreloadFovScale, LiveHFov, 179.0f);
 	FCesiumCamera Cam(
 		FVector2D(Cfg.CaptureWidth, Cfg.CaptureHeight),
 		SceneCapture->GetComponentLocation(),

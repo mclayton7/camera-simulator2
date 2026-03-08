@@ -159,7 +159,7 @@ by the host. Not terrain-relative; the host is responsible for providing ellipso
 
 **Source:** `SceneCapture->FOVAngle` — set from CIGI View Definition (opcode 21) `FovLeft`
 + `FovRight` fields. Updated immediately when a View Definition packet is received. Default
-value comes from `hfov_deg` in `camsim_config.json`.
+value comes from `hfov_deg` in `camsim_config.yaml`.
 
 ---
 

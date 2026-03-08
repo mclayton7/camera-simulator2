@@ -255,9 +255,9 @@ class IGState:
 
         # Camera entity
         self.camera_entity_id: int = 0
-        self.cam_lat: float = 37.7749
-        self.cam_lon: float = -122.4194
-        self.cam_alt: float = 1000.0
+        self.cam_lat: float = 32.97679168129847
+        self.cam_lon: float = -114.26653388625711
+        self.cam_alt: float = 1500.0
         self.cam_yaw: float = 0.0
         self.cam_pitch: float = 0.0    # platform level — gimbal points to nadir
         self.cam_roll: float = 0.0
@@ -358,8 +358,8 @@ async def frame_send_task(state: IGState):
             for eid, ed in list(state.entities.items()):
                 dgram += pack_entity_control(
                     eid,
-                    ed.get("lat", 37.7749),
-                    ed.get("lon", -122.4194),
+                    ed.get("lat", 32.97679168129847),
+                    ed.get("lon", -114.26653388625711),
                     ed.get("alt", 1000.0),
                     ed.get("yaw", 0.0),
                     ed.get("pitch", 0.0),
@@ -473,8 +473,8 @@ async def ws_handler(websocket, state: IGState):
                 elif t == "entity_spawn":
                     eid = int(m["id"])
                     state.entities[eid] = {
-                        "lat":         float(m.get("lat",         37.7749)),
-                        "lon":         float(m.get("lon",         -122.4194)),
+                        "lat":         float(m.get("lat",         32.97679168129847)),
+                        "lon":         float(m.get("lon",         -114.26653388625711)),
                         "alt":         float(m.get("alt",         50.0)),
                         "yaw":         float(m.get("yaw",         0.0)),
                         "pitch":       float(m.get("pitch",       0.0)),
@@ -491,7 +491,7 @@ async def ws_handler(websocket, state: IGState):
                         # Queue a Remove state packet
                         state.pending_packets.append(pack_entity_control(
                             eid,
-                            ed.get("lat", 37.7749), ed.get("lon", -122.4194),
+                            ed.get("lat", 32.97679168129847), ed.get("lon", -114.26653388625711),
                             ed.get("alt", 50.0), 0.0, 0.0, 0.0,
                             entity_state=2,
                         ))

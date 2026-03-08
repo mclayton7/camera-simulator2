@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Dom/JsonObject.h"
 
 /**
  * FEntityTypeEntry
@@ -28,17 +27,21 @@ struct FEntityTypeEntry
 /**
  * FEntityTypeTable
  *
- * Singleton lookup table mapping CIGI EntityType uint16 → FEntityTypeEntry.
- * Populated at startup from the "entity_types" block in camsim_config.json.
+ * Lookup table mapping CIGI EntityType uint16 → FEntityTypeEntry.
+ * Populated at startup from the "entity_types" block in camsim_config.yaml.
  *
- * JSON format:
- *   "entity_types": {
- *     "1001": { "mesh": "/Game/...", "skeletal": true,
- *               "mesh_damaged": "/Game/...", "mesh_destroyed": "/Game/...",
- *               "scale": 1.0,
- *               "rotation": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0 } },
- *     "2001": { "mesh": "/Game/...", "skeletal": false }
- *   }
+ * YAML format:
+ *   entity_types:
+ *     "1001":
+ *       mesh: "/Game/..."
+ *       skeletal: true
+ *       mesh_damaged: "/Game/..."
+ *       mesh_destroyed: "/Game/..."
+ *       scale: 1.0
+ *       rotation:
+ *         pitch: 0.0
+ *         yaw: 0.0
+ *         roll: 0.0
  */
 class UStaticMesh;
 class USkeletalMesh;
@@ -46,8 +49,8 @@ class USkeletalMesh;
 class FEntityTypeTable
 {
 public:
-	/** Parse the "entity_types" JSON object and populate the type map. */
-	void LoadFromConfig(const TSharedPtr<FJsonObject>& Root);
+	/** Re-parse the config YAML and populate the type map from "entity_types". */
+	void LoadFromConfig();
 
 	/** Returns the entry for the given type ID, or nullptr if not found. */
 	const FEntityTypeEntry* FindEntry(uint16 TypeId) const;
