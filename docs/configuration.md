@@ -3,6 +3,10 @@
 CamSim reads `camsim_config.json` from the project directory (or the binary
 directory as a fallback). Environment variables override any JSON value.
 
+**JSONC support:** The config file supports `//` line comments and `/* */`
+block comments (stripped before JSON parsing). Comments inside JSON strings
+(e.g. URLs) are preserved. Pure JSON files load without modification.
+
 **Canonical file:** `deploy/camsim_config.json` is the single source of truth
 for all three deployment modes. `run.sh` copies it into the UE project
 directory before launch; the container `entrypoint.sh` copies it into the
@@ -24,6 +28,7 @@ is generated and is listed in `.gitignore`.
   "video_bitrate":   4000000,
   "h264_preset":     "ultrafast",
   "h264_tune":       "zerolatency",
+  "encoder":         "auto",
 
   "capture_width":   1920,
   "capture_height":  1080,
@@ -33,27 +38,34 @@ is generated and is listed in `.gitignore`.
   "readback_format": "auto",
   "encoder_watchdog_policy": "reconnect",
   "encoder_watchdog_interval_ticks": 150,
+  "watchdog_max_reconnects": 3,
   "hfov_deg":        60.0,
   "terrain_provider": "cesium",
   "imagery_provider": "cesium",
 
   "tile_preload_fov_scale":      2.0,
   "max_simultaneous_tile_loads": 40,
+  "maximum_screen_space_error":  4.0,
+  "maximum_cached_bytes_mb":     2048,
 
-  "start_latitude":  38.8977,
-  "start_longitude": -77.0365,
-  "start_altitude":  500.0,
-  "start_yaw":       0.0,
-  "start_pitch":     -45.0,
+  "start_latitude":  32.9768,
+  "start_longitude": -114.2665,
+  "start_altitude":  1500.0,
+  "start_yaw":       200.0,
+  "start_pitch":     0.0,
   "start_roll":      0.0,
   "start_hour":      12.0,
 
-  "gimbal_max_slew_rate": 60.0,
+  "gimbal_max_slew_rate": 0.0,
   "gimbal_pitch_min":    -90.0,
   "gimbal_pitch_max":     30.0,
   "gimbal_yaw_min":     -180.0,
   "gimbal_yaw_max":      180.0,
-  "sensor_fov_presets":  [60.0, 30.0, 10.0, 3.0],
+  "sensor_fov_presets":  [60.0, 20.0, 5.0],
+
+  "max_entities":          500,
+  "use_instanced_rendering": true,
+  "gpu_sensor_effects":    false,
 
   "sensor_quality": {
     "preset": "medium",
@@ -76,16 +88,6 @@ is generated and is listed in `.gitignore`.
       "h264_preset": "ultrafast",
       "h264_tune": "zerolatency",
       "hfov_deg": 0.0
-    },
-    {
-      "view_id": 1,
-      "enabled": false,
-      "multicast_addr": "239.1.1.2",
-      "multicast_port": 5005,
-      "video_bitrate": 2500000,
-      "h264_preset": "ultrafast",
-      "h264_tune": "zerolatency",
-      "hfov_deg": 20.0
     }
   ],
 
@@ -130,16 +132,36 @@ is generated and is listed in `.gitignore`.
     ]
   },
 
+  "sensor_modes": {
+    "eo": {
+      "noise_netd": 0.0, "fixed_pattern_noise": 0.0,
+      "vignetting": 0.10, "scan_lines": false, "scan_line_strength": 0.0,
+      "ir_extinction_coeff": 0.0, "atmospheric_visibility_m": 0.0,
+      "atmosphere_strength": 1.0, "color_temperature_k": 6500.0,
+      "contrast": 1.0, "brightness_bias": 0.0, "blur_radius": 0
+    },
+    "ir": {
+      "noise_netd": 0.01, "fixed_pattern_noise": 0.005,
+      "vignetting": 0.20, "scan_lines": false, "scan_line_strength": 0.0,
+      "ir_extinction_coeff": 0.00001, "atmospheric_visibility_m": 12000.0,
+      "atmosphere_strength": 0.75, "color_temperature_k": 0.0,
+      "contrast": 1.1, "brightness_bias": -0.03, "blur_radius": 0
+    },
+    "nvg": {
+      "noise_netd": 0.03, "fixed_pattern_noise": 0.0,
+      "vignetting": 0.35, "scan_lines": false, "scan_line_strength": 0.05,
+      "ir_extinction_coeff": 0.0, "atmospheric_visibility_m": 8000.0,
+      "atmosphere_strength": 0.9, "color_temperature_k": 5200.0,
+      "contrast": 1.2, "brightness_bias": 0.02, "blur_radius": 0
+    }
+  },
+
   "entity_types": {
     "1001": {
-      "mesh":           "/Game/Models/F16/F16.F16",
-      "mesh_damaged":   "/Game/Models/F16/F16_Damaged.F16_Damaged",
-      "mesh_destroyed": "/Game/Models/F16/F16_Destroyed.F16_Destroyed",
-      "skeletal":       true
-    },
-    "2001": {
-      "mesh":     "/Game/Models/Truck/Truck.Truck",
-      "skeletal": false
+      "mesh": "f16/f16-c_falcon.glb",
+      "skeletal": false,
+      "scale": 1.0,
+      "rotation": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0 }
     }
   }
 }
@@ -183,8 +205,13 @@ is generated and is listed in `.gitignore`.
 
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
+| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | H.264 encoder selection: `auto` (tries NVENC first, falls back to libx264), `nvenc`, or `libx264`. |
 | `encoder_watchdog_policy` | string | `"reconnect"` | `CAMSIM_ENCODER_WATCHDOG_POLICY` | Encoder watchdog action when no frames are written for `encoder_watchdog_interval_ticks`: `reconnect`, `log_only`, or `fail_fast`. |
 | `encoder_watchdog_interval_ticks` | int | `150` | `CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS` | Tick interval used by the encoder watchdog and runtime health checks. |
+| `watchdog_max_reconnects` | int | `3` | — | Maximum encoder reconnect attempts before `RequestExit`. `0` = unlimited retries. |
+| `max_entities` | int | `500` | `CAMSIM_MAX_ENTITIES` | Maximum simultaneous entities managed by the entity renderer. |
+| `use_instanced_rendering` | bool | `true` | — | Use instanced rendering for entities with the same mesh type. |
+| `gpu_sensor_effects` | bool | `false` | — | Use GPU post-process materials for sensor effects instead of CPU pipeline. Set `false` for Mesa llvmpipe compatibility. |
 
 ### Geospatial Providers (Phase F1 foundation)
 
@@ -199,6 +226,8 @@ is generated and is listed in `.gitignore`.
 |-------|------|---------|---------|-------------|
 | `tile_preload_fov_scale` | float | `2.0` | `CAMSIM_TILE_FOV_SCALE` | Multiplier applied to `hfov_deg` when registering with `ACesiumCameraManager`. Values above 1.0 pre-fetch tiles outside the visible frustum to reduce pop-in when the camera pans. |
 | `max_simultaneous_tile_loads` | int | `40` | `CAMSIM_MAX_TILE_LOADS` | Maximum concurrent Cesium tile HTTP requests. Higher values speed up initial scene load at the cost of network/CPU. |
+| `maximum_screen_space_error` | float | `4.0` | `CAMSIM_MAX_SSE` | Cesium LOD quality: lower = sharper terrain. Cesium default is 16; 4.0 is high quality for ISR imagery. |
+| `maximum_cached_bytes_mb` | int | `2048` | `CAMSIM_MAX_CACHED_MB` | Cesium tile cache budget in MB. `0` = Cesium default (uncapped). |
 
 ### Camera Start Position
 
@@ -206,11 +235,11 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
-| `start_latitude` | double | `38.8977` | `CAMSIM_START_LAT` | WGS-84 latitude in decimal degrees. |
-| `start_longitude` | double | `-77.0365` | `CAMSIM_START_LON` | WGS-84 longitude in decimal degrees. |
-| `start_altitude` | double | `500.0` | `CAMSIM_START_ALT` | Height above WGS-84 ellipsoid in metres. |
-| `start_yaw` | float | `0.0` | `CAMSIM_START_YAW` | Initial heading in degrees [0, 360). |
-| `start_pitch` | float | `-45.0` | `CAMSIM_START_PITCH` | Initial pitch in degrees. Negative = looking down. |
+| `start_latitude` | double | `32.9768` | `CAMSIM_START_LAT` | WGS-84 latitude in decimal degrees. |
+| `start_longitude` | double | `-114.2665` | `CAMSIM_START_LON` | WGS-84 longitude in decimal degrees. |
+| `start_altitude` | double | `1500.0` | `CAMSIM_START_ALT` | Height above WGS-84 ellipsoid in metres. |
+| `start_yaw` | float | `200.0` | `CAMSIM_START_YAW` | Initial heading in degrees [0, 360). |
+| `start_pitch` | float | `0.0` | `CAMSIM_START_PITCH` | Initial pitch in degrees. Negative = looking down. |
 | `start_roll` | float | `0.0` | `CAMSIM_START_ROLL` | Initial roll in degrees. |
 | `start_hour` | float | `12.0` | `CAMSIM_START_HOUR` | Initial time of day (0–24). Used to set sun position before a CIGI Celestial Control packet is received. |
 
@@ -218,12 +247,12 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `gimbal_max_slew_rate` | float | `60.0` | Maximum gimbal slew rate in degrees per second. `0` means unlimited (instant). Applies to both yaw and pitch axes. |
+| `gimbal_max_slew_rate` | float | `0.0` | Maximum gimbal slew rate in degrees per second. `0` means unlimited (instant). Applies to both yaw and pitch axes. |
 | `gimbal_pitch_min` | float | `-90.0` | Lower pitch limit in degrees (negative = looking down). |
 | `gimbal_pitch_max` | float | `30.0` | Upper pitch limit in degrees. |
 | `gimbal_yaw_min` | float | `-180.0` | Left yaw limit in degrees relative to platform heading. |
 | `gimbal_yaw_max` | float | `180.0` | Right yaw limit in degrees relative to platform heading. |
-| `sensor_fov_presets` | float[] | `[60.0, 30.0, 10.0, 3.0]` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0–1.0) selects the preset by index. |
+| `sensor_fov_presets` | float[] | `[60.0, 20.0, 5.0]` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0–1.0) selects the preset by index. |
 
 ### Sensor Quality (Phase D1)
 
@@ -242,14 +271,25 @@ mode.
 | `sensor_quality.contrast` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_CONTRAST` | Global contrast multiplier. |
 | `sensor_quality.brightness_bias` | float | `0.0` | `CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS` | Global brightness offset in normalized range `[-1, 1]`. |
 
-Per-waveband `sensor_modes` now also supports:
+### Sensor Modes (per-waveband)
 
-- `atmospheric_visibility_m`
-- `atmosphere_strength`
-- `color_temperature_k`
-- `contrast`
-- `brightness_bias`
-- `blur_radius`
+Per-waveband CPU-side post-processing parameters. Configured under `sensor_modes.eo`,
+`sensor_modes.ir`, and `sensor_modes.nvg`.
+
+| Field | Type | EO default | IR default | NVG default | Description |
+|-------|------|------------|------------|-------------|-------------|
+| `noise_netd` | float | `0.0` | `0.01` | `0.03` | NETD noise amplitude. |
+| `fixed_pattern_noise` | float | `0.0` | `0.005` | `0.0` | Fixed pattern noise amplitude. |
+| `vignetting` | float | `0.10` | `0.20` | `0.35` | Vignette edge darkening strength. |
+| `scan_lines` | bool | `false` | `false` | `false` | Enable scan line overlay. |
+| `scan_line_strength` | float | `0.0` | `0.0` | `0.05` | Scan line intensity. |
+| `ir_extinction_coeff` | float | `0.0` | `0.00001` | `0.0` | IR atmospheric extinction coefficient. |
+| `atmospheric_visibility_m` | float | `0.0` | `12000` | `8000` | Visibility range in metres. |
+| `atmosphere_strength` | float | `1.0` | `0.75` | `0.9` | Atmosphere effect multiplier. |
+| `color_temperature_k` | float | `6500` | `0.0` | `5200` | White balance in Kelvin. |
+| `contrast` | float | `1.0` | `1.1` | `1.2` | Contrast multiplier. |
+| `brightness_bias` | float | `0.0` | `-0.03` | `0.02` | Brightness offset `[-1, 1]`. |
+| `blur_radius` | int | `0` | `0` | `0` | Post-effect blur in pixels. |
 
 ### Multi-stream Output Views (Phase D2)
 
@@ -371,11 +411,13 @@ CAMSIM_MULTICAST_ADDR=239.1.1.1   # or 127.0.0.1 for unicast loopback test
 CAMSIM_MULTICAST_PORT=5004
 CAMSIM_VIDEO_BITRATE=4000000
 CAMSIM_H264_PRESET=ultrafast
+CAMSIM_ENCODER=auto
 CAMSIM_SWAP_RB_READBACK=0
 CAMSIM_READBACK_READY_POLLS=2
 CAMSIM_READBACK_FORMAT=auto
 CAMSIM_ENCODER_WATCHDOG_POLICY=reconnect
 CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS=150
+CAMSIM_MAX_ENTITIES=500
 CAMSIM_SENSOR_QUALITY_PRESET=medium
 CAMSIM_SENSOR_QUALITY_NOISE_SCALE=1.0
 CAMSIM_SENSOR_QUALITY_VIGNETTING_SCALE=1.0
@@ -396,15 +438,17 @@ CAMSIM_SCENARIO_ENABLED=0
 CAMSIM_SCENARIO_TIME_SCALE=1.0
 
 # Start position
-CAMSIM_START_LAT=38.8977
-CAMSIM_START_LON=-77.0365
-CAMSIM_START_ALT=500.0
-CAMSIM_START_YAW=0.0
-CAMSIM_START_PITCH=-45.0
+CAMSIM_START_LAT=32.9768
+CAMSIM_START_LON=-114.2665
+CAMSIM_START_ALT=1500.0
+CAMSIM_START_YAW=200.0
+CAMSIM_START_PITCH=0.0
 CAMSIM_START_ROLL=0.0
 CAMSIM_START_HOUR=12.0
 
 # Cesium
 CAMSIM_TILE_FOV_SCALE=2.0
 CAMSIM_MAX_TILE_LOADS=40
+CAMSIM_MAX_SSE=4.0
+CAMSIM_MAX_CACHED_MB=2048
 ```

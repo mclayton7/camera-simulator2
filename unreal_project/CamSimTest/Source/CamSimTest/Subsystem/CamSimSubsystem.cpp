@@ -122,7 +122,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: CIGI query handler created"));
 
 	// Register for graceful shutdown on SIGTERM (Phase 2)
-	FCoreDelegates::ApplicationWillTerminateDelegate.AddLambda([this]()
+	FCoreDelegates::GetApplicationWillTerminateDelegate().AddLambda([this]()
 	{
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: ApplicationWillTerminate — flushing encoder"));
 		if (VideoEncoder)

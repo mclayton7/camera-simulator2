@@ -76,6 +76,88 @@ static void ResolveActiveSensorQuality(FCamSimConfig& Cfg)
 }
 
 // ---------------------------------------------------------------------------
+// JSONC comment stripper — removes // and /* */ comments while respecting
+// JSON string boundaries (so URLs like udp://... survive intact).
+// ---------------------------------------------------------------------------
+
+static FString StripJsonComments(const FString& Input)
+{
+	enum class EState { Normal, InString, BlockComment };
+
+	FString Out;
+	Out.Reserve(Input.Len());
+
+	EState State = EState::Normal;
+	const int32 Len = Input.Len();
+
+	for (int32 I = 0; I < Len; ++I)
+	{
+		const TCHAR C = Input[I];
+		const TCHAR Next = (I + 1 < Len) ? Input[I + 1] : 0;
+
+		switch (State)
+		{
+		case EState::Normal:
+			if (C == TEXT('"'))
+			{
+				Out.AppendChar(C);
+				State = EState::InString;
+			}
+			else if (C == TEXT('/') && Next == TEXT('/'))
+			{
+				// Skip to end of line
+				while (I < Len && Input[I] != TEXT('\n'))
+				{
+					++I;
+				}
+				// Keep the newline itself so line numbers stay meaningful
+				if (I < Len)
+				{
+					Out.AppendChar(TEXT('\n'));
+				}
+			}
+			else if (C == TEXT('/') && Next == TEXT('*'))
+			{
+				I += 1; // skip the '*'
+				State = EState::BlockComment;
+			}
+			else
+			{
+				Out.AppendChar(C);
+			}
+			break;
+
+		case EState::InString:
+			Out.AppendChar(C);
+			if (C == TEXT('\\'))
+			{
+				// Escaped character — copy the next char too
+				if (I + 1 < Len)
+				{
+					Out.AppendChar(Input[++I]);
+				}
+			}
+			else if (C == TEXT('"'))
+			{
+				State = EState::Normal;
+			}
+			break;
+
+		case EState::BlockComment:
+			if (C == TEXT('*') && Next == TEXT('/'))
+			{
+				I += 1; // skip the '/'
+				State = EState::Normal;
+			}
+			// else: skip character
+			break;
+		}
+	}
+
+	return Out;
+}
+
+// ---------------------------------------------------------------------------
 // FCamSimConfig
 // ---------------------------------------------------------------------------
 
@@ -178,6 +260,9 @@ FCamSimConfig FCamSimConfig::Load(TSharedPtr<FJsonObject>* OutJsonRoot)
 	FString JsonContent;
 	if (FFileHelper::LoadFileToString(JsonContent, *JsonPath))
 	{
+		// Strip // and /* */ comments so the config file can use JSONC format.
+		JsonContent = StripJsonComments(JsonContent);
+
 		TSharedPtr<FJsonObject> Root;
 		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonContent);
 		if (FJsonSerializer::Deserialize(Reader, Root) && Root.IsValid())

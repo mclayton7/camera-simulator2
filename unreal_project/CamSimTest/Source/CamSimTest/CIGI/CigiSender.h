@@ -8,7 +8,7 @@
 // Forward-declare CCL types to avoid pulling heavy headers into every TU
 class CigiIGSession;
 class CigiOutgoingMsg;
-class CigiSOFV3;
+class CigiSOFV3_2;
 class CigiHatHotRespV3;
 class CigiLosRespV3;
 
@@ -62,7 +62,7 @@ private:
 	// Separate outgoing-only CCL session (no incoming buffers needed)
 	CigiIGSession*  CigiSession  = nullptr;
 	CigiOutgoingMsg* OutgoingMsg = nullptr;  // non-owning ptr into CigiSession
-	CigiSOFV3*      SofPacket   = nullptr;
+	CigiSOFV3_2*    SofPacket   = nullptr;
 
 	// Per-frame staging arrays (cleared after FlushFrame)
 	TArray<CigiHatHotRespV3*> PendingHatHot;

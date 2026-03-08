@@ -11,7 +11,7 @@
 THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiIGSession.h"
 #include "cigicl/CigiOutgoingMsg.h"
-#include "cigicl/CigiSOFV3.h"
+#include "cigicl/CigiSOFV3_2.h"
 #include "cigicl/CigiHatHotRespV3.h"
 #include "cigicl/CigiLosRespV3.h"
 THIRD_PARTY_INCLUDES_END
@@ -74,7 +74,7 @@ bool FCigiSender::Open(const FCamSimConfig& Config)
 	OutgoingMsg = &CigiSession->GetOutgoingMsgMgr();
 
 	// Pre-allocate SOF packet (reused every frame)
-	SofPacket = new CigiSOFV3();
+	SofPacket = new CigiSOFV3_2();
 
 	bOpen = true;
 	UE_LOG(LogCamSim, Log, TEXT("FCigiSender: sending to %s:%d"),
@@ -116,7 +116,7 @@ void FCigiSender::FlushFrame(uint32 FrameCntr, uint8 LastHostFrame)
 
 	// Update SOF frame counter and echo host frame
 	SofPacket->SetFrameCntr(static_cast<Cigi_uint32>(FrameCntr));
-	SofPacket->SetLastRcvdIGFrame(static_cast<Cigi_uint32>(LastHostFrame));
+	SofPacket->SetLastRcvdHostFrame(static_cast<Cigi_uint32>(LastHostFrame));
 
 	// Begin message assembly
 	OutgoingMsg->BeginMsg();
