@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+#include "Templates/PimplPtr.h"
 #include "Config/CamSimConfig.h"
 #include "Entity/EntityTypeTable.h"
 #include "CamSimSubsystem.generated.h"
@@ -65,5 +66,5 @@ private:
 	// requires the destructor to be defined in the .cpp, which the Pimpl pattern
 	// handles naturally.  This replaces 6 raw new/delete pointer pairs.
 	struct FSubsystemImpl;
-	TUniquePtr<FSubsystemImpl> Impl;
+	TPimplPtr<FSubsystemImpl> Impl;
 };

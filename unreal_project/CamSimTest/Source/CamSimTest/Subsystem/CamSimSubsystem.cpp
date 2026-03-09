@@ -196,7 +196,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Config.SecurityMetadata.ReleasingInstructions);
 
 	// Phase 13B: allocate Pimpl — all sub-objects owned via TUniquePtr
-	Impl = MakeUnique<FSubsystemImpl>();
+	Impl = MakePimpl<FSubsystemImpl>();
 
 	// Start CIGI receiver thread
 	Impl->CigiReceiver = MakeUnique<FCigiReceiver>(Config);
