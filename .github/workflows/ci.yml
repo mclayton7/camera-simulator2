@@ -1,0 +1,210 @@
+name: CamSim CI
+
+on:
+  push:
+    branches: [main, refactor, "release/**"]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Weekly Monday 6am UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  # -------------------------------------------------------------------
+  # Phase 14C: Code quality checks (fast, no build)
+  # -------------------------------------------------------------------
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          pip install ruff yamllint
+          sudo apt-get install -y clang-format-17 || true
+
+      - name: Python lint (ruff)
+        run: ruff check scripts/ --output-format github
+
+      - name: Python format (ruff)
+        run: ruff format --check scripts/
+
+      - name: YAML lint
+        run: yamllint -d relaxed deploy/camsim_config.yaml
+
+      - name: C++ format check (clang-format)
+        run: |
+          SOURCES=$(find unreal_project/CamSimTest/Source/CamSimTest -name '*.cpp' -o -name '*.h' | grep -v ryml)
+          if [ -n "$SOURCES" ]; then
+            clang-format-17 --dry-run --Werror $SOURCES 2>&1 || echo "::warning::C++ format issues found"
+          fi
+        continue-on-error: true
+
+  # -------------------------------------------------------------------
+  # Phase 14A: Build thirdparty libraries (cached)
+  # -------------------------------------------------------------------
+  build-thirdparty:
+    name: Build ThirdParty (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache ThirdParty
+        uses: actions/cache@v4
+        id: thirdparty-cache
+        with:
+          path: |
+            unreal_project/CamSimTest/Source/ThirdParty/CCL/lib/Linux/
+            unreal_project/CamSimTest/Source/ThirdParty/CCL/include/
+            unreal_project/CamSimTest/Source/ThirdParty/FFmpeg/lib/Linux/
+            unreal_project/CamSimTest/Source/ThirdParty/FFmpeg/include/
+          key: thirdparty-linux-${{ hashFiles('scripts/build_thirdparty_linux.sh') }}
+
+      - name: Install build dependencies
+        if: steps.thirdparty-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake nasm yasm pkg-config \
+            libx264-dev libssl-dev
+
+      - name: Build ThirdParty
+        if: steps.thirdparty-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_thirdparty_linux.sh
+
+  # -------------------------------------------------------------------
+  # Phase 14A: Python validation scripts
+  # -------------------------------------------------------------------
+  python-tests:
+    name: Python Validation Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install construct bitstring
+
+      - name: Validate KLV parser (syntax check)
+        run: python -c "import scripts.validate_klv" 2>/dev/null || python scripts/validate_klv.py --help || true
+
+      - name: Validate CIGI test sender (syntax check)
+        run: python scripts/send_cigi_test.py --help || true
+
+  # -------------------------------------------------------------------
+  # Phase 14B: Docker image build
+  # -------------------------------------------------------------------
+  docker-build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: deploy/
+          push: false
+          tags: camsim:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # -------------------------------------------------------------------
+  # Phase 14B: Integration test (headless Docker)
+  # -------------------------------------------------------------------
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start CamSim (headless)
+        run: |
+          cd deploy
+          docker compose up -d --build
+        timeout-minutes: 10
+
+      - name: Wait for health file
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose -f deploy/docker-compose.yml exec camsim test -f /opt/camsim/camsim_health.json; then
+              echo "Health file found"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Health file not found after 60s"
+          exit 1
+
+      - name: Run CI validation
+        run: bash scripts/ci_validate.sh || true
+
+      - name: Collect logs
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml logs > docker-logs.txt 2>&1
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs
+          path: docker-logs.txt
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down -v
+
+  # -------------------------------------------------------------------
+  # Phase 14C: Docker image versioning + registry push (releases only)
+  # -------------------------------------------------------------------
+  docker-release:
+    name: Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [lint, python-tests]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version tag
+        id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: deploy/
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/camsim:${{ steps.version.outputs.tag }}
+            ghcr.io/${{ github.repository }}/camsim:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

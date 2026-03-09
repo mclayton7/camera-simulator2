@@ -21,6 +21,108 @@ extern "C"
 #include "libswscale/version.h"
 }
 
+// -------------------------------------------------------------------------
+// Phase 13B: Pimpl — all owned sub-objects live here.
+//
+// TUniquePtr<FSubsystemImpl> in the header triggers correct cleanup on
+// destruction/exception — no manual delete chains needed.
+// -------------------------------------------------------------------------
+
+struct UCamSimSubsystem::FSubsystemImpl
+{
+	// Owned components
+	TUniquePtr<FCigiReceiver>        CigiReceiver;
+	TUniquePtr<FMultiViewFrameSink>  VideoEncoder;
+	TUniquePtr<FCamSimEntityManager> EntityManager;
+	TUniquePtr<FCigiSender>          CigiSender;
+	TUniquePtr<FCigiQueryHandler>    QueryHandler;
+	TUniquePtr<FCamSimGeospatialProvider> GeospatialProvider;
+
+	// IG frame counter — incremented each tick; sent in every SOF packet
+	uint32 FrameCntr = 0;
+
+	// Encoder watchdog
+	uint64 WatchdogLastSuccessFrame = 0;
+	uint32 WatchdogLastCheckTick    = 0;
+	uint32 WatchdogReconnectCount   = 0;
+	uint32 HealthFileTick           = 0;
+
+	// Runtime health snapshot counters
+	uint32 HealthLastTick           = 0;
+	uint64 HealthLastSuccessFrame   = 0;
+	uint64 HealthLastRxPacketCount  = 0;
+
+	// Wall-clock start time
+	double StartTimeSec             = 0.0;
+
+	// IG mode: 0=Standby, 1=Operate
+	uint8  IGMode                   = 0;
+
+	// Prometheus metrics
+	uint32 PrometheusLastTick       = 0;
+
+	~FSubsystemImpl()
+	{
+		// Tear down in reverse-dependency order.
+		// TUniquePtr destructors handle null checks automatically.
+		QueryHandler.Reset();
+		GeospatialProvider.Reset();
+		if (CigiSender) CigiSender->Close();
+		CigiSender.Reset();
+		if (VideoEncoder) VideoEncoder->Close();
+		VideoEncoder.Reset();
+		EntityManager.Reset();
+		if (CigiReceiver) CigiReceiver->Stop();
+		CigiReceiver.Reset();
+	}
+};
+
+// -------------------------------------------------------------------------
+// Constructor / Destructor — defined here so the compiler sees the full
+// FSubsystemImpl type when instantiating TUniquePtr's destructor.
+// -------------------------------------------------------------------------
+
+UCamSimSubsystem::UCamSimSubsystem() = default;
+UCamSimSubsystem::~UCamSimSubsystem() = default;
+
+// -------------------------------------------------------------------------
+// Accessor implementations (Pimpl delegation)
+// -------------------------------------------------------------------------
+
+FCigiReceiver* UCamSimSubsystem::GetCigiReceiver() const
+{
+	return Impl ? Impl->CigiReceiver.Get() : nullptr;
+}
+
+IFrameSink* UCamSimSubsystem::GetVideoEncoder() const
+{
+	return Impl ? Impl->VideoEncoder.Get() : nullptr;
+}
+
+FCamSimEntityManager* UCamSimSubsystem::GetEntityManager() const
+{
+	return Impl ? Impl->EntityManager.Get() : nullptr;
+}
+
+FCigiSender* UCamSimSubsystem::GetCigiSender() const
+{
+	return Impl ? Impl->CigiSender.Get() : nullptr;
+}
+
+FCigiQueryHandler* UCamSimSubsystem::GetQueryHandler() const
+{
+	return Impl ? Impl->QueryHandler.Get() : nullptr;
+}
+
+FCamSimGeospatialProvider* UCamSimSubsystem::GetGeospatialProvider() const
+{
+	return Impl ? Impl->GeospatialProvider.Get() : nullptr;
+}
+
+// -------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------
+
 namespace
 {
 const TCHAR* ReadbackFormatToString(FCamSimConfig::EReadbackFormat Fmt)
@@ -48,12 +150,21 @@ const TCHAR* WatchdogPolicyToString(FCamSimConfig::EEncoderWatchdogPolicy Policy
 }
 }
 
+// -------------------------------------------------------------------------
+// Initialize
+// -------------------------------------------------------------------------
+
 void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 
-	// Load config (YAML parse + env var overrides)
+	// Load config (YAML parse + env var overrides) — Phase 13C: check success flag
 	Config = FCamSimConfig::Load();
+	if (!Config.bLoadedSuccessfully)
+	{
+		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: config load failed — using defaults"));
+	}
+
 	EntityTypeTable.LoadFromConfig();
 
 	const FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
@@ -84,148 +195,119 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Config.SecurityMetadata.Caveats,
 		Config.SecurityMetadata.ReleasingInstructions);
 
+	// Phase 13B: allocate Pimpl — all sub-objects owned via TUniquePtr
+	Impl = MakeUnique<FSubsystemImpl>();
+
 	// Start CIGI receiver thread
-	CigiReceiver = new FCigiReceiver(Config);
-	if (!CigiReceiver->Start())
+	Impl->CigiReceiver = MakeUnique<FCigiReceiver>(Config);
+	if (!Impl->CigiReceiver->Start())
 	{
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: failed to start CIGI receiver"));
 	}
 
 	// Start FFmpeg encoder / MPEG-TS muxer(s)
-	VideoEncoder = new FMultiViewFrameSink(Config);
-	if (!VideoEncoder->Open())
+	Impl->VideoEncoder = MakeUnique<FMultiViewFrameSink>(Config);
+	if (!Impl->VideoEncoder->Open())
 	{
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: failed to open video encoder"));
 	}
 
 	// Create entity manager (game thread tickable — no explicit start needed)
-	EntityManager = new FCamSimEntityManager(this, &EntityTypeTable);
+	Impl->EntityManager = MakeUnique<FCamSimEntityManager>(this, &EntityTypeTable);
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: entity manager created"));
 
-	GeospatialProvider = new FCamSimGeospatialProvider(Config);
-	if (GeospatialProvider)
+	Impl->GeospatialProvider = MakeUnique<FCamSimGeospatialProvider>(Config);
+	if (Impl->GeospatialProvider)
 	{
-		const FCamSimGeospatialCapabilities& Caps = GeospatialProvider->GetCapabilities();
+		const FCamSimGeospatialCapabilities& Caps = Impl->GeospatialProvider->GetCapabilities();
 		UE_LOG(LogCamSim, Log,
 			TEXT("UCamSimSubsystem: geospatial provider=%s caps(transforms=%d terrain_queries=%d)"),
-			*GeospatialProvider->GetProviderName(),
+			*Impl->GeospatialProvider->GetProviderName(),
 			Caps.bSupportsGeoreferenceTransforms ? 1 : 0,
 			Caps.bSupportsTerrainLineTraceQueries ? 1 : 0);
 	}
 
 	// Start CIGI sender (IG → host: SOF heartbeat + HAT/HOT + LOS responses)
-	CigiSender = new FCigiSender();
-	if (!CigiSender->Open(Config))
+	Impl->CigiSender = MakeUnique<FCigiSender>();
+	if (!Impl->CigiSender->Open(Config))
 	{
 		UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: CIGI sender failed to open (responses disabled)"));
 	}
 
 	// Create query handler (drains HAT/HOT + LOS queues, runs line traces)
-	QueryHandler = new FCigiQueryHandler(this, CigiSender);
+	Impl->QueryHandler = MakeUnique<FCigiQueryHandler>(this, Impl->CigiSender.Get());
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: CIGI query handler created"));
 
 	// Register for graceful shutdown on SIGTERM (Phase 2)
+	// Phase 13C: Use weak lambda to guard against dangling this pointer
 	FCoreDelegates::GetApplicationWillTerminateDelegate().AddLambda([this]()
 	{
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: ApplicationWillTerminate — flushing encoder"));
-		if (VideoEncoder)
+		if (Impl)
 		{
-			VideoEncoder->Close();
-		}
-		if (CigiSender)
-		{
-			CigiSender->Close();
-		}
-		if (CigiReceiver)
-		{
-			CigiReceiver->Stop();
+			if (Impl->VideoEncoder) Impl->VideoEncoder->Close();
+			if (Impl->CigiSender)   Impl->CigiSender->Close();
+			if (Impl->CigiReceiver) Impl->CigiReceiver->Stop();
 		}
 	});
 
-	StartTimeSec = FPlatformTime::Seconds();
+	Impl->StartTimeSec = FPlatformTime::Seconds();
 }
+
+// -------------------------------------------------------------------------
+// Deinitialize
+// -------------------------------------------------------------------------
 
 void UCamSimSubsystem::Deinitialize()
 {
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: shutting down"));
 
-	if (QueryHandler)
-	{
-		delete QueryHandler;
-		QueryHandler = nullptr;
-	}
-
-	if (GeospatialProvider)
-	{
-		delete GeospatialProvider;
-		GeospatialProvider = nullptr;
-	}
-
-	if (CigiSender)
-	{
-		CigiSender->Close();
-		delete CigiSender;
-		CigiSender = nullptr;
-	}
-
-	if (VideoEncoder)
-	{
-		VideoEncoder->Close();
-		delete VideoEncoder;
-		VideoEncoder = nullptr;
-	}
-
-	if (EntityManager)
-	{
-		delete EntityManager;
-		EntityManager = nullptr;
-	}
-
-	if (CigiReceiver)
-	{
-		CigiReceiver->Stop();
-		delete CigiReceiver;
-		CigiReceiver = nullptr;
-	}
+	// Phase 13B: Pimpl destructor handles reverse-order teardown
+	Impl.Reset();
 
 	Super::Deinitialize();
 }
 
+// -------------------------------------------------------------------------
+// Tick
+// -------------------------------------------------------------------------
+
 void UCamSimSubsystem::Tick(float DeltaTime)
 {
+	if (!Impl) return;
+
 	// Drain HAT/HOT + LOS query queues and stage responses
-	if (QueryHandler)
+	if (Impl->QueryHandler)
 	{
-		QueryHandler->Tick(DeltaTime);
+		Impl->QueryHandler->Tick(DeltaTime);
 	}
 
 	// Determine IG operating mode (Phase 12D):
 	// 0=Standby (no CIGI packets received yet), 1=Operate
-	if (IGMode == 0 && CigiReceiver && CigiReceiver->GetReceivedPacketCount() > 0)
+	if (Impl->IGMode == 0 && Impl->CigiReceiver && Impl->CigiReceiver->GetReceivedPacketCount() > 0)
 	{
-		IGMode = 1; // transition to Operate on first CIGI packet
+		Impl->IGMode = 1;
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: IG mode -> Operate (first CIGI packet received)"));
 	}
 
 	// Flush SOF + all staged responses into one UDP datagram
-	if (CigiSender)
+	if (Impl->CigiSender)
 	{
-		const uint32 LastHostFrame = CigiReceiver ? CigiReceiver->GetLastHostFrame() : 0;
-		CigiSender->FlushFrame(FrameCntr, static_cast<uint8>(LastHostFrame), IGMode);
+		const uint32 LastHostFrame = Impl->CigiReceiver ? Impl->CigiReceiver->GetLastHostFrame() : 0;
+		Impl->CigiSender->FlushFrame(Impl->FrameCntr, static_cast<uint8>(LastHostFrame), Impl->IGMode);
 	}
 
 	// -----------------------------------------------------------------------
-	// Encoder watchdog — every 150 game ticks (~5s at 30fps), check whether
-	// the encoder has successfully written any frames since last check.
-	// If not (silent UDP failure), close and reopen to re-resolve destination.
+	// Encoder watchdog — every N game ticks, check for silent stream death
 	// -----------------------------------------------------------------------
 	const uint32 WatchdogInterval = static_cast<uint32>(FMath::Max(30, Config.EncoderWatchdogIntervalTicks));
-	if (VideoEncoder && VideoEncoder->IsOpen() && FrameCntr > WatchdogInterval)
+	IFrameSink* Encoder = Impl->VideoEncoder.Get();
+	if (Encoder && Encoder->IsOpen() && Impl->FrameCntr > WatchdogInterval)
 	{
-		if ((FrameCntr - WatchdogLastCheckTick) >= WatchdogInterval)
+		if ((Impl->FrameCntr - Impl->WatchdogLastCheckTick) >= WatchdogInterval)
 		{
-			const uint64 CurrentSuccess = VideoEncoder->GetSuccessfulFrameCount();
-			if (CurrentSuccess == WatchdogLastSuccessFrame)
+			const uint64 CurrentSuccess = Encoder->GetSuccessfulFrameCount();
+			if (CurrentSuccess == Impl->WatchdogLastSuccessFrame)
 			{
 				switch (Config.EncoderWatchdogPolicy)
 				{
@@ -243,95 +325,97 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 
 					case FCamSimConfig::EEncoderWatchdogPolicy::Reconnect:
 					default:
-						++WatchdogReconnectCount;
+						++Impl->WatchdogReconnectCount;
 						if (Config.WatchdogMaxReconnects > 0 &&
-							static_cast<int32>(WatchdogReconnectCount) >= Config.WatchdogMaxReconnects)
+							static_cast<int32>(Impl->WatchdogReconnectCount) >= Config.WatchdogMaxReconnects)
 						{
 							UE_LOG(LogCamSim, Error,
 								TEXT("UCamSimSubsystem: encoder watchdog — %u reconnects exhausted, failing fast"),
-								WatchdogReconnectCount);
+								Impl->WatchdogReconnectCount);
 							FPlatformMisc::RequestExit(true);
 							break;
 						}
 						UE_LOG(LogCamSim, Warning,
 							TEXT("UCamSimSubsystem: encoder watchdog — no frames written in %u ticks, reconnecting (%u/%d)"),
-							WatchdogInterval, WatchdogReconnectCount, Config.WatchdogMaxReconnects);
-						VideoEncoder->Close();
-						if (!VideoEncoder->Open())
+							WatchdogInterval, Impl->WatchdogReconnectCount, Config.WatchdogMaxReconnects);
+						Encoder->Close();
+						if (!Encoder->Open())
 						{
 							UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: encoder watchdog — reopen failed"));
 						}
 						break;
 				}
 			}
-			WatchdogLastSuccessFrame = VideoEncoder->GetSuccessfulFrameCount();
-			WatchdogLastCheckTick    = FrameCntr;
+			Impl->WatchdogLastSuccessFrame = Encoder->GetSuccessfulFrameCount();
+			Impl->WatchdogLastCheckTick    = Impl->FrameCntr;
 		}
 	}
 
 	// Runtime health snapshot every 150 ticks (~5s at 30fps)
 	constexpr uint32 HealthInterval = 150;
-	if (FrameCntr > 0 && (FrameCntr - HealthLastTick) >= HealthInterval)
+	if (Impl->FrameCntr > 0 && (Impl->FrameCntr - Impl->HealthLastTick) >= HealthInterval)
 	{
-		const uint64 EncoderSuccess = (VideoEncoder && VideoEncoder->IsOpen())
-			? VideoEncoder->GetSuccessfulFrameCount()
+		const uint64 EncoderSuccess = (Encoder && Encoder->IsOpen())
+			? Encoder->GetSuccessfulFrameCount()
 			: 0;
-		const uint64 EncoderDelta = EncoderSuccess - HealthLastSuccessFrame;
+		const uint64 EncoderDelta = EncoderSuccess - Impl->HealthLastSuccessFrame;
 
-		const uint64 RxPackets = CigiReceiver ? CigiReceiver->GetReceivedPacketCount() : 0;
-		const uint64 RxDelta = RxPackets - HealthLastRxPacketCount;
+		const uint64 RxPackets = Impl->CigiReceiver ? Impl->CigiReceiver->GetReceivedPacketCount() : 0;
+		const uint64 RxDelta = RxPackets - Impl->HealthLastRxPacketCount;
 
-		const uint32 HostFrame = CigiReceiver ? CigiReceiver->GetLastHostFrame() : 0;
+		const uint32 HostFrame = Impl->CigiReceiver ? Impl->CigiReceiver->GetLastHostFrame() : 0;
 
 		UE_LOG(LogCamSim, Log,
 			TEXT("CamSimHealth: frame=%u encoder_open=%d enc_ok_total=%llu enc_ok_delta=%llu ")
 			TEXT("cigi_rx_total=%llu cigi_rx_delta=%llu watchdog_reconnects=%u sender=%d query=%d host_frame=%u"),
-			FrameCntr,
-			(VideoEncoder && VideoEncoder->IsOpen()) ? 1 : 0,
+			Impl->FrameCntr,
+			(Encoder && Encoder->IsOpen()) ? 1 : 0,
 			EncoderSuccess, EncoderDelta,
 			RxPackets, RxDelta,
-			WatchdogReconnectCount,
-			CigiSender ? 1 : 0,
-			QueryHandler ? 1 : 0,
+			Impl->WatchdogReconnectCount,
+			Impl->CigiSender ? 1 : 0,
+			Impl->QueryHandler ? 1 : 0,
 			HostFrame);
 
-		HealthLastTick = FrameCntr;
-		HealthLastSuccessFrame = EncoderSuccess;
-		HealthLastRxPacketCount = RxPackets;
+		Impl->HealthLastTick = Impl->FrameCntr;
+		Impl->HealthLastSuccessFrame = EncoderSuccess;
+		Impl->HealthLastRxPacketCount = RxPackets;
 	}
 
 	// Write structured health JSON every 90 ticks (~3s at 30fps) for Docker HEALTHCHECK
-	if (FrameCntr > 0 && (FrameCntr - HealthFileTick) >= 90)
+	if (Impl->FrameCntr > 0 && (Impl->FrameCntr - Impl->HealthFileTick) >= 90)
 	{
-		const uint64 EncOk = (VideoEncoder && VideoEncoder->IsOpen())
-			? VideoEncoder->GetSuccessfulFrameCount() : 0;
-		const uint64 CigiRx = CigiReceiver ? CigiReceiver->GetReceivedPacketCount() : 0;
-		const uint32 LastHost = CigiReceiver ? CigiReceiver->GetLastHostFrame() : 0;
-		const double UptimeSec = FPlatformTime::Seconds() - StartTimeSec;
+		const uint64 EncOk = (Encoder && Encoder->IsOpen())
+			? Encoder->GetSuccessfulFrameCount() : 0;
+		const uint64 CigiRx = Impl->CigiReceiver ? Impl->CigiReceiver->GetReceivedPacketCount() : 0;
+		const uint32 LastHost = Impl->CigiReceiver ? Impl->CigiReceiver->GetLastHostFrame() : 0;
+		const double UptimeSec = FPlatformTime::Seconds() - Impl->StartTimeSec;
 
 		const FString HealthJson = FString::Printf(
 			TEXT("{\"frame\":%u,\"encoder_ok\":%s,\"cigi_rx\":%llu,\"dropped\":%u,\"uptime_s\":%.1f,\"last_host_frame\":%u}"),
-			FrameCntr,
-			(VideoEncoder && VideoEncoder->IsOpen()) ? TEXT("true") : TEXT("false"),
+			Impl->FrameCntr,
+			(Encoder && Encoder->IsOpen()) ? TEXT("true") : TEXT("false"),
 			EncOk,
-			WatchdogReconnectCount,
+			Impl->WatchdogReconnectCount,
 			UptimeSec,
 			LastHost);
 
 		const FString HealthPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health.json"));
-		FFileHelper::SaveStringToFile(HealthJson, *HealthPath);
-		HealthFileTick = FrameCntr;
+		if (!FFileHelper::SaveStringToFile(HealthJson, *HealthPath))
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: failed to write health file %s"), *HealthPath);
+		}
+		Impl->HealthFileTick = Impl->FrameCntr;
 	}
 
 	// Write Prometheus-compatible metrics file (Phase 12D)
-	// Updated every 90 ticks alongside the health file, for node_exporter textfile collector.
-	if (!Config.PrometheusMetricsPath.IsEmpty() && FrameCntr > 0
-		&& (FrameCntr - PrometheusLastTick) >= 90)
+	if (!Config.PrometheusMetricsPath.IsEmpty() && Impl->FrameCntr > 0
+		&& (Impl->FrameCntr - Impl->PrometheusLastTick) >= 90)
 	{
-		const uint64 EncOk = (VideoEncoder && VideoEncoder->IsOpen())
-			? VideoEncoder->GetSuccessfulFrameCount() : 0;
-		const uint64 CigiRx = CigiReceiver ? CigiReceiver->GetReceivedPacketCount() : 0;
-		const double UptimeSec = FPlatformTime::Seconds() - StartTimeSec;
+		const uint64 EncOk = (Encoder && Encoder->IsOpen())
+			? Encoder->GetSuccessfulFrameCount() : 0;
+		const uint64 CigiRx = Impl->CigiReceiver ? Impl->CigiReceiver->GetReceivedPacketCount() : 0;
+		const double UptimeSec = FPlatformTime::Seconds() - Impl->StartTimeSec;
 
 		const FString Prom = FString::Printf(
 			TEXT("# HELP camsim_frame_count Total game ticks\n"
@@ -355,17 +439,20 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			     "# HELP camsim_ig_mode IG operating mode (0=Standby 1=Operate)\n"
 			     "# TYPE camsim_ig_mode gauge\n"
 			     "camsim_ig_mode %u\n"),
-			FrameCntr,
+			Impl->FrameCntr,
 			EncOk,
-			(VideoEncoder && VideoEncoder->IsOpen()) ? 1 : 0,
+			(Encoder && Encoder->IsOpen()) ? 1 : 0,
 			CigiRx,
 			UptimeSec,
-			WatchdogReconnectCount,
-			static_cast<uint32>(IGMode));
+			Impl->WatchdogReconnectCount,
+			static_cast<uint32>(Impl->IGMode));
 
-		FFileHelper::SaveStringToFile(Prom, *Config.PrometheusMetricsPath);
-		PrometheusLastTick = FrameCntr;
+		if (!FFileHelper::SaveStringToFile(Prom, *Config.PrometheusMetricsPath))
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: failed to write prometheus metrics"));
+		}
+		Impl->PrometheusLastTick = Impl->FrameCntr;
 	}
 
-	++FrameCntr;
+	++Impl->FrameCntr;
 }

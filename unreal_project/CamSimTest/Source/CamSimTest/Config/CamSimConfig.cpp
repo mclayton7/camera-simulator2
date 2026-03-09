@@ -289,7 +289,8 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 		catch (const std::exception& Ex)
 		{
-			UE_LOG(LogCamSim, Warning, TEXT("Failed to parse %s: %hs - using defaults"), *YamlPath, Ex.what());
+			UE_LOG(LogCamSim, Error, TEXT("Failed to parse %s: %hs - using defaults"), *YamlPath, Ex.what());
+			Cfg.bLoadedSuccessfully = false;
 			ApplyEnvOverrides(Cfg);
 			return Cfg;
 		}

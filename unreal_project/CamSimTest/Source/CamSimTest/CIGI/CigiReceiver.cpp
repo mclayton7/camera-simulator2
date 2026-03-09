@@ -643,6 +643,11 @@ uint32 FCigiReceiver::Run()
 			{
 				IncomingMsg->ProcessIncomingMsg(reinterpret_cast<Cigi_uint8*>(RecvBuf), static_cast<int>(Length));
 			}
+			catch (const std::exception& Ex)
+			{
+				UE_LOG(LogCamSim, Warning,
+					TEXT("FCigiReceiver: CCL playback exception: %hs"), Ex.what());
+			}
 			catch (...) {}
 		}
 		delete PlaybackFile;
@@ -674,13 +679,22 @@ uint32 FCigiReceiver::Run()
 			FCigiRawEnvParser::PreParseEnvPackets(RecvBuf, BytesRead, this);
 
 			// Feed raw bytes to CCL parser for entity/view/other packets
+			// Phase 13C: catch typed exceptions for better diagnostics
 			try
 			{
 				IncomingMsg->ProcessIncomingMsg(reinterpret_cast<Cigi_uint8*>(RecvBuf), BytesRead);
 			}
+			catch (const std::exception& Ex)
+			{
+				UE_LOG(LogCamSim, Warning,
+					TEXT("FCigiReceiver: CCL exception parsing packet (%d bytes): %hs"),
+					BytesRead, Ex.what());
+			}
 			catch (...)
 			{
-				UE_LOG(LogCamSim, Warning, TEXT("FCigiReceiver: CCL threw exception parsing packet"));
+				UE_LOG(LogCamSim, Warning,
+					TEXT("FCigiReceiver: CCL threw unknown exception parsing packet (%d bytes)"),
+					BytesRead);
 			}
 		}
 		else

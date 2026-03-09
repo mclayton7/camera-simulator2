@@ -525,11 +525,17 @@ void FVideoEncoder::EncodeFrame(
 	// dropped (the gap in wall time produced uneven PTS deltas in the mux).
 	YuvFrame->pts = EncodedFrameCount++;
 
-	// Send frame to encoder
+	// Send frame to encoder — Phase 13C: stop encoding on persistent failure
 	int Ret = avcodec_send_frame(VideoCodecCtx, YuvFrame);
 	if (Ret < 0)
 	{
 		LogFfmpegError(Ret, TEXT("avcodec_send_frame"));
+		// AVERROR(EAGAIN) is transient (encoder buffer full); any other error is fatal
+		if (Ret != AVERROR(EAGAIN))
+		{
+			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: fatal encode error — closing encoder"));
+			Close();
+		}
 		return;
 	}
 

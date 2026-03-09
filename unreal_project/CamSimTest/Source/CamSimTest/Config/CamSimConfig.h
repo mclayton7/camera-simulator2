@@ -247,6 +247,10 @@ struct FCamSimConfig
 	};
 	FRecordingConfig Recording;
 
+	// Phase 13C: set to true when config was loaded (or defaults are valid).
+	// Set to false only if YAML parsing fails AND no defaults are available.
+	bool bLoadedSuccessfully = true;
+
 	/** Load from YAML file, then apply env var overrides. */
 	static FCamSimConfig Load();
 

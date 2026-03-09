@@ -314,6 +314,7 @@ void FKlvBuilder::AppendTag(TArray<uint8>& Buf, uint8 Tag, const uint8* Value, u
 
 int32 FKlvBuilder::MapLatLon(double Degrees, double Range)
 {
+	if (!FMath::IsFinite(Degrees)) Degrees = 0.0;
 	const double Scale   = static_cast<double>(0x7FFFFFFF) / Range;
 	const double Clamped = FMath::Clamp(Degrees, -Range, Range);
 	return static_cast<int32>(FMath::RoundToInt(Clamped * Scale));
@@ -322,6 +323,7 @@ int32 FKlvBuilder::MapLatLon(double Degrees, double Range)
 // Tag 18/20: Sensor Relative Azimuth/Roll — unsigned uint32, 0..360°
 uint32 FKlvBuilder::MapAzimuth360(float Degrees)
 {
+	if (!FMath::IsFinite(Degrees)) Degrees = 0.0f;
 	// Normalize to [0, 360) then map to full uint32 range
 	const double Norm = FMath::Fmod(static_cast<double>(Degrees) + 360.0, 360.0);
 	return static_cast<uint32>(Norm / 360.0 * static_cast<double>(TNumericLimits<uint32>::Max()));
@@ -330,6 +332,7 @@ uint32 FKlvBuilder::MapAzimuth360(float Degrees)
 // Tag 19: Sensor Relative Elevation — signed int32, ±180°
 int32 FKlvBuilder::MapElevation180(float Degrees)
 {
+	if (!FMath::IsFinite(Degrees)) Degrees = 0.0f;
 	const double Scale   = static_cast<double>(0x7FFFFFFF) / 180.0;
 	const double Clamped = FMath::Clamp(static_cast<double>(Degrees), -180.0, 180.0);
 	return static_cast<int32>(FMath::RoundToInt(Clamped * Scale));
@@ -338,6 +341,7 @@ int32 FKlvBuilder::MapElevation180(float Degrees)
 // Tags 15/25: Altitude, 2-byte unsigned mapped from −900..19000 m
 int16 FKlvBuilder::MapAltitude(double Metres)
 {
+	if (!FMath::IsFinite(Metres)) Metres = 0.0;
 	constexpr double MinAlt = -900.0;
 	constexpr double MaxAlt = 19000.0;
 	const double Scale      = 65535.0 / (MaxAlt - MinAlt);
@@ -348,6 +352,7 @@ int16 FKlvBuilder::MapAltitude(double Metres)
 // Tags 16/17: FOV, 2-byte unsigned, 0..180°
 uint16 FKlvBuilder::MapFov(float Degrees)
 {
+	if (!FMath::IsFinite(Degrees)) Degrees = 0.0f;
 	const double Scale   = 65535.0 / 180.0;
 	const float  Clamped = FMath::Clamp(Degrees, 0.0f, 180.0f);
 	return static_cast<uint16>(FMath::RoundToInt(static_cast<double>(Clamped) * Scale));
@@ -356,6 +361,7 @@ uint16 FKlvBuilder::MapFov(float Degrees)
 // Tag 5: Platform Heading, 2-byte unsigned, 0..360°
 uint16 FKlvBuilder::MapHeading(float Degrees)
 {
+	if (!FMath::IsFinite(Degrees)) Degrees = 0.0f;
 	const double Norm = FMath::Fmod(static_cast<double>(Degrees) + 360.0, 360.0);
 	return static_cast<uint16>(Norm / 360.0 * 65535.0);
 }
@@ -363,6 +369,7 @@ uint16 FKlvBuilder::MapHeading(float Degrees)
 // Tag 6: Platform Pitch, 2-byte signed, ±20°
 int16 FKlvBuilder::MapPlatformPitch(float Degrees)
 {
+	if (!FMath::IsFinite(Degrees)) Degrees = 0.0f;
 	const double Scale   = static_cast<double>(0x7FFF) / 20.0;
 	const double Clamped = FMath::Clamp(static_cast<double>(Degrees), -20.0, 20.0);
 	return static_cast<int16>(FMath::RoundToInt(Clamped * Scale));
@@ -371,6 +378,7 @@ int16 FKlvBuilder::MapPlatformPitch(float Degrees)
 // Tag 7: Platform Roll, 2-byte signed, ±50°
 int16 FKlvBuilder::MapPlatformRoll(float Degrees)
 {
+	if (!FMath::IsFinite(Degrees)) Degrees = 0.0f;
 	const double Scale   = static_cast<double>(0x7FFF) / 50.0;
 	const double Clamped = FMath::Clamp(static_cast<double>(Degrees), -50.0, 50.0);
 	return static_cast<int16>(FMath::RoundToInt(Clamped * Scale));
@@ -379,6 +387,7 @@ int16 FKlvBuilder::MapPlatformRoll(float Degrees)
 // Tag 21: Slant Range, 4-byte unsigned, 0..5000000 m
 uint32 FKlvBuilder::MapSlantRange(double Metres)
 {
+	if (!FMath::IsFinite(Metres)) Metres = 0.0;
 	constexpr double Max     = 5000000.0;
 	const double     Clamped = FMath::Clamp(Metres, 0.0, Max);
 	return static_cast<uint32>(Clamped / Max * static_cast<double>(TNumericLimits<uint32>::Max()));

@@ -21,6 +21,10 @@ class FCamSimGeospatialProvider;
  * Lifetime owner for the CIGI receiver and video encoder.  Created and torn
  * down automatically with the game instance so the camera actor can obtain
  * stable pointers via UGameInstance::GetSubsystem<UCamSimSubsystem>().
+ *
+ * Phase 13B: Internal state is held via a Pimpl (FSubsystemImpl) allocated
+ * in Initialize() and destroyed in Deinitialize().  This eliminates the
+ * leak-on-exception risk from raw new/delete scattered across two methods.
  */
 UCLASS()
 class CAMSIMTEST_API UCamSimSubsystem : public UGameInstanceSubsystem
@@ -28,6 +32,9 @@ class CAMSIMTEST_API UCamSimSubsystem : public UGameInstanceSubsystem
 	GENERATED_BODY()
 
 public:
+	UCamSimSubsystem();
+	virtual ~UCamSimSubsystem() override;
+
 	// USubsystem interface
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
@@ -39,12 +46,12 @@ public:
 	void Tick(float DeltaTime);
 
 	// Accessors used by ACamSimCamera and FCamSimEntityManager
-	FCigiReceiver*        GetCigiReceiver()  const { return CigiReceiver; }
-	IFrameSink*           GetVideoEncoder()  const { return VideoEncoder; }
-	FCamSimEntityManager* GetEntityManager() const { return EntityManager; }
-	FCigiSender*          GetCigiSender()    const { return CigiSender; }
-	FCigiQueryHandler*    GetQueryHandler()  const { return QueryHandler; }
-	FCamSimGeospatialProvider* GetGeospatialProvider() const { return GeospatialProvider; }
+	FCigiReceiver*        GetCigiReceiver()  const;
+	IFrameSink*           GetVideoEncoder()  const;
+	FCamSimEntityManager* GetEntityManager() const;
+	FCigiSender*          GetCigiSender()    const;
+	FCigiQueryHandler*    GetQueryHandler()  const;
+	FCamSimGeospatialProvider* GetGeospatialProvider() const;
 
 	const FCamSimConfig&    GetConfig()        const { return Config; }
 	const FEntityTypeTable& GetEntityTypeTable() const { return EntityTypeTable; }
@@ -53,38 +60,10 @@ private:
 	FCamSimConfig    Config;
 	FEntityTypeTable EntityTypeTable;
 
-	// Raw pointers — created/destroyed in Initialize/Deinitialize.
-	// TUniquePtr<ForwardDeclaredType> cannot appear in a UCLASS header because
-	// UHT generates an inline constructor that triggers C++2c's incomplete-type
-	// delete check.
-	FCigiReceiver*        CigiReceiver   = nullptr;
-	IFrameSink*           VideoEncoder   = nullptr;
-	FCamSimEntityManager* EntityManager  = nullptr;
-	FCigiSender*          CigiSender     = nullptr;
-	FCigiQueryHandler*    QueryHandler   = nullptr;
-	FCamSimGeospatialProvider* GeospatialProvider = nullptr;
-
-	// IG frame counter — incremented each tick; sent in every SOF packet
-	uint32                FrameCntr      = 0;
-
-	// Encoder watchdog — detect and recover from silent stream death
-	// (avio_open succeeds but UDP sends silently fail after network change)
-	uint64                WatchdogLastSuccessFrame = 0;   // snapshot of encoder's counter
-	uint32                WatchdogLastCheckTick    = 0;   // tick when snapshot was taken
-	uint32                WatchdogReconnectCount   = 0;
-	uint32                HealthFileTick           = 0;   // tick when health file was last written
-
-	// Runtime health snapshot counters (periodic diagnostics log)
-	uint32                HealthLastTick           = 0;
-	uint64                HealthLastSuccessFrame   = 0;
-	uint64                HealthLastRxPacketCount  = 0;
-
-	// Wall-clock start time for uptime calculation (Phase 2)
-	double                StartTimeSec             = 0.0;
-
-	// IG operating mode: 0=Standby (no CIGI yet), 1=Operate (Phase 12D)
-	uint8                 IGMode                   = 0;
-
-	// Prometheus metrics file write tick
-	uint32                PrometheusLastTick       = 0;
+	// Phase 13B: Pimpl — all owned subsystem components live in FSubsystemImpl,
+	// defined in CamSimSubsystem.cpp.  TUniquePtr<> with a forward-declared type
+	// requires the destructor to be defined in the .cpp, which the Pimpl pattern
+	// handles naturally.  This replaces 6 raw new/delete pointer pairs.
+	struct FSubsystemImpl;
+	TUniquePtr<FSubsystemImpl> Impl;
 };
