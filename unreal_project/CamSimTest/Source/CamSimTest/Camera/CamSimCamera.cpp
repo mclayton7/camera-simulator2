@@ -178,7 +178,77 @@ void ACamSimCamera::BeginPlay()
 	// be substituted without touching the camera actor.
 	auto* Pipeline = new FSensorPostProcess();
 	Pipeline->Initialize(Cfg.CaptureWidth, Cfg.CaptureHeight, Cfg.SensorModeConfigs, Cfg.ActiveSensorQuality);
+
+	// Wire up CPU-side lens distortion (Phase 15B)
+	if (Cfg.OpticalRealism.bEnabled && Cfg.OpticalRealism.bLensDistortion)
+	{
+		Pipeline->SetDistortion(Cfg.OpticalRealism.DistortionK1, Cfg.OpticalRealism.DistortionK2);
+	}
 	SensorFX.Reset(Pipeline);
+
+	// Apply GPU-side optical realism post-process settings (Phase 15)
+	if (Cfg.OpticalRealism.bEnabled && SceneCapture)
+	{
+		FPostProcessSettings& PP = SceneCapture->PostProcessSettings;
+
+		// 15A Motion Blur
+		SceneCapture->ShowFlags.SetMotionBlur(Cfg.OpticalRealism.bMotionBlur);
+		if (Cfg.OpticalRealism.bMotionBlur)
+		{
+			PP.bOverride_MotionBlurAmount = true;
+			PP.MotionBlurAmount = Cfg.OpticalRealism.MotionBlurAmount;
+			PP.bOverride_MotionBlurMax = true;
+			PP.MotionBlurMax = static_cast<float>(Cfg.OpticalRealism.MotionBlurMax);
+		}
+
+		// 15C Bloom
+		SceneCapture->ShowFlags.SetBloom(Cfg.OpticalRealism.bBloom);
+		if (Cfg.OpticalRealism.bBloom)
+		{
+			PP.bOverride_BloomIntensity = true;
+			PP.BloomIntensity = Cfg.OpticalRealism.BloomIntensity;
+			PP.bOverride_BloomThreshold = true;
+			PP.BloomThreshold = Cfg.OpticalRealism.BloomThreshold;
+		}
+
+		// 15D Chromatic Aberration
+		if (Cfg.OpticalRealism.bChromaticAberration)
+		{
+			PP.bOverride_SceneFringeIntensity = true;
+			PP.SceneFringeIntensity = Cfg.OpticalRealism.ChromaticAberrationIntensity;
+		}
+
+		// 15E Depth of Field
+		if (Cfg.OpticalRealism.bDepthOfField)
+		{
+			PP.bOverride_DepthOfFieldFstop = true;
+			PP.DepthOfFieldFstop = Cfg.OpticalRealism.ApertureFStop;
+			PP.bOverride_DepthOfFieldSensorWidth = true;
+			PP.DepthOfFieldSensorWidth = Cfg.OpticalRealism.SensorWidth;
+			if (Cfg.OpticalRealism.FocalDistance > 0.0f)
+			{
+				PP.bOverride_DepthOfFieldFocalDistance = true;
+				PP.DepthOfFieldFocalDistance = Cfg.OpticalRealism.FocalDistance;
+			}
+		}
+
+		// 15F Lens Flare
+		SceneCapture->ShowFlags.SetLensFlares(Cfg.OpticalRealism.bLensFlare);
+		if (Cfg.OpticalRealism.bLensFlare)
+		{
+			PP.bOverride_LensFlareIntensity = true;
+			PP.LensFlareIntensity = Cfg.OpticalRealism.LensFlareIntensity;
+			PP.bOverride_LensFlareBokehSize = true;
+			PP.LensFlareBokehSize = Cfg.OpticalRealism.LensFlareBokehSize;
+			PP.bOverride_LensFlareThreshold = true;
+			PP.LensFlareThreshold = Cfg.OpticalRealism.LensFlareThreshold;
+		}
+
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: optical realism enabled (blur=%d bloom=%d CA=%d DoF=%d flare=%d distort=%d)"),
+			Cfg.OpticalRealism.bMotionBlur, Cfg.OpticalRealism.bBloom,
+			Cfg.OpticalRealism.bChromaticAberration, Cfg.OpticalRealism.bDepthOfField,
+			Cfg.OpticalRealism.bLensFlare, Cfg.OpticalRealism.bLensDistortion);
+	}
 
 	// Allocate async GPU readback helper (non-blocking DMA: EnqueueCopy → IsReady → Lock)
 	GPUReadback = new FRHIGPUTextureReadback(TEXT("CamSimReadback"));
@@ -470,6 +540,20 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 
 	// Compute slant range and frame centre from current pose + gimbal
 	ComputeGeometricLOS();
+
+	// Auto-focus DoF from slant range (Phase 15E)
+	if (Subsystem && SceneCapture)
+	{
+		const FCamSimConfig& OptCfg = Subsystem->GetConfig();
+		if (OptCfg.OpticalRealism.bEnabled && OptCfg.OpticalRealism.bDepthOfField
+			&& OptCfg.OpticalRealism.FocalDistance <= 0.0f
+			&& CurrentTelemetry.SlantRangeM > 0.0)
+		{
+			SceneCapture->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
+			SceneCapture->PostProcessSettings.DepthOfFieldFocalDistance =
+				static_cast<float>(CurrentTelemetry.SlantRangeM * 100.0); // m → cm
+		}
+	}
 }
 
 // -------------------------------------------------------------------------

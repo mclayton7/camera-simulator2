@@ -217,6 +217,12 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 	{
 		ApplyBoxBlur(Pixels, EffectiveBlur);
 	}
+
+	// Step 11: lens distortion (Phase 15B) — applied last as geometric warp
+	if (bDistortionEnabled)
+	{
+		ApplyLensDistortion(Pixels);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -595,6 +601,109 @@ void FSensorPostProcess::ApplyBoxBlur(TArray<FColor>& Pixels, int32 Radius)
 				D.R = static_cast<uint8>(SumR / Kernel);
 				D.G = static_cast<uint8>(SumG / Kernel);
 				D.B = static_cast<uint8>(SumB / Kernel);
+				D.A = 255;
+			}
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// SetDistortion — build Brown-Conrady radial remap table (Phase 15B)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::SetDistortion(float K1, float K2)
+{
+	if (Width <= 0 || Height <= 0) return;
+
+	// Skip table allocation for identity distortion
+	if (FMath::IsNearlyZero(K1) && FMath::IsNearlyZero(K2))
+	{
+		bDistortionEnabled = false;
+		DistortionRemap.Empty();
+		return;
+	}
+
+	const int32 NumPixels = Width * Height;
+	DistortionRemap.SetNumUninitialized(NumPixels * 2);
+
+	const float HalfW = Width  * 0.5f;
+	const float HalfH = Height * 0.5f;
+	// Normalize radius so corners have r=1
+	const float MaxR = FMath::Sqrt(HalfW * HalfW + HalfH * HalfH);
+
+	for (int32 Y = 0; Y < Height; ++Y)
+	{
+		for (int32 X = 0; X < Width; ++X)
+		{
+			const float nx = (X - HalfW) / MaxR;
+			const float ny = (Y - HalfH) / MaxR;
+			const float r2 = nx * nx + ny * ny;
+			const float factor = 1.0f + K1 * r2 + K2 * r2 * r2;
+
+			const float srcX = nx * factor * MaxR + HalfW;
+			const float srcY = ny * factor * MaxR + HalfH;
+
+			const int32 Idx = (Y * Width + X) * 2;
+			DistortionRemap[Idx]     = FMath::Clamp(srcX, 0.0f, static_cast<float>(Width - 1));
+			DistortionRemap[Idx + 1] = FMath::Clamp(srcY, 0.0f, static_cast<float>(Height - 1));
+		}
+	}
+
+	bDistortionEnabled = true;
+	UE_LOG(LogCamSim, Log, TEXT("FSensorPostProcess: lens distortion enabled K1=%.4f K2=%.4f"), K1, K2);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyLensDistortion — bilinear warp using precomputed remap table
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyLensDistortion(TArray<FColor>& Pixels)
+{
+	if (DistortionRemap.Num() != Width * Height * 2) return;
+
+	TArray<FColor> Src = Pixels;
+	const FColor* SrcData = Src.GetData();
+	const float* Remap = DistortionRemap.GetData();
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+
+		for (int32 Y = RowStart; Y < RowEnd; ++Y)
+		{
+			for (int32 X = 0; X < Width; ++X)
+			{
+				const int32 OutIdx = Y * Width + X;
+				const int32 RemapIdx = OutIdx * 2;
+				const float srcX = Remap[RemapIdx];
+				const float srcY = Remap[RemapIdx + 1];
+
+				const int32 x0 = FMath::FloorToInt(srcX);
+				const int32 y0 = FMath::FloorToInt(srcY);
+				const int32 x1 = FMath::Min(x0 + 1, Width - 1);
+				const int32 y1 = FMath::Min(y0 + 1, Height - 1);
+				const float fx = srcX - x0;
+				const float fy = srcY - y0;
+
+				const FColor& P00 = SrcData[y0 * Width + x0];
+				const FColor& P10 = SrcData[y0 * Width + x1];
+				const FColor& P01 = SrcData[y1 * Width + x0];
+				const FColor& P11 = SrcData[y1 * Width + x1];
+
+				const float w00 = (1.0f - fx) * (1.0f - fy);
+				const float w10 = fx * (1.0f - fy);
+				const float w01 = (1.0f - fx) * fy;
+				const float w11 = fx * fy;
+
+				FColor& D = Pixels[OutIdx];
+				D.R = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(
+					P00.R * w00 + P10.R * w10 + P01.R * w01 + P11.R * w11), 0, 255));
+				D.G = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(
+					P00.G * w00 + P10.G * w10 + P01.G * w01 + P11.G * w11), 0, 255));
+				D.B = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(
+					P00.B * w00 + P10.B * w10 + P01.B * w01 + P11.B * w11), 0, 255));
 				D.A = 255;
 			}
 		}

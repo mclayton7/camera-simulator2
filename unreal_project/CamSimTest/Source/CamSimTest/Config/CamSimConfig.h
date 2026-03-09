@@ -247,6 +247,38 @@ struct FCamSimConfig
 	};
 	FRecordingConfig Recording;
 
+	// Optical realism effects (Phase 15)
+	struct FOpticalRealismConfig
+	{
+		bool bEnabled = false;              // master toggle (false = clean ML frames)
+		// 15A Motion Blur
+		bool  bMotionBlur = true;
+		float MotionBlurAmount = 0.5f;      // [0,1]
+		int32 MotionBlurMax = 5;            // max blur pixels
+		// 15B Lens Distortion (CPU-side Brown-Conrady)
+		bool  bLensDistortion = false;
+		float DistortionK1 = 0.0f;         // + barrel, - pincushion
+		float DistortionK2 = 0.0f;
+		// 15C Bloom
+		bool  bBloom = true;
+		float BloomIntensity = 0.675f;
+		float BloomThreshold = -1.0f;       // -1 = auto
+		// 15D Chromatic Aberration
+		bool  bChromaticAberration = false;
+		float ChromaticAberrationIntensity = 0.0f; // 0-5
+		// 15E Depth of Field
+		bool  bDepthOfField = false;
+		float FocalDistance = 0.0f;         // cm, 0 = auto-focus from LOS
+		float ApertureFStop = 4.0f;
+		float SensorWidth = 24.576f;        // mm
+		// 15F Lens Flare
+		bool  bLensFlare = false;
+		float LensFlareIntensity = 1.0f;
+		float LensFlareBokehSize = 3.0f;
+		float LensFlareThreshold = 8.0f;
+	};
+	FOpticalRealismConfig OpticalRealism;
+
 	// Phase 13C: set to true when config was loaded (or defaults are valid).
 	// Set to false only if YAML parsing fails AND no defaults are available.
 	bool bLoadedSuccessfully = true;

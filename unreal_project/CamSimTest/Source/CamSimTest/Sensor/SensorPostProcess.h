@@ -22,6 +22,13 @@ public:
 	                        const FSensorQualityConfig& InQualityConfig) override;
 
 	/**
+	 * Configure Brown-Conrady radial lens distortion remap table.
+	 * K1=0, K2=0 produces identity (no distortion).
+	 * Must be called after Initialize().
+	 */
+	void SetDistortion(float K1, float K2);
+
+	/**
 	 * Apply the sensor pipeline in-place.
 	 * Called from the async task thread — safe to modify Pixels without a lock
 	 * because each frame owns its TArray exclusively.
@@ -97,4 +104,13 @@ private:
 
 	/** Apply a separable box blur with clamped edges. */
 	void ApplyBoxBlur(TArray<FColor>& Pixels, int32 Radius);
+
+	// -- Lens distortion (Phase 15B) -----------------------------------------
+
+	/** Precomputed remap table [W*H*2]: (srcX, srcY) per output pixel. */
+	TArray<float> DistortionRemap;
+	bool bDistortionEnabled = false;
+
+	/** Apply Brown-Conrady radial lens distortion using precomputed remap. */
+	void ApplyLensDistortion(TArray<FColor>& Pixels);
 };

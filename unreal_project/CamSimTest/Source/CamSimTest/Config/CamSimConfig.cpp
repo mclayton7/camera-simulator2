@@ -639,6 +639,32 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlString(RecNode, "cigi_playback_path", Cfg.Recording.CigiPlaybackPath);
 		}
 
+		// Optical realism (Phase 15)
+		if (Root.has_child("optical_realism"))
+		{
+			ryml::ConstNodeRef OptNode = Root["optical_realism"];
+			YamlBool (OptNode, "enabled",                        Cfg.OpticalRealism.bEnabled);
+			YamlBool (OptNode, "motion_blur",                    Cfg.OpticalRealism.bMotionBlur);
+			YamlFloat(OptNode, "motion_blur_amount",             Cfg.OpticalRealism.MotionBlurAmount);
+			YamlInt  (OptNode, "motion_blur_max",                Cfg.OpticalRealism.MotionBlurMax);
+			YamlBool (OptNode, "lens_distortion",                Cfg.OpticalRealism.bLensDistortion);
+			YamlFloat(OptNode, "distortion_k1",                  Cfg.OpticalRealism.DistortionK1);
+			YamlFloat(OptNode, "distortion_k2",                  Cfg.OpticalRealism.DistortionK2);
+			YamlBool (OptNode, "bloom",                          Cfg.OpticalRealism.bBloom);
+			YamlFloat(OptNode, "bloom_intensity",                Cfg.OpticalRealism.BloomIntensity);
+			YamlFloat(OptNode, "bloom_threshold",                Cfg.OpticalRealism.BloomThreshold);
+			YamlBool (OptNode, "chromatic_aberration",           Cfg.OpticalRealism.bChromaticAberration);
+			YamlFloat(OptNode, "chromatic_aberration_intensity", Cfg.OpticalRealism.ChromaticAberrationIntensity);
+			YamlBool (OptNode, "depth_of_field",                 Cfg.OpticalRealism.bDepthOfField);
+			YamlFloat(OptNode, "focal_distance",                 Cfg.OpticalRealism.FocalDistance);
+			YamlFloat(OptNode, "aperture_fstop",                 Cfg.OpticalRealism.ApertureFStop);
+			YamlFloat(OptNode, "sensor_width",                   Cfg.OpticalRealism.SensorWidth);
+			YamlBool (OptNode, "lens_flare",                     Cfg.OpticalRealism.bLensFlare);
+			YamlFloat(OptNode, "lens_flare_intensity",           Cfg.OpticalRealism.LensFlareIntensity);
+			YamlFloat(OptNode, "lens_flare_bokeh_size",          Cfg.OpticalRealism.LensFlareBokehSize);
+			YamlFloat(OptNode, "lens_flare_threshold",           Cfg.OpticalRealism.LensFlareThreshold);
+		}
+
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
 	}
 	else
@@ -741,6 +767,15 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Recording.CigiRecordPath = GetEnv(TEXT("CAMSIM_CIGI_RECORD_PATH"), Cfg.Recording.CigiRecordPath);
 	Cfg.Recording.VideoRecordPath = GetEnv(TEXT("CAMSIM_VIDEO_RECORD_PATH"), Cfg.Recording.VideoRecordPath);
 	Cfg.Recording.CigiPlaybackPath = GetEnv(TEXT("CAMSIM_CIGI_PLAYBACK_PATH"), Cfg.Recording.CigiPlaybackPath);
+
+	// Phase 15: optical realism env overrides
+	Cfg.OpticalRealism.bEnabled = GetEnvInt(TEXT("CAMSIM_OPTICAL_REALISM_ENABLED"),
+		Cfg.OpticalRealism.bEnabled ? 1 : 0) != 0;
+	Cfg.OpticalRealism.MotionBlurAmount = GetEnvFloat(TEXT("CAMSIM_MOTION_BLUR_AMOUNT"), Cfg.OpticalRealism.MotionBlurAmount);
+	Cfg.OpticalRealism.DistortionK1 = GetEnvFloat(TEXT("CAMSIM_DISTORTION_K1"), Cfg.OpticalRealism.DistortionK1);
+	Cfg.OpticalRealism.DistortionK2 = GetEnvFloat(TEXT("CAMSIM_DISTORTION_K2"), Cfg.OpticalRealism.DistortionK2);
+	Cfg.OpticalRealism.FocalDistance = GetEnvFloat(TEXT("CAMSIM_FOCAL_DISTANCE"), Cfg.OpticalRealism.FocalDistance);
+	Cfg.OpticalRealism.ApertureFStop = GetEnvFloat(TEXT("CAMSIM_APERTURE_FSTOP"), Cfg.OpticalRealism.ApertureFStop);
 
 	if (Cfg.OutputViews.Num() > 0 && (bHasMulticastAddrEnv || bHasMulticastPortEnv))
 	{

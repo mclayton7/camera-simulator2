@@ -314,6 +314,37 @@ sensor_modes:
     brightness_bias: 0.02
     blur_radius: 0
 
+# --- Optical Realism (Phase 15) ---
+# GPU-side + CPU-side optical effects for camera realism.
+# Master toggle: enabled=false gives clean ML training frames.
+optical_realism:
+  enabled: false
+  # 15A Motion Blur (GPU)
+  motion_blur: true
+  motion_blur_amount: 0.5
+  motion_blur_max: 5
+  # 15B Lens Distortion (CPU, Brown-Conrady radial model)
+  lens_distortion: false
+  distortion_k1: 0.0
+  distortion_k2: 0.0
+  # 15C Bloom (GPU)
+  bloom: true
+  bloom_intensity: 0.675
+  bloom_threshold: -1.0
+  # 15D Chromatic Aberration (GPU)
+  chromatic_aberration: false
+  chromatic_aberration_intensity: 0.0
+  # 15E Depth of Field (GPU). focal_distance 0 = auto-focus from LOS range.
+  depth_of_field: false
+  focal_distance: 0.0
+  aperture_fstop: 4.0
+  sensor_width: 24.576
+  # 15F Lens Flare (GPU)
+  lens_flare: false
+  lens_flare_intensity: 1.0
+  lens_flare_bokeh_size: 3.0
+  lens_flare_threshold: 8.0
+
 # --- Security Metadata (MISB ST 0102) ---
 # Embedded in every KLV packet as ST 0601 Tag 48.
 # Required for STANAG 4609 compliance even for unclassified output.
