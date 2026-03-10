@@ -14,6 +14,7 @@
 #include "Atmosphere/AtmosphericFogComponent.h"
 #include "Engine/ExponentialHeightFog.h"
 #include "Components/VolumetricCloudComponent.h"
+#include "Components/SkyAtmosphereComponent.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 
@@ -79,6 +80,9 @@ void ACamSimEnvironment::BeginPlay()
 		CesiumSunSkyActor = *It;
 		break;
 	}
+
+	// Copy Phase 18 config once at startup
+	Phase18Cfg = Subsystem->GetConfig().Phase18;
 
 	// Initialise sun from config StartHour
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
@@ -366,6 +370,12 @@ void ACamSimEnvironment::ApplyAtmosphere()
 		FogComp->SetFogInscatteringColor(FLinearColor(0.1f, 0.12f, 0.18f));
 	}
 
+	// Update Phase 18 atmospheric snapshot
+	CachedAtmosSnapshot.AtmosphericVisibilityM = CurrentAtmosphere.Visibility;
+
+	ApplySecondFogLayer();
+	ApplySkyAtmosphericScattering();
+
 	UE_LOG(LogCamSim, Verbose,
 		TEXT("ACamSimEnvironment: visibility=%.0fm  fogDensity=%.6f"),
 		CurrentAtmosphere.Visibility, Density);
@@ -435,10 +445,105 @@ void ACamSimEnvironment::ApplyWeather()
 		{
 			CloudComp->SetLayerBottomAltitude(FMath::Max(CurrentWeather.BaseElev   / 1000.0f, 0.1f));
 			CloudComp->SetLayerHeight        (FMath::Max(CurrentWeather.Thickness  / 1000.0f, 0.1f));
+
+			// 18A: Show/hide cloud component based on coverage and enable flag
+			if (Phase18Cfg.bVolumetricClouds)
+			{
+				CloudComp->SetVisibility(Coverage01 > 0.01f);
+			}
+
+			// 18B: Drive cloud shadow from coverage threshold
+			SetCloudShadowsEnabled(
+				Phase18Cfg.bVolumetricClouds && Coverage01 > 0.1f,
+				Phase18Cfg.CloudShadowStrength);
 		}
 	}
+
+	// Update Phase 18 atmospheric snapshot with weather data
+	{
+		CachedAtmosSnapshot.WeatherSeverity = Coverage01;
+
+		// Derive precipitation type from coverage/visibility heuristic
+		// CIGI WeatherState does not carry an explicit precip type, so we infer:
+		// heavy coverage + restricted visibility = rain; below-freezing = snow
+		const bool bHeavy = (Coverage01 > 0.6f) && (CurrentWeather.VisibilityRng < 5000.0f);
+		if (bHeavy)
+		{
+			// AirTempCelsius < 2°C → snow, else rain
+			CachedAtmosSnapshot.WeatherPrecipType = (CachedAtmosSnapshot.AirTempCelsius < 2.0f) ? 2 : 1;
+		}
+		else
+		{
+			CachedAtmosSnapshot.WeatherPrecipType = 0;
+		}
+	}
+
+	ApplyGodRays();
 
 	UE_LOG(LogCamSim, Verbose,
 		TEXT("ACamSimEnvironment: weather coverage=%.0f%%  baseElev=%.0fm  thickness=%.0fm"),
 		CurrentWeather.Coverage, CurrentWeather.BaseElev, CurrentWeather.Thickness);
+}
+
+// -------------------------------------------------------------------------
+// Phase 18 helpers
+// -------------------------------------------------------------------------
+
+void ACamSimEnvironment::SetCloudShadowsEnabled(bool bEnabled, float Strength)
+{
+	if (!SunLight) return;
+	UDirectionalLightComponent* LightComp =
+		Cast<UDirectionalLightComponent>(SunLight->GetLightComponent());
+	if (!LightComp) return;
+	LightComp->bCastCloudShadows   = bEnabled;
+	LightComp->CloudShadowStrength = FMath::Clamp(Strength, 0.0f, 1.0f);
+	LightComp->MarkRenderStateDirty();
+}
+
+void ACamSimEnvironment::ApplySecondFogLayer()
+{
+	if (!HeightFog || !Phase18Cfg.bSecondFog) return;
+
+	UExponentialHeightFogComponent* FogComp = HeightFog->GetComponent();
+	if (!FogComp) return;
+
+	FogComp->SecondFogData.FogDensity      = FMath::Clamp(Phase18Cfg.FogDensity,       0.0f, 1.0f);
+	FogComp->SecondFogData.FogHeightFalloff = FMath::Clamp(Phase18Cfg.FogHeightFalloff, 0.0f, 1.0f);
+	FogComp->MarkRenderStateDirty();
+}
+
+void ACamSimEnvironment::ApplyGodRays()
+{
+	if (!SunLight || !Phase18Cfg.bGodRays) return;
+
+	UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(SunLight->GetLightComponent());
+	if (!LightComp) return;
+
+	LightComp->bEnableLightShaftBloom    = true;
+	LightComp->bEnableLightShaftOcclusion = true;
+	LightComp->LightShaftOverrideDirection = FVector::ZeroVector; // auto-from-sun
+
+	// Scale bloom tint intensity by config
+	const float Intensity = FMath::Clamp(Phase18Cfg.GodRayIntensity, 0.0f, 4.0f);
+	LightComp->BloomScale = Intensity;
+	LightComp->MarkRenderStateDirty();
+}
+
+void ACamSimEnvironment::ApplySkyAtmosphericScattering()
+{
+	if (!SkyAtmosphere || !Phase18Cfg.bAtmosphericScattering) return;
+
+	USkyAtmosphereComponent* AtmosComp = SkyAtmosphere->GetComponent();
+	if (!AtmosComp) return;
+
+	// Base Rayleigh scattering coefficient (UE default ~0.0331 /km at sea level)
+	// We multiply by the user's Rayleigh factor
+	const float RayleighBase = 0.0331f;
+	AtmosComp->RayleighScatteringScale = FMath::Clamp(Phase18Cfg.RayleighScattering * RayleighBase, 0.0f, 1.0f);
+
+	// Base Mie scattering coefficient (UE default ~0.003996 /km)
+	const float MieBase = 0.003996f;
+	AtmosComp->MieScatteringScale = FMath::Clamp(Phase18Cfg.MieScattering * MieBase, 0.0f, 1.0f);
+
+	AtmosComp->MarkRenderStateDirty();
 }

@@ -41,3 +41,23 @@ bool FPhase18ParticleConfigDefaultsTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("MaxCraters default 32"),        Cfg.Phase18.MaxCraters,               32);
     return true;
 }
+
+// ─── 18A/18B: Coverage-to-shadow mapping ────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18CoverageToShadowTest,
+    "CamSim.Phase18.CoverageToShadowMapping",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase18CoverageToShadowTest::RunTest(const FString& Parameters)
+{
+    // CIGI Coverage field is percent 0-100; normalise to [0,1] and apply threshold
+    const float CoveragePercent = 75.0f;
+    const float Coverage01      = FMath::Clamp(CoveragePercent / 100.0f, 0.0f, 1.0f);
+    const bool  bShadowOn       = (Coverage01 > 0.1f);
+    TestNearlyEqual(TEXT("Coverage01 from 75%"), Coverage01, 0.75f, 0.001f);
+    TestTrue(TEXT("Shadow enabled at 75% coverage"), bShadowOn);
+
+    const float LowCoverage01 = FMath::Clamp(5.0f / 100.0f, 0.0f, 1.0f);
+    TestFalse(TEXT("Shadow disabled at 5% coverage"), LowCoverage01 > 0.1f);
+    return true;
+}
