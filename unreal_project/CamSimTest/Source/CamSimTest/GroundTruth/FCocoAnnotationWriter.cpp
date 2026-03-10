@@ -5,6 +5,7 @@
 #include "CamSimTest.h"
 
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
 
 bool FCocoAnnotationWriter::Open(const FString& OutputDir)
@@ -18,7 +19,7 @@ bool FCocoAnnotationWriter::Open(const FString& OutputDir)
 	// Create / truncate the file and keep a persistent append handle.
 	// Using a persistent IFileHandle avoids per-frame open+close+seek overhead
 	// that would otherwise accumulate on multi-hour capture sessions.
-	FileHandle = IFileManager::Get().CreateFileWriter(*JsonlPath, FILEWRITE_AllowRead);
+	FileHandle = FPlatformFileManager::Get().GetPlatformFile().OpenWrite(*JsonlPath, /*bAppend=*/false, /*bAllowRead=*/true);
 	if (!FileHandle)
 	{
 		UE_LOG(LogCamSim, Error, TEXT("FCocoAnnotationWriter: failed to create %s"), *JsonlPath);

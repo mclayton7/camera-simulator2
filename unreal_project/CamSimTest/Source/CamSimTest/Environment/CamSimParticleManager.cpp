@@ -1,5 +1,6 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 #include "Environment/CamSimParticleManager.h"
+#include "CamSimTest.h"
 #include "Config/CamSimConfig.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "CIGI/CigiPacketTypes.h"

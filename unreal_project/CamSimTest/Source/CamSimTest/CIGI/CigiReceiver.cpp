@@ -59,9 +59,7 @@ public:
 		State.Yaw         = static_cast<float>(Pkt->GetYaw());
 		State.Pitch       = static_cast<float>(Pkt->GetPitch());
 		State.Roll        = static_cast<float>(Pkt->GetRoll());
-		State.EntityKind     = static_cast<uint8>(Pkt->GetEntityKind());
-		State.EntityDomain   = static_cast<uint8>(Pkt->GetEntityDomain());
-		State.EntityCategory = static_cast<uint8>(Pkt->GetEntityCategory());
+		// CIGI V3 EntityCtrl has no Kind/Domain/Category fields; leave at defaults (0).
 
 		// Route by entity ID: camera entity → CameraEntityQueue; others → EntityStateQueue
 		if (State.EntityId == static_cast<uint16>(Receiver->Config.CameraEntityId))
