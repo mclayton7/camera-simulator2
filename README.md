@@ -183,6 +183,18 @@ camsim/
             └── FFmpeg/             FFmpeg headers + static libs
 ```
 
+## Gotchas
+
+- **Phase 18 Niagara assets**: Particle effects (18F rotor wash, 18G smoke/fire, 18H contrails) and decal cratering (18I) require assets authored in the UE editor. Create the following and save to `/Game/Effects/`:
+  | Asset | Type | Key exposed parameters |
+  |---|---|---|
+  | `NS_RotorWash` | Niagara System | `Velocity` (float), `Density` (float), `Radius` (float) |
+  | `NS_Smoke` | Niagara System | `EmitRate` (float), `Color` (LinearColor) |
+  | `NS_Fire` | Niagara System | `EmitRate` (float), `Scale` (float) |
+  | `NS_Contrail` | Niagara System | `Width` (float), `Opacity` (float) |
+  | `M_Crater` | Decal Material | Normal map input, burn ring albedo, opacity mask |
+  Asset paths are configurable via `phase18.niagara_*` and `phase18.crater_decal_material` in `camsim_config.yaml`. Missing assets log a warning and skip that effect — other effects still work.
+
 ## Links
 
 - [CIGI Class Library (CCL)](https://github.com/Hadron/cigi-ccl)
