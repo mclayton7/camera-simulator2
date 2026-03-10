@@ -138,3 +138,24 @@ bool FPhase18CoverageToShadowTest::RunTest(const FString& Parameters)
     TestFalse(TEXT("Shadow disabled at 5% coverage"), LowCoverage01 > 0.1f);
     return true;
 }
+
+// ─── 18F/G/H/I: Particle state defaults ──────────────────────────────────────
+
+#include "Environment/CamSimParticleManager.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18ParticleStateDefaultsTest,
+    "CamSim.Phase18.ParticleState_Defaults",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase18ParticleStateDefaultsTest::RunTest(const FString& Parameters)
+{
+    FEntityParticleState State;
+    TestNull(TEXT("RotorWashComp null"),   State.RotorWashComp);
+    TestNull(TEXT("SmokeComp null"),       State.SmokeComp);
+    TestNull(TEXT("FireComp null"),        State.FireComp);
+    TestNull(TEXT("ContrailComp null"),    State.ContrailComp);
+    TestFalse(TEXT("Smoke inactive"),      State.bSmokeActive);
+    TestFalse(TEXT("Fire inactive"),       State.bFireActive);
+    TestFalse(TEXT("Contrail inactive"),   State.bContrailActive);
+    return true;
+}
