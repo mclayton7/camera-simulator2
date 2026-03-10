@@ -59,6 +59,9 @@ public:
 		State.Yaw         = static_cast<float>(Pkt->GetYaw());
 		State.Pitch       = static_cast<float>(Pkt->GetPitch());
 		State.Roll        = static_cast<float>(Pkt->GetRoll());
+		State.EntityKind     = static_cast<uint8>(Pkt->GetEntityKind());
+		State.EntityDomain   = static_cast<uint8>(Pkt->GetEntityDomain());
+		State.EntityCategory = static_cast<uint8>(Pkt->GetEntityCategory());
 
 		// Route by entity ID: camera entity → CameraEntityQueue; others → EntityStateQueue
 		if (State.EntityId == static_cast<uint16>(Receiver->Config.CameraEntityId))

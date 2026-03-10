@@ -23,6 +23,12 @@ struct FCigiEntityState
 	float  Yaw       = 0.0f;  // CIGI heading, degrees [0,360)
 	float  Pitch      = 0.0f;  // degrees, positive = nose up
 	float  Roll       = 0.0f;  // degrees, positive = right wing down
+
+	// Entity classification from CIGI EntityCtrlV3 — used by FCamSimParticleManager
+	// Kind=1 (Platform), Domain=1 (Air), Category=2=fixed-wing, Category=3=rotary-wing
+	uint8 EntityKind     = 0;
+	uint8 EntityDomain   = 0;
+	uint8 EntityCategory = 0;
 };
 
 /**
