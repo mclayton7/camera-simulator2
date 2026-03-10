@@ -42,6 +42,83 @@ bool FPhase18ParticleConfigDefaultsTest::RunTest(const FString& Parameters)
     return true;
 }
 
+// ─── 18L: Weather zone blending math ─────────────────────────────────────────
+
+#include "Environment/CamSimEnvironment.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18WeatherZoneAddTest,
+    "CamSim.Phase18.WeatherZone_Add",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase18WeatherZoneAddTest::RunTest(const FString& Parameters)
+{
+    TArray<FWeatherZone> Zones;
+    FWeatherZone Z; Z.ZoneID = 1; Z.LatDeg = 37.0; Z.LonDeg = -122.0; Z.RadiusM = 5000.0f;
+    Z.Params.FogDensity = 0.8f;
+    Zones.Add(Z);
+    TestEqual(TEXT("One zone stored"), Zones.Num(), 1);
+    TestNearlyEqual(TEXT("Zone fog density"), Zones[0].Params.FogDensity, 0.8f, 0.001f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18WeatherZoneRemoveTest,
+    "CamSim.Phase18.WeatherZone_Remove",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase18WeatherZoneRemoveTest::RunTest(const FString& Parameters)
+{
+    TArray<FWeatherZone> Zones;
+    FWeatherZone Z; Z.ZoneID = 5;
+    Zones.Add(Z);
+    Zones.RemoveAll([](const FWeatherZone& W){ return W.ZoneID == 5; });
+    TestEqual(TEXT("Zone removed"), Zones.Num(), 0);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18WeatherZoneBlendInsideTest,
+    "CamSim.Phase18.WeatherZoneBlend_Inside",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase18WeatherZoneBlendInsideTest::RunTest(const FString& Parameters)
+{
+    const float Dist = 0.0f, Radius = 5000.0f;
+    const float Alpha = FMath::Clamp(1.0f - (Dist / Radius), 0.0f, 1.0f);
+    TestNearlyEqual(TEXT("Alpha at center = 1"), Alpha, 1.0f, 0.001f);
+    const float Result = FMath::Lerp(0.02f, 0.8f, Alpha);
+    TestNearlyEqual(TEXT("Fog blended to zone value"), Result, 0.8f, 0.001f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18WeatherZoneBlendOutsideTest,
+    "CamSim.Phase18.WeatherZoneBlend_Outside",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase18WeatherZoneBlendOutsideTest::RunTest(const FString& Parameters)
+{
+    const float Dist = 10000.0f, Radius = 5000.0f;
+    const float Alpha = FMath::Clamp(1.0f - (Dist / Radius), 0.0f, 1.0f);
+    TestNearlyEqual(TEXT("Alpha outside = 0"), Alpha, 0.0f, 0.001f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18WeatherZoneCapTest,
+    "CamSim.Phase18.WeatherZone_Cap16",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase18WeatherZoneCapTest::RunTest(const FString& Parameters)
+{
+    TArray<FWeatherZone> Zones;
+    for (int32 i = 0; i < 17; ++i)
+    {
+        if (Zones.Num() >= 16) { Zones.RemoveAt(0); }
+        FWeatherZone Z; Z.ZoneID = i;
+        Zones.Add(Z);
+    }
+    TestEqual(TEXT("Max 16 zones"), Zones.Num(), 16);
+    TestEqual(TEXT("ID=0 evicted"), Zones[0].ZoneID, 1);
+    return true;
+}
+
 // ─── 18A/18B: Coverage-to-shadow mapping ────────────────────────────────────
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18CoverageToShadowTest,

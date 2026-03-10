@@ -10,8 +10,13 @@
 #include "Encoder/VideoEncoder.h"
 #include "Sensor/SensorPostProcess.h"  // FSensorPostProcess concrete type
 #include "Geospatial/CamSimGeospatialProvider.h"
+#include "Environment/CamSimEnvironment.h"
 
 #include "Encoder/IFrameSink.h"
+#include "GroundTruth/FGroundTruthCollector.h"
+#include "GroundTruth/FEntityProjection.h"
+#include "Entity/CamSimEntityManager.h"
+#include "EngineUtils.h" // TActorIterator
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/GameInstance.h"
@@ -184,6 +189,10 @@ void ACamSimCamera::BeginPlay()
 	{
 		Pipeline->SetDistortion(Cfg.OpticalRealism.DistortionK1, Cfg.OpticalRealism.DistortionK2);
 	}
+
+	// Phase 18: weather & atmospheric sensor effects
+	Pipeline->SetPhase18Config(Cfg.Phase18);
+
 	SensorFX.Reset(Pipeline);
 
 	// Apply GPU-side optical realism post-process settings (Phase 15)
@@ -253,6 +262,34 @@ void ACamSimCamera::BeginPlay()
 	// Allocate async GPU readback helper (non-blocking DMA: EnqueueCopy → IsReady → Lock)
 	GPUReadback = new FRHIGPUTextureReadback(TEXT("CamSimReadback"));
 
+	// Depth capture for ML training data (Phase 17A)
+	if (Cfg.MLTraining.bEnabled && Cfg.MLTraining.bDepthMap)
+	{
+		DepthCapture = NewObject<USceneCaptureComponent2D>(this, TEXT("DepthCapture"));
+		DepthCapture->SetupAttachment(Root);
+		DepthCapture->bCaptureEveryFrame   = false;
+		DepthCapture->bCaptureOnMovement   = false;
+		DepthCapture->CaptureSource        = SCS_SceneDepth;
+		DepthCapture->bAlwaysPersistRenderingState = false;
+		DepthCapture->RegisterComponent();
+
+		DepthRenderTargets.Reset();
+		for (int32 Idx = 0; Idx < 2; ++Idx)
+		{
+			UTextureRenderTarget2D* DRT = NewObject<UTextureRenderTarget2D>(
+				this, *FString::Printf(TEXT("CamSimDepthRT_%d"), Idx));
+			DRT->InitCustomFormat(Cfg.CaptureWidth, Cfg.CaptureHeight, PF_R32_FLOAT,
+				/*bInForceLinearGamma=*/true);
+			DRT->UpdateResource();
+			DepthRenderTargets.Add(DRT);
+		}
+		DepthCaptureTargetIndex = 0;
+		DepthCapture->TextureTarget = DepthRenderTargets[0];
+		DepthGPUReadback = new FRHIGPUTextureReadback(TEXT("CamSimDepthReadback"));
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: depth capture enabled (%dx%d PF_R32_FLOAT)"),
+			Cfg.CaptureWidth, Cfg.CaptureHeight);
+	}
+
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ready (%dx%d @ %.0ffps)"),
 		Cfg.CaptureWidth, Cfg.CaptureHeight, Cfg.FrameRate);
 }
@@ -278,6 +315,12 @@ void ACamSimCamera::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		delete GPUReadback;
 		GPUReadback = nullptr;
+	}
+
+	if (DepthGPUReadback)
+	{
+		delete DepthGPUReadback;
+		DepthGPUReadback = nullptr;
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -326,9 +369,13 @@ void ACamSimCamera::Tick(float DeltaTime)
 		UTextureRenderTarget2D* RT            =
 			RenderTargets.IsValidIndex(PendingReadbackTargetIndex) ? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
 		FRHIGPUTextureReadback* Readback      = GPUReadback;
+		FRHIGPUTextureReadback* DepthReadback = DepthGPUReadback;
+		const int32 CaptureW = Cfg.CaptureWidth;
+		const int32 CaptureH = Cfg.CaptureHeight;
 
 		ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
-			[this, WaitFrame, WaitTelemetry, WaitSessionId, bForceSwap, DesiredFormat, ReadyPollsRequired, RT, Readback](FRHICommandListImmediate& RHICmdList)
+			[this, WaitFrame, WaitTelemetry, WaitSessionId, bForceSwap, DesiredFormat,
+			 ReadyPollsRequired, RT, Readback, DepthReadback, CaptureW, CaptureH](FRHICommandListImmediate& RHICmdList)
 		{
 			// Ignore stale poll commands from prior capture sessions.
 			if (WaitSessionId != ReadbackSessionIdRT) return;
@@ -393,7 +440,45 @@ void ACamSimCamera::Tick(float DeltaTime)
 				bReadbackPending = false;
 				PendingReadbackTargetIndex = INDEX_NONE;
 
-				SubmitFrameToEncoder(MoveTemp(Pixels), WaitTelemetry, WaitFrame);
+				// Opportunistic depth readback — sampled alongside color.
+				// Both captures are issued together so they typically complete at the same time.
+				// Apply the same Vulkan-early-ready streak guard as the color path.
+				// If depth is not ready (or streak insufficient) this frame it is skipped (ML data only).
+				TArray<float> DepthPixels;
+				if (DepthReadback && !bDepthReadbackClaimed)
+				{
+					if (DepthReadback->IsReady())
+					{
+						if (DepthReadbackReadyStreak < 255) ++DepthReadbackReadyStreak;
+						if (DepthReadbackReadyStreak >= ReadyPollsRequired)
+						{
+							bDepthReadbackClaimed = true;
+							int32 DepthRowPitch = 0;
+							void* DepthRaw = DepthReadback->Lock(DepthRowPitch);
+							if (DepthRaw)
+							{
+								DepthPixels.SetNumUninitialized(CaptureW * CaptureH);
+								const uint8* Src = static_cast<const uint8*>(DepthRaw);
+								float*       Dst = DepthPixels.GetData();
+								const int32  RowBytes = CaptureW * sizeof(float);
+								for (int32 Row = 0; Row < CaptureH; ++Row)
+								{
+									FMemory::Memcpy(Dst + Row * CaptureW, Src + Row * DepthRowPitch, RowBytes);
+								}
+								// SCS_SceneDepth returns depth in UE units (cm); convert to metres
+								for (float& V : DepthPixels) { V /= 100.0f; }
+								DepthReadback->Unlock();
+							}
+							// else: Lock() returned null — do NOT call Unlock() (UB)
+						}
+					}
+					else
+					{
+						DepthReadbackReadyStreak = 0;
+					}
+				}
+
+				SubmitFrameToEncoder(MoveTemp(Pixels), WaitTelemetry, WaitFrame, MoveTemp(DepthPixels));
 			}
 			else
 			{
@@ -534,6 +619,9 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 		CurrentTelemetry.GimbalRoll  = GimbalComp->GetGimbalRoll();
 	}
 
+	// Populate environment telemetry for sensor effects (Phase 16K + Phase 18)
+	ReadEnvironmentTelemetry();
+
 	// Update Cesium tile streaming camera *after* all state (position, gimbal,
 	// FOV) has been applied this frame so LOD decisions use the true frustum.
 	UpdateCesiumCamera();
@@ -552,6 +640,33 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 			SceneCapture->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
 			SceneCapture->PostProcessSettings.DepthOfFieldFocalDistance =
 				static_cast<float>(CurrentTelemetry.SlantRangeM * 100.0); // m → cm
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// ReadEnvironmentTelemetry – sun elevation + Phase 18 atmospheric snapshot
+// -------------------------------------------------------------------------
+
+void ACamSimCamera::ReadEnvironmentTelemetry()
+{
+	if (UWorld* W = GetWorld())
+	{
+		for (TActorIterator<ACamSimEnvironment> It(W); It; ++It)
+		{
+			CurrentTelemetry.SunElevationDeg = It->GetSunElevationDeg();
+
+			// Phase 18: atmospheric snapshot
+			const ACamSimEnvironment::FAtmosphericSnapshot Snap = It->GetAtmosphericSnapshot();
+			CurrentTelemetry.AtmosphericVisibilityM = Snap.AtmosphericVisibilityM;
+			CurrentTelemetry.RelativeHumidity       = Snap.RelativeHumidity;
+			CurrentTelemetry.AirTempCelsius         = Snap.AirTempCelsius;
+			CurrentTelemetry.WeatherSeverity        = Snap.WeatherSeverity;
+			CurrentTelemetry.WeatherPrecipType      = Snap.WeatherPrecipType;
+
+			// 18L: update environment with camera position for zone blending
+			It->SetCameraPosition(CurrentTelemetry.Latitude, CurrentTelemetry.Longitude);
+			break;
 		}
 	}
 }
@@ -671,6 +786,28 @@ void ACamSimCamera::CaptureAndEncode()
 	if (!SceneCapture || !GPUReadback) return;
 	if (!RenderTargets.IsValidIndex(CaptureTargetIndex) || !RenderTargets[CaptureTargetIndex]) return;
 
+	// Capture entity annotation snapshot BEFORE setting bEncoderBusy (Phase 17D)
+	if (Subsystem)
+	{
+		FGroundTruthCollector* Collector  = Subsystem->GetGroundTruthCollector();
+		FCamSimEntityManager*  EntityMgr  = Subsystem->GetEntityManager();
+		if (Collector && Collector->IsEnabled() && EntityMgr && SceneCapture)
+		{
+			const FCamSimConfig& Cfg = Subsystem->GetConfig();
+			FViewProjectionData ViewProj;
+			ViewProj.ViewProjectionMatrix = FEntityProjection::BuildViewProjectionMatrix(
+				SceneCapture->GetComponentLocation(),
+				SceneCapture->GetComponentRotation(),
+				SceneCapture->FOVAngle,
+				Cfg.CaptureWidth, Cfg.CaptureHeight);
+			ViewProj.ImageWidth  = Cfg.CaptureWidth;
+			ViewProj.ImageHeight = Cfg.CaptureHeight;
+			Collector->SetPendingEntitySnapshot(
+				EntityMgr->GetEntitySnapshot(ViewProj),
+				Cfg.CaptureWidth, Cfg.CaptureHeight);
+		}
+	}
+
 	UTextureRenderTarget2D* CaptureRT = RenderTargets[CaptureTargetIndex].Get();
 	SceneCapture->TextureTarget = CaptureRT;
 
@@ -692,6 +829,18 @@ void ACamSimCamera::CaptureAndEncode()
 	bReadbackPending = true;
 	bEncoderBusy     = true;
 
+	// Trigger depth capture alongside color (Phase 17A)
+	UTextureRenderTarget2D* DepthCaptureRT = nullptr;
+	if (DepthCapture && DepthGPUReadback && DepthRenderTargets.IsValidIndex(DepthCaptureTargetIndex))
+	{
+		DepthCaptureRT = DepthRenderTargets[DepthCaptureTargetIndex].Get();
+		DepthCapture->TextureTarget = DepthCaptureRT;
+		// Sync relative rotation with SceneCapture so depth aligns with color
+		DepthCapture->SetRelativeRotation(SceneCapture->GetRelativeRotation());
+		DepthCapture->CaptureScene();
+		DepthCaptureTargetIndex = (DepthCaptureTargetIndex + 1) % DepthRenderTargets.Num();
+	}
+
 	// Enqueue the async GPU→CPU DMA on the render thread (returns immediately)
 	UTextureRenderTarget2D*  RT       =
 		RenderTargets.IsValidIndex(PendingReadbackTargetIndex) ? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
@@ -704,8 +853,10 @@ void ACamSimCamera::CaptureAndEncode()
 		return;
 	}
 
+	FRHIGPUTextureReadback* DepthReadback = DepthGPUReadback;
+
 	ENQUEUE_RENDER_COMMAND(CamSimEnqueueReadback)(
-		[this, RT, Readback, SessionId](FRHICommandListImmediate& RHICmdList)
+		[this, RT, Readback, DepthCaptureRT, DepthReadback, SessionId](FRHICommandListImmediate& RHICmdList)
 	{
 		ReadbackSessionIdRT = SessionId;
 
@@ -713,6 +864,8 @@ void ACamSimCamera::CaptureAndEncode()
 		// Subsequent poll commands from the same session will see bReadbackClaimed=true and bail.
 		bReadbackClaimed   = false;
 		ReadbackReadyStreak = 0;
+		bDepthReadbackClaimed   = false;
+		DepthReadbackReadyStreak = 0;
 
 		FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
 		if (!Resource) return;
@@ -737,6 +890,19 @@ void ACamSimCamera::CaptureAndEncode()
 			SourceTexture,
 			ERHIAccess::CopySrc,
 			ERHIAccess::RTV));
+
+		// Depth readback — enqueue alongside color (Phase 17A)
+		if (DepthCaptureRT && DepthReadback)
+		{
+			FTextureRenderTargetResource* DepthRes = DepthCaptureRT->GetRenderTargetResource();
+			FRHITexture* DepthTex = DepthRes ? DepthRes->GetRenderTargetTexture() : nullptr;
+			if (DepthTex)
+			{
+				RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::RTV, ERHIAccess::CopySrc));
+				DepthReadback->EnqueueCopy(RHICmdList, DepthTex);
+				RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::CopySrc, ERHIAccess::RTV));
+			}
+		}
 	});
 }
 
@@ -745,7 +911,7 @@ void ACamSimCamera::CaptureAndEncode()
 // -------------------------------------------------------------------------
 
 void ACamSimCamera::SubmitFrameToEncoder(
-	TArray<FColor> PixelData, FCamSimTelemetry Telemetry, uint64 FrameIdx)
+	TArray<FColor> PixelData, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres)
 {
 	IFrameSink* Encoder = Subsystem ? Subsystem->GetVideoEncoder() : nullptr;
 	if (!Encoder)
@@ -754,24 +920,42 @@ void ACamSimCamera::SubmitFrameToEncoder(
 		return;
 	}
 
-	// Capture sensor state for the lambda (game-thread variables, safe to read here).
-	const ESensorMode  Mode     = SensorComp ? SensorComp->GetMode()     : ESensorMode::EO;
-	const uint8        Polarity = SensorComp ? SensorComp->GetPolarity() : 0;
+	// Read sensor state from Telemetry — already captured on the game thread in Tick()
+	// and stored into WaitTelemetry before the readback.  Do NOT touch SensorComp here:
+	// SubmitFrameToEncoder is called from the render thread, and UObjects are game-thread only.
+	const ESensorMode  Mode     = static_cast<ESensorMode>(Telemetry.SensorMode);
+	const uint8        Polarity = Telemetry.SensorPolarity;
 
 	// When GPU sensor effects are active (Phase 5), the post-process materials
 	// already ran on the GPU before readback — skip the CPU pipeline.
 	const bool bSkipCpuFX = Subsystem && Subsystem->GetConfig().bGpuSensorEffects;
 	IPixelPipeline* FX = bSkipCpuFX ? nullptr : SensorFX.Get();
 
+	// Ground truth collector (Phase 17) — pointer captured for task lambda.
+	FGroundTruthCollector* Collector = Subsystem ? Subsystem->GetGroundTruthCollector() : nullptr;
+	const int32 CaptureW = Subsystem ? Subsystem->GetConfig().CaptureWidth  : 0;
+	const int32 CaptureH = Subsystem ? Subsystem->GetConfig().CaptureHeight : 0;
+
 	// Move pixel buffer into async task to avoid copy
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-		[this, Encoder, FX, Mode, Polarity, Pixels = MoveTemp(PixelData), Telemetry, FrameIdx]() mutable
+		[this, Encoder, FX, Mode, Polarity, Collector, CaptureW, CaptureH,
+		 Pixels = MoveTemp(PixelData), Telemetry, FrameIdx,
+		 Depth  = MoveTemp(DepthMetres)]() mutable
 	{
 		SCOPE_CYCLE_COUNTER(STAT_CamSimEncode);
 		// Apply CPU-side sensor post-processing before encode
 		if (FX)
 		{
 			FX->Process(Pixels, Mode, Polarity, Telemetry, FrameIdx);
+		}
+		// Write ML ground truth annotation and depth (Phase 17)
+		if (Collector)
+		{
+			Collector->WriteAnnotationFrame(Telemetry, FrameIdx);
+			if (Depth.Num() > 0)
+			{
+				Collector->WriteDepthFrame(Depth, CaptureW, CaptureH, FrameIdx);
+			}
 		}
 		Encoder->EncodeFrame(Pixels, Telemetry, FrameIdx);
 		bEncoderBusy = false;

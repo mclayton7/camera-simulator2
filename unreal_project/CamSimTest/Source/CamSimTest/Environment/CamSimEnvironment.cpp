@@ -84,6 +84,17 @@ void ACamSimEnvironment::BeginPlay()
 	// Copy Phase 18 config once at startup
 	Phase18Cfg = Subsystem->GetConfig().Phase18;
 
+	// 18L: Populate runtime zone list from YAML-configured positions
+	for (const FCamSimConfig::FPhase18Config::FWeatherZoneConfig& ZCfg : Phase18Cfg.WeatherZoneConfigs)
+	{
+		FWeatherZone Z;
+		Z.ZoneID  = ZCfg.ZoneID;
+		Z.LatDeg  = ZCfg.LatDeg;
+		Z.LonDeg  = ZCfg.LonDeg;
+		Z.RadiusM = ZCfg.RadiusM;
+		ActiveWeatherZones.Add(Z);
+	}
+
 	// Initialise sun from config StartHour
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 	CurrentCelestial.Hour   = static_cast<uint8>(FMath::FloorToInt(Cfg.StartHour));
@@ -157,7 +168,18 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 	bool bGotWeather = false;
 	while (Receiver->DequeueWeatherState(WxState))
 	{
-		bGotWeather = true;
+		if (WxState.RegionId > 0)
+		{
+			FWeatherZoneParams ZParams;
+			ZParams.FogDensity    = FMath::Lerp(0.0f, 0.1f, WxState.Coverage / 100.0f);
+			ZParams.VisibilityM   = WxState.VisibilityRng;
+			ZParams.CloudCoverage = WxState.Coverage / 100.0f;
+			UpdateWeatherZone(WxState.RegionId, ZParams);
+		}
+		else
+		{
+			bGotWeather = true;
+		}
 	}
 	if (bGotWeather)
 	{
@@ -168,8 +190,22 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 				WxState.Coverage, WxState.BaseElev);
 		}
 		bReceivedWeather = true;
+
+		// 18L: capture fog baseline before weather apply (for zone blending reference)
+		if (HeightFog)
+		{
+			UExponentialHeightFogComponent* FogComp = HeightFog->GetComponent();
+			if (FogComp)
+			{
+				GlobalWeatherBaseline.FogDensity = FogComp->FogDensity;
+			}
+		}
+
 		ApplyWeather();
 	}
+
+	// 18L: Blend zone weather toward camera
+	BlendWeatherZones();
 }
 
 // -------------------------------------------------------------------------
@@ -483,6 +519,70 @@ void ACamSimEnvironment::ApplyWeather()
 	UE_LOG(LogCamSim, Verbose,
 		TEXT("ACamSimEnvironment: weather coverage=%.0f%%  baseElev=%.0fm  thickness=%.0fm"),
 		CurrentWeather.Coverage, CurrentWeather.BaseElev, CurrentWeather.Thickness);
+}
+
+// -------------------------------------------------------------------------
+// Phase 18L: Weather zone blending
+// -------------------------------------------------------------------------
+
+void ACamSimEnvironment::SetCameraPosition(double LatDeg, double LonDeg)
+{
+	CameraLatDeg = LatDeg;
+	CameraLonDeg = LonDeg;
+}
+
+void ACamSimEnvironment::UpdateWeatherZone(uint16 RegionId, const FWeatherZoneParams& Params)
+{
+	for (FWeatherZone& Z : ActiveWeatherZones)
+	{
+		if (Z.ZoneID == static_cast<int32>(RegionId))
+		{
+			Z.Params = Params;
+			return;
+		}
+	}
+	// Zone not in runtime list — it may have a position configured in YAML.
+	// Ignore if not pre-configured (position-less zones cannot be blended).
+	UE_LOG(LogTemp, Verbose,
+		TEXT("ACamSimEnvironment: RegionId %d has no YAML position config — ignoring zone update."),
+		static_cast<int32>(RegionId));
+}
+
+float ACamSimEnvironment::GreatCircleApproxM(double Lat1, double Lon1, double Lat2, double Lon2)
+{
+	// Flat-earth approximation, valid for radii < ~100 km
+	const double dLat = FMath::DegreesToRadians(Lat2 - Lat1);
+	const double dLon = FMath::DegreesToRadians(Lon2 - Lon1)
+	                  * FMath::Cos(FMath::DegreesToRadians((Lat1 + Lat2) * 0.5));
+	return static_cast<float>(FMath::Sqrt(dLat*dLat + dLon*dLon) * 6371000.0);
+}
+
+void ACamSimEnvironment::BlendWeatherZones()
+{
+	if (!Phase18Cfg.bWeatherZones || ActiveWeatherZones.IsEmpty()) return;
+
+	float                     BestAlpha  = 0.0f;
+	const FWeatherZoneParams* BestParams = nullptr;
+
+	for (const FWeatherZone& Z : ActiveWeatherZones)
+	{
+		const float DistM = GreatCircleApproxM(CameraLatDeg, CameraLonDeg, Z.LatDeg, Z.LonDeg);
+		const float Alpha = FMath::Clamp(1.0f - (DistM / Z.RadiusM), 0.0f, 1.0f);
+		if (Alpha > BestAlpha) { BestAlpha = Alpha; BestParams = &Z.Params; }
+	}
+
+	if (BestAlpha <= 0.0f || !BestParams) return;
+
+	// Blend fog
+	if (HeightFog)
+	{
+		UExponentialHeightFogComponent* FogComp = HeightFog->GetComponent();
+		if (FogComp)
+		{
+			FogComp->SetFogDensity(
+				FMath::Lerp(GlobalWeatherBaseline.FogDensity, BestParams->FogDensity, BestAlpha));
+		}
+	}
 }
 
 // -------------------------------------------------------------------------
