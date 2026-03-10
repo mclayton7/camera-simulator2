@@ -171,6 +171,9 @@ struct FCamSimConfig
 	// using the root multicast/video settings above.
 	TArray<FOutputViewConfig> OutputViews;
 
+	// Telemetry JSONL sidecar (pre-Phase 17 ground truth stream).
+	// Distinct from FMLTrainingConfig: writes per-frame KLV telemetry to a JSONL
+	// file alongside the video stream (used by MultiViewFrameSink).
 	struct FGroundTruthConfig
 	{
 		bool    bEnabled = false;
@@ -247,6 +250,28 @@ struct FCamSimConfig
 	};
 	FRecordingConfig Recording;
 
+	// ML Training Data Generation (Phase 17)
+	//   CAMSIM_ML_ENABLED             - master toggle                  (default 0)
+	//   CAMSIM_ML_OUTPUT_DIR          - base output directory          (default <BinaryDir>/ml_output)
+	//   CAMSIM_ML_DEPTH_ENABLED       - write 16-bit PNG depth maps    (default 1)
+	//   CAMSIM_ML_BBOX_ENABLED        - project entity AABB to screen  (default 1)
+	//   CAMSIM_ML_COCO_ENABLED        - write COCO JSONL sidecar       (default 1)
+	//   CAMSIM_ML_VOC_ENABLED         - write Pascal VOC XML per frame (default 0)
+	//   CAMSIM_ML_INTERVAL_FRAMES     - annotation cadence             (default 1)
+	//   CAMSIM_ML_DEPTH_FAR_PLANE_M   - depth quantization ceiling (m) (default 5000)
+	struct FMLTrainingConfig
+	{
+		bool    bEnabled                 = false;
+		FString OutputDir;                       // empty → <BinaryDir>/ml_output
+		int32   AnnotationIntervalFrames = 1;
+		bool    bDepthMap                = true;   // 17A: 16-bit PNG depth
+		bool    bBoundingBoxes           = true;   // 17D: project entity AABB to screen
+		bool    bCocoExport              = true;   // 17G: streaming COCO JSONL
+		bool    bVocExport               = false;  // 17H: Pascal VOC XML per frame
+		float   DepthFarPlaneM           = 5000.0f;
+	};
+	FMLTrainingConfig MLTraining;
+
 	// Optical realism effects (Phase 15)
 	struct FOpticalRealismConfig
 	{
@@ -278,6 +303,65 @@ struct FCamSimConfig
 		float LensFlareThreshold = 8.0f;
 	};
 	FOpticalRealismConfig OpticalRealism;
+
+	/** YAML-configured position for a regional weather zone (18L). */
+	struct FWeatherZoneConfig
+	{
+		int32  ZoneID   = 0;
+		double LatDeg   = 0.0;
+		double LonDeg   = 0.0;
+		float  RadiusM  = 10000.0f;
+	};
+
+	// Weather, Atmosphere & Particle Effects (Phase 18)
+	struct FPhase18Config
+	{
+		// 18C Second fog layer (low-lying mist)
+		bool  bSecondFog        = false;
+		float FogDensity        = 0.02f;  // [0,1]
+		float FogHeightFalloff  = 0.2f;   // UE ExponentialHeightFog param
+		// 18D Precipitation overlay (CPU pixel pass)
+		bool  bPrecipitation    = false;
+		float RainIntensity     = 0.0f;   // [0,1] — drop density
+		float SnowIntensity     = 0.0f;   // [0,1] — flake density
+		// 18E God rays / light shafts
+		bool  bGodRays          = false;
+		float GodRayIntensity   = 1.0f;
+		// 18J Sky atmospheric scattering overrides
+		bool  bAtmosphericScattering = false;
+		float RayleighScattering     = 1.0f; // multiplier on Rayleigh coefficient
+		float MieScattering          = 1.0f; // multiplier on Mie coefficient
+		// 18K Dynamic IR extinction driven by atmospheric visibility
+		bool  bDynamicIRExtinction   = false;
+		float VisibilityRangeM       = 10000.0f; // metres — overrides sensor_modes IR coeff
+
+		// 18A/18B Volumetric cloud shadow strength (cloud actor exists in scene)
+		bool  bVolumetricClouds   = false;
+		float CloudShadowStrength = 0.6f;   // [0,1] shadow intensity on terrain
+
+		// 18L Regional weather zones — positions from YAML, parameters from CIGI RegionId
+		bool                       bWeatherZones = false;
+		TArray<FWeatherZoneConfig> WeatherZoneConfigs;  // up to 16, populated from YAML array
+
+		// 18F/18G/18H Niagara particle FX — soft asset paths, authored in UE editor
+		FString NiagaraRotorWash  = TEXT("/Game/Effects/NS_RotorWash");
+		FString NiagaraSmoke      = TEXT("/Game/Effects/NS_Smoke");
+		FString NiagaraFire       = TEXT("/Game/Effects/NS_Fire");
+		FString NiagaraContrail   = TEXT("/Game/Effects/NS_Contrail");
+		float   ContrailAltM      = 8000.0f;
+		// NOTE: speed threshold not enforced — FCigiEntityState has no velocity field.
+		float   ContrailSpeedMs   = 100.0f;
+		int32   SmokeComponentID  = 1;
+		int32   FireComponentID   = 2;
+
+		// 18I Decal cratering
+		// NOTE: FCigiComponentControl has no CompData field — radius uses config default only.
+		FString CraterDecalMaterial     = TEXT("/Game/Effects/M_Crater");
+		int32   CraterImpactComponentID = 10;
+		int32   MaxCraters              = 32;
+		float   CraterDefaultRadiusM    = 5.0f;
+	};
+	FPhase18Config Phase18;
 
 	// Phase 13C: set to true when config was loaded (or defaults are valid).
 	// Set to false only if YAML parsing fails AND no defaults are available.

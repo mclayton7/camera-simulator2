@@ -39,6 +39,11 @@ public class CamSimTest : ModuleRules
 			"JsonUtilities",
 			// Runtime glTF loading for entity meshes
 			"glTFRuntime",
+			// PNG encoding for depth maps (Phase 17A)
+			"ImageWrapper",
+			// Niagara particle FX (Phase 18F/G/H/I)
+			"Niagara",
+			"NiagaraCore",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

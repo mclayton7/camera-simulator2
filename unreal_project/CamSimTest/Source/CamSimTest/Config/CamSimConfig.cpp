@@ -196,6 +196,11 @@ FCamSimConfig FCamSimConfig::Load()
 		EoCfg.BrightnessBias    = 0.0f;
 		EoCfg.BlurRadius        = 0;
 		EoCfg.ColorTemperatureK = 6500.0f;
+		// Phase 16 Sprint 2 defaults (EO)
+		EoCfg.RollingShutterStrength = 0.0f;
+		EoCfg.SunGlintIntensity      = 0.0f;
+		EoCfg.SunGlintThreshold      = 220.0f;
+		EoCfg.SunGlintSpread         = 2.0f;
 		Cfg.SensorModeConfigs.Add(ESensorMode::EO, EoCfg);
 
 		FSensorModeConfig IrCfg;
@@ -208,6 +213,24 @@ FCamSimConfig FCamSimConfig::Load()
 		IrCfg.AtmosphereStrength = 0.75f;
 		IrCfg.Contrast          = 1.1f;
 		IrCfg.BrightnessBias    = -0.03f;
+		// Phase 16 defaults
+		IrCfg.bAGCEnabled        = true;
+		IrCfg.AGCLowPercentile   = 0.01f;
+		IrCfg.AGCHighPercentile  = 0.99f;
+		IrCfg.AGCManualLevel     = -1.0f;
+		IrCfg.DefectPixelCount   = 150;
+		IrCfg.DefectHotRatio     = 0.6f;
+		IrCfg.DefectSeed         = 42;
+		IrCfg.GaussianSigma      = 0.5f;
+		IrCfg.ACBandingAmplitude = 4.0f;
+		IrCfg.ACBandingFrequency = 3.0f;
+		// Phase 16 Sprint 2 defaults (IR)
+		IrCfg.bThermalDriftEnabled = true;
+		IrCfg.ThermalDriftRate     = 0.5f;
+		IrCfg.NUCIntervalSec       = 30.0f;
+		IrCfg.AGCLagFrames         = 2;
+		IrCfg.GainJitter           = 0.005f;
+		IrCfg.OffsetJitter         = 1.0f;
 		Cfg.SensorModeConfigs.Add(ESensorMode::IR, IrCfg);
 
 		FSensorModeConfig NvgCfg;
@@ -221,6 +244,12 @@ FCamSimConfig FCamSimConfig::Load()
 		NvgCfg.Contrast          = 1.2f;
 		NvgCfg.BrightnessBias    = 0.02f;
 		NvgCfg.ColorTemperatureK = 5200.0f;
+		// Phase 16 defaults
+		NvgCfg.bAGCEnabled       = true;
+		NvgCfg.AGCLowPercentile  = 0.02f;
+		NvgCfg.AGCHighPercentile = 0.98f;
+		NvgCfg.AGCManualLevel    = -1.0f;
+		NvgCfg.AGCLagFrames      = 1;
 		Cfg.SensorModeConfigs.Add(ESensorMode::NVG, NvgCfg);
 	}
 
@@ -414,6 +443,53 @@ FCamSimConfig FCamSimConfig::Load()
 						MC.BlurRadius = FMath::Max(0, BlurVal);
 					}
 				}
+				// Phase 16 fields
+				YamlBool (ModeNode, "agc_enabled",          MC.bAGCEnabled);
+				YamlFloat(ModeNode, "agc_low_percentile",   MC.AGCLowPercentile);
+				YamlFloat(ModeNode, "agc_high_percentile",  MC.AGCHighPercentile);
+				YamlFloat(ModeNode, "agc_manual_level",     MC.AGCManualLevel);
+				YamlFloat(ModeNode, "agc_manual_gain",      MC.AGCManualGain);
+				{
+					int32 QBits = MC.QuantizationBits;
+					if (YamlInt(ModeNode, "quantization_bits", QBits))
+						MC.QuantizationBits = FMath::Clamp(QBits, 1, 14);
+				}
+				YamlBool (ModeNode, "quantization_dither",  MC.bQuantizationDither);
+				{
+					int32 DefCount = MC.DefectPixelCount;
+					if (YamlInt(ModeNode, "defect_pixel_count", DefCount))
+						MC.DefectPixelCount = FMath::Max(0, DefCount);
+				}
+				YamlFloat(ModeNode, "defect_hot_ratio",     MC.DefectHotRatio);
+				{
+					int32 DefSeed = MC.DefectSeed;
+					if (YamlInt(ModeNode, "defect_seed", DefSeed))
+						MC.DefectSeed = DefSeed;
+				}
+				YamlFloat(ModeNode, "gaussian_sigma",       MC.GaussianSigma);
+				YamlFloat(ModeNode, "ac_banding_amplitude",  MC.ACBandingAmplitude);
+				YamlFloat(ModeNode, "ac_banding_frequency",  MC.ACBandingFrequency);
+				YamlBool (ModeNode, "ir_pointer_enabled",    MC.bIRPointerEnabled);
+				YamlFloat(ModeNode, "ir_pointer_x",          MC.IRPointerX);
+				YamlFloat(ModeNode, "ir_pointer_y",          MC.IRPointerY);
+				YamlFloat(ModeNode, "ir_pointer_radius",     MC.IRPointerRadius);
+				YamlFloat(ModeNode, "ir_pointer_intensity",  MC.IRPointerIntensity);
+				// Phase 16 Sprint 2
+				YamlBool (ModeNode, "thermal_drift_enabled",    MC.bThermalDriftEnabled);
+				YamlFloat(ModeNode, "thermal_drift_rate",       MC.ThermalDriftRate);
+				YamlFloat(ModeNode, "nuc_interval_sec",         MC.NUCIntervalSec);
+				{
+					int32 LagVal = MC.AGCLagFrames;
+					if (YamlInt(ModeNode, "agc_lag_frames", LagVal))
+						MC.AGCLagFrames = FMath::Clamp(LagVal, 0, 10);
+				}
+				YamlFloat(ModeNode, "rolling_shutter_strength", MC.RollingShutterStrength);
+				YamlFloat(ModeNode, "vibration_amplitude",      MC.VibrationAmplitude);
+				YamlFloat(ModeNode, "gain_jitter",              MC.GainJitter);
+				YamlFloat(ModeNode, "offset_jitter",            MC.OffsetJitter);
+				YamlFloat(ModeNode, "sun_glint_intensity",      MC.SunGlintIntensity);
+				YamlFloat(ModeNode, "sun_glint_threshold",      MC.SunGlintThreshold);
+				YamlFloat(ModeNode, "sun_glint_spread",         MC.SunGlintSpread);
 			};
 
 			ParseMode("eo",  ESensorMode::EO);
@@ -472,6 +548,7 @@ FCamSimConfig FCamSimConfig::Load()
 			}
 			YamlFloat(QualityNode, "contrast",         Cfg.ActiveSensorQuality.Contrast);
 			YamlFloat(QualityNode, "brightness_bias",  Cfg.ActiveSensorQuality.BrightnessBias);
+			YamlFloat(QualityNode, "gaussian_sigma_scale", Cfg.ActiveSensorQuality.GaussianSigmaScale);
 		}
 		else
 		{
@@ -532,6 +609,24 @@ FCamSimConfig FCamSimConfig::Load()
 			if (YamlInt(Root, "ground_truth_interval_frames", GTInterval))
 			{
 				Cfg.GroundTruth.IntervalFrames = FMath::Max(1, GTInterval);
+			}
+		}
+
+		// ML Training Data Generation (Phase 17).
+		if (Root.has_child("ml_training"))
+		{
+			ryml::ConstNodeRef MLNode = Root["ml_training"];
+			YamlBool  (MLNode, "enabled",                  Cfg.MLTraining.bEnabled);
+			YamlString(MLNode, "output_dir",               Cfg.MLTraining.OutputDir);
+			YamlBool  (MLNode, "depth_map",                Cfg.MLTraining.bDepthMap);
+			YamlBool  (MLNode, "bounding_boxes",           Cfg.MLTraining.bBoundingBoxes);
+			YamlBool  (MLNode, "coco_export",              Cfg.MLTraining.bCocoExport);
+			YamlBool  (MLNode, "voc_export",               Cfg.MLTraining.bVocExport);
+			YamlFloat (MLNode, "depth_far_plane_m",        Cfg.MLTraining.DepthFarPlaneM);
+			{
+				int32 Interval = Cfg.MLTraining.AnnotationIntervalFrames;
+				if (YamlInt(MLNode, "annotation_interval_frames", Interval))
+					Cfg.MLTraining.AnnotationIntervalFrames = FMath::Max(1, Interval);
 			}
 		}
 
@@ -665,6 +760,59 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlFloat(OptNode, "lens_flare_threshold",           Cfg.OpticalRealism.LensFlareThreshold);
 		}
 
+		// Phase 18: weather, atmosphere & particle effects
+		if (Root.has_child("phase18"))
+		{
+			ryml::ConstNodeRef P18 = Root["phase18"];
+			YamlBool (P18, "second_fog",                Cfg.Phase18.bSecondFog);
+			YamlFloat(P18, "fog_density",               Cfg.Phase18.FogDensity);
+			YamlFloat(P18, "fog_height_falloff",        Cfg.Phase18.FogHeightFalloff);
+			YamlBool (P18, "precipitation",             Cfg.Phase18.bPrecipitation);
+			YamlFloat(P18, "rain_intensity",            Cfg.Phase18.RainIntensity);
+			YamlFloat(P18, "snow_intensity",            Cfg.Phase18.SnowIntensity);
+			YamlBool (P18, "god_rays",                  Cfg.Phase18.bGodRays);
+			YamlFloat(P18, "god_ray_intensity",         Cfg.Phase18.GodRayIntensity);
+			YamlBool (P18, "atmospheric_scattering",    Cfg.Phase18.bAtmosphericScattering);
+			YamlFloat(P18, "rayleigh_scattering",       Cfg.Phase18.RayleighScattering);
+			YamlFloat(P18, "mie_scattering",            Cfg.Phase18.MieScattering);
+			YamlBool (P18, "dynamic_ir_extinction",     Cfg.Phase18.bDynamicIRExtinction);
+			YamlFloat(P18, "visibility_range_m",        Cfg.Phase18.VisibilityRangeM);
+			// 18A/18B
+			YamlBool (P18, "volumetric_clouds",          Cfg.Phase18.bVolumetricClouds);
+			YamlFloat(P18, "cloud_shadow_strength",       Cfg.Phase18.CloudShadowStrength);
+			// 18L Weather zones -- array of {id, lat, lon, radius_m}
+			YamlBool (P18, "weather_zones",               Cfg.Phase18.bWeatherZones);
+			if (P18.has_child("zone_positions") && P18["zone_positions"].is_seq())
+			{
+				for (const ryml::ConstNodeRef& ZNode : P18["zone_positions"])
+				{
+					FCamSimConfig::FWeatherZoneConfig ZCfg;
+					YamlInt   (ZNode, "id",       ZCfg.ZoneID);
+					YamlDouble(ZNode, "lat",      ZCfg.LatDeg);
+					YamlDouble(ZNode, "lon",      ZCfg.LonDeg);
+					YamlFloat (ZNode, "radius_m", ZCfg.RadiusM);
+					if (Cfg.Phase18.WeatherZoneConfigs.Num() < 16)
+					{
+						Cfg.Phase18.WeatherZoneConfigs.Add(ZCfg);
+					}
+				}
+			}
+			// 18F/G/H Niagara
+			YamlString(P18, "niagara_rotor_wash",         Cfg.Phase18.NiagaraRotorWash);
+			YamlString(P18, "niagara_smoke",               Cfg.Phase18.NiagaraSmoke);
+			YamlString(P18, "niagara_fire",                Cfg.Phase18.NiagaraFire);
+			YamlString(P18, "niagara_contrail",            Cfg.Phase18.NiagaraContrail);
+			YamlFloat (P18, "contrail_alt_m",              Cfg.Phase18.ContrailAltM);
+			YamlFloat (P18, "contrail_speed_ms",           Cfg.Phase18.ContrailSpeedMs);
+			YamlInt   (P18, "smoke_component_id",          Cfg.Phase18.SmokeComponentID);
+			YamlInt   (P18, "fire_component_id",           Cfg.Phase18.FireComponentID);
+			// 18I
+			YamlString(P18, "crater_decal_material",       Cfg.Phase18.CraterDecalMaterial);
+			YamlInt   (P18, "crater_impact_component_id",  Cfg.Phase18.CraterImpactComponentID);
+			YamlInt   (P18, "max_craters",                 Cfg.Phase18.MaxCraters);
+			YamlFloat (P18, "crater_default_radius_m",     Cfg.Phase18.CraterDefaultRadiusM);
+		}
+
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
 	}
 	else
@@ -741,10 +889,45 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.ActiveSensorQuality.BlurRadius = FMath::Max(0, GetEnvInt(TEXT("CAMSIM_SENSOR_QUALITY_BLUR_RADIUS"), Cfg.ActiveSensorQuality.BlurRadius));
 	Cfg.ActiveSensorQuality.Contrast = GetEnvFloat(TEXT("CAMSIM_SENSOR_QUALITY_CONTRAST"), Cfg.ActiveSensorQuality.Contrast);
 	Cfg.ActiveSensorQuality.BrightnessBias = GetEnvFloat(TEXT("CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS"), Cfg.ActiveSensorQuality.BrightnessBias);
+	Cfg.ActiveSensorQuality.GaussianSigmaScale = GetEnvFloat(TEXT("CAMSIM_SENSOR_QUALITY_GAUSSIAN_SIGMA_SCALE"), Cfg.ActiveSensorQuality.GaussianSigmaScale);
+
+	// Phase 16 Sprint 2: per-mode env var overrides (applied to whichever mode has the feature)
+	if (FSensorModeConfig* IrM = Cfg.SensorModeConfigs.Find(ESensorMode::IR))
+	{
+		IrM->bThermalDriftEnabled = GetEnvInt(TEXT("CAMSIM_IR_THERMAL_DRIFT_ENABLED"), IrM->bThermalDriftEnabled ? 1 : 0) != 0;
+		IrM->ThermalDriftRate     = GetEnvFloat(TEXT("CAMSIM_IR_THERMAL_DRIFT_RATE"), IrM->ThermalDriftRate);
+		IrM->NUCIntervalSec       = GetEnvFloat(TEXT("CAMSIM_IR_NUC_INTERVAL_SEC"), IrM->NUCIntervalSec);
+		IrM->AGCLagFrames         = FMath::Clamp(GetEnvInt(TEXT("CAMSIM_IR_AGC_LAG_FRAMES"), IrM->AGCLagFrames), 0, 10);
+		IrM->GainJitter           = GetEnvFloat(TEXT("CAMSIM_IR_GAIN_JITTER"), IrM->GainJitter);
+		IrM->OffsetJitter         = GetEnvFloat(TEXT("CAMSIM_IR_OFFSET_JITTER"), IrM->OffsetJitter);
+		IrM->VibrationAmplitude   = GetEnvFloat(TEXT("CAMSIM_IR_VIBRATION_AMPLITUDE"), IrM->VibrationAmplitude);
+	}
+	if (FSensorModeConfig* EoM = Cfg.SensorModeConfigs.Find(ESensorMode::EO))
+	{
+		EoM->RollingShutterStrength = GetEnvFloat(TEXT("CAMSIM_EO_ROLLING_SHUTTER_STRENGTH"), EoM->RollingShutterStrength);
+		EoM->SunGlintIntensity      = GetEnvFloat(TEXT("CAMSIM_EO_SUN_GLINT_INTENSITY"), EoM->SunGlintIntensity);
+		EoM->SunGlintThreshold      = GetEnvFloat(TEXT("CAMSIM_EO_SUN_GLINT_THRESHOLD"), EoM->SunGlintThreshold);
+		EoM->SunGlintSpread         = GetEnvFloat(TEXT("CAMSIM_EO_SUN_GLINT_SPREAD"), EoM->SunGlintSpread);
+		EoM->VibrationAmplitude     = GetEnvFloat(TEXT("CAMSIM_EO_VIBRATION_AMPLITUDE"), EoM->VibrationAmplitude);
+	}
+	if (FSensorModeConfig* NvgM = Cfg.SensorModeConfigs.Find(ESensorMode::NVG))
+	{
+		NvgM->AGCLagFrames        = FMath::Clamp(GetEnvInt(TEXT("CAMSIM_NVG_AGC_LAG_FRAMES"), NvgM->AGCLagFrames), 0, 10);
+		NvgM->VibrationAmplitude  = GetEnvFloat(TEXT("CAMSIM_NVG_VIBRATION_AMPLITUDE"), NvgM->VibrationAmplitude);
+	}
 
 	Cfg.GroundTruth.bEnabled = GetEnvInt(TEXT("CAMSIM_GROUND_TRUTH_ENABLED"), Cfg.GroundTruth.bEnabled ? 1 : 0) != 0;
 	Cfg.GroundTruth.OutputPath = GetEnv(TEXT("CAMSIM_GROUND_TRUTH_PATH"), Cfg.GroundTruth.OutputPath);
 	Cfg.GroundTruth.IntervalFrames = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES"), Cfg.GroundTruth.IntervalFrames));
+
+	Cfg.MLTraining.bEnabled = GetEnvInt(TEXT("CAMSIM_ML_ENABLED"), Cfg.MLTraining.bEnabled ? 1 : 0) != 0;
+	Cfg.MLTraining.OutputDir = GetEnv(TEXT("CAMSIM_ML_OUTPUT_DIR"), Cfg.MLTraining.OutputDir);
+	Cfg.MLTraining.bDepthMap = GetEnvInt(TEXT("CAMSIM_ML_DEPTH_ENABLED"), Cfg.MLTraining.bDepthMap ? 1 : 0) != 0;
+	Cfg.MLTraining.bBoundingBoxes = GetEnvInt(TEXT("CAMSIM_ML_BBOX_ENABLED"), Cfg.MLTraining.bBoundingBoxes ? 1 : 0) != 0;
+	Cfg.MLTraining.bCocoExport = GetEnvInt(TEXT("CAMSIM_ML_COCO_ENABLED"), Cfg.MLTraining.bCocoExport ? 1 : 0) != 0;
+	Cfg.MLTraining.bVocExport = GetEnvInt(TEXT("CAMSIM_ML_VOC_ENABLED"), Cfg.MLTraining.bVocExport ? 1 : 0) != 0;
+	Cfg.MLTraining.AnnotationIntervalFrames = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_ML_INTERVAL_FRAMES"), Cfg.MLTraining.AnnotationIntervalFrames));
+	Cfg.MLTraining.DepthFarPlaneM = GetEnvFloat(TEXT("CAMSIM_ML_DEPTH_FAR_PLANE_M"), Cfg.MLTraining.DepthFarPlaneM);
 	Cfg.EntityScale.MaxDrawDistanceM = GetEnvFloat(TEXT("CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M"), Cfg.EntityScale.MaxDrawDistanceM);
 	Cfg.EntityScale.TickRateHz = GetEnvFloat(TEXT("CAMSIM_ENTITY_TICK_RATE_HZ"), Cfg.EntityScale.TickRateHz);
 	Cfg.EntityScale.DefaultMaxUpdateRateHz = GetEnvFloat(
@@ -776,6 +959,21 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.OpticalRealism.DistortionK2 = GetEnvFloat(TEXT("CAMSIM_DISTORTION_K2"), Cfg.OpticalRealism.DistortionK2);
 	Cfg.OpticalRealism.FocalDistance = GetEnvFloat(TEXT("CAMSIM_FOCAL_DISTANCE"), Cfg.OpticalRealism.FocalDistance);
 	Cfg.OpticalRealism.ApertureFStop = GetEnvFloat(TEXT("CAMSIM_APERTURE_FSTOP"), Cfg.OpticalRealism.ApertureFStop);
+
+	// Phase 18: weather, atmosphere & particle effects env overrides
+	Cfg.Phase18.bSecondFog       = GetEnvInt(TEXT("CAMSIM_SECOND_FOG"),       Cfg.Phase18.bSecondFog       ? 1 : 0) != 0;
+	Cfg.Phase18.bPrecipitation   = GetEnvInt(TEXT("CAMSIM_PRECIPITATION"),    Cfg.Phase18.bPrecipitation   ? 1 : 0) != 0;
+	Cfg.Phase18.RainIntensity    = GetEnvFloat(TEXT("CAMSIM_RAIN_INTENSITY"), Cfg.Phase18.RainIntensity);
+	Cfg.Phase18.SnowIntensity    = GetEnvFloat(TEXT("CAMSIM_SNOW_INTENSITY"), Cfg.Phase18.SnowIntensity);
+	Cfg.Phase18.bGodRays         = GetEnvInt(TEXT("CAMSIM_GOD_RAYS"),        Cfg.Phase18.bGodRays         ? 1 : 0) != 0;
+	Cfg.Phase18.bDynamicIRExtinction = GetEnvInt(TEXT("CAMSIM_DYNAMIC_IR_EXTINCTION"),
+		Cfg.Phase18.bDynamicIRExtinction ? 1 : 0) != 0;
+	Cfg.Phase18.VisibilityRangeM = GetEnvFloat(TEXT("CAMSIM_VISIBILITY_RANGE_M"), Cfg.Phase18.VisibilityRangeM);
+	Cfg.Phase18.bVolumetricClouds   = GetEnvInt(TEXT("CAMSIM_VOLUMETRIC_CLOUDS"),      Cfg.Phase18.bVolumetricClouds   ? 1 : 0) != 0;
+	Cfg.Phase18.CloudShadowStrength = GetEnvFloat(TEXT("CAMSIM_CLOUD_SHADOW_STRENGTH"),Cfg.Phase18.CloudShadowStrength);
+	Cfg.Phase18.bWeatherZones       = GetEnvInt(TEXT("CAMSIM_WEATHER_ZONES"),          Cfg.Phase18.bWeatherZones       ? 1 : 0) != 0;
+	Cfg.Phase18.ContrailAltM        = GetEnvFloat(TEXT("CAMSIM_CONTRAIL_ALT_M"),       Cfg.Phase18.ContrailAltM);
+	Cfg.Phase18.MaxCraters          = GetEnvInt(TEXT("CAMSIM_MAX_CRATERS"),            Cfg.Phase18.MaxCraters);
 
 	if (Cfg.OutputViews.Num() > 0 && (bHasMulticastAddrEnv || bHasMulticastPortEnv))
 	{
