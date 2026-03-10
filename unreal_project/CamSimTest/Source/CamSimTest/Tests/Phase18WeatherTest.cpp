@@ -159,3 +159,35 @@ bool FPhase18ParticleStateDefaultsTest::RunTest(const FString& Parameters)
     TestFalse(TEXT("Contrail inactive"),   State.bContrailActive);
     return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18ParticleMapRemoveTest,
+    "CamSim.Phase18.ParticleMap_EntityRemoved",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase18ParticleMapRemoveTest::RunTest(const FString& Parameters)
+{
+    TMap<uint16, FEntityParticleState> EntityParticles;
+    EntityParticles.Add(42u, FEntityParticleState{});
+    TestEqual(TEXT("Entity registered"), EntityParticles.Num(), 1);
+    EntityParticles.Remove(42u);
+    TestEqual(TEXT("Entity removed"),    EntityParticles.Num(), 0);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18CraterRingBufferTest,
+    "CamSim.Phase18.Crater_RingBuffer",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase18CraterRingBufferTest::RunTest(const FString& Parameters)
+{
+    TArray<int32> FakeCraters;
+    const int32 MaxCraters = 32;
+    for (int32 i = 0; i < 33; ++i)
+    {
+        if (FakeCraters.Num() >= MaxCraters) { FakeCraters.RemoveAt(0); }
+        FakeCraters.Add(i);
+    }
+    TestEqual(TEXT("Ring buffer at max"),  FakeCraters.Num(), MaxCraters);
+    TestEqual(TEXT("Oldest (0) evicted"),  FakeCraters[0], 1);
+    return true;
+}
