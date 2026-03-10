@@ -41,6 +41,15 @@
  *   CAMSIM_ENCODER                - H.264 encoder: auto|nvenc|libx264               (default auto)
  *   CAMSIM_MAX_ENTITIES           - Max simultaneous entities                        (default 500)
  */
+/** YAML-configured position for a regional weather zone (18L). */
+struct FWeatherZoneConfig
+{
+	int32  ZoneID  = 0;
+	double LatDeg  = 0.0;
+	double LonDeg  = 0.0;
+	float  RadiusM = 10000.0f;
+};
+
 struct FCamSimConfig
 {
 	enum class EReadbackFormat : uint8
@@ -303,15 +312,6 @@ struct FCamSimConfig
 		float LensFlareThreshold = 8.0f;
 	};
 	FOpticalRealismConfig OpticalRealism;
-
-	/** YAML-configured position for a regional weather zone (18L). */
-	struct FWeatherZoneConfig
-	{
-		int32  ZoneID   = 0;
-		double LatDeg   = 0.0;
-		double LonDeg   = 0.0;
-		float  RadiusM  = 10000.0f;
-	};
 
 	// Weather, Atmosphere & Particle Effects (Phase 18)
 	struct FPhase18Config

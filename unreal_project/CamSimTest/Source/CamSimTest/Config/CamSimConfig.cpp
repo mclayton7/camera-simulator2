@@ -786,7 +786,7 @@ FCamSimConfig FCamSimConfig::Load()
 			{
 				for (const ryml::ConstNodeRef& ZNode : P18["zone_positions"])
 				{
-					FCamSimConfig::FWeatherZoneConfig ZCfg;
+					FWeatherZoneConfig ZCfg;
 					YamlInt   (ZNode, "id",       ZCfg.ZoneID);
 					YamlDouble(ZNode, "lat",      ZCfg.LatDeg);
 					YamlDouble(ZNode, "lon",      ZCfg.LonDeg);
@@ -974,6 +974,11 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Phase18.bWeatherZones       = GetEnvInt(TEXT("CAMSIM_WEATHER_ZONES"),          Cfg.Phase18.bWeatherZones       ? 1 : 0) != 0;
 	Cfg.Phase18.ContrailAltM        = GetEnvFloat(TEXT("CAMSIM_CONTRAIL_ALT_M"),       Cfg.Phase18.ContrailAltM);
 	Cfg.Phase18.MaxCraters          = GetEnvInt(TEXT("CAMSIM_MAX_CRATERS"),            Cfg.Phase18.MaxCraters);
+	Cfg.Phase18.ContrailSpeedMs       = GetEnvFloat(TEXT("CAMSIM_CONTRAIL_SPEED_MS"),        Cfg.Phase18.ContrailSpeedMs);
+	Cfg.Phase18.SmokeComponentID      = GetEnvInt  (TEXT("CAMSIM_SMOKE_COMPONENT_ID"),        Cfg.Phase18.SmokeComponentID);
+	Cfg.Phase18.FireComponentID       = GetEnvInt  (TEXT("CAMSIM_FIRE_COMPONENT_ID"),         Cfg.Phase18.FireComponentID);
+	Cfg.Phase18.CraterImpactComponentID = GetEnvInt(TEXT("CAMSIM_CRATER_IMPACT_COMPONENT_ID"),Cfg.Phase18.CraterImpactComponentID);
+	Cfg.Phase18.CraterDefaultRadiusM  = GetEnvFloat(TEXT("CAMSIM_CRATER_DEFAULT_RADIUS_M"),   Cfg.Phase18.CraterDefaultRadiusM);
 
 	if (Cfg.OutputViews.Num() > 0 && (bHasMulticastAddrEnv || bHasMulticastPortEnv))
 	{
