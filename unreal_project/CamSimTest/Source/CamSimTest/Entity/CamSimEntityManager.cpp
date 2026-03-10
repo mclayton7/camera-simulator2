@@ -223,10 +223,11 @@ void FCamSimEntityManager::ProcessComponentControls()
 		if (EntityPtr && IsValid(*EntityPtr))
 		{
 			(*EntityPtr)->ApplyComponentControl(Comp);
-			if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
-			{
-				PM->OnComponentControl(Comp.EntityId, static_cast<AActor*>(*EntityPtr), Comp);
-			}
+		}
+		if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
+		{
+			PM->OnComponentControl(Comp.EntityId,
+				EntityPtr ? static_cast<AActor*>(*EntityPtr) : nullptr, Comp);
 		}
 	}
 }
