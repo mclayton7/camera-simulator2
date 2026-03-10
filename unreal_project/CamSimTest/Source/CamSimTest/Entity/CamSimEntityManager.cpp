@@ -99,9 +99,10 @@ void FCamSimEntityManager::ApplyEntityState(const FCigiEntityState& S, double No
 	{
 		ACamSimEntity** ExistingPtr = EntityMap.Find(S.EntityId);
 		ACamSimEntity*  Entity = ExistingPtr ? *ExistingPtr : nullptr;
-		bool bTypeChanged = false;
+		bool bTypeChanged  = false;
+		const bool bJustSpawned = !IsValid(Entity);
 
-		if (!IsValid(Entity))
+		if (bJustSpawned)
 		{
 			Entity = SpawnEntity(S);
 			if (!Entity)
@@ -144,9 +145,12 @@ void FCamSimEntityManager::ApplyEntityState(const FCigiEntityState& S, double No
 			LastPoseApplySeconds.Add(S.EntityId, NowSeconds);
 		}
 		Entity->SetActorHiddenInGame(false);
-		if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
+		if (!bJustSpawned)
 		{
-			PM->OnEntityUpdated(S.EntityId, Entity, S);
+			if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
+			{
+				PM->OnEntityUpdated(S.EntityId, Entity, S);
+			}
 		}
 		return;
 	}
@@ -272,7 +276,7 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
 		Entity->ApplyScaleControls(Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz);
 	}
 	Entity->ApplyPose(S);
-	if (FCamSimParticleManager* PM = Subsystem->GetParticleManager())
+	if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
 	{
 		PM->OnEntitySpawned(S.EntityId, Entity, S);
 	}
