@@ -7,22 +7,24 @@ environmental effects, and interoperability — plus ML training data generation
 
 ## Implemented (Phases 1–15)
 
-| Phase | Feature                                                                         | Status |
-| ----- | ------------------------------------------------------------------------------- | ------ |
-| 1–6   | Core pipeline: CIGI input, Cesium terrain, H.264/KLV MPEG-TS output             | ✅ Done |
-| 7     | Environment: day/night cycle, sky atmosphere, fog, cloud/weather layers         | ✅ Done |
-| 8     | Entity rendering: aircraft/vehicles, dead-reckoning, articulated parts, lights  | ✅ Done |
-| 9     | Gimbal & sensor: 3-DOF gimbal, slew limits, FOV presets, polarity               | ✅ Done |
-| 10    | Terrain feedback: HAT/HOT and LOS line traces, SOF heartbeat, IG→Host UDP       | ✅ Done |
-| 11    | Sensor simulation: EO/IR/NVG post-process, noise, vignetting, extinction        | ✅ Done |
-| 12A   | MISB ST 0102 security classification in every KLV packet                        | ✅ Done |
-| 12B   | STANAG 4609: PID allocation, KLV rate, PTS sync, H.265/HEVC encoder             | ✅ Done |
-| 12C   | Multi-channel: multiple simultaneous output streams with digital zoom           | ✅ Done |
-| 12D   | Health & monitoring: health file, Prometheus metrics, IG mode in SOF            | ✅ Done |
-| 12E   | Recording & playback: CIGI recording/replay, local .ts video recording          | ✅ Done |
-| 13    | Code hardening: 29 unit tests, Pimpl pattern, error propagation                 | ✅ Done |
-| 14    | CI/CD: GitHub Actions, pre-commit hooks, Docker integration test                | ✅ Done |
-| 15    | Optical realism: motion blur, lens distortion, bloom, chromatic aberration, DoF | ✅ Done |
+| Phase | Feature                                                                                                                                      | Status          |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| 1–6   | Core pipeline: CIGI input, Cesium terrain, H.264/KLV MPEG-TS output                                                                          | ✅ Done          |
+| 7     | Environment: day/night cycle, sky atmosphere, fog, cloud/weather layers                                                                      | ✅ Done          |
+| 8     | Entity rendering: aircraft/vehicles, dead-reckoning, articulated parts, lights                                                               | ✅ Done          |
+| 9     | Gimbal & sensor: 3-DOF gimbal, slew limits, FOV presets, polarity                                                                            | ✅ Done          |
+| 10    | Terrain feedback: HAT/HOT and LOS line traces, SOF heartbeat, IG→Host UDP                                                                    | ✅ Done          |
+| 11    | Sensor simulation: EO/IR/NVG post-process, noise, vignetting, extinction                                                                     | ✅ Done          |
+| 12A   | MISB ST 0102 security classification in every KLV packet                                                                                     | ✅ Done          |
+| 12B   | STANAG 4609: PID allocation, KLV rate, PTS sync, H.265/HEVC encoder                                                                          | ✅ Done          |
+| 12C   | Multi-channel: multiple simultaneous output streams with digital zoom                                                                        | ✅ Done          |
+| 12D   | Health & monitoring: health file, Prometheus metrics, IG mode in SOF                                                                         | ✅ Done          |
+| 12E   | Recording & playback: CIGI recording/replay, local .ts video recording                                                                       | ✅ Done          |
+| 13    | Code hardening: 29 unit tests, Pimpl pattern, error propagation                                                                              | ✅ Done          |
+| 14    | CI/CD: GitHub Actions, pre-commit hooks, Docker integration test                                                                             | ✅ Done          |
+| 15    | Optical realism: motion blur, lens distortion, bloom, chromatic aberration, DoF                                                              | ✅ Done          |
+| 17*   | ML training data: depth maps (17A), 2D bboxes (17D), COCO JSONL (17G), VOC (17H)                                                             | ✅ Sprint 1 Done |
+| 18*   | Weather/atmosphere: second fog (18C), precipitation overlay (18D), god rays (18E), atmospheric scattering (18J), dynamic IR extinction (18K) | ✅ Sprint 1 Done |
 
 ## CIGI 3.3 Packet Coverage
 
@@ -53,12 +55,12 @@ Features VRSG has that CamSim lacks, organized by priority:
 
 | VRSG Capability                       | CamSim Status       | Addressed In |
 | ------------------------------------- | ------------------- | ------------ |
-| IR AGC (radiance-based) + level/gain  | Partial (histogram) | Phase 16     |
-| IR AC banding, hot/dead pixels, MTF   | Missing             | Phase 16     |
-| Volumetric ray-traced clouds          | Basic cloud layer   | Phase 18     |
-| Volumetric precipitation (rain/snow)  | Missing             | Phase 18     |
-| Particle FX (dust, rotor wash, smoke) | Missing             | Phase 18     |
-| Dynamic terrain cratering             | Missing             | Phase 18     |
+| IR AGC (radiance-based) + level/gain  | ✅ Done              | Phase 16     |
+| IR AC banding, hot/dead pixels, MTF   | ✅ Done              | Phase 16     |
+| Volumetric ray-traced clouds          | ✅ Done              | Phase 18     |
+| Volumetric precipitation (rain/snow)  | ✅ CPU overlay done  | Phase 18     |
+| Particle FX (dust, rotor wash, smoke) | ✅ Done              | Phase 18     |
+| Dynamic terrain cratering             | ✅ Done              | Phase 18     |
 | 3D ocean (waves, wakes, sea states)   | Missing             | Phase 19     |
 | HUD/OSD burn-in overlays              | Missing             | Phase 20     |
 | DIS protocol support                  | Missing (CIGI only) | Phase 21     |
@@ -75,7 +77,7 @@ Features VRSG has that CamSim lacks, organized by priority:
 | Radar simulation (SAR/ISAR)           | Missing             | Phase 26     |
 | Edge blending / dome display          | Missing             | Phase 25     |
 | FBX/OpenFlight model import           | Missing             | Phase 22     |
-| NVG IR pointer                        | Missing             | Phase 16     |
+| NVG IR pointer                        | ✅ Done              | Phase 16     |
 
 ---
 
@@ -85,20 +87,20 @@ IR output matches real LWIR FPA detector behavior. Closes the biggest sensor gap
 
 | Item                             | Description                                                                    | Effort | VRSG Parity |
 | -------------------------------- | ------------------------------------------------------------------------------ | ------ | ----------- |
-| **16A** Radiance-Based AGC       | IR auto gain control from scene radiance histogram; manual level/gain override | M      | ✓           |
-| **16B** Quantization & Bit Depth | 14-bit thermal → 8-bit display with dither; configurable A/D bit depth         | S      | ✓           |
-| **16C** Hot/Dead Pixels          | Procedural defect map per detector spec (~50–100 per Mpixel)                   | S      | ✓           |
-| **16D** MTF Degradation          | Gaussian PSF frequency-domain blur; configurable cutoff                        | M      | ✓           |
-| **16E** Thermal Drift            | IR baseline shift over time; periodic auto-NUC reset events                    | S      |             |
-| **16F** AC Banding               | Simulated AC coupling artifacts in IR detector readout                         | S      | ✓           |
-| **16G** Auto-Exposure Lag        | Histogram-driven gain with 1–3 frame convergence delay                         | M      |             |
-| **16H** Rolling Shutter          | Per-row temporal offset simulating CMOS sequential readout                     | L      |             |
-| **16I** Platform Vibration       | Subpixel random displacement per frame (microdynamics)                         | S      |             |
-| **16J** Sensor Gain/Offset Noise | Electronic instability in IR detector bias voltage                             | S      |             |
-| **16K** Sun Glint (EO)           | Specular reflections from water/metal based on sun-camera-surface geometry     | M      |             |
-| **16L** NVG IR Pointer           | Visible IR laser dot in NVG mode for night target marking                      | S      | ✓           |
+| **16A** Radiance-Based AGC       | IR auto gain control from scene radiance histogram; manual level/gain override | M      | ✓ ✅ Done    |
+| **16B** Quantization & Bit Depth | 14-bit thermal → 8-bit display with dither; configurable A/D bit depth         | S      | ✓ ✅ Done    |
+| **16C** Hot/Dead Pixels          | Procedural defect map per detector spec (~50–100 per Mpixel)                   | S      | ✓ ✅ Done    |
+| **16D** MTF Degradation          | Gaussian PSF separable blur; configurable sigma                                | M      | ✓ ✅ Done    |
+| **16E** Thermal Drift            | IR baseline shift over time; periodic auto-NUC reset events                    | S      | ✓ ✅ Done    |
+| **16F** AC Banding               | Simulated AC coupling artifacts in IR detector readout                         | S      | ✓ ✅ Done    |
+| **16G** Auto-Exposure Lag        | Histogram-driven gain with 1–3 frame convergence delay                         | M      | ✓ ✅ Done    |
+| **16H** Rolling Shutter          | Per-row temporal offset simulating CMOS sequential readout                     | L      | ✓ ✅ Done    |
+| **16I** Platform Vibration       | Subpixel random displacement per frame (microdynamics)                         | S      | ✓ ✅ Done    |
+| **16J** Sensor Gain/Offset Noise | Electronic instability in IR detector bias voltage                             | S      | ✓ ✅ Done    |
+| **16K** Sun Glint (EO)           | Specular reflections from water/metal based on sun-camera-surface geometry     | M      | ✓ ✅ Done    |
+| **16L** NVG IR Pointer           | Visible IR laser dot in NVG mode for night target marking                      | S      | ✓ ✅ Done    |
 
-**Files**: `Sensor/SensorPostProcess.cpp`, `Camera/CamSimCamera.cpp`, `Config/CamSimConfig.h`
+**Files**: `Sensor/SensorPostProcess.cpp`, `Sensor/SensorTypes.h`, `Config/CamSimConfig.cpp`, `Tests/SensorFidelityTest.cpp`, `deploy/camsim_config.yaml`
 **Validation**: Compare IR noise floor to real FLIR Boson/Tau2 NETD specs; verify AGC matches VRSG radiance-based behavior
 
 ---
@@ -109,18 +111,34 @@ Export rich ground-truth annotations alongside video. **Beyond VRSG** — differ
 
 | Item                          | Description                                                                           | Effort |
 | ----------------------------- | ------------------------------------------------------------------------------------- | ------ |
-| **17A** Depth Map Output      | Second SceneCaptureComponent2D with `SCS_SceneDepth`; export 16-bit PNG per frame     | M      |
+| **17A** Depth Map Output      | ✅ Second SceneCaptureComponent2D with `SCS_SceneDepth`; export 16-bit PNG per frame   | M      |
 | **17B** Semantic Segmentation | Custom stencil buffer with per-material class IDs (terrain, building, water, vehicle) | L      |
 | **17C** Instance Segmentation | Per-entity unique color ID in stencil buffer; mapped to entity type table             | L      |
-| **17D** 2D Bounding Boxes     | Project entity mesh OBB to screen space; per-frame annotation file                    | M      |
+| **17D** 2D Bounding Boxes     | ✅ Project entity mesh AABB to screen space; per-frame annotation file                 | M      |
 | **17E** 3D Bounding Boxes     | Entity OBB in geodetic coordinates + camera intrinsics matrix                         | M      |
 | **17F** Optical Flow          | Dense motion vectors via UE velocity buffer; export as .flo or 16-bit PNG pairs       | L      |
-| **17G** COCO JSON Export      | Standard annotation format for direct ML ingestion                                    | M      |
-| **17H** Pascal VOC XML        | Alternative annotation format for legacy toolchains                                   | S      |
+| **17G** COCO JSON Export      | ✅ Standard JSONL annotation format for direct ML ingestion                            | M      |
+| **17H** Pascal VOC XML        | ✅ Alternative annotation format for legacy toolchains                                 | S      |
 | **17I** Dataset Randomization | Stochastic weather, TOD, entity spawn variance; batch generation mode                 | M      |
 
-**Files**: new `GroundTruth/` module, `Camera/CamSimCamera.cpp`, `Entity/CamSimEntity.cpp`
-**Validation**: Load COCO JSON in FiftyOne/CVAT; bounding boxes align with entities; depth matches LOS slant range
+**Sprint 1 status**: 17A, 17D, 17G, 17H implemented and reviewed (Phase 17 Sprint 1 complete).
+17B, 17C, 17E, 17F, 17I remain for future sprints.
+
+**Files created/modified**:
+- `GroundTruth/FEntityProjection.h/.cpp` — `BuildViewProjectionMatrix`, `ProjectAABB`
+- `GroundTruth/AnnotationTypes.h` — `FEntityAnnotationData`
+- `GroundTruth/IAnnotationWriter.h` — pure-virtual writer interface
+- `GroundTruth/FCocoAnnotationWriter.h/.cpp` — streaming COCO JSONL (persistent IFileHandle)
+- `GroundTruth/FVocAnnotationWriter.h/.cpp` — Pascal VOC XML per frame
+- `GroundTruth/FDepthMapWriter.h/.cpp` — 16-bit PNG depth (ImageWrapper)
+- `GroundTruth/FGroundTruthCollector.h/.cpp` — orchestrator owned by UCamSimSubsystem
+- `Camera/CamSimCamera.h/.cpp` — depth capture component, async readback, entity snapshot
+- `Config/CamSimConfig.h` — `FMLTrainingConfig` struct
+- `deploy/camsim_config.yaml` — `ml_training:` block
+- `Tests/GroundTruthTest.cpp` — 7 automation tests
+- `CamSimTest.Build.cs` — added `ImageWrapper` dependency
+
+**Validation**: Load COCO JSONL in FiftyOne/CVAT; bounding boxes align with entities; depth matches LOS slant range
 
 ---
 
@@ -128,23 +146,29 @@ Export rich ground-truth annotations alongside video. **Beyond VRSG** — differ
 
 VRSG's volumetric clouds, precipitation, and particle system are a major visual gap.
 
-| Item                           | Description                                                                | Effort | VRSG Parity |
-| ------------------------------ | -------------------------------------------------------------------------- | ------ | ----------- |
-| **18A** Volumetric Clouds      | Ray-marched volumetric clouds; respond to CIGI Weather layer type/coverage | L      | ✓           |
-| **18B** Dynamic Cloud Shadows  | Moving shadow projections from cloud layer onto terrain                    | M      | ✓           |
-| **18C** Volumetric Fog         | 3D density-aware fog (not just height fog); CIGI Atmosphere visibility     | M      | ✓           |
-| **18D** Rain & Snow Particles  | Niagara particle FX driven by CIGI Weather precipitation type/intensity    | M      | ✓           |
-| **18E** God Rays               | Volumetric light shafts through clouds/atmosphere                          | S      | ✓           |
-| **18F** Dust & Rotor Wash      | Niagara particle FX: dust trails, rotor downwash, blown sand/snow          | M      | ✓           |
-| **18G** Tactical Smoke/Fire    | Smoke plumes, fire effects, explosions as entity-attached Niagara systems  | M      | ✓           |
-| **18H** Contrails              | Aircraft engine exhaust trails responding to altitude/temperature          | S      | ✓           |
-| **18I** Dynamic Cratering      | Terrain deformation from munitions impact (runtime mesh modification)      | L      | ✓           |
-| **18J** Atmospheric Scattering | Rayleigh/Mie wavelength-dependent color shift (blue haze, warm horizon)    | M      |             |
-| **18K** IR-Specific Atmosphere | Wavelength-dependent LWIR 8–12μm extinction; MODTRAN-like lookup           | M      |             |
-| **18L** Regional Weather Zones | CIGI opcode 13 — localized weather zones with boundaries                   | L      | ✓           |
+| Item                           | Description                                                                | Effort | VRSG Parity | Status          |
+| ------------------------------ | -------------------------------------------------------------------------- | ------ | ----------- | --------------- |
+| **18A** Volumetric Clouds      | Ray-marched volumetric clouds; respond to CIGI Weather layer type/coverage | L      | ✓           | ✅ Sprint 2 Done |
+| **18B** Dynamic Cloud Shadows  | Moving shadow projections from cloud layer onto terrain                    | M      | ✓           | ✅ Sprint 2 Done |
+| **18C** Second Fog Layer       | Low-lying ground mist via UE ExponentialHeightFog SecondFogData            | M      | ✓           | ✅ Sprint 1 Done |
+| **18D** Rain & Snow Overlay    | CPU pixel-pass precipitation (rain streaks / snow dots) on task thread     | M      | ✓           | ✅ Sprint 1 Done |
+| **18E** God Rays               | UE DirectionalLight bloom + occlusion light shafts                         | S      | ✓           | ✅ Sprint 1 Done |
+| **18F** Dust & Rotor Wash      | Niagara particle FX: dust trails, rotor downwash, blown sand/snow          | M      | ✓           | ✅ Sprint 2 Done |
+| **18G** Tactical Smoke/Fire    | Smoke plumes, fire effects, explosions as entity-attached Niagara systems  | M      | ✓           | ✅ Sprint 2 Done |
+| **18H** Contrails              | Aircraft engine exhaust trails responding to altitude/temperature          | S      | ✓           | ✅ Sprint 2 Done |
+| **18I** Dynamic Cratering      | Terrain deformation from munitions impact (runtime mesh modification)      | L      | ✓           | ✅ Sprint 2 Done |
+| **18J** Atmospheric Scattering | USkyAtmosphereComponent Rayleigh/Mie coefficient overrides                 | M      |             | ✅ Sprint 1 Done |
+| **18K** IR-Specific Atmosphere | Dynamic IR extinction from atmospheric visibility (Koschmieder)            | M      |             | ✅ Sprint 1 Done |
+| **18L** Regional Weather Zones | CIGI opcode 13 — localized weather zones with boundaries                   | L      | ✓           | ✅ Sprint 2 Done |
 
-**Files**: `Environment/CamSimEnvironment.cpp`, Niagara systems, post-process volumes
-**Validation**: Visible rain/fog in output; cloud shadows move across terrain; dust on entity ground contact
+**Sprint 1 files**: `Config/CamSimConfig.h`, `Config/CamSimConfig.cpp`, `Metadata/KlvBuilder.h`,
+  `Environment/CamSimEnvironment.h/.cpp`, `Camera/CamSimCamera.h/.cpp`,
+  `Sensor/SensorPostProcess.h/.cpp`, `Tests/Phase18Test.cpp`, `deploy/camsim_config.yaml`
+**Sprint 1 validation**: Visible rain/fog in output; IR extinction attenuates under simulated haze; god rays visible with high-contrast sun scenes
+**Sprint 2 files**: `CIGI/CigiPacketTypes.h`, `CIGI/CigiReceiver.cpp`,
+  `Environment/CamSimParticleManager.h/.cpp`, `Subsystem/CamSimSubsystem.h/.cpp`,
+  `Entity/CamSimEntityManager.cpp`, `CamSimTest.Build.cs`, `Tests/Phase18WeatherTest.cpp`
+**Sprint 2 validation**: Rotary-wing CIGI entity spawns rotor wash Niagara FX; Component Control CompId=10 places crater decal; regional weather zone fog blends by camera distance; volumetric cloud visibility and shadows driven by CIGI coverage value
 
 ---
 
@@ -378,7 +402,7 @@ Sprint 5 ──── Phase 20F-H (HUD: compass, platform presets, config layout
 Sprint 6 ──── Phase 22A,C-D (Content: FBX import, damage states, characters)
               Phase 23A-C (Scenario: waypoints, triggers, pattern-of-life)
 
-Sprint 7 ──── Phase 16E,G-K (Sensor advanced: thermal drift, exposure, vibration, glint)
+Sprint 7 ──── Phase 16E,G-K ✅ DONE (Sensor advanced: thermal drift, exposure, vibration, glint)
               Phase 26A-E,G (Standards: ST 0601 tags, checksum, CIGI opcodes, MISB update)
 
 Sprint 8 ──── Phase 23D-H (Scenario: formations, randomization, batch, editor, scripting)
