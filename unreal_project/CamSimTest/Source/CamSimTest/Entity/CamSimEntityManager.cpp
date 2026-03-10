@@ -3,7 +3,9 @@
 #include "Entity/CamSimEntityManager.h"
 #include "Entity/CamSimEntity.h"
 #include "Entity/EntityTypeTable.h"
+#include "GroundTruth/FEntityProjection.h"
 #include "Subsystem/CamSimSubsystem.h"
+#include "Environment/CamSimParticleManager.h"
 #include "CIGI/CigiReceiver.h"
 #include "CamSimTest.h"
 
@@ -142,6 +144,10 @@ void FCamSimEntityManager::ApplyEntityState(const FCigiEntityState& S, double No
 			LastPoseApplySeconds.Add(S.EntityId, NowSeconds);
 		}
 		Entity->SetActorHiddenInGame(false);
+		if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
+		{
+			PM->OnEntityUpdated(S.EntityId, Entity, S);
+		}
 		return;
 	}
 
@@ -161,6 +167,10 @@ void FCamSimEntityManager::ApplyEntityState(const FCigiEntityState& S, double No
 		if (EntityPtr && IsValid(*EntityPtr))
 		{
 			(*EntityPtr)->Destroy();
+		}
+		if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
+		{
+			PM->OnEntityRemoved(S.EntityId);
 		}
 		EntityMap.Remove(S.EntityId);
 		LastPoseApplySeconds.Remove(S.EntityId);
@@ -213,6 +223,10 @@ void FCamSimEntityManager::ProcessComponentControls()
 		if (EntityPtr && IsValid(*EntityPtr))
 		{
 			(*EntityPtr)->ApplyComponentControl(Comp);
+			if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
+			{
+				PM->OnComponentControl(Comp.EntityId, static_cast<AActor*>(*EntityPtr), Comp);
+			}
 		}
 	}
 }
@@ -257,8 +271,66 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
 		Entity->ApplyScaleControls(Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz);
 	}
 	Entity->ApplyPose(S);
+	if (FCamSimParticleManager* PM = Subsystem->GetParticleManager())
+	{
+		PM->OnEntitySpawned(S.EntityId, Entity, S);
+	}
 
 	return Entity;
+}
+
+// -------------------------------------------------------------------------
+// GetEntitySnapshot — game-thread entity annotation capture (Phase 17D)
+// -------------------------------------------------------------------------
+
+TArray<FEntityAnnotationData> FCamSimEntityManager::GetEntitySnapshot(
+    const FViewProjectionData& ViewProj) const
+{
+	TArray<FEntityAnnotationData> Result;
+	Result.Reserve(EntityMap.Num());
+
+	for (const auto& Pair : EntityMap)
+	{
+		const ACamSimEntity* Entity = Pair.Value;
+		if (!IsValid(Entity)) continue;
+
+		// Cheap visibility pre-filter: skip actors UE has recently culled
+		if (!Entity->WasRecentlyRendered(0.1f)) continue;
+
+		FEntityAnnotationData Data;
+		Data.EntityId   = Entity->EntityId;
+		Data.EntityType = Entity->EntityType;
+
+		// Look up class label from entity type table
+		if (TypeTable)
+		{
+			if (const FEntityTypeEntry* Entry = TypeTable->FindEntry(Entity->EntityType))
+				Data.ClassName = Entry->ClassName;
+		}
+		if (Data.ClassName.IsEmpty())
+			Data.ClassName = FString::Printf(TEXT("type_%u"), Entity->EntityType);
+
+		// World-space AABB from all components (non-colliding meshes included)
+		FVector Origin, Extent;
+		Entity->GetActorBounds(/*bOnlyCollidingComponents=*/false, Origin, Extent);
+		if (Extent.IsNearlyZero()) continue;
+
+		const FBox WorldAABB(Origin - Extent, Origin + Extent);
+
+		FBox2D ScreenBBox(ForceInit);
+		bool   bTruncated = false;
+		const bool bVisible = FEntityProjection::ProjectAABB(
+			WorldAABB, ViewProj.ViewProjectionMatrix,
+			ViewProj.ImageWidth, ViewProj.ImageHeight,
+			ScreenBBox, bTruncated);
+
+		Data.bVisible   = bVisible;
+		Data.bTruncated = bTruncated;
+		Data.ScreenBBox = ScreenBBox;
+		Result.Add(MoveTemp(Data));
+	}
+
+	return Result;
 }
 
 // -------------------------------------------------------------------------

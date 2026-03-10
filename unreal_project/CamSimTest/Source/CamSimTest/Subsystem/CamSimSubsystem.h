@@ -15,6 +15,8 @@ class FCamSimEntityManager;
 class FCigiSender;
 class FCigiQueryHandler;
 class FCamSimGeospatialProvider;
+class FGroundTruthCollector;
+class FCamSimParticleManager;
 
 /**
  * UCamSimSubsystem
@@ -53,6 +55,8 @@ public:
 	FCigiSender*          GetCigiSender()    const;
 	FCigiQueryHandler*    GetQueryHandler()  const;
 	FCamSimGeospatialProvider* GetGeospatialProvider() const;
+	FGroundTruthCollector* GetGroundTruthCollector() const;
+	FCamSimParticleManager* GetParticleManager() const;
 
 	const FCamSimConfig&    GetConfig()        const { return Config; }
 	const FEntityTypeTable& GetEntityTypeTable() const { return EntityTypeTable; }

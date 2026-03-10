@@ -9,6 +9,8 @@
 #include "Encoder/MultiViewFrameSink.h" // FMultiViewFrameSink (concrete IFrameSink)
 #include "Encoder/IFrameSink.h"
 #include "Metadata/KlvBuilder.h"        // FKlvBuilder::SetSecurityMetadata (Phase 12A)
+#include "GroundTruth/FGroundTruthCollector.h"
+#include "Environment/CamSimParticleManager.h"
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -37,6 +39,8 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCigiSender>          CigiSender;
 	TUniquePtr<FCigiQueryHandler>    QueryHandler;
 	TUniquePtr<FCamSimGeospatialProvider> GeospatialProvider;
+	TUniquePtr<FGroundTruthCollector>     GroundTruthCollector;
+	TUniquePtr<FCamSimParticleManager>    ParticleManager;
 
 	// IG frame counter — incremented each tick; sent in every SOF packet
 	uint32 FrameCntr = 0;
@@ -67,6 +71,9 @@ struct UCamSimSubsystem::FSubsystemImpl
 		// TUniquePtr destructors handle null checks automatically.
 		QueryHandler.Reset();
 		GeospatialProvider.Reset();
+		if (GroundTruthCollector) { GroundTruthCollector->Close(); }
+		GroundTruthCollector.Reset();
+		ParticleManager.Reset();
 		if (CigiSender) CigiSender->Close();
 		CigiSender.Reset();
 		if (VideoEncoder) VideoEncoder->Close();
@@ -117,6 +124,16 @@ FCigiQueryHandler* UCamSimSubsystem::GetQueryHandler() const
 FCamSimGeospatialProvider* UCamSimSubsystem::GetGeospatialProvider() const
 {
 	return Impl ? Impl->GeospatialProvider.Get() : nullptr;
+}
+
+FGroundTruthCollector* UCamSimSubsystem::GetGroundTruthCollector() const
+{
+	return Impl ? Impl->GroundTruthCollector.Get() : nullptr;
+}
+
+FCamSimParticleManager* UCamSimSubsystem::GetParticleManager() const
+{
+	return Impl ? Impl->ParticleManager.Get() : nullptr;
 }
 
 // -------------------------------------------------------------------------
@@ -185,7 +202,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Config.ReadbackReadyPolls,
 		Config.VideoBitrate, *Config.H264Preset, *Config.H264Tune,
 		WatchdogPolicyToString(Config.EncoderWatchdogPolicy), Config.EncoderWatchdogIntervalTicks,
-		*Config.SensorQualityPreset, Config.OutputViews.Num(), Config.GroundTruth.bEnabled ? 1 : 0);
+		*Config.SensorQualityPreset, Config.OutputViews.Num(), Config.MLTraining.bEnabled ? 1 : 0);
 
 	// Initialise MISB ST 0102 security metadata for KLV output (Phase 12A)
 	FKlvBuilder::SetSecurityMetadata(
@@ -237,6 +254,18 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	// Create query handler (drains HAT/HOT + LOS queues, runs line traces)
 	Impl->QueryHandler = MakeUnique<FCigiQueryHandler>(this, Impl->CigiSender.Get());
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: CIGI query handler created"));
+
+	// Create ground truth / ML training data collector (Phase 17)
+	Impl->GroundTruthCollector = MakeUnique<FGroundTruthCollector>(Config);
+	if (!Impl->GroundTruthCollector->Open())
+	{
+		UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: ground truth collector failed to open"));
+	}
+
+	// Create particle effect manager (Phase 18F/G/H/I)
+	Impl->ParticleManager = MakeUnique<FCamSimParticleManager>(this);
+	Impl->ParticleManager->Initialize(Config);
+	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: particle manager created"));
 
 	// Register for graceful shutdown on SIGTERM (Phase 2)
 	// Phase 13C: Use weak lambda to guard against dangling this pointer
