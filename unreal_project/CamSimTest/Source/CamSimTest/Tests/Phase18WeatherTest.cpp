@@ -11,7 +11,7 @@ bool FPhase18CloudConfigDefaultsTest::RunTest(const FString& Parameters)
 {
     FCamSimConfig Cfg;
     TestFalse(TEXT("bVolumetricClouds off by default"),       Cfg.Phase18.bVolumetricClouds);
-    TestNearlyEqual(TEXT("CloudShadowStrength default 0.6"),  Cfg.Phase18.CloudShadowStrength, 0.6f, 0.001f);
+    TestEqual(TEXT("CloudShadowStrength default 0.6"),  Cfg.Phase18.CloudShadowStrength, 0.6f);
     return true;
 }
 
@@ -33,8 +33,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase18ParticleConfigDefaultsTest,
 bool FPhase18ParticleConfigDefaultsTest::RunTest(const FString& Parameters)
 {
     FCamSimConfig Cfg;
-    TestNearlyEqual(TEXT("ContrailAltM default 8000"),   Cfg.Phase18.ContrailAltM,    8000.0f, 1.0f);
-    TestNearlyEqual(TEXT("ContrailSpeedMs default 100"), Cfg.Phase18.ContrailSpeedMs, 100.0f,  1.0f);
+    TestEqual(TEXT("ContrailAltM default 8000"),   Cfg.Phase18.ContrailAltM,    8000.0f);
+    TestEqual(TEXT("ContrailSpeedMs default 100"), Cfg.Phase18.ContrailSpeedMs, 100.0f);
     TestEqual(TEXT("SmokeComponentID default 1"),  Cfg.Phase18.SmokeComponentID,          1);
     TestEqual(TEXT("FireComponentID default 2"),   Cfg.Phase18.FireComponentID,            2);
     TestEqual(TEXT("CraterComponentID default 10"),Cfg.Phase18.CraterImpactComponentID,   10);

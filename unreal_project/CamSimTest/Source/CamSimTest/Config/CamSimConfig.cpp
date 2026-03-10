@@ -786,15 +786,17 @@ FCamSimConfig FCamSimConfig::Load()
 			{
 				for (const ryml::ConstNodeRef& ZNode : P18["zone_positions"])
 				{
-					FWeatherZoneConfig ZCfg;
+					if (Cfg.Phase18.WeatherZoneConfigs.Num() >= 16)
+					{
+						UE_LOG(LogCamSim, Warning, TEXT("zone_positions: exceeded 16-zone CIGI limit; extra entries ignored"));
+						break;
+					}
+					FCamSimConfig::FPhase18Config::FWeatherZoneConfig ZCfg;
 					YamlInt   (ZNode, "id",       ZCfg.ZoneID);
 					YamlDouble(ZNode, "lat",      ZCfg.LatDeg);
 					YamlDouble(ZNode, "lon",      ZCfg.LonDeg);
 					YamlFloat (ZNode, "radius_m", ZCfg.RadiusM);
-					if (Cfg.Phase18.WeatherZoneConfigs.Num() < 16)
-					{
-						Cfg.Phase18.WeatherZoneConfigs.Add(ZCfg);
-					}
+					Cfg.Phase18.WeatherZoneConfigs.Add(ZCfg);
 				}
 			}
 			// 18F/G/H Niagara
