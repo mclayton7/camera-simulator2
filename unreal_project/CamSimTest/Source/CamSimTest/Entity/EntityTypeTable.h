@@ -18,6 +18,10 @@ struct FEntityTypeEntry
 	FString DestroyedAssetPath;  // optional — used for CompId=10, state=2
 	bool    bSkeletal = false;   // true → USkeletalMesh; false → UStaticMesh
 
+	// Human-readable class label for ML annotation output (COCO category name, VOC object name).
+	// Parsed from optional YAML key "class_name:"; falls back to "type_NNNN" if absent.
+	FString ClassName;
+
 	// Model-space correction applied to the mesh component's relative transform.
 	// Use these to fix glTF assets that are scaled or oriented incorrectly.
 	float   ModelScale    = 1.0f;   // uniform scale factor (default 1.0)

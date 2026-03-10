@@ -77,6 +77,23 @@ private:
 	/** Index of the render target currently in-flight for readback. */
 	int32 PendingReadbackTargetIndex = INDEX_NONE;
 
+	/** Optional depth capture component for ML training data (Phase 17A). */
+	UPROPERTY(VisibleAnywhere, Category = "CamSim")
+	TObjectPtr<USceneCaptureComponent2D> DepthCapture;
+
+	/** Ping-pong render targets for async depth readback (PF_R32_FLOAT). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextureRenderTarget2D>> DepthRenderTargets;
+
+	int32 DepthCaptureTargetIndex = 0;
+
+	/** Non-blocking GPU readback helper for the depth channel. */
+	FRHIGPUTextureReadback* DepthGPUReadback = nullptr;
+
+	/** RENDER THREAD ONLY — depth readback claim/streak state. */
+	bool  bDepthReadbackClaimed    = false;
+	uint8 DepthReadbackReadyStreak = 0;
+
 	/** Cached pointer to our subsystem (set in BeginPlay). */
 	UPROPERTY(Transient)
 	TObjectPtr<UCamSimSubsystem> Subsystem;
@@ -147,6 +164,10 @@ private:
 	// Helpers
 	void ApplyCigiState(float DeltaTime);
 	void ComputeGeometricLOS();
+
+	/** Populate telemetry fields from the environment actor (Phase 18). */
+	void ReadEnvironmentTelemetry();
 	void UpdateCesiumCamera();
-	void SubmitFrameToEncoder(TArray<FColor> PixelData, FCamSimTelemetry Telemetry, uint64 FrameIdx);
+	void SubmitFrameToEncoder(TArray<FColor> PixelData, FCamSimTelemetry Telemetry,
+	                          uint64 FrameIdx, TArray<float> DepthMetres);
 };

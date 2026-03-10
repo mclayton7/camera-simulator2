@@ -100,12 +100,86 @@ void FSensorPostProcess::Initialize(int32 InWidth, int32 InHeight,
 		NoiseRing[i] = static_cast<int16>(FMath::Clamp(FMath::RoundToInt(sum * 127.5f), -255, 255));
 	}
 
+	// -------------------------------------------------------------------------
+	// 16A: AGC histogram scratch buffer (pre-allocated, zeroed per frame)
+	// -------------------------------------------------------------------------
+	AGCHistogram.SetNumZeroed(256);
+
+	// -------------------------------------------------------------------------
+	// 16B: Bayer ordered dither matrix (4x4)
+	// Values in [0, 15] — thresholded against quantization step.
+	// -------------------------------------------------------------------------
+	static constexpr uint8 kBayerRaw[16] = {
+		 0,  8,  2, 10,
+		12,  4, 14,  6,
+		 3, 11,  1,  9,
+		15,  7, 13,  5
+	};
+	for (int32 i = 0; i < 16; ++i)
+		BayerMatrix[i] = kBayerRaw[i];
+
+	// -------------------------------------------------------------------------
+	// 16C: Defect pixel map — sparse list of hot/dead pixel positions
+	// Uses the first mode with DefectPixelCount > 0 as the source.
+	// Seeded deterministically for reproducibility.
+	// -------------------------------------------------------------------------
+	int32 MaxDefects = 0;
+	float HotRatio   = 0.5f;
+	int32 DefSeed    = 42;
+	for (const auto& Pair : Configs)
+	{
+		if (Pair.Value.DefectPixelCount > MaxDefects)
+		{
+			MaxDefects = Pair.Value.DefectPixelCount;
+			HotRatio   = Pair.Value.DefectHotRatio;
+			DefSeed    = Pair.Value.DefectSeed;
+		}
+	}
+	if (MaxDefects > 0 && NumPixels > 0)
+	{
+		const int32 Count = FMath::Min(MaxDefects, NumPixels);
+		DefectIndices.SetNumUninitialized(Count);
+		DefectValues.SetNumUninitialized(Count);
+
+		// Rejection sampling for unique indices
+		TSet<int32> UsedIndices;
+		UsedIndices.Reserve(Count);
+		FMath::SRandInit(DefSeed);
+		int32 Placed = 0;
+		for (int32 i = 0; i < Count; ++i)
+		{
+			int32 Idx = -1;
+			constexpr int32 MaxAttempts = 1000;
+			for (int32 Attempt = 0; Attempt < MaxAttempts; ++Attempt)
+			{
+				Idx = static_cast<int32>(FMath::SRand() * NumPixels) % NumPixels;
+				if (!UsedIndices.Contains(Idx)) break;
+				if (Attempt == MaxAttempts - 1) Idx = -1;
+			}
+			if (Idx < 0)
+			{
+				UE_LOG(LogCamSim, Warning, TEXT("FSensorPostProcess: defect pixel placement exhausted after %d placed"), Placed);
+				break;
+			}
+			UsedIndices.Add(Idx);
+			DefectIndices[Placed] = Idx;
+			DefectValues[Placed] = (FMath::SRand() < HotRatio) ? 255u : 0u;
+			++Placed;
+		}
+		if (Placed < Count)
+		{
+			DefectIndices.SetNum(Placed);
+			DefectValues.SetNum(Placed);
+		}
+	}
+
 	UE_LOG(LogCamSim, Log,
-		TEXT("FSensorPostProcess: initialized %dx%d ring=%d EO/IR/NVG=%d/%d/%d quality(noise=%.2f vignette=%.2f scan=%.2f atmos=%.2f blur=%d contrast=%.2f bias=%.2f)"),
+		TEXT("FSensorPostProcess: initialized %dx%d ring=%d EO/IR/NVG=%d/%d/%d defects=%d quality(noise=%.2f vignette=%.2f scan=%.2f atmos=%.2f blur=%d contrast=%.2f bias=%.2f)"),
 		Width, Height, RingSize,
 		Configs.Contains(ESensorMode::EO) ? 1 : 0,
 		Configs.Contains(ESensorMode::IR) ? 1 : 0,
 		Configs.Contains(ESensorMode::NVG) ? 1 : 0,
+		DefectIndices.Num(),
 		Quality.NoiseScale, Quality.VignettingScale, Quality.ScanLineScale,
 		Quality.AtmosphereScale, Quality.BlurRadius, Quality.Contrast, Quality.BrightnessBias);
 }
@@ -150,6 +224,46 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 			break;
 	}
 
+	// Step 1.1: 16J — Sensor gain/offset jitter (IR only, before AGC)
+	if (Mode == ESensorMode::IR &&
+		(Cfg.GainJitter > 0.0f || Cfg.OffsetJitter > 0.0f))
+	{
+		ApplyGainOffsetJitter(Pixels, Cfg.GainJitter, Cfg.OffsetJitter, FrameIndex);
+	}
+
+	// Step 1A: 16A — Radiance AGC or manual gain (IR/NVG only, after grayscale)
+	if (Mode == ESensorMode::IR || Mode == ESensorMode::NVG)
+	{
+		const bool bManual = (Cfg.AGCManualLevel >= 0.0f);
+		if (Cfg.bAGCEnabled && !bManual)
+		{
+			ApplyRadianceAGC(Pixels, Cfg);
+		}
+		else if (bManual)
+		{
+			ApplyManualGain(Pixels, Cfg.AGCManualLevel, Cfg.AGCManualGain);
+		}
+	}
+
+	// Step 1B: 16B — Quantization (after AGC, before tone controls)
+	if (Cfg.QuantizationBits > 0 && Cfg.QuantizationBits < 8)
+	{
+		ApplyQuantization(Pixels, Cfg.QuantizationBits, Cfg.bQuantizationDither);
+	}
+
+	// Step 1.5: 16E — Thermal drift (IR only, after AGC/quantization)
+	if (Mode == ESensorMode::IR && Cfg.bThermalDriftEnabled)
+	{
+		// Assume 30fps (matches DefaultEngine.ini FixedFrameRate=30)
+		ApplyThermalDrift(Pixels, Cfg, 1.0f / 30.0f);
+	}
+
+	// Step 1C: 16L — NVG IR pointer (NVG only, after waveband remap)
+	if (Mode == ESensorMode::NVG && Cfg.bIRPointerEnabled)
+	{
+		ApplyIRPointer(Pixels, Cfg);
+	}
+
 	// Step 2: optional color-temperature shift
 	if (Cfg.ColorTemperatureK > 1000.0f)
 	{
@@ -190,11 +304,24 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 		ApplyNoise(Pixels, EffectiveNETD, FrameIndex);
 	}
 
+	// Step 6A: 16F — AC banding (IR only, after temporal noise)
+	if (Mode == ESensorMode::IR &&
+		Cfg.ACBandingFrequency > 0.0f && Cfg.ACBandingAmplitude > 0.0f)
+	{
+		ApplyACBanding(Pixels, Cfg.ACBandingFrequency, Cfg.ACBandingAmplitude, FrameIndex);
+	}
+
 	// Step 7: Fixed pattern noise (static per-pixel bias)
 	const float EffectiveFPN = Cfg.FixedPatternNoise * Quality.NoiseScale;
 	if (EffectiveFPN > 0.0f)
 	{
 		ApplyFixedPatternNoise(Pixels, EffectiveFPN);
+	}
+
+	// Step 7A: 16C — Hot/dead pixel defects (after FPN, sparse stamp)
+	if (Cfg.DefectPixelCount > 0 && DefectIndices.Num() > 0)
+	{
+		ApplyDefectPixels(Pixels);
 	}
 
 	// Step 8: Vignetting (radial corner darkening)
@@ -211,17 +338,64 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 		ApplyScanLines(Pixels, EffectiveScanLine);
 	}
 
-	// Step 10: blur (mode + quality)
-	const int32 EffectiveBlur = FMath::Clamp(Cfg.BlurRadius + Quality.BlurRadius, 0, 8);
-	if (EffectiveBlur > 0)
+	// Step 9A: 16K — Sun glint (EO only, after vignetting)
+	if (Mode == ESensorMode::EO && Cfg.SunGlintIntensity > 0.0f)
 	{
-		ApplyBoxBlur(Pixels, EffectiveBlur);
+		ApplySunGlint(Pixels, Cfg, Telemetry.SunElevationDeg);
+	}
+
+	// Step 10: MTF degradation — Gaussian PSF (16D) if sigma set; else legacy box blur
+	const float EffectiveGaussian = FMath::Max(0.0f, Cfg.GaussianSigma * Quality.GaussianSigmaScale);
+	if (EffectiveGaussian > 0.0f)
+	{
+		ApplyGaussianBlur(Pixels, EffectiveGaussian);
+	}
+	else
+	{
+		const int32 EffectiveBlur = FMath::Clamp(Cfg.BlurRadius + Quality.BlurRadius, 0, 8);
+		if (EffectiveBlur > 0)
+		{
+			ApplyBoxBlur(Pixels, EffectiveBlur);
+		}
+	}
+
+	// Step 10A: 16I — Platform vibration (all modes, before lens distortion)
+	if (Cfg.VibrationAmplitude > 0.0f)
+	{
+		ApplyVibration(Pixels, Cfg.VibrationAmplitude, FrameIndex);
 	}
 
 	// Step 11: lens distortion (Phase 15B) — applied last as geometric warp
 	if (bDistortionEnabled)
 	{
 		ApplyLensDistortion(Pixels);
+	}
+
+	// Step 11B: Phase 18D — Precipitation overlay (rain/snow CPU pixel pass)
+	if (Phase18.bPrecipitation && (Phase18.RainIntensity > 0.0f || Phase18.SnowIntensity > 0.0f))
+	{
+		ApplyPrecipitation(Pixels, FrameIndex);
+	}
+
+	// Step 11C: Phase 18K — Dynamic IR extinction from atmospheric visibility (IR only)
+	if (Phase18.bDynamicIRExtinction && Mode == ESensorMode::IR)
+	{
+		ApplyDynamicIRExtinction(Pixels, static_cast<float>(Telemetry.SlantRangeM));
+	}
+
+	// Step 12: 16H — Rolling shutter (EO only, very last — blends with previous frame)
+	if (Mode == ESensorMode::EO && Cfg.RollingShutterStrength > 0.0f)
+	{
+		ApplyRollingShutter(Pixels, Cfg.RollingShutterStrength);
+	}
+	else if (Mode == ESensorMode::EO)
+	{
+		// Store current frame for next rolling shutter blend even when disabled,
+		// so enabling mid-run has a valid previous frame. Only for EO mode (I3 fix).
+		if (PreviousFrame.Num() != Pixels.Num())
+			PreviousFrame = Pixels;
+		else
+			FMemory::Memcpy(PreviousFrame.GetData(), Pixels.GetData(), Pixels.Num() * sizeof(FColor));
 	}
 }
 
@@ -708,4 +882,608 @@ void FSensorPostProcess::ApplyLensDistortion(TArray<FColor>& Pixels)
 			}
 		}
 	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyRadianceAGC — percentile-stretch auto gain control (Phase 16A)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyRadianceAGC(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg)
+{
+	const int32 NumPixels = Width * Height;
+
+	// Build 256-bin histogram over the R channel (R==G==B after waveband remap)
+	int32* Hist = AGCHistogram.GetData();
+	FMemory::Memzero(Hist, 256 * sizeof(int32));
+	for (const FColor& P : Pixels)
+		Hist[P.R]++;
+
+	// Find low and high percentile values by walking the CDF forward
+	const int32 LoTarget = FMath::Max(1, FMath::RoundToInt(Cfg.AGCLowPercentile * NumPixels));
+	const int32 HiTarget = FMath::Max(1, FMath::RoundToInt(Cfg.AGCHighPercentile * NumPixels));
+
+	int32 Lo = 0, Hi = 255;
+	int32 Acc = 0;
+	for (int32 b = 0; b < 256; ++b)
+	{
+		Acc += Hist[b];
+		if (Acc >= LoTarget) { Lo = b; break; }
+	}
+	Acc = 0;
+	for (int32 b = 0; b < 256; ++b)
+	{
+		Acc += Hist[b];
+		if (Acc >= HiTarget) { Hi = b; break; }
+	}
+
+	if (Hi <= Lo) return;  // degenerate (uniform frame) — skip
+
+	// 16G: AGC lag — smooth Lo/Hi over multiple frames
+	if (Cfg.AGCLagFrames > 0)
+	{
+		const float Alpha = 1.0f / (1.0f + static_cast<float>(Cfg.AGCLagFrames));
+		if (AGCSmoothedLo < 0.0f)
+		{
+			// First frame — initialize directly
+			AGCSmoothedLo = static_cast<float>(Lo);
+			AGCSmoothedHi = static_cast<float>(Hi);
+		}
+		else
+		{
+			AGCSmoothedLo = AGCSmoothedLo + Alpha * (static_cast<float>(Lo) - AGCSmoothedLo);
+			AGCSmoothedHi = AGCSmoothedHi + Alpha * (static_cast<float>(Hi) - AGCSmoothedHi);
+		}
+		Lo = FMath::RoundToInt(AGCSmoothedLo);
+		Hi = FMath::RoundToInt(AGCSmoothedHi);
+		if (Hi <= Lo) return;
+	}
+
+	// Build 256-entry remap LUT
+	uint8 StretchLut[256];
+	const float Scale = 255.0f / static_cast<float>(Hi - Lo);
+	for (int32 i = 0; i < 256; ++i)
+		StretchLut[i] = static_cast<uint8>(FMath::Clamp(
+			FMath::RoundToInt(static_cast<float>(i - Lo) * Scale), 0, 255));
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
+		{
+			FColor& P = Pixels[i];
+			const uint8 V = StretchLut[P.R];
+			P.R = V; P.G = V; P.B = V;
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyManualGain — manual level/gain override (Phase 16A)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyManualGain(TArray<FColor>& Pixels, float Level, float Gain)
+{
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
+		{
+			FColor& P = Pixels[i];
+			const float V = (static_cast<float>(P.R) - Level) * Gain + Level;
+			const uint8 Out = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(V), 0, 255));
+			P.R = Out; P.G = Out; P.B = Out;
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyQuantization — A/D bit-depth reduction with optional Bayer dither (Phase 16B)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyQuantization(TArray<FColor>& Pixels, int32 Bits, bool bDither)
+{
+	const int32 Shift = 8 - Bits;
+	const int32 Step  = 1 << Shift;
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 Y = RowStart; Y < RowEnd; ++Y)
+		{
+			for (int32 X = 0; X < Width; ++X)
+			{
+				FColor& P = Pixels[Y * Width + X];
+				int32 V = static_cast<int32>(P.R);
+
+				if (bDither)
+				{
+					const int32 DitherVal = BayerMatrix[(Y % 4) * 4 + (X % 4)];
+					V += (DitherVal * Step) / 16;
+				}
+
+				const uint8 Q = static_cast<uint8>(FMath::Clamp((V >> Shift) << Shift, 0, 255));
+				P.R = Q; P.G = Q; P.B = Q;
+			}
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyDefectPixels — stamp hot/dead pixel defects (Phase 16C)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyDefectPixels(TArray<FColor>& Pixels)
+{
+	const int32 NumPixels = Width * Height;
+	const int32 N = DefectIndices.Num();
+
+	for (int32 i = 0; i < N; ++i)
+	{
+		const int32 Idx = DefectIndices[i];
+		if (Idx >= 0 && Idx < NumPixels)
+		{
+			FColor& P = Pixels[Idx];
+			P.R = DefectValues[i];
+			P.G = DefectValues[i];
+			P.B = DefectValues[i];
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ApplyGaussianBlur — separable Gaussian PSF (Phase 16D)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyGaussianBlur(TArray<FColor>& Pixels, float Sigma)
+{
+	if (Sigma <= 0.0f || Pixels.Num() != Width * Height) return;
+
+	const int32 Radius = FMath::Clamp(FMath::CeilToInt(3.0f * Sigma), 1, 5);
+	const int32 KernelLen = 2 * Radius + 1;
+
+	// Build 1D Gaussian kernel
+	TArray<float> Kernel;
+	Kernel.SetNumUninitialized(KernelLen);
+	float KSum = 0.0f;
+	for (int32 i = 0; i < KernelLen; ++i)
+	{
+		const float x = static_cast<float>(i - Radius);
+		Kernel[i] = FMath::Exp(-(x * x) / (2.0f * Sigma * Sigma));
+		KSum += Kernel[i];
+	}
+	for (float& v : Kernel) v /= KSum;
+
+	const float* Kd = Kernel.GetData();
+	TArray<FColor> Temp;
+	Temp.SetNumUninitialized(Pixels.Num());
+
+	// Horizontal pass
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 Y = RowStart; Y < RowEnd; ++Y)
+		{
+			for (int32 X = 0; X < Width; ++X)
+			{
+				float SR = 0.0f, SG = 0.0f, SB = 0.0f;
+				for (int32 K = -Radius; K <= Radius; ++K)
+				{
+					const int32 SX = FMath::Clamp(X + K, 0, Width - 1);
+					const FColor& S = Pixels[Y * Width + SX];
+					const float W = Kd[K + Radius];
+					SR += S.R * W;
+					SG += S.G * W;
+					SB += S.B * W;
+				}
+				FColor& D = Temp[Y * Width + X];
+				D.R = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(SR), 0, 255));
+				D.G = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(SG), 0, 255));
+				D.B = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(SB), 0, 255));
+				D.A = 255;
+			}
+		}
+	}, EParallelForFlags::BackgroundPriority);
+
+	// Vertical pass
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 Y = RowStart; Y < RowEnd; ++Y)
+		{
+			for (int32 X = 0; X < Width; ++X)
+			{
+				float SR = 0.0f, SG = 0.0f, SB = 0.0f;
+				for (int32 K = -Radius; K <= Radius; ++K)
+				{
+					const int32 SY = FMath::Clamp(Y + K, 0, Height - 1);
+					const FColor& S = Temp[SY * Width + X];
+					const float W = Kd[K + Radius];
+					SR += S.R * W;
+					SG += S.G * W;
+					SB += S.B * W;
+				}
+				FColor& D = Pixels[Y * Width + X];
+				D.R = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(SR), 0, 255));
+				D.G = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(SG), 0, 255));
+				D.B = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(SB), 0, 255));
+				D.A = 255;
+			}
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyACBanding — sinusoidal horizontal stripe artifact (Phase 16F)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyACBanding(TArray<FColor>& Pixels,
+                                         float Frequency, float Amplitude,
+                                         uint64 FrameIndex)
+{
+	// Temporal drift: 2-second cycle at 30fps
+	const float Phase = FMath::Fmod(static_cast<float>(FrameIndex), 60.0f) * (2.0f * PI / 60.0f);
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 Y = RowStart; Y < RowEnd; ++Y)
+		{
+			const float NormY = static_cast<float>(Y) / Height;
+			const int32 Delta = FMath::RoundToInt(
+				Amplitude * FMath::Sin(2.0f * PI * Frequency * NormY + Phase));
+			for (int32 X = 0; X < Width; ++X)
+			{
+				FColor& P = Pixels[Y * Width + X];
+				const uint8 V = static_cast<uint8>(FMath::Clamp(
+					static_cast<int32>(P.R) + Delta, 0, 255));
+				P.R = V; P.G = V; P.B = V;
+			}
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyIRPointer — Gaussian bright spot for NVG IR pointer (Phase 16L)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyIRPointer(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg)
+{
+	const float CX = Cfg.IRPointerX * Width;
+	const float CY = Cfg.IRPointerY * Height;
+	const float Radius  = FMath::Max(Cfg.IRPointerRadius, 0.5f);
+	const float InvTwoR2 = 1.0f / (2.0f * Radius * Radius);
+	const float Peak = FMath::Clamp(Cfg.IRPointerIntensity, 0.0f, 255.0f);
+
+	const int32 BBoxXMin = FMath::Max(0, FMath::FloorToInt(CX - 3.0f * Radius));
+	const int32 BBoxXMax = FMath::Min(Width - 1, FMath::CeilToInt(CX + 3.0f * Radius));
+	const int32 BBoxYMin = FMath::Max(0, FMath::FloorToInt(CY - 3.0f * Radius));
+	const int32 BBoxYMax = FMath::Min(Height - 1, FMath::CeilToInt(CY + 3.0f * Radius));
+
+	const int32 RowsInBox = BBoxYMax - BBoxYMin + 1;
+	if (RowsInBox <= 0) return;
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (RowsInBox + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = BBoxYMin + Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, BBoxYMax + 1);
+		for (int32 Y = RowStart; Y < RowEnd; ++Y)
+		{
+			const float dy = Y - CY;
+			for (int32 X = BBoxXMin; X <= BBoxXMax; ++X)
+			{
+				const float dx = X - CX;
+				const float w  = Peak * FMath::Exp(-(dx * dx + dy * dy) * InvTwoR2);
+				if (w < 0.5f) continue;
+				FColor& P = Pixels[Y * Width + X];
+				const float NewG = FMath::Clamp(static_cast<float>(P.G) + w, 0.0f, 255.0f);
+				const float GDelta = NewG - static_cast<float>(P.G);
+				P.G = static_cast<uint8>(FMath::RoundToInt(NewG));
+				P.B = static_cast<uint8>(FMath::Clamp(
+					FMath::RoundToInt(static_cast<float>(P.B) + GDelta * 3.0f / 10.0f), 0, 255));
+			}
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyThermalDrift — gradual IR baseline shift with periodic NUC (Phase 16E)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyThermalDrift(TArray<FColor>& Pixels,
+                                            const FSensorModeConfig& Cfg,
+                                            float DeltaTime)
+{
+	// Accumulate drift
+	DriftElapsedSec += DeltaTime;
+	DriftAccumulatorDN += Cfg.ThermalDriftRate * DeltaTime;
+
+	// Auto-NUC: reset drift when interval elapses
+	if (Cfg.NUCIntervalSec > 0.0f && DriftElapsedSec >= Cfg.NUCIntervalSec)
+	{
+		DriftAccumulatorDN = 0.0f;
+		DriftElapsedSec    = 0.0f;
+		return;  // NUC frame — no drift applied
+	}
+
+	const int32 Offset = FMath::RoundToInt(DriftAccumulatorDN);
+	if (Offset == 0) return;
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
+		{
+			FColor& P = Pixels[i];
+			const uint8 V = static_cast<uint8>(FMath::Clamp(
+				static_cast<int32>(P.R) + Offset, 0, 255));
+			P.R = V; P.G = V; P.B = V;
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyRollingShutter — per-row temporal blend with previous frame (Phase 16H)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyRollingShutter(TArray<FColor>& Pixels, float Strength)
+{
+	const int32 NumPixels = Width * Height;
+	const bool bHasPrevious = (PreviousFrame.Num() == NumPixels);
+
+	// Store the unblended frame BEFORE blending to avoid feedback loop (I2 fix)
+	TArray<FColor> Unblended = Pixels;
+
+	if (bHasPrevious)
+	{
+		const FColor* PrevData = PreviousFrame.GetData();
+		const int32 MaxY = FMath::Max(Height - 1, 1);  // avoid division by zero (I4 fix)
+
+		ParallelFor(kParallelBands, [&](int32 Band)
+		{
+			const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+			const int32 RowStart    = Band * RowsPerBand;
+			const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+			for (int32 Y = RowStart; Y < RowEnd; ++Y)
+			{
+				// Bottom rows are "newer" (less blend), top rows are "older" (more blend)
+				const float T = (1.0f - static_cast<float>(Y) / static_cast<float>(MaxY)) * Strength;
+				if (T < (1.0f / 255.0f)) continue;  // negligible blend
+				for (int32 X = 0; X < Width; ++X)
+				{
+					const int32 Idx = Y * Width + X;
+					FColor& Cur = Pixels[Idx];
+					const FColor& Prev = PrevData[Idx];
+					Cur.R = static_cast<uint8>(Cur.R + FMath::RoundToInt((static_cast<float>(Prev.R) - Cur.R) * T));
+					Cur.G = static_cast<uint8>(Cur.G + FMath::RoundToInt((static_cast<float>(Prev.G) - Cur.G) * T));
+					Cur.B = static_cast<uint8>(Cur.B + FMath::RoundToInt((static_cast<float>(Prev.B) - Cur.B) * T));
+				}
+			}
+		}, EParallelForFlags::BackgroundPriority);
+	}
+
+	// Store the unblended frame for next iteration (not the blended output)
+	if (PreviousFrame.Num() != NumPixels)
+		PreviousFrame.SetNumUninitialized(NumPixels);
+	FMemory::Memcpy(PreviousFrame.GetData(), Unblended.GetData(), NumPixels * sizeof(FColor));
+}
+
+// ---------------------------------------------------------------------------
+// ApplyVibration — subpixel random displacement (Phase 16I)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyVibration(TArray<FColor>& Pixels, float Amplitude, uint64 FrameIndex)
+{
+	if (Amplitude <= 0.0f || Pixels.Num() != Width * Height) return;
+
+	// Deterministic per-frame displacement using FRandomStream (thread-safe)
+	// CLT approximation: average 4 uniform samples for Gaussian-like distribution
+	FRandomStream Rng(static_cast<int32>(FrameIndex * 7919));
+	const float dx = Amplitude * ((Rng.FRand() + Rng.FRand() + Rng.FRand() + Rng.FRand()) - 2.0f);
+	const float dy = Amplitude * ((Rng.FRand() + Rng.FRand() + Rng.FRand() + Rng.FRand()) - 2.0f);
+
+	if (FMath::Abs(dx) < 0.01f && FMath::Abs(dy) < 0.01f) return;
+
+	// Bilinear warp with flat offset (like lens distortion but uniform shift)
+	TArray<FColor> Src = Pixels;
+	const FColor* SrcData = Src.GetData();
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 Y = RowStart; Y < RowEnd; ++Y)
+		{
+			for (int32 X = 0; X < Width; ++X)
+			{
+				const float srcX = FMath::Clamp(static_cast<float>(X) + dx, 0.0f, static_cast<float>(Width - 1));
+				const float srcY = FMath::Clamp(static_cast<float>(Y) + dy, 0.0f, static_cast<float>(Height - 1));
+
+				const int32 x0 = FMath::FloorToInt(srcX);
+				const int32 y0 = FMath::FloorToInt(srcY);
+				const int32 x1 = FMath::Min(x0 + 1, Width - 1);
+				const int32 y1 = FMath::Min(y0 + 1, Height - 1);
+				const float fx = srcX - x0;
+				const float fy = srcY - y0;
+
+				const FColor& P00 = SrcData[y0 * Width + x0];
+				const FColor& P10 = SrcData[y0 * Width + x1];
+				const FColor& P01 = SrcData[y1 * Width + x0];
+				const FColor& P11 = SrcData[y1 * Width + x1];
+
+				const float w00 = (1.0f - fx) * (1.0f - fy);
+				const float w10 = fx * (1.0f - fy);
+				const float w01 = (1.0f - fx) * fy;
+				const float w11 = fx * fy;
+
+				FColor& D = Pixels[Y * Width + X];
+				D.R = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(
+					P00.R * w00 + P10.R * w10 + P01.R * w01 + P11.R * w11), 0, 255));
+				D.G = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(
+					P00.G * w00 + P10.G * w10 + P01.G * w01 + P11.G * w11), 0, 255));
+				D.B = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(
+					P00.B * w00 + P10.B * w10 + P01.B * w01 + P11.B * w11), 0, 255));
+				D.A = 255;
+			}
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyGainOffsetJitter — per-frame electronic instability (Phase 16J)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplyGainOffsetJitter(TArray<FColor>& Pixels,
+                                                float GainJitter, float OffsetJitter,
+                                                uint64 FrameIndex)
+{
+	// Deterministic jitter per frame using FRandomStream (thread-safe)
+	FRandomStream Rng(static_cast<int32>(FrameIndex * 6271));
+	const float GainDelta   = GainJitter * (Rng.FRand() * 2.0f - 1.0f);
+	const float OffsetDelta = OffsetJitter * (Rng.FRand() * 2.0f - 1.0f);
+	const float Gain = 1.0f + GainDelta;
+	const float Offset = OffsetDelta;
+
+	if (FMath::IsNearlyEqual(Gain, 1.0f, 1e-5f) && FMath::IsNearlyZero(Offset, 0.1f)) return;
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
+		{
+			FColor& P = Pixels[i];
+			const uint8 V = static_cast<uint8>(FMath::Clamp(
+				FMath::RoundToInt(static_cast<float>(P.R) * Gain + Offset), 0, 255));
+			P.R = V; P.G = V; P.B = V;
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// ---------------------------------------------------------------------------
+// ApplySunGlint — brighten highlight pixels based on sun angle (Phase 16K)
+// ---------------------------------------------------------------------------
+
+void FSensorPostProcess::ApplySunGlint(TArray<FColor>& Pixels,
+                                        const FSensorModeConfig& Cfg,
+                                        float SunElevationDeg)
+{
+	// Sun factor: sin(elevation) clamped to [0, 1] — no glint below horizon
+	const float SunFactor = FMath::Max(0.0f, FMath::Sin(FMath::DegreesToRadians(SunElevationDeg)));
+	if (SunFactor <= 0.0f) return;
+
+	const float Threshold = FMath::Clamp(Cfg.SunGlintThreshold, 0.0f, 254.0f);
+	const float Intensity = Cfg.SunGlintIntensity * SunFactor;
+	const float Spread    = FMath::Max(Cfg.SunGlintSpread, 0.1f);
+	const float Range     = 255.0f - Threshold;
+	if (Range <= 0.0f) return;
+
+	ParallelFor(kParallelBands, [&](int32 Band)
+	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
+		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
+		{
+			FColor& P = Pixels[i];
+			// Use max channel as brightness proxy
+			const uint8 MaxCh = FMath::Max3(P.R, P.G, P.B);
+			if (MaxCh <= static_cast<uint8>(Threshold)) continue;
+			// Normalized excess above threshold [0, 1] raised to spread power
+			const float Excess = static_cast<float>(MaxCh - static_cast<uint8>(Threshold)) / Range;
+			const float Boost = Intensity * FMath::Pow(Excess, Spread);
+			P.R = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.R + Boost), 0, 255));
+			P.G = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.G + Boost), 0, 255));
+			P.B = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.B + Boost), 0, 255));
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+// -------------------------------------------------------------------------
+// Phase 18 — Weather, Atmosphere & Particle Effects
+// -------------------------------------------------------------------------
+
+void FSensorPostProcess::SetPhase18Config(const FCamSimConfig::FPhase18Config& Cfg)
+{
+	Phase18 = Cfg;
+}
+
+void FSensorPostProcess::ApplyPrecipitation(TArray<FColor>& Pixels, uint64 FrameIndex)
+{
+	const float RainI = FMath::Clamp(Phase18.RainIntensity, 0.0f, 1.0f);
+	const float SnowI = FMath::Clamp(Phase18.SnowIntensity, 0.0f, 1.0f);
+
+	if (RainI <= 0.0f && SnowI <= 0.0f) return;
+
+	// Per-frame FRandomStream seeded from FrameIndex — thread-safe, no global state.
+	FRandomStream RandStream(static_cast<int32>(FrameIndex ^ 0xDEADBEEFull));
+
+	// Rain: vertical streaks, length 4-12 px, semi-transparent white additive
+	if (RainI > 0.0f)
+	{
+		const int32 DropCount = FMath::RoundToInt(RainI * Width * Height * 0.005f);
+		for (int32 D = 0; D < DropCount; ++D)
+		{
+			const int32 X     = RandStream.RandRange(0, Width  - 1);
+			const int32 Y0    = RandStream.RandRange(0, Height - 1);
+			const int32 Len   = RandStream.RandRange(4, 12);
+			const uint8 Alpha = static_cast<uint8>(RandStream.RandRange(60, 140));
+			for (int32 DY = 0; DY < Len; ++DY)
+			{
+				const int32 Y = FMath::Clamp(Y0 + DY, 0, Height - 1);
+				FColor& P = Pixels[Y * Width + X];
+				P.R = static_cast<uint8>(FMath::Min(P.R + Alpha, 255));
+				P.G = static_cast<uint8>(FMath::Min(P.G + Alpha, 255));
+				P.B = static_cast<uint8>(FMath::Min(P.B + Alpha, 255));
+			}
+		}
+	}
+
+	// Snow: 3×3 bright dots
+	if (SnowI > 0.0f)
+	{
+		const int32 FlakeCount = FMath::RoundToInt(SnowI * Width * Height * 0.003f);
+		for (int32 F = 0; F < FlakeCount; ++F)
+		{
+			const int32 CX = RandStream.RandRange(0, Width  - 1);
+			const int32 CY = RandStream.RandRange(0, Height - 1);
+			const uint8 Brightness = static_cast<uint8>(RandStream.RandRange(180, 255));
+			for (int32 DY = -1; DY <= 1; ++DY)
+			{
+				for (int32 DX = -1; DX <= 1; ++DX)
+				{
+					const int32 X = FMath::Clamp(CX + DX, 0, Width  - 1);
+					const int32 Y = FMath::Clamp(CY + DY, 0, Height - 1);
+					FColor& P = Pixels[Y * Width + X];
+					P.R = Brightness;
+					P.G = Brightness;
+					P.B = Brightness;
+				}
+			}
+		}
+	}
+}
+
+void FSensorPostProcess::ApplyDynamicIRExtinction(TArray<FColor>& Pixels, float SlantRangeM)
+{
+	// Koschmieder: Coeff = 3.912 / VisibilityM  (2% contrast threshold)
+	const float VisM  = FMath::Max(Phase18.VisibilityRangeM, 100.0f);
+	const float Coeff = 3.912f / VisM;
+	ApplyIRExtinction(Pixels, Coeff, SlantRangeM);
 }

@@ -6,6 +6,7 @@
 #include "Metadata/KlvBuilder.h"   // FCamSimTelemetry
 #include "Sensor/SensorTypes.h"    // ESensorMode, FSensorModeConfig
 #include "Sensor/IPixelPipeline.h" // IPixelPipeline
+#include "Config/CamSimConfig.h"   // FCamSimConfig::FPhase18Config
 
 // ---------------------------------------------------------------------------
 // FSensorPostProcess — CPU-side pixel pipeline applied after GPU readback
@@ -27,6 +28,12 @@ public:
 	 * Must be called after Initialize().
 	 */
 	void SetDistortion(float K1, float K2);
+
+	/**
+	 * Apply Phase 18 config (precipitation, dynamic IR extinction).
+	 * Safe to call from game thread before each frame is submitted.
+	 */
+	void SetPhase18Config(const FCamSimConfig::FPhase18Config& Cfg);
 
 	/**
 	 * Apply the sensor pipeline in-place.
@@ -113,4 +120,82 @@ private:
 
 	/** Apply Brown-Conrady radial lens distortion using precomputed remap. */
 	void ApplyLensDistortion(TArray<FColor>& Pixels);
+
+	// -- Phase 16: Sensor Fidelity -------------------------------------------
+
+	/** Pre-allocated 256-bin histogram scratch buffer (avoids per-frame alloc). */
+	TArray<int32> AGCHistogram;
+
+	/** Pre-baked 4x4 Bayer ordered dither matrix [0, 15]. */
+	uint8 BayerMatrix[16] = {};
+
+	/** Sparse defect pixel indices into [W*H]. Built once in Initialize(). */
+	TArray<int32> DefectIndices;
+	/** Corresponding defect values: 255 = hot, 0 = dead. */
+	TArray<uint8> DefectValues;
+
+	/** 16A: Histogram percentile stretch (AGC). Computed live per frame. */
+	void ApplyRadianceAGC(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg);
+
+	/** 16A: Manual level/gain override when AGC is disabled. */
+	void ApplyManualGain(TArray<FColor>& Pixels, float Level, float Gain);
+
+	/** 16B: A/D quantization to N bits with optional ordered dither. */
+	void ApplyQuantization(TArray<FColor>& Pixels, int32 Bits, bool bDither);
+
+	/** 16C: Stamp pre-baked hot/dead pixel defects onto the image. */
+	void ApplyDefectPixels(TArray<FColor>& Pixels);
+
+	/** 16D: Separable Gaussian PSF blur (replaces box blur when sigma > 0). */
+	void ApplyGaussianBlur(TArray<FColor>& Pixels, float Sigma);
+
+	/** 16F: Sinusoidal horizontal AC banding artifact (IR readout simulation). */
+	void ApplyACBanding(TArray<FColor>& Pixels, float Frequency, float Amplitude, uint64 FrameIndex);
+
+	/** 16L: Gaussian bright spot for NVG IR pointer overlay. */
+	void ApplyIRPointer(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg);
+
+	// -- Phase 16 Sprint 2: Sensor Fidelity -----------------------------------
+
+	// 16E: Thermal drift state
+	float DriftAccumulatorDN = 0.0f;   // current baseline shift in DN
+	float DriftElapsedSec    = 0.0f;   // time since last NUC reset
+
+	// 16G: AGC lag smoothed thresholds
+	float AGCSmoothedLo = -1.0f;       // -1 = not yet initialized
+	float AGCSmoothedHi = -1.0f;
+
+	// 16H: Previous frame for rolling shutter blending
+	TArray<FColor> PreviousFrame;
+
+	/** 16E: Gradual IR baseline drift with periodic NUC reset. */
+	void ApplyThermalDrift(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg, float DeltaTime);
+
+	/** 16H: Per-row blend between previous and current frame. */
+	void ApplyRollingShutter(TArray<FColor>& Pixels, float Strength);
+
+	/** 16I: Subpixel random displacement (platform microdynamics). */
+	void ApplyVibration(TArray<FColor>& Pixels, float Amplitude, uint64 FrameIndex);
+
+	/** 16J: Per-frame global gain and offset jitter. */
+	void ApplyGainOffsetJitter(TArray<FColor>& Pixels, float GainJitter, float OffsetJitter, uint64 FrameIndex);
+
+	/** 16K: Brighten highlight pixels based on sun angle (EO sun glint). */
+	void ApplySunGlint(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg, float SunElevationDeg);
+
+	// -- Phase 18: Weather, Atmosphere & Particle Effects --------------------
+
+	FCamSimConfig::FPhase18Config Phase18;
+
+	/**
+	 * 18D: CPU precipitation overlay (rain streaks / snow flakes).
+	 * Uses per-frame FRandomStream seeded from FrameIndex for thread safety.
+	 */
+	void ApplyPrecipitation(TArray<FColor>& Pixels, uint64 FrameIndex);
+
+	/**
+	 * 18K: Override IR extinction coefficient from atmospheric visibility.
+	 * Maps VisibilityRangeM to an extinction coefficient, then calls ApplyIRExtinction.
+	 */
+	void ApplyDynamicIRExtinction(TArray<FColor>& Pixels, float SlantRangeM);
 };

@@ -7,6 +7,7 @@
 #include "Containers/Set.h"
 #include "Config/CamSimConfig.h"
 #include "CIGI/CigiPacketTypes.h"
+#include "GroundTruth/AnnotationTypes.h"
 
 class UCamSimSubsystem;
 class ACamSimEntity;
@@ -40,6 +41,14 @@ public:
 	virtual TStatId GetStatId() const override;
 	virtual bool   IsTickable() const override { return true; }
 	virtual bool   IsTickableInEditor() const override { return false; }
+
+	/**
+	 * Capture a snapshot of all active entity annotations for the current game tick.
+	 * Called on the game thread before CaptureAndEncode().
+	 * Uses ViewProj to project each entity's AABB to screen space.
+	 */
+	TArray<FEntityAnnotationData> GetEntitySnapshot(
+	    const FViewProjectionData& ViewProj) const;
 
 private:
 	UCamSimSubsystem*       Subsystem  = nullptr;

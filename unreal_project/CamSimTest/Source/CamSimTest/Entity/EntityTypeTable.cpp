@@ -211,6 +211,9 @@ void FEntityTypeTable::LoadFromConfig()
 		YamlString(EntryNode, "mesh_damaged",    Entry.DamagedAssetPath);
 		YamlString(EntryNode, "mesh_destroyed",  Entry.DestroyedAssetPath);
 		YamlBool  (EntryNode, "skeletal",        Entry.bSkeletal);
+		// Optional class label for ML annotation (Phase 17); falls back to "type_NNNN"
+		if (!YamlString(EntryNode, "class_name", Entry.ClassName) || Entry.ClassName.IsEmpty())
+			Entry.ClassName = FString::Printf(TEXT("type_%u"), TypeId);
 
 		// Optional model-space correction for glTF assets
 		YamlFloat(EntryNode, "scale", Entry.ModelScale);

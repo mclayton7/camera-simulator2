@@ -38,6 +38,16 @@ struct FCamSimTelemetry
 	// Active sensor state snapshot (for optional sidecar ground-truth output).
 	uint8 SensorMode      = 0;    // 0=EO, 1=IR, 2=NVG
 	uint8 SensorPolarity  = 0;    // 0=white-hot, 1=black-hot (IR)
+
+	// Environment state for sensor effects (Phase 16K sun glint).
+	float SunElevationDeg = 45.0f; // degrees above horizon (negative = below)
+
+	// Atmospheric snapshot for Phase 18 sensor + KLV annotation.
+	float AtmosphericVisibilityM = 10000.0f; // metres (meteorological visibility)
+	float RelativeHumidity       = 0.5f;     // [0,1]
+	float AirTempCelsius         = 15.0f;    // degrees Celsius
+	float WeatherSeverity        = 0.0f;     // [0,1] — 0=clear, 1=severe
+	uint8 WeatherPrecipType      = 0;        // 0=none, 1=rain, 2=snow
 };
 
 /**
