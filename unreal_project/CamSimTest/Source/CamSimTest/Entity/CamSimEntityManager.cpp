@@ -354,6 +354,10 @@ void FCamSimEntityManager::PurgeStaleEntities()
 	}
 	for (uint16 Id : ToRemove)
 	{
+		if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
+		{
+			PM->OnEntityRemoved(Id);
+		}
 		EntityMap.Remove(Id);
 		LastPoseApplySeconds.Remove(Id);
 		LastScenarioUpdateSeconds.Remove(Id);

@@ -543,7 +543,7 @@ void ACamSimEnvironment::UpdateWeatherZone(uint16 RegionId, const FWeatherZonePa
 	}
 	// Zone not in runtime list — it may have a position configured in YAML.
 	// Ignore if not pre-configured (position-less zones cannot be blended).
-	UE_LOG(LogTemp, Verbose,
+	UE_LOG(LogCamSim, Verbose,
 		TEXT("ACamSimEnvironment: RegionId %d has no YAML position config — ignoring zone update."),
 		static_cast<int32>(RegionId));
 }

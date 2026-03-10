@@ -311,6 +311,12 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		Impl->QueryHandler->Tick(DeltaTime);
 	}
 
+	// Tick particle effect manager (Phase 18F/G/H/I)
+	if (Impl->ParticleManager)
+	{
+		Impl->ParticleManager->Tick(DeltaTime);
+	}
+
 	// Determine IG operating mode (Phase 12D):
 	// 0=Standby (no CIGI packets received yet), 1=Operate
 	if (Impl->IGMode == 0 && Impl->CigiReceiver && Impl->CigiReceiver->GetReceivedPacketCount() > 0)

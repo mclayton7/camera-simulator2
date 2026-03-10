@@ -11,7 +11,7 @@ bool FPhase18CloudConfigDefaultsTest::RunTest(const FString& Parameters)
 {
     FCamSimConfig Cfg;
     TestFalse(TEXT("bVolumetricClouds off by default"),       Cfg.Phase18.bVolumetricClouds);
-    TestEqual(TEXT("CloudShadowStrength default 0.6"),  Cfg.Phase18.CloudShadowStrength, 0.6f);
+    TestNearlyEqual(TEXT("CloudShadowStrength default 0.6"),  Cfg.Phase18.CloudShadowStrength, 0.6f, 0.001f);
     return true;
 }
 

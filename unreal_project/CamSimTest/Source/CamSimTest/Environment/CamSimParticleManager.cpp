@@ -29,7 +29,7 @@ void FCamSimParticleManager::Initialize(const FCamSimConfig& Config)
         UNiagaraSystem* A = LoadObject<UNiagaraSystem>(nullptr, *Path);
         if (!A)
         {
-            UE_LOG(LogTemp, Warning,
+            UE_LOG(LogCamSim, Warning,
                 TEXT("CamSimParticleManager: Niagara asset not found: '%s'. "
                      "Author it in the UE editor — see README Gotchas."), *Path);
         }
@@ -43,7 +43,7 @@ void FCamSimParticleManager::Initialize(const FCamSimConfig& Config)
     CraterMaterial = LoadObject<UMaterialInterface>(nullptr, *Config.Phase18.CraterDecalMaterial);
     if (!CraterMaterial)
     {
-        UE_LOG(LogTemp, Warning,
+        UE_LOG(LogCamSim, Warning,
             TEXT("CamSimParticleManager: Crater material not found: '%s'."),
             *Config.Phase18.CraterDecalMaterial);
     }
