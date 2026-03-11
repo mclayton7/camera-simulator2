@@ -30,3 +30,4 @@ unreal_project/CamSimTest/camsim_config.yaml
 
 # Local Unreal DDC/Zen cache rooted in repo by scripts/run.sh
 .cache/ue-ddc/
+.worktrees/
