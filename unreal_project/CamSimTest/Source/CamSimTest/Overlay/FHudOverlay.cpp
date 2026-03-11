@@ -210,7 +210,8 @@ void FHudOverlay::DrawClassificationBanner(TArray<FColor>& P, int32 W, int32 H) 
     FBitmapFont::FillRect(P, W, H, 0, H - BannerH, W, BannerH, Black);
 
     // Centered classification text
-    const ANSICHAR* Txt = TCHAR_TO_ANSI(*Config.ClassificationText);
+    auto TxtCast = StringCast<ANSICHAR>(*Config.ClassificationText);
+    const ANSICHAR* Txt = TxtCast.Get();
     const int32 TxtW = FBitmapFont::StringWidth(Txt, S);
     const int32 X = (W - TxtW) / 2;
 

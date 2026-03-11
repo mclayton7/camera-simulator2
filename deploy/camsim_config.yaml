@@ -490,7 +490,7 @@ phase18:
 #      CAMSIM_OVERLAY_FOV, CAMSIM_OVERLAY_SLANT_RANGE, CAMSIM_OVERLAY_TIMESTAMP,
 #      CAMSIM_OVERLAY_CLASS_BANNER, CAMSIM_OVERLAY_CLASS_TEXT
 overlay:
-  enabled: false            # master switch; set true for ISR output with HUD burn-in
+  enabled: true            # master switch; set true for ISR output with HUD burn-in
   crosshair: true           # 20A targeting reticle
   crosshair_style: mil_dot  # simple_cross | mil_dot | circle
   az_el_readout: true       # 20B gimbal azimuth/elevation (top-left)
