@@ -483,6 +483,24 @@ phase18:
   max_craters: 32
   crater_default_radius_m: 5.0
 
+# --- HUD/OSD Overlay (Phase 20) ---
+# Burn-in overlay for ISR display: reticle, telemetry readouts, classification banner.
+# Master switch enabled=false keeps frames clean for ML training.
+# Env: CAMSIM_OVERLAY_ENABLED, CAMSIM_OVERLAY_CROSSHAIR, CAMSIM_OVERLAY_AZEL,
+#      CAMSIM_OVERLAY_FOV, CAMSIM_OVERLAY_SLANT_RANGE, CAMSIM_OVERLAY_TIMESTAMP,
+#      CAMSIM_OVERLAY_CLASS_BANNER, CAMSIM_OVERLAY_CLASS_TEXT
+overlay:
+  enabled: false            # master switch; set true for ISR output with HUD burn-in
+  crosshair: true           # 20A targeting reticle
+  crosshair_style: mil_dot  # simple_cross | mil_dot | circle
+  az_el_readout: true       # 20B gimbal azimuth/elevation (top-left)
+  fov_indicator: true       # 20C FOV readout (top-right)
+  slant_range: true         # 20D slant range to target (bottom-left)
+  timestamp: true           # 20E DTG timestamp (bottom-center)
+  class_banner: true        # 20E classification banner (top/bottom bar)
+  classification_text: "UNCLASSIFIED"
+  text_scale: 2             # 1=5x7 native, 2=10x14 (recommended for 1080p)
+
 # --- Security Metadata (MISB ST 0102) ---
 # Embedded in every KLV packet as ST 0601 Tag 48.
 # Required for STANAG 4609 compliance even for unclassified output.

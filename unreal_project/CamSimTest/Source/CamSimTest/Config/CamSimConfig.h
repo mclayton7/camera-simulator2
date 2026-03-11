@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Sensor/SensorTypes.h"         // ESensorMode, sensor config structs
+#include "Overlay/FHudOverlay.h"        // FHudOverlayConfig, ECrosshairStyle
 
 /**
  * Runtime configuration for CamSim.
@@ -361,6 +362,9 @@ struct FCamSimConfig
 		float   CraterDefaultRadiusM    = 5.0f;
 	};
 	FPhase18Config Phase18;
+
+	// HUD/OSD overlay burn-in (Phase 20)
+	FHudOverlayConfig OverlayConfig;
 
 	// Phase 13C: set to true when config was loaded (or defaults are valid).
 	// Set to false only if YAML parsing fails AND no defaults are available.

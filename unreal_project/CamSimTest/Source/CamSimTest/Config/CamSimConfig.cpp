@@ -815,6 +815,37 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlFloat (P18, "crater_default_radius_m",     Cfg.Phase18.CraterDefaultRadiusM);
 		}
 
+		// Phase 20: overlay HUD/OSD
+		if (Root.has_child("overlay"))
+		{
+			ryml::ConstNodeRef Ov = Root["overlay"];
+			YamlBool  (Ov, "enabled",               Cfg.OverlayConfig.bEnabled);
+			YamlBool  (Ov, "crosshair",             Cfg.OverlayConfig.bCrosshair);
+			YamlBool  (Ov, "az_el_readout",         Cfg.OverlayConfig.bAzElReadout);
+			YamlBool  (Ov, "fov_indicator",         Cfg.OverlayConfig.bFovIndicator);
+			YamlBool  (Ov, "slant_range",           Cfg.OverlayConfig.bSlantRange);
+			YamlBool  (Ov, "timestamp",             Cfg.OverlayConfig.bTimestamp);
+			YamlBool  (Ov, "class_banner",          Cfg.OverlayConfig.bClassBanner);
+			{
+				int32 V = Cfg.OverlayConfig.TextScale;
+				if (YamlInt(Ov, "text_scale", V))
+				{
+					Cfg.OverlayConfig.TextScale = FMath::Clamp(V, 1, 4);
+				}
+			}
+			{
+				FString StyleStr;
+				if (YamlString(Ov, "crosshair_style", StyleStr))
+				{
+					StyleStr = StyleStr.TrimStartAndEnd().ToLower();
+					if      (StyleStr == TEXT("mil_dot")) Cfg.OverlayConfig.CrosshairStyle = ECrosshairStyle::MilDot;
+					else if (StyleStr == TEXT("circle"))  Cfg.OverlayConfig.CrosshairStyle = ECrosshairStyle::CircleCross;
+					else                                  Cfg.OverlayConfig.CrosshairStyle = ECrosshairStyle::SimpleCross;
+				}
+			}
+			YamlString(Ov, "classification_text", Cfg.OverlayConfig.ClassificationText);
+		}
+
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
 	}
 	else
@@ -981,6 +1012,19 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Phase18.FireComponentID       = GetEnvInt  (TEXT("CAMSIM_FIRE_COMPONENT_ID"),         Cfg.Phase18.FireComponentID);
 	Cfg.Phase18.CraterImpactComponentID = GetEnvInt(TEXT("CAMSIM_CRATER_IMPACT_COMPONENT_ID"),Cfg.Phase18.CraterImpactComponentID);
 	Cfg.Phase18.CraterDefaultRadiusM  = GetEnvFloat(TEXT("CAMSIM_CRATER_DEFAULT_RADIUS_M"),   Cfg.Phase18.CraterDefaultRadiusM);
+
+	// Phase 20: overlay HUD/OSD env var overrides
+	Cfg.OverlayConfig.bEnabled      = GetEnvInt(TEXT("CAMSIM_OVERLAY_ENABLED"),     Cfg.OverlayConfig.bEnabled     ? 1 : 0) != 0;
+	Cfg.OverlayConfig.bCrosshair    = GetEnvInt(TEXT("CAMSIM_OVERLAY_CROSSHAIR"),   Cfg.OverlayConfig.bCrosshair   ? 1 : 0) != 0;
+	Cfg.OverlayConfig.bAzElReadout  = GetEnvInt(TEXT("CAMSIM_OVERLAY_AZEL"),        Cfg.OverlayConfig.bAzElReadout ? 1 : 0) != 0;
+	Cfg.OverlayConfig.bFovIndicator = GetEnvInt(TEXT("CAMSIM_OVERLAY_FOV"),         Cfg.OverlayConfig.bFovIndicator? 1 : 0) != 0;
+	Cfg.OverlayConfig.bSlantRange   = GetEnvInt(TEXT("CAMSIM_OVERLAY_SLANT_RANGE"), Cfg.OverlayConfig.bSlantRange  ? 1 : 0) != 0;
+	Cfg.OverlayConfig.bTimestamp    = GetEnvInt(TEXT("CAMSIM_OVERLAY_TIMESTAMP"),   Cfg.OverlayConfig.bTimestamp   ? 1 : 0) != 0;
+	Cfg.OverlayConfig.bClassBanner  = GetEnvInt(TEXT("CAMSIM_OVERLAY_CLASS_BANNER"),Cfg.OverlayConfig.bClassBanner ? 1 : 0) != 0;
+	{
+		const FString ClassTxt = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_OVERLAY_CLASS_TEXT"));
+		if (!ClassTxt.IsEmpty()) Cfg.OverlayConfig.ClassificationText = ClassTxt;
+	}
 
 	if (Cfg.OutputViews.Num() > 0 && (bHasMulticastAddrEnv || bHasMulticastPortEnv))
 	{

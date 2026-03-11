@@ -193,8 +193,7 @@ void ACamSimCamera::BeginPlay()
 	// Phase 18: weather & atmospheric sensor effects
 	Pipeline->SetPhase18Config(Cfg.Phase18);
 
-	// TODO Task 8: Config.OverlayConfig will be added in config task
-	Pipeline->SetOverlayConfig(FHudOverlayConfig{});
+	Pipeline->SetOverlayConfig(Cfg.OverlayConfig);
 
 	SensorFX.Reset(Pipeline);
 
