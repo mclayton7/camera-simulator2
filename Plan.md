@@ -25,6 +25,7 @@ environmental effects, and interoperability — plus ML training data generation
 | 15    | Optical realism: motion blur, lens distortion, bloom, chromatic aberration, DoF                                                              | ✅ Done          |
 | 17*   | ML training data: depth maps (17A), 2D bboxes (17D), COCO JSONL (17G), VOC (17H)                                                             | ✅ Sprint 1 Done |
 | 18*   | Weather/atmosphere: second fog (18C), precipitation overlay (18D), god rays (18E), atmospheric scattering (18J), dynamic IR extinction (18K) | ✅ Sprint 1 Done |
+| 20*   | HUD/OSD: crosshair (20A), Az/El readout (20B), FOV indicator (20C), slant range (20D), timestamp/classification (20E), toggle (20I)        | ✅ Sprint 1 Done |
 
 ## CIGI 3.3 Packet Coverage
 
@@ -195,19 +196,30 @@ VRSG's 3D ocean and thousands-of-light-points system are distinctive features.
 
 Burned-in sensor display symbology matching real ISR platform output. VRSG ships 2D overlays for multiple UAV/RPA platforms.
 
-| Item                               | Description                                                              | Effort | VRSG Parity |
-| ---------------------------------- | ------------------------------------------------------------------------ | ------ | ----------- |
-| **20A** Crosshair/Reticle          | Configurable targeting crosshair at frame center (multiple styles)       | S      | ✓           |
-| **20B** Azimuth/Elevation Readout  | Numeric gimbal angles on-screen                                          | S      | ✓           |
-| **20C** FOV/Zoom Indicator         | Current zoom level / FOV arc display                                     | S      | ✓           |
-| **20D** Slant Range Display        | Computed range overlay from terrain LOS                                  | S      | ✓           |
-| **20E** Timestamp & Classification | UTC time + MISB ST 0102 classification banner                            | S      | ✓           |
-| **20F** Compass Rose               | Heading indicator on screen edge                                         | M      | ✓           |
-| **20G** Platform-Specific Presets  | Pre-built overlay layouts for MQ-9, MQ-1C, RQ-7B, etc.                   | M      | ✓           |
-| **20H** Configurable Layout        | YAML-driven symbology placement, font, color, per-element enable/disable | M      |             |
-| **20I** Symbology Toggle           | Config flag for clean frames (ML) vs overlay (ISR)                       | S      |             |
+| Item                               | Description                                                              | Effort | VRSG Parity | Status          |
+| ---------------------------------- | ------------------------------------------------------------------------ | ------ | ----------- | --------------- |
+| **20A** Crosshair/Reticle          | Configurable targeting crosshair at frame center (multiple styles)       | S      | ✓           | ✅ Sprint 1 Done |
+| **20B** Azimuth/Elevation Readout  | Numeric gimbal angles on-screen                                          | S      | ✓           | ✅ Sprint 1 Done |
+| **20C** FOV/Zoom Indicator         | Current zoom level / FOV arc display                                     | S      | ✓           | ✅ Sprint 1 Done |
+| **20D** Slant Range Display        | Computed range overlay from terrain LOS                                  | S      | ✓           | ✅ Sprint 1 Done |
+| **20E** Timestamp & Classification | UTC time + MISB ST 0102 classification banner                            | S      | ✓           | ✅ Sprint 1 Done |
+| **20F** Compass Rose               | Heading indicator on screen edge                                         | M      | ✓           |                 |
+| **20G** Platform-Specific Presets  | Pre-built overlay layouts for MQ-9, MQ-1C, RQ-7B, etc.                   | M      | ✓           |                 |
+| **20H** Configurable Layout        | YAML-driven symbology placement, font, color, per-element enable/disable | M      |             |                 |
+| **20I** Symbology Toggle           | Config flag for clean frames (ML) vs overlay (ISR)                       | S      |             | ✅ Sprint 1 Done |
 
-**Files**: new `Overlay/` module (UMG widgets or direct pixel draw before encode)
+**Sprint 1 status**: 20A–20E, 20I implemented.
+20F (Compass Rose), 20G (Platform Presets), 20H (Configurable Layout) remain for future sprints.
+
+**Sprint 1 files**:
+- `Overlay/FBitmapFont.h/.cpp` — 5×7 pixel font + drawing primitives (SetPixel, DrawHLine/VLine/Rect/FillRect, DrawString, DrawStringWithShadow)
+- `Overlay/FHudOverlay.h/.cpp` — crosshair (20A), Az/El readout (20B), FOV indicator (20C), slant range (20D), timestamp + classification banner (20E); master toggle (20I)
+- `Sensor/SensorPostProcess.h/.cpp` — FHudOverlay member + SetOverlayConfig(); Render() called last in Process()
+- `Config/CamSimConfig.h/.cpp` — FHudOverlayConfig field, overlay: YAML block, CAMSIM_OVERLAY_* env vars (all disabled by default)
+- `Camera/CamSimCamera.cpp` — SetOverlayConfig(Cfg.OverlayConfig) at BeginPlay
+- `deploy/camsim_config.yaml` — overlay: block (enabled: false default)
+- `Tests/OverlayTest.cpp` — 8 unit tests
+
 **Validation**: Visual comparison to real FLIR/L3Harris sensor display; symbology disabled = clean frame
 
 ---
