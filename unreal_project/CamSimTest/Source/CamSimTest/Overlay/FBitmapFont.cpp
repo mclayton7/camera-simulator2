@@ -251,5 +251,5 @@ int32 FBitmapFont::StringWidth(const ANSICHAR* Str, int32 Scale)
     {
         ++Count;
     }
-    return Count * CharStride * Scale;
+    return Count > 0 ? (Count * CharStride - CharSpacing) * Scale : 0;
 }
