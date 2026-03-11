@@ -397,6 +397,9 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 		else
 			FMemory::Memcpy(PreviousFrame.GetData(), Pixels.GetData(), Pixels.Num() * sizeof(FColor));
 	}
+
+	// Phase 20: HUD/OSD overlay (runs last, on top of all sensor effects)
+	HudOverlay.Render(Pixels, Width, Height, static_cast<uint8>(Mode), Telemetry, FrameIndex);
 }
 
 // ---------------------------------------------------------------------------

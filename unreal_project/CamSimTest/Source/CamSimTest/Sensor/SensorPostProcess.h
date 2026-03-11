@@ -7,6 +7,7 @@
 #include "Sensor/SensorTypes.h"    // ESensorMode, FSensorModeConfig
 #include "Sensor/IPixelPipeline.h" // IPixelPipeline
 #include "Config/CamSimConfig.h"   // FCamSimConfig::FPhase18Config
+#include "Overlay/FHudOverlay.h"   // FHudOverlay, FHudOverlayConfig
 
 // ---------------------------------------------------------------------------
 // FSensorPostProcess — CPU-side pixel pipeline applied after GPU readback
@@ -34,6 +35,12 @@ public:
 	 * Safe to call from game thread before each frame is submitted.
 	 */
 	void SetPhase18Config(const FCamSimConfig::FPhase18Config& Cfg);
+
+	/**
+	 * Apply Phase 20 HUD/OSD overlay config.
+	 * Safe to call from game thread before each frame is submitted.
+	 */
+	void SetOverlayConfig(const FHudOverlayConfig& Cfg) { HudOverlay.SetConfig(Cfg); }
 
 	/**
 	 * Apply the sensor pipeline in-place.
@@ -186,6 +193,10 @@ private:
 	// -- Phase 18: Weather, Atmosphere & Particle Effects --------------------
 
 	FCamSimConfig::FPhase18Config Phase18;
+
+	// -- Phase 20: HUD/OSD overlay -------------------------------------------
+
+	FHudOverlay HudOverlay;
 
 	/**
 	 * 18D: CPU precipitation overlay (rain streaks / snow flakes).
