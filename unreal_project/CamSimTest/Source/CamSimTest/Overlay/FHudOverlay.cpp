@@ -16,6 +16,12 @@ FColor FHudOverlay::TextColor(uint8 SensorMode) const
     }
 }
 
+FColor FHudOverlay::ResolveColor(const FHudElementConfig& E, uint8 SensorMode) const
+{
+    // Alpha=0 is sentinel for "use sensor-mode default"
+    return (E.Color.A > 0) ? E.Color : TextColor(SensorMode);
+}
+
 // ---------------------------------------------------------------------------
 // Render — master dispatcher
 // ---------------------------------------------------------------------------
@@ -28,12 +34,14 @@ void FHudOverlay::Render(TArray<FColor>& Pixels, int32 W, int32 H,
     if (Pixels.Num() != W * H) return;
     (void)FrameIdx;
 
-    if (Config.bClassBanner)  DrawClassificationBanner(Pixels, W, H);
-    if (Config.bCrosshair)    DrawCrosshair(Pixels, W, H, SensorMode);
-    if (Config.bAzElReadout)  DrawAzElReadout(Pixels, W, H, SensorMode, Telemetry);
-    if (Config.bFovIndicator) DrawFovIndicator(Pixels, W, H, SensorMode, Telemetry);
-    if (Config.bSlantRange)   DrawSlantRange(Pixels, W, H, SensorMode, Telemetry);
-    if (Config.bTimestamp)    DrawTimestamp(Pixels, W, H, SensorMode, Telemetry);
+    if (Config.ElementClassBanner.bEnabled)  DrawClassificationBanner(Pixels, W, H);
+    if (Config.ElementCrosshair.bEnabled)    DrawCrosshair(Pixels, W, H, SensorMode);
+    if (Config.ElementAzEl.bEnabled)         DrawAzElReadout(Pixels, W, H, SensorMode, Telemetry);
+    if (Config.ElementFov.bEnabled)          DrawFovIndicator(Pixels, W, H, SensorMode, Telemetry);
+    if (Config.ElementSlantRange.bEnabled)   DrawSlantRange(Pixels, W, H, SensorMode, Telemetry);
+    if (Config.ElementTimestamp.bEnabled)    DrawTimestamp(Pixels, W, H, SensorMode, Telemetry);
+    if (Config.ElementCompassRose.bEnabled)  DrawCompassRose(Pixels, W, H, SensorMode, Telemetry);
+    if (Config.ElementPlatformLabel.bEnabled) DrawPlatformLabel(Pixels, W, H, SensorMode);
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +52,7 @@ void FHudOverlay::DrawCrosshair(TArray<FColor>& P, int32 W, int32 H, uint8 Senso
 {
     const int32 CX = W / 2, CY = H / 2;
     const int32 ArmLen = 20, Gap = 4;
-    const FColor C = TextColor(SensorMode);
+    const FColor C = ResolveColor(Config.ElementCrosshair, SensorMode);
 
     FBitmapFont::DrawHLine(P, W, H, CX - ArmLen, CY, ArmLen - Gap, C);
     FBitmapFont::DrawHLine(P, W, H, CX + Gap + 1, CY, ArmLen - Gap, C);
@@ -89,19 +97,22 @@ void FHudOverlay::DrawCrosshair(TArray<FColor>& P, int32 W, int32 H, uint8 Senso
 void FHudOverlay::DrawAzElReadout(TArray<FColor>& P, int32 W, int32 H,
                                   uint8 SensorMode, const FCamSimTelemetry& T) const
 {
-    const FColor C = TextColor(SensorMode);
+    const FColor C = ResolveColor(Config.ElementAzEl, SensorMode);
     const int32 S = Config.TextScale;
     const int32 M = Config.EdgeMarginPx;
-    const int32 BannerH   = Config.bClassBanner ? FBitmapFont::GlyphH * S + 4 : 0;
-    const int32 TopY      = M + BannerH;
+    const int32 BannerH = Config.ElementClassBanner.bEnabled ? FBitmapFont::GlyphH * S + 4 : 0;
+    const int32 LineH   = (FBitmapFont::GlyphH + 2) * S;
+    const int32 DefaultX = M;
+    const int32 DefaultY = M + BannerH;
+    const int32 X = (Config.ElementAzEl.X >= 0) ? Config.ElementAzEl.X : DefaultX;
+    const int32 Y = (Config.ElementAzEl.Y >= 0) ? Config.ElementAzEl.Y : DefaultY;
 
     char Buf[32];
     FCStringAnsi::Snprintf(Buf, sizeof(Buf), "AZ: %+07.2f", (double)T.GimbalYaw);
-    FBitmapFont::DrawStringWithShadow(P, W, H, M, TopY, Buf, C, S);
+    FBitmapFont::DrawStringWithShadow(P, W, H, X, Y, Buf, C, S);
 
     FCStringAnsi::Snprintf(Buf, sizeof(Buf), "EL: %+07.2f", (double)T.GimbalPitch);
-    const int32 LineH = (FBitmapFont::GlyphH + 2) * S;
-    FBitmapFont::DrawStringWithShadow(P, W, H, M, TopY + LineH, Buf, C, S);
+    FBitmapFont::DrawStringWithShadow(P, W, H, X, Y + LineH, Buf, C, S);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,19 +122,21 @@ void FHudOverlay::DrawAzElReadout(TArray<FColor>& P, int32 W, int32 H,
 void FHudOverlay::DrawFovIndicator(TArray<FColor>& P, int32 W, int32 H,
                                    uint8 SensorMode, const FCamSimTelemetry& T) const
 {
-    const FColor C = TextColor(SensorMode);
+    const FColor C = ResolveColor(Config.ElementFov, SensorMode);
     const int32 S = Config.TextScale;
     const int32 M = Config.EdgeMarginPx;
-    const int32 BannerH = Config.bClassBanner ? FBitmapFont::GlyphH * S + 4 : 0;
-    const int32 TopY    = M + BannerH;
+    const int32 BannerH = Config.ElementClassBanner.bEnabled ? FBitmapFont::GlyphH * S + 4 : 0;
 
     char Buf[32];
     FCStringAnsi::Snprintf(Buf, sizeof(Buf), "FOV: %.1fx%.1f",
                            (double)T.HFovDeg, (double)T.VFovDeg);
 
-    const int32 TxtW = FBitmapFont::StringWidth(Buf, S);
-    const int32 X = W - M - TxtW;
-    FBitmapFont::DrawStringWithShadow(P, W, H, X, TopY, Buf, C, S);
+    const int32 TxtW    = FBitmapFont::StringWidth(Buf, S);
+    const int32 DefaultX = W - M - TxtW;
+    const int32 DefaultY = M + BannerH;
+    const int32 X = (Config.ElementFov.X >= 0) ? Config.ElementFov.X : DefaultX;
+    const int32 Y = (Config.ElementFov.Y >= 0) ? Config.ElementFov.Y : DefaultY;
+    FBitmapFont::DrawStringWithShadow(P, W, H, X, Y, Buf, C, S);
 }
 
 // ---------------------------------------------------------------------------
@@ -133,10 +146,10 @@ void FHudOverlay::DrawFovIndicator(TArray<FColor>& P, int32 W, int32 H,
 void FHudOverlay::DrawSlantRange(TArray<FColor>& P, int32 W, int32 H,
                                  uint8 SensorMode, const FCamSimTelemetry& T) const
 {
-    const FColor C = TextColor(SensorMode);
+    const FColor C = ResolveColor(Config.ElementSlantRange, SensorMode);
     const int32 S = Config.TextScale;
     const int32 M = Config.EdgeMarginPx;
-    const int32 BannerH  = Config.bClassBanner ? FBitmapFont::GlyphH * S + 4 : 0;
+    const int32 BannerH  = Config.ElementClassBanner.bEnabled ? FBitmapFont::GlyphH * S + 4 : 0;
 
     char Buf[32];
     if (T.SlantRangeM >= 1000.0)
@@ -144,8 +157,11 @@ void FHudOverlay::DrawSlantRange(TArray<FColor>& P, int32 W, int32 H,
     else
         FCStringAnsi::Snprintf(Buf, sizeof(Buf), "R: %.0fm", T.SlantRangeM);
 
-    const int32 Y = H - M - BannerH - FBitmapFont::GlyphH * S;
-    FBitmapFont::DrawStringWithShadow(P, W, H, M, Y, Buf, C, S);
+    const int32 DefaultX = M;
+    const int32 DefaultY = H - M - BannerH - FBitmapFont::GlyphH * S;
+    const int32 X = (Config.ElementSlantRange.X >= 0) ? Config.ElementSlantRange.X : DefaultX;
+    const int32 Y = (Config.ElementSlantRange.Y >= 0) ? Config.ElementSlantRange.Y : DefaultY;
+    FBitmapFont::DrawStringWithShadow(P, W, H, X, Y, Buf, C, S);
 }
 
 // ---------------------------------------------------------------------------
@@ -155,10 +171,10 @@ void FHudOverlay::DrawSlantRange(TArray<FColor>& P, int32 W, int32 H,
 void FHudOverlay::DrawTimestamp(TArray<FColor>& P, int32 W, int32 H,
                                 uint8 SensorMode, const FCamSimTelemetry& T) const
 {
-    const FColor C = TextColor(SensorMode);
+    const FColor C = ResolveColor(Config.ElementTimestamp, SensorMode);
     const int32 S = Config.TextScale;
     const int32 M = Config.EdgeMarginPx;
-    const int32 BannerH = Config.bClassBanner ? FBitmapFont::GlyphH * S + 4 : 0;
+    const int32 BannerH = Config.ElementClassBanner.bEnabled ? FBitmapFont::GlyphH * S + 4 : 0;
 
     const int64 TotalSec = (int64)(T.TimestampUs / 1000000ULL);
     const int32 Sec  = (int32)(TotalSec % 60);
@@ -189,9 +205,11 @@ void FHudOverlay::DrawTimestamp(TArray<FColor>& P, int32 W, int32 H,
     FCStringAnsi::Snprintf(Buf, sizeof(Buf), "%02d%02d%02dZ %02d%s%02d",
                            Hour, Min, Sec, Day, Mon, Yr2);
 
-    const int32 TxtW = FBitmapFont::StringWidth(Buf, S);
-    const int32 X = (W - TxtW) / 2;
-    const int32 Y = H - M - BannerH - FBitmapFont::GlyphH * S;
+    const int32 TxtW     = FBitmapFont::StringWidth(Buf, S);
+    const int32 DefaultX = (W - TxtW) / 2;
+    const int32 DefaultY = H - M - BannerH - FBitmapFont::GlyphH * S;
+    const int32 X = (Config.ElementTimestamp.X >= 0) ? Config.ElementTimestamp.X : DefaultX;
+    const int32 Y = (Config.ElementTimestamp.Y >= 0) ? Config.ElementTimestamp.Y : DefaultY;
     FBitmapFont::DrawStringWithShadow(P, W, H, X, Y, Buf, C, S);
 }
 
@@ -217,4 +235,34 @@ void FHudOverlay::DrawClassificationBanner(TArray<FColor>& P, int32 W, int32 H) 
 
     FBitmapFont::DrawString(P, W, H, X, 2,               Txt, Config.ClassificationColor, S);
     FBitmapFont::DrawString(P, W, H, X, H - BannerH + 2, Txt, Config.ClassificationColor, S);
+}
+
+// ---------------------------------------------------------------------------
+// LoadPreset (20G) — stub; full implementation in Task 8
+// ---------------------------------------------------------------------------
+
+bool FHudOverlay::LoadPreset(const FString& Name, FHudOverlayConfig& OutCfg)
+{
+    (void)Name; (void)OutCfg;
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// DrawCompassRose (20F) — stub; full implementation in Task 6
+// ---------------------------------------------------------------------------
+
+void FHudOverlay::DrawCompassRose(TArray<FColor>& P, int32 W, int32 H,
+                                  uint8 SensorMode, const FCamSimTelemetry& T) const
+{
+    (void)P; (void)W; (void)H; (void)SensorMode; (void)T;
+}
+
+// ---------------------------------------------------------------------------
+// DrawPlatformLabel (20G) — stub; full implementation in Task 8
+// ---------------------------------------------------------------------------
+
+void FHudOverlay::DrawPlatformLabel(TArray<FColor>& P, int32 W, int32 H,
+                                    uint8 SensorMode) const
+{
+    (void)P; (void)W; (void)H; (void)SensorMode;
 }
