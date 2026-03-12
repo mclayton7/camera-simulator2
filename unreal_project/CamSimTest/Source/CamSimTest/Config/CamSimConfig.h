@@ -363,6 +363,33 @@ struct FCamSimConfig
 	};
 	FPhase18Config Phase18;
 
+	/** Phase 19 — Ocean Core (19A–19D) */
+	struct FPhase19Config
+	{
+		// 19A Ocean surface
+		bool    bOceanEnabled        = false;
+		int32   BeaufortState        = 0;        // 0–12; used when no CIGI Wave Control arrives
+		float   WaveAmplitudeScale   = 1.0f;     // multiplier on top of Beaufort params
+		float   WaveFrequencyScale   = 1.0f;
+		float   WaveChoppiness       = 0.5f;     // 0 = sine, 1 = sharp Gerstner peaks
+		FString OceanMaterialPath    = TEXT("/Game/Materials/M_Ocean");
+
+		// 19B Vessel wakes
+		bool    bVesselWakesEnabled  = false;
+		FString NiagaraVesselWake    = TEXT("/Game/Effects/NS_VesselWake");
+		float   WakeFadeTime         = 8.0f;     // seconds before wake trail dissipates
+
+		// 19C Vessel surface motion
+		bool    bVesselMotionEnabled = false;
+		float   VesselMotionScale    = 1.0f;     // pitch/roll/heave amplitude multiplier
+
+		// 19D Reflections (SSR + SkyLight capture)
+		bool    bOceanReflectionsEnabled = false;
+		float   SSRIntensity             = 1.0f;
+		float   ReflectionCaptureRadius  = 10000.0f;  // UE units (cm)
+	};
+	FPhase19Config Phase19;
+
 	// HUD/OSD overlay burn-in (Phase 20)
 	FHudOverlayConfig OverlayConfig;
 
