@@ -6,6 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "CIGI/CigiPacketTypes.h"
 #include "Config/CamSimConfig.h"
+#include "Ocean/FOceanManager.h"
 #include "CamSimEnvironment.generated.h"
 
 class ADirectionalLight;
@@ -72,6 +73,9 @@ public:
 	/** Called from ACamSimCamera::Tick() to update camera position for zone blending (18L). */
 	void SetCameraPosition(double LatDeg, double LonDeg);
 
+	/** Called when celestial or weather state changes — refreshes sky reflection capture. */
+	void OnAtmosphereChanged();
+
 private:
 	// Cached UE environment actors (found via TActorIterator in BeginPlay)
 	UPROPERTY(Transient) TObjectPtr<ADirectionalLight>    SunLight;
@@ -100,6 +104,9 @@ private:
 
 	// Phase 18 config (copied from FCamSimConfig at BeginPlay)
 	FCamSimConfig::FPhase18Config Phase18Cfg;
+
+	// Phase 19 — Ocean
+	FOceanManager OceanManager;
 
 	// 18L: Weather zone blending
 	TArray<FWeatherZone>  ActiveWeatherZones;    // runtime zones (up to 16)
