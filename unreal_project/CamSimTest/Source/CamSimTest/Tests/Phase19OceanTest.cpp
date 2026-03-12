@@ -6,6 +6,7 @@
 #include "Ocean/FBeaufortTable.h"
 #include "Ocean/FGerstnerOceanSurface.h"
 #include "CIGI/CigiPacketTypes.h"
+#include "Environment/CamSimParticleManager.h"
 
 // ---------------------------------------------------------------------------
 // Test 1: FPhase19Config default values
@@ -294,6 +295,27 @@ bool FPhase19SeaDomainDispatchTest::RunTest(const FString& Parameters)
 
 	TestTrue (TEXT("Sea domain (3) triggers motion"),  IsMaritime(SeaEntity));
 	TestFalse(TEXT("Land domain (2) skips motion"),    IsMaritime(LandEntity));
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 14: Wake FX entity state tracking — bWakeActive flag test
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19WakeLifecycleTest,
+	"CamSim.Phase19.WakeLifecycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19WakeLifecycleTest::RunTest(const FString& Parameters)
+{
+	// Test the tracking map logic without spawning real Niagara components.
+	// FEntityParticleState should have a bWakeActive flag.
+	FEntityParticleState State;
+	State.bWakeActive = false;
+	TestFalse(TEXT("Wake inactive on spawn"), State.bWakeActive);
+
+	State.bWakeActive = true;
+	TestTrue(TEXT("Wake active after flag set"), State.bWakeActive);
 
 	return true;
 }

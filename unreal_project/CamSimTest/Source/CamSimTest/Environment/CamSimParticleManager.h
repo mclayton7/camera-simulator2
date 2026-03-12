@@ -25,6 +25,8 @@ struct FEntityParticleState
     bool               bSmokeActive   = false;
     bool               bFireActive    = false;
     bool               bContrailActive = false;
+	UNiagaraComponent* WakeComp    = nullptr;
+	bool               bWakeActive = false;
 };
 
 /**
@@ -53,6 +55,7 @@ public:
 
 private:
     void SpawnRotorWash(uint16 EntityID, AActor* Actor);
+    void SpawnWake(uint16 EntityID, AActor* Actor);
     void UpdateContrail(uint16 EntityID, AActor* Actor, float AltitudeM);
     void ActivateSmoke(uint16 EntityID, AActor* Actor);
     void ActivateFire(uint16 EntityID, AActor* Actor);
@@ -69,7 +72,11 @@ private:
     UNiagaraSystem*     SmokeAsset     = nullptr;
     UNiagaraSystem*     FireAsset      = nullptr;
     UNiagaraSystem*     ContrailAsset  = nullptr;
+    UNiagaraSystem*     WakeAsset                         = nullptr;
     UMaterialInterface* CraterMaterial = nullptr;
+
+    float               WakeFadeTime                      = 8.0f;
+    bool                Config_Phase19_VesselWakesEnabled = false;
 
     float ContrailAltM      = 8000.0f;
     int32 SmokeComponentID  = 1;
