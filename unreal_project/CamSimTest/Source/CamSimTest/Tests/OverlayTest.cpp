@@ -53,17 +53,19 @@ FCamSimTelemetry MakeTelemetry()
 FHudOverlay MakeOverlay(bool AllEnabled = true)
 {
     FHudOverlayConfig Cfg;
-    Cfg.bEnabled      = AllEnabled;
-    Cfg.bCrosshair    = AllEnabled;
-    Cfg.bAzElReadout  = AllEnabled;
-    Cfg.bFovIndicator = AllEnabled;
-    Cfg.bSlantRange   = AllEnabled;
-    Cfg.bTimestamp    = AllEnabled;
-    Cfg.bClassBanner  = AllEnabled;
-    Cfg.TextScale     = 1;
-    Cfg.EdgeMarginPx  = 5;
-    Cfg.ClassificationText  = TEXT("UNCLASSIFIED");
-    Cfg.ClassificationColor = FColor(0, 200, 0, 255);
+    Cfg.bEnabled                         = AllEnabled;
+    Cfg.ElementCrosshair.bEnabled        = AllEnabled;
+    Cfg.ElementAzEl.bEnabled             = AllEnabled;
+    Cfg.ElementFov.bEnabled              = AllEnabled;
+    Cfg.ElementSlantRange.bEnabled       = AllEnabled;
+    Cfg.ElementTimestamp.bEnabled        = AllEnabled;
+    Cfg.ElementClassBanner.bEnabled      = AllEnabled;
+    Cfg.ElementCompassRose.bEnabled      = false; // off by default in helper
+    Cfg.ElementPlatformLabel.bEnabled    = false;
+    Cfg.TextScale                        = 1;
+    Cfg.EdgeMarginPx                     = 5;
+    Cfg.ClassificationText               = TEXT("UNCLASSIFIED");
+    Cfg.ClassificationColor              = FColor(0, 200, 0, 255);
     FHudOverlay O;
     O.SetConfig(Cfg);
     return O;
@@ -112,13 +114,13 @@ bool FOverlayCrosshairAtCenterTest::RunTest(const FString& Parameters)
     TArray<FColor> F = BlackFrame();
 
     FHudOverlayConfig Cfg;
-    Cfg.bEnabled      = true;
-    Cfg.bCrosshair    = true;
-    Cfg.bAzElReadout  = false;
-    Cfg.bFovIndicator = false;
-    Cfg.bSlantRange   = false;
-    Cfg.bTimestamp    = false;
-    Cfg.bClassBanner  = false;
+    Cfg.bEnabled                         = true;
+    Cfg.ElementCrosshair.bEnabled        = true;
+    Cfg.ElementAzEl.bEnabled             = false;
+    Cfg.ElementFov.bEnabled              = false;
+    Cfg.ElementSlantRange.bEnabled       = false;
+    Cfg.ElementTimestamp.bEnabled        = false;
+    Cfg.ElementClassBanner.bEnabled      = false;
     Cfg.CrosshairStyle = ECrosshairStyle::SimpleCross;
     Cfg.TextScale     = 1;
     FHudOverlay O;
@@ -171,17 +173,17 @@ bool FOverlayClassificationBannerTopTest::RunTest(const FString& Parameters)
     TArray<FColor> F = BlackFrame();
 
     FHudOverlayConfig Cfg;
-    Cfg.bEnabled      = true;
-    Cfg.bCrosshair    = false;
-    Cfg.bAzElReadout  = false;
-    Cfg.bFovIndicator = false;
-    Cfg.bSlantRange   = false;
-    Cfg.bTimestamp    = false;
-    Cfg.bClassBanner  = true;
-    Cfg.TextScale     = 1;
-    Cfg.EdgeMarginPx  = 5;
-    Cfg.ClassificationText  = TEXT("UNCLASSIFIED");
-    Cfg.ClassificationColor = FColor(0, 200, 0, 255);
+    Cfg.bEnabled                         = true;
+    Cfg.ElementCrosshair.bEnabled        = false;
+    Cfg.ElementAzEl.bEnabled             = false;
+    Cfg.ElementFov.bEnabled              = false;
+    Cfg.ElementSlantRange.bEnabled       = false;
+    Cfg.ElementTimestamp.bEnabled        = false;
+    Cfg.ElementClassBanner.bEnabled      = true;
+    Cfg.TextScale                        = 1;
+    Cfg.EdgeMarginPx                     = 5;
+    Cfg.ClassificationText               = TEXT("UNCLASSIFIED");
+    Cfg.ClassificationColor              = FColor(0, 200, 0, 255);
     FHudOverlay O;
     O.SetConfig(Cfg);
 
@@ -206,15 +208,15 @@ bool FOverlayAzElRendersTopLeftTest::RunTest(const FString& Parameters)
     TArray<FColor> F = BlackFrame();
 
     FHudOverlayConfig Cfg;
-    Cfg.bEnabled      = true;
-    Cfg.bCrosshair    = false;
-    Cfg.bAzElReadout  = true;
-    Cfg.bFovIndicator = false;
-    Cfg.bSlantRange   = false;
-    Cfg.bTimestamp    = false;
-    Cfg.bClassBanner  = false;
-    Cfg.TextScale     = 1;
-    Cfg.EdgeMarginPx  = 5;
+    Cfg.bEnabled                         = true;
+    Cfg.ElementCrosshair.bEnabled        = false;
+    Cfg.ElementAzEl.bEnabled             = true;
+    Cfg.ElementFov.bEnabled              = false;
+    Cfg.ElementSlantRange.bEnabled       = false;
+    Cfg.ElementTimestamp.bEnabled        = false;
+    Cfg.ElementClassBanner.bEnabled      = false;
+    Cfg.TextScale                        = 1;
+    Cfg.EdgeMarginPx                     = 5;
     FHudOverlay O;
     O.SetConfig(Cfg);
 
@@ -239,15 +241,15 @@ bool FOverlayFovIndicatorTopRightTest::RunTest(const FString& Parameters)
     TArray<FColor> F = BlackFrame();
 
     FHudOverlayConfig Cfg;
-    Cfg.bEnabled      = true;
-    Cfg.bCrosshair    = false;
-    Cfg.bAzElReadout  = false;
-    Cfg.bFovIndicator = true;
-    Cfg.bSlantRange   = false;
-    Cfg.bTimestamp    = false;
-    Cfg.bClassBanner  = false;
-    Cfg.TextScale     = 1;
-    Cfg.EdgeMarginPx  = 5;
+    Cfg.bEnabled                         = true;
+    Cfg.ElementCrosshair.bEnabled        = false;
+    Cfg.ElementAzEl.bEnabled             = false;
+    Cfg.ElementFov.bEnabled              = true;
+    Cfg.ElementSlantRange.bEnabled       = false;
+    Cfg.ElementTimestamp.bEnabled        = false;
+    Cfg.ElementClassBanner.bEnabled      = false;
+    Cfg.TextScale                        = 1;
+    Cfg.EdgeMarginPx                     = 5;
     FHudOverlay O;
     O.SetConfig(Cfg);
 
@@ -272,15 +274,15 @@ bool FOverlaySlantRangeFormatsKmTest::RunTest(const FString& Parameters)
     TArray<FColor> F = BlackFrame();
 
     FHudOverlayConfig Cfg;
-    Cfg.bEnabled      = true;
-    Cfg.bCrosshair    = false;
-    Cfg.bAzElReadout  = false;
-    Cfg.bFovIndicator = false;
-    Cfg.bSlantRange   = true;
-    Cfg.bTimestamp    = false;
-    Cfg.bClassBanner  = false;
-    Cfg.TextScale     = 1;
-    Cfg.EdgeMarginPx  = 5;
+    Cfg.bEnabled                         = true;
+    Cfg.ElementCrosshair.bEnabled        = false;
+    Cfg.ElementAzEl.bEnabled             = false;
+    Cfg.ElementFov.bEnabled              = false;
+    Cfg.ElementSlantRange.bEnabled       = true;
+    Cfg.ElementTimestamp.bEnabled        = false;
+    Cfg.ElementClassBanner.bEnabled      = false;
+    Cfg.TextScale                        = 1;
+    Cfg.EdgeMarginPx                     = 5;
     FHudOverlay O;
     O.SetConfig(Cfg);
 
