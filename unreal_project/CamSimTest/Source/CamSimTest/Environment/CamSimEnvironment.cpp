@@ -214,7 +214,7 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 	// Phase 19 — drain CIGI Wave Control queue
 	{
 		FCigiWaveState WaveState;
-		while (Subsystem->GetCigiReceiver()->DequeueWaveState(WaveState))
+		while (Receiver->DequeueWaveState(WaveState))
 		{
 			OceanManager.ApplyWaveState(WaveState);
 		}

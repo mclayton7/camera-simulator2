@@ -49,9 +49,10 @@ public:
 
 private:
 	// Non-owning — GC managed by ACamSimEnvironment (the outer actor)
-	UStaticMeshComponent*       OceanMesh   = nullptr;
-	USkyLightComponent*         OceanSky    = nullptr;
-	UMaterialParameterCollection* MPCInstance = nullptr;
+	UStaticMeshComponent*         OceanMesh = nullptr;
+	USkyLightComponent*           OceanSky  = nullptr;
+	UMaterialParameterCollection* MPC       = nullptr;
+	UWorld*                       World     = nullptr;
 
 	// Wave state (CPU mirror of GPU MPC values)
 	float AmplitudeCm  = 0.0f;  // half peak-to-trough in UE units (cm)

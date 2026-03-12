@@ -16,13 +16,15 @@ void FGerstnerOceanSurface::Init(const FString& MaterialPath,
 	OceanMesh = InOceanMesh;
 	OceanSky  = InOceanSky;
 
+	World = InWorld;
+
 	if (!MaterialPath.IsEmpty())
 	{
-		UMaterialParameterCollection* MPC = LoadObject<UMaterialParameterCollection>(
+		UMaterialParameterCollection* LoadedMPC = LoadObject<UMaterialParameterCollection>(
 			nullptr, *MaterialPath);
-		if (MPC && InWorld)
+		if (LoadedMPC && InWorld)
 		{
-			MPCInstance = MPC;
+			MPC = LoadedMPC;
 		}
 	}
 }
@@ -102,10 +104,10 @@ void FGerstnerOceanSurface::RepositionToCamera(const FVector& CameraWorldLocatio
 
 void FGerstnerOceanSurface::WriteMPC() const
 {
-	if (!MPCInstance) return;
+	if (!MPC || !World) return;
 
-	MPCInstance->SetScalarParameterValue(FName("Amplitude"),  AmplitudeCm);
-	MPCInstance->SetScalarParameterValue(FName("Frequency"),  WaveNumber);
-	MPCInstance->SetScalarParameterValue(FName("Choppiness"), Choppiness_);
-	MPCInstance->SetScalarParameterValue(FName("Time"),       ElapsedTime);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, FName("Amplitude"),  AmplitudeCm);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, FName("Frequency"),  WaveNumber);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, FName("Choppiness"), Choppiness_);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, FName("Time"),       ElapsedTime);
 }

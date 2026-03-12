@@ -92,19 +92,6 @@ void FCamSimParticleManager::OnEntityRemoved(uint16 EntityID)
     if (FEntityParticleState* PS = EntityParticles.Find(EntityID))
     {
         DetachAll(*PS);
-
-		// 19B: Remove wake FX
-		if (FEntityParticleState* PSWake = EntityParticles.Find(EntityID))
-		{
-			if (PSWake->WakeComp)
-			{
-				PSWake->WakeComp->DeactivateImmediate();
-				PSWake->WakeComp->DestroyComponent();
-				PSWake->WakeComp    = nullptr;
-				PSWake->bWakeActive = false;
-			}
-		}
-
         EntityParticles.Remove(EntityID);
     }
 }
@@ -244,7 +231,9 @@ void FCamSimParticleManager::DetachAll(FEntityParticleState& PS)
     Destroy(PS.SmokeComp);
     Destroy(PS.FireComp);
     Destroy(PS.ContrailComp);
+    Destroy(PS.WakeComp);
     PS.bSmokeActive    = false;
     PS.bFireActive     = false;
     PS.bContrailActive = false;
+    PS.bWakeActive     = false;
 }
