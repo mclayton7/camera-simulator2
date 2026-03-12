@@ -97,6 +97,9 @@ public:
 
 #undef CAMSIM_DEQUEUE
 
+	/** Dequeue a wave control state for ocean surface update. Returns false when queue is empty. */
+	bool DequeueWaveState(FCigiWaveState& OutState) { return WaveStateQueue.Dequeue(OutState); }
+
 	// FRunnable interface
 	virtual bool   Init() override;
 	virtual uint32 Run() override;
@@ -115,6 +118,7 @@ private:
 	friend class FLosSegReqProcessor;
 	friend class FLosVectReqProcessor;
 	friend class FIGCtrlProcessor;
+	friend class FWaveCtrlProcessor;
 
 	// CigiRawParse needs queue access for direct env packet parsing
 	// (bypasses CCL's hold mechanism for celestial/atmos/weather packets)
@@ -146,6 +150,7 @@ private:
 	TSpscQueue<FCigiHatHotRequest>    HatHotReqQueue;      // opcode 24 (FCigiQueryHandler)
 	TSpscQueue<FCigiLosSegRequest>    LosSegReqQueue;      // opcode 25 (FCigiQueryHandler)
 	TSpscQueue<FCigiLosVectRequest>   LosVectReqQueue;     // opcode 26 (FCigiQueryHandler)
+	TSpscQueue<FCigiWaveState>        WaveStateQueue;      // opcode 14 (FOceanManager)
 
 	// CCL session objects — session owns InMsg; we hold a non-owning pointer to it
 	TUniquePtr<CigiIGSession> CigiSession;
@@ -164,6 +169,7 @@ private:
 	TUniquePtr<CigiBaseEventProcessor> LosSegReqProc;
 	TUniquePtr<CigiBaseEventProcessor> LosVectReqProc;
 	TUniquePtr<CigiBaseEventProcessor> IGCtrlProc;
+	TUniquePtr<CigiBaseEventProcessor> WaveCtrlProc;
 
 	bool CreateSocket();
 

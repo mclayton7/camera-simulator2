@@ -284,3 +284,13 @@ struct FCigiWeatherState
 	float  VertWindSp    = 0.0f;   // m/s
 	float  WindDir       = 0.0f;   // degrees from north [0,360)
 };
+
+/** CIGI Wave Control (opcode 14) — ocean wave parameters from CIGI host. */
+struct FCigiWaveState
+{
+	uint8 WaveID   = 0;
+	bool  bEnabled = false;
+	float WaveHtM  = 0.0f;  // wave height, metres  (CigiBaseWaveCtrl::GetWaveHt())
+	float WaveLenM = 0.0f;  // wave length, metres  (CigiBaseWaveCtrl::GetWaveLen())
+	float PeriodS  = 0.0f;  // wave period, seconds (CigiBaseWaveCtrl::GetPeriod()) — informational
+};

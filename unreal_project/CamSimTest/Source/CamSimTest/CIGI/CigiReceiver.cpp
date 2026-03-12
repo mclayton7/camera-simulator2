@@ -25,6 +25,7 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiLosSegReqV3.h"     // opcode 25
 #include "cigicl/CigiLosVectReqV3.h"    // opcode 26
 #include "cigicl/CigiIGCtrlV3.h"       // opcode 1 (IG Control — host frame counter)
+#include "cigicl/CigiWaveCtrlV3.h"     // opcode 14 (Wave Control — ocean waves)
 // CigiCelestialCtrl.h, CigiAtmosCtrl.h, CigiWeatherCtrlV3.h are NOT included
 // here — we parse those packet types directly from raw bytes in
 // FCigiRawEnvParser to bypass CCL's CigiHoldEnvCtrl merge mechanism.
@@ -446,6 +447,31 @@ static void PreParseEnvPackets(const uint8* Buf, int32 Len, FCigiReceiver* Recei
 
 }; // class FCigiRawEnvParser
 
+// ---------------------------------------------------------------------------
+// Wave Control (opcode 14)
+// ---------------------------------------------------------------------------
+class FWaveCtrlProcessor : public CigiBaseEventProcessor
+{
+	FCigiReceiver* Receiver;
+public:
+	explicit FWaveCtrlProcessor(FCigiReceiver* R) : Receiver(R) {}
+
+	void OnPacketReceived(CigiBasePacket* Packet) override
+	{
+		auto* Pkt = static_cast<CigiWaveCtrlV3*>(Packet);
+		if (!Receiver || !Pkt) return;
+
+		FCigiWaveState State;
+		State.WaveID   = static_cast<uint8>(Pkt->GetWaveID());
+		State.bEnabled = Pkt->GetWaveEn();
+		State.WaveHtM  = static_cast<float>(Pkt->GetWaveHt());
+		State.WaveLenM = static_cast<float>(Pkt->GetWaveLen());
+		State.PeriodS  = static_cast<float>(Pkt->GetPeriod());
+
+		Receiver->WaveStateQueue.Enqueue(State);
+	}
+};
+
 // -------------------------------------------------------------------------
 // Constructor / Destructor
 // -------------------------------------------------------------------------
@@ -591,6 +617,10 @@ bool FCigiReceiver::Init()
 	IncomingMsg->RegisterEventProcessor(
 		CIGI_IG_CTRL_PACKET_ID_V3, IGCtrlProc.Get());
 
+	WaveCtrlProc = MakeUnique<FWaveCtrlProcessor>(this);
+	IncomingMsg->RegisterEventProcessor(CIGI_WAVE_CTRL_PACKET_ID_V3,
+	                                     WaveCtrlProc.Get());
+
 	// Note: Celestial (9), Atmosphere (10), and Weather (12) packets are parsed
 	// directly from the raw buffer in Run() via CigiRawParse::PreParseEnvPackets(),
 	// bypassing CCL's CigiHoldEnvCtrl merge mechanism which prevents reliable
@@ -731,6 +761,7 @@ void FCigiReceiver::Exit()
 	Unreg(LosSegReqProc,   CIGI_LOS_SEG_REQ_PACKET_ID_V3);
 	Unreg(LosVectReqProc,  CIGI_LOS_VECT_REQ_PACKET_ID_V3);
 	Unreg(IGCtrlProc,      CIGI_IG_CTRL_PACKET_ID_V3);
+	Unreg(WaveCtrlProc,   CIGI_WAVE_CTRL_PACKET_ID_V3);
 
 	IncomingMsg = nullptr;   // non-owning; session owns and will destroy it
 	CigiSession.Reset();
