@@ -365,3 +365,115 @@ bool FOverlayPerElementColorOverrideTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Az/El element renders in explicit red color override"), bFoundRed);
     return true;
 }
+
+// -------------------------------------------------------------------------
+// Test 10: Compass rose renders pixels in bottom-center region
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverlayCompassRoseRendersAtBottomTest,
+    "CamSim.Overlay.CompassRoseRendersAtBottom",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FOverlayCompassRoseRendersAtBottomTest::RunTest(const FString& Parameters)
+{
+    TArray<FColor> F = BlackFrame();
+
+    FHudOverlayConfig Cfg;
+    Cfg.bEnabled                        = true;
+    Cfg.ElementCrosshair.bEnabled       = false;
+    Cfg.ElementAzEl.bEnabled            = false;
+    Cfg.ElementFov.bEnabled             = false;
+    Cfg.ElementSlantRange.bEnabled      = false;
+    Cfg.ElementTimestamp.bEnabled       = false;
+    Cfg.ElementClassBanner.bEnabled     = false;
+    Cfg.ElementCompassRose.bEnabled     = true;
+    Cfg.ElementPlatformLabel.bEnabled   = false;
+    Cfg.TextScale                       = 1;
+    Cfg.EdgeMarginPx                    = 5;
+    FHudOverlay O;
+    O.SetConfig(Cfg);
+
+    FCamSimTelemetry T = MakeTelemetry();
+    T.Yaw = 90.0f; // heading East
+    O.Render(F, TW, TH, 0, T, 0);
+
+    // Tape horizontal line should be in bottom quarter of frame, centered
+    TestTrue(TEXT("Compass rose has pixels in bottom-center region"),
+             HasNonBlackPixel(F, TW / 4, TH * 3 / 4, TW / 2, TH / 4));
+    return true;
+}
+
+// -------------------------------------------------------------------------
+// Test 11: Compass rose North label visible when heading = 0
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverlayCompassRoseNorthLabelTest,
+    "CamSim.Overlay.CompassRoseNorthLabel",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FOverlayCompassRoseNorthLabelTest::RunTest(const FString& Parameters)
+{
+    TArray<FColor> F = BlackFrame();
+
+    FHudOverlayConfig Cfg;
+    Cfg.bEnabled                      = true;
+    Cfg.ElementCrosshair.bEnabled     = false;
+    Cfg.ElementAzEl.bEnabled          = false;
+    Cfg.ElementFov.bEnabled           = false;
+    Cfg.ElementSlantRange.bEnabled    = false;
+    Cfg.ElementTimestamp.bEnabled     = false;
+    Cfg.ElementClassBanner.bEnabled   = false;
+    Cfg.ElementCompassRose.bEnabled   = true;
+    Cfg.ElementPlatformLabel.bEnabled = false;
+    Cfg.TextScale                     = 1;
+    Cfg.EdgeMarginPx                  = 5;
+    FHudOverlay O;
+    O.SetConfig(Cfg);
+
+    FCamSimTelemetry T = MakeTelemetry();
+    T.Yaw = 0.0f; // heading North — N label should appear at center tick
+    O.Render(F, TW, TH, 0, T, 0);
+
+    // N label is 1 character wide (5px glyph) centered above center tick (TW/2)
+    // Check a wider window above the tape region to account for label offset
+    TestTrue(TEXT("'N' label pixels visible above center tick when heading=0"),
+             HasNonBlackPixel(F, TW / 2 - 10, TH * 3 / 4, 20, TH / 8));
+    return true;
+}
+
+// -------------------------------------------------------------------------
+// Test 12: Compass rose wraps through 360°/0° without crash
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverlayCompassRoseWrapTest,
+    "CamSim.Overlay.CompassRoseWrapThrough360",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FOverlayCompassRoseWrapTest::RunTest(const FString& Parameters)
+{
+    TArray<FColor> F = BlackFrame();
+
+    FHudOverlayConfig Cfg;
+    Cfg.bEnabled                      = true;
+    Cfg.ElementCrosshair.bEnabled     = false;
+    Cfg.ElementAzEl.bEnabled          = false;
+    Cfg.ElementFov.bEnabled           = false;
+    Cfg.ElementSlantRange.bEnabled    = false;
+    Cfg.ElementTimestamp.bEnabled     = false;
+    Cfg.ElementClassBanner.bEnabled   = false;
+    Cfg.ElementCompassRose.bEnabled   = true;
+    Cfg.ElementPlatformLabel.bEnabled = false;
+    Cfg.TextScale                     = 1;
+    Cfg.EdgeMarginPx                  = 5;
+    FHudOverlay O;
+    O.SetConfig(Cfg);
+
+    FCamSimTelemetry T = MakeTelemetry();
+    T.Yaw = 355.0f; // wraps through N — 5° tick visible left of center, N visible right
+    O.Render(F, TW, TH, 0, T, 0);
+
+    // Frame buffer must be valid size and contain tape pixels
+    TestEqual(TEXT("Frame buffer unchanged size"), F.Num(), TW * TH);
+    TestTrue(TEXT("Tape pixels exist in bottom half"), HasNonBlackPixel(F, 0, TH / 2, TW, TH / 2));
+    return true;
+}
