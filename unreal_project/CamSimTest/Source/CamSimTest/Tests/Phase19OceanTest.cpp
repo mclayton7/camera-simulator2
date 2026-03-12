@@ -3,6 +3,9 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
+#include "Ocean/FBeaufortTable.h"
+#include "Ocean/FGerstnerOceanSurface.h"
+#include "CIGI/CigiPacketTypes.h"
 
 // ---------------------------------------------------------------------------
 // Test 1: FPhase19Config default values
@@ -102,5 +105,168 @@ bool FPhase19EnvAmpScaleTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Env var sets WaveAmplitudeScale to 2.5"), Cfg.Phase19.WaveAmplitudeScale, 2.5f);
 
 	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_OCEAN_AMP_SCALE"), TEXT(""));
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 5: Beaufort 0 → flat sea
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19Beaufort0Test,
+	"CamSim.Phase19.Beaufort0Flat",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19Beaufort0Test::RunTest(const FString& Parameters)
+{
+	const FBeaufortEntry E = FBeaufortTable::Sample(0);
+	TestEqual(TEXT("Beaufort 0 WaveHt"),  E.WaveHtM,    0.0f);
+	TestEqual(TEXT("Beaufort 0 WaveLen"), E.WaveLenM,   0.0f);
+	TestEqual(TEXT("Beaufort 0 Chop"),    E.Choppiness, 0.0f);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 6: Beaufort 6 → correct table values
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19Beaufort6Test,
+	"CamSim.Phase19.Beaufort6Values",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19Beaufort6Test::RunTest(const FString& Parameters)
+{
+	const FBeaufortEntry E = FBeaufortTable::Sample(6);
+	TestEqual(TEXT("Beaufort 6 WaveHt"),  E.WaveHtM,    2.5f);
+	TestEqual(TEXT("Beaufort 6 WaveLen"), E.WaveLenM,  70.0f);
+	TestEqual(TEXT("Beaufort 6 Chop"),    E.Choppiness, 0.6f);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 7: Beaufort 12 → clamped to max
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19Beaufort12Test,
+	"CamSim.Phase19.Beaufort12Max",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19Beaufort12Test::RunTest(const FString& Parameters)
+{
+	const FBeaufortEntry E12  = FBeaufortTable::Sample(12);
+	const FBeaufortEntry E100 = FBeaufortTable::Sample(100); // clamped
+	TestEqual(TEXT("WaveHt 12"),    E12.WaveHtM,     14.0f);
+	TestEqual(TEXT("WaveHt clamp"), E100.WaveHtM,    E12.WaveHtM);
+	TestEqual(TEXT("WaveLen clamp"),E100.WaveLenM,   E12.WaveLenM);
+	TestEqual(TEXT("Chop clamp"),   E100.Choppiness, E12.Choppiness);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 8: Beaufort 5 → linearly interpolated
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19Beaufort5InterpolTest,
+	"CamSim.Phase19.Beaufort5Interp",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19Beaufort5InterpolTest::RunTest(const FString& Parameters)
+{
+	const FBeaufortEntry E4 = FBeaufortTable::Sample(4);
+	const FBeaufortEntry E5 = FBeaufortTable::Sample(5);
+	const FBeaufortEntry E6 = FBeaufortTable::Sample(6);
+
+	// E5 should be between E4 and E6
+	TestTrue(TEXT("WaveHt 5 between 4 and 6"),
+		E5.WaveHtM >= E4.WaveHtM && E5.WaveHtM <= E6.WaveHtM);
+	TestTrue(TEXT("WaveLen 5 between 4 and 6"),
+		E5.WaveLenM >= E4.WaveLenM && E5.WaveLenM <= E6.WaveLenM);
+
+	// Beaufort 5.0: Lo=5, Hi=6, T=0.0 → exactly Entries[5]
+	TestEqual(TEXT("WaveHt 5 exact"), E5.WaveHtM, 1.5f);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: FCigiWaveState fields from opcode 14 struct
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19CigiWaveStateTest,
+	"CamSim.Phase19.CigiWaveState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19CigiWaveStateTest::RunTest(const FString& Parameters)
+{
+	FCigiWaveState S;
+	S.WaveID   = 2;
+	S.bEnabled = true;
+	S.WaveHtM  = 3.5f;
+	S.WaveLenM = 80.0f;
+	S.PeriodS  = 7.2f;
+
+	TestEqual(TEXT("WaveID"),   (int32)S.WaveID,  2);
+	TestTrue (TEXT("Enabled"),  S.bEnabled);
+	TestEqual(TEXT("WaveHtM"),  S.WaveHtM,   3.5f);
+	TestEqual(TEXT("WaveLenM"), S.WaveLenM, 80.0f);
+	TestEqual(TEXT("PeriodS"),  S.PeriodS,   7.2f);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: CIGI WaveHtM > 0 → SetWaveParams uses it directly, no Beaufort conversion
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19CigiWaveOverrideTest,
+	"CamSim.Phase19.CigiWaveOverride",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19CigiWaveOverrideTest::RunTest(const FString& Parameters)
+{
+	FGerstnerOceanSurface Ocean;
+	// Set Beaufort 6 first (WaveHt=2.5)
+	const FBeaufortEntry B6 = FBeaufortTable::Sample(6);
+	Ocean.SetWaveParams(B6.WaveHtM, B6.WaveLenM, 1.0f, 1.0f, B6.Choppiness);
+	// Now override with CIGI values
+	Ocean.SetWaveParams(5.0f, 120.0f, 1.0f, 1.0f, 0.7f);
+
+	// At t=0, X=0: height = A*cos(0) = A = WaveHt * 100 * 0.5 = 250 cm
+	const float H = Ocean.GetSurfaceHeightAt(FVector2D(0.0f, 0.0f));
+	TestTrue(TEXT("Height reflects CIGI WaveHt, not Beaufort 6"),
+		FMath::IsNearlyEqual(H, 250.0f, 1.0f));
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 11: GetSurfaceHeightAt() returns 0 at Beaufort 0
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19HeightFlatTest,
+	"CamSim.Phase19.HeightFlat",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19HeightFlatTest::RunTest(const FString& Parameters)
+{
+	FGerstnerOceanSurface Ocean;
+	const FBeaufortEntry B0 = FBeaufortTable::Sample(0);
+	Ocean.SetWaveParams(B0.WaveHtM, B0.WaveLenM, 1.0f, 1.0f, B0.Choppiness);
+
+	TestEqual(TEXT("Height 0 at Beaufort 0"),
+		Ocean.GetSurfaceHeightAt(FVector2D(0.0f, 0.0f)), 0.0f);
+	TestEqual(TEXT("Height 0 at Beaufort 0 far"),
+		Ocean.GetSurfaceHeightAt(FVector2D(100000.0f, 0.0f)), 0.0f);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 12: GetSurfaceHeightAt() returns non-zero at Beaufort 6
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19HeightNonZeroTest,
+	"CamSim.Phase19.HeightNonZero",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19HeightNonZeroTest::RunTest(const FString& Parameters)
+{
+	FGerstnerOceanSurface Ocean;
+	const FBeaufortEntry B6 = FBeaufortTable::Sample(6);
+	Ocean.SetWaveParams(B6.WaveHtM, B6.WaveLenM, 1.0f, 1.0f, B6.Choppiness);
+
+	// At X=0, t=0: height = A * cos(0) = A > 0
+	const float H = Ocean.GetSurfaceHeightAt(FVector2D(0.0f, 0.0f));
+	TestTrue(TEXT("Height > 0 at Beaufort 6 crest"), H > 0.0f);
+
+	// Expected: A = 2.5m * 100 * 0.5 = 125 cm
+	TestTrue(TEXT("Height ≈ 125 cm at crest"), FMath::IsNearlyEqual(H, 125.0f, 1.0f));
 	return true;
 }
