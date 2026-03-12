@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 #include "Overlay/FHudOverlay.h"
 #include "Metadata/KlvBuilder.h"
+#include "CamSimTest.h"
 
 // ---------------------------------------------------------------------------
 // TextColor
@@ -243,7 +244,61 @@ void FHudOverlay::DrawClassificationBanner(TArray<FColor>& P, int32 W, int32 H) 
 
 bool FHudOverlay::LoadPreset(const FString& Name, FHudOverlayConfig& OutCfg)
 {
-    (void)Name; (void)OutCfg;
+    const FString N = Name.TrimStartAndEnd().ToLower();
+
+    if (N == TEXT("mq9"))
+    {
+        OutCfg.bEnabled                         = true;
+        OutCfg.TextScale                        = 2;
+        OutCfg.EdgeMarginPx                     = 10;
+        OutCfg.CrosshairStyle                   = ECrosshairStyle::MilDot;
+        OutCfg.ElementCrosshair.bEnabled        = true;
+        OutCfg.ElementAzEl.bEnabled             = true;
+        OutCfg.ElementFov.bEnabled              = true;
+        OutCfg.ElementSlantRange.bEnabled       = true;
+        OutCfg.ElementTimestamp.bEnabled        = true;
+        OutCfg.ElementClassBanner.bEnabled      = true;
+        OutCfg.ElementCompassRose.bEnabled      = true;
+        OutCfg.PlatformLabelText                = TEXT("MQ-9");
+        OutCfg.ElementPlatformLabel.bEnabled    = true;
+        return true;
+    }
+    if (N == TEXT("mq1c"))
+    {
+        OutCfg.bEnabled                         = true;
+        OutCfg.TextScale                        = 2;
+        OutCfg.EdgeMarginPx                     = 8;
+        OutCfg.CrosshairStyle                   = ECrosshairStyle::MilDot;
+        OutCfg.ElementCrosshair.bEnabled        = true;
+        OutCfg.ElementAzEl.bEnabled             = true;
+        OutCfg.ElementFov.bEnabled              = true;
+        OutCfg.ElementSlantRange.bEnabled       = true;
+        OutCfg.ElementTimestamp.bEnabled        = true;
+        OutCfg.ElementClassBanner.bEnabled      = true;
+        OutCfg.ElementCompassRose.bEnabled      = true;
+        OutCfg.PlatformLabelText                = TEXT("MQ-1C");
+        OutCfg.ElementPlatformLabel.bEnabled    = true;
+        return true;
+    }
+    if (N == TEXT("rq7b"))
+    {
+        OutCfg.bEnabled                         = true;
+        OutCfg.TextScale                        = 1;
+        OutCfg.EdgeMarginPx                     = 5;
+        OutCfg.CrosshairStyle                   = ECrosshairStyle::SimpleCross;
+        OutCfg.ElementCrosshair.bEnabled        = true;
+        OutCfg.ElementAzEl.bEnabled             = true;
+        OutCfg.ElementFov.bEnabled              = true;
+        OutCfg.ElementSlantRange.bEnabled       = true;
+        OutCfg.ElementTimestamp.bEnabled        = true;
+        OutCfg.ElementClassBanner.bEnabled      = false;
+        OutCfg.ElementCompassRose.bEnabled      = true;
+        OutCfg.PlatformLabelText                = TEXT("RQ-7B");
+        OutCfg.ElementPlatformLabel.bEnabled    = true;
+        return true;
+    }
+
+    UE_LOG(LogCamSim, Warning, TEXT("HUD: unknown preset '%s' — ignored"), *Name);
     return false;
 }
 
@@ -353,5 +408,23 @@ void FHudOverlay::DrawCompassRose(TArray<FColor>& P, int32 W, int32 H,
 void FHudOverlay::DrawPlatformLabel(TArray<FColor>& P, int32 W, int32 H,
                                     uint8 SensorMode) const
 {
-    (void)P; (void)W; (void)H; (void)SensorMode;
+    if (Config.PlatformLabelText.IsEmpty()) return;
+
+    const FColor C = ResolveColor(Config.ElementPlatformLabel, SensorMode);
+    const int32  S = Config.TextScale;
+    const int32  M = Config.EdgeMarginPx;
+    const int32  BannerH = Config.ElementClassBanner.bEnabled ? FBitmapFont::GlyphH * S + 4 : 0;
+    const int32  RowH    = (FBitmapFont::GlyphH + 2) * S;
+
+    auto TxtCast  = StringCast<ANSICHAR>(*Config.PlatformLabelText);
+    const ANSICHAR* Txt  = TxtCast.Get();
+    const int32     TxtW = FBitmapFont::StringWidth(Txt, S);
+
+    const int32 DefaultX = W - M - TxtW;
+    const int32 DefaultY = M + BannerH + RowH; // one text row below FOV indicator
+
+    const int32 X = (Config.ElementPlatformLabel.X >= 0) ? Config.ElementPlatformLabel.X : DefaultX;
+    const int32 Y = (Config.ElementPlatformLabel.Y >= 0) ? Config.ElementPlatformLabel.Y : DefaultY;
+
+    FBitmapFont::DrawStringWithShadow(P, W, H, X, Y, Txt, C, S);
 }
