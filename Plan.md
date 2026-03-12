@@ -177,17 +177,34 @@ VRSG's volumetric clouds, precipitation, and particle system are a major visual 
 
 VRSG's 3D ocean and thousands-of-light-points system are distinctive features.
 
-| Item                          | Description                                                                      | Effort | VRSG Parity |
-| ----------------------------- | -------------------------------------------------------------------------------- | ------ | ----------- |
-| **19A** 3D Ocean Surface      | Wave motion via Gerstner/FFT ocean shader; 12 Beaufort sea states configurable   | L      | ✓           |
-| **19B** Vessel Wakes          | Ship/boat wake particle trails attached to maritime entities                     | M      | ✓           |
-| **19C** Vessel Surface Motion | Pitch/roll/heave driven by sea state for shipboard entities                      | M      | ✓           |
-| **19D** Ocean Reflections     | Environment reflections on water surface (SSR or planar reflection)              | M      | ✓           |
-| **19E** Bathymetry            | Shallow water transparency and shoreline wave deformation from depth data        | M      | ✓           |
-| **19F** Light Point System    | High-performance light points with per-pixel axial/radial attenuation            | M      | ✓           |
-| **19G** Steerable Light Lobes | Thousands of concurrent independent light sources (runway, city, vehicle lights) | L      | ✓           |
+| Item                          | Description                                                                      | Effort | VRSG Parity | Status          |
+| ----------------------------- | -------------------------------------------------------------------------------- | ------ | ----------- | --------------- |
+| **19A** 3D Ocean Surface      | Wave motion via Gerstner/FFT ocean shader; 12 Beaufort sea states configurable   | L      | ✓           | ✅ Sprint 1 Done |
+| **19B** Vessel Wakes          | Ship/boat wake particle trails attached to maritime entities                     | M      | ✓           | ✅ Sprint 1 Done |
+| **19C** Vessel Surface Motion | Pitch/roll/heave driven by sea state for shipboard entities                      | M      | ✓           | ✅ Sprint 1 Done |
+| **19D** Ocean Reflections     | Environment reflections on water surface (SSR or planar reflection)              | M      | ✓           | ✅ Sprint 1 Done |
+| **19E** Bathymetry            | Shallow water transparency and shoreline wave deformation from depth data        | M      | ✓           |                 |
+| **19F** Light Point System    | High-performance light points with per-pixel axial/radial attenuation            | M      | ✓           |                 |
+| **19G** Steerable Light Lobes | Thousands of concurrent independent light sources (runway, city, vehicle lights) | L      | ✓           |                 |
 
-**Files**: new `Ocean/` module, `Environment/`, `Entity/CamSimEntity.cpp`
+**Sprint 1 status**: 19A, 19B, 19C, 19D implemented.
+
+**Sprint 1 files**:
+- `Ocean/IOceanSurface.h` — pure C++ abstract interface; future-proofed for UE5 Water plugin
+- `Ocean/FBeaufortTable.h` — Beaufort 0–12 → WaveHt/WaveLen/Choppiness lookup + linear interp
+- `Ocean/FGerstnerOceanSurface.h/.cpp` — GPU MPC writes + CPU analytic eval for vessel motion
+- `Ocean/FOceanManager.h/.cpp` — lifecycle owner; BeginPlay init; CIGI wave drain; SSR setup
+- `Config/CamSimConfig.h/.cpp` — FPhase19Config struct, YAML `phase19:` parsing, env var overrides
+- `CIGI/CigiPacketTypes.h` — FCigiWaveState (opcode 14)
+- `CIGI/CigiReceiver.h/.cpp` — FWaveCtrlProcessor + DequeueWaveState
+- `Environment/CamSimEnvironment.h/.cpp` — FOceanManager wiring; OnAtmosphereChanged()
+- `Environment/CamSimParticleManager.h/.cpp` — NS_VesselWake FX (19B)
+- `Entity/EntityTypeTable.h/.cpp` — HalfLengthCm, HalfBeamCm vessel geometry fields
+- `Entity/CamSimEntity.h/.cpp` — ApplyVesselMotion() with 4-point height sampling
+- `Entity/CamSimEntityManager.h/.cpp` — SetOceanSurface(); sea-domain dispatch
+- `Tests/Phase19OceanTest.cpp` — 15 unit tests
+- `deploy/camsim_config.yaml` — phase19: block
+
 **Validation**: Ocean visible from altitude with Beaufort scaling; wake trails follow entities; lights visible at distance in NVG
 
 ---
