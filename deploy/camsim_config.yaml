@@ -488,9 +488,11 @@ phase18:
 # Master switch enabled=false keeps frames clean for ML training.
 # Env: CAMSIM_OVERLAY_ENABLED, CAMSIM_OVERLAY_CROSSHAIR, CAMSIM_OVERLAY_AZEL,
 #      CAMSIM_OVERLAY_FOV, CAMSIM_OVERLAY_SLANT_RANGE, CAMSIM_OVERLAY_TIMESTAMP,
-#      CAMSIM_OVERLAY_CLASS_BANNER, CAMSIM_OVERLAY_CLASS_TEXT
+#      CAMSIM_OVERLAY_CLASS_BANNER, CAMSIM_OVERLAY_CLASS_TEXT,
+#      CAMSIM_OVERLAY_PRESET, CAMSIM_OVERLAY_COMPASS_ROSE, CAMSIM_OVERLAY_PLATFORM_LABEL
 overlay:
-  enabled: true            # master switch; set true for ISR output with HUD burn-in
+  enabled: true             # master switch; set true for ISR output with HUD burn-in
+  preset: ""                # mq9 | mq1c | rq7b — seeds all defaults; individual keys override
   crosshair: true           # 20A targeting reticle
   crosshair_style: mil_dot  # simple_cross | mil_dot | circle
   az_el_readout: true       # 20B gimbal azimuth/elevation (top-left)
@@ -499,7 +501,26 @@ overlay:
   timestamp: true           # 20E DTG timestamp (bottom-center)
   class_banner: true        # 20E classification banner (top/bottom bar)
   classification_text: "UNCLASSIFIED"
+  compass_rose: false       # 20F linear heading tape (bottom-center); enable for ISR
+  platform_label: ""        # 20G platform identifier text; e.g. "MQ-9"; empty = disabled
   text_scale: 2             # 1=5x7 native, 2=10x14 (recommended for 1080p)
+  edge_margin_px: 10        # pixels between frame edge and HUD elements
+  # Per-element color overrides (hex RRGGBB; empty = sensor-mode default):
+  # compass_rose_color: ""
+  # platform_label_color: ""
+  # Per-element position overrides (-1 = use default anchor):
+  # az_el_x: -1
+  # az_el_y: -1
+  # fov_x: -1
+  # fov_y: -1
+  # slant_range_x: -1
+  # slant_range_y: -1
+  # timestamp_x: -1
+  # timestamp_y: -1
+  # compass_rose_x: -1
+  # compass_rose_y: -1
+  # platform_label_x: -1
+  # platform_label_y: -1
 
 # --- Security Metadata (MISB ST 0102) ---
 # Embedded in every KLV packet as ST 0601 Tag 48.

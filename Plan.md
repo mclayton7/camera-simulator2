@@ -203,13 +203,21 @@ Burned-in sensor display symbology matching real ISR platform output. VRSG ships
 | **20C** FOV/Zoom Indicator         | Current zoom level / FOV arc display                                     | S      | ✓           | ✅ Sprint 1 Done |
 | **20D** Slant Range Display        | Computed range overlay from terrain LOS                                  | S      | ✓           | ✅ Sprint 1 Done |
 | **20E** Timestamp & Classification | UTC time + MISB ST 0102 classification banner                            | S      | ✓           | ✅ Sprint 1 Done |
-| **20F** Compass Rose               | Heading indicator on screen edge                                         | M      | ✓           |                 |
-| **20G** Platform-Specific Presets  | Pre-built overlay layouts for MQ-9, MQ-1C, RQ-7B, etc.                   | M      | ✓           |                 |
-| **20H** Configurable Layout        | YAML-driven symbology placement, font, color, per-element enable/disable | M      |             |                 |
+| **20F** Compass Rose               | Heading indicator on screen edge                                         | M      | ✓           | ✅ Sprint 2 Done |
+| **20G** Platform-Specific Presets  | Pre-built overlay layouts for MQ-9, MQ-1C, RQ-7B, etc.                   | M      | ✓           | ✅ Sprint 2 Done |
+| **20H** Configurable Layout        | YAML-driven symbology placement, font, color, per-element enable/disable | M      |             | ✅ Sprint 2 Done |
 | **20I** Symbology Toggle           | Config flag for clean frames (ML) vs overlay (ISR)                       | S      |             | ✅ Sprint 1 Done |
 
 **Sprint 1 status**: 20A–20E, 20I implemented.
-20F (Compass Rose), 20G (Platform Presets), 20H (Configurable Layout) remain for future sprints.
+
+**Sprint 2 status**: 20F, 20G, 20H implemented.
+
+**Sprint 2 files**:
+- `Overlay/FHudOverlay.h` — `FHudElementConfig`, updated `FHudOverlayConfig`, `LoadPreset()` declaration
+- `Overlay/FHudOverlay.cpp` — `DrawCompassRose()` (20F), `DrawPlatformLabel()` (20G), `LoadPreset()` (20G), `ResolveColor()`, updated `Render()` + all Draw methods
+- `Config/CamSimConfig.cpp` — preset loading, new YAML keys, new env vars
+- `deploy/camsim_config.yaml` — `compass_rose:`, `platform_label:`, `preset:`, per-element position keys
+- `Tests/OverlayTest.cpp` — 7 new tests (tests 9–15); updated `MakeOverlay()` helper
 
 **Sprint 1 files**:
 - `Overlay/FBitmapFont.h/.cpp` — 5×7 pixel font + drawing primitives (SetPixel, DrawHLine/VLine/Rect/FillRect, DrawString, DrawStringWithShadow)
