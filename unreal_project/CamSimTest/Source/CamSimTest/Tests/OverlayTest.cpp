@@ -477,3 +477,87 @@ bool FOverlayCompassRoseWrapTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Tape pixels exist in bottom half"), HasNonBlackPixel(F, 0, TH / 2, TW, TH / 2));
     return true;
 }
+
+// -------------------------------------------------------------------------
+// Test 13: Platform label renders in top-right region
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverlayPlatformLabelRendersTopRightTest,
+    "CamSim.Overlay.PlatformLabelRendersTopRight",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FOverlayPlatformLabelRendersTopRightTest::RunTest(const FString& Parameters)
+{
+    TArray<FColor> F = BlackFrame();
+
+    FHudOverlayConfig Cfg;
+    Cfg.bEnabled                      = true;
+    Cfg.ElementCrosshair.bEnabled     = false;
+    Cfg.ElementAzEl.bEnabled          = false;
+    Cfg.ElementFov.bEnabled           = false;
+    Cfg.ElementSlantRange.bEnabled    = false;
+    Cfg.ElementTimestamp.bEnabled     = false;
+    Cfg.ElementClassBanner.bEnabled   = false;
+    Cfg.ElementCompassRose.bEnabled   = false;
+    Cfg.ElementPlatformLabel.bEnabled = true;
+    Cfg.PlatformLabelText             = TEXT("MQ-9");
+    Cfg.TextScale                     = 1;
+    Cfg.EdgeMarginPx                  = 5;
+    FHudOverlay O;
+    O.SetConfig(Cfg);
+
+    FCamSimTelemetry T = MakeTelemetry();
+    O.Render(F, TW, TH, 0, T, 0);
+
+    // "MQ-9" is 4 chars × 6px = 24px wide; sits right-aligned in top-right area
+    TestTrue(TEXT("Platform label pixels visible in top-right region"),
+             HasNonBlackPixel(F, TW - 60, 0, 55, 30));
+    return true;
+}
+
+// -------------------------------------------------------------------------
+// Test 14: LoadPreset("mq9") seeds correct config values
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverlayPresetMq9SeedsConfigTest,
+    "CamSim.Overlay.PresetMq9SeedsConfig",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FOverlayPresetMq9SeedsConfigTest::RunTest(const FString& Parameters)
+{
+    FHudOverlayConfig Cfg;
+    const bool bLoaded = FHudOverlay::LoadPreset(TEXT("mq9"), Cfg);
+
+    TestTrue(TEXT("LoadPreset returns true for 'mq9'"),                bLoaded);
+    TestTrue(TEXT("mq9 preset: bEnabled=true"),                        Cfg.bEnabled);
+    TestTrue(TEXT("mq9 preset: crosshair enabled"),                    Cfg.ElementCrosshair.bEnabled);
+    TestTrue(TEXT("mq9 preset: compass rose enabled"),                  Cfg.ElementCompassRose.bEnabled);
+    TestTrue(TEXT("mq9 preset: platform label enabled"),               Cfg.ElementPlatformLabel.bEnabled);
+    TestEqual(TEXT("mq9 preset: PlatformLabelText = 'MQ-9'"),         Cfg.PlatformLabelText, FString(TEXT("MQ-9")));
+    TestEqual(TEXT("mq9 preset: CrosshairStyle = MilDot"),
+              (uint8)Cfg.CrosshairStyle, (uint8)ECrosshairStyle::MilDot);
+    return true;
+}
+
+// -------------------------------------------------------------------------
+// Test 15: LoadPreset("unknown") returns false and leaves config unchanged
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverlayPresetUnknownReturnsFalseTest,
+    "CamSim.Overlay.PresetUnknownReturnsFalse",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FOverlayPresetUnknownReturnsFalseTest::RunTest(const FString& Parameters)
+{
+    FHudOverlayConfig Cfg;
+    Cfg.bEnabled = false;
+    Cfg.PlatformLabelText = TEXT("ORIGINAL");
+
+    const bool bLoaded = FHudOverlay::LoadPreset(TEXT("nonexistent_preset"), Cfg);
+
+    TestFalse(TEXT("LoadPreset returns false for unknown preset"), bLoaded);
+    TestFalse(TEXT("Config bEnabled unchanged after failed preset"), Cfg.bEnabled);
+    TestEqual(TEXT("Config PlatformLabelText unchanged after failed preset"),
+              Cfg.PlatformLabelText, FString(TEXT("ORIGINAL")));
+    return true;
+}
