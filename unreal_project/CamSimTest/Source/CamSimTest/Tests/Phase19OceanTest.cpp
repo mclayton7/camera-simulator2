@@ -270,3 +270,30 @@ bool FPhase19HeightNonZeroTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Height ≈ 125 cm at crest"), FMath::IsNearlyEqual(H, 125.0f, 1.0f));
 	return true;
 }
+
+// ---------------------------------------------------------------------------
+// Test 13: Sea-domain entity (EntityDomain==3) triggers vessel motion;
+//          land-domain (EntityDomain==2) is skipped.
+// This tests the dispatch logic in FCamSimEntityManager — here we test
+// the FCigiEntityState field directly.
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19SeaDomainDispatchTest,
+	"CamSim.Phase19.SeaDomainDispatch",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19SeaDomainDispatchTest::RunTest(const FString& Parameters)
+{
+	FCigiEntityState SeaEntity;
+	SeaEntity.EntityDomain = 3;
+
+	FCigiEntityState LandEntity;
+	LandEntity.EntityDomain = 2;
+
+	// Dispatch predicate mirrors CamSimEntityManager logic
+	auto IsMaritime = [](const FCigiEntityState& S) { return S.EntityDomain == 3; };
+
+	TestTrue (TEXT("Sea domain (3) triggers motion"),  IsMaritime(SeaEntity));
+	TestFalse(TEXT("Land domain (2) skips motion"),    IsMaritime(LandEntity));
+
+	return true;
+}

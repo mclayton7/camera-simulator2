@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "CIGI/CigiPacketTypes.h"
+#include "Ocean/IOceanSurface.h"
 #include "CamSimEntity.generated.h"
 
 class UCesiumGlobeAnchorComponent;
@@ -62,6 +63,15 @@ public:
 
 	/** Apply runtime culling and tick-rate controls for large scene scaling. */
 	void ApplyScaleControls(float MaxDrawDistanceM, float TickRateHz);
+
+	/**
+	 * Apply pitch/roll/heave from ocean surface to this vessel entity.
+	 * Called from FCamSimEntityManager::Tick() for sea-domain entities only.
+	 * Ocean must be non-null. TypeEntry provides HalfLength/HalfBeam geometry.
+	 */
+	void ApplyVesselMotion(IOceanSurface* Ocean,
+	                       float HalfLengthCm, float HalfBeamCm,
+	                       float MotionScale);
 
 	// AActor interface
 	virtual void Tick(float DeltaTime) override;
