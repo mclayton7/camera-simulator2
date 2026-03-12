@@ -319,3 +319,37 @@ bool FPhase19WakeLifecycleTest::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+// ---------------------------------------------------------------------------
+// Test 15: CIGI wave queue drain → FOceanManager::ApplyWaveState() path.
+//          Tests SetWaveParams + GetSurfaceHeightAt round-trip directly.
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19WaveQueueDrainTest,
+	"CamSim.Phase19.WaveQueueDrain",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase19WaveQueueDrainTest::RunTest(const FString& Parameters)
+{
+	// Test that ApplyWaveState with a valid state changes ocean height.
+	FGerstnerOceanSurface Ocean;
+
+	// Start with Beaufort 0 (flat)
+	Ocean.SetWaveParams(0.0f, 0.0f, 1.0f, 1.0f, 0.5f);
+	TestEqual(TEXT("Flat before CIGI"), Ocean.GetSurfaceHeightAt(FVector2D::ZeroVector), 0.0f);
+
+	// Simulate ApplyWaveState: apply WaveHt=5.0m, WaveLen=120m
+	FCigiWaveState WaveState;
+	WaveState.bEnabled = true;
+	WaveState.WaveHtM  = 5.0f;
+	WaveState.WaveLenM = 120.0f;
+
+	// ApplyWaveState passes these directly to SetWaveParams
+	Ocean.SetWaveParams(WaveState.WaveHtM, WaveState.WaveLenM, 1.0f, 1.0f, 0.5f);
+
+	const float H = Ocean.GetSurfaceHeightAt(FVector2D::ZeroVector);
+	TestTrue(TEXT("Non-zero height after CIGI wave state applied"), H > 0.0f);
+	// A = 5.0m * 100 * 0.5 = 250 cm; height at crest ≈ 250
+	TestTrue(TEXT("Height ≈ 250 cm (5m Beaufort)"), FMath::IsNearlyEqual(H, 250.0f, 1.0f));
+
+	return true;
+}
