@@ -359,7 +359,7 @@ void FHudOverlay::DrawCompassRose(TArray<FColor>& P, int32 W, int32 H,
     {
         // Actual compass degree at this tick
         const float TickDeg = FMath::Fmod(Heading + (float)DeltaDeg + 360.0f, 360.0f);
-        const int32 TickDegI = FMath::RoundToInt(TickDeg);
+        const int32 TickDegI = FMath::RoundToInt(TickDeg) % 360; // normalise to [0,359]
 
         // Only draw ticks at multiples of 5°
         if (TickDegI % 5 != 0) continue;
