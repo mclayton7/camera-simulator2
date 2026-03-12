@@ -228,6 +228,14 @@ void FEntityTypeTable::LoadFromConfig()
 			Entry.ModelRotation = FRotator(P, Y, R);
 		}
 
+		// Phase 19C — Vessel motion geometry
+		float HalfLengthM = 0.0f;
+		float HalfBeamM   = 0.0f;
+		YamlFloat(EntryNode, "half_length_m", HalfLengthM);
+		YamlFloat(EntryNode, "half_beam_m",   HalfBeamM);
+		Entry.HalfLengthCm = HalfLengthM * 100.0f;
+		Entry.HalfBeamCm   = HalfBeamM   * 100.0f;
+
 		if (!ValidateMeshAssetPath(Entry.AssetPath, Entry.bSkeletal, TypeId, TEXT("mesh")))
 		{
 			++SkippedEntries;

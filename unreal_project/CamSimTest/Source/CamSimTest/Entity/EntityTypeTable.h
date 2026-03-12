@@ -26,6 +26,13 @@ struct FEntityTypeEntry
 	// Use these to fix glTF assets that are scaled or oriented incorrectly.
 	float   ModelScale    = 1.0f;   // uniform scale factor (default 1.0)
 	FRotator ModelRotation = FRotator::ZeroRotator; // pitch/yaw/roll offset (degrees)
+
+	// Phase 19C — Vessel motion geometry.
+	// Set in EntityTypeTable YAML as half_length_m / half_beam_m for sea-domain entities.
+	// 0.0 = use static mesh bounding box extents at runtime (fallback).
+	// Stored in UE units (cm) — multiply YAML metres by 100 on load.
+	float HalfLengthCm = 0.0f;
+	float HalfBeamCm   = 0.0f;
 };
 
 /**
