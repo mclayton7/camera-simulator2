@@ -239,7 +239,7 @@ void FHudOverlay::DrawClassificationBanner(TArray<FColor>& P, int32 W, int32 H) 
 }
 
 // ---------------------------------------------------------------------------
-// LoadPreset (20G) — stub; full implementation in Task 8
+// LoadPreset (20G) — seeds a named platform preset into OutCfg; returns false for unknown names
 // ---------------------------------------------------------------------------
 
 bool FHudOverlay::LoadPreset(const FString& Name, FHudOverlayConfig& OutCfg)
@@ -341,7 +341,10 @@ void FHudOverlay::DrawCompassRose(TArray<FColor>& P, int32 W, int32 H,
 
     // Heading: normalise to [0, 360)
     const float Heading = FMath::Fmod(T.Yaw + 3600.0f, 360.0f);
-    const float PxPerDeg = (float)TapeW / 90.0f; // ±45° window
+    // Fixed ±45° visible window regardless of frame width. Pixel density adapts
+    // so the tape always occupies exactly 40% of frame width. This is preferable
+    // to a fixed 2px/deg density, which would show ±96° at 1080p — too wide.
+    const float PxPerDeg = (float)TapeW / 90.0f; // 90° total window → ±45°
 
     // Cardinal/intercardinal label table
     struct FCardinal { float Deg; const ANSICHAR* Label; };
@@ -402,7 +405,7 @@ void FHudOverlay::DrawCompassRose(TArray<FColor>& P, int32 W, int32 H,
 }
 
 // ---------------------------------------------------------------------------
-// DrawPlatformLabel (20G) — stub; full implementation in Task 8
+// DrawPlatformLabel (20G) — renders Config.PlatformLabelText right-aligned below the FOV row
 // ---------------------------------------------------------------------------
 
 void FHudOverlay::DrawPlatformLabel(TArray<FColor>& P, int32 W, int32 H,
