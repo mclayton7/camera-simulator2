@@ -819,19 +819,39 @@ FCamSimConfig FCamSimConfig::Load()
 		if (Root.has_child("overlay"))
 		{
 			ryml::ConstNodeRef Ov = Root["overlay"];
-			YamlBool  (Ov, "enabled",               Cfg.OverlayConfig.bEnabled);
-			YamlBool  (Ov, "crosshair",             Cfg.OverlayConfig.bCrosshair);
-			YamlBool  (Ov, "az_el_readout",         Cfg.OverlayConfig.bAzElReadout);
-			YamlBool  (Ov, "fov_indicator",         Cfg.OverlayConfig.bFovIndicator);
-			YamlBool  (Ov, "slant_range",           Cfg.OverlayConfig.bSlantRange);
-			YamlBool  (Ov, "timestamp",             Cfg.OverlayConfig.bTimestamp);
-			YamlBool  (Ov, "class_banner",          Cfg.OverlayConfig.bClassBanner);
+
+			// Preset seeds config defaults before individual keys override
+			{
+				FString PresetName;
+				if (YamlString(Ov, "preset", PresetName) && !PresetName.IsEmpty())
+					FHudOverlay::LoadPreset(PresetName, Cfg.OverlayConfig);
+			}
+
+			YamlBool  (Ov, "enabled",         Cfg.OverlayConfig.bEnabled);
+			YamlBool  (Ov, "crosshair",       Cfg.OverlayConfig.ElementCrosshair.bEnabled);
+			YamlBool  (Ov, "az_el_readout",   Cfg.OverlayConfig.ElementAzEl.bEnabled);
+			YamlBool  (Ov, "fov_indicator",   Cfg.OverlayConfig.ElementFov.bEnabled);
+			YamlBool  (Ov, "slant_range",     Cfg.OverlayConfig.ElementSlantRange.bEnabled);
+			YamlBool  (Ov, "timestamp",       Cfg.OverlayConfig.ElementTimestamp.bEnabled);
+			YamlBool  (Ov, "class_banner",    Cfg.OverlayConfig.ElementClassBanner.bEnabled);
+			YamlBool  (Ov, "compass_rose",    Cfg.OverlayConfig.ElementCompassRose.bEnabled);
+			{
+				FString LabelText;
+				if (YamlString(Ov, "platform_label", LabelText))
+				{
+					Cfg.OverlayConfig.PlatformLabelText = LabelText;
+					Cfg.OverlayConfig.ElementPlatformLabel.bEnabled = !LabelText.IsEmpty();
+				}
+			}
 			{
 				int32 V = Cfg.OverlayConfig.TextScale;
 				if (YamlInt(Ov, "text_scale", V))
-				{
 					Cfg.OverlayConfig.TextScale = FMath::Clamp(V, 1, 4);
-				}
+			}
+			{
+				int32 V = Cfg.OverlayConfig.EdgeMarginPx;
+				if (YamlInt(Ov, "edge_margin_px", V))
+					Cfg.OverlayConfig.EdgeMarginPx = FMath::Clamp(V, 0, 100);
 			}
 			{
 				FString StyleStr;
@@ -844,6 +864,36 @@ FCamSimConfig FCamSimConfig::Load()
 				}
 			}
 			YamlString(Ov, "classification_text", Cfg.OverlayConfig.ClassificationText);
+
+			// Per-element color overrides (hex string "RRGGBB"; empty = sensor-mode default)
+			// Helper: parse "RRGGBB" or "#RRGGBB" -> FColor(R,G,B,255); no-op if empty/invalid
+			auto YamlHexColor = [&](c4::csubstr Key, FColor& OutColor)
+			{
+				FString Hex;
+				if (!YamlString(Ov, Key, Hex) || Hex.IsEmpty()) return;
+				if (Hex.StartsWith(TEXT("#"))) Hex = Hex.RightChop(1);
+				if (Hex.Len() == 6)
+				{
+					const uint32 V = FParse::HexNumber(*Hex);
+					OutColor = FColor((V >> 16) & 0xFF, (V >> 8) & 0xFF, V & 0xFF, 255);
+				}
+			};
+			YamlHexColor("compass_rose_color",   Cfg.OverlayConfig.ElementCompassRose.Color);
+			YamlHexColor("platform_label_color", Cfg.OverlayConfig.ElementPlatformLabel.Color);
+
+			// Per-element position overrides (-1 = use default anchor)
+			YamlInt(Ov, "az_el_x",          Cfg.OverlayConfig.ElementAzEl.X);
+			YamlInt(Ov, "az_el_y",          Cfg.OverlayConfig.ElementAzEl.Y);
+			YamlInt(Ov, "fov_x",            Cfg.OverlayConfig.ElementFov.X);
+			YamlInt(Ov, "fov_y",            Cfg.OverlayConfig.ElementFov.Y);
+			YamlInt(Ov, "slant_range_x",    Cfg.OverlayConfig.ElementSlantRange.X);
+			YamlInt(Ov, "slant_range_y",    Cfg.OverlayConfig.ElementSlantRange.Y);
+			YamlInt(Ov, "timestamp_x",      Cfg.OverlayConfig.ElementTimestamp.X);
+			YamlInt(Ov, "timestamp_y",      Cfg.OverlayConfig.ElementTimestamp.Y);
+			YamlInt(Ov, "compass_rose_x",   Cfg.OverlayConfig.ElementCompassRose.X);
+			YamlInt(Ov, "compass_rose_y",   Cfg.OverlayConfig.ElementCompassRose.Y);
+			YamlInt(Ov, "platform_label_x", Cfg.OverlayConfig.ElementPlatformLabel.X);
+			YamlInt(Ov, "platform_label_y", Cfg.OverlayConfig.ElementPlatformLabel.Y);
 		}
 
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
@@ -1014,16 +1064,31 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Phase18.CraterDefaultRadiusM  = GetEnvFloat(TEXT("CAMSIM_CRATER_DEFAULT_RADIUS_M"),   Cfg.Phase18.CraterDefaultRadiusM);
 
 	// Phase 20: overlay HUD/OSD env var overrides
-	Cfg.OverlayConfig.bEnabled      = GetEnvInt(TEXT("CAMSIM_OVERLAY_ENABLED"),     Cfg.OverlayConfig.bEnabled     ? 1 : 0) != 0;
-	Cfg.OverlayConfig.bCrosshair    = GetEnvInt(TEXT("CAMSIM_OVERLAY_CROSSHAIR"),   Cfg.OverlayConfig.bCrosshair   ? 1 : 0) != 0;
-	Cfg.OverlayConfig.bAzElReadout  = GetEnvInt(TEXT("CAMSIM_OVERLAY_AZEL"),        Cfg.OverlayConfig.bAzElReadout ? 1 : 0) != 0;
-	Cfg.OverlayConfig.bFovIndicator = GetEnvInt(TEXT("CAMSIM_OVERLAY_FOV"),         Cfg.OverlayConfig.bFovIndicator? 1 : 0) != 0;
-	Cfg.OverlayConfig.bSlantRange   = GetEnvInt(TEXT("CAMSIM_OVERLAY_SLANT_RANGE"), Cfg.OverlayConfig.bSlantRange  ? 1 : 0) != 0;
-	Cfg.OverlayConfig.bTimestamp    = GetEnvInt(TEXT("CAMSIM_OVERLAY_TIMESTAMP"),   Cfg.OverlayConfig.bTimestamp   ? 1 : 0) != 0;
-	Cfg.OverlayConfig.bClassBanner  = GetEnvInt(TEXT("CAMSIM_OVERLAY_CLASS_BANNER"),Cfg.OverlayConfig.bClassBanner ? 1 : 0) != 0;
+	// Apply preset first so individual env var overrides win
+	{
+		const FString PresetEnv = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_OVERLAY_PRESET"));
+		if (!PresetEnv.IsEmpty())
+			FHudOverlay::LoadPreset(PresetEnv, Cfg.OverlayConfig);
+	}
+	Cfg.OverlayConfig.bEnabled                        = GetEnvInt(TEXT("CAMSIM_OVERLAY_ENABLED"),     Cfg.OverlayConfig.bEnabled                       ? 1 : 0) != 0;
+	Cfg.OverlayConfig.ElementCrosshair.bEnabled       = GetEnvInt(TEXT("CAMSIM_OVERLAY_CROSSHAIR"),   Cfg.OverlayConfig.ElementCrosshair.bEnabled       ? 1 : 0) != 0;
+	Cfg.OverlayConfig.ElementAzEl.bEnabled            = GetEnvInt(TEXT("CAMSIM_OVERLAY_AZEL"),        Cfg.OverlayConfig.ElementAzEl.bEnabled            ? 1 : 0) != 0;
+	Cfg.OverlayConfig.ElementFov.bEnabled             = GetEnvInt(TEXT("CAMSIM_OVERLAY_FOV"),         Cfg.OverlayConfig.ElementFov.bEnabled             ? 1 : 0) != 0;
+	Cfg.OverlayConfig.ElementSlantRange.bEnabled      = GetEnvInt(TEXT("CAMSIM_OVERLAY_SLANT_RANGE"), Cfg.OverlayConfig.ElementSlantRange.bEnabled      ? 1 : 0) != 0;
+	Cfg.OverlayConfig.ElementTimestamp.bEnabled       = GetEnvInt(TEXT("CAMSIM_OVERLAY_TIMESTAMP"),   Cfg.OverlayConfig.ElementTimestamp.bEnabled       ? 1 : 0) != 0;
+	Cfg.OverlayConfig.ElementClassBanner.bEnabled     = GetEnvInt(TEXT("CAMSIM_OVERLAY_CLASS_BANNER"),Cfg.OverlayConfig.ElementClassBanner.bEnabled     ? 1 : 0) != 0;
+	Cfg.OverlayConfig.ElementCompassRose.bEnabled     = GetEnvInt(TEXT("CAMSIM_OVERLAY_COMPASS_ROSE"),Cfg.OverlayConfig.ElementCompassRose.bEnabled     ? 1 : 0) != 0;
 	{
 		const FString ClassTxt = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_OVERLAY_CLASS_TEXT"));
 		if (!ClassTxt.IsEmpty()) Cfg.OverlayConfig.ClassificationText = ClassTxt;
+	}
+	{
+		const FString LabelTxt = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_OVERLAY_PLATFORM_LABEL"));
+		if (!LabelTxt.IsEmpty())
+		{
+			Cfg.OverlayConfig.PlatformLabelText = LabelTxt;
+			Cfg.OverlayConfig.ElementPlatformLabel.bEnabled = true;
+		}
 	}
 
 	if (Cfg.OutputViews.Num() > 0 && (bHasMulticastAddrEnv || bHasMulticastPortEnv))

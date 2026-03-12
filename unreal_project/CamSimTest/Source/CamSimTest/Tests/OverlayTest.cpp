@@ -323,3 +323,45 @@ bool FOverlayNvgModeUsesGreenTextTest::RunTest(const FString& Parameters)
     AddError(TEXT("No NVG green pixel (G>200, R<100) found in glyph region (10,10)-(15,16)"));
     return false;
 }
+
+// -------------------------------------------------------------------------
+// Test 9: Per-element color override renders in the specified color
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverlayPerElementColorOverrideTest,
+    "CamSim.Overlay.PerElementColorOverride",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FOverlayPerElementColorOverrideTest::RunTest(const FString& Parameters)
+{
+    TArray<FColor> F = BlackFrame();
+
+    FHudOverlayConfig Cfg;
+    Cfg.bEnabled                   = true;
+    Cfg.ElementCrosshair.bEnabled  = false;
+    Cfg.ElementAzEl.bEnabled       = true;
+    Cfg.ElementAzEl.Color          = FColor(255, 0, 0, 255); // force red
+    Cfg.ElementFov.bEnabled        = false;
+    Cfg.ElementSlantRange.bEnabled = false;
+    Cfg.ElementTimestamp.bEnabled  = false;
+    Cfg.ElementClassBanner.bEnabled= false;
+    Cfg.TextScale                  = 1;
+    Cfg.EdgeMarginPx               = 5;
+    FHudOverlay O;
+    O.SetConfig(Cfg);
+
+    FCamSimTelemetry T = MakeTelemetry();
+    O.Render(F, TW, TH, 0 /*EO*/, T, 0);
+
+    // Find a red pixel (R>200, G<50, B<50) in the Az/El region (top-left)
+    bool bFoundRed = false;
+    for (int32 Y = 5; Y < 30 && Y < TH; ++Y)
+        for (int32 X = 5; X < 100 && X < TW; ++X)
+        {
+            const FColor& C = F[Y * TW + X];
+            if (C.R > 200 && C.G < 50 && C.B < 50) { bFoundRed = true; break; }
+        }
+
+    TestTrue(TEXT("Az/El element renders in explicit red color override"), bFoundRed);
+    return true;
+}
