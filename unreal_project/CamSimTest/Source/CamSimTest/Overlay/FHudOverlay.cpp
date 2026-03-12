@@ -248,13 +248,102 @@ bool FHudOverlay::LoadPreset(const FString& Name, FHudOverlayConfig& OutCfg)
 }
 
 // ---------------------------------------------------------------------------
-// DrawCompassRose (20F) — stub; full implementation in Task 6
+// DrawCompassRose (20F) — linear heading tape, MQ-9 style
+// Tape: horizontal strip at bottom-center, 40% of frame width.
+// Scale: TapeW / 90 px per degree → ±45° visible window.
+// Ticks: every 5° (short) and 10° (tall); cardinal/intercardinal labels at 45° intervals.
+// Center marker: downward triangle above center tick.
+// Heading readout: [NNN] below tape center.
 // ---------------------------------------------------------------------------
 
 void FHudOverlay::DrawCompassRose(TArray<FColor>& P, int32 W, int32 H,
                                   uint8 SensorMode, const FCamSimTelemetry& T) const
 {
-    (void)P; (void)W; (void)H; (void)SensorMode; (void)T;
+    const FColor C  = ResolveColor(Config.ElementCompassRose, SensorMode);
+    const int32  S  = Config.TextScale;
+    const int32  M  = Config.EdgeMarginPx;
+    const int32  BannerH = Config.ElementClassBanner.bEnabled ? FBitmapFont::GlyphH * S + 4 : 0;
+    const int32  RowH    = (FBitmapFont::GlyphH + 2) * S;
+
+    // Tape geometry
+    const int32 TapeW    = (W * 2) / 5;            // 40% of frame
+    const int32 TapeX    = (W - TapeW) / 2;        // centered horizontally
+    const int32 CX       = (Config.ElementCompassRose.X >= 0) ? Config.ElementCompassRose.X : W / 2;
+
+    // Default Y: 2 rows above bottom (leaves room for timestamp and banner)
+    const int32 DefaultTapeY = H - M - BannerH - RowH * 2 - 8;
+    const int32 TapeY        = (Config.ElementCompassRose.Y >= 0) ? Config.ElementCompassRose.Y : DefaultTapeY;
+
+    const int32 TickShortH = 3 * S;
+    const int32 TickTallH  = 6 * S;
+    const int32 TapeLineY  = TapeY + TickTallH + FBitmapFont::GlyphH * S + 4; // line below labels
+
+    // Guard against drawing outside valid range
+    if (TapeLineY < 0 || TapeLineY >= H) return;
+
+    // Horizontal tape line
+    FBitmapFont::DrawHLine(P, W, H, TapeX, TapeLineY, TapeW, C);
+
+    // Heading: normalise to [0, 360)
+    const float Heading = FMath::Fmod(T.Yaw + 3600.0f, 360.0f);
+    const float PxPerDeg = (float)TapeW / 90.0f; // ±45° window
+
+    // Cardinal/intercardinal label table
+    struct FCardinal { float Deg; const ANSICHAR* Label; };
+    static const FCardinal Cardinals[] = {
+        {   0.0f, "N"  }, {  45.0f, "NE" }, {  90.0f, "E"  }, { 135.0f, "SE" },
+        { 180.0f, "S"  }, { 225.0f, "SW" }, { 270.0f, "W"  }, { 315.0f, "NW" },
+    };
+    constexpr int32 NumCardinals = 8;
+
+    // Draw ticks from heading-45 to heading+45 in 1° steps
+    for (int32 DeltaDeg = -45; DeltaDeg <= 45; ++DeltaDeg)
+    {
+        // Actual compass degree at this tick
+        const float TickDeg = FMath::Fmod(Heading + (float)DeltaDeg + 360.0f, 360.0f);
+        const int32 TickDegI = FMath::RoundToInt(TickDeg);
+
+        // Only draw ticks at multiples of 5°
+        if (TickDegI % 5 != 0) continue;
+
+        const int32 TX = CX + FMath::RoundToInt((float)DeltaDeg * PxPerDeg);
+        if (TX < TapeX || TX >= TapeX + TapeW) continue;
+
+        const bool bMajor = (TickDegI % 10 == 0);
+        const int32 TH = bMajor ? TickTallH : TickShortH;
+        FBitmapFont::DrawVLine(P, W, H, TX, TapeLineY - TH, TH, C);
+
+        // Cardinal/intercardinal label above tall tick
+        if (bMajor)
+        {
+            for (int32 k = 0; k < NumCardinals; ++k)
+            {
+                const float Diff = FMath::Fmod(FMath::Abs(TickDeg - Cardinals[k].Deg), 360.0f);
+                if (Diff < 0.5f || Diff > 359.5f)
+                {
+                    const int32 LabelW = FBitmapFont::StringWidth(Cardinals[k].Label, S);
+                    const int32 LX = TX - LabelW / 2;
+                    const int32 LY = TapeLineY - TickTallH - FBitmapFont::GlyphH * S - 2;
+                    FBitmapFont::DrawStringWithShadow(P, W, H, LX, LY, Cardinals[k].Label, C, S);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Center marker — small downward-pointing triangle above tape line
+    const int32 MarkerY = TapeLineY - TickTallH - 5;
+    FBitmapFont::SetPixel(P, W, H, CX,     MarkerY,     C);
+    FBitmapFont::SetPixel(P, W, H, CX - 1, MarkerY - 1, C);
+    FBitmapFont::SetPixel(P, W, H, CX + 1, MarkerY - 1, C);
+    FBitmapFont::SetPixel(P, W, H, CX - 2, MarkerY - 2, C);
+    FBitmapFont::SetPixel(P, W, H, CX + 2, MarkerY - 2, C);
+
+    // Heading readout [NNN] below tape line
+    char Buf[8];
+    FCStringAnsi::Snprintf(Buf, sizeof(Buf), "[%03d]", (int32)FMath::RoundToInt(Heading) % 360);
+    const int32 BufW = FBitmapFont::StringWidth(Buf, S);
+    FBitmapFont::DrawStringWithShadow(P, W, H, CX - BufW / 2, TapeLineY + 2, Buf, C, S);
 }
 
 // ---------------------------------------------------------------------------
