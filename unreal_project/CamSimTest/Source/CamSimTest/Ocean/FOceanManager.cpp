@@ -41,7 +41,7 @@ void FOceanManager::Init(UWorld* World, AActor* OuterActor,
 	USkyLightComponent* SkyComp = NewObject<USkyLightComponent>(
 		OuterActor, TEXT("OceanSkyLight"));
 	SkyComp->SourceType              = SLS_CapturedScene;
-	SkyComp->bRealTimeCaptureEnabled = false;
+	SkyComp->bRealTimeCapture = false;
 	SkyComp->RegisterComponent();
 
 	// --- Initialise ocean surface ---
