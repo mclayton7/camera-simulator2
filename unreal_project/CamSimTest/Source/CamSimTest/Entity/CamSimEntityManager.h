@@ -8,6 +8,7 @@
 #include "Config/CamSimConfig.h"
 #include "CIGI/CigiPacketTypes.h"
 #include "GroundTruth/AnnotationTypes.h"
+#include "Ocean/IOceanSurface.h"
 
 class UCamSimSubsystem;
 class ACamSimEntity;
@@ -50,6 +51,9 @@ public:
 	TArray<FEntityAnnotationData> GetEntitySnapshot(
 	    const FViewProjectionData& ViewProj) const;
 
+	/** Called from FOceanManager::Init() after ocean surface is created. */
+	void SetOceanSurface(IOceanSurface* Ocean);
+
 private:
 	UCamSimSubsystem*       Subsystem  = nullptr;
 	const FEntityTypeTable* TypeTable  = nullptr;
@@ -73,6 +77,8 @@ private:
 
 	// Remove a stale (pending-kill) entry from EntityMap
 	void PurgeStaleEntities();
+
+	IOceanSurface* OceanSurface = nullptr;
 
 	// Runtime update throttling to reduce transform churn under large-entity loads.
 	TMap<uint16, double> LastPoseApplySeconds;

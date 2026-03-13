@@ -815,6 +815,25 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlFloat (P18, "crater_default_radius_m",     Cfg.Phase18.CraterDefaultRadiusM);
 		}
 
+		if (Root.has_child("phase19"))
+		{
+			ryml::ConstNodeRef P19 = Root["phase19"];
+			YamlBool  (P19, "ocean_enabled",            Cfg.Phase19.bOceanEnabled);
+			YamlInt   (P19, "beaufort_state",            Cfg.Phase19.BeaufortState);
+			YamlFloat (P19, "wave_amplitude_scale",      Cfg.Phase19.WaveAmplitudeScale);
+			YamlFloat (P19, "wave_frequency_scale",      Cfg.Phase19.WaveFrequencyScale);
+			YamlFloat (P19, "wave_choppiness",           Cfg.Phase19.WaveChoppiness);
+			YamlString(P19, "ocean_material_path",       Cfg.Phase19.OceanMaterialPath);
+			YamlBool  (P19, "vessel_wakes_enabled",      Cfg.Phase19.bVesselWakesEnabled);
+			YamlString(P19, "niagara_vessel_wake",       Cfg.Phase19.NiagaraVesselWake);
+			YamlFloat (P19, "wake_fade_time",            Cfg.Phase19.WakeFadeTime);
+			YamlBool  (P19, "vessel_motion_enabled",     Cfg.Phase19.bVesselMotionEnabled);
+			YamlFloat (P19, "vessel_motion_scale",       Cfg.Phase19.VesselMotionScale);
+			YamlBool  (P19, "ocean_reflections_enabled", Cfg.Phase19.bOceanReflectionsEnabled);
+			YamlFloat (P19, "ssr_intensity",             Cfg.Phase19.SSRIntensity);
+			YamlFloat (P19, "reflection_capture_radius", Cfg.Phase19.ReflectionCaptureRadius);
+		}
+
 		// Phase 20: overlay HUD/OSD
 		if (Root.has_child("overlay"))
 		{
@@ -1062,6 +1081,20 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Phase18.FireComponentID       = GetEnvInt  (TEXT("CAMSIM_FIRE_COMPONENT_ID"),         Cfg.Phase18.FireComponentID);
 	Cfg.Phase18.CraterImpactComponentID = GetEnvInt(TEXT("CAMSIM_CRATER_IMPACT_COMPONENT_ID"),Cfg.Phase18.CraterImpactComponentID);
 	Cfg.Phase18.CraterDefaultRadiusM  = GetEnvFloat(TEXT("CAMSIM_CRATER_DEFAULT_RADIUS_M"),   Cfg.Phase18.CraterDefaultRadiusM);
+
+	// Phase 19 — Ocean
+	Cfg.Phase19.bOceanEnabled           = GetEnvInt  (TEXT("CAMSIM_OCEAN_ENABLED"),            Cfg.Phase19.bOceanEnabled            ? 1 : 0) != 0;
+	Cfg.Phase19.BeaufortState           = GetEnvInt  (TEXT("CAMSIM_OCEAN_BEAUFORT"),            Cfg.Phase19.BeaufortState);
+	Cfg.Phase19.WaveAmplitudeScale      = GetEnvFloat(TEXT("CAMSIM_OCEAN_AMP_SCALE"),           Cfg.Phase19.WaveAmplitudeScale);
+	Cfg.Phase19.WaveFrequencyScale      = GetEnvFloat(TEXT("CAMSIM_OCEAN_FREQ_SCALE"),          Cfg.Phase19.WaveFrequencyScale);
+	Cfg.Phase19.WaveChoppiness          = GetEnvFloat(TEXT("CAMSIM_OCEAN_CHOPPINESS"),          Cfg.Phase19.WaveChoppiness);
+	Cfg.Phase19.bVesselWakesEnabled     = GetEnvInt  (TEXT("CAMSIM_OCEAN_WAKES_ENABLED"),       Cfg.Phase19.bVesselWakesEnabled      ? 1 : 0) != 0;
+	Cfg.Phase19.WakeFadeTime            = GetEnvFloat(TEXT("CAMSIM_OCEAN_WAKE_FADE"),           Cfg.Phase19.WakeFadeTime);
+	Cfg.Phase19.bVesselMotionEnabled    = GetEnvInt  (TEXT("CAMSIM_OCEAN_MOTION_ENABLED"),      Cfg.Phase19.bVesselMotionEnabled     ? 1 : 0) != 0;
+	Cfg.Phase19.VesselMotionScale       = GetEnvFloat(TEXT("CAMSIM_OCEAN_MOTION_SCALE"),        Cfg.Phase19.VesselMotionScale);
+	Cfg.Phase19.bOceanReflectionsEnabled = GetEnvInt (TEXT("CAMSIM_OCEAN_REFLECTIONS_ENABLED"), Cfg.Phase19.bOceanReflectionsEnabled ? 1 : 0) != 0;
+	Cfg.Phase19.SSRIntensity            = GetEnvFloat(TEXT("CAMSIM_OCEAN_SSR_INTENSITY"),       Cfg.Phase19.SSRIntensity);
+	Cfg.Phase19.ReflectionCaptureRadius = GetEnvFloat(TEXT("CAMSIM_OCEAN_REFLECTION_RADIUS"),   Cfg.Phase19.ReflectionCaptureRadius);
 
 	// Phase 20: overlay HUD/OSD env var overrides
 	// Apply preset first so individual env var overrides win

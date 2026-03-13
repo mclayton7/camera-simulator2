@@ -483,6 +483,26 @@ phase18:
   max_craters: 32
   crater_default_radius_m: 5.0
 
+phase19:
+  # 19A Ocean surface — GPU Gerstner waves via Material WPO
+  ocean_enabled: false
+  beaufort_state: 0          # 0-12; used when no CIGI Wave Control packet arrives
+  wave_amplitude_scale: 1.0
+  wave_frequency_scale: 1.0
+  wave_choppiness: 0.5       # 0=sine waves, 1=sharp Gerstner peaks
+  ocean_material_path: "/Game/Materials/M_Ocean"
+  # 19B Vessel wake particle trails
+  vessel_wakes_enabled: false
+  niagara_vessel_wake: "/Game/Effects/NS_VesselWake"
+  wake_fade_time: 8.0        # seconds before wake dissipates
+  # 19C Vessel surface motion (pitch/roll/heave)
+  vessel_motion_enabled: false
+  vessel_motion_scale: 1.0
+  # 19D Ocean reflections (SSR + SkyLight capture)
+  ocean_reflections_enabled: false
+  ssr_intensity: 1.0
+  reflection_capture_radius: 10000.0  # cm (UE units)
+
 # --- HUD/OSD Overlay (Phase 20) ---
 # Burn-in overlay for ISR display: reticle, telemetry readouts, classification banner.
 # Master switch enabled=false keeps frames clean for ML training.

@@ -44,6 +44,11 @@ FCamSimEntityManager::~FCamSimEntityManager()
 	ScenarioRemovedEntities.Empty();
 }
 
+void FCamSimEntityManager::SetOceanSurface(IOceanSurface* Ocean)
+{
+	OceanSurface = Ocean;
+}
+
 // -------------------------------------------------------------------------
 // FTickableGameObject
 // -------------------------------------------------------------------------
@@ -151,6 +156,15 @@ void FCamSimEntityManager::ApplyEntityState(const FCigiEntityState& S, double No
 			{
 				PM->OnEntityUpdated(S.EntityId, Entity, S);
 			}
+		}
+		// Phase 19C: vessel motion for sea-domain entities
+		if (OceanSurface && S.EntityDomain == 3 && Subsystem->GetConfig().Phase19.bVesselMotionEnabled)
+		{
+			const FEntityTypeEntry* TypeEntry = TypeTable->FindEntry(S.EntityType);
+			const float HalfLen = TypeEntry ? TypeEntry->HalfLengthCm : 0.0f;
+			const float HalfBm  = TypeEntry ? TypeEntry->HalfBeamCm   : 0.0f;
+			Entity->ApplyVesselMotion(OceanSurface, HalfLen, HalfBm,
+			                          Subsystem->GetConfig().Phase19.VesselMotionScale);
 		}
 		return;
 	}

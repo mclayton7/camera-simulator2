@@ -40,6 +40,9 @@ void FCamSimParticleManager::Initialize(const FCamSimConfig& Config)
     SmokeAsset     = LoadNiagara(Config.Phase18.NiagaraSmoke);
     FireAsset      = LoadNiagara(Config.Phase18.NiagaraFire);
     ContrailAsset  = LoadNiagara(Config.Phase18.NiagaraContrail);
+    WakeAsset                         = LoadNiagara(Config.Phase19.NiagaraVesselWake);
+    WakeFadeTime                      = Config.Phase19.WakeFadeTime;
+    Config_Phase19_VesselWakesEnabled = Config.Phase19.bVesselWakesEnabled;
 
     CraterMaterial = LoadObject<UMaterialInterface>(nullptr, *Config.Phase18.CraterDecalMaterial);
     if (!CraterMaterial)
@@ -62,6 +65,13 @@ void FCamSimParticleManager::OnEntitySpawned(uint16 EntityID, AActor* Actor,
     {
         SpawnRotorWash(EntityID, Actor);
     }
+
+	// 19B: Sea-domain entities get wake FX
+	if (Config_Phase19_VesselWakesEnabled &&
+	    State.EntityDomain == 3 && WakeAsset)
+	{
+		SpawnWake(EntityID, Actor);
+	}
 }
 
 void FCamSimParticleManager::OnEntityUpdated(uint16 EntityID, AActor* Actor,
@@ -111,6 +121,23 @@ void FCamSimParticleManager::SpawnRotorWash(uint16 EntityID, AActor* Actor)
         RotorWashAsset, Actor->GetRootComponent(),
         NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
         EAttachLocation::KeepRelativeOffset, /*bAutoDestroy=*/false);
+}
+
+void FCamSimParticleManager::SpawnWake(uint16 EntityID, AActor* Actor)
+{
+	FEntityParticleState& PS = EntityParticles.FindOrAdd(EntityID);
+	if (PS.WakeComp || !WakeAsset) return;
+
+	PS.WakeComp = UNiagaraFunctionLibrary::SpawnSystemAttached(
+		WakeAsset, Actor->GetRootComponent(),
+		NAME_None, FVector::ZeroVector, FRotator::ZeroRotator,
+		EAttachLocation::KeepRelativeOffset, false);
+
+	if (PS.WakeComp)
+	{
+		PS.WakeComp->SetFloatParameter(FName("FadeTime"), WakeFadeTime);
+		PS.bWakeActive = true;
+	}
 }
 
 void FCamSimParticleManager::UpdateContrail(uint16 EntityID, AActor* Actor, float AltitudeM)
@@ -204,7 +231,9 @@ void FCamSimParticleManager::DetachAll(FEntityParticleState& PS)
     Destroy(PS.SmokeComp);
     Destroy(PS.FireComp);
     Destroy(PS.ContrailComp);
+    Destroy(PS.WakeComp);
     PS.bSmokeActive    = false;
     PS.bFireActive     = false;
     PS.bContrailActive = false;
+    PS.bWakeActive     = false;
 }
