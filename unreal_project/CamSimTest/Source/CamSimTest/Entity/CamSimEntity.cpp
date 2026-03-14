@@ -80,11 +80,15 @@ ACamSimEntity::ACamSimEntity()
 	StaticMeshComp->SetupAttachment(Root);
 	StaticMeshComp->SetVisibility(false);
 	StaticMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	StaticMeshComp->CastShadow          = true;  // 24A: explicit shadow casting
+	StaticMeshComp->bCastDynamicShadow  = true;
 
 	SkelMeshComp = CreateDefaultSubobject<UPoseableMeshComponent>(TEXT("SkelMesh"));
 	SkelMeshComp->SetupAttachment(Root);
 	SkelMeshComp->SetVisibility(false);
 	SkelMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SkelMeshComp->CastShadow            = true;  // 24A: explicit shadow casting
+	SkelMeshComp->bCastDynamicShadow    = true;
 
 	// Nav lights — created but hidden; enabled via Component Control
 	NavLightRed = CreateDefaultSubobject<UPointLightComponent>(TEXT("NavLightRed"));
@@ -149,6 +153,16 @@ void ACamSimEntity::ApplyScaleControls(float MaxDrawDistanceM, float TickRateHz)
 
 	const float TickInterval = (TickRateHz > 0.0f) ? (1.0f / TickRateHz) : 0.0f;
 	SetActorTickInterval(TickInterval);
+}
+
+// -------------------------------------------------------------------------
+// SetShadowCasting — Phase 24A
+// -------------------------------------------------------------------------
+
+void ACamSimEntity::SetShadowCasting(bool bCast)
+{
+	if (StaticMeshComp) { StaticMeshComp->CastShadow = bCast; StaticMeshComp->bCastDynamicShadow = bCast; }
+	if (SkelMeshComp)   { SkelMeshComp->CastShadow   = bCast; SkelMeshComp->bCastDynamicShadow   = bCast; }
 }
 
 // -------------------------------------------------------------------------

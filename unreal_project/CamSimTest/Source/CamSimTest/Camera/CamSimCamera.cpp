@@ -72,6 +72,12 @@ ACamSimCamera::ACamSimCamera()
 	// bAlwaysPersistRenderingState (above) is required for TSR history accumulation.
 	SceneCapture->ShowFlags.SetTemporalAA(true);
 	SceneCapture->ShowFlags.SetAntiAliasing(true);
+
+	// 24A: Dynamic shadows between entities (VSM is enabled globally in DefaultEngine.ini)
+	SceneCapture->ShowFlags.SetDynamicShadows(true);
+
+	// 24C: Normal maps (ensure not disabled on SceneCapture)
+	SceneCapture->ShowFlags.SetMaterialNormal(true);
 }
 
 // -------------------------------------------------------------------------
@@ -171,10 +177,13 @@ void ACamSimCamera::BeginPlay()
 		It->PreloadAncestors = true;
 		It->PreloadSiblings  = true;
 		It->ForbidHoles      = true;
-		It->LoadingDescendantLimit = 40;
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tuned tileset '%s' (maxLoads=%d SSE=%.1f cacheMB=%d ForbidHoles=true)"),
+		It->LoadingDescendantLimit = Cfg.LoadingDescendantLimit;
+		It->SetUseLodTransitions(Cfg.bUseLodTransitions);
+		It->LodTransitionLength    = Cfg.LodTransitionLength;
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tuned tileset '%s' (maxLoads=%d SSE=%.1f cacheMB=%d descLimit=%d lodBlend=%d)"),
 			*It->GetName(), Cfg.MaxSimultaneousTileLoads,
-			Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB);
+			Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB,
+			Cfg.LoadingDescendantLimit, (int)Cfg.bUseLodTransitions);
 	}
 
 	// Initialize CPU-side sensor post-processing pipeline (Phase 11)
@@ -259,6 +268,53 @@ void ACamSimCamera::BeginPlay()
 			Cfg.OpticalRealism.bMotionBlur, Cfg.OpticalRealism.bBloom,
 			Cfg.OpticalRealism.bChromaticAberration, Cfg.OpticalRealism.bDepthOfField,
 			Cfg.OpticalRealism.bLensFlare, Cfg.OpticalRealism.bLensDistortion);
+	}
+
+	// Phase 24 — Rendering quality
+	{
+		const FCamSimConfig::FRenderingQualityConfig& RQ = Cfg.RenderingQuality;
+		FPostProcessSettings& PP = SceneCapture->PostProcessSettings;
+
+		// 24A contact shadows (ShowFlag — per-light ContactShadowLength is set in editor)
+		SceneCapture->ShowFlags.SetContactShadows(RQ.bContactShadows);
+
+		// 24B ambient occlusion (Lumen GTAO)
+		if (RQ.AOIntensity > 0.0f)
+		{
+			PP.bOverride_AmbientOcclusionIntensity = true;
+			PP.AmbientOcclusionIntensity           = RQ.AOIntensity;
+			PP.bOverride_AmbientOcclusionRadius    = true;
+			PP.AmbientOcclusionRadius              = RQ.AORadius;
+		}
+
+		// 24E shadow quality + 24D RT reflections via console variables
+		auto SetCVar = [](const TCHAR* Name, float Value)
+		{
+			if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name))
+				CVar->Set(Value, ECVF_SetByCode);
+		};
+		auto SetCVarI = [](const TCHAR* Name, int32 Value)
+		{
+			if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name))
+				CVar->Set(Value, ECVF_SetByCode);
+		};
+		SetCVarI(TEXT("r.RayTracing.Reflections"), RQ.bRayTracedReflections ? 1 : 0);  // 24D
+		SetCVar (TEXT("r.Shadow.DistanceScale"),                         RQ.ShadowDistanceScale);
+		SetCVarI(TEXT("r.Shadow.Virtual.ResolutionLodBiasDirectional"),  RQ.VSMResolutionBias);
+		SetCVarI(TEXT("r.Shadow.Virtual.MaxPhysicalPages"),              RQ.VSMMaxPhysicalPages);
+
+		// 24F TSR screen percentage
+		if (RQ.TSRScreenPercentage != 100)
+		{
+			SetCVarI(TEXT("r.ScreenPercentage"), RQ.TSRScreenPercentage);
+		}
+
+		UE_LOG(LogCamSim, Log,
+			TEXT("ACamSimCamera: RenderingQuality — shadows=%d contactShadow=%d AO=%.2f "
+			     "RTRefl=%d shadowDist=%.1f VSMBias=%d TSR%%=%d"),
+			(int)RQ.bEntityShadows, (int)RQ.bContactShadows, RQ.AOIntensity,
+			(int)RQ.bRayTracedReflections, RQ.ShadowDistanceScale,
+			RQ.VSMResolutionBias, RQ.TSRScreenPercentage);
 	}
 
 	// Allocate async GPU readback helper (non-blocking DMA: EnqueueCopy → IsReady → Lock)

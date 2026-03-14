@@ -308,3 +308,12 @@ All paths are overridable in `camsim_config.yaml` or via `CAMSIM_*` env vars.
 | `Entity/CamSimEntity.cpp` | Entity mesh loading from YAML paths |
 | `Config/CamSimConfig.h` | All `FPhase18Config` / `FPhase19Config` path fields |
 | `deploy/camsim_config.yaml` | Canonical runtime config — enable features here |
+
+---
+
+## Phase 24C — Normal Maps (content, not C++)
+
+- Entity materials need normal map textures assigned in the UE5 editor material editor.
+- Each glTF/FBX entity model should have a corresponding `_Normal.png` / `.tga` texture.
+- After assigning, verify the normal map intensity with `r.NormalMap.Enable=1` in the console.
+- No C++ changes needed; `ShowFlags.SetMaterialNormalMap(true)` is already set (Phase 24C).

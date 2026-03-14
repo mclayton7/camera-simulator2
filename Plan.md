@@ -314,14 +314,24 @@ Close the visual fidelity gap with VRSG's advanced rendering pipeline.
 | Item                            | Description                                                                  | Effort | VRSG Parity |
 | ------------------------------- | ---------------------------------------------------------------------------- | ------ | ----------- |
 | **24A** Object-on-Object Shadow | Dynamic shadowing between entities (tanker-receiver, vehicle-building)       | M      | ✓           |
-| **24B** Screen Space AO         | Ambient occlusion for grounded visual contact (SSAO/HBAO)                    | S      | ✓           |
+| **24B** Screen Space AO         | Ambient occlusion for grounded visual contact (Lumen GTAO)                   | S      | ✓           |
 | **24C** Normal/Light Maps       | Support normal maps and lightmaps on terrain and entity materials            | M      | ✓           |
-| **24D** Ray Tracing Integration | RTX reflections/shadows on SceneCapture for Cesium terrain                   | M      |             |
-| **24E** Shadow Quality Tuning   | Virtual shadow map cascade optimization for high-altitude ISR viewing angles | S      |             |
-| **24F** Model-Edge Anti-Alias   | Entity silhouette anti-aliasing (TAA/TSR already on, verify SceneCapture)    | S      | ✓           |
+| **24D** Ray Tracing Integration | RTX reflections on SceneCapture via `r.RayTracing.Reflections` CVar          | M      |             |
+| **24E** Shadow Quality Tuning   | Virtual shadow map cascade optimization for high-altitude ISR viewing angles | S      | ✓           |
+| **24F** Model-Edge Anti-Alias   | TSR screen percentage override; shadow+normal ShowFlags on SceneCapture      | S      | ✓           |
 
-**Files**: UE materials, `Camera/CamSimCamera.cpp`, post-process settings
-**Validation**: Shadows cast between entities; SSAO visible at ground level; no aliasing on entity edges
+**Status**: Sprint 1 complete. All 24A–24F implemented.
+
+**Files**:
+- `Config/CamSimConfig.h` — `FRenderingQualityConfig` struct (11 fields)
+- `Config/CamSimConfig.cpp` — YAML `rendering_quality:` block + env var overrides
+- `Camera/CamSimCamera.cpp` — constructor ShowFlags (24A/C); BeginPlay PP/CVar block (24B/D/E/F)
+- `Entity/CamSimEntity.h/.cpp` — explicit `CastShadow`/`bCastDynamicShadow`; `SetShadowCasting(bool)`
+- `Entity/CamSimEntityManager.cpp` — calls `SetShadowCasting()` at spawn
+- `deploy/camsim_config.yaml` — `rendering_quality:` config block
+- `TODO.md` — Phase 24C normal map content note
+
+**Validation**: Log line `ACamSimCamera: RenderingQuality — shadows=1 contactShadow=0 AO=0.50 RTRefl=0 shadowDist=2.0 VSMBias=-1 TSR%=100` on startup; `r.Shadow.Virtual.MaxPhysicalPages` reports 4096 in console
 
 ---
 

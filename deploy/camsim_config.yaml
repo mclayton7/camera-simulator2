@@ -107,12 +107,12 @@ imagery_provider: cesium
 # Multiplier on hfov_deg reported to CesiumCameraManager. >1.0 pre-fetches
 # tiles outside the visible frustum to reduce pop-in on camera pan.
 # Env: CAMSIM_TILE_FOV_SCALE
-tile_preload_fov_scale: 2.0
+tile_preload_fov_scale: 3.5
 
 # Maximum concurrent Cesium tile HTTP requests. Higher = faster initial
 # load at the cost of network/CPU.
 # Env: CAMSIM_MAX_TILE_LOADS
-max_simultaneous_tile_loads: 40
+max_simultaneous_tile_loads: 80
 
 # Cesium LOD quality: lower = sharper terrain. Cesium default is 16;
 # 2.0 is high quality for ISR imagery (1.0 = maximum sharpness).
@@ -121,7 +121,19 @@ maximum_screen_space_error: 2.0
 
 # Cesium tile cache budget in MB. 0 = Cesium default (uncapped).
 # Env: CAMSIM_MAX_CACHED_MB
-maximum_cached_bytes_mb: 2048
+maximum_cached_bytes_mb: 4096
+
+# Max descendant tiles to load simultaneously (Cesium default 20; higher = better low-alt detail).
+# Env: CAMSIM_LOADING_DESCENDANT_LIMIT
+loading_descendant_limit: 80
+
+# Enable smooth opacity crossfade when tile LOD level changes (Cesium UseLodTransitions).
+# Env: CAMSIM_USE_LOD_TRANSITIONS
+use_lod_transitions: true
+
+# Duration of LOD crossfade in seconds (only used when use_lod_transitions=true).
+# Env: CAMSIM_LOD_TRANSITION_LENGTH
+lod_transition_length: 0.5
 
 # --- Camera Start Position (WGS-84) ---
 # Initial camera pose before the first CIGI Entity Control packet.
@@ -434,6 +446,34 @@ optical_realism:
   lens_flare_intensity: 1.0
   lens_flare_bokeh_size: 3.0
   lens_flare_threshold: 8.0
+
+# --- Rendering Quality (Phase 24) ---
+
+rendering_quality:
+  # 24A: Entity shadow casting and contact shadows
+  # Env: CAMSIM_ENTITY_SHADOWS / CAMSIM_CONTACT_SHADOWS / CAMSIM_CONTACT_SHADOW_LENGTH
+  entity_shadows: true
+  contact_shadows: false
+  contact_shadow_length: 0.1
+
+  # 24B: Ambient occlusion (Lumen GTAO) intensity and world-space radius
+  # Env: CAMSIM_AO_INTENSITY / CAMSIM_AO_RADIUS
+  ao_intensity: 0.5
+  ao_radius: 200.0
+
+  # 24D: Enable ray-traced reflections on SceneCapture (requires NVIDIA GPU + DX12)
+  # Env: CAMSIM_RT_REFLECTIONS
+  rt_reflections: false
+
+  # 24E: Shadow distance and Virtual Shadow Map quality
+  # Env: CAMSIM_SHADOW_DISTANCE_SCALE / CAMSIM_VSM_RESOLUTION_BIAS / CAMSIM_VSM_MAX_PAGES
+  shadow_distance_scale: 2.0
+  vsm_resolution_bias: -1
+  vsm_max_physical_pages: 4096
+
+  # 24F: TSR screen percentage (100=native, >100=super-sample for crisp entity edges)
+  # Env: CAMSIM_TSR_SCREEN_PERCENTAGE
+  tsr_screen_percentage: 100
 
 # --- Weather, Atmosphere & Particle Effects (Phase 18) ---
 # All effects default to false (opt-in). Safe to leave disabled for clean ML frames.
