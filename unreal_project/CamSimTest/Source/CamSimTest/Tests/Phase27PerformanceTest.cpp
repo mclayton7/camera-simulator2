@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
+#include "Camera/CamSimCamera.h"
 
 // -------------------------------------------------------------------------
 // Phase 27 — Performance & Optimization Config Tests
@@ -112,5 +113,26 @@ bool FPhase27_FrameRateValidation::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Default OutputFrameRateHz in [1,240]"),
 		C.OutputFrameRateHz >= MinFps && C.OutputFrameRateHz <= MaxFps);
 
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 4 — FFrameDropStats initial state and counting
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_FrameDropStats,
+	"CamSim.Phase27.FrameDropStats",
+	EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FPhase27_FrameDropStats::RunTest(const FString& Parameters)
+{
+	FFrameDropStats S;
+	TestEqual(TEXT("EncoderBusy zero"),     S.EncoderBusy.Load(),     0);
+	TestEqual(TEXT("ReadbackTimeout zero"), S.ReadbackTimeout.Load(), 0);
+	TestEqual(TEXT("SocketError zero"),     S.SocketError.Load(),     0);
+	TestEqual(TEXT("Total zero"),           S.Total(),                0);
+
+	S.EncoderBusy++;
+	S.ReadbackTimeout++;
+	TestEqual(TEXT("Total after increments"), S.Total(), 2);
 	return true;
 }

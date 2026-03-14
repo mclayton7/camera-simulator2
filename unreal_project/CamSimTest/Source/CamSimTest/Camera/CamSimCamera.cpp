@@ -94,8 +94,13 @@ void ACamSimCamera::BeginPlay()
 		UE_LOG(LogCamSim, Error, TEXT("ACamSimCamera: UCamSimSubsystem not found"));
 		return;
 	}
+	Subsystem->RegisterCamera(this);
 
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+
+	bTrackFrameDrops_ = Cfg.Performance.bTrackFrameDropsByCategory;
+	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: FrameDropTracking=%s"),
+		bTrackFrameDrops_ ? TEXT("enabled") : TEXT("disabled"));
 
 	// Log the RHI backend for platform-specific diagnostics.
 	FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
@@ -368,6 +373,12 @@ void ACamSimCamera::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		CesiumCameraId = -1;
 	}
 
+	// Phase 27B — deregister from subsystem so health writer doesn't access a dangling ptr
+	if (Subsystem)
+	{
+		Subsystem->RegisterCamera(nullptr);
+	}
+
 	// Free the GPU readback object — must happen before the render target is destroyed
 	if (GPUReadback)
 	{
@@ -559,6 +570,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 	{
 		++DroppedFrameCount;
 		INC_DWORD_STAT(STAT_CamSimDropped);
+		if (bTrackFrameDrops_) FrameDropStats_.EncoderBusy++;
 		UE_LOG(LogCamSim, Verbose, TEXT("ACamSimCamera: encoder busy, skipping frame %llu (total dropped=%llu)"),
 			FrameIndex, (uint64)DroppedFrameCount);
 		return;

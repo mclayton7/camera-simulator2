@@ -18,6 +18,15 @@ class UCamSimGimbalComponent;
 class UCamSimSensorComponent;
 class FRHIGPUTextureReadback;  // forward-declare async readback helper
 
+/** Phase 27B — per-category frame drop counters. */
+struct FFrameDropStats
+{
+	TAtomic<int32> EncoderBusy     { 0 };
+	TAtomic<int32> ReadbackTimeout { 0 };
+	TAtomic<int32> SocketError     { 0 };
+	int32 Total() const { return EncoderBusy.Load() + ReadbackTimeout.Load() + SocketError.Load(); }
+};
+
 /**
  * ACamSimCamera
  *
@@ -45,6 +54,10 @@ public:
 
 	// Called by Tick after geospatial position has been applied
 	void CaptureAndEncode();
+
+	// Phase 27B — expose drop stats to subsystem for health JSON
+	const FFrameDropStats& GetFrameDropStats() const { return FrameDropStats_; }
+	bool IsTrackingFrameDrops()                const { return bTrackFrameDrops_; }
 
 private:
 	/** Explicit root scene component. */
@@ -160,6 +173,10 @@ private:
 
 	/** CPU-side sensor post-processing pipeline (Phase 11). */
 	TUniquePtr<IPixelPipeline> SensorFX;
+
+	/** Phase 27B — per-category frame drop counters. */
+	FFrameDropStats FrameDropStats_;
+	bool            bTrackFrameDrops_ = false;
 
 	// Helpers
 	void ApplyCigiState(float DeltaTime);

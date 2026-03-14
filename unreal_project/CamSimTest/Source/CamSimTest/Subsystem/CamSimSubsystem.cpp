@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Subsystem/CamSimSubsystem.h"
+#include "Camera/CamSimCamera.h"
 #include "Entity/CamSimEntityManager.h"
 #include "CIGI/CigiReceiver.h"
 #include "CIGI/CigiSender.h"
@@ -426,14 +427,24 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		const uint32 LastHost = Impl->CigiReceiver ? Impl->CigiReceiver->GetLastHostFrame() : 0;
 		const double UptimeSec = FPlatformTime::Seconds() - Impl->StartTimeSec;
 
-		const FString HealthJson = FString::Printf(
-			TEXT("{\"frame\":%u,\"encoder_ok\":%s,\"cigi_rx\":%llu,\"dropped\":%u,\"uptime_s\":%.1f,\"last_host_frame\":%u}"),
+		FString HealthJson = FString::Printf(
+			TEXT("{\"frame\":%u,\"encoder_ok\":%s,\"cigi_rx\":%llu,\"dropped\":%u,\"uptime_s\":%.1f,\"last_host_frame\":%u"),
 			Impl->FrameCntr,
 			(Encoder && Encoder->IsOpen()) ? TEXT("true") : TEXT("false"),
 			EncOk,
 			Impl->WatchdogReconnectCount,
 			UptimeSec,
 			LastHost);
+
+		// Phase 27B — append per-category frame drop stats when tracking is enabled
+		if (Camera_ && Camera_->IsTrackingFrameDrops())
+		{
+			const FFrameDropStats& D = Camera_->GetFrameDropStats();
+			HealthJson += FString::Printf(
+				TEXT(",\"frame_drops\":{\"encoder_busy\":%d,\"readback_timeout\":%d,\"socket_error\":%d,\"total\":%d}"),
+				D.EncoderBusy.Load(), D.ReadbackTimeout.Load(), D.SocketError.Load(), D.Total());
+		}
+		HealthJson += TEXT("}");
 
 		const FString HealthPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health.json"));
 		if (!FFileHelper::SaveStringToFile(HealthJson, *HealthPath))
