@@ -18,6 +18,7 @@
 #   --mcast-port PORT   Override output UDP port (default: 5004)
 #   --cigi-port PORT    Override CIGI listen port (default: 8888)
 #   --log               Tail the UE log after launch, filtered to LogCamSim
+#   --detach            Background UE and write PID to .cache/camsim.pid (use stop.sh to kill)
 #   --help              Show this message
 # Environment:
 #   CAMSIM_DDC_DIR      Override local UE DDC/Zen cache root (default: <repo>/.cache/ue-ddc)
@@ -61,6 +62,7 @@ BUILD_ONLY=0
 HEADLESS=0
 FOLLOW_LOG=0
 USE_LOCAL=0
+DETACH=0
 declare -a EXTRA_ARGS=()
 
 # -------------------------------------------------------------------------
@@ -77,6 +79,7 @@ while [[ $# -gt 0 ]]; do
         --multicast)   export CAMSIM_MULTICAST_ADDR="$2";    shift 2 ;;
         --mcast-port)  export CAMSIM_MULTICAST_PORT="$2";    shift 2 ;;
         --log)         FOLLOW_LOG=1;                          shift   ;;
+        --detach)      DETACH=1;                              shift   ;;
         --help|-h)
             sed -n '2,/^$/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'
             exit 0
@@ -341,6 +344,20 @@ UE_COMMON_ARGS=(
 echo "==> Platform: ${PLATFORM}  Mode: ${MODE}$([ "${HEADLESS}" -eq 1 ] && echo " (headless)")"
 
 # -------------------------------------------------------------------------
+# Cleanup handler (foreground mode and --log mode)
+# -------------------------------------------------------------------------
+PID_FILE="${REPO_ROOT}/.cache/camsim.pid"
+
+_cleanup() {
+    local pid
+    pid="${UE_PID:-}"
+    [ -n "${pid}" ] && kill "${pid}" 2>/dev/null || true
+    [ -n "${XVFB_PID:-}" ] && kill "${XVFB_PID}" 2>/dev/null || true
+    [ -n "${TAIL_PID:-}" ] && kill "${TAIL_PID}" 2>/dev/null || true
+    echo
+}
+
+# -------------------------------------------------------------------------
 # Launch
 # -------------------------------------------------------------------------
 if [ "${MODE}" = "packaged" ]; then
@@ -372,31 +389,37 @@ echo "    Log: ${LOG_FILE}"
 echo ""
 
 # -------------------------------------------------------------------------
-# Log tail
+# Detach vs foreground
 # -------------------------------------------------------------------------
-if [ "${FOLLOW_LOG}" -eq 1 ]; then
-    for _ in $(seq 1 40); do [ -f "${LOG_FILE}" ] && break; sleep 0.5; done
-    if [ -f "${LOG_FILE}" ]; then
-        echo "==> Tailing log (Ctrl-C stops tail; UE keeps running)"
-        tail -F "${LOG_FILE}" \
-            | grep --line-buffered -E '(LogCamSim|Error|Warning)' &
-        TAIL_PID=$!
-        _cleanup() {
-            kill "${TAIL_PID}" 2>/dev/null || true
-            [ -n "${XVFB_PID}" ] && kill "${XVFB_PID}" 2>/dev/null || true
-            echo
-        }
-        trap '_cleanup' INT TERM
-        wait "${UE_PID}" 2>/dev/null || true
-        _cleanup
-    else
-        echo "[WARN] Log not found after 20s: ${LOG_FILE}"
-    fi
-else
-    if [ -n "${XVFB_PID}" ]; then
+if [ "${DETACH}" -eq 1 ]; then
+    mkdir -p "${REPO_ROOT}/.cache"
+    printf '%s\n%s\n' "${UE_PID}" "${XVFB_PID:-}" > "${PID_FILE}"
+    if [ -n "${XVFB_PID:-}" ]; then
+        # Reap Xvfb when UE exits
         nohup bash -c "while kill -0 ${UE_PID} 2>/dev/null; do sleep 1; done; kill ${XVFB_PID} 2>/dev/null || true" \
             >/dev/null 2>&1 &
     fi
-    echo "    Tip: rerun with --log, or:"
-    echo "    grep LogCamSim '${LOG_FILE}'"
+    echo "==> Detached (PID ${UE_PID}). Stop with: scripts/stop.sh"
+else
+    trap '_cleanup' INT TERM EXIT
+
+    # -------------------------------------------------------------------------
+    # Log tail
+    # -------------------------------------------------------------------------
+    if [ "${FOLLOW_LOG}" -eq 1 ]; then
+        for _ in $(seq 1 40); do [ -f "${LOG_FILE}" ] && break; sleep 0.5; done
+        if [ -f "${LOG_FILE}" ]; then
+            echo "==> Tailing log (Ctrl-C kills UE)"
+            tail -F "${LOG_FILE}" \
+                | grep --line-buffered -E '(LogCamSim|Error|Warning)' &
+            TAIL_PID=$!
+        else
+            echo "[WARN] Log not found after 20s: ${LOG_FILE}"
+        fi
+    else
+        echo "    Tip: rerun with --log, or:"
+        echo "    grep LogCamSim '${LOG_FILE}'"
+    fi
+
+    wait "${UE_PID}" 2>/dev/null || true
 fi
