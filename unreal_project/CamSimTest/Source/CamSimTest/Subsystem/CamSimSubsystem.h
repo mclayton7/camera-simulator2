@@ -17,6 +17,7 @@ class FCigiQueryHandler;
 class FCamSimGeospatialProvider;
 class FGroundTruthCollector;
 class FCamSimParticleManager;
+class UCesiumIonServer;
 
 /**
  * UCamSimSubsystem
@@ -57,6 +58,11 @@ public:
 	FCamSimGeospatialProvider* GetGeospatialProvider() const;
 	FGroundTruthCollector* GetGroundTruthCollector() const;
 	FCamSimParticleManager* GetParticleManager() const;
+
+	/** Store the transient UCesiumIonServer created by ApplyCesiumBackendConfig.
+	 *  Passing nullptr clears the stored reference (no-op if already null).
+	 *  Must be called on the game thread. */
+	void StoreCesiumIonServer(UCesiumIonServer* Server);
 
 	const FCamSimConfig&    GetConfig()        const { return Config; }
 	const FEntityTypeTable& GetEntityTypeTable() const { return EntityTypeTable; }

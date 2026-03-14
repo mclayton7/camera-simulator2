@@ -6,6 +6,7 @@
 #include "Config/CamSimConfig.h"
 
 class UWorld;
+class UCesiumIonServer;
 
 struct FCamSimGeospatialCapabilities
 {
@@ -36,4 +37,17 @@ private:
 	FString ProviderName = TEXT("cesium");
 	FCamSimGeospatialCapabilities Capabilities;
 };
+
+/**
+ * Apply Cesium backend configuration (ion server, terrain source, imagery overlay)
+ * to all ACesium3DTileset actors in the world.
+ *
+ * Must be called on the game thread.
+ * Returns the created UCesiumIonServer* (nullptr if ion server step was skipped —
+ * i.e. all three ion settings are at their defaults).
+ * Caller is responsible for passing the result to UCamSimSubsystem::StoreCesiumIonServer()
+ * to prevent GC.
+ */
+UCesiumIonServer* ApplyCesiumBackendConfig(
+	UWorld* World, const FCamSimConfig::FCesiumBackendConfig& Config);
 

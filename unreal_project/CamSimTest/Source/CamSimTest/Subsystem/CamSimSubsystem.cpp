@@ -16,6 +16,8 @@
 #include "DynamicRHI.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "CesiumIonServer.h"
+#include "UObject/StrongObjectPtr.h"
 
 extern "C"
 {
@@ -41,6 +43,10 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCamSimGeospatialProvider> GeospatialProvider;
 	TUniquePtr<FGroundTruthCollector>     GroundTruthCollector;
 	TUniquePtr<FCamSimParticleManager>    ParticleManager;
+
+	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
+	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
+	TStrongObjectPtr<UCesiumIonServer> CesiumIonServerOverride;
 
 	// IG frame counter — incremented each tick; sent in every SOF packet
 	uint32 FrameCntr = 0;
@@ -69,6 +75,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	{
 		// Tear down in reverse-dependency order.
 		// TUniquePtr destructors handle null checks automatically.
+		CesiumIonServerOverride.Reset();
 		QueryHandler.Reset();
 		GeospatialProvider.Reset();
 		if (GroundTruthCollector) { GroundTruthCollector->Close(); }
@@ -134,6 +141,18 @@ FGroundTruthCollector* UCamSimSubsystem::GetGroundTruthCollector() const
 FCamSimParticleManager* UCamSimSubsystem::GetParticleManager() const
 {
 	return Impl ? Impl->ParticleManager.Get() : nullptr;
+}
+
+void UCamSimSubsystem::StoreCesiumIonServer(UCesiumIonServer* Server)
+{
+	if (Impl)
+	{
+		Impl->CesiumIonServerOverride.Reset();
+		if (Server)
+		{
+			Impl->CesiumIonServerOverride = TStrongObjectPtr<UCesiumIonServer>(Server);
+		}
+	}
 }
 
 // -------------------------------------------------------------------------
