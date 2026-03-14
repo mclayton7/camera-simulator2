@@ -17,6 +17,8 @@ class UCamSimSubsystem;
 class UCamSimGimbalComponent;
 class UCamSimSensorComponent;
 class FRHIGPUTextureReadback;  // forward-declare async readback helper
+class UMaterialInterface;
+class UMaterialParameterCollection;
 
 /** Phase 27B — per-category frame drop counters. */
 struct FFrameDropStats
@@ -174,6 +176,10 @@ private:
 	/** CPU-side sensor post-processing pipeline (Phase 11). */
 	TUniquePtr<IPixelPipeline> SensorFX;
 
+	// Phase 27A — GPU sensor post-process
+	UMaterialParameterCollection* GpuSensorMpc_ = nullptr;
+	UMaterialInterface*           GpuSensorMat_ = nullptr;
+
 	/** Phase 27B — per-category frame drop counters. */
 	FFrameDropStats FrameDropStats_;
 	bool            bTrackFrameDrops_ = false;
@@ -190,6 +196,8 @@ private:
 	// Helpers
 	void ApplyCigiState(float DeltaTime);
 	void ComputeGeometricLOS();
+	/** Phase 27A — Update MPC scalar parameters for GPU sensor post-process material. */
+	void UpdateGpuSensorMpcParams();
 
 	/** Populate telemetry fields from the environment actor (Phase 18). */
 	void ReadEnvironmentTelemetry();

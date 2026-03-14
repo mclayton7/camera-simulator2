@@ -317,3 +317,27 @@ All paths are overridable in `camsim_config.yaml` or via `CAMSIM_*` env vars.
 - Each glTF/FBX entity model should have a corresponding `_Normal.png` / `.tga` texture.
 - After assigning, verify the normal map intensity with `r.NormalMap.Enable=1` in the console.
 - No C++ changes needed; `ShowFlags.SetMaterialNormalMap(true)` is already set (Phase 24C).
+
+---
+
+## Part 6 — Phase 27A GPU Sensor Post-Process Material
+
+Required when `gpu_sensor_effects: true` in camsim_config.yaml.
+
+**6A: Material Parameter Collection (MPC_SensorParams)**
+- Path: `Content/CamSim/Materials/MPC_SensorParams`
+- Scalar parameters:
+  - `SensorMode` (float: 0=EO, 1=IR, 2=NVG)
+  - `NoiseIntensity` (float: 0.0–1.0)
+  - `AGCLevel` (float: 0.0–1.0)
+
+**6B: Post-Process Material (M_SensorPostProcess)**
+- Path: `Content/CamSim/Materials/M_SensorPostProcess`
+- Material domain: Post Process
+- Blendable location: Before Tonemapping
+- Must sample `MPC_SensorParams` for all effect parameters
+- EO mode: color pass-through + optional vignette
+- IR mode: luminance-based false-color ramp + Gaussian noise
+- NVG mode: green phosphor tint + grain noise
+
+**Verification:** Set `gpu_sensor_effects: true`, confirm IR ramp visible in output video

@@ -202,6 +202,22 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 		return;
 	}
 
+	// 27A — GPU post-process material handles tone mapping and noise on GPU.
+	// Only run cheap stateful CPU effects (defect pixels, quantization, overlay).
+	if (bGpuSensorEffectsActive_)
+	{
+		const FSensorModeConfig* ModeCfg = Configs.Find(Mode);
+		if (ModeCfg)
+		{
+			ApplyDefectPixels(Pixels);
+			ApplyQuantization(Pixels, ModeCfg->QuantizationBits, ModeCfg->bQuantizationDither);
+		}
+		if (Phase18.bPrecipitation)
+			ApplyPrecipitation(Pixels, FrameIndex);
+		HudOverlay.Render(Pixels, Telemetry);
+		return;
+	}
+
 	const FSensorModeConfig* CfgPtr = Configs.Find(Mode);
 	if (!CfgPtr)
 	{

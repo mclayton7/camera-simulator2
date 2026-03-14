@@ -29,6 +29,11 @@
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
 
+// Phase 27A — GPU sensor post-process material loading
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialParameterCollection.h"
+#include "Kismet/KismetMaterialLibrary.h"
+
 // Cesium
 #include "CesiumGlobeAnchorComponent.h"
 #include "CesiumCameraManager.h"
@@ -348,6 +353,40 @@ void ACamSimCamera::BeginPlay()
 		Cfg.Performance.bTrackFrameDropsByCategory ? TEXT("1") : TEXT("0"),
 		Cfg.Performance.bHotReloadConfig ? TEXT("1") : TEXT("0"));
 
+	// 27A — GPU sensor post-process material
+	if (Cfg.Performance.bGpuSensorEffects)
+	{
+		GpuSensorMat_ = Cast<UMaterialInterface>(
+			StaticLoadObject(UMaterialInterface::StaticClass(), nullptr,
+				*Cfg.Performance.GpuSensorMaterialPath));
+		GpuSensorMpc_ = Cast<UMaterialParameterCollection>(
+			StaticLoadObject(UMaterialParameterCollection::StaticClass(), nullptr,
+				*Cfg.Performance.GpuSensorMpcPath));
+
+		if (GpuSensorMat_ && GpuSensorMpc_ && SceneCapture)
+		{
+			FWeightedBlendable Blendable;
+			Blendable.Object = GpuSensorMat_;
+			Blendable.Weight = 1.0f;
+			SceneCapture->PostProcessSettings.WeightedBlendables.Array.Add(Blendable);
+
+			// Bypass expensive CPU pipeline loops — defect pixels, quantization, overlay still run
+			if (auto* FXCast = dynamic_cast<FSensorPostProcess*>(SensorFX.Get()))
+			{
+				FXCast->SetGpuSensorEffectsActive(true);
+			}
+			UE_LOG(LogCamSim, Log,
+				TEXT("ACamSimCamera: GPU sensor pipeline ACTIVE — material=%s"),
+				*Cfg.Performance.GpuSensorMaterialPath);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("ACamSimCamera: GPU sensor material/MPC not found at '%s' / '%s' — falling back to CPU pipeline"),
+				*Cfg.Performance.GpuSensorMaterialPath, *Cfg.Performance.GpuSensorMpcPath);
+		}
+	}
+
 	// Allocate async GPU readback helper (non-blocking DMA: EnqueueCopy → IsReady → Lock)
 	GPUReadback = new FRHIGPUTextureReadback(TEXT("CamSimReadback"));
 
@@ -494,6 +533,9 @@ void ACamSimCamera::Tick(float DeltaTime)
 	// Apply pending CIGI state first (CIGI queue drain runs every tick,
 	// even if we skip capture, so the platform pose stays current)
 	ApplyCigiState(DeltaTime);
+
+	// 27A — Push current sensor state into GPU MPC each tick (no-op when MPC not loaded)
+	if (GpuSensorMpc_) UpdateGpuSensorMpcParams();
 
 	// -----------------------------------------------------------------------
 	// State B — GPU readback pending: poll render thread for DMA completion.
@@ -826,6 +868,19 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 }
 
 // -------------------------------------------------------------------------
+// UpdateGpuSensorMpcParams – Phase 27A: push per-frame scalars to GPU MPC
+// -------------------------------------------------------------------------
+
+void ACamSimCamera::UpdateGpuSensorMpcParams()
+{
+	if (!GpuSensorMpc_ || !GetWorld()) return;
+	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), GpuSensorMpc_,
+		TEXT("SensorMode"), static_cast<float>(SensorComp->GetMode()));
+	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), GpuSensorMpc_,
+		TEXT("NoiseIntensity"), 0.0f); // placeholder — actual value from sensor config
+}
+
+// -------------------------------------------------------------------------
 // ReadEnvironmentTelemetry – sun elevation + Phase 18 atmospheric snapshot
 // -------------------------------------------------------------------------
 
@@ -1107,10 +1162,10 @@ void ACamSimCamera::SubmitFrameToEncoder(
 	const ESensorMode  Mode     = static_cast<ESensorMode>(Telemetry.SensorMode);
 	const uint8        Polarity = Telemetry.SensorPolarity;
 
-	// When GPU sensor effects are active (Phase 5), the post-process materials
-	// already ran on the GPU before readback — skip the CPU pipeline.
-	const bool bSkipCpuFX = Subsystem && Subsystem->GetConfig().Performance.bGpuSensorEffects;
-	IPixelPipeline* FX = bSkipCpuFX ? nullptr : SensorFX.Get();
+	// When GPU sensor effects are active (Phase 27A), FSensorPostProcess::Process()
+	// bypasses the expensive CPU loops internally (waveband, AGC, noise) and only
+	// runs cheap stateful effects (defect pixels, quantization, overlay).
+	IPixelPipeline* FX = SensorFX.Get();
 
 	// Ground truth collector (Phase 17) — pointer captured for task lambda.
 	FGroundTruthCollector* Collector = Subsystem ? Subsystem->GetGroundTruthCollector() : nullptr;

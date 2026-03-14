@@ -42,6 +42,9 @@ public:
 	 */
 	void SetOverlayConfig(const FHudOverlayConfig& Cfg) { HudOverlay.SetConfig(Cfg); }
 
+	/** Phase 27A — GPU sensor pipeline: skip CPU waveband/AGC/noise loops when GPU material is active. */
+	void SetGpuSensorEffectsActive(bool bActive) { bGpuSensorEffectsActive_ = bActive; }
+
 	/**
 	 * Apply the sensor pipeline in-place.
 	 * Called from the async task thread — safe to modify Pixels without a lock
@@ -189,6 +192,10 @@ private:
 
 	/** 16K: Brighten highlight pixels based on sun angle (EO sun glint). */
 	void ApplySunGlint(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg, float SunElevationDeg);
+
+	// -- Phase 27A: GPU sensor pipeline bypass flag --------------------------
+
+	bool bGpuSensorEffectsActive_ = false;
 
 	// -- Phase 18: Weather, Atmosphere & Particle Effects --------------------
 

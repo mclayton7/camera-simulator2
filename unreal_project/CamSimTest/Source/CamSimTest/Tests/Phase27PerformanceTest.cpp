@@ -199,3 +199,18 @@ bool FPhase27_HotReloadImmutable::RunTest(const FString& Parameters)
     TestTrue(TEXT("VideoCodec change detected"),    A.VideoCodec != B.VideoCodec);
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// Test 9 — GPU sensor bypass flag in FPerformanceConfig
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_GpuSensorBypass,
+    "CamSim.Phase27.GpuSensorBypass",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FPhase27_GpuSensorBypass::RunTest(const FString& Parameters)
+{
+    FCamSimConfig::FPerformanceConfig C;
+    TestFalse(TEXT("GPU sensor off by default"), C.bGpuSensorEffects);
+    C.bGpuSensorEffects = true;
+    TestTrue(TEXT("GPU sensor flag set"), C.bGpuSensorEffects);
+    return true;
+}
