@@ -384,13 +384,13 @@ Use `scripts/validate_klv.py` against a live stream:
 sudo route add -net 239.0.0.0/8 -interface lo0
 
 # Validate KLV in the MPEG-TS stream
-python3 scripts/validate_klv.py udp://239.1.1.1:5004
+uv run scripts/validate_klv.py udp://239.1.1.1:5004
 
 # Exercise platform attitude tags
-python3 scripts/send_cigi_test.py --sweep
+uv run scripts/send_cigi_test.py --sweep
 
 # Exercise sensor mode / polarity tags
-python3 scripts/send_cigi_test.py --sensor-id 1 --polarity 1
+uv run scripts/send_cigi_test.py --sensor-id 1 --polarity 1
 ```
 
 The validator will print each decoded tag with its numeric value. Tag 65 should appear in

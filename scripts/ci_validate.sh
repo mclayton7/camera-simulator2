@@ -5,7 +5,7 @@
 # validates H.264 + KLV streams via ffprobe, and captures a short segment
 # to check for decode errors.
 #
-# Requirements: docker, ffprobe, ffmpeg, python3 (for validate_klv.py)
+# Requirements: docker, ffprobe, ffmpeg, uv (for validate_klv.py)
 #
 # Usage:
 #   ./scripts/ci_validate.sh [image_name]
@@ -105,7 +105,7 @@ fi
 # -----------------------------------------------------------------------
 if [ -f "${REPO_ROOT}/scripts/validate_klv.py" ] && [ -f /tmp/camsim_ci_capture.ts ]; then
     echo "==> Validating KLV..."
-    python3 "${REPO_ROOT}/scripts/validate_klv.py" /tmp/camsim_ci_capture.ts --check-crc || true
+    uv run "${REPO_ROOT}/scripts/validate_klv.py" /tmp/camsim_ci_capture.ts --check-crc || true
 fi
 
 # -----------------------------------------------------------------------

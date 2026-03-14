@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """
 test_entity_rendering.py — Phase 8 entity rendering test sender for CamSim.
 
@@ -18,7 +18,7 @@ CIGI 3.3 packet IDs used here:
   8  Rate Control
 
 Usage:
-    python3 scripts/test_entity_rendering.py <mode> [options]
+    uv run scripts/test_entity_rendering.py <mode> [options]
 
 Modes:
     spawn       Spawn a scene entity and hold it stationary.
@@ -43,26 +43,25 @@ Options:
 
 Examples:
     # Spawn F-16 (type 1001) and hold for 30 s:
-    python3 scripts/test_entity_rendering.py spawn --entity-type 1001 --duration 30
+    uv run scripts/test_entity_rendering.py spawn --entity-type 1001 --duration 30
 
     # Spawn F-16 moving north at 200 m/s; watch dead-reckoning:
-    python3 scripts/test_entity_rendering.py deadreckon --entity-type 1001 --duration 20
+    uv run scripts/test_entity_rendering.py deadreckon --entity-type 1001 --duration 20
 
     # Toggle nav, strobe, and landing lights:
-    python3 scripts/test_entity_rendering.py lights --duration 10
+    uv run scripts/test_entity_rendering.py lights --duration 10
 
     # Cycle damage states every 5 seconds:
-    python3 scripts/test_entity_rendering.py damage --duration 30
+    uv run scripts/test_entity_rendering.py damage --duration 30
 
     # Remove entity from a previous session:
-    python3 scripts/test_entity_rendering.py remove --entity-id 1
+    uv run scripts/test_entity_rendering.py remove --entity-id 1
 """
 
 import argparse
 import math
 import socket
 import struct
-import sys
 import time
 
 
@@ -221,12 +220,18 @@ def pack_art_part_control(
       28-31 float32 Yaw (deg)
     """
     flags = 0x01 if art_part_en else 0x00
-    if x_off  is not None: flags |= 0x02
-    if y_off  is not None: flags |= 0x04
-    if z_off  is not None: flags |= 0x08
-    if roll   is not None: flags |= 0x10
-    if pitch  is not None: flags |= 0x20
-    if yaw    is not None: flags |= 0x40
+    if x_off is not None:
+        flags |= 0x02
+    if y_off is not None:
+        flags |= 0x04
+    if z_off is not None:
+        flags |= 0x08
+    if roll is not None:
+        flags |= 0x10
+    if pitch is not None:
+        flags |= 0x20
+    if yaw is not None:
+        flags |= 0x40
 
     pkt = struct.pack(">BBHBBxxffffff",
         6, 32, entity_id & 0xFFFF,

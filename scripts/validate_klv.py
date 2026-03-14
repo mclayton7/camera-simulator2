@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """
 validate_klv.py — MISB ST 0601 KLV metadata validator for CamSim.
 
@@ -11,14 +11,14 @@ reassembles PES packets, and decodes MISB ST 0601 Local Set KLV. Validates:
 
 Usage:
     # Live UDP multicast (Phase 4 test):
-    python3 scripts/validate_klv.py --addr 239.1.1.1 --port 5004
+    uv run scripts/validate_klv.py --addr 239.1.1.1 --port 5004
 
     # From a saved .ts file:
-    python3 scripts/validate_klv.py --file /tmp/camsim_capture.ts
+    uv run scripts/validate_klv.py --file /tmp/camsim_capture.ts
 
     # Save a capture first (via test_video_output.sh --save):
     ./scripts/test_video_output.sh --save /tmp/cap.ts --duration 5
-    python3 scripts/validate_klv.py --file /tmp/cap.ts
+    uv run scripts/validate_klv.py --file /tmp/cap.ts
 
 Options:
     --addr ADDR       Multicast/unicast address  (default: 239.1.1.1)
@@ -240,11 +240,13 @@ def parse_klv_local_set(packet: bytes, verbose: bool = False) -> dict:
     while pos < end:
         if pos >= len(packet):
             break
-        tag = packet[pos]; pos += 1
+        tag = packet[pos]
+        pos += 1
         if pos >= len(packet):
             result["_errors"].append(f"Truncated at tag {tag} length byte")
             break
-        length = packet[pos]; pos += 1  # ST 0601 uses 1-byte lengths only
+        length = packet[pos]
+        pos += 1  # ST 0601 uses 1-byte lengths only
         if pos + length > len(packet):
             result["_errors"].append(f"Tag {tag}: length {length} overruns packet")
             break
@@ -506,7 +508,7 @@ def main():
         else read_udp_chunks(args.addr, args.port, max_wait_seconds=args.timeout)
     )
 
-    print(f"    Looking for KLVA data PID …")
+    print("    Looking for KLVA data PID …")
 
     try:
         for chunk in source:

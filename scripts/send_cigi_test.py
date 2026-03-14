@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """
 send_cigi_test.py — CIGI 3.3 test packet sender for CamSim.
 
@@ -14,7 +14,7 @@ CIGI 3.3 references:
   • Packet IDs: IG Control=1, Entity Control=2, View Definition=21
 
 Usage:
-    python3 scripts/send_cigi_test.py [options]
+    uv run scripts/send_cigi_test.py [options]
 
 Options:
     --host HOST         CamSim CIGI listen address  (default: 127.0.0.1)
@@ -48,42 +48,41 @@ Options:
 
 Examples:
     # Hover over San Francisco airport at 500 m, looking down at -30°:
-    python3 scripts/send_cigi_test.py --lat 37.6213 --lon -122.379 --alt 500 --pitch -30
+    uv run scripts/send_cigi_test.py --lat 37.6213 --lon -122.379 --alt 500 --pitch -30
 
     # Sweep heading slowly (good for visual validation):
-    python3 scripts/send_cigi_test.py --sweep --duration 30
+    uv run scripts/send_cigi_test.py --sweep --duration 30
 
     # Orbit a point over 60 seconds:
-    python3 scripts/send_cigi_test.py --circle 37.7749 -122.4194 --alt 2000 --duration 60
+    uv run scripts/send_cigi_test.py --circle 37.7749 -122.4194 --alt 2000 --duration 60
 
     # Automated tour (loops until Ctrl-C):
-    python3 scripts/send_cigi_test.py --tour
-    python3 scripts/send_cigi_test.py --tour --tour-speed 2.0 --alt 2000
+    uv run scripts/send_cigi_test.py --tour
+    uv run scripts/send_cigi_test.py --tour --tour-speed 2.0 --alt 2000
 
     # Sunrise with fog:
-    python3 scripts/send_cigi_test.py --time 0600 --visibility 2000
+    uv run scripts/send_cigi_test.py --time 0600 --visibility 2000
 
     # Night scene:
-    python3 scripts/send_cigi_test.py --time 2200
+    uv run scripts/send_cigi_test.py --time 2200
 
     # Day/night cycle during a tour:
-    python3 scripts/send_cigi_test.py --tour --time-sweep --time-sweep-period 60
+    uv run scripts/send_cigi_test.py --tour --time-sweep --time-sweep-period 60
 
     # Overcast weather:
-    python3 scripts/send_cigi_test.py --weather
+    uv run scripts/send_cigi_test.py --weather
 
     # Low stratus at 500 m base, 200 m thick:
-    python3 scripts/send_cigi_test.py --weather --cloud-base 500 --cloud-thickness 200
+    uv run scripts/send_cigi_test.py --weather --cloud-base 500 --cloud-thickness 200
 
     # High cirrus at 8000 m base, 1000 m thick:
-    python3 scripts/send_cigi_test.py --weather --cloud-base 8000 --cloud-thickness 1000
+    uv run scripts/send_cigi_test.py --weather --cloud-base 8000 --cloud-thickness 1000
 """
 
 import argparse
 import math
 import socket
 import struct
-import sys
 import time
 
 
@@ -250,7 +249,8 @@ def pack_sensor_control(
       20-23 float32 Noise
     """
     flags = 0
-    if sensor_on: flags |= 0x01
+    if sensor_on:
+        flags |= 0x01
     flags |= (polarity & 0x01) << 1
 
     return struct.pack(">BBHBBBxffff",
@@ -295,9 +295,12 @@ def pack_celestial_control(
       14-15         reserved (zero)
     """
     flags = 0
-    if ephemeris_en: flags |= 0x01
-    if sun_en:       flags |= 0x02
-    if moon_en:      flags |= 0x04
+    if ephemeris_en:
+        flags |= 0x01
+    if sun_en:
+        flags |= 0x02
+    if moon_en:
+        flags |= 0x04
     flags |= 0x10  # Date Valid
 
     return struct.pack(">BBBBBxBBHfH",
@@ -396,7 +399,8 @@ def pack_weather_control(
       52-55 float32 Aerosol Concentration (0.0)
     """
     flags = 0x00
-    if weather_en: flags |= 0x01
+    if weather_en:
+        flags |= 0x01
     flags |= (cloud_type & 0x0F) << 4
 
     scope_sev = (scope & 0x03) | ((severity & 0x07) << 2)

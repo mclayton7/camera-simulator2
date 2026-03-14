@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """
 capture_cigi_stream.py — capture raw CIGI UDP datagrams to JSONL.
 
