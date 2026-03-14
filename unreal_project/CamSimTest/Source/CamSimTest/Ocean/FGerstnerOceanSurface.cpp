@@ -31,9 +31,9 @@ void FGerstnerOceanSurface::Init(const FString& MaterialPath,
 
 void FGerstnerOceanSurface::SetWaveParams(float WaveHtM, float WaveLenM,
                                            float AmplScale, float FreqScale,
-                                           float Choppiness)
+                                           float InChoppiness)
 {
-	Choppiness_ = FMath::Clamp(Choppiness, 0.0f, 1.0f);
+	Choppiness = FMath::Clamp(InChoppiness, 0.0f, 1.0f);
 
 	if (WaveHtM <= 0.0f || WaveLenM <= 0.0f)
 	{
@@ -59,8 +59,9 @@ void FGerstnerOceanSurface::SetWaveParams(float WaveHtM, float WaveLenM,
 
 void FGerstnerOceanSurface::Tick(float DeltaTime)
 {
-	if (!bEnabled_) return;
-	ElapsedTime += DeltaTime;
+	if (!bEnabled) return;
+	ElapsedTime  += DeltaTime;
+	PhaseOffset   = AngularFreq * ElapsedTime;
 	WriteMPC();
 }
 
@@ -69,14 +70,14 @@ float FGerstnerOceanSurface::GetSurfaceHeightAt(FVector2D WorldXY) const
 	if (AmplitudeCm <= 0.0f || WaveNumber <= 0.0f) return 0.0f;
 
 	// Single dominant wave, propagating along +X axis (fixed direction, Sprint 1)
-	// Z = A · cos(k·x − ω·t)
-	const float Phase = WaveNumber * WorldXY.X - AngularFreq * ElapsedTime;
+	// Z = A · cos(k·x − ω·t);  PhaseOffset = ω·t cached each Tick
+	const float Phase = WaveNumber * WorldXY.X - PhaseOffset;
 	return AmplitudeCm * FMath::Cos(Phase);
 }
 
 void FGerstnerOceanSurface::SetEnabled(bool bInEnabled)
 {
-	bEnabled_ = bInEnabled;
+	bEnabled = bInEnabled;
 	if (OceanMesh)
 	{
 		OceanMesh->SetVisibility(bInEnabled);
@@ -108,6 +109,6 @@ void FGerstnerOceanSurface::WriteMPC() const
 
 	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, FName("Amplitude"),  AmplitudeCm);
 	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, FName("Frequency"),  WaveNumber);
-	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, FName("Choppiness"), Choppiness_);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, FName("Choppiness"), Choppiness);
 	UKismetMaterialLibrary::SetScalarParameterValue(World, MPC, FName("Time"),       ElapsedTime);
 }

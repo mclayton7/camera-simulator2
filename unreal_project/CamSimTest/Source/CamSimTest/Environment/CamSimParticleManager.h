@@ -75,8 +75,8 @@ private:
     UNiagaraSystem*     WakeAsset                         = nullptr;
     UMaterialInterface* CraterMaterial = nullptr;
 
-    float               WakeFadeTime                      = 8.0f;
-    bool                Config_Phase19_VesselWakesEnabled = false;
+    float               WakeFadeTime          = 8.0f;
+    bool                bVesselWakesEnabled   = false;
 
     float ContrailAltM      = 8000.0f;
     int32 SmokeComponentID  = 1;

@@ -16,6 +16,7 @@ class AExponentialHeightFog;
 class AVolumetricCloud;
 class ACesiumSunSky;
 class UCamSimSubsystem;
+class ACamSimCamera;
 
 /** Weather parameters for a regional zone (blended when camera is inside the radius). */
 struct FWeatherZoneParams
@@ -86,6 +87,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<ACesiumSunSky>         CesiumSunSkyActor;
 
 	UPROPERTY(Transient) TObjectPtr<UCamSimSubsystem> Subsystem;
+	UPROPERTY(Transient) TObjectPtr<ACamSimCamera>    CamSimCameraActor;
 
 	// Latest state from CIGI queues
 	FCigiCelestialState  CurrentCelestial;
