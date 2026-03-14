@@ -365,7 +365,6 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlString(Root, "encoder", Cfg.Encoder);
 		YamlInt   (Root, "max_entities", Cfg.MaxEntities);
 		YamlBool  (Root, "use_instanced_rendering", Cfg.bUseInstancedRendering);
-		YamlBool  (Root, "gpu_sensor_effects", Cfg.bGpuSensorEffects);
 		YamlFloat (Root, "hfov_deg",         Cfg.HFovDeg);
 		YamlString(Root, "terrain_provider", Cfg.TerrainProvider);
 		YamlString(Root, "imagery_provider", Cfg.ImageryProvider);
@@ -840,6 +839,25 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlInt  (RQNode, "tsr_screen_percentage",  RQ.TSRScreenPercentage);
 		}
 
+		// Phase 27: Performance
+		if (Root.has_child("performance"))
+		{
+			ryml::ConstNodeRef PerfNode = Root["performance"];
+			FPerformanceConfig& Perf = Cfg.Performance;
+			YamlBool (PerfNode, "track_frame_drops_by_category",        Perf.bTrackFrameDropsByCategory);
+			YamlBool (PerfNode, "hot_reload_config",                    Perf.bHotReloadConfig);
+			YamlFloat(PerfNode, "hot_reload_poll_interval_sec",         Perf.HotReloadPollIntervalSec);
+			YamlFloat(PerfNode, "tile_prefetch_slew_threshold_deg_per_sec", Perf.TilePrefetchSlewThresholdDegPerSec);
+			YamlFloat(PerfNode, "tile_prefetch_fov_boost",              Perf.TilePrefetchFovBoost);
+			YamlInt  (PerfNode, "tile_prefetch_boost_frames",           Perf.TilePrefetchBoostFrames);
+			YamlFloat(PerfNode, "render_frame_rate_hz",                 Perf.RenderFrameRateHz);
+			YamlFloat(PerfNode, "output_frame_rate_hz",                 Perf.OutputFrameRateHz);
+			YamlInt  (PerfNode, "texture_pool_budget_mb",               Perf.TexturePoolBudgetMB);
+			YamlBool (PerfNode, "gpu_sensor_effects",                   Perf.bGpuSensorEffects);
+			YamlString(PerfNode, "gpu_sensor_material_path",            Perf.GpuSensorMaterialPath);
+			YamlString(PerfNode, "gpu_sensor_mpc_path",                 Perf.GpuSensorMpcPath);
+		}
+
 		if (Root.has_child("phase19"))
 		{
 			ryml::ConstNodeRef P19 = Root["phase19"];
@@ -1191,11 +1209,26 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		*Cfg.MulticastAddr, Cfg.MulticastPort,
 		Cfg.VideoBitrate, *Cfg.H264Preset, *Cfg.Encoder,
 		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks,
-		Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB, Cfg.MaxEntities, Cfg.bGpuSensorEffects ? 1 : 0,
+		Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB, Cfg.MaxEntities, Cfg.Performance.bGpuSensorEffects ? 1 : 0,
 		*Cfg.SensorQualityPreset, *Cfg.TerrainProvider, *Cfg.ImageryProvider,
 		Cfg.GroundTruth.bEnabled ? 1 : 0,
 		Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz, Cfg.EntityScale.DefaultMaxUpdateRateHz,
 		Cfg.bScenarioEnabled ? 1 : 0, Cfg.ScenarioEntities.Num(), Cfg.ScenarioTimeScale);
+
+	// Phase 27: Performance env overrides
+	{
+		FPerformanceConfig& Perf = Cfg.Performance;
+		Perf.bTrackFrameDropsByCategory          = GetEnvBool (TEXT("CAMSIM_PERF_TRACK_DROPS"),         Perf.bTrackFrameDropsByCategory);
+		Perf.bHotReloadConfig                    = GetEnvBool (TEXT("CAMSIM_PERF_HOT_RELOAD"),          Perf.bHotReloadConfig);
+		Perf.HotReloadPollIntervalSec            = GetEnvFloat(TEXT("CAMSIM_PERF_POLL_INTERVAL"),       Perf.HotReloadPollIntervalSec);
+		Perf.TilePrefetchSlewThresholdDegPerSec  = GetEnvFloat(TEXT("CAMSIM_PERF_TILE_SLEW_THRESHOLD"), Perf.TilePrefetchSlewThresholdDegPerSec);
+		Perf.TilePrefetchFovBoost                = GetEnvFloat(TEXT("CAMSIM_PERF_TILE_FOV_BOOST"),      Perf.TilePrefetchFovBoost);
+		Perf.TilePrefetchBoostFrames             = GetEnvInt  (TEXT("CAMSIM_PERF_TILE_BOOST_FRAMES"),   Perf.TilePrefetchBoostFrames);
+		Perf.RenderFrameRateHz                   = GetEnvFloat(TEXT("CAMSIM_PERF_RENDER_FPS"),          Perf.RenderFrameRateHz);
+		Perf.OutputFrameRateHz                   = GetEnvFloat(TEXT("CAMSIM_PERF_OUTPUT_FPS"),          Perf.OutputFrameRateHz);
+		Perf.TexturePoolBudgetMB                 = GetEnvInt  (TEXT("CAMSIM_PERF_TEXTURE_POOL_MB"),     Perf.TexturePoolBudgetMB);
+		Perf.bGpuSensorEffects                   = GetEnvBool (TEXT("CAMSIM_PERF_GPU_SENSOR"),          Perf.bGpuSensorEffects);
+	}
 
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping
 	if (Cfg.SensorFovPresets.Num() > 0)

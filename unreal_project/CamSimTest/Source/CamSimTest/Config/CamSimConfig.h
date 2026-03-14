@@ -134,11 +134,6 @@ struct FCamSimConfig
 	int32   MaxEntities = 500;
 	bool    bUseInstancedRendering = true;
 
-	// GPU sensor post-processing (Phase 5). When true, sensor effects run as
-	// post-process materials on the GPU before readback -- CPU pipeline is skipped.
-	// Set false for Mesa llvmpipe compatibility (CPU fallback).
-	bool    bGpuSensorEffects = false;
-
 	// CIGI entity ID that drives the camera (all others -> entity manager)
 	int32   CameraEntityId  = 0;
 
@@ -343,6 +338,35 @@ struct FCamSimConfig
 		int32 TSRScreenPercentage = 100;
 	};
 	FRenderingQualityConfig RenderingQuality;
+
+	// Phase 27 — Performance & Optimization
+	struct FPerformanceConfig
+	{
+		// 27B Frame Drop Categorization
+		bool  bTrackFrameDropsByCategory    = false;
+
+		// 27D Hot-Reload Config
+		bool  bHotReloadConfig              = false;
+		float HotReloadPollIntervalSec      = 5.0f;
+
+		// 27E Tile Prefetch
+		float TilePrefetchSlewThresholdDegPerSec = 10.0f;
+		float TilePrefetchFovBoost               = 2.0f;
+		int32 TilePrefetchBoostFrames            = 30;
+
+		// 27F 60 Hz Rendering
+		float RenderFrameRateHz  = 30.0f;
+		float OutputFrameRateHz  = 30.0f;
+
+		// 27G Texture Paging Budget
+		int32 TexturePoolBudgetMB = 0;
+
+		// 27A GPU Sensor Pipeline
+		bool    bGpuSensorEffects      = false;
+		FString GpuSensorMaterialPath = TEXT("/Game/CamSim/Materials/M_SensorPostProcess");
+		FString GpuSensorMpcPath      = TEXT("/Game/CamSim/Materials/MPC_SensorParams");
+	};
+	FPerformanceConfig Performance;
 
 	// Weather, Atmosphere & Particle Effects (Phase 18)
 	struct FPhase18Config

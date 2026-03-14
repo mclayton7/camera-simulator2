@@ -274,9 +274,6 @@ max_entities: 500
 # Use instanced rendering for entities with the same mesh type.
 use_instanced_rendering: true
 
-# Use GPU post-process materials for sensor effects instead of CPU
-# pipeline. Set false for Mesa llvmpipe compatibility.
-gpu_sensor_effects: false
 
 entity_scale:
   # Draw/cull distance in metres. 0 = no distance culling.
@@ -542,6 +539,32 @@ phase19:
   ocean_reflections_enabled: false
   ssr_intensity: 1.0
   reflection_capture_radius: 10000.0  # cm (UE units)
+
+# Phase 27 — Performance & Optimization
+performance:
+  # 27B Frame drop categorization (log drops by cause: encoder_busy, readback_timeout, socket_error)
+  track_frame_drops_by_category: false         # CAMSIM_PERF_TRACK_DROPS
+
+  # 27D Hot-reload config (apply YAML changes at runtime without restart)
+  hot_reload_config: false                      # CAMSIM_PERF_HOT_RELOAD
+  hot_reload_poll_interval_sec: 5.0             # CAMSIM_PERF_POLL_INTERVAL
+
+  # 27E Tile prefetch (boost Cesium LOD during fast gimbal slews)
+  tile_prefetch_slew_threshold_deg_per_sec: 10.0  # CAMSIM_PERF_TILE_SLEW_THRESHOLD
+  tile_prefetch_fov_boost: 2.0                    # CAMSIM_PERF_TILE_FOV_BOOST
+  tile_prefetch_boost_frames: 30                  # CAMSIM_PERF_TILE_BOOST_FRAMES
+
+  # 27F Configurable frame rate
+  render_frame_rate_hz: 30.0                    # CAMSIM_PERF_RENDER_FPS
+  output_frame_rate_hz: 30.0                    # CAMSIM_PERF_OUTPUT_FPS
+
+  # 27G Texture streaming pool (0 = engine default)
+  texture_pool_budget_mb: 0                     # CAMSIM_PERF_TEXTURE_POOL_MB
+
+  # 27A GPU sensor pipeline (requires editor material M_SensorPostProcess + MPC_SensorParams)
+  gpu_sensor_effects: false                     # CAMSIM_PERF_GPU_SENSOR
+  gpu_sensor_material_path: "/Game/CamSim/Materials/M_SensorPostProcess"
+  gpu_sensor_mpc_path: "/Game/CamSim/Materials/MPC_SensorParams"
 
 # --- HUD/OSD Overlay (Phase 20) ---
 # Burn-in overlay for ISR display: reticle, telemetry readouts, classification banner.

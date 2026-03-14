@@ -986,7 +986,7 @@ void ACamSimCamera::SubmitFrameToEncoder(
 
 	// When GPU sensor effects are active (Phase 5), the post-process materials
 	// already ran on the GPU before readback — skip the CPU pipeline.
-	const bool bSkipCpuFX = Subsystem && Subsystem->GetConfig().bGpuSensorEffects;
+	const bool bSkipCpuFX = Subsystem && Subsystem->GetConfig().Performance.bGpuSensorEffects;
 	IPixelPipeline* FX = bSkipCpuFX ? nullptr : SensorFX.Get();
 
 	// Ground truth collector (Phase 17) — pointer captured for task lambda.
