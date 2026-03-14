@@ -335,7 +335,7 @@ Phase C adds stress and deterministic replay tooling:
 
 ```bash
 # Spawn entity 1 (type 1001) for 20 seconds
-python3 scripts/test_entity_rendering.py spawn \
+uv run scripts/test_entity_rendering.py spawn \
     --entity-id 1 --entity-type 1001 \
     --lat 37.6213 --lon -122.379 --alt 1000 \
     --duration 20
@@ -343,14 +343,14 @@ python3 scripts/test_entity_rendering.py spawn \
 # Verify log: "EntityManager: spawned entity 1 (type 1001)"
 
 # Remove it
-python3 scripts/test_entity_rendering.py remove --entity-id 1
+uv run scripts/test_entity_rendering.py remove --entity-id 1
 # Verify log: "EntityManager: removed entity 1"
 ```
 
 ### 8B — Mesh loading
 
 ```bash
-python3 scripts/test_entity_rendering.py spawn \
+uv run scripts/test_entity_rendering.py spawn \
     --entity-type 1001 --lat 37.6213 --lon -122.379 --alt 800
 ```
 
@@ -361,7 +361,7 @@ path is wrong, the entity is invisible and the log shows:
 ### 8C — Dead-reckoning
 
 ```bash
-python3 scripts/test_entity_rendering.py deadreckon \
+uv run scripts/test_entity_rendering.py deadreckon \
     --entity-type 1001 --duration 30
 ```
 
@@ -373,7 +373,7 @@ video.
 ### 8D — Articulated parts
 
 ```bash
-python3 scripts/test_entity_rendering.py artpart \
+uv run scripts/test_entity_rendering.py artpart \
     --entity-type 1001 --duration 30
 ```
 
@@ -383,7 +383,7 @@ python3 scripts/test_entity_rendering.py artpart \
 ### 8E — Lights and strobe
 
 ```bash
-python3 scripts/test_entity_rendering.py lights \
+uv run scripts/test_entity_rendering.py lights \
     --entity-type 1001 --duration 20
 ```
 
@@ -396,7 +396,7 @@ Cycles through four phases every 3 seconds:
 ### 8F — Damage state
 
 ```bash
-python3 scripts/test_entity_rendering.py damage \
+uv run scripts/test_entity_rendering.py damage \
     --entity-type 1001 --duration 30
 ```
 
@@ -408,18 +408,18 @@ transitions.
 
 ```bash
 # 1) Stress entity throughput (spawn+update many entities)
-python3 scripts/stress_entity_rendering.py \
+uv run scripts/stress_entity_rendering.py \
     --host 127.0.0.1 --port 8888 \
     --count 200 --entity-type 1001 \
     --pattern ring --rate 10 --duration 60 --remove-on-exit
 
 # 2) Capture a real CIGI stream for deterministic replay
-python3 scripts/capture_cigi_stream.py \
+uv run scripts/capture_cigi_stream.py \
     --bind-host 0.0.0.0 --bind-port 8888 \
     --output /tmp/cigi_capture.jsonl --duration 30
 
 # 3) Replay the capture at 1x (or adjust --speed, --loops)
-python3 scripts/replay_cigi_stream.py \
+uv run scripts/replay_cigi_stream.py \
     --input /tmp/cigi_capture.jsonl --host 127.0.0.1 --port 8888 --speed 1.0 --loops 1
 ```
 
@@ -430,10 +430,10 @@ with the camera:
 
 ```bash
 # Terminal 1 — camera tour (entity id=0, the camera)
-python3 scripts/send_cigi_test.py --entity-id 0 --tour &
+uv run scripts/send_cigi_test.py --entity-id 0 --tour &
 
 # Terminal 2 — scene entity (entity id=1)
-python3 scripts/test_entity_rendering.py spawn --entity-id 1 --duration 60
+uv run scripts/test_entity_rendering.py spawn --entity-id 1 --duration 60
 ```
 
 KLV metadata should continue updating correctly (`validate_klv.py`) and there

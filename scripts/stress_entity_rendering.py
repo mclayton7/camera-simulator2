@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """
 stress_entity_rendering.py — bulk entity spawn/update stress sender for CamSim.
 

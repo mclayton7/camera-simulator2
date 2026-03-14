@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """
 check_cigi_responses.py - verify CamSim IG->Host CIGI response traffic.
 

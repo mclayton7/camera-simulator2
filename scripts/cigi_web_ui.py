@@ -1,12 +1,17 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.9"
+# dependencies = [
+#   "websockets",
+# ]
+# ///
 """
 cigi_web_ui.py — Interactive CIGI 3.3 web control panel for CamSim.
 
 HTTP UI on port 8080, WebSocket on port 8081, UDP sender to CamSim.
 
 Usage:
-    pip install websockets
-    python3 scripts/cigi_web_ui.py [--ig-host HOST] [--ig-port PORT] [--rate HZ]
+    uv run scripts/cigi_web_ui.py [--ig-host HOST] [--ig-port PORT] [--rate HZ]
 
 Then open: http://localhost:8080
 """
@@ -24,7 +29,7 @@ from pathlib import Path
 try:
     import websockets
 except ImportError:
-    print("ERROR: 'websockets' not installed.  Run:  pip install websockets")
+    print("ERROR: 'websockets' not installed.  Run:  uv run scripts/cigi_web_ui.py")
     raise
 
 

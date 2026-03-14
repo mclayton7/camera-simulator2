@@ -72,7 +72,7 @@ brew install cmake ninja nasm git pkg-config
 ./scripts/run.sh
 
 # In another terminal — send a static camera pose
-python3 scripts/send_cigi_test.py --lat 37.6213 --lon -122.379 --alt 1000 --pitch -30
+uv run scripts/send_cigi_test.py --lat 37.6213 --lon -122.379 --alt 1000 --pitch -30
 
 # Validate the output stream
 ./scripts/test_video_output.sh
@@ -94,7 +94,7 @@ export UE_ROOT=/path/to/UE_5.7
 ./scripts/run.sh --local --headless --log
 
 # Send CIGI and validate
-python3 scripts/send_cigi_test.py
+uv run scripts/send_cigi_test.py
 ./scripts/test_video_output.sh
 ```
 
@@ -105,7 +105,7 @@ python3 scripts/send_cigi_test.py
 docker compose -f deploy/docker-compose.yml up --build
 
 # Send CIGI from the host machine
-python3 scripts/send_cigi_test.py --host <container-ip>
+uv run scripts/send_cigi_test.py --host <container-ip>
 
 # Watch the stream
 ffplay udp://239.1.1.1:5004

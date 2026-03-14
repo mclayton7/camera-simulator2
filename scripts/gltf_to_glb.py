@@ -1,8 +1,14 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.9"
+# dependencies = [
+#   "pygltflib",
+# ]
+# ///
 """Convert a split glTF (scene.gltf + scene.bin) to a self-contained .glb.
 
 Usage:
-    python3 scripts/gltf_to_glb.py entities/f16/f16-c_falcon/scene.gltf
+    uv run scripts/gltf_to_glb.py entities/f16/f16-c_falcon/scene.gltf
 
 The output .glb will be written next to the input file.
 """

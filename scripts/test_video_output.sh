@@ -79,8 +79,8 @@ ffprobe \
 echo ""
 
 # Extract key fields for a quick summary
-if command -v python3 &>/dev/null; then
-    python3 - << 'EOF'
+if command -v uv &>/dev/null; then
+    uv run - << 'EOF'
 import json, sys
 
 try:

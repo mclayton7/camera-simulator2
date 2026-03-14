@@ -26,9 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
       - name: Install tools
         run: |
-          pip install ruff yamllint
+          uv tool install ruff
+          uv tool install yamllint
           sudo apt-get install -y clang-format-17 || true
 
       - name: Python lint (ruff)
@@ -88,19 +92,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: pip install construct bitstring
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
 
       - name: Validate KLV parser (syntax check)
-        run: python -c "import scripts.validate_klv" 2>/dev/null || python scripts/validate_klv.py --help || true
+        run: uv run scripts/validate_klv.py --help || true
 
       - name: Validate CIGI test sender (syntax check)
-        run: python scripts/send_cigi_test.py --help || true
+        run: uv run scripts/send_cigi_test.py --help || true
 
   # -------------------------------------------------------------------
   # Phase 14B: Docker image build
