@@ -40,9 +40,9 @@ void FCamSimParticleManager::Initialize(const FCamSimConfig& Config)
     SmokeAsset     = LoadNiagara(Config.Phase18.NiagaraSmoke);
     FireAsset      = LoadNiagara(Config.Phase18.NiagaraFire);
     ContrailAsset  = LoadNiagara(Config.Phase18.NiagaraContrail);
-    WakeAsset                         = LoadNiagara(Config.Phase19.NiagaraVesselWake);
-    WakeFadeTime                      = Config.Phase19.WakeFadeTime;
-    Config_Phase19_VesselWakesEnabled = Config.Phase19.bVesselWakesEnabled;
+    WakeAsset           = LoadNiagara(Config.Phase19.NiagaraVesselWake);
+    WakeFadeTime        = Config.Phase19.WakeFadeTime;
+    bVesselWakesEnabled = Config.Phase19.bVesselWakesEnabled;
 
     CraterMaterial = LoadObject<UMaterialInterface>(nullptr, *Config.Phase18.CraterDecalMaterial);
     if (!CraterMaterial)
@@ -67,7 +67,7 @@ void FCamSimParticleManager::OnEntitySpawned(uint16 EntityID, AActor* Actor,
     }
 
 	// 19B: Sea-domain entities get wake FX
-	if (Config_Phase19_VesselWakesEnabled &&
+	if (bVesselWakesEnabled &&
 	    State.EntityDomain == 3 && WakeAsset)
 	{
 		SpawnWake(EntityID, Actor);

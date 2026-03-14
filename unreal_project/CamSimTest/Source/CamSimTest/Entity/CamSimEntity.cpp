@@ -451,12 +451,12 @@ void ACamSimEntity::ApplyVesselMotion(IOceanSurface* Ocean,
 	const float HeaveZ   = (hBow + hStern + hPort + hStbd) * 0.25f * MotionScale;
 
 	// Apply as delta on top of current CIGI-commanded pose
-	FRotator NewRot = GetActorRotation();
+	FRotator NewRot = Rot;
 	NewRot.Pitch += FMath::RadiansToDegrees(PitchRad);
 	NewRot.Roll  += FMath::RadiansToDegrees(RollRad);
 	SetActorRotation(NewRot);
 
-	FVector NewLoc = GetActorLocation();
+	FVector NewLoc = Loc;
 	NewLoc.Z += HeaveZ;
 	SetActorLocation(NewLoc);
 }

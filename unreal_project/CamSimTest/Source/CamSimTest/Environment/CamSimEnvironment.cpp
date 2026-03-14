@@ -82,6 +82,13 @@ void ACamSimEnvironment::BeginPlay()
 		break;
 	}
 
+	// Phase 19 — cache camera reference for ocean plane tracking (avoid per-tick scan)
+	for (TActorIterator<ACamSimCamera> It(GetWorld()); It; ++It)
+	{
+		CamSimCameraActor = *It;
+		break;
+	}
+
 	// Copy Phase 18 config once at startup
 	Phase18Cfg = Subsystem->GetConfig().Phase18;
 
@@ -220,14 +227,17 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 		}
 	}
 
+	// Phase 19 — notify ocean of sky changes once per tick (coalesced from Apply* calls above)
+	if (bGotCelestial || bGotAtmos || bGotWeather)
+	{
+		OnAtmosphereChanged();
+	}
+
 	// Phase 19 — tick ocean surface (wave time + plane reposition)
 	{
-		FVector CamLoc = FVector::ZeroVector;
-		for (TActorIterator<ACamSimCamera> It(GetWorld()); It; ++It)
-		{
-			CamLoc = It->GetActorLocation();
-			break;
-		}
+		const FVector CamLoc = CamSimCameraActor
+			? CamSimCameraActor->GetActorLocation()
+			: FVector::ZeroVector;
 		OceanManager.Tick(DeltaTime, CamLoc);
 	}
 }
@@ -380,8 +390,6 @@ void ACamSimEnvironment::ApplyCelestial()
 			PrevSunElevation = SunElevation;
 		}
 	}
-
-	OnAtmosphereChanged();
 }
 
 // -------------------------------------------------------------------------
@@ -441,8 +449,6 @@ void ACamSimEnvironment::ApplyAtmosphere()
 	UE_LOG(LogCamSim, Verbose,
 		TEXT("ACamSimEnvironment: visibility=%.0fm  fogDensity=%.6f"),
 		CurrentAtmosphere.Visibility, Density);
-
-	OnAtmosphereChanged();
 }
 
 // -------------------------------------------------------------------------
@@ -547,8 +553,6 @@ void ACamSimEnvironment::ApplyWeather()
 	UE_LOG(LogCamSim, Verbose,
 		TEXT("ACamSimEnvironment: weather coverage=%.0f%%  baseElev=%.0fm  thickness=%.0fm"),
 		CurrentWeather.Coverage, CurrentWeather.BaseElev, CurrentWeather.Thickness);
-
-	OnAtmosphereChanged();
 }
 
 // -------------------------------------------------------------------------
