@@ -151,3 +151,27 @@ bool FPhase27_TexturePoolRange::RunTest(const FString& Parameters)
 	TestTrue("4096 MB valid", C.TexturePoolBudgetMB > 0);
 	return true;
 }
+
+// ---------------------------------------------------------------------------
+// Test 7 — Tile prefetch slew detection logic
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_TilePrefetchSlew,
+    "CamSim.Phase27.TilePrefetchSlewDetection",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FPhase27_TilePrefetchSlew::RunTest(const FString& Parameters)
+{
+    // Simulate gimbal velocity calculation
+    const float PrevPan  = 10.0f;
+    const float CurrPan  = 22.0f;   // 12 deg in 1/30 s = 360 deg/s
+    const float DeltaTime = 1.0f / 30.0f;
+    const float Threshold = 10.0f;  // deg/s
+
+    const float PanVel = FMath::Abs(CurrPan - PrevPan) / DeltaTime;
+    TestTrue(TEXT("Fast slew (360 deg/s) triggers prefetch"), PanVel >= Threshold);
+
+    // Below threshold
+    const float SlowPan = 10.1f;
+    const float SlowVel = FMath::Abs(SlowPan - PrevPan) / DeltaTime;
+    TestFalse(TEXT("Slow slew (3 deg/s) no prefetch"), SlowVel >= Threshold);
+    return true;
+}

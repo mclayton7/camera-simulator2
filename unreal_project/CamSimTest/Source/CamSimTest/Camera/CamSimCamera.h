@@ -178,6 +178,11 @@ private:
 	FFrameDropStats FrameDropStats_;
 	bool            bTrackFrameDrops_ = false;
 
+	// Phase 27E — Tile prefetch during gimbal slew
+	float PrevGimbalPanDeg_   = 0.0f;
+	float PrevGimbalTiltDeg_  = 0.0f;
+	int32 TilePrefetchBoostFramesRemaining_ = 0;
+
 	// Helpers
 	void ApplyCigiState(float DeltaTime);
 	void ComputeGeometricLOS();

@@ -714,6 +714,41 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 		CurrentTelemetry.GimbalYaw   = GimbalComp->GetGimbalYaw();
 		CurrentTelemetry.GimbalPitch = GimbalComp->GetGimbalPitch();
 		CurrentTelemetry.GimbalRoll  = GimbalComp->GetGimbalRoll();
+
+		// 27E — Dynamic tile prefetch during fast gimbal slews
+		if (Cfg.Performance.TilePrefetchSlewThresholdDegPerSec > 0.0f)
+		{
+			if (DeltaTime > KINDA_SMALL_NUMBER)
+			{
+				const float CurrPan  = CurrentTelemetry.GimbalYaw;
+				const float CurrTilt = CurrentTelemetry.GimbalPitch;
+				const float PanVelDegSec  = FMath::Abs(CurrPan  - PrevGimbalPanDeg_)  / DeltaTime;
+				const float TiltVelDegSec = FMath::Abs(CurrTilt - PrevGimbalTiltDeg_) / DeltaTime;
+				const float MaxVel = FMath::Max(PanVelDegSec, TiltVelDegSec);
+
+				if (MaxVel >= Cfg.Performance.TilePrefetchSlewThresholdDegPerSec)
+				{
+					// Reset (or extend) the boost window on every above-threshold frame
+					TilePrefetchBoostFramesRemaining_ = Cfg.Performance.TilePrefetchBoostFrames;
+				}
+				else if (TilePrefetchBoostFramesRemaining_ > 0)
+				{
+					TilePrefetchBoostFramesRemaining_--;
+				}
+
+				// Apply or restore Cesium SSE based on current counter
+				for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+				{
+					It->MaximumScreenSpaceError = (TilePrefetchBoostFramesRemaining_ > 0)
+						? Cfg.MaximumScreenSpaceError / FMath::Max(Cfg.Performance.TilePrefetchFovBoost, 1.0f)
+						: Cfg.MaximumScreenSpaceError;
+				}
+			}
+
+			// Always update prev angles regardless of DeltaTime
+			PrevGimbalPanDeg_  = CurrentTelemetry.GimbalYaw;
+			PrevGimbalTiltDeg_ = CurrentTelemetry.GimbalPitch;
+		}
 	}
 
 	// Populate environment telemetry for sensor effects (Phase 16K + Phase 18)
