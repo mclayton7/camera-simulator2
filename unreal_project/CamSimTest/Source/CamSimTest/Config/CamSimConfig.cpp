@@ -834,6 +834,34 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlFloat (P19, "reflection_capture_radius", Cfg.Phase19.ReflectionCaptureRadius);
 		}
 
+		// Cesium backend: ion server, terrain source, imagery overlay
+		if (Root.has_child("cesium"))
+		{
+			ryml::ConstNodeRef Cs = Root["cesium"];
+			YamlString(Cs, "ion_portal_url", Cfg.CesiumBackend.IonPortalUrl);
+			YamlString(Cs, "ion_api_url",    Cfg.CesiumBackend.IonApiUrl);
+			YamlString(Cs, "ion_token",      Cfg.CesiumBackend.IonToken);
+
+			if (Cs.has_child("terrain"))
+			{
+				ryml::ConstNodeRef Tr = Cs["terrain"];
+				YamlString(Tr, "source",       Cfg.CesiumBackend.Terrain.Source);
+				YamlInt   (Tr, "ion_asset_id", Cfg.CesiumBackend.Terrain.IonAssetId);
+				YamlString(Tr, "url",          Cfg.CesiumBackend.Terrain.Url);
+			}
+
+			if (Cs.has_child("imagery"))
+			{
+				ryml::ConstNodeRef Im = Cs["imagery"];
+				YamlString(Im, "source",          Cfg.CesiumBackend.Imagery.Source);
+				YamlInt   (Im, "ion_asset_id",    Cfg.CesiumBackend.Imagery.IonAssetId);
+				YamlString(Im, "wms_url",         Cfg.CesiumBackend.Imagery.WmsUrl);
+				YamlString(Im, "wms_layers",      Cfg.CesiumBackend.Imagery.WmsLayers);
+				YamlInt   (Im, "wms_tile_width",  Cfg.CesiumBackend.Imagery.WmsTileWidth);
+				YamlInt   (Im, "wms_tile_height", Cfg.CesiumBackend.Imagery.WmsTileHeight);
+			}
+		}
+
 		// Phase 20: overlay HUD/OSD
 		if (Root.has_child("overlay"))
 		{
@@ -1095,6 +1123,20 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Phase19.bOceanReflectionsEnabled = GetEnvInt (TEXT("CAMSIM_OCEAN_REFLECTIONS_ENABLED"), Cfg.Phase19.bOceanReflectionsEnabled ? 1 : 0) != 0;
 	Cfg.Phase19.SSRIntensity            = GetEnvFloat(TEXT("CAMSIM_OCEAN_SSR_INTENSITY"),       Cfg.Phase19.SSRIntensity);
 	Cfg.Phase19.ReflectionCaptureRadius = GetEnvFloat(TEXT("CAMSIM_OCEAN_REFLECTION_RADIUS"),   Cfg.Phase19.ReflectionCaptureRadius);
+
+	// Cesium backend env var overrides — IonToken is never logged
+	Cfg.CesiumBackend.IonPortalUrl = GetEnv(TEXT("CAMSIM_CESIUM_ION_PORTAL_URL"), Cfg.CesiumBackend.IonPortalUrl);
+	Cfg.CesiumBackend.IonApiUrl    = GetEnv(TEXT("CAMSIM_CESIUM_ION_API_URL"),    Cfg.CesiumBackend.IonApiUrl);
+	Cfg.CesiumBackend.IonToken     = GetEnv(TEXT("CAMSIM_CESIUM_ION_TOKEN"),      Cfg.CesiumBackend.IonToken);
+	Cfg.CesiumBackend.Terrain.Source     = GetEnv(TEXT("CAMSIM_CESIUM_TERRAIN_SOURCE"), Cfg.CesiumBackend.Terrain.Source).TrimStartAndEnd().ToLower();
+	Cfg.CesiumBackend.Terrain.IonAssetId = GetEnvInt(TEXT("CAMSIM_CESIUM_TERRAIN_ION_ASSET_ID"), Cfg.CesiumBackend.Terrain.IonAssetId);
+	Cfg.CesiumBackend.Terrain.Url        = GetEnv(TEXT("CAMSIM_CESIUM_TERRAIN_URL"), Cfg.CesiumBackend.Terrain.Url);
+	Cfg.CesiumBackend.Imagery.Source     = GetEnv(TEXT("CAMSIM_CESIUM_IMAGERY_SOURCE"), Cfg.CesiumBackend.Imagery.Source).TrimStartAndEnd().ToLower();
+	Cfg.CesiumBackend.Imagery.IonAssetId = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_ION_ASSET_ID"), Cfg.CesiumBackend.Imagery.IonAssetId);
+	Cfg.CesiumBackend.Imagery.WmsUrl     = GetEnv(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_URL"),    Cfg.CesiumBackend.Imagery.WmsUrl);
+	Cfg.CesiumBackend.Imagery.WmsLayers  = GetEnv(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_LAYERS"), Cfg.CesiumBackend.Imagery.WmsLayers);
+	Cfg.CesiumBackend.Imagery.WmsTileWidth  = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_TILE_WIDTH"),  Cfg.CesiumBackend.Imagery.WmsTileWidth);
+	Cfg.CesiumBackend.Imagery.WmsTileHeight = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_TILE_HEIGHT"), Cfg.CesiumBackend.Imagery.WmsTileHeight);
 
 	// Phase 20: overlay HUD/OSD env var overrides
 	// Apply preset first so individual env var overrides win
