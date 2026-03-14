@@ -197,6 +197,11 @@ void ACamSimCamera::BeginPlay()
 			Cfg.LoadingDescendantLimit, (int)Cfg.bUseLodTransitions);
 	}
 
+	// Apply Cesium backend config (ion server, terrain source, imagery overlay).
+	// Must run after the streaming-params loop above.
+	UCesiumIonServer* CesiumServer = ApplyCesiumBackendConfig(GetWorld(), Cfg.CesiumBackend);
+	Subsystem->StoreCesiumIonServer(CesiumServer);
+
 	// Initialize CPU-side sensor post-processing pipeline (Phase 11)
 	// Concrete FSensorPostProcess is stored behind the IPixelPipeline interface
 	// so that a NullPixelPipeline or alternate waveband implementation can

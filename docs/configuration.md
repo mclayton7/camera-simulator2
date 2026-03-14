@@ -246,6 +246,25 @@ entity_types:
 | `terrain_provider` | string | `"cesium"` | `CAMSIM_TERRAIN_PROVIDER` | Terrain/georeference provider selector. Currently supported: `cesium` (unsupported values fall back to `cesium` with warning). |
 | `imagery_provider` | string | `"cesium"` | `CAMSIM_IMAGERY_PROVIDER` | Imagery provider selector (currently informational; `cesium` supported). |
 
+### Cesium Backend
+
+Controls which Cesium ion server, terrain source, and imagery overlay CamSim uses at runtime. All settings default to the standard Cesium ion public cloud; override for air-gapped or multi-profile deployments.
+
+| Environment Variable | Default | Description |
+|---|---|---|
+| `CAMSIM_CESIUM_ION_PORTAL_URL` | `https://ion.cesium.com` | Ion portal URL (`UCesiumIonServer::ServerUrl`). Set for self-hosted ion. |
+| `CAMSIM_CESIUM_ION_API_URL` | `https://api.cesium.com` | Ion REST API URL (`UCesiumIonServer::ApiUrl`). Set for self-hosted ion. |
+| `CAMSIM_CESIUM_ION_TOKEN` | *(empty)* | Ion access token. **Never logged.** Leave empty to use level asset default. |
+| `CAMSIM_CESIUM_TERRAIN_SOURCE` | `cesium_ion` | Terrain source: `cesium_ion`, `url`, or `flat`. |
+| `CAMSIM_CESIUM_TERRAIN_ION_ASSET_ID` | `1` | Cesium ion asset ID for terrain (Cesium World Terrain = 1). |
+| `CAMSIM_CESIUM_TERRAIN_URL` | *(empty)* | Quantized-mesh terrain URL (used when `TERRAIN_SOURCE=url`). |
+| `CAMSIM_CESIUM_IMAGERY_SOURCE` | `cesium_ion` | Imagery overlay source: `cesium_ion`, `wms`, or `none`. |
+| `CAMSIM_CESIUM_IMAGERY_ION_ASSET_ID` | `2` | Cesium ion asset ID for imagery (Bing Maps Aerial = 2). |
+| `CAMSIM_CESIUM_IMAGERY_WMS_URL` | *(empty)* | WMS base URL (used when `IMAGERY_SOURCE=wms`). |
+| `CAMSIM_CESIUM_IMAGERY_WMS_LAYERS` | *(empty)* | WMS layer name(s), comma-separated. |
+| `CAMSIM_CESIUM_IMAGERY_WMS_TILE_WIDTH` | `256` | WMS tile width in pixels. |
+| `CAMSIM_CESIUM_IMAGERY_WMS_TILE_HEIGHT` | `256` | WMS tile height in pixels. |
+
 ### Cesium Tile Streaming
 
 | Field | Type | Default | Env var | Description |

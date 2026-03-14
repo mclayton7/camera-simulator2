@@ -566,6 +566,33 @@ performance:
   gpu_sensor_material_path: "/Game/CamSim/Materials/M_SensorPostProcess"
   gpu_sensor_mpc_path: "/Game/CamSim/Materials/MPC_SensorParams"
 
+# --- Cesium Backend ---
+# Ion server, terrain source, and imagery overlay.
+# Set ion_token to authenticate against Cesium ion (https://ion.cesium.com/tokens).
+# For air-gapped deployments, set ion_portal_url and ion_api_url to your self-hosted server.
+# Env: CAMSIM_CESIUM_ION_PORTAL_URL, CAMSIM_CESIUM_ION_API_URL, CAMSIM_CESIUM_ION_TOKEN,
+#      CAMSIM_CESIUM_TERRAIN_SOURCE, CAMSIM_CESIUM_TERRAIN_ION_ASSET_ID, CAMSIM_CESIUM_TERRAIN_URL,
+#      CAMSIM_CESIUM_IMAGERY_SOURCE, CAMSIM_CESIUM_IMAGERY_ION_ASSET_ID,
+#      CAMSIM_CESIUM_IMAGERY_WMS_URL, CAMSIM_CESIUM_IMAGERY_WMS_LAYERS,
+#      CAMSIM_CESIUM_IMAGERY_WMS_TILE_WIDTH, CAMSIM_CESIUM_IMAGERY_WMS_TILE_HEIGHT
+cesium:
+  ion_portal_url: "https://ion.cesium.com"   # UCesiumIonServer::ServerUrl (OAuth/browser)
+  ion_api_url:    "https://api.cesium.com"    # UCesiumIonServer::ApiUrl (REST tile API)
+  ion_token: ""                               # leave empty to use level asset default
+
+  terrain:
+    source: cesium_ion    # cesium_ion | url | flat
+    ion_asset_id: 1       # Cesium World Terrain (ignored unless source: cesium_ion)
+    url: ""               # quantized-mesh endpoint (ignored unless source: url)
+
+  imagery:
+    source: cesium_ion    # cesium_ion | wms | none
+    ion_asset_id: 2       # Bing Maps Aerial (ignored unless source: cesium_ion)
+    wms_url: ""           # ignored unless source: wms
+    wms_layers: ""        # ignored unless source: wms
+    wms_tile_width: 256
+    wms_tile_height: 256
+
 # --- HUD/OSD Overlay (Phase 20) ---
 # Burn-in overlay for ISR display: reticle, telemetry readouts, classification banner.
 # Master switch enabled=false keeps frames clean for ML training.

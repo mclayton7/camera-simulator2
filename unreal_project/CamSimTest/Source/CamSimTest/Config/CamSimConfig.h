@@ -453,6 +453,37 @@ struct FCamSimConfig
 	};
 	FPhase19Config Phase19;
 
+	/** Cesium backend: ion server, terrain source, imagery overlay */
+	struct FCesiumBackendConfig
+	{
+		// UCesiumIonServer has two distinct URL fields:
+		//   ServerUrl — portal/OAuth redirect URL (default: "https://ion.cesium.com")
+		//   ApiUrl    — REST tile API endpoint    (default: "https://api.cesium.com")
+		// For self-hosted ion these are typically different hosts.
+		FString IonPortalUrl = TEXT("https://ion.cesium.com");  // → UCesiumIonServer::ServerUrl
+		FString IonApiUrl    = TEXT("https://api.cesium.com");  // → UCesiumIonServer::ApiUrl
+		// IonToken: never log at any verbosity level.
+		// DefaultIonAccessTokenId not set — only needed for Editor sign-in UI, not headless use.
+		FString IonToken = TEXT("");  // empty = use level asset default
+
+		struct FTerrainConfig
+		{
+			FString Source     = TEXT("cesium_ion"); // "cesium_ion" | "url" | "flat"
+			int32   IonAssetId = 1;                  // Cesium World Terrain
+			FString Url        = TEXT("");
+		} Terrain;
+
+		struct FImageryConfig
+		{
+			FString Source        = TEXT("cesium_ion"); // "cesium_ion" | "wms" | "none"
+			int32   IonAssetId    = 2;                  // Bing Maps Aerial
+			FString WmsUrl        = TEXT("");
+			FString WmsLayers     = TEXT("");
+			int32   WmsTileWidth  = 256;
+			int32   WmsTileHeight = 256;
+		} Imagery;
+	} CesiumBackend;
+
 	// HUD/OSD overlay burn-in (Phase 20)
 	FHudOverlayConfig OverlayConfig;
 
