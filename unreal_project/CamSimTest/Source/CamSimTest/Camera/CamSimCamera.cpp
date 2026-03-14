@@ -874,10 +874,13 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 void ACamSimCamera::UpdateGpuSensorMpcParams()
 {
 	if (!GpuSensorMpc_ || !GetWorld()) return;
+	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+	const FSensorModeConfig* IrCfg = Cfg.SensorModeConfigs.Find(ESensorMode::IR);
+	const float NoiseIntensity = IrCfg ? IrCfg->NETD : 0.0f;
 	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), GpuSensorMpc_,
 		TEXT("SensorMode"), static_cast<float>(SensorComp->GetMode()));
 	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), GpuSensorMpc_,
-		TEXT("NoiseIntensity"), 0.0f); // placeholder — actual value from sensor config
+		TEXT("NoiseIntensity"), NoiseIntensity);
 }
 
 // -------------------------------------------------------------------------

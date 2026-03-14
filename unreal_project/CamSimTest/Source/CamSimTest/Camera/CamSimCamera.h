@@ -177,8 +177,10 @@ private:
 	TUniquePtr<IPixelPipeline> SensorFX;
 
 	// Phase 27A — GPU sensor post-process
-	UMaterialParameterCollection* GpuSensorMpc_ = nullptr;
-	UMaterialInterface*           GpuSensorMat_ = nullptr;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialParameterCollection> GpuSensorMpc_;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> GpuSensorMat_;
 
 	/** Phase 27B — per-category frame drop counters. */
 	FFrameDropStats FrameDropStats_;
