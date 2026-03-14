@@ -62,6 +62,13 @@ public:
 	const FCamSimConfig&    GetConfig()        const { return Config; }
 	const FEntityTypeTable& GetEntityTypeTable() const { return EntityTypeTable; }
 
+	/**
+	 * Phase 27D — Hot-reload: replace mutable config fields at runtime.
+	 * Immutable fields (CigiPort, MulticastAddr, VideoCodec) are preserved
+	 * from the current config and not overwritten.
+	 */
+	void HotReloadConfig(const FCamSimConfig& NewCfg);
+
 	// Phase 27B — camera registration for health JSON frame drop stats
 	void             RegisterCamera(ACamSimCamera* Camera) { Camera_ = Camera; }
 	ACamSimCamera*   GetCamera() const { return Camera_.Get(); }

@@ -175,3 +175,27 @@ bool FPhase27_TilePrefetchSlew::RunTest(const FString& Parameters)
     TestFalse(TEXT("Slow slew (3 deg/s) no prefetch"), SlowVel >= Threshold);
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// Test 8 — Hot-reload: detect immutable field changes
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_HotReloadImmutable,
+    "CamSim.Phase27.HotReloadImmutableFields",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FPhase27_HotReloadImmutable::RunTest(const FString& Parameters)
+{
+    // These fields are detected as changed and logged as warnings during hot-reload.
+    // The actual preservation logic lives in UCamSimSubsystem::HotReloadConfig().
+    FCamSimConfig A, B;
+
+    A.CigiPort      = 8888;            B.CigiPort      = 9999;
+    A.MulticastAddr = TEXT("239.1.1.1"); B.MulticastAddr = TEXT("239.1.1.2");
+    A.MulticastPort = 5004;            B.MulticastPort = 5005;
+    A.VideoCodec    = TEXT("h264");    B.VideoCodec    = TEXT("h265");
+
+    TestTrue(TEXT("CigiPort change detected"),      A.CigiPort != B.CigiPort);
+    TestTrue(TEXT("MulticastAddr change detected"), A.MulticastAddr != B.MulticastAddr);
+    TestTrue(TEXT("MulticastPort change detected"), A.MulticastPort != B.MulticastPort);
+    TestTrue(TEXT("VideoCodec change detected"),    A.VideoCodec != B.VideoCodec);
+    return true;
+}

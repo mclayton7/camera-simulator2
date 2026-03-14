@@ -183,6 +183,10 @@ private:
 	float PrevGimbalTiltDeg_  = 0.0f;
 	int32 TilePrefetchBoostFramesRemaining_ = 0;
 
+	// Phase 27D — Hot-reload config
+	float     HotReloadAccumSec_ = 0.0f;
+	FDateTime LastConfigMTime_ = FDateTime::MinValue();
+
 	// Helpers
 	void ApplyCigiState(float DeltaTime);
 	void ComputeGeometricLOS();

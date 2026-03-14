@@ -27,6 +27,7 @@
 #include "DynamicRHI.h"
 #include "PixelFormat.h"
 #include "Async/Async.h"
+#include "HAL/FileManager.h"
 
 // Cesium
 #include "CesiumGlobeAnchorComponent.h"
@@ -440,6 +441,54 @@ void ACamSimCamera::Tick(float DeltaTime)
 			TickCount, (int)(bool)bEncoderBusy, (int)(bool)bReadbackPending,
 			(int)(SensorComp && SensorComp->IsOn()), FrameIndex, (uint64)DroppedFrameCount,
 			CaptureTargetIndex, PendingReadbackTargetIndex, ReadyPollsRequired);
+	}
+
+	// 27D — Hot-reload config via mtime poll
+	{
+		const FCamSimConfig& Cfg = Subsystem->GetConfig();
+		if (Cfg.Performance.bHotReloadConfig)
+		{
+			HotReloadAccumSec_ += DeltaTime;
+			if (HotReloadAccumSec_ >= Cfg.Performance.HotReloadPollIntervalSec)
+			{
+				HotReloadAccumSec_ = 0.0f;
+				const FString CfgPath = FCamSimConfig::GetConfigFilePath();
+				const FDateTime CurrMTime = IFileManager::Get().GetTimeStamp(*CfgPath);
+				if (CurrMTime != FDateTime::MinValue() && CurrMTime != LastConfigMTime_)
+				{
+					LastConfigMTime_ = CurrMTime;
+					const FCamSimConfig OldCfg = Cfg;
+					FCamSimConfig NewCfg = FCamSimConfig::Load();
+					if (!NewCfg.bLoadedSuccessfully)
+					{
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: config parse failed — keeping current config"));
+						return;
+					}
+
+					// Warn on immutable field changes (require restart)
+					if (NewCfg.CigiPort != OldCfg.CigiPort)
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: CIGI port change ignored (requires restart)"));
+					if (NewCfg.MulticastAddr != OldCfg.MulticastAddr)
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: multicast addr change ignored (requires restart)"));
+					if (NewCfg.VideoCodec != OldCfg.VideoCodec)
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: video codec change ignored (requires restart)"));
+					if (NewCfg.MulticastPort != OldCfg.MulticastPort)
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: multicast port change ignored (requires restart)"));
+
+					// Apply mutable settings to subsystem config
+					Subsystem->HotReloadConfig(NewCfg);
+
+					// Re-apply mutable pixel pipeline settings
+					if (auto* FXCast = dynamic_cast<FSensorPostProcess*>(SensorFX.Get()))
+					{
+						FXCast->SetPhase18Config(NewCfg.Phase18);
+						FXCast->SetOverlayConfig(NewCfg.OverlayConfig);
+					}
+
+					UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: HotReload applied from %s"), *CfgPath);
+				}
+			}
+		}
 	}
 
 	// Apply pending CIGI state first (CIGI queue drain runs every tick,
