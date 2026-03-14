@@ -371,10 +371,7 @@ void ACamSimCamera::BeginPlay()
 			SceneCapture->PostProcessSettings.WeightedBlendables.Array.Add(Blendable);
 
 			// Bypass expensive CPU pipeline loops — defect pixels, quantization, overlay still run
-			if (auto* FXCast = dynamic_cast<FSensorPostProcess*>(SensorFX.Get()))
-			{
-				FXCast->SetGpuSensorEffectsActive(true);
-			}
+			SensorFX->SetGpuSensorEffectsActive(true);
 			UE_LOG(LogCamSim, Log,
 				TEXT("ACamSimCamera: GPU sensor pipeline ACTIVE — material=%s"),
 				*Cfg.Performance.GpuSensorMaterialPath);
@@ -518,11 +515,8 @@ void ACamSimCamera::Tick(float DeltaTime)
 					Subsystem->HotReloadConfig(NewCfg);
 
 					// Re-apply mutable pixel pipeline settings
-					if (auto* FXCast = dynamic_cast<FSensorPostProcess*>(SensorFX.Get()))
-					{
-						FXCast->SetPhase18Config(NewCfg.Phase18);
-						FXCast->SetOverlayConfig(NewCfg.OverlayConfig);
-					}
+					SensorFX->SetPhase18Config(NewCfg.Phase18);
+					SensorFX->SetOverlayConfig(NewCfg.OverlayConfig);
 
 					UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: HotReload applied from %s"), *CfgPath);
 				}

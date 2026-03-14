@@ -34,3 +34,4 @@ unreal_project/CamSimTest/camsim_config.yaml
 .cache/camsim.pid
 .worktrees/
 .superpowers/
+.claude/

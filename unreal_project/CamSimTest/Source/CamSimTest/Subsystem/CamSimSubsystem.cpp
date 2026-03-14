@@ -137,6 +137,16 @@ FCamSimParticleManager* UCamSimSubsystem::GetParticleManager() const
 	return Impl ? Impl->ParticleManager.Get() : nullptr;
 }
 
+void UCamSimSubsystem::RegisterCamera(ACamSimCamera* Camera)
+{
+	Camera_ = Camera;
+}
+
+ACamSimCamera* UCamSimSubsystem::GetCamera() const
+{
+	return Camera_.Get();
+}
+
 void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)
 {
 	// Preserve immutable fields that cannot change without a restart.

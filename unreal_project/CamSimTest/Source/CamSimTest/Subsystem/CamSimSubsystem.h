@@ -70,8 +70,8 @@ public:
 	void HotReloadConfig(const FCamSimConfig& NewCfg);
 
 	// Phase 27B — camera registration for health JSON frame drop stats
-	void             RegisterCamera(ACamSimCamera* Camera) { Camera_ = Camera; }
-	ACamSimCamera*   GetCamera() const { return Camera_.Get(); }
+	void             RegisterCamera(ACamSimCamera* Camera);
+	ACamSimCamera*   GetCamera() const;
 
 private:
 	FCamSimConfig    Config;

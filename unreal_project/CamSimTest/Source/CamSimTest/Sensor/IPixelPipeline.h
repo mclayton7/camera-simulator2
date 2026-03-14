@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Config/CamSimConfig.h"   // FCamSimConfig::FPhase18Config, FHudOverlayConfig
 #include "Metadata/KlvBuilder.h"  // FCamSimTelemetry
 #include "Sensor/SensorTypes.h"   // ESensorMode, FSensorModeConfig
 
@@ -38,4 +39,10 @@ public:
 	                     uint8           Polarity,
 	                     const FCamSimTelemetry& Telemetry,
 	                     uint64          FrameIndex) = 0;
+
+	// Optional mutable settings — no-op defaults allow callers to use the
+	// interface directly without dynamic_cast to FSensorPostProcess.
+	virtual void SetGpuSensorEffectsActive(bool /*bActive*/) {}
+	virtual void SetPhase18Config(const FCamSimConfig::FPhase18Config& /*Cfg*/) {}
+	virtual void SetOverlayConfig(const FHudOverlayConfig& /*Cfg*/) {}
 };

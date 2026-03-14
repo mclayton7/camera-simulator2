@@ -34,16 +34,16 @@ public:
 	 * Apply Phase 18 config (precipitation, dynamic IR extinction).
 	 * Safe to call from game thread before each frame is submitted.
 	 */
-	void SetPhase18Config(const FCamSimConfig::FPhase18Config& Cfg);
+	virtual void SetPhase18Config(const FCamSimConfig::FPhase18Config& Cfg) override;
 
 	/**
 	 * Apply Phase 20 HUD/OSD overlay config.
 	 * Safe to call from game thread before each frame is submitted.
 	 */
-	void SetOverlayConfig(const FHudOverlayConfig& Cfg) { HudOverlay.SetConfig(Cfg); }
+	virtual void SetOverlayConfig(const FHudOverlayConfig& Cfg) override { HudOverlay.SetConfig(Cfg); }
 
 	/** Phase 27A — GPU sensor pipeline: skip CPU waveband/AGC/noise loops when GPU material is active. */
-	void SetGpuSensorEffectsActive(bool bActive) { bGpuSensorEffectsActive_ = bActive; }
+	virtual void SetGpuSensorEffectsActive(bool bActive) override { bGpuSensorEffectsActive_ = bActive; }
 
 	/**
 	 * Apply the sensor pipeline in-place.

@@ -214,7 +214,7 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 		}
 		if (Phase18.bPrecipitation)
 			ApplyPrecipitation(Pixels, FrameIndex);
-		HudOverlay.Render(Pixels, Telemetry);
+		HudOverlay.Render(Pixels, Width, Height, static_cast<uint8>(Mode), Telemetry, FrameIndex);
 		return;
 	}
 
