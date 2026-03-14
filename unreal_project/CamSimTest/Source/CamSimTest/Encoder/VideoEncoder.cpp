@@ -90,9 +90,12 @@ bool FVideoEncoder::Open()
 	bIsOpen = true;
 	const TCHAR* CodecLabel = Config.VideoCodec.ToLower().Contains(TEXT("265"))
 		? TEXT("H.265") : TEXT("H.264");
+	const float LogEffectiveFps = (Config.Performance.OutputFrameRateHz > 0.0f)
+		? FMath::Clamp(Config.Performance.OutputFrameRateHz, 1.0f, 120.0f)
+		: Config.FrameRate;
 	UE_LOG(LogCamSim, Log,
 		TEXT("FVideoEncoder: %s %dx%d @ %.0ffps  bitrate=%d bps  preset=%s  tune=%s  -> %s"),
-		CodecLabel, Config.CaptureWidth, Config.CaptureHeight, Config.FrameRate,
+		CodecLabel, Config.CaptureWidth, Config.CaptureHeight, LogEffectiveFps,
 		Config.VideoBitrate, *Config.H264Preset, *Config.H264Tune, *UdpUrl);
 	return true;
 }
@@ -205,10 +208,13 @@ bool FVideoEncoder::OpenVideoStream()
 	VideoCodecCtx->width       = Config.CaptureWidth;
 	VideoCodecCtx->height      = Config.CaptureHeight;
 	VideoCodecCtx->pix_fmt     = AV_PIX_FMT_YUV420P;
-	VideoCodecCtx->time_base   = AVRational{1, (int)FMath::RoundToInt(Config.FrameRate)};
-	VideoCodecCtx->framerate   = AVRational{(int)FMath::RoundToInt(Config.FrameRate), 1};
+	const float EffectiveFps = (Config.Performance.OutputFrameRateHz > 0.0f)
+		? FMath::Clamp(Config.Performance.OutputFrameRateHz, 1.0f, 120.0f)
+		: Config.FrameRate;
+	VideoCodecCtx->time_base   = AVRational{1, (int)FMath::RoundToInt(EffectiveFps)};
+	VideoCodecCtx->framerate   = AVRational{(int)FMath::RoundToInt(EffectiveFps), 1};
 	VideoCodecCtx->bit_rate    = Config.VideoBitrate;
-	VideoCodecCtx->gop_size    = 30;
+	VideoCodecCtx->gop_size    = (int)FMath::RoundToInt(EffectiveFps);
 	VideoCodecCtx->max_b_frames = 0; // zero-latency
 
 	// Explicitly signal the color space so all decoders (VLC, ffplay, hardware) agree.

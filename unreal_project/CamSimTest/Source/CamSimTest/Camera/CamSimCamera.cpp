@@ -322,6 +322,31 @@ void ACamSimCamera::BeginPlay()
 			RQ.VSMResolutionBias, RQ.TSRScreenPercentage);
 	}
 
+	// 27F — Configurable render frame rate
+	const float TargetRenderFps = FMath::Clamp(Cfg.Performance.RenderFrameRateHz, 1.0f, 120.0f);
+	if (!FMath::IsNearlyEqual(TargetRenderFps, 30.0f))
+	{
+		GEngine->SetMaxFPS(TargetRenderFps);
+		GEngine->FixedFrameRate    = TargetRenderFps;
+		GEngine->bUseFixedFrameRate = true;
+	}
+
+	// 27G — Texture streaming pool budget
+	if (Cfg.Performance.TexturePoolBudgetMB > 0)
+	{
+		const FString TexturePoolCmd = FString::Printf(
+			TEXT("r.Streaming.PoolSize %d"), Cfg.Performance.TexturePoolBudgetMB);
+		GEngine->Exec(GetWorld(), *TexturePoolCmd);
+	}
+
+	UE_LOG(LogCamSim, Log,
+		TEXT("ACamSimCamera: Performance — renderFPS=%.0f outputFPS=%.0f texturePoolMB=%d dropTracking=%s hotReload=%s"),
+		TargetRenderFps,
+		Cfg.Performance.OutputFrameRateHz,
+		Cfg.Performance.TexturePoolBudgetMB,
+		Cfg.Performance.bTrackFrameDropsByCategory ? TEXT("1") : TEXT("0"),
+		Cfg.Performance.bHotReloadConfig ? TEXT("1") : TEXT("0"));
+
 	// Allocate async GPU readback helper (non-blocking DMA: EnqueueCopy → IsReady → Lock)
 	GPUReadback = new FRHIGPUTextureReadback(TEXT("CamSimReadback"));
 

@@ -97,20 +97,20 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_FrameRateValidation,
 
 bool FPhase27_FrameRateValidation::RunTest(const FString& Parameters)
 {
-	// Verify FMath::Clamp correctly constrains frame rates to supported range [1, 240]
+	// Verify FMath::Clamp correctly constrains frame rates to supported range [1, 120]
 	constexpr float MinFps  = 1.0f;
-	constexpr float MaxFps  = 240.0f;
+	constexpr float MaxFps  = 120.0f;
 
 	TestEqual(TEXT("30 fps stays 30"),  FMath::Clamp(30.0f,  MinFps, MaxFps), 30.0f);
 	TestEqual(TEXT("60 fps stays 60"),  FMath::Clamp(60.0f,  MinFps, MaxFps), 60.0f);
 	TestEqual(TEXT("0 fps clamps to 1"),FMath::Clamp(0.0f,   MinFps, MaxFps), MinFps);
-	TestEqual(TEXT("300 fps clamps to 240"), FMath::Clamp(300.0f, MinFps, MaxFps), MaxFps);
+	TestEqual(TEXT("200 fps clamps to 120"), FMath::Clamp(200.0f, MinFps, MaxFps), MaxFps);
 
 	// Render and output frame rates from defaults are within valid range
 	FCamSimConfig::FPerformanceConfig C;
-	TestTrue(TEXT("Default RenderFrameRateHz in [1,240]"),
+	TestTrue(TEXT("Default RenderFrameRateHz in [1,120]"),
 		C.RenderFrameRateHz >= MinFps && C.RenderFrameRateHz <= MaxFps);
-	TestTrue(TEXT("Default OutputFrameRateHz in [1,240]"),
+	TestTrue(TEXT("Default OutputFrameRateHz in [1,120]"),
 		C.OutputFrameRateHz >= MinFps && C.OutputFrameRateHz <= MaxFps);
 
 	return true;
@@ -134,5 +134,20 @@ bool FPhase27_FrameDropStats::RunTest(const FString& Parameters)
 	S.EncoderBusy++;
 	S.ReadbackTimeout++;
 	TestEqual(TEXT("Total after increments"), S.Total(), 2);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test 6 — Texture pool budget range check
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_TexturePoolRange,
+	"CamSim.Phase27.TexturePoolRange",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FPhase27_TexturePoolRange::RunTest(const FString& Parameters)
+{
+	FCamSimConfig::FPerformanceConfig C;
+	TestEqual("Default 0 = engine default", C.TexturePoolBudgetMB, 0);
+	C.TexturePoolBudgetMB = 4096;
+	TestTrue("4096 MB valid", C.TexturePoolBudgetMB > 0);
 	return true;
 }
