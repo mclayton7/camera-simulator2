@@ -121,7 +121,7 @@ bool FPhase27_FrameRateValidation::RunTest(const FString& Parameters)
 // ---------------------------------------------------------------------------
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_FrameDropStats,
 	"CamSim.Phase27.FrameDropStats",
-	EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FPhase27_FrameDropStats::RunTest(const FString& Parameters)
 {

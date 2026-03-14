@@ -493,6 +493,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 					UE_LOG(LogCamSim, Warning,
 						TEXT("CamSimReadback frame %llu: unsupported pixel format %s"),
 						WaitFrame, GetPixelFormatString(PixelFormat));
+					if (bTrackFrameDrops_) FrameDropStats_.ReadbackTimeout++;
 					Readback->Unlock();
 					bReadbackPending = false;
 					bEncoderBusy     = false;
@@ -551,6 +552,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 			}
 			else
 			{
+				if (bTrackFrameDrops_) FrameDropStats_.ReadbackTimeout++;
 				Readback->Unlock();
 				bReadbackPending = false;
 				bEncoderBusy     = false;

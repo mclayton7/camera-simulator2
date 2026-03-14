@@ -437,12 +437,15 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			LastHost);
 
 		// Phase 27B — append per-category frame drop stats when tracking is enabled
-		if (Camera_ && Camera_->IsTrackingFrameDrops())
+		if (ACamSimCamera* Cam = Camera_.Get())
 		{
-			const FFrameDropStats& D = Camera_->GetFrameDropStats();
-			HealthJson += FString::Printf(
-				TEXT(",\"frame_drops\":{\"encoder_busy\":%d,\"readback_timeout\":%d,\"socket_error\":%d,\"total\":%d}"),
-				D.EncoderBusy.Load(), D.ReadbackTimeout.Load(), D.SocketError.Load(), D.Total());
+			if (Cam->IsTrackingFrameDrops())
+			{
+				const FFrameDropStats& D = Cam->GetFrameDropStats();
+				HealthJson += FString::Printf(
+					TEXT(",\"frame_drops\":{\"encoder_busy\":%d,\"readback_timeout\":%d,\"socket_error\":%d,\"total\":%d}"),
+					D.EncoderBusy.Load(), D.ReadbackTimeout.Load(), D.SocketError.Load(), D.Total());
+			}
 		}
 		HealthJson += TEXT("}");
 

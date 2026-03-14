@@ -64,14 +64,14 @@ public:
 
 	// Phase 27B — camera registration for health JSON frame drop stats
 	void             RegisterCamera(ACamSimCamera* Camera) { Camera_ = Camera; }
-	ACamSimCamera*   GetCamera() const { return Camera_; }
+	ACamSimCamera*   GetCamera() const { return Camera_.Get(); }
 
 private:
 	FCamSimConfig    Config;
 	FEntityTypeTable EntityTypeTable;
 
 	// Phase 27B — weak reference to the camera actor (game thread only)
-	ACamSimCamera* Camera_ = nullptr;
+	TWeakObjectPtr<ACamSimCamera> Camera_;
 
 	// Phase 13B: Pimpl — all owned subsystem components live in FSubsystemImpl,
 	// defined in CamSimSubsystem.cpp.  TUniquePtr<> with a forward-declared type
