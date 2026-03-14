@@ -17,6 +17,17 @@ class UCamSimSubsystem;
 class UCamSimGimbalComponent;
 class UCamSimSensorComponent;
 class FRHIGPUTextureReadback;  // forward-declare async readback helper
+class UMaterialInterface;
+class UMaterialParameterCollection;
+
+/** Phase 27B — per-category frame drop counters. */
+struct FFrameDropStats
+{
+	TAtomic<int32> EncoderBusy     { 0 };
+	TAtomic<int32> ReadbackTimeout { 0 };
+	TAtomic<int32> SocketError     { 0 };
+	int32 Total() const { return EncoderBusy.Load() + ReadbackTimeout.Load() + SocketError.Load(); }
+};
 
 /**
  * ACamSimCamera
@@ -45,6 +56,10 @@ public:
 
 	// Called by Tick after geospatial position has been applied
 	void CaptureAndEncode();
+
+	// Phase 27B — expose drop stats to subsystem for health JSON
+	const FFrameDropStats& GetFrameDropStats() const { return FrameDropStats_; }
+	bool IsTrackingFrameDrops()                const { return bTrackFrameDrops_; }
 
 private:
 	/** Explicit root scene component. */
@@ -161,9 +176,30 @@ private:
 	/** CPU-side sensor post-processing pipeline (Phase 11). */
 	TUniquePtr<IPixelPipeline> SensorFX;
 
+	// Phase 27A — GPU sensor post-process
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialParameterCollection> GpuSensorMpc_;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> GpuSensorMat_;
+
+	/** Phase 27B — per-category frame drop counters. */
+	FFrameDropStats FrameDropStats_;
+	bool            bTrackFrameDrops_ = false;
+
+	// Phase 27E — Tile prefetch during gimbal slew
+	float PrevGimbalPanDeg_   = 0.0f;
+	float PrevGimbalTiltDeg_  = 0.0f;
+	int32 TilePrefetchBoostFramesRemaining_ = 0;
+
+	// Phase 27D — Hot-reload config
+	float     HotReloadAccumSec_ = 0.0f;
+	FDateTime LastConfigMTime_ = FDateTime::MinValue();
+
 	// Helpers
 	void ApplyCigiState(float DeltaTime);
 	void ComputeGeometricLOS();
+	/** Phase 27A — Update MPC scalar parameters for GPU sensor post-process material. */
+	void UpdateGpuSensorMpcParams();
 
 	/** Populate telemetry fields from the environment actor (Phase 18). */
 	void ReadEnvironmentTelemetry();

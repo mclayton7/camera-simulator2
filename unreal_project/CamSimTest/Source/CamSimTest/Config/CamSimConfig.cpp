@@ -50,6 +50,12 @@ static float GetEnvFloat(const TCHAR* Key, float Default)
 	return Value.IsEmpty() ? Default : FCString::Atof(*Value);
 }
 
+static bool GetEnvBool(const TCHAR* Key, bool Default)
+{
+	FString Value = FPlatformMisc::GetEnvironmentVariable(Key);
+	return Value.IsEmpty() ? Default : FCString::Atoi(*Value) != 0;
+}
+
 static FCamSimConfig::EReadbackFormat ParseReadbackFormat(const FString& Value)
 {
 	const FString Lower = Value.ToLower();
@@ -359,7 +365,6 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlString(Root, "encoder", Cfg.Encoder);
 		YamlInt   (Root, "max_entities", Cfg.MaxEntities);
 		YamlBool  (Root, "use_instanced_rendering", Cfg.bUseInstancedRendering);
-		YamlBool  (Root, "gpu_sensor_effects", Cfg.bGpuSensorEffects);
 		YamlFloat (Root, "hfov_deg",         Cfg.HFovDeg);
 		YamlString(Root, "terrain_provider", Cfg.TerrainProvider);
 		YamlString(Root, "imagery_provider", Cfg.ImageryProvider);
@@ -379,6 +384,9 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlInt   (Root, "max_simultaneous_tile_loads", Cfg.MaxSimultaneousTileLoads);
 		YamlFloat (Root, "maximum_screen_space_error", Cfg.MaximumScreenSpaceError);
 		YamlInt   (Root, "maximum_cached_bytes_mb",    Cfg.MaximumCachedBytesMB);
+		YamlInt  (Root, "loading_descendant_limit", Cfg.LoadingDescendantLimit);
+		YamlBool (Root, "use_lod_transitions",      Cfg.bUseLodTransitions);
+		YamlFloat(Root, "lod_transition_length",    Cfg.LodTransitionLength);
 		YamlDouble(Root, "start_latitude",   Cfg.StartLatitude);
 		YamlDouble(Root, "start_longitude",  Cfg.StartLongitude);
 		YamlDouble(Root, "start_altitude",   Cfg.StartAltitude);
@@ -815,6 +823,41 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlFloat (P18, "crater_default_radius_m",     Cfg.Phase18.CraterDefaultRadiusM);
 		}
 
+		if (Root.has_child("rendering_quality"))
+		{
+			ryml::ConstNodeRef RQNode = Root["rendering_quality"];
+			FRenderingQualityConfig& RQ = Cfg.RenderingQuality;
+			YamlBool (RQNode, "entity_shadows",         RQ.bEntityShadows);
+			YamlBool (RQNode, "contact_shadows",        RQ.bContactShadows);
+			YamlFloat(RQNode, "contact_shadow_length",  RQ.ContactShadowLength);
+			YamlFloat(RQNode, "ao_intensity",           RQ.AOIntensity);
+			YamlFloat(RQNode, "ao_radius",              RQ.AORadius);
+			YamlBool (RQNode, "rt_reflections",         RQ.bRayTracedReflections);
+			YamlFloat(RQNode, "shadow_distance_scale",  RQ.ShadowDistanceScale);
+			YamlInt  (RQNode, "vsm_resolution_bias",    RQ.VSMResolutionBias);
+			YamlInt  (RQNode, "vsm_max_physical_pages", RQ.VSMMaxPhysicalPages);
+			YamlInt  (RQNode, "tsr_screen_percentage",  RQ.TSRScreenPercentage);
+		}
+
+		// Phase 27: Performance
+		if (Root.has_child("performance"))
+		{
+			ryml::ConstNodeRef PerfNode = Root["performance"];
+			FPerformanceConfig& Perf = Cfg.Performance;
+			YamlBool (PerfNode, "track_frame_drops_by_category",        Perf.bTrackFrameDropsByCategory);
+			YamlBool (PerfNode, "hot_reload_config",                    Perf.bHotReloadConfig);
+			YamlFloat(PerfNode, "hot_reload_poll_interval_sec",         Perf.HotReloadPollIntervalSec);
+			YamlFloat(PerfNode, "tile_prefetch_slew_threshold_deg_per_sec", Perf.TilePrefetchSlewThresholdDegPerSec);
+			YamlFloat(PerfNode, "tile_prefetch_fov_boost",              Perf.TilePrefetchFovBoost);
+			YamlInt  (PerfNode, "tile_prefetch_boost_frames",           Perf.TilePrefetchBoostFrames);
+			YamlFloat(PerfNode, "render_frame_rate_hz",                 Perf.RenderFrameRateHz);
+			YamlFloat(PerfNode, "output_frame_rate_hz",                 Perf.OutputFrameRateHz);
+			YamlInt  (PerfNode, "texture_pool_budget_mb",               Perf.TexturePoolBudgetMB);
+			YamlBool (PerfNode, "gpu_sensor_effects",                   Perf.bGpuSensorEffects);
+			YamlString(PerfNode, "gpu_sensor_material_path",            Perf.GpuSensorMaterialPath);
+			YamlString(PerfNode, "gpu_sensor_mpc_path",                 Perf.GpuSensorMpcPath);
+		}
+
 		if (Root.has_child("phase19"))
 		{
 			ryml::ConstNodeRef P19 = Root["phase19"];
@@ -964,6 +1007,9 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.MaxSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_MAX_TILE_LOADS"),        Cfg.MaxSimultaneousTileLoads);
 	Cfg.MaximumScreenSpaceError = GetEnvFloat(TEXT("CAMSIM_MAX_SSE"),             Cfg.MaximumScreenSpaceError);
 	Cfg.MaximumCachedBytesMB    = GetEnvInt(TEXT("CAMSIM_MAX_CACHED_MB"),         Cfg.MaximumCachedBytesMB);
+	Cfg.LoadingDescendantLimit  = GetEnvInt  (TEXT("CAMSIM_LOADING_DESCENDANT_LIMIT"), Cfg.LoadingDescendantLimit);
+	Cfg.bUseLodTransitions      = GetEnvBool (TEXT("CAMSIM_USE_LOD_TRANSITIONS"),      Cfg.bUseLodTransitions);
+	Cfg.LodTransitionLength     = GetEnvFloat(TEXT("CAMSIM_LOD_TRANSITION_LENGTH"),    Cfg.LodTransitionLength);
 	Cfg.Encoder = GetEnv(TEXT("CAMSIM_ENCODER"), Cfg.Encoder);
 	Cfg.MaxEntities = GetEnvInt(TEXT("CAMSIM_MAX_ENTITIES"), Cfg.MaxEntities);
 	Cfg.TerrainProvider = GetEnv(TEXT("CAMSIM_TERRAIN_PROVIDER"), Cfg.TerrainProvider).TrimStartAndEnd().ToLower();
@@ -1096,6 +1142,21 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Phase19.SSRIntensity            = GetEnvFloat(TEXT("CAMSIM_OCEAN_SSR_INTENSITY"),       Cfg.Phase19.SSRIntensity);
 	Cfg.Phase19.ReflectionCaptureRadius = GetEnvFloat(TEXT("CAMSIM_OCEAN_REFLECTION_RADIUS"),   Cfg.Phase19.ReflectionCaptureRadius);
 
+	// Phase 24: rendering quality env var overrides
+	{
+		FRenderingQualityConfig& RQ = Cfg.RenderingQuality;
+		RQ.bEntityShadows        = GetEnvInt  (TEXT("CAMSIM_ENTITY_SHADOWS"),          RQ.bEntityShadows        ? 1 : 0) != 0;
+		RQ.bContactShadows       = GetEnvInt  (TEXT("CAMSIM_CONTACT_SHADOWS"),         RQ.bContactShadows       ? 1 : 0) != 0;
+		RQ.ContactShadowLength   = GetEnvFloat(TEXT("CAMSIM_CONTACT_SHADOW_LENGTH"),   RQ.ContactShadowLength);
+		RQ.AOIntensity           = GetEnvFloat(TEXT("CAMSIM_AO_INTENSITY"),            RQ.AOIntensity);
+		RQ.AORadius              = GetEnvFloat(TEXT("CAMSIM_AO_RADIUS"),               RQ.AORadius);
+		RQ.bRayTracedReflections = GetEnvInt  (TEXT("CAMSIM_RT_REFLECTIONS"),          RQ.bRayTracedReflections ? 1 : 0) != 0;
+		RQ.ShadowDistanceScale   = GetEnvFloat(TEXT("CAMSIM_SHADOW_DISTANCE_SCALE"),   RQ.ShadowDistanceScale);
+		RQ.VSMResolutionBias     = GetEnvInt  (TEXT("CAMSIM_VSM_RESOLUTION_BIAS"),     RQ.VSMResolutionBias);
+		RQ.VSMMaxPhysicalPages   = GetEnvInt  (TEXT("CAMSIM_VSM_MAX_PAGES"),           RQ.VSMMaxPhysicalPages);
+		RQ.TSRScreenPercentage   = GetEnvInt  (TEXT("CAMSIM_TSR_SCREEN_PERCENTAGE"),   RQ.TSRScreenPercentage);
+	}
+
 	// Phase 20: overlay HUD/OSD env var overrides
 	// Apply preset first so individual env var overrides win
 	{
@@ -1148,11 +1209,26 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		*Cfg.MulticastAddr, Cfg.MulticastPort,
 		Cfg.VideoBitrate, *Cfg.H264Preset, *Cfg.Encoder,
 		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks,
-		Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB, Cfg.MaxEntities, Cfg.bGpuSensorEffects ? 1 : 0,
+		Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB, Cfg.MaxEntities, Cfg.Performance.bGpuSensorEffects ? 1 : 0,
 		*Cfg.SensorQualityPreset, *Cfg.TerrainProvider, *Cfg.ImageryProvider,
 		Cfg.GroundTruth.bEnabled ? 1 : 0,
 		Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz, Cfg.EntityScale.DefaultMaxUpdateRateHz,
 		Cfg.bScenarioEnabled ? 1 : 0, Cfg.ScenarioEntities.Num(), Cfg.ScenarioTimeScale);
+
+	// Phase 27: Performance env overrides
+	{
+		FPerformanceConfig& Perf = Cfg.Performance;
+		Perf.bTrackFrameDropsByCategory          = GetEnvBool (TEXT("CAMSIM_PERF_TRACK_DROPS"),         Perf.bTrackFrameDropsByCategory);
+		Perf.bHotReloadConfig                    = GetEnvBool (TEXT("CAMSIM_PERF_HOT_RELOAD"),          Perf.bHotReloadConfig);
+		Perf.HotReloadPollIntervalSec            = GetEnvFloat(TEXT("CAMSIM_PERF_POLL_INTERVAL"),       Perf.HotReloadPollIntervalSec);
+		Perf.TilePrefetchSlewThresholdDegPerSec  = GetEnvFloat(TEXT("CAMSIM_PERF_TILE_SLEW_THRESHOLD"), Perf.TilePrefetchSlewThresholdDegPerSec);
+		Perf.TilePrefetchFovBoost                = GetEnvFloat(TEXT("CAMSIM_PERF_TILE_FOV_BOOST"),      Perf.TilePrefetchFovBoost);
+		Perf.TilePrefetchBoostFrames             = GetEnvInt  (TEXT("CAMSIM_PERF_TILE_BOOST_FRAMES"),   Perf.TilePrefetchBoostFrames);
+		Perf.RenderFrameRateHz                   = GetEnvFloat(TEXT("CAMSIM_PERF_RENDER_FPS"),          Perf.RenderFrameRateHz);
+		Perf.OutputFrameRateHz                   = GetEnvFloat(TEXT("CAMSIM_PERF_OUTPUT_FPS"),          Perf.OutputFrameRateHz);
+		Perf.TexturePoolBudgetMB                 = GetEnvInt  (TEXT("CAMSIM_PERF_TEXTURE_POOL_MB"),     Perf.TexturePoolBudgetMB);
+		Perf.bGpuSensorEffects                   = GetEnvBool (TEXT("CAMSIM_PERF_GPU_SENSOR"),          Perf.bGpuSensorEffects);
+	}
 
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping
 	if (Cfg.SensorFovPresets.Num() > 0)

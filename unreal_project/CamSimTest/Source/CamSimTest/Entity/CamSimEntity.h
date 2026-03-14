@@ -64,6 +64,9 @@ public:
 	/** Apply runtime culling and tick-rate controls for large scene scaling. */
 	void ApplyScaleControls(float MaxDrawDistanceM, float TickRateHz);
 
+	/** Enable or disable shadow casting on all mesh components (Phase 24A). */
+	void SetShadowCasting(bool bCast);
+
 	/**
 	 * Apply pitch/roll/heave from ocean surface to this vessel entity.
 	 * Called from FCamSimEntityManager::Tick() for sea-domain entities only.

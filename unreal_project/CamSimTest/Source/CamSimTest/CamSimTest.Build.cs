@@ -17,6 +17,7 @@ public class CamSimTest : ModuleRules
 
 		// Suppress warnings from FFmpeg C headers included via extern "C"
 		bEnableUndefinedIdentifierWarnings = false;
+		bUseRTTI = true; // required for dynamic_cast on non-UObject types (FSensorPostProcess)
 
 		PublicDependencyModuleNames.AddRange(new string[]
 		{

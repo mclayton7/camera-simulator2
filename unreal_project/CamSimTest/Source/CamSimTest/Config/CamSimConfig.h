@@ -99,7 +99,16 @@ struct FCamSimConfig
 	// Cesium LOD quality: lower = sharper terrain (Cesium default 16; 2 = high quality ISR)
 	float   MaximumScreenSpaceError = 2.0f;
 	// Tile cache budget in MB (0 = Cesium default / uncapped)
-	int32   MaximumCachedBytesMB = 2048;
+	int32   MaximumCachedBytesMB = 4096;
+	// Max descendant tiles to load simultaneously (Cesium default 20; higher = better low-alt detail)
+	// Env: CAMSIM_LOADING_DESCENDANT_LIMIT
+	int32   LoadingDescendantLimit = 80;
+	// Enable smooth opacity crossfade when tile LOD level changes (Cesium UseLodTransitions)
+	// Env: CAMSIM_USE_LOD_TRANSITIONS
+	bool    bUseLodTransitions = true;
+	// Duration of LOD crossfade in seconds (only used when bUseLodTransitions=true)
+	// Env: CAMSIM_LOD_TRANSITION_LENGTH
+	float   LodTransitionLength = 0.5f;
 
 	// Default camera start position (WGS-84) -- used before first CIGI packet
 	double  StartLatitude   = 38.8977;     // Washington DC
@@ -124,11 +133,6 @@ struct FCamSimConfig
 	// Entity scalability
 	int32   MaxEntities = 500;
 	bool    bUseInstancedRendering = true;
-
-	// GPU sensor post-processing (Phase 5). When true, sensor effects run as
-	// post-process materials on the GPU before readback -- CPU pipeline is skipped.
-	// Set false for Mesa llvmpipe compatibility (CPU fallback).
-	bool    bGpuSensorEffects = false;
 
 	// CIGI entity ID that drives the camera (all others -> entity manager)
 	int32   CameraEntityId  = 0;
@@ -304,6 +308,65 @@ struct FCamSimConfig
 		float LensFlareThreshold = 8.0f;
 	};
 	FOpticalRealismConfig OpticalRealism;
+
+	// Phase 24 — Rendering Quality
+	struct FRenderingQualityConfig
+	{
+		// 24A: Entity shadow casting + contact shadows
+		// Env: CAMSIM_ENTITY_SHADOWS / CAMSIM_CONTACT_SHADOWS
+		bool  bEntityShadows      = true;
+		bool  bContactShadows     = false;   // expensive; off by default
+		float ContactShadowLength = 0.1f;    // fraction of screen height [0,1]
+
+		// 24B: Ambient occlusion (Lumen GTAO intensity/radius)
+		// Env: CAMSIM_AO_INTENSITY / CAMSIM_AO_RADIUS
+		float AOIntensity = 0.5f;    // [0,1]; 0 = off
+		float AORadius    = 200.0f;  // UE cm units
+
+		// 24D: Ray-traced reflections on SceneCapture (requires r.RayTracing=True)
+		// Env: CAMSIM_RT_REFLECTIONS
+		bool bRayTracedReflections = false;
+
+		// 24E: Shadow distance and VSM quality
+		// Env: CAMSIM_SHADOW_DISTANCE_SCALE / CAMSIM_VSM_RESOLUTION_BIAS / CAMSIM_VSM_MAX_PAGES
+		float ShadowDistanceScale = 2.0f;   // multiplies engine max shadow distance
+		int32 VSMResolutionBias   = -1;     // negative = sharper; ISR high-alt needs detail
+		int32 VSMMaxPhysicalPages = 4096;   // default 2048; more = less VSM cache thrash
+
+		// 24F: TSR screen percentage (100 = native; >100 = super-sample for entity edge quality)
+		// Env: CAMSIM_TSR_SCREEN_PERCENTAGE
+		int32 TSRScreenPercentage = 100;
+	};
+	FRenderingQualityConfig RenderingQuality;
+
+	// Phase 27 — Performance & Optimization
+	struct FPerformanceConfig
+	{
+		// 27B Frame Drop Categorization
+		bool  bTrackFrameDropsByCategory    = false;
+
+		// 27D Hot-Reload Config
+		bool  bHotReloadConfig              = false;
+		float HotReloadPollIntervalSec      = 5.0f;
+
+		// 27E Tile Prefetch
+		float TilePrefetchSlewThresholdDegPerSec = 10.0f;
+		float TilePrefetchFovBoost               = 2.0f;
+		int32 TilePrefetchBoostFrames            = 30;
+
+		// 27F 60 Hz Rendering
+		float RenderFrameRateHz  = 30.0f;
+		float OutputFrameRateHz  = 30.0f;
+
+		// 27G Texture Paging Budget
+		int32 TexturePoolBudgetMB = 0;
+
+		// 27A GPU Sensor Pipeline
+		bool    bGpuSensorEffects      = false;
+		FString GpuSensorMaterialPath = TEXT("/Game/CamSim/Materials/M_SensorPostProcess");
+		FString GpuSensorMpcPath      = TEXT("/Game/CamSim/Materials/MPC_SensorParams");
+	};
+	FPerformanceConfig Performance;
 
 	// Weather, Atmosphere & Particle Effects (Phase 18)
 	struct FPhase18Config

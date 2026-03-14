@@ -288,6 +288,7 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
 	{
 		const FCamSimConfig& Cfg = Subsystem->GetConfig();
 		Entity->ApplyScaleControls(Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz);
+		Entity->SetShadowCasting(Cfg.RenderingQuality.bEntityShadows);  // 24A
 	}
 	Entity->ApplyPose(S);
 	if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)

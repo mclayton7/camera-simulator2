@@ -27,6 +27,12 @@
 #include "DynamicRHI.h"
 #include "PixelFormat.h"
 #include "Async/Async.h"
+#include "HAL/FileManager.h"
+
+// Phase 27A — GPU sensor post-process material loading
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialParameterCollection.h"
+#include "Kismet/KismetMaterialLibrary.h"
 
 // Cesium
 #include "CesiumGlobeAnchorComponent.h"
@@ -72,6 +78,12 @@ ACamSimCamera::ACamSimCamera()
 	// bAlwaysPersistRenderingState (above) is required for TSR history accumulation.
 	SceneCapture->ShowFlags.SetTemporalAA(true);
 	SceneCapture->ShowFlags.SetAntiAliasing(true);
+
+	// 24A: Dynamic shadows between entities (VSM is enabled globally in DefaultEngine.ini)
+	SceneCapture->ShowFlags.SetDynamicShadows(true);
+
+	// 24C: Normal maps (ensure not disabled on SceneCapture)
+	SceneCapture->ShowFlags.SetMaterialNormal(true);
 }
 
 // -------------------------------------------------------------------------
@@ -88,8 +100,13 @@ void ACamSimCamera::BeginPlay()
 		UE_LOG(LogCamSim, Error, TEXT("ACamSimCamera: UCamSimSubsystem not found"));
 		return;
 	}
+	Subsystem->RegisterCamera(this);
 
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+
+	bTrackFrameDrops_ = Cfg.Performance.bTrackFrameDropsByCategory;
+	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: FrameDropTracking=%s"),
+		bTrackFrameDrops_ ? TEXT("enabled") : TEXT("disabled"));
 
 	// Log the RHI backend for platform-specific diagnostics.
 	FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
@@ -171,10 +188,13 @@ void ACamSimCamera::BeginPlay()
 		It->PreloadAncestors = true;
 		It->PreloadSiblings  = true;
 		It->ForbidHoles      = true;
-		It->LoadingDescendantLimit = 40;
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tuned tileset '%s' (maxLoads=%d SSE=%.1f cacheMB=%d ForbidHoles=true)"),
+		It->LoadingDescendantLimit = Cfg.LoadingDescendantLimit;
+		It->SetUseLodTransitions(Cfg.bUseLodTransitions);
+		It->LodTransitionLength    = Cfg.LodTransitionLength;
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tuned tileset '%s' (maxLoads=%d SSE=%.1f cacheMB=%d descLimit=%d lodBlend=%d)"),
 			*It->GetName(), Cfg.MaxSimultaneousTileLoads,
-			Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB);
+			Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB,
+			Cfg.LoadingDescendantLimit, (int)Cfg.bUseLodTransitions);
 	}
 
 	// Initialize CPU-side sensor post-processing pipeline (Phase 11)
@@ -261,6 +281,112 @@ void ACamSimCamera::BeginPlay()
 			Cfg.OpticalRealism.bLensFlare, Cfg.OpticalRealism.bLensDistortion);
 	}
 
+	// Phase 24 — Rendering quality
+	{
+		const FCamSimConfig::FRenderingQualityConfig& RQ = Cfg.RenderingQuality;
+		FPostProcessSettings& PP = SceneCapture->PostProcessSettings;
+
+		// 24A contact shadows (ShowFlag — per-light ContactShadowLength is set in editor)
+		SceneCapture->ShowFlags.SetContactShadows(RQ.bContactShadows);
+
+		// 24B ambient occlusion (Lumen GTAO)
+		if (RQ.AOIntensity > 0.0f)
+		{
+			PP.bOverride_AmbientOcclusionIntensity = true;
+			PP.AmbientOcclusionIntensity           = RQ.AOIntensity;
+			PP.bOverride_AmbientOcclusionRadius    = true;
+			PP.AmbientOcclusionRadius              = RQ.AORadius;
+		}
+
+		// 24E shadow quality + 24D RT reflections via console variables
+		auto SetCVar = [](const TCHAR* Name, float Value)
+		{
+			if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name))
+				CVar->Set(Value, ECVF_SetByCode);
+		};
+		auto SetCVarI = [](const TCHAR* Name, int32 Value)
+		{
+			if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name))
+				CVar->Set(Value, ECVF_SetByCode);
+		};
+		SetCVarI(TEXT("r.RayTracing.Reflections"), RQ.bRayTracedReflections ? 1 : 0);  // 24D
+		SetCVar (TEXT("r.Shadow.DistanceScale"),                         RQ.ShadowDistanceScale);
+		SetCVarI(TEXT("r.Shadow.Virtual.ResolutionLodBiasDirectional"),  RQ.VSMResolutionBias);
+		SetCVarI(TEXT("r.Shadow.Virtual.MaxPhysicalPages"),              RQ.VSMMaxPhysicalPages);
+
+		// 24F TSR screen percentage
+		if (RQ.TSRScreenPercentage != 100)
+		{
+			SetCVarI(TEXT("r.ScreenPercentage"), RQ.TSRScreenPercentage);
+		}
+
+		UE_LOG(LogCamSim, Log,
+			TEXT("ACamSimCamera: RenderingQuality — shadows=%d contactShadow=%d AO=%.2f "
+			     "RTRefl=%d shadowDist=%.1f VSMBias=%d TSR%%=%d"),
+			(int)RQ.bEntityShadows, (int)RQ.bContactShadows, RQ.AOIntensity,
+			(int)RQ.bRayTracedReflections, RQ.ShadowDistanceScale,
+			RQ.VSMResolutionBias, RQ.TSRScreenPercentage);
+	}
+
+	// 27F — Configurable render frame rate
+	const float TargetRenderFps = FMath::Clamp(Cfg.Performance.RenderFrameRateHz, 1.0f, 120.0f);
+	if (!FMath::IsNearlyEqual(TargetRenderFps, 30.0f))
+	{
+		GEngine->SetMaxFPS(TargetRenderFps);
+		GEngine->FixedFrameRate    = TargetRenderFps;
+		GEngine->bUseFixedFrameRate = true;
+	}
+
+	// 27G — Texture streaming pool budget
+	if (Cfg.Performance.TexturePoolBudgetMB > 0)
+	{
+		const FString TexturePoolCmd = FString::Printf(
+			TEXT("r.Streaming.PoolSize %d"), Cfg.Performance.TexturePoolBudgetMB);
+		GEngine->Exec(GetWorld(), *TexturePoolCmd);
+	}
+
+	UE_LOG(LogCamSim, Log,
+		TEXT("ACamSimCamera: Performance — renderFPS=%.0f outputFPS=%.0f texturePoolMB=%d dropTracking=%s hotReload=%s"),
+		TargetRenderFps,
+		Cfg.Performance.OutputFrameRateHz,
+		Cfg.Performance.TexturePoolBudgetMB,
+		Cfg.Performance.bTrackFrameDropsByCategory ? TEXT("1") : TEXT("0"),
+		Cfg.Performance.bHotReloadConfig ? TEXT("1") : TEXT("0"));
+
+	// 27A — GPU sensor post-process material
+	if (Cfg.Performance.bGpuSensorEffects)
+	{
+		GpuSensorMat_ = Cast<UMaterialInterface>(
+			StaticLoadObject(UMaterialInterface::StaticClass(), nullptr,
+				*Cfg.Performance.GpuSensorMaterialPath));
+		GpuSensorMpc_ = Cast<UMaterialParameterCollection>(
+			StaticLoadObject(UMaterialParameterCollection::StaticClass(), nullptr,
+				*Cfg.Performance.GpuSensorMpcPath));
+
+		if (GpuSensorMat_ && GpuSensorMpc_ && SceneCapture)
+		{
+			FWeightedBlendable Blendable;
+			Blendable.Object = GpuSensorMat_;
+			Blendable.Weight = 1.0f;
+			SceneCapture->PostProcessSettings.WeightedBlendables.Array.Add(Blendable);
+
+			// Bypass expensive CPU pipeline loops — defect pixels, quantization, overlay still run
+			if (auto* FXCast = dynamic_cast<FSensorPostProcess*>(SensorFX.Get()))
+			{
+				FXCast->SetGpuSensorEffectsActive(true);
+			}
+			UE_LOG(LogCamSim, Log,
+				TEXT("ACamSimCamera: GPU sensor pipeline ACTIVE — material=%s"),
+				*Cfg.Performance.GpuSensorMaterialPath);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("ACamSimCamera: GPU sensor material/MPC not found at '%s' / '%s' — falling back to CPU pipeline"),
+				*Cfg.Performance.GpuSensorMaterialPath, *Cfg.Performance.GpuSensorMpcPath);
+		}
+	}
+
 	// Allocate async GPU readback helper (non-blocking DMA: EnqueueCopy → IsReady → Lock)
 	GPUReadback = new FRHIGPUTextureReadback(TEXT("CamSimReadback"));
 
@@ -312,6 +438,12 @@ void ACamSimCamera::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		CesiumCameraId = -1;
 	}
 
+	// Phase 27B — deregister from subsystem so health writer doesn't access a dangling ptr
+	if (Subsystem)
+	{
+		Subsystem->RegisterCamera(nullptr);
+	}
+
 	// Free the GPU readback object — must happen before the render target is destroyed
 	if (GPUReadback)
 	{
@@ -350,9 +482,60 @@ void ACamSimCamera::Tick(float DeltaTime)
 			CaptureTargetIndex, PendingReadbackTargetIndex, ReadyPollsRequired);
 	}
 
+	// 27D — Hot-reload config via mtime poll
+	{
+		const FCamSimConfig& Cfg = Subsystem->GetConfig();
+		if (Cfg.Performance.bHotReloadConfig)
+		{
+			HotReloadAccumSec_ += DeltaTime;
+			if (HotReloadAccumSec_ >= Cfg.Performance.HotReloadPollIntervalSec)
+			{
+				HotReloadAccumSec_ = 0.0f;
+				const FString CfgPath = FCamSimConfig::GetConfigFilePath();
+				const FDateTime CurrMTime = IFileManager::Get().GetTimeStamp(*CfgPath);
+				if (CurrMTime != FDateTime::MinValue() && CurrMTime != LastConfigMTime_)
+				{
+					LastConfigMTime_ = CurrMTime;
+					const FCamSimConfig OldCfg = Cfg;
+					FCamSimConfig NewCfg = FCamSimConfig::Load();
+					if (!NewCfg.bLoadedSuccessfully)
+					{
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: config parse failed — keeping current config"));
+						return;
+					}
+
+					// Warn on immutable field changes (require restart)
+					if (NewCfg.CigiPort != OldCfg.CigiPort)
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: CIGI port change ignored (requires restart)"));
+					if (NewCfg.MulticastAddr != OldCfg.MulticastAddr)
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: multicast addr change ignored (requires restart)"));
+					if (NewCfg.VideoCodec != OldCfg.VideoCodec)
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: video codec change ignored (requires restart)"));
+					if (NewCfg.MulticastPort != OldCfg.MulticastPort)
+						UE_LOG(LogCamSim, Warning, TEXT("HotReload: multicast port change ignored (requires restart)"));
+
+					// Apply mutable settings to subsystem config
+					Subsystem->HotReloadConfig(NewCfg);
+
+					// Re-apply mutable pixel pipeline settings
+					if (auto* FXCast = dynamic_cast<FSensorPostProcess*>(SensorFX.Get()))
+					{
+						FXCast->SetPhase18Config(NewCfg.Phase18);
+						FXCast->SetOverlayConfig(NewCfg.OverlayConfig);
+					}
+
+					UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: HotReload applied from %s"), *CfgPath);
+				}
+			}
+		}
+	}
+
 	// Apply pending CIGI state first (CIGI queue drain runs every tick,
 	// even if we skip capture, so the platform pose stays current)
 	ApplyCigiState(DeltaTime);
+
+	// 27A — Push current sensor state into GPU MPC each tick (no-op when MPC not loaded)
+	if (GpuSensorMpc_) UpdateGpuSensorMpcParams();
 
 	// -----------------------------------------------------------------------
 	// State B — GPU readback pending: poll render thread for DMA completion.
@@ -426,6 +609,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 					UE_LOG(LogCamSim, Warning,
 						TEXT("CamSimReadback frame %llu: unsupported pixel format %s"),
 						WaitFrame, GetPixelFormatString(PixelFormat));
+					if (bTrackFrameDrops_) FrameDropStats_.ReadbackTimeout++;
 					Readback->Unlock();
 					bReadbackPending = false;
 					bEncoderBusy     = false;
@@ -484,6 +668,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 			}
 			else
 			{
+				if (bTrackFrameDrops_) FrameDropStats_.ReadbackTimeout++;
 				Readback->Unlock();
 				bReadbackPending = false;
 				bEncoderBusy     = false;
@@ -503,6 +688,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 	{
 		++DroppedFrameCount;
 		INC_DWORD_STAT(STAT_CamSimDropped);
+		if (bTrackFrameDrops_) FrameDropStats_.EncoderBusy++;
 		UE_LOG(LogCamSim, Verbose, TEXT("ACamSimCamera: encoder busy, skipping frame %llu (total dropped=%llu)"),
 			FrameIndex, (uint64)DroppedFrameCount);
 		return;
@@ -619,6 +805,41 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 		CurrentTelemetry.GimbalYaw   = GimbalComp->GetGimbalYaw();
 		CurrentTelemetry.GimbalPitch = GimbalComp->GetGimbalPitch();
 		CurrentTelemetry.GimbalRoll  = GimbalComp->GetGimbalRoll();
+
+		// 27E — Dynamic tile prefetch during fast gimbal slews
+		if (Cfg.Performance.TilePrefetchSlewThresholdDegPerSec > 0.0f)
+		{
+			if (DeltaTime > KINDA_SMALL_NUMBER)
+			{
+				const float CurrPan  = CurrentTelemetry.GimbalYaw;
+				const float CurrTilt = CurrentTelemetry.GimbalPitch;
+				const float PanVelDegSec  = FMath::Abs(CurrPan  - PrevGimbalPanDeg_)  / DeltaTime;
+				const float TiltVelDegSec = FMath::Abs(CurrTilt - PrevGimbalTiltDeg_) / DeltaTime;
+				const float MaxVel = FMath::Max(PanVelDegSec, TiltVelDegSec);
+
+				if (MaxVel >= Cfg.Performance.TilePrefetchSlewThresholdDegPerSec)
+				{
+					// Reset (or extend) the boost window on every above-threshold frame
+					TilePrefetchBoostFramesRemaining_ = Cfg.Performance.TilePrefetchBoostFrames;
+				}
+				else if (TilePrefetchBoostFramesRemaining_ > 0)
+				{
+					TilePrefetchBoostFramesRemaining_--;
+				}
+
+				// Apply or restore Cesium SSE based on current counter
+				for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+				{
+					It->MaximumScreenSpaceError = (TilePrefetchBoostFramesRemaining_ > 0)
+						? Cfg.MaximumScreenSpaceError / FMath::Max(Cfg.Performance.TilePrefetchFovBoost, 1.0f)
+						: Cfg.MaximumScreenSpaceError;
+				}
+			}
+
+			// Always update prev angles regardless of DeltaTime
+			PrevGimbalPanDeg_  = CurrentTelemetry.GimbalYaw;
+			PrevGimbalTiltDeg_ = CurrentTelemetry.GimbalPitch;
+		}
 	}
 
 	// Populate environment telemetry for sensor effects (Phase 16K + Phase 18)
@@ -644,6 +865,22 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 				static_cast<float>(CurrentTelemetry.SlantRangeM * 100.0); // m → cm
 		}
 	}
+}
+
+// -------------------------------------------------------------------------
+// UpdateGpuSensorMpcParams – Phase 27A: push per-frame scalars to GPU MPC
+// -------------------------------------------------------------------------
+
+void ACamSimCamera::UpdateGpuSensorMpcParams()
+{
+	if (!GpuSensorMpc_ || !GetWorld()) return;
+	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+	const FSensorModeConfig* IrCfg = Cfg.SensorModeConfigs.Find(ESensorMode::IR);
+	const float NoiseIntensity = IrCfg ? IrCfg->NETD : 0.0f;
+	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), GpuSensorMpc_,
+		TEXT("SensorMode"), static_cast<float>(SensorComp->GetMode()));
+	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), GpuSensorMpc_,
+		TEXT("NoiseIntensity"), NoiseIntensity);
 }
 
 // -------------------------------------------------------------------------
@@ -928,10 +1165,10 @@ void ACamSimCamera::SubmitFrameToEncoder(
 	const ESensorMode  Mode     = static_cast<ESensorMode>(Telemetry.SensorMode);
 	const uint8        Polarity = Telemetry.SensorPolarity;
 
-	// When GPU sensor effects are active (Phase 5), the post-process materials
-	// already ran on the GPU before readback — skip the CPU pipeline.
-	const bool bSkipCpuFX = Subsystem && Subsystem->GetConfig().bGpuSensorEffects;
-	IPixelPipeline* FX = bSkipCpuFX ? nullptr : SensorFX.Get();
+	// When GPU sensor effects are active (Phase 27A), FSensorPostProcess::Process()
+	// bypasses the expensive CPU loops internally (waveband, AGC, noise) and only
+	// runs cheap stateful effects (defect pixels, quantization, overlay).
+	IPixelPipeline* FX = SensorFX.Get();
 
 	// Ground truth collector (Phase 17) — pointer captured for task lambda.
 	FGroundTruthCollector* Collector = Subsystem ? Subsystem->GetGroundTruthCollector() : nullptr;
