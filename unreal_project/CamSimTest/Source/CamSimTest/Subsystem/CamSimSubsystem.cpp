@@ -12,6 +12,8 @@
 #include "Metadata/KlvBuilder.h"        // FKlvBuilder::SetSecurityMetadata (Phase 12A)
 #include "GroundTruth/FGroundTruthCollector.h"
 #include "Environment/CamSimParticleManager.h"
+#include "DIS/DisReceiver.h"
+#include "DIS/DisEntityAdapter.h"
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -44,6 +46,8 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCamSimGeospatialProvider> GeospatialProvider;
 	TUniquePtr<FGroundTruthCollector>     GroundTruthCollector;
 	TUniquePtr<FCamSimParticleManager>    ParticleManager;
+	TUniquePtr<FDisReceiver>             DisReceiver;
+	TUniquePtr<FDisEntityAdapter>        DisAdapter;
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -87,6 +91,9 @@ struct UCamSimSubsystem::FSubsystemImpl
 		if (VideoEncoder) VideoEncoder->Close();
 		VideoEncoder.Reset();
 		EntityManager.Reset();
+		DisAdapter.Reset();
+		if (DisReceiver) DisReceiver->Stop();
+		DisReceiver.Reset();
 		if (CigiReceiver) CigiReceiver->Stop();
 		CigiReceiver.Reset();
 	}
@@ -142,6 +149,16 @@ FGroundTruthCollector* UCamSimSubsystem::GetGroundTruthCollector() const
 FCamSimParticleManager* UCamSimSubsystem::GetParticleManager() const
 {
 	return Impl ? Impl->ParticleManager.Get() : nullptr;
+}
+
+FDisReceiver* UCamSimSubsystem::GetDisReceiver() const
+{
+	return Impl ? Impl->DisReceiver.Get() : nullptr;
+}
+
+FDisEntityAdapter* UCamSimSubsystem::GetDisAdapter() const
+{
+	return Impl ? Impl->DisAdapter.Get() : nullptr;
 }
 
 void UCamSimSubsystem::RegisterCamera(ACamSimCamera* Camera)
@@ -266,6 +283,19 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	if (!Impl->CigiReceiver->Start())
 	{
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: failed to start CIGI receiver"));
+	}
+
+	// Start DIS receiver thread (Phase 21) — runs alongside CIGI
+	if (Config.DIS.bEnabled)
+	{
+		Impl->DisReceiver = MakeUnique<FDisReceiver>(Config);
+		if (!Impl->DisReceiver->Start())
+		{
+			UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: failed to start DIS receiver"));
+		}
+		Impl->DisAdapter = MakeUnique<FDisEntityAdapter>(Config, Impl->DisReceiver.Get());
+		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: DIS protocol enabled (port=%d exercise=%d)"),
+			Config.DIS.Port, Config.DIS.ExerciseId);
 	}
 
 	// Start FFmpeg encoder / MPEG-TS muxer(s)

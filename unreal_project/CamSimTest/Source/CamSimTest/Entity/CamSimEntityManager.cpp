@@ -7,6 +7,7 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "Environment/CamSimParticleManager.h"
 #include "CIGI/CigiReceiver.h"
+#include "DIS/DisEntityAdapter.h"
 #include "CamSimTest.h"
 
 #include "Engine/World.h"
@@ -61,7 +62,7 @@ TStatId FCamSimEntityManager::GetStatId() const
 void FCamSimEntityManager::Tick(float DeltaTime)
 {
 	PurgeStaleEntities();
-	ProcessEntityStates();
+	ProcessEntityStates(DeltaTime);
 	ProcessRateControls();
 	ProcessArtPartControls();
 	ProcessComponentControls();
@@ -78,17 +79,31 @@ void FCamSimEntityManager::Tick(float DeltaTime)
 // Drain helpers
 // -------------------------------------------------------------------------
 
-void FCamSimEntityManager::ProcessEntityStates()
+void FCamSimEntityManager::ProcessEntityStates(float DeltaTime)
 {
-	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
-	if (!Receiver) return;
-
 	// Collect last state per entity ID this frame (last write wins)
 	TMap<uint16, FCigiEntityState> FrameStates;
 	FCigiEntityState State;
-	while (Receiver->DequeueEntityState(State))
+
+	// Drain CIGI entity states
+	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
+	if (Receiver)
 	{
-		FrameStates.Add(State.EntityId, State);
+		while (Receiver->DequeueEntityState(State))
+		{
+			FrameStates.Add(State.EntityId, State);
+		}
+	}
+
+	// Drain DIS entity states (Phase 21) — tick adapter first to process PDUs
+	FDisEntityAdapter* DisAdapter = Subsystem ? Subsystem->GetDisAdapter() : nullptr;
+	if (DisAdapter)
+	{
+		DisAdapter->Tick(DeltaTime);
+		while (DisAdapter->DequeueEntityState(State))
+		{
+			FrameStates.Add(State.EntityId, State);
+		}
 	}
 
 	const double NowSeconds = FPlatformTime::Seconds();
@@ -199,16 +214,33 @@ void FCamSimEntityManager::ApplyEntityState(const FCigiEntityState& S, double No
 
 void FCamSimEntityManager::ProcessRateControls()
 {
-	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
-	if (!Receiver) return;
-
 	FCigiRateControl Rate;
-	while (Receiver->DequeueRateControl(Rate))
+
+	// Drain CIGI rate controls
+	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
+	if (Receiver)
 	{
-		ACamSimEntity** EntityPtr = EntityMap.Find(Rate.EntityId);
-		if (EntityPtr && IsValid(*EntityPtr))
+		while (Receiver->DequeueRateControl(Rate))
 		{
-			(*EntityPtr)->SetRateControl(Rate);
+			ACamSimEntity** EntityPtr = EntityMap.Find(Rate.EntityId);
+			if (EntityPtr && IsValid(*EntityPtr))
+			{
+				(*EntityPtr)->SetRateControl(Rate);
+			}
+		}
+	}
+
+	// Drain DIS rate controls (Phase 21)
+	FDisEntityAdapter* DisAdapter = Subsystem ? Subsystem->GetDisAdapter() : nullptr;
+	if (DisAdapter)
+	{
+		while (DisAdapter->DequeueRateControl(Rate))
+		{
+			ACamSimEntity** EntityPtr = EntityMap.Find(Rate.EntityId);
+			if (EntityPtr && IsValid(*EntityPtr))
+			{
+				(*EntityPtr)->SetRateControl(Rate);
+			}
 		}
 	}
 }

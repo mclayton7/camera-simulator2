@@ -990,6 +990,41 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlInt(Ov, "platform_label_y", Cfg.OverlayConfig.ElementPlatformLabel.Y);
 		}
 
+		// Phase 21: DIS protocol config
+		if (Root.has_child("dis"))
+		{
+			ryml::ConstNodeRef D = Root["dis"];
+			YamlBool  (D, "enabled",               Cfg.DIS.bEnabled);
+			YamlString(D, "bind_addr",              Cfg.DIS.BindAddr);
+			YamlInt   (D, "port",                   Cfg.DIS.Port);
+			YamlString(D, "multicast_group",        Cfg.DIS.MulticastGroup);
+			YamlInt   (D, "exercise_id",            Cfg.DIS.ExerciseId);
+			YamlInt   (D, "site_id",                Cfg.DIS.SiteId);
+			YamlInt   (D, "application_id",         Cfg.DIS.ApplicationId);
+			YamlFloat (D, "heartbeat_timeout_sec",  Cfg.DIS.HeartbeatTimeoutSec);
+			YamlInt   (D, "id_base_offset",         Cfg.DIS.IdBaseOffset);
+			YamlInt   (D, "default_entity_type_id", Cfg.DIS.DefaultEntityTypeId);
+
+			// Entity type mappings: dis.entity_type_map
+			if (D.has_child("entity_type_map"))
+			{
+				ryml::ConstNodeRef MapNode = D["entity_type_map"];
+				if (MapNode.is_map())
+				{
+					for (ryml::ConstNodeRef Entry : MapNode)
+					{
+						if (Entry.has_key() && Entry.has_val())
+						{
+							FString Key = RymlToFString(Entry.key());
+							FString ValStr = RymlToFString(Entry.val());
+							const int32 TypeId = FCString::Atoi(*ValStr);
+							Cfg.DIS.EntityTypeMappings.Add(Key, static_cast<uint16>(TypeId));
+						}
+					}
+				}
+			}
+		}
+
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
 	}
 	else
@@ -1278,6 +1313,21 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		Perf.OutputFrameRateHz                   = GetEnvFloat(TEXT("CAMSIM_PERF_OUTPUT_FPS"),          Perf.OutputFrameRateHz);
 		Perf.TexturePoolBudgetMB                 = GetEnvInt  (TEXT("CAMSIM_PERF_TEXTURE_POOL_MB"),     Perf.TexturePoolBudgetMB);
 		Perf.bGpuSensorEffects                   = GetEnvBool (TEXT("CAMSIM_PERF_GPU_SENSOR"),          Perf.bGpuSensorEffects);
+	}
+
+	// Phase 21: DIS protocol env var overrides
+	{
+		FDisConfig& D = Cfg.DIS;
+		D.bEnabled            = GetEnvInt  (TEXT("CAMSIM_DIS_ENABLED"),         D.bEnabled            ? 1 : 0) != 0;
+		D.BindAddr            = GetEnv     (TEXT("CAMSIM_DIS_BIND_ADDR"),       D.BindAddr);
+		D.Port                = GetEnvInt  (TEXT("CAMSIM_DIS_PORT"),            D.Port);
+		D.MulticastGroup      = GetEnv     (TEXT("CAMSIM_DIS_MULTICAST_GROUP"), D.MulticastGroup);
+		D.ExerciseId          = GetEnvInt  (TEXT("CAMSIM_DIS_EXERCISE_ID"),     D.ExerciseId);
+		D.SiteId              = GetEnvInt  (TEXT("CAMSIM_DIS_SITE_ID"),         D.SiteId);
+		D.ApplicationId       = GetEnvInt  (TEXT("CAMSIM_DIS_APP_ID"),          D.ApplicationId);
+		D.HeartbeatTimeoutSec = GetEnvFloat(TEXT("CAMSIM_DIS_HEARTBEAT_TIMEOUT"), D.HeartbeatTimeoutSec);
+		D.IdBaseOffset        = GetEnvInt  (TEXT("CAMSIM_DIS_ID_BASE_OFFSET"),  D.IdBaseOffset);
+		D.DefaultEntityTypeId = GetEnvInt  (TEXT("CAMSIM_DIS_DEFAULT_ENTITY_TYPE"), D.DefaultEntityTypeId);
 	}
 
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping

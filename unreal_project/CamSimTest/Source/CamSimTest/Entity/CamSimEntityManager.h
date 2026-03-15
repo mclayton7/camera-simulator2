@@ -62,7 +62,7 @@ private:
 	TMap<uint16, ACamSimEntity*> EntityMap;
 
 	// Drain helpers — called from Tick()
-	void ProcessEntityStates();
+	void ProcessEntityStates(float DeltaTime);
 	void ProcessRateControls();
 	void ProcessArtPartControls();
 	void ProcessComponentControls();

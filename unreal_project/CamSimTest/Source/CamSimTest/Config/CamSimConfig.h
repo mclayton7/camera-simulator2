@@ -502,6 +502,35 @@ struct FCamSimConfig
 		} Imagery;
 	} CesiumBackend;
 
+	// Phase 21 — DIS (IEEE 1278.1) Protocol
+	//   CAMSIM_DIS_ENABLED              - master toggle                  (default 0)
+	//   CAMSIM_DIS_PORT                 - UDP port                       (default 3000)
+	//   CAMSIM_DIS_BIND_ADDR            - bind address                   (default 0.0.0.0)
+	//   CAMSIM_DIS_MULTICAST_GROUP      - multicast group                (default empty)
+	//   CAMSIM_DIS_EXERCISE_ID          - exercise filter (0=any)        (default 1)
+	//   CAMSIM_DIS_HEARTBEAT_TIMEOUT    - entity removal timeout (sec)   (default 12.0)
+	//   CAMSIM_DIS_ID_BASE_OFFSET       - CamSim ID range start         (default 1000)
+	//   CAMSIM_DIS_DEFAULT_ENTITY_TYPE  - fallback entity type ID        (default 1001)
+	struct FDisConfig
+	{
+		bool    bEnabled              = false;
+		FString BindAddr              = TEXT("0.0.0.0");
+		int32   Port                  = 3000;
+		FString MulticastGroup;                          // empty = no multicast join
+		int32   ExerciseId            = 1;               // 0 = accept all exercises
+		int32   SiteId                = 1;
+		int32   ApplicationId         = 1;
+		float   HeartbeatTimeoutSec   = 12.0f;
+		int32   IdBaseOffset          = 1000;            // CamSim IDs start here for DIS
+		int32   DefaultEntityTypeId   = 1001;            // fallback CamSim entity type
+
+		// DIS entity type → CamSim type ID mappings from YAML
+		// Key: "kind:domain:country:category:subcategory:specific:extra"
+		// Value: CamSim uint16 entity type ID
+		TMap<FString, uint16> EntityTypeMappings;
+	};
+	FDisConfig DIS;
+
 	// HUD/OSD overlay burn-in (Phase 20)
 	FHudOverlayConfig OverlayConfig;
 

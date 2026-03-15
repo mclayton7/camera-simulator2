@@ -17,6 +17,8 @@ class FCigiQueryHandler;
 class FCamSimGeospatialProvider;
 class FGroundTruthCollector;
 class FCamSimParticleManager;
+class FDisReceiver;
+class FDisEntityAdapter;
 class ACamSimCamera;
 class UCesiumIonServer;
 
@@ -59,6 +61,8 @@ public:
 	FCamSimGeospatialProvider* GetGeospatialProvider() const;
 	FGroundTruthCollector* GetGroundTruthCollector() const;
 	FCamSimParticleManager* GetParticleManager() const;
+	FDisReceiver*          GetDisReceiver()     const;
+	FDisEntityAdapter*     GetDisAdapter()      const;
 
 	/** Store the transient UCesiumIonServer created by ApplyCesiumBackendConfig.
 	 *  Passing nullptr clears the stored reference (no-op if already null).

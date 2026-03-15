@@ -22,6 +22,62 @@ cigi_response_addr: "127.0.0.1"
 # Env: CAMSIM_CIGI_RESPONSE_PORT
 cigi_response_port: 8889
 
+# --- DIS Protocol (IEEE 1278.1) ---
+# Alternative/supplemental entity input via DIS protocol.
+# When enabled, FDisReceiver runs alongside FCigiReceiver (both can coexist).
+# DIS entities are translated to CamSim's internal format automatically.
+
+# Master toggle: enable DIS receiver thread.
+# Env: CAMSIM_DIS_ENABLED
+dis:
+  enabled: false
+
+  # UDP bind address for incoming DIS PDUs.
+  # Env: CAMSIM_DIS_BIND_ADDR
+  bind_addr: "0.0.0.0"
+
+  # UDP port for DIS traffic (IEEE 1278.1 default is 3000).
+  # Env: CAMSIM_DIS_PORT
+  port: 3000
+
+  # Multicast group to join (empty = no multicast, receive unicast only).
+  # Env: CAMSIM_DIS_MULTICAST_GROUP
+  multicast_group: "239.1.2.3"
+
+  # DIS exercise ID filter. Only PDUs with this exercise ID are accepted.
+  # Set to 0 to accept all exercises.
+  # Env: CAMSIM_DIS_EXERCISE_ID
+  exercise_id: 1
+
+  # This IG's DIS site and application identifiers.
+  # Env: CAMSIM_DIS_SITE_ID, CAMSIM_DIS_APP_ID
+  site_id: 1
+  application_id: 1
+
+  # Entity heartbeat timeout in seconds. DIS has no explicit "remove entity"
+  # packet — entities are removed when no Entity State PDU arrives within
+  # this interval.
+  # Env: CAMSIM_DIS_HEARTBEAT_TIMEOUT
+  heartbeat_timeout_sec: 12.0
+
+  # CamSim entity ID range start for DIS entities. IDs 0-999 are reserved
+  # for CIGI entities; DIS entities get IDs starting at this offset.
+  # Env: CAMSIM_DIS_ID_BASE_OFFSET
+  id_base_offset: 1000
+
+  # Default CamSim entity type ID for unmapped DIS entity types.
+  # Env: CAMSIM_DIS_DEFAULT_ENTITY_TYPE
+  default_entity_type_id: 1001
+
+  # DIS entity type → CamSim entity type mapping table.
+  # Keys are "kind:domain:country:category:subcategory:specific:extra" strings.
+  # Values are CamSim entity type IDs (matching entity_types keys below).
+  # Unmapped types fall back through fuzzy match (kind:domain:category)
+  # then to default_entity_type_id.
+  # entity_type_map:
+  #   "1:2:225:1:2:0:0": 1001   # F-16 -> type 1001
+  #   "1:1:225:1:0:0:0": 1002   # M1 Abrams -> type 1002
+
 # --- Video Output ---
 
 # UDP multicast group (or unicast address) for the MPEG-TS output stream.

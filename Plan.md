@@ -255,15 +255,19 @@ VRSG natively supports DIS and streams FMV to ATAK/ROVER. This is a critical int
 
 | Item                         | Description                                                                    | Effort | VRSG Parity |
 | ---------------------------- | ------------------------------------------------------------------------------ | ------ | ----------- |
-| **21A** DIS Protocol Support | IEEE 1278.1 Entity State, Fire, Detonation PDUs via open-dis-cpp               | L      | ✓           |
-| **21B** DIS ↔ Entity Manager | Map DIS entity state PDUs to existing entity spawn/update/remove pipeline      | M      | ✓           |
-| **21C** DIS PDU Logging      | Record all DIS traffic for after-action review playback                        | M      | ✓           |
-| **21D** ATAK FMV Streaming   | Stream H.264 + KLV to ATAK-compatible endpoints (CoT + RTSP/UDP)               | M      | ✓           |
-| **21E** ROVER Compatibility  | ROVER-format video feed for ground force terminals                             | M      | ✓           |
-| **21F** Laser Designator Viz | Visible laser spot (EO) and IR laser marker (NVG mode); Designator PDU support | M      | ✓           |
-| **21G** HLA Gateway          | HLA RTI adapter wrapping DIS PDU conversion (RPR FOM 2.0)                      | L      | ✓           |
+| **21A** DIS Protocol Support | IEEE 1278.1 Entity State PDU — custom minimal parser (no open-dis-cpp)        | XL     | ✓           | ✅ Sprint 1 Done |
+| **21B** DIS ↔ Entity Manager | ECEF→geodetic, ID translation, DR algo 2/5, timeout sweep, type mapping       | XL     | ✓           | ✅ Sprint 1 Done |
+| **21C** DIS PDU Logging      | PDU binary recording (same pattern as CIGI 12E)                                | S      | ✓           | ✅ Sprint 1 Done |
+| **21D** ATAK FMV Streaming   | Stream H.264 + KLV to ATAK-compatible endpoints (CoT + RTSP/UDP)               | M      | ✓           |                  |
+| **21E** ROVER Compatibility  | ROVER-format video feed for ground force terminals                             | M      | ✓           |                  |
+| **21F** Laser Designator Viz | Visible laser spot (EO) and IR laser marker (NVG mode); Designator PDU support | M      | ✓           |                  |
+| **21G** HLA Gateway          | Deferred — DIS covers >90% of exercise interop needs                           | L      | ✓           |                  |
 
-**Files**: new `DIS/` module, `CIGI/CigiReceiver.cpp`, `Encoder/VideoEncoder.cpp`
+**Sprint 1 (Done)**: DIS protocol core — custom PDU parser, FDisReceiver (FRunnable), FDisEntityAdapter (ECEF→geodetic, ID translation, DR, timeout), FDisConfig, 10 unit tests.
+**Sprint 2 (Planned)**: ATAK/ROVER streaming (CoT, RTSP), laser designator visualization.
+
+**New Files**: `DIS/DisPduTypes.h/.cpp`, `DIS/DisReceiver.h/.cpp`, `DIS/DisEntityAdapter.h/.cpp`, `Tests/DisProtocolTest.cpp`
+**Modified Files**: `Config/CamSimConfig.h/.cpp`, `Subsystem/CamSimSubsystem.h/.cpp`, `Entity/CamSimEntityManager.h/.cpp`, `deploy/camsim_config.yaml`
 **Validation**: CamSim joins OneSAF/VBS exercise via DIS; ATAK displays live FMV feed; laser spot visible in NVG
 
 ---
