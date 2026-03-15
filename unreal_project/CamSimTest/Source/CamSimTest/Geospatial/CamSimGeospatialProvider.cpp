@@ -179,6 +179,12 @@ UCesiumIonServer* ApplyCesiumBackendConfig(
 				NewObject<UCesiumIonRasterOverlay>(Tileset, TEXT("CamSimImagery"));
 			O->IonAssetID = static_cast<int64>(Config.Imagery.IonAssetId);
 			if (CustomServer) { O->CesiumIonServer = CustomServer; }
+			O->SetMaximumScreenSpaceError(Config.Imagery.MaximumScreenSpaceError);
+			if (Config.Imagery.MaximumTextureSize > 0)
+			{
+				O->SetMaximumTextureSize(Config.Imagery.MaximumTextureSize);
+			}
+			O->SetMaximumSimultaneousTileLoads(Config.Imagery.MaximumSimultaneousTileLoads);
 			O->RegisterComponent();
 			O->Activate(false); // false = activate without resetting internal state
 		}
@@ -190,6 +196,12 @@ UCesiumIonServer* ApplyCesiumBackendConfig(
 			O->Layers     = Config.Imagery.WmsLayers;
 			O->TileWidth  = Config.Imagery.WmsTileWidth;
 			O->TileHeight = Config.Imagery.WmsTileHeight;
+			O->SetMaximumScreenSpaceError(Config.Imagery.MaximumScreenSpaceError);
+			if (Config.Imagery.MaximumTextureSize > 0)
+			{
+				O->SetMaximumTextureSize(Config.Imagery.MaximumTextureSize);
+			}
+			O->SetMaximumSimultaneousTileLoads(Config.Imagery.MaximumSimultaneousTileLoads);
 			O->RegisterComponent();
 			O->Activate(false);
 		}

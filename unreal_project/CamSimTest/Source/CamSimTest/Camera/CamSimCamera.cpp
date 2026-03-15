@@ -74,9 +74,10 @@ ACamSimCamera::ACamSimCamera()
 	SceneCapture->CaptureSource        = SCS_FinalColorLDR;
 	SceneCapture->bAlwaysPersistRenderingState = true;
 
-	// Enable TSR / temporal AA on the scene capture for clean anti-aliasing.
-	// bAlwaysPersistRenderingState (above) is required for TSR history accumulation.
-	SceneCapture->ShowFlags.SetTemporalAA(true);
+	// Use FXAA for SceneCapture2D — TSR's temporal history does not accumulate
+	// correctly on off-screen captures, producing persistent ghosting/blur.
+	// FXAA is stateless and works correctly with bCaptureEveryFrame=false.
+	SceneCapture->ShowFlags.SetTemporalAA(false);
 	SceneCapture->ShowFlags.SetAntiAliasing(true);
 
 	// 24A: Dynamic shadows between entities (VSM is enabled globally in DefaultEngine.ini)
@@ -161,19 +162,31 @@ void ACamSimCamera::BeginPlay()
 			Cfg.StartYaw, Cfg.StartPitch);
 	}
 
-	// Register with Cesium's camera manager so tiles stream for our viewpoint
+	// Register with Cesium's camera manager so tiles stream for our viewpoint.
+	// Two cameras: primary (actual FOV) drives accurate SSE/LOD for visible tiles,
+	// prefetch (inflated FOV) preloads tiles outside the frustum for gimbal slews.
 	ACesiumCameraManager* CamMgr = ACesiumCameraManager::GetDefaultCameraManager(this);
 	if (CamMgr)
 	{
+		// Primary camera — actual render FOV drives tile LOD/SSE
+		FCesiumCamera PrimaryCam(
+			FVector2D(Cfg.CaptureWidth, Cfg.CaptureHeight),
+			GetActorLocation(),
+			GetActorRotation(),
+			Cfg.HFovDeg);
+		CesiumCameraId = CamMgr->AddCamera(PrimaryCam);
+
+		// Prefetch camera — inflated FOV for anticipatory tile loading
 		const float PreloadFov = FMath::Clamp(Cfg.HFovDeg * Cfg.TilePreloadFovScale, Cfg.HFovDeg, 179.0f);
-		FCesiumCamera InitCam(
+		FCesiumCamera PrefetchCam(
 			FVector2D(Cfg.CaptureWidth, Cfg.CaptureHeight),
 			GetActorLocation(),
 			GetActorRotation(),
 			PreloadFov);
-		CesiumCameraId = CamMgr->AddCamera(InitCam);
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: registered with CesiumCameraManager (id=%d, preload FOV=%.0f)"),
-			CesiumCameraId, PreloadFov);
+		CesiumPrefetchCameraId = CamMgr->AddCamera(PrefetchCam);
+
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: registered with CesiumCameraManager (primary id=%d FOV=%.0f, prefetch id=%d FOV=%.0f)"),
+			CesiumCameraId, Cfg.HFovDeg, CesiumPrefetchCameraId, PreloadFov);
 	}
 
 	// Tune Cesium3DTileset actors for smoother streaming and LOD quality
@@ -186,15 +199,17 @@ void ACamSimCamera::BeginPlay()
 			It->MaximumCachedBytes = static_cast<int64>(Cfg.MaximumCachedBytesMB) * 1024LL * 1024LL;
 		}
 		It->PreloadAncestors = true;
-		It->PreloadSiblings  = true;
+		It->PreloadSiblings  = false;  // prefetch camera already covers adjacent tiles
 		It->ForbidHoles      = true;
 		It->LoadingDescendantLimit = Cfg.LoadingDescendantLimit;
 		It->SetUseLodTransitions(Cfg.bUseLodTransitions);
 		It->LodTransitionLength    = Cfg.LodTransitionLength;
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tuned tileset '%s' (maxLoads=%d SSE=%.1f cacheMB=%d descLimit=%d lodBlend=%d)"),
+		It->LogSelectionStats      = Cfg.bLogTileSelectionStats;
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tuned tileset '%s' (maxLoads=%d SSE=%.1f cacheMB=%d descLimit=%d lodBlend=%d logStats=%d)"),
 			*It->GetName(), Cfg.MaxSimultaneousTileLoads,
 			Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB,
-			Cfg.LoadingDescendantLimit, (int)Cfg.bUseLodTransitions);
+			Cfg.LoadingDescendantLimit, (int)Cfg.bUseLodTransitions,
+			(int)Cfg.bLogTileSelectionStats);
 	}
 
 	// Apply Cesium backend config (ion server, terrain source, imagery overlay).
@@ -325,9 +340,14 @@ void ACamSimCamera::BeginPlay()
 			SetCVarI(TEXT("r.ScreenPercentage"), RQ.TSRScreenPercentage);
 		}
 
+		// SceneCapture2D AA: override to FXAA (1). TSR (4) causes temporal
+		// ghosting on off-screen captures. FXAA is stateless and works with
+		// manual-capture mode.
+		SetCVarI(TEXT("r.AntiAliasingMethod"), 1);
+
 		UE_LOG(LogCamSim, Log,
 			TEXT("ACamSimCamera: RenderingQuality — shadows=%d contactShadow=%d AO=%.2f "
-			     "RTRefl=%d shadowDist=%.1f VSMBias=%d TSR%%=%d"),
+			     "RTRefl=%d shadowDist=%.1f VSMBias=%d TSR%%=%d AA=FXAA"),
 			(int)RQ.bEntityShadows, (int)RQ.bContactShadows, RQ.AOIntensity,
 			(int)RQ.bRayTracedReflections, RQ.ShadowDistanceScale,
 			RQ.VSMResolutionBias, RQ.TSRScreenPercentage);
@@ -430,14 +450,21 @@ void ACamSimCamera::BeginPlay()
 
 void ACamSimCamera::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (CesiumCameraId >= 0)
 	{
 		ACesiumCameraManager* CamMgr = ACesiumCameraManager::GetDefaultCameraManager(this);
 		if (CamMgr)
 		{
-			CamMgr->RemoveCamera(CesiumCameraId);
+			if (CesiumCameraId >= 0)
+			{
+				CamMgr->RemoveCamera(CesiumCameraId);
+				CesiumCameraId = -1;
+			}
+			if (CesiumPrefetchCameraId >= 0)
+			{
+				CamMgr->RemoveCamera(CesiumPrefetchCameraId);
+				CesiumPrefetchCameraId = -1;
+			}
 		}
-		CesiumCameraId = -1;
 	}
 
 	// Phase 27B — deregister from subsystem so health writer doesn't access a dangling ptr
@@ -482,6 +509,17 @@ void ACamSimCamera::Tick(float DeltaTime)
 			TickCount, (int)(bool)bEncoderBusy, (int)(bool)bReadbackPending,
 			(int)(SensorComp && SensorComp->IsOn()), FrameIndex, (uint64)DroppedFrameCount,
 			CaptureTargetIndex, PendingReadbackTargetIndex, ReadyPollsRequired);
+
+		// Tile loading stats — report per-tileset load progress
+		for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+		{
+			const float Progress = It->GetLoadProgress();
+			UE_LOG(LogCamSim, Log,
+				TEXT("ACamSimCamera: tileset='%s' loadProgress=%.1f%% SSE=%.1f maxLoads=%d"),
+				*It->GetName(), Progress * 100.0f,
+				It->MaximumScreenSpaceError,
+				It->MaximumSimultaneousTileLoads);
+		}
 	}
 
 	// 27D — Hot-reload config via mtime poll
@@ -992,7 +1030,7 @@ void ACamSimCamera::ComputeGeometricLOS()
 
 void ACamSimCamera::UpdateCesiumCamera()
 {
-	if (CesiumCameraId < 0 || !Subsystem) return;
+	if (!Subsystem) return;
 
 	ACesiumCameraManager* CamMgr = ACesiumCameraManager::GetDefaultCameraManager(this);
 	if (!CamMgr) return;
@@ -1002,14 +1040,29 @@ void ACamSimCamera::UpdateCesiumCamera()
 	// instead of the static config default, so Cesium streams tiles at the
 	// correct resolution for the current zoom level.
 	const float LiveHFov = SceneCapture ? SceneCapture->FOVAngle : Cfg.HFovDeg;
-	const float PreloadFov = FMath::Clamp(LiveHFov * Cfg.TilePreloadFovScale, LiveHFov, 179.0f);
-	FCesiumCamera Cam(
-		FVector2D(Cfg.CaptureWidth, Cfg.CaptureHeight),
-		SceneCapture->GetComponentLocation(),
-		SceneCapture->GetComponentRotation(),
-		PreloadFov);
 
-	CamMgr->UpdateCamera(CesiumCameraId, Cam);
+	// Primary camera — actual render FOV for accurate tile LOD/SSE
+	if (CesiumCameraId >= 0)
+	{
+		FCesiumCamera PrimaryCam(
+			FVector2D(Cfg.CaptureWidth, Cfg.CaptureHeight),
+			SceneCapture->GetComponentLocation(),
+			SceneCapture->GetComponentRotation(),
+			LiveHFov);
+		CamMgr->UpdateCamera(CesiumCameraId, PrimaryCam);
+	}
+
+	// Prefetch camera — inflated FOV for anticipatory tile loading
+	if (CesiumPrefetchCameraId >= 0)
+	{
+		const float PreloadFov = FMath::Clamp(LiveHFov * Cfg.TilePreloadFovScale, LiveHFov, 179.0f);
+		FCesiumCamera PrefetchCam(
+			FVector2D(Cfg.CaptureWidth, Cfg.CaptureHeight),
+			SceneCapture->GetComponentLocation(),
+			SceneCapture->GetComponentRotation(),
+			PreloadFov);
+		CamMgr->UpdateCamera(CesiumPrefetchCameraId, PrefetchCam);
+	}
 }
 
 // -------------------------------------------------------------------------

@@ -104,10 +104,16 @@ watchdog_max_reconnects: 3
 terrain_provider: cesium
 imagery_provider: cesium
 
-# Multiplier on hfov_deg reported to CesiumCameraManager. >1.0 pre-fetches
-# tiles outside the visible frustum to reduce pop-in on camera pan.
+# Enable Cesium's per-frame tile selection logging (very verbose).
+# Shows tiles visited, rendered, culled, queue lengths per frame.
+# Env: CAMSIM_LOG_TILE_STATS
+log_tile_stats: false
+
+# Multiplier on hfov_deg reported to CesiumCameraManager prefetch camera.
+# >1.0 pre-fetches tiles outside the frustum to reduce pop-in on pan.
+# Lower values free loading slots for visible tiles (1.5 = 50% extra).
 # Env: CAMSIM_TILE_FOV_SCALE
-tile_preload_fov_scale: 3.5
+tile_preload_fov_scale: 1.5
 
 # Maximum concurrent Cesium tile HTTP requests. Higher = faster initial
 # load at the cost of network/CPU.
@@ -115,7 +121,8 @@ tile_preload_fov_scale: 3.5
 max_simultaneous_tile_loads: 80
 
 # Cesium LOD quality: lower = sharper terrain. Cesium default is 16;
-# 2.0 is high quality for ISR imagery (1.0 = maximum sharpness).
+# for quantized-mesh terrain (CWT), value is internally divided by 8,
+# so 2.0 → effective 0.25 px error (already very aggressive).
 # Env: CAMSIM_MAX_SSE
 maximum_screen_space_error: 2.0
 
@@ -128,12 +135,13 @@ maximum_cached_bytes_mb: 4096
 loading_descendant_limit: 80
 
 # Enable smooth opacity crossfade when tile LOD level changes (Cesium UseLodTransitions).
+# Disabled: crossfade causes blur on moving cameras with SceneCapture2D.
 # Env: CAMSIM_USE_LOD_TRANSITIONS
-use_lod_transitions: true
+use_lod_transitions: false
 
 # Duration of LOD crossfade in seconds (only used when use_lod_transitions=true).
 # Env: CAMSIM_LOD_TRANSITION_LENGTH
-lod_transition_length: 0.5
+lod_transition_length: 0.0
 
 # --- Camera Start Position (WGS-84) ---
 # Initial camera pose before the first CIGI Entity Control packet.
@@ -574,7 +582,9 @@ performance:
 #      CAMSIM_CESIUM_TERRAIN_SOURCE, CAMSIM_CESIUM_TERRAIN_ION_ASSET_ID, CAMSIM_CESIUM_TERRAIN_URL,
 #      CAMSIM_CESIUM_IMAGERY_SOURCE, CAMSIM_CESIUM_IMAGERY_ION_ASSET_ID,
 #      CAMSIM_CESIUM_IMAGERY_WMS_URL, CAMSIM_CESIUM_IMAGERY_WMS_LAYERS,
-#      CAMSIM_CESIUM_IMAGERY_WMS_TILE_WIDTH, CAMSIM_CESIUM_IMAGERY_WMS_TILE_HEIGHT
+#      CAMSIM_CESIUM_IMAGERY_WMS_TILE_WIDTH, CAMSIM_CESIUM_IMAGERY_WMS_TILE_HEIGHT,
+#      CAMSIM_CESIUM_IMAGERY_MAX_SSE, CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE,
+#      CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS
 cesium:
   ion_portal_url: "https://ion.cesium.com"   # UCesiumIonServer::ServerUrl (OAuth/browser)
   ion_api_url:    "https://api.cesium.com"    # UCesiumIonServer::ApiUrl (REST tile API)
@@ -592,6 +602,18 @@ cesium:
     wms_layers: ""        # ignored unless source: wms
     wms_tile_width: 256
     wms_tile_height: 256
+    # Overlay SSE: controls imagery resolution. 2.0 = 1 source px covers 2x2 screen px,
+    # 1.0 = 1:1 pixel mapping (sharpest for ISR). Plugin default 2.0.
+    # Env: CAMSIM_CESIUM_IMAGERY_MAX_SSE
+    maximum_screen_space_error: 1.0
+    # Maximum texture size per raster overlay tile (pixels per side).
+    # 4096 doubles texel density vs plugin default (2048). 0 = plugin default.
+    # Env: CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE
+    maximum_texture_size: 4096
+    # Maximum simultaneous HTTP requests for imagery overlay tiles.
+    # Plugin default 20; raised to match tileset throughput (max_simultaneous_tile_loads).
+    # Env: CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS
+    maximum_simultaneous_tile_loads: 40
 
 # --- HUD/OSD Overlay (Phase 20) ---
 # Burn-in overlay for ISR display: reticle, telemetry readouts, classification banner.

@@ -167,8 +167,9 @@ private:
 	/** Telemetry cached from the last applied CIGI state. */
 	FCamSimTelemetry CurrentTelemetry;
 
-	/** Cesium camera manager registration ID (-1 = not registered). */
+	/** Cesium camera manager registration IDs (-1 = not registered). */
 	int32 CesiumCameraId = -1;
+	int32 CesiumPrefetchCameraId = -1;
 
 	// Gimbal and sensor state have been extracted to UCamSimGimbalComponent
 	// and UCamSimSensorComponent. Access via GimbalComp / SensorComp.

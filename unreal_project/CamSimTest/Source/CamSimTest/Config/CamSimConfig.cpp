@@ -380,6 +380,7 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlString(ImageryNode, "provider", Cfg.ImageryProvider);
 		}
 
+		YamlBool  (Root, "log_tile_stats",             Cfg.bLogTileSelectionStats);
 		YamlFloat (Root, "tile_preload_fov_scale",     Cfg.TilePreloadFovScale);
 		YamlInt   (Root, "max_simultaneous_tile_loads", Cfg.MaxSimultaneousTileLoads);
 		YamlFloat (Root, "maximum_screen_space_error", Cfg.MaximumScreenSpaceError);
@@ -902,6 +903,9 @@ FCamSimConfig FCamSimConfig::Load()
 				YamlString(Im, "wms_layers",      Cfg.CesiumBackend.Imagery.WmsLayers);
 				YamlInt   (Im, "wms_tile_width",  Cfg.CesiumBackend.Imagery.WmsTileWidth);
 				YamlInt   (Im, "wms_tile_height", Cfg.CesiumBackend.Imagery.WmsTileHeight);
+				YamlDouble(Im, "maximum_screen_space_error",     Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError);
+				YamlInt   (Im, "maximum_texture_size",           Cfg.CesiumBackend.Imagery.MaximumTextureSize);
+				YamlInt   (Im, "maximum_simultaneous_tile_loads", Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads);
 			}
 		}
 
@@ -1031,6 +1035,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	}
 	Cfg.EncoderWatchdogIntervalTicks = FMath::Max(30, GetEnvInt(
 		TEXT("CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS"), Cfg.EncoderWatchdogIntervalTicks));
+	Cfg.bLogTileSelectionStats  = GetEnvBool(TEXT("CAMSIM_LOG_TILE_STATS"),        Cfg.bLogTileSelectionStats);
 	Cfg.TilePreloadFovScale     = GetEnvFloat(TEXT("CAMSIM_TILE_FOV_SCALE"),       Cfg.TilePreloadFovScale);
 	Cfg.MaxSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_MAX_TILE_LOADS"),        Cfg.MaxSimultaneousTileLoads);
 	Cfg.MaximumScreenSpaceError = GetEnvFloat(TEXT("CAMSIM_MAX_SSE"),             Cfg.MaximumScreenSpaceError);
@@ -1198,6 +1203,9 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.CesiumBackend.Imagery.WmsLayers  = GetEnv(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_LAYERS"), Cfg.CesiumBackend.Imagery.WmsLayers);
 	Cfg.CesiumBackend.Imagery.WmsTileWidth  = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_TILE_WIDTH"),  Cfg.CesiumBackend.Imagery.WmsTileWidth);
 	Cfg.CesiumBackend.Imagery.WmsTileHeight = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_TILE_HEIGHT"), Cfg.CesiumBackend.Imagery.WmsTileHeight);
+	Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError      = GetEnvDouble(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_SSE"),      Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError);
+	Cfg.CesiumBackend.Imagery.MaximumTextureSize          = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE"), Cfg.CesiumBackend.Imagery.MaximumTextureSize);
+	Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS"),  Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads);
 
 	// Phase 20: overlay HUD/OSD env var overrides
 	// Apply preset first so individual env var overrides win

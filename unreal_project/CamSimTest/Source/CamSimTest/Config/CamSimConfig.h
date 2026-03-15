@@ -91,24 +91,31 @@ struct FCamSimConfig
 	FString ImageryProvider = TEXT("cesium");
 
 	// Cesium tile streaming tuning
-	// TilePreloadFovScale inflates the FOV reported to Cesium so tiles beyond
-	// the visible frustum are pre-fetched (1.0 = exact FOV, 2.0 = double).
-	float   TilePreloadFovScale = 2.0f;
-	// Maximum simultaneous tile HTTP requests (Cesium default is 20)
-	int32   MaxSimultaneousTileLoads = 40;
-	// Cesium LOD quality: lower = sharper terrain (Cesium default 16; 2 = high quality ISR)
+	// Enable Cesium's per-frame tile selection logging (very verbose).
+	// Env: CAMSIM_LOG_TILE_STATS
+	bool    bLogTileSelectionStats = false;
+	// TilePreloadFovScale inflates the FOV on the prefetch camera so tiles beyond
+	// the visible frustum are pre-fetched (1.0 = exact FOV, 1.5 = 50% wider).
+	// Too high wastes loading slots on off-screen tiles.
+	float   TilePreloadFovScale = 1.5f;
+	// Maximum simultaneous tile HTTP requests (Cesium default is 20).
+	// Higher values load tiles faster at the cost of network/CPU.
+	int32   MaxSimultaneousTileLoads = 80;
+	// Cesium LOD quality: lower = sharper terrain (Cesium default 16).
+	// For quantized-mesh terrain (CWT), internally divided by 8: so 2.0 → effective 0.25 px.
 	float   MaximumScreenSpaceError = 2.0f;
 	// Tile cache budget in MB (0 = Cesium default / uncapped)
 	int32   MaximumCachedBytesMB = 4096;
 	// Max descendant tiles to load simultaneously (Cesium default 20; higher = better low-alt detail)
 	// Env: CAMSIM_LOADING_DESCENDANT_LIMIT
 	int32   LoadingDescendantLimit = 80;
-	// Enable smooth opacity crossfade when tile LOD level changes (Cesium UseLodTransitions)
+	// Enable smooth opacity crossfade when tile LOD level changes (Cesium UseLodTransitions).
+	// Disabled by default: crossfade blur compounds with SceneCapture AA on moving cameras.
 	// Env: CAMSIM_USE_LOD_TRANSITIONS
-	bool    bUseLodTransitions = true;
+	bool    bUseLodTransitions = false;
 	// Duration of LOD crossfade in seconds (only used when bUseLodTransitions=true)
 	// Env: CAMSIM_LOD_TRANSITION_LENGTH
-	float   LodTransitionLength = 0.5f;
+	float   LodTransitionLength = 0.0f;
 
 	// Default camera start position (WGS-84) -- used before first CIGI packet
 	double  StartLatitude   = 38.8977;     // Washington DC
@@ -481,6 +488,17 @@ struct FCamSimConfig
 			FString WmsLayers     = TEXT("");
 			int32   WmsTileWidth  = 256;
 			int32   WmsTileHeight = 256;
+			// Raster overlay quality: applied before Activate() in ApplyCesiumBackendConfig.
+			// Overlay SSE controls imagery resolution: 2.0 = 1 source px covers 2x2 screen px,
+			// 1.0 = 1:1 pixel mapping (sharpest). Plugin default 2.0; ISR needs 1.0.
+			// Env: CAMSIM_CESIUM_IMAGERY_MAX_SSE
+			double  MaximumScreenSpaceError    = 1.0;
+			// 0 = plugin default (2048). 4096 doubles texel density for ISR imagery.
+			// Env: CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE
+			int32   MaximumTextureSize         = 4096;
+			// Concurrent HTTP requests for imagery tiles (plugin default 20; match tileset throughput).
+			// Env: CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS
+			int32   MaximumSimultaneousTileLoads = 40;
 		} Imagery;
 	} CesiumBackend;
 
