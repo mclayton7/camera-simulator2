@@ -236,6 +236,11 @@ void FEntityTypeTable::LoadFromConfig()
 		Entry.HalfLengthCm = HalfLengthM * 100.0f;
 		Entry.HalfBeamCm   = HalfBeamM   * 100.0f;
 
+		// Phase 22D — Character animation
+		YamlBool  (EntryNode, "animated",       Entry.bAnimated);
+		YamlString(EntryNode, "anim_blueprint", Entry.AnimBlueprintPath);
+		YamlString(EntryNode, "entity_category", Entry.EntityCategory);
+
 		if (!ValidateMeshAssetPath(Entry.AssetPath, Entry.bSkeletal, TypeId, TEXT("mesh")))
 		{
 			++SkippedEntries;
@@ -299,4 +304,32 @@ USkeletalMesh* FEntityTypeTable::GetCachedSkeletalMesh(uint16 TypeId) const
 void FEntityTypeTable::SetCachedSkeletalMesh(uint16 TypeId, USkeletalMesh* Mesh)
 {
 	SkeletalMeshCache.Add(TypeId, Mesh);
+}
+
+void FEntityTypeTable::HotReload()
+{
+	TMap<uint16, FEntityTypeEntry> OldMap = MoveTemp(TypeMap);
+	TMap<uint16, TWeakObjectPtr<UStaticMesh>> OldStaticCache = StaticMeshCache;
+	TMap<uint16, TWeakObjectPtr<USkeletalMesh>> OldSkelCache = SkeletalMeshCache;
+
+	LoadFromConfig();
+
+	// Preserve cached meshes for entries whose asset path hasn't changed
+	for (const auto& Pair : TypeMap)
+	{
+		if (const FEntityTypeEntry* Old = OldMap.Find(Pair.Key))
+		{
+			if (Old->AssetPath == Pair.Value.AssetPath)
+			{
+				// Asset unchanged — restore cache
+				if (const TWeakObjectPtr<UStaticMesh>* SM = OldStaticCache.Find(Pair.Key))
+					StaticMeshCache.Add(Pair.Key, *SM);
+				if (const TWeakObjectPtr<USkeletalMesh>* SK = OldSkelCache.Find(Pair.Key))
+					SkeletalMeshCache.Add(Pair.Key, *SK);
+			}
+			// else: asset changed — cache already cleared by LoadFromConfig's TypeMap.Empty()
+		}
+	}
+
+	UE_LOG(LogCamSim, Log, TEXT("EntityTypeTable: hot-reload complete (%d entries)"), TypeMap.Num());
 }

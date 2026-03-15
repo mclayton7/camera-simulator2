@@ -51,6 +51,7 @@ public:
     void OnEntityUpdated(uint16 EntityID, AActor* Actor, const FCigiEntityState& State);
     void OnEntityRemoved(uint16 EntityID);
     void OnComponentControl(uint16 EntityID, AActor* Actor, const FCigiComponentControl& Pkt);
+    void OnDamageStateChanged(uint16 EntityID, AActor* Actor, uint8 OldState, uint8 NewState);
     void Tick(float DeltaTime);
 
 private:

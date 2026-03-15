@@ -28,6 +28,10 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
 | `scripts/ci_validate.sh`       | Integration test (health wait + video/KLV validation)         |
 
+## Documentation
+
+- Unreal Engine Cesium Plugin Documentation - https://cesium.com/learn/cesium-unreal/ref-doc/api-design.html and https://cesium.com/learn/cesium-unreal/ref-doc/index.html
+
 ## Architecture
 
 ```
@@ -104,6 +108,8 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Docker networking**: `network_mode: host` required for UDP multicast routing
 - **rapidyaml bundled**: Source in `Config/ryml/` — excluded from pre-commit linting
 - **KLV checksum**: Uses CRC-16/CCITT (not BCC-16 per spec) — intentional, matches validate_klv.py
+- **RHI readback is render-thread only**: `FRHIGPUTextureReadback::IsReady()/Lock()/Unlock()` assert `IsInRenderingThread()`. Use `ENQUEUE_RENDER_COMMAND` + `FlushRenderingCommands()` for synchronous game-thread access (see CamSimCamera.cpp Phase 1 readback pattern)
+- **UE5 TAtomic uses EMemoryOrder**: `TAtomic<T>::Load()/Store()` take `EMemoryOrder` enum, NOT `std::memory_order`
 
 ## Environment
 

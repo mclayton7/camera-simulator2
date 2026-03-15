@@ -311,6 +311,61 @@ All paths are overridable in `camsim_config.yaml` or via `CAMSIM_*` env vars.
 
 ---
 
+## Phase 22D — Character Animation Assets (content, not C++)
+
+Character animation infrastructure (UCamSimAnimInstance, AnimMeshComp, InitAnimatedCharacter)
+is implemented in C++. The following UE editor content work is required to activate it:
+
+### 7A — Character Skeletal Mesh
+
+- [ ] Source or create a character skeletal mesh (Mixamo, UE Mannequin, or custom)
+- [ ] Import via Content Browser → `Content/Characters/SK_Soldier`
+- [ ] Ensure skeleton has standard humanoid bone hierarchy (root, pelvis, spine, etc.)
+
+### 7B — Animation Sequences
+
+- [ ] Import or retarget walk, run, idle animation sequences
+- [ ] Place in `Content/Characters/Animations/` (e.g. `Anim_Idle`, `Anim_Walk`, `Anim_Run`)
+- [ ] Optional: crouch, prone sequences for CompId=20 stance override
+
+### 7C — Animation Blueprint `ABP_Soldier`
+
+- [ ] Right-click → Animation → **Animation Blueprint** → select SK_Soldier skeleton
+- [ ] Name it `ABP_Soldier` in `Content/Characters/`
+- [ ] Set **Parent Class** to `UCamSimAnimInstance`
+- [ ] Create state machine with states: Idle, Walk, Run (and optionally Crouch, Prone)
+- [ ] Wire transitions using `AnimStateIndex` variable (0=Idle, 1=Walk, 2=Run, 3=Crouch, 4=Prone)
+- [ ] Compile and save
+
+### 7D — Entity Type YAML Entry
+
+After creating the above assets, uncomment the animated entity entry in `deploy/camsim_config.yaml`:
+```yaml
+entity_types:
+  "1010":
+    mesh: /Game/Characters/SK_Soldier.SK_Soldier
+    skeletal: true
+    animated: true
+    anim_blueprint: /Game/Characters/ABP_Soldier.ABP_Soldier_C
+    entity_category: character
+    scale: 1.0
+```
+
+### 7E — Verify Damage Transition FX
+
+- [ ] Confirm existing `NS_Smoke` and `NS_Fire` Niagara systems (from Phase 18G) work as
+  damage transition particle FX when triggered via CIGI CompId=10
+- [ ] If gradual damage is enabled (`damage_transition.gradual: true`), verify mesh blend
+  timing matches `interpolation_sec` config value
+
+### 7F — Scorch Damage Material (optional, for gradual damage)
+
+- [ ] Create Material Instance Dynamic with `ScorchBlend` scalar parameter (0.0 = clean, 1.0 = scorched)
+- [ ] Apply to entity material during gradual damage blend
+- [ ] `DamageScorchDarkening` config value controls max darkening (default 0.3)
+
+---
+
 ## Phase 24C — Normal Maps (content, not C++)
 
 - Entity materials need normal map textures assigned in the UE5 editor material editor.
@@ -339,5 +394,8 @@ Required when `gpu_sensor_effects: true` in camsim_config.yaml.
 - EO mode: color pass-through + optional vignette
 - IR mode: luminance-based false-color ramp + Gaussian noise
 - NVG mode: green phosphor tint + grain noise
+
+**Performance impact:** When active, eliminates 10-25ms CPU sensor processing per frame.
+The CPU pipeline bypass (SensorPostProcess.cpp) only runs defects + quantization + precipitation + HUD (<1ms).
 
 **Verification:** Set `gpu_sensor_effects: true`, confirm IR ramp visible in output video

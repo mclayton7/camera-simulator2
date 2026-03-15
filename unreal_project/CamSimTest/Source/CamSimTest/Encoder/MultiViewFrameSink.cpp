@@ -170,6 +170,35 @@ void FMultiViewFrameSink::BuildViewRuntimes()
 		}
 	}
 
+	// Phase 21D.2 — inject ATAK FMV output view
+	if (Config.Streaming.bAtakViewEnabled)
+	{
+		FCamSimConfig::FOutputViewConfig AtakView;
+		AtakView.ViewId       = 100; // ATAK view
+		AtakView.bEnabled     = true;
+		AtakView.MulticastAddr = Config.Streaming.AtakAddr;
+		AtakView.MulticastPort = Config.Streaming.AtakPort;
+		AtakView.VideoBitrate  = Config.Streaming.AtakBitrate;
+		AtakView.H264Preset    = TEXT("ultrafast");
+		AtakView.H264Tune      = TEXT("zerolatency");
+		AtakView.HFovDeg       = 0.0f;
+
+		FViewRuntime Runtime;
+		Runtime.ViewId = AtakView.ViewId;
+		Runtime.ViewConfig = Config;
+		Runtime.ViewConfig.MulticastAddr = AtakView.MulticastAddr;
+		Runtime.ViewConfig.MulticastPort = AtakView.MulticastPort;
+		Runtime.ViewConfig.VideoBitrate  = AtakView.VideoBitrate;
+		Runtime.ViewConfig.H264Preset    = AtakView.H264Preset;
+		Runtime.ViewConfig.H264Tune      = AtakView.H264Tune;
+		// Force ROVER compat on ATAK view for Baseline profile
+		Runtime.ViewConfig.Streaming.bRoverCompat = true;
+		Runtime.OutputHFovDeg = 0.0f;
+		Runtime.RouteLabel = FString::Printf(TEXT("udp://%s:%d [ATAK]"),
+			*AtakView.MulticastAddr, AtakView.MulticastPort);
+		Views.Add(MoveTemp(Runtime));
+	}
+
 	if (Views.Num() == 0)
 	{
 		FCamSimConfig::FOutputViewConfig DefaultView;

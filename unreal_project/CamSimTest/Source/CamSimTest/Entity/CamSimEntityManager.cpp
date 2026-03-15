@@ -6,6 +6,7 @@
 #include "GroundTruth/FEntityProjection.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "Environment/CamSimParticleManager.h"
+#include "Scenario/ScenarioEngine.h"
 #include "CIGI/CigiReceiver.h"
 #include "DIS/DisEntityAdapter.h"
 #include "CamSimTest.h"
@@ -270,14 +271,33 @@ void FCamSimEntityManager::ProcessComponentControls()
 	while (Receiver->DequeueCompCtrl(Comp))
 	{
 		ACamSimEntity** EntityPtr = EntityMap.Find(Comp.EntityId);
-		if (EntityPtr && IsValid(*EntityPtr))
+		ACamSimEntity*  Entity = (EntityPtr && IsValid(*EntityPtr)) ? *EntityPtr : nullptr;
+
+		// Phase 22C: track old damage state for FX callback
+		uint8 OldDamageState = 0;
+		if (Entity && Comp.CompClass == 0 && Comp.CompId == 10)
 		{
-			(*EntityPtr)->ApplyComponentControl(Comp);
+			OldDamageState = Entity->GetDamageState();
+		}
+
+		if (Entity)
+		{
+			Entity->ApplyComponentControl(Comp);
 		}
 		if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
 		{
 			PM->OnComponentControl(Comp.EntityId,
-				(EntityPtr && IsValid(*EntityPtr)) ? static_cast<AActor*>(*EntityPtr) : nullptr, Comp);
+				Entity ? static_cast<AActor*>(Entity) : nullptr, Comp);
+
+			// Phase 22C: damage transition FX
+			if (Entity && Comp.CompClass == 0 && Comp.CompId == 10)
+			{
+				const uint8 NewDamageState = FMath::Min(Comp.CompState, static_cast<uint8>(2));
+				if (OldDamageState != NewDamageState)
+				{
+					PM->OnDamageStateChanged(Comp.EntityId, Entity, OldDamageState, NewDamageState);
+				}
+			}
 		}
 	}
 }
@@ -321,6 +341,11 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
 		const FCamSimConfig& Cfg = Subsystem->GetConfig();
 		Entity->ApplyScaleControls(Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz);
 		Entity->SetShadowCasting(Cfg.RenderingQuality.bEntityShadows);  // 24A
+		// Phase 22C: configure gradual damage interpolation
+		if (Cfg.DamageTransition.bGradualDamage)
+		{
+			Entity->SetDamageInterpolation(true, Cfg.DamageTransition.DamageInterpolationSec);
+		}
 	}
 	Entity->ApplyPose(S);
 	if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
@@ -457,52 +482,73 @@ void FCamSimEntityManager::ProcessScenarioEntities()
 	if (ScenarioStartSeconds <= 0.0)
 	{
 		ScenarioStartSeconds = NowSeconds;
-		UE_LOG(LogCamSim, Log, TEXT("EntityManager: scenario orchestration enabled (%d entities, time_scale=%.2f)"),
-			Cfg.ScenarioEntities.Num(), Cfg.ScenarioTimeScale);
+		ScenarioEngine = MakeUnique<FScenarioEngine>();
+		ScenarioEngine->Initialize(Cfg);
+		UE_LOG(LogCamSim, Log, TEXT("EntityManager: scenario orchestration enabled (%d entities, %d triggers, time_scale=%.2f)"),
+			Cfg.ScenarioEntities.Num(), Cfg.ScenarioTriggers.Num(), Cfg.ScenarioTimeScale);
 	}
 
 	const double ScenarioElapsed = (NowSeconds - ScenarioStartSeconds) * FMath::Max(0.0f, Cfg.ScenarioTimeScale);
+	const float  DeltaTime = 1.0f / 30.0f; // fixed frame rate
+	const float  TOD = FMath::Fmod(Cfg.ScenarioStartHour + static_cast<float>(ScenarioElapsed / 3600.0), 24.0f);
+
+	// Despawn check (still handled here for rate-limiting integration)
 	for (const FCamSimConfig::FScenarioEntityConfig& Spec : Cfg.ScenarioEntities)
 	{
 		const uint16 ScenarioEntityId = static_cast<uint16>(FMath::Clamp(Spec.EntityId, 0, 65535));
-		if (ScenarioElapsed < static_cast<double>(Spec.SpawnTimeSec))
-		{
-			continue;
-		}
-
 		const bool bShouldDespawn =
 			(Spec.DespawnTimeSec > Spec.SpawnTimeSec) &&
 			(ScenarioElapsed > static_cast<double>(Spec.DespawnTimeSec));
 
-		if (bShouldDespawn)
+		if (bShouldDespawn && !ScenarioRemovedEntities.Contains(ScenarioEntityId))
 		{
 			FCigiEntityState RemoveState;
 			RemoveState.EntityId = ScenarioEntityId;
 			RemoveState.EntityState = CIGI_ENTITY_REMOVE;
-			if (!ScenarioRemovedEntities.Contains(ScenarioEntityId))
-			{
-				ApplyEntityState(RemoveState, NowSeconds, true);
-				ScenarioRemovedEntities.Add(ScenarioEntityId);
-			}
-			continue;
+			ApplyEntityState(RemoveState, NowSeconds, true);
+			ScenarioRemovedEntities.Add(ScenarioEntityId);
 		}
-		ScenarioRemovedEntities.Remove(ScenarioEntityId);
+	}
 
-		const float ScenarioUpdateHz = FMath::Max(0.0f, Spec.UpdateRateHz);
-		if (ScenarioUpdateHz > 0.0f)
+	// Delegate to ScenarioEngine for entity state production
+	TArray<FCigiEntityState> States = ScenarioEngine->Tick(ScenarioElapsed, DeltaTime, TOD, EntityMap);
+	for (const FCigiEntityState& S : States)
+	{
+		const uint16 EId = S.EntityId;
+		if (ScenarioRemovedEntities.Contains(EId)) continue;
+
+		// Rate limiting
+		const FCamSimConfig::FScenarioEntityConfig* FoundSpec = nullptr;
+		for (const auto& Spec : Cfg.ScenarioEntities)
 		{
-			const double MinInterval = 1.0 / static_cast<double>(ScenarioUpdateHz);
-			if (const double* LastUpdate = LastScenarioUpdateSeconds.Find(ScenarioEntityId))
+			if (static_cast<uint16>(FMath::Clamp(Spec.EntityId, 0, 65535)) == EId)
 			{
-				if ((NowSeconds - *LastUpdate) < MinInterval)
+				FoundSpec = &Spec;
+				break;
+			}
+		}
+		if (FoundSpec)
+		{
+			const float ScenarioUpdateHz = FMath::Max(0.0f, FoundSpec->UpdateRateHz);
+			if (ScenarioUpdateHz > 0.0f)
+			{
+				const double MinInterval = 1.0 / static_cast<double>(ScenarioUpdateHz);
+				if (const double* LastUpdate = LastScenarioUpdateSeconds.Find(EId))
 				{
-					continue;
+					if ((NowSeconds - *LastUpdate) < MinInterval) continue;
 				}
 			}
 		}
-		LastScenarioUpdateSeconds.Add(ScenarioEntityId, NowSeconds);
+		LastScenarioUpdateSeconds.Add(EId, NowSeconds);
+		ApplyEntityState(S, NowSeconds, false);
+	}
 
-		const FCigiEntityState ScenarioState = BuildScenarioState(Spec, ScenarioElapsed);
-		ApplyEntityState(ScenarioState, NowSeconds, false);
+	// Process removals from triggers
+	for (uint16 RemoveId : ScenarioEngine->GetPendingRemovals())
+	{
+		FCigiEntityState RemoveState;
+		RemoveState.EntityId = RemoveId;
+		RemoveState.EntityState = CIGI_ENTITY_REMOVE;
+		ApplyEntityState(RemoveState, NowSeconds, true);
 	}
 }

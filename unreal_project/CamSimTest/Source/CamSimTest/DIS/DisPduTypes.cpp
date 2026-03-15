@@ -164,3 +164,50 @@ bool FDisEntityStatePdu::Parse(const uint8* Data, int32 DataLen, FDisEntityState
 
 	return true;
 }
+
+// -------------------------------------------------------------------------
+// FDisDesignatorPdu::Parse
+//
+// Designator PDU layout (minimum 56 bytes):
+//   Offset  0: PDU Header (12 bytes)
+//   Offset 12: Designating Entity ID (6 bytes)
+//   Offset 18: Code Name (2 bytes)
+//   Offset 20: Designated Entity ID (6 bytes)
+//   Offset 26: Designator Code (2 bytes)
+//   Offset 28: Designator Power (4 bytes, float32)
+//   Offset 32: Spot Location ECEF (24 bytes: 3x float64)
+// -------------------------------------------------------------------------
+
+bool FDisDesignatorPdu::Parse(const uint8* Data, int32 DataLen, FDisDesignatorPdu& Out)
+{
+	if (!Data || DataLen < 56) return false;
+
+	if (!FDisPduHeader::Parse(Data, DataLen, Out.Header)) return false;
+	if (Out.Header.PduType != EDisPduType::Designator) return false;
+
+	// Designating Entity ID (offset 12)
+	Out.DesignatingEntityId.Site        = ReadU16BE(Data + 12);
+	Out.DesignatingEntityId.Application = ReadU16BE(Data + 14);
+	Out.DesignatingEntityId.Entity      = ReadU16BE(Data + 16);
+
+	// Code Name (offset 18)
+	Out.CodeName = ReadU16BE(Data + 18);
+
+	// Designated Entity ID (offset 20)
+	Out.DesignatedEntityId.Site        = ReadU16BE(Data + 20);
+	Out.DesignatedEntityId.Application = ReadU16BE(Data + 22);
+	Out.DesignatedEntityId.Entity      = ReadU16BE(Data + 24);
+
+	// Designator Code (offset 26)
+	Out.DesignatorCode = ReadU16BE(Data + 26);
+
+	// Designator Power (offset 28)
+	Out.DesignatorPower = ReadF32BE(Data + 28);
+
+	// Spot Location ECEF (offset 32)
+	Out.SpotLocationX = ReadF64BE(Data + 32);
+	Out.SpotLocationY = ReadF64BE(Data + 40);
+	Out.SpotLocationZ = ReadF64BE(Data + 48);
+
+	return true;
+}

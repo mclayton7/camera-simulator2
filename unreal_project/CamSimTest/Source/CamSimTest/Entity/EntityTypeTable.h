@@ -33,6 +33,11 @@ struct FEntityTypeEntry
 	// Stored in UE units (cm) — multiply YAML metres by 100 on load.
 	float HalfLengthCm = 0.0f;
 	float HalfBeamCm   = 0.0f;
+
+	// Phase 22D — Character animation
+	bool    bAnimated         = false;   // use USkeletalMeshComponent + AnimInstance
+	FString AnimBlueprintPath;           // e.g. "/Game/Characters/ABP_Soldier.ABP_Soldier_C"
+	FString EntityCategory;              // "character" | "vehicle" | "" (auto)
 };
 
 /**
@@ -62,6 +67,9 @@ class FEntityTypeTable
 public:
 	/** Re-parse the config YAML and populate the type map from "entity_types". */
 	void LoadFromConfig();
+
+	/** Re-parse config; preserve cached meshes for unchanged asset paths. */
+	void HotReload();
 
 	/** Returns the entry for the given type ID, or nullptr if not found. */
 	const FEntityTypeEntry* FindEntry(uint16 TypeId) const;

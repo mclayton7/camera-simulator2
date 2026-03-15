@@ -78,6 +78,47 @@ dis:
   #   "1:2:225:1:2:0:0": 1001   # F-16 -> type 1001
   #   "1:1:225:1:0:0:0": 1002   # M1 Abrams -> type 1002
 
+# --- Streaming & ATAK Interop (Phase 21 Sprint 2) ---
+# CoT (Cursor on Target) position reporting and ATAK FMV streaming.
+# ROVER compatibility changes MPEG-TS PID assignments for ROVER terminals.
+
+streaming:
+  # CoT position sender (XML-over-UDP multicast)
+  # Env: CAMSIM_COT_ENABLED
+  cot_enabled: false
+  cot_addr: "239.2.3.1"       # CAMSIM_COT_ADDR
+  cot_port: 6969               # CAMSIM_COT_PORT
+  cot_interval_sec: 2.0        # CAMSIM_COT_INTERVAL
+  cot_uid: "CamSim-ISR-1"     # CAMSIM_COT_UID
+  cot_type: "a-f-G-E-S"       # CAMSIM_COT_TYPE
+  cot_callsign: "CAMSIM"       # CAMSIM_COT_CALLSIGN
+
+  # ATAK FMV second output view (UDP MPEG-TS, Baseline profile)
+  # Env: CAMSIM_ATAK_VIEW_ENABLED
+  atak_view_enabled: false
+  atak_addr: "239.1.1.2"      # CAMSIM_ATAK_ADDR
+  atak_port: 5005              # CAMSIM_ATAK_PORT
+  atak_bitrate: 2000000        # CAMSIM_ATAK_BITRATE
+
+  # ROVER terminal compatibility (changes MPEG-TS PIDs)
+  # Env: CAMSIM_ROVER_COMPAT
+  rover_compat: false
+  rover_video_pid: 0x1011      # CAMSIM_ROVER_VIDEO_PID (decimal: 4113)
+  rover_klv_pid: 0x1012        # CAMSIM_ROVER_KLV_PID   (decimal: 4114)
+
+# --- Laser Designator (Phase 21 Sprint 2) ---
+# Renders a Gaussian laser spot on the sensor output.
+# When DIS Designator PDUs are received, spot position is updated dynamically.
+
+laser_designator:
+  # Env: CAMSIM_LASER_ENABLED
+  enabled: false
+  spot_x: 0.5                  # CAMSIM_LASER_X (normalized 0-1)
+  spot_y: 0.5                  # CAMSIM_LASER_Y (normalized 0-1)
+  spot_radius: 6.0             # CAMSIM_LASER_RADIUS (pixels, 1-sigma)
+  spot_intensity: 250.0        # CAMSIM_LASER_INTENSITY (0-255)
+  designator_code: 1688        # CAMSIM_LASER_CODE (NATO laser code)
+
 # --- Video Output ---
 
 # UDP multicast group (or unicast address) for the MPEG-TS output stream.
@@ -105,8 +146,8 @@ h264_tune: zerolatency
 # --- Capture & Readback ---
 
 # Render target dimensions in pixels.
-capture_width: 1920
-capture_height: 1080
+capture_width: 1280
+capture_height: 720
 
 # Fixed tick rate. Must match DefaultEngine.ini FixedFrameRate setting.
 frame_rate: 30.0
@@ -119,7 +160,7 @@ swap_rb_readback: false
 # Consecutive FRHIGPUTextureReadback::IsReady() polls required before
 # Lock(). Increase on Linux/Vulkan if occasional partial-row tearing.
 # Env: CAMSIM_READBACK_READY_POLLS
-readback_ready_polls: 2
+readback_ready_polls: 1
 
 # Override readback byte order: auto, bgra, rgba, argb, abgr.
 # "auto" uses the render target's native format.
@@ -172,23 +213,25 @@ log_tile_stats: false
 tile_preload_fov_scale: 1.5
 
 # Maximum concurrent Cesium tile HTTP requests. Higher = faster initial
-# load at the cost of network/CPU.
+# load at the cost of network/CPU. Keep ≤20 for real-time 30fps.
 # Env: CAMSIM_MAX_TILE_LOADS
-max_simultaneous_tile_loads: 80
+max_simultaneous_tile_loads: 20
 
 # Cesium LOD quality: lower = sharper terrain. Cesium default is 16;
 # for quantized-mesh terrain (CWT), value is internally divided by 8,
-# so 2.0 → effective 0.25 px error (already very aggressive).
+# so 8.0 → effective 1.0 px error (good balance of quality vs perf).
+# Previous 2.0 caused 44K+ loaded tiles and ~18 fps on macOS.
 # Env: CAMSIM_MAX_SSE
-maximum_screen_space_error: 2.0
+maximum_screen_space_error: 16.0
 
-# Cesium tile cache budget in MB. 0 = Cesium default (uncapped).
+# Cesium tile cache budget in MB (per tileset). 0 = Cesium default (uncapped).
+# Large cache avoids re-downloading tiles when revisiting areas.
 # Env: CAMSIM_MAX_CACHED_MB
-maximum_cached_bytes_mb: 4096
+maximum_cached_bytes_mb: 1024
 
 # Max descendant tiles to load simultaneously (Cesium default 20; higher = better low-alt detail).
 # Env: CAMSIM_LOADING_DESCENDANT_LIMIT
-loading_descendant_limit: 80
+loading_descendant_limit: 20
 
 # Enable smooth opacity crossfade when tile LOD level changes (Cesium UseLodTransitions).
 # Disabled: crossfade causes blur on moving cameras with SceneCapture2D.
@@ -373,12 +416,69 @@ scenario:
       # Scripted pose update rate. 0 = every manager tick.
       update_rate_hz: 10.0
       # Scripted trajectory rates (north/east/up m/s, yaw/pitch/roll deg/s).
+      # Used when no waypoints are defined (linear rate fallback).
       north_rate_mps: 50.0
       east_rate_mps: 0.0
       up_rate_mps: 0.0
       yaw_rate_dps: 0.0
       pitch_rate_dps: 0.0
       roll_rate_dps: 0.0
+      # Phase 23A — Waypoint trajectory (overrides linear rates when present).
+      # base_speed_mps: default speed between waypoints (m/s).
+      # loop_waypoints: true = loop back to first waypoint after last.
+      base_speed_mps: 50.0
+      loop_waypoints: false
+      waypoints: []
+      #   - lat: 38.8977
+      #     lon: -77.0365
+      #     alt: 900.0
+      #     speed_mps: 0.0        # 0 = use base_speed_mps
+      #     heading_deg: -1.0     # -1 = auto from great-circle bearing
+      #     pause_sec: 0.0        # dwell at waypoint before continuing
+      #   - lat: 38.9100
+      #     lon: -77.0200
+      #     alt: 900.0
+      #     speed_mps: 60.0
+      #     heading_deg: -1.0
+      #     pause_sec: 5.0
+      # Phase 23C — Pattern-of-life schedule (keyed by time-of-day).
+      activity_profile: ""       # "civilian" | "military" | "" (custom)
+      activity_schedule: []
+      #   - start_hour: 6.0
+      #     end_hour: 12.0
+      #     waypoint_path: 0
+      #     spawn_jitter_sec: 0.0
+      #     path_deviation_m: 0.0
+  # Phase 23C — Scenario time-of-day start hour (0-24).
+  # Env: CAMSIM_SCENARIO_START_HOUR
+  start_hour: 6.0
+  # Phase 23B — Event triggers (condition → action).
+  # Env: none (YAML only).
+  triggers: []
+  #   - name: "spawn_target_at_30s"
+  #     condition:
+  #       type: time_sec
+  #       time_sec: 30.0
+  #     action:
+  #       type: spawn_entity
+  #       target_entity_id: 2002
+  #       target_entity_type: 1001
+  #       spawn_latitude: 38.9050
+  #       spawn_longitude: -77.0300
+  #       spawn_altitude: 0.0
+  #     repeat: false
+  #     cooldown_sec: 0.0
+  #   - name: "despawn_on_proximity"
+  #     condition:
+  #       type: entity_proximity
+  #       entity_id_a: 2001
+  #       entity_id_b: 2002
+  #       radius_m: 50.0
+  #     action:
+  #       type: despawn_entity
+  #       target_entity_id: 2002
+  #     repeat: false
+  #     cooldown_sec: 0.0
 
 # --- Sensor Modes (per-waveband) ---
 # CPU-side post-processing parameters. SensorId 0=EO, 1=IR, 2=NVG.
@@ -519,18 +619,23 @@ rendering_quality:
 
   # 24B: Ambient occlusion (Lumen GTAO) intensity and world-space radius
   # Env: CAMSIM_AO_INTENSITY / CAMSIM_AO_RADIUS
-  ao_intensity: 0.5
+  ao_intensity: 0.0
   ao_radius: 200.0
 
-  # 24D: Enable ray-traced reflections on SceneCapture (requires NVIDIA GPU + DX12)
+  # Ray tracing backend (BLAS/TLAS allocation). Off by default for performance.
+  # Enable on NVIDIA builds that want RT features. Requires project restart.
+  # Env: CAMSIM_RT_ENABLED
+  rt_enabled: false
+
+  # 24D: Enable ray-traced reflections on SceneCapture (requires rt_enabled + NVIDIA GPU + DX12)
   # Env: CAMSIM_RT_REFLECTIONS
   rt_reflections: false
 
   # 24E: Shadow distance and Virtual Shadow Map quality
   # Env: CAMSIM_SHADOW_DISTANCE_SCALE / CAMSIM_VSM_RESOLUTION_BIAS / CAMSIM_VSM_MAX_PAGES
-  shadow_distance_scale: 2.0
-  vsm_resolution_bias: -1
-  vsm_max_physical_pages: 4096
+  shadow_distance_scale: 1.0
+  vsm_resolution_bias: 0
+  vsm_max_physical_pages: 2048
 
   # 24F: TSR screen percentage (100=native, >100=super-sample for crisp entity edges)
   # Env: CAMSIM_TSR_SCREEN_PERCENTAGE
@@ -615,7 +720,7 @@ performance:
 
   # 27E Tile prefetch (boost Cesium LOD during fast gimbal slews)
   tile_prefetch_slew_threshold_deg_per_sec: 10.0  # CAMSIM_PERF_TILE_SLEW_THRESHOLD
-  tile_prefetch_fov_boost: 2.0                    # CAMSIM_PERF_TILE_FOV_BOOST
+  tile_prefetch_fov_boost: 1.0                    # CAMSIM_PERF_TILE_FOV_BOOST
   tile_prefetch_boost_frames: 30                  # CAMSIM_PERF_TILE_BOOST_FRAMES
 
   # 27F Configurable frame rate
@@ -629,6 +734,11 @@ performance:
   gpu_sensor_effects: false                     # CAMSIM_PERF_GPU_SENSOR
   gpu_sensor_material_path: "/Game/CamSim/Materials/M_SensorPostProcess"
   gpu_sensor_mpc_path: "/Game/CamSim/Materials/MPC_SensorParams"
+
+  # Adaptive SSE — dynamically adjust Cesium LOD based on frame budget
+  adaptive_sse: false                        # CAMSIM_PERF_ADAPTIVE_SSE
+  adaptive_sse_min: 8.0                      # CAMSIM_PERF_ADAPTIVE_SSE_MIN (sharpest allowed)
+  adaptive_sse_max: 24.0                     # CAMSIM_PERF_ADAPTIVE_SSE_MAX (coarsest allowed)
 
 # --- Cesium Backend ---
 # Ion server, terrain source, and imagery overlay.
@@ -661,15 +771,15 @@ cesium:
     # Overlay SSE: controls imagery resolution. 2.0 = 1 source px covers 2x2 screen px,
     # 1.0 = 1:1 pixel mapping (sharpest for ISR). Plugin default 2.0.
     # Env: CAMSIM_CESIUM_IMAGERY_MAX_SSE
-    maximum_screen_space_error: 1.0
+    maximum_screen_space_error: 2.0
     # Maximum texture size per raster overlay tile (pixels per side).
-    # 4096 doubles texel density vs plugin default (2048). 0 = plugin default.
+    # 2048 is Cesium plugin default. 4096 doubles texel density but is overkill at 720p.
     # Env: CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE
-    maximum_texture_size: 4096
+    maximum_texture_size: 2048
     # Maximum simultaneous HTTP requests for imagery overlay tiles.
-    # Plugin default 20; raised to match tileset throughput (max_simultaneous_tile_loads).
+    # Plugin default 20; keep low for real-time 30fps.
     # Env: CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS
-    maximum_simultaneous_tile_loads: 40
+    maximum_simultaneous_tile_loads: 20
 
 # --- HUD/OSD Overlay (Phase 20) ---
 # Burn-in overlay for ISR display: reticle, telemetry readouts, classification banner.
@@ -739,12 +849,28 @@ recording:
   # When set, CigiReceiver reads from this file instead of UDP socket (playback mode).
   cigi_playback_path: ""
 
+# --- Damage Transition FX (Phase 22C) ---
+# Controls visual damage transition effects when entity state changes.
+# Env: CAMSIM_DAMAGE_TRANSITION_FX, CAMSIM_DAMAGE_GRADUAL,
+#      CAMSIM_DAMAGE_INTERPOLATION_SEC
+damage_transition:
+  # Master toggle for damage transition particle FX (smoke on damaged, fire on destroyed).
+  enabled: true
+  # Gradual damage: interpolate mesh swap over time instead of instant.
+  gradual: false
+  # Interpolation duration in seconds (only when gradual: true).
+  interpolation_sec: 1.0
+  # Scorch darkening factor applied during gradual blend (0.0 = none, 1.0 = full black).
+  scorch_darkening: 0.3
+
 # --- Entity Types ---
 # Maps CIGI EntityType uint16 to asset paths.
 # Use .gltf/.glb paths (relative to entities/) for runtime loading,
 # or /Game/... UE content paths for cooked assets.
 # "scale": uniform scale factor (default 1.0).
 # "rotation": pitch/yaw/roll offset in degrees to correct model-space orientation.
+# Phase 22D: "animated: true" + "anim_blueprint:" for skeletal character animation.
+# Phase 22A: "entity_category:" for type classification ("character"|"vehicle"|"").
 entity_types:
   "1001":
     mesh: f16/f16-c_falcon.glb
@@ -754,3 +880,16 @@ entity_types:
       pitch: 0.0
       yaw: 0.0
       roll: 0.0
+  # Example animated character entity (Phase 22D).
+  # Requires skeletal mesh + Animation Blueprint assets in UE editor (see TODO.md).
+  # "1010":
+  #   mesh: /Game/Characters/SK_Soldier.SK_Soldier
+  #   skeletal: true
+  #   animated: true
+  #   anim_blueprint: /Game/Characters/ABP_Soldier.ABP_Soldier_C
+  #   entity_category: character
+  #   scale: 1.0
+  #   rotation:
+  #     pitch: 0.0
+  #     yaw: 0.0
+  #     roll: 0.0

@@ -50,6 +50,9 @@ void FDisEntityAdapter::Tick(float DeltaTime)
 
 	// Sweep for timed-out entities
 	SweepTimeouts();
+
+	// Drain Designator PDUs (Phase 21F.2)
+	DrainDesignatorPdus();
 }
 
 // -------------------------------------------------------------------------
@@ -330,4 +333,42 @@ void FDisEntityAdapter::BuildTypeMaps()
 	UE_LOG(LogCamSim, Log,
 		TEXT("FDisEntityAdapter: type maps loaded (%d exact, %d fuzzy, default=%u)"),
 		ExactTypeMap.Num(), FuzzyTypeMap.Num(), DefaultEntityTypeId);
+}
+
+// -------------------------------------------------------------------------
+// Designator spot tracking (Phase 21F.2)
+// -------------------------------------------------------------------------
+
+bool FDisEntityAdapter::GetDesignatorSpot(double& OutLat, double& OutLon, double& OutAlt, int32& OutCode) const
+{
+	if (!bDesignatorActive) return false;
+	OutLat  = DesignatorLat;
+	OutLon  = DesignatorLon;
+	OutAlt  = DesignatorAlt;
+	OutCode = DesignatorCode;
+	return true;
+}
+
+void FDisEntityAdapter::DrainDesignatorPdus()
+{
+	if (!Receiver) return;
+
+	const double NowSec = FPlatformTime::Seconds();
+
+	FDisDesignatorPdu Pdu;
+	while (Receiver->DequeueDesignatorPdu(Pdu))
+	{
+		// Convert ECEF spot → geodetic
+		EcefToGeodetic(Pdu.SpotLocationX, Pdu.SpotLocationY, Pdu.SpotLocationZ,
+			DesignatorLat, DesignatorLon, DesignatorAlt);
+		DesignatorCode = static_cast<int32>(Pdu.DesignatorCode);
+		DesignatorUpdateTimeSec = NowSec;
+		bDesignatorActive = true;
+	}
+
+	// Timeout: clear after 5s with no update
+	if (bDesignatorActive && (NowSec - DesignatorUpdateTimeSec) > 5.0)
+	{
+		bDesignatorActive = false;
+	}
 }

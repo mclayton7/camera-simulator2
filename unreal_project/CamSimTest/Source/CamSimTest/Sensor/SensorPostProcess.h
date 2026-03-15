@@ -42,6 +42,12 @@ public:
 	 */
 	virtual void SetOverlayConfig(const FHudOverlayConfig& Cfg) override { HudOverlay.SetConfig(Cfg); }
 
+	/** Phase 21F.1 — Laser designator spot config. */
+	virtual void SetLaserDesignatorConfig(const FCamSimConfig::FLaserDesignatorConfig& Cfg) override
+	{
+		LaserDesignatorConfig = Cfg;
+	}
+
 	/** Phase 27A — GPU sensor pipeline: skip CPU waveband/AGC/noise loops when GPU material is active. */
 	virtual void SetGpuSensorEffectsActive(bool bActive) override { bGpuSensorEffectsActive_ = bActive; }
 
@@ -193,6 +199,15 @@ private:
 	/** 16K: Brighten highlight pixels based on sun angle (EO sun glint). */
 	void ApplySunGlint(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg, float SunElevationDeg);
 
+	// -- Fused pixel pipeline (Phase 28 optimization) -----------------------
+
+	/** Fused per-pixel pass: combines waveband remap, AGC, tone controls,
+	 *  noise, vignetting, scan lines, and atmospheric effects into a single
+	 *  cache-friendly iteration. Returns true if fusion was applied. */
+	bool ProcessFusedPerPixel(TArray<FColor>& Pixels, ESensorMode Mode, uint8 Polarity,
+	                          const FSensorModeConfig& Cfg, const FCamSimTelemetry& Telemetry,
+	                          uint64 FrameIndex);
+
 	// -- Phase 27A: GPU sensor pipeline bypass flag --------------------------
 
 	bool bGpuSensorEffectsActive_ = false;
@@ -204,6 +219,13 @@ private:
 	// -- Phase 20: HUD/OSD overlay -------------------------------------------
 
 	FHudOverlay HudOverlay;
+
+	// -- Phase 21F.1: Laser designator visualization -------------------------
+
+	FCamSimConfig::FLaserDesignatorConfig LaserDesignatorConfig;
+
+	/** Gaussian laser spot overlay — renders per-mode (EO/IR/NVG). */
+	void ApplyLaserDesignator(TArray<FColor>& Pixels, ESensorMode Mode, uint8 Polarity);
 
 	/**
 	 * 18D: CPU precipitation overlay (rain streaks / snow flakes).

@@ -105,6 +105,38 @@ void FCamSimParticleManager::OnComponentControl(uint16 EntityID, AActor* Actor,
     if (Pkt.CompId == static_cast<uint16>(CraterComponentID)) { SpawnCraterDecal(Actor);         return; }
 }
 
+void FCamSimParticleManager::OnDamageStateChanged(uint16 EntityID, AActor* Actor,
+                                                   uint8 OldState, uint8 NewState)
+{
+    if (!Actor) return;
+
+    if (NewState > OldState)
+    {
+        // Damage escalation
+        if (NewState >= 1) ActivateSmoke(EntityID, Actor);
+        if (NewState >= 2) ActivateFire(EntityID, Actor);
+        UE_LOG(LogCamSim, Log, TEXT("ParticleManager: entity %u damage FX %u -> %u"),
+            EntityID, OldState, NewState);
+    }
+    else if (NewState < OldState)
+    {
+        // Repair — deactivate damage effects
+        FEntityParticleState& PS = EntityParticles.FindOrAdd(EntityID);
+        if (NewState < 2 && PS.bFireActive && PS.FireComp)
+        {
+            PS.FireComp->Deactivate();
+            PS.bFireActive = false;
+        }
+        if (NewState < 1 && PS.bSmokeActive && PS.SmokeComp)
+        {
+            PS.SmokeComp->Deactivate();
+            PS.bSmokeActive = false;
+        }
+        UE_LOG(LogCamSim, Log, TEXT("ParticleManager: entity %u damage FX repair %u -> %u"),
+            EntityID, OldState, NewState);
+    }
+}
+
 void FCamSimParticleManager::Tick(float DeltaTime)
 {
     // Reserved for future per-frame parameter updates

@@ -45,4 +45,5 @@ public:
 	virtual void SetGpuSensorEffectsActive(bool /*bActive*/) {}
 	virtual void SetPhase18Config(const FCamSimConfig::FPhase18Config& /*Cfg*/) {}
 	virtual void SetOverlayConfig(const FHudOverlayConfig& /*Cfg*/) {}
+	virtual void SetLaserDesignatorConfig(const FCamSimConfig::FLaserDesignatorConfig& /*Cfg*/) {}
 };

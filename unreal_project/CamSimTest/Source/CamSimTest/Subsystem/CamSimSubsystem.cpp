@@ -14,6 +14,7 @@
 #include "Environment/CamSimParticleManager.h"
 #include "DIS/DisReceiver.h"
 #include "DIS/DisEntityAdapter.h"
+#include "Streaming/CotSender.h"
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -48,6 +49,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCamSimParticleManager>    ParticleManager;
 	TUniquePtr<FDisReceiver>             DisReceiver;
 	TUniquePtr<FDisEntityAdapter>        DisAdapter;
+	TUniquePtr<FCotSender>               CotSender;
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -66,6 +68,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	uint32 HealthLastTick           = 0;
 	uint64 HealthLastSuccessFrame   = 0;
 	uint64 HealthLastRxPacketCount  = 0;
+	double HealthLastWallSec        = 0.0;
 
 	// Wall-clock start time
 	double StartTimeSec             = 0.0;
@@ -91,6 +94,8 @@ struct UCamSimSubsystem::FSubsystemImpl
 		if (VideoEncoder) VideoEncoder->Close();
 		VideoEncoder.Reset();
 		EntityManager.Reset();
+		if (CotSender) CotSender->Close();
+		CotSender.Reset();
 		DisAdapter.Reset();
 		if (DisReceiver) DisReceiver->Stop();
 		DisReceiver.Reset();
@@ -161,6 +166,11 @@ FDisEntityAdapter* UCamSimSubsystem::GetDisAdapter() const
 	return Impl ? Impl->DisAdapter.Get() : nullptr;
 }
 
+FCotSender* UCamSimSubsystem::GetCotSender() const
+{
+	return Impl ? Impl->CotSender.Get() : nullptr;
+}
+
 void UCamSimSubsystem::RegisterCamera(ACamSimCamera* Camera)
 {
 	Camera_ = Camera;
@@ -185,6 +195,9 @@ void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)
 	Config.MulticastAddr = SavedMulticastAddr;
 	Config.MulticastPort = SavedMulticastPort;
 	Config.VideoCodec    = SavedVideoCodec;
+
+	// Phase 22A: Re-parse entity types on hot-reload
+	EntityTypeTable.HotReload();
 }
 
 void UCamSimSubsystem::StoreCesiumIonServer(UCesiumIonServer* Server)
@@ -298,6 +311,18 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			Config.DIS.Port, Config.DIS.ExerciseId);
 	}
 
+	// Start CoT sender (Phase 21D.1)
+	if (Config.Streaming.bCotEnabled)
+	{
+		Impl->CotSender = MakeUnique<FCotSender>(Config);
+		if (!Impl->CotSender->Open())
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: CoT sender failed to open"));
+		}
+		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: CoT enabled (addr=%s:%d interval=%.1fs)"),
+			*Config.Streaming.CotAddr, Config.Streaming.CotPort, Config.Streaming.CotIntervalSec);
+	}
+
 	// Start FFmpeg encoder / MPEG-TS muxer(s)
 	Impl->VideoEncoder = MakeUnique<FMultiViewFrameSink>(Config);
 	if (!Impl->VideoEncoder->Open())
@@ -393,6 +418,18 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		Impl->ParticleManager->Tick(DeltaTime);
 	}
 
+	// Tick CoT sender (Phase 21D.1)
+	if (Impl->CotSender)
+	{
+		// Get telemetry from camera if available
+		FCamSimTelemetry CotTelemetry;
+		if (ACamSimCamera* Cam = Camera_.Get())
+		{
+			CotTelemetry = Cam->GetCurrentTelemetry();
+		}
+		Impl->CotSender->Tick(DeltaTime, CotTelemetry);
+	}
+
 	// Determine IG operating mode (Phase 12D):
 	// 0=Standby (no CIGI packets received yet), 1=Operate
 	if (Impl->IGMode == 0 && Impl->CigiReceiver && Impl->CigiReceiver->GetReceivedPacketCount() > 0)
@@ -476,9 +513,18 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 
 		const uint32 HostFrame = Impl->CigiReceiver ? Impl->CigiReceiver->GetLastHostFrame() : 0;
 
+		const double NowSec = FPlatformTime::Seconds();
+		const double UptimeSec = NowSec - Impl->StartTimeSec;
+		const double WallDeltaSec = (Impl->HealthLastWallSec > 0.0)
+			? (NowSec - Impl->HealthLastWallSec)
+			: 0.0;
+		const uint32 TickDelta = Impl->FrameCntr - Impl->HealthLastTick;
+		const double EffectiveFps = (WallDeltaSec > 0.0) ? (TickDelta / WallDeltaSec) : 0.0;
+
 		UE_LOG(LogCamSim, Log,
 			TEXT("CamSimHealth: frame=%u encoder_open=%d enc_ok_total=%llu enc_ok_delta=%llu ")
-			TEXT("cigi_rx_total=%llu cigi_rx_delta=%llu watchdog_reconnects=%u sender=%d query=%d host_frame=%u"),
+			TEXT("cigi_rx_total=%llu cigi_rx_delta=%llu watchdog_reconnects=%u sender=%d query=%d host_frame=%u ")
+			TEXT("wall_dt=%.1fs fps=%.1f uptime=%.0fs"),
 			Impl->FrameCntr,
 			(Encoder && Encoder->IsOpen()) ? 1 : 0,
 			EncoderSuccess, EncoderDelta,
@@ -486,11 +532,13 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			Impl->WatchdogReconnectCount,
 			Impl->CigiSender ? 1 : 0,
 			Impl->QueryHandler ? 1 : 0,
-			HostFrame);
+			HostFrame,
+			WallDeltaSec, EffectiveFps, UptimeSec);
 
 		Impl->HealthLastTick = Impl->FrameCntr;
 		Impl->HealthLastSuccessFrame = EncoderSuccess;
 		Impl->HealthLastRxPacketCount = RxPackets;
+		Impl->HealthLastWallSec = NowSec;
 	}
 
 	// Write structured health JSON every 90 ticks (~3s at 30fps) for Docker HEALTHCHECK

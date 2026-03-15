@@ -63,12 +63,12 @@ Features VRSG has that CamSim lacks, organized by priority:
 | Particle FX (dust, rotor wash, smoke) | ✅ Done              | Phase 18     |
 | Dynamic terrain cratering             | ✅ Done              | Phase 18     |
 | 3D ocean (waves, wakes, sea states)   | Missing             | Phase 19     |
-| HUD/OSD burn-in overlays              | Missing             | Phase 20     |
-| DIS protocol support                  | Missing (CIGI only) | Phase 21     |
-| Character animation / FPS mode        | Missing             | Phase 22     |
-| Pattern-of-life scenarios             | Missing             | Phase 23     |
-| Laser rangefinder/designator viz      | Missing             | Phase 21     |
-| ATAK/ROVER FMV streaming              | Missing             | Phase 21     |
+| HUD/OSD burn-in overlays              | ✅ Done              | Phase 20     |
+| DIS protocol support                  | ✅ Done              | Phase 21     |
+| Character animation / FPS mode        | ✅ Sprint 1 Done    | Phase 22     |
+| Pattern-of-life scenarios             | ✅ Sprint 1 Done    | Phase 23     |
+| Laser rangefinder/designator viz      | ✅ Done              | Phase 21     |
+| ATAK/ROVER FMV streaming              | ✅ Done              | Phase 21     |
 | Light point system (thousands)        | Basic UE lights     | Phase 19     |
 | Object-on-object dynamic shadows      | Missing             | Phase 24     |
 | VR/HMD headset rendering              | Missing             | Phase 25     |
@@ -77,7 +77,7 @@ Features VRSG has that CamSim lacks, organized by priority:
 | After-action review / DIS log replay  | CIGI replay only    | Phase 21     |
 | Radar simulation (SAR/ISAR)           | Missing             | Phase 26     |
 | Edge blending / dome display          | Missing             | Phase 25     |
-| FBX/OpenFlight model import           | Missing             | Phase 22     |
+| FBX/OpenFlight model import           | ✅ FBX done         | Phase 22     |
 | NVG IR pointer                        | ✅ Done              | Phase 16     |
 
 ---
@@ -258,17 +258,18 @@ VRSG natively supports DIS and streams FMV to ATAK/ROVER. This is a critical int
 | **21A** DIS Protocol Support | IEEE 1278.1 Entity State PDU — custom minimal parser (no open-dis-cpp)        | XL     | ✓           | ✅ Sprint 1 Done |
 | **21B** DIS ↔ Entity Manager | ECEF→geodetic, ID translation, DR algo 2/5, timeout sweep, type mapping       | XL     | ✓           | ✅ Sprint 1 Done |
 | **21C** DIS PDU Logging      | PDU binary recording (same pattern as CIGI 12E)                                | S      | ✓           | ✅ Sprint 1 Done |
-| **21D** ATAK FMV Streaming   | Stream H.264 + KLV to ATAK-compatible endpoints (CoT + RTSP/UDP)               | M      | ✓           |                  |
-| **21E** ROVER Compatibility  | ROVER-format video feed for ground force terminals                             | M      | ✓           |                  |
-| **21F** Laser Designator Viz | Visible laser spot (EO) and IR laser marker (NVG mode); Designator PDU support | M      | ✓           |                  |
+| **21D** ATAK FMV Streaming   | Stream H.264 + KLV to ATAK-compatible endpoints (CoT + RTSP/UDP)               | M      | ✓           | ✅ Sprint 2 Done |
+| **21E** ROVER Compatibility  | ROVER-format video feed for ground force terminals                             | M      | ✓           | ✅ Sprint 2 Done |
+| **21F** Laser Designator Viz | Visible laser spot (EO) and IR laser marker (NVG mode); Designator PDU support | M      | ✓           | ✅ Sprint 2 Done |
 | **21G** HLA Gateway          | Deferred — DIS covers >90% of exercise interop needs                           | L      | ✓           |                  |
 
 **Sprint 1 (Done)**: DIS protocol core — custom PDU parser, FDisReceiver (FRunnable), FDisEntityAdapter (ECEF→geodetic, ID translation, DR, timeout), FDisConfig, 10 unit tests.
-**Sprint 2 (Planned)**: ATAK/ROVER streaming (CoT, RTSP), laser designator visualization.
+**Sprint 2 (Done)**: ATAK/ROVER streaming (CoT XML-over-UDP, MPEG-TS PID/profile), laser designator visualization (EO/IR/NVG), DIS Designator PDU (type 24), 11 unit tests.
 
-**New Files**: `DIS/DisPduTypes.h/.cpp`, `DIS/DisReceiver.h/.cpp`, `DIS/DisEntityAdapter.h/.cpp`, `Tests/DisProtocolTest.cpp`
-**Modified Files**: `Config/CamSimConfig.h/.cpp`, `Subsystem/CamSimSubsystem.h/.cpp`, `Entity/CamSimEntityManager.h/.cpp`, `deploy/camsim_config.yaml`
-**Validation**: CamSim joins OneSAF/VBS exercise via DIS; ATAK displays live FMV feed; laser spot visible in NVG
+**Sprint 1 Files**: `DIS/DisPduTypes.h/.cpp`, `DIS/DisReceiver.h/.cpp`, `DIS/DisEntityAdapter.h/.cpp`, `Tests/DisProtocolTest.cpp`
+**Sprint 2 New Files**: `Streaming/CotSender.h/.cpp`, `Tests/Phase21StreamingTest.cpp`
+**Sprint 2 Modified Files**: `Config/CamSimConfig.h/.cpp`, `Encoder/VideoEncoder.cpp`, `Encoder/MultiViewFrameSink.cpp`, `Sensor/SensorPostProcess.h/.cpp`, `Sensor/IPixelPipeline.h`, `DIS/DisPduTypes.h/.cpp`, `DIS/DisReceiver.h/.cpp`, `DIS/DisEntityAdapter.h/.cpp`, `Subsystem/CamSimSubsystem.h/.cpp`, `Camera/CamSimCamera.h/.cpp`, `deploy/camsim_config.yaml`
+**Validation**: CamSim joins OneSAF/VBS exercise via DIS; ATAK displays live FMV feed; laser spot visible in NVG; ROVER PIDs on ffprobe; CoT XML on tcpdump
 
 ---
 
@@ -278,16 +279,26 @@ VRSG ships hundreds of entity models. CamSim needs a broader content pipeline.
 
 | Item                            | Description                                                                       | Effort | VRSG Parity |
 | ------------------------------- | --------------------------------------------------------------------------------- | ------ | ----------- |
-| **22A** FBX/glTF Model Import   | Runtime or editor-time import pipeline for FBX/glTF models into entity type table | M      | ✓           |
-| **22B** OpenFlight Converter    | Batch convert OpenFlight (.flt) databases/models to UE-compatible format          | L      | ✓           |
-| **22C** Damage State Models     | Multi-stage visual damage (pristine → damaged → destroyed) per entity type        | M      | ✓           |
-| **22D** Character Animation     | Human characters with walk/run/crouch/prone skeletal animation                    | L      | ✓           |
-| **22E** Civilian Population     | Ambient pedestrian/vehicle traffic using UE AI navigation                         | L      | ✓           |
-| **22F** Standard Entity Library | Baseline set of 50+ military/civilian models (air, ground, maritime, personnel)   | L      | ✓           |
-| **22G** First-Person View       | FPS mode: camera follows character entity at eye height with look controls        | M      | ✓           |
+| **22A** FBX/glTF Model Import   | Runtime or editor-time import pipeline for FBX/glTF models into entity type table | M      | ✓           | ✅ Sprint 1 Done |
+| **22B** OpenFlight Converter    | Batch convert OpenFlight (.flt) databases/models to UE-compatible format          | L      | ✓           |                  |
+| **22C** Damage State Models     | Multi-stage visual damage (pristine → damaged → destroyed) per entity type        | M      | ✓           | ✅ Sprint 1 Done |
+| **22D** Character Animation     | Human characters with walk/run/crouch/prone skeletal animation                    | L      | ✓           | ✅ Sprint 1 Done |
+| **22E** Civilian Population     | Ambient pedestrian/vehicle traffic using UE AI navigation                         | L      | ✓           |                  |
+| **22F** Standard Entity Library | Baseline set of 50+ military/civilian models (air, ground, maritime, personnel)   | L      | ✓           |                  |
+| **22G** First-Person View       | FPS mode: camera follows character entity at eye height with look controls        | M      | ✓           |                  |
 
-**Files**: `Entity/`, new `Content/` pipeline, `Config/CamSimConfig.h`
-**Validation**: FBX model loads at runtime; characters animate correctly; damage states transition on Component Control
+**Sprint 1 status**: 22A, 22C, 22D implemented.
+22B, 22E, 22F, 22G remain for future sprints.
+
+**Sprint 1 files**:
+- `Entity/EntityTypeTable.h/.cpp` — HotReload(), bAnimated/AnimBlueprintPath/EntityCategory fields
+- `Entity/CamSimEntity.h/.cpp` — AnimMeshComp, InitAnimatedCharacter(), gradual damage interpolation
+- `Entity/CamSimAnimInstance.h/.cpp` — UCamSimAnimInstance (GroundSpeed → AnimStateIndex)
+- `Environment/CamSimParticleManager.h/.cpp` — OnDamageStateChanged() smoke/fire FX
+- `Config/CamSimConfig.h/.cpp` — FDamageTransitionConfig
+- `scripts/fbx_to_gltf.py` — Blender headless FBX→glTF conversion
+
+**Validation**: FBX model loads at runtime; characters animate correctly; damage states transition on Component Control with optional particle FX
 
 ---
 
@@ -297,17 +308,26 @@ Complex scripted scenarios without external CIGI host. VRSG has a built-in scena
 
 | Item                          | Description                                                                         | Effort | VRSG Parity |
 | ----------------------------- | ----------------------------------------------------------------------------------- | ------ | ----------- |
-| **23A** Waypoint Trajectories | Entity follows lat/lon/alt waypoints with speed/acceleration curves                 | M      | ✓           |
-| **23B** Event Triggers        | Actions fired on conditions (entity visible, range < threshold, timer, frame count) | M      | ✓           |
-| **23C** Pattern-of-Life       | Repeating daily activity cycles for characters/vehicles (YAML-scripted)             | M      | ✓           |
-| **23D** Formation Flying      | Multiple entities maintain relative positions with configurable offsets             | M      |             |
-| **23E** Randomization Engine  | Stochastic entity count, spawn area, weather, TOD for training robustness           | M      |             |
-| **23F** Batch Runner          | Run N scenarios unattended; output ground truth + video per scenario                | M      |             |
-| **23G** Scenario Editor GUI   | Web-based or ImGui editor for culture placement and scenario authoring              | L      | ✓           |
-| **23H** Mission Scripting     | Lua or Python scripting API for complex multi-phase missions                        | L      | ✓           |
+| **23A** Waypoint Trajectories | Entity follows lat/lon/alt waypoints with speed/acceleration curves                 | M      | ✓           | ✅ Sprint 1 Done |
+| **23B** Event Triggers        | Actions fired on conditions (entity visible, range < threshold, timer, frame count) | M      | ✓           | ✅ Sprint 1 Done |
+| **23C** Pattern-of-Life       | Repeating daily activity cycles for characters/vehicles (YAML-scripted)             | M      | ✓           | ✅ Sprint 1 Done |
+| **23D** Formation Flying      | Multiple entities maintain relative positions with configurable offsets             | M      |             |                  |
+| **23E** Randomization Engine  | Stochastic entity count, spawn area, weather, TOD for training robustness           | M      |             |                  |
+| **23F** Batch Runner          | Run N scenarios unattended; output ground truth + video per scenario                | M      |             |                  |
+| **23G** Scenario Editor GUI   | Web-based or ImGui editor for culture placement and scenario authoring              | L      | ✓           |                  |
+| **23H** Mission Scripting     | Lua or Python scripting API for complex multi-phase missions                        | L      | ✓           |                  |
 
-**Files**: new `Scenario/` module, extend `Config/CamSimConfig.cpp`
-**Validation**: Run 10-scenario batch; entity paths match YAML waypoints; pattern-of-life repeats correctly
+**Sprint 1 status**: 23A, 23B, 23C implemented.
+23D–23H remain for future sprints.
+
+**Sprint 1 files**:
+- `Scenario/ScenarioEngine.h/.cpp` — Waypoint interpolation (Haversine), event triggers, pattern-of-life schedule
+- `Entity/CamSimEntityManager.h/.cpp` — ScenarioEngine delegation, trigger removal processing
+- `Config/CamSimConfig.h/.cpp` — FWaypointConfig, FScenarioTrigger, FActivityScheduleEntry, FScenarioCondition/Action enums
+- `deploy/camsim_config.yaml` — waypoints, triggers, activity_schedule YAML blocks
+- `Tests/ScenarioEngineTest.cpp` — 14 unit tests
+
+**Validation**: Waypoint entities follow YAML paths; triggers fire at correct conditions; pattern-of-life entities switch paths by time-of-day
 
 ---
 
@@ -391,11 +411,34 @@ Maximize throughput and minimize glass-to-glass latency.
 | **27F** 60 Hz Rendering           | Option to render at 60 Hz (VRSG default) with configurable output frame rate | M      | ✅ Sprint 1 Done |
 | **27G** Texture Paging Budget     | Configurable texture memory budget (VRSG addresses up to 2 TB)               | M      | ✅ Sprint 1 Done |
 
-**Status**: Sprint 1 complete. All 27A–27G implemented.
+**Status**: Sprint 1 complete. All 27A–27G implemented. Sprint 2 (rendering performance optimization) complete.
 
 **Sprint 1 files**: `Config/CamSimConfig.h`, `Config/CamSimConfig.cpp`, `deploy/camsim_config.yaml`, `Camera/CamSimCamera.h`, `Camera/CamSimCamera.cpp`, `Encoder/VideoEncoder.cpp`, `Sensor/SensorPostProcess.h`, `Sensor/SensorPostProcess.cpp`, `Subsystem/CamSimSubsystem.h`, `Subsystem/CamSimSubsystem.cpp`, `Tests/Phase27PerformanceTest.cpp`, `scripts/prewarm_shaders.sh`
 
 **Sprint 1 validation**: Log line on startup confirms renderFPS/outputFPS/texturePoolMB/dropTracking/hotReload; frame drop counters in `camsim_health.json`; DDC cold-start < 90s; GPU sensor falls back gracefully when editor material absent
+
+### Sprint 2 — Rendering Performance Optimization (target: steady 30fps)
+
+Addresses FPS drops from 30→8-15fps during camera motion. Three tiers of changes:
+
+| Item | Description | Status |
+| ---- | ----------- | ------ |
+| **Tier 1** Config tuning | SSE 8→16, imagery SSE 1→2, texture 4096→2048, cache 2048→1024, descendant 40→20, AO 0.5→0.0, shadow scale 2→1, VSM pages 4096→2048, VSM bias -1→0, prefetch boost 2→1, RT disabled | ✅ Done |
+| **2A** Decouple sensor/encoder | Persistent FEncoderThread with TSpscQueue; sensor async frees bSensorBusy before encode | ✅ Done |
+| **2B** EO fast-path skip | Skip all 15+ Apply* functions when all effect strengths are identity/zero | ✅ Done |
+| **2C** Fused pixel pipeline | Single ParallelFor pass for all per-pixel operations (cache-friendly) | ✅ Done |
+| **2D** IR/NVG YUV shortcut | Skip sws_scale — write Y=R, U=V=128 directly for grayscale modes | ✅ Done |
+| **3A** GPU sensor scaffold | Phase 27A material loading + MPC parameter pushing + CPU bypass path | ✅ Done |
+| **3B** Triple-buffer readback | 3 render targets instead of 2; overlapped render/readback/encode | ✅ Done |
+| **3C** Adaptive SSE | Frame budget-driven Cesium LOD: over budget → SSE+1, under 75% for 30 frames → SSE-0.5 | ✅ Done |
+| **3D** Output decimation | Render at RenderFrameRateHz, encode at OutputFrameRateHz; skip capture on non-output frames | ✅ Done |
+| **3E** Sync readback pipeline | Move readback poll from async render-thread to sync FlushRenderingCommands; 1 tick/frame (30fps encode, was 10fps) | ✅ Done |
+
+**Sprint 2 files**: `Config/CamSimConfig.h`, `Config/CamSimConfig.cpp`, `deploy/camsim_config.yaml`, `Config/DefaultEngine.ini`, `Camera/CamSimCamera.h`, `Camera/CamSimCamera.cpp`, `Encoder/EncoderThread.h` (new), `Encoder/EncoderThread.cpp` (new), `Encoder/VideoEncoder.h`, `Encoder/VideoEncoder.cpp`, `Sensor/SensorPostProcess.h`, `Sensor/SensorPostProcess.cpp`
+
+**Sprint 2 config**: `adaptive_sse: false` (opt-in), `adaptive_sse_min: 8.0`, `adaptive_sse_max: 24.0`, `rt_enabled: false`
+
+**Sprint 2 validation**: `scripts/run.sh --build` + `scripts/send_cigi_test.py --sweep`; monitor `fps=` field ≥30 and `dropped=` delta → 0 during sustained motion
 
 ---
 

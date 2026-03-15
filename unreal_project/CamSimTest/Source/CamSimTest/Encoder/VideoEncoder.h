@@ -32,7 +32,7 @@ THIRD_PARTY_INCLUDES_END
  *   Close() – flush encoder, write MPEG-TS trailer, free contexts
  *
  * Thread safety: EncodeFrame() is called from a single background task thread
- * (serialised by ACamSimCamera::bEncoderBusy).  Open/Close are called from
+ * (serialised by FEncoderThread — single consumer).  Open/Close are called from
  * the game instance subsystem on the game thread before / after gameplay.
  */
 class FVideoEncoder : public IFrameSink

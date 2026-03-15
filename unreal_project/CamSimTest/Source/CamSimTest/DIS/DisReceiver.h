@@ -42,6 +42,9 @@ public:
 	/** Dequeue the next parsed Entity State PDU. Returns false if empty. */
 	bool DequeueEntityStatePdu(FDisEntityStatePdu& Out) { return EntityStatePduQueue.Dequeue(Out); }
 
+	/** Dequeue the next parsed Designator PDU. Returns false if empty. */
+	bool DequeueDesignatorPdu(FDisDesignatorPdu& Out) { return DesignatorPduQueue.Dequeue(Out); }
+
 	// FRunnable interface
 	virtual bool   Init() override;
 	virtual uint32 Run() override;
@@ -57,6 +60,7 @@ private:
 
 	// SPSC queue: receiver thread produces, game thread consumes
 	TSpscQueue<FDisEntityStatePdu> EntityStatePduQueue;
+	TSpscQueue<FDisDesignatorPdu> DesignatorPduQueue;
 
 	bool CreateSocket();
 };

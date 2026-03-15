@@ -19,6 +19,7 @@ class FGroundTruthCollector;
 class FCamSimParticleManager;
 class FDisReceiver;
 class FDisEntityAdapter;
+class FCotSender;
 class ACamSimCamera;
 class UCesiumIonServer;
 
@@ -63,6 +64,7 @@ public:
 	FCamSimParticleManager* GetParticleManager() const;
 	FDisReceiver*          GetDisReceiver()     const;
 	FDisEntityAdapter*     GetDisAdapter()      const;
+	FCotSender*            GetCotSender()       const;
 
 	/** Store the transient UCesiumIonServer created by ApplyCesiumBackendConfig.
 	 *  Passing nullptr clears the stored reference (no-op if already null).

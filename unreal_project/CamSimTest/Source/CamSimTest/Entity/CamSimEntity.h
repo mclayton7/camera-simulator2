@@ -10,9 +10,11 @@
 
 class UCesiumGlobeAnchorComponent;
 class UStaticMeshComponent;
+class USkeletalMeshComponent;
 class UPoseableMeshComponent;  // USkinnedMeshComponent subclass with per-bone API
 class UPointLightComponent;
 class FEntityTypeTable;
+struct FEntityTypeEntry;
 
 /**
  * ACamSimEntity
@@ -67,6 +69,12 @@ public:
 	/** Enable or disable shadow casting on all mesh components (Phase 24A). */
 	void SetShadowCasting(bool bCast);
 
+	/** Current damage state (0=intact, 1=damaged, 2=destroyed). */
+	uint8 GetDamageState() const { return DamageState; }
+
+	/** Configure gradual damage interpolation (Phase 22C). */
+	void SetDamageInterpolation(bool bEnabled, float RateSec);
+
 	/**
 	 * Apply pitch/roll/heave from ocean surface to this vessel entity.
 	 * Called from FCamSimEntityManager::Tick() for sea-domain entities only.
@@ -113,6 +121,13 @@ private:
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UPointLightComponent> LandingLight;
 
+	// Phase 22D: Animated character skeletal mesh
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<USkeletalMeshComponent> AnimMeshComp;
+
+	float CachedGroundSpeed = 0.0f;
+	void InitAnimatedCharacter(const FEntityTypeEntry& Entry);
+
 	// Dead-reckoning state
 	struct FDRState
 	{
@@ -130,6 +145,12 @@ private:
 
 	// Damage state (0=intact, 1=damaged, 2=destroyed)
 	uint8 DamageState = 0;
+
+	// Phase 22C: Damage transition interpolation
+	uint8 TargetDamageState    = 0;
+	float DamageBlendAlpha     = 1.0f;
+	bool  bDamageInterpolating = false;
+	float DamageInterpolationRate = 1.0f;
 
 	// Set to true after the first ApplyPose — suppresses the one-time world-location log
 	bool bPoseLogged = false;

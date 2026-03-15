@@ -79,8 +79,23 @@ bool FVideoEncoder::Open()
 		return false;
 	}
 
+	// Phase 21E.1 — ROVER PID override
+	if (Config.Streaming.bRoverCompat)
+	{
+		VideoStream->id = Config.Streaming.RoverVideoPid;
+		KlvStream->id   = Config.Streaming.RoverKlvPid;
+		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: ROVER compat — video PID=0x%04X klv PID=0x%04X"),
+			Config.Streaming.RoverVideoPid, Config.Streaming.RoverKlvPid);
+	}
+
 	// Write MPEG-TS header
-	Ret = avformat_write_header(FmtCtx, nullptr);
+	AVDictionary* MuxOpts = nullptr;
+	if (Config.Streaming.bRoverCompat)
+	{
+		av_dict_set(&MuxOpts, "mpegts_pmt_start_pid", "4096", 0);
+	}
+	Ret = avformat_write_header(FmtCtx, Config.Streaming.bRoverCompat ? &MuxOpts : nullptr);
+	if (MuxOpts) av_dict_free(&MuxOpts);
 	if (Ret < 0)
 	{
 		LogFfmpegError(Ret, TEXT("avformat_write_header"));
@@ -252,6 +267,14 @@ bool FVideoEncoder::OpenVideoStream()
 	{
 		av_opt_set(VideoCodecCtx->priv_data, "preset", TCHAR_TO_ANSI(*Config.H264Preset), 0);
 		av_opt_set(VideoCodecCtx->priv_data, "tune",   TCHAR_TO_ANSI(*Config.H264Tune),   0);
+	}
+
+	// Phase 21E.1 — ROVER Baseline profile override
+	if (Config.Streaming.bRoverCompat && !bUsingNvenc && !bWantH265)
+	{
+		VideoCodecCtx->profile = FF_PROFILE_H264_CONSTRAINED_BASELINE;
+		av_opt_set(VideoCodecCtx->priv_data, "profile", "baseline", 0);
+		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: ROVER Baseline profile set"));
 	}
 
 	int Ret = avcodec_open2(VideoCodecCtx, Codec, nullptr);
@@ -478,9 +501,39 @@ void FVideoEncoder::EncodeFrame(
 		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: encoding frame %llu (%d pixels)"), FrameIdx, PixelData.Num());
 	}
 
-	// Convert BGRA → YUV420P via sws_scale
+	// Convert BGRA → YUV420P
 	av_frame_make_writable(YuvFrame);
 
+	// IR/NVG fast path: frame is already grayscale after sensor post-process.
+	// Y = R channel (all channels equal after ApplyIR/ApplyNVG), Cb=Cr=128.
+	// Skips sws_scale entirely, saving 2-3ms per frame.
+	const bool bGrayscaleMode = (Telemetry.SensorMode == 1 || Telemetry.SensorMode == 2);
+	if (bGrayscaleMode)
+	{
+		const int32 W = Config.CaptureWidth;
+		const int32 H = Config.CaptureHeight;
+		const FColor* RESTRICT Src = PixelData.GetData();
+
+		// Y plane: BT.601 luma from BGRA (limited range for MPEG compliance)
+		for (int32 y = 0; y < H; ++y)
+		{
+			uint8* RESTRICT YRow = YuvFrame->data[0] + y * YuvFrame->linesize[0];
+			const FColor* RESTRICT SrcRow = Src + y * W;
+			for (int32 x = 0; x < W; ++x)
+			{
+				// For grayscale, R≈G≈B. Use R directly, map to limited range.
+				YRow[x] = static_cast<uint8>(16 + (SrcRow[x].R * 219 + 127) / 255);
+			}
+		}
+		// U/V planes: neutral chroma (128)
+		const int32 HalfW = W / 2;
+		const int32 HalfH = H / 2;
+		FMemory::Memset(YuvFrame->data[1], 128, YuvFrame->linesize[1] * HalfH);
+		FMemory::Memset(YuvFrame->data[2], 128, YuvFrame->linesize[2] * HalfH);
+	}
+	else
+	{
+	// Full color path: BGRA → YUV420P via sws_scale
 	const uint8* SrcPtr = reinterpret_cast<const uint8*>(PixelData.GetData());
 	TArray<uint8> CompressedBuf;
 
@@ -506,6 +559,7 @@ void FVideoEncoder::EncodeFrame(
 		SrcData, SrcLinesize,
 		0, Config.CaptureHeight,
 		YuvFrame->data, YuvFrame->linesize);
+	} // end color path
 
 	// Diagnostic: dump sample pixel values for first frame to verify conversion
 	if (FrameIdx == 0 && PixelData.Num() > 0)

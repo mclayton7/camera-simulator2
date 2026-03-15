@@ -82,6 +82,12 @@ public:
 	 */
 	uint16 MapEntityType(const FDisEntityType& DisType) const;
 
+	/**
+	 * Get the latest designator spot in geodetic coordinates.
+	 * Returns false if no designator is active (timed out or never received).
+	 */
+	bool GetDesignatorSpot(double& OutLat, double& OutLon, double& OutAlt, int32& OutCode) const;
+
 private:
 	const FCamSimConfig& Config;
 	FDisReceiver*        Receiver = nullptr;
@@ -111,6 +117,16 @@ private:
 	// Fuzzy key: "kind:domain:category"
 	TMap<FString, uint16> FuzzyTypeMap;
 	uint16                DefaultEntityTypeId = 1001;
+
+	// Designator spot state (Phase 21F.2)
+	bool   bDesignatorActive = false;
+	double DesignatorLat = 0.0;
+	double DesignatorLon = 0.0;
+	double DesignatorAlt = 0.0;
+	int32  DesignatorCode = 0;
+	double DesignatorUpdateTimeSec = 0.0;
+
+	void DrainDesignatorPdus();
 
 	void ProcessPdu(const FDisEntityStatePdu& Pdu);
 	void SweepTimeouts();

@@ -80,7 +80,7 @@ struct FCamSimConfig
 	float   FrameRate       = 30.0f;
 	bool    bSwapRBReadback = false;
 	EReadbackFormat ReadbackFormat = EReadbackFormat::Auto;
-	int32   ReadbackReadyPolls = 2; // require N consecutive IsReady() polls before Lock()
+	int32   ReadbackReadyPolls = 1; // require N consecutive IsReady() polls before Lock()
 
 	// Horizontal field of view in degrees (used for KLV metadata)
 	float   HFovDeg         = 60.0f;
@@ -99,16 +99,17 @@ struct FCamSimConfig
 	// Too high wastes loading slots on off-screen tiles.
 	float   TilePreloadFovScale = 1.5f;
 	// Maximum simultaneous tile HTTP requests (Cesium default is 20).
-	// Higher values load tiles faster at the cost of network/CPU.
-	int32   MaxSimultaneousTileLoads = 80;
+	// Keep ≤20 for real-time 30fps; higher values load faster but stall the game thread.
+	int32   MaxSimultaneousTileLoads = 20;
 	// Cesium LOD quality: lower = sharper terrain (Cesium default 16).
-	// For quantized-mesh terrain (CWT), internally divided by 8: so 2.0 → effective 0.25 px.
-	float   MaximumScreenSpaceError = 2.0f;
-	// Tile cache budget in MB (0 = Cesium default / uncapped)
-	int32   MaximumCachedBytesMB = 4096;
+	// For quantized-mesh terrain (CWT), internally divided by 8: so 8.0 → effective 1.0 px.
+	float   MaximumScreenSpaceError = 16.0f;
+	// Tile cache budget in MB per tileset (0 = Cesium default / uncapped).
+	// Large cache avoids re-downloading tiles when revisiting areas.
+	int32   MaximumCachedBytesMB = 1024;
 	// Max descendant tiles to load simultaneously (Cesium default 20; higher = better low-alt detail)
 	// Env: CAMSIM_LOADING_DESCENDANT_LIMIT
-	int32   LoadingDescendantLimit = 80;
+	int32   LoadingDescendantLimit = 20;
 	// Enable smooth opacity crossfade when tile LOD level changes (Cesium UseLodTransitions).
 	// Disabled by default: crossfade blur compounds with SceneCapture AA on moving cameras.
 	// Env: CAMSIM_USE_LOD_TRANSITIONS
@@ -207,6 +208,27 @@ struct FCamSimConfig
 	};
 	FEntityScaleConfig EntityScale;
 
+	// ---- 23A: Waypoint Trajectories ----
+	struct FWaypointConfig
+	{
+		double Latitude   = 0.0;
+		double Longitude  = 0.0;
+		float  Altitude   = 0.0f;
+		float  SpeedMps   = 0.0f;    // 0 = inherit from entity BaseSpeedMps
+		float  HeadingDeg = -1.0f;   // -1 = auto from great-circle bearing
+		float  PauseSec   = 0.0f;    // dwell at waypoint before continuing
+	};
+
+	// ---- 23C: Pattern-of-Life ----
+	struct FActivityScheduleEntry
+	{
+		float StartHour         = 0.0f;   // 0-24 scenario time-of-day
+		float EndHour           = 24.0f;
+		int32 WaypointPathIndex = 0;      // index into entity Waypoints sub-arrays
+		float SpawnJitterSec    = 0.0f;
+		float PathDeviationM    = 0.0f;
+	};
+
 	struct FScenarioEntityConfig
 	{
 		int32 EntityId = 1;
@@ -222,18 +244,91 @@ struct FCamSimConfig
 		float DespawnTimeSec = 0.0f; // <= SpawnTimeSec means persistent
 		float UpdateRateHz = 10.0f;  // 0 = every manager tick
 
-		// Scripted trajectory rates.
+		// Scripted trajectory rates (linear fallback when no waypoints).
 		float NorthRateMps = 0.0f;
 		float EastRateMps = 0.0f;
 		float UpRateMps = 0.0f;
 		float YawRateDegPerSec = 0.0f;
 		float PitchRateDegPerSec = 0.0f;
 		float RollRateDegPerSec = 0.0f;
+
+		// Phase 23A: Waypoint trajectories
+		TArray<FWaypointConfig> Waypoints;
+		bool  bLoopWaypoints = false;
+		float BaseSpeedMps   = 10.0f;
+
+		// Phase 23C: Pattern-of-life activity schedule
+		TArray<FActivityScheduleEntry> ActivitySchedule;
+		FString ActivityProfile;   // "civilian" | "military" | "" (custom)
+	};
+
+	// ---- 23B: Event Triggers ----
+	enum class EScenarioConditionType : uint8
+	{
+		TimeSec = 0,         // scenario_elapsed >= threshold
+		EntityInArea,        // entity within lat/lon/radius
+		EntityProximity,     // two entities within distance
+		FrameCount,          // scenario frame >= threshold
+	};
+
+	enum class EScenarioActionType : uint8
+	{
+		SpawnEntity = 0,
+		DespawnEntity,
+		SetDamageState,
+		ChangeSpeed,
+		LogMessage,
+	};
+
+	struct FScenarioCondition
+	{
+		EScenarioConditionType Type = EScenarioConditionType::TimeSec;
+		float  TimeSec        = 0.0f;
+		int32  EntityIdA      = 0;
+		int32  EntityIdB      = 0;
+		double AreaLatitude   = 0.0;
+		double AreaLongitude  = 0.0;
+		float  RadiusM        = 100.0f;
+		int32  FrameThreshold = 0;
+	};
+
+	struct FScenarioAction
+	{
+		EScenarioActionType Type = EScenarioActionType::LogMessage;
+		int32   TargetEntityId   = 0;
+		int32   TargetEntityType = 1001;
+		double  SpawnLatitude    = 0.0;
+		double  SpawnLongitude   = 0.0;
+		float   SpawnAltitude    = 0.0f;
+		uint8   DamageState      = 0;
+		float   NewSpeedMps      = 0.0f;
+		FString Message;
+	};
+
+	struct FScenarioTrigger
+	{
+		FString            Name;
+		FScenarioCondition Condition;
+		FScenarioAction    Action;
+		bool  bRepeat     = false;
+		float CooldownSec = 0.0f;
+	};
+
+	// ---- 22C: Damage Transition FX ----
+	struct FDamageTransitionConfig
+	{
+		bool  bDamageTransitionFX    = true;
+		bool  bGradualDamage         = false;
+		float DamageInterpolationSec = 1.0f;
+		float DamageScorchDarkening  = 0.3f;
 	};
 
 	bool bScenarioEnabled = false;
 	float ScenarioTimeScale = 1.0f;
+	float ScenarioStartHour = 6.0f;
 	TArray<FScenarioEntityConfig> ScenarioEntities;
+	TArray<FScenarioTrigger> ScenarioTriggers;
+	FDamageTransitionConfig DamageTransition;
 
 	// Security metadata for MISB ST 0102 (Phase 12A)
 	struct FSecurityMetadataConfig
@@ -327,18 +422,23 @@ struct FCamSimConfig
 
 		// 24B: Ambient occlusion (Lumen GTAO intensity/radius)
 		// Env: CAMSIM_AO_INTENSITY / CAMSIM_AO_RADIUS
-		float AOIntensity = 0.5f;    // [0,1]; 0 = off
+		float AOIntensity = 0.0f;    // [0,1]; 0 = off
 		float AORadius    = 200.0f;  // UE cm units
 
-		// 24D: Ray-traced reflections on SceneCapture (requires r.RayTracing=True)
+		// Ray tracing backend (BLAS/TLAS allocation). DefaultEngine.ini default is False.
+		// Set True on NVIDIA builds that want RT features. Requires project restart.
+		// Env: CAMSIM_RT_ENABLED
+		bool bRayTracingEnabled = false;
+
+		// 24D: Ray-traced reflections on SceneCapture (requires bRayTracingEnabled=true)
 		// Env: CAMSIM_RT_REFLECTIONS
 		bool bRayTracedReflections = false;
 
 		// 24E: Shadow distance and VSM quality
 		// Env: CAMSIM_SHADOW_DISTANCE_SCALE / CAMSIM_VSM_RESOLUTION_BIAS / CAMSIM_VSM_MAX_PAGES
-		float ShadowDistanceScale = 2.0f;   // multiplies engine max shadow distance
-		int32 VSMResolutionBias   = -1;     // negative = sharper; ISR high-alt needs detail
-		int32 VSMMaxPhysicalPages = 4096;   // default 2048; more = less VSM cache thrash
+		float ShadowDistanceScale = 1.0f;   // multiplies engine max shadow distance
+		int32 VSMResolutionBias   = 0;      // 0 = engine default
+		int32 VSMMaxPhysicalPages = 2048;   // engine default
 
 		// 24F: TSR screen percentage (100 = native; >100 = super-sample for entity edge quality)
 		// Env: CAMSIM_TSR_SCREEN_PERCENTAGE
@@ -358,7 +458,7 @@ struct FCamSimConfig
 
 		// 27E Tile Prefetch
 		float TilePrefetchSlewThresholdDegPerSec = 10.0f;
-		float TilePrefetchFovBoost               = 2.0f;
+		float TilePrefetchFovBoost               = 1.0f;
 		int32 TilePrefetchBoostFrames            = 30;
 
 		// 27F 60 Hz Rendering
@@ -367,6 +467,11 @@ struct FCamSimConfig
 
 		// 27G Texture Paging Budget
 		int32 TexturePoolBudgetMB = 0;
+
+		// Adaptive SSE: auto-adjust Cesium LOD quality based on frame budget
+		bool  bAdaptiveSSE          = false;
+		float AdaptiveSSEMin        = 8.0f;   // minimum SSE (sharpest allowed)
+		float AdaptiveSSEMax        = 24.0f;  // maximum SSE (most aggressive LOD reduction)
 
 		// 27A GPU Sensor Pipeline
 		bool    bGpuSensorEffects      = false;
@@ -492,15 +597,51 @@ struct FCamSimConfig
 			// Overlay SSE controls imagery resolution: 2.0 = 1 source px covers 2x2 screen px,
 			// 1.0 = 1:1 pixel mapping (sharpest). Plugin default 2.0; ISR needs 1.0.
 			// Env: CAMSIM_CESIUM_IMAGERY_MAX_SSE
-			double  MaximumScreenSpaceError    = 1.0;
-			// 0 = plugin default (2048). 4096 doubles texel density for ISR imagery.
+			double  MaximumScreenSpaceError    = 2.0;
+			// 0 = plugin default (2048). 2048 is Cesium default; sufficient at 720p.
 			// Env: CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE
-			int32   MaximumTextureSize         = 4096;
-			// Concurrent HTTP requests for imagery tiles (plugin default 20; match tileset throughput).
+			int32   MaximumTextureSize         = 2048;
+			// Concurrent HTTP requests for imagery tiles (plugin default 20).
 			// Env: CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS
-			int32   MaximumSimultaneousTileLoads = 40;
+			int32   MaximumSimultaneousTileLoads = 20;
 		} Imagery;
 	} CesiumBackend;
+
+	// Phase 21 Sprint 2 — Streaming, ROVER & Laser Designator
+	struct FStreamingConfig
+	{
+		// CoT (21D.1)
+		bool    bCotEnabled      = false;
+		FString CotAddr          = TEXT("239.2.3.1");
+		int32   CotPort          = 6969;
+		float   CotIntervalSec   = 2.0f;
+		FString CotUid           = TEXT("CamSim-ISR-1");
+		FString CotType          = TEXT("a-f-G-E-S");
+		FString CotCallsign      = TEXT("CAMSIM");
+
+		// ATAK view (21D.2)
+		bool    bAtakViewEnabled = false;
+		FString AtakAddr         = TEXT("239.1.1.2");
+		int32   AtakPort         = 5005;
+		int32   AtakBitrate      = 2000000;
+
+		// ROVER (21E.1)
+		bool    bRoverCompat     = false;
+		int32   RoverVideoPid    = 0x1011;
+		int32   RoverKlvPid      = 0x1012;
+	};
+	FStreamingConfig Streaming;
+
+	struct FLaserDesignatorConfig
+	{
+		bool  bEnabled       = false;
+		float SpotX          = 0.5f;    // normalized [0,1]
+		float SpotY          = 0.5f;
+		float SpotRadius     = 6.0f;    // pixels, 1-sigma
+		float SpotIntensity  = 250.0f;  // [0,255]
+		int32 DesignatorCode = 1688;
+	};
+	FLaserDesignatorConfig LaserDesignator;
 
 	// Phase 21 — DIS (IEEE 1278.1) Protocol
 	//   CAMSIM_DIS_ENABLED              - master toggle                  (default 0)

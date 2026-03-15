@@ -9,6 +9,7 @@
 #include "Metadata/KlvBuilder.h"
 #include "Sensor/SensorTypes.h"      // ESensorMode
 #include "Sensor/IPixelPipeline.h"   // IPixelPipeline
+#include "Encoder/EncoderThread.h"   // FEncoderThread — must be complete for TUniquePtr in UHT .gen.cpp
 #include "CamSimCamera.generated.h"
 
 class USceneCaptureComponent2D;
@@ -61,6 +62,9 @@ public:
 	const FFrameDropStats& GetFrameDropStats() const { return FrameDropStats_; }
 	bool IsTrackingFrameDrops()                const { return bTrackFrameDrops_; }
 
+	/** Return a snapshot of the current telemetry for external consumers (e.g. CoT sender). */
+	FCamSimTelemetry GetCurrentTelemetry() const { return CurrentTelemetry; }
+
 private:
 	/** Explicit root scene component. */
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")
@@ -105,10 +109,6 @@ private:
 	/** Non-blocking GPU readback helper for the depth channel. */
 	FRHIGPUTextureReadback* DepthGPUReadback = nullptr;
 
-	/** RENDER THREAD ONLY — depth readback claim/streak state. */
-	bool  bDepthReadbackClaimed    = false;
-	uint8 DepthReadbackReadyStreak = 0;
-
 	/** Cached pointer to our subsystem (set in BeginPlay). */
 	UPROPERTY(Transient)
 	TObjectPtr<UCamSimSubsystem> Subsystem;
@@ -117,46 +117,40 @@ private:
 	uint64 FrameIndex = 0;
 
 	/**
-	 * Set to true while the encoder task is processing the previous frame.
-	 * Cleared by the background encode task when it finishes.
+	 * Set to true while the sensor post-process task is running on the previous frame.
+	 * Cleared by the sensor async task after depositing into the encoder queue.
+	 * (Replaces the old bEncoderBusy — encode now runs on a separate persistent thread.)
 	 */
-	FThreadSafeBool bEncoderBusy;
+	FThreadSafeBool bSensorBusy;
+
+	/** Persistent encoder thread — drains processed frames from SPSC queue. */
+	TUniquePtr<FEncoderThread> EncoderThread;
 
 	/**
-	 * Set to true between EnqueueCopy (State A) and IsReady+Lock (State B).
-	 * Cleared from the render thread once pixels have been copied.
+	 * Set to true between CaptureAndEncode() and game-thread readback completion.
+	 * Cleared on game thread once pixels have been copied.
 	 */
-	FThreadSafeBool bReadbackPending;
+	bool bReadbackPending = false;
 
 	/** Non-blocking GPU-to-CPU texture readback helper (async DMA). */
 	FRHIGPUTextureReadback* GPUReadback = nullptr;
 
-	/**
-	 * Set to true by the first CamSimPollReadback render command that successfully
-	 * claims the completed readback.  Reset to false by CamSimEnqueueReadback at
-	 * the start of each new capture session.
-	 *
-	 * RENDER THREAD ONLY — no atomic needed; all accesses are inside ENQUEUE_RENDER_COMMAND.
-	 */
-	bool bReadbackClaimed = false;
+	/** Set by render thread after EnqueueCopy; game thread polls IsReady() only after this is true. */
+	TAtomic<bool> bReadbackDMAIssued{false};
 
-	/**
-	 * RENDER THREAD ONLY — count of consecutive IsReady()==true polls before Lock().
-	 * Required threshold is configurable via Config.ReadbackReadyPolls.
-	 */
-	uint8 ReadbackReadyStreak = 0;
-
-	/** RENDER THREAD ONLY — current readback session ID for stale poll suppression. */
-	uint64 ReadbackSessionIdRT = 0;
+	/** Game-thread streak counters for consecutive IsReady()==true polls. */
+	uint8 ReadbackReadyStreakGT = 0;
+	uint8 DepthReadbackReadyStreakGT = 0;
 
 	/** Frame index in-flight through the GPU readback pipeline. */
 	uint64 PendingFrameIndex = 0;
 
-	/** Monotonic session counter for each EnqueueCopy issued on the game thread. */
-	uint64 ReadbackSessionCounter = 0;
-
-	/** Current readback session ID captured by poll commands (game thread only). */
-	uint64 ActiveReadbackSessionId = 0;
+	/** Intermediate result: readback completed but sensor still busy. */
+	TArray<FColor>   CompletedPixels_;
+	TArray<float>    CompletedDepth_;
+	FCamSimTelemetry CompletedTelemetry_;
+	uint64           CompletedFrameIndex_ = 0;
+	bool             bReadbackResultReady_ = false;
 
 	/** Telemetry snapshot captured at the same time as the in-flight frame. */
 	FCamSimTelemetry PendingTelemetry;
@@ -191,6 +185,13 @@ private:
 	float PrevGimbalPanDeg_   = 0.0f;
 	float PrevGimbalTiltDeg_  = 0.0f;
 	int32 TilePrefetchBoostFramesRemaining_ = 0;
+
+	// Adaptive SSE — frame budget-driven Cesium LOD adjustment
+	float CurrentAdaptiveSSE_      = 0.0f;   // current effective SSE (0 = not initialised)
+	int32 UnderBudgetStreakFrames_ = 0;       // consecutive frames under 75% of budget
+
+	// Output decimation — render at RenderFrameRateHz, encode at OutputFrameRateHz
+	uint64 RenderFrameCounter_ = 0;
 
 	// Phase 27D — Hot-reload config
 	float     HotReloadAccumSec_ = 0.0f;

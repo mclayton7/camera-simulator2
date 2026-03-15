@@ -163,3 +163,25 @@ struct FDisEntityStatePdu
 	 */
 	static bool Parse(const uint8* Data, int32 DataLen, FDisEntityStatePdu& OutPdu);
 };
+
+/**
+ * FDisDesignatorPdu
+ *
+ * DIS Designator PDU (type 24) — laser designator spot location.
+ * Minimum 56 bytes: Header(12) + DesigEntity(6) + CodeName(2) + DesigdEntity(6) +
+ * DesigCode(2) + Power(4) + SpotXYZ(24).
+ */
+struct FDisDesignatorPdu
+{
+	FDisPduHeader Header;
+	FDisEntityId  DesignatingEntityId;
+	uint16        CodeName = 0;
+	FDisEntityId  DesignatedEntityId;
+	uint16        DesignatorCode = 0;
+	float         DesignatorPower = 0.0f;
+	double        SpotLocationX = 0.0;  // ECEF
+	double        SpotLocationY = 0.0;
+	double        SpotLocationZ = 0.0;
+
+	static bool Parse(const uint8* Data, int32 DataLen, FDisDesignatorPdu& Out);
+};

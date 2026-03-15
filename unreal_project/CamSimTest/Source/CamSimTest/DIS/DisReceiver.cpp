@@ -100,13 +100,21 @@ uint32 FDisReceiver::Run()
 				continue;
 			}
 
-			// Only process Entity State PDUs for now
 			if (Hdr.PduType == EDisPduType::EntityState)
 			{
 				FDisEntityStatePdu Pdu;
 				if (FDisEntityStatePdu::Parse(RecvBuf, BytesRead, Pdu))
 				{
 					EntityStatePduQueue.Enqueue(MoveTemp(Pdu));
+					++ReceivedPduCount;
+				}
+			}
+			else if (Hdr.PduType == EDisPduType::Designator)
+			{
+				FDisDesignatorPdu DesigPdu;
+				if (FDisDesignatorPdu::Parse(RecvBuf, BytesRead, DesigPdu))
+				{
+					DesignatorPduQueue.Enqueue(MoveTemp(DesigPdu));
 					++ReceivedPduCount;
 				}
 			}

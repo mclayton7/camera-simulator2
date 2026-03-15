@@ -6,8 +6,10 @@
 #include "CamSimTest.h"
 
 #include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Components/PointLightComponent.h"
+#include "Entity/CamSimAnimInstance.h"
 #include "CesiumGlobeAnchorComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
@@ -120,6 +122,14 @@ ACamSimEntity::ACamSimEntity()
 	LandingLight->SetVisibility(false);
 	LandingLight->SetLightColor(FLinearColor::White);
 	LandingLight->Intensity = 30000.0f;
+
+	// Phase 22D: Animated character mesh (hidden by default)
+	AnimMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("AnimMesh"));
+	AnimMeshComp->SetupAttachment(Root);
+	AnimMeshComp->SetVisibility(false);
+	AnimMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	AnimMeshComp->CastShadow         = true;
+	AnimMeshComp->bCastDynamicShadow = true;
 }
 
 // -------------------------------------------------------------------------
@@ -163,6 +173,13 @@ void ACamSimEntity::SetShadowCasting(bool bCast)
 {
 	if (StaticMeshComp) { StaticMeshComp->CastShadow = bCast; StaticMeshComp->bCastDynamicShadow = bCast; }
 	if (SkelMeshComp)   { SkelMeshComp->CastShadow   = bCast; SkelMeshComp->bCastDynamicShadow   = bCast; }
+	if (AnimMeshComp)   { AnimMeshComp->CastShadow    = bCast; AnimMeshComp->bCastDynamicShadow   = bCast; }
+}
+
+void ACamSimEntity::SetDamageInterpolation(bool bEnabled, float RateSec)
+{
+	bDamageInterpolating  = bEnabled;
+	DamageInterpolationRate = FMath::Max(0.01f, RateSec);
 }
 
 // -------------------------------------------------------------------------
@@ -177,6 +194,13 @@ void ACamSimEntity::SetEntityType(uint16 Type)
 	if (!Entry || Entry->AssetPath.IsEmpty())
 	{
 		UE_LOG(LogCamSim, Warning, TEXT("ACamSimEntity[%u]: no asset for type %u"), EntityId, Type);
+		return;
+	}
+
+	// Phase 22D: Animated character entities use a separate path
+	if (Entry->bAnimated)
+	{
+		InitAnimatedCharacter(*Entry);
 		return;
 	}
 
@@ -236,6 +260,52 @@ void ACamSimEntity::SetEntityType(uint16 Type)
 				EntityId, *Entry->AssetPath);
 		}
 	}
+}
+
+// -------------------------------------------------------------------------
+// InitAnimatedCharacter — Phase 22D
+// -------------------------------------------------------------------------
+
+void ACamSimEntity::InitAnimatedCharacter(const FEntityTypeEntry& Entry)
+{
+	if (!AnimMeshComp) return;
+
+	// Load skeletal mesh (same path resolution as SetEntityType)
+	USkeletalMesh* Mesh = LoadSkeletalMeshFromPath(Entry.AssetPath);
+	if (!Mesh)
+	{
+		UE_LOG(LogCamSim, Warning, TEXT("ACamSimEntity[%u]: failed to load animated skeletal mesh '%s'"),
+			EntityId, *Entry.AssetPath);
+		return;
+	}
+
+	AnimMeshComp->SetSkeletalMesh(Mesh);
+	AnimMeshComp->SetRelativeRotation(Entry.ModelRotation);
+	AnimMeshComp->SetRelativeScale3D(FVector(Entry.ModelScale));
+
+	// Load AnimBlueprint class
+	if (!Entry.AnimBlueprintPath.IsEmpty())
+	{
+		UClass* AnimBPClass = FSoftClassPath(Entry.AnimBlueprintPath).TryLoadClass<UAnimInstance>();
+		if (AnimBPClass)
+		{
+			AnimMeshComp->SetAnimInstanceClass(AnimBPClass);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("ACamSimEntity[%u]: failed to load AnimBlueprint '%s'"),
+				EntityId, *Entry.AnimBlueprintPath);
+		}
+	}
+
+	// Show AnimMeshComp, hide StaticMesh + PoseableMesh
+	AnimMeshComp->SetVisibility(true);
+	StaticMeshComp->SetVisibility(false);
+	SkelMeshComp->SetVisibility(false);
+
+	UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: initialized animated character '%s'"),
+		EntityId, *Entry.AssetPath);
 }
 
 // -------------------------------------------------------------------------
@@ -358,40 +428,61 @@ void ACamSimEntity::ApplyComponentControl(const FCigiComponentControl& C)
 		}
 		break;
 
-	case 10: // Damage state — swap mesh asset
+	case 10: // Damage state — swap mesh asset (Phase 22C: gradual interpolation)
 		{
-			DamageState = C.CompState;
+			const uint8 OldDamageState = DamageState;
+			const uint8 NewDamageState = FMath::Min(C.CompState, static_cast<uint8>(2));
 			static const TCHAR* DamageNames[] = { TEXT("intact"), TEXT("damaged"), TEXT("destroyed") };
 			UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: damage state -> %u (%s)"),
-				EntityId, DamageState,
-				DamageState <= 2 ? DamageNames[DamageState] : TEXT("unknown"));
+				EntityId, NewDamageState,
+				NewDamageState <= 2 ? DamageNames[NewDamageState] : TEXT("unknown"));
 
-			const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr;
-			if (!Entry) break;
-
-			FString AssetPath;
-			if (DamageState == 1 && !Entry->DamagedAssetPath.IsEmpty())
+			if (bDamageInterpolating && DamageInterpolationRate > 0.0f && OldDamageState != NewDamageState)
 			{
-				AssetPath = Entry->DamagedAssetPath;
-			}
-			else if (DamageState == 2 && !Entry->DestroyedAssetPath.IsEmpty())
-			{
-				AssetPath = Entry->DestroyedAssetPath;
+				// Gradual damage: start interpolation, defer mesh swap
+				TargetDamageState = NewDamageState;
+				DamageBlendAlpha  = 0.0f;
 			}
 			else
 			{
-				AssetPath = Entry->AssetPath; // revert to intact
-			}
+				// Immediate swap
+				DamageState = NewDamageState;
+				TargetDamageState = NewDamageState;
 
-			if (Entry->bSkeletal)
-			{
-				USkeletalMesh* Mesh = LoadSkeletalMeshFromPath(AssetPath);
-				if (Mesh) SkelMeshComp->SetSkinnedAsset(Mesh);
+				const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr;
+				if (!Entry) break;
+
+				FString AssetPath;
+				if (DamageState == 1 && !Entry->DamagedAssetPath.IsEmpty())
+					AssetPath = Entry->DamagedAssetPath;
+				else if (DamageState == 2 && !Entry->DestroyedAssetPath.IsEmpty())
+					AssetPath = Entry->DestroyedAssetPath;
+				else
+					AssetPath = Entry->AssetPath;
+
+				if (Entry->bSkeletal)
+				{
+					USkeletalMesh* Mesh = LoadSkeletalMeshFromPath(AssetPath);
+					if (Mesh) SkelMeshComp->SetSkinnedAsset(Mesh);
+				}
+				else
+				{
+					UStaticMesh* Mesh = LoadStaticMeshFromPath(AssetPath);
+					if (Mesh) StaticMeshComp->SetStaticMesh(Mesh);
+				}
 			}
-			else
+		}
+		break;
+
+	case 20: // Phase 22D: Character stance override (3=Crouch, 4=Prone)
+		if (AnimMeshComp && AnimMeshComp->IsVisible())
+		{
+			if (UCamSimAnimInstance* Anim = Cast<UCamSimAnimInstance>(AnimMeshComp->GetAnimInstance()))
 			{
-				UStaticMesh* Mesh = LoadStaticMeshFromPath(AssetPath);
-				if (Mesh) StaticMeshComp->SetStaticMesh(Mesh);
+				Anim->AnimStateIndex = FMath::Clamp(static_cast<int32>(C.CompState), 0, 4);
+				Anim->bManualState = (C.CompState >= 3); // manual for crouch/prone
+				UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: anim stance -> %d"),
+					EntityId, Anim->AnimStateIndex);
 			}
 		}
 		break;
@@ -410,6 +501,51 @@ void ACamSimEntity::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	UpdateDeadReckoning(DeltaTime);
+
+	// Phase 22C: Gradual damage blend
+	if (bDamageInterpolating && DamageState != TargetDamageState && DamageInterpolationRate > 0.0f)
+	{
+		DamageBlendAlpha += DeltaTime / DamageInterpolationRate;
+		if (DamageBlendAlpha >= 1.0f)
+		{
+			DamageBlendAlpha = 1.0f;
+			DamageState = TargetDamageState;
+
+			// Complete mesh swap
+			const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr;
+			if (Entry)
+			{
+				FString AssetPath;
+				if (DamageState == 1 && !Entry->DamagedAssetPath.IsEmpty())
+					AssetPath = Entry->DamagedAssetPath;
+				else if (DamageState == 2 && !Entry->DestroyedAssetPath.IsEmpty())
+					AssetPath = Entry->DestroyedAssetPath;
+				else
+					AssetPath = Entry->AssetPath;
+
+				if (Entry->bSkeletal)
+				{
+					USkeletalMesh* Mesh = LoadSkeletalMeshFromPath(AssetPath);
+					if (Mesh) SkelMeshComp->SetSkinnedAsset(Mesh);
+				}
+				else
+				{
+					UStaticMesh* Mesh = LoadStaticMeshFromPath(AssetPath);
+					if (Mesh) StaticMeshComp->SetStaticMesh(Mesh);
+				}
+			}
+		}
+	}
+
+	// Phase 22D: Push ground speed to animation instance
+	if (AnimMeshComp && AnimMeshComp->IsVisible())
+	{
+		CachedGroundSpeed = FMath::Sqrt(DR.XRate * DR.XRate + DR.YRate * DR.YRate);
+		if (UCamSimAnimInstance* Anim = Cast<UCamSimAnimInstance>(AnimMeshComp->GetAnimInstance()))
+		{
+			Anim->GroundSpeed = CachedGroundSpeed;
+		}
+	}
 
 	// 1Hz strobe with 50% duty cycle
 	if (bStrobeEnabled && StrobeLight)

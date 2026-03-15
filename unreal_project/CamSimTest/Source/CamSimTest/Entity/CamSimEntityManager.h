@@ -14,6 +14,7 @@ class UCamSimSubsystem;
 class ACamSimEntity;
 class UWorld;
 class FEntityTypeTable;
+class FScenarioEngine;
 
 /**
  * FCamSimEntityManager
@@ -85,4 +86,7 @@ private:
 	TMap<uint16, double> LastScenarioUpdateSeconds;
 	double ScenarioStartSeconds = 0.0;
 	TSet<uint16> ScenarioRemovedEntities;
+
+	// Phase 23: Scenario engine (waypoints, triggers, pattern-of-life)
+	TUniquePtr<FScenarioEngine> ScenarioEngine;
 };
