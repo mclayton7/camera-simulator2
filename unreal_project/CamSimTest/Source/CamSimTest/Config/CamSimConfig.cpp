@@ -983,6 +983,7 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlBool (PerfNode, "adaptive_sse",                         Perf.bAdaptiveSSE);
 			YamlFloat(PerfNode, "adaptive_sse_min",                     Perf.AdaptiveSSEMin);
 			YamlFloat(PerfNode, "adaptive_sse_max",                     Perf.AdaptiveSSEMax);
+			YamlBool (PerfNode, "track_pipeline_latency",              Perf.bTrackPipelineLatency);
 		}
 
 		if (Root.has_child("phase19"))
@@ -1181,6 +1182,16 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlFloat (L, "spot_radius",      Cfg.LaserDesignator.SpotRadius);
 			YamlFloat (L, "spot_intensity",   Cfg.LaserDesignator.SpotIntensity);
 			YamlInt   (L, "designator_code",  Cfg.LaserDesignator.DesignatorCode);
+		}
+
+		// Phase 28: operational config
+		if (Root.has_child("operational"))
+		{
+			ryml::ConstNodeRef OpNode = Root["operational"];
+			YamlString(OpNode, "structured_log_path", Cfg.Operational.StructuredLogPath);
+			YamlInt(OpNode, "structured_log_max_mb", Cfg.Operational.StructuredLogMaxMB);
+			YamlBool(OpNode, "health_http_enabled", Cfg.Operational.bHealthHttpEnabled);
+			YamlInt(OpNode, "health_http_port", Cfg.Operational.HealthHttpPort);
 		}
 
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
@@ -1533,6 +1544,13 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		L.SpotIntensity  = GetEnvFloat(TEXT("CAMSIM_LASER_INTENSITY"), L.SpotIntensity);
 		L.DesignatorCode = GetEnvInt  (TEXT("CAMSIM_LASER_CODE"),      L.DesignatorCode);
 	}
+
+	// Phase 28: operational env var overrides
+	Cfg.Operational.StructuredLogPath = GetEnv(TEXT("CAMSIM_STRUCTURED_LOG_PATH"), Cfg.Operational.StructuredLogPath);
+	Cfg.Operational.StructuredLogMaxMB = GetEnvInt(TEXT("CAMSIM_STRUCTURED_LOG_MAX_MB"), Cfg.Operational.StructuredLogMaxMB);
+	Cfg.Operational.bHealthHttpEnabled = GetEnvBool(TEXT("CAMSIM_HEALTH_HTTP_ENABLED"), Cfg.Operational.bHealthHttpEnabled);
+	Cfg.Operational.HealthHttpPort = GetEnvInt(TEXT("CAMSIM_HEALTH_HTTP_PORT"), Cfg.Operational.HealthHttpPort);
+	Cfg.Performance.bTrackPipelineLatency = GetEnvBool(TEXT("CAMSIM_TRACK_PIPELINE_LATENCY"), Cfg.Performance.bTrackPipelineLatency);
 
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping
 	if (Cfg.SensorFovPresets.Num() > 0)

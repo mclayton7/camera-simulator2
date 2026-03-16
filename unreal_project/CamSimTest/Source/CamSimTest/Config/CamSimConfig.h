@@ -480,6 +480,9 @@ struct FCamSimConfig
 		bool    bGpuSensorEffects      = false;
 		FString GpuSensorMaterialPath = TEXT("/Game/CamSim/Materials/M_SensorPostProcess");
 		FString GpuSensorMpcPath      = TEXT("/Game/CamSim/Materials/MPC_SensorParams");
+
+		// 28G Per-Frame Latency Tracking
+		bool  bTrackPipelineLatency = false;
 	};
 	FPerformanceConfig Performance;
 
@@ -677,6 +680,19 @@ struct FCamSimConfig
 
 	// HUD/OSD overlay burn-in (Phase 20)
 	FHudOverlayConfig OverlayConfig;
+
+	// Phase 28 — Operational Hardening
+	struct FOperationalConfig
+	{
+		// 28B: Structured JSON logging sidecar
+		FString StructuredLogPath;           // empty = disabled
+		int32   StructuredLogMaxMB = 100;    // rotation threshold
+
+		// 28C: HTTP health endpoints
+		bool  bHealthHttpEnabled = false;
+		int32 HealthHttpPort     = 8080;
+	};
+	FOperationalConfig Operational;
 
 	// Phase 13C: set to true when config was loaded (or defaults are valid).
 	// Set to false only if YAML parsing fails AND no defaults are available.

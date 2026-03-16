@@ -177,6 +177,12 @@ hfov_deg: 60.0
 # Env: CAMSIM_VIDEO_CODEC
 video_codec: h264
 
+# KLV checksum algorithm.
+# "crc16" = CRC-16/CCITT (default, matches validate_klv.py)
+# "bcc16" = BCC-16 running sum (per MISB ST 0601 specification)
+# Env: CAMSIM_KLV_CHECKSUM_MODE
+klv_checksum_mode: "crc16"
+
 # Encoder implementation: "auto" tries NVENC first, falls back to
 # libx264/libx265. Explicit values: "nvenc", "libx264", "libx265".
 # Env: CAMSIM_ENCODER
@@ -862,6 +868,26 @@ damage_transition:
   interpolation_sec: 1.0
   # Scorch darkening factor applied during gradual blend (0.0 = none, 1.0 = full black).
   scorch_darkening: 0.3
+
+# --- Phase 28: Operational Hardening ---
+
+# Structured JSON logging sidecar for ELK/Datadog/Splunk ingestion.
+# Set to a file path to enable (e.g., /var/log/camsim.jsonl).
+# Env: CAMSIM_STRUCTURED_LOG_PATH
+operational:
+  structured_log_path: ""
+
+  # Max file size in MB before rotation (close, rename .1, reopen).
+  # Env: CAMSIM_STRUCTURED_LOG_MAX_MB
+  structured_log_max_mb: 100
+
+  # HTTP health endpoints for Kubernetes liveness/readiness probes.
+  # GET /live — 200 if game loop ticking, 503 if stalled
+  # GET /ready — 200 when encoder + CIGI + first frame all OK
+  # GET /metrics — Prometheus exposition format
+  # Env: CAMSIM_HEALTH_HTTP_ENABLED / CAMSIM_HEALTH_HTTP_PORT
+  health_http_enabled: false
+  health_http_port: 8080
 
 # --- Entity Types ---
 # Maps CIGI EntityType uint16 to asset paths.
