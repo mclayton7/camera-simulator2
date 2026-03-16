@@ -746,6 +746,10 @@ performance:
   adaptive_sse_min: 8.0                      # CAMSIM_PERF_ADAPTIVE_SSE_MIN (sharpest allowed)
   adaptive_sse_max: 24.0                     # CAMSIM_PERF_ADAPTIVE_SSE_MAX (coarsest allowed)
 
+  # Phase 28G: Per-frame pipeline latency tracking (P50/P95/P99 to health + Prometheus).
+  # Env: CAMSIM_TRACK_PIPELINE_LATENCY
+  track_pipeline_latency: false
+
 # --- Cesium Backend ---
 # Ion server, terrain source, and imagery overlay.
 # Set ion_token to authenticate against Cesium ion (https://ion.cesium.com/tokens).

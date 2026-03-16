@@ -17,6 +17,8 @@
  */
 struct FCamSimJsonLogger
 {
+	~FCamSimJsonLogger() { Close(); }
+
 	bool Open(const FString& FilePath, int32 MaxSizeMB = 100);
 	void Close();
 	bool IsOpen() const { return FileHandle != nullptr; }
