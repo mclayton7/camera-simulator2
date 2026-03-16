@@ -22,6 +22,7 @@ class FDisEntityAdapter;
 class FCotSender;
 class ACamSimCamera;
 class UCesiumIonServer;
+struct FPipelineLatencyTracker;
 
 /**
  * UCamSimSubsystem
@@ -65,6 +66,7 @@ public:
 	FDisReceiver*          GetDisReceiver()     const;
 	FDisEntityAdapter*     GetDisAdapter()      const;
 	FCotSender*            GetCotSender()       const;
+	FPipelineLatencyTracker* GetLatencyTracker() const;
 
 	/** Store the transient UCesiumIonServer created by ApplyCesiumBackendConfig.
 	 *  Passing nullptr clears the stored reference (no-op if already null).

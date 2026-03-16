@@ -162,3 +162,68 @@ bool FPhase28LoggerDisabledTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Logger is not open"), Logger.IsOpen());
 	return true;
 }
+
+// -------------------------------------------------------------------------
+// Phase 28G: Pipeline Latency Tracker Tests
+// -------------------------------------------------------------------------
+
+#include "Diagnostics/PipelineLatencyTracker.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase28LatencyFullBufferTest,
+	"CamSim.Phase28.Latency.CommitAndPercentiles_FullBuffer",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase28LatencyFullBufferTest::RunTest(const FString& Parameters)
+{
+	FPipelineLatencyTracker Tracker(300);
+
+	// Fill 300 frames with known deltas
+	for (int32 i = 0; i < 300; ++i)
+	{
+		Tracker.SetStageTimestamp(EPipelineStage::CigiDequeue, static_cast<uint64>(i * 1000));
+		Tracker.SetStageTimestamp(EPipelineStage::EncodeComplete, static_cast<uint64>(i * 1000 + 500));
+		Tracker.CommitFrame();
+	}
+
+	FPipelineLatencyTracker::FLatencyPercentiles P = Tracker.ComputePercentiles();
+	// All frames have same delta (500 cycles) — P50/P95/P99 should all be ~same
+	TestTrue(TEXT("Total P50 > 0"), P.TotalUs[0] > 0.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase28LatencyEmptyTest,
+	"CamSim.Phase28.Latency.EmptyTracker_ReturnsZero",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase28LatencyEmptyTest::RunTest(const FString& Parameters)
+{
+	FPipelineLatencyTracker Tracker(300);
+	FPipelineLatencyTracker::FLatencyPercentiles P = Tracker.ComputePercentiles();
+	TestEqual(TEXT("Empty P50 total is 0"), P.TotalUs[0], 0.0f);
+	TestEqual(TEXT("Empty P95 total is 0"), P.TotalUs[1], 0.0f);
+	TestEqual(TEXT("Empty P99 total is 0"), P.TotalUs[2], 0.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase28LatencyPartialTest,
+	"CamSim.Phase28.Latency.PartialBuffer_ComputesCorrectly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase28LatencyPartialTest::RunTest(const FString& Parameters)
+{
+	FPipelineLatencyTracker Tracker(300);
+
+	// Only 10 frames
+	for (int32 i = 0; i < 10; ++i)
+	{
+		Tracker.SetStageTimestamp(EPipelineStage::CigiDequeue, static_cast<uint64>(i * 1000));
+		Tracker.SetStageTimestamp(EPipelineStage::EncodeComplete, static_cast<uint64>(i * 1000 + 100 * (i + 1)));
+		Tracker.CommitFrame();
+	}
+
+	FPipelineLatencyTracker::FLatencyPercentiles P = Tracker.ComputePercentiles();
+	// P50 should be near median delta; P99 should be >= P50
+	TestTrue(TEXT("Partial P50 > 0"), P.TotalUs[0] > 0.0f);
+	TestTrue(TEXT("P99 >= P50"), P.TotalUs[2] >= P.TotalUs[0]);
+	return true;
+}
