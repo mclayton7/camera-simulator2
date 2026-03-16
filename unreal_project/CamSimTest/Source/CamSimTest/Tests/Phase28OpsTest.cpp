@@ -110,3 +110,55 @@ bool FPhase28OddWidthTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Error mentions even requirement"), bFoundEven);
 	return true;
 }
+
+// -------------------------------------------------------------------------
+// Phase 28B: Structured JSON Logger Tests
+// -------------------------------------------------------------------------
+
+#include "Logging/CamSimJsonLogger.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase28LoggerWritesJsonTest,
+	"CamSim.Phase28.Logger.WritesValidJsonLine",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase28LoggerWritesJsonTest::RunTest(const FString& Parameters)
+{
+	const FString TestPath = FPaths::Combine(
+		FPlatformProcess::UserTempDir(), TEXT("camsim_test_log.jsonl"));
+
+	FCamSimJsonLogger Logger;
+	TestTrue(TEXT("Logger opens"), Logger.Open(TestPath));
+
+	TMap<FString, FString> Fields;
+	Fields.Add(TEXT("codec"), TEXT("h264"));
+	Logger.Log(TEXT("info"), TEXT("encoder"), TEXT("opened"), Fields);
+	Logger.Flush();
+	Logger.Close();
+
+	FString Contents;
+	TestTrue(TEXT("File exists"), FFileHelper::LoadFileToString(Contents, *TestPath));
+	TestTrue(TEXT("Contains severity"), Contents.Contains(TEXT("\"severity\":\"info\"")));
+	TestTrue(TEXT("Contains category"), Contents.Contains(TEXT("\"category\":\"encoder\"")));
+	TestTrue(TEXT("Contains msg"), Contents.Contains(TEXT("\"msg\":\"opened\"")));
+	TestTrue(TEXT("Contains codec field"), Contents.Contains(TEXT("\"codec\":\"h264\"")));
+	TestTrue(TEXT("Contains ts"), Contents.Contains(TEXT("\"ts\":")));
+
+	// Clean up
+	IFileManager::Get().Delete(*TestPath);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase28LoggerDisabledTest,
+	"CamSim.Phase28.Logger.DisabledLogger_NoFile",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase28LoggerDisabledTest::RunTest(const FString& Parameters)
+{
+	FCamSimJsonLogger Logger;
+	// Don't call Open — logger should be a no-op
+	Logger.Log(TEXT("info"), TEXT("test"), TEXT("should not crash"));
+	TestFalse(TEXT("Logger is not open"), Logger.IsOpen());
+	return true;
+}

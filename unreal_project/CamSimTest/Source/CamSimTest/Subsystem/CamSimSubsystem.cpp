@@ -15,6 +15,7 @@
 #include "DIS/DisReceiver.h"
 #include "DIS/DisEntityAdapter.h"
 #include "Streaming/CotSender.h"
+#include "Logging/CamSimJsonLogger.h"
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -50,6 +51,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FDisReceiver>             DisReceiver;
 	TUniquePtr<FDisEntityAdapter>        DisAdapter;
 	TUniquePtr<FCotSender>               CotSender;
+	TUniquePtr<FCamSimJsonLogger>        JsonLogger;
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -309,6 +311,29 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	// Phase 13B: allocate Pimpl — all sub-objects owned via TUniquePtr
 	Impl = MakePimpl<FSubsystemImpl>();
 
+	// Phase 28B: structured JSON logging
+	if (!Config.Operational.StructuredLogPath.IsEmpty())
+	{
+		Impl->JsonLogger = MakeUnique<FCamSimJsonLogger>();
+		if (Impl->JsonLogger->Open(Config.Operational.StructuredLogPath,
+		                            Config.Operational.StructuredLogMaxMB))
+		{
+			// Log startup config digest
+			TMap<FString, FString> StartupFields;
+			StartupFields.Add(TEXT("capture"), FString::Printf(TEXT("%dx%d"), Config.CaptureWidth, Config.CaptureHeight));
+			StartupFields.Add(TEXT("codec"), Config.VideoCodec);
+			StartupFields.Add(TEXT("bitrate"), FString::FromInt(Config.VideoBitrate));
+			StartupFields.Add(TEXT("fps"), FString::SanitizeFloat(Config.FrameRate));
+			Impl->JsonLogger->Log(TEXT("info"), TEXT("subsystem"), TEXT("initialized"), StartupFields);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: failed to open structured log at %s"),
+				*Config.Operational.StructuredLogPath);
+			Impl->JsonLogger.Reset();
+		}
+	}
+
 	// Start CIGI receiver thread
 	Impl->CigiReceiver = MakeUnique<FCigiReceiver>(Config);
 	if (!Impl->CigiReceiver->Start())
@@ -393,6 +418,15 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: ApplicationWillTerminate — flushing encoder"));
 		if (Impl)
 		{
+			if (Impl->JsonLogger)
+			{
+				TMap<FString, FString> ShutdownFields;
+				ShutdownFields.Add(TEXT("frame"), FString::FromInt(Impl->FrameCntr));
+				ShutdownFields.Add(TEXT("uptime_s"), FString::SanitizeFloat(
+					FPlatformTime::Seconds() - Impl->StartTimeSec));
+				Impl->JsonLogger->Log(TEXT("info"), TEXT("subsystem"), TEXT("shutdown"), ShutdownFields);
+				Impl->JsonLogger->Flush();
+			}
 			if (Impl->VideoEncoder) Impl->VideoEncoder->Close();
 			if (Impl->CigiSender)   Impl->CigiSender->Close();
 			if (Impl->CigiReceiver) Impl->CigiReceiver->Stop();
@@ -642,6 +676,12 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: failed to write prometheus metrics"));
 		}
 		Impl->PrometheusLastTick = Impl->FrameCntr;
+	}
+
+	// Phase 28B: flush structured log queue
+	if (Impl->JsonLogger)
+	{
+		Impl->JsonLogger->Flush();
 	}
 
 	++Impl->FrameCntr;
