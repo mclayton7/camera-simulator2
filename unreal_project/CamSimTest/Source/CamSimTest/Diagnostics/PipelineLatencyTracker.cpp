@@ -18,12 +18,12 @@ void FPipelineLatencyTracker::CommitFrame()
 {
 	const uint32 Idx = WriteIndex.Load(EMemoryOrder::Relaxed);
 	Records[Idx % BufferCapacity] = CurrentFrame;
-	WriteIndex.Store(Idx + 1, EMemoryOrder::Release);
+	WriteIndex.Store(Idx + 1, EMemoryOrder::SequentiallyConsistent);
 
 	const int32 Count = CommittedCount.Load(EMemoryOrder::Relaxed);
 	if (Count < BufferCapacity)
 	{
-		CommittedCount.Store(Count + 1, EMemoryOrder::Release);
+		CommittedCount.Store(Count + 1, EMemoryOrder::SequentiallyConsistent);
 	}
 
 	FMemory::Memzero(CurrentFrame);
@@ -51,7 +51,7 @@ float FPipelineLatencyTracker::PercentileFromSorted(const TArray<float>& Sorted,
 FPipelineLatencyTracker::FLatencyPercentiles FPipelineLatencyTracker::ComputePercentiles() const
 {
 	FLatencyPercentiles Result;
-	const int32 Count = CommittedCount.Load(EMemoryOrder::Acquire);
+	const int32 Count = CommittedCount.Load(EMemoryOrder::SequentiallyConsistent);
 	if (Count == 0) return Result;
 
 	// Collect deltas
@@ -61,7 +61,7 @@ FPipelineLatencyTracker::FLatencyPercentiles FPipelineLatencyTracker::ComputePer
 	EncodeDeltas.Reserve(Count);
 	TotalDeltas.Reserve(Count);
 
-	const uint32 WIdx = WriteIndex.Load(EMemoryOrder::Acquire);
+	const uint32 WIdx = WriteIndex.Load(EMemoryOrder::SequentiallyConsistent);
 	const int32 StartIdx = (Count < BufferCapacity) ? 0 : static_cast<int32>(WIdx % BufferCapacity);
 
 	for (int32 i = 0; i < Count; ++i)
