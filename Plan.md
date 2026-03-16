@@ -44,6 +44,10 @@ environmental effects, and interoperability — plus ML training data generation
 | 20     | View Definition           | ✅ FOV presets            |
 | 24     | HAT/HOT Request           | ✅ Terrain line trace     |
 | 25–26  | LOS Request               | ✅ Line-of-sight query    |
+| 3      | Conformal Clamped Entity  | ✅ Ground-clamped entity  |
+| 7      | Collision Detection Seg   | ⚠️ Stub (log only)        |
+| 13     | Maritime Surface Control  | ✅ Surface height/temp    |
+| 14     | Wave Control              | ✅ Wave state override    |
 | 101    | Start of Frame (response) | ✅ SOF + IG mode          |
 | 102    | HAT/HOT Response          | ✅ Terrain height reply   |
 | 103    | LOS Response              | ✅ LOS reply              |
@@ -75,7 +79,7 @@ Features VRSG has that CamSim lacks, organized by priority:
 | Scenario editor GUI                   | Missing             | Phase 23     |
 | Entity model library (hundreds)       | Small set           | Phase 22     |
 | After-action review / DIS log replay  | CIGI replay only    | Phase 21     |
-| Radar simulation (SAR/ISAR)           | Missing             | Phase 26     |
+| Radar simulation (SAR/ISAR)           | Missing             | Phase 29     |
 | Edge blending / dome display          | Missing             | Phase 25     |
 | FBX/OpenFlight model import           | ✅ FBX done         | Phase 22     |
 | NVG IR pointer                        | ✅ Done              | Phase 16     |
@@ -382,18 +386,38 @@ VRSG supports VR headsets, dome displays, and multi-monitor setups.
 
 Full interoperability with ISR ecosystem tools and standards validators.
 
-| Item                           | Description                                                                        | Effort | VRSG Parity |
-| ------------------------------ | ---------------------------------------------------------------------------------- | ------ | ----------- |
-| **26A** ST 0601 Missing Tags   | Tag 4 (frame #), 26 (target width), 31–34 (microdynamics), 42–45 (target location) | M      |             |
-| **26B** BCC-16 Checksum        | Switch from CRC-16/CCITT to standard BCC-16 (or make configurable)                 | S      |             |
-| **26C** STANAG 4609 Validation | Verify PAT/PMT structure, PID allocation, KLV sync timing per spec                 | M      | ✓           |
-| **26D** Remaining CIGI Opcodes | Opcode 3 (conformal clutter), 7 (collision detection), 13 (regional weather)       | M      | ✓           |
-| **26E** KLV Uncertainty Tags   | Tags 27–30 (slant range, cross-range, HFOV, VFOV uncertainty)                      | S      |             |
-| **26F** MISB ST 0903 VMTI      | Video Moving Target Indicator metadata for tracked entities                        | L      |             |
-| **26G** MISB 0601.9 + 0104.5   | Update to latest MISB standard versions (VRSG ships 0601.9 / 0104.5)               | M      | ✓           |
+| Item                           | Description                                                                        | Effort | VRSG Parity | Status           |
+| ------------------------------ | ---------------------------------------------------------------------------------- | ------ | ----------- | ---------------- |
+| **26A** ST 0601 Missing Tags   | Tags 4, 26, 31, 42-44 (frame #, target width, platform designation, target loc)    | M      |             | ✅ Sprint 1 Done |
+| **26B** BCC-16 Checksum        | Configurable CRC-16/CCITT (default) or BCC-16 running sum                          | S      |             | ✅ Sprint 1 Done |
+| **26C** STANAG 4609 Validation | Verify PAT/PMT structure, PID allocation, KLV sync timing per spec                 | M      | ✓           | ✅ Sprint 1 Done |
+| **26D** Remaining CIGI Opcodes | Opcode 3 (conformal clamped), 7 (collision detection stub), 13 (maritime surface)  | M      | ✓           | ✅ Sprint 1 Done |
+| **26E** KLV Uncertainty Tags   | Tags 27–30 (slant range, target width, HFOV, VFOV uncertainty — zero for sim)      | S      |             | ✅ Sprint 1 Done |
+| **26F** MISB ST 0903 VMTI      | Video Moving Target Indicator metadata for tracked entities                        | L      |             |                  |
+| **26G** MISB 0601.9 + 0104.5   | Update to latest MISB standard versions (VRSG ships 0601.9 / 0104.5)               | M      | ✓           | ✅ Sprint 1 Done |
 
-**Files**: `Metadata/KlvBuilder.cpp`, `CIGI/CigiReceiver.cpp`, `CIGI/CigiPacketTypes.h`
-**Validation**: Pass MISB ST 0601 compliance checker; validate with external KLV decoder
+**Sprint 1 status**: 26A, 26B, 26C, 26D, 26E, 26G implemented. 26F remains for future sprint.
+
+**Sprint 1 files**:
+- `Metadata/KlvBuilder.h` — `FrameNumber`, `TargetWidthM` telemetry fields; `MapTargetWidth()`, `SetChecksumMode()`, `ComputeBcc16()` declarations; updated tag list to ST 0601.9
+- `Metadata/KlvBuilder.cpp` — 10 new tag entries (4, 26, 27-31, 42-44); `MapTargetWidth()`, `ComputeBcc16()` implementations; checksum mode branching; Tag 65 version → 9
+- `Camera/CamSimCamera.cpp` — populate `FrameNumber` and `TargetWidthM` in telemetry
+- `Config/CamSimConfig.h` — `KlvChecksumMode` field
+- `Config/CamSimConfig.cpp` — YAML parsing + env var override for `klv_checksum_mode`
+- `Subsystem/CamSimSubsystem.cpp` — call `SetChecksumMode()` at init
+- `Encoder/VideoEncoder.cpp` — STANAG 4609 compliance comments in `OpenKlvStream()`
+- `CIGI/CigiPacketTypes.h` — `FCigiConfClampEntityState`, `FCigiCollisionDetSegDef`, `FCigiMaritimeSurfaceState` structs
+- `CIGI/CigiReceiver.h` — 2 SPSC queues, dequeue accessors, friend classes for new processors
+- `CIGI/CigiReceiver.cpp` — 3 new CCL processors (ConfClamp, CollisionDetSeg stub, MaritimeSurface) + register/unregister
+- `Entity/CamSimEntityManager.h/.cpp` — `ProcessConfClampEntities()` drain method
+- `Ocean/FGerstnerOceanSurface.h/.cpp` — `SetSurfaceHeightOffset()` method + `SurfaceHeightOffsetCm` member
+- `Ocean/FOceanManager.h/.cpp` — `SetMaritimeSurfaceState()` method
+- `Environment/CamSimEnvironment.cpp` — maritime surface queue drain loop
+- `scripts/validate_klv.py` — BCC-16 support, `--checksum-mode` flag, new tag decoders (4, 26, 27-31, 42-44)
+- `deploy/camsim_config.yaml` — `klv_checksum_mode:` entry
+- `Tests/Phase26StandardsTest.cpp` — 12 unit tests
+
+**Validation**: KLV packets contain all new tags; `validate_klv.py` decodes them; BCC-16 mode produces valid packets; CIGI opcode 3 entities appear ground-clamped; opcode 13 adjusts ocean surface height
 
 ---
 
@@ -446,20 +470,35 @@ Addresses FPS drops from 30→8-15fps during camera motion. Three tiers of chang
 
 Production-grade reliability for 24/7 deployment.
 
-| Item                               | Description                                                                    | Effort |
-| ---------------------------------- | ------------------------------------------------------------------------------ | ------ |
-| **28A** Unit Tests in CI           | Run UE automation tests in GitHub Actions (UE test runner step)                | M      |
-| **28B** Structured JSON Logging    | Machine-parseable log output for ELK/Datadog aggregation                       | M      |
-| **28C** HTTP Health Endpoints      | `/ready` and `/live` for Kubernetes probes                                     | M      |
-| **28D** Config Validation          | Pre-flight range checks on all config values with meaningful error messages    | S      |
-| **28E** Graceful Degradation       | Reduce resolution or disable effects under GPU/CPU pressure                    | L      |
-| **28F** Encoder Reconnection       | Socket reopen on UDP failure (3 retries); failover to local .ts recording      | M      |
-| **28G** Per-Frame Latency Tracking | Timestamp each pipeline stage; export P50/P95/P99 to Prometheus                | M      |
-| **28H** After-Action Review        | DIS/CIGI log replay with entity visualization, fire/shot lines, viewpoint save | L      |
-| **28I** Virtual World Sound        | Positional audio (engine sounds, weapons) for VR/training                      | M      |
+| Item                               | Description                                                                    | Effort | Status           |
+| ---------------------------------- | ------------------------------------------------------------------------------ | ------ | ---------------- |
+| **28A** Unit Tests in CI           | Run UE automation tests in GitHub Actions (UE test runner step)                | M      | ✅ Sprint 1 Done |
+| **28B** Structured JSON Logging    | Machine-parseable log output for ELK/Datadog aggregation                       | M      | ✅ Sprint 1 Done |
+| **28C** HTTP Health Endpoints      | `/ready` and `/live` for Kubernetes probes                                     | M      | ✅ Sprint 1 Done |
+| **28D** Config Validation          | Pre-flight range checks on all config values with meaningful error messages    | S      | ✅ Sprint 1 Done |
+| **28E** Graceful Degradation       | Reduce resolution or disable effects under GPU/CPU pressure                    | L      |                  |
+| **28F** Encoder Reconnection       | Socket reopen on UDP failure (3 retries); failover to local .ts recording      | M      |                  |
+| **28G** Per-Frame Latency Tracking | Timestamp each pipeline stage; export P50/P95/P99 to Prometheus                | M      | ✅ Sprint 1 Done |
+| **28H** After-Action Review        | DIS/CIGI log replay with entity visualization, fire/shot lines, viewpoint save | L      |                  |
+| **28I** Virtual World Sound        | Positional audio (engine sounds, weapons) for VR/training                      | M      |                  |
 
-**Files**: `Tests/`, `.github/workflows/ci.yml`, `Subsystem/CamSimSubsystem.cpp`
-**Validation**: CI passes all tests; health endpoint returns JSON; latency metrics in Prometheus
+**Sprint 1 status**: 28A, 28B, 28C, 28D, 28G implemented. 28E, 28F, 28H, 28I remain for Sprint 2.
+
+**Sprint 1 files**:
+- `Config/CamSimConfig.h` — `FOperationalConfig` struct, `Validate()` decl, `bTrackPipelineLatency` field
+- `Config/CamSimConfig.cpp` — 19 range-check validators, `operational:` YAML parsing, env var overrides
+- `Logging/CamSimJsonLogger.h/.cpp` — JSONL sidecar logger with SPSC queue + rotation
+- `Health/CamSimHealthServer.h/.cpp` — HTTP `/live`, `/ready`, `/metrics` via FHttpServerModule
+- `Diagnostics/PipelineLatencyTracker.h/.cpp` — per-frame stage timestamps, ring buffer, P50/P95/P99
+- `Subsystem/CamSimSubsystem.cpp` — owns logger/health/tracker; validation at init; structured log events; latency in health+Prometheus
+- `Camera/CamSimCamera.h/.cpp` — 6 latency Mark() calls at pipeline stages
+- `Encoder/EncoderThread.h/.cpp` — EncodeComplete mark + CommitFrame
+- `CamSimTest.Build.cs` — added `HTTPServer` module dependency
+- `.github/workflows/ci.yml` — `unit-tests` job (headless -NullRHI)
+- `deploy/camsim_config.yaml` — `operational:` block, `track_pipeline_latency` key
+- `Tests/Phase28OpsTest.cpp` — 10 unit tests (config validation, logger, latency tracker)
+
+**Validation**: CI passes all tests; `curl localhost:8080/live` returns 200; structured JSON in sidecar file; latency percentiles in Prometheus metrics
 
 ---
 
