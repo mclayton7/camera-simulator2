@@ -44,6 +44,7 @@ bool FCamSimHealthServer::Start(int32 Port,
 			{
 				FString Body = FString::Printf(TEXT("{\"status\":\"stalled\",\"last_tick_ago_s\":%.1f}"), AgeSec);
 				auto Response = FHttpServerResponse::Create(Body, TEXT("application/json"));
+				Response->Code = EHttpServerResponseCodes::ServiceUnavailable;
 				OnComplete(MoveTemp(Response));
 			}
 			return true;
@@ -66,6 +67,10 @@ bool FCamSimHealthServer::Start(int32 Port,
 				bFrame ? TEXT("true") : TEXT("false"));
 
 			auto Response = FHttpServerResponse::Create(Body, TEXT("application/json"));
+			if (!bReady)
+			{
+				Response->Code = EHttpServerResponseCodes::ServiceUnavailable;
+			}
 			OnComplete(MoveTemp(Response));
 			return true;
 		}));

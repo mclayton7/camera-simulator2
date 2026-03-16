@@ -9,8 +9,9 @@
  * FCamSimJsonLogger
  *
  * Writes structured JSON lines to a sidecar file for ELK/Datadog ingestion.
- * Thread-safe via lock-free SPSC queue: producers enqueue entries, game-thread
- * Flush() writes them to disk. Call Flush() periodically from the subsystem tick.
+ * Uses lock-free SPSC queue: a single producer thread enqueues entries,
+ * game-thread Flush() writes them to disk. Call Flush() periodically from
+ * the subsystem tick. NOTE: Only one thread may call Log() (single producer).
  *
  * Log rotation: when the file exceeds StructuredLogMaxMB, it is closed,
  * renamed to .1, and a fresh file is opened.
@@ -23,7 +24,7 @@ struct FCamSimJsonLogger
 	void Close();
 	bool IsOpen() const { return FileHandle != nullptr; }
 
-	/** Enqueue a structured log entry. Safe to call from any thread. */
+	/** Enqueue a structured log entry. Must be called from a single producer thread only (SPSC). */
 	void Log(const TCHAR* Severity, const TCHAR* Category,
 	         const TCHAR* Message, const TMap<FString, FString>& Fields = {});
 

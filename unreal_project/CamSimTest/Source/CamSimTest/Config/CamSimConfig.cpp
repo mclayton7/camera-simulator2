@@ -1606,9 +1606,9 @@ TArray<FString> FCamSimConfig::Validate() const
 	RangeCheckInt(TEXT("VideoBitrate"), VideoBitrate, 100000, 100000000);
 	RangeCheckFloat(TEXT("FrameRate"), FrameRate, 1.0f, 120.0f);
 
-	// Ports
-	RangeCheckInt(TEXT("CigiPort"), CigiPort, 1, 65535);
-	RangeCheckInt(TEXT("CigiResponsePort"), CigiResponsePort, 1, 65535);
+	// Ports (0 = disabled)
+	if (CigiPort != 0) RangeCheckInt(TEXT("CigiPort"), CigiPort, 1, 65535);
+	if (CigiResponsePort != 0) RangeCheckInt(TEXT("CigiResponsePort"), CigiResponsePort, 1, 65535);
 	RangeCheckInt(TEXT("MulticastPort"), MulticastPort, 1, 65535);
 
 	// FOV
