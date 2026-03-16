@@ -53,6 +53,16 @@ bool FPhase28InvalidResolutionTest::RunTest(const FString& Parameters)
 	Cfg.CaptureWidth = 0;
 	TArray<FString> Errors = Cfg.Validate();
 	TestTrue(TEXT("Has errors for width=0"), Errors.Num() > 0);
+	bool bFoundWidth = false;
+	for (const FString& E : Errors)
+	{
+		if (E.Contains(TEXT("CaptureWidth")))
+		{
+			bFoundWidth = true;
+			break;
+		}
+	}
+	TestTrue(TEXT("Error mentions CaptureWidth"), bFoundWidth);
 	return true;
 }
 

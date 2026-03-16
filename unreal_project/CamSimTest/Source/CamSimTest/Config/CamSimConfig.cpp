@@ -1645,11 +1645,10 @@ TArray<FString> FCamSimConfig::Validate() const
 
 	// Performance
 	RangeCheckFloat(TEXT("Performance.RenderFrameRateHz"), Performance.RenderFrameRateHz, 1.0f, 120.0f);
-	RangeCheckFloat(TEXT("Performance.OutputFrameRateHz"), Performance.OutputFrameRateHz, 1.0f, 120.0f);
-	if (Performance.OutputFrameRateHz > Performance.RenderFrameRateHz)
+	if (Performance.OutputFrameRateHz < 1.0f || Performance.OutputFrameRateHz > Performance.RenderFrameRateHz)
 	{
 		Errors.Add(FString::Printf(
-			TEXT("Performance.OutputFrameRateHz (%.1f) exceeds RenderFrameRateHz (%.1f)"),
+			TEXT("Performance.OutputFrameRateHz=%.1f out of range [1.0, RenderFrameRateHz=%.1f]"),
 			Performance.OutputFrameRateHz, Performance.RenderFrameRateHz));
 	}
 
