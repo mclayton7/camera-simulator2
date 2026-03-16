@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Ocean/FOceanManager.h"
+#include "CamSimTest.h"
 #include "Ocean/FBeaufortTable.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "Entity/CamSimEntityManager.h"
@@ -86,6 +87,25 @@ void FOceanManager::ApplyWaveState(const FCigiWaveState& State)
 	GerstnerSurface.SetWaveParams(State.WaveHtM, State.WaveLenM,
 	                               Config.WaveAmplitudeScale, Config.WaveFrequencyScale,
 	                               Config.WaveChoppiness);
+}
+
+void FOceanManager::SetMaritimeSurfaceState(const FCigiMaritimeSurfaceState& State)
+{
+	if (!OceanEnabled)
+	{
+		UE_LOG(LogCamSim, Verbose,
+			TEXT("FOceanManager: maritime surface state received but ocean is disabled (region=%u)"),
+			State.EntityRgnId);
+		return;
+	}
+	if (!State.bSurfaceCondEn) return;
+
+	// Apply surface height offset to the Gerstner ocean surface
+	GerstnerSurface.SetSurfaceHeightOffset(State.SurfaceHeight);
+
+	UE_LOG(LogCamSim, Verbose,
+		TEXT("FOceanManager: maritime surface applied (region=%u height=%.1fm temp=%.1fC clarity=%.2f)"),
+		State.EntityRgnId, State.SurfaceHeight, State.WaterTemp, State.Clarity);
 }
 
 void FOceanManager::OnAtmosphereChanged()

@@ -62,6 +62,14 @@ def crc16_ccitt(data: bytes) -> int:
 
 
 # ---------------------------------------------------------------------------
+# BCC-16 (running 16-bit modular sum, per MISB ST 0601 specification)
+# ---------------------------------------------------------------------------
+
+def bcc16(data: bytes) -> int:
+    return sum(data) & 0xFFFF
+
+
+# ---------------------------------------------------------------------------
 # MISB ST 0601 tag decoders
 # ---------------------------------------------------------------------------
 
@@ -130,6 +138,34 @@ def decode_slant_range(v: bytes) -> str:
     return f"{metres:.1f} m"
 
 
+def decode_target_width(v: bytes) -> str:
+    """Unsigned uint16, 0..10 000 m."""
+    raw = int.from_bytes(v, "big")
+    metres = raw * 10_000.0 / 65535.0
+    return f"{metres:.1f} m"
+
+
+def decode_uncertainty_range(v: bytes) -> str:
+    """Unsigned uint32, 0..5 000 000 m (slant range uncertainty)."""
+    raw = int.from_bytes(v, "big")
+    metres = raw * 5_000_000.0 / 0xFFFF_FFFF
+    return f"{metres:.1f} m"
+
+
+def decode_uncertainty_width(v: bytes) -> str:
+    """Unsigned uint16, 0..10 000 m (target width uncertainty)."""
+    raw = int.from_bytes(v, "big")
+    metres = raw * 10_000.0 / 65535.0
+    return f"{metres:.1f} m"
+
+
+def decode_uncertainty_fov(v: bytes) -> str:
+    """Unsigned uint16, 0..180° (FOV uncertainty)."""
+    raw = int.from_bytes(v, "big")
+    deg = raw * 180.0 / 65535.0
+    return f"{deg:.3f}°"
+
+
 def decode_flag_data_01(v: bytes) -> str:
     """Generic Flag Data 01 bitmask: bit5=IR polarity, bit3=slant range valid."""
     b = v[0]
@@ -152,6 +188,7 @@ def decode_version(v: bytes) -> str:
 TAG_DECODERS = {
     1:  ("Checksum",                  lambda v: f"0x{int.from_bytes(v,'big'):04X}"),
     2:  ("UNIX Timestamp",            decode_timestamp),
+    4:  ("Precision Time Stamp",      decode_timestamp),
     5:  ("Platform Heading",          decode_heading),
     6:  ("Platform Pitch",            decode_platform_pitch),
     7:  ("Platform Roll",             decode_platform_roll),
@@ -169,6 +206,15 @@ TAG_DECODERS = {
     23: ("Frame Center Latitude",     lambda v: decode_lat_lon(v,  90.0)),
     24: ("Frame Center Longitude",    lambda v: decode_lat_lon(v, 180.0)),
     25: ("Frame Center Elevation",    decode_altitude),
+    26: ("Target Width",              decode_target_width),
+    27: ("Slant Range Uncertainty",   decode_uncertainty_range),
+    28: ("Target Width Uncertainty",  decode_uncertainty_width),
+    29: ("Sensor HFOV Uncertainty",   decode_uncertainty_fov),
+    30: ("Sensor VFOV Uncertainty",   decode_uncertainty_fov),
+    31: ("Platform Designation",      decode_string),
+    42: ("Target Location Lat",       lambda v: decode_lat_lon(v,  90.0)),
+    43: ("Target Location Lon",       lambda v: decode_lat_lon(v, 180.0)),
+    44: ("Target Location Elev",      decode_altitude),
     47: ("Generic Flag Data 01",      decode_flag_data_01),
     65: ("UAS LS Version",            decode_version),
 }
@@ -194,7 +240,7 @@ def decode_ber_length(data: bytes, offset: int) -> tuple[int, int]:
 # KLV Local Set parser
 # ---------------------------------------------------------------------------
 
-def parse_klv_local_set(packet: bytes, verbose: bool = False) -> dict:
+def parse_klv_local_set(packet: bytes, verbose: bool = False, checksum_mode: str = "crc16") -> dict:
     """
     Parse a MISB ST 0601 Local Set KLV packet.
     Returns a dict of {tag: (name, decoded_value)} plus '_errors' list.
@@ -270,18 +316,20 @@ def parse_klv_local_set(packet: bytes, verbose: bool = False) -> dict:
 
         pos += length
 
-    # CRC validation
+    # Checksum validation (CRC-16/CCITT or BCC-16)
     if crc_offset is not None:
-        # CRC covers: UL key + BER length + all TLVs up to (not including) Tag1 value
+        # Checksum covers: UL key + BER length + all TLVs up to (not including) Tag1 value
         # = packet[0 .. crc_offset-2]   (exclude tag=1, length=2 bytes too)
-        data_for_crc = packet[:crc_offset - 2]   # exclude "01 02" tag+length of CRC tag
-        expected_crc = crc16_ccitt(data_for_crc)
-        actual_crc   = int.from_bytes(packet[crc_offset: crc_offset + 2], "big")
-        if expected_crc == actual_crc:
-            result["_crc"] = f"OK (0x{actual_crc:04X})"
+        data_for_checksum = packet[:crc_offset - 2]   # exclude "01 02" tag+length of checksum tag
+        checksum_fn = bcc16 if checksum_mode == "bcc16" else crc16_ccitt
+        expected_checksum = checksum_fn(data_for_checksum)
+        actual_checksum   = int.from_bytes(packet[crc_offset: crc_offset + 2], "big")
+        mode_label = "BCC-16" if checksum_mode == "bcc16" else "CRC-16"
+        if expected_checksum == actual_checksum:
+            result["_crc"] = f"OK ({mode_label} 0x{actual_checksum:04X})"
         else:
-            result["_crc"] = f"FAIL (got 0x{actual_crc:04X}, expected 0x{expected_crc:04X})"
-            result["_errors"].append("CRC mismatch")
+            result["_crc"] = f"FAIL ({mode_label} got 0x{actual_checksum:04X}, expected 0x{expected_checksum:04X})"
+            result["_errors"].append(f"{mode_label} checksum mismatch")
     else:
         result["_crc"] = "Tag 1 not found"
 
@@ -492,6 +540,12 @@ def main():
         help="Max seconds to wait for UDP stream data before failing (UDP mode only)",
     )
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument(
+        "--checksum-mode",
+        choices=["crc16", "bcc16"],
+        default="crc16",
+        help="Checksum algorithm: crc16 (CRC-16/CCITT, default) or bcc16 (running sum)",
+    )
     args = ap.parse_args()
 
     print("==> CamSim KLV Validator")
@@ -587,7 +641,7 @@ def main():
                     klv_pid = pid
                     print(f"    Auto-detected KLV PID: 0x{pid:04X} ({pid})")
 
-                result = parse_klv_local_set(klv_packet, verbose=args.verbose)
+                result = parse_klv_local_set(klv_packet, verbose=args.verbose, checksum_mode=args.checksum_mode)
                 klv_count += 1
                 print_klv_result(result, klv_count)
 

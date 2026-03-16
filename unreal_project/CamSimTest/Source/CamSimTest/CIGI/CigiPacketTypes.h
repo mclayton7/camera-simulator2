@@ -285,6 +285,50 @@ struct FCigiWeatherState
 	float  WindDir       = 0.0f;   // degrees from north [0,360)
 };
 
+/**
+ * FCigiConfClampEntityState
+ *
+ * Flattened CIGI Conformal Clamped Entity Control packet (v3.3, opcode 3).
+ * Entity is clamped to terrain — altitude is determined by terrain query.
+ */
+struct FCigiConfClampEntityState
+{
+	uint16 EntityId  = 0;
+	double Latitude  = 0.0;   // WGS-84 decimal degrees
+	double Longitude = 0.0;   // WGS-84 decimal degrees
+	float  Yaw       = 0.0f;  // degrees [0,360)
+};
+
+/**
+ * FCigiCollisionDetSegDef
+ *
+ * Minimal stub for CIGI Collision Detection Segment Definition (v3.3, opcode 7).
+ * Logged at Verbose level only — no game-thread processing.
+ */
+struct FCigiCollisionDetSegDef
+{
+	uint16 EntityId = 0;
+	uint8  SegId    = 0;
+	bool   bEnabled = false;
+};
+
+/**
+ * FCigiMaritimeSurfaceState
+ *
+ * Flattened CIGI Maritime Surface Conditions Control packet (v3.3, opcode 13).
+ * Controls ocean surface parameters for a given scope.
+ */
+struct FCigiMaritimeSurfaceState
+{
+	uint16 EntityRgnId    = 0;
+	bool   bSurfaceCondEn = false;
+	bool   bWhitecapEn    = false;
+	uint8  Scope          = 0;        // 0=Global, 1=Regional, 2=Entity
+	float  SurfaceHeight  = 0.0f;     // metres
+	float  WaterTemp      = 15.0f;    // degrees Celsius
+	float  Clarity        = 1.0f;     // [0,1]
+};
+
 /** CIGI Wave Control (opcode 14) — ocean wave parameters from CIGI host. */
 struct FCigiWaveState
 {

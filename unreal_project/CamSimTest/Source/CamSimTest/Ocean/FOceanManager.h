@@ -37,6 +37,9 @@ public:
 	/** Apply a CIGI Wave Control packet — called from ACamSimEnvironment::Tick() drain loop. */
 	void ApplyWaveState(const FCigiWaveState& State);
 
+	/** Phase 26D: Apply maritime surface conditions from CIGI opcode 13. */
+	void SetMaritimeSurfaceState(const FCigiMaritimeSurfaceState& State);
+
 	/** Non-owning pointer to the ocean surface (for IOceanSurface* injection into entity manager). */
 	IOceanSurface* GetOceanSurface() { return OceanEnabled ? &GerstnerSurface : nullptr; }
 

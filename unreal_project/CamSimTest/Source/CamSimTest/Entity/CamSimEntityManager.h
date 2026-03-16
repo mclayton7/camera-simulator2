@@ -64,6 +64,7 @@ private:
 
 	// Drain helpers — called from Tick()
 	void ProcessEntityStates(float DeltaTime);
+	void ProcessConfClampEntities();
 	void ProcessRateControls();
 	void ProcessArtPartControls();
 	void ProcessComponentControls();

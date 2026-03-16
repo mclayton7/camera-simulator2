@@ -23,6 +23,12 @@ static const uint8 kST0601_UL[16] = {
 static TArray<uint8> CachedST0102Payload;
 
 // -------------------------------------------------------------------------
+// Phase 26B: Checksum mode — BCC-16 vs CRC-16/CCITT
+// Configured once at startup via FKlvBuilder::SetChecksumMode().
+// -------------------------------------------------------------------------
+static bool bUseBcc16Checksum = false;
+
+// -------------------------------------------------------------------------
 // Tag descriptor table
 //
 // Each entry describes one TLV field.  The encoder lambda appends the
@@ -54,6 +60,23 @@ static void AppendStringTag(TArray<uint8>& V, uint8 Tag, const char* Str)
 	FKlvBuilder::AppendTag(V, Tag, reinterpret_cast<const uint8*>(Str), Len);
 }
 
+// Append a 2-byte unsigned tag with a raw uint16 value
+static void AppendUint16Tag(TArray<uint8>& V, uint8 Tag, uint16 Val)
+{
+	uint8 Tmp[2] = { uint8((Val >> 8) & 0xFF), uint8(Val & 0xFF) };
+	FKlvBuilder::AppendTag(V, Tag, Tmp, 2);
+}
+
+// Append a 4-byte unsigned tag with a raw uint32 value
+static void AppendUint32Tag(TArray<uint8>& V, uint8 Tag, uint32 Val)
+{
+	uint8 Tmp[4] = {
+		uint8((Val >> 24) & 0xFF), uint8((Val >> 16) & 0xFF),
+		uint8((Val >>  8) & 0xFF), uint8(Val & 0xFF)
+	};
+	FKlvBuilder::AppendTag(V, Tag, Tmp, 4);
+}
+
 static const TArray<FKlvTagDescriptor> KlvTagTable = {
 	// Tag 2 – UNIX Time Stamp, 8-byte unsigned, microseconds
 	{ 2, [](TArray<uint8>& V, const FCamSimTelemetry& T)
@@ -64,12 +87,19 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		FKlvBuilder::AppendTag(V, 2, Tmp, 8);
 	}},
 
+	// Tag 4 – Precision Time Stamp, 8-byte unsigned, microseconds (same value as Tag 2 per spec)
+	{ 4, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		uint8 Tmp[8];
+		uint64 Ts = T.TimestampUs;
+		for (int i = 7; i >= 0; --i) { Tmp[i] = Ts & 0xFF; Ts >>= 8; }
+		FKlvBuilder::AppendTag(V, 4, Tmp, 8);
+	}},
+
 	// Tag 5 – Platform Heading Angle, 2-byte unsigned, 0..360°
 	{ 5, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		uint16 H = FKlvBuilder::MapHeading(T.Yaw);
-		uint8 Tmp[2] = { uint8((H >> 8) & 0xFF), uint8(H & 0xFF) };
-		FKlvBuilder::AppendTag(V, 5, Tmp, 2);
+		AppendUint16Tag(V, 5, FKlvBuilder::MapHeading(T.Yaw));
 	}},
 
 	// Tag 6 – Platform Pitch Angle, 2-byte signed, ±20°
@@ -118,36 +148,25 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 	// Tag 15 – Sensor True Altitude, 2-byte unsigned −900..19000 m
 	{ 15, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.Altitude));
-		uint8 Tmp[2] = { uint8((Alt >> 8) & 0xFF), uint8(Alt & 0xFF) };
-		FKlvBuilder::AppendTag(V, 15, Tmp, 2);
+		AppendUint16Tag(V, 15, static_cast<uint16>(FKlvBuilder::MapAltitude(T.Altitude)));
 	}},
 
 	// Tag 16 – Sensor Horizontal FOV, 2-byte unsigned 0..180°
 	{ 16, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		uint16 Fov = FKlvBuilder::MapFov(T.HFovDeg);
-		uint8 Tmp[2] = { uint8((Fov >> 8) & 0xFF), uint8(Fov & 0xFF) };
-		FKlvBuilder::AppendTag(V, 16, Tmp, 2);
+		AppendUint16Tag(V, 16, FKlvBuilder::MapFov(T.HFovDeg));
 	}},
 
 	// Tag 17 – Sensor Vertical FOV, 2-byte unsigned 0..180°
 	{ 17, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		uint16 Fov = FKlvBuilder::MapFov(T.VFovDeg > 0.0f ? T.VFovDeg : T.HFovDeg * (9.0f / 16.0f));
-		uint8 Tmp[2] = { uint8((Fov >> 8) & 0xFF), uint8(Fov & 0xFF) };
-		FKlvBuilder::AppendTag(V, 17, Tmp, 2);
+		AppendUint16Tag(V, 17, FKlvBuilder::MapFov(T.VFovDeg > 0.0f ? T.VFovDeg : T.HFovDeg * (9.0f / 16.0f)));
 	}},
 
 	// Tag 18 – Sensor Relative Azimuth Angle, 4-byte unsigned 0..360° (gimbal yaw)
 	{ 18, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		uint32 Az = FKlvBuilder::MapAzimuth360(T.GimbalYaw);
-		uint8 Tmp[4] = {
-			uint8((Az >> 24) & 0xFF), uint8((Az >> 16) & 0xFF),
-			uint8((Az >>  8) & 0xFF), uint8(Az & 0xFF)
-		};
-		FKlvBuilder::AppendTag(V, 18, Tmp, 4);
+		AppendUint32Tag(V, 18, FKlvBuilder::MapAzimuth360(T.GimbalYaw));
 	}},
 
 	// Tag 19 – Sensor Relative Elevation Angle, 4-byte signed ±180° (gimbal pitch)
@@ -164,24 +183,14 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 	// Tag 20 – Sensor Relative Roll Angle, 4-byte unsigned 0..360° (gimbal roll)
 	{ 20, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		uint32 Ro = FKlvBuilder::MapAzimuth360(T.GimbalRoll);
-		uint8 Tmp[4] = {
-			uint8((Ro >> 24) & 0xFF), uint8((Ro >> 16) & 0xFF),
-			uint8((Ro >>  8) & 0xFF), uint8(Ro & 0xFF)
-		};
-		FKlvBuilder::AppendTag(V, 20, Tmp, 4);
+		AppendUint32Tag(V, 20, FKlvBuilder::MapAzimuth360(T.GimbalRoll));
 	}},
 
 	// Tag 21 – Slant Range, 4-byte unsigned 0..5000000 m (omit if 0)
 	{ 21, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
 		if (T.SlantRangeM <= 0.0) return;
-		uint32 SR = FKlvBuilder::MapSlantRange(T.SlantRangeM);
-		uint8 Tmp[4] = {
-			uint8((SR >> 24) & 0xFF), uint8((SR >> 16) & 0xFF),
-			uint8((SR >>  8) & 0xFF), uint8(SR & 0xFF)
-		};
-		FKlvBuilder::AppendTag(V, 21, Tmp, 4);
+		AppendUint32Tag(V, 21, FKlvBuilder::MapSlantRange(T.SlantRangeM));
 	}},
 
 	// Tag 23 – Frame Center Latitude, 4-byte signed ±90°
@@ -199,9 +208,64 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 	// Tag 25 – Frame Center Elevation, 2-byte unsigned −900..19000 m
 	{ 25, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.FrameCenterElev));
-		uint8 Tmp[2] = { uint8((Alt >> 8) & 0xFF), uint8(Alt & 0xFF) };
-		FKlvBuilder::AppendTag(V, 25, Tmp, 2);
+		AppendUint16Tag(V, 25, static_cast<uint16>(FKlvBuilder::MapAltitude(T.FrameCenterElev)));
+	}},
+
+	// Tag 26 – Target Width, 2-byte unsigned 0..10000 m (omit if 0)
+	{ 26, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (T.TargetWidthM <= 0.0f) return;
+		AppendUint16Tag(V, 26, FKlvBuilder::MapTargetWidth(T.TargetWidthM));
+	}},
+
+	// Tag 27 – Slant Range Uncertainty, 4-byte unsigned 0..5000000 m (only when range valid)
+	{ 27, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (T.SlantRangeM <= 0.0) return;
+		AppendUint32Tag(V, 27, 0);  // simulator has perfect knowledge
+	}},
+
+	// Tag 28 – Target Width Uncertainty, 2-byte unsigned 0..10000 m (only when width valid)
+	{ 28, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (T.TargetWidthM <= 0.0f) return;
+		AppendUint16Tag(V, 28, 0);  // simulator has perfect knowledge
+	}},
+
+	// Tag 29 – Sensor Horizontal FOV Uncertainty, 2-byte unsigned 0..180°
+	{ 29, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		AppendUint16Tag(V, 29, 0);  // simulator has perfect knowledge
+	}},
+
+	// Tag 30 – Sensor Vertical FOV Uncertainty, 2-byte unsigned 0..180°
+	{ 30, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		AppendUint16Tag(V, 30, 0);  // simulator has perfect knowledge
+	}},
+
+	// Tag 31 – Platform Designation, ISO 646 string (static)
+	{ 31, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		AppendStringTag(V, 31, "CamSim");
+	}},
+
+	// Tag 42 – Target Location Latitude, 4-byte signed ±90° (reuse frame center)
+	{ 42, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		AppendLatLon4(V, 42, T.FrameCenterLat, 90.0);
+	}},
+
+	// Tag 43 – Target Location Longitude, 4-byte signed ±180° (reuse frame center)
+	{ 43, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		AppendLatLon4(V, 43, T.FrameCenterLon, 180.0);
+	}},
+
+	// Tag 44 – Target Location Elevation, 2-byte unsigned −900..19000 m (reuse frame center)
+	{ 44, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		AppendUint16Tag(V, 44, static_cast<uint16>(FKlvBuilder::MapAltitude(T.FrameCenterElev)));
 	}},
 
 	// Tag 47 – Generic Flag Data 01, 1-byte bitmask
@@ -235,10 +299,10 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		V.Append(CachedST0102Payload);
 	}},
 
-	// Tag 65 – UAS LS Version Number, 1-byte unsigned, value=8 (ST 0601.8)
+	// Tag 65 – UAS LS Version Number, 1-byte unsigned, value=9 (ST 0601.9)
 	{ 65, [](TArray<uint8>& V, const FCamSimTelemetry&)
 	{
-		constexpr uint8 Version = 8;
+		constexpr uint8 Version = 9;
 		FKlvBuilder::AppendTag(V, 65, &Version, 1);
 	}},
 };
@@ -251,17 +315,17 @@ TArray<uint8> FKlvBuilder::BuildMisbST0601(const FCamSimTelemetry& T)
 {
 	// Build value payload by iterating the descriptor table
 	TArray<uint8> Value;
-	Value.Reserve(200);
+	Value.Reserve(256);
 
 	for (const FKlvTagDescriptor& Desc : KlvTagTable)
 	{
 		Desc.Encode(Value, T);
 	}
 
-	// Reserve 4 bytes for CRC tag (written after CRC computation)
-	constexpr int32 CrcTagLen = 4;  // tag(1) + len(1) + crc(2)
+	// Reserve 4 bytes for checksum tag (written after computation)
+	constexpr int32 CrcTagLen = 4;  // tag(1) + len(1) + checksum(2)
 
-	// Assemble full packet: UL key + BER length + TLV payload + CRC tag
+	// Assemble full packet: UL key + BER length + TLV payload + checksum tag
 	TArray<uint8> Packet;
 	Packet.Reserve(16 + 3 + Value.Num() + CrcTagLen);
 
@@ -286,13 +350,15 @@ TArray<uint8> FKlvBuilder::BuildMisbST0601(const FCamSimTelemetry& T)
 
 	Packet.Append(Value);
 
-	// CRC-16/CCITT over everything so far (UL + length + TLVs)
-	const uint16 Crc = ComputeCrc16(Packet.GetData(), Packet.Num());
+	// Compute checksum over everything so far (UL + length + TLVs)
+	const uint16 Checksum = bUseBcc16Checksum
+		? ComputeBcc16(Packet.GetData(), Packet.Num())
+		: ComputeCrc16(Packet.GetData(), Packet.Num());
 
 	Packet.Add(1);   // Tag 1 (checksum)
 	Packet.Add(2);   // length
-	Packet.Add(static_cast<uint8>((Crc >> 8) & 0xFF));
-	Packet.Add(static_cast<uint8>(Crc & 0xFF));
+	Packet.Add(static_cast<uint8>((Checksum >> 8) & 0xFF));
+	Packet.Add(static_cast<uint8>(Checksum & 0xFF));
 
 	return Packet;
 }
@@ -338,7 +404,7 @@ int32 FKlvBuilder::MapElevation180(float Degrees)
 	return static_cast<int32>(FMath::RoundToInt(Clamped * Scale));
 }
 
-// Tags 15/25: Altitude, 2-byte unsigned mapped from −900..19000 m
+// Tags 15/25/44: Altitude, 2-byte unsigned mapped from −900..19000 m
 int16 FKlvBuilder::MapAltitude(double Metres)
 {
 	if (!FMath::IsFinite(Metres)) Metres = 0.0;
@@ -391,6 +457,26 @@ uint32 FKlvBuilder::MapSlantRange(double Metres)
 	constexpr double Max     = 5000000.0;
 	const double     Clamped = FMath::Clamp(Metres, 0.0, Max);
 	return static_cast<uint32>(Clamped / Max * static_cast<double>(TNumericLimits<uint32>::Max()));
+}
+
+// Tag 26: Target Width, 2-byte unsigned, 0..10000 m
+uint16 FKlvBuilder::MapTargetWidth(double Metres)
+{
+	if (!FMath::IsFinite(Metres)) Metres = 0.0;
+	constexpr double Max     = 10000.0;
+	const double     Clamped = FMath::Clamp(Metres, 0.0, Max);
+	return static_cast<uint16>(FMath::RoundToInt(Clamped / Max * 65535.0));
+}
+
+// -------------------------------------------------------------------------
+// SetChecksumMode — Phase 26B
+// -------------------------------------------------------------------------
+
+void FKlvBuilder::SetChecksumMode(bool bUseBcc16)
+{
+	bUseBcc16Checksum = bUseBcc16;
+	UE_LOG(LogCamSim, Log, TEXT("FKlvBuilder: checksum mode set to %s"),
+		bUseBcc16 ? TEXT("BCC-16") : TEXT("CRC-16/CCITT"));
 }
 
 // -------------------------------------------------------------------------
@@ -495,4 +581,18 @@ uint16 FKlvBuilder::ComputeCrc16(const uint8* Data, int32 Len)
 		}
 	}
 	return Crc;
+}
+
+// -------------------------------------------------------------------------
+// BCC-16 (running 16-bit modular sum, per MISB ST 0601 specification)
+// -------------------------------------------------------------------------
+
+uint16 FKlvBuilder::ComputeBcc16(const uint8* Data, int32 Len)
+{
+	uint16 Sum = 0;
+	for (int32 i = 0; i < Len; ++i)
+	{
+		Sum += Data[i];
+	}
+	return Sum;
 }

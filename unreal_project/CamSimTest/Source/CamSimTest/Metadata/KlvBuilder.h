@@ -48,6 +48,10 @@ struct FCamSimTelemetry
 	float AirTempCelsius         = 15.0f;    // degrees Celsius
 	float WeatherSeverity        = 0.0f;     // [0,1] — 0=clear, 1=severe
 	uint8 WeatherPrecipType      = 0;        // 0=none, 1=rain, 2=snow
+
+	// Phase 26A: additional KLV tags
+	uint32 FrameNumber      = 0;       // Tag 4 — monotonic frame counter
+	float  TargetWidthM     = 0.0f;    // Tag 26 — sensor footprint width on ground (metres)
 };
 
 /**
@@ -56,9 +60,10 @@ struct FCamSimTelemetry
  * Stateless helper that encodes an FCamSimTelemetry into a MISB ST 0601
  * KLV Local Set byte buffer ready to be written to an FFmpeg data-stream packet.
  *
- * Tags implemented (ST 0601.8, ascending order):
- *   Tag  1  – Checksum (CRC-16/CCITT)
+ * Tags implemented (ST 0601.9, ascending order):
+ *   Tag  1  – Checksum (CRC-16/CCITT or BCC-16, configurable)
  *   Tag  2  – UNIX Time Stamp            (uint64, μs, 8 bytes)
+ *   Tag  4  – Precision Time Stamp       (uint64, μs, 8 bytes — same as Tag 2)
  *   Tag  5  – Platform Heading Angle     (uint16, 0..360°)
  *   Tag  6  – Platform Pitch Angle       (int16,  ±20°)
  *   Tag  7  – Platform Roll Angle        (int16,  ±50°)
@@ -76,11 +81,21 @@ struct FCamSimTelemetry
  *   Tag 23  – Frame Center Latitude      (int32,  ±90°)
  *   Tag 24  – Frame Center Longitude     (int32,  ±180°)
  *   Tag 25  – Frame Center Elevation     (uint16, −900..19000 m)
+ *   Tag 26  – Target Width               (uint16, 0..10 000 m)
+ *   Tag 27  – Slant Range Uncertainty    (uint32, 0..5 000 000 m — 0 for simulator)
+ *   Tag 28  – Target Width Uncertainty   (uint16, 0..10 000 m — 0 for simulator)
+ *   Tag 29  – Sensor HFOV Uncertainty    (uint16, 0..180° — 0 for simulator)
+ *   Tag 30  – Sensor VFOV Uncertainty    (uint16, 0..180° — 0 for simulator)
+ *   Tag 31  – Platform Designation       (ISO 646 string: "CamSim")
+ *   Tag 42  – Target Location Latitude   (int32,  ±90°)
+ *   Tag 43  – Target Location Longitude  (int32,  ±180°)
+ *   Tag 44  – Target Location Elevation  (uint16, −900..19000 m)
  *   Tag 47  – Generic Flag Data 01       (uint8 bitmask: bit5=IR polarity, bit3=range valid)
- *   Tag 65  – UAS LS Version Number      (uint8, value=8)
+ *   Tag 65  – UAS LS Version Number      (uint8, value=9)
  *
- * NOTE on checksum: The ST 0601.8 standard specifies BCC-16 (running modular sum), but this
- * implementation uses CRC-16/CCITT (poly 0x1021, init 0xFFFF) to match validate_klv.py.
+ * Checksum modes (Phase 26B):
+ *   CRC-16/CCITT (poly 0x1021, init 0xFFFF) — default, matches validate_klv.py
+ *   BCC-16 (running modular sum) — per MISB ST 0601 specification
  */
 class FKlvBuilder
 {
@@ -124,9 +139,19 @@ public:
 	static int16  MapPlatformPitch(float Degrees);         // signed,   2-byte, ±20°
 	static int16  MapPlatformRoll(float Degrees);          // signed,   2-byte, ±50°
 	static uint32 MapSlantRange(double Metres);            // unsigned, 4-byte, 0..5000000 m
+	static uint16 MapTargetWidth(double Metres);           // unsigned, 2-byte, 0..10000 m
+
+	/**
+	 * Configure checksum algorithm: BCC-16 (true) or CRC-16/CCITT (false, default).
+	 * Called once at startup from UCamSimSubsystem::Initialize().
+	 */
+	static void SetChecksumMode(bool bUseBcc16);
 
 private:
 	// CRC-16/CCITT (poly 0x1021, init 0xFFFF) over the entire KLV set
 	// including the UL key and length, excluding the checksum tag itself.
 	static uint16 ComputeCrc16(const uint8* Data, int32 Len);
+
+	// BCC-16 running modular sum (per MISB ST 0601 specification)
+	static uint16 ComputeBcc16(const uint8* Data, int32 Len);
 };
