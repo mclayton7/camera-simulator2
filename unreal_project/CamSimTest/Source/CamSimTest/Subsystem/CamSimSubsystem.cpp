@@ -17,6 +17,7 @@
 #include "Streaming/CotSender.h"
 #include "Logging/CamSimJsonLogger.h"
 #include "Diagnostics/PipelineLatencyTracker.h"
+#include "Health/CamSimHealthServer.h"
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -54,6 +55,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCotSender>               CotSender;
 	TUniquePtr<FCamSimJsonLogger>        JsonLogger;
 	TUniquePtr<FPipelineLatencyTracker>  LatencyTracker;
+	TUniquePtr<FCamSimHealthServer>     HealthServer;
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -87,6 +89,8 @@ struct UCamSimSubsystem::FSubsystemImpl
 	{
 		// Tear down in reverse-dependency order.
 		// TUniquePtr destructors handle null checks automatically.
+		if (HealthServer) { HealthServer->Stop(); }
+		HealthServer.Reset();
 		CesiumIonServerOverride.Reset();
 		QueryHandler.Reset();
 		GeospatialProvider.Reset();
@@ -349,6 +353,28 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: pipeline latency tracking enabled (buffer=%d)"), BufSize);
 	}
 
+	// Phase 28C: HTTP health endpoints
+	if (Config.Operational.bHealthHttpEnabled)
+	{
+		Impl->HealthServer = MakeUnique<FCamSimHealthServer>();
+		auto* ImplPtr = Impl.Get();
+		Impl->HealthServer->Start(Config.Operational.HealthHttpPort,
+			// IsAlive — always true if we got this far
+			[ImplPtr]() { return true; },
+			// IsEncoderReady
+			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->IsOpen(); },
+			// IsCigiReady
+			[ImplPtr]() { return ImplPtr->CigiReceiver && ImplPtr->CigiReceiver->GetReceivedPacketCount() > 0; },
+			// HasFirstFrame
+			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->GetSuccessfulFrameCount() > 0; },
+			// GetPrometheusMetrics — placeholder; /metrics endpoint can be improved in a follow-up
+			[ImplPtr]() -> FString
+			{
+				return TEXT("");
+			}
+		);
+	}
+
 	// Start CIGI receiver thread
 	Impl->CigiReceiver = MakeUnique<FCigiReceiver>(Config);
 	if (!Impl->CigiReceiver->Start())
@@ -433,6 +459,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: ApplicationWillTerminate — flushing encoder"));
 		if (Impl)
 		{
+			if (Impl->HealthServer) { Impl->HealthServer->Stop(); }
 			if (Impl->JsonLogger)
 			{
 				TMap<FString, FString> ShutdownFields;
@@ -472,6 +499,12 @@ void UCamSimSubsystem::Deinitialize()
 void UCamSimSubsystem::Tick(float DeltaTime)
 {
 	if (!Impl) return;
+
+	// Phase 28C: update HTTP health liveness timestamp
+	if (Impl->HealthServer)
+	{
+		Impl->HealthServer->UpdateTick();
+	}
 
 	// Drain HAT/HOT + LOS query queues and stage responses
 	if (Impl->QueryHandler)

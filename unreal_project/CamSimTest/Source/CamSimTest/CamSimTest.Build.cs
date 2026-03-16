@@ -44,6 +44,8 @@ public class CamSimTest : ModuleRules
 			// Niagara particle FX (Phase 18F/G/H/I)
 			"Niagara",
 			"NiagaraCore",
+			// HTTP health endpoints (Phase 28C)
+			"HTTPServer",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
