@@ -258,6 +258,21 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: config load failed — using defaults"));
 	}
 
+	// Phase 28D: pre-flight config validation
+	{
+		const TArray<FString> ValidationErrors = Config.Validate();
+		for (const FString& Err : ValidationErrors)
+		{
+			UE_LOG(LogCamSim, Error, TEXT("Config validation: %s"), *Err);
+		}
+		if (ValidationErrors.Num() > 0)
+		{
+			UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: %d config validation error(s) — check config"),
+				ValidationErrors.Num());
+			Config.bLoadedSuccessfully = false;
+		}
+	}
+
 	EntityTypeTable.LoadFromConfig();
 
 	const FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
@@ -287,6 +302,9 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Config.SecurityMetadata.ObjectCountryCodes,
 		Config.SecurityMetadata.Caveats,
 		Config.SecurityMetadata.ReleasingInstructions);
+
+	// Phase 26B: configure KLV checksum algorithm
+	FKlvBuilder::SetChecksumMode(Config.KlvChecksumMode.ToLower() == TEXT("bcc16"));
 
 	// Phase 13B: allocate Pimpl — all sub-objects owned via TUniquePtr
 	Impl = MakePimpl<FSubsystemImpl>();
