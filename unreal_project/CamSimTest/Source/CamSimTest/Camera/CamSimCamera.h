@@ -181,6 +181,11 @@ private:
 	FFrameDropStats FrameDropStats_;
 	bool            bTrackFrameDrops_ = false;
 
+	// Phase 26C — Ground speed from position delta (Tag 8)
+	double PrevGeoLatDeg_   = 0.0;
+	double PrevGeoLonDeg_   = 0.0;
+	bool   bHasPrevGeoPos_  = false;
+
 	// Phase 27E — Tile prefetch during gimbal slew
 	float PrevGimbalPanDeg_   = 0.0f;
 	float PrevGimbalTiltDeg_  = 0.0f;
@@ -197,8 +202,14 @@ private:
 	float     HotReloadAccumSec_ = 0.0f;
 	FDateTime LastConfigMTime_ = FDateTime::MinValue();
 
+	// Phase 22G: First-person view
+	uint16 FpsEntityId_       = 0;    // 0 = FPS mode inactive
+	float  FpsEyeHeightM_     = 1.7f;
+	bool   bFpsFromCigi_      = false; // true = activated by CIGI ViewControl
+
 	// Helpers
 	void ApplyCigiState(float DeltaTime);
+	void ApplyFpsPose();
 	void ComputeGeometricLOS();
 	/** Phase 27A — Update MPC scalar parameters for GPU sensor post-process material. */
 	void UpdateGpuSensorMpcParams();

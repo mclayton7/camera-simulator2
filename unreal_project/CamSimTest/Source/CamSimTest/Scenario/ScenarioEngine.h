@@ -72,6 +72,9 @@ private:
 	TMap<uint16, float>          SpeedOverrides;
 	TArray<uint16>               PendingRemovals;
 
+	// 23D: Formation flying — leader last-known states for hold-on-loss
+	TMap<uint16, FCigiEntityState> LastKnownStates;
+
 	// 23A: Waypoint interpolation
 	FCigiEntityState InterpolateWaypoints(
 	    const FCamSimConfig::FScenarioEntityConfig& Spec,
@@ -93,4 +96,9 @@ private:
 	// 23C: Activity schedule resolution
 	int32 ResolveActiveSchedule(const FCamSimConfig::FScenarioEntityConfig& Spec,
 	                             float TimeOfDayHours) const;
+
+	// 23D: Formation flying
+	void ApplyFormationOffsets(TArray<FCigiEntityState>& Output);
+	void SortByFormationDependency();
+	const FCamSimConfig::FScenarioEntityConfig* FindSpecById(uint16 EId) const;
 };

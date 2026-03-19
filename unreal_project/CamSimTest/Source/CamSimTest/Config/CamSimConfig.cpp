@@ -731,6 +731,26 @@ FCamSimConfig FCamSimConfig::Load()
 							}
 						}
 
+						// Phase 23D: Formation flying
+						YamlInt (EntityNode, "leader_entity_id", Spec.LeaderEntityId);
+						YamlBool(EntityNode, "inherit_heading",  Spec.bInheritHeading);
+						if (EntityNode.has_child("formation_offset_m"))
+						{
+							ryml::ConstNodeRef OffNode = EntityNode["formation_offset_m"];
+							if (OffNode.is_seq() && OffNode.num_children() >= 3)
+							{
+								auto ReadVal = [](ryml::ConstNodeRef N) -> float {
+									if (!N.has_val()) return 0.0f;
+									FString S = RymlToFString(N.val());
+									return FCString::Atof(*S);
+								};
+								Spec.FormationOffsetM = FVector(
+									ReadVal(OffNode[0]),
+									ReadVal(OffNode[1]),
+									ReadVal(OffNode[2]));
+							}
+						}
+
 						// Phase 23C: Activity schedule
 						YamlString(EntityNode, "activity_profile", Spec.ActivityProfile);
 						if (EntityNode.has_child("activity_schedule"))
@@ -1180,6 +1200,50 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlInt   (L, "designator_code",  Cfg.LaserDesignator.DesignatorCode);
 		}
 
+		// Phase 26: standards compliance config
+		if (Root.has_child("phase26"))
+		{
+			ryml::ConstNodeRef P = Root["phase26"];
+			YamlString(P, "platform_tail_number",     Cfg.Phase26.PlatformTailNumber);
+			YamlString(P, "klv_checksum",             Cfg.Phase26.KlvChecksum);
+			YamlFloat (P, "target_track_gate_width",  Cfg.Phase26.TargetTrackGateWidth);
+			YamlFloat (P, "target_track_gate_height", Cfg.Phase26.TargetTrackGateHeight);
+		}
+
+		// Phase 22G: First-person view
+		YamlInt  (Root, "fps_entity_id",    Cfg.FpsEntityId);
+		YamlFloat(Root, "fps_eye_height_m", Cfg.FpsEyeHeightM);
+
+		// Phase 23E: Randomization engine
+		if (Root.has_child("randomization"))
+		{
+			ryml::ConstNodeRef RandNode = Root["randomization"];
+			YamlBool (RandNode, "enabled",                 Cfg.Randomization.bEnabled);
+			YamlInt  (RandNode, "seed",                    Cfg.Randomization.Seed);
+			YamlFloat(RandNode, "start_hour_jitter_hrs",   Cfg.Randomization.StartHourJitterHrs);
+			YamlFloat(RandNode, "visibility_jitter_frac",  Cfg.Randomization.VisibilityJitterFrac);
+			YamlFloat(RandNode, "fog_density_jitter_frac", Cfg.Randomization.FogDensityJitterFrac);
+			YamlBool (RandNode, "randomize_weather",       Cfg.Randomization.bRandomizeWeather);
+			YamlFloat(RandNode, "weather_probability",     Cfg.Randomization.WeatherProbability);
+
+			if (RandNode.has_child("entity_entries") && RandNode["entity_entries"].is_seq())
+			{
+				for (ryml::ConstNodeRef EE : RandNode["entity_entries"])
+				{
+					if (!EE.is_map()) continue;
+					FCamSimConfig::FEntityRandomizationEntry Entry;
+					YamlInt  (EE, "template_entity_id", Entry.TemplateEntityId);
+					YamlInt  (EE, "min_count",          Entry.MinCount);
+					YamlInt  (EE, "max_count",          Entry.MaxCount);
+					YamlFloat(EE, "spawn_radius_m",     Entry.SpawnRadiusM);
+					YamlFloat(EE, "position_jitter_m",  Entry.PositionJitterM);
+					YamlFloat(EE, "speed_jitter_frac",  Entry.SpeedJitterFrac);
+					YamlInt  (EE, "id_offset",          Entry.IdOffset);
+					Cfg.Randomization.EntityEntries.Add(Entry);
+				}
+			}
+		}
+
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
 	}
 	else
@@ -1306,6 +1370,14 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.bScenarioEnabled = GetEnvInt(TEXT("CAMSIM_SCENARIO_ENABLED"), Cfg.bScenarioEnabled ? 1 : 0) != 0;
 	Cfg.ScenarioTimeScale = GetEnvFloat(TEXT("CAMSIM_SCENARIO_TIME_SCALE"), Cfg.ScenarioTimeScale);
 	Cfg.ScenarioStartHour = GetEnvFloat(TEXT("CAMSIM_SCENARIO_START_HOUR"), Cfg.ScenarioStartHour);
+
+	// Phase 22G: FPS view
+	Cfg.FpsEntityId   = GetEnvInt  (TEXT("CAMSIM_FPS_ENTITY_ID"),    Cfg.FpsEntityId);
+	Cfg.FpsEyeHeightM = GetEnvFloat(TEXT("CAMSIM_FPS_EYE_HEIGHT_M"), Cfg.FpsEyeHeightM);
+
+	// Phase 23E: Randomization
+	Cfg.Randomization.bEnabled = GetEnvInt(TEXT("CAMSIM_RAND_ENABLED"), Cfg.Randomization.bEnabled ? 1 : 0) != 0;
+	Cfg.Randomization.Seed     = GetEnvInt(TEXT("CAMSIM_RAND_SEED"),    Cfg.Randomization.Seed);
 
 	// Phase 22C: Damage transition env overrides
 	Cfg.DamageTransition.bDamageTransitionFX = GetEnvInt(TEXT("CAMSIM_DAMAGE_TRANSITION_FX"),
@@ -1526,6 +1598,15 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		L.SpotRadius     = GetEnvFloat(TEXT("CAMSIM_LASER_RADIUS"),    L.SpotRadius);
 		L.SpotIntensity  = GetEnvFloat(TEXT("CAMSIM_LASER_INTENSITY"), L.SpotIntensity);
 		L.DesignatorCode = GetEnvInt  (TEXT("CAMSIM_LASER_CODE"),      L.DesignatorCode);
+	}
+
+	// Phase 26: standards compliance env var overrides
+	{
+		FPhase26Config& P = Cfg.Phase26;
+		P.PlatformTailNumber    = GetEnv     (TEXT("CAMSIM_PLATFORM_TAIL_NUMBER"),      P.PlatformTailNumber);
+		P.KlvChecksum           = GetEnv     (TEXT("CAMSIM_KLV_CHECKSUM"),              P.KlvChecksum);
+		P.TargetTrackGateWidth  = GetEnvFloat(TEXT("CAMSIM_TARGET_TRACK_GATE_WIDTH"),   P.TargetTrackGateWidth);
+		P.TargetTrackGateHeight = GetEnvFloat(TEXT("CAMSIM_TARGET_TRACK_GATE_HEIGHT"),  P.TargetTrackGateHeight);
 	}
 
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping

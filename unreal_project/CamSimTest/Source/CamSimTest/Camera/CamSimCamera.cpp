@@ -17,6 +17,7 @@
 #include "GroundTruth/FGroundTruthCollector.h"
 #include "GroundTruth/FEntityProjection.h"
 #include "Entity/CamSimEntityManager.h"
+#include "Entity/CamSimEntity.h"
 #include "DIS/DisEntityAdapter.h"
 #include "EngineUtils.h" // TActorIterator
 #include "Components/SceneCaptureComponent2D.h"
@@ -164,6 +165,14 @@ void ACamSimCamera::BeginPlay()
 			TEXT("ACamSimCamera: start position lat=%.4f lon=%.4f alt=%.0fm yaw=%.0f pitch=%.0f"),
 			Cfg.StartLatitude, Cfg.StartLongitude, Cfg.StartAltitude,
 			Cfg.StartYaw, Cfg.StartPitch);
+	}
+
+	// Phase 22G: Initialize FPS view from config
+	FpsEntityId_   = static_cast<uint16>(FMath::Clamp(Cfg.FpsEntityId, 0, 65535));
+	FpsEyeHeightM_ = Cfg.FpsEyeHeightM;
+	if (FpsEntityId_ != 0)
+	{
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: FPS mode -> entity %u (config)"), FpsEntityId_);
 	}
 
 	// Register with Cesium's camera manager so tiles stream for our viewpoint.
@@ -846,6 +855,29 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 				static_cast<float>(Cfg.CaptureHeight) /
 				static_cast<float>(Cfg.CaptureWidth);
 
+			// Phase 26C: compute ground speed from position delta (Tag 8)
+			if (bHasPrevGeoPos_ && DeltaTime > 0.0f)
+			{
+				// Haversine approximation using Unreal's cosine
+				constexpr double EarthR = 6371000.0; // metres
+				const double DLat = FMath::DegreesToRadians(EntityState.Latitude  - PrevGeoLatDeg_);
+				const double DLon = FMath::DegreesToRadians(EntityState.Longitude - PrevGeoLonDeg_);
+				const double MeanLat = FMath::DegreesToRadians(
+					(EntityState.Latitude + PrevGeoLatDeg_) * 0.5);
+				const double Dx = DLon * FMath::Cos(MeanLat) * EarthR;
+				const double Dy = DLat * EarthR;
+				const double DistM = FMath::Sqrt(Dx * Dx + Dy * Dy);
+				CurrentTelemetry.GroundSpeedMps = static_cast<float>(DistM / DeltaTime);
+			}
+			PrevGeoLatDeg_  = EntityState.Latitude;
+			PrevGeoLonDeg_  = EntityState.Longitude;
+			bHasPrevGeoPos_ = true;
+
+		}
+		else if (!bGotState)
+		{
+			// No CIGI update this frame — decay ground speed to zero
+			CurrentTelemetry.GroundSpeedMps = 0.0f;
 		}
 	}
 
@@ -881,6 +913,29 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 	if (GimbalComp)
 	{
 		GimbalComp->TickGimbal(DeltaTime, Receiver, Cfg);
+
+		// Phase 22G: Detect FPS activation/deactivation from CIGI ViewControl
+		{
+			const uint16 CigiReqId = GimbalComp->GetLastViewControlEntityId();
+			if (CigiReqId != 0 && CigiReqId != FpsEntityId_)
+			{
+				FpsEntityId_ = CigiReqId;
+				bFpsFromCigi_ = true;
+				UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: FPS mode -> entity %u (CIGI ViewControl)"), FpsEntityId_);
+			}
+			else if (CigiReqId == 0 && bFpsFromCigi_ && FpsEntityId_ != 0)
+			{
+				UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: FPS mode deactivated (CIGI ViewControl EntityId=0)"));
+				FpsEntityId_ = 0;
+				bFpsFromCigi_ = false;
+			}
+		}
+
+		// Phase 22G: Apply FPS pose if active (overrides CIGI camera entity position)
+		if (FpsEntityId_ != 0)
+		{
+			ApplyFpsPose();
+		}
 
 		// Apply result to the scene capture's relative rotation
 		if (SceneCapture)
@@ -1084,6 +1139,50 @@ void ACamSimCamera::ReadEnvironmentTelemetry()
 // -------------------------------------------------------------------------
 // ComputeGeometricLOS – slant range and frame center from platform + gimbal
 // -------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Phase 22G: First-person view — attach camera to tracked entity
+// ---------------------------------------------------------------------------
+
+void ACamSimCamera::ApplyFpsPose()
+{
+	if (!Subsystem || !GlobeAnchor) return;
+
+	FCamSimEntityManager* Mgr = Subsystem->GetEntityManager();
+	if (!Mgr) return;
+
+	ACamSimEntity* Entity = Mgr->FindEntity(FpsEntityId_);
+	if (!IsValid(Entity)) return;  // entity not yet spawned — hold current position
+
+	UCesiumGlobeAnchorComponent* EntGa =
+		Entity->FindComponentByClass<UCesiumGlobeAnchorComponent>();
+	if (!EntGa) return;
+
+	// Read entity geodetic position (Cesium LLH order: Lon, Lat, Height)
+	const FVector LLH = EntGa->GetLongitudeLatitudeHeight();
+	const double EntityLon = LLH.X;
+	const double EntityLat = LLH.Y;
+	const double EntityAlt = LLH.Z;
+
+	// Eye height: simple vertical offset above entity origin
+	const double EyeAlt = EntityAlt + static_cast<double>(FpsEyeHeightM_);
+
+	GlobeAnchor->MoveToLongitudeLatitudeHeight(
+		FVector(EntityLon, EntityLat, EyeAlt));
+	SetActorScale3D(FVector::OneVector);
+
+	// Inherit entity heading; gimbal applies freelook on top
+	const FRotator EntityRot = Entity->GetActorRotation();
+	SetActorRotation(FRotator(0.0f, EntityRot.Yaw, 0.0f));
+
+	// Update telemetry from entity pose
+	CurrentTelemetry.Latitude  = EntityLat;
+	CurrentTelemetry.Longitude = EntityLon;
+	CurrentTelemetry.Altitude  = static_cast<float>(EyeAlt);
+	CurrentTelemetry.Yaw       = EntityRot.Yaw;
+	CurrentTelemetry.Pitch     = 0.0f;
+	CurrentTelemetry.Roll      = 0.0f;
+}
 
 void ACamSimCamera::ComputeGeometricLOS()
 {

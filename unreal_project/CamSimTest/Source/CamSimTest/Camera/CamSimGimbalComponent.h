@@ -46,7 +46,15 @@ public:
 	float GetGimbalPitch() const { return GimbalPitch; }
 	float GetGimbalRoll()  const { return GimbalRoll;  }
 
+	/** Phase 22G: Last EntityId seen in a ViewControl packet (0 = none). */
+	uint16 GetLastViewControlEntityId() const { return LastViewControlEntityId; }
+
+	/** Phase 22G: Last body-frame offset from ViewControl (metres). */
+	FVector GetLastViewControlOffset() const { return LastViewControlOffset; }
+
 private:
+	uint16  LastViewControlEntityId = 0;
+	FVector LastViewControlOffset   = FVector::ZeroVector;
 	/** Current gimbal orientation relative to platform body frame (degrees).
 	 *  Pitch defaults to -90 (nadir) — sensor mounts below the aircraft and
 	 *  looks straight down when boresighted.  CIGI ArtPart/ViewCtrl overrides. */

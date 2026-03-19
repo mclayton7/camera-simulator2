@@ -37,6 +37,10 @@
  *   CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ - default pose apply cap               (default 0=unlimited)
  *   CAMSIM_SCENARIO_ENABLED       - enable scenario_entities                        (default 0)
  *   CAMSIM_SCENARIO_TIME_SCALE    - scenario time multiplier                        (default 1.0)
+ *   CAMSIM_FPS_ENTITY_ID          - FPS entity (0=disabled)                          (default 0)
+ *   CAMSIM_FPS_EYE_HEIGHT_M       - eye height above entity origin                   (default 1.7)
+ *   CAMSIM_RAND_ENABLED           - enable scenario randomization                    (default 0)
+ *   CAMSIM_RAND_SEED              - randomization seed (0=wall-clock)                (default 0)
  *   CAMSIM_MAX_SSE                - Cesium MaximumScreenSpaceError                  (default 2.0)
  *   CAMSIM_MAX_CACHED_MB          - Cesium tile cache budget in MB                  (default 2048)
  *   CAMSIM_ENCODER                - H.264 encoder: auto|nvenc|libx264               (default auto)
@@ -144,6 +148,12 @@ struct FCamSimConfig
 
 	// CIGI entity ID that drives the camera (all others -> entity manager)
 	int32   CameraEntityId  = 0;
+
+	// Phase 22G: First-person view
+	// 0 = disabled. Non-zero attaches camera to the named entity.
+	// Overridden at runtime by FCigiViewControl.EntityId != 0.
+	int32   FpsEntityId     = 0;
+	float   FpsEyeHeightM   = 1.7f;  // metres above entity origin
 
 	// Gimbal slew rate limit in degrees/second (0 = unlimited / instantaneous snap)
 	float   GimbalMaxSlewRateDegPerSec = 0.0f;
@@ -260,6 +270,14 @@ struct FCamSimConfig
 		// Phase 23C: Pattern-of-life activity schedule
 		TArray<FActivityScheduleEntry> ActivitySchedule;
 		FString ActivityProfile;   // "civilian" | "military" | "" (custom)
+
+		// Phase 23D: Formation flying
+		// 0 = no formation (entity is its own leader).
+		int32   LeaderEntityId   = 0;
+		// Body-frame offset from leader in metres: X=forward, Y=right, Z=down.
+		FVector FormationOffsetM = FVector::ZeroVector;
+		// true = follower copies leader Yaw; false = follower keeps its own heading.
+		bool    bInheritHeading  = true;
 	};
 
 	// ---- 23B: Event Triggers ----
@@ -672,8 +690,55 @@ struct FCamSimConfig
 	};
 	FDisConfig DIS;
 
+	// Phase 26 — Standards Compliance (MISB ST 0601.9 + BCC-16)
+	struct FPhase26Config
+	{
+		// Tag 4: Platform Tail Number (ISO 646, up to 127 chars; empty = omit)
+		FString PlatformTailNumber;
+
+		// Checksum algorithm: "crc16" (default, matches validate_klv.py) or "bcc16" (ST 0601 spec)
+		FString KlvChecksum = TEXT("crc16");
+
+		// Tag 40: Target Track Gate Width uncertainty (pixels, 0 = omit)
+		float TargetTrackGateWidth = 0.0f;
+
+		// Tag 41: Target Track Gate Height uncertainty (pixels, 0 = omit)
+		float TargetTrackGateHeight = 0.0f;
+	};
+	FPhase26Config Phase26;
+
 	// HUD/OSD overlay burn-in (Phase 20)
 	FHudOverlayConfig OverlayConfig;
+
+	// Phase 23E: Scenario Randomization Engine
+	struct FEntityRandomizationEntry
+	{
+		int32  TemplateEntityId = 0;    // matches a ScenarioEntities[*].EntityId
+		int32  MinCount         = 1;
+		int32  MaxCount         = 1;
+		float  SpawnRadiusM     = 0.0f; // jitter radius for extra cloned entities
+		float  PositionJitterM  = 0.0f; // jitter on the template entity itself
+		float  SpeedJitterFrac  = 0.0f; // fractional jitter on BaseSpeedMps [0,1]
+		int32  IdOffset         = 100;  // extra entities: BaseId + IdOffset, +IdOffset*2, …
+	};
+
+	struct FRandomizationConfig
+	{
+		bool    bEnabled            = false;
+		int32   Seed                = 0;      // 0 = wall-clock
+		int32   ResolvedSeed        = 0;      // written back after resolution (not parsed)
+
+		// Environment jitter
+		float   StartHourJitterHrs  = 0.0f;  // ± jitter on ScenarioStartHour
+		float   VisibilityJitterFrac = 0.0f; // fractional jitter on Phase18 VisibilityRangeM
+		float   FogDensityJitterFrac = 0.0f; // fractional jitter on Phase18 FogDensity
+		bool    bRandomizeWeather   = false; // randomly enable/disable precipitation
+		float   WeatherProbability  = 0.3f;  // P(precipitation enabled) when bRandomizeWeather
+
+		// Per-entity template overrides
+		TArray<FEntityRandomizationEntry> EntityEntries;
+	};
+	FRandomizationConfig Randomization;
 
 	// Phase 13C: set to true when config was loaded (or defaults are valid).
 	// Set to false only if YAML parsing fails AND no defaults are available.

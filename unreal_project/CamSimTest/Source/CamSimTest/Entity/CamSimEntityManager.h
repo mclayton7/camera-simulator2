@@ -55,6 +55,9 @@ public:
 	/** Called from FOceanManager::Init() after ocean surface is created. */
 	void SetOceanSurface(IOceanSurface* Ocean);
 
+	/** Phase 22G: Find a live entity actor by CIGI EntityId. Returns nullptr if not found. */
+	ACamSimEntity* FindEntity(uint16 EntityId) const;
+
 private:
 	UCamSimSubsystem*       Subsystem  = nullptr;
 	const FEntityTypeTable* TypeTable  = nullptr;

@@ -119,6 +119,22 @@ laser_designator:
   spot_intensity: 250.0        # CAMSIM_LASER_INTENSITY (0-255)
   designator_code: 1688        # CAMSIM_LASER_CODE (NATO laser code)
 
+# --- Phase 26: Standards Compliance (MISB ST 0601.9) ---
+
+phase26:
+  # Platform tail number (Tag 4, ISO 646 string, empty = omit)
+  # Env: CAMSIM_PLATFORM_TAIL_NUMBER
+  platform_tail_number: ""
+
+  # KLV checksum algorithm: "crc16" (default) or "bcc16" (ST 0601 spec)
+  # Env: CAMSIM_KLV_CHECKSUM
+  klv_checksum: "crc16"
+
+  # Target track gate dimensions in pixels (Tags 40/41, 0 = omit)
+  # Env: CAMSIM_TARGET_TRACK_GATE_WIDTH / CAMSIM_TARGET_TRACK_GATE_HEIGHT
+  target_track_gate_width:  0
+  target_track_gate_height: 0
+
 # --- Video Output ---
 
 # UDP multicast group (or unicast address) for the MPEG-TS output stream.
@@ -273,6 +289,17 @@ start_hour: 12.0
 # CIGI Entity ID that drives the camera. All other entity IDs are managed
 # by the entity renderer. Must match --entity-id in send_cigi_test.py.
 camera_entity_id: 0
+
+# --- First-Person View (Phase 22G) ---
+# Attach the camera to a character entity at eye height.
+# Set to a valid EntityId to activate FPS mode from config.
+# Can also be activated dynamically via CIGI ViewControl EntityId.
+# Env: CAMSIM_FPS_ENTITY_ID
+fps_entity_id: 0
+
+# Eye height above entity ground position in metres.
+# Env: CAMSIM_FPS_EYE_HEIGHT_M
+fps_eye_height_m: 1.7
 
 # --- Gimbal ---
 
@@ -449,6 +476,13 @@ scenario:
       #     waypoint_path: 0
       #     spawn_jitter_sec: 0.0
       #     path_deviation_m: 0.0
+      # Phase 23D — Formation flying.
+      # leader_entity_id: 0 = no formation. Non-zero = follow that entity.
+      # formation_offset_m: [forward, right, down] body-frame offset in metres.
+      # inherit_heading: true = copy leader Yaw; false = keep own heading.
+      leader_entity_id: 0
+      # formation_offset_m: [0, 0, 0]
+      inherit_heading: true
   # Phase 23C — Scenario time-of-day start hour (0-24).
   # Env: CAMSIM_SCENARIO_START_HOUR
   start_hour: 6.0
@@ -479,6 +513,33 @@ scenario:
   #       target_entity_id: 2002
   #     repeat: false
   #     cooldown_sec: 0.0
+
+# --- Randomization Engine (Phase 23E) ---
+# Stochastic variation of entity positions/counts and environment parameters.
+# Applied at scenario initialization time; never mutates live config.
+# Env: CAMSIM_RAND_ENABLED, CAMSIM_RAND_SEED
+randomization:
+  enabled: false
+  # Seed for deterministic RNG. 0 = wall-clock (non-repeatable).
+  seed: 0
+  # Time-of-day jitter: +/- hours around scenario start_hour.
+  start_hour_jitter_hrs: 0.0
+  # Visibility jitter: fractional +/- around base visibility.
+  visibility_jitter_frac: 0.0
+  # Fog density jitter: fractional +/- around base fog density.
+  fog_density_jitter_frac: 0.0
+  # Randomize weather type (rain/snow/clear).
+  randomize_weather: false
+  weather_probability: 0.3
+  # Per-entity randomization entries.
+  entity_entries: []
+  #   - template_entity_id: 2001
+  #     min_count: 1
+  #     max_count: 3
+  #     spawn_radius_m: 500.0
+  #     position_jitter_m: 50.0
+  #     speed_jitter_frac: 0.1
+  #     id_offset: 100
 
 # --- Sensor Modes (per-waveband) ---
 # CPU-side post-processing parameters. SensorId 0=EO, 1=IR, 2=NVG.

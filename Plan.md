@@ -75,7 +75,8 @@ Features VRSG has that CamSim lacks, organized by priority:
 | Scenario editor GUI                   | Missing             | Phase 23     |
 | Entity model library (hundreds)       | Small set           | Phase 22     |
 | After-action review / DIS log replay  | CIGI replay only    | Phase 21     |
-| Radar simulation (SAR/ISAR)           | Missing             | Phase 26     |
+| Standards compliance (ST 0601.9)      | ✅ Sprint 1 Done    | Phase 26     |
+| Radar simulation (SAR/ISAR)           | Missing             | Phase 29     |
 | Edge blending / dome display          | Missing             | Phase 25     |
 | FBX/OpenFlight model import           | ✅ FBX done         | Phase 22     |
 | NVG IR pointer                        | ✅ Done              | Phase 16     |
@@ -285,10 +286,11 @@ VRSG ships hundreds of entity models. CamSim needs a broader content pipeline.
 | **22D** Character Animation     | Human characters with walk/run/crouch/prone skeletal animation                    | L      | ✓           | ✅ Sprint 1 Done |
 | **22E** Civilian Population     | Ambient pedestrian/vehicle traffic using UE AI navigation                         | L      | ✓           |                  |
 | **22F** Standard Entity Library | Baseline set of 50+ military/civilian models (air, ground, maritime, personnel)   | L      | ✓           |                  |
-| **22G** First-Person View       | FPS mode: camera follows character entity at eye height with look controls        | M      | ✓           |                  |
+| **22G** First-Person View       | FPS mode: camera follows character entity at eye height with look controls        | M      | ✓           | ✅ Sprint 2 Done |
 
 **Sprint 1 status**: 22A, 22C, 22D implemented.
-22B, 22E, 22F, 22G remain for future sprints.
+**Sprint 2 status**: 22G implemented.
+22B, 22E, 22F remain for future sprints.
 
 **Sprint 1 files**:
 - `Entity/EntityTypeTable.h/.cpp` — HotReload(), bAnimated/AnimBlueprintPath/EntityCategory fields
@@ -311,14 +313,15 @@ Complex scripted scenarios without external CIGI host. VRSG has a built-in scena
 | **23A** Waypoint Trajectories | Entity follows lat/lon/alt waypoints with speed/acceleration curves                 | M      | ✓           | ✅ Sprint 1 Done |
 | **23B** Event Triggers        | Actions fired on conditions (entity visible, range < threshold, timer, frame count) | M      | ✓           | ✅ Sprint 1 Done |
 | **23C** Pattern-of-Life       | Repeating daily activity cycles for characters/vehicles (YAML-scripted)             | M      | ✓           | ✅ Sprint 1 Done |
-| **23D** Formation Flying      | Multiple entities maintain relative positions with configurable offsets             | M      |             |                  |
-| **23E** Randomization Engine  | Stochastic entity count, spawn area, weather, TOD for training robustness           | M      |             |                  |
-| **23F** Batch Runner          | Run N scenarios unattended; output ground truth + video per scenario                | M      |             |                  |
+| **23D** Formation Flying      | Multiple entities maintain relative positions with configurable offsets             | M      |             | ✅ Sprint 2 Done |
+| **23E** Randomization Engine  | Stochastic entity count, spawn area, weather, TOD for training robustness           | M      |             | ✅ Sprint 2 Done |
+| **23F** Batch Runner          | Run N scenarios unattended; output ground truth + video per scenario                | M      |             | ✅ Sprint 2 Done |
 | **23G** Scenario Editor GUI   | Web-based or ImGui editor for culture placement and scenario authoring              | L      | ✓           |                  |
 | **23H** Mission Scripting     | Lua or Python scripting API for complex multi-phase missions                        | L      | ✓           |                  |
 
 **Sprint 1 status**: 23A, 23B, 23C implemented.
-23D–23H remain for future sprints.
+**Sprint 2 status**: 23D, 23E, 23F implemented.
+23G–23H remain for future sprints.
 
 **Sprint 1 files**:
 - `Scenario/ScenarioEngine.h/.cpp` — Waypoint interpolation (Haversine), event triggers, pattern-of-life schedule
@@ -327,7 +330,19 @@ Complex scripted scenarios without external CIGI host. VRSG has a built-in scena
 - `deploy/camsim_config.yaml` — waypoints, triggers, activity_schedule YAML blocks
 - `Tests/ScenarioEngineTest.cpp` — 14 unit tests
 
-**Validation**: Waypoint entities follow YAML paths; triggers fire at correct conditions; pattern-of-life entities switch paths by time-of-day
+**Sprint 2 files**:
+- `Scenario/ScenarioEngine.h/.cpp` — Formation flying: ApplyFormationOffsets(), SortByFormationDependency(), LastKnownStates cache
+- `Scenario/ScenarioRandomizer.h/.cpp` — Static Randomize() helper: deterministic RNG, env jitter, entity count/position randomization
+- `Camera/CamSimCamera.h/.cpp` — FPS view: ApplyFpsPose(), dual activation (config + CIGI ViewControl)
+- `Camera/CamSimGimbalComponent.h/.cpp` — ViewControl EntityId/offset capture for FPS mode
+- `Entity/CamSimEntityManager.h/.cpp` — FindEntity() accessor, config-copy pattern for randomization
+- `Config/CamSimConfig.h/.cpp` — FpsEntityId, FpsEyeHeightM, FEntityRandomizationEntry, FRandomizationConfig, formation fields
+- `deploy/camsim_config.yaml` — fps_entity_id, fps_eye_height_m, randomization block, formation fields
+- `scripts/batch_run.py` — Python stdlib-only batch runner: per-run config gen, health polling, artifact collection
+- `Tests/FormationFlyingTest.cpp` — 5 formation flying unit tests
+- `Tests/ScenarioRandomizerTest.cpp` — 6 randomization unit tests
+
+**Validation**: Waypoint entities follow YAML paths; triggers fire at correct conditions; pattern-of-life entities switch paths by time-of-day; formation followers maintain body-frame offsets; randomizer produces deterministic results from same seed; batch runner executes N runs with per-run output directories
 
 ---
 
@@ -382,18 +397,21 @@ VRSG supports VR headsets, dome displays, and multi-monitor setups.
 
 Full interoperability with ISR ecosystem tools and standards validators.
 
-| Item                           | Description                                                                        | Effort | VRSG Parity |
-| ------------------------------ | ---------------------------------------------------------------------------------- | ------ | ----------- |
-| **26A** ST 0601 Missing Tags   | Tag 4 (frame #), 26 (target width), 31–34 (microdynamics), 42–45 (target location) | M      |             |
-| **26B** BCC-16 Checksum        | Switch from CRC-16/CCITT to standard BCC-16 (or make configurable)                 | S      |             |
-| **26C** STANAG 4609 Validation | Verify PAT/PMT structure, PID allocation, KLV sync timing per spec                 | M      | ✓           |
-| **26D** Remaining CIGI Opcodes | Opcode 3 (conformal clutter), 7 (collision detection), 13 (regional weather)       | M      | ✓           |
-| **26E** KLV Uncertainty Tags   | Tags 27–30 (slant range, cross-range, HFOV, VFOV uncertainty)                      | S      |             |
-| **26F** MISB ST 0903 VMTI      | Video Moving Target Indicator metadata for tracked entities                        | L      |             |
-| **26G** MISB 0601.9 + 0104.5   | Update to latest MISB standard versions (VRSG ships 0601.9 / 0104.5)               | M      | ✓           |
+| Item                           | Description                                                                        | Effort | Status           |
+| ------------------------------ | ---------------------------------------------------------------------------------- | ------ | ---------------- |
+| **26A** ST 0601 Missing Tags   | Tag 4 (tail number), Tags 40/41 (target track gate width/height)                   | M      | ✅ Sprint 1 Done |
+| **26B** BCC-16 Checksum        | Configurable: CRC-16/CCITT (default) or BCC-16 (per spec)                          | S      | ✅ Sprint 1 Done |
+| **26C** Ground Speed Tag       | Tag 8 (platform ground speed) from position deltas                                 | S      | ✅ Sprint 1 Done |
+| **26D** Remaining CIGI Opcodes | Opcode 3 (conformal clutter), 7 (collision detection), 13 (regional weather)       | M      | Deferred         |
+| **26E** KLV Uncertainty Tags   | Tags 27–30 (slant range, cross-range, HFOV, VFOV uncertainty)                      | S      | Deferred         |
+| **26F** MISB ST 0903 VMTI      | Video Moving Target Indicator metadata for tracked entities                        | L      |                  |
+| **26G** MISB 0601.9 Update     | Version bump to ST 0601.9 (Tag 65 = 9), validate_klv.py updated                   | M      | ✅ Sprint 1 Done |
 
-**Files**: `Metadata/KlvBuilder.cpp`, `CIGI/CigiReceiver.cpp`, `CIGI/CigiPacketTypes.h`
-**Validation**: Pass MISB ST 0601 compliance checker; validate with external KLV decoder
+**Status**: Sprint 1 complete. 26A (new tags 4/8/40/41), 26B (configurable checksum), 26C (ground speed), 26G (version 9) implemented. 26D/26E deferred; 26F future.
+
+**Sprint 1 files**: `Metadata/KlvBuilder.h`, `Metadata/KlvBuilder.cpp`, `Config/CamSimConfig.h`, `Config/CamSimConfig.cpp`, `Camera/CamSimCamera.h`, `Camera/CamSimCamera.cpp`, `Subsystem/CamSimSubsystem.cpp`, `Tests/Phase26StandardsTest.cpp`, `scripts/validate_klv.py`, `deploy/camsim_config.yaml`, `docs/klv-tags.md`
+
+**Sprint 1 validation**: 9 new unit tests; validate_klv.py auto-detects CRC-16 and BCC-16; Tag 65 = 9 in every packet
 
 ---
 
@@ -502,8 +520,9 @@ Sprint 6 ──── Phase 22A,C-D (Content: FBX import, damage states, charact
 Sprint 7 ──── Phase 16E,G-K ✅ DONE (Sensor advanced: thermal drift, exposure, vibration, glint)
               Phase 26A-E,G (Standards: ST 0601 tags, checksum, CIGI opcodes, MISB update)
 
-Sprint 8 ──── Phase 23D-H (Scenario: formations, randomization, batch, editor, scripting)
-              Phase 22E-G (Content: civilian population, entity library, FPS mode)
+Sprint 8 ──── Phase 23D-F ✅ (Scenario: formations, randomization, batch runner)
+              Phase 22G ✅ (Content: first-person view)
+              Phase 23G-H, 22E-F (remaining: editor GUI, scripting, civilian pop, entity library)
 
 Sprint 9 ──── Phase 17E-F,H-I (ML advanced: 3D boxes, optical flow, VOC, randomization)
               Phase 27 (Performance: GPU sensor, prefetch, 60Hz, hot-reload)

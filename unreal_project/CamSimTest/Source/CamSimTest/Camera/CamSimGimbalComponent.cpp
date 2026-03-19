@@ -28,9 +28,25 @@ void UCamSimGimbalComponent::TickGimbal(float DeltaTime, FCigiReceiver* Receiver
 			if (ViewCtrl.bYawEn)   GimbalYaw   = ViewCtrl.Yaw;
 			if (ViewCtrl.bPitchEn) GimbalPitch = ViewCtrl.Pitch;
 			if (ViewCtrl.bRollEn)  GimbalRoll  = ViewCtrl.Roll;
+
+			// Phase 22G: Capture FPS view activation from ViewControl EntityId
+			if (ViewCtrl.EntityId != 0)
+			{
+				LastViewControlEntityId = ViewCtrl.EntityId;
+				if (ViewCtrl.bXOffEn) LastViewControlOffset.X = ViewCtrl.XOff;
+				if (ViewCtrl.bYOffEn) LastViewControlOffset.Y = ViewCtrl.YOff;
+				if (ViewCtrl.bZOffEn) LastViewControlOffset.Z = ViewCtrl.ZOff;
+			}
+			else if (LastViewControlEntityId != 0)
+			{
+				// EntityId=0 deactivates FPS mode
+				LastViewControlEntityId = 0;
+				LastViewControlOffset = FVector::ZeroVector;
+			}
+
 			UE_LOG(LogCamSim, Verbose,
-				TEXT("UCamSimGimbalComponent: ViewCtrl -> yaw=%.1f pitch=%.1f roll=%.1f"),
-				GimbalYaw, GimbalPitch, GimbalRoll);
+				TEXT("UCamSimGimbalComponent: ViewCtrl -> yaw=%.1f pitch=%.1f roll=%.1f entity=%u"),
+				GimbalYaw, GimbalPitch, GimbalRoll, ViewCtrl.EntityId);
 		}
 	}
 

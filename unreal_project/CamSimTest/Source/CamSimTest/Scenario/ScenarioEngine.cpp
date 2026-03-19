@@ -6,7 +6,7 @@
 #include "CesiumGlobeAnchorComponent.h"
 
 static constexpr uint8  CIGI_ENTITY_ACTIVE = 1;
-static constexpr double METRES_PER_DEGREE_LAT = 111320.0;
+#include "Geospatial/GeoConstants.h"
 static constexpr double DEG_TO_RAD = PI / 180.0;
 
 // ---------------------------------------------------------------------------
@@ -59,6 +59,9 @@ void FScenarioEngine::Initialize(const FCamSimConfig& Config)
 	WaypointStates.Empty();
 	SpeedOverrides.Empty();
 	PendingRemovals.Empty();
+	LastKnownStates.Empty();
+
+	SortByFormationDependency();
 }
 
 void FScenarioEngine::Reset()
@@ -67,6 +70,7 @@ void FScenarioEngine::Reset()
 	TriggerStates.Empty();
 	SpeedOverrides.Empty();
 	PendingRemovals.Empty();
+	LastKnownStates.Empty();
 	FrameCount = 0;
 }
 
@@ -122,7 +126,11 @@ TArray<FCigiEntityState> FScenarioEngine::Tick(
 		}
 
 		Output.Add(State);
+		LastKnownStates.Add(State.EntityId, State);
 	}
+
+	// 23D: Apply formation offsets (followers derived from leader positions)
+	ApplyFormationOffsets(Output);
 
 	// 23B: Evaluate triggers after entity states are computed
 	EvaluateTriggers(ScenarioElapsedSec, EntityMap);
@@ -454,4 +462,94 @@ int32 FScenarioEngine::ResolveActiveSchedule(
 		}
 	}
 	return -1; // not in any active window
+}
+
+// ---------------------------------------------------------------------------
+// 23D: Formation flying
+// ---------------------------------------------------------------------------
+
+const FCamSimConfig::FScenarioEntityConfig* FScenarioEngine::FindSpecById(uint16 EId) const
+{
+	for (const FCamSimConfig::FScenarioEntityConfig& Spec : EntityConfigs)
+	{
+		if (static_cast<uint16>(FMath::Clamp(Spec.EntityId, 0, 65535)) == EId)
+			return &Spec;
+	}
+	return nullptr;
+}
+
+void FScenarioEngine::ApplyFormationOffsets(TArray<FCigiEntityState>& Output)
+{
+	// Build index for O(1) leader lookup within current frame output
+	TMap<uint16, int32> OutputIndexByID;
+	for (int32 i = 0; i < Output.Num(); ++i)
+	{
+		OutputIndexByID.Add(Output[i].EntityId, i);
+	}
+
+	for (FCigiEntityState& Follower : Output)
+	{
+		const FCamSimConfig::FScenarioEntityConfig* Spec = FindSpecById(Follower.EntityId);
+		if (!Spec || Spec->LeaderEntityId == 0)
+			continue;
+
+		const uint16 LeaderId = static_cast<uint16>(FMath::Clamp(Spec->LeaderEntityId, 0, 65535));
+
+		// Find leader state: prefer current frame, fall back to last-known
+		const FCigiEntityState* Leader = nullptr;
+		if (const int32* Idx = OutputIndexByID.Find(LeaderId))
+		{
+			Leader = &Output[*Idx];
+		}
+		else if (const FCigiEntityState* Cached = LastKnownStates.Find(LeaderId))
+		{
+			Leader = Cached;
+		}
+
+		if (!Leader)
+			continue; // leader never seen — skip
+
+		// Rotate body-frame offset by leader heading
+		const double HeadingRad = FMath::DegreesToRadians(Leader->Yaw);
+		const double CosH = FMath::Cos(HeadingRad);
+		const double SinH = FMath::Sin(HeadingRad);
+
+		// Body: X=forward(North when heading=0), Y=right(East when heading=0)
+		const double OffsetNorthM = Spec->FormationOffsetM.X * CosH - Spec->FormationOffsetM.Y * SinH;
+		const double OffsetEastM  = Spec->FormationOffsetM.X * SinH + Spec->FormationOffsetM.Y * CosH;
+		const double OffsetAltM   = -Spec->FormationOffsetM.Z; // Z=down in body frame, alt is up
+
+		const double CosLat = FMath::Max(0.001, FMath::Abs(FMath::Cos(FMath::DegreesToRadians(Leader->Latitude))));
+		Follower.Latitude  = Leader->Latitude  + OffsetNorthM / METRES_PER_DEGREE_LAT;
+		Follower.Longitude = Leader->Longitude + OffsetEastM  / (METRES_PER_DEGREE_LAT * CosLat);
+		Follower.Altitude  = Leader->Altitude  + static_cast<float>(OffsetAltM);
+
+		if (Spec->bInheritHeading)
+		{
+			Follower.Yaw = Leader->Yaw;
+		}
+
+		// Update cache with post-formation position
+		LastKnownStates.Add(Follower.EntityId, Follower);
+	}
+}
+
+void FScenarioEngine::SortByFormationDependency()
+{
+	// Stable topological sort: entities with no LeaderEntityId first,
+	// then entities whose leader appeared earlier. Handles one level of nesting.
+	TArray<FCamSimConfig::FScenarioEntityConfig> Leaders;
+	TArray<FCamSimConfig::FScenarioEntityConfig> Followers;
+
+	for (const FCamSimConfig::FScenarioEntityConfig& Spec : EntityConfigs)
+	{
+		if (Spec.LeaderEntityId == 0)
+			Leaders.Add(Spec);
+		else
+			Followers.Add(Spec);
+	}
+
+	EntityConfigs.Empty(Leaders.Num() + Followers.Num());
+	EntityConfigs.Append(Leaders);
+	EntityConfigs.Append(Followers);
 }

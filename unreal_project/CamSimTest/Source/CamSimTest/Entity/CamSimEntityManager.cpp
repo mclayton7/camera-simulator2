@@ -7,6 +7,7 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "Environment/CamSimParticleManager.h"
 #include "Scenario/ScenarioEngine.h"
+#include "Scenario/ScenarioRandomizer.h"
 #include "CIGI/CigiReceiver.h"
 #include "DIS/DisEntityAdapter.h"
 #include "CamSimTest.h"
@@ -17,7 +18,7 @@
 static constexpr uint8 CIGI_ENTITY_STANDBY = 0;
 static constexpr uint8 CIGI_ENTITY_ACTIVE  = 1;
 static constexpr uint8 CIGI_ENTITY_REMOVE  = 2;
-static constexpr double METRES_PER_DEGREE_LAT = 111320.0;
+#include "Geospatial/GeoConstants.h"
 
 // -------------------------------------------------------------------------
 // Constructor / Destructor
@@ -451,6 +452,12 @@ float FCamSimEntityManager::GetEntityMaxUpdateRateHz(uint16 EntityId) const
 	return FMath::Max(0.0f, Cfg.EntityScale.DefaultMaxUpdateRateHz);
 }
 
+ACamSimEntity* FCamSimEntityManager::FindEntity(uint16 EntityId) const
+{
+	ACamSimEntity* const* Found = EntityMap.Find(EntityId);
+	return (Found && IsValid(*Found)) ? *Found : nullptr;
+}
+
 FCigiEntityState FCamSimEntityManager::BuildScenarioState(
 	const FCamSimConfig::FScenarioEntityConfig& Spec,
 	double ScenarioElapsedSeconds) const
@@ -482,10 +489,18 @@ void FCamSimEntityManager::ProcessScenarioEntities()
 	if (ScenarioStartSeconds <= 0.0)
 	{
 		ScenarioStartSeconds = NowSeconds;
+
+		// Phase 23E: Apply randomization to a config copy before initializing
+		FCamSimConfig WorkCfg = Cfg;
+		if (WorkCfg.Randomization.bEnabled)
+		{
+			FScenarioRandomizer::Randomize(WorkCfg);
+		}
+
 		ScenarioEngine = MakeUnique<FScenarioEngine>();
-		ScenarioEngine->Initialize(Cfg);
+		ScenarioEngine->Initialize(WorkCfg);
 		UE_LOG(LogCamSim, Log, TEXT("EntityManager: scenario orchestration enabled (%d entities, %d triggers, time_scale=%.2f)"),
-			Cfg.ScenarioEntities.Num(), Cfg.ScenarioTriggers.Num(), Cfg.ScenarioTimeScale);
+			WorkCfg.ScenarioEntities.Num(), WorkCfg.ScenarioTriggers.Num(), WorkCfg.ScenarioTimeScale);
 	}
 
 	const double ScenarioElapsed = (NowSeconds - ScenarioStartSeconds) * FMath::Max(0.0f, Cfg.ScenarioTimeScale);
