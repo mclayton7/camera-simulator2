@@ -23,6 +23,15 @@ static const uint8 kST0601_UL[16] = {
 static TArray<uint8> CachedST0102Payload;
 
 // -------------------------------------------------------------------------
+// Phase 26: configurable checksum algorithm + cached config statics
+// -------------------------------------------------------------------------
+enum class EKlvChecksumAlgo : uint8 { CRC16, BCC16 };
+static EKlvChecksumAlgo GKlvChecksumAlgo = EKlvChecksumAlgo::CRC16;
+static FString GCachedTailNumber;
+static uint8  GCachedTargetGateWidth  = 0;
+static uint8  GCachedTargetGateHeight = 0;
+
+// -------------------------------------------------------------------------
 // Tag descriptor table
 //
 // Each entry describes one TLV field.  The encoder lambda appends the
@@ -64,6 +73,15 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		FKlvBuilder::AppendTag(V, 2, Tmp, 8);
 	}},
 
+	// Tag 4 – Platform Tail Number, ISO 646 string (Phase 26A)
+	{ 4, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		if (GCachedTailNumber.IsEmpty()) return;
+		auto Ansi = StringCast<ANSICHAR>(*GCachedTailNumber);
+		FKlvBuilder::AppendTag(V, 4, reinterpret_cast<const uint8*>(Ansi.Get()),
+			static_cast<uint8>(FMath::Min(Ansi.Length(), 127)));
+	}},
+
 	// Tag 5 – Platform Heading Angle, 2-byte unsigned, 0..360°
 	{ 5, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
@@ -86,6 +104,14 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		int16 R = FKlvBuilder::MapPlatformRoll(T.Roll);
 		uint8 Tmp[2] = { uint8((R >> 8) & 0xFF), uint8(R & 0xFF) };
 		FKlvBuilder::AppendTag(V, 7, Tmp, 2);
+	}},
+
+	// Tag 8 – Platform Ground Speed, 1-byte unsigned, 0..255 m/s (Phase 26C)
+	{ 8, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (T.GroundSpeedMps <= 0.0f) return;
+		uint8 Spd = FKlvBuilder::MapGroundSpeed(T.GroundSpeedMps);
+		FKlvBuilder::AppendTag(V, 8, &Spd, 1);
 	}},
 
 	// Tag 11 – Image Source Sensor, ISO 646 string
@@ -204,6 +230,20 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		FKlvBuilder::AppendTag(V, 25, Tmp, 2);
 	}},
 
+	// Tag 40 – Target Track Gate Width, 1-byte unsigned, pixels (Phase 26D)
+	{ 40, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		if (GCachedTargetGateWidth == 0) return;
+		FKlvBuilder::AppendTag(V, 40, &GCachedTargetGateWidth, 1);
+	}},
+
+	// Tag 41 – Target Track Gate Height, 1-byte unsigned, pixels (Phase 26D)
+	{ 41, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		if (GCachedTargetGateHeight == 0) return;
+		FKlvBuilder::AppendTag(V, 41, &GCachedTargetGateHeight, 1);
+	}},
+
 	// Tag 47 – Generic Flag Data 01, 1-byte bitmask
 	//   Bit 5 (0x20): IR Polarity — 1 = black-hot
 	//   Bit 3 (0x08): Slant Range valid — 1 = range is computed
@@ -235,10 +275,10 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		V.Append(CachedST0102Payload);
 	}},
 
-	// Tag 65 – UAS LS Version Number, 1-byte unsigned, value=8 (ST 0601.8)
+	// Tag 65 – UAS LS Version Number, 1-byte unsigned, value=9 (ST 0601.9)
 	{ 65, [](TArray<uint8>& V, const FCamSimTelemetry&)
 	{
-		constexpr uint8 Version = 8;
+		constexpr uint8 Version = 9;
 		FKlvBuilder::AppendTag(V, 65, &Version, 1);
 	}},
 };
@@ -286,13 +326,15 @@ TArray<uint8> FKlvBuilder::BuildMisbST0601(const FCamSimTelemetry& T)
 
 	Packet.Append(Value);
 
-	// CRC-16/CCITT over everything so far (UL + length + TLVs)
-	const uint16 Crc = ComputeCrc16(Packet.GetData(), Packet.Num());
+	// Checksum over everything so far (UL + length + TLVs)
+	const uint16 Checksum = (GKlvChecksumAlgo == EKlvChecksumAlgo::BCC16)
+		? ComputeBcc16(Packet.GetData(), Packet.Num())
+		: ComputeCrc16(Packet.GetData(), Packet.Num());
 
 	Packet.Add(1);   // Tag 1 (checksum)
 	Packet.Add(2);   // length
-	Packet.Add(static_cast<uint8>((Crc >> 8) & 0xFF));
-	Packet.Add(static_cast<uint8>(Crc & 0xFF));
+	Packet.Add(static_cast<uint8>((Checksum >> 8) & 0xFF));
+	Packet.Add(static_cast<uint8>(Checksum & 0xFF));
 
 	return Packet;
 }
@@ -495,4 +537,56 @@ uint16 FKlvBuilder::ComputeCrc16(const uint8* Data, int32 Len)
 		}
 	}
 	return Crc;
+}
+
+// -------------------------------------------------------------------------
+// BCC-16: running 16-bit modular sum (ST 0601 spec checksum)
+// Even-indexed bytes accumulate into the high byte, odd into the low byte.
+// NOTE: This matches the common JMISB / impleotv interpretation. Verify
+// against the MISB ST 0601.9 §12 reference vector if strict compliance is
+// required. CRC-16 (the default) is recommended for most integrations.
+// -------------------------------------------------------------------------
+
+uint16 FKlvBuilder::ComputeBcc16(const uint8* Data, int32 Len)
+{
+	uint16 Bcc = 0;
+	for (int32 i = 0; i < Len; ++i)
+	{
+		Bcc += static_cast<uint16>(Data[i]) << ((i & 1) ? 0 : 8);
+	}
+	return Bcc;
+}
+
+// -------------------------------------------------------------------------
+// MapGroundSpeed — 1-byte unsigned, 0..255 m/s (Tag 8)
+// -------------------------------------------------------------------------
+
+uint8 FKlvBuilder::MapGroundSpeed(float MetresPerSec)
+{
+	if (!FMath::IsFinite(MetresPerSec)) MetresPerSec = 0.0f;
+	return static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(MetresPerSec), 0, 255));
+}
+
+// -------------------------------------------------------------------------
+// Phase 26: Configure — set checksum algorithm and cached tag values
+// -------------------------------------------------------------------------
+
+void FKlvBuilder::Configure(const FString& ChecksumAlgo,
+                             const FString& TailNumber,
+                             float TargetTrackGateWidth,
+                             float TargetTrackGateHeight)
+{
+	GKlvChecksumAlgo = (ChecksumAlgo.ToLower() == TEXT("bcc16"))
+		? EKlvChecksumAlgo::BCC16
+		: EKlvChecksumAlgo::CRC16;
+
+	GCachedTailNumber = TailNumber;
+	GCachedTargetGateWidth  = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(TargetTrackGateWidth),  0, 255));
+	GCachedTargetGateHeight = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(TargetTrackGateHeight), 0, 255));
+
+	UE_LOG(LogCamSim, Log,
+		TEXT("FKlvBuilder: Phase 26 configured (checksum=%s, tail=%s, gate=%dx%d)"),
+		GKlvChecksumAlgo == EKlvChecksumAlgo::BCC16 ? TEXT("bcc16") : TEXT("crc16"),
+		GCachedTailNumber.IsEmpty() ? TEXT("(none)") : *GCachedTailNumber,
+		GCachedTargetGateWidth, GCachedTargetGateHeight);
 }

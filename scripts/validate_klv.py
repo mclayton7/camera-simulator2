@@ -61,6 +61,14 @@ def crc16_ccitt(data: bytes) -> int:
     return crc
 
 
+def bcc16(data: bytes) -> int:
+    """BCC-16: running 16-bit modular sum (ST 0601 spec checksum)."""
+    acc = 0
+    for i, byte in enumerate(data):
+        acc = (acc + (byte << (8 if i % 2 == 0 else 0))) & 0xFFFF
+    return acc
+
+
 # ---------------------------------------------------------------------------
 # MISB ST 0601 tag decoders
 # ---------------------------------------------------------------------------
@@ -149,12 +157,29 @@ def decode_version(v: bytes) -> str:
     return str(v[0])
 
 
+def decode_ground_speed(v: bytes) -> str:
+    """uint8: 0..255 m/s."""
+    return f"{v[0]} m/s"
+
+
+def decode_tail_number(v: bytes) -> str:
+    """ISO 646 string: platform tail number."""
+    return v.decode("ascii", errors="replace")
+
+
+def decode_target_gate(v: bytes) -> str:
+    """uint8: target track gate size in pixels."""
+    return f"{v[0]} px"
+
+
 TAG_DECODERS = {
     1:  ("Checksum",                  lambda v: f"0x{int.from_bytes(v,'big'):04X}"),
     2:  ("UNIX Timestamp",            decode_timestamp),
+    4:  ("Platform Tail Number",      decode_tail_number),
     5:  ("Platform Heading",          decode_heading),
     6:  ("Platform Pitch",            decode_platform_pitch),
     7:  ("Platform Roll",             decode_platform_roll),
+    8:  ("Platform Ground Speed",     decode_ground_speed),
     11: ("Image Source Sensor",       decode_string),
     12: ("Image Coordinate System",   decode_string),
     13: ("Sensor Latitude",           lambda v: decode_lat_lon(v,  90.0)),
@@ -169,6 +194,8 @@ TAG_DECODERS = {
     23: ("Frame Center Latitude",     lambda v: decode_lat_lon(v,  90.0)),
     24: ("Frame Center Longitude",    lambda v: decode_lat_lon(v, 180.0)),
     25: ("Frame Center Elevation",    decode_altitude),
+    40: ("Target Track Gate Width",   decode_target_gate),
+    41: ("Target Track Gate Height",  decode_target_gate),
     47: ("Generic Flag Data 01",      decode_flag_data_01),
     65: ("UAS LS Version",            decode_version),
 }
@@ -270,18 +297,22 @@ def parse_klv_local_set(packet: bytes, verbose: bool = False) -> dict:
 
         pos += length
 
-    # CRC validation
+    # Checksum validation (CRC-16/CCITT or BCC-16)
     if crc_offset is not None:
-        # CRC covers: UL key + BER length + all TLVs up to (not including) Tag1 value
-        # = packet[0 .. crc_offset-2]   (exclude tag=1, length=2 bytes too)
-        data_for_crc = packet[:crc_offset - 2]   # exclude "01 02" tag+length of CRC tag
+        data_for_crc = packet[:crc_offset - 2]   # exclude "01 02" tag+length of checksum tag
+        actual_val   = int.from_bytes(packet[crc_offset: crc_offset + 2], "big")
         expected_crc = crc16_ccitt(data_for_crc)
-        actual_crc   = int.from_bytes(packet[crc_offset: crc_offset + 2], "big")
-        if expected_crc == actual_crc:
-            result["_crc"] = f"OK (0x{actual_crc:04X})"
+        expected_bcc = bcc16(data_for_crc)
+        if expected_crc == actual_val:
+            result["_crc"] = f"OK CRC-16 (0x{actual_val:04X})"
+        elif expected_bcc == actual_val:
+            result["_crc"] = f"OK BCC-16 (0x{actual_val:04X})"
         else:
-            result["_crc"] = f"FAIL (got 0x{actual_crc:04X}, expected 0x{expected_crc:04X})"
-            result["_errors"].append("CRC mismatch")
+            result["_crc"] = (
+                f"FAIL (got 0x{actual_val:04X}, "
+                f"expected CRC-16=0x{expected_crc:04X} or BCC-16=0x{expected_bcc:04X})"
+            )
+            result["_errors"].append("Checksum mismatch")
     else:
         result["_crc"] = "Tag 1 not found"
 

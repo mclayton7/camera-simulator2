@@ -1,6 +1,6 @@
 # MISB ST 0601 KLV Tag Reference
 
-CamSim outputs a MISB ST 0601.8 Local Set embedded in every MPEG-TS packet as a KLVA
+CamSim outputs a MISB ST 0601.9 Local Set embedded in every MPEG-TS packet as a KLVA
 data stream (PID assigned by FFmpeg alongside the H.264 video PID).
 
 ## Packet Structure
@@ -16,11 +16,14 @@ Each TLV triplet: `[tag: uint8] [length: uint8] [value: N bytes]`.
 
 ## Checksum
 
-The standard (ST 0601.8 §12) specifies **BCC-16** (running 16-bit modular sum of byte pairs).
-This implementation uses **CRC-16/CCITT** (polynomial 0x1021, init 0xFFFF) instead, which
-covers the full packet from the Universal Label through the last TLV before Tag 1.
-`scripts/validate_klv.py` also uses CRC-16/CCITT. A standards-compliant decoder expecting
-BCC-16 will flag the checksum as invalid.
+CamSim supports two checksum algorithms, configurable via `phase26.klv_checksum` in
+`camsim_config.yaml` or `CAMSIM_KLV_CHECKSUM` env var:
+
+- **`crc16`** (default): CRC-16/CCITT (polynomial 0x1021, init 0xFFFF). Matches
+  `scripts/validate_klv.py` and most third-party decoders.
+- **`bcc16`**: BCC-16 (running 16-bit modular sum), per ST 0601 spec §12.
+
+`scripts/validate_klv.py` auto-detects both algorithms.
 
 ---
 
@@ -38,6 +41,19 @@ Tags are written in ascending numerical order as required by ST 0601.
 
 **Source:** `ACamSimCamera::BuildTelemetry()` — `FDateTime::UtcNow()` converted to
 microseconds at the start of each `Tick()` before frame capture.
+
+---
+
+### Tag 4 — Platform Tail Number (Phase 26A)
+
+| Field | Value |
+|-------|-------|
+| Format | ISO 646 (ASCII) string, variable length |
+| Max length | 127 bytes |
+| Omitted | Tag is not written if `platform_tail_number` is empty |
+
+**Source:** Config value `phase26.platform_tail_number` / `CAMSIM_PLATFORM_TAIL_NUMBER`.
+Set once at startup via `FKlvBuilder::Configure()`. Examples: `"N12345"`, `"CAMSIM-01"`.
 
 ---
 
@@ -78,6 +94,21 @@ for a fixed-wing platform.
 | Encoding | `round(roll / 50.0 * 32767)`, clamped to ±50° |
 
 **Source:** `FCigiEntityState.Roll` — from CIGI Entity Control. Positive = right wing down.
+
+---
+
+### Tag 8 — Platform Ground Speed (Phase 26C)
+
+| Field | Value |
+|-------|-------|
+| Format | `uint8`, 1 byte |
+| Units | Metres/second, 0..255 |
+| Encoding | `clamp(round(speed_mps), 0, 255)` |
+| Omitted | Tag is not written if `GroundSpeedMps <= 0` |
+
+**Source:** Computed from successive WGS-84 position deltas in `ACamSimCamera::ApplyCigiState()`.
+Uses an equirectangular distance approximation (cos(mean_lat) scaling on longitude delta)
+divided by frame delta time.
 
 ---
 
@@ -293,6 +324,34 @@ stays `0.0`, which encodes as 0 m MSL — not physically meaningful but not corr
 
 ---
 
+### Tag 40 — Target Track Gate Width (Phase 26D)
+
+| Field | Value |
+|-------|-------|
+| Format | `uint8`, 1 byte |
+| Units | Pixels |
+| Range | 0..255 |
+| Omitted | Tag is not written if `target_track_gate_width == 0` |
+
+**Source:** Config value `phase26.target_track_gate_width` / `CAMSIM_TARGET_TRACK_GATE_WIDTH`.
+Static — set once at startup. Represents the width of the target tracker's gate overlay.
+
+---
+
+### Tag 41 — Target Track Gate Height (Phase 26D)
+
+| Field | Value |
+|-------|-------|
+| Format | `uint8`, 1 byte |
+| Units | Pixels |
+| Range | 0..255 |
+| Omitted | Tag is not written if `target_track_gate_height == 0` |
+
+**Source:** Config value `phase26.target_track_gate_height` / `CAMSIM_TARGET_TRACK_GATE_HEIGHT`.
+Static — set once at startup. Represents the height of the target tracker's gate overlay.
+
+---
+
 ### Tag 47 — Generic Flag Data 01
 
 | Field | Value |
@@ -319,9 +378,9 @@ Bit numbering is MSB-first (bit 7 = most significant):
 | Field | Value |
 |-------|-------|
 | Format | `uint8`, 1 byte |
-| Value | `8` (ST 0601.8) |
+| Value | `9` (ST 0601.9) |
 
-**Source:** Hardcoded constant. Required in every packet per ST 0601.8 §12. Allows
+**Source:** Hardcoded constant. Required in every packet per ST 0601. Allows
 decoders to select the correct tag dictionary.
 
 ---
@@ -331,7 +390,7 @@ decoders to select the correct tag dictionary.
 | Field | Value |
 |-------|-------|
 | Format | `uint16`, 2 bytes, big-endian |
-| Algorithm | CRC-16/CCITT, polynomial 0x1021, initial value 0xFFFF |
+| Algorithm | CRC-16/CCITT (default) or BCC-16 (configurable) |
 | Coverage | Universal Label + BER length + all TLV payload |
 
 Always the final tag in the packet. See checksum note at the top of this document.
@@ -343,7 +402,13 @@ Always the final tag in the packet. See checksum note at the top of this documen
 ```
 CIGI Entity Control (opcode 2)
   └─> FCigiEntityState.{Lat,Lon,Alt,Yaw,Pitch,Roll}
-        └─> Tags 5, 6, 7, 13, 14, 15
+        ├─> Tags 5, 6, 7, 13, 14, 15
+        └─> Position delta → Tag 8 (ground speed)
+
+Config (camsim_config.yaml / env vars)
+  ├─> phase26.platform_tail_number → Tag 4
+  ├─> phase26.target_track_gate_width/height → Tags 40, 41
+  └─> phase26.klv_checksum → Tag 1 algorithm
 
 CIGI View Definition (opcode 21)
   └─> SceneCapture->FOVAngle
@@ -369,8 +434,8 @@ System clock (FDateTime::UtcNow)
 
 Static / derived
   └─> Tag 12  ("Geodetic WGS84")
-  └─> Tag 65  (version = 8)
-  └─> Tag 1   (CRC-16/CCITT checksum)
+  └─> Tag 65  (version = 9)
+  └─> Tag 1   (checksum: CRC-16 or BCC-16)
 ```
 
 ---
@@ -393,6 +458,7 @@ uv run scripts/send_cigi_test.py --sweep
 uv run scripts/send_cigi_test.py --sensor-id 1 --polarity 1
 ```
 
-The validator will print each decoded tag with its numeric value. Tag 65 should appear in
-every packet with value `8`. Tags 5/6/7 should change during `--sweep`. Tag 11 should
-change string value when `--sensor-id` is varied.
+The validator auto-detects both CRC-16/CCITT and BCC-16 checksums. Tag 65 should appear in
+every packet with value `9`. Tags 5/6/7 should change during `--sweep`. Tag 11 should
+change string value when `--sensor-id` is varied. Tag 4 appears when `platform_tail_number`
+is configured. Tag 8 appears when the platform is in motion.

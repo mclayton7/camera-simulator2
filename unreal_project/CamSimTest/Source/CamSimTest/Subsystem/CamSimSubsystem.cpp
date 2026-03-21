@@ -288,6 +288,13 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Config.SecurityMetadata.Caveats,
 		Config.SecurityMetadata.ReleasingInstructions);
 
+	// Phase 26: configure KLV checksum algorithm, tail number, and target gate
+	FKlvBuilder::Configure(
+		Config.Phase26.KlvChecksum,
+		Config.Phase26.PlatformTailNumber,
+		Config.Phase26.TargetTrackGateWidth,
+		Config.Phase26.TargetTrackGateHeight);
+
 	// Phase 13B: allocate Pimpl — all sub-objects owned via TUniquePtr
 	Impl = MakePimpl<FSubsystemImpl>();
 

@@ -35,6 +35,9 @@ struct FCamSimTelemetry
 	double FrameCenterLon  = 0.0;  // WGS-84 decimal degrees — Tag 24
 	double FrameCenterElev = 0.0;  // metres above ellipsoid  — Tag 25 (from terrain hit)
 
+	// Phase 26: additional ST 0601.9 fields
+	float  GroundSpeedMps  = 0.0f; // metres/sec — Tag 8 (0 = omit)
+
 	// Active sensor state snapshot (for optional sidecar ground-truth output).
 	uint8 SensorMode      = 0;    // 0=EO, 1=IR, 2=NVG
 	uint8 SensorPolarity  = 0;    // 0=white-hot, 1=black-hot (IR)
@@ -53,15 +56,17 @@ struct FCamSimTelemetry
 /**
  * FKlvBuilder
  *
- * Stateless helper that encodes an FCamSimTelemetry into a MISB ST 0601
+ * Static helper (with one-time configuration) that encodes an FCamSimTelemetry into a MISB ST 0601
  * KLV Local Set byte buffer ready to be written to an FFmpeg data-stream packet.
  *
- * Tags implemented (ST 0601.8, ascending order):
- *   Tag  1  – Checksum (CRC-16/CCITT)
+ * Tags implemented (ST 0601.9, ascending order):
+ *   Tag  1  – Checksum (CRC-16/CCITT or BCC-16, configurable)
  *   Tag  2  – UNIX Time Stamp            (uint64, μs, 8 bytes)
+ *   Tag  4  – Platform Tail Number       (ISO 646 string, configurable)
  *   Tag  5  – Platform Heading Angle     (uint16, 0..360°)
  *   Tag  6  – Platform Pitch Angle       (int16,  ±20°)
  *   Tag  7  – Platform Roll Angle        (int16,  ±50°)
+ *   Tag  8  – Platform Ground Speed      (uint8, 0..255 m/s)
  *   Tag 11  – Image Source Sensor        (ISO 646 string: "EO Nose" / "LWIR" / "NVG")
  *   Tag 12  – Image Coordinate System    (ISO 646 string: "Geodetic WGS84")
  *   Tag 13  – Sensor Latitude            (int32,  ±90°)
@@ -76,11 +81,13 @@ struct FCamSimTelemetry
  *   Tag 23  – Frame Center Latitude      (int32,  ±90°)
  *   Tag 24  – Frame Center Longitude     (int32,  ±180°)
  *   Tag 25  – Frame Center Elevation     (uint16, −900..19000 m)
+ *   Tag 40  – Target Track Gate Width    (uint8, pixels, configurable)
+ *   Tag 41  – Target Track Gate Height   (uint8, pixels, configurable)
  *   Tag 47  – Generic Flag Data 01       (uint8 bitmask: bit5=IR polarity, bit3=range valid)
- *   Tag 65  – UAS LS Version Number      (uint8, value=8)
+ *   Tag 65  – UAS LS Version Number      (uint8, value=9)
  *
- * NOTE on checksum: The ST 0601.8 standard specifies BCC-16 (running modular sum), but this
- * implementation uses CRC-16/CCITT (poly 0x1021, init 0xFFFF) to match validate_klv.py.
+ * Checksum: default is CRC-16/CCITT (poly 0x1021, init 0xFFFF) to match validate_klv.py.
+ * Configure() can switch to BCC-16 (running 16-bit modular sum) per ST 0601 spec.
  */
 class FKlvBuilder
 {
@@ -108,6 +115,15 @@ public:
 	                                const FString& Caveats = FString(),
 	                                const FString& ReleasingInstructions = FString());
 
+	/**
+	 * Phase 26: one-time configuration for checksum algorithm, tail number,
+	 * and target track gate dimensions. Called at startup from subsystem init.
+	 */
+	static void Configure(const FString& ChecksumAlgo,
+	                       const FString& TailNumber,
+	                       float TargetTrackGateWidth,
+	                       float TargetTrackGateHeight);
+
 	// -----------------------------------------------------------------------
 	// Public helpers used by the tag-descriptor table in KlvBuilder.cpp.
 	// These pure-math converters are also useful for testing individual tags.
@@ -124,9 +140,9 @@ public:
 	static int16  MapPlatformPitch(float Degrees);         // signed,   2-byte, ±20°
 	static int16  MapPlatformRoll(float Degrees);          // signed,   2-byte, ±50°
 	static uint32 MapSlantRange(double Metres);            // unsigned, 4-byte, 0..5000000 m
+	static uint8  MapGroundSpeed(float MetresPerSec);      // unsigned, 1-byte, 0..255 m/s
 
-private:
-	// CRC-16/CCITT (poly 0x1021, init 0xFFFF) over the entire KLV set
-	// including the UL key and length, excluding the checksum tag itself.
+	// Checksum helpers (public for testing)
 	static uint16 ComputeCrc16(const uint8* Data, int32 Len);
+	static uint16 ComputeBcc16(const uint8* Data, int32 Len);
 };
