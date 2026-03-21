@@ -162,11 +162,6 @@ def decode_ground_speed(v: bytes) -> str:
     return f"{v[0]} m/s"
 
 
-def decode_tail_number(v: bytes) -> str:
-    """ISO 646 string: platform tail number."""
-    return v.decode("ascii", errors="replace")
-
-
 def decode_target_gate(v: bytes) -> str:
     """uint8: target track gate size in pixels."""
     return f"{v[0]} px"
@@ -175,7 +170,7 @@ def decode_target_gate(v: bytes) -> str:
 TAG_DECODERS = {
     1:  ("Checksum",                  lambda v: f"0x{int.from_bytes(v,'big'):04X}"),
     2:  ("UNIX Timestamp",            decode_timestamp),
-    4:  ("Platform Tail Number",      decode_tail_number),
+    4:  ("Platform Tail Number",      decode_string),
     5:  ("Platform Heading",          decode_heading),
     6:  ("Platform Pitch",            decode_platform_pitch),
     7:  ("Platform Roll",             decode_platform_roll),

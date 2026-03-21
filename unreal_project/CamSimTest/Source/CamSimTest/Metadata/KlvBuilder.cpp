@@ -27,7 +27,7 @@ static TArray<uint8> CachedST0102Payload;
 // -------------------------------------------------------------------------
 enum class EKlvChecksumAlgo : uint8 { CRC16, BCC16 };
 static EKlvChecksumAlgo GKlvChecksumAlgo = EKlvChecksumAlgo::CRC16;
-static FString GCachedTailNumber;
+static TArray<uint8> GCachedTailNumberAnsi;
 static uint8  GCachedTargetGateWidth  = 0;
 static uint8  GCachedTargetGateHeight = 0;
 
@@ -76,10 +76,9 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 	// Tag 4 – Platform Tail Number, ISO 646 string (Phase 26A)
 	{ 4, [](TArray<uint8>& V, const FCamSimTelemetry&)
 	{
-		if (GCachedTailNumber.IsEmpty()) return;
-		auto Ansi = StringCast<ANSICHAR>(*GCachedTailNumber);
-		FKlvBuilder::AppendTag(V, 4, reinterpret_cast<const uint8*>(Ansi.Get()),
-			static_cast<uint8>(FMath::Min(Ansi.Length(), 127)));
+		if (GCachedTailNumberAnsi.Num() == 0) return;
+		FKlvBuilder::AppendTag(V, 4, GCachedTailNumberAnsi.GetData(),
+			static_cast<uint8>(GCachedTailNumberAnsi.Num()));
 	}},
 
 	// Tag 5 – Platform Heading Angle, 2-byte unsigned, 0..360°
@@ -576,17 +575,35 @@ void FKlvBuilder::Configure(const FString& ChecksumAlgo,
                              float TargetTrackGateWidth,
                              float TargetTrackGateHeight)
 {
-	GKlvChecksumAlgo = (ChecksumAlgo.ToLower() == TEXT("bcc16"))
-		? EKlvChecksumAlgo::BCC16
-		: EKlvChecksumAlgo::CRC16;
+	const FString AlgoLower = ChecksumAlgo.ToLower();
+	if (AlgoLower == TEXT("bcc16"))
+	{
+		GKlvChecksumAlgo = EKlvChecksumAlgo::BCC16;
+	}
+	else
+	{
+		if (AlgoLower != TEXT("crc16") && !AlgoLower.IsEmpty())
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FKlvBuilder::Configure: unknown checksum '%s', defaulting to crc16"), *ChecksumAlgo);
+		}
+		GKlvChecksumAlgo = EKlvChecksumAlgo::CRC16;
+	}
 
-	GCachedTailNumber = TailNumber;
+	// Pre-convert tail number to ANSI bytes (avoids per-frame StringCast allocation)
+	GCachedTailNumberAnsi.Reset();
+	if (!TailNumber.IsEmpty())
+	{
+		auto Ansi = StringCast<ANSICHAR>(*TailNumber);
+		const int32 Len = FMath::Min(Ansi.Length(), 127);
+		GCachedTailNumberAnsi.Append(reinterpret_cast<const uint8*>(Ansi.Get()), Len);
+	}
 	GCachedTargetGateWidth  = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(TargetTrackGateWidth),  0, 255));
 	GCachedTargetGateHeight = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(TargetTrackGateHeight), 0, 255));
 
 	UE_LOG(LogCamSim, Log,
 		TEXT("FKlvBuilder: Phase 26 configured (checksum=%s, tail=%s, gate=%dx%d)"),
 		GKlvChecksumAlgo == EKlvChecksumAlgo::BCC16 ? TEXT("bcc16") : TEXT("crc16"),
-		GCachedTailNumber.IsEmpty() ? TEXT("(none)") : *GCachedTailNumber,
+		TailNumber.IsEmpty() ? TEXT("(none)") : *TailNumber,
 		GCachedTargetGateWidth, GCachedTargetGateHeight);
 }
