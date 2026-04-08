@@ -2,6 +2,7 @@
 
 #include "Subsystem/CamSimSubsystem.h"
 #include "Camera/CamSimCamera.h"
+#include "Camera/CamSimSensorComponent.h"
 #include "Entity/CamSimEntityManager.h"
 #include "CIGI/CigiReceiver.h"
 #include "CIGI/CigiSender.h"
@@ -443,6 +444,29 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 	{
 		Impl->IGMode = 1;
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: IG mode -> Operate (first CIGI packet received)"));
+	}
+
+	// Stage Sensor Extended Response from camera telemetry
+	if (Impl->CigiSender)
+	{
+		if (ACamSimCamera* Cam = Camera_.Get())
+		{
+			FCamSimTelemetry Telem = Cam->GetCurrentTelemetry();
+			// SensorStat: 1=Tracking when sensor is on, 0=Searching when off
+			const uint8 SensorStat = (Cam->SensorComp && Cam->SensorComp->IsOn()) ? 1 : 0;
+			// GateXoff/GateYoff: 0.0 = centered (no pixel-level tracking)
+			Impl->CigiSender->SetSensorResponse(
+				0,                           // ViewId
+				Telem.SensorMode,            // SensorId (0=EO, 1=IR, 2=NVG)
+				SensorStat,
+				0.0f, 0.0f,                  // GateXoff, GateYoff (centered)
+				0, 0,                        // GateSzX, GateSzY (no gate dimensions)
+				Telem.FrameCenterLat,        // TrackPntLat (degrees)
+				Telem.FrameCenterLon,        // TrackPntLon (degrees)
+				Telem.FrameCenterElev,       // TrackPntAlt (metres)
+				Impl->FrameCntr
+			);
+		}
 	}
 
 	// Flush SOF + all staged responses into one UDP datagram

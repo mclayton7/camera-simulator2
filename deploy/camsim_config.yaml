@@ -30,7 +30,7 @@ cigi_response_port: 8889
 # Master toggle: enable DIS receiver thread.
 # Env: CAMSIM_DIS_ENABLED
 dis:
-  enabled: false
+  enabled: true
 
   # UDP bind address for incoming DIS PDUs.
   # Env: CAMSIM_DIS_BIND_ADDR
@@ -74,9 +74,8 @@ dis:
   # Values are CamSim entity type IDs (matching entity_types keys below).
   # Unmapped types fall back through fuzzy match (kind:domain:category)
   # then to default_entity_type_id.
-  # entity_type_map:
-  #   "1:2:225:1:2:0:0": 1001   # F-16 -> type 1001
-  #   "1:1:225:1:0:0:0": 1002   # M1 Abrams -> type 1002
+  entity_type_map:
+    "1:2:225:2:0:0:0": 1001   # Fixed-wing USA (ownship from mavlink-dis-bridge)
 
 # --- Streaming & ATAK Interop (Phase 21 Sprint 2) ---
 # CoT (Cursor on Target) position reporting and ATAK FMV streaming.
@@ -288,7 +287,7 @@ start_hour: 12.0
 
 # CIGI Entity ID that drives the camera. All other entity IDs are managed
 # by the entity renderer. Must match --entity-id in send_cigi_test.py.
-camera_entity_id: 0
+camera_entity_id: 1
 
 # --- First-Person View (Phase 22G) ---
 # Attach the camera to a character entity at eye height.

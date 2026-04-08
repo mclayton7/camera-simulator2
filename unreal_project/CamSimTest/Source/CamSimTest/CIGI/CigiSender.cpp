@@ -15,6 +15,8 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiBaseSOF.h"        // CigiBaseSOF::IGModeGrp (Phase 12D)
 #include "cigicl/CigiHatHotRespV3.h"
 #include "cigicl/CigiLosRespV3.h"
+#include "cigicl/CigiSensorXRespV3.h"
+#include "cigicl/CigiBaseSensorResp.h"
 THIRD_PARTY_INCLUDES_END
 
 // -------------------------------------------------------------------------
@@ -93,6 +95,7 @@ void FCigiSender::Close()
 	PendingHatHot.Empty();
 	for (CigiLosRespV3* P : PendingLos) { delete P; }
 	PendingLos.Empty();
+	delete PendingSensorXResp; PendingSensorXResp = nullptr;
 
 	delete SofPacket;   SofPacket   = nullptr;
 	delete CigiSession; CigiSession = nullptr;  // also destroys OutgoingMsg
@@ -141,6 +144,14 @@ void FCigiSender::FlushFrame(uint32 FrameCntr, uint8 LastHostFrame, uint8 IGMode
 		delete P;
 	}
 	PendingLos.Empty();
+
+	// Pack sensor extended response (if staged this frame)
+	if (PendingSensorXResp)
+	{
+		*OutgoingMsg << *static_cast<CigiBasePacket*>(PendingSensorXResp);
+		delete PendingSensorXResp;
+		PendingSensorXResp = nullptr;
+	}
 
 	// Finalise and send
 	Cigi_uint8* MsgBuf = nullptr;
@@ -202,4 +213,30 @@ void FCigiSender::EnqueueLosResponse(uint16 LosId, bool bValid, bool bVisible,
 		Resp->SetEntityID(static_cast<Cigi_uint16>(EntityId));
 	}
 	PendingLos.Add(Resp);
+}
+
+void FCigiSender::SetSensorResponse(uint16 ViewId, uint8 SensorId, uint8 SensorStat,
+                                     float GateXoff, float GateYoff,
+                                     uint16 GateSzX, uint16 GateSzY,
+                                     double TrackLat, double TrackLon, double TrackAlt,
+                                     uint32 FrameCntr)
+{
+	if (!bOpen) return;
+
+	// Replace any existing pending response (one per frame)
+	delete PendingSensorXResp;
+	PendingSensorXResp = new CigiSensorXRespV3();
+	PendingSensorXResp->SetViewID(static_cast<Cigi_uint16>(ViewId));
+	PendingSensorXResp->SetSensorID(static_cast<Cigi_uint8>(SensorId));
+	PendingSensorXResp->SetSensorStat(
+		static_cast<CigiBaseSensorResp::SensorStatGrp>(FMath::Clamp((int)SensorStat, 0, 2)));
+	PendingSensorXResp->SetGateXoff(GateXoff);
+	PendingSensorXResp->SetGateYoff(GateYoff);
+	PendingSensorXResp->SetGateSzX(static_cast<Cigi_uint16>(GateSzX));
+	PendingSensorXResp->SetGateSzY(static_cast<Cigi_uint16>(GateSzY));
+	PendingSensorXResp->SetEntityTgt(false);
+	PendingSensorXResp->SetTrackPntLat(TrackLat);
+	PendingSensorXResp->SetTrackPntLon(TrackLon);
+	PendingSensorXResp->SetTrackPntAlt(TrackAlt);
+	PendingSensorXResp->SetFrameCntr(static_cast<Cigi_uint32>(FrameCntr));
 }

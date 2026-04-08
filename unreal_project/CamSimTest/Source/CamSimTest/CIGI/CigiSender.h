@@ -11,6 +11,7 @@ class CigiOutgoingMsg;
 class CigiSOFV3_2;
 class CigiHatHotRespV3;
 class CigiLosRespV3;
+class CigiSensorXRespV3;
 
 /**
  * FCigiSender
@@ -20,6 +21,7 @@ class CigiLosRespV3;
  *   1. Start-of-Frame (SOF, opcode 101) — mandatory CIGI heartbeat
  *   2. Any HAT/HOT response packets staged via EnqueueHatHotResponse()
  *   3. Any LOS response packets staged via EnqueueLosResponse()
+ *   4. A Sensor Extended Response (opcode 107) staged via SetSensorResponse()
  *
  * Uses a dedicated CigiIGSession (outgoing only) so it does not share
  * state with the receiver's session.
@@ -56,6 +58,14 @@ public:
 	                        double Range, double HitLat, double HitLon, double HitAlt,
 	                        uint16 EntityId, bool bEntityIdValid);
 
+	/** Stage a Sensor Extended Response for the current frame.
+	 *  Provides gimbal look-point and sensor status to the host. */
+	void SetSensorResponse(uint16 ViewId, uint8 SensorId, uint8 SensorStat,
+	                        float GateXoff, float GateYoff,
+	                        uint16 GateSzX, uint16 GateSzY,
+	                        double TrackLat, double TrackLon, double TrackAlt,
+	                        uint32 FrameCntr);
+
 private:
 	FSocket*                      Socket      = nullptr;
 	TSharedPtr<FInternetAddr>     DestAddr;
@@ -68,6 +78,8 @@ private:
 	// Per-frame staging arrays (cleared after FlushFrame)
 	TArray<CigiHatHotRespV3*> PendingHatHot;
 	TArray<CigiLosRespV3*>    PendingLos;
+
+	CigiSensorXRespV3* PendingSensorXResp = nullptr;
 
 	bool bOpen = false;
 };
