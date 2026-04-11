@@ -468,7 +468,7 @@ Production-grade reliability for 24/7 deployment.
 | ---------------------------------- | ------------------------------------------------------------------------------ | ------ |
 | **28A** Unit Tests in CI           | Run UE automation tests in GitHub Actions (UE test runner step)                | M      |
 | **28B** Structured JSON Logging    | Machine-parseable log output for ELK/Datadog aggregation                       | M      |
-| **28C** HTTP Health Endpoints      | `/ready` and `/live` for Kubernetes probes                                     | M      |
+| **28C** HTTP Health Endpoints      | ✅ `/live`, `/health` (alias), `/ready`, `/metrics` on :8080 — K8s + sim-environment orchestrator (§10.4 metrics done 2026-04-11) | M      |
 | **28D** Config Validation          | Pre-flight range checks on all config values with meaningful error messages    | S      |
 | **28E** Graceful Degradation       | Reduce resolution or disable effects under GPU/CPU pressure                    | L      |
 | **28F** Encoder Reconnection       | Socket reopen on UDP failure (3 retries); failover to local .ts recording      | M      |

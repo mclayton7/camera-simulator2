@@ -110,6 +110,8 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **KLV checksum**: Uses CRC-16/CCITT (not BCC-16 per spec) — intentional, matches validate_klv.py
 - **RHI readback is render-thread only**: `FRHIGPUTextureReadback::IsReady()/Lock()/Unlock()` assert `IsInRenderingThread()`. Use `ENQUEUE_RENDER_COMMAND` + `FlushRenderingCommands()` for synchronous game-thread access (see CamSimCamera.cpp Phase 1 readback pattern)
 - **UE5 TAtomic uses EMemoryOrder**: `TAtomic<T>::Load()/Store()` take `EMemoryOrder` enum, NOT `std::memory_order`
+- **HTTP health server is on by default**: `operational.health_http_enabled` defaults to `true` for sim-environment REST orchestrator compatibility. Binds `0.0.0.0:8080`. To disable: `CAMSIM_HEALTH_HTTP_ENABLED=0`. `/live` and `/health` are route aliases pointing at the same 5-second watchdog. K8s probes that target `/live` still work unchanged.
+- **HTTP server automation tests need two tickers**: `FCamSimHealthServer` is built on `FHttpServerModule` which pumps its listener via `FTSTicker::GetCoreTicker()`, not the HTTP client's `FHttpManager`. Automation tests spinning the HTTP pipeline must tick BOTH `FHttpModule::Get().GetHttpManager().Tick(dt)` AND `FTSTicker::GetCoreTicker().Tick(dt)` in the wait loop, otherwise the server never accepts connections (see `Tests/HttpServerLifecycleTest.cpp`).
 
 ## Environment
 
@@ -120,6 +122,10 @@ Config via `deploy/camsim_config.yaml` or env vars (env takes precedence):
 - `CAMSIM_VIDEO_CODEC` — `h264` | `h265` (default h264)
 - `CAMSIM_ENCODER_TYPE` — `auto` | `nvenc` | `libx264` (default auto)
 - `CAMSIM_OPTICAL_REALISM_ENABLED` — enable lens effects (default false)
+- `CAMSIM_HEALTH_HTTP_ENABLED` — HTTP health server toggle (default 1; Phase 28C)
+- `CAMSIM_HEALTH_HTTP_PORT` — HTTP health server port (default 8080)
+- `CAMSIM_STRUCTURED_LOG_PATH` — JSONL structured log file path (default empty = disabled; Phase 28B)
+- `CAMSIM_TRACK_PIPELINE_LATENCY` — P50/P95/P99 tracking (default 0; Phase 28G)
 - Full list: see `docs/configuration.md`
 
 ## Docker
@@ -132,4 +138,4 @@ CAMSIM_ENCODER_TYPE=libx264 docker compose up  # CPU fallback (Mesa llvmpipe)
 - Non-root user (uid 1000)
 - Entrypoint auto-detects NVIDIA vs Mesa
 - CPU path disables ray tracing via `-ini` flag
-- Health: `camsim_health.json` written every 90 ticks
+- Health: HTTP server on port `8080` exposes `GET /live`, `GET /health` (alias for `/live`), `GET /ready`, and `GET /metrics` (Prometheus format). Legacy `camsim_health.json` file also still written every 90 ticks for backward compatibility.

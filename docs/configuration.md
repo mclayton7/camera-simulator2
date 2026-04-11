@@ -548,4 +548,73 @@ CAMSIM_PROMETHEUS_METRICS_PATH=
 CAMSIM_CIGI_RECORD_PATH=
 CAMSIM_VIDEO_RECORD_PATH=
 CAMSIM_CIGI_PLAYBACK_PATH=
+
+# Operational hardening (Phase 28)
+CAMSIM_STRUCTURED_LOG_PATH=
+CAMSIM_STRUCTURED_LOG_MAX_MB=100
+CAMSIM_HEALTH_HTTP_ENABLED=1
+CAMSIM_HEALTH_HTTP_PORT=8080
+CAMSIM_TRACK_PIPELINE_LATENCY=0
 ```
+
+## Phase 28 — Operational Hardening
+
+### Structured JSON Logging (28B)
+
+Writes one JSON line per event to a rolling log file. Used for ELK/Datadog ingestion.
+
+```yaml
+operational:
+  structured_log_path: "/var/log/camsim.jsonl"   # empty = disabled
+  structured_log_max_mb: 100                     # rotate at this size
+```
+
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `operational.structured_log_path` | `CAMSIM_STRUCTURED_LOG_PATH` | `""` | Path to the JSONL log file. Empty string disables structured logging. |
+| `operational.structured_log_max_mb` | `CAMSIM_STRUCTURED_LOG_MAX_MB` | `100` | Rotation threshold. On overflow, the file is closed, renamed to `<path>.1`, and reopened. |
+
+### HTTP Health & Metrics Server (28C)
+
+An embedded HTTP server on a dedicated port exposing liveness, readiness, and Prometheus-format metrics. Used by Kubernetes probes, by the `sim-environment` REST orchestrator for Docker Compose health monitoring, and by Grafana for direct metric scraping.
+
+```yaml
+operational:
+  health_http_enabled: true   # default true — set to false to disable entirely
+  health_http_port: 8080
+```
+
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `operational.health_http_enabled` | `CAMSIM_HEALTH_HTTP_ENABLED` | `true` | Master toggle. Default on for `sim-environment` Docker Compose compatibility. Set to `0` (env) or `false` (YAML) to disable. |
+| `operational.health_http_port` | `CAMSIM_HEALTH_HTTP_PORT` | `8080` | Listen port. Binds on all interfaces (0.0.0.0) — `FHttpServerModule::GetHttpRouter` does not take a bind address. |
+
+**Routes:**
+
+| Route | Semantics | 200 body | 503 body |
+|---|---|---|---|
+| `GET /live` | Kubernetes liveness convention. Watchdog: returns 200 when the game-thread `Tick()` has fired within the last 5 seconds, 503 otherwise. | `{"status":"ok"}` | `{"status":"stalled","last_tick_ago_s":12.3}` |
+| `GET /health` | `sim-environment` REST orchestrator convention. **Alias for `/live`** — same handler, same semantics. Added so the orchestrator's generic `/health` probe naming works without breaking existing K8s manifests. | `{"status":"ok"}` | Same as `/live` |
+| `GET /ready` | Readiness: encoder open AND at least one CIGI packet received AND first frame successfully encoded. 200 only when all three gates pass. | `{"status":"ready","encoder":true,"cigi":true,"first_frame":true}` | `{"status":"not_ready","encoder":false,"cigi":true,"first_frame":false}` |
+| `GET /metrics` | Prometheus exposition format (`text/plain; charset=utf-8`, version 0.0.4). | See metric list below. | N/A — always 200. |
+
+**`/metrics` contract** (matches the `sim-environment` orchestrator spec §10.4):
+
+- **Gauges:** `camsim_render_fps`, `camsim_output_fps`, `camsim_entity_count`, `camsim_uptime_seconds`
+- **Counters:** `camsim_frame_drops_total`, `camsim_cigi_packets_total`, `camsim_dis_packets_total`, `camsim_frames_encoded_total`
+- **Histograms (optional):** `camsim_frame_latency_ms` — P50/P95/P99 from `FPipelineLatencyTracker`. Only emitted when `performance.track_pipeline_latency = true`.
+
+The render/output FPS gauges are 1Hz rolling measurements updated from the subsystem's `Tick()` (not target values from config). FPS is `(frame_count_delta) / (wall_clock_delta)` over approximately one second.
+
+### Per-Frame Latency Tracking (28G)
+
+Captures pipeline-stage timestamps for P50/P95/P99 latency analysis across the 4-thread pipeline.
+
+```yaml
+performance:
+  track_pipeline_latency: false   # enable to populate camsim_frame_latency_ms on /metrics
+```
+
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `performance.track_pipeline_latency` | `CAMSIM_TRACK_PIPELINE_LATENCY` | `false` | Enable ring-buffer tracking of per-frame latency. Adds a small overhead per frame; recommended for dev/staging, off for production unless needed. |
