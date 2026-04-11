@@ -46,6 +46,8 @@ public class CamSimTest : ModuleRules
 			"NiagaraCore",
 			// HTTP health endpoints (Phase 28C)
 			"HTTPServer",
+			// HTTP client for automation tests of the HTTP server
+			"HTTP",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
