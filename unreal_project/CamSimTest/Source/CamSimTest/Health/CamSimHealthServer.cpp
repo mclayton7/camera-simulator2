@@ -30,9 +30,12 @@ bool FCamSimHealthServer::Start(int32 Port,
 		return false;
 	}
 
-	// GET /live
-	Router->BindRoute(FHttpPath(TEXT("/live")), EHttpServerRequestVerbs::VERB_GET,
-		FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest& Req, const FHttpResultCallback& OnComplete)
+	// Shared liveness handler — used for both /live (K8s convention) and
+	// /health (sim-environment REST orchestrator convention). Both names
+	// probe the same watchdog: 200 when Tick() fired within 5s, 503 with
+	// stall duration otherwise.
+	auto LivenessHandler = FHttpRequestHandler::CreateLambda(
+		[this](const FHttpServerRequest& Req, const FHttpResultCallback& OnComplete)
 		{
 			const double AgeSec = FPlatformTime::Seconds() - LastTickTimeSec;
 			if (AgeSec < 5.0)
@@ -48,7 +51,12 @@ bool FCamSimHealthServer::Start(int32 Port,
 				OnComplete(MoveTemp(Response));
 			}
 			return true;
-		}));
+		});
+
+	// GET /live — K8s liveness probe convention
+	Router->BindRoute(FHttpPath(TEXT("/live")),   EHttpServerRequestVerbs::VERB_GET, LivenessHandler);
+	// GET /health — sim-environment REST orchestrator convention (same handler)
+	Router->BindRoute(FHttpPath(TEXT("/health")), EHttpServerRequestVerbs::VERB_GET, LivenessHandler);
 
 	// GET /ready
 	Router->BindRoute(FHttpPath(TEXT("/ready")), EHttpServerRequestVerbs::VERB_GET,
@@ -86,7 +94,7 @@ bool FCamSimHealthServer::Start(int32 Port,
 		}));
 
 	FHttpServerModule::Get().StartAllListeners();
-	UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: listening on port %d (/live /ready /metrics)"), Port);
+	UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: listening on port %d (/live /health /ready /metrics)"), Port);
 	return true;
 }
 
