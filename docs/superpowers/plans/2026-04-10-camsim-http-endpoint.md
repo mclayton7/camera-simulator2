@@ -642,7 +642,8 @@ namespace CamSimHttp
 	/**
 	 * Build the JSON body for GET /ready.
 	 *
-	 * On ready: status="ready" + full counter block.
+	 * On ready: status="ready" + readiness payload fields from the §10.4
+	 * route contract.
 	 * On not ready: status="not_ready" + reason string (no counters).
 	 */
 	FString BuildReadyJson(const FHealthSnapshot& Snap, bool bReady, const FString& Reason);
@@ -920,8 +921,8 @@ git commit -m "$(cat <<'EOF'
 feat: add PrometheusFormatter pure-function emitter + tests
 
 Phase 28G. Produces the /metrics endpoint body in Prometheus text
-exposition format. Metric set matches the existing .prom textfile
-writer for drop-in compatibility — same names, same types.
+exposition format. Metric naming and types align with the §10.4
+route contract while keeping the .prom textfile path behavior available.
 
 Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
 EOF
@@ -943,7 +944,8 @@ EOF
 1. If CIGI receiver is not alive → 503 `"cigi receiver not running"`
 2. If encoder is not open → 503 `"encoder not open"`
 3. If `CigiPacketsReceived == 0` AND `UptimeSeconds < 30.0` → 503 `"waiting for first CIGI packet (bootstrap grace period)"`
-4. Otherwise → 200
+4. Boundary rule: `UptimeSeconds == 30.0` is treated as grace elapsed (rule 3 only applies while `< 30.0`).
+5. Otherwise → 200
 
 - [ ] **Step 1: Write the failing test first**
 
@@ -1039,10 +1041,10 @@ bool FHttpServerReadinessReadyAfterGraceElapsesTest::RunTest(const FString& Para
 	Snap.bCigiReceiverAlive  = true;
 	Snap.bEncoderOpen        = true;
 	Snap.CigiPacketsReceived = 0;  // no packets yet
-	Snap.UptimeSeconds       = 60.0;  // past grace period
+	Snap.UptimeSeconds       = 30.0;  // exact grace boundary (>= 30.0 is ready)
 
 	CamSimHttp::FReadinessResult R = CamSimHttp::EvaluateReadiness(Snap);
-	TestTrue(TEXT("ready after grace elapses"), R.bReady);
+	TestTrue(TEXT("ready at grace boundary"), R.bReady);
 	return true;
 }
 ```
@@ -1079,6 +1081,7 @@ namespace CamSimHttp
 	 *   1. CIGI receiver must be alive              (else 503 "cigi receiver not running")
 	 *   2. Encoder must be open                     (else 503 "encoder not open")
 	 *   3. Either CIGI packets > 0, OR uptime >= bootstrap grace period
+	 *      (exact boundary is inclusive: uptime == grace period counts as elapsed)
 	 *                                                (else 503 "waiting for first CIGI packet (grace period)")
 	 *   4. Otherwise ready (200)
 	 */
@@ -1496,28 +1499,41 @@ Expected: exit code 0.
 
 - [ ] **Step 5: Smoke-test by launching and probing the endpoint**
 
-Launch camsim in headless mode with a short timeout:
+Pre-flight: ensure no stale camsim process is already bound to `:8910`, then launch camsim in headless mode and wait for `/health` to become reachable (instead of assuming a fixed startup delay).
 
 ```bash
-# Run camsim in the background for ~10 seconds, then probe.
-# Note: a full UE5 launch takes 5-15s to initialize the game instance.
 ./scripts/run.sh --headless &
 CAMSIM_PID=$!
-sleep 12
-curl -sS -o /tmp/camsim-health.json -w "%{http_code}\n" http://localhost:8910/health
-curl -sS -o /tmp/camsim-ready.json  -w "%{http_code}\n" http://localhost:8910/ready
-curl -sS -o /tmp/camsim-metrics.txt -w "%{http_code}\n" http://localhost:8910/metrics
+
+for i in $(seq 1 45); do
+  if curl -fsS http://localhost:8910/health >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+curl -fsS http://localhost:8910/health >/dev/null || {
+  echo "camsim HTTP server did not become reachable on :8910"
+  kill $CAMSIM_PID 2>/dev/null
+  wait $CAMSIM_PID 2>/dev/null
+  exit 1
+}
+
+curl -sS -o camsim-health.json -w "%{http_code}\n" http://localhost:8910/health
+curl -sS -o camsim-ready.json  -w "%{http_code}\n" http://localhost:8910/ready
+curl -sS -o camsim-metrics.txt -w "%{http_code}\n" http://localhost:8910/metrics
 kill $CAMSIM_PID 2>/dev/null
 wait $CAMSIM_PID 2>/dev/null
-cat /tmp/camsim-health.json ; echo
-cat /tmp/camsim-ready.json  ; echo
-head -5 /tmp/camsim-metrics.txt
+cat camsim-health.json ; echo
+cat camsim-ready.json  ; echo
+head -5 camsim-metrics.txt
+rm -f camsim-health.json camsim-ready.json camsim-metrics.txt
 ```
 
 Expected output:
 - `/health` → 200, body like `{"status":"ok","version":"camsim-1.0.0","uptime_seconds":12.345}`
-- `/ready` → 503 with reason about bootstrap grace period (unless CIGI traffic is arriving) OR 200 with the full counter block
-- `/metrics` → 200 with Prometheus text starting with `# HELP camsim_frame_count ...`
+- `/ready` → 503 with `{"status":"not_ready","reason":"..."}` while not ready, or 200 with `{"status":"ready",...}` payload fields matching the §10.4 contract once ready
+- `/metrics` → 200 with Prometheus text containing the §10.4 metric names/types (for example `camsim_render_fps` and `camsim_frames_encoded_total`)
 
 If any probe returns connection-refused, check the `[LogCamSim]` lines for the "HTTP server listening" message to confirm the server started.
 
@@ -1763,8 +1779,8 @@ any existing file-based outputs; the `camsim_health.json` and
 **Routes:**
 
 - `GET /health` — **Liveness**. Returns 200 as long as the server process is running and the subsystem initialized. Response body: `{"status":"ok","version":"...","uptime_seconds":N}`.
-- `GET /ready` — **Readiness**. Returns 200 only when the CIGI receiver is alive, the encoder is open, and either the first CIGI packet has arrived OR the 30-second bootstrap grace period has elapsed. Returns 503 otherwise with a reason string.
-- `GET /metrics` — **Prometheus exposition format**. Same metric set as the `prometheus_metrics_path` textfile writer (`camsim_frame_count`, `camsim_encoder_frames_total`, `camsim_encoder_ok`, `camsim_cigi_rx_total`, `camsim_cigi_last_host_frame`, `camsim_uptime_seconds`, `camsim_watchdog_reconnects_total`, `camsim_ig_mode`). Content type: `text/plain; version=0.0.4; charset=utf-8`.
+- `GET /ready` — **Readiness**. Returns 200 only when readiness gates pass per §10.4 (CIGI receiver thread running, encoder thread running, bootstrap condition satisfied). Returns 503 otherwise with a `not_ready` reason body.
+- `GET /metrics` — **Prometheus exposition format**. Uses the §10.4 metric contract (gauges: `camsim_render_fps`, `camsim_output_fps`, `camsim_entity_count`, `camsim_uptime_seconds`; counters: `camsim_frame_drops_total`, `camsim_cigi_packets_total`, `camsim_dis_packets_total`, `camsim_frames_encoded_total`; optional histogram: `camsim_frame_latency_ms`). Content type: `text/plain; version=0.0.4; charset=utf-8`.
 
 **Port choice.** Port 8910 is chosen to not collide with any port in the
 `sim-environment` port map (CIGI 8888/8889, Orion 8008, orchestrator 8000,
@@ -1928,7 +1944,20 @@ Expected: zero Failed. If any non-HttpServer tests fail, they are pre-existing f
 ```bash
 ./scripts/run.sh --headless &
 CAMSIM_PID=$!
-sleep 15
+
+for i in $(seq 1 45); do
+  if curl -fsS http://localhost:8910/health >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+curl -fsS http://localhost:8910/health >/dev/null || {
+  echo "camsim HTTP server did not become reachable on :8910"
+  kill $CAMSIM_PID 2>/dev/null
+  wait $CAMSIM_PID 2>/dev/null
+  exit 1
+}
 
 echo "=== /health ==="
 curl -sS -w "\nHTTP %{http_code}\n" http://localhost:8910/health
@@ -1945,8 +1974,8 @@ wait $CAMSIM_PID 2>/dev/null
 
 Expected:
 - `/health` → HTTP 200, JSON body with `"status":"ok"`
-- `/ready` → HTTP 503 with reason about grace period OR HTTP 200 with counter block (depends on whether CIGI traffic is arriving)
-- `/metrics` → HTTP 200, Prometheus text starting with `# HELP camsim_frame_count`
+- `/ready` → HTTP 503 with `status:"not_ready"` reason body before readiness, or HTTP 200 with `status:"ready"` payload matching §10.4 once readiness gates pass
+- `/metrics` → HTTP 200, Prometheus text containing §10.4 metric names/types (e.g., `camsim_render_fps`, `camsim_frame_drops_total`)
 
 - [ ] **Step 4: No commit needed — verification step only.**
 
