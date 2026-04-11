@@ -870,6 +870,9 @@ FCamSimConfig FCamSimConfig::Load()
 		// Video codec (Phase 12B)
 		YamlString(Root, "video_codec", Cfg.VideoCodec);
 
+		// KLV checksum mode (Phase 26B)
+		YamlString(Root, "klv_checksum_mode", Cfg.KlvChecksumMode);
+
 		// Prometheus metrics (Phase 12D)
 		YamlString(Root, "prometheus_metrics_path", Cfg.PrometheusMetricsPath);
 
@@ -1000,6 +1003,7 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlBool (PerfNode, "adaptive_sse",                         Perf.bAdaptiveSSE);
 			YamlFloat(PerfNode, "adaptive_sse_min",                     Perf.AdaptiveSSEMin);
 			YamlFloat(PerfNode, "adaptive_sse_max",                     Perf.AdaptiveSSEMax);
+			YamlBool (PerfNode, "track_pipeline_latency",              Perf.bTrackPipelineLatency);
 		}
 
 		if (Root.has_child("phase19"))
@@ -1244,6 +1248,16 @@ FCamSimConfig FCamSimConfig::Load()
 			}
 		}
 
+		// Phase 28: operational config
+		if (Root.has_child("operational"))
+		{
+			ryml::ConstNodeRef OpNode = Root["operational"];
+			YamlString(OpNode, "structured_log_path", Cfg.Operational.StructuredLogPath);
+			YamlInt(OpNode, "structured_log_max_mb", Cfg.Operational.StructuredLogMaxMB);
+			YamlBool(OpNode, "health_http_enabled", Cfg.Operational.bHealthHttpEnabled);
+			YamlInt(OpNode, "health_http_port", Cfg.Operational.HealthHttpPort);
+		}
+
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
 	}
 	else
@@ -1394,6 +1408,9 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 
 	// Phase 12B: video codec
 	Cfg.VideoCodec = GetEnv(TEXT("CAMSIM_VIDEO_CODEC"), Cfg.VideoCodec);
+
+	// Phase 26B: KLV checksum mode
+	Cfg.KlvChecksumMode = GetEnv(TEXT("CAMSIM_KLV_CHECKSUM_MODE"), Cfg.KlvChecksumMode);
 
 	// Phase 12D: Prometheus
 	Cfg.PrometheusMetricsPath = GetEnv(TEXT("CAMSIM_PROMETHEUS_METRICS_PATH"), Cfg.PrometheusMetricsPath);
@@ -1609,6 +1626,13 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		P.TargetTrackGateHeight = GetEnvFloat(TEXT("CAMSIM_TARGET_TRACK_GATE_HEIGHT"),  P.TargetTrackGateHeight);
 	}
 
+	// Phase 28: operational env var overrides
+	Cfg.Operational.StructuredLogPath     = GetEnv    (TEXT("CAMSIM_STRUCTURED_LOG_PATH"),   Cfg.Operational.StructuredLogPath);
+	Cfg.Operational.StructuredLogMaxMB    = GetEnvInt (TEXT("CAMSIM_STRUCTURED_LOG_MAX_MB"), Cfg.Operational.StructuredLogMaxMB);
+	Cfg.Operational.bHealthHttpEnabled    = GetEnvBool(TEXT("CAMSIM_HEALTH_HTTP_ENABLED"),   Cfg.Operational.bHealthHttpEnabled);
+	Cfg.Operational.HealthHttpPort        = GetEnvInt (TEXT("CAMSIM_HEALTH_HTTP_PORT"),      Cfg.Operational.HealthHttpPort);
+	Cfg.Performance.bTrackPipelineLatency = GetEnvBool(TEXT("CAMSIM_TRACK_PIPELINE_LATENCY"), Cfg.Performance.bTrackPipelineLatency);
+
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping
 	if (Cfg.SensorFovPresets.Num() > 0)
 	{
@@ -1621,4 +1645,111 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		UE_LOG(LogCamSim, Log, TEXT("Config: SensorFovPresets=[%s] (%d levels)"),
 			*PresetStr, Cfg.SensorFovPresets.Num());
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 28D: Config Validation
+// ---------------------------------------------------------------------------
+
+TArray<FString> FCamSimConfig::Validate() const
+{
+	TArray<FString> Errors;
+
+	auto RangeCheckInt = [&](const TCHAR* Name, int32 Value, int32 Min, int32 Max)
+	{
+		if (Value < Min || Value > Max)
+		{
+			Errors.Add(FString::Printf(TEXT("%s=%d out of range [%d, %d]"), Name, Value, Min, Max));
+		}
+	};
+
+	auto RangeCheckFloat = [&](const TCHAR* Name, float Value, float Min, float Max)
+	{
+		if (Value < Min || Value > Max)
+		{
+			Errors.Add(FString::Printf(TEXT("%s=%.2f out of range [%.1f, %.1f]"), Name, Value, Min, Max));
+		}
+	};
+
+	// Resolution — must be in range AND even (H.264 requires even dimensions)
+	RangeCheckInt(TEXT("CaptureWidth"), CaptureWidth, 64, 7680);
+	RangeCheckInt(TEXT("CaptureHeight"), CaptureHeight, 64, 4320);
+	if (CaptureWidth % 2 != 0)
+	{
+		Errors.Add(FString::Printf(TEXT("CaptureWidth=%d must be even (H.264 requirement)"), CaptureWidth));
+	}
+	if (CaptureHeight % 2 != 0)
+	{
+		Errors.Add(FString::Printf(TEXT("CaptureHeight=%d must be even (H.264 requirement)"), CaptureHeight));
+	}
+
+	// Video
+	RangeCheckInt(TEXT("VideoBitrate"), VideoBitrate, 100000, 100000000);
+	RangeCheckFloat(TEXT("FrameRate"), FrameRate, 1.0f, 120.0f);
+
+	// Ports (0 = disabled)
+	if (CigiPort != 0) RangeCheckInt(TEXT("CigiPort"), CigiPort, 1, 65535);
+	if (CigiResponsePort != 0) RangeCheckInt(TEXT("CigiResponsePort"), CigiResponsePort, 1, 65535);
+	RangeCheckInt(TEXT("MulticastPort"), MulticastPort, 1, 65535);
+
+	// FOV
+	if (HFovDeg <= 0.0f || HFovDeg > 180.0f)
+	{
+		Errors.Add(FString::Printf(TEXT("HFovDeg=%.2f out of range (0, 180]"), HFovDeg));
+	}
+
+	// Gimbal limits
+	if (GimbalPitchMin >= GimbalPitchMax)
+	{
+		Errors.Add(FString::Printf(TEXT("GimbalPitchMin (%.1f) >= GimbalPitchMax (%.1f)"),
+			GimbalPitchMin, GimbalPitchMax));
+	}
+	if (GimbalYawMin >= GimbalYawMax)
+	{
+		Errors.Add(FString::Printf(TEXT("GimbalYawMin (%.1f) >= GimbalYawMax (%.1f)"),
+			GimbalYawMin, GimbalYawMax));
+	}
+
+	// Entities
+	RangeCheckInt(TEXT("MaxEntities"), MaxEntities, 1, 10000);
+
+	// Time
+	RangeCheckFloat(TEXT("StartHour"), StartHour, 0.0f, 24.0f);
+
+	// Watchdog
+	RangeCheckInt(TEXT("WatchdogMaxReconnects"), WatchdogMaxReconnects, 0, 100);
+	RangeCheckInt(TEXT("EncoderWatchdogIntervalTicks"), EncoderWatchdogIntervalTicks, 30, 9000);
+
+	// Readback
+	RangeCheckInt(TEXT("ReadbackReadyPolls"), ReadbackReadyPolls, 0, 10);
+
+	// Codec enum
+	{
+		const FString Lower = VideoCodec.ToLower();
+		if (Lower != TEXT("h264") && Lower != TEXT("h265"))
+		{
+			Errors.Add(FString::Printf(TEXT("VideoCodec='%s' must be h264 or h265"), *VideoCodec));
+		}
+	}
+
+	// Encoder enum
+	{
+		const FString Lower = Encoder.ToLower();
+		if (Lower != TEXT("auto") && Lower != TEXT("nvenc") &&
+		    Lower != TEXT("libx264") && Lower != TEXT("libx265"))
+		{
+			Errors.Add(FString::Printf(TEXT("Encoder='%s' must be auto, nvenc, libx264, or libx265"), *Encoder));
+		}
+	}
+
+	// Performance
+	RangeCheckFloat(TEXT("Performance.RenderFrameRateHz"), Performance.RenderFrameRateHz, 1.0f, 120.0f);
+	if (Performance.OutputFrameRateHz < 1.0f || Performance.OutputFrameRateHz > Performance.RenderFrameRateHz)
+	{
+		Errors.Add(FString::Printf(
+			TEXT("Performance.OutputFrameRateHz=%.1f out of range [1.0, RenderFrameRateHz=%.1f]"),
+			Performance.OutputFrameRateHz, Performance.RenderFrameRateHz));
+	}
+
+	return Errors;
 }

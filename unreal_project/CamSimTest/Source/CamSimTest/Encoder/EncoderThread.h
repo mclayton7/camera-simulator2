@@ -8,6 +8,7 @@
 #include "HAL/Event.h"
 #include "Containers/SpscQueue.h"
 #include "Metadata/KlvBuilder.h"
+#include "Diagnostics/PipelineLatencyTracker.h"
 
 class IFrameSink;
 
@@ -50,6 +51,9 @@ public:
 	/** True if the queue is non-empty (encoder has work pending). */
 	bool HasPendingFrames() const { return !Queue.IsEmpty(); }
 
+	/** Phase 28G: set the pipeline latency tracker for encode-complete marking. */
+	void SetLatencyTracker(FPipelineLatencyTracker* Tracker) { LatencyTracker = Tracker; }
+
 	// FRunnable interface
 	virtual uint32 Run() override;
 
@@ -61,4 +65,5 @@ private:
 	FRunnableThread*               Thread    = nullptr;
 	double                         FrameIntervalSec = 1.0 / 30.0;  // output pacing interval
 	double                         LastSendTimeSec  = 0.0;          // wall-clock of last encode
+	FPipelineLatencyTracker*       LatencyTracker   = nullptr;
 };

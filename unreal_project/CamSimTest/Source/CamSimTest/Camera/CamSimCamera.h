@@ -10,6 +10,7 @@
 #include "Sensor/SensorTypes.h"      // ESensorMode
 #include "Sensor/IPixelPipeline.h"   // IPixelPipeline
 #include "Encoder/EncoderThread.h"   // FEncoderThread — must be complete for TUniquePtr in UHT .gen.cpp
+#include "Diagnostics/PipelineLatencyTracker.h"
 #include "CamSimCamera.generated.h"
 
 class USceneCaptureComponent2D;
@@ -64,6 +65,13 @@ public:
 
 	/** Return a snapshot of the current telemetry for external consumers (e.g. CoT sender). */
 	FCamSimTelemetry GetCurrentTelemetry() const { return CurrentTelemetry; }
+
+	/** Read-only accessor for the sensor component (needed by UCamSimSubsystem for
+	 *  SensorExtendedResponse opcode 107). */
+	UCamSimSensorComponent* GetSensorComp() const { return SensorComp; }
+
+	/** Phase 28G: set the pipeline latency tracker (owned by subsystem, nullable). */
+	void SetLatencyTracker(FPipelineLatencyTracker* Tracker) { LatencyTracker_ = Tracker; }
 
 private:
 	/** Explicit root scene component. */
@@ -185,6 +193,9 @@ private:
 	double PrevGeoLatDeg_   = 0.0;
 	double PrevGeoLonDeg_   = 0.0;
 	bool   bHasPrevGeoPos_  = false;
+
+	/** Phase 28G: per-frame pipeline latency tracker (owned by subsystem, nullable). */
+	FPipelineLatencyTracker* LatencyTracker_ = nullptr;
 
 	// Phase 27E — Tile prefetch during gimbal slew
 	float PrevGimbalPanDeg_   = 0.0f;

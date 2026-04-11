@@ -103,6 +103,17 @@ void FGerstnerOceanSurface::RepositionToCamera(const FVector& CameraWorldLocatio
 	}
 }
 
+void FGerstnerOceanSurface::SetSurfaceHeightOffset(float HeightM)
+{
+	SurfaceHeightOffsetCm = HeightM * 100.0f;
+	if (OceanMesh)
+	{
+		FVector Loc = OceanMesh->GetComponentLocation();
+		Loc.Z = SurfaceHeightOffsetCm;
+		OceanMesh->SetWorldLocation(Loc);
+	}
+}
+
 void FGerstnerOceanSurface::WriteMPC() const
 {
 	if (!MPC || !World) return;

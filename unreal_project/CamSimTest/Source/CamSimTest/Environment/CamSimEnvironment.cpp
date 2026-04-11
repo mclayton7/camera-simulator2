@@ -227,6 +227,15 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 		}
 	}
 
+	// Phase 26D — drain CIGI Maritime Surface Conditions queue
+	{
+		FCigiMaritimeSurfaceState MaritimeState;
+		while (Receiver->DequeueMaritimeSurface(MaritimeState))
+		{
+			OceanManager.SetMaritimeSurfaceState(MaritimeState);
+		}
+	}
+
 	// Phase 19 — notify ocean of sky changes once per tick (coalesced from Apply* calls above)
 	if (bGotCelestial || bGotAtmos || bGotWeather)
 	{

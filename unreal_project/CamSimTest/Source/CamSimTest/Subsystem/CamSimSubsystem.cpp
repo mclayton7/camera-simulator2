@@ -16,6 +16,9 @@
 #include "DIS/DisReceiver.h"
 #include "DIS/DisEntityAdapter.h"
 #include "Streaming/CotSender.h"
+#include "Logging/CamSimJsonLogger.h"
+#include "Diagnostics/PipelineLatencyTracker.h"
+#include "Health/CamSimHealthServer.h"
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -51,6 +54,9 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FDisReceiver>             DisReceiver;
 	TUniquePtr<FDisEntityAdapter>        DisAdapter;
 	TUniquePtr<FCotSender>               CotSender;
+	TUniquePtr<FCamSimJsonLogger>        JsonLogger;
+	TUniquePtr<FPipelineLatencyTracker>  LatencyTracker;
+	TUniquePtr<FCamSimHealthServer>     HealthServer;
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -84,6 +90,8 @@ struct UCamSimSubsystem::FSubsystemImpl
 	{
 		// Tear down in reverse-dependency order.
 		// TUniquePtr destructors handle null checks automatically.
+		if (HealthServer) { HealthServer->Stop(); }
+		HealthServer.Reset();
 		CesiumIonServerOverride.Reset();
 		QueryHandler.Reset();
 		GeospatialProvider.Reset();
@@ -170,6 +178,11 @@ FDisEntityAdapter* UCamSimSubsystem::GetDisAdapter() const
 FCotSender* UCamSimSubsystem::GetCotSender() const
 {
 	return Impl ? Impl->CotSender.Get() : nullptr;
+}
+
+FPipelineLatencyTracker* UCamSimSubsystem::GetLatencyTracker() const
+{
+	return Impl ? Impl->LatencyTracker.Get() : nullptr;
 }
 
 void UCamSimSubsystem::RegisterCamera(ACamSimCamera* Camera)
@@ -259,6 +272,21 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: config load failed — using defaults"));
 	}
 
+	// Phase 28D: pre-flight config validation
+	{
+		const TArray<FString> ValidationErrors = Config.Validate();
+		for (const FString& Err : ValidationErrors)
+		{
+			UE_LOG(LogCamSim, Error, TEXT("Config validation: %s"), *Err);
+		}
+		if (ValidationErrors.Num() > 0)
+		{
+			UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: %d config validation error(s) — check config"),
+				ValidationErrors.Num());
+			Config.bLoadedSuccessfully = false;
+		}
+	}
+
 	EntityTypeTable.LoadFromConfig();
 
 	const FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
@@ -298,6 +326,59 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	// Phase 13B: allocate Pimpl — all sub-objects owned via TUniquePtr
 	Impl = MakePimpl<FSubsystemImpl>();
+
+	// Phase 28B: structured JSON logging
+	if (!Config.Operational.StructuredLogPath.IsEmpty())
+	{
+		Impl->JsonLogger = MakeUnique<FCamSimJsonLogger>();
+		if (Impl->JsonLogger->Open(Config.Operational.StructuredLogPath,
+		                            Config.Operational.StructuredLogMaxMB))
+		{
+			// Log startup config digest
+			TMap<FString, FString> StartupFields;
+			StartupFields.Add(TEXT("capture"), FString::Printf(TEXT("%dx%d"), Config.CaptureWidth, Config.CaptureHeight));
+			StartupFields.Add(TEXT("codec"), Config.VideoCodec);
+			StartupFields.Add(TEXT("bitrate"), FString::FromInt(Config.VideoBitrate));
+			StartupFields.Add(TEXT("fps"), FString::SanitizeFloat(Config.FrameRate));
+			Impl->JsonLogger->Log(TEXT("info"), TEXT("subsystem"), TEXT("initialized"), StartupFields);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: failed to open structured log at %s"),
+				*Config.Operational.StructuredLogPath);
+			Impl->JsonLogger.Reset();
+		}
+	}
+
+	// Phase 28G: pipeline latency tracker
+	if (Config.Performance.bTrackPipelineLatency)
+	{
+		const int32 BufSize = static_cast<int32>(Config.Performance.OutputFrameRateHz * 10.0f);
+		Impl->LatencyTracker = MakeUnique<FPipelineLatencyTracker>(BufSize);
+		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: pipeline latency tracking enabled (buffer=%d)"), BufSize);
+	}
+
+	// Phase 28C: HTTP health endpoints
+	if (Config.Operational.bHealthHttpEnabled)
+	{
+		Impl->HealthServer = MakeUnique<FCamSimHealthServer>();
+		auto* ImplPtr = Impl.Get();
+		Impl->HealthServer->Start(Config.Operational.HealthHttpPort,
+			// IsAlive — always true if we got this far
+			[ImplPtr]() { return true; },
+			// IsEncoderReady
+			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->IsOpen(); },
+			// IsCigiReady
+			[ImplPtr]() { return ImplPtr->CigiReceiver && ImplPtr->CigiReceiver->GetReceivedPacketCount() > 0; },
+			// HasFirstFrame
+			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->GetSuccessfulFrameCount() > 0; },
+			// GetPrometheusMetrics — placeholder; /metrics endpoint can be improved in a follow-up
+			[ImplPtr]() -> FString
+			{
+				return TEXT("");
+			}
+		);
+	}
 
 	// Start CIGI receiver thread
 	Impl->CigiReceiver = MakeUnique<FCigiReceiver>(Config);
@@ -383,6 +464,16 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: ApplicationWillTerminate — flushing encoder"));
 		if (Impl)
 		{
+			if (Impl->HealthServer) { Impl->HealthServer->Stop(); }
+			if (Impl->JsonLogger)
+			{
+				TMap<FString, FString> ShutdownFields;
+				ShutdownFields.Add(TEXT("frame"), FString::FromInt(Impl->FrameCntr));
+				ShutdownFields.Add(TEXT("uptime_s"), FString::SanitizeFloat(
+					FPlatformTime::Seconds() - Impl->StartTimeSec));
+				Impl->JsonLogger->Log(TEXT("info"), TEXT("subsystem"), TEXT("shutdown"), ShutdownFields);
+				Impl->JsonLogger->Flush();
+			}
 			if (Impl->VideoEncoder) Impl->VideoEncoder->Close();
 			if (Impl->CigiSender)   Impl->CigiSender->Close();
 			if (Impl->CigiReceiver) Impl->CigiReceiver->Stop();
@@ -413,6 +504,12 @@ void UCamSimSubsystem::Deinitialize()
 void UCamSimSubsystem::Tick(float DeltaTime)
 {
 	if (!Impl) return;
+
+	// Phase 28C: update HTTP health liveness timestamp
+	if (Impl->HealthServer)
+	{
+		Impl->HealthServer->UpdateTick();
+	}
 
 	// Drain HAT/HOT + LOS query queues and stage responses
 	if (Impl->QueryHandler)
@@ -452,8 +549,10 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		if (ACamSimCamera* Cam = Camera_.Get())
 		{
 			FCamSimTelemetry Telem = Cam->GetCurrentTelemetry();
-			// SensorStat: 1=Tracking when sensor is on, 0=Searching when off
-			const uint8 SensorStat = (Cam->SensorComp && Cam->SensorComp->IsOn()) ? 1 : 0;
+			// SensorStat: 1=Tracking when sensor is on, 0=Searching when off.
+			// SensorComp is private on ACamSimCamera; go through the public accessor.
+			UCamSimSensorComponent* SensorComp = Cam->GetSensorComp();
+			const uint8 SensorStat = (SensorComp && SensorComp->IsOn()) ? 1 : 0;
 			// GateXoff/GateYoff: 0.0 = centered (no pixel-level tracking)
 			Impl->CigiSender->SetSensorResponse(
 				0,                           // ViewId
@@ -601,6 +700,20 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 					D.EncoderBusy.Load(), D.ReadbackTimeout.Load(), D.SocketError.Load(), D.Total());
 			}
 		}
+		// Phase 28G: pipeline latency percentiles
+		if (Impl->LatencyTracker)
+		{
+			auto P = Impl->LatencyTracker->ComputePercentiles();
+			HealthJson += FString::Printf(
+				TEXT(",\"latency_us\":{\"readback_p50\":%.0f,\"readback_p95\":%.0f,\"readback_p99\":%.0f,")
+				TEXT("\"sensor_p50\":%.0f,\"sensor_p95\":%.0f,\"sensor_p99\":%.0f,")
+				TEXT("\"encode_p50\":%.0f,\"encode_p95\":%.0f,\"encode_p99\":%.0f,")
+				TEXT("\"total_p50\":%.0f,\"total_p95\":%.0f,\"total_p99\":%.0f}"),
+				P.ReadbackUs[0], P.ReadbackUs[1], P.ReadbackUs[2],
+				P.SensorUs[0], P.SensorUs[1], P.SensorUs[2],
+				P.EncodeUs[0], P.EncodeUs[1], P.EncodeUs[2],
+				P.TotalUs[0], P.TotalUs[1], P.TotalUs[2]);
+		}
 		HealthJson += TEXT("}");
 
 		const FString HealthPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health.json"));
@@ -620,7 +733,7 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		const uint64 CigiRx = Impl->CigiReceiver ? Impl->CigiReceiver->GetReceivedPacketCount() : 0;
 		const double UptimeSec = FPlatformTime::Seconds() - Impl->StartTimeSec;
 
-		const FString Prom = FString::Printf(
+		FString Prom = FString::Printf(
 			TEXT("# HELP camsim_frame_count Total game ticks\n"
 			     "# TYPE camsim_frame_count counter\n"
 			     "camsim_frame_count %u\n"
@@ -650,11 +763,48 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			Impl->WatchdogReconnectCount,
 			static_cast<uint32>(Impl->IGMode));
 
+		// Phase 28G: append pipeline latency metrics
+		if (Impl->LatencyTracker)
+		{
+			auto P = Impl->LatencyTracker->ComputePercentiles();
+			Prom += FString::Printf(
+				TEXT("# HELP camsim_latency_readback_us Readback latency microseconds\n"
+				     "# TYPE camsim_latency_readback_us gauge\n"
+				     "camsim_latency_readback_us{quantile=\"0.5\"} %.0f\n"
+				     "camsim_latency_readback_us{quantile=\"0.95\"} %.0f\n"
+				     "camsim_latency_readback_us{quantile=\"0.99\"} %.0f\n"
+				     "# HELP camsim_latency_sensor_us Sensor pipeline latency microseconds\n"
+				     "# TYPE camsim_latency_sensor_us gauge\n"
+				     "camsim_latency_sensor_us{quantile=\"0.5\"} %.0f\n"
+				     "camsim_latency_sensor_us{quantile=\"0.95\"} %.0f\n"
+				     "camsim_latency_sensor_us{quantile=\"0.99\"} %.0f\n"
+				     "# HELP camsim_latency_encode_us Encode latency microseconds\n"
+				     "# TYPE camsim_latency_encode_us gauge\n"
+				     "camsim_latency_encode_us{quantile=\"0.5\"} %.0f\n"
+				     "camsim_latency_encode_us{quantile=\"0.95\"} %.0f\n"
+				     "camsim_latency_encode_us{quantile=\"0.99\"} %.0f\n"
+				     "# HELP camsim_latency_total_us Total pipeline latency microseconds\n"
+				     "# TYPE camsim_latency_total_us gauge\n"
+				     "camsim_latency_total_us{quantile=\"0.5\"} %.0f\n"
+				     "camsim_latency_total_us{quantile=\"0.95\"} %.0f\n"
+				     "camsim_latency_total_us{quantile=\"0.99\"} %.0f\n"),
+				P.ReadbackUs[0], P.ReadbackUs[1], P.ReadbackUs[2],
+				P.SensorUs[0], P.SensorUs[1], P.SensorUs[2],
+				P.EncodeUs[0], P.EncodeUs[1], P.EncodeUs[2],
+				P.TotalUs[0], P.TotalUs[1], P.TotalUs[2]);
+		}
+
 		if (!FFileHelper::SaveStringToFile(Prom, *Config.PrometheusMetricsPath))
 		{
 			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: failed to write prometheus metrics"));
 		}
 		Impl->PrometheusLastTick = Impl->FrameCntr;
+	}
+
+	// Phase 28B: flush structured log queue
+	if (Impl->JsonLogger)
+	{
+		Impl->JsonLogger->Flush();
 	}
 
 	++Impl->FrameCntr;

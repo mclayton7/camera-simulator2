@@ -475,6 +475,13 @@ void ACamSimCamera::BeginPlay()
 		}
 	}
 
+	// Phase 28G: wire pipeline latency tracker from subsystem to camera + encoder
+	if (FPipelineLatencyTracker* LT = Subsystem->GetLatencyTracker())
+	{
+		LatencyTracker_ = LT;
+		if (EncoderThread) EncoderThread->SetLatencyTracker(LT);
+	}
+
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ready (%dx%d @ %.0ffps)"),
 		Cfg.CaptureWidth, Cfg.CaptureHeight, Cfg.FrameRate);
 }
@@ -627,9 +634,15 @@ void ACamSimCamera::Tick(float DeltaTime)
 		}
 	}
 
+	// Phase 28G: mark pipeline latency at start of game tick
+	if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::GameTickStart);
+
 	// Apply pending CIGI state first (CIGI queue drain runs every tick,
 	// even if we skip capture, so the platform pose stays current)
 	ApplyCigiState(DeltaTime);
+
+	// Phase 28G: mark CIGI dequeue complete
+	if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::CigiDequeue);
 
 	// 27A — Push current sensor state into GPU MPC each tick (no-op when MPC not loaded)
 	if (GpuSensorMpc_) UpdateGpuSensorMpcParams();
@@ -649,6 +662,9 @@ void ACamSimCamera::Tick(float DeltaTime)
 		UTextureRenderTarget2D* RT =
 			RenderTargets.IsValidIndex(PendingReadbackTargetIndex)
 				? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
+
+		// Phase 28G: mark readback issue before render command
+		if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::ReadbackIssue);
 
 		// Stack-local results filled by render command; safe because
 		// FlushRenderingCommands() blocks game thread until it completes.
@@ -732,6 +748,9 @@ void ACamSimCamera::Tick(float DeltaTime)
 		// Synchronously wait for the render command — game thread was idle during
 		// the old async poll anyway, so this adds no effective latency.
 		FlushRenderingCommands();
+
+		// Phase 28G: mark readback complete after flush
+		if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::ReadbackComplete);
 
 		if (bGotPixels)
 		{
@@ -1451,19 +1470,29 @@ void ACamSimCamera::SubmitFrameToEncoder(
 	// Capture raw pointer to encoder thread for lambda (safe: thread outlives task)
 	FEncoderThread* EncThread = EncoderThread.Get();
 
+	// Capture latency tracker pointer for lambda (safe: tracker outlives task)
+	FPipelineLatencyTracker* LT = LatencyTracker_;
+
 	// Sensor post-process runs on a pool thread; encode is decoupled via SPSC queue.
 	// bSensorBusy is cleared after sensor FX + ML annotation, NOT after encode.
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-		[this, EncThread, FX, Mode, Polarity, Collector, CaptureW, CaptureH,
+		[this, EncThread, FX, Mode, Polarity, Collector, CaptureW, CaptureH, LT,
 		 Pixels = MoveTemp(PixelData), Telemetry, FrameIdx,
 		 Depth  = MoveTemp(DepthMetres)]() mutable
 	{
 		SCOPE_CYCLE_COUNTER(STAT_CamSimEncode);
+		// Phase 28G: mark sensor start
+		if (LT) LT->Mark(EPipelineStage::SensorStart);
+
 		// Apply CPU-side sensor post-processing before encode
 		if (FX)
 		{
 			FX->Process(Pixels, Mode, Polarity, Telemetry, FrameIdx);
 		}
+
+		// Phase 28G: mark sensor end
+		if (LT) LT->Mark(EPipelineStage::SensorEnd);
+
 		// Write ML ground truth annotation and depth (Phase 17)
 		if (Collector)
 		{

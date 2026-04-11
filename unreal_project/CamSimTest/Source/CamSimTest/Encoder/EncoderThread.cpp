@@ -82,6 +82,13 @@ uint32 FEncoderThread::Run()
 				Encoder->EncodeFrame(Frame.Pixels, Frame.Telemetry, Frame.FrameIndex);
 			}
 			LastSendTimeSec = FPlatformTime::Seconds();
+
+			// Phase 28G: mark encode complete and commit latency record
+			if (LatencyTracker)
+			{
+				LatencyTracker->Mark(EPipelineStage::EncodeComplete);
+				LatencyTracker->CommitFrame();
+			}
 		}
 
 		// Sleep until next Enqueue() or Stop()

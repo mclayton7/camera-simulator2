@@ -362,6 +362,9 @@ struct FCamSimConfig
 	// Video codec: "h264" or "h265" (Phase 12B)
 	FString VideoCodec = TEXT("h264");
 
+	// KLV checksum algorithm (Phase 26B): "crc16" or "bcc16"
+	FString KlvChecksumMode = TEXT("crc16");
+
 	// Prometheus metrics file path (empty = disabled). Phase 12D.
 	// A Prometheus node_exporter textfile-collector compatible .prom file.
 	FString PrometheusMetricsPath;
@@ -495,6 +498,9 @@ struct FCamSimConfig
 		bool    bGpuSensorEffects      = false;
 		FString GpuSensorMaterialPath = TEXT("/Game/CamSim/Materials/M_SensorPostProcess");
 		FString GpuSensorMpcPath      = TEXT("/Game/CamSim/Materials/MPC_SensorParams");
+
+		// 28G Per-Frame Latency Tracking
+		bool  bTrackPipelineLatency = false;
 	};
 	FPerformanceConfig Performance;
 
@@ -740,6 +746,22 @@ struct FCamSimConfig
 	};
 	FRandomizationConfig Randomization;
 
+	// Phase 28 — Operational Hardening
+	struct FOperationalConfig
+	{
+		// 28B: Structured JSON logging sidecar
+		FString StructuredLogPath;           // empty = disabled
+		int32   StructuredLogMaxMB = 100;    // rotation threshold
+
+		// 28C: HTTP health endpoints
+		// Default true so the sim-environment orchestrator (Docker Compose)
+		// can probe /live, /ready, /metrics out of the box. K8s deployments
+		// that don't want the server can set CAMSIM_HEALTH_HTTP_ENABLED=0.
+		bool  bHealthHttpEnabled = true;
+		int32 HealthHttpPort     = 8080;
+	};
+	FOperationalConfig Operational;
+
 	// Phase 13C: set to true when config was loaded (or defaults are valid).
 	// Set to false only if YAML parsing fails AND no defaults are available.
 	bool bLoadedSuccessfully = true;
@@ -749,6 +771,9 @@ struct FCamSimConfig
 
 	/** Return the path to the resolved config file (for re-parsing by other modules). */
 	static FString GetConfigFilePath();
+
+	/** Pre-flight validation — returns empty array if config is valid. */
+	TArray<FString> Validate() const;
 
 private:
 	static void ApplyEnvOverrides(FCamSimConfig& Cfg);

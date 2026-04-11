@@ -421,6 +421,15 @@ bool FVideoEncoder::OpenKlvStream()
 	}
 	KlvStream->id = 1;
 
+	// STANAG 4609 compliance (Phase 26C):
+	// - codec_type AVMEDIA_TYPE_DATA → PMT stream_type 0x06/0x15 (metadata PES)
+	// - codec_id AV_CODEC_ID_SMPTE_KLV → FFmpeg adds registration descriptor "KLVA"
+	// - codec_tag 'KLVA' → STANAG 4609 Edition 3 §4.3.1 KLV metadata stream identifier
+	// - time_base 90kHz → STANAG 4609 §4.2 MPEG-TS clock reference (ISO/IEC 13818-1)
+	// - KLV PTS synced to video PTS via av_rescale_q in WriteKlvPacket
+	// - TS packet size 1316 bytes set via pkt_size option in OpenOutputContext
+	// - PAT at PID 0x0000 (FFmpeg default) per STANAG 4609 §4.1
+	// - PMT contains video (stream_type 0x1B for H.264 / 0x24 for H.265) + KLV
 	KlvStream->codecpar->codec_type = AVMEDIA_TYPE_DATA;
 	KlvStream->codecpar->codec_id   = AV_CODEC_ID_SMPTE_KLV;
 	KlvStream->codecpar->codec_tag  = MKTAG('K','L','V','A');

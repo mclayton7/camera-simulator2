@@ -100,6 +100,12 @@ public:
 	/** Dequeue a wave control state for ocean surface update. Returns false when queue is empty. */
 	bool DequeueWaveState(FCigiWaveState& OutState) { return WaveStateQueue.Dequeue(OutState); }
 
+	/** Phase 26D: Conformal clamped entity control (opcode 3). Consumed by FCamSimEntityManager. */
+	bool DequeueConfClampEntity(FCigiConfClampEntityState& Out) { return ConfClampQueue.Dequeue(Out); }
+
+	/** Phase 26D: Maritime surface conditions (opcode 13). Consumed by FOceanManager. */
+	bool DequeueMaritimeSurface(FCigiMaritimeSurfaceState& Out) { return MaritimeSurfaceQueue.Dequeue(Out); }
+
 	// FRunnable interface
 	virtual bool   Init() override;
 	virtual uint32 Run() override;
@@ -119,6 +125,9 @@ private:
 	friend class FLosVectReqProcessor;
 	friend class FIGCtrlProcessor;
 	friend class FWaveCtrlProcessor;
+	friend class FConfClampProcessor;
+	friend class FCollisionDetSegProcessor;
+	friend class FMaritimeSurfaceProcessor;
 
 	// CigiRawParse needs queue access for direct env packet parsing
 	// (bypasses CCL's hold mechanism for celestial/atmos/weather packets)
@@ -151,6 +160,8 @@ private:
 	TSpscQueue<FCigiLosSegRequest>    LosSegReqQueue;      // opcode 25 (FCigiQueryHandler)
 	TSpscQueue<FCigiLosVectRequest>   LosVectReqQueue;     // opcode 26 (FCigiQueryHandler)
 	TSpscQueue<FCigiWaveState>        WaveStateQueue;      // opcode 14 (FOceanManager)
+	TSpscQueue<FCigiConfClampEntityState> ConfClampQueue;     // opcode 3  (FCamSimEntityManager)
+	TSpscQueue<FCigiMaritimeSurfaceState> MaritimeSurfaceQueue; // opcode 13 (FOceanManager)
 
 	// CCL session objects — session owns InMsg; we hold a non-owning pointer to it
 	TUniquePtr<CigiIGSession> CigiSession;
@@ -170,6 +181,9 @@ private:
 	TUniquePtr<CigiBaseEventProcessor> LosVectReqProc;
 	TUniquePtr<CigiBaseEventProcessor> IGCtrlProc;
 	TUniquePtr<CigiBaseEventProcessor> WaveCtrlProc;
+	TUniquePtr<CigiBaseEventProcessor> ConfClampProc;
+	TUniquePtr<CigiBaseEventProcessor> CollisionDetSegProc;
+	TUniquePtr<CigiBaseEventProcessor> MaritimeSurfaceProc;
 
 	bool CreateSocket();
 

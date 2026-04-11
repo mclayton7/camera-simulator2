@@ -26,6 +26,9 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiLosVectReqV3.h"    // opcode 26
 #include "cigicl/CigiIGCtrlV3.h"       // opcode 1 (IG Control — host frame counter)
 #include "cigicl/CigiWaveCtrlV3.h"     // opcode 14 (Wave Control — ocean waves)
+#include "cigicl/CigiConfClampEntityCtrlV3.h" // opcode 3  (Conformal Clamped Entity)
+#include "cigicl/CigiCollDetSegDefV3.h"       // opcode 7  (Collision Detection Segment Def)
+#include "cigicl/CigiMaritimeSurfaceCtrlV3.h" // opcode 13 (Maritime Surface Conditions)
 // CigiCelestialCtrl.h, CigiAtmosCtrl.h, CigiWeatherCtrlV3.h are NOT included
 // here — we parse those packet types directly from raw bytes in
 // FCigiRawEnvParser to bypass CCL's CigiHoldEnvCtrl merge mechanism.
@@ -472,6 +475,77 @@ public:
 	}
 };
 
+// ---------------------------------------------------------------------------
+// Phase 26D: Conformal Clamped Entity Control (opcode 3)
+// ---------------------------------------------------------------------------
+class FConfClampProcessor : public CigiBaseEventProcessor
+{
+	FCigiReceiver* Receiver;
+public:
+	explicit FConfClampProcessor(FCigiReceiver* R) : Receiver(R) {}
+
+	void OnPacketReceived(CigiBasePacket* Packet) override
+	{
+		auto* Pkt = static_cast<CigiConfClampEntityCtrlV3*>(Packet);
+		if (!Receiver || !Pkt) return;
+
+		FCigiConfClampEntityState State;
+		State.EntityId  = static_cast<uint16>(Pkt->GetEntityID());
+		State.Latitude  = Pkt->GetLat();
+		State.Longitude = Pkt->GetLon();
+		State.Yaw       = static_cast<float>(Pkt->GetYaw());
+
+		Receiver->ConfClampQueue.Enqueue(State);
+	}
+};
+
+// ---------------------------------------------------------------------------
+// Phase 26D: Collision Detection Segment Definition (opcode 7) — stub
+// ---------------------------------------------------------------------------
+class FCollisionDetSegProcessor : public CigiBaseEventProcessor
+{
+	FCigiReceiver* Receiver;
+public:
+	explicit FCollisionDetSegProcessor(FCigiReceiver* R) : Receiver(R) {}
+
+	void OnPacketReceived(CigiBasePacket* Packet) override
+	{
+		auto* Pkt = static_cast<CigiCollDetSegDefV3*>(Packet);
+		if (!Receiver || !Pkt) return;
+
+		UE_LOG(LogCamSim, Verbose,
+			TEXT("FCigiReceiver: CollisionDetSegDef entity=%d seg=%d enabled=%d (stub, not processed)"),
+			Pkt->GetEntityID(), Pkt->GetSegmentID(), Pkt->GetSegmentEn() ? 1 : 0);
+	}
+};
+
+// ---------------------------------------------------------------------------
+// Phase 26D: Maritime Surface Conditions Control (opcode 13)
+// ---------------------------------------------------------------------------
+class FMaritimeSurfaceProcessor : public CigiBaseEventProcessor
+{
+	FCigiReceiver* Receiver;
+public:
+	explicit FMaritimeSurfaceProcessor(FCigiReceiver* R) : Receiver(R) {}
+
+	void OnPacketReceived(CigiBasePacket* Packet) override
+	{
+		auto* Pkt = static_cast<CigiMaritimeSurfaceCtrlV3*>(Packet);
+		if (!Receiver || !Pkt) return;
+
+		FCigiMaritimeSurfaceState State;
+		State.EntityRgnId    = static_cast<uint16>(Pkt->GetEntityRgnID());
+		State.bSurfaceCondEn = Pkt->GetSurfaceCondEn();
+		State.bWhitecapEn    = Pkt->GetWhitecapEn();
+		State.Scope          = static_cast<uint8>(Pkt->GetScope());
+		State.SurfaceHeight  = static_cast<float>(Pkt->GetSurfaceHeight());
+		State.WaterTemp      = static_cast<float>(Pkt->GetWaterTemp());
+		State.Clarity        = static_cast<float>(Pkt->GetClarity());
+
+		Receiver->MaritimeSurfaceQueue.Enqueue(State);
+	}
+};
+
 // -------------------------------------------------------------------------
 // Constructor / Destructor
 // -------------------------------------------------------------------------
@@ -621,6 +695,21 @@ bool FCigiReceiver::Init()
 	IncomingMsg->RegisterEventProcessor(CIGI_WAVE_CTRL_PACKET_ID_V3,
 	                                     WaveCtrlProc.Get());
 
+	// Phase 26D: Conformal Clamped Entity Control (opcode 3)
+	ConfClampProc = MakeUnique<FConfClampProcessor>(this);
+	IncomingMsg->RegisterEventProcessor(
+		CIGI_CONF_CLAMP_ENTITY_CTRL_PACKET_ID_V3, ConfClampProc.Get());
+
+	// Phase 26D: Collision Detection Segment Definition (opcode 7) — stub
+	CollisionDetSegProc = MakeUnique<FCollisionDetSegProcessor>(this);
+	IncomingMsg->RegisterEventProcessor(
+		CIGI_COLL_DET_SEG_DEF_PACKET_ID_V3, CollisionDetSegProc.Get());
+
+	// Phase 26D: Maritime Surface Conditions Control (opcode 13)
+	MaritimeSurfaceProc = MakeUnique<FMaritimeSurfaceProcessor>(this);
+	IncomingMsg->RegisterEventProcessor(
+		CIGI_MARITIME_SURFACE_CTRL_PACKET_ID_V3, MaritimeSurfaceProc.Get());
+
 	// Note: Celestial (9), Atmosphere (10), and Weather (12) packets are parsed
 	// directly from the raw buffer in Run() via CigiRawParse::PreParseEnvPackets(),
 	// bypassing CCL's CigiHoldEnvCtrl merge mechanism which prevents reliable
@@ -762,6 +851,9 @@ void FCigiReceiver::Exit()
 	Unreg(LosVectReqProc,  CIGI_LOS_VECT_REQ_PACKET_ID_V3);
 	Unreg(IGCtrlProc,      CIGI_IG_CTRL_PACKET_ID_V3);
 	Unreg(WaveCtrlProc,   CIGI_WAVE_CTRL_PACKET_ID_V3);
+	Unreg(ConfClampProc,      CIGI_CONF_CLAMP_ENTITY_CTRL_PACKET_ID_V3);
+	Unreg(CollisionDetSegProc, CIGI_COLL_DET_SEG_DEF_PACKET_ID_V3);
+	Unreg(MaritimeSurfaceProc, CIGI_MARITIME_SURFACE_CTRL_PACKET_ID_V3);
 
 	IncomingMsg = nullptr;   // non-owning; session owns and will destroy it
 	CigiSession.Reset();

@@ -47,6 +47,9 @@ public:
 	/** Snap ocean plane XY to camera position each tick. */
 	void RepositionToCamera(const FVector& CameraWorldLocation);
 
+	/** Phase 26D: Set surface height offset from CIGI Maritime Surface Control (opcode 13). */
+	void SetSurfaceHeightOffset(float HeightM);
+
 private:
 	// Non-owning — GC managed by ACamSimEnvironment (the outer actor)
 	UStaticMeshComponent*         OceanMesh = nullptr;
@@ -61,6 +64,7 @@ private:
 	float Choppiness   = 0.5f;
 	float ElapsedTime  = 0.0f;
 	float PhaseOffset  = 0.0f;  // AngularFreq * ElapsedTime, cached each Tick
+	float SurfaceHeightOffsetCm = 0.0f;  // Phase 26D: maritime surface height offset (cm)
 	bool  bEnabled     = false;
 
 	void WriteMPC() const;

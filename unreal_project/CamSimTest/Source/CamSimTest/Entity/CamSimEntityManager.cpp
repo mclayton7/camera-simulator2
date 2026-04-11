@@ -65,6 +65,7 @@ void FCamSimEntityManager::Tick(float DeltaTime)
 {
 	PurgeStaleEntities();
 	ProcessEntityStates(DeltaTime);
+	ProcessConfClampEntities();
 	ProcessRateControls();
 	ProcessArtPartControls();
 	ProcessComponentControls();
@@ -211,6 +212,36 @@ void FCamSimEntityManager::ApplyEntityState(const FCigiEntityState& S, double No
 		LastPoseApplySeconds.Remove(S.EntityId);
 		LastScenarioUpdateSeconds.Remove(S.EntityId);
 		UE_LOG(LogCamSim, Log, TEXT("EntityManager: removed entity %u"), S.EntityId);
+	}
+}
+
+void FCamSimEntityManager::ProcessConfClampEntities()
+{
+	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
+	if (!Receiver) return;
+
+	FCigiConfClampEntityState Clamp;
+	const double NowSeconds = FPlatformTime::Seconds();
+
+	while (Receiver->DequeueConfClampEntity(Clamp))
+	{
+		// Convert to standard entity state: Active, clamped to terrain (pitch=0, roll=0)
+		FCigiEntityState State;
+		State.EntityId    = Clamp.EntityId;
+		State.EntityState = CIGI_ENTITY_ACTIVE;
+		State.Latitude    = Clamp.Latitude;
+		State.Longitude   = Clamp.Longitude;
+		State.Yaw         = Clamp.Yaw;
+		State.Pitch       = 0.0f;
+		State.Roll        = 0.0f;
+
+		// Altitude: conformal clamped entities sit on terrain surface.
+		// Set to 0 (MSL); Cesium globe anchor + terrain mesh will place the
+		// entity visually on the terrain.  A more accurate implementation
+		// would perform a downward line trace to get exact terrain height.
+		State.Altitude = 0.0f;
+
+		ApplyEntityState(State, NowSeconds, false);
 	}
 }
 
