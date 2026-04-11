@@ -39,6 +39,9 @@ public:
 	/** Number of DIS PDUs successfully parsed. */
 	uint64 GetReceivedPduCount() const { return ReceivedPduCount.Load(); }
 
+	/** Number of UDP datagrams successfully read from the DIS socket (before parse/filter). */
+	uint64 GetReceivedPacketCount() const { return ReceivedPacketCount.Load(); }
+
 	/** Dequeue the next parsed Entity State PDU. Returns false if empty. */
 	bool DequeueEntityStatePdu(FDisEntityStatePdu& Out) { return EntityStatePduQueue.Dequeue(Out); }
 
@@ -57,6 +60,7 @@ private:
 	FSocket*         Socket    = nullptr;
 	TAtomic<bool>    bShouldRun;
 	TAtomic<uint64>  ReceivedPduCount { 0 };
+	TAtomic<uint64>  ReceivedPacketCount { 0 };
 
 	// SPSC queue: receiver thread produces, game thread consumes
 	TSpscQueue<FDisEntityStatePdu> EntityStatePduQueue;

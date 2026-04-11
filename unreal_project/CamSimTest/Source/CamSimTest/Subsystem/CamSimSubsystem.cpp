@@ -86,6 +86,13 @@ struct UCamSimSubsystem::FSubsystemImpl
 	// Prometheus metrics
 	uint32 PrometheusLastTick       = 0;
 
+	// §10.4 metrics: rolling-1-second FPS measurement (updated from Tick).
+	uint32 FpsLastSampleFrameCntr     = 0;
+	uint64 FpsLastSampleEncodedFrames = 0;
+	double FpsLastSampleWallSec       = 0.0;
+	double CachedRenderFps            = 0.0;  // measured render ticks/sec
+	double CachedOutputFps            = 0.0;  // measured encoded frames/sec
+
 	~FSubsystemImpl()
 	{
 		// Tear down in reverse-dependency order.
@@ -372,10 +379,84 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			[ImplPtr]() { return ImplPtr->CigiReceiver && ImplPtr->CigiReceiver->GetReceivedPacketCount() > 0; },
 			// HasFirstFrame
 			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->GetSuccessfulFrameCount() > 0; },
-			// GetPrometheusMetrics — placeholder; /metrics endpoint can be improved in a follow-up
-			[ImplPtr]() -> FString
+			// §10.4 contract: gauges render_fps, output_fps, entity_count, uptime_seconds;
+			// counters frame_drops_total, cigi_packets_total, dis_packets_total, frames_encoded_total.
+			// Optional histogram frame_latency_ms when pipeline latency tracking is enabled.
+			[ImplPtr, this]() -> FString
 			{
-				return TEXT("");
+				const uint64 EncodedFrames = (ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->IsOpen())
+					? ImplPtr->VideoEncoder->GetSuccessfulFrameCount() : 0;
+				const uint64 CigiRx = ImplPtr->CigiReceiver
+					? ImplPtr->CigiReceiver->GetReceivedPacketCount() : 0;
+				const uint64 DisRx = ImplPtr->DisReceiver
+					? ImplPtr->DisReceiver->GetReceivedPacketCount() : 0;
+				const double Uptime = FPlatformTime::Seconds() - ImplPtr->StartTimeSec;
+				const int32 EntityCount = ImplPtr->EntityManager
+					? ImplPtr->EntityManager->GetEntityCount() : 0;
+
+				int32 FrameDropsTotal = 0;
+				if (ACamSimCamera* Cam = Camera_.Get())
+				{
+					if (Cam->IsTrackingFrameDrops())
+					{
+						FrameDropsTotal = Cam->GetFrameDropStats().Total();
+					}
+				}
+
+				FString Body;
+				Body.Reserve(2048);
+
+				Body += TEXT("# HELP camsim_render_fps Current render thread framerate.\n");
+				Body += TEXT("# TYPE camsim_render_fps gauge\n");
+				Body += FString::Printf(TEXT("camsim_render_fps %.3f\n"), ImplPtr->CachedRenderFps);
+
+				Body += TEXT("# HELP camsim_output_fps Current encoder output framerate.\n");
+				Body += TEXT("# TYPE camsim_output_fps gauge\n");
+				Body += FString::Printf(TEXT("camsim_output_fps %.3f\n"), ImplPtr->CachedOutputFps);
+
+				Body += TEXT("# HELP camsim_entity_count Active entities in the scene.\n");
+				Body += TEXT("# TYPE camsim_entity_count gauge\n");
+				Body += FString::Printf(TEXT("camsim_entity_count %d\n"), EntityCount);
+
+				Body += TEXT("# HELP camsim_uptime_seconds Subsystem uptime in seconds.\n");
+				Body += TEXT("# TYPE camsim_uptime_seconds gauge\n");
+				Body += FString::Printf(TEXT("camsim_uptime_seconds %.3f\n"), Uptime);
+
+				Body += TEXT("# HELP camsim_frame_drops_total Total frame drops across all categories.\n");
+				Body += TEXT("# TYPE camsim_frame_drops_total counter\n");
+				Body += FString::Printf(TEXT("camsim_frame_drops_total %d\n"), FrameDropsTotal);
+
+				Body += TEXT("# HELP camsim_cigi_packets_total Total CIGI packets received.\n");
+				Body += TEXT("# TYPE camsim_cigi_packets_total counter\n");
+				Body += FString::Printf(TEXT("camsim_cigi_packets_total %llu\n"),
+					static_cast<unsigned long long>(CigiRx));
+
+				Body += TEXT("# HELP camsim_dis_packets_total Total DIS PDUs received.\n");
+				Body += TEXT("# TYPE camsim_dis_packets_total counter\n");
+				Body += FString::Printf(TEXT("camsim_dis_packets_total %llu\n"),
+					static_cast<unsigned long long>(DisRx));
+
+				Body += TEXT("# HELP camsim_frames_encoded_total Total frames successfully encoded.\n");
+				Body += TEXT("# TYPE camsim_frames_encoded_total counter\n");
+				Body += FString::Printf(TEXT("camsim_frames_encoded_total %llu\n"),
+					static_cast<unsigned long long>(EncodedFrames));
+
+				// Optional histogram: only when latency tracking is enabled.
+				if (ImplPtr->LatencyTracker)
+				{
+					const FPipelineLatencyTracker::FLatencyPercentiles P =
+						ImplPtr->LatencyTracker->ComputePercentiles();
+					Body += TEXT("# HELP camsim_frame_latency_ms Per-frame pipeline latency.\n");
+					Body += TEXT("# TYPE camsim_frame_latency_ms summary\n");
+					Body += FString::Printf(TEXT("camsim_frame_latency_ms{quantile=\"0.5\"} %.3f\n"),
+						P.TotalUs[0] / 1000.0);
+					Body += FString::Printf(TEXT("camsim_frame_latency_ms{quantile=\"0.95\"} %.3f\n"),
+						P.TotalUs[1] / 1000.0);
+					Body += FString::Printf(TEXT("camsim_frame_latency_ms{quantile=\"0.99\"} %.3f\n"),
+						P.TotalUs[2] / 1000.0);
+				}
+
+				return Body;
 			}
 		);
 	}
@@ -504,6 +585,36 @@ void UCamSimSubsystem::Deinitialize()
 void UCamSimSubsystem::Tick(float DeltaTime)
 {
 	if (!Impl) return;
+
+	// §10.4 metrics: update render/output FPS once per second.
+	{
+		const double NowSec = FPlatformTime::Seconds();
+		if (Impl->FpsLastSampleWallSec == 0.0)
+		{
+			Impl->FpsLastSampleWallSec       = NowSec;
+			Impl->FpsLastSampleFrameCntr     = Impl->FrameCntr;
+			Impl->FpsLastSampleEncodedFrames = (Impl->VideoEncoder && Impl->VideoEncoder->IsOpen())
+				? Impl->VideoEncoder->GetSuccessfulFrameCount() : 0;
+		}
+		else
+		{
+			const double Elapsed = NowSec - Impl->FpsLastSampleWallSec;
+			if (Elapsed >= 1.0)
+			{
+				const uint32 FrameDelta = Impl->FrameCntr - Impl->FpsLastSampleFrameCntr;
+				const uint64 CurrentEncoded = (Impl->VideoEncoder && Impl->VideoEncoder->IsOpen())
+					? Impl->VideoEncoder->GetSuccessfulFrameCount() : 0;
+				const uint64 EncodedDelta = CurrentEncoded - Impl->FpsLastSampleEncodedFrames;
+
+				Impl->CachedRenderFps = FrameDelta / Elapsed;
+				Impl->CachedOutputFps = EncodedDelta / Elapsed;
+
+				Impl->FpsLastSampleWallSec       = NowSec;
+				Impl->FpsLastSampleFrameCntr     = Impl->FrameCntr;
+				Impl->FpsLastSampleEncodedFrames = CurrentEncoded;
+			}
+		}
+	}
 
 	// Phase 28C: update HTTP health liveness timestamp
 	if (Impl->HealthServer)

@@ -87,6 +87,8 @@ uint32 FDisReceiver::Run()
 		int32 BytesRead = 0;
 		if (Socket && Socket->Recv(RecvBuf, RecvBufSize, BytesRead) && BytesRead > 0)
 		{
+			++ReceivedPacketCount;
+
 			// Parse PDU header for filtering
 			FDisPduHeader Hdr;
 			if (!FDisPduHeader::Parse(RecvBuf, BytesRead, Hdr))

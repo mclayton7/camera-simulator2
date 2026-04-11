@@ -58,6 +58,9 @@ public:
 	/** Phase 22G: Find a live entity actor by CIGI EntityId. Returns nullptr if not found. */
 	ACamSimEntity* FindEntity(uint16 EntityId) const;
 
+	/** Current number of live entity actors (for /metrics camsim_entity_count). */
+	int32 GetEntityCount() const { return EntityMap.Num(); }
+
 private:
 	UCamSimSubsystem*       Subsystem  = nullptr;
 	const FEntityTypeTable* TypeTable  = nullptr;
