@@ -17,8 +17,15 @@ def main():
     ap.add_argument("--bind-host", default="0.0.0.0")
     ap.add_argument("--bind-port", type=int, default=8888)
     ap.add_argument("--output", required=True, help="Path to JSONL capture file")
-    ap.add_argument("--duration", type=float, default=0.0, help="Seconds to capture (0=until Ctrl-C)")
-    ap.add_argument("--max-packets", type=int, default=0, help="Stop after N packets (0=unlimited)")
+    ap.add_argument(
+        "--duration",
+        type=float,
+        default=0.0,
+        help="Seconds to capture (0=until Ctrl-C)",
+    )
+    ap.add_argument(
+        "--max-packets", type=int, default=0, help="Stop after N packets (0=unlimited)"
+    )
     args = ap.parse_args()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

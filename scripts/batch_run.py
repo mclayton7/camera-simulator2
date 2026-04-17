@@ -36,6 +36,7 @@ from pathlib import Path
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def resolve_repo_root() -> Path:
     """Walk up from this script's directory looking for CLAUDE.md."""
     d = Path(__file__).resolve().parent
@@ -63,6 +64,7 @@ def _pid_alive(pid: int) -> bool:
 # ---------------------------------------------------------------------------
 # Config generation
 # ---------------------------------------------------------------------------
+
 
 def build_run_config(
     base_config_path: Path,
@@ -109,6 +111,7 @@ def build_run_config(
 # ---------------------------------------------------------------------------
 # Launch / monitor / stop
 # ---------------------------------------------------------------------------
+
 
 def launch_run(
     repo_root: Path,
@@ -242,6 +245,7 @@ def stop_run(pid: int) -> None:
 # Artifact collection
 # ---------------------------------------------------------------------------
 
+
 def collect_run_artifacts(
     run_dir: Path,
     health_path: Path | None,
@@ -279,23 +283,53 @@ def collect_run_artifacts(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--runs",    type=int, required=True, help="Number of runs")
-    ap.add_argument("--frames",  type=int, default=900,   help="Target frame count per run (default: 900)")
-    ap.add_argument("--timeout", type=int, default=300,   help="Wall-clock timeout per run in seconds (default: 300)")
-    ap.add_argument("--output",  default="batch_output",  help="Batch output root directory (default: batch_output)")
-    ap.add_argument("--config",  default=None,            help="Base config YAML (default: deploy/camsim_config.yaml)")
-    ap.add_argument("--seed",    type=int, default=0,     help="Starting seed; 0=wall-clock per run (default: 0)")
-    ap.add_argument("--dry-run", action="store_true",     help="Print what would be executed, then exit")
+    ap.add_argument("--runs", type=int, required=True, help="Number of runs")
+    ap.add_argument(
+        "--frames",
+        type=int,
+        default=900,
+        help="Target frame count per run (default: 900)",
+    )
+    ap.add_argument(
+        "--timeout",
+        type=int,
+        default=300,
+        help="Wall-clock timeout per run in seconds (default: 300)",
+    )
+    ap.add_argument(
+        "--output",
+        default="batch_output",
+        help="Batch output root directory (default: batch_output)",
+    )
+    ap.add_argument(
+        "--config",
+        default=None,
+        help="Base config YAML (default: deploy/camsim_config.yaml)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Starting seed; 0=wall-clock per run (default: 0)",
+    )
+    ap.add_argument(
+        "--dry-run", action="store_true", help="Print what would be executed, then exit"
+    )
     args = ap.parse_args()
 
     repo_root = resolve_repo_root()
 
-    base_config = Path(args.config) if args.config else repo_root / "deploy" / "camsim_config.yaml"
+    base_config = (
+        Path(args.config)
+        if args.config
+        else repo_root / "deploy" / "camsim_config.yaml"
+    )
     if not base_config.exists():
         print(f"[ERROR] Base config not found: {base_config}", file=sys.stderr)
         sys.exit(1)
@@ -322,7 +356,9 @@ def main() -> None:
         for i in range(args.runs):
             seed = 0 if args.seed == 0 else args.seed + i
             run_dir = output_root / f"run_{i:04d}"
-            print(f"  [DRY-RUN] run {i}: dir={run_dir}  seed={seed}  frames={args.frames}")
+            print(
+                f"  [DRY-RUN] run {i}: dir={run_dir}  seed={seed}  frames={args.frames}"
+            )
         print("\n  --dry-run: nothing executed.")
         return
 
@@ -345,7 +381,11 @@ def main() -> None:
 
             try:
                 config_path = build_run_config(
-                    base_config, run_dir, i, seed, args.frames,
+                    base_config,
+                    run_dir,
+                    i,
+                    seed,
+                    args.frames,
                 )
                 print(f"    Config written: {config_path}")
 
@@ -361,9 +401,14 @@ def main() -> None:
                 else:
                     print(f"    Health: {health_path}")
                     reason, final_frame, elapsed_sec = poll_health(
-                        health_path, args.frames, args.timeout, pid,
+                        health_path,
+                        args.frames,
+                        args.timeout,
+                        pid,
                     )
-                    print(f"    Result: {reason}  frames={final_frame}  elapsed={elapsed_sec:.1f}s")
+                    print(
+                        f"    Result: {reason}  frames={final_frame}  elapsed={elapsed_sec:.1f}s"
+                    )
 
                 if reason == "frames_reached":
                     exit_code = 0
@@ -387,8 +432,15 @@ def main() -> None:
                     current_pid = None
 
                 summary = collect_run_artifacts(
-                    run_dir, health_path, start_time, end_time,
-                    exit_code, seed, reason, final_frame, elapsed_sec,
+                    run_dir,
+                    health_path,
+                    start_time,
+                    end_time,
+                    exit_code,
+                    seed,
+                    reason,
+                    final_frame,
+                    elapsed_sec,
                 )
                 run_summaries.append(summary)
 
@@ -399,14 +451,18 @@ def main() -> None:
         if current_pid is not None:
             stop_run(current_pid)
         # Write partial summary and exit 130
-        _write_batch_summary(output_root, batch_start, run_summaries,
-                             completed, timed_out, failed)
+        _write_batch_summary(
+            output_root, batch_start, run_summaries, completed, timed_out, failed
+        )
         sys.exit(130)
 
-    _write_batch_summary(output_root, batch_start, run_summaries,
-                         completed, timed_out, failed)
+    _write_batch_summary(
+        output_root, batch_start, run_summaries, completed, timed_out, failed
+    )
 
-    print(f"==> Batch complete: {completed} completed, {timed_out} timed out, {failed} failed")
+    print(
+        f"==> Batch complete: {completed} completed, {timed_out} timed out, {failed} failed"
+    )
 
 
 def _write_batch_summary(

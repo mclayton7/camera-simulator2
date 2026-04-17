@@ -30,7 +30,9 @@ def main() -> int:
     ap.add_argument("--host", default="0.0.0.0", help="Bind host/interface")
     ap.add_argument("--port", type=int, default=8889, help="CIGI response UDP port")
     ap.add_argument("--timeout", type=float, default=10.0, help="Max wait seconds")
-    ap.add_argument("--min-packets", type=int, default=3, help="Minimum datagrams to receive")
+    ap.add_argument(
+        "--min-packets", type=int, default=3, help="Minimum datagrams to receive"
+    )
     ap.add_argument(
         "--require-query-response",
         action="store_true",
@@ -68,7 +70,9 @@ def main() -> int:
     sock.close()
 
     if datagrams < args.min_packets:
-        print(f"[FAIL] Received only {datagrams} response datagrams (expected >= {args.min_packets})")
+        print(
+            f"[FAIL] Received only {datagrams} response datagrams (expected >= {args.min_packets})"
+        )
         return 1
     if sof_count == 0:
         print("[FAIL] No SOF opcode 101 packets found in response datagrams")
@@ -86,4 +90,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

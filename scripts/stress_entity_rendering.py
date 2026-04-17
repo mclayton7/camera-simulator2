@@ -18,8 +18,16 @@ def pack_ig_control(frame_ctr: int) -> bytes:
     ts = int((time.time() % 86400) * 10_000) & 0xFFFF_FFFF
     return struct.pack(
         ">BBBbBxHIIII",
-        1, 24, 3, 0, 0x05, 0x8000,
-        frame_ctr & 0xFFFF_FFFF, ts, 0, 0,
+        1,
+        24,
+        3,
+        0,
+        0x05,
+        0x8000,
+        frame_ctr & 0xFFFF_FFFF,
+        ts,
+        0,
+        0,
     )
 
 
@@ -36,7 +44,8 @@ def pack_entity_control(
 ) -> bytes:
     header = struct.pack(
         ">BBHBBBxHH",
-        2, 48,
+        2,
+        48,
         entity_id & 0xFFFF,
         entity_state & 0x03,
         0,
@@ -44,18 +53,28 @@ def pack_entity_control(
         entity_type & 0xFFFF,
         0,
     )
-    pkt = header + struct.pack(">fff", roll, pitch, yaw) + struct.pack(">ddd", lat, lon, alt)
+    pkt = (
+        header
+        + struct.pack(">fff", roll, pitch, yaw)
+        + struct.pack(">ddd", lat, lon, alt)
+    )
     assert len(pkt) == 48
     return pkt
 
 
-def camera_behind(center_lat: float, center_lon: float, center_alt: float, yaw_deg: float) -> tuple[float, float, float]:
+def camera_behind(
+    center_lat: float, center_lon: float, center_alt: float, yaw_deg: float
+) -> tuple[float, float, float]:
     alt_above = 700.0
     pitch = -35.0
     dist_behind = alt_above / math.tan(math.radians(abs(pitch)))
     yaw_rad = math.radians(yaw_deg)
     dlat = -dist_behind * math.cos(yaw_rad) / 111320.0
-    dlon = -dist_behind * math.sin(yaw_rad) / (111320.0 * math.cos(math.radians(center_lat)))
+    dlon = (
+        -dist_behind
+        * math.sin(yaw_rad)
+        / (111320.0 * math.cos(math.radians(center_lat)))
+    )
     return center_lat + dlat, center_lon + dlon, center_alt + alt_above
 
 
@@ -131,7 +150,11 @@ def main():
     args = ap.parse_args()
 
     count = max(1, args.count)
-    offsets = ring_offsets(count, args.radius_m) if args.pattern == "ring" else grid_offsets(count, args.radius_m)
+    offsets = (
+        ring_offsets(count, args.radius_m)
+        if args.pattern == "ring"
+        else grid_offsets(count, args.radius_m)
+    )
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     addr = (args.host, args.port)
@@ -153,11 +176,17 @@ def main():
             if args.duration > 0 and elapsed >= args.duration:
                 break
 
-            cam_lat, cam_lon, cam_alt = camera_behind(args.center_lat, args.center_lon, args.alt, yaw_deg=0.0)
+            cam_lat, cam_lon, cam_alt = camera_behind(
+                args.center_lat, args.center_lon, args.alt, yaw_deg=0.0
+            )
             camera_pkt = pack_entity_control(
                 args.camera_id,
-                cam_lat, cam_lon, cam_alt,
-                0.0, -35.0, 0.0,
+                cam_lat,
+                cam_lon,
+                cam_alt,
+                0.0,
+                -35.0,
+                0.0,
                 entity_state=1,
                 entity_type=0,
             )
@@ -169,23 +198,38 @@ def main():
                 north = base_north + math.cos(orbit_theta) * 30.0
                 east = base_east + math.sin(orbit_theta) * 30.0
                 lat = args.center_lat + north / 111320.0
-                lon = args.center_lon + east / (111320.0 * math.cos(math.radians(args.center_lat)))
+                lon = args.center_lon + east / (
+                    111320.0 * math.cos(math.radians(args.center_lat))
+                )
                 yaw = math.degrees(orbit_theta) % 360.0
-                entity_pkts.append(pack_entity_control(
-                    args.start_entity_id + i,
-                    lat, lon, args.alt,
-                    yaw, 0.0, 0.0,
-                    entity_state=1,
-                    entity_type=args.entity_type,
-                ))
+                entity_pkts.append(
+                    pack_entity_control(
+                        args.start_entity_id + i,
+                        lat,
+                        lon,
+                        args.alt,
+                        yaw,
+                        0.0,
+                        0.0,
+                        entity_state=1,
+                        entity_type=args.entity_type,
+                    )
+                )
 
             sent_datagrams += send_chunked(
-                sock, addr, frame_ctr, camera_pkt, entity_pkts, max(512, args.max_dgram_bytes)
+                sock,
+                addr,
+                frame_ctr,
+                camera_pkt,
+                entity_pkts,
+                max(512, args.max_dgram_bytes),
             )
             frame_ctr += 1
 
             if frame_ctr % max(1, int(args.rate)) == 0:
-                print(f"  t={elapsed:6.1f}s frame={frame_ctr:5d} dgrams={sent_datagrams:6d}")
+                print(
+                    f"  t={elapsed:6.1f}s frame={frame_ctr:5d} dgrams={sent_datagrams:6d}"
+                )
 
             next_send += interval
             sleep_for = next_send - time.monotonic()
@@ -196,15 +240,43 @@ def main():
 
     if args.remove_on_exit:
         print("[stress] sending remove packets...")
-        cam_lat, cam_lon, cam_alt = camera_behind(args.center_lat, args.center_lon, args.alt, yaw_deg=0.0)
-        camera_pkt = pack_entity_control(args.camera_id, cam_lat, cam_lon, cam_alt, 0.0, -35.0, 0.0, entity_state=1, entity_type=0)
+        cam_lat, cam_lon, cam_alt = camera_behind(
+            args.center_lat, args.center_lon, args.alt, yaw_deg=0.0
+        )
+        camera_pkt = pack_entity_control(
+            args.camera_id,
+            cam_lat,
+            cam_lon,
+            cam_alt,
+            0.0,
+            -35.0,
+            0.0,
+            entity_state=1,
+            entity_type=0,
+        )
         remove_pkts = [
-            pack_entity_control(args.start_entity_id + i, args.center_lat, args.center_lon, args.alt,
-                                0.0, 0.0, 0.0, entity_state=2, entity_type=args.entity_type)
+            pack_entity_control(
+                args.start_entity_id + i,
+                args.center_lat,
+                args.center_lon,
+                args.alt,
+                0.0,
+                0.0,
+                0.0,
+                entity_state=2,
+                entity_type=args.entity_type,
+            )
             for i in range(count)
         ]
         for i in range(5):
-            send_chunked(sock, addr, frame_ctr + i, camera_pkt, remove_pkts, max(512, args.max_dgram_bytes))
+            send_chunked(
+                sock,
+                addr,
+                frame_ctr + i,
+                camera_pkt,
+                remove_pkts,
+                max(512, args.max_dgram_bytes),
+            )
             time.sleep(0.05)
 
     sock.close()

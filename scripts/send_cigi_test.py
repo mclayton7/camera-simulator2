@@ -90,6 +90,7 @@ import time
 # CIGI 3.3 packet construction
 # ---------------------------------------------------------------------------
 
+
 def pack_ig_control(frame_ctr: int, db_number: int = 0) -> bytes:
     """
     IG Control packet -- Packet ID 1, Size 24 bytes (CIGI 3.3).
@@ -120,25 +121,30 @@ def pack_ig_control(frame_ctr: int, db_number: int = 0) -> bytes:
     # 100-us ticks since midnight UTC
     ts = int((time.time() % 86400) * 10_000) & 0xFFFF_FFFF
 
-    return struct.pack(">BBBbBxHIIII",
-        1,              # byte  0: Packet ID
-        24,             # byte  1: Packet Size (V3.3 = 24)
-        3,              # byte  2: Major Version
-        db_number,      # byte  3: Database Number (signed int8)
-        ig_mode_byte,   # byte  4: IG Mode flags
+    return struct.pack(
+        ">BBBbBxHIIII",
+        1,  # byte  0: Packet ID
+        24,  # byte  1: Packet Size (V3.3 = 24)
+        3,  # byte  2: Major Version
+        db_number,  # byte  3: Database Number (signed int8)
+        ig_mode_byte,  # byte  4: IG Mode flags
         #               # byte  5: reserved (x)
         BYTE_SWAP_MAGIC,  # bytes 6-7: Byte Swap Magic
         frame_ctr & 0xFFFF_FFFF,  # bytes 8-11: Host Frame Counter
-        ts,             # bytes 12-15: Timestamp
-        0,              # bytes 16-19: Last Received IG Frame
-        0,              # bytes 20-23: reserved
+        ts,  # bytes 12-15: Timestamp
+        0,  # bytes 16-19: Last Received IG Frame
+        0,  # bytes 20-23: reserved
     )
 
 
 def pack_entity_control(
     entity_id: int,
-    lat: float, lon: float, alt: float,
-    yaw: float, pitch: float, roll: float,
+    lat: float,
+    lon: float,
+    alt: float,
+    yaw: float,
+    pitch: float,
+    roll: float,
     entity_state: int = 1,
 ) -> bytes:
     """Entity Control — packet ID 2, 48 bytes (CIGI 3.3).
@@ -156,19 +162,20 @@ def pack_entity_control(
       12-23 roll, pitch, yaw  (3× float32)
       24-47 lat, lon, alt     (3× float64)
     """
-    state_byte = (entity_state & 0x03)
+    state_byte = entity_state & 0x03
 
-    header = struct.pack(">BBHBBBxHH",
-        2,           # packet_id
-        48,          # size
+    header = struct.pack(
+        ">BBHBBBxHH",
+        2,  # packet_id
+        48,  # size
         entity_id,
         state_byte,  # entity state / flags
-        0,           # animation flags
-        255,         # alpha
-        0,           # entity_type (camera entity — type irrelevant)
-        0,           # parent_entity_id
+        0,  # animation flags
+        255,  # alpha
+        0,  # entity_type (camera entity — type irrelevant)
+        0,  # parent_entity_id
     )
-    angles   = struct.pack(">fff", roll, pitch, yaw)
+    angles = struct.pack(">fff", roll, pitch, yaw)
     position = struct.pack(">ddd", lat, lon, alt)
 
     pkt = header + angles + position
@@ -181,7 +188,7 @@ def pack_view_definition(
     group_id: int = 0,
     fov_left: float = -30.0,
     fov_right: float = 30.0,
-    fov_top: float = 16.875,   # ~16.875° for 16:9 ratio with 33.75° VFOV
+    fov_top: float = 16.875,  # ~16.875° for 16:9 ratio with 33.75° VFOV
     fov_bottom: float = -16.875,
     near_plane: float = 0.1,
     far_plane: float = 1_000_000.0,
@@ -208,16 +215,22 @@ def pack_view_definition(
     # Enable all FOV fields and near/far
     flags = 0b00011111  # bits 0-4 set
 
-    header = struct.pack(">BBHBBxx",
-        21,       # packet_id
-        32,       # size
+    header = struct.pack(
+        ">BBHBBxx",
+        21,  # packet_id
+        32,  # size
         view_id,
         group_id,
         flags,
     )
-    planes_fov = struct.pack(">ffffff",
-        near_plane, far_plane,
-        fov_left, fov_right, fov_top, fov_bottom,
+    planes_fov = struct.pack(
+        ">ffffff",
+        near_plane,
+        far_plane,
+        fov_left,
+        fov_right,
+        fov_top,
+        fov_bottom,
     )
     pkt = header + planes_fov
     assert len(pkt) == 32, f"View Definition size error: {len(pkt)}"
@@ -253,17 +266,18 @@ def pack_sensor_control(
         flags |= 0x01
     flags |= (polarity & 0x01) << 1
 
-    return struct.pack(">BBHBBBxffff",
-        17,           # Packet ID
-        24,           # Packet Size
-        view_id   & 0xFFFF,
+    return struct.pack(
+        ">BBHBBBxffff",
+        17,  # Packet ID
+        24,  # Packet Size
+        view_id & 0xFFFF,
         sensor_id & 0xFF,
         flags,
-        0,            # ResponseType = GatePos (0)
+        0,  # ResponseType = GatePos (0)
         gain,
-        0.0,          # Level
-        0.0,          # AC Coupling
-        0.0,          # Noise
+        0.0,  # Level
+        0.0,  # AC Coupling
+        0.0,  # Noise
     )
 
 
@@ -303,17 +317,18 @@ def pack_celestial_control(
         flags |= 0x04
     flags |= 0x10  # Date Valid
 
-    return struct.pack(">BBBBBxBBHfH",
-        9,          # Packet ID
-        16,         # Packet Size
+    return struct.pack(
+        ">BBBBBxBBHfH",
+        9,  # Packet ID
+        16,  # Packet Size
         hour & 0xFF,
         minute & 0xFF,
         flags,
         month & 0xFF,
         day & 0xFF,
         year & 0xFFFF,
-        0.0,        # Star field intensity
-        0,          # reserved
+        0.0,  # Star field intensity
+        0,  # reserved
     )
 
 
@@ -345,9 +360,10 @@ def pack_atmos_control(
     """
     flags = 0x01 if atmos_en else 0x00
 
-    return struct.pack(">BBBxfffffff",
-        10,         # Packet ID
-        32,         # Packet Size
+    return struct.pack(
+        ">BBBxfffffff",
+        10,  # Packet ID
+        32,  # Packet Size
         flags,
         humidity,
         air_temp,
@@ -405,34 +421,39 @@ def pack_weather_control(
 
     scope_sev = (scope & 0x03) | ((severity & 0x07) << 2)
 
-    return struct.pack(">BBHBBBBffffffffffff",
-        12,         # Packet ID
-        56,         # Packet Size
+    return struct.pack(
+        ">BBHBBBBffffffffffff",
+        12,  # Packet ID
+        56,  # Packet Size
         region_id & 0xFFFF,
         layer_id & 0xFF,
-        0,          # Humidity (unused)
+        0,  # Humidity (unused)
         flags,
         scope_sev,
-        0.0,        # Air Temp
+        0.0,  # Air Temp
         visibility_rng,
-        0.0,        # Scud Frequency
+        0.0,  # Scud Frequency
         coverage,
         base_elev,
         thickness,
         transition,
-        0.0,        # Horiz Wind Speed
-        0.0,        # Vert Wind Speed
-        0.0,        # Wind Direction
-        1013.25,    # Barometric Pressure
-        0.0,        # Aerosol Concentration
+        0.0,  # Horiz Wind Speed
+        0.0,  # Vert Wind Speed
+        0.0,  # Wind Direction
+        1013.25,  # Barometric Pressure
+        0.0,  # Aerosol Concentration
     )
 
 
 def build_host_frame(
     frame_ctr: int,
     entity_id: int,
-    lat: float, lon: float, alt: float,
-    yaw: float, pitch: float, roll: float,
+    lat: float,
+    lon: float,
+    alt: float,
+    yaw: float,
+    pitch: float,
+    roll: float,
     fov_h: float = 60.0,
     include_view_def: bool = True,
     sensor_id: int = 0,
@@ -443,7 +464,7 @@ def build_host_frame(
 ) -> bytes:
     """Assemble a complete CIGI 3.3 host frame datagram."""
     ig_ctrl = pack_ig_control(frame_ctr)
-    entity  = pack_entity_control(entity_id, lat, lon, alt, yaw, pitch, roll)
+    entity = pack_entity_control(entity_id, lat, lon, alt, yaw, pitch, roll)
 
     payload = ig_ctrl + entity
 
@@ -459,8 +480,10 @@ def build_host_frame(
         half_h = fov_h / 2.0
         half_v = half_h * (9.0 / 16.0)  # 16:9 aspect
         view = pack_view_definition(
-            fov_left=-half_h, fov_right=half_h,
-            fov_top=half_v,   fov_bottom=-half_v,
+            fov_left=-half_h,
+            fov_right=half_h,
+            fov_top=half_v,
+            fov_bottom=-half_v,
         )
         payload += view
 
@@ -482,14 +505,14 @@ def build_host_frame(
 # alt_factor is multiplied by the base --alt value to get the target altitude.
 # Segments are traversed in order, cycling back to the first after the last.
 _TOUR_POSES = [
-    ("bird-eye",     0,   -80,   0,  2.5),   # high altitude, near-vertical
-    ("glide-north",  10,  -20,   0,  1.0),   # low, flat glide heading north
-    ("bank-east",    90,  -35,  20,  1.5),   # medium, banking turn to east
-    ("dive-south",  185,  -60,   0,  0.7),   # steep dive heading south
-    ("pan-west",    270,  -25, -20,  1.8),   # sweeping west, gentle left bank
-    ("roll-ne",      45,  -15,  40,  1.2),   # heavy right roll, low pitch
+    ("bird-eye", 0, -80, 0, 2.5),  # high altitude, near-vertical
+    ("glide-north", 10, -20, 0, 1.0),  # low, flat glide heading north
+    ("bank-east", 90, -35, 20, 1.5),  # medium, banking turn to east
+    ("dive-south", 185, -60, 0, 0.7),  # steep dive heading south
+    ("pan-west", 270, -25, -20, 1.8),  # sweeping west, gentle left bank
+    ("roll-ne", 45, -15, 40, 1.2),  # heavy right roll, low pitch
 ]
-_TOUR_SEGMENT_SEC = 6.0   # seconds per segment at tour_speed=1.0
+_TOUR_SEGMENT_SEC = 6.0  # seconds per segment at tour_speed=1.0
 
 
 def _coslerp(a: float, b: float, t: float) -> float:
@@ -516,26 +539,29 @@ def tour_pose(
     """
     n = len(_TOUR_POSES)
     total_period = _TOUR_SEGMENT_SEC * n / tour_speed
-    phase = (elapsed % total_period) / total_period   # 0..1 for a full cycle
+    phase = (elapsed % total_period) / total_period  # 0..1 for a full cycle
     pos = phase * n
     seg = int(pos) % n
-    t = pos - int(pos)                                 # 0..1 within this segment
+    t = pos - int(pos)  # 0..1 within this segment
     nxt = (seg + 1) % n
 
     _, yaw0, pitch0, roll0, alt_f0 = _TOUR_POSES[seg]
     _, yaw1, pitch1, roll1, alt_f1 = _TOUR_POSES[nxt]
 
-    yaw   = _lerp_angle(yaw0, yaw1, t)
+    yaw = _lerp_angle(yaw0, yaw1, t)
     pitch = _coslerp(pitch0, pitch1, t)
-    roll  = _coslerp(roll0, roll1, t)
-    alt   = _coslerp(base_alt * alt_f0, base_alt * alt_f1, t)
+    roll = _coslerp(roll0, roll1, t)
+    alt = _coslerp(base_alt * alt_f0, base_alt * alt_f1, t)
 
     return yaw, pitch, roll, alt, _TOUR_POSES[seg][0]
 
 
 def orbit_position(
-    center_lat: float, center_lon: float, alt: float,
-    radius_m: float, heading_deg: float
+    center_lat: float,
+    center_lon: float,
+    alt: float,
+    radius_m: float,
+    heading_deg: float,
 ) -> tuple[float, float, float, float]:
     """
     Compute a position on a circular orbit around (center_lat, center_lon)
@@ -550,8 +576,8 @@ def orbit_position(
     d = radius_m / R
 
     lat2 = math.asin(
-        math.sin(lat1) * math.cos(d) +
-        math.cos(lat1) * math.sin(d) * math.cos(bearing_rad)
+        math.sin(lat1) * math.cos(d)
+        + math.cos(lat1) * math.sin(d) * math.cos(bearing_rad)
     )
     lon2 = lon1 + math.atan2(
         math.sin(bearing_rad) * math.sin(d) * math.cos(lat1),
@@ -568,53 +594,102 @@ def orbit_position(
 # Main send loop
 # ---------------------------------------------------------------------------
 
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--host",      default="127.0.0.1",    help="CamSim host")
-    ap.add_argument("--port",      type=int, default=8888,  help="CamSim CIGI UDP port")
-    ap.add_argument("--lat",       type=float, default=37.7749)
-    ap.add_argument("--lon",       type=float, default=-122.4194)
-    ap.add_argument("--alt",       type=float, default=1000.0, help="Altitude metres MSL")
-    ap.add_argument("--yaw",       type=float, default=0.0)
-    ap.add_argument("--pitch",     type=float, default=-15.0)
-    ap.add_argument("--roll",      type=float, default=0.0)
-    ap.add_argument("--rate",      type=float, default=30.0,  help="Packets/sec")
-    ap.add_argument("--duration",  type=float, default=0.0,   help="Seconds (0=forever)")
-    ap.add_argument("--sweep",      action="store_true",       help="Rotate heading 0→360")
-    ap.add_argument("--circle",     nargs=2, type=float,
-                    metavar=("LAT", "LON"),                    help="Orbit a point")
-    ap.add_argument("--tour",       action="store_true",
-                    help="Cycle through predefined camera poses (loops forever)")
-    ap.add_argument("--tour-speed", type=float, default=1.0,
-                    metavar="SCALE",
-                    help="Tour speed multiplier (default: 1.0)")
-    ap.add_argument("--entity-id",  type=int, default=0,
-                    help="CIGI entity ID for the camera (must match camera_entity_id in config)")
-    ap.add_argument("--sensor-id",  type=int, default=0,
-                    choices=[0, 1, 2],
-                    help="Sensor waveband: 0=EO (color), 1=IR (thermal), 2=NVG (default: 0)")
-    ap.add_argument("--polarity",   type=int, default=0,
-                    choices=[0, 1],
-                    help="IR polarity: 0=WhiteHot, 1=BlackHot (default: 0; IR mode only)")
-    ap.add_argument("--fov-h",      type=float, default=60.0, help="Horizontal FOV degrees")
-    ap.add_argument("--time",       type=str, default=None, metavar="HHMM",
-                    help="Time of day as HHMM (e.g. 0600 for sunrise)")
-    ap.add_argument("--visibility", type=float, default=None, metavar="METRES",
-                    help="Visibility range in metres (e.g. 500 for dense fog)")
-    ap.add_argument("--weather",          action="store_true",
-                    help="Enable basic overcast weather layer")
-    ap.add_argument("--cloud-base",       type=float, default=None, metavar="METRES",
-                    help="Cloud layer base altitude in metres MSL (default: 2000)")
-    ap.add_argument("--cloud-thickness",  type=float, default=None, metavar="METRES",
-                    help="Cloud layer thickness in metres (default: 500)")
-    ap.add_argument("--time-sweep", action="store_true",
-                    help="Cycle time-of-day 0000→2400 (use with --tour)")
-    ap.add_argument("--time-sweep-period", type=float, default=120.0,
-                    metavar="SEC",
-                    help="Seconds for one full day/night cycle (default: 120)")
+    ap.add_argument("--host", default="127.0.0.1", help="CamSim host")
+    ap.add_argument("--port", type=int, default=8888, help="CamSim CIGI UDP port")
+    ap.add_argument("--lat", type=float, default=37.7749)
+    ap.add_argument("--lon", type=float, default=-122.4194)
+    ap.add_argument("--alt", type=float, default=1000.0, help="Altitude metres MSL")
+    ap.add_argument("--yaw", type=float, default=0.0)
+    ap.add_argument("--pitch", type=float, default=-15.0)
+    ap.add_argument("--roll", type=float, default=0.0)
+    ap.add_argument("--rate", type=float, default=30.0, help="Packets/sec")
+    ap.add_argument("--duration", type=float, default=0.0, help="Seconds (0=forever)")
+    ap.add_argument("--sweep", action="store_true", help="Rotate heading 0→360")
+    ap.add_argument(
+        "--circle", nargs=2, type=float, metavar=("LAT", "LON"), help="Orbit a point"
+    )
+    ap.add_argument(
+        "--tour",
+        action="store_true",
+        help="Cycle through predefined camera poses (loops forever)",
+    )
+    ap.add_argument(
+        "--tour-speed",
+        type=float,
+        default=1.0,
+        metavar="SCALE",
+        help="Tour speed multiplier (default: 1.0)",
+    )
+    ap.add_argument(
+        "--entity-id",
+        type=int,
+        default=0,
+        help="CIGI entity ID for the camera (must match camera_entity_id in config)",
+    )
+    ap.add_argument(
+        "--sensor-id",
+        type=int,
+        default=0,
+        choices=[0, 1, 2],
+        help="Sensor waveband: 0=EO (color), 1=IR (thermal), 2=NVG (default: 0)",
+    )
+    ap.add_argument(
+        "--polarity",
+        type=int,
+        default=0,
+        choices=[0, 1],
+        help="IR polarity: 0=WhiteHot, 1=BlackHot (default: 0; IR mode only)",
+    )
+    ap.add_argument("--fov-h", type=float, default=60.0, help="Horizontal FOV degrees")
+    ap.add_argument(
+        "--time",
+        type=str,
+        default=None,
+        metavar="HHMM",
+        help="Time of day as HHMM (e.g. 0600 for sunrise)",
+    )
+    ap.add_argument(
+        "--visibility",
+        type=float,
+        default=None,
+        metavar="METRES",
+        help="Visibility range in metres (e.g. 500 for dense fog)",
+    )
+    ap.add_argument(
+        "--weather", action="store_true", help="Enable basic overcast weather layer"
+    )
+    ap.add_argument(
+        "--cloud-base",
+        type=float,
+        default=None,
+        metavar="METRES",
+        help="Cloud layer base altitude in metres MSL (default: 2000)",
+    )
+    ap.add_argument(
+        "--cloud-thickness",
+        type=float,
+        default=None,
+        metavar="METRES",
+        help="Cloud layer thickness in metres (default: 500)",
+    )
+    ap.add_argument(
+        "--time-sweep",
+        action="store_true",
+        help="Cycle time-of-day 0000→2400 (use with --tour)",
+    )
+    ap.add_argument(
+        "--time-sweep-period",
+        type=float,
+        default=120.0,
+        metavar="SEC",
+        help="Seconds for one full day/night cycle (default: 120)",
+    )
     args = ap.parse_args()
 
     interval = 1.0 / args.rate
@@ -636,12 +711,14 @@ def main():
     weather_base: dict | None = None
     if args.weather or args.cloud_base is not None or args.cloud_thickness is not None:
         weather_base = {
-            "coverage":       80.0  if args.weather else 20.0,
-            "base_elev":      args.cloud_base      if args.cloud_base      is not None else 2000.0,
-            "thickness":      args.cloud_thickness if args.cloud_thickness is not None else 500.0,
-            "cloud_type":     2,
-            "severity":       2     if args.weather else 0,
-            "weather_en":     True,
+            "coverage": 80.0 if args.weather else 20.0,
+            "base_elev": args.cloud_base if args.cloud_base is not None else 2000.0,
+            "thickness": args.cloud_thickness
+            if args.cloud_thickness is not None
+            else 500.0,
+            "cloud_type": 2,
+            "severity": 2 if args.weather else 0,
+            "weather_en": True,
             "visibility_rng": 5000.0 if args.weather else 50000.0,
         }
 
@@ -652,37 +729,47 @@ def main():
         clat, clon = args.circle
         print(f"    Mode: orbit ({clat:.4f}, {clon:.4f}), alt={args.alt}m")
     elif args.sweep:
-        print(f"    Mode: heading sweep ({args.lat:.4f}, {args.lon:.4f}), alt={args.alt}m")
+        print(
+            f"    Mode: heading sweep ({args.lat:.4f}, {args.lon:.4f}), alt={args.alt}m"
+        )
     elif args.tour:
         seg_sec = _TOUR_SEGMENT_SEC / args.tour_speed
-        print(f"    Mode: tour  ({args.lat:.4f}, {args.lon:.4f}), base alt={args.alt}m, "
-              f"speed={args.tour_speed}x ({seg_sec:.1f}s/segment)")
+        print(
+            f"    Mode: tour  ({args.lat:.4f}, {args.lon:.4f}), base alt={args.alt}m, "
+            f"speed={args.tour_speed}x ({seg_sec:.1f}s/segment)"
+        )
         pose_names = ", ".join(p[0] for p in _TOUR_POSES)
         print(f"    Poses: {pose_names}")
     else:
-        print(f"    Mode: static  lat={args.lat:.4f} lon={args.lon:.4f} "
-              f"alt={args.alt:.0f}m  yaw={args.yaw:.1f}° pitch={args.pitch:.1f}°")
+        print(
+            f"    Mode: static  lat={args.lat:.4f} lon={args.lon:.4f} "
+            f"alt={args.alt:.0f}m  yaw={args.yaw:.1f}° pitch={args.pitch:.1f}°"
+        )
     if celestial_base:
         if args.time_sweep:
             print(f"    Time: sweep 0000→2400 over {args.time_sweep_period:.0f}s")
         else:
-            print(f"    Time: {celestial_base['hour']:02d}:{celestial_base['minute']:02d}")
+            print(
+                f"    Time: {celestial_base['hour']:02d}:{celestial_base['minute']:02d}"
+            )
     if atmosphere_base:
         print(f"    Visibility: {atmosphere_base['visibility']:.0f}m")
     if weather_base:
-        print(f"    Weather: coverage={weather_base['coverage']:.0f}%  "
-              f"base={weather_base['base_elev']:.0f}m  "
-              f"thickness={weather_base['thickness']:.0f}m")
+        print(
+            f"    Weather: coverage={weather_base['coverage']:.0f}%  "
+            f"base={weather_base['base_elev']:.0f}m  "
+            f"thickness={weather_base['thickness']:.0f}m"
+        )
     sensor_label = _SENSOR_NAMES.get(args.sensor_id, f"id={args.sensor_id}")
-    pol_label    = _POLARITY_NAMES.get(args.polarity, str(args.polarity))
+    pol_label = _POLARITY_NAMES.get(args.polarity, str(args.polarity))
     print(f"    Sensor: {sensor_label}  polarity: {pol_label}")
     print("    Press Ctrl-C to stop")
     print()
 
-    frame_ctr  = 0
+    frame_ctr = 0
     start_time = time.monotonic()
-    next_send  = start_time
-    orbit_deg  = 0.0   # current orbit/sweep angle
+    next_send = start_time
+    orbit_deg = 0.0  # current orbit/sweep angle
     sent_count = 0
 
     try:
@@ -698,21 +785,24 @@ def main():
             if args.circle:
                 clat, clon = args.circle
                 lat, lon, alt, yaw = orbit_position(
-                    clat, clon, args.alt,
+                    clat,
+                    clon,
+                    args.alt,
                     radius_m=500.0,
                     heading_deg=orbit_deg,
                 )
                 pitch = args.pitch
-                roll  = 0.0
+                roll = 0.0
             elif args.sweep:
                 lat, lon, alt = args.lat, args.lon, args.alt
-                yaw   = orbit_deg % 360.0
+                yaw = orbit_deg % 360.0
                 pitch = args.pitch
-                roll  = 0.0
+                roll = 0.0
             elif args.tour:
                 lat, lon = args.lat, args.lon
                 yaw, pitch, roll, alt, seg_name = tour_pose(
-                    elapsed, args.alt, args.tour_speed)
+                    elapsed, args.alt, args.tour_speed
+                )
             else:
                 lat, lon, alt = args.lat, args.lon, args.alt
                 yaw, pitch, roll = args.yaw, args.pitch, args.roll
@@ -729,8 +819,14 @@ def main():
 
             # Build and send the CIGI datagram
             pkt = build_host_frame(
-                frame_ctr, args.entity_id,
-                lat, lon, alt, yaw, pitch, roll,
+                frame_ctr,
+                args.entity_id,
+                lat,
+                lon,
+                alt,
+                yaw,
+                pitch,
+                roll,
                 fov_h=args.fov_h,
                 include_view_def=(frame_ctr == 0),  # send view def only on first frame
                 sensor_id=args.sensor_id,
@@ -740,7 +836,7 @@ def main():
                 weather=weather_base,
             )
             sock.sendto(pkt, (args.host, args.port))
-            frame_ctr  += 1
+            frame_ctr += 1
             sent_count += 1
 
             # Advance motion at 6°/s for orbit/sweep
@@ -751,9 +847,11 @@ def main():
                 extra = f"  [{seg_name}]" if seg_name else ""
                 if celestial_frame:
                     extra += f"  time={celestial_frame['hour']:02d}:{celestial_frame['minute']:02d}"
-                print(f"  [{elapsed:6.1f}s] frame {frame_ctr}  "
-                      f"lat={lat:.4f} lon={lon:.4f} alt={alt:.0f}m  "
-                      f"yaw={yaw:.1f}° pitch={pitch:.1f}° roll={roll:.1f}°{extra}")
+                print(
+                    f"  [{elapsed:6.1f}s] frame {frame_ctr}  "
+                    f"lat={lat:.4f} lon={lon:.4f} alt={alt:.0f}m  "
+                    f"yaw={yaw:.1f}° pitch={pitch:.1f}° roll={roll:.1f}°{extra}"
+                )
 
             # Rate-limit
             next_send += interval
@@ -766,7 +864,9 @@ def main():
 
     elapsed = time.monotonic() - start_time
     actual_fps = sent_count / elapsed if elapsed > 0 else 0
-    print(f"==> Sent {sent_count} frames in {elapsed:.1f}s ({actual_fps:.1f} fps actual)")
+    print(
+        f"==> Sent {sent_count} frames in {elapsed:.1f}s ({actual_fps:.1f} fps actual)"
+    )
     sock.close()
 
 

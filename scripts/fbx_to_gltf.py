@@ -7,6 +7,7 @@ Usage:
 
 Prints a YAML snippet suitable for camsim_config.yaml entity_types block.
 """
+
 import sys
 import os
 import argparse
@@ -14,16 +15,29 @@ import argparse
 
 def main():
     # Blender passes everything after '--' to the script
-    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
+    argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else sys.argv[1:]
 
     parser = argparse.ArgumentParser(description="FBX to glTF converter for CamSim")
     parser.add_argument("fbx_path", help="Path to the .fbx file")
-    parser.add_argument("--output", "-o", default="entities/",
-                        help="Output directory for .glb file (default: entities/)")
-    parser.add_argument("--type-id", "-t", type=int, default=1001,
-                        help="Entity type ID for YAML snippet (default: 1001)")
-    parser.add_argument("--class-name", "-c", default="",
-                        help="Class name for ML annotation (default: filename stem)")
+    parser.add_argument(
+        "--output",
+        "-o",
+        default="entities/",
+        help="Output directory for .glb file (default: entities/)",
+    )
+    parser.add_argument(
+        "--type-id",
+        "-t",
+        type=int,
+        default=1001,
+        help="Entity type ID for YAML snippet (default: 1001)",
+    )
+    parser.add_argument(
+        "--class-name",
+        "-c",
+        default="",
+        help="Class name for ML annotation (default: filename stem)",
+    )
     args = parser.parse_args(argv)
 
     fbx_path = os.path.abspath(args.fbx_path)
@@ -35,8 +49,10 @@ def main():
         import bpy
     except ImportError:
         print("Error: This script must be run inside Blender:", file=sys.stderr)
-        print("  blender --background --python scripts/fbx_to_gltf.py -- model.fbx",
-              file=sys.stderr)
+        print(
+            "  blender --background --python scripts/fbx_to_gltf.py -- model.fbx",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Clear default scene
@@ -56,7 +72,7 @@ def main():
     print(f"Exporting: {glb_path}")
     bpy.ops.export_scene.gltf(
         filepath=glb_path,
-        export_format='GLB',
+        export_format="GLB",
         use_selection=False,
         export_apply=True,
     )
@@ -67,8 +83,8 @@ def main():
 
     print("\n# --- Add to camsim_config.yaml entity_types: ---")
     print(f'  "{args.type_id}":')
-    print(f"    mesh: \"{rel_path}\"")
-    print(f"    class_name: \"{class_name}\"")
+    print(f'    mesh: "{rel_path}"')
+    print(f'    class_name: "{class_name}"')
     print("    scale: 1.0")
     print("    skeletal: false")
     print("    rotation:")

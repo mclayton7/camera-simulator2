@@ -69,8 +69,11 @@ import time
 # Camera positioning helper
 # ---------------------------------------------------------------------------
 
+
 def camera_behind_entity(
-    entity_lat: float, entity_lon: float, entity_alt: float,
+    entity_lat: float,
+    entity_lon: float,
+    entity_alt: float,
     yaw_deg: float,
     alt_above: float = 500.0,
     pitch_deg: float = -30.0,
@@ -88,37 +91,55 @@ def camera_behind_entity(
     yaw_rad = math.radians(yaw_deg)
     # Offset in the opposite direction of yaw (behind entity)
     dlat = -dist_behind * math.cos(yaw_rad) / 111320.0
-    dlon = -dist_behind * math.sin(yaw_rad) / (
-        111320.0 * math.cos(math.radians(entity_lat))
+    dlon = (
+        -dist_behind
+        * math.sin(yaw_rad)
+        / (111320.0 * math.cos(math.radians(entity_lat)))
     )
     return entity_lat + dlat, entity_lon + dlon, entity_alt + alt_above
+
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 CIGI_ENTITY_STANDBY = 0
-CIGI_ENTITY_ACTIVE  = 1
-CIGI_ENTITY_REMOVE  = 2
+CIGI_ENTITY_ACTIVE = 1
+CIGI_ENTITY_REMOVE = 2
 
 
 # ---------------------------------------------------------------------------
 # Packet builders
 # ---------------------------------------------------------------------------
 
+
 def pack_ig_control(frame_ctr: int) -> bytes:
     """IG Control — packet ID 1, 24 bytes."""
     ig_mode = 0x05  # Operate(1) | TS_Valid(1<<2)
     ts = int((time.time() % 86400) * 10_000) & 0xFFFF_FFFF
-    return struct.pack(">BBBbBxHIIII",
-        1, 24, 3, 0, ig_mode, 0x8000,
-        frame_ctr & 0xFFFF_FFFF, ts, 0, 0,
+    return struct.pack(
+        ">BBBbBxHIIII",
+        1,
+        24,
+        3,
+        0,
+        ig_mode,
+        0x8000,
+        frame_ctr & 0xFFFF_FFFF,
+        ts,
+        0,
+        0,
     )
 
 
 def pack_entity_control(
-    entity_id: int, lat: float, lon: float, alt: float,
-    yaw: float, pitch: float, roll: float,
+    entity_id: int,
+    lat: float,
+    lon: float,
+    alt: float,
+    yaw: float,
+    pitch: float,
+    roll: float,
     entity_state: int = CIGI_ENTITY_ACTIVE,
     entity_type: int = 0,
 ) -> bytes:
@@ -138,12 +159,18 @@ def pack_entity_control(
       24-47 lat, lon, alt     (3× float64)
     """
     state_byte = entity_state & 0x03
-    header = struct.pack(">BBHBBBxHH",
-        2, 48, entity_id, state_byte, 0,  # anim flags
-        255,                               # alpha
-        entity_type & 0xFFFF, 0,          # entity_type, parent
+    header = struct.pack(
+        ">BBHBBBxHH",
+        2,
+        48,
+        entity_id,
+        state_byte,
+        0,  # anim flags
+        255,  # alpha
+        entity_type & 0xFFFF,
+        0,  # entity_type, parent
     )
-    angles   = struct.pack(">fff", roll, pitch, yaw)
+    angles = struct.pack(">fff", roll, pitch, yaw)
     position = struct.pack(">ddd", lat, lon, alt)
     pkt = header + angles + position
     assert len(pkt) == 48
@@ -152,12 +179,12 @@ def pack_entity_control(
 
 def pack_rate_control(
     entity_id: int,
-    x_rate: float = 0.0,   # m/s body-frame forward (North when yaw=0)
-    y_rate: float = 0.0,   # m/s body-frame right
-    z_rate: float = 0.0,   # m/s body-frame down
-    roll_rate:  float = 0.0,  # deg/s
+    x_rate: float = 0.0,  # m/s body-frame forward (North when yaw=0)
+    y_rate: float = 0.0,  # m/s body-frame right
+    z_rate: float = 0.0,  # m/s body-frame down
+    roll_rate: float = 0.0,  # deg/s
     pitch_rate: float = 0.0,  # deg/s
-    yaw_rate:   float = 0.0,  # deg/s
+    yaw_rate: float = 0.0,  # deg/s
     art_part_id: int = 0,
     apply_to_art_part: bool = False,
 ) -> bytes:
@@ -179,11 +206,19 @@ def pack_rate_control(
       28-31 float32 Yaw Rate (deg/s)
     """
     flags = 0x01 if apply_to_art_part else 0x00
-    pkt = struct.pack(">BBHBBxxffffff",
-        8, 32, entity_id & 0xFFFF,
-        art_part_id & 0xFF, flags,
-        x_rate, y_rate, z_rate,
-        roll_rate, pitch_rate, yaw_rate,
+    pkt = struct.pack(
+        ">BBHBBxxffffff",
+        8,
+        32,
+        entity_id & 0xFFFF,
+        art_part_id & 0xFF,
+        flags,
+        x_rate,
+        y_rate,
+        z_rate,
+        roll_rate,
+        pitch_rate,
+        yaw_rate,
     )
     assert len(pkt) == 32
     return pkt
@@ -196,9 +231,9 @@ def pack_art_part_control(
     x_off: float | None = None,
     y_off: float | None = None,
     z_off: float | None = None,
-    roll:  float | None = None,
+    roll: float | None = None,
     pitch: float | None = None,
-    yaw:   float | None = None,
+    yaw: float | None = None,
 ) -> bytes:
     """
     Articulated Part Control — packet ID 6, 32 bytes (CIGI 3.3).
@@ -233,18 +268,26 @@ def pack_art_part_control(
     if yaw is not None:
         flags |= 0x40
 
-    pkt = struct.pack(">BBHBBxxffffff",
-        6, 32, entity_id & 0xFFFF,
-        art_part_id & 0xFF, flags,
-        x_off  or 0.0, y_off  or 0.0, z_off  or 0.0,
-        roll   or 0.0, pitch  or 0.0, yaw    or 0.0,
+    pkt = struct.pack(
+        ">BBHBBxxffffff",
+        6,
+        32,
+        entity_id & 0xFFFF,
+        art_part_id & 0xFF,
+        flags,
+        x_off or 0.0,
+        y_off or 0.0,
+        z_off or 0.0,
+        roll or 0.0,
+        pitch or 0.0,
+        yaw or 0.0,
     )
     assert len(pkt) == 32
     return pkt
 
 
 def pack_component_control(
-    instance_id: int,   # entity ID for CompClass=0
+    instance_id: int,  # entity ID for CompClass=0
     comp_id: int,
     comp_state: int,
     comp_class: int = 0,  # 0 = entity
@@ -261,8 +304,10 @@ def pack_component_control(
       7     uint8   Component State
       8-31  24 bytes Component Data (unused, zeroed)
     """
-    pkt = struct.pack(">BBHHBBxxxxxxxxxxxxxxxxxxxxxxxx",
-        4, 32,
+    pkt = struct.pack(
+        ">BBHHBBxxxxxxxxxxxxxxxxxxxxxxxx",
+        4,
+        32,
         instance_id & 0xFFFF,
         comp_id & 0xFFFF,
         comp_class & 0xFF,
@@ -275,6 +320,7 @@ def pack_component_control(
 # ---------------------------------------------------------------------------
 # Send loop helpers
 # ---------------------------------------------------------------------------
+
 
 def send_frame(sock, addr, frame_ctr, packets: list[bytes]):
     """Assemble a CIGI datagram (IG Control + supplied packets) and send it."""
@@ -289,20 +335,28 @@ def run_loop(sock, addr, args, frame_builder):
     Generic send loop.  frame_builder(elapsed, frame_ctr) returns a list of
     bytes objects to include after the camera entity control.
     """
-    interval   = 1.0 / args.rate
-    start      = time.monotonic()
-    next_send  = start
-    frame_ctr  = 0
+    interval = 1.0 / args.rate
+    start = time.monotonic()
+    next_send = start
+    frame_ctr = 0
 
     _CAM_PITCH = -90.0
     cam_lat, cam_lon, cam_alt = camera_behind_entity(
-        args.lat, args.lon, args.alt, args.yaw,
-        alt_above=500.0, pitch_deg=_CAM_PITCH,
+        args.lat,
+        args.lon,
+        args.alt,
+        args.yaw,
+        alt_above=500.0,
+        pitch_deg=_CAM_PITCH,
     )
     camera_entity = pack_entity_control(
         args.camera_id,
-        cam_lat, cam_lon, cam_alt,
-        args.yaw, _CAM_PITCH, 0.0,
+        cam_lat,
+        cam_lon,
+        cam_alt,
+        args.yaw,
+        _CAM_PITCH,
+        0.0,
     )
 
     try:
@@ -316,7 +370,7 @@ def run_loop(sock, addr, args, frame_builder):
 
             frame_ctr += 1
             next_send += interval
-            sleep_for  = next_send - time.monotonic()
+            sleep_for = next_send - time.monotonic()
             if sleep_for > 0:
                 time.sleep(sleep_for)
 
@@ -328,15 +382,23 @@ def run_loop(sock, addr, args, frame_builder):
 # Modes
 # ---------------------------------------------------------------------------
 
+
 def mode_spawn(sock, addr, args):
     """Spawn entity at configured lat/lon/alt and hold stationary."""
-    print(f"[spawn] entity_id={args.entity_id} type={args.entity_type} "
-          f"lat={args.lat:.4f} lon={args.lon:.4f} alt={args.alt:.0f}m")
+    print(
+        f"[spawn] entity_id={args.entity_id} type={args.entity_type} "
+        f"lat={args.lat:.4f} lon={args.lon:.4f} alt={args.alt:.0f}m"
+    )
     print("        Watching for entity to appear in scene...")
 
     entity_pkt = pack_entity_control(
-        args.entity_id, args.lat, args.lon, args.alt,
-        args.yaw, 0.0, 0.0,
+        args.entity_id,
+        args.lat,
+        args.lon,
+        args.alt,
+        args.yaw,
+        0.0,
+        0.0,
         entity_state=CIGI_ENTITY_ACTIVE,
         entity_type=args.entity_type,
     )
@@ -353,23 +415,33 @@ def mode_remove(sock, addr, args):
     print(f"[remove] entity_id={args.entity_id}")
 
     remove_pkt = pack_entity_control(
-        args.entity_id, args.lat, args.lon, args.alt,
-        0.0, 0.0, 0.0,
+        args.entity_id,
+        args.lat,
+        args.lon,
+        args.alt,
+        0.0,
+        0.0,
+        0.0,
         entity_state=CIGI_ENTITY_REMOVE,
     )
 
     cam_lat, cam_lon, cam_alt = camera_behind_entity(
-        args.lat, args.lon, args.alt, args.yaw)
+        args.lat, args.lon, args.alt, args.yaw
+    )
     camera_entity = pack_entity_control(
         args.camera_id,
-        cam_lat, cam_lon, cam_alt,
-        args.yaw, -30.0, 0.0,
+        cam_lat,
+        cam_lon,
+        cam_alt,
+        args.yaw,
+        -30.0,
+        0.0,
     )
 
     # Send remove packet for 1 second to ensure it's received
-    start     = time.monotonic()
+    start = time.monotonic()
     frame_ctr = 0
-    interval  = 1.0 / args.rate
+    interval = 1.0 / args.rate
     next_send = start
 
     try:
@@ -377,7 +449,7 @@ def mode_remove(sock, addr, args):
             send_frame(sock, addr, frame_ctr, [camera_entity, remove_pkt])
             frame_ctr += 1
             next_send += interval
-            sleep_for  = next_send - time.monotonic()
+            sleep_for = next_send - time.monotonic()
             if sleep_for > 0:
                 time.sleep(sleep_for)
     except KeyboardInterrupt:
@@ -400,7 +472,7 @@ def mode_deadreckon(sock, addr, args):
 
     rate_pkt = pack_rate_control(
         args.entity_id,
-        x_rate=200.0,   # 200 m/s body-forward → north when yaw=0
+        x_rate=200.0,  # 200 m/s body-forward → north when yaw=0
         y_rate=0.0,
         z_rate=0.0,
         yaw_rate=0.0,
@@ -409,8 +481,13 @@ def mode_deadreckon(sock, addr, args):
     def builder(elapsed, frame_ctr):
         if elapsed < 2.0:
             entity_pkt = pack_entity_control(
-                args.entity_id, args.lat, args.lon, args.alt,
-                args.yaw, 0.0, 0.0,
+                args.entity_id,
+                args.lat,
+                args.lon,
+                args.alt,
+                args.yaw,
+                0.0,
+                0.0,
                 entity_state=CIGI_ENTITY_ACTIVE,
                 entity_type=args.entity_type,
             )
@@ -421,8 +498,10 @@ def mode_deadreckon(sock, addr, args):
                 dt = elapsed - 2.0
                 approx_north_m = 200.0 * dt
                 deg_north = approx_north_m / 111320.0
-                print(f"  [{elapsed:5.1f}s] DR active — ~{approx_north_m:.0f}m north "
-                      f"(~{deg_north:.4f}° lat offset expected)")
+                print(
+                    f"  [{elapsed:5.1f}s] DR active — ~{approx_north_m:.0f}m north "
+                    f"(~{deg_north:.4f}° lat offset expected)"
+                )
             return []
 
     run_loop(sock, addr, args, builder)
@@ -437,8 +516,13 @@ def mode_artpart(sock, addr, args):
     print("          Extended XOff=-2.0 for 5s, retracted XOff=0.0 for 5s")
 
     entity_pkt = pack_entity_control(
-        args.entity_id, args.lat, args.lon, args.alt,
-        args.yaw, 0.0, 0.0,
+        args.entity_id,
+        args.lat,
+        args.lon,
+        args.alt,
+        args.yaw,
+        0.0,
+        0.0,
         entity_state=CIGI_ENTITY_ACTIVE,
         entity_type=args.entity_type,
     )
@@ -448,7 +532,7 @@ def mode_artpart(sock, addr, args):
         x_off = -2.0 if gear_extended else 0.0
         art_pkt = pack_art_part_control(
             args.entity_id,
-            art_part_id=0,   # ArtPart_00 = landing gear
+            art_part_id=0,  # ArtPart_00 = landing gear
             art_part_en=True,
             x_off=x_off,
         )
@@ -465,11 +549,18 @@ def mode_lights(sock, addr, args):
     8E test: Toggle nav lights (CompId=0), strobe (CompId=1), and landing lights
     (CompId=2) every 3 seconds.
     """
-    print(f"[lights] entity_id={args.entity_id} — nav + strobe + landing lights toggle every 3s")
+    print(
+        f"[lights] entity_id={args.entity_id} — nav + strobe + landing lights toggle every 3s"
+    )
 
     entity_pkt = pack_entity_control(
-        args.entity_id, args.lat, args.lon, args.alt,
-        args.yaw, 0.0, 0.0,
+        args.entity_id,
+        args.lat,
+        args.lon,
+        args.alt,
+        args.yaw,
+        0.0,
+        0.0,
         entity_state=CIGI_ENTITY_ACTIVE,
         entity_type=args.entity_type,
     )
@@ -480,21 +571,26 @@ def mode_lights(sock, addr, args):
         nonlocal prev_phase
         # Toggle every 3 seconds
         phase = int(elapsed / 3.0) % 4  # 4 phases: all off, nav, strobe+landing, all on
-        lights_on = (phase in (1, 3))
-        strobe_on = (phase in (2, 3))
-        landing_on = (phase in (2, 3))
+        lights_on = phase in (1, 3)
+        strobe_on = phase in (2, 3)
+        landing_on = phase in (2, 3)
 
         if phase != prev_phase:
             prev_phase = phase
-            print(f"  [{elapsed:5.1f}s] nav lights={'ON ' if lights_on else 'OFF'}  "
-                  f"strobe={'ON' if strobe_on else 'OFF'}  landing={'ON' if landing_on else 'OFF'}")
+            print(
+                f"  [{elapsed:5.1f}s] nav lights={'ON ' if lights_on else 'OFF'}  "
+                f"strobe={'ON' if strobe_on else 'OFF'}  landing={'ON' if landing_on else 'OFF'}"
+            )
 
         comp_nav = pack_component_control(
-            args.entity_id, comp_id=0, comp_state=1 if lights_on else 0)
+            args.entity_id, comp_id=0, comp_state=1 if lights_on else 0
+        )
         comp_strobe = pack_component_control(
-            args.entity_id, comp_id=1, comp_state=1 if strobe_on else 0)
+            args.entity_id, comp_id=1, comp_state=1 if strobe_on else 0
+        )
         comp_landing = pack_component_control(
-            args.entity_id, comp_id=2, comp_state=1 if landing_on else 0)
+            args.entity_id, comp_id=2, comp_state=1 if landing_on else 0
+        )
 
         return [entity_pkt, comp_nav, comp_strobe, comp_landing]
 
@@ -510,8 +606,13 @@ def mode_damage(sock, addr, args):
     print("         Ensure entity_types config has mesh_damaged/mesh_destroyed paths")
 
     entity_pkt = pack_entity_control(
-        args.entity_id, args.lat, args.lon, args.alt,
-        args.yaw, 0.0, 0.0,
+        args.entity_id,
+        args.lat,
+        args.lon,
+        args.alt,
+        args.yaw,
+        0.0,
+        0.0,
         entity_state=CIGI_ENTITY_ACTIVE,
         entity_type=args.entity_type,
     )
@@ -525,10 +626,13 @@ def mode_damage(sock, addr, args):
 
         if damage_state != prev_state:
             prev_state = damage_state
-            print(f"  [{elapsed:5.1f}s] damage state → {_STATE_NAMES[damage_state]} ({damage_state})")
+            print(
+                f"  [{elapsed:5.1f}s] damage state → {_STATE_NAMES[damage_state]} ({damage_state})"
+            )
 
         comp_pkt = pack_component_control(
-            args.entity_id, comp_id=10, comp_state=damage_state)
+            args.entity_id, comp_id=10, comp_state=damage_state
+        )
 
         return [entity_pkt, comp_pkt]
 
@@ -540,12 +644,12 @@ def mode_damage(sock, addr, args):
 # ---------------------------------------------------------------------------
 
 _MODES = {
-    "spawn":      mode_spawn,
-    "remove":     mode_remove,
+    "spawn": mode_spawn,
+    "remove": mode_remove,
     "deadreckon": mode_deadreckon,
-    "artpart":    mode_artpart,
-    "lights":     mode_lights,
-    "damage":     mode_damage,
+    "artpart": mode_artpart,
+    "lights": mode_lights,
+    "damage": mode_damage,
 }
 
 
@@ -554,31 +658,48 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("mode", choices=list(_MODES),
-                    help="Test scenario to run")
-    ap.add_argument("--host",        default="127.0.0.1")
-    ap.add_argument("--port",        type=int, default=8888)
-    ap.add_argument("--camera-id",   type=int, default=0,    dest="camera_id",
-                    help="CIGI entity ID for the camera (must match camera_entity_id in config)")
-    ap.add_argument("--entity-id",   type=int, default=1,    dest="entity_id",
-                    help="CIGI entity ID for the scene entity")
-    ap.add_argument("--entity-type", type=int, default=1001, dest="entity_type",
-                    help="CIGI entity type (must be in entity_types config)")
-    ap.add_argument("--lat",         type=float, default=37.7749)
-    ap.add_argument("--lon",         type=float, default=-122.4194)
-    ap.add_argument("--alt",         type=float, default=1000.0)
-    ap.add_argument("--yaw",         type=float, default=0.0)
-    ap.add_argument("--rate",        type=float, default=30.0)
-    ap.add_argument("--duration",    type=float, default=10.0,
-                    help="Duration in seconds (0=forever)")
+    ap.add_argument("mode", choices=list(_MODES), help="Test scenario to run")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8888)
+    ap.add_argument(
+        "--camera-id",
+        type=int,
+        default=0,
+        dest="camera_id",
+        help="CIGI entity ID for the camera (must match camera_entity_id in config)",
+    )
+    ap.add_argument(
+        "--entity-id",
+        type=int,
+        default=1,
+        dest="entity_id",
+        help="CIGI entity ID for the scene entity",
+    )
+    ap.add_argument(
+        "--entity-type",
+        type=int,
+        default=1001,
+        dest="entity_type",
+        help="CIGI entity type (must be in entity_types config)",
+    )
+    ap.add_argument("--lat", type=float, default=37.7749)
+    ap.add_argument("--lon", type=float, default=-122.4194)
+    ap.add_argument("--alt", type=float, default=1000.0)
+    ap.add_argument("--yaw", type=float, default=0.0)
+    ap.add_argument("--rate", type=float, default=30.0)
+    ap.add_argument(
+        "--duration", type=float, default=10.0, help="Duration in seconds (0=forever)"
+    )
     args = ap.parse_args()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     addr = (args.host, args.port)
 
     print(f"==> Phase 8 entity test: mode={args.mode}  target={args.host}:{args.port}")
-    print(f"    camera_id={args.camera_id}  entity_id={args.entity_id}  "
-          f"entity_type={args.entity_type}  duration={args.duration:.0f}s")
+    print(
+        f"    camera_id={args.camera_id}  entity_id={args.entity_id}  "
+        f"entity_type={args.entity_type}  duration={args.duration:.0f}s"
+    )
     print()
 
     _MODES[args.mode](sock, addr, args)

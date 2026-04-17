@@ -38,16 +38,31 @@ from typing import Iterator
 # ---------------------------------------------------------------------------
 # MISB ST 0601 Universal Label (16 bytes)
 # ---------------------------------------------------------------------------
-ST0601_UL = bytes([
-    0x06, 0x0E, 0x2B, 0x34,
-    0x02, 0x0B, 0x01, 0x01,
-    0x0E, 0x01, 0x03, 0x01,
-    0x01, 0x00, 0x00, 0x00,
-])
+ST0601_UL = bytes(
+    [
+        0x06,
+        0x0E,
+        0x2B,
+        0x34,
+        0x02,
+        0x0B,
+        0x01,
+        0x01,
+        0x0E,
+        0x01,
+        0x03,
+        0x01,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+    ]
+)
 
 # ---------------------------------------------------------------------------
 # CRC-16/CCITT (poly=0x1021, init=0xFFFF) — matches FKlvBuilder::ComputeCrc16
 # ---------------------------------------------------------------------------
+
 
 def crc16_ccitt(data: bytes) -> int:
     crc = 0xFFFF
@@ -72,6 +87,7 @@ def bcc16(data: bytes) -> int:
 # ---------------------------------------------------------------------------
 # MISB ST 0601 tag decoders
 # ---------------------------------------------------------------------------
+
 
 def decode_timestamp(v: bytes) -> str:
     ts = int.from_bytes(v, "big")
@@ -168,37 +184,38 @@ def decode_target_gate(v: bytes) -> str:
 
 
 TAG_DECODERS = {
-    1:  ("Checksum",                  lambda v: f"0x{int.from_bytes(v,'big'):04X}"),
-    2:  ("UNIX Timestamp",            decode_timestamp),
-    4:  ("Platform Tail Number",      decode_string),
-    5:  ("Platform Heading",          decode_heading),
-    6:  ("Platform Pitch",            decode_platform_pitch),
-    7:  ("Platform Roll",             decode_platform_roll),
-    8:  ("Platform Ground Speed",     decode_ground_speed),
-    11: ("Image Source Sensor",       decode_string),
-    12: ("Image Coordinate System",   decode_string),
-    13: ("Sensor Latitude",           lambda v: decode_lat_lon(v,  90.0)),
-    14: ("Sensor Longitude",          lambda v: decode_lat_lon(v, 180.0)),
-    15: ("Sensor Altitude",           decode_altitude),
-    16: ("Sensor HFOV",               decode_fov),
-    17: ("Sensor VFOV",               decode_fov),
-    18: ("Sensor Azimuth",            decode_azimuth360),
-    19: ("Sensor Elevation",          decode_elevation180),
-    20: ("Sensor Roll",               decode_azimuth360),
-    21: ("Slant Range",               decode_slant_range),
-    23: ("Frame Center Latitude",     lambda v: decode_lat_lon(v,  90.0)),
-    24: ("Frame Center Longitude",    lambda v: decode_lat_lon(v, 180.0)),
-    25: ("Frame Center Elevation",    decode_altitude),
-    40: ("Target Track Gate Width",   decode_target_gate),
-    41: ("Target Track Gate Height",  decode_target_gate),
-    47: ("Generic Flag Data 01",      decode_flag_data_01),
-    65: ("UAS LS Version",            decode_version),
+    1: ("Checksum", lambda v: f"0x{int.from_bytes(v, 'big'):04X}"),
+    2: ("UNIX Timestamp", decode_timestamp),
+    4: ("Platform Tail Number", decode_string),
+    5: ("Platform Heading", decode_heading),
+    6: ("Platform Pitch", decode_platform_pitch),
+    7: ("Platform Roll", decode_platform_roll),
+    8: ("Platform Ground Speed", decode_ground_speed),
+    11: ("Image Source Sensor", decode_string),
+    12: ("Image Coordinate System", decode_string),
+    13: ("Sensor Latitude", lambda v: decode_lat_lon(v, 90.0)),
+    14: ("Sensor Longitude", lambda v: decode_lat_lon(v, 180.0)),
+    15: ("Sensor Altitude", decode_altitude),
+    16: ("Sensor HFOV", decode_fov),
+    17: ("Sensor VFOV", decode_fov),
+    18: ("Sensor Azimuth", decode_azimuth360),
+    19: ("Sensor Elevation", decode_elevation180),
+    20: ("Sensor Roll", decode_azimuth360),
+    21: ("Slant Range", decode_slant_range),
+    23: ("Frame Center Latitude", lambda v: decode_lat_lon(v, 90.0)),
+    24: ("Frame Center Longitude", lambda v: decode_lat_lon(v, 180.0)),
+    25: ("Frame Center Elevation", decode_altitude),
+    40: ("Target Track Gate Width", decode_target_gate),
+    41: ("Target Track Gate Height", decode_target_gate),
+    47: ("Generic Flag Data 01", decode_flag_data_01),
+    65: ("UAS LS Version", decode_version),
 }
 
 
 # ---------------------------------------------------------------------------
 # BER-OID length decoder
 # ---------------------------------------------------------------------------
+
 
 def decode_ber_length(data: bytes, offset: int) -> tuple[int, int]:
     """Returns (length_value, bytes_consumed)."""
@@ -208,13 +225,14 @@ def decode_ber_length(data: bytes, offset: int) -> tuple[int, int]:
     n = b0 & 0x7F
     if n == 0 or offset + n >= len(data):
         raise ValueError(f"Invalid BER length at offset {offset}")
-    length = int.from_bytes(data[offset + 1: offset + 1 + n], "big")
+    length = int.from_bytes(data[offset + 1 : offset + 1 + n], "big")
     return length, 1 + n
 
 
 # ---------------------------------------------------------------------------
 # KLV Local Set parser
 # ---------------------------------------------------------------------------
+
 
 def parse_klv_local_set(packet: bytes, verbose: bool = False) -> dict:
     """
@@ -273,7 +291,7 @@ def parse_klv_local_set(packet: bytes, verbose: bool = False) -> dict:
             result["_errors"].append(f"Tag {tag}: length {length} overruns packet")
             break
 
-        value = packet[pos: pos + length]
+        value = packet[pos : pos + length]
 
         if tag == 1:
             # CRC is over the entire packet up to (not including) the CRC value
@@ -294,8 +312,10 @@ def parse_klv_local_set(packet: bytes, verbose: bool = False) -> dict:
 
     # Checksum validation (CRC-16/CCITT or BCC-16)
     if crc_offset is not None:
-        data_for_crc = packet[:crc_offset - 2]   # exclude "01 02" tag+length of checksum tag
-        actual_val   = int.from_bytes(packet[crc_offset: crc_offset + 2], "big")
+        data_for_crc = packet[
+            : crc_offset - 2
+        ]  # exclude "01 02" tag+length of checksum tag
+        actual_val = int.from_bytes(packet[crc_offset : crc_offset + 2], "big")
         expected_crc = crc16_ccitt(data_for_crc)
         expected_bcc = bcc16(data_for_crc)
         if expected_crc == actual_val:
@@ -316,13 +336,13 @@ def parse_klv_local_set(packet: bytes, verbose: bool = False) -> dict:
 
 def print_klv_result(r: dict, frame_num: int) -> None:
     errors = r.get("_errors", [])
-    crc    = r.get("_crc", "")
-    size   = r.get("_raw_size", 0)
+    crc = r.get("_crc", "")
+    size = r.get("_raw_size", 0)
 
     status = "OK" if not errors else "ERRORS"
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"KLV Packet #{frame_num}  ({size} bytes)  [{status}]")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     for tag in sorted(k for k in r if isinstance(k, int) and k != 1):
         name, val = r[tag]
@@ -340,14 +360,15 @@ def print_klv_result(r: dict, frame_num: int) -> None:
 # ---------------------------------------------------------------------------
 
 TS_PACKET_SIZE = 188
-TS_SYNC_BYTE   = 0x47
+TS_SYNC_BYTE = 0x47
+
 
 def iter_ts_packets(data: bytes) -> Iterator[bytes]:
     """Yield 188-byte TS packets from a buffer."""
     i = 0
     while i + TS_PACKET_SIZE <= len(data):
         if data[i] == TS_SYNC_BYTE:
-            yield data[i: i + TS_PACKET_SIZE]
+            yield data[i : i + TS_PACKET_SIZE]
             i += TS_PACKET_SIZE
         else:
             i += 1  # resync
@@ -356,19 +377,19 @@ def iter_ts_packets(data: bytes) -> Iterator[bytes]:
 def parse_ts_header(pkt: bytes) -> dict:
     h = struct.unpack(">I", pkt[:4])[0]
     return {
-        "sync":              (h >> 24) & 0xFF,
-        "tei":               (h >> 23) & 0x1,
-        "pusi":              (h >> 22) & 0x1,   # payload unit start indicator
-        "pid":               (h >> 8)  & 0x1FFF,
-        "adaptation_field":  (h >> 5)  & 0x3,
-        "continuity_ctr":     h        & 0xF,
+        "sync": (h >> 24) & 0xFF,
+        "tei": (h >> 23) & 0x1,
+        "pusi": (h >> 22) & 0x1,  # payload unit start indicator
+        "pid": (h >> 8) & 0x1FFF,
+        "adaptation_field": (h >> 5) & 0x3,
+        "continuity_ctr": h & 0xF,
     }
 
 
 def extract_pes_payload(pkt: bytes) -> bytes:
     """Return the payload bytes from a TS packet (after adaptation field if any)."""
     hdr = parse_ts_header(pkt)
-    af  = hdr["adaptation_field"]
+    af = hdr["adaptation_field"]
     offset = 4
     if af in (2, 3):  # has adaptation field
         af_len = pkt[4]
@@ -401,8 +422,13 @@ def find_klv_pid_from_pat_pmt(ts_buffer: bytes) -> int | None:
                 continue
             entry_start = base + 8
             while entry_start + 4 <= len(payload) - 4:  # -4 for CRC
-                prog_num = struct.unpack(">H", payload[entry_start: entry_start + 2])[0]
-                pmt_pid  = struct.unpack(">H", payload[entry_start + 2: entry_start + 4])[0] & 0x1FFF
+                prog_num = struct.unpack(">H", payload[entry_start : entry_start + 2])[
+                    0
+                ]
+                pmt_pid = (
+                    struct.unpack(">H", payload[entry_start + 2 : entry_start + 4])[0]
+                    & 0x1FFF
+                )
                 if prog_num != 0:
                     pat_pmt_pid = pmt_pid
                     break
@@ -426,14 +452,18 @@ def find_klv_pid_from_pat_pmt(ts_buffer: bytes) -> int | None:
             continue
 
         # section_length at base+1 (10 bits)
-        section_len = struct.unpack(">H", payload[base + 1: base + 3])[0] & 0x0FFF
-        prog_info_len = struct.unpack(">H", payload[base + 10: base + 12])[0] & 0x0FFF
+        section_len = struct.unpack(">H", payload[base + 1 : base + 3])[0] & 0x0FFF
+        prog_info_len = struct.unpack(">H", payload[base + 10 : base + 12])[0] & 0x0FFF
         es_start = base + 12 + prog_info_len
 
         while es_start + 5 <= base + 3 + section_len - 4:
             stream_type = payload[es_start]
-            es_pid      = struct.unpack(">H", payload[es_start + 1: es_start + 3])[0] & 0x1FFF
-            es_info_len = struct.unpack(">H", payload[es_start + 3: es_start + 5])[0] & 0x0FFF
+            es_pid = (
+                struct.unpack(">H", payload[es_start + 1 : es_start + 3])[0] & 0x1FFF
+            )
+            es_info_len = (
+                struct.unpack(">H", payload[es_start + 3 : es_start + 5])[0] & 0x0FFF
+            )
 
             # Stream types used for KLV / metadata in MPEG-TS:
             #   0x15 = Metadata PES
@@ -450,6 +480,7 @@ def find_klv_pid_from_pat_pmt(ts_buffer: bytes) -> int | None:
 # UDP / file reader
 # ---------------------------------------------------------------------------
 
+
 def read_udp_chunks(
     addr: str,
     port: int,
@@ -465,6 +496,7 @@ def read_udp_chunks(
     # Join multicast group if address is multicast
     if addr.startswith("239.") or addr.startswith("224."):
         import struct as _s
+
         mreq = _s.pack("4sL", socket.inet_aton(addr), socket.INADDR_ANY)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
         print(f"  Joined multicast group {addr}")
@@ -475,7 +507,10 @@ def read_udp_chunks(
     start = time.monotonic()
     try:
         while True:
-            if max_wait_seconds is not None and (time.monotonic() - start) >= max_wait_seconds:
+            if (
+                max_wait_seconds is not None
+                and (time.monotonic() - start) >= max_wait_seconds
+            ):
                 raise TimeoutError(
                     f"No UDP stream data received within {max_wait_seconds:.1f}s on {addr}:{port}"
                 )
@@ -502,15 +537,16 @@ def read_file_chunks(path: str, chunk_size: int = 65536) -> Iterator[bytes]:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--addr",    default="239.1.1.1")
-    ap.add_argument("--port",    type=int, default=5004)
-    ap.add_argument("--file",    default=None, help="Read from .ts file")
-    ap.add_argument("--count",   type=int, default=5, help="KLV packets to decode")
+    ap.add_argument("--addr", default="239.1.1.1")
+    ap.add_argument("--port", type=int, default=5004)
+    ap.add_argument("--file", default=None, help="Read from .ts file")
+    ap.add_argument("--count", type=int, default=5, help="KLV packets to decode")
     ap.add_argument(
         "--timeout",
         type=float,
@@ -524,8 +560,8 @@ def main():
 
     # Accumulate a few TS packets to find the KLV PID via PAT/PMT
     ts_buffer = b""
-    klv_pid   = None
-    klv_pes_buf: dict[int, bytes] = {}   # pid → reassembly buffer
+    klv_pid = None
+    klv_pes_buf: dict[int, bytes] = {}  # pid → reassembly buffer
     klv_count = 0
 
     source = (
@@ -548,7 +584,9 @@ def main():
                 else:
                     # Fallback: scan all PIDs not 0x0000, 0x0001, 0x1FFF
                     # and try to parse each as KLV
-                    print("    Could not identify KLV PID via PAT/PMT — scanning all PIDs")
+                    print(
+                        "    Could not identify KLV PID via PAT/PMT — scanning all PIDs"
+                    )
 
             # Process buffered TS packets
             for pkt in iter_ts_packets(ts_buffer):
@@ -606,8 +644,8 @@ def main():
                 if klv_start + total_len > len(buf):
                     continue  # not yet complete
 
-                klv_packet = buf[klv_start: klv_start + total_len]
-                klv_pes_buf[pid] = buf[klv_start + total_len:]
+                klv_packet = buf[klv_start : klv_start + total_len]
+                klv_pes_buf[pid] = buf[klv_start + total_len :]
 
                 if klv_pid is None:
                     klv_pid = pid

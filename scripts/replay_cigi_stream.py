@@ -27,7 +27,12 @@ def load_capture(path: str) -> list[tuple[int, bytes]]:
     return rows
 
 
-def replay_once(sock: socket.socket, addr: tuple[str, int], rows: list[tuple[int, bytes]], speed: float) -> int:
+def replay_once(
+    sock: socket.socket,
+    addr: tuple[str, int],
+    rows: list[tuple[int, bytes]],
+    speed: float,
+) -> int:
     if not rows:
         return 0
     start = time.monotonic()
@@ -51,7 +56,12 @@ def main():
     ap.add_argument("--input", required=True, help="JSONL capture file")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8888)
-    ap.add_argument("--speed", type=float, default=1.0, help="Replay speed multiplier (1.0=real-time)")
+    ap.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="Replay speed multiplier (1.0=real-time)",
+    )
     ap.add_argument("--loops", type=int, default=1, help="Replay loops (0=infinite)")
     args = ap.parse_args()
 

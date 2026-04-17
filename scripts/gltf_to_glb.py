@@ -17,6 +17,7 @@ import sys
 import pathlib
 import pygltflib
 
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: gltf_to_glb.py <path/to/scene.gltf>")
@@ -38,6 +39,7 @@ def main():
     print(f"Writing {dst} ...")
     gltf.save_binary(str(dst))
     print(f"Done. {dst.stat().st_size / 1024:.0f} KB")
+
 
 if __name__ == "__main__":
     main()
