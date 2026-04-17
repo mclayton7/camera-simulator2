@@ -69,12 +69,12 @@ def main():
     print(f'  "{args.type_id}":')
     print(f"    mesh: \"{rel_path}\"")
     print(f"    class_name: \"{class_name}\"")
-    print(f"    scale: 1.0")
-    print(f"    skeletal: false")
-    print(f"    rotation:")
-    print(f"      pitch: 0.0")
-    print(f"      yaw: 0.0")
-    print(f"      roll: 0.0")
+    print("    scale: 1.0")
+    print("    skeletal: false")
+    print("    rotation:")
+    print("      pitch: 0.0")
+    print("      yaw: 0.0")
+    print("      roll: 0.0")
 
     print(f"\nDone: {glb_path}")
 

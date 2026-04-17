@@ -309,7 +309,7 @@ def main() -> None:
     timed_out = 0
     failed = 0
 
-    print(f"==> CamSim Batch Runner")
+    print("==> CamSim Batch Runner")
     print(f"    Runs:        {args.runs}")
     print(f"    Frames/run:  {args.frames}")
     print(f"    Timeout/run: {args.timeout}s")
