@@ -402,269 +402,57 @@ The CPU pipeline bypass (SensorPostProcess.cpp) only runs defects + quantization
 
 ---
 
-## Part 7 — Engineering Punch List (Architecture Review, 2026-04-16)
+## Part 7 — Engineering Punch List (Architecture Review)
 
-Code-level items surfaced by a general architecture / performance / Cesium review.
-These are C++ changes, not editor content work. Paths are relative to
-`unreal_project/CamSimTest/Source/CamSimTest/` unless noted otherwise.
+### 7A/7B/7C — Landed 2026-04-16 → 2026-04-17
 
-Each item: **what**, **where**, **why**, **fix**. Grouped by impact tier.
+The full 2026-04-16 architecture / performance / Cesium review has been closed.
+Detailed write-ups live in the commits themselves; the one-line summaries below
+are a map from issue ID to the change. All items are implemented on `main`.
 
-**Implementation status (updated 2026-04-16):**
-- **Tier 1 (7A.1–7A.6):** all six items landed — see the diff on branch `main`.
-- **Tier 2 (7B.1–7B.9):** all nine items landed.
-- **Tier 3 (7C.*):** still open — pure polish, can wait.
-- Verification suggestions in §7D are NOT yet run (no UE build environment here);
-  `stat unit` / automation tests should be exercised before shipping.
+| ID     | Topic                                              | Commit      |
+|--------|----------------------------------------------------|-------------|
+| 7A.1   | Async GPU readback via FRenderCommandFence         | `05e8342`   |
+| 7A.2   | Pooled FRHIGPUTextureReadback per render target    | `05e8342`   |
+| 7A.3   | Disable physics meshes on all ACesium3DTileset     | `05e8342`   |
+| 7A.4   | Reapply tileset tuning on HotReloadConfig          | `05e8342`   |
+| 7A.5   | Quaternion dead-reckoning (no Euler integration)   | `05e8342`   |
+| 7A.6   | Bounded SPSC queues + drop counters in /metrics    | `05e8342`   |
+| 7B.1   | CulledSSE scales with HFoV; prefetch slew boost    | `05e8342`   |
+| 7B.2   | Subsystem Tick shrink + off-thread metrics writer  | `05e8342`   |
+| 7B.3   | Entity-snapshot buffer reuse + frustum prefilter   | `05e8342`   |
+| 7B.4   | Async entity mesh loading via FStreamableManager   | `05e8342`   |
+| 7B.5   | Pre-allocated BGRA chroma-range buffer             | `05e8342`   |
+| 7B.6   | Cached /metrics snapshot (game thread → shared ref)| `05e8342`   |
+| 7B.7   | Copy-on-write FCamSimConfig snapshots              | `05e8342`   |
+| 7B.8   | FEvent-driven CIGI/DIS receiver shutdown           | `05e8342`   |
+| 7B.9   | RFC 7159 JSONL escaping + off-thread flush         | `05e8342`   |
+| 7C.1   | FMath::UnwindDegrees in gimbal slew                | `05e8342`   |
+| 7C.2   | Anonymous-ns ImplGet helper for subsystem accessors| 2026-04-17  |
+| 7C.3   | KLV scratch-buffer + AVPacket reuse                | `05e8342`   |
+| 7C.4   | Monotonic DIS ID allocation (no recycling)         | 2026-04-17  |
+| 7C.5   | Bounds-validate CIGI env packets + DIS PDU floor   | `05e8342`   |
+| 7C.6   | NaN/range guard on CoT telemetry                   | `05e8342`   |
+| 7C.7   | Wraparound-safe circular index in latency tracker  | `05e8342`   |
+| 7C.8   | FHudOverlay draw primitives take frame W/H         | `05e8342`   |
 
-### 7A — Tier 1: High-ROI Performance & Correctness
+### 7D — Remaining Verification
 
-#### 7A.1 Drop `FlushRenderingCommands()` from the per-tick readback path
+Still open — require a UE build environment:
 
-- **Where:** `Camera/CamSimCamera.cpp:750`
-- **Why:** The readback is designed async (EnqueueCopy + IsReady poll), but the
-  code then synchronously flushes the render thread every frame. At 30 fps this
-  stalls the game thread 2–5 ms per tick and serializes game/render work that
-  should overlap. Single highest-ROI change in the repo.
-- [ ] Replace the per-tick `FlushRenderingCommands()` with an `FRenderCommandFence`
-      fired on frame N; on frame N+2 check `IsReady()` from a queued render
-      command and signal the game thread via `TAtomic<bool>` / `FEvent`
-- [ ] Benchmark before/after with `stat unit` and `stat GPU` to confirm the win
-
-#### 7A.2 Pool the GPU readback objects (one per render target)
-
-- **Where:** `Camera/CamSimCamera.cpp:436, 461` (and raw-pointer fields in `.h:118, 144`)
-- **Why:** Triple-buffered render targets but a single shared
-  `FRHIGPUTextureReadback`. EnqueueCopy on frame N+1 can race frame N's
-  in-flight copy. The raw pointers also bypass RAII, so teardown is manual.
-- [ ] Replace `FRHIGPUTextureReadback* GPUReadback` (and `DepthGPUReadback`)
-      with `TArray<TUniquePtr<FRHIGPUTextureReadback>>` sized to match
-      `NumCaptureTargets` (triple buffer)
-- [ ] Round-robin by `CaptureTargetIndex` so each readback has exclusive
-      ownership until consumed
-
-#### 7A.3 Disable physics meshes on every `ACesium3DTileset`
-
-- **Where:** `Camera/CamSimCamera.cpp:206–232` (tileset tuning loop)
-- **Why:** The camera never collides with terrain. Every loaded tile currently
-  cooks collision geometry that nothing queries — wastes VRAM and CPU cook time,
-  especially during camera motion. If HAT/HOT terrain queries are needed,
-  keep physics on only for the terrain tileset flagged for it.
-- [ ] Add `It->SetCreatePhysicsMeshes(false);` inside the tuning loop
-      (one line, immediate win)
-- [ ] If HAT/HOT is required for a specific tileset, make it opt-in via tag or
-      config rather than default-on
-
-#### 7A.4 Reapply Cesium tileset params on hot-reload
-
-- **Where:** `Subsystem/CamSimSubsystem.cpp:205–222` (`HotReloadConfig`)
-- **Why:** `MaxSimultaneousTileLoads`, `MaximumScreenSpaceError`,
-  `MaximumCachedBytesMB`, `LoadingDescendantLimit` are applied once at
-  `BeginPlay`. Hot-reload mutates the config fields but nothing pushes them
-  to live tilesets — operators tuning at runtime see zero effect.
-- [ ] At the end of `HotReloadConfig()`, iterate `ACesium3DTileset` actors and
-      re-run the tuning loop from `CamSimCamera.cpp:206–232`
-      (extract to a shared helper: `FCamSimTilesetTuner::Apply(World, Cfg)`)
-- [ ] Add an automation test that flips `MaximumScreenSpaceError` via
-      `HotReloadConfig` and asserts propagation to the live tileset
-
-#### 7A.5 Fix dead-reckoning quaternion integration (Euler → gimbal lock)
-
-- **Where:** `Entity/CamSimEntity.cpp:618–646` (`UpdateDeadReckoning`)
-- **Why:** Euler rates (`YawRate`/`PitchRate`/`RollRate`) are integrated each
-  tick and rebuilt into `FQuat` via `FRotator`. At pitch ±90° this passes
-  through the `FRotator→FQuat` gimbal-lock singularity and produces
-  discontinuous headings. Ground targets are fine; aircraft dive/climb glitch.
-- [ ] Store orientation as `FQuat` in `FDRState` (replace Euler angles)
-- [ ] Integrate body-frame angular velocity on the quaternion directly:
-      `Q_{t+1} = (Q_t * FQuat(BodyAngVel * dt)).GetNormalized()`
-- [ ] Add a unit test: 1000 frames of pure pitch-rate input should land within
-      1e-3 rad of the analytic quaternion result
-
-#### 7A.6 Bound the SPSC queues (receiver → game thread, encoder sink)
-
-- **Where:** `CIGI/CigiReceiver.h:147–164`, `DIS/DisReceiver.h:66`,
-  `Encoder/EncoderThread.cpp:51`
-- **Why:** All queues are unbounded `TSpscQueue`. A GC spike or encoder stall
-  lets the producer grow the heap without limit. No counters in `/metrics`.
-- [ ] Wrap each queue with a bounded variant (caps: 1024 entity-state,
-      256 HAT/HOT responses, 4 video frames)
-- [ ] On overflow, drop-oldest + increment a counter
-- [ ] Wire the counters into `FrameDropStats_` (already exists on camera) and
-      expose them via the `/metrics` endpoint
-
-### 7B — Tier 2: Important
-
-#### 7B.1 Scale Cesium culling to actual sensor FOV
-
-- **Where:** `Camera/CamSimCamera.cpp:222–223` (`CulledScreenSpaceError = 200.0`)
-- **Why:** Hardcoded for a ~60° FOV. A 5° EO sensor can tolerate far more
-  aggressive off-frustum culling and needs a wider prefetch FOV during
-  gimbal slew to avoid pop-in.
-- [ ] Scale `CulledScreenSpaceError` by `HFovDeg / 60.0f` (clamp ≥ 100)
-- [ ] Inflate prefetch FOV by `GimbalMaxSlewRateDegPerSec * frame_budget` when
-      updating the prefetch camera in `UpdateCesiumCamera()`
-- [ ] Expose `CacheDir` in `FCesiumBackendConfig` so tiles persist across
-      runs (reduces re-download on region revisit)
-
-#### 7B.2 Shrink `UCamSimSubsystem::Tick()` and move file I/O off the game thread
-
-- **Where:** `Subsystem/CamSimSubsystem.cpp:585–921` (~337 lines)
-- **Why:** Does CIGI sender flush, watchdog, health JSON serialization,
-  Prometheus file write, and structured logging in one method. Sync file I/O
-  every 90/150 ticks on the game thread is a cheap but visible stall source.
-- [ ] Extract health/metrics writer into a dedicated `FTickableGameObject`
-      or run it on the task thread (snapshot game-thread state, write off-thread)
-- [ ] Keep only CIGI sender/responder flush in the subsystem Tick
-
-#### 7B.3 Reuse entity-snapshot buffers and cull before projecting
-
-- **Where:** `Entity/CamSimEntityManager.cpp:399–407` (`GetEntitySnapshot`)
-- **Why:** Allocates a fresh `TArray<FEntityAnnotationData>` every tick and
-  projects every entity AABB — no frustum culling. At `MaxEntities = 500`
-  that's 15k projections/sec.
-- [ ] Make the result buffer a member; call `Reset(EntityMap.Num())` each tick
-- [ ] Bounding-sphere vs. camera-forward dot-product cull before projection
-      (skip projection for anything outside the prefetch cone)
-
-#### 7B.4 Async entity mesh loading
-
-- **Where:** `Entity/CamSimEntity.cpp:241–244, 270–280`
-- **Why:** `LoadSkeletalMeshFromPath` / `LoadStaticMeshFromPath` run on the
-  game thread from the entity-manager tick. A burst of DIS/CIGI spawns stalls
-  the frame while mesh cook/stream finishes.
-- [ ] Route mesh loads through `FStreamableManager::RequestAsyncLoad`
-- [ ] Queue pending-spawn entities; hide them until their mesh is resident
-- [ ] Move `const_cast<FEntityTypeTable*>` cache writes to `mutable` fields
-      on `FEntityTypeTable` and drop the cast
-
-#### 7B.5 Pre-allocate the BGRA chroma-range fallback buffer
-
-- **Where:** `Encoder/VideoEncoder.cpp:547`
-- **Why:** The sws color-space-details fallback path allocates a full-frame
-  temporary (≈3.6 MB at 720p) per tick. Either move the 16–235 range
-  compression into the readback conversion, or reuse one buffer.
-- [ ] Allocate `CompressedBuf` once in `FVideoEncoder::Open()` and reuse
-- [ ] Alternative: fold the range compression into
-      `Camera/CamSimPixelConvert.h` so sws always gets correct-range input
-
-#### 7B.6 Cache the `/metrics` snapshot
-
-- **Where:** `Health/CamSimHealthServer.cpp:87–94`
-- **Why:** `GetPrometheusMetrics` runs inline in the HTTP handler. If a
-  scraper polls during an entity-heavy tick, metrics generation runs on the
-  HTTP thread and can race game-thread state.
-- [ ] Produce a metrics snapshot on the game thread (once per second) into a
-      `TSharedRef<const FString>`; have the HTTP handler read the shared ref
-- [ ] Apply the same pattern to `/ready` if its work grows
-
-#### 7B.7 Make `FCamSimConfig` safe for hot-reload
-
-- **Where:** `Config/CamSimConfig.h` (and `cpp` hot-reload path)
-- **Why:** ~780-line struct with nested `TMap`s. Hot-reload mutates these
-  while the game thread reads them — the POD fields are mostly benign but
-  the maps race.
-- [ ] Swap to copy-on-write: `TSharedRef<const FCamSimConfig>` held by the
-      subsystem; hot-reload publishes a new ref atomically; readers snapshot
-      the ref at tick boundary
-- [ ] Splitting into per-subsystem sub-structs is a nice-to-have follow-up,
-      not required to fix the race
-
-#### 7B.8 Clean CIGI/DIS receiver shutdown via `FEvent`
-
-- **Where:** `CIGI/CigiReceiver.cpp:610–632` (`Stop`), same pattern in
-  `DIS/DisReceiver.cpp:51–67`
-- **Why:** The runnable may be inside `Socket->Recv()` when `Stop()` tears
-  the socket down. Relies on the non-blocking 1 ms poll to notice.
-- [ ] Add an auto-reset `FEvent* ShutdownEvent` per receiver
-- [ ] `Stop()` sets `bShouldRun = false` **and** `ShutdownEvent->Trigger()`
-- [ ] Receiver loop waits on the event with a small timeout instead of
-      `FPlatformProcess::SleepNoStats`
-- [ ] Verify non-blocking mode succeeded post-build; fail `Start()` if it didn't
-- [ ] Multicast join failure in `FDisReceiver::CreateSocket` should return
-      false, not log-and-continue
-
-#### 7B.9 Proper JSONL escaping and off-thread flush
-
-- **Where:** `Logging/CamSimJsonLogger.cpp` (only `"` and `\` currently escaped)
-- **Why:** A newline or control char in a message field breaks every JSONL
-  reader downstream. Flush also runs synchronously on the game thread.
-- [ ] Full RFC 7159 escaping (or route through `FJsonObject::Serialize`)
-- [ ] Move the file-write drain into a dedicated consumer thread on the
-      existing SPSC queue
-
-### 7C — Tier 3: Polish
-
-#### 7C.1 Replace manual angle wrap with `FMath::UnwindDegrees`
-
-- **Where:** `Camera/CamSimGimbalComponent.cpp:91–100` (`SlewAngle` lambda)
-- [ ] Swap the `while` loop for `Delta = FMath::UnwindDegrees(Delta);`
-
-#### 7C.2 Collapse `UCamSimSubsystem` accessor boilerplate
-
-- **Where:** `Subsystem/CamSimSubsystem.cpp` — 14 copies of
-  `return Impl ? Impl->X.Get() : nullptr;`
-- [ ] Add a private inline helper template:
-      `template<typename T> T* ImplGet(const TUniquePtr<T>& P) const { return Impl ? P.Get() : nullptr; }`
-
-#### 7C.3 Reuse the KLV scratch buffer on the encoder thread
-
-- **Where:** `Metadata/KlvBuilder.cpp` (called from `Encoder/VideoEncoder.cpp:654`)
-- [ ] Keep a `TArray<uint8>` member on the encoder; pass by out-param into
-      `FKlvBuilder::BuildMisbST0601`; `Reset()` each frame; mutate only the
-      tags that changed (timestamp, platform lat/lon/alt, gimbal)
-- [ ] Reuse `AVPacket` via `av_packet_unref` instead of
-      `av_packet_free` per frame (`VideoEncoder.cpp:657`)
-
-#### 7C.4 Generation numbers for DIS→CamSim ID allocation
-
-- **Where:** `DIS/DisEntityAdapter.cpp:244–273` (`GetOrAllocateId`)
-- **Why:** Free-list reuse of IDs without a generation can alias stale
-  consumer-side handles onto new entities.
-- [ ] Either stop recycling and use a monotonic counter, or pair each allocated
-      ID with a 16-bit generation that consumers must match
-
-#### 7C.5 Bounds-validate CIGI env-packet and DIS PDU lengths
-
-- **Where:** `CIGI/CigiReceiver.cpp:368–448` (`PreParseEnvPackets`),
-  `DIS/DisPduTypes.cpp:90–166` (`FDisEntityStatePdu::Parse`)
-- [ ] Guard against `PktSize < 2` and `Pos + PktSize > Len`; log + break on bad
-      input rather than advancing
-- [ ] Log DIS PDUs that miss the 144-byte floor at `Verbose` so operators can
-      see silent drops
-
-#### 7C.6 NaN/range guard on CoT telemetry
-
-- **Where:** `Streaming/CotSender.cpp:116–142` (`BuildCotXml`)
-- [ ] Reject frames where `lat`/`lon`/`alt` are non-finite or out of bounds;
-      emit a warning and skip the datagram rather than shipping a NaN lat
-
-#### 7C.7 Latency tracker wraparound math
-
-- **Where:** `Diagnostics/PipelineLatencyTracker.cpp:65`
-- [ ] Either round `BufferCapacity` up to a power of two or replace the
-      `WIdx % BufferCapacity` dance with an explicit circular-index counter
-      that's safe against `uint32` overflow
-
-#### 7C.8 Bounds-check in `FHudOverlay` draw primitives
-
-- **Where:** `Overlay/FHudOverlay.h:59–83`
-- [ ] Pass frame W/H to each `Draw*` method and clamp glyph/line writes at the
-      edges instead of trusting callers
-
-### 7D — Verification Suggestions
-
-Before merging Tier 1 items:
-
-- [ ] `stat unit` + `stat GPU` capture on a representative scene before/after
-      the `FlushRenderingCommands` removal to confirm >1 ms game-thread save
-- [ ] Run `scripts/ci_validate.sh` to confirm the video/KLV pipeline is
-      still compliant after readback-pool changes
+- [ ] `stat unit` + `stat GPU` capture on a representative scene to confirm the
+      7A.1 `FlushRenderingCommands` removal delivered the expected >1 ms save
+- [ ] Run `scripts/ci_validate.sh` end-to-end to confirm the video/KLV pipeline
+      stays compliant after the 7A.2 readback-pool restructure
 - [ ] Add an automation test that spawns 500 entities in a single frame and
-      confirms the frame does not exceed 2× nominal budget (catches regression
-      on async mesh loading)
-- [ ] Add a `HotReloadConfig` test that mutates `MaximumScreenSpaceError` and
-      asserts the value reached the live `ACesium3DTileset`
+      confirms the frame does not exceed 2× nominal budget (regression guard
+      on the 7B.4 async mesh loading path)
+- [ ] Add an in-PIE test that mutates `MaximumScreenSpaceError` via
+      `HotReloadConfig` and asserts the value reached a live `ACesium3DTileset`.
+      *Partial coverage:* `CamSim.Phase27.CulledSseDerivation` now tests the
+      pure HFoV→CulledSSE derivation, and `HotReloadConfig` is known to call
+      `ApplyCesiumTilesetTuning` at `Subsystem/CamSimSubsystem.cpp:244`. A
+      live-world regression test is still missing.
 
 ### 7E — What's Working (Don't Regress)
 
@@ -674,5 +462,5 @@ Non-issues called out during review — worth preserving:
 - Four-thread split (CIGI receiver, game, render, encoder) with SPSC queues
 - Cesium prefetch camera + `EnforceCulledScreenSpaceError` + LOD transitions
 - Cesium camera de-registration in `EndPlay` (`Camera/CamSimCamera.cpp:493–507`)
-- 29 UE Automation tests + CLAUDE.md gotcha documentation
-- `FCigiReceiver` playback/recording (mirror into `FDisReceiver` per 7B.8)
+- UE Automation test suite + CLAUDE.md gotcha documentation
+- `FCigiReceiver` playback/recording (mirrored into `FDisReceiver` per 7B.8)

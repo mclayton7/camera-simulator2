@@ -248,37 +248,33 @@ uint16 FDisEntityAdapter::GetOrAllocateId(const FDisEntityId& DisId)
 		return *Existing;
 	}
 
-	uint16 NewId;
-	if (FreeIds.Num() > 0)
+	// Monotonic allocation — no recycling. Dropping the free-list prevents stale
+	// consumer-side handles from aliasing onto a reused ID (7C.4).
+	const uint16 MaxId = static_cast<uint16>(Config.DIS.IdBaseOffset + 4096);
+	if (NextId >= MaxId)
 	{
-		NewId = FreeIds.Pop();
-	}
-	else
-	{
-		const uint16 MaxId = static_cast<uint16>(Config.DIS.IdBaseOffset + 4096);
-		if (NextId >= MaxId)
+		if (!bIdPoolExhaustedLogged_)
 		{
 			UE_LOG(LogCamSim, Error,
-				TEXT("FDisEntityAdapter: DIS entity ID pool exhausted (%d active entities)"),
-				DisIdMap.Num());
-			// Return a sentinel — the entity will get a duplicate ID but this is a
-			// hard limit rather than silently corrupting the entity map.
-			return MaxId;
+				TEXT("FDisEntityAdapter: DIS entity ID pool exhausted at %d live entities ")
+				TEXT("(IdBaseOffset=%d, cap=4096). Further DIS entities will collide on the ")
+				TEXT("sentinel ID %u. Suppressing further exhaustion logs."),
+				DisIdMap.Num(), Config.DIS.IdBaseOffset, MaxId);
+			bIdPoolExhaustedLogged_ = true;
 		}
-		NewId = NextId++;
+		// Sentinel — aliased but deterministic; better than silent corruption.
+		return MaxId;
 	}
 
+	const uint16 NewId = NextId++;
 	DisIdMap.Add(DisId, NewId);
 	return NewId;
 }
 
 void FDisEntityAdapter::ReleaseId(const FDisEntityId& DisId)
 {
-	uint16 RemovedId;
-	if (DisIdMap.RemoveAndCopyValue(DisId, RemovedId))
-	{
-		FreeIds.Add(RemovedId);
-	}
+	// Map removal only — released IDs are not recycled (see GetOrAllocateId).
+	DisIdMap.Remove(DisId);
 }
 
 // -------------------------------------------------------------------------

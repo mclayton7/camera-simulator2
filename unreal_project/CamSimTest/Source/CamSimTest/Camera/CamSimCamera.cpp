@@ -57,16 +57,21 @@ DECLARE_CYCLE_STAT(TEXT("Encode Latency"),  STAT_CamSimEncode,   STATGROUP_CamSi
 // ApplyCesiumTilesetTuning – shared by BeginPlay() and HotReloadConfig()
 // -------------------------------------------------------------------------
 
+double ACamSimCamera::ComputeCulledScreenSpaceError(double HFovDeg)
+{
+	// Narrow-FOV sensors (e.g. 5° EO) can tolerate far more aggressive off-frustum
+	// culling than the default 60° tuning. Scale proportionally and clamp so a
+	// zoomed-out view doesn't collapse to nothing.
+	constexpr double ReferenceFovDeg = 60.0;
+	const double FovScale = FMath::Max(HFovDeg, 1.0) / ReferenceFovDeg;
+	return FMath::Max(200.0 * FovScale, 100.0);
+}
+
 void ACamSimCamera::ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg)
 {
 	if (!World) return;
 
-	// Narrow-FOV sensors (e.g. 5° EO) can tolerate far more aggressive off-frustum
-	// culling than the default 60° tuning. Scale CulledSSE proportionally and
-	// clamp so a zoomed-out view doesn't collapse to nothing.
-	constexpr double ReferenceFovDeg = 60.0;
-	const double FovScale  = FMath::Max(static_cast<double>(Cfg.HFovDeg), 1.0) / ReferenceFovDeg;
-	const double CulledSSE = FMath::Max(200.0 * FovScale, 100.0);
+	const double CulledSSE = ComputeCulledScreenSpaceError(static_cast<double>(Cfg.HFovDeg));
 
 	for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
 	{

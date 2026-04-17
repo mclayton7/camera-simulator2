@@ -227,7 +227,7 @@ bool FDisEcefToGeodeticTest::RunTest(const FString& Parameters)
 }
 
 // =========================================================================
-// Test: DIS Entity ID → CamSim uint16 allocation and recycling
+// Test: DIS Entity ID → CamSim uint16 allocation (monotonic, non-recycling)
 // =========================================================================
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisIdTranslationTest,
@@ -262,11 +262,81 @@ bool FDisIdTranslationTest::RunTest(const FString& Parameters)
 	// Same DIS ID should return same CamSim ID
 	TestEqual(TEXT("ID1 stable"), Adapter.GetOrAllocateId(Id1), CamId1);
 
-	// Release and re-allocate — should recycle the ID
+	// Release + re-allocate a fresh DIS triple: post 7C.4, IDs are monotonic
+	// and never recycled. CamId4 must NOT equal the freed CamId1.
 	Adapter.ReleaseId(Id1);
 	FDisEntityId Id4 { 5, 5, 5 };
 	const uint16 CamId4 = Adapter.GetOrAllocateId(Id4);
-	TestEqual(TEXT("Recycled ID"), CamId4, CamId1);
+	TestNotEqual(TEXT("No ID recycling after release"), CamId4, CamId1);
+	TestTrue(TEXT("CamId4 monotonically greater than prior peak"), CamId4 > CamId3);
+
+	return true;
+}
+
+// =========================================================================
+// Test: DIS ID pool exhaustion sentinel (7C.4)
+//
+// After 4096 unique DIS entities have been allocated, further allocations
+// return the sentinel MaxId == IdBaseOffset + 4096 rather than silently
+// corrupting the map. The exhaustion log fires once, not per-allocation.
+// =========================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisIdPoolExhaustionTest,
+	"CamSim.Phase21.IdPoolExhaustion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDisIdPoolExhaustionTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Config;
+	Config.DIS.bEnabled = true;
+	Config.DIS.IdBaseOffset = 0;  // keep arithmetic simple: IDs run 0..4095
+
+	// The adapter emits a single Error-level log when the pool is first exhausted.
+	// Declare it expected so the automation framework doesn't promote it to a failure.
+	AddExpectedError(TEXT("DIS entity ID pool exhausted"),
+		EAutomationExpectedErrorFlags::Contains, 1);
+
+	FDisEntityAdapter Adapter(Config, nullptr);
+
+	constexpr uint16 PoolSize = 4096;
+	const uint16 Sentinel = static_cast<uint16>(Config.DIS.IdBaseOffset + PoolSize);
+
+	// Fill the pool. Each allocation should return a fresh unique ID < Sentinel.
+	TSet<uint16> SeenIds;
+	SeenIds.Reserve(PoolSize);
+	for (uint32 I = 0; I < PoolSize; ++I)
+	{
+		// Three-tuple must be unique per allocation; vary Entity field since it's 16-bit.
+		FDisEntityId DisId { 1, 1, static_cast<uint16>(I) };
+		const uint16 CamId = Adapter.GetOrAllocateId(DisId);
+
+		if (CamId >= Sentinel)
+		{
+			AddError(FString::Printf(
+				TEXT("Allocation %u returned sentinel (%u) before pool was full"), I, CamId));
+			return false;
+		}
+		SeenIds.Add(CamId);
+	}
+	TestEqual(TEXT("Full pool produces 4096 unique IDs"), SeenIds.Num(), static_cast<int32>(PoolSize));
+
+	// One past the cap: must return the sentinel.
+	FDisEntityId Overflow1 { 2, 2, 1 };
+	const uint16 CamOverflow1 = Adapter.GetOrAllocateId(Overflow1);
+	TestEqual(TEXT("First post-exhaustion allocation returns sentinel"),
+		CamOverflow1, Sentinel);
+
+	// Repeated overflow — still the sentinel, no crash, no corruption of prior mappings.
+	FDisEntityId Overflow2 { 3, 3, 1 };
+	const uint16 CamOverflow2 = Adapter.GetOrAllocateId(Overflow2);
+	TestEqual(TEXT("Second post-exhaustion allocation also returns sentinel"),
+		CamOverflow2, Sentinel);
+
+	// Re-querying an in-pool entity must still return its original mapping — the
+	// sentinel path must not pollute the DisIdMap.
+	FDisEntityId InPool { 1, 1, 0 };
+	const uint16 FirstId = Adapter.GetOrAllocateId(InPool);
+	TestTrue(TEXT("Prior mapping survives overflow"), FirstId < Sentinel);
 
 	return true;
 }

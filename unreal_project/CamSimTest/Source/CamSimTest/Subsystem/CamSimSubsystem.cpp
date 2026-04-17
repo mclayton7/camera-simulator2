@@ -133,64 +133,75 @@ UCamSimSubsystem::~UCamSimSubsystem() = default;
 // Accessor implementations (Pimpl delegation)
 // -------------------------------------------------------------------------
 
+namespace
+{
+	// Pull a raw pointer out of a TUniquePtr<T> member on the Pimpl,
+	// returning nullptr if the Pimpl itself hasn't been constructed yet.
+	template<typename Owner, typename T>
+	T* ImplGet(const TPimplPtr<Owner>& Impl, TUniquePtr<T> Owner::* Field)
+	{
+		return Impl ? ((*Impl).*Field).Get() : nullptr;
+	}
+}
+
 FCigiReceiver* UCamSimSubsystem::GetCigiReceiver() const
 {
-	return Impl ? Impl->CigiReceiver.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::CigiReceiver);
 }
 
 IFrameSink* UCamSimSubsystem::GetVideoEncoder() const
 {
-	return Impl ? Impl->VideoEncoder.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::VideoEncoder);
 }
 
 FCamSimEntityManager* UCamSimSubsystem::GetEntityManager() const
 {
-	return Impl ? Impl->EntityManager.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::EntityManager);
 }
 
 FCigiSender* UCamSimSubsystem::GetCigiSender() const
 {
-	return Impl ? Impl->CigiSender.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::CigiSender);
 }
 
 FCigiQueryHandler* UCamSimSubsystem::GetQueryHandler() const
 {
-	return Impl ? Impl->QueryHandler.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::QueryHandler);
 }
 
 FCamSimGeospatialProvider* UCamSimSubsystem::GetGeospatialProvider() const
 {
-	return Impl ? Impl->GeospatialProvider.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::GeospatialProvider);
 }
 
 FGroundTruthCollector* UCamSimSubsystem::GetGroundTruthCollector() const
 {
-	return Impl ? Impl->GroundTruthCollector.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::GroundTruthCollector);
 }
 
 FCamSimParticleManager* UCamSimSubsystem::GetParticleManager() const
 {
-	return Impl ? Impl->ParticleManager.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::ParticleManager);
 }
 
 FDisReceiver* UCamSimSubsystem::GetDisReceiver() const
 {
-	return Impl ? Impl->DisReceiver.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::DisReceiver);
 }
 
 FDisEntityAdapter* UCamSimSubsystem::GetDisAdapter() const
 {
-	return Impl ? Impl->DisAdapter.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::DisAdapter);
 }
 
 FCotSender* UCamSimSubsystem::GetCotSender() const
 {
-	return Impl ? Impl->CotSender.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::CotSender);
 }
 
 FPipelineLatencyTracker* UCamSimSubsystem::GetLatencyTracker() const
 {
-	return Impl ? Impl->LatencyTracker.Get() : nullptr;
+	return ImplGet(Impl, &FSubsystemImpl::LatencyTracker);
 }
 
 void UCamSimSubsystem::RegisterCamera(ACamSimCamera* Camera)

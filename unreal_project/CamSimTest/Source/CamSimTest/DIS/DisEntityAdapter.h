@@ -69,7 +69,7 @@ public:
 	 */
 	uint16 GetOrAllocateId(const FDisEntityId& DisId);
 
-	/** Release a CamSim ID back to the free list. */
+	/** Drop the DIS→CamSim mapping for this entity. IDs are never recycled (see DisIdMap). */
 	void ReleaseId(const FDisEntityId& DisId);
 
 	// -----------------------------------------------------------------------
@@ -98,10 +98,15 @@ private:
 	int32 EntityDrainIndex = 0;
 	int32 RateDrainIndex   = 0;
 
-	// ID translation: DIS triple → CamSim uint16
+	// ID translation: DIS triple → CamSim uint16.
+	//
+	// IDs are allocated monotonically from [IdBaseOffset, IdBaseOffset+4096) and
+	// never recycled — aliasing stale consumer-side handles onto reused IDs
+	// caused subtle bugs. A long run that churns through 4096 unique DIS entities
+	// will hit the cap; bIdPoolExhaustedLogged_ ensures we only log once.
 	TMap<FDisEntityId, uint16>   DisIdMap;
-	TArray<uint16>               FreeIds;
 	uint16                       NextId = 0;
+	bool                         bIdPoolExhaustedLogged_ = false;
 
 	// Entity timeout tracking
 	struct FEntityTimestamp
