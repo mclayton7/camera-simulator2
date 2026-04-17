@@ -16,8 +16,8 @@ void FPipelineLatencyTracker::SetStageTimestamp(EPipelineStage Stage, uint64 Cyc
 
 void FPipelineLatencyTracker::CommitFrame()
 {
-	const uint32 Idx = WriteIndex.Load(EMemoryOrder::Relaxed);
-	Records[Idx % BufferCapacity] = CurrentFrame;
+	const uint64 Idx = WriteIndex.Load(EMemoryOrder::Relaxed);
+	Records[static_cast<int32>(Idx % BufferCapacity)] = CurrentFrame;
 	WriteIndex.Store(Idx + 1, EMemoryOrder::SequentiallyConsistent);
 
 	const int32 Count = CommittedCount.Load(EMemoryOrder::Relaxed);
@@ -61,7 +61,7 @@ FPipelineLatencyTracker::FLatencyPercentiles FPipelineLatencyTracker::ComputePer
 	EncodeDeltas.Reserve(Count);
 	TotalDeltas.Reserve(Count);
 
-	const uint32 WIdx = WriteIndex.Load(EMemoryOrder::SequentiallyConsistent);
+	const uint64 WIdx = WriteIndex.Load(EMemoryOrder::SequentiallyConsistent);
 	const int32 StartIdx = (Count < BufferCapacity) ? 0 : static_cast<int32>(WIdx % BufferCapacity);
 
 	for (int32 i = 0; i < Count; ++i)

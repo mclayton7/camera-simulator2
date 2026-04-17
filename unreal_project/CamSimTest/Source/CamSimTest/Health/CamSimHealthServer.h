@@ -35,6 +35,14 @@ struct FCamSimHealthServer
 	/** Call from game thread tick to update the liveness timestamp. */
 	void UpdateTick();
 
+	/**
+	 * Refresh the cached /metrics body on the game thread. Intended to be
+	 * called at a low rate (~1 Hz) from the subsystem tick so HTTP handlers
+	 * can serve the snapshot lock-free instead of executing the potentially
+	 * expensive build callback inline on the HTTP thread.
+	 */
+	void UpdateMetricsSnapshot();
+
 private:
 	TSharedPtr<IHttpRouter> Router;
 	double LastTickTimeSec = 0.0;
@@ -45,4 +53,15 @@ private:
 	FStatusQueryFn IsCigiReady;
 	FStatusQueryFn HasFirstFrame;
 	TFunction<FString()> GetPrometheusMetrics;
+
+	/**
+	 * Cached /metrics body. Game thread stores a new snapshot via
+	 * UpdateMetricsSnapshot(); HTTP threads acquire the same shared ref to
+	 * produce the response body. TSharedRef atomic-ref-count keeps this
+	 * race-free even if a scrape fires mid-update — the HTTP thread either
+	 * sees the old snapshot or the new one, never a torn FString.
+	 */
+	TSharedRef<FString, ESPMode::ThreadSafe> CachedMetrics_ =
+		MakeShared<FString, ESPMode::ThreadSafe>();
+	mutable FCriticalSection MetricsLock_;
 };

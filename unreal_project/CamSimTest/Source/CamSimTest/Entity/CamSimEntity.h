@@ -6,6 +6,9 @@
 #include "GameFramework/Actor.h"
 #include "CIGI/CigiPacketTypes.h"
 #include "Ocean/IOceanSurface.h"
+// StreamableManager gives us the complete FStreamableHandle type — needed so
+// the UHT-generated CamSimEntity.gen.cpp can destruct TSharedPtr<FStreamableHandle>.
+#include "Engine/StreamableManager.h"
 #include "CamSimEntity.generated.h"
 
 class UCesiumGlobeAnchorComponent;
@@ -13,8 +16,11 @@ class UStaticMeshComponent;
 class USkeletalMeshComponent;
 class UPoseableMeshComponent;  // USkinnedMeshComponent subclass with per-bone API
 class UPointLightComponent;
+class UStaticMesh;
+class USkeletalMesh;
 class FEntityTypeTable;
 struct FEntityTypeEntry;
+// FStreamableHandle is provided by the Engine/StreamableManager.h include above.
 
 /**
  * ACamSimEntity
@@ -128,15 +134,28 @@ private:
 	float CachedGroundSpeed = 0.0f;
 	void InitAnimatedCharacter(const FEntityTypeEntry& Entry);
 
-	// Dead-reckoning state
+	/** In-flight async mesh load handle — resetting cancels the request. */
+	TSharedPtr<FStreamableHandle> PendingMeshHandle_;
+
+	// Async-load helpers — keep the public API stable; the call chain is
+	// SetEntityType → Request*Mesh → (async) → ApplyLoaded*Mesh.
+	void RequestAsyncStaticMesh(const FEntityTypeEntry& Entry, uint16 Type);
+	void RequestAsyncSkeletalMesh(const FEntityTypeEntry& Entry, uint16 Type);
+	void ApplyLoadedStaticMesh(UStaticMesh* Mesh, const FEntityTypeEntry& Entry, uint16 Type);
+	void ApplyLoadedSkeletalMesh(USkeletalMesh* Mesh, const FEntityTypeEntry& Entry, uint16 Type);
+
+	// Dead-reckoning state. Orientation is stored as FQuat to integrate body-frame
+	// angular velocity without passing through the FRotator→FQuat singularity at
+	// pitch = ±90° — Euler-only integration produced discontinuous heading for
+	// aircraft in a steep climb or dive.
 	struct FDRState
 	{
-		double Lat = 0.0, Lon = 0.0;
-		float  Alt = 0.0f;
-		float  Yaw = 0.0f, Pitch = 0.0f, Roll = 0.0f;
-		float  XRate = 0.0f, YRate = 0.0f, ZRate = 0.0f;  // m/s body-frame
-		float  YawRate = 0.0f, PitchRate = 0.0f, RollRate = 0.0f; // deg/s
-		bool   bHasRate = false;
+		double  Lat = 0.0, Lon = 0.0;
+		float   Alt = 0.0f;
+		FQuat   Orientation = FQuat::Identity;                 // single source of truth
+		float   XRate = 0.0f, YRate = 0.0f, ZRate = 0.0f;     // m/s body-frame
+		float   YawRate = 0.0f, PitchRate = 0.0f, RollRate = 0.0f; // deg/s body-frame
+		bool    bHasRate = false;
 	} DR;
 
 	// Strobe state

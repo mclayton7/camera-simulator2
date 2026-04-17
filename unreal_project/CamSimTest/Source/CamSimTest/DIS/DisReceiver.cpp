@@ -39,6 +39,10 @@ bool FDisReceiver::Start()
 	}
 
 	bShouldRun = true;
+	if (!ShutdownEvent)
+	{
+		ShutdownEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/false);
+	}
 	Thread = FRunnableThread::Create(this, TEXT("DisReceiverThread"), 128 * 1024,
 		TPri_Normal, FPlatformAffinity::GetTaskGraphBackgroundTaskMask());
 
@@ -51,6 +55,7 @@ bool FDisReceiver::Start()
 void FDisReceiver::Stop()
 {
 	bShouldRun = false;
+	if (ShutdownEvent) ShutdownEvent->Trigger();
 	if (Thread)
 	{
 		Thread->WaitForCompletion();
@@ -61,6 +66,11 @@ void FDisReceiver::Stop()
 	{
 		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket);
 		Socket = nullptr;
+	}
+	if (ShutdownEvent)
+	{
+		FPlatformProcess::ReturnSynchEventToPool(ShutdownEvent);
+		ShutdownEvent = nullptr;
 	}
 	UE_LOG(LogCamSim, Log, TEXT("FDisReceiver: stopped (parsed %llu PDUs)"),
 		ReceivedPduCount.Load());
@@ -123,8 +133,10 @@ uint32 FDisReceiver::Run()
 		}
 		else
 		{
-			// Non-blocking socket returned no data — yield briefly
-			FPlatformProcess::SleepNoStats(0.001f);
+			// Non-blocking socket returned no data — wait on the shutdown event
+			// so we exit cleanly the instant Stop() fires.
+			if (ShutdownEvent) ShutdownEvent->Wait(1);
+			else FPlatformProcess::SleepNoStats(0.001f);
 		}
 	}
 
@@ -175,9 +187,16 @@ bool FDisReceiver::CreateSocket()
 			}
 			else
 			{
-				UE_LOG(LogCamSim, Warning,
-					TEXT("FDisReceiver: failed to join multicast group %s"),
-					*Config.DIS.MulticastGroup);
+				// Don't silently carry on — an operator who configured a
+				// multicast group expects multicast data. Returning false
+				// surfaces the failure at Start() instead of looking like a
+				// healthy but oddly-empty unicast receiver.
+				UE_LOG(LogCamSim, Error,
+					TEXT("FDisReceiver: failed to join multicast group %s (port %d)"),
+					*Config.DIS.MulticastGroup, Config.DIS.Port);
+				ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket);
+				Socket = nullptr;
+				return false;
 			}
 		}
 	}

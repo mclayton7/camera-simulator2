@@ -6,7 +6,7 @@
 #include "HAL/Runnable.h"
 #include "HAL/RunnableThread.h"
 #include "HAL/Event.h"
-#include "Containers/SpscQueue.h"
+#include "CIGI/BoundedSpscQueue.h"
 #include "Metadata/KlvBuilder.h"
 #include "Diagnostics/PipelineLatencyTracker.h"
 
@@ -54,12 +54,18 @@ public:
 	/** Phase 28G: set the pipeline latency tracker for encode-complete marking. */
 	void SetLatencyTracker(FPipelineLatencyTracker* Tracker) { LatencyTracker = Tracker; }
 
+	/** Number of frames dropped because the encoder queue was saturated. */
+	uint64 GetDroppedFrameCount() const { return Queue.GetDropCount(); }
+
 	// FRunnable interface
 	virtual uint32 Run() override;
 
 private:
 	IFrameSink*                    Encoder = nullptr;
-	TSpscQueue<FProcessedFrame>    Queue;
+	// Small cap: at 30 fps, 4 queued frames = 133 ms of backlog before drop-
+	// newest kicks in. Bigger than that is perceptibly stale for live video.
+	static constexpr int32         EncoderQueueCapacity = 4;
+	TBoundedSpscQueue<FProcessedFrame> Queue { EncoderQueueCapacity };
 	FEventRef                      WakeEvent { EEventMode::AutoReset };
 	TAtomic<bool>                  bRunning  { false };
 	FRunnableThread*               Thread    = nullptr;

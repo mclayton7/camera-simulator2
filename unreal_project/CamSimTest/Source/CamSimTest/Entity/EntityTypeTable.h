@@ -74,13 +74,15 @@ public:
 	/** Returns the entry for the given type ID, or nullptr if not found. */
 	const FEntityTypeEntry* FindEntry(uint16 TypeId) const;
 
-	/** Retrieve or store a cached static mesh for the given type ID. */
+	/** Retrieve or store a cached static mesh for the given type ID.
+	 *  Const because the cache is treated as memoisation of an otherwise
+	 *  pure lookup — we don't want callers to have to const_cast the table. */
 	UStaticMesh* GetCachedStaticMesh(uint16 TypeId) const;
-	void SetCachedStaticMesh(uint16 TypeId, UStaticMesh* Mesh);
+	void SetCachedStaticMesh(uint16 TypeId, UStaticMesh* Mesh) const;
 
 	/** Retrieve or store a cached skeletal mesh for the given type ID. */
 	USkeletalMesh* GetCachedSkeletalMesh(uint16 TypeId) const;
-	void SetCachedSkeletalMesh(uint16 TypeId, USkeletalMesh* Mesh);
+	void SetCachedSkeletalMesh(uint16 TypeId, USkeletalMesh* Mesh) const;
 
 private:
 	TMap<uint16, FEntityTypeEntry> TypeMap;

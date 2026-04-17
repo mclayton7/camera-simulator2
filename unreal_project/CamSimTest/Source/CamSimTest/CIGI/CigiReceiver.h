@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "HAL/Runnable.h"
-#include "Containers/SpscQueue.h"
+#include "CIGI/BoundedSpscQueue.h"
 #include "Config/CamSimConfig.h"
 #include "CIGI/CigiPacketTypes.h"
 
@@ -138,30 +138,44 @@ private:
 	FRunnableThread* Thread    = nullptr;
 	FSocket*         Socket    = nullptr;
 	TAtomic<bool>    bShouldRun;
+	// Auto-reset event used to wake the receiver thread immediately on Stop()
+	// so shutdown doesn't depend on the non-blocking recv poll interval.
+	FEvent*          ShutdownEvent = nullptr;
 	TAtomic<uint64>  ReceivedPacketCount { 0 };
 	TAtomic<uint32>  LastHostFrameCntr { 0 };
 
-	// SPSC queues: receiver thread produces, game thread consumes.
+	// Bounded SPSC queues: receiver thread produces, game thread consumes.
 	// Camera entity is routed separately so ACamSimCamera and FCamSimEntityManager
 	// each have their own exclusive consumer, preserving SPSC invariant.
-	TSpscQueue<FCigiEntityState>      CameraEntityQueue;   // camera entity only
-	TSpscQueue<FCigiEntityState>      EntityStateQueue;    // all other entities
-	TSpscQueue<FCigiViewDefinition>   ViewDefQueue;
-	TSpscQueue<FCigiSensorControl>    SensorCtrlQueue;     // opcode 17, ACamSimCamera
-	TSpscQueue<FCigiViewControl>      ViewCtrlQueue;       // opcode 16, ACamSimCamera
-	TSpscQueue<FCigiCelestialState>   CelestialQueue;
-	TSpscQueue<FCigiAtmosphereState>  AtmosphereQueue;
-	TSpscQueue<FCigiWeatherState>     WeatherQueue;
-	TSpscQueue<FCigiRateControl>      RateCtrlQueue;
-	TSpscQueue<FCigiArtPartControl>   ArtPartQueue;
-	TSpscQueue<FCigiArtPartControl>   CameraArtPartQueue;  // art parts for camera entity (gimbal)
-	TSpscQueue<FCigiComponentControl> CompCtrlQueue;
-	TSpscQueue<FCigiHatHotRequest>    HatHotReqQueue;      // opcode 24 (FCigiQueryHandler)
-	TSpscQueue<FCigiLosSegRequest>    LosSegReqQueue;      // opcode 25 (FCigiQueryHandler)
-	TSpscQueue<FCigiLosVectRequest>   LosVectReqQueue;     // opcode 26 (FCigiQueryHandler)
-	TSpscQueue<FCigiWaveState>        WaveStateQueue;      // opcode 14 (FOceanManager)
-	TSpscQueue<FCigiConfClampEntityState> ConfClampQueue;     // opcode 3  (FCamSimEntityManager)
-	TSpscQueue<FCigiMaritimeSurfaceState> MaritimeSurfaceQueue; // opcode 13 (FOceanManager)
+	// Capacities are sized to absorb a ~1 s game-thread stall at typical CIGI
+	// fan-in without unbounded heap growth. Drop-newest on overflow.
+	static constexpr int32 CigiEntityQueueCapacity  = 2048;  // many entities per-frame
+	static constexpr int32 CigiControlQueueCapacity = 512;   // view/sensor/rate
+	static constexpr int32 CigiRequestQueueCapacity = 1024;  // HAT/HOT/LOS bursts
+
+	TBoundedSpscQueue<FCigiEntityState>      CameraEntityQueue  { CigiControlQueueCapacity };
+	TBoundedSpscQueue<FCigiEntityState>      EntityStateQueue   { CigiEntityQueueCapacity };
+	TBoundedSpscQueue<FCigiViewDefinition>   ViewDefQueue       { CigiControlQueueCapacity };
+	TBoundedSpscQueue<FCigiSensorControl>    SensorCtrlQueue    { CigiControlQueueCapacity };  // opcode 17
+	TBoundedSpscQueue<FCigiViewControl>      ViewCtrlQueue      { CigiControlQueueCapacity };  // opcode 16
+	TBoundedSpscQueue<FCigiCelestialState>   CelestialQueue     { CigiControlQueueCapacity };
+	TBoundedSpscQueue<FCigiAtmosphereState>  AtmosphereQueue    { CigiControlQueueCapacity };
+	TBoundedSpscQueue<FCigiWeatherState>     WeatherQueue       { CigiControlQueueCapacity };
+	TBoundedSpscQueue<FCigiRateControl>      RateCtrlQueue      { CigiEntityQueueCapacity };
+	TBoundedSpscQueue<FCigiArtPartControl>   ArtPartQueue       { CigiEntityQueueCapacity };
+	TBoundedSpscQueue<FCigiArtPartControl>   CameraArtPartQueue { CigiControlQueueCapacity };
+	TBoundedSpscQueue<FCigiComponentControl> CompCtrlQueue      { CigiEntityQueueCapacity };
+	TBoundedSpscQueue<FCigiHatHotRequest>    HatHotReqQueue     { CigiRequestQueueCapacity };  // opcode 24
+	TBoundedSpscQueue<FCigiLosSegRequest>    LosSegReqQueue     { CigiRequestQueueCapacity };  // opcode 25
+	TBoundedSpscQueue<FCigiLosVectRequest>   LosVectReqQueue    { CigiRequestQueueCapacity };  // opcode 26
+	TBoundedSpscQueue<FCigiWaveState>        WaveStateQueue     { CigiControlQueueCapacity };  // opcode 14
+	TBoundedSpscQueue<FCigiConfClampEntityState> ConfClampQueue { CigiEntityQueueCapacity };   // opcode 3
+	TBoundedSpscQueue<FCigiMaritimeSurfaceState> MaritimeSurfaceQueue { CigiControlQueueCapacity }; // opcode 13
+
+public:
+	/** Aggregate total drops across all CIGI queues — exposed for /metrics. */
+	uint64 GetTotalDropCount() const;
+private:
 
 	// CCL session objects — session owns InMsg; we hold a non-owning pointer to it
 	TUniquePtr<CigiIGSession> CigiSession;

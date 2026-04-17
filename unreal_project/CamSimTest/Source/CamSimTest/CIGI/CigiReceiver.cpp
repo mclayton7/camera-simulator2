@@ -598,6 +598,12 @@ bool FCigiReceiver::Start()
 	}
 
 	bShouldRun = true;
+	if (!ShutdownEvent)
+	{
+		// Auto-reset: one Wait() returns per Trigger(), so the receiver doesn't
+		// need to manually Reset() the event between poll iterations.
+		ShutdownEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/false);
+	}
 	Thread = FRunnableThread::Create(this, TEXT("CigiReceiverThread"), 128 * 1024,
 		TPri_Normal, FPlatformAffinity::GetTaskGraphBackgroundTaskMask());
 
@@ -610,11 +616,19 @@ bool FCigiReceiver::Start()
 void FCigiReceiver::Stop()
 {
 	bShouldRun = false;
+	// Wake the receiver from its 1 ms recv poll immediately — without this,
+	// shutdown latency is capped at the poll interval per waiting thread.
+	if (ShutdownEvent) ShutdownEvent->Trigger();
 	if (Thread)
 	{
 		Thread->WaitForCompletion();
 		delete Thread;
 		Thread = nullptr;
+	}
+	if (ShutdownEvent)
+	{
+		FPlatformProcess::ReturnSynchEventToPool(ShutdownEvent);
+		ShutdownEvent = nullptr;
 	}
 	if (Socket)
 	{
@@ -819,8 +833,11 @@ uint32 FCigiReceiver::Run()
 		}
 		else
 		{
-			// Non-blocking socket returned no data — yield briefly
-			FPlatformProcess::SleepNoStats(0.001f);
+			// Non-blocking socket returned no data — wait on the shutdown event
+			// with a 1 ms timeout so we wake immediately on Stop() instead of
+			// serving out the full sleep interval.
+			if (ShutdownEvent) ShutdownEvent->Wait(1);
+			else FPlatformProcess::SleepNoStats(0.001f);
 		}
 	}
 
@@ -880,4 +897,26 @@ bool FCigiReceiver::CreateSocket()
 		.Build();
 
 	return Socket != nullptr;
+}
+
+uint64 FCigiReceiver::GetTotalDropCount() const
+{
+	return CameraEntityQueue.GetDropCount()
+	     + EntityStateQueue.GetDropCount()
+	     + ViewDefQueue.GetDropCount()
+	     + SensorCtrlQueue.GetDropCount()
+	     + ViewCtrlQueue.GetDropCount()
+	     + CelestialQueue.GetDropCount()
+	     + AtmosphereQueue.GetDropCount()
+	     + WeatherQueue.GetDropCount()
+	     + RateCtrlQueue.GetDropCount()
+	     + ArtPartQueue.GetDropCount()
+	     + CameraArtPartQueue.GetDropCount()
+	     + CompCtrlQueue.GetDropCount()
+	     + HatHotReqQueue.GetDropCount()
+	     + LosSegReqQueue.GetDropCount()
+	     + LosVectReqQueue.GetDropCount()
+	     + WaveStateQueue.GetDropCount()
+	     + ConfClampQueue.GetDropCount()
+	     + MaritimeSurfaceQueue.GetDropCount();
 }

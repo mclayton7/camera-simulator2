@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "DIS/DisPduTypes.h"
+#include "CamSimTest.h"  // LogCamSim
 
 // DIS uses big-endian (network byte order) for all multi-byte fields.
 // UE's ByteSwap.h or platform ntoh* may not be available everywhere,
@@ -89,8 +90,15 @@ bool FDisPduHeader::Parse(const uint8* Data, int32 DataLen, FDisPduHeader& OutHd
 
 bool FDisEntityStatePdu::Parse(const uint8* Data, int32 DataLen, FDisEntityStatePdu& OutPdu)
 {
-	// Minimum Entity State PDU size (no articulation params)
-	if (!Data || DataLen < 144) return false;
+	// Minimum Entity State PDU size (no articulation params).
+	// Log at Verbose so operators who suspect silent drops can crank the
+	// log verbosity without adding explicit debug instrumentation.
+	if (!Data || DataLen < 144)
+	{
+		UE_LOG(LogCamSim, Verbose,
+			TEXT("FDisEntityStatePdu: truncated PDU (got %d bytes, need 144)"), DataLen);
+		return false;
+	}
 
 	// Parse header
 	if (!FDisPduHeader::Parse(Data, DataLen, OutPdu.Header)) return false;

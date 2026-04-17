@@ -73,13 +73,29 @@ public:
 	 *  Must be called on the game thread. */
 	void StoreCesiumIonServer(UCesiumIonServer* Server);
 
+	/**
+	 * Return the live config. Game-thread-only. Cross-thread readers should
+	 * either (a) snapshot the fields they need at construction, as the
+	 * receivers and encoder do, or (b) call GetConfigSnapshot() which copies
+	 * under the same lock that HotReloadConfig takes when swapping.
+	 */
 	const FCamSimConfig&    GetConfig()        const { return Config; }
 	const FEntityTypeTable& GetEntityTypeTable() const { return EntityTypeTable; }
 
 	/**
+	 * Thread-safe snapshot of the current config. Takes the hot-reload
+	 * read lock, returns a shared copy that the caller can keep for the
+	 * duration of its work without worrying about a concurrent HotReloadConfig
+	 * mutating nested TMap fields (e.g. SensorModeConfigs).
+	 */
+	TSharedRef<const FCamSimConfig, ESPMode::ThreadSafe> GetConfigSnapshot() const;
+
+	/**
 	 * Phase 27D — Hot-reload: replace mutable config fields at runtime.
 	 * Immutable fields (CigiPort, MulticastAddr, VideoCodec) are preserved
-	 * from the current config and not overwritten.
+	 * from the current config and not overwritten. Serialised via ConfigLock_
+	 * so non-game-thread readers that go through GetConfigSnapshot() observe
+	 * a coherent struct.
 	 */
 	void HotReloadConfig(const FCamSimConfig& NewCfg);
 
@@ -90,6 +106,8 @@ public:
 private:
 	FCamSimConfig    Config;
 	FEntityTypeTable EntityTypeTable;
+	/** Serialises HotReloadConfig writes against cross-thread Config snapshot reads. */
+	mutable FRWLock  ConfigLock_;
 
 	// Phase 27B — weak reference to the camera actor (game thread only)
 	TWeakObjectPtr<ACamSimCamera> Camera_;

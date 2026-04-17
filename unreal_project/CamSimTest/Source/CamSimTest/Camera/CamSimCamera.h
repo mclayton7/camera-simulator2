@@ -11,6 +11,10 @@
 #include "Sensor/IPixelPipeline.h"   // IPixelPipeline
 #include "Encoder/EncoderThread.h"   // FEncoderThread — must be complete for TUniquePtr in UHT .gen.cpp
 #include "Diagnostics/PipelineLatencyTracker.h"
+// FRHIGPUTextureReadback needs a complete type here because the UHT-generated
+// CamSimCamera.gen.cpp instantiates TArray<TUniquePtr<FRHIGPUTextureReadback>>'s
+// destructor outside this TU.
+#include "RHIGPUReadback.h"
 #include "CamSimCamera.generated.h"
 
 class USceneCaptureComponent2D;
@@ -18,7 +22,6 @@ class UCesiumGlobeAnchorComponent;
 class UCamSimSubsystem;
 class UCamSimGimbalComponent;
 class UCamSimSensorComponent;
-class FRHIGPUTextureReadback;  // forward-declare async readback helper
 class UMaterialInterface;
 class UMaterialParameterCollection;
 
@@ -73,6 +76,14 @@ public:
 	/** Phase 28G: set the pipeline latency tracker (owned by subsystem, nullable). */
 	void SetLatencyTracker(FPipelineLatencyTracker* Tracker) { LatencyTracker_ = Tracker; }
 
+	/**
+	 * Apply Cesium tileset streaming parameters (SSE, cache, culling, physics)
+	 * to every ACesium3DTileset in the world. Called from BeginPlay() once and
+	 * again from UCamSimSubsystem::HotReloadConfig() so runtime tuning takes
+	 * effect without a level reload. Safe to call with a null World (no-op).
+	 */
+	static void ApplyCesiumTilesetTuning(UWorld* World, const struct FCamSimConfig& Cfg);
+
 private:
 	/** Explicit root scene component. */
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")
@@ -114,8 +125,14 @@ private:
 
 	int32 DepthCaptureTargetIndex = 0;
 
-	/** Non-blocking GPU readback helper for the depth channel. */
-	FRHIGPUTextureReadback* DepthGPUReadback = nullptr;
+	/**
+	 * Pool of depth-readback helpers — one per DepthRenderTarget so EnqueueCopy
+	 * on frame N+1 can't race Lock/Unlock on frame N. Indexed by PendingDepthReadbackTargetIndex.
+	 */
+	TArray<TUniquePtr<FRHIGPUTextureReadback>> DepthReadbackPool;
+
+	/** Render-target index that the currently in-flight depth readback is bound to. */
+	int32 PendingDepthReadbackTargetIndex = INDEX_NONE;
 
 	/** Cached pointer to our subsystem (set in BeginPlay). */
 	UPROPERTY(Transient)
@@ -140,15 +157,35 @@ private:
 	 */
 	bool bReadbackPending = false;
 
-	/** Non-blocking GPU-to-CPU texture readback helper (async DMA). */
-	FRHIGPUTextureReadback* GPUReadback = nullptr;
+	/**
+	 * Pool of GPU→CPU readback helpers — one per RenderTarget so the EnqueueCopy
+	 * triggered on frame N+1 can't race the Lock/Unlock that still targets
+	 * frame N's staging copy. Indexed by PendingReadbackTargetIndex.
+	 */
+	TArray<TUniquePtr<FRHIGPUTextureReadback>> ColorReadbackPool;
 
 	/** Set by render thread after EnqueueCopy; game thread polls IsReady() only after this is true. */
 	TAtomic<bool> bReadbackDMAIssued{false};
 
-	/** Game-thread streak counters for consecutive IsReady()==true polls. */
-	uint8 ReadbackReadyStreakGT = 0;
-	uint8 DepthReadbackReadyStreakGT = 0;
+	/**
+	 * Async readback result hand-off (render thread writes → game thread reads).
+	 * Render command fills AsyncPixels_/AsyncDepth_, then sets bPollComplete_
+	 * with sequentially-consistent semantics; the matching acquire on the game
+	 * thread makes the array contents visible without FlushRenderingCommands().
+	 */
+	TArray<FColor> AsyncPixels_;
+	TArray<float>  AsyncDepth_;
+	TAtomic<bool>  bPollComplete_{false};  // data ready for consume
+	TAtomic<bool>  bPollFailed_{false};    // Lock failure / bad format
+	/**
+	 * Monotonic poll generation — game thread bumps on every new CaptureAndEncode.
+	 * Each poll render command captures the generation by value and no-ops if
+	 * the generation has advanced, preventing stale polls from one frame from
+	 * resurrecting an already-consumed result once we advance to the next frame.
+	 */
+	TAtomic<uint32> PollGeneration_{0};
+	uint8          RenderReadyStreak_ = 0;      // render-thread only
+	uint8          RenderDepthReadyStreak_ = 0; // render-thread only
 
 	/** Frame index in-flight through the GPU readback pipeline. */
 	uint64 PendingFrameIndex = 0;

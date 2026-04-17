@@ -392,11 +392,17 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
 // GetEntitySnapshot — game-thread entity annotation capture (Phase 17D)
 // -------------------------------------------------------------------------
 
-TArray<FEntityAnnotationData> FCamSimEntityManager::GetEntitySnapshot(
-    const FViewProjectionData& ViewProj) const
+void FCamSimEntityManager::GetEntitySnapshot(
+    const FViewProjectionData& ViewProj,
+    TArray<FEntityAnnotationData>& OutSnapshot) const
 {
-	TArray<FEntityAnnotationData> Result;
-	Result.Reserve(EntityMap.Num());
+	// Reset() preserves allocated capacity so the caller's buffer amortises
+	// across frames — avoids one ~N-entity allocation per tick.
+	OutSnapshot.Reset(EntityMap.Num());
+
+	const bool bUseConeCull = (ViewProj.CullConeHalfAngleCos > 0.0f)
+		&& !ViewProj.CameraForward.IsNearlyZero();
+	const FVector CamFwd = bUseConeCull ? ViewProj.CameraForward.GetSafeNormal() : FVector::ZeroVector;
 
 	for (const auto& Pair : EntityMap)
 	{
@@ -405,6 +411,25 @@ TArray<FEntityAnnotationData> FCamSimEntityManager::GetEntitySnapshot(
 
 		// Cheap visibility pre-filter: skip actors UE has recently culled
 		if (!Entity->WasRecentlyRendered(0.1f)) continue;
+
+		// Cone-cull: reject entities whose direction from the camera falls
+		// outside the inflated view cone before paying for AABB projection.
+		// Entities closer than 1 m get a free pass (the direction vector is
+		// unstable and they're almost certainly inside the frustum anyway).
+		if (bUseConeCull)
+		{
+			const FVector ToEntity = Entity->GetActorLocation() - ViewProj.CameraLocation;
+			const double  DistSq   = ToEntity.SizeSquared();
+			constexpr double MinDistSqCm2 = 100.0 * 100.0;  // 1 m in UE cm units
+			if (DistSq > MinDistSqCm2)
+			{
+				const FVector ToEntityDir = ToEntity / FMath::Sqrt(DistSq);
+				if (FVector::DotProduct(ToEntityDir, CamFwd) < ViewProj.CullConeHalfAngleCos)
+				{
+					continue;
+				}
+			}
+		}
 
 		FEntityAnnotationData Data;
 		Data.EntityId   = Entity->EntityId;
@@ -436,10 +461,8 @@ TArray<FEntityAnnotationData> FCamSimEntityManager::GetEntitySnapshot(
 		Data.bVisible   = bVisible;
 		Data.bTruncated = bTruncated;
 		Data.ScreenBBox = ScreenBBox;
-		Result.Add(MoveTemp(Data));
+		OutSnapshot.Add(MoveTemp(Data));
 	}
-
-	return Result;
 }
 
 // -------------------------------------------------------------------------

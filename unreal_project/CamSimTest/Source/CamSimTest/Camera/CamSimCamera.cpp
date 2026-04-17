@@ -54,6 +54,56 @@ DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Frames Dropped"), STAT_CamSimDropped, STATG
 DECLARE_CYCLE_STAT(TEXT("Encode Latency"),  STAT_CamSimEncode,   STATGROUP_CamSim)
 
 // -------------------------------------------------------------------------
+// ApplyCesiumTilesetTuning – shared by BeginPlay() and HotReloadConfig()
+// -------------------------------------------------------------------------
+
+void ACamSimCamera::ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg)
+{
+	if (!World) return;
+
+	// Narrow-FOV sensors (e.g. 5° EO) can tolerate far more aggressive off-frustum
+	// culling than the default 60° tuning. Scale CulledSSE proportionally and
+	// clamp so a zoomed-out view doesn't collapse to nothing.
+	constexpr double ReferenceFovDeg = 60.0;
+	const double FovScale  = FMath::Max(static_cast<double>(Cfg.HFovDeg), 1.0) / ReferenceFovDeg;
+	const double CulledSSE = FMath::Max(200.0 * FovScale, 100.0);
+
+	for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
+	{
+		It->MaximumSimultaneousTileLoads = Cfg.MaxSimultaneousTileLoads;
+		It->MaximumScreenSpaceError      = Cfg.MaximumScreenSpaceError;
+		if (Cfg.MaximumCachedBytesMB > 0)
+		{
+			It->MaximumCachedBytes =
+				static_cast<int64>(Cfg.MaximumCachedBytesMB) * 1024LL * 1024LL;
+		}
+		It->PreloadAncestors       = true;
+		It->PreloadSiblings        = false;  // prefetch camera already covers adjacent tiles
+		It->ForbidHoles            = false;  // true grows the render set linearly during camera motion
+		It->LoadingDescendantLimit = Cfg.LoadingDescendantLimit;
+
+		// Aggressively cull off-screen tiles (low-res placeholders outside frustum).
+		It->EnforceCulledScreenSpaceError = true;
+		It->CulledScreenSpaceError        = CulledSSE;
+
+		// Non-player ISR camera never collides — skip physics-mesh cook (saves VRAM + CPU).
+		// HAT/HOT terrain feedback uses Cesium's own sampling API, not physics queries.
+		It->SetCreatePhysicsMeshes(false);
+
+		It->SetUseLodTransitions(Cfg.bUseLodTransitions);
+		It->LodTransitionLength = Cfg.LodTransitionLength;
+		It->LogSelectionStats   = Cfg.bLogTileSelectionStats;
+
+		UE_LOG(LogCamSim, Log,
+			TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f@hfov=%.0f° cacheMB=%d descLimit=%d lodBlend=%d logStats=%d physicsMeshes=off)"),
+			*It->GetName(), Cfg.MaxSimultaneousTileLoads,
+			Cfg.MaximumScreenSpaceError, CulledSSE, Cfg.HFovDeg,
+			Cfg.MaximumCachedBytesMB, Cfg.LoadingDescendantLimit,
+			(int)Cfg.bUseLodTransitions, (int)Cfg.bLogTileSelectionStats);
+	}
+}
+
+// -------------------------------------------------------------------------
 // Constructor
 // -------------------------------------------------------------------------
 
@@ -202,34 +252,10 @@ void ACamSimCamera::BeginPlay()
 			CesiumCameraId, Cfg.HFovDeg, CesiumPrefetchCameraId, PreloadFov);
 	}
 
-	// Tune Cesium3DTileset actors for smoother streaming and LOD quality
-	for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
-	{
-		It->MaximumSimultaneousTileLoads = Cfg.MaxSimultaneousTileLoads;
-		It->MaximumScreenSpaceError = Cfg.MaximumScreenSpaceError;
-		if (Cfg.MaximumCachedBytesMB > 0)
-		{
-			It->MaximumCachedBytes = static_cast<int64>(Cfg.MaximumCachedBytesMB) * 1024LL * 1024LL;
-		}
-		It->PreloadAncestors = true;
-		It->PreloadSiblings  = false;  // prefetch camera already covers adjacent tiles
-		It->ForbidHoles      = false;  // true forces parent tiles to stay rendered while children load,
-		                               // growing the render set linearly as camera moves
-		It->LoadingDescendantLimit = Cfg.LoadingDescendantLimit;
-
-		// Aggressively cull off-screen tiles: allow low-res placeholders outside the frustum
-		// instead of keeping full-detail tiles rendered. Reduces draw calls during camera motion.
-		It->EnforceCulledScreenSpaceError = true;
-		It->CulledScreenSpaceError = 200.0;
-		It->SetUseLodTransitions(Cfg.bUseLodTransitions);
-		It->LodTransitionLength    = Cfg.LodTransitionLength;
-		It->LogSelectionStats      = Cfg.bLogTileSelectionStats;
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tuned tileset '%s' (maxLoads=%d SSE=%.1f cacheMB=%d descLimit=%d lodBlend=%d logStats=%d)"),
-			*It->GetName(), Cfg.MaxSimultaneousTileLoads,
-			Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB,
-			Cfg.LoadingDescendantLimit, (int)Cfg.bUseLodTransitions,
-			(int)Cfg.bLogTileSelectionStats);
-	}
+	// Tune Cesium3DTileset actors for smoother streaming and LOD quality.
+	// Shared helper is also used by UCamSimSubsystem::HotReloadConfig so runtime
+	// tuning edits don't need a level reload.
+	ApplyCesiumTilesetTuning(GetWorld(), Cfg);
 
 	// Apply Cesium backend config (ion server, terrain source, imagery overlay).
 	// Must run after the streaming-params loop above.
@@ -432,8 +458,16 @@ void ACamSimCamera::BeginPlay()
 		}
 	}
 
-	// Allocate async GPU readback helper (non-blocking DMA: EnqueueCopy → IsReady → Lock)
-	GPUReadback = new FRHIGPUTextureReadback(TEXT("CamSimReadback"));
+	// Allocate a pool of async GPU readback helpers — one per RenderTarget.
+	// Round-robining with PendingReadbackTargetIndex avoids EnqueueCopy racing
+	// Lock/Unlock on a still-in-flight frame (matters once we drop
+	// FlushRenderingCommands from the per-tick poll path).
+	ColorReadbackPool.Reset();
+	for (int32 Idx = 0; Idx < RenderTargets.Num(); ++Idx)
+	{
+		ColorReadbackPool.Add(MakeUnique<FRHIGPUTextureReadback>(
+			*FString::Printf(TEXT("CamSimReadback_%d"), Idx)));
+	}
 
 	// Depth capture for ML training data (Phase 17A)
 	if (Cfg.MLTraining.bEnabled && Cfg.MLTraining.bDepthMap)
@@ -458,9 +492,15 @@ void ACamSimCamera::BeginPlay()
 		}
 		DepthCaptureTargetIndex = 0;
 		DepthCapture->TextureTarget = DepthRenderTargets[0];
-		DepthGPUReadback = new FRHIGPUTextureReadback(TEXT("CamSimDepthReadback"));
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: depth capture enabled (%dx%d PF_R32_FLOAT)"),
-			Cfg.CaptureWidth, Cfg.CaptureHeight);
+
+		DepthReadbackPool.Reset();
+		for (int32 Idx = 0; Idx < DepthRenderTargets.Num(); ++Idx)
+		{
+			DepthReadbackPool.Add(MakeUnique<FRHIGPUTextureReadback>(
+				*FString::Printf(TEXT("CamSimDepthReadback_%d"), Idx)));
+		}
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: depth capture enabled (%dx%d PF_R32_FLOAT, pool=%d)"),
+			Cfg.CaptureWidth, Cfg.CaptureHeight, DepthReadbackPool.Num());
 	}
 
 	// Create persistent encoder thread (decouples sensor post-process from encode)
@@ -522,18 +562,12 @@ void ACamSimCamera::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		Subsystem->RegisterCamera(nullptr);
 	}
 
-	// Free the GPU readback object — must happen before the render target is destroyed
-	if (GPUReadback)
-	{
-		delete GPUReadback;
-		GPUReadback = nullptr;
-	}
-
-	if (DepthGPUReadback)
-	{
-		delete DepthGPUReadback;
-		DepthGPUReadback = nullptr;
-	}
+	// Flush one last time so no in-flight poll command touches the pools after
+	// we drop them — we don't flush in the normal tick path but teardown is
+	// the one place we must guarantee no render-thread work races the delete.
+	FlushRenderingCommands();
+	ColorReadbackPool.Reset();
+	DepthReadbackPool.Reset();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -647,115 +681,26 @@ void ACamSimCamera::Tick(float DeltaTime)
 	// 27A — Push current sensor state into GPU MPC each tick (no-op when MPC not loaded)
 	if (GpuSensorMpc_) UpdateGpuSensorMpcParams();
 
-	// ── PHASE 1: Complete pending readback ──────────────────────────────
-	// RHI Lock()/Unlock() must run on the render thread — we enqueue a render
-	// command that does IsReady/Lock/Copy/Unlock, then FlushRenderingCommands()
-	// to synchronously wait.  The flush is cheap (~0.1ms on Metal) because the
-	// only pending work is the tiny poll command; it replaces the old async
-	// approach that wasted an entire tick waiting for the render-thread round-trip.
+	// ── PHASE 1: Complete pending readback (async; no FlushRenderingCommands) ─
+	// We enqueue a non-blocking render command each tick while a readback is in
+	// flight.  The command polls IsReady(); on success it copies the data into
+	// AsyncPixels_ and flips bPollComplete_ (seq-cst). Game thread consumes on
+	// the NEXT tick after bPollComplete_ becomes observable — no synchronous
+	// flush, so the render thread is free to keep rendering frame N+1 while
+	// frame N's DMA drains.
 	if (bReadbackPending && bReadbackDMAIssued.Load(EMemoryOrder::Relaxed))
 	{
-		const FCamSimConfig& Cfg = Subsystem->GetConfig();
-		const int32 ReadyPollsRequired = FMath::Max(1, Cfg.ReadbackReadyPolls);
-		FRHIGPUTextureReadback* Readback = GPUReadback;
-		FRHIGPUTextureReadback* DepthReadback = DepthGPUReadback;
-		UTextureRenderTarget2D* RT =
-			RenderTargets.IsValidIndex(PendingReadbackTargetIndex)
-				? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
-
-		// Phase 28G: mark readback issue before render command
-		if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::ReadbackIssue);
-
-		// Stack-local results filled by render command; safe because
-		// FlushRenderingCommands() blocks game thread until it completes.
-		TArray<FColor> Pixels;
-		TArray<float>  DepthPixels;
-		bool bGotPixels = false;
-		bool bReadbackFailed = false;
-
-		ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
-			[&, Readback, DepthReadback, RT, ReadyPollsRequired](FRHICommandListImmediate&)
+		// First: if a prior poll already completed, consume it now.
+		if (bPollComplete_.Load(EMemoryOrder::SequentiallyConsistent))
 		{
-			if (!Readback || !Readback->IsReady())
-			{
-				ReadbackReadyStreakGT = 0;
-				return;
-			}
-			if (ReadbackReadyStreakGT < 255) ++ReadbackReadyStreakGT;
-			if (ReadbackReadyStreakGT < ReadyPollsRequired) return;
+			if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::ReadbackComplete);
 
-			int32 RowPitch = 0;
-			void* RawData = Readback->Lock(RowPitch);
-			if (!RawData || !RT)
-			{
-				if (RawData) Readback->Unlock();
-				bReadbackFailed = true;
-				return;
-			}
-
-			const int32 W = RT->SizeX;
-			const int32 H = RT->SizeY;
-			const EPixelFormat PixelFormat = RT->GetFormat();
-			const bool bIsBgra = (PixelFormat == PF_B8G8R8A8);
-			const bool bIsRgba = (PixelFormat == PF_R8G8B8A8);
-			if (!bIsBgra && !bIsRgba)
-			{
-				Readback->Unlock();
-				bReadbackFailed = true;
-				return;
-			}
-
-			Pixels.SetNumUninitialized(W * H);
-			CamSimConvertReadbackPixels(RawData, RowPitch, W, H,
-				PixelFormat, Cfg.ReadbackFormat, Cfg.bSwapRBReadback,
-				Pixels, PendingFrameIndex);
-			Readback->Unlock();
-
-			// Opportunistic depth readback
-			if (DepthReadback && DepthReadback->IsReady())
-			{
-				if (DepthReadbackReadyStreakGT < 255) ++DepthReadbackReadyStreakGT;
-				if (DepthReadbackReadyStreakGT >= ReadyPollsRequired)
-				{
-					int32 DepthRowPitch = 0;
-					void* DepthRaw = DepthReadback->Lock(DepthRowPitch);
-					if (DepthRaw)
-					{
-						const int32 CaptureW = Cfg.CaptureWidth;
-						const int32 CaptureH = Cfg.CaptureHeight;
-						DepthPixels.SetNumUninitialized(CaptureW * CaptureH);
-						const uint8* Src = static_cast<const uint8*>(DepthRaw);
-						float*       Dst = DepthPixels.GetData();
-						const int32  RowBytes = CaptureW * sizeof(float);
-						for (int32 Row = 0; Row < CaptureH; ++Row)
-						{
-							FMemory::Memcpy(Dst + Row * CaptureW, Src + Row * DepthRowPitch, RowBytes);
-						}
-						for (float& V : DepthPixels) { V /= 100.0f; }
-						DepthReadback->Unlock();
-					}
-					// else: Lock() returned null — do NOT call Unlock() (UB)
-				}
-			}
-			else
-			{
-				DepthReadbackReadyStreakGT = 0;
-			}
-
-			bGotPixels = true;
-		});
-
-		// Synchronously wait for the render command — game thread was idle during
-		// the old async poll anyway, so this adds no effective latency.
-		FlushRenderingCommands();
-
-		// Phase 28G: mark readback complete after flush
-		if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::ReadbackComplete);
-
-		if (bGotPixels)
-		{
+			TArray<FColor> Pixels      = MoveTemp(AsyncPixels_);
+			TArray<float>  DepthPixels = MoveTemp(AsyncDepth_);
+			bPollComplete_.Store(false, EMemoryOrder::SequentiallyConsistent);
 			bReadbackPending = false;
-			PendingReadbackTargetIndex = INDEX_NONE;
+			PendingReadbackTargetIndex      = INDEX_NONE;
+			PendingDepthReadbackTargetIndex = INDEX_NONE;
 
 			if (!bSensorBusy)
 			{
@@ -773,13 +718,127 @@ void ACamSimCamera::Tick(float DeltaTime)
 				bReadbackResultReady_ = true;
 			}
 		}
-		else if (bReadbackFailed)
+		else if (bPollFailed_.Load(EMemoryOrder::SequentiallyConsistent))
 		{
 			if (bTrackFrameDrops_) FrameDropStats_.ReadbackTimeout++;
-			bReadbackPending = false;
-			PendingReadbackTargetIndex = INDEX_NONE;
 			UE_LOG(LogCamSim, Warning,
 				TEXT("CamSimReadback frame %llu: lock returned null or bad format"), PendingFrameIndex);
+			AsyncPixels_.Reset();
+			AsyncDepth_.Reset();
+			bPollFailed_.Store(false, EMemoryOrder::SequentiallyConsistent);
+			bReadbackPending = false;
+			PendingReadbackTargetIndex      = INDEX_NONE;
+			PendingDepthReadbackTargetIndex = INDEX_NONE;
+		}
+		else
+		{
+			// No result yet — enqueue another poll. Capture every piece of
+			// config by value so the lambda is safe to run after the enclosing
+			// scope unwinds.
+			const FCamSimConfig& Cfg = Subsystem->GetConfig();
+			const int32 ReadyPollsRequired = FMath::Max(1, Cfg.ReadbackReadyPolls);
+			FRHIGPUTextureReadback* Readback =
+				ColorReadbackPool.IsValidIndex(PendingReadbackTargetIndex)
+					? ColorReadbackPool[PendingReadbackTargetIndex].Get() : nullptr;
+			FRHIGPUTextureReadback* DepthReadback =
+				DepthReadbackPool.IsValidIndex(PendingDepthReadbackTargetIndex)
+					? DepthReadbackPool[PendingDepthReadbackTargetIndex].Get() : nullptr;
+			UTextureRenderTarget2D* RT =
+				RenderTargets.IsValidIndex(PendingReadbackTargetIndex)
+					? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
+
+			if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::ReadbackIssue);
+
+			const int32  CaptureW       = Cfg.CaptureWidth;
+			const int32  CaptureH       = Cfg.CaptureHeight;
+			const auto   ReadbackFormat = Cfg.ReadbackFormat;
+			const bool   bSwapRB        = Cfg.bSwapRBReadback;
+			const uint64 FrameIdx       = PendingFrameIndex;
+			const uint32 CaptureGen     = PollGeneration_.Load(EMemoryOrder::Relaxed);
+
+			ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
+				[this, Readback, DepthReadback, RT, ReadyPollsRequired,
+				 CaptureW, CaptureH, ReadbackFormat, bSwapRB, FrameIdx, CaptureGen]
+				(FRHICommandListImmediate&)
+			{
+				// Stale poll from a previous frame — game thread has already advanced.
+				if (PollGeneration_.Load(EMemoryOrder::Relaxed) != CaptureGen) return;
+
+				// Idempotent: if a previous poll on this pending frame already
+				// delivered (or failed), subsequent polls are a no-op.
+				if (bPollComplete_.Load(EMemoryOrder::Relaxed)) return;
+				if (bPollFailed_  .Load(EMemoryOrder::Relaxed)) return;
+
+				if (!Readback || !Readback->IsReady())
+				{
+					RenderReadyStreak_ = 0;
+					return;
+				}
+				if (RenderReadyStreak_ < 255) ++RenderReadyStreak_;
+				if (RenderReadyStreak_ < ReadyPollsRequired) return;
+
+				int32 RowPitch = 0;
+				void* RawData = Readback->Lock(RowPitch);
+				if (!RawData || !RT)
+				{
+					if (RawData) Readback->Unlock();
+					bPollFailed_.Store(true, EMemoryOrder::SequentiallyConsistent);
+					return;
+				}
+
+				const int32 W = RT->SizeX;
+				const int32 H = RT->SizeY;
+				const EPixelFormat PixelFormat = RT->GetFormat();
+				const bool bIsBgra = (PixelFormat == PF_B8G8R8A8);
+				const bool bIsRgba = (PixelFormat == PF_R8G8B8A8);
+				if (!bIsBgra && !bIsRgba)
+				{
+					Readback->Unlock();
+					bPollFailed_.Store(true, EMemoryOrder::SequentiallyConsistent);
+					return;
+				}
+
+				AsyncPixels_.SetNumUninitialized(W * H);
+				CamSimConvertReadbackPixels(RawData, RowPitch, W, H,
+					PixelFormat, ReadbackFormat, bSwapRB, AsyncPixels_, FrameIdx);
+				Readback->Unlock();
+
+				// Opportunistic depth readback — may not be ready even if color is;
+				// skip on this tick and try again next one.
+				AsyncDepth_.Reset();
+				if (DepthReadback && DepthReadback->IsReady())
+				{
+					if (RenderDepthReadyStreak_ < 255) ++RenderDepthReadyStreak_;
+					if (RenderDepthReadyStreak_ >= ReadyPollsRequired)
+					{
+						int32 DepthRowPitch = 0;
+						void* DepthRaw = DepthReadback->Lock(DepthRowPitch);
+						if (DepthRaw)
+						{
+							AsyncDepth_.SetNumUninitialized(CaptureW * CaptureH);
+							const uint8* Src = static_cast<const uint8*>(DepthRaw);
+							float*       Dst = AsyncDepth_.GetData();
+							const int32  RowBytes = CaptureW * sizeof(float);
+							for (int32 Row = 0; Row < CaptureH; ++Row)
+							{
+								FMemory::Memcpy(Dst + Row * CaptureW,
+									Src + Row * DepthRowPitch, RowBytes);
+							}
+							for (float& V : AsyncDepth_) { V /= 100.0f; }
+							DepthReadback->Unlock();
+						}
+						// else: Lock() returned null — do NOT call Unlock() (UB)
+					}
+				}
+				else
+				{
+					RenderDepthReadyStreak_ = 0;
+				}
+
+				// Release-store: data writes above are visible to the game
+				// thread once it observes bPollComplete_ = true.
+				bPollComplete_.Store(true, EMemoryOrder::SequentiallyConsistent);
+			});
 		}
 	}
 
@@ -1326,8 +1385,11 @@ void ACamSimCamera::UpdateCesiumCamera()
 
 void ACamSimCamera::CaptureAndEncode()
 {
-	if (!SceneCapture || !GPUReadback) return;
+	if (!SceneCapture) return;
 	if (!RenderTargets.IsValidIndex(CaptureTargetIndex) || !RenderTargets[CaptureTargetIndex]) return;
+	if (!ColorReadbackPool.IsValidIndex(CaptureTargetIndex) ||
+	    !ColorReadbackPool[CaptureTargetIndex])
+		return;
 
 	// Capture entity annotation snapshot BEFORE setting bSensorBusy (Phase 17D)
 	if (Subsystem)
@@ -1345,6 +1407,16 @@ void ACamSimCamera::CaptureAndEncode()
 				Cfg.CaptureWidth, Cfg.CaptureHeight);
 			ViewProj.ImageWidth  = Cfg.CaptureWidth;
 			ViewProj.ImageHeight = Cfg.CaptureHeight;
+
+			// Cheap cone-cull hints — inflate the cone by ~30% beyond HFOV so
+			// entities barely outside the projection still get projected (the
+			// AABB-projection code handles clipping/truncation correctly).
+			ViewProj.CameraLocation = SceneCapture->GetComponentLocation();
+			ViewProj.CameraForward  = SceneCapture->GetForwardVector();
+			const float ConeHalfAngleDeg = FMath::Min(90.0f, SceneCapture->FOVAngle * 0.65f);
+			ViewProj.CullConeHalfAngleCos =
+				FMath::Cos(FMath::DegreesToRadians(ConeHalfAngleDeg));
+
 			Collector->SetPendingEntitySnapshot(
 				EntityMgr->GetEntitySnapshot(ViewProj),
 				Cfg.CaptureWidth, Cfg.CaptureHeight);
@@ -1365,36 +1437,48 @@ void ACamSimCamera::CaptureAndEncode()
 	PendingFrameIndex = FrameIndex++;
 	PendingTelemetry  = CurrentTelemetry;
 
-	// Reset game-thread readback state for the new capture
+	// Reset game-thread readback state for the new capture. Bumping the poll
+	// generation is what lets stale polls from the previous frame safely no-op.
 	bReadbackDMAIssued.Store(false, EMemoryOrder::Relaxed);
-	ReadbackReadyStreakGT = 0;
-	DepthReadbackReadyStreakGT = 0;
+	bPollComplete_   .Store(false, EMemoryOrder::SequentiallyConsistent);
+	bPollFailed_     .Store(false, EMemoryOrder::SequentiallyConsistent);
+	PollGeneration_  .Store(PollGeneration_.Load(EMemoryOrder::Relaxed) + 1,
+	                        EMemoryOrder::SequentiallyConsistent);
+	RenderReadyStreak_      = 0;
+	RenderDepthReadyStreak_ = 0;
 	bReadbackPending = true;
 
 	// Trigger depth capture alongside color (Phase 17A)
 	UTextureRenderTarget2D* DepthCaptureRT = nullptr;
-	if (DepthCapture && DepthGPUReadback && DepthRenderTargets.IsValidIndex(DepthCaptureTargetIndex))
+	int32 DepthPoolIdx = INDEX_NONE;
+	if (DepthCapture && DepthRenderTargets.IsValidIndex(DepthCaptureTargetIndex))
 	{
 		DepthCaptureRT = DepthRenderTargets[DepthCaptureTargetIndex].Get();
 		DepthCapture->TextureTarget = DepthCaptureRT;
 		// Sync relative rotation with SceneCapture so depth aligns with color
 		DepthCapture->SetRelativeRotation(SceneCapture->GetRelativeRotation());
 		DepthCapture->CaptureScene();
+		DepthPoolIdx = DepthCaptureTargetIndex;
 		DepthCaptureTargetIndex = (DepthCaptureTargetIndex + 1) % DepthRenderTargets.Num();
 	}
+	PendingDepthReadbackTargetIndex = DepthPoolIdx;
 
 	// Enqueue the async GPU→CPU DMA on the render thread (returns immediately)
-	UTextureRenderTarget2D*  RT       =
-		RenderTargets.IsValidIndex(PendingReadbackTargetIndex) ? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
-	FRHIGPUTextureReadback*  Readback = GPUReadback;
+	UTextureRenderTarget2D*  RT =
+		RenderTargets.IsValidIndex(PendingReadbackTargetIndex)
+			? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
+	FRHIGPUTextureReadback*  Readback = ColorReadbackPool[PendingReadbackTargetIndex].Get();
 	if (!RT)
 	{
 		bReadbackPending = false;
 		PendingReadbackTargetIndex = INDEX_NONE;
+		PendingDepthReadbackTargetIndex = INDEX_NONE;
 		return;
 	}
 
-	FRHIGPUTextureReadback* DepthReadback = DepthGPUReadback;
+	FRHIGPUTextureReadback* DepthReadback =
+		DepthReadbackPool.IsValidIndex(DepthPoolIdx)
+			? DepthReadbackPool[DepthPoolIdx].Get() : nullptr;
 
 	ENQUEUE_RENDER_COMMAND(CamSimEnqueueReadback)(
 		[this, RT, Readback, DepthCaptureRT, DepthReadback](FRHICommandListImmediate& RHICmdList)

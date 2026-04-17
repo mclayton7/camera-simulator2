@@ -106,7 +106,7 @@ void FCotSender::Tick(float DeltaTime, const FCamSimTelemetry& Telemetry)
 	AccumulatedSec -= Config.Streaming.CotIntervalSec;
 
 	const FString Xml = BuildCotXml(Telemetry);
-	SendCotPacket(Xml);
+	if (!Xml.IsEmpty()) SendCotPacket(Xml);
 }
 
 // -------------------------------------------------------------------------
@@ -115,6 +115,26 @@ void FCotSender::Tick(float DeltaTime, const FCamSimTelemetry& Telemetry)
 
 FString FCotSender::BuildCotXml(const FCamSimTelemetry& Telemetry) const
 {
+	// Reject frames with non-finite or out-of-bounds geodetic before we emit
+	// XML that would poison downstream ATAK/TAK databases. Return empty so
+	// the caller skips Send(); a real telemetry frame will follow at the next
+	// CotIntervalSec interval.
+	if (!FMath::IsFinite(Telemetry.Latitude) || !FMath::IsFinite(Telemetry.Longitude)
+	    || !FMath::IsFinite(Telemetry.Altitude) || !FMath::IsFinite(Telemetry.Yaw))
+	{
+		UE_LOG(LogCamSim, Warning,
+			TEXT("FCotSender: non-finite telemetry (lat=%f lon=%f alt=%f yaw=%f) — skipping frame"),
+			Telemetry.Latitude, Telemetry.Longitude, Telemetry.Altitude, Telemetry.Yaw);
+		return FString();
+	}
+	if (FMath::Abs(Telemetry.Latitude) > 90.0 || FMath::Abs(Telemetry.Longitude) > 180.0)
+	{
+		UE_LOG(LogCamSim, Warning,
+			TEXT("FCotSender: out-of-bounds geodetic (%f, %f) — skipping frame"),
+			Telemetry.Latitude, Telemetry.Longitude);
+		return FString();
+	}
+
 	const FDateTime Now = FDateTime::UtcNow();
 	const FDateTime Stale = Now + FTimespan::FromSeconds(
 		static_cast<double>(Config.Streaming.CotIntervalSec) * 2.0);

@@ -65,7 +65,11 @@ private:
 
 	TArray<FLatencyRecord> Records;
 	FLatencyRecord CurrentFrame;
-	TAtomic<uint32> WriteIndex { 0 };
+	// 64-bit write index so `WriteIndex % BufferCapacity` stays valid past the
+	// ~4.5-year point at 30 fps where a uint32 would overflow. (uint32 also
+	// required BufferCapacity to be a power of two for the wrap math to be
+	// exact after overflow; uint64 sidesteps that constraint entirely.)
+	TAtomic<uint64> WriteIndex { 0 };
 	int32 BufferCapacity = 300;
 	TAtomic<int32> CommittedCount { 0 };
 

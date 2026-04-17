@@ -13,6 +13,8 @@
 #include "CesiumGlobeAnchorComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/AssetManager.h"
+#include "Engine/StreamableManager.h"
 #include "glTFRuntimeFunctionLibrary.h"
 #include "glTFRuntimeAsset.h"
 
@@ -204,62 +206,144 @@ void ACamSimEntity::SetEntityType(uint16 Type)
 		return;
 	}
 
+	// Keep entity invisible until the mesh is resident — avoids the visual
+	// artefact where a burst of spawns would otherwise show zero-bounds actors
+	// at (0,0,0) while synchronous mesh cook/stream drains the game thread.
+	SkelMeshComp->SetVisibility(false);
+	StaticMeshComp->SetVisibility(false);
+
 	if (Entry->bSkeletal)
 	{
 		// Check mesh cache first (Phase 4)
 		USkeletalMesh* Mesh = TypeTable ? TypeTable->GetCachedSkeletalMesh(Type) : nullptr;
-		if (!Mesh)
-		{
-			Mesh = LoadSkeletalMeshFromPath(Entry->AssetPath);
-			if (Mesh && TypeTable)
-			{
-				const_cast<FEntityTypeTable*>(TypeTable)->SetCachedSkeletalMesh(Type, Mesh);
-			}
-		}
 		if (Mesh)
 		{
-			SkelMeshComp->SetSkinnedAsset(Mesh);
-			SkelMeshComp->SetRelativeRotation(Entry->ModelRotation);
-			SkelMeshComp->SetRelativeScale3D(FVector(Entry->ModelScale));
-			SkelMeshComp->SetVisibility(true);
-			StaticMeshComp->SetVisibility(false);
-			UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: loaded skeletal mesh '%s' (type %u, scale=%.3f)"),
-				EntityId, *Entry->AssetPath, Type, Entry->ModelScale);
+			ApplyLoadedSkeletalMesh(Mesh, *Entry, Type);
+			return;
 		}
-		else
+		// glTF path: must go through the runtime plugin — stays synchronous.
+		if (IsGltfPath(Entry->AssetPath))
 		{
-			UE_LOG(LogCamSim, Warning, TEXT("ACamSimEntity[%u]: failed to load skeletal mesh '%s'"),
+			Mesh = LoadSkeletalMeshFromPath(Entry->AssetPath);
+			if (Mesh && TypeTable) TypeTable->SetCachedSkeletalMesh(Type, Mesh);
+			if (Mesh) ApplyLoadedSkeletalMesh(Mesh, *Entry, Type);
+			else UE_LOG(LogCamSim, Warning,
+				TEXT("ACamSimEntity[%u]: failed to load skeletal glTF '%s'"),
 				EntityId, *Entry->AssetPath);
+			return;
 		}
+		// UE content path — async load so a spawn burst doesn't stall the tick.
+		RequestAsyncSkeletalMesh(*Entry, Type);
 	}
 	else
 	{
-		// Check mesh cache first (Phase 4)
 		UStaticMesh* Mesh = TypeTable ? TypeTable->GetCachedStaticMesh(Type) : nullptr;
-		if (!Mesh)
-		{
-			Mesh = LoadStaticMeshFromPath(Entry->AssetPath);
-			if (Mesh && TypeTable)
-			{
-				const_cast<FEntityTypeTable*>(TypeTable)->SetCachedStaticMesh(Type, Mesh);
-			}
-		}
 		if (Mesh)
 		{
-			StaticMeshComp->SetStaticMesh(Mesh);
-			StaticMeshComp->SetRelativeRotation(Entry->ModelRotation);
-			StaticMeshComp->SetRelativeScale3D(FVector(Entry->ModelScale));
-			StaticMeshComp->SetVisibility(true);
-			SkelMeshComp->SetVisibility(false);
-			UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: loaded static mesh '%s' (type %u, scale=%.3f)"),
-				EntityId, *Entry->AssetPath, Type, Entry->ModelScale);
+			ApplyLoadedStaticMesh(Mesh, *Entry, Type);
+			return;
 		}
-		else
+		if (IsGltfPath(Entry->AssetPath))
 		{
-			UE_LOG(LogCamSim, Warning, TEXT("ACamSimEntity[%u]: failed to load static mesh '%s'"),
+			Mesh = LoadStaticMeshFromPath(Entry->AssetPath);
+			if (Mesh && TypeTable) TypeTable->SetCachedStaticMesh(Type, Mesh);
+			if (Mesh) ApplyLoadedStaticMesh(Mesh, *Entry, Type);
+			else UE_LOG(LogCamSim, Warning,
+				TEXT("ACamSimEntity[%u]: failed to load static glTF '%s'"),
 				EntityId, *Entry->AssetPath);
+			return;
 		}
+		RequestAsyncStaticMesh(*Entry, Type);
 	}
+}
+
+// -------------------------------------------------------------------------
+// Async mesh loading (UE content paths) — callbacks run on the game thread
+// when FStreamableManager finishes streaming the asset in.
+// -------------------------------------------------------------------------
+
+void ACamSimEntity::ApplyLoadedSkeletalMesh(USkeletalMesh* Mesh,
+                                             const FEntityTypeEntry& Entry,
+                                             uint16 Type)
+{
+	if (!Mesh || !SkelMeshComp) return;
+	SkelMeshComp->SetSkinnedAsset(Mesh);
+	SkelMeshComp->SetRelativeRotation(Entry.ModelRotation);
+	SkelMeshComp->SetRelativeScale3D(FVector(Entry.ModelScale));
+	SkelMeshComp->SetVisibility(true);
+	StaticMeshComp->SetVisibility(false);
+	UE_LOG(LogCamSim, Log,
+		TEXT("ACamSimEntity[%u]: loaded skeletal mesh '%s' (type %u, scale=%.3f)"),
+		EntityId, *Entry.AssetPath, Type, Entry.ModelScale);
+}
+
+void ACamSimEntity::ApplyLoadedStaticMesh(UStaticMesh* Mesh,
+                                           const FEntityTypeEntry& Entry,
+                                           uint16 Type)
+{
+	if (!Mesh || !StaticMeshComp) return;
+	StaticMeshComp->SetStaticMesh(Mesh);
+	StaticMeshComp->SetRelativeRotation(Entry.ModelRotation);
+	StaticMeshComp->SetRelativeScale3D(FVector(Entry.ModelScale));
+	StaticMeshComp->SetVisibility(true);
+	SkelMeshComp->SetVisibility(false);
+	UE_LOG(LogCamSim, Log,
+		TEXT("ACamSimEntity[%u]: loaded static mesh '%s' (type %u, scale=%.3f)"),
+		EntityId, *Entry.AssetPath, Type, Entry.ModelScale);
+}
+
+void ACamSimEntity::RequestAsyncSkeletalMesh(const FEntityTypeEntry& Entry, uint16 Type)
+{
+	const FSoftObjectPath SoftPath(Entry.AssetPath);
+	if (!SoftPath.IsValid())
+	{
+		UE_LOG(LogCamSim, Warning,
+			TEXT("ACamSimEntity[%u]: invalid skeletal mesh path '%s'"),
+			EntityId, *Entry.AssetPath);
+		return;
+	}
+	const uint16 PendingType = Type;
+	const FEntityTypeEntry EntryCopy = Entry;  // callback runs later; capture by value
+	FStreamableManager& Mgr = UAssetManager::GetStreamableManager();
+	PendingMeshHandle_ = Mgr.RequestAsyncLoad(
+		SoftPath,
+		FStreamableDelegate::CreateWeakLambda(this, [this, SoftPath, EntryCopy, PendingType]()
+		{
+			USkeletalMesh* Mesh = Cast<USkeletalMesh>(SoftPath.ResolveObject());
+			if (Mesh && TypeTable) TypeTable->SetCachedSkeletalMesh(PendingType, Mesh);
+			if (Mesh) ApplyLoadedSkeletalMesh(Mesh, EntryCopy, PendingType);
+			else UE_LOG(LogCamSim, Warning,
+				TEXT("ACamSimEntity[%u]: async skeletal load failed for '%s'"),
+				EntityId, *EntryCopy.AssetPath);
+		}),
+		FStreamableManager::AsyncLoadHighPriority);
+}
+
+void ACamSimEntity::RequestAsyncStaticMesh(const FEntityTypeEntry& Entry, uint16 Type)
+{
+	const FSoftObjectPath SoftPath(Entry.AssetPath);
+	if (!SoftPath.IsValid())
+	{
+		UE_LOG(LogCamSim, Warning,
+			TEXT("ACamSimEntity[%u]: invalid static mesh path '%s'"),
+			EntityId, *Entry.AssetPath);
+		return;
+	}
+	const uint16 PendingType = Type;
+	const FEntityTypeEntry EntryCopy = Entry;
+	FStreamableManager& Mgr = UAssetManager::GetStreamableManager();
+	PendingMeshHandle_ = Mgr.RequestAsyncLoad(
+		SoftPath,
+		FStreamableDelegate::CreateWeakLambda(this, [this, SoftPath, EntryCopy, PendingType]()
+		{
+			UStaticMesh* Mesh = Cast<UStaticMesh>(SoftPath.ResolveObject());
+			if (Mesh && TypeTable) TypeTable->SetCachedStaticMesh(PendingType, Mesh);
+			if (Mesh) ApplyLoadedStaticMesh(Mesh, EntryCopy, PendingType);
+			else UE_LOG(LogCamSim, Warning,
+				TEXT("ACamSimEntity[%u]: async static load failed for '%s'"),
+				EntityId, *EntryCopy.AssetPath);
+		}),
+		FStreamableManager::AsyncLoadHighPriority);
 }
 
 // -------------------------------------------------------------------------
@@ -317,16 +401,15 @@ void ACamSimEntity::ApplyPose(const FCigiEntityState& S)
 	if (!GlobeAnchor) return;
 
 	// Update DR base so dead-reckoning doesn't drift after a new packet
-	DR.Lat   = S.Latitude;
-	DR.Lon   = S.Longitude;
-	DR.Alt   = S.Altitude;
-	DR.Yaw   = S.Yaw;
-	DR.Pitch = S.Pitch;
-	DR.Roll  = S.Roll;
+	DR.Lat = S.Latitude;
+	DR.Lon = S.Longitude;
+	DR.Alt = S.Altitude;
+	const FRotator PoseRot(S.Pitch, S.Yaw, S.Roll);
+	DR.Orientation = PoseRot.Quaternion();
 
 	GlobeAnchor->MoveToLongitudeLatitudeHeight(
 		FVector(S.Longitude, S.Latitude, S.Altitude));
-	SetActorRotation(FRotator(S.Pitch, S.Yaw, S.Roll));
+	SetActorRotation(PoseRot);
 
 	// One-time log to confirm the entity reached a real UE world position.
 	// (If this prints 0,0,0 the GlobeAnchor has not found a CesiumGeoreference.)
@@ -619,29 +702,35 @@ void ACamSimEntity::UpdateDeadReckoning(float Dt)
 {
 	if (!DR.bHasRate || !GlobeAnchor) return;
 
-	// Integrate angular rates
-	float NewYaw   = DR.Yaw   + DR.YawRate   * Dt;
-	float NewPitch = DR.Pitch + DR.PitchRate  * Dt;
-	float NewRoll  = DR.Roll  + DR.RollRate   * Dt;
+	// Integrate body-frame angular velocity directly on the quaternion.
+	// Omega axes match UE's FRotator convention: X=Roll, Y=Pitch, Z=Yaw.
+	// Building the delta quaternion from an axis-angle pair (rather than from
+	// a FRotator) dodges the FRotator→FQuat gimbal-lock singularity at
+	// pitch = ±90° that would otherwise produce discontinuous heading.
+	const FVector Omega(
+		FMath::DegreesToRadians(DR.RollRate),
+		FMath::DegreesToRadians(DR.PitchRate),
+		FMath::DegreesToRadians(DR.YawRate));
+	const float OmegaMag = Omega.Size();
+	const FQuat DeltaRot = (OmegaMag > SMALL_NUMBER)
+		? FQuat(Omega / OmegaMag, OmegaMag * Dt)
+		: FQuat::Identity;
+	DR.Orientation = (DR.Orientation * DeltaRot).GetNormalized();
 
-	// Body → NED velocity: X=forward(North), Y=right(East), Z=down
-	FQuat Q = FQuat(FRotator(DR.Pitch, DR.Yaw, DR.Roll));
-	FVector WorldVel = Q.RotateVector(FVector(DR.XRate, DR.YRate, DR.ZRate));
+	// Body → NED linear velocity: X=forward(North), Y=right(East), Z=down
+	const FVector WorldVel =
+		DR.Orientation.RotateVector(FVector(DR.XRate, DR.YRate, DR.ZRate));
 
 	// Integrate position in WGS-84 (linear approximation valid for small Dt)
-	double NewLat = DR.Lat + (WorldVel.X * Dt) / 111320.0;
-	double NewLon = DR.Lon + (WorldVel.Y * Dt) /
+	const double NewLat = DR.Lat + (WorldVel.X * Dt) / 111320.0;
+	const double NewLon = DR.Lon + (WorldVel.Y * Dt) /
 		(111320.0 * FMath::Cos(DR.Lat * PI / 180.0));
-	float  NewAlt = DR.Alt - WorldVel.Z * Dt;  // CIGI Z=down, alt increases upward
+	const float  NewAlt = DR.Alt - WorldVel.Z * Dt;  // CIGI Z=down, alt increases upward
 
-	// Update DR state
-	DR.Yaw   = NewYaw;
-	DR.Pitch = NewPitch;
-	DR.Roll  = NewRoll;
-	DR.Lat   = NewLat;
-	DR.Lon   = NewLon;
-	DR.Alt   = NewAlt;
+	DR.Lat = NewLat;
+	DR.Lon = NewLon;
+	DR.Alt = NewAlt;
 
 	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(NewLon, NewLat, NewAlt));
-	SetActorRotation(FRotator(NewPitch, NewYaw, NewRoll));
+	SetActorRotation(DR.Orientation.Rotator());
 }

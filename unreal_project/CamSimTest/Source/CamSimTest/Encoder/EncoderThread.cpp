@@ -48,7 +48,15 @@ void FEncoderThread::Stop()
 
 void FEncoderThread::Enqueue(FProcessedFrame&& Frame)
 {
-	Queue.Enqueue(MoveTemp(Frame));
+	// Returns false on overflow — we drop the newest frame and bump the queue's
+	// internal drop counter, so live video stays close to real-time instead of
+	// accumulating stale backlog when the encoder can't keep up.
+	if (!Queue.Enqueue(MoveTemp(Frame)))
+	{
+		UE_LOG(LogCamSim, Verbose,
+			TEXT("FEncoderThread: queue saturated (cap=%d); dropped frame (total=%llu)"),
+			Queue.GetCapacity(), (uint64)Queue.GetDropCount());
+	}
 	WakeEvent->Trigger();
 }
 

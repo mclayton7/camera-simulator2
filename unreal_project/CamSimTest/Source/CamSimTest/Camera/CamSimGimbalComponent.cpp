@@ -91,10 +91,9 @@ void UCamSimGimbalComponent::ApplyGimbalSlew(
 	auto SlewAngle = [MaxRate, DeltaTime](float Current, float Target) -> float
 	{
 		if (MaxRate <= 0.0f) return Target;  // unlimited — snap instantly
-		float Delta = Target - Current;
-		// Shortest path wrap
-		while (Delta >  180.0f) Delta -= 360.0f;
-		while (Delta < -180.0f) Delta += 360.0f;
+		// UnwindDegrees is O(1) via fmod instead of the while-loop form below,
+		// and folds the [-180,180] shortest-path normalisation into one call.
+		const float Delta    = FMath::UnwindDegrees(Target - Current);
 		const float MaxDelta = MaxRate * DeltaTime;
 		return Current + FMath::Clamp(Delta, -MaxDelta, MaxDelta);
 	};

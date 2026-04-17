@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "HAL/Runnable.h"
-#include "Containers/SpscQueue.h"
+#include "CIGI/BoundedSpscQueue.h"
 #include "DIS/DisPduTypes.h"
 
 struct FCamSimConfig;
@@ -59,12 +59,28 @@ private:
 	FRunnableThread* Thread    = nullptr;
 	FSocket*         Socket    = nullptr;
 	TAtomic<bool>    bShouldRun;
+	// Auto-reset event: Stop() triggers it so the receiver wakes instantly
+	// from its non-blocking recv poll instead of stalling shutdown by up to
+	// one poll interval.
+	FEvent*          ShutdownEvent = nullptr;
 	TAtomic<uint64>  ReceivedPduCount { 0 };
 	TAtomic<uint64>  ReceivedPacketCount { 0 };
 
-	// SPSC queue: receiver thread produces, game thread consumes
-	TSpscQueue<FDisEntityStatePdu> EntityStatePduQueue;
-	TSpscQueue<FDisDesignatorPdu> DesignatorPduQueue;
+	// Bounded SPSC queues: receiver thread produces, game thread consumes.
+	// 2048 entity states absorbs a ~1 s game-thread stall at typical DIS fan-in
+	// (many exercises broadcast ~500 PDUs/sec). Drop-newest on overflow.
+	static constexpr int32 DisEntityQueueCapacity     = 2048;
+	static constexpr int32 DisDesignatorQueueCapacity = 256;
+	TBoundedSpscQueue<FDisEntityStatePdu> EntityStatePduQueue { DisEntityQueueCapacity };
+	TBoundedSpscQueue<FDisDesignatorPdu>  DesignatorPduQueue  { DisDesignatorQueueCapacity };
 
+public:
+	/** Total drops across DIS queues — for /metrics exposure. */
+	uint64 GetTotalDropCount() const
+	{
+		return EntityStatePduQueue.GetDropCount() + DesignatorPduQueue.GetDropCount();
+	}
+
+private:
 	bool CreateSocket();
 };

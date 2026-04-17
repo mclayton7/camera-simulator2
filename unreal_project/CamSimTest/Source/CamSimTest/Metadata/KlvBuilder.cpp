@@ -288,6 +288,16 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 
 TArray<uint8> FKlvBuilder::BuildMisbST0601(const FCamSimTelemetry& T)
 {
+	TArray<uint8> Packet;
+	BuildMisbST0601Into(T, Packet);
+	return Packet;
+}
+
+void FKlvBuilder::BuildMisbST0601Into(const FCamSimTelemetry& T, TArray<uint8>& Packet)
+{
+	// Caller keeps Packet alive across frames so the allocation is amortised.
+	Packet.Reset();
+
 	// Build value payload by iterating the descriptor table
 	TArray<uint8> Value;
 	Value.Reserve(200);
@@ -301,7 +311,7 @@ TArray<uint8> FKlvBuilder::BuildMisbST0601(const FCamSimTelemetry& T)
 	constexpr int32 CrcTagLen = 4;  // tag(1) + len(1) + crc(2)
 
 	// Assemble full packet: UL key + BER length + TLV payload + CRC tag
-	TArray<uint8> Packet;
+	// (Packet was Reset() above; Reserve preserves the amortised capacity.)
 	Packet.Reserve(16 + 3 + Value.Num() + CrcTagLen);
 
 	Packet.Append(kST0601_UL, 16);
@@ -334,8 +344,6 @@ TArray<uint8> FKlvBuilder::BuildMisbST0601(const FCamSimTelemetry& T)
 	Packet.Add(2);   // length
 	Packet.Add(static_cast<uint8>((Checksum >> 8) & 0xFF));
 	Packet.Add(static_cast<uint8>(Checksum & 0xFF));
-
-	return Packet;
 }
 
 // -------------------------------------------------------------------------

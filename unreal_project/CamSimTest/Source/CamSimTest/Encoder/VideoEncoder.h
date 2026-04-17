@@ -78,6 +78,19 @@ private:
 	// Scratch packet for av_interleaved_write_frame
 	AVPacket*        Pkt         = nullptr;
 
+	/**
+	 * Scratch buffer reused across frames when the limited-range chroma
+	 * fallback path runs (i.e. sws_setColorspaceDetails didn't take).
+	 * Sized once in Open() to CaptureWidth * CaptureHeight * 4. Pre-allocating
+	 * avoids ~3.6 MB / frame heap churn at 720p on the fallback path.
+	 */
+	TArray<uint8>    RgbCompressedScratch;
+
+	// KLV scratch — reused across frames so we don't av_packet_alloc +
+	// TArray<uint8> allocate + free every single frame. Lifecycle mirrors Pkt.
+	AVPacket*        KlvPkt      = nullptr;
+	TArray<uint8>    KlvScratch;
+
 	// Local recording (Phase 12E) — optional second output to a local .ts file
 	AVFormatContext* RecordFmtCtx      = nullptr;
 	AVStream*        RecordVideoStream = nullptr;

@@ -104,6 +104,14 @@ public:
 	static TArray<uint8> BuildMisbST0601(const FCamSimTelemetry& Telemetry);
 
 	/**
+	 * In-place variant of BuildMisbST0601: fills OutPacket (after Reset()) so a
+	 * single caller-owned buffer can be reused across frames without allocating
+	 * a fresh TArray every time. Wire format is identical.
+	 */
+	static void BuildMisbST0601Into(const FCamSimTelemetry& Telemetry,
+	                                TArray<uint8>& OutPacket);
+
+	/**
 	 * Initialise the static ST 0102 security metadata payload.
 	 * Called once at startup from UCamSimSubsystem::Initialize().
 	 * The pre-built TLV content is embedded as ST 0601 Tag 48 in every

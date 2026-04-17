@@ -83,12 +83,18 @@ bool FCamSimHealthServer::Start(int32 Port,
 			return true;
 		}));
 
-	// GET /metrics
+	// GET /metrics — serve the game-thread-cached snapshot so the HTTP handler
+	// doesn't run expensive work (entity walks, percentile calcs) on the
+	// listener thread while the scraper holds the socket open.
 	Router->BindRoute(FHttpPath(TEXT("/metrics")), EHttpServerRequestVerbs::VERB_GET,
 		FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest& Req, const FHttpResultCallback& OnComplete)
 		{
-			FString Body = GetPrometheusMetrics ? GetPrometheusMetrics() : TEXT("");
-			auto Response = FHttpServerResponse::Create(Body, TEXT("text/plain; charset=utf-8"));
+			TSharedRef<FString, ESPMode::ThreadSafe> Snapshot = [this]()
+			{
+				FScopeLock Lock(&MetricsLock_);
+				return CachedMetrics_;
+			}();
+			auto Response = FHttpServerResponse::Create(*Snapshot, TEXT("text/plain; charset=utf-8"));
 			OnComplete(MoveTemp(Response));
 			return true;
 		}));
@@ -111,4 +117,16 @@ void FCamSimHealthServer::Stop()
 void FCamSimHealthServer::UpdateTick()
 {
 	LastTickTimeSec = FPlatformTime::Seconds();
+}
+
+void FCamSimHealthServer::UpdateMetricsSnapshot()
+{
+	// Build the body on the caller's thread (expected to be the game thread,
+	// where Prometheus counter sources are free of synchronisation). Publish
+	// it atomically for the HTTP handler to read.
+	if (!GetPrometheusMetrics) return;
+	TSharedRef<FString, ESPMode::ThreadSafe> NewBody =
+		MakeShared<FString, ESPMode::ThreadSafe>(GetPrometheusMetrics());
+	FScopeLock Lock(&MetricsLock_);
+	CachedMetrics_ = NewBody;
 }

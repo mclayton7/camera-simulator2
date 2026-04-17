@@ -37,4 +37,14 @@ struct FViewProjectionData
 	FMatrix ViewProjectionMatrix = FMatrix::Identity;
 	int32   ImageWidth           = 1920;
 	int32   ImageHeight          = 1080;
+
+	/**
+	 * Optional fast cone-cull fields — when CullConeHalfAngleCos > 0.0,
+	 * GetEntitySnapshot() skips the expensive AABB projection for any entity
+	 * whose direction from CameraLocation lies outside the cone. Set to 0.0f
+	 * to disable the cull.
+	 */
+	FVector CameraLocation       = FVector::ZeroVector;
+	FVector CameraForward        = FVector::ForwardVector;
+	float   CullConeHalfAngleCos = 0.0f;
 };

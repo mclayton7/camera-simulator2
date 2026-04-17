@@ -46,9 +46,11 @@ bool FVideoEncoder::Open()
 		return false;
 	}
 
-	// Allocate re-usable packet
-	Pkt = av_packet_alloc();
-	if (!Pkt)
+	// Allocate re-usable packets — one for video, one for KLV. Reused across
+	// every frame so we don't pay the av_packet_alloc/free cost per tick.
+	Pkt    = av_packet_alloc();
+	KlvPkt = av_packet_alloc();
+	if (!Pkt || !KlvPkt)
 	{
 		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: av_packet_alloc failed"));
 		return false;
@@ -103,6 +105,13 @@ bool FVideoEncoder::Open()
 	}
 
 	bIsOpen = true;
+
+	// Pre-allocate the fallback-path BGRA scratch buffer now so EncodeFrame()
+	// doesn't thrash the heap every frame if sws_setColorspaceDetails didn't
+	// take (which otherwise allocates ~3.6 MB / frame at 720p).
+	RgbCompressedScratch.SetNumUninitialized(
+		Config.CaptureWidth * Config.CaptureHeight * 4);
+
 	const TCHAR* CodecLabel = Config.VideoCodec.ToLower().Contains(TEXT("265"))
 		? TEXT("H.265") : TEXT("H.264");
 	const float LogEffectiveFps = (Config.Performance.OutputFrameRateHz > 0.0f)
@@ -544,21 +553,28 @@ void FVideoEncoder::EncodeFrame(
 	{
 	// Full color path: BGRA → YUV420P via sws_scale
 	const uint8* SrcPtr = reinterpret_cast<const uint8*>(PixelData.GetData());
-	TArray<uint8> CompressedBuf;
 
 	// If sws color space details didn't take, sws_scale treats input as
 	// limited-range RGB [16-235].  Pre-compress full-range [0-255] → [16-235]
 	// to prevent chroma overflow that causes pink/green banding.
+	// RgbCompressedScratch is sized once in Open() so this path allocates
+	// zero memory per frame.
 	if (!bSwsColorSpaceApplied)
 	{
 		const int32 NumBytes = PixelData.Num() * 4;
-		CompressedBuf.SetNumUninitialized(NumBytes);
+		if (RgbCompressedScratch.Num() < NumBytes)
+		{
+			// Resize only on the unusual path where CaptureWidth/Height changed
+			// after Open() (e.g. mid-run config push). Normal case: no-op.
+			RgbCompressedScratch.SetNumUninitialized(NumBytes);
+		}
+		uint8* Dst = RgbCompressedScratch.GetData();
 		for (int32 i = 0; i < NumBytes; ++i)
 		{
 			// Map [0,255] → [16,235]: out = 16 + in * 219/255
-			CompressedBuf[i] = static_cast<uint8>(16 + (SrcPtr[i] * 219 + 127) / 255);
+			Dst[i] = static_cast<uint8>(16 + (SrcPtr[i] * 219 + 127) / 255);
 		}
-		SrcPtr = CompressedBuf.GetData();
+		SrcPtr = RgbCompressedScratch.GetData();
 	}
 
 	const uint8* SrcData[1] = { SrcPtr };
@@ -651,14 +667,19 @@ void FVideoEncoder::EncodeFrame(
 
 void FVideoEncoder::WriteKlvPacket(const FCamSimTelemetry& Telemetry, uint64 FrameIdx)
 {
-	TArray<uint8> KlvData = FKlvBuilder::BuildMisbST0601(Telemetry);
-	if (KlvData.Num() == 0) return;
-
-	AVPacket* KlvPkt = av_packet_alloc();
 	if (!KlvPkt) return;
 
-	av_new_packet(KlvPkt, KlvData.Num());
-	FMemory::Memcpy(KlvPkt->data, KlvData.GetData(), KlvData.Num());
+	// Reuse the scratch TArray across frames; BuildMisbST0601Into() appends
+	// into it after Reset(), preserving the allocated capacity.
+	KlvScratch.Reset();
+	FKlvBuilder::BuildMisbST0601Into(Telemetry, KlvScratch);
+	if (KlvScratch.Num() == 0) return;
+
+	// av_packet_unref clears any previous payload without freeing the AVPacket
+	// itself; av_new_packet then allocates a buf of the right size.
+	av_packet_unref(KlvPkt);
+	av_new_packet(KlvPkt, KlvScratch.Num());
+	FMemory::Memcpy(KlvPkt->data, KlvScratch.GetData(), KlvScratch.Num());
 
 	// KLV PTS derived from video PTS via av_rescale_q (Phase 6)
 	const int64 VideoPts = YuvFrame ? YuvFrame->pts : static_cast<int64>(FrameIdx);
@@ -668,7 +689,9 @@ void FVideoEncoder::WriteKlvPacket(const FCamSimTelemetry& Telemetry, uint64 Fra
 	KlvPkt->duration     = av_rescale_q(1, VideoCodecCtx->time_base, KlvStream->time_base);
 	KlvPkt->stream_index = KlvStream->index;
 
-	// Duplicate KLV to local recording
+	// Duplicate KLV to local recording — the clone is the one short-lived
+	// AVPacket alloc per frame; Unref'ing KlvPkt after the main write would
+	// invalidate the buffer the clone shared, so clone first, send both.
 	if (bRecording && RecordFmtCtx)
 	{
 		AVPacket* RecPkt = av_packet_clone(KlvPkt);
@@ -681,7 +704,7 @@ void FVideoEncoder::WriteKlvPacket(const FCamSimTelemetry& Telemetry, uint64 Fra
 	}
 
 	av_interleaved_write_frame(FmtCtx, KlvPkt);
-	av_packet_free(&KlvPkt);
+	// Keep KlvPkt alive; av_packet_unref on the next call releases this buf.
 }
 
 // -------------------------------------------------------------------------
@@ -723,6 +746,7 @@ void FVideoEncoder::Close()
 	if (SwsCtx)        { sws_freeContext(SwsCtx); SwsCtx = nullptr; }
 	if (YuvFrame)      { av_frame_free(&YuvFrame); }
 	if (Pkt)           { av_packet_free(&Pkt); }
+	if (KlvPkt)        { av_packet_free(&KlvPkt); }
 	if (VideoCodecCtx) { avcodec_free_context(&VideoCodecCtx); }
 	if (FmtCtx)
 	{

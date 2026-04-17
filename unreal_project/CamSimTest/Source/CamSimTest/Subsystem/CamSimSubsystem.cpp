@@ -24,6 +24,7 @@
 #include "DynamicRHI.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeRWLock.h"
 #include "CesiumIonServer.h"
 #include "UObject/StrongObjectPtr.h"
 
@@ -204,21 +205,38 @@ ACamSimCamera* UCamSimSubsystem::GetCamera() const
 
 void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)
 {
-	// Preserve immutable fields that cannot change without a restart.
-	const int32   SavedCigiPort      = Config.CigiPort;
-	const FString SavedMulticastAddr = Config.MulticastAddr;
-	const int32   SavedMulticastPort = Config.MulticastPort;
-	const FString SavedVideoCodec    = Config.VideoCodec;
+	{
+		// Write-lock the swap so a non-game-thread reader calling
+		// GetConfigSnapshot() either sees the old struct whole or the new
+		// struct whole — never a torn nested TMap mid-assignment.
+		FRWScopeLock Lock(ConfigLock_, SLT_Write);
 
-	Config = NewCfg;
+		// Preserve immutable fields that cannot change without a restart.
+		const int32   SavedCigiPort      = Config.CigiPort;
+		const FString SavedMulticastAddr = Config.MulticastAddr;
+		const int32   SavedMulticastPort = Config.MulticastPort;
+		const FString SavedVideoCodec    = Config.VideoCodec;
 
-	Config.CigiPort      = SavedCigiPort;
-	Config.MulticastAddr = SavedMulticastAddr;
-	Config.MulticastPort = SavedMulticastPort;
-	Config.VideoCodec    = SavedVideoCodec;
+		Config = NewCfg;
 
-	// Phase 22A: Re-parse entity types on hot-reload
+		Config.CigiPort      = SavedCigiPort;
+		Config.MulticastAddr = SavedMulticastAddr;
+		Config.MulticastPort = SavedMulticastPort;
+		Config.VideoCodec    = SavedVideoCodec;
+	}
+
+	// Phase 22A: Re-parse entity types on hot-reload (no config lock — own data)
 	EntityTypeTable.HotReload();
+
+	// Reapply Cesium tileset tuning so runtime edits to SSE / cache / culling /
+	// descendant-limit take effect without reloading the level.
+	ACamSimCamera::ApplyCesiumTilesetTuning(GetWorld(), Config);
+}
+
+TSharedRef<const FCamSimConfig, ESPMode::ThreadSafe> UCamSimSubsystem::GetConfigSnapshot() const
+{
+	FRWScopeLock Lock(ConfigLock_, SLT_ReadOnly);
+	return MakeShared<const FCamSimConfig, ESPMode::ThreadSafe>(Config);
 }
 
 void UCamSimSubsystem::StoreCesiumIonServer(UCesiumIonServer* Server)
@@ -827,11 +845,20 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		}
 		HealthJson += TEXT("}");
 
-		const FString HealthPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health.json"));
-		if (!FFileHelper::SaveStringToFile(HealthJson, *HealthPath))
+		// Dispatch the SaveStringToFile off the game thread — rewriting the
+		// file every 3 s shouldn't cost game-thread frame time. Task scheduler
+		// serialises background tasks so we won't race ourselves.
+		const FString HealthPath =
+			FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health.json"));
+		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
+			[Body = MoveTemp(HealthJson), Path = HealthPath]()
 		{
-			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: failed to write health file %s"), *HealthPath);
-		}
+			if (!FFileHelper::SaveStringToFile(Body, *Path))
+			{
+				UE_LOG(LogCamSim, Warning,
+					TEXT("UCamSimSubsystem: failed to write health file %s"), *Path);
+			}
+		});
 		Impl->HealthFileTick = Impl->FrameCntr;
 	}
 
@@ -905,18 +932,31 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 				P.TotalUs[0], P.TotalUs[1], P.TotalUs[2]);
 		}
 
-		if (!FFileHelper::SaveStringToFile(Prom, *Config.PrometheusMetricsPath))
+		// Same async-dispatch pattern as the health file — the 90-tick cadence
+		// is slow enough that background tasks won't pile up.
+		const FString PromPath = Config.PrometheusMetricsPath;
+		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
+			[Body = MoveTemp(Prom), Path = PromPath]()
 		{
-			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: failed to write prometheus metrics"));
-		}
+			if (!FFileHelper::SaveStringToFile(Body, *Path))
+			{
+				UE_LOG(LogCamSim, Warning,
+					TEXT("UCamSimSubsystem: failed to write prometheus metrics %s"), *Path);
+			}
+		});
 		Impl->PrometheusLastTick = Impl->FrameCntr;
 	}
 
-	// Phase 28B: flush structured log queue
-	if (Impl->JsonLogger)
+	// Refresh the /metrics cache on the game thread at ~1 Hz. HTTP scrapers
+	// read the cached string lock-free instead of racing with live counters.
+	if (Impl->HealthServer && (Impl->FrameCntr % 30) == 0)
 	{
-		Impl->JsonLogger->Flush();
+		Impl->HealthServer->UpdateMetricsSnapshot();
 	}
+
+	// JsonLogger now drains on its own consumer thread (Phase 28B refactor),
+	// so an explicit Flush every tick is unnecessary — calling it would just
+	// spin briefly on Queue.IsEmpty(). Close() still drains on shutdown.
 
 	++Impl->FrameCntr;
 }

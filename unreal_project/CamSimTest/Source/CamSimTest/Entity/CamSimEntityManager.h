@@ -47,10 +47,23 @@ public:
 	/**
 	 * Capture a snapshot of all active entity annotations for the current game tick.
 	 * Called on the game thread before CaptureAndEncode().
-	 * Uses ViewProj to project each entity's AABB to screen space.
+	 *
+	 * Out-param form: fills the caller's array in place (Reset()-reused so the
+	 * allocation amortises). Cheap cone cull runs before the per-entity AABB
+	 * projection so a 500-entity scene with a narrow camera only pays for the
+	 * handful of entities plausibly inside the frustum.
 	 */
+	void GetEntitySnapshot(const FViewProjectionData& ViewProj,
+	                       TArray<FEntityAnnotationData>& OutSnapshot) const;
+
+	/** Backwards-compatible convenience form — copies into a fresh TArray. */
 	TArray<FEntityAnnotationData> GetEntitySnapshot(
-	    const FViewProjectionData& ViewProj) const;
+	    const FViewProjectionData& ViewProj) const
+	{
+		TArray<FEntityAnnotationData> Out;
+		GetEntitySnapshot(ViewProj, Out);
+		return Out;
+	}
 
 	/** Called from FOceanManager::Init() after ocean surface is created. */
 	void SetOceanSurface(IOceanSurface* Ocean);

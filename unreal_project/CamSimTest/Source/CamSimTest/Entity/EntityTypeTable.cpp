@@ -287,7 +287,7 @@ UStaticMesh* FEntityTypeTable::GetCachedStaticMesh(uint16 TypeId) const
 	return nullptr;
 }
 
-void FEntityTypeTable::SetCachedStaticMesh(uint16 TypeId, UStaticMesh* Mesh)
+void FEntityTypeTable::SetCachedStaticMesh(uint16 TypeId, UStaticMesh* Mesh) const
 {
 	StaticMeshCache.Add(TypeId, Mesh);
 }
@@ -301,7 +301,7 @@ USkeletalMesh* FEntityTypeTable::GetCachedSkeletalMesh(uint16 TypeId) const
 	return nullptr;
 }
 
-void FEntityTypeTable::SetCachedSkeletalMesh(uint16 TypeId, USkeletalMesh* Mesh)
+void FEntityTypeTable::SetCachedSkeletalMesh(uint16 TypeId, USkeletalMesh* Mesh) const
 {
 	SkeletalMeshCache.Add(TypeId, Mesh);
 }
