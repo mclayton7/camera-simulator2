@@ -135,11 +135,13 @@ private:
 
 	const FCamSimConfig& Config;
 
-	FRunnableThread* Thread    = nullptr;
+	TUniquePtr<FRunnableThread> Thread;
 	FSocket*         Socket    = nullptr;
 	TAtomic<bool>    bShouldRun;
 	// Auto-reset event used to wake the receiver thread immediately on Stop()
 	// so shutdown doesn't depend on the non-blocking recv poll interval.
+	// Event is owned by the platform pool and returned via ReturnSynchEventToPool,
+	// so the raw pointer is intentional here.
 	FEvent*          ShutdownEvent = nullptr;
 	TAtomic<uint64>  ReceivedPacketCount { 0 };
 	TAtomic<uint32>  LastHostFrameCntr { 0 };

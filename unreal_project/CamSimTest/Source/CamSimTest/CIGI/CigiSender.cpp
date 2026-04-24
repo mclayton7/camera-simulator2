@@ -71,13 +71,15 @@ bool FCigiSender::Open(const FCamSimConfig& Config)
 	}
 
 	// CCL outgoing-only session: 0 in-buffers, 2 out-buffers of 4096 bytes each
-	CigiSession = new CigiIGSession(0, 0, 2, 4096);
+	CigiSession = MakeUnique<CigiIGSession>(0, 0, 2, 4096);
 	CigiSession->SetCigiVersion(3, 3);
 
 	OutgoingMsg = &CigiSession->GetOutgoingMsgMgr();
 
-	// Pre-allocate SOF packet (reused every frame)
-	SofPacket = new CigiSOFV3_2();
+	// Pre-allocate the SOF and the single-slot SensorX response. Both are
+	// reused every frame; their fields are overwritten before each send.
+	SofPacket = MakeUnique<CigiSOFV3_2>();
+	SensorXResp = MakeUnique<CigiSensorXRespV3>();
 
 	bOpen = true;
 	UE_LOG(LogCamSim, Log, TEXT("FCigiSender: sending to %s:%d"),
@@ -90,15 +92,17 @@ void FCigiSender::Close()
 	if (!bOpen) return;
 	bOpen = false;
 
-	// Free any unreleased pending packets
-	for (CigiHatHotRespV3* P : PendingHatHot) { delete P; }
-	PendingHatHot.Empty();
-	for (CigiLosRespV3* P : PendingLos) { delete P; }
-	PendingLos.Empty();
-	delete PendingSensorXResp; PendingSensorXResp = nullptr;
+	// Pools own their CCL packets via TUniquePtr; clearing releases them.
+	HatHotPool.Empty();
+	HatHotInUse = 0;
+	LosPool.Empty();
+	LosInUse = 0;
 
-	delete SofPacket;   SofPacket   = nullptr;
-	delete CigiSession; CigiSession = nullptr;  // also destroys OutgoingMsg
+	SensorXResp.Reset();
+	bSensorXRespPending = false;
+
+	SofPacket.Reset();
+	CigiSession.Reset();  // destruction also invalidates OutgoingMsg
 	OutgoingMsg = nullptr;
 
 	if (Socket)
@@ -116,7 +120,12 @@ void FCigiSender::Close()
 
 void FCigiSender::FlushFrame(uint32 FrameCntr, uint8 LastHostFrame, uint8 IGMode)
 {
-	if (!bOpen || !OutgoingMsg || !SofPacket) return;
+	if (!bOpen || !OutgoingMsg || !SofPacket)
+	{
+		UE_LOG(LogCamSim, Verbose,
+			TEXT("FCigiSender::FlushFrame skipped — sender not open (frame=%u)"), FrameCntr);
+		return;
+	}
 
 	// Update SOF frame counter, host frame echo, and IG operating mode (Phase 12D)
 	SofPacket->SetFrameCntr(static_cast<Cigi_uint32>(FrameCntr));
@@ -129,28 +138,26 @@ void FCigiSender::FlushFrame(uint32 FrameCntr, uint8 LastHostFrame, uint8 IGMode
 	// SOF must be first
 	*OutgoingMsg << *SofPacket;
 
-	// Pack staged HAT/HOT responses
-	for (CigiHatHotRespV3* P : PendingHatHot)
+	// Serialise staged HAT/HOT responses from the pool prefix, then reset the
+	// counter — the pool slots themselves are retained for next frame.
+	for (int32 Idx = 0; Idx < HatHotInUse; ++Idx)
 	{
-		*OutgoingMsg << *static_cast<CigiBasePacket*>(P);
-		delete P;
+		*OutgoingMsg << *static_cast<CigiBasePacket*>(HatHotPool[Idx].Get());
 	}
-	PendingHatHot.Empty();
+	HatHotInUse = 0;
 
-	// Pack staged LOS responses
-	for (CigiLosRespV3* P : PendingLos)
+	// Serialise staged LOS responses the same way.
+	for (int32 Idx = 0; Idx < LosInUse; ++Idx)
 	{
-		*OutgoingMsg << *static_cast<CigiBasePacket*>(P);
-		delete P;
+		*OutgoingMsg << *static_cast<CigiBasePacket*>(LosPool[Idx].Get());
 	}
-	PendingLos.Empty();
+	LosInUse = 0;
 
-	// Pack sensor extended response (if staged this frame)
-	if (PendingSensorXResp)
+	// Pack the single-slot sensor extended response if one was staged.
+	if (bSensorXRespPending && SensorXResp.IsValid())
 	{
-		*OutgoingMsg << *static_cast<CigiBasePacket*>(PendingSensorXResp);
-		delete PendingSensorXResp;
-		PendingSensorXResp = nullptr;
+		*OutgoingMsg << *static_cast<CigiBasePacket*>(SensorXResp.Get());
+		bSensorXRespPending = false;
 	}
 
 	// Finalise and send
@@ -171,9 +178,22 @@ void FCigiSender::FlushFrame(uint32 FrameCntr, uint8 LastHostFrame, uint8 IGMode
 void FCigiSender::EnqueueHatHotResponse(uint16 HatHotId, bool bValid,
                                         uint8 ReqType, double Hat, double Hot)
 {
-	if (!bOpen) return;
+	if (!bOpen)
+	{
+		UE_LOG(LogCamSim, Verbose,
+			TEXT("FCigiSender::EnqueueHatHotResponse dropped (hatHotId=%u) — sender not open"),
+			HatHotId);
+		return;
+	}
 
-	CigiHatHotRespV3* Resp = new CigiHatHotRespV3();
+	// Grow the pool on demand. Steady state: the pool plateaus after the first
+	// few frames at the peak per-frame response count and no further allocs run.
+	if (HatHotInUse >= HatHotPool.Num())
+	{
+		HatHotPool.Emplace(MakeUnique<CigiHatHotRespV3>());
+	}
+	CigiHatHotRespV3* Resp = HatHotPool[HatHotInUse++].Get();
+
 	Resp->SetHatHotID(static_cast<Cigi_uint16>(HatHotId));
 	Resp->SetValid(bValid);
 	// ReqType: 0=HAT, 1=HOT, 2=Extended.
@@ -181,38 +201,41 @@ void FCigiSender::EnqueueHatHotResponse(uint16 HatHotId, bool bValid,
 	// extended (2) to HOT semantics in the response.
 	const uint8 ResponseReqType = (ReqType == 1 || ReqType == 2) ? 1 : 0;
 	Resp->SetReqType(static_cast<CigiBaseHatHotResp::ReqTypeGrp>(ResponseReqType));
-	if (bValid)
-	{
-		Resp->SetHat(Hat);
-		Resp->SetHot(Hot);
-	}
-	PendingHatHot.Add(Resp);
+	// Always write Hat/Hot, even when bValid is false — otherwise a recycled
+	// slot could surface stale metres from a prior valid response.
+	Resp->SetHat(bValid ? Hat : 0.0);
+	Resp->SetHot(bValid ? Hot : 0.0);
 }
 
 void FCigiSender::EnqueueLosResponse(uint16 LosId, bool bValid, bool bVisible,
                                      double Range, double HitLat, double HitLon,
                                      double HitAlt, uint16 EntityId, bool bEntityIdValid)
 {
-	if (!bOpen) return;
+	if (!bOpen)
+	{
+		UE_LOG(LogCamSim, Verbose,
+			TEXT("FCigiSender::EnqueueLosResponse dropped (losId=%u) — sender not open"),
+			LosId);
+		return;
+	}
 
-	CigiLosRespV3* Resp = new CigiLosRespV3();
+	if (LosInUse >= LosPool.Num())
+	{
+		LosPool.Emplace(MakeUnique<CigiLosRespV3>());
+	}
+	CigiLosRespV3* Resp = LosPool[LosInUse++].Get();
+
 	Resp->SetLosID(static_cast<Cigi_uint16>(LosId));
 	Resp->SetValid(bValid);
 	Resp->SetVisible(bVisible);
 	Resp->SetRespCount(1);
-	if (bValid)
-	{
-		Resp->SetRange(Range);
-		Resp->SetLatitude(HitLat);
-		Resp->SetLongitude(HitLon);
-		Resp->SetAltitude(HitAlt);
-	}
+	// Always write hit fields so a recycled slot never surfaces stale data.
+	Resp->SetRange   (bValid ? Range  : 0.0);
+	Resp->SetLatitude(bValid ? HitLat : 0.0);
+	Resp->SetLongitude(bValid ? HitLon : 0.0);
+	Resp->SetAltitude(bValid ? HitAlt : 0.0);
 	Resp->SetEntityIDValid(bEntityIdValid);
-	if (bEntityIdValid)
-	{
-		Resp->SetEntityID(static_cast<Cigi_uint16>(EntityId));
-	}
-	PendingLos.Add(Resp);
+	Resp->SetEntityID(bEntityIdValid ? static_cast<Cigi_uint16>(EntityId) : 0);
 }
 
 void FCigiSender::SetSensorResponse(uint16 ViewId, uint8 SensorId, uint8 SensorStat,
@@ -221,22 +244,28 @@ void FCigiSender::SetSensorResponse(uint16 ViewId, uint8 SensorId, uint8 SensorS
                                      double TrackLat, double TrackLon, double TrackAlt,
                                      uint32 FrameCntr)
 {
-	if (!bOpen) return;
+	if (!bOpen || !SensorXResp.IsValid())
+	{
+		UE_LOG(LogCamSim, Verbose,
+			TEXT("FCigiSender::SetSensorResponse dropped (viewId=%u sensorId=%u) — sender not open"),
+			ViewId, SensorId);
+		return;
+	}
 
-	// Replace any existing pending response (one per frame)
-	delete PendingSensorXResp;
-	PendingSensorXResp = new CigiSensorXRespV3();
-	PendingSensorXResp->SetViewID(static_cast<Cigi_uint16>(ViewId));
-	PendingSensorXResp->SetSensorID(static_cast<Cigi_uint8>(SensorId));
-	PendingSensorXResp->SetSensorStat(
+	// Reuse the single preallocated slot. Caller semantics unchanged: repeated
+	// calls within a single frame overwrite the staged response.
+	SensorXResp->SetViewID(static_cast<Cigi_uint16>(ViewId));
+	SensorXResp->SetSensorID(static_cast<Cigi_uint8>(SensorId));
+	SensorXResp->SetSensorStat(
 		static_cast<CigiBaseSensorResp::SensorStatGrp>(FMath::Clamp((int)SensorStat, 0, 2)));
-	PendingSensorXResp->SetGateXoff(GateXoff);
-	PendingSensorXResp->SetGateYoff(GateYoff);
-	PendingSensorXResp->SetGateSzX(static_cast<Cigi_uint16>(GateSzX));
-	PendingSensorXResp->SetGateSzY(static_cast<Cigi_uint16>(GateSzY));
-	PendingSensorXResp->SetEntityTgt(false);
-	PendingSensorXResp->SetTrackPntLat(TrackLat);
-	PendingSensorXResp->SetTrackPntLon(TrackLon);
-	PendingSensorXResp->SetTrackPntAlt(TrackAlt);
-	PendingSensorXResp->SetFrameCntr(static_cast<Cigi_uint32>(FrameCntr));
+	SensorXResp->SetGateXoff(GateXoff);
+	SensorXResp->SetGateYoff(GateYoff);
+	SensorXResp->SetGateSzX(static_cast<Cigi_uint16>(GateSzX));
+	SensorXResp->SetGateSzY(static_cast<Cigi_uint16>(GateSzY));
+	SensorXResp->SetEntityTgt(false);
+	SensorXResp->SetTrackPntLat(TrackLat);
+	SensorXResp->SetTrackPntLon(TrackLon);
+	SensorXResp->SetTrackPntAlt(TrackAlt);
+	SensorXResp->SetFrameCntr(static_cast<Cigi_uint32>(FrameCntr));
+	bSensorXRespPending = true;
 }

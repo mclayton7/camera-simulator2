@@ -111,28 +111,36 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **RHI readback is render-thread only**: `FRHIGPUTextureReadback::IsReady()/Lock()/Unlock()` assert `IsInRenderingThread()`. Use `ENQUEUE_RENDER_COMMAND` + `FlushRenderingCommands()` for synchronous game-thread access (see CamSimCamera.cpp Phase 1 readback pattern)
 - **UE5 TAtomic uses EMemoryOrder**: `TAtomic<T>::Load()/Store()` take `EMemoryOrder` enum, NOT `std::memory_order`
 - **HTTP health server is on by default**: `operational.health_http_enabled` defaults to `true` for sim-environment REST orchestrator compatibility. Binds `0.0.0.0:8080`. To disable: `CAMSIM_HEALTH_HTTP_ENABLED=0`. `/live` and `/health` are route aliases pointing at the same 5-second watchdog. K8s probes that target `/live` still work unchanged.
-- **HTTP server automation tests need two tickers**: `FCamSimHealthServer` is built on `FHttpServerModule` which pumps its listener via `FTSTicker::GetCoreTicker()`, not the HTTP client's `FHttpManager`. Automation tests spinning the HTTP pipeline must tick BOTH `FHttpModule::Get().GetHttpManager().Tick(dt)` AND `FTSTicker::GetCoreTicker().Tick(dt)` in the wait loop, otherwise the server never accepts connections (see `Tests/HttpServerLifecycleTest.cpp`).
+- **HTTP automation tests need two tickers** (load-bearing test invariant — if you skip this, the test hangs silently instead of failing):
+  - `FCamSimHealthServer` is built on `FHttpServerModule`. The **listener** is pumped by `FTSTicker::GetCoreTicker()`.
+  - The HTTP **client** (`FHttpModule::Get().ProcessRequest`) is pumped by `FHttpModule::Get().GetHttpManager()`.
+  - These are two independent tickers. An automation test running both ends has to tick BOTH inside its wait loop:
+    ```cpp
+    FHttpModule::Get().GetHttpManager().Tick(DeltaSec);
+    FTSTicker::GetCoreTicker().Tick(DeltaSec);
+    ```
+  - Ticking only the HTTP manager means the server never accepts connections; ticking only the core ticker means the client never dispatches the request. See [`Tests/HttpServerLifecycleTest.cpp`](unreal_project/CamSimTest/Source/CamSimTest/Tests/HttpServerLifecycleTest.cpp) for a working template.
 
 ## Environment
 
-Config via `deploy/camsim_config.yaml` or env vars (env takes precedence):
+Config via `deploy/camsim_config.yaml` or env vars (env takes precedence).
+The full reference — every key, env var, default, and phase annotation —
+lives in [`docs/configuration.md`](docs/configuration.md). That is the
+single source of truth; keep new env vars documented there, not here.
+
+Only the vars you need at the console every day are listed below:
+
 - `CAMSIM_CIGI_PORT` — CIGI listen port (default 8888)
 - `CAMSIM_MULTICAST_ADDR` — output address (default 239.1.1.1)
-- `CAMSIM_MULTICAST_PORT` — output port (default 5004)
-- `CAMSIM_VIDEO_CODEC` — `h264` | `h265` (default h264)
-- `CAMSIM_ENCODER_TYPE` — `auto` | `nvenc` | `libx264` (default auto)
-- `CAMSIM_OPTICAL_REALISM_ENABLED` — enable lens effects (default false)
-- `CAMSIM_HEALTH_HTTP_ENABLED` — HTTP health server toggle (default 1; Phase 28C)
-- `CAMSIM_HEALTH_HTTP_PORT` — HTTP health server port (default 8080)
-- `CAMSIM_STRUCTURED_LOG_PATH` — JSONL structured log file path (default empty = disabled; Phase 28B)
-- `CAMSIM_TRACK_PIPELINE_LATENCY` — P50/P95/P99 tracking (default 0; Phase 28G)
-- Full list: see `docs/configuration.md`
+- `CAMSIM_ENCODER` — `auto` | `nvenc` | `libx264` (default auto; force `libx264` on non-NVIDIA)
+- `CAMSIM_HEALTH_HTTP_ENABLED` / `CAMSIM_HEALTH_HTTP_PORT` — K8s probe server (default 1, 8080)
+- `CAMSIM_STRUCTURED_LOG_PATH` — JSONL logs for ELK/Datadog (empty = disabled)
 
 ## Docker
 
 ```bash
 cd deploy && docker compose up        # GPU (NVIDIA)
-CAMSIM_ENCODER_TYPE=libx264 docker compose up  # CPU fallback (Mesa llvmpipe)
+CAMSIM_ENCODER=libx264 docker compose up  # CPU fallback (Mesa llvmpipe)
 ```
 
 - Non-root user (uid 1000)

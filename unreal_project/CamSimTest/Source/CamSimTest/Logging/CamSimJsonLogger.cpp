@@ -21,11 +21,11 @@ bool FCamSimJsonLogger::Open(const FString& InPath, int32 MaxSizeMB)
 	// file handle directly — all writes are serialised through Run().
 	bShouldRun = true;
 	WakeEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/false);
-	ConsumerThread = FRunnableThread::Create(this, TEXT("CamSimJsonLogger"),
+	ConsumerThread.Reset(FRunnableThread::Create(this, TEXT("CamSimJsonLogger"),
 		64 * 1024, TPri_BelowNormal,
-		FPlatformAffinity::GetTaskGraphBackgroundTaskMask());
+		FPlatformAffinity::GetTaskGraphBackgroundTaskMask()));
 
-	return ConsumerThread != nullptr;
+	return ConsumerThread.IsValid();
 }
 
 void FCamSimJsonLogger::Close()
@@ -33,11 +33,10 @@ void FCamSimJsonLogger::Close()
 	// Signal the consumer to exit and wake it so it doesn't wait for the event.
 	bShouldRun = false;
 	if (WakeEvent) WakeEvent->Trigger();
-	if (ConsumerThread)
+	if (ConsumerThread.IsValid())
 	{
 		ConsumerThread->WaitForCompletion();
-		delete ConsumerThread;
-		ConsumerThread = nullptr;
+		ConsumerThread.Reset();
 	}
 	if (WakeEvent)
 	{
@@ -102,7 +101,7 @@ void FCamSimJsonLogger::Flush()
 {
 	if (!FileHandle) return;
 
-	if (ConsumerThread)
+	if (ConsumerThread.IsValid())
 	{
 		// Consumer is the SPSC reader; Flush() must not Dequeue directly or
 		// we'd violate the invariant. Nudge the consumer and poll until the
@@ -155,41 +154,42 @@ void FCamSimJsonLogger::AppendEscapedJson(FString& Out, const FString& In)
 	}
 }
 
-FString FCamSimJsonLogger::FormatEntry(const FLogEntry& Entry) const
+void FCamSimJsonLogger::AppendFormattedEntry(FString& Out, const FLogEntry& Entry) const
 {
 	// Flat-object JSON line. Keys are ASCII and controlled internally, so
 	// they don't need escaping; all dynamic strings (values) go through
 	// AppendEscapedJson so newlines and control chars can't break the JSONL
 	// framing downstream.
-	FString Json;
-	Json.Reserve(128 + Entry.Message.Len());
-	Json += TEXT("{\"ts\":\"");
-	AppendEscapedJson(Json, Entry.Timestamp.ToIso8601());
-	Json += TEXT("\",\"severity\":\"");
-	AppendEscapedJson(Json, Entry.Severity);
-	Json += TEXT("\",\"category\":\"");
-	AppendEscapedJson(Json, Entry.Category);
-	Json += TEXT("\",\"msg\":\"");
-	AppendEscapedJson(Json, Entry.Message);
-	Json += TEXT("\"");
+	Out.Reserve(Out.Len() + 128 + Entry.Message.Len());
+	Out += TEXT("{\"ts\":\"");
+	AppendEscapedJson(Out, Entry.Timestamp.ToIso8601());
+	Out += TEXT("\",\"severity\":\"");
+	AppendEscapedJson(Out, Entry.Severity);
+	Out += TEXT("\",\"category\":\"");
+	AppendEscapedJson(Out, Entry.Category);
+	Out += TEXT("\",\"msg\":\"");
+	AppendEscapedJson(Out, Entry.Message);
+	Out += TEXT("\"");
 
 	for (const auto& Pair : Entry.Fields)
 	{
-		Json += TEXT(",\"");
-		AppendEscapedJson(Json, Pair.Key);
-		Json += TEXT("\":\"");
-		AppendEscapedJson(Json, Pair.Value);
-		Json += TEXT("\"");
+		Out += TEXT(",\"");
+		AppendEscapedJson(Out, Pair.Key);
+		Out += TEXT("\":\"");
+		AppendEscapedJson(Out, Pair.Value);
+		Out += TEXT("\"");
 	}
-	Json += TEXT("}\n");
-	return Json;
+	Out += TEXT("}\n");
 }
 
 void FCamSimJsonLogger::WriteEntry(const FLogEntry& Entry)
 {
 	if (!FileHandle) return;
-	const FString Line = FormatEntry(Entry);
-	auto Utf8 = StringCast<UTF8CHAR>(*Line);
+	// Reset (not Empty) keeps the previously-grown backing allocation so the
+	// next entry appends without reallocating.
+	ScratchJsonBuffer.Reset();
+	AppendFormattedEntry(ScratchJsonBuffer, Entry);
+	auto Utf8 = StringCast<UTF8CHAR>(*ScratchJsonBuffer);
 	const int32 Len = Utf8.Length();
 	FileHandle->Write(reinterpret_cast<const uint8*>(Utf8.Get()), Len);
 	CurrentSizeBytes += Len;

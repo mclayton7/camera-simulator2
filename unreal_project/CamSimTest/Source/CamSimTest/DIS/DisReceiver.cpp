@@ -43,24 +43,23 @@ bool FDisReceiver::Start()
 	{
 		ShutdownEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/false);
 	}
-	Thread = FRunnableThread::Create(this, TEXT("DisReceiverThread"), 128 * 1024,
-		TPri_Normal, FPlatformAffinity::GetTaskGraphBackgroundTaskMask());
+	Thread.Reset(FRunnableThread::Create(this, TEXT("DisReceiverThread"), 128 * 1024,
+		TPri_Normal, FPlatformAffinity::GetTaskGraphBackgroundTaskMask()));
 
 	UE_LOG(LogCamSim, Log, TEXT("FDisReceiver: listening on %s:%d (exercise=%d timeout=%.1fs)"),
 		*Config.DIS.BindAddr, Config.DIS.Port,
 		Config.DIS.ExerciseId, Config.DIS.HeartbeatTimeoutSec);
-	return Thread != nullptr;
+	return Thread.IsValid();
 }
 
 void FDisReceiver::Stop()
 {
 	bShouldRun = false;
 	if (ShutdownEvent) ShutdownEvent->Trigger();
-	if (Thread)
+	if (Thread.IsValid())
 	{
 		Thread->WaitForCompletion();
-		delete Thread;
-		Thread = nullptr;
+		Thread.Reset();
 	}
 	if (Socket)
 	{

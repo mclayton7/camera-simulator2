@@ -68,7 +68,7 @@ private:
 	TBoundedSpscQueue<FProcessedFrame> Queue { EncoderQueueCapacity };
 	FEventRef                      WakeEvent { EEventMode::AutoReset };
 	TAtomic<bool>                  bRunning  { false };
-	FRunnableThread*               Thread    = nullptr;
+	TUniquePtr<FRunnableThread>    Thread;
 	double                         FrameIntervalSec = 1.0 / 30.0;  // output pacing interval
 	double                         LastSendTimeSec  = 0.0;          // wall-clock of last encode
 	FPipelineLatencyTracker*       LatencyTracker   = nullptr;

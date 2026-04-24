@@ -57,9 +57,15 @@ private:
 	/**
 	 * Cached /metrics body. Game thread stores a new snapshot via
 	 * UpdateMetricsSnapshot(); HTTP threads acquire the same shared ref to
-	 * produce the response body. TSharedRef atomic-ref-count keeps this
-	 * race-free even if a scrape fires mid-update — the HTTP thread either
-	 * sees the old snapshot or the new one, never a torn FString.
+	 * produce the response body.
+	 *
+	 * Lock rationale: `ESPMode::ThreadSafe` makes the CONTROL BLOCK refcount
+	 * atomic, but reassigning a TSharedRef member (object pointer + control
+	 * pointer) is still two unsynchronised stores. Without the lock an HTTP
+	 * thread could read a new object pointer paired with the old control
+	 * block (or vice versa) while the game thread is mid-swap. The critical
+	 * section below holds only long enough to copy the TSharedRef by value
+	 * — the FString body is then used outside the lock.
 	 */
 	TSharedRef<FString, ESPMode::ThreadSafe> CachedMetrics_ =
 		MakeShared<FString, ESPMode::ThreadSafe>();

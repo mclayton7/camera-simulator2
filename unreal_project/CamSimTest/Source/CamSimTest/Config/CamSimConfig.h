@@ -362,9 +362,6 @@ struct FCamSimConfig
 	// Video codec: "h264" or "h265" (Phase 12B)
 	FString VideoCodec = TEXT("h264");
 
-	// KLV checksum algorithm (Phase 26B): "crc16" or "bcc16"
-	FString KlvChecksumMode = TEXT("crc16");
-
 	// Prometheus metrics file path (empty = disabled). Phase 12D.
 	// A Prometheus node_exporter textfile-collector compatible .prom file.
 	FString PrometheusMetricsPath;

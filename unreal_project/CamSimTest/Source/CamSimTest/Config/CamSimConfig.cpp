@@ -870,9 +870,6 @@ FCamSimConfig FCamSimConfig::Load()
 		// Video codec (Phase 12B)
 		YamlString(Root, "video_codec", Cfg.VideoCodec);
 
-		// KLV checksum mode (Phase 26B)
-		YamlString(Root, "klv_checksum_mode", Cfg.KlvChecksumMode);
-
 		// Prometheus metrics (Phase 12D)
 		YamlString(Root, "prometheus_metrics_path", Cfg.PrometheusMetricsPath);
 
@@ -1408,9 +1405,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 
 	// Phase 12B: video codec
 	Cfg.VideoCodec = GetEnv(TEXT("CAMSIM_VIDEO_CODEC"), Cfg.VideoCodec);
-
-	// Phase 26B: KLV checksum mode
-	Cfg.KlvChecksumMode = GetEnv(TEXT("CAMSIM_KLV_CHECKSUM_MODE"), Cfg.KlvChecksumMode);
 
 	// Phase 12D: Prometheus
 	Cfg.PrometheusMetricsPath = GetEnv(TEXT("CAMSIM_PROMETHEUS_METRICS_PATH"), Cfg.PrometheusMetricsPath);

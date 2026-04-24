@@ -438,21 +438,37 @@ are a map from issue ID to the change. All items are implemented on `main`.
 
 ### 7D — Remaining Verification
 
-Still open — require a UE build environment:
+**Status:** all four items are blocked on a UE5-capable CI runner. The
+workflow gate that will unblock them is tracked in Part 8A (#3) — once
+`vars.CAMSIM_UE5_RUNNER_AVAILABLE == 'true'` the `unit-tests` and
+`integration-test` jobs run automatically, at which point these checks
+can be added to the automation suite.
 
-- [ ] `stat unit` + `stat GPU` capture on a representative scene to confirm the
-      7A.1 `FlushRenderingCommands` removal delivered the expected >1 ms save
-- [ ] Run `scripts/ci_validate.sh` end-to-end to confirm the video/KLV pipeline
-      stays compliant after the 7A.2 readback-pool restructure
-- [ ] Add an automation test that spawns 500 entities in a single frame and
-      confirms the frame does not exceed 2× nominal budget (regression guard
-      on the 7B.4 async mesh loading path)
-- [ ] Add an in-PIE test that mutates `MaximumScreenSpaceError` via
-      `HotReloadConfig` and asserts the value reached a live `ACesium3DTileset`.
-      *Partial coverage:* `CamSim.Phase27.CulledSseDerivation` now tests the
-      pure HFoV→CulledSSE derivation, and `HotReloadConfig` is known to call
-      `ApplyCesiumTilesetTuning` at `Subsystem/CamSimSubsystem.cpp:244`. A
-      live-world regression test is still missing.
+Each item below cites the file/test it would live in so someone picking
+this up cold has a starting point.
+
+- [ ] **7D.1 — `stat unit` / `stat GPU` perf capture.** Confirm the
+      7A.1 `FlushRenderingCommands` removal delivered the expected
+      >1 ms save. Capture on a representative scene (San Francisco
+      downtown tour is the canonical test). No test file yet —
+      landing spot: a benchmark script under `scripts/` or a
+      latency log in `Camera/CamSimCamera.cpp::PollReadbackCompletion`.
+- [ ] **7D.2 — `scripts/ci_validate.sh` end-to-end.** Validates
+      video/KLV pipeline compliance after the 7A.2 readback-pool
+      restructure. Already scripted; just needs to run under the
+      UE5 runner job.
+- [ ] **7D.3 — 500-entity frame-budget regression test.** Assert
+      that spawning 500 entities in one frame does not exceed 2×
+      nominal budget. Guards the 7B.4 async mesh-loading path.
+      Landing spot: `Source/CamSimTest/Tests/StressEntityTest.cpp`
+      (new file).
+- [ ] **7D.4 — Live `MaximumScreenSpaceError` hot-reload test.**
+      Mutate via `HotReloadConfig` and assert the value reached a
+      live `ACesium3DTileset`. *Partial coverage today:*
+      `CamSim.Phase27.CulledSseDerivation` tests the pure
+      HFoV→CulledSSE derivation, and `Subsystem/CamSimSubsystem.cpp:244`
+      is the known hot-reload entry point. Missing: an in-PIE test
+      that observes the tuning applied at runtime.
 
 ### 7E — What's Working (Don't Regress)
 
@@ -464,3 +480,101 @@ Non-issues called out during review — worth preserving:
 - Cesium camera de-registration in `EndPlay` (`Camera/CamSimCamera.cpp:493–507`)
 - UE Automation test suite + CLAUDE.md gotcha documentation
 - `FCigiReceiver` playback/recording (mirrored into `FDisReceiver` per 7B.8)
+
+---
+
+## Part 8 — Cleanup Review (2026-04-23)
+
+Repo-wide cleanup pass. Items 1–17 and 22–25 are being worked in the same
+session that introduced this section. Items 18–21 (scripts/infra) are
+deferred.
+
+### 8A — Bugs / correctness
+
+- [x] **#1** `CLAUDE.md:123,135` — docs say `CAMSIM_ENCODER_TYPE` but the
+      code reads `CAMSIM_ENCODER` (`Config/CamSimConfig.h:46`,
+      `deploy/camsim_config.yaml:203`). Users following the docs to force
+      `libx264` silently get NVENC.
+- [x] **#2** `deploy/camsim_config.yaml:130` vs `:199` — duplicate KLV
+      checksum keys (`klv_checksum` + `klv_checksum_mode`). Only one is
+      read; delete the other.
+- [x] **#3** `.github/workflows/ci.yml` — `docker-build` is `if: false`,
+      and `unit-tests` / `integration-test` cascade-skip via
+      `needs: [docker-build]`. No C++ test coverage in CI today.
+- [x] **#4** `ci.yml:98-102` — Python "tests" are `--help` smoke only.
+      Add real round-trip tests for `validate_klv.py` and
+      `send_cigi_test.py`.
+
+### 8B — Hot-path performance
+
+- [x] **#5** `CIGI/CigiSender.cpp:79-154` — response packets alloc/free
+      every frame. Pool `CigiHatHotRespV3` / `CigiLosRespV3`.
+- [x] **#6** `Camera/CamSimCamera.cpp:918` — Verbose log on every CIGI
+      update on the game thread. Gate with `UE_LOG_ACTIVE` or demote to
+      1 Hz polling.
+- [x] **#7** `Metadata/CamSimJsonLogger.cpp:158-186` — `FormatEntry()`
+      allocates a fresh `FString` per entry on the logger thread. Reuse
+      a preallocated buffer.
+- [x] **#8** `Health/CamSimHealthServer.h:64-66` — `FCriticalSection`
+      around a `TSharedRef` snapshot is probably redundant. Validate
+      and drop, or document the invariant.
+
+### 8C — Clarity / structure
+
+- [x] **#9** `Camera/CamSimCamera.cpp:584-883` — `Tick()` is ~300 lines
+      across 5+ responsibilities. Extract phase helpers.
+- [x] **#10** `Encoder/VideoEncoder.cpp` — `Open()` mixes socket setup,
+      codec selection, colorspace, and option marshalling. Split.
+- [x] **#11** `Camera/CamSimCamera.cpp:60-68` — magic numbers in
+      `ComputeCulledScreenSpaceError()` (60.0 / 200.0 / 100.0). Give
+      them named constants.
+- [x] **#12** `Camera/CamSimCamera.h:31-33,175-211` — 11+ `TAtomic`
+      members without a documented reader/writer/order policy. Add
+      comments or group into a struct.
+- [x] **#13** Cross-subsystem — receivers use `TAtomic`, encoder/camera
+      mix plain `int32` flags with `TAtomic`. Pick one policy.
+
+### 8D — UE5 idiom / hygiene
+
+- [x] **#14** Raw `new`/`delete` of `FRunnableThread*` across
+      `CigiReceiver`, `DisReceiver`, `EncoderThread`,
+      `CamSimJsonLogger`. Wrap in `TUniquePtr`.
+- [x] **#15** `CigiSender.cpp:74-101` — raw `new`/`delete` on
+      `CigiIGSession` / `CigiSOFV3_2`. Wrap in `TUniquePtr`.
+- [x] **#16** `Camera/CamSimCamera.h:12` — `EncoderThread.h` include
+      drags heavy transitive headers into every TU. Landed via a
+      forward-declared `FEncoderThreadDeleter` whose `operator()` is
+      declared in the header and defined in `CamSimCamera.cpp`. UHT's
+      generated .gen.cpp now only emits a call to the deleter rather
+      than instantiating `delete` against an incomplete type.
+- [x] **#17** `CigiSender.cpp:119,174,196,224` — silent `if (!bOpen)
+      return` bailouts. Add a Verbose log with method context.
+
+### 8E — Scripts / infra (deferred — not in this session)
+
+- [ ] **#18** Add `set -euo pipefail` to `scripts/check.sh`,
+      `stop.sh`, `repo_setup.sh`, `test_matrix.sh`,
+      `test_video_output.sh`.
+- [ ] **#19** Extract a `scripts/lib/probe.sh` helper; switch ffprobe
+      parsing to JSON output in `ci_validate.sh`,
+      `test_video_output.sh`, `test_matrix.sh`.
+- [ ] **#20** `deploy/Dockerfile:54-58` — version-pinned
+      `libnvidia-encode-535 || true` is non-reproducible. Parameterize
+      or drop the version.
+- [ ] **#21** `deploy/docker-compose.yml:44-54` — block of
+      commented-out env overrides. Move to a `.env.example`.
+
+### 8F — Doc hygiene
+
+- [x] **#22** `TODO.md §7D` — 4 open verification items from the
+      2026-04-16 architecture review. `git log` shows 7A/7B/7C landed
+      in `05e8342`/`70e4df1`; reconcile the §7D checklist.
+- [x] **#23** `README.md:187-196` — Phase 18 Niagara section reads as a
+      spec. Clarify assets are not bundled, and what the missing-asset
+      behavior is.
+- [x] **#24** `docs/configuration.md` and `CLAUDE.md:117-130` duplicate
+      the env-var table and drift (see #1). Make CLAUDE.md a pointer
+      into `docs/configuration.md`.
+- [x] **#25** `CLAUDE.md:112-114` — HTTP dual-ticker gotcha is one
+      dense bullet. Break into sub-bullets and link
+      `Tests/HttpServerLifecycleTest.cpp`.

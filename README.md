@@ -185,7 +185,10 @@ camsim/
 
 ## Gotchas
 
-- **Phase 18 Niagara assets**: Particle effects (18F rotor wash, 18G smoke/fire, 18H contrails) and decal cratering (18I) require assets authored in the UE editor. Create the following and save to `/Game/Effects/`:
+- **Phase 18 Niagara assets**: Particle effects (18F rotor wash, 18G smoke/fire, 18H contrails) and decal cratering (18I) are driven by Niagara/material assets that **are not bundled with the repository** — they must be authored in the UE editor once per checkout. Missing assets are non-fatal: the subsystem logs a single warning at load time and simply skips that effect; every other feature continues to work.
+
+  Create the following and save to `/Game/Effects/`:
+
   | Asset | Type | Key exposed parameters |
   |---|---|---|
   | `NS_RotorWash` | Niagara System | `Velocity` (float), `Density` (float), `Radius` (float) |
@@ -193,7 +196,8 @@ camsim/
   | `NS_Fire` | Niagara System | `EmitRate` (float), `Scale` (float) |
   | `NS_Contrail` | Niagara System | `Width` (float), `Opacity` (float) |
   | `M_Crater` | Decal Material | Normal map input, burn ring albedo, opacity mask |
-  Asset paths are configurable via `phase18.niagara_*` and `phase18.crater_decal_material` in `camsim_config.yaml`. Missing assets log a warning and skip that effect — other effects still work.
+
+  Asset paths are configurable via `phase18.niagara_*` and `phase18.crater_decal_material` in `camsim_config.yaml` — point them at existing content if you have preferred Niagara systems in another folder. The full editor-side checklist (including sun/sky actors, HUD widgets, and entity glTF paths) lives in [`TODO.md`](TODO.md).
 
 ## Links
 

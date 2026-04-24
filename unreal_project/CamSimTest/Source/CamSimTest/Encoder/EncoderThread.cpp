@@ -25,20 +25,19 @@ FEncoderThread::~FEncoderThread()
 
 void FEncoderThread::Start()
 {
-	if (Thread) return;
+	if (Thread.IsValid()) return;
 	bRunning = true;
-	Thread = FRunnableThread::Create(this, TEXT("CamSimEncoder"), 0, TPri_Normal);
+	Thread.Reset(FRunnableThread::Create(this, TEXT("CamSimEncoder"), 0, TPri_Normal));
 	UE_LOG(LogCamSim, Log, TEXT("FEncoderThread: started"));
 }
 
 void FEncoderThread::Stop()
 {
-	if (!Thread) return;
+	if (!Thread.IsValid()) return;
 	bRunning = false;
 	WakeEvent->Trigger();
 	Thread->WaitForCompletion();
-	delete Thread;
-	Thread = nullptr;
+	Thread.Reset();
 	UE_LOG(LogCamSim, Log, TEXT("FEncoderThread: stopped"));
 }
 

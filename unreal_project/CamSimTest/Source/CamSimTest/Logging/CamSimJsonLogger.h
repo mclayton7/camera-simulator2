@@ -67,13 +67,19 @@ private:
 	int64 CurrentSizeBytes = 0;
 	TBoundedSpscQueue<FLogEntry> Queue { QueueCapacity };
 
-	FRunnableThread* ConsumerThread = nullptr;
-	FEvent*          WakeEvent      = nullptr;
+	TUniquePtr<FRunnableThread> ConsumerThread;
+	FEvent*          WakeEvent      = nullptr;  // owned by platform pool; not deleted
 	TAtomic<bool>    bShouldRun     { false };
+
+	// Reused by the consumer thread on every WriteEntry() call so the logger
+	// doesn't allocate a fresh FString per log line. Only touched from Run().
+	FString ScratchJsonBuffer;
 
 	void WriteEntry(const FLogEntry& Entry);
 	void RotateIfNeeded();
-	FString FormatEntry(const FLogEntry& Entry) const;
+	// Appends one JSON line (terminated by '\n') into Out. Out is NOT reset —
+	// the caller is expected to Reset() the buffer before reuse.
+	void AppendFormattedEntry(FString& Out, const FLogEntry& Entry) const;
 	// RFC 7159 compliant string escape — replaces the previous \ and " only path.
 	static void AppendEscapedJson(FString& Out, const FString& In);
 };

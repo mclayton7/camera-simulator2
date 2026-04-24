@@ -71,15 +71,22 @@ private:
 	TSharedPtr<FInternetAddr>     DestAddr;
 
 	// Separate outgoing-only CCL session (no incoming buffers needed)
-	CigiIGSession*  CigiSession  = nullptr;
-	CigiOutgoingMsg* OutgoingMsg = nullptr;  // non-owning ptr into CigiSession
-	CigiSOFV3_2*    SofPacket   = nullptr;
+	TUniquePtr<CigiIGSession> CigiSession;
+	CigiOutgoingMsg*          OutgoingMsg = nullptr;  // non-owning; points into CigiSession
+	TUniquePtr<CigiSOFV3_2>   SofPacket;
 
-	// Per-frame staging arrays (cleared after FlushFrame)
-	TArray<CigiHatHotRespV3*> PendingHatHot;
-	TArray<CigiLosRespV3*>    PendingLos;
+	// Response packet pools. The pools grow on first use and are reused every
+	// frame to keep the game-thread hot path allocation-free. `*InUse` counts
+	// the prefix that holds the current frame's staged responses; FlushFrame()
+	// serialises `[0, InUse)` then resets the counter to 0.
+	TArray<TUniquePtr<CigiHatHotRespV3>> HatHotPool;
+	int32 HatHotInUse = 0;
+	TArray<TUniquePtr<CigiLosRespV3>>    LosPool;
+	int32 LosInUse = 0;
 
-	CigiSensorXRespV3* PendingSensorXResp = nullptr;
+	// At most one sensor response per frame — single-slot "pool".
+	TUniquePtr<CigiSensorXRespV3> SensorXResp;
+	bool                          bSensorXRespPending = false;
 
 	bool bOpen = false;
 };

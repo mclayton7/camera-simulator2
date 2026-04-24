@@ -604,13 +604,13 @@ bool FCigiReceiver::Start()
 		// need to manually Reset() the event between poll iterations.
 		ShutdownEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/false);
 	}
-	Thread = FRunnableThread::Create(this, TEXT("CigiReceiverThread"), 128 * 1024,
-		TPri_Normal, FPlatformAffinity::GetTaskGraphBackgroundTaskMask());
+	Thread.Reset(FRunnableThread::Create(this, TEXT("CigiReceiverThread"), 128 * 1024,
+		TPri_Normal, FPlatformAffinity::GetTaskGraphBackgroundTaskMask()));
 
 	UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: %s (camera entity id=%d)"),
 		bPlaybackMode ? TEXT("playback mode") : *FString::Printf(TEXT("listening on %s:%d"), *Config.CigiBindAddr, Config.CigiPort),
 		Config.CameraEntityId);
-	return Thread != nullptr;
+	return Thread.IsValid();
 }
 
 void FCigiReceiver::Stop()
@@ -619,11 +619,10 @@ void FCigiReceiver::Stop()
 	// Wake the receiver from its 1 ms recv poll immediately — without this,
 	// shutdown latency is capped at the poll interval per waiting thread.
 	if (ShutdownEvent) ShutdownEvent->Trigger();
-	if (Thread)
+	if (Thread.IsValid())
 	{
 		Thread->WaitForCompletion();
-		delete Thread;
-		Thread = nullptr;
+		Thread.Reset();
 	}
 	if (ShutdownEvent)
 	{

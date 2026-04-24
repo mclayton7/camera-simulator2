@@ -192,11 +192,7 @@ hfov_deg: 60.0
 # Env: CAMSIM_VIDEO_CODEC
 video_codec: h264
 
-# KLV checksum algorithm.
-# "crc16" = CRC-16/CCITT (default, matches validate_klv.py)
-# "bcc16" = BCC-16 running sum (per MISB ST 0601 specification)
-# Env: CAMSIM_KLV_CHECKSUM_MODE
-klv_checksum_mode: "crc16"
+# KLV checksum algorithm — see phase26.klv_checksum above (env CAMSIM_KLV_CHECKSUM).
 
 # Encoder implementation: "auto" tries NVENC first, falls back to
 # libx264/libx265. Explicit values: "nvenc", "libx264", "libx265".

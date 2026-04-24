@@ -56,7 +56,7 @@ public:
 private:
 	const FCamSimConfig& Config;
 
-	FRunnableThread* Thread    = nullptr;
+	TUniquePtr<FRunnableThread> Thread;
 	FSocket*         Socket    = nullptr;
 	TAtomic<bool>    bShouldRun;
 	// Auto-reset event: Stop() triggers it so the receiver wakes instantly

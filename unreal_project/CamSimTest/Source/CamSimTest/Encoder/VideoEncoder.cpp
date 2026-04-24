@@ -128,87 +128,187 @@ bool FVideoEncoder::Open()
 // OpenVideoStream
 // -------------------------------------------------------------------------
 
-bool FVideoEncoder::OpenVideoStream()
+const AVCodec* FVideoEncoder::SelectVideoCodec(bool& bOutWantH265)
 {
-	const AVCodec* Codec = nullptr;
 	const FString EncoderPref = Config.Encoder.ToLower().TrimStartAndEnd();
 	const FString CodecPref   = Config.VideoCodec.ToLower().TrimStartAndEnd();
-	const bool bWantH265      = (CodecPref == TEXT("h265") || CodecPref == TEXT("hevc"));
+	bOutWantH265              = (CodecPref == TEXT("h265") || CodecPref == TEXT("hevc"));
 
-	if (bWantH265)
+	const char* NvencName   = bOutWantH265 ? "hevc_nvenc" : "h264_nvenc";
+	const char* SoftwareName = bOutWantH265 ? "libx265"    : "libx264";
+	const AVCodecID FallbackId = bOutWantH265 ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
+
+	const AVCodec* Codec = nullptr;
+	if (EncoderPref == TEXT("nvenc") || EncoderPref == TEXT("auto"))
 	{
-		// H.265/HEVC encoder selection
-		if (EncoderPref == TEXT("nvenc") || EncoderPref == TEXT("auto"))
+		Codec = avcodec_find_encoder_by_name(NvencName);
+		if (Codec)
 		{
-			Codec = avcodec_find_encoder_by_name("hevc_nvenc");
-			if (Codec)
-			{
-				UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder hevc_nvenc"));
-			}
-			else if (EncoderPref == TEXT("nvenc"))
-			{
-				UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but hevc_nvenc not available"));
-				return false;
-			}
-			else
-			{
-				UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: hevc_nvenc not available, trying libx265"));
-			}
+			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder %s"),
+				ANSI_TO_TCHAR(NvencName));
 		}
-		if (!Codec)
+		else if (EncoderPref == TEXT("nvenc"))
 		{
-			Codec = avcodec_find_encoder_by_name("libx265");
+			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but %s not available"),
+				ANSI_TO_TCHAR(NvencName));
+			return nullptr;
 		}
-		if (!Codec)
+		else
 		{
-			Codec = avcodec_find_encoder(AV_CODEC_ID_HEVC);
+			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: %s not available, falling back to %s"),
+				ANSI_TO_TCHAR(NvencName), ANSI_TO_TCHAR(SoftwareName));
 		}
-		if (!Codec)
+	}
+
+	if (!Codec) Codec = avcodec_find_encoder_by_name(SoftwareName);
+	if (!Codec) Codec = avcodec_find_encoder(FallbackId);
+	if (!Codec)
+	{
+		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: %s encoder not found"),
+			bOutWantH265 ? TEXT("H.265/HEVC") : TEXT("H.264"));
+	}
+	return Codec;
+}
+
+void FVideoEncoder::ApplyEncoderOptions(bool bWantH265)
+{
+	if (bUsingNvenc)
+	{
+		av_opt_set(VideoCodecCtx->priv_data, "preset", "p4",  0);
+		av_opt_set(VideoCodecCtx->priv_data, "tune",   "ll",  0); // low latency
+		av_opt_set(VideoCodecCtx->priv_data, "rc",     "cbr", 0);
+		av_opt_set(VideoCodecCtx->priv_data, "gpu",    "0",   0);
+	}
+	else if (bWantH265)
+	{
+		av_opt_set(VideoCodecCtx->priv_data, "preset", TCHAR_TO_ANSI(*Config.H264Preset), 0);
+		// libx265 uses x265-params for tune instead of a top-level tune key.
+		FString X265Params = FString::Printf(TEXT("log-level=warning"));
+		if (!Config.H264Tune.IsEmpty())
 		{
-			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: H.265/HEVC encoder not found"));
-			return false;
+			X265Params += FString::Printf(TEXT(":tune=%s"), *Config.H264Tune);
 		}
+		av_opt_set(VideoCodecCtx->priv_data, "x265-params", TCHAR_TO_ANSI(*X265Params), 0);
 	}
 	else
 	{
-		// H.264 encoder selection (default)
-		if (EncoderPref == TEXT("nvenc") || EncoderPref == TEXT("auto"))
+		av_opt_set(VideoCodecCtx->priv_data, "preset", TCHAR_TO_ANSI(*Config.H264Preset), 0);
+		av_opt_set(VideoCodecCtx->priv_data, "tune",   TCHAR_TO_ANSI(*Config.H264Tune),   0);
+	}
+
+	// Phase 21E.1 — ROVER Baseline profile override.
+	if (Config.Streaming.bRoverCompat && !bUsingNvenc && !bWantH265)
+	{
+		VideoCodecCtx->profile = FF_PROFILE_H264_CONSTRAINED_BASELINE;
+		av_opt_set(VideoCodecCtx->priv_data, "profile", "baseline", 0);
+		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: ROVER Baseline profile set"));
+	}
+}
+
+bool FVideoEncoder::ConfigureColorSpace()
+{
+	// Create sws context: BGRA → YUV420P (BT.709, limited range).
+	SwsCtx = sws_getContext(
+		Config.CaptureWidth, Config.CaptureHeight, AV_PIX_FMT_BGRA,
+		Config.CaptureWidth, Config.CaptureHeight, AV_PIX_FMT_YUV420P,
+		SWS_BILINEAR, nullptr, nullptr, nullptr);
+	if (!SwsCtx)
+	{
+		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: sws_getContext failed"));
+		return false;
+	}
+
+	// CRITICAL: sws_getContext defaults to srcRange=0 (limited-range 16-235 RGB),
+	// but GPU readback delivers full-range 0-255 RGB. Without correcting this,
+	// values below 16 or above 235 cause chroma overflow → pink/green banding.
+	const int* BT709Coeffs = sws_getCoefficients(SWS_CS_ITU709);
+	int ScsRet = sws_setColorspaceDetails(
+		SwsCtx,
+		BT709Coeffs, /*srcRange=*/1,   // full-range RGB in (0-255)
+		BT709Coeffs, /*dstRange=*/0,   // limited-range YUV out (16-235/16-240)
+		0, 1 << 16, 1 << 16);
+	if (ScsRet < 0)
+	{
+		UE_LOG(LogCamSim, Error,
+			TEXT("FVideoEncoder: sws_setColorspaceDetails FAILED (ret=%d). "
+			     "Pink/green artifacts are likely."), ScsRet);
+	}
+
+	// Verify the color parameters actually took effect; some sws builds need an
+	// explicit sws_alloc_context / sws_init_context sequence to honour them.
+	int *InvTbl = nullptr, *Tbl = nullptr;
+	int VerifySrcRange = -1, VerifyDstRange = -1;
+	int Bri = 0, Con = 0, Sat = 0;
+	sws_getColorspaceDetails(SwsCtx, &InvTbl, &VerifySrcRange,
+	                         &Tbl, &VerifyDstRange, &Bri, &Con, &Sat);
+
+	UE_LOG(LogCamSim, Log,
+		TEXT("FVideoEncoder: sws colorspace verified → srcRange=%d dstRange=%d "
+		     "(expected srcRange=1 dstRange=0)"),
+		VerifySrcRange, VerifyDstRange);
+
+	if (VerifySrcRange != 1 || VerifyDstRange != 0)
+	{
+		UE_LOG(LogCamSim, Warning,
+			TEXT("FVideoEncoder: sws color params NOT applied correctly! "
+			     "srcRange=%d (want 1) dstRange=%d (want 0). Retrying with context reinit..."),
+			VerifySrcRange, VerifyDstRange);
+
+		sws_freeContext(SwsCtx);
+		SwsCtx = sws_alloc_context();
+		if (SwsCtx)
 		{
-			Codec = avcodec_find_encoder_by_name("h264_nvenc");
-			if (Codec)
+			av_opt_set_int(SwsCtx, "srcw",       Config.CaptureWidth,  0);
+			av_opt_set_int(SwsCtx, "srch",       Config.CaptureHeight, 0);
+			av_opt_set_int(SwsCtx, "src_format", AV_PIX_FMT_BGRA,      0);
+			av_opt_set_int(SwsCtx, "dstw",       Config.CaptureWidth,  0);
+			av_opt_set_int(SwsCtx, "dsth",       Config.CaptureHeight, 0);
+			av_opt_set_int(SwsCtx, "dst_format", AV_PIX_FMT_YUV420P,   0);
+			av_opt_set_int(SwsCtx, "sws_flags",  SWS_BILINEAR,         0);
+
+			const int InitRet = sws_init_context(SwsCtx, nullptr, nullptr);
+			if (InitRet < 0)
 			{
-				UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder h264_nvenc"));
-			}
-			else if (EncoderPref == TEXT("nvenc"))
-			{
-				UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but h264_nvenc not available"));
+				UE_LOG(LogCamSim, Error,
+					TEXT("FVideoEncoder: sws_init_context fallback failed (ret=%d)"), InitRet);
+				sws_freeContext(SwsCtx);
+				SwsCtx = nullptr;
 				return false;
 			}
-			else
-			{
-				UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: NVENC not available, falling back to libx264"));
-			}
-		}
-		if (!Codec)
-		{
-			Codec = avcodec_find_encoder_by_name("libx264");
-		}
-		if (!Codec)
-		{
-			Codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-		}
-		if (!Codec)
-		{
-			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: H.264 encoder not found"));
-			return false;
+
+			ScsRet = sws_setColorspaceDetails(
+				SwsCtx,
+				BT709Coeffs, /*srcRange=*/1,
+				BT709Coeffs, /*dstRange=*/0,
+				0, 1 << 16, 1 << 16);
+
+			sws_getColorspaceDetails(SwsCtx, &InvTbl, &VerifySrcRange,
+			                         &Tbl, &VerifyDstRange, &Bri, &Con, &Sat);
+			UE_LOG(LogCamSim, Log,
+				TEXT("FVideoEncoder: sws fallback → srcRange=%d dstRange=%d ret=%d"),
+				VerifySrcRange, VerifyDstRange, ScsRet);
 		}
 	}
+
+	bSwsColorSpaceApplied = (VerifySrcRange == 1 && VerifyDstRange == 0);
+	if (!bSwsColorSpaceApplied)
+	{
+		UE_LOG(LogCamSim, Warning,
+			TEXT("FVideoEncoder: sws color space NOT active — EncodeFrame will "
+			     "pre-compress BGRA to limited range (16-235) to avoid pink/green"));
+	}
+	return true;
+}
+
+bool FVideoEncoder::OpenVideoStream()
+{
+	bool bWantH265 = false;
+	const AVCodec* Codec = SelectVideoCodec(bWantH265);
+	if (!Codec) return false;
 
 	bUsingNvenc = (FCStringAnsi::Strstr(Codec->name, "nvenc") != nullptr);
 	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: using encoder %s (codec=%s)"),
 		ANSI_TO_TCHAR(Codec->name), bWantH265 ? TEXT("H.265") : TEXT("H.264"));
-
-	// Log library versions — helps diagnose system-vs-ThirdParty lib conflicts
 	UE_LOG(LogCamSim, Log,
 		TEXT("FVideoEncoder: libswscale %d.%d.%d  libavcodec %d.%d.%d"),
 		LIBSWSCALE_VERSION_MAJOR, LIBSWSCALE_VERSION_MINOR, LIBSWSCALE_VERSION_MICRO,
@@ -235,56 +335,24 @@ bool FVideoEncoder::OpenVideoStream()
 	const float EffectiveFps = (Config.Performance.OutputFrameRateHz > 0.0f)
 		? FMath::Clamp(Config.Performance.OutputFrameRateHz, 1.0f, 120.0f)
 		: Config.FrameRate;
-	VideoCodecCtx->time_base   = AVRational{1, (int)FMath::RoundToInt(EffectiveFps)};
-	VideoCodecCtx->framerate   = AVRational{(int)FMath::RoundToInt(EffectiveFps), 1};
-	VideoCodecCtx->bit_rate    = Config.VideoBitrate;
-	VideoCodecCtx->gop_size    = (int)FMath::RoundToInt(EffectiveFps);
+	VideoCodecCtx->time_base    = AVRational{1, (int)FMath::RoundToInt(EffectiveFps)};
+	VideoCodecCtx->framerate    = AVRational{(int)FMath::RoundToInt(EffectiveFps), 1};
+	VideoCodecCtx->bit_rate     = Config.VideoBitrate;
+	VideoCodecCtx->gop_size     = (int)FMath::RoundToInt(EffectiveFps);
 	VideoCodecCtx->max_b_frames = 0; // zero-latency
 
 	// Explicitly signal the color space so all decoders (VLC, ffplay, hardware) agree.
-	// sws_scale converts sRGB→YUV using BT.709 limited-range coefficients (see below),
-	// so we stamp the matching values into the H.264 VUI / SPS here.
-	VideoCodecCtx->color_range      = AVCOL_RANGE_MPEG;        // limited (16-235/16-240)
-	VideoCodecCtx->color_primaries  = AVCOL_PRI_BT709;
-	VideoCodecCtx->color_trc        = AVCOL_TRC_IEC61966_2_1;  // sRGB gamma (matches SCS_FinalColorLDR)
-	VideoCodecCtx->colorspace       = AVCOL_SPC_BT709;
+	// sws_scale converts sRGB→YUV using BT.709 limited-range coefficients, so we stamp
+	// the matching values into the H.264 VUI / SPS here.
+	VideoCodecCtx->color_range     = AVCOL_RANGE_MPEG;        // limited (16-235/16-240)
+	VideoCodecCtx->color_primaries = AVCOL_PRI_BT709;
+	VideoCodecCtx->color_trc       = AVCOL_TRC_IEC61966_2_1;  // sRGB gamma (matches SCS_FinalColorLDR)
+	VideoCodecCtx->colorspace      = AVCOL_SPC_BT709;
 
 	if (FmtCtx->oformat->flags & AVFMT_GLOBALHEADER)
 		VideoCodecCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-	// Encoder-specific options
-	if (bUsingNvenc)
-	{
-		av_opt_set(VideoCodecCtx->priv_data, "preset", "p4",  0);
-		av_opt_set(VideoCodecCtx->priv_data, "tune",   "ll",  0); // low latency
-		av_opt_set(VideoCodecCtx->priv_data, "rc",     "cbr", 0);
-		av_opt_set(VideoCodecCtx->priv_data, "gpu",    "0",   0);
-	}
-	else if (bWantH265)
-	{
-		// libx265 options
-		av_opt_set(VideoCodecCtx->priv_data, "preset", TCHAR_TO_ANSI(*Config.H264Preset), 0);
-		// libx265 uses x265-params for tune instead of top-level tune
-		FString X265Params = FString::Printf(TEXT("log-level=warning"));
-		if (!Config.H264Tune.IsEmpty())
-		{
-			X265Params += FString::Printf(TEXT(":tune=%s"), *Config.H264Tune);
-		}
-		av_opt_set(VideoCodecCtx->priv_data, "x265-params", TCHAR_TO_ANSI(*X265Params), 0);
-	}
-	else
-	{
-		av_opt_set(VideoCodecCtx->priv_data, "preset", TCHAR_TO_ANSI(*Config.H264Preset), 0);
-		av_opt_set(VideoCodecCtx->priv_data, "tune",   TCHAR_TO_ANSI(*Config.H264Tune),   0);
-	}
-
-	// Phase 21E.1 — ROVER Baseline profile override
-	if (Config.Streaming.bRoverCompat && !bUsingNvenc && !bWantH265)
-	{
-		VideoCodecCtx->profile = FF_PROFILE_H264_CONSTRAINED_BASELINE;
-		av_opt_set(VideoCodecCtx->priv_data, "profile", "baseline", 0);
-		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: ROVER Baseline profile set"));
-	}
+	ApplyEncoderOptions(bWantH265);
 
 	int Ret = avcodec_open2(VideoCodecCtx, Codec, nullptr);
 	if (Ret < 0)
@@ -302,112 +370,16 @@ bool FVideoEncoder::OpenVideoStream()
 
 	VideoStream->time_base = VideoCodecCtx->time_base;
 
-	// Allocate YUV frame for sws_scale output
+	// Allocate YUV frame for sws_scale output.
 	YuvFrame = av_frame_alloc();
 	YuvFrame->format = AV_PIX_FMT_YUV420P;
 	YuvFrame->width  = Config.CaptureWidth;
 	YuvFrame->height = Config.CaptureHeight;
 	av_frame_get_buffer(YuvFrame, 0);
 
-	// Create sws context: BGRA → YUV420P (BT.709, limited range)
-	SwsCtx = sws_getContext(
-		Config.CaptureWidth, Config.CaptureHeight, AV_PIX_FMT_BGRA,
-		Config.CaptureWidth, Config.CaptureHeight, AV_PIX_FMT_YUV420P,
-		SWS_BILINEAR, nullptr, nullptr, nullptr);
+	if (!ConfigureColorSpace()) return false;
 
-	if (!SwsCtx)
-	{
-		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: sws_getContext failed"));
-		return false;
-	}
-
-	// CRITICAL: sws_getContext defaults to srcRange=0 (limited-range 16-235 RGB),
-	// but GPU readback delivers full-range 0-255 RGB.  Without correcting this,
-	// values below 16 or above 235 cause chroma overflow → pink/green banding.
-	const int* BT709Coeffs = sws_getCoefficients(SWS_CS_ITU709);
-	int ScsRet = sws_setColorspaceDetails(
-		SwsCtx,
-		BT709Coeffs, /*srcRange=*/1,   // full-range RGB in (0-255)
-		BT709Coeffs, /*dstRange=*/0,   // limited-range YUV out (16-235/16-240)
-		0, 1 << 16, 1 << 16);
-
-	if (ScsRet < 0)
-	{
-		UE_LOG(LogCamSim, Error,
-			TEXT("FVideoEncoder: sws_setColorspaceDetails FAILED (ret=%d). "
-			     "Pink/green artifacts are likely."), ScsRet);
-	}
-
-	// Verify the color parameters actually took effect
-	{
-		int *InvTbl = nullptr, *Tbl = nullptr;
-		int VerifySrcRange = -1, VerifyDstRange = -1;
-		int Bri = 0, Con = 0, Sat = 0;
-		sws_getColorspaceDetails(SwsCtx, &InvTbl, &VerifySrcRange,
-		                         &Tbl, &VerifyDstRange, &Bri, &Con, &Sat);
-
-		UE_LOG(LogCamSim, Log,
-			TEXT("FVideoEncoder: sws colorspace verified → srcRange=%d dstRange=%d "
-			     "(expected srcRange=1 dstRange=0)"),
-			VerifySrcRange, VerifyDstRange);
-
-		if (VerifySrcRange != 1 || VerifyDstRange != 0)
-		{
-			UE_LOG(LogCamSim, Warning,
-				TEXT("FVideoEncoder: sws color params NOT applied correctly! "
-				     "srcRange=%d (want 1) dstRange=%d (want 0). "
-				     "Retrying with context reinit..."),
-				VerifySrcRange, VerifyDstRange);
-
-			// Fallback: recreate the context using the explicit init path
-			sws_freeContext(SwsCtx);
-			SwsCtx = sws_alloc_context();
-			if (SwsCtx)
-			{
-				av_opt_set_int(SwsCtx, "srcw",       Config.CaptureWidth,   0);
-				av_opt_set_int(SwsCtx, "srch",       Config.CaptureHeight,  0);
-				av_opt_set_int(SwsCtx, "src_format",  AV_PIX_FMT_BGRA,     0);
-				av_opt_set_int(SwsCtx, "dstw",       Config.CaptureWidth,   0);
-				av_opt_set_int(SwsCtx, "dsth",       Config.CaptureHeight,  0);
-				av_opt_set_int(SwsCtx, "dst_format",  AV_PIX_FMT_YUV420P,  0);
-				av_opt_set_int(SwsCtx, "sws_flags",   SWS_BILINEAR,        0);
-
-				int InitRet = sws_init_context(SwsCtx, nullptr, nullptr);
-				if (InitRet < 0)
-				{
-					UE_LOG(LogCamSim, Error,
-						TEXT("FVideoEncoder: sws_init_context fallback failed (ret=%d)"), InitRet);
-					sws_freeContext(SwsCtx);
-					SwsCtx = nullptr;
-					return false;
-				}
-
-				// Re-apply color space details on the freshly initialized context
-				ScsRet = sws_setColorspaceDetails(
-					SwsCtx,
-					BT709Coeffs, /*srcRange=*/1,
-					BT709Coeffs, /*dstRange=*/0,
-					0, 1 << 16, 1 << 16);
-
-				sws_getColorspaceDetails(SwsCtx, &InvTbl, &VerifySrcRange,
-				                         &Tbl, &VerifyDstRange, &Bri, &Con, &Sat);
-				UE_LOG(LogCamSim, Log,
-					TEXT("FVideoEncoder: sws fallback → srcRange=%d dstRange=%d ret=%d"),
-					VerifySrcRange, VerifyDstRange, ScsRet);
-			}
-		}
-
-		// Final determination of whether color space settings were applied
-		bSwsColorSpaceApplied = (VerifySrcRange == 1 && VerifyDstRange == 0);
-		if (!bSwsColorSpaceApplied)
-		{
-			UE_LOG(LogCamSim, Warning,
-				TEXT("FVideoEncoder: sws color space NOT active — EncodeFrame will "
-				     "pre-compress BGRA to limited range (16-235) to avoid pink/green"));
-		}
-	}
-
-	// Stamp color properties on the YUV frame to match VUI and sws output
+	// Stamp color properties on the YUV frame to match VUI and sws output.
 	YuvFrame->color_range     = AVCOL_RANGE_MPEG;
 	YuvFrame->colorspace      = AVCOL_SPC_BT709;
 	YuvFrame->color_primaries = AVCOL_PRI_BT709;

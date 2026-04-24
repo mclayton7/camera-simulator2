@@ -95,11 +95,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Validate KLV parser (syntax check)
-        run: uv run scripts/validate_klv.py --help || true
+      - name: Validate KLV parser (import + --help smoke)
+        run: uv run scripts/validate_klv.py --help
 
-      - name: Validate CIGI test sender (syntax check)
-        run: uv run scripts/send_cigi_test.py --help || true
+      - name: Validate CIGI test sender (import + --help smoke)
+        run: uv run scripts/send_cigi_test.py --help
+
+      - name: Unit tests (scripts/tests)
+        run: uv run --with pytest pytest scripts/tests/ -v
 
   # -------------------------------------------------------------------
   # Phase 14B: Docker image build
@@ -109,14 +112,18 @@ jobs:
   # UE5 installed, so there's no way to produce that directory here.
   # Re-enable once a self-hosted runner (or prebuilt UE5 container) is
   # wired up and a packaging job stages LinuxNoEditor/ as an artifact for
-  # this job to download. unit-tests and integration-test cascade-skip
-  # via their needs: [docker-build] dependency.
+  # this job to download.
+  #
+  # unit-tests, integration-test, and docker-release are all gated behind
+  # the same CAMSIM_UE5_RUNNER_AVAILABLE repo variable — no hidden cascade
+  # via `needs:`. Each job bootstraps its own image or compose stack, so
+  # they do not consume an artifact from this job.
   # -------------------------------------------------------------------
   docker-build:
     name: Build Docker Image
     runs-on: ubuntu-latest
     needs: [lint]
-    if: false
+    if: ${{ vars.CAMSIM_UE5_RUNNER_AVAILABLE == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -134,11 +141,16 @@ jobs:
 
   # -------------------------------------------------------------------
   # Phase 28A: UE5 unit tests (headless, no GPU)
+  #
+  # Gated on CAMSIM_UE5_RUNNER_AVAILABLE (see docker-build rationale).
+  # Builds its own test image via docker/build-push-action, so no
+  # `needs: [docker-build]` dependency — the two jobs are independent.
   # -------------------------------------------------------------------
   unit-tests:
     name: UE5 Unit Tests
     runs-on: ubuntu-latest
-    needs: [docker-build]
+    needs: [lint]
+    if: ${{ vars.CAMSIM_UE5_RUNNER_AVAILABLE == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -185,12 +197,19 @@ jobs:
 
   # -------------------------------------------------------------------
   # Phase 14B: Integration test (headless Docker)
+  #
+  # Gated on CAMSIM_UE5_RUNNER_AVAILABLE (see docker-build rationale).
+  # Runs `docker compose up --build`, so no `needs: [docker-build]`.
+  # Additionally branch-gated to pushes to main.
   # -------------------------------------------------------------------
   integration-test:
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [docker-build]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint]
+    if: >-
+      ${{ vars.CAMSIM_UE5_RUNNER_AVAILABLE == 'true'
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -235,13 +254,12 @@ jobs:
   # -------------------------------------------------------------------
   # Disabled for the same reason as docker-build: the Dockerfile requires
   # a staged UE5 binary (deploy/staged/LinuxNoEditor/) that CI cannot
-  # produce on ubuntu-latest. Re-enable alongside docker-build once UE5
-  # packaging is wired up.
+  # produce on ubuntu-latest. Gated on CAMSIM_UE5_RUNNER_AVAILABLE.
   docker-release:
     name: Push Docker Image
     runs-on: ubuntu-latest
     needs: [lint, python-tests]
-    if: false
+    if: ${{ vars.CAMSIM_UE5_RUNNER_AVAILABLE == 'true' }}
     permissions:
       packages: write
     steps:

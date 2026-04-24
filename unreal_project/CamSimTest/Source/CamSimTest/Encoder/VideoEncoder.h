@@ -108,4 +108,15 @@ private:
 	bool OpenRecordingContext();
 	void WriteKlvPacket(const FCamSimTelemetry& Telemetry, uint64 FrameIdx);
 	void LogFfmpegError(int Err, const TCHAR* Context);
+
+	// OpenVideoStream sub-helpers (split for readability).
+	// Picks the H.264 or H.265 encoder honouring Config.Encoder (auto/nvenc/libx*).
+	// Returns nullptr on failure and logs the reason.
+	const AVCodec* SelectVideoCodec(bool& bOutWantH265);
+	// Writes preset/tune/rc/profile options onto VideoCodecCtx->priv_data.
+	void ApplyEncoderOptions(bool bWantH265);
+	// Sets up SwsCtx (BGRA → YUV420P BT.709 limited range). Runs a verify+retry
+	// path if the initial sws_setColorspaceDetails call didn't stick. Returns
+	// false on unrecoverable sws failure.
+	bool ConfigureColorSpace();
 };

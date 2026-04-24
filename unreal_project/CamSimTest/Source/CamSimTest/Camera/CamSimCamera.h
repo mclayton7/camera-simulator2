@@ -9,7 +9,14 @@
 #include "Metadata/KlvBuilder.h"
 #include "Sensor/SensorTypes.h"      // ESensorMode
 #include "Sensor/IPixelPipeline.h"   // IPixelPipeline
-#include "Encoder/EncoderThread.h"   // FEncoderThread — must be complete for TUniquePtr in UHT .gen.cpp
+// FEncoderThread is intentionally held behind a TUniquePtr with a custom
+// forward-declared deleter (see `FEncoderThreadDeleter` below). UHT's
+// generated .gen.cpp emits DEFINE_VTABLE_PTR_HELPER_CTOR_NS(, ACamSimCamera),
+// which forces the destructor of every member to be instantiable in that TU.
+// A plain TUniquePtr<FEncoderThread> would inline `delete Ptr;` there and
+// fail with -Werror,-Wdelete-incomplete. The custom deleter declares
+// operator() here but defines it in CamSimCamera.cpp, so the .gen.cpp TU
+// only emits a call instruction — link-time resolution sees the full type.
 #include "Diagnostics/PipelineLatencyTracker.h"
 // FRHIGPUTextureReadback needs a complete type here because the UHT-generated
 // CamSimCamera.gen.cpp instantiates TArray<TUniquePtr<FRHIGPUTextureReadback>>'s
@@ -24,13 +31,34 @@ class UCamSimGimbalComponent;
 class UCamSimSensorComponent;
 class UMaterialInterface;
 class UMaterialParameterCollection;
+class FEncoderThread;
 
-/** Phase 27B — per-category frame drop counters. */
+/**
+ * Forward-declared deleter that lets ACamSimCamera hold a
+ * `TUniquePtr<FEncoderThread, FEncoderThreadDeleter>` without including
+ * `Encoder/EncoderThread.h`. The operator() is DECLARED here and DEFINED in
+ * CamSimCamera.cpp, so the UHT-generated .gen.cpp only emits a call to it —
+ * no `delete` is instantiated against an incomplete type.
+ */
+struct FEncoderThreadDeleter
+{
+	void operator()(FEncoderThread* Ptr) const;
+};
+
+/**
+ * Phase 27B — per-category frame drop counters.
+ *
+ * Threading: each counter is written from the thread that first observes the
+ * drop (EncoderBusy / SocketError from the game thread; ReadbackTimeout from
+ * the render thread). Reads come from the HTTP thread via the health server.
+ * Relaxed ordering is sufficient — drops are pure monotonic counters and
+ * don't gate any other data.
+ */
 struct FFrameDropStats
 {
-	TAtomic<int32> EncoderBusy     { 0 };
-	TAtomic<int32> ReadbackTimeout { 0 };
-	TAtomic<int32> SocketError     { 0 };
+	TAtomic<int32> EncoderBusy     { 0 };  // writer: game; readers: HTTP
+	TAtomic<int32> ReadbackTimeout { 0 };  // writer: game (observed from render); readers: HTTP
+	TAtomic<int32> SocketError     { 0 };  // writer: encoder thread; readers: HTTP
 	int32 Total() const { return EncoderBusy.Load() + ReadbackTimeout.Load() + SocketError.Load(); }
 };
 
@@ -148,15 +176,33 @@ private:
 	/** Frame counter for PTS calculation. */
 	uint64 FrameIndex = 0;
 
+	// -----------------------------------------------------------------------
+	// Threading policy (summary for the TAtomic/FThreadSafeBool fields below):
+	//
+	//   * Game-thread-only state stays as plain members (FrameIndex,
+	//     CaptureTargetIndex, etc.) — no synchronisation needed.
+	//   * Cross-thread counters and one-shot flags use TAtomic<T>. Each field
+	//     below is annotated "writer → readers (order)".
+	//   * bSensorBusy uses FThreadSafeBool for historical reasons — it's a
+	//     32-bit relaxed atomic bool with implicit conversions back to bool,
+	//     so `if (!bSensorBusy)` works without `.Load()`. Kept as-is to avoid
+	//     churn in every call site.
+	//
+	// "SeqCst" below means Load/Store(EMemoryOrder::SequentiallyConsistent);
+	// the matching read on the opposite thread takes SeqCst too, which is what
+	// we use whenever a flag is paired with data writes (release/acquire).
+	// -----------------------------------------------------------------------
+
 	/**
 	 * Set to true while the sensor post-process task is running on the previous frame.
 	 * Cleared by the sensor async task after depositing into the encoder queue.
 	 * (Replaces the old bEncoderBusy — encode now runs on a separate persistent thread.)
+	 * writer: game + sensor task → readers: game (relaxed; no paired data).
 	 */
 	FThreadSafeBool bSensorBusy;
 
 	/** Persistent encoder thread — drains processed frames from SPSC queue. */
-	TUniquePtr<FEncoderThread> EncoderThread;
+	TUniquePtr<FEncoderThread, FEncoderThreadDeleter> EncoderThread;
 
 	/**
 	 * Set to true between CaptureAndEncode() and game-thread readback completion.
@@ -171,7 +217,8 @@ private:
 	 */
 	TArray<TUniquePtr<FRHIGPUTextureReadback>> ColorReadbackPool;
 
-	/** Set by render thread after EnqueueCopy; game thread polls IsReady() only after this is true. */
+	/** Set by render thread after EnqueueCopy; game thread polls IsReady() only after this is true.
+	 *  writer: render → reader: game (relaxed — just gates whether polling can start). */
 	TAtomic<bool> bReadbackDMAIssued{false};
 
 	/**
@@ -182,13 +229,17 @@ private:
 	 */
 	TArray<FColor> AsyncPixels_;
 	TArray<float>  AsyncDepth_;
-	TAtomic<bool>  bPollComplete_{false};  // data ready for consume
-	TAtomic<bool>  bPollFailed_{false};    // Lock failure / bad format
+	// Paired with the AsyncPixels_/AsyncDepth_ data writes above. SeqCst store
+	// from render thread is observed by the game thread's SeqCst load, so the
+	// pixel array is fully visible once the flag reads true (acquire semantics).
+	TAtomic<bool>  bPollComplete_{false};  // writer: render → reader: game (SeqCst)
+	TAtomic<bool>  bPollFailed_{false};    // writer: render → reader: game (SeqCst)
 	/**
 	 * Monotonic poll generation — game thread bumps on every new CaptureAndEncode.
 	 * Each poll render command captures the generation by value and no-ops if
 	 * the generation has advanced, preventing stale polls from one frame from
 	 * resurrecting an already-consumed result once we advance to the next frame.
+	 * writer: game → reader: render (relaxed; compared for equality only).
 	 */
 	TAtomic<uint32> PollGeneration_{0};
 	uint8          RenderReadyStreak_ = 0;      // render-thread only
@@ -207,7 +258,8 @@ private:
 	/** Telemetry snapshot captured at the same time as the in-flight frame. */
 	FCamSimTelemetry PendingTelemetry;
 
-	/** Monotonically increasing count of frames dropped due to encoder busy. */
+	/** Monotonically increasing count of frames dropped due to encoder busy.
+	 *  writer: game → readers: game (heartbeat log) + HTTP /metrics (relaxed). */
 	TAtomic<uint64> DroppedFrameCount { 0 };
 
 	/** Telemetry cached from the last applied CIGI state. */
@@ -262,6 +314,12 @@ private:
 	float  FpsEyeHeightM_     = 1.7f;
 	bool   bFpsFromCigi_      = false; // true = activated by CIGI ViewControl
 
+	// Tick accounting — promoted from function-local statics so Tick() can be
+	// decomposed into helpers and so other methods (CIGI log throttling) can
+	// see the current tick count.
+	uint64 TickCount              = 0;
+	double LastHeartbeatWallSec   = 0.0;
+
 	// Helpers
 	void ApplyCigiState(float DeltaTime);
 	void ApplyFpsPose();
@@ -274,4 +332,13 @@ private:
 	void UpdateCesiumCamera();
 	void SubmitFrameToEncoder(TArray<FColor> PixelData, FCamSimTelemetry Telemetry,
 	                          uint64 FrameIdx, TArray<float> DepthMetres);
+
+	// Tick() helpers (decomposition of the former 300-line function).
+	void EmitHeartbeatIfDue();
+	// Returns false if the caller should abort this tick (parse failure).
+	bool PollHotReloadConfig(float DeltaTime);
+	void PollReadbackCompletion();
+	void DispatchQueuedResultIfFree();
+	// Returns true if this render frame should be skipped to honour OutputFps.
+	bool ShouldSkipFrameForDecimation();
 };
