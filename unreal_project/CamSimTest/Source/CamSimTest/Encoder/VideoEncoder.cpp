@@ -2,6 +2,22 @@
 
 #include "Encoder/VideoEncoder.h"
 #include "CamSimTest.h"
+#include "Sensor/SensorTypes.h"
+
+// ---------------------------------------------------------------------------
+// Helper: configure an AVStream as a STANAG 4609 KLV metadata stream.
+// Used by both OpenKlvStream (primary multicast output) and
+// OpenRecordingContext (local .ts recording). Keeps the four required field
+// assignments in one place so a future STANAG compliance fix only changes one
+// site.
+// ---------------------------------------------------------------------------
+static void ConfigureKlvStream(struct AVStream* S)
+{
+	S->codecpar->codec_type = AVMEDIA_TYPE_DATA;
+	S->codecpar->codec_id   = AV_CODEC_ID_SMPTE_KLV;
+	S->codecpar->codec_tag  = MKTAG('K','L','V','A');
+	S->time_base            = AVRational{1, 90000};
+}
 
 // -------------------------------------------------------------------------
 // Constructor / Destructor
@@ -130,7 +146,8 @@ bool FVideoEncoder::Open()
 
 const AVCodec* FVideoEncoder::SelectVideoCodec(bool& bOutWantH265)
 {
-	const FString EncoderPref = Config.Encoder.ToLower().TrimStartAndEnd();
+	using EPref = FCamSimConfig::EEncoderPreference;
+	const EPref EncoderPref   = Config.EncoderPref;
 	const FString CodecPref   = Config.VideoCodec.ToLower().TrimStartAndEnd();
 	bOutWantH265              = (CodecPref == TEXT("h265") || CodecPref == TEXT("hevc"));
 
@@ -139,7 +156,7 @@ const AVCodec* FVideoEncoder::SelectVideoCodec(bool& bOutWantH265)
 	const AVCodecID FallbackId = bOutWantH265 ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
 
 	const AVCodec* Codec = nullptr;
-	if (EncoderPref == TEXT("nvenc") || EncoderPref == TEXT("auto"))
+	if (EncoderPref == EPref::Nvenc || EncoderPref == EPref::Auto)
 	{
 		Codec = avcodec_find_encoder_by_name(NvencName);
 		if (Codec)
@@ -147,7 +164,7 @@ const AVCodec* FVideoEncoder::SelectVideoCodec(bool& bOutWantH265)
 			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder %s"),
 				ANSI_TO_TCHAR(NvencName));
 		}
-		else if (EncoderPref == TEXT("nvenc"))
+		else if (EncoderPref == EPref::Nvenc)
 		{
 			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but %s not available"),
 				ANSI_TO_TCHAR(NvencName));
@@ -411,10 +428,7 @@ bool FVideoEncoder::OpenKlvStream()
 	// - TS packet size 1316 bytes set via pkt_size option in OpenOutputContext
 	// - PAT at PID 0x0000 (FFmpeg default) per STANAG 4609 §4.1
 	// - PMT contains video (stream_type 0x1B for H.264 / 0x24 for H.265) + KLV
-	KlvStream->codecpar->codec_type = AVMEDIA_TYPE_DATA;
-	KlvStream->codecpar->codec_id   = AV_CODEC_ID_SMPTE_KLV;
-	KlvStream->codecpar->codec_tag  = MKTAG('K','L','V','A');
-	KlvStream->time_base            = AVRational{1, 90000};
+	ConfigureKlvStream(KlvStream);
 
 	return true;
 }
@@ -446,10 +460,7 @@ bool FVideoEncoder::OpenRecordingContext()
 	RecordKlvStream = avformat_new_stream(RecordFmtCtx, nullptr);
 	if (!RecordKlvStream) return false;
 	RecordKlvStream->id = 1;
-	RecordKlvStream->codecpar->codec_type = AVMEDIA_TYPE_DATA;
-	RecordKlvStream->codecpar->codec_id   = AV_CODEC_ID_SMPTE_KLV;
-	RecordKlvStream->codecpar->codec_tag  = MKTAG('K','L','V','A');
-	RecordKlvStream->time_base            = AVRational{1, 90000};
+	ConfigureKlvStream(RecordKlvStream);
 
 	Ret = avio_open(&RecordFmtCtx->pb, PathStr, AVIO_FLAG_WRITE);
 	if (Ret < 0)
@@ -497,7 +508,8 @@ void FVideoEncoder::EncodeFrame(
 	// IR/NVG fast path: frame is already grayscale after sensor post-process.
 	// Y = R channel (all channels equal after ApplyIR/ApplyNVG), Cb=Cr=128.
 	// Skips sws_scale entirely, saving 2-3ms per frame.
-	const bool bGrayscaleMode = (Telemetry.SensorMode == 1 || Telemetry.SensorMode == 2);
+	const ESensorMode SM = static_cast<ESensorMode>(Telemetry.SensorMode);
+	const bool bGrayscaleMode = (SM == ESensorMode::IR || SM == ESensorMode::NVG);
 	if (bGrayscaleMode)
 	{
 		const int32 W = Config.CaptureWidth;

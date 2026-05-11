@@ -57,6 +57,14 @@ struct FCamSimConfig
 		ABGR
 	};
 
+	enum class EEncoderPreference : uint8
+	{
+		Auto    = 0,
+		Nvenc,
+		LibX264,
+		LibX265
+	};
+
 	enum class EEncoderWatchdogPolicy : uint8
 	{
 		Reconnect = 0,
@@ -139,8 +147,13 @@ struct FCamSimConfig
 	int32   WatchdogMaxReconnects = 3;
 
 	// Encoder selection: "auto" tries NVENC first, falls back to libx264.
-	// Explicit values: "nvenc", "libx264".
+	// Explicit values: "nvenc", "libx264", "libx265".
+	//
+	// Phase 4: the raw string is preserved (for YAML/env-var round-trip
+	// compatibility) and parsed into EncoderPref at load time. Consumers
+	// should use EncoderPref for runtime branching — see VideoEncoder.cpp.
 	FString Encoder = TEXT("auto");
+	EEncoderPreference EncoderPref = EEncoderPreference::Auto;
 
 	// Entity scalability
 	int32   MaxEntities = 500;
