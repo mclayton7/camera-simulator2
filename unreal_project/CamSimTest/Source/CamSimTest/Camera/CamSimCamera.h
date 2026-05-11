@@ -257,7 +257,14 @@ private:
 	/** Frame index in-flight through the GPU readback pipeline. */
 	uint64 PendingFrameIndex = 0;
 
-	/** Intermediate result: readback completed but sensor still busy. */
+	// -----------------------------------------------------------------------
+	// Game-thread-only readback hand-off state. Written by
+	// PollReadbackCompletion when a readback finishes but the sensor task is
+	// still busy on the previous frame; read by DispatchQueuedResultIfFree
+	// the next time it runs (both on the game thread). NOT atomic — moving
+	// any access off-thread would introduce a silent race. Guards live at the
+	// accessor sites (checkSlow(IsInGameThread())).
+	// -----------------------------------------------------------------------
 	TArray<FColor>   CompletedPixels_;
 	TArray<float>    CompletedDepth_;
 	FCamSimTelemetry CompletedTelemetry_;

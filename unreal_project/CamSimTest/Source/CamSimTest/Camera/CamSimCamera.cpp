@@ -716,6 +716,8 @@ bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 
 void ACamSimCamera::PollReadbackCompletion()
 {
+	checkSlow(IsInGameThread());  // function reads game-thread-only state and enqueues render commands.
+
 	// Complete pending readback (async; no FlushRenderingCommands). We enqueue
 	// a non-blocking render command each tick while a readback is in flight.
 	// The command polls IsReady(); on success it copies the data into
@@ -885,6 +887,11 @@ void ACamSimCamera::PollReadbackCompletion()
 
 void ACamSimCamera::DispatchQueuedResultIfFree()
 {
+	// All reads and writes of CompletedPixels_/CompletedDepth_/CompletedTelemetry_/
+	// CompletedFrameIndex_/bReadbackResultReady_ are game-thread-only — none
+	// of these are atomic. The guard makes the constraint loud.
+	checkSlow(IsInGameThread());
+
 	if (bReadbackResultReady_ && !bSensorBusy)
 	{
 		bSensorBusy = true;
