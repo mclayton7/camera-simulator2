@@ -55,6 +55,12 @@ private:
 	FString GroundTruthPath;
 	int32 GroundTruthIntervalFrames = 1;
 
+	// Phase 2: persistent JSONL sidecar handle. Opened once in Open() and
+	// closed in Close(); WriteGroundTruthLine appends through this handle
+	// instead of FFileHelper::SaveStringToFile which would open/seek/write/
+	// close the OS file descriptor on every record (30 syscalls/sec at 30 fps).
+	class IFileHandle* GroundTruthHandle_ = nullptr;
+
 	void BuildViewRuntimes();
 	void WriteGroundTruthLine(const FCamSimTelemetry& Telemetry, uint64 FrameIdx, int32 EncodedViewCount) const;
 	static void ApplyDigitalZoom(const TArray<FColor>& SourcePixels,
