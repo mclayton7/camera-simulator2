@@ -130,7 +130,8 @@ bool FVideoEncoder::Open()
 
 const AVCodec* FVideoEncoder::SelectVideoCodec(bool& bOutWantH265)
 {
-	const FString EncoderPref = Config.Encoder.ToLower().TrimStartAndEnd();
+	using EPref = FCamSimConfig::EEncoderPreference;
+	const EPref EncoderPref   = Config.EncoderPref;
 	const FString CodecPref   = Config.VideoCodec.ToLower().TrimStartAndEnd();
 	bOutWantH265              = (CodecPref == TEXT("h265") || CodecPref == TEXT("hevc"));
 
@@ -139,7 +140,7 @@ const AVCodec* FVideoEncoder::SelectVideoCodec(bool& bOutWantH265)
 	const AVCodecID FallbackId = bOutWantH265 ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
 
 	const AVCodec* Codec = nullptr;
-	if (EncoderPref == TEXT("nvenc") || EncoderPref == TEXT("auto"))
+	if (EncoderPref == EPref::Nvenc || EncoderPref == EPref::Auto)
 	{
 		Codec = avcodec_find_encoder_by_name(NvencName);
 		if (Codec)
@@ -147,7 +148,7 @@ const AVCodec* FVideoEncoder::SelectVideoCodec(bool& bOutWantH265)
 			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder %s"),
 				ANSI_TO_TCHAR(NvencName));
 		}
-		else if (EncoderPref == TEXT("nvenc"))
+		else if (EncoderPref == EPref::Nvenc)
 		{
 			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but %s not available"),
 				ANSI_TO_TCHAR(NvencName));

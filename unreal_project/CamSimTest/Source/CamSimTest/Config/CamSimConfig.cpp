@@ -74,6 +74,19 @@ static FCamSimConfig::EEncoderWatchdogPolicy ParseWatchdogPolicy(const FString& 
 	return FCamSimConfig::EEncoderWatchdogPolicy::Reconnect;
 }
 
+static FCamSimConfig::EEncoderPreference ParseEncoderPreference(const FString& Value)
+{
+	const FString Lower = Value.ToLower().TrimStartAndEnd();
+	if (Lower == TEXT("nvenc"))   return FCamSimConfig::EEncoderPreference::Nvenc;
+	if (Lower == TEXT("libx264")) return FCamSimConfig::EEncoderPreference::LibX264;
+	if (Lower == TEXT("libx265")) return FCamSimConfig::EEncoderPreference::LibX265;
+	if (Lower == TEXT("auto") || Lower.IsEmpty())
+		return FCamSimConfig::EEncoderPreference::Auto;
+	UE_LOG(LogCamSim, Warning,
+		TEXT("Unknown Encoder preference '%s' — defaulting to Auto"), *Value);
+	return FCamSimConfig::EEncoderPreference::Auto;
+}
+
 static FString NormalizeQualityPreset(const FString& Value)
 {
 	return Value.TrimStartAndEnd().ToLower();
@@ -363,6 +376,7 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlInt   (Root, "encoder_watchdog_interval_ticks", Cfg.EncoderWatchdogIntervalTicks);
 		YamlInt   (Root, "watchdog_max_reconnects", Cfg.WatchdogMaxReconnects);
 		YamlString(Root, "encoder", Cfg.Encoder);
+		Cfg.EncoderPref = ParseEncoderPreference(Cfg.Encoder);
 		YamlInt   (Root, "max_entities", Cfg.MaxEntities);
 		YamlBool  (Root, "use_instanced_rendering", Cfg.bUseInstancedRendering);
 		YamlFloat (Root, "hfov_deg",         Cfg.HFovDeg);
@@ -1309,6 +1323,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.bUseLodTransitions      = GetEnvBool (TEXT("CAMSIM_USE_LOD_TRANSITIONS"),      Cfg.bUseLodTransitions);
 	Cfg.LodTransitionLength     = GetEnvFloat(TEXT("CAMSIM_LOD_TRANSITION_LENGTH"),    Cfg.LodTransitionLength);
 	Cfg.Encoder = GetEnv(TEXT("CAMSIM_ENCODER"), Cfg.Encoder);
+	Cfg.EncoderPref = ParseEncoderPreference(Cfg.Encoder);
 	Cfg.MaxEntities = GetEnvInt(TEXT("CAMSIM_MAX_ENTITIES"), Cfg.MaxEntities);
 	Cfg.TerrainProvider = GetEnv(TEXT("CAMSIM_TERRAIN_PROVIDER"), Cfg.TerrainProvider).TrimStartAndEnd().ToLower();
 	Cfg.ImageryProvider = GetEnv(TEXT("CAMSIM_IMAGERY_PROVIDER"), Cfg.ImageryProvider).TrimStartAndEnd().ToLower();
