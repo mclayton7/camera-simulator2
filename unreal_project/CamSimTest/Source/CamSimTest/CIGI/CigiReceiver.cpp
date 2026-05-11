@@ -634,9 +634,11 @@ void FCigiReceiver::Stop()
 		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket);
 		Socket = nullptr;
 	}
-	// Phase 12E: close recording file
+	// Phase 12E: close recording file (Phase 2: final flush to ensure
+	// the tail of the file is durable before delete).
 	if (RecordFileHandle)
 	{
+		RecordFileHandle->Flush();
 		delete RecordFileHandle;
 		RecordFileHandle = nullptr;
 		UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: recording file closed"));
@@ -788,7 +790,11 @@ uint32 FCigiReceiver::Run()
 		return 0;
 	}
 
-	// Normal UDP receive mode
+	// Normal UDP receive mode.
+	// Phase 2: flush the recording file every 100 packets instead of every
+	// packet (60 fsync/sec at ~60 Hz CIGI → ~0.6/sec). Crash recovery loses
+	// up to ~1.7 s of recording, acceptable for a diagnostic feature.
+	int32 RecordWriteCount = 0;
 	while (bShouldRun)
 	{
 		int32 BytesRead = 0;
@@ -804,7 +810,10 @@ uint32 FCigiReceiver::Run()
 				RecordFileHandle->Write(reinterpret_cast<const uint8*>(&Ts), sizeof(Ts));
 				RecordFileHandle->Write(reinterpret_cast<const uint8*>(&Len), sizeof(Len));
 				RecordFileHandle->Write(RecvBuf, BytesRead);
-				RecordFileHandle->Flush();
+				if (((++RecordWriteCount) % 100) == 0)
+				{
+					RecordFileHandle->Flush();
+				}
 			}
 
 			// Pre-parse environment packets directly from raw buffer
