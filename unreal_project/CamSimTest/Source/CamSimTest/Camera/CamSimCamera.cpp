@@ -43,7 +43,8 @@
 #include "CesiumCamera.h"
 #include "Cesium3DTileset.h"
 #include <Cesium3DTilesSelection/Tileset.h>
-#include "EngineUtils.h"
+
+#include "Geospatial/CesiumTuning.h"
 
 // -------------------------------------------------------------------------
 // Stats
@@ -52,65 +53,6 @@
 DECLARE_STATS_GROUP(TEXT("CamSim"), STATGROUP_CamSim, STATCAT_Advanced)
 DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Frames Dropped"), STAT_CamSimDropped, STATGROUP_CamSim)
 DECLARE_CYCLE_STAT(TEXT("Encode Latency"),  STAT_CamSimEncode,   STATGROUP_CamSim)
-
-// -------------------------------------------------------------------------
-// ApplyCesiumTilesetTuning – shared by BeginPlay() and HotReloadConfig()
-// -------------------------------------------------------------------------
-
-double ACamSimCamera::ComputeCulledScreenSpaceError(double HFovDeg)
-{
-	// Narrow-FOV sensors (e.g. 5° EO) can tolerate far more aggressive off-frustum
-	// culling than the default 60° tuning. Scale proportionally and clamp so a
-	// zoomed-out view doesn't collapse to nothing.
-	constexpr double ReferenceFovDeg      = 60.0;   // baseline horizontal FOV for tuning
-	constexpr double BaseCulledSseAtRef   = 200.0;  // SSE applied when HFovDeg == ReferenceFovDeg
-	constexpr double MinCulledSse         = 100.0;  // floor so wide-FOV tilesets still cull off-frustum geometry
-	constexpr double MinHFovClampDeg      = 1.0;    // guard against div-by-zero / runaway scaling
-
-	const double FovScale = FMath::Max(HFovDeg, MinHFovClampDeg) / ReferenceFovDeg;
-	return FMath::Max(BaseCulledSseAtRef * FovScale, MinCulledSse);
-}
-
-void ACamSimCamera::ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg)
-{
-	if (!World) return;
-
-	const double CulledSSE = ComputeCulledScreenSpaceError(static_cast<double>(Cfg.HFovDeg));
-
-	for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
-	{
-		It->MaximumSimultaneousTileLoads = Cfg.MaxSimultaneousTileLoads;
-		It->MaximumScreenSpaceError      = Cfg.MaximumScreenSpaceError;
-		if (Cfg.MaximumCachedBytesMB > 0)
-		{
-			It->MaximumCachedBytes =
-				static_cast<int64>(Cfg.MaximumCachedBytesMB) * 1024LL * 1024LL;
-		}
-		It->PreloadAncestors       = true;
-		It->PreloadSiblings        = false;  // prefetch camera already covers adjacent tiles
-		It->ForbidHoles            = false;  // true grows the render set linearly during camera motion
-		It->LoadingDescendantLimit = Cfg.LoadingDescendantLimit;
-
-		// Aggressively cull off-screen tiles (low-res placeholders outside frustum).
-		It->EnforceCulledScreenSpaceError = true;
-		It->CulledScreenSpaceError        = CulledSSE;
-
-		// Non-player ISR camera never collides — skip physics-mesh cook (saves VRAM + CPU).
-		// HAT/HOT terrain feedback uses Cesium's own sampling API, not physics queries.
-		It->SetCreatePhysicsMeshes(false);
-
-		It->SetUseLodTransitions(Cfg.bUseLodTransitions);
-		It->LodTransitionLength = Cfg.LodTransitionLength;
-		It->LogSelectionStats   = Cfg.bLogTileSelectionStats;
-
-		UE_LOG(LogCamSim, Log,
-			TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f@hfov=%.0f° cacheMB=%d descLimit=%d lodBlend=%d logStats=%d physicsMeshes=off)"),
-			*It->GetName(), Cfg.MaxSimultaneousTileLoads,
-			Cfg.MaximumScreenSpaceError, CulledSSE, Cfg.HFovDeg,
-			Cfg.MaximumCachedBytesMB, Cfg.LoadingDescendantLimit,
-			(int)Cfg.bUseLodTransitions, (int)Cfg.bLogTileSelectionStats);
-	}
-}
 
 // -------------------------------------------------------------------------
 // Constructor
@@ -273,7 +215,7 @@ void ACamSimCamera::BeginPlay()
 	// Tune Cesium3DTileset actors for smoother streaming and LOD quality.
 	// Shared helper is also used by UCamSimSubsystem::HotReloadConfig so runtime
 	// tuning edits don't need a level reload.
-	ApplyCesiumTilesetTuning(GetWorld(), Cfg);
+	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Cfg);
 
 	// Apply Cesium backend config (ion server, terrain source, imagery overlay).
 	// Must run after the streaming-params loop above.
@@ -626,8 +568,9 @@ void ACamSimCamera::Tick(float DeltaTime)
 	if (SensorComp && !SensorComp->IsOn()) return;
 	if (ShouldSkipFrameForDecimation())    return;
 
-	// Issue new capture if the readback slot is free.
-	if (!bReadbackPending)
+	// Issue new capture if the readback slot is free (state is Idle — no DMA
+	// in flight and no completed result still awaiting consumption).
+	if (ReadbackState_.Load(EMemoryOrder::SequentiallyConsistent) == EReadbackState::Idle)
 	{
 		CaptureAndEncode();
 	}
@@ -648,28 +591,34 @@ void ACamSimCamera::EmitHeartbeatIfDue()
 
 	const int32 ReadyPollsRequired = FMath::Max(1, Subsystem->GetConfig().ReadbackReadyPolls);
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tick=%llu busy=%d readback=%d sensor=%d frames_encoded=%llu dropped=%llu cap_idx=%d pending_idx=%d ready_polls=%d wall_dt=%.1fs fps=%.1f"),
-		TickCount, (int)(bool)bSensorBusy, (int)(bool)bReadbackPending,
+		TickCount, (int)(bool)bSensorBusy,
+		(int)(ReadbackState_.Load(EMemoryOrder::Relaxed) != EReadbackState::Idle),
 		(int)(SensorComp && SensorComp->IsOn()), FrameIndex, (uint64)DroppedFrameCount,
 		CaptureTargetIndex, PendingReadbackTargetIndex, ReadyPollsRequired,
 		WallDeltaSec, EffectiveFps);
 
 	// Tile loading stats — report per-tileset load progress and memory.
-	for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+	if (Subsystem)
 	{
-		const float Progress = It->GetLoadProgress();
-		int32 TilesLoaded = 0;
-		int64 DataBytes = 0;
-		if (auto* Tileset = It->GetTileset())
+		for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Subsystem->GetCachedTilesets())
 		{
-			TilesLoaded = Tileset->getNumberOfTilesLoaded();
-			DataBytes = Tileset->getTotalDataBytes();
+			ACesium3DTileset* T = Weak.Get();
+			if (!T) continue;
+			const float Progress = T->GetLoadProgress();
+			int32 TilesLoaded = 0;
+			int64 DataBytes = 0;
+			if (auto* Tileset = T->GetTileset())
+			{
+				TilesLoaded = Tileset->getNumberOfTilesLoaded();
+				DataBytes = Tileset->getTotalDataBytes();
+			}
+			UE_LOG(LogCamSim, Log,
+				TEXT("ACamSimCamera: tileset='%s' progress=%.1f%% SSE=%.1f loaded=%d dataMB=%.1f maxLoads=%d"),
+				*T->GetName(), Progress * 100.0f,
+				T->MaximumScreenSpaceError,
+				TilesLoaded, DataBytes / (1024.0 * 1024.0),
+				T->MaximumSimultaneousTileLoads);
 		}
-		UE_LOG(LogCamSim, Log,
-			TEXT("ACamSimCamera: tileset='%s' progress=%.1f%% SSE=%.1f loaded=%d dataMB=%.1f maxLoads=%d"),
-			*It->GetName(), Progress * 100.0f,
-			It->MaximumScreenSpaceError,
-			TilesLoaded, DataBytes / (1024.0 * 1024.0),
-			It->MaximumSimultaneousTileLoads);
 	}
 }
 
@@ -678,16 +627,35 @@ bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 	if (!Cfg.Performance.bHotReloadConfig) return true;
 
+	// Phase 3: kick off the stat syscall on a background thread so it never
+	// blocks the game thread on slow storage (NFS, container FUSE overlays).
 	HotReloadAccumSec_ += DeltaTime;
-	if (HotReloadAccumSec_ < Cfg.Performance.HotReloadPollIntervalSec) return true;
+	if (HotReloadAccumSec_ >= Cfg.Performance.HotReloadPollIntervalSec
+	    && !bHotReloadStatInFlight_.Load(EMemoryOrder::Relaxed))
+	{
+		HotReloadAccumSec_ = 0.0f;
+		bHotReloadStatInFlight_.Store(true, EMemoryOrder::Relaxed);
+		const FString CfgPath = FCamSimConfig::GetConfigFilePath();
+		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, CfgPath]()
+		{
+			const FDateTime CurrMTime = IFileManager::Get().GetTimeStamp(*CfgPath);
+			if (CurrMTime != FDateTime::MinValue() && CurrMTime != LastConfigMTime_)
+			{
+				LastConfigMTime_ = CurrMTime;
+				bHotReloadFileChanged_.Store(true, EMemoryOrder::SequentiallyConsistent);
+			}
+			bHotReloadStatInFlight_.Store(false, EMemoryOrder::Relaxed);
+		});
+	}
 
-	HotReloadAccumSec_ = 0.0f;
-	const FString CfgPath = FCamSimConfig::GetConfigFilePath();
-	const FDateTime CurrMTime = IFileManager::Get().GetTimeStamp(*CfgPath);
-	if (CurrMTime == FDateTime::MinValue() || CurrMTime == LastConfigMTime_) return true;
+	// Consume the flag on the game thread.
+	if (!bHotReloadFileChanged_.Exchange(false, EMemoryOrder::SequentiallyConsistent))
+	{
+		return true;
+	}
 
-	LastConfigMTime_ = CurrMTime;
 	const FCamSimConfig OldCfg = Cfg;
+	const FString CfgPath = FCamSimConfig::GetConfigFilePath();
 	FCamSimConfig NewCfg = FCamSimConfig::Load();
 	if (!NewCfg.bLoadedSuccessfully)
 	{
@@ -721,21 +689,21 @@ void ACamSimCamera::PollReadbackCompletion()
 	// Complete pending readback (async; no FlushRenderingCommands). We enqueue
 	// a non-blocking render command each tick while a readback is in flight.
 	// The command polls IsReady(); on success it copies the data into
-	// AsyncPixels_ and flips bPollComplete_ (seq-cst). Game thread consumes on
-	// the NEXT tick after bPollComplete_ becomes observable — no synchronous
-	// flush, so the render thread is free to keep rendering frame N+1 while
-	// frame N's DMA drains.
-	if (!bReadbackPending || !bReadbackDMAIssued.Load(EMemoryOrder::SequentiallyConsistent)) return;
+	// AsyncPixels_ and transitions ReadbackState_ to Complete (seq-cst). Game
+	// thread consumes on the NEXT tick after the transition is observable —
+	// no synchronous flush, so the render thread is free to keep rendering
+	// frame N+1 while frame N's DMA drains.
+	const EReadbackState State = ReadbackState_.Load(EMemoryOrder::SequentiallyConsistent);
+	if (State == EReadbackState::Idle) return;
 
 	// First: if a prior poll already completed, consume it now.
-	if (bPollComplete_.Load(EMemoryOrder::SequentiallyConsistent))
+	if (State == EReadbackState::Complete)
 	{
 		if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::ReadbackComplete);
 
 		TArray<FColor> Pixels      = MoveTemp(AsyncPixels_);
 		TArray<float>  DepthPixels = MoveTemp(AsyncDepth_);
-		bPollComplete_.Store(false, EMemoryOrder::SequentiallyConsistent);
-		bReadbackPending = false;
+		ReadbackState_.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
 		PendingReadbackTargetIndex      = INDEX_NONE;
 		PendingDepthReadbackTargetIndex = INDEX_NONE;
 
@@ -757,19 +725,20 @@ void ACamSimCamera::PollReadbackCompletion()
 		return;
 	}
 
-	if (bPollFailed_.Load(EMemoryOrder::SequentiallyConsistent))
+	if (State == EReadbackState::Failed)
 	{
 		if (bTrackFrameDrops_) FrameDropStats_.ReadbackTimeout++;
 		UE_LOG(LogCamSim, Warning,
 			TEXT("CamSimReadback frame %llu: lock returned null or bad format"), PendingFrameIndex);
 		AsyncPixels_.Reset();
 		AsyncDepth_.Reset();
-		bPollFailed_.Store(false, EMemoryOrder::SequentiallyConsistent);
-		bReadbackPending = false;
+		ReadbackState_.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
 		PendingReadbackTargetIndex      = INDEX_NONE;
 		PendingDepthReadbackTargetIndex = INDEX_NONE;
 		return;
 	}
+
+	// State must be DMAQueued at this point — enqueue another poll below.
 
 	// No result yet — enqueue another poll. Capture every piece of config by
 	// value so the lambda is safe to run after the enclosing scope unwinds.
@@ -802,10 +771,10 @@ void ACamSimCamera::PollReadbackCompletion()
 		// Stale poll from a previous frame — game thread has already advanced.
 		if (PollGeneration_.Load(EMemoryOrder::Relaxed) != CaptureGen) return;
 
-		// Idempotent: if a previous poll on this pending frame already
-		// delivered (or failed), subsequent polls are a no-op.
-		if (bPollComplete_.Load(EMemoryOrder::Relaxed)) return;
-		if (bPollFailed_  .Load(EMemoryOrder::Relaxed)) return;
+		// Idempotent: only proceed if we're still in the DMAQueued phase. If
+		// the state has already transitioned to Complete/Failed/Idle, a prior
+		// poll on this frame already delivered, so this one is a no-op.
+		if (ReadbackState_.Load(EMemoryOrder::Relaxed) != EReadbackState::DMAQueued) return;
 
 		if (!Readback || !Readback->IsReady())
 		{
@@ -823,7 +792,7 @@ void ACamSimCamera::PollReadbackCompletion()
 		if (!RawData || !RT)
 		{
 			if (RawData) Readback->Unlock();
-			bPollFailed_.Store(true, EMemoryOrder::SequentiallyConsistent);
+			ReadbackState_.Store(EReadbackState::Failed, EMemoryOrder::SequentiallyConsistent);
 			return;
 		}
 
@@ -835,7 +804,7 @@ void ACamSimCamera::PollReadbackCompletion()
 		if (!bIsBgra && !bIsRgba)
 		{
 			Readback->Unlock();
-			bPollFailed_.Store(true, EMemoryOrder::SequentiallyConsistent);
+			ReadbackState_.Store(EReadbackState::Failed, EMemoryOrder::SequentiallyConsistent);
 			return;
 		}
 
@@ -879,9 +848,9 @@ void ACamSimCamera::PollReadbackCompletion()
 			RenderDepthReadyStreak_.Store(0, EMemoryOrder::Relaxed);
 		}
 
-		// SeqCst store: data writes above are visible to the game thread
-		// once it observes bPollComplete_ = true.
-		bPollComplete_.Store(true, EMemoryOrder::SequentiallyConsistent);
+		// SeqCst store: data writes above (AsyncPixels_/AsyncDepth_) are
+		// visible to the game thread once it observes ReadbackState_=Complete.
+		ReadbackState_.Store(EReadbackState::Complete, EMemoryOrder::SequentiallyConsistent);
 	});
 }
 
@@ -1090,11 +1059,17 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 				}
 
 				// Apply or restore Cesium SSE based on current counter
-				for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+				if (Subsystem)
 				{
-					It->MaximumScreenSpaceError = (TilePrefetchBoostFramesRemaining_ > 0)
-						? Cfg.MaximumScreenSpaceError / FMath::Max(Cfg.Performance.TilePrefetchFovBoost, 1.0f)
-						: Cfg.MaximumScreenSpaceError;
+					for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Subsystem->GetCachedTilesets())
+					{
+						if (ACesium3DTileset* T = Weak.Get())
+						{
+							T->MaximumScreenSpaceError = (TilePrefetchBoostFramesRemaining_ > 0)
+								? Cfg.MaximumScreenSpaceError / FMath::Max(Cfg.Performance.TilePrefetchFovBoost, 1.0f)
+								: Cfg.MaximumScreenSpaceError;
+						}
+					}
 				}
 			}
 
@@ -1134,9 +1109,15 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 		}
 
 		// Apply adapted SSE to all tilesets
-		for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+		if (Subsystem)
 		{
-			It->MaximumScreenSpaceError = CurrentAdaptiveSSE_;
+			for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Subsystem->GetCachedTilesets())
+			{
+				if (ACesium3DTileset* T = Weak.Get())
+				{
+					T->MaximumScreenSpaceError = CurrentAdaptiveSSE_;
+				}
+			}
 		}
 	}
 
@@ -1421,7 +1402,7 @@ void ACamSimCamera::UpdateCesiumCamera()
 // -------------------------------------------------------------------------
 // CaptureAndEncode – State A: trigger GPU capture + enqueue async readback
 // -------------------------------------------------------------------------
-// State B (polling completion) runs in Tick() via the bReadbackPending branch.
+// State B (polling completion) runs in Tick() via the ReadbackState_ branch.
 // The two states naturally double-buffer: frame N+1 renders on the game thread
 // while the render thread completes frame N's DMA and the encode task runs.
 
@@ -1479,16 +1460,14 @@ void ACamSimCamera::CaptureAndEncode()
 	PendingFrameIndex = FrameIndex++;
 	PendingTelemetry  = CurrentTelemetry;
 
-	// Reset game-thread readback state for the new capture. Bumping the poll
-	// generation is what lets stale polls from the previous frame safely no-op.
-	bReadbackDMAIssued.Store(false, EMemoryOrder::SequentiallyConsistent);
-	bPollComplete_   .Store(false, EMemoryOrder::SequentiallyConsistent);
-	bPollFailed_     .Store(false, EMemoryOrder::SequentiallyConsistent);
+	// Transition the readback state machine to DMAQueued and bump the poll
+	// generation so any stale render-command polls from the previous frame
+	// safely no-op when they observe Generation_ mismatch.
 	PollGeneration_  .Store(PollGeneration_.Load(EMemoryOrder::Relaxed) + 1,
 	                        EMemoryOrder::SequentiallyConsistent);
 	RenderReadyStreak_     .Store(0, EMemoryOrder::Relaxed);
 	RenderDepthReadyStreak_.Store(0, EMemoryOrder::Relaxed);
-	bReadbackPending = true;
+	ReadbackState_.Store(EReadbackState::DMAQueued, EMemoryOrder::SequentiallyConsistent);
 
 	// Trigger depth capture alongside color (Phase 17A)
 	UTextureRenderTarget2D* DepthCaptureRT = nullptr;
@@ -1512,7 +1491,7 @@ void ACamSimCamera::CaptureAndEncode()
 	FRHIGPUTextureReadback*  Readback = ColorReadbackPool[PendingReadbackTargetIndex].Get();
 	if (!RT)
 	{
-		bReadbackPending = false;
+		ReadbackState_.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
 		PendingReadbackTargetIndex = INDEX_NONE;
 		PendingDepthReadbackTargetIndex = INDEX_NONE;
 		return;
@@ -1560,13 +1539,9 @@ void ACamSimCamera::CaptureAndEncode()
 			}
 		}
 
-		// Signal game thread: DMA has been enqueued, safe to poll IsReady()
-		// SeqCst: paired with the SeqCst load in PollReadbackCompletion so
-		// the render command's writes (Readback->EnqueueCopy, transition) are
-		// visible to the game thread once it observes bReadbackDMAIssued=true.
-		// (UE5's EMemoryOrder enum has only Relaxed and SequentiallyConsistent —
-		// SeqCst substitutes for release/acquire here.)
-		bReadbackDMAIssued.Store(true, EMemoryOrder::SequentiallyConsistent);
+		// State remains DMAQueued — game thread already set it before
+		// enqueueing this command. No additional signal needed; the poll
+		// loop in PollReadbackCompletion reads ReadbackState_ directly.
 	});
 }
 

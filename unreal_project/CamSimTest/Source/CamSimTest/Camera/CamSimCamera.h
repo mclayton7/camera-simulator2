@@ -104,21 +104,6 @@ public:
 	/** Phase 28G: set the pipeline latency tracker (owned by subsystem, nullable). */
 	void SetLatencyTracker(FPipelineLatencyTracker* Tracker) { LatencyTracker_ = Tracker; }
 
-	/**
-	 * Apply Cesium tileset streaming parameters (SSE, cache, culling, physics)
-	 * to every ACesium3DTileset in the world. Called from BeginPlay() once and
-	 * again from UCamSimSubsystem::HotReloadConfig() so runtime tuning takes
-	 * effect without a level reload. Safe to call with a null World (no-op).
-	 */
-	static void ApplyCesiumTilesetTuning(UWorld* World, const struct FCamSimConfig& Cfg);
-
-	/**
-	 * Pure derivation: scales the off-frustum culled-SSE with horizontal FoV so a narrow
-	 * sensor gets more aggressive culling (and a wide one less). Clamped at ≥100.
-	 * Extracted from ApplyCesiumTilesetTuning so it can be tested without a live world.
-	 */
-	static double ComputeCulledScreenSpaceError(double HFovDeg);
-
 private:
 	/** Explicit root scene component. */
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")
@@ -205,38 +190,39 @@ private:
 	TUniquePtr<FEncoderThread, FEncoderThreadDeleter> EncoderThread;
 
 	/**
-	 * Set to true between CaptureAndEncode() and game-thread readback completion.
-	 * Cleared on game thread once pixels have been copied.
-	 */
-	bool bReadbackPending = false;
-
-	/**
 	 * Pool of GPU→CPU readback helpers — one per RenderTarget so the EnqueueCopy
 	 * triggered on frame N+1 can't race the Lock/Unlock that still targets
 	 * frame N's staging copy. Indexed by PendingReadbackTargetIndex.
 	 */
 	TArray<TUniquePtr<FRHIGPUTextureReadback>> ColorReadbackPool;
 
-	/** Set by render thread after EnqueueCopy; game thread polls IsReady() only after this is true.
-	 *  writer: render → reader: game (SeqCst — pairs with the EnqueueCopy
-	 *  data writes so they're visible to the game thread on observation; UE5
-	 *  EMemoryOrder has no Release/Acquire, so SeqCst is the project-wide
-	 *  substitute — see CamSimCamera.h:191-193). */
-	TAtomic<bool> bReadbackDMAIssued{false};
-
 	/**
 	 * Async readback result hand-off (render thread writes → game thread reads).
-	 * Render command fills AsyncPixels_/AsyncDepth_, then sets bPollComplete_
-	 * with sequentially-consistent semantics; the matching acquire on the game
-	 * thread makes the array contents visible without FlushRenderingCommands().
+	 * Render command fills AsyncPixels_/AsyncDepth_, then transitions
+	 * ReadbackState_ to Complete with sequentially-consistent semantics; the
+	 * matching SeqCst load on the game thread makes the array contents visible
+	 * without FlushRenderingCommands().
 	 */
 	TArray<FColor> AsyncPixels_;
 	TArray<float>  AsyncDepth_;
-	// Paired with the AsyncPixels_/AsyncDepth_ data writes above. SeqCst store
-	// from render thread is observed by the game thread's SeqCst load, so the
-	// pixel array is fully visible once the flag reads true (acquire semantics).
-	TAtomic<bool>  bPollComplete_{false};  // writer: render → reader: game (SeqCst)
-	TAtomic<bool>  bPollFailed_{false};    // writer: render → reader: game (SeqCst)
+
+	/**
+	 * Readback state machine. Replaces the previous four-flag cluster
+	 * (bReadbackPending, bReadbackDMAIssued, bPollComplete_, bPollFailed_).
+	 * Transitions:
+	 *   Idle      → DMAQueued  (game thread, before ENQUEUE_RENDER_COMMAND)
+	 *   DMAQueued → Complete   (render thread, after pixels copied)
+	 *   DMAQueued → Failed     (render thread, on Lock/Unlock error)
+	 *   Complete  → Idle       (game thread, after dispatch)
+	 *   Failed    → Idle       (game thread, after logging)
+	 *
+	 * SeqCst on every Store/Load — the state is paired with the
+	 * AsyncPixels_/AsyncDepth_ data writes on the DMAQueued → Complete edge.
+	 * writer: game (Idle↔DMAQueued, Complete/Failed→Idle) + render (DMAQueued→Complete/Failed)
+	 * readers: both threads (SeqCst).
+	 */
+	enum class EReadbackState : uint8 { Idle, DMAQueued, Complete, Failed };
+	TAtomic<EReadbackState> ReadbackState_ { EReadbackState::Idle };
 	/**
 	 * Monotonic poll generation — game thread bumps on every new CaptureAndEncode.
 	 * Each poll render command captures the generation by value and no-ops if
@@ -321,9 +307,15 @@ private:
 	// Output decimation — render at RenderFrameRateHz, encode at OutputFrameRateHz
 	uint64 RenderFrameCounter_ = 0;
 
-	// Phase 27D — Hot-reload config
+	// Phase 27D — Hot-reload config. Phase 3 moves the IFileManager::GetTimeStamp
+	// syscall off-thread: PollHotReloadConfig spawns an AsyncTask that reads the
+	// file mtime and flips bHotReloadFileChanged_ if it differs from the last
+	// observed value. The next tick consumes the flag and runs the actual
+	// load+apply on the game thread.
 	float     HotReloadAccumSec_ = 0.0f;
 	FDateTime LastConfigMTime_ = FDateTime::MinValue();
+	TAtomic<bool> bHotReloadFileChanged_ { false };
+	TAtomic<bool> bHotReloadStatInFlight_ { false };
 
 	// Phase 22G: First-person view
 	uint16 FpsEntityId_       = 0;    // 0 = FPS mode inactive

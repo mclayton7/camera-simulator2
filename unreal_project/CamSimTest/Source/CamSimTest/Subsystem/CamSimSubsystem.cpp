@@ -8,6 +8,7 @@
 #include "CIGI/CigiSender.h"
 #include "CIGI/CigiQueryHandler.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
+#include "Geospatial/CesiumTuning.h"
 #include "Encoder/MultiViewFrameSink.h" // FMultiViewFrameSink (concrete IFrameSink)
 #include "Encoder/IFrameSink.h"
 #include "Metadata/KlvBuilder.h"        // FKlvBuilder::SetSecurityMetadata (Phase 12A)
@@ -26,6 +27,8 @@
 #include "Misc/Paths.h"
 #include "Misc/ScopeRWLock.h"
 #include "CesiumIonServer.h"
+#include "Cesium3DTileset.h"
+#include "EngineUtils.h"
 #include "UObject/StrongObjectPtr.h"
 
 extern "C"
@@ -239,9 +242,35 @@ void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)
 	// Phase 22A: Re-parse entity types on hot-reload (no config lock — own data)
 	EntityTypeTable.HotReload();
 
-	// Reapply Cesium tileset tuning so runtime edits to SSE / cache / culling /
-	// descendant-limit take effect without reloading the level.
-	ACamSimCamera::ApplyCesiumTilesetTuning(GetWorld(), Config);
+	// Refresh the cached tileset list in case the hot-reload spawned or
+	// destroyed any tilesets, then reapply Cesium tuning so runtime edits to
+	// SSE / cache / culling / descendant-limit take effect without reloading
+	// the level.
+	RefreshCachedTilesets();
+	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Config);
+}
+
+void UCamSimSubsystem::RefreshCachedTilesets()
+{
+	CachedTilesets_.Reset();
+	bCachedTilesetsInitialized_ = true;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
+		{
+			CachedTilesets_.Add(*It);
+		}
+	}
+	UE_LOG(LogCamSim, Log, TEXT("CamSimSubsystem: cached %d tileset actor(s)"), CachedTilesets_.Num());
+}
+
+const TArray<TWeakObjectPtr<ACesium3DTileset>>& UCamSimSubsystem::GetCachedTilesets() const
+{
+	if (!bCachedTilesetsInitialized_)
+	{
+		const_cast<UCamSimSubsystem*>(this)->RefreshCachedTilesets();
+	}
+	return CachedTilesets_;
 }
 
 TSharedRef<const FCamSimConfig, ESPMode::ThreadSafe> UCamSimSubsystem::GetConfigSnapshot() const

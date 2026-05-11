@@ -21,6 +21,7 @@ class FDisReceiver;
 class FDisEntityAdapter;
 class FCotSender;
 class ACamSimCamera;
+class ACesium3DTileset;
 class UCesiumIonServer;
 struct FPipelineLatencyTracker;
 
@@ -103,6 +104,18 @@ public:
 	void             RegisterCamera(ACamSimCamera* Camera);
 	ACamSimCamera*   GetCamera() const;
 
+	/**
+	 * Phase 3: cached tileset pointer list. Populated lazily on first access
+	 * (and refreshable on demand) so per-tick adaptive-SSE / tile-prefetch
+	 * loops in ACamSimCamera::Tick don't run TActorIterator every frame.
+	 * TWeakObjectPtr handles destroyed-tileset cleanup naturally.
+	 */
+	const TArray<TWeakObjectPtr<ACesium3DTileset>>& GetCachedTilesets() const;
+
+	/** Force a refresh of the cached tileset list (e.g. after a hot-reload
+	 *  that creates new tilesets). Must be called on the game thread. */
+	void RefreshCachedTilesets();
+
 private:
 	FCamSimConfig    Config;
 	FEntityTypeTable EntityTypeTable;
@@ -111,6 +124,10 @@ private:
 
 	// Phase 27B — weak reference to the camera actor (game thread only)
 	TWeakObjectPtr<ACamSimCamera> Camera_;
+
+	// Phase 3: cached tileset pointer list (see public accessor).
+	mutable TArray<TWeakObjectPtr<ACesium3DTileset>> CachedTilesets_;
+	mutable bool bCachedTilesetsInitialized_ = false;
 
 	// Phase 13B: Pimpl — all owned subsystem components live in FSubsystemImpl,
 	// defined in CamSimSubsystem.cpp.  TUniquePtr<> with a forward-declared type
