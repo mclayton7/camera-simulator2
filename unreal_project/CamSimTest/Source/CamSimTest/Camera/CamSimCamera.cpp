@@ -625,8 +625,9 @@ void ACamSimCamera::Tick(float DeltaTime)
 	if (SensorComp && !SensorComp->IsOn()) return;
 	if (ShouldSkipFrameForDecimation())    return;
 
-	// Issue new capture if the readback slot is free.
-	if (!bReadbackPending)
+	// Issue new capture if the readback slot is free (state is Idle — no DMA
+	// in flight and no completed result still awaiting consumption).
+	if (ReadbackState_.Load(EMemoryOrder::SequentiallyConsistent) == EReadbackState::Idle)
 	{
 		CaptureAndEncode();
 	}
@@ -647,7 +648,8 @@ void ACamSimCamera::EmitHeartbeatIfDue()
 
 	const int32 ReadyPollsRequired = FMath::Max(1, Subsystem->GetConfig().ReadbackReadyPolls);
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tick=%llu busy=%d readback=%d sensor=%d frames_encoded=%llu dropped=%llu cap_idx=%d pending_idx=%d ready_polls=%d wall_dt=%.1fs fps=%.1f"),
-		TickCount, (int)(bool)bSensorBusy, (int)(bool)bReadbackPending,
+		TickCount, (int)(bool)bSensorBusy,
+		(int)(ReadbackState_.Load(EMemoryOrder::Relaxed) != EReadbackState::Idle),
 		(int)(SensorComp && SensorComp->IsOn()), FrameIndex, (uint64)DroppedFrameCount,
 		CaptureTargetIndex, PendingReadbackTargetIndex, ReadyPollsRequired,
 		WallDeltaSec, EffectiveFps);
@@ -718,21 +720,21 @@ void ACamSimCamera::PollReadbackCompletion()
 	// Complete pending readback (async; no FlushRenderingCommands). We enqueue
 	// a non-blocking render command each tick while a readback is in flight.
 	// The command polls IsReady(); on success it copies the data into
-	// AsyncPixels_ and flips bPollComplete_ (seq-cst). Game thread consumes on
-	// the NEXT tick after bPollComplete_ becomes observable — no synchronous
-	// flush, so the render thread is free to keep rendering frame N+1 while
-	// frame N's DMA drains.
-	if (!bReadbackPending || !bReadbackDMAIssued.Load(EMemoryOrder::Relaxed)) return;
+	// AsyncPixels_ and transitions ReadbackState_ to Complete (seq-cst). Game
+	// thread consumes on the NEXT tick after the transition is observable —
+	// no synchronous flush, so the render thread is free to keep rendering
+	// frame N+1 while frame N's DMA drains.
+	const EReadbackState State = ReadbackState_.Load(EMemoryOrder::SequentiallyConsistent);
+	if (State == EReadbackState::Idle) return;
 
 	// First: if a prior poll already completed, consume it now.
-	if (bPollComplete_.Load(EMemoryOrder::SequentiallyConsistent))
+	if (State == EReadbackState::Complete)
 	{
 		if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::ReadbackComplete);
 
 		TArray<FColor> Pixels      = MoveTemp(AsyncPixels_);
 		TArray<float>  DepthPixels = MoveTemp(AsyncDepth_);
-		bPollComplete_.Store(false, EMemoryOrder::SequentiallyConsistent);
-		bReadbackPending = false;
+		ReadbackState_.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
 		PendingReadbackTargetIndex      = INDEX_NONE;
 		PendingDepthReadbackTargetIndex = INDEX_NONE;
 
@@ -754,19 +756,20 @@ void ACamSimCamera::PollReadbackCompletion()
 		return;
 	}
 
-	if (bPollFailed_.Load(EMemoryOrder::SequentiallyConsistent))
+	if (State == EReadbackState::Failed)
 	{
 		if (bTrackFrameDrops_) FrameDropStats_.ReadbackTimeout++;
 		UE_LOG(LogCamSim, Warning,
 			TEXT("CamSimReadback frame %llu: lock returned null or bad format"), PendingFrameIndex);
 		AsyncPixels_.Reset();
 		AsyncDepth_.Reset();
-		bPollFailed_.Store(false, EMemoryOrder::SequentiallyConsistent);
-		bReadbackPending = false;
+		ReadbackState_.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
 		PendingReadbackTargetIndex      = INDEX_NONE;
 		PendingDepthReadbackTargetIndex = INDEX_NONE;
 		return;
 	}
+
+	// State must be DMAQueued at this point — enqueue another poll below.
 
 	// No result yet — enqueue another poll. Capture every piece of config by
 	// value so the lambda is safe to run after the enclosing scope unwinds.
@@ -799,10 +802,10 @@ void ACamSimCamera::PollReadbackCompletion()
 		// Stale poll from a previous frame — game thread has already advanced.
 		if (PollGeneration_.Load(EMemoryOrder::Relaxed) != CaptureGen) return;
 
-		// Idempotent: if a previous poll on this pending frame already
-		// delivered (or failed), subsequent polls are a no-op.
-		if (bPollComplete_.Load(EMemoryOrder::Relaxed)) return;
-		if (bPollFailed_  .Load(EMemoryOrder::Relaxed)) return;
+		// Idempotent: only proceed if we're still in the DMAQueued phase. If
+		// the state has already transitioned to Complete/Failed/Idle, a prior
+		// poll on this frame already delivered, so this one is a no-op.
+		if (ReadbackState_.Load(EMemoryOrder::Relaxed) != EReadbackState::DMAQueued) return;
 
 		if (!Readback || !Readback->IsReady())
 		{
@@ -817,7 +820,7 @@ void ACamSimCamera::PollReadbackCompletion()
 		if (!RawData || !RT)
 		{
 			if (RawData) Readback->Unlock();
-			bPollFailed_.Store(true, EMemoryOrder::SequentiallyConsistent);
+			ReadbackState_.Store(EReadbackState::Failed, EMemoryOrder::SequentiallyConsistent);
 			return;
 		}
 
@@ -829,7 +832,7 @@ void ACamSimCamera::PollReadbackCompletion()
 		if (!bIsBgra && !bIsRgba)
 		{
 			Readback->Unlock();
-			bPollFailed_.Store(true, EMemoryOrder::SequentiallyConsistent);
+			ReadbackState_.Store(EReadbackState::Failed, EMemoryOrder::SequentiallyConsistent);
 			return;
 		}
 
@@ -870,9 +873,9 @@ void ACamSimCamera::PollReadbackCompletion()
 			RenderDepthReadyStreak_ = 0;
 		}
 
-		// Release-store: data writes above are visible to the game thread
-		// once it observes bPollComplete_ = true.
-		bPollComplete_.Store(true, EMemoryOrder::SequentiallyConsistent);
+		// SeqCst store: data writes above (AsyncPixels_/AsyncDepth_) are
+		// visible to the game thread once it observes ReadbackState_=Complete.
+		ReadbackState_.Store(EReadbackState::Complete, EMemoryOrder::SequentiallyConsistent);
 	});
 }
 
@@ -1407,7 +1410,7 @@ void ACamSimCamera::UpdateCesiumCamera()
 // -------------------------------------------------------------------------
 // CaptureAndEncode – State A: trigger GPU capture + enqueue async readback
 // -------------------------------------------------------------------------
-// State B (polling completion) runs in Tick() via the bReadbackPending branch.
+// State B (polling completion) runs in Tick() via the ReadbackState_ branch.
 // The two states naturally double-buffer: frame N+1 renders on the game thread
 // while the render thread completes frame N's DMA and the encode task runs.
 
@@ -1465,16 +1468,14 @@ void ACamSimCamera::CaptureAndEncode()
 	PendingFrameIndex = FrameIndex++;
 	PendingTelemetry  = CurrentTelemetry;
 
-	// Reset game-thread readback state for the new capture. Bumping the poll
-	// generation is what lets stale polls from the previous frame safely no-op.
-	bReadbackDMAIssued.Store(false, EMemoryOrder::Relaxed);
-	bPollComplete_   .Store(false, EMemoryOrder::SequentiallyConsistent);
-	bPollFailed_     .Store(false, EMemoryOrder::SequentiallyConsistent);
+	// Transition the readback state machine to DMAQueued and bump the poll
+	// generation so any stale render-command polls from the previous frame
+	// safely no-op when they observe Generation_ mismatch.
 	PollGeneration_  .Store(PollGeneration_.Load(EMemoryOrder::Relaxed) + 1,
 	                        EMemoryOrder::SequentiallyConsistent);
 	RenderReadyStreak_      = 0;
 	RenderDepthReadyStreak_ = 0;
-	bReadbackPending = true;
+	ReadbackState_.Store(EReadbackState::DMAQueued, EMemoryOrder::SequentiallyConsistent);
 
 	// Trigger depth capture alongside color (Phase 17A)
 	UTextureRenderTarget2D* DepthCaptureRT = nullptr;
@@ -1498,7 +1499,7 @@ void ACamSimCamera::CaptureAndEncode()
 	FRHIGPUTextureReadback*  Readback = ColorReadbackPool[PendingReadbackTargetIndex].Get();
 	if (!RT)
 	{
-		bReadbackPending = false;
+		ReadbackState_.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
 		PendingReadbackTargetIndex = INDEX_NONE;
 		PendingDepthReadbackTargetIndex = INDEX_NONE;
 		return;
@@ -1546,8 +1547,9 @@ void ACamSimCamera::CaptureAndEncode()
 			}
 		}
 
-		// Signal game thread: DMA has been enqueued, safe to poll IsReady()
-		bReadbackDMAIssued.Store(true, EMemoryOrder::Relaxed);
+		// State remains DMAQueued — game thread already set it before
+		// enqueueing this command. No additional signal needed; the poll
+		// loop in PollReadbackCompletion reads ReadbackState_ directly.
 	});
 }
 

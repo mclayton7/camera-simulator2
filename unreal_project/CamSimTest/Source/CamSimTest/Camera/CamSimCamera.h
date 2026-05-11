@@ -205,35 +205,39 @@ private:
 	TUniquePtr<FEncoderThread, FEncoderThreadDeleter> EncoderThread;
 
 	/**
-	 * Set to true between CaptureAndEncode() and game-thread readback completion.
-	 * Cleared on game thread once pixels have been copied.
-	 */
-	bool bReadbackPending = false;
-
-	/**
 	 * Pool of GPU→CPU readback helpers — one per RenderTarget so the EnqueueCopy
 	 * triggered on frame N+1 can't race the Lock/Unlock that still targets
 	 * frame N's staging copy. Indexed by PendingReadbackTargetIndex.
 	 */
 	TArray<TUniquePtr<FRHIGPUTextureReadback>> ColorReadbackPool;
 
-	/** Set by render thread after EnqueueCopy; game thread polls IsReady() only after this is true.
-	 *  writer: render → reader: game (relaxed — just gates whether polling can start). */
-	TAtomic<bool> bReadbackDMAIssued{false};
-
 	/**
 	 * Async readback result hand-off (render thread writes → game thread reads).
-	 * Render command fills AsyncPixels_/AsyncDepth_, then sets bPollComplete_
-	 * with sequentially-consistent semantics; the matching acquire on the game
-	 * thread makes the array contents visible without FlushRenderingCommands().
+	 * Render command fills AsyncPixels_/AsyncDepth_, then transitions
+	 * ReadbackState_ to Complete with sequentially-consistent semantics; the
+	 * matching SeqCst load on the game thread makes the array contents visible
+	 * without FlushRenderingCommands().
 	 */
 	TArray<FColor> AsyncPixels_;
 	TArray<float>  AsyncDepth_;
-	// Paired with the AsyncPixels_/AsyncDepth_ data writes above. SeqCst store
-	// from render thread is observed by the game thread's SeqCst load, so the
-	// pixel array is fully visible once the flag reads true (acquire semantics).
-	TAtomic<bool>  bPollComplete_{false};  // writer: render → reader: game (SeqCst)
-	TAtomic<bool>  bPollFailed_{false};    // writer: render → reader: game (SeqCst)
+
+	/**
+	 * Readback state machine. Replaces the previous four-flag cluster
+	 * (bReadbackPending, bReadbackDMAIssued, bPollComplete_, bPollFailed_).
+	 * Transitions:
+	 *   Idle      → DMAQueued  (game thread, before ENQUEUE_RENDER_COMMAND)
+	 *   DMAQueued → Complete   (render thread, after pixels copied)
+	 *   DMAQueued → Failed     (render thread, on Lock/Unlock error)
+	 *   Complete  → Idle       (game thread, after dispatch)
+	 *   Failed    → Idle       (game thread, after logging)
+	 *
+	 * SeqCst on every Store/Load — the state is paired with the
+	 * AsyncPixels_/AsyncDepth_ data writes on the DMAQueued → Complete edge.
+	 * writer: game (Idle↔DMAQueued, Complete/Failed→Idle) + render (DMAQueued→Complete/Failed)
+	 * readers: both threads (SeqCst).
+	 */
+	enum class EReadbackState : uint8 { Idle, DMAQueued, Complete, Failed };
+	TAtomic<EReadbackState> ReadbackState_ { EReadbackState::Idle };
 	/**
 	 * Monotonic poll generation — game thread bumps on every new CaptureAndEncode.
 	 * Each poll render command captures the generation by value and no-ops if
