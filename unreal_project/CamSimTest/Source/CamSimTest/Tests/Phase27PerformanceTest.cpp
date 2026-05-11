@@ -4,6 +4,7 @@
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
 #include "Camera/CamSimCamera.h"
+#include "Geospatial/CesiumTuning.h"
 #include "HAL/PlatformMemory.h"
 #include "Metadata/KlvBuilder.h"
 

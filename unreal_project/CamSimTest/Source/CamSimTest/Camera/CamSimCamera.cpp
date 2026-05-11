@@ -649,7 +649,9 @@ bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 	}
 
 	// Consume the flag on the game thread.
-	if (!bHotReloadFileChanged_.Exchange(false, EMemoryOrder::SequentiallyConsistent))
+	// TAtomic<T>::Exchange in UE 5.7 is single-arg; std::atomic::exchange
+	// defaults to seq_cst, which matches the paired Store call above.
+	if (!bHotReloadFileChanged_.Exchange(false))
 	{
 		return true;
 	}

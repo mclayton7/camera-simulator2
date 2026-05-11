@@ -18,10 +18,13 @@ static constexpr int32 kParallelBands = 8;
 template<typename FnT>
 static FORCEINLINE void ForEachPixelBand(int32 Height, FnT&& Fn)
 {
-	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
+	ParallelFor(kParallelBands, [&](int32 Band)
 	{
+		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
+		const int32 RowStart    = Band * RowsPerBand;
+		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		Fn(RowStart, RowEnd);
-	});
+	}, EParallelForFlags::BackgroundPriority);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +128,6 @@ void FSensorPostProcess::Initialize(int32 InWidth, int32 InHeight,
 	// existing capacity instead of allocating. SetNumUninitialized is OK here
 	// because every Apply* that uses these writes every pixel before reading.
 	// -------------------------------------------------------------------------
-	const int32 NumPixels = InWidth * InHeight;
 	BlurTemp_     .SetNumUninitialized(NumPixels);
 	ScratchFrameA_.SetNumUninitialized(NumPixels);
 	ScratchFrameB_.SetNumUninitialized(NumPixels);
