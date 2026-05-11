@@ -807,11 +807,14 @@ void ACamSimCamera::PollReadbackCompletion()
 
 		if (!Readback || !Readback->IsReady())
 		{
-			RenderReadyStreak_ = 0;
+			RenderReadyStreak_.Store(0, EMemoryOrder::Relaxed);
 			return;
 		}
-		if (RenderReadyStreak_ < 255) ++RenderReadyStreak_;
-		if (RenderReadyStreak_ < ReadyPollsRequired) return;
+		{
+			const uint8 Cur = RenderReadyStreak_.Load(EMemoryOrder::Relaxed);
+			if (Cur < 255) RenderReadyStreak_.Store(Cur + 1, EMemoryOrder::Relaxed);
+		}
+		if (RenderReadyStreak_.Load(EMemoryOrder::Relaxed) < ReadyPollsRequired) return;
 
 		int32 RowPitch = 0;
 		void* RawData = Readback->Lock(RowPitch);
@@ -844,8 +847,11 @@ void ACamSimCamera::PollReadbackCompletion()
 		AsyncDepth_.Reset();
 		if (DepthReadback && DepthReadback->IsReady())
 		{
-			if (RenderDepthReadyStreak_ < 255) ++RenderDepthReadyStreak_;
-			if (RenderDepthReadyStreak_ >= ReadyPollsRequired)
+			{
+				const uint8 Cur = RenderDepthReadyStreak_.Load(EMemoryOrder::Relaxed);
+				if (Cur < 255) RenderDepthReadyStreak_.Store(Cur + 1, EMemoryOrder::Relaxed);
+			}
+			if (RenderDepthReadyStreak_.Load(EMemoryOrder::Relaxed) >= ReadyPollsRequired)
 			{
 				int32 DepthRowPitch = 0;
 				void* DepthRaw = DepthReadback->Lock(DepthRowPitch);
@@ -868,7 +874,7 @@ void ACamSimCamera::PollReadbackCompletion()
 		}
 		else
 		{
-			RenderDepthReadyStreak_ = 0;
+			RenderDepthReadyStreak_.Store(0, EMemoryOrder::Relaxed);
 		}
 
 		// Release-store: data writes above are visible to the game thread
@@ -1473,8 +1479,8 @@ void ACamSimCamera::CaptureAndEncode()
 	bPollFailed_     .Store(false, EMemoryOrder::SequentiallyConsistent);
 	PollGeneration_  .Store(PollGeneration_.Load(EMemoryOrder::Relaxed) + 1,
 	                        EMemoryOrder::SequentiallyConsistent);
-	RenderReadyStreak_      = 0;
-	RenderDepthReadyStreak_ = 0;
+	RenderReadyStreak_     .Store(0, EMemoryOrder::Relaxed);
+	RenderDepthReadyStreak_.Store(0, EMemoryOrder::Relaxed);
 	bReadbackPending = true;
 
 	// Trigger depth capture alongside color (Phase 17A)

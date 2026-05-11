@@ -245,8 +245,14 @@ private:
 	 * writer: game → reader: render (relaxed; compared for equality only).
 	 */
 	TAtomic<uint32> PollGeneration_{0};
-	uint8          RenderReadyStreak_ = 0;      // render-thread only
-	uint8          RenderDepthReadyStreak_ = 0; // render-thread only
+	// Streak counters for "N consecutive Ready polls before consuming"
+	// debounce. Game thread resets to 0 in CaptureAndEncode (before
+	// enqueuing the render command); render thread increments inside
+	// the poll command. Relaxed: pure counters, no paired data, and the
+	// ENQUEUE_RENDER_COMMAND barrier already orders reset → increment.
+	// writer: game (reset) + render (increment) → readers: render
+	TAtomic<uint8> RenderReadyStreak_      { 0 };
+	TAtomic<uint8> RenderDepthReadyStreak_ { 0 };
 
 	/** Frame index in-flight through the GPU readback pipeline. */
 	uint64 PendingFrameIndex = 0;
