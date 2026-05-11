@@ -627,16 +627,35 @@ bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 	if (!Cfg.Performance.bHotReloadConfig) return true;
 
+	// Phase 3: kick off the stat syscall on a background thread so it never
+	// blocks the game thread on slow storage (NFS, container FUSE overlays).
 	HotReloadAccumSec_ += DeltaTime;
-	if (HotReloadAccumSec_ < Cfg.Performance.HotReloadPollIntervalSec) return true;
+	if (HotReloadAccumSec_ >= Cfg.Performance.HotReloadPollIntervalSec
+	    && !bHotReloadStatInFlight_.Load(EMemoryOrder::Relaxed))
+	{
+		HotReloadAccumSec_ = 0.0f;
+		bHotReloadStatInFlight_.Store(true, EMemoryOrder::Relaxed);
+		const FString CfgPath = FCamSimConfig::GetConfigFilePath();
+		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, CfgPath]()
+		{
+			const FDateTime CurrMTime = IFileManager::Get().GetTimeStamp(*CfgPath);
+			if (CurrMTime != FDateTime::MinValue() && CurrMTime != LastConfigMTime_)
+			{
+				LastConfigMTime_ = CurrMTime;
+				bHotReloadFileChanged_.Store(true, EMemoryOrder::SequentiallyConsistent);
+			}
+			bHotReloadStatInFlight_.Store(false, EMemoryOrder::Relaxed);
+		});
+	}
 
-	HotReloadAccumSec_ = 0.0f;
-	const FString CfgPath = FCamSimConfig::GetConfigFilePath();
-	const FDateTime CurrMTime = IFileManager::Get().GetTimeStamp(*CfgPath);
-	if (CurrMTime == FDateTime::MinValue() || CurrMTime == LastConfigMTime_) return true;
+	// Consume the flag on the game thread.
+	if (!bHotReloadFileChanged_.Exchange(false, EMemoryOrder::SequentiallyConsistent))
+	{
+		return true;
+	}
 
-	LastConfigMTime_ = CurrMTime;
 	const FCamSimConfig OldCfg = Cfg;
+	const FString CfgPath = FCamSimConfig::GetConfigFilePath();
 	FCamSimConfig NewCfg = FCamSimConfig::Load();
 	if (!NewCfg.bLoadedSuccessfully)
 	{

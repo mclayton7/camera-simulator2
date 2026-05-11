@@ -294,9 +294,15 @@ private:
 	// Output decimation — render at RenderFrameRateHz, encode at OutputFrameRateHz
 	uint64 RenderFrameCounter_ = 0;
 
-	// Phase 27D — Hot-reload config
+	// Phase 27D — Hot-reload config. Phase 3 moves the IFileManager::GetTimeStamp
+	// syscall off-thread: PollHotReloadConfig spawns an AsyncTask that reads the
+	// file mtime and flips bHotReloadFileChanged_ if it differs from the last
+	// observed value. The next tick consumes the flag and runs the actual
+	// load+apply on the game thread.
 	float     HotReloadAccumSec_ = 0.0f;
 	FDateTime LastConfigMTime_ = FDateTime::MinValue();
+	TAtomic<bool> bHotReloadFileChanged_ { false };
+	TAtomic<bool> bHotReloadStatInFlight_ { false };
 
 	// Phase 22G: First-person view
 	uint16 FpsEntityId_       = 0;    // 0 = FPS mode inactive
