@@ -39,6 +39,11 @@ private:
 		float OutputHFovDeg = 0.0f;
 		FString RouteLabel;
 		TUniquePtr<FVideoEncoder> Encoder;
+
+		// Phase 2: per-view zoom scratch — sized lazily on first zoomed frame
+		// and reused thereafter. EncodeFrame writes into this instead of
+		// allocating a fresh TArray<FColor> per view per frame.
+		TArray<FColor> ZoomedScratch;
 	};
 
 	const FCamSimConfig& Config;
@@ -49,6 +54,12 @@ private:
 	bool bGroundTruthEnabled = false;
 	FString GroundTruthPath;
 	int32 GroundTruthIntervalFrames = 1;
+
+	// Phase 2: persistent JSONL sidecar handle. Opened once in Open() and
+	// closed in Close(); WriteGroundTruthLine appends through this handle
+	// instead of FFileHelper::SaveStringToFile which would open/seek/write/
+	// close the OS file descriptor on every record (30 syscalls/sec at 30 fps).
+	class IFileHandle* GroundTruthHandle_ = nullptr;
 
 	void BuildViewRuntimes();
 	void WriteGroundTruthLine(const FCamSimTelemetry& Telemetry, uint64 FrameIdx, int32 EncodedViewCount) const;

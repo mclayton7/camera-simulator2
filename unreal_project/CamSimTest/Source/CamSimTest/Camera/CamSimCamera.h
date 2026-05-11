@@ -231,13 +231,26 @@ private:
 	 * writer: game → reader: render (relaxed; compared for equality only).
 	 */
 	TAtomic<uint32> PollGeneration_{0};
-	uint8          RenderReadyStreak_ = 0;      // render-thread only
-	uint8          RenderDepthReadyStreak_ = 0; // render-thread only
+	// Streak counters for "N consecutive Ready polls before consuming"
+	// debounce. Game thread resets to 0 in CaptureAndEncode (before
+	// enqueuing the render command); render thread increments inside
+	// the poll command. Relaxed: pure counters, no paired data, and the
+	// ENQUEUE_RENDER_COMMAND barrier already orders reset → increment.
+	// writer: game (reset) + render (increment) → readers: render
+	TAtomic<uint8> RenderReadyStreak_      { 0 };
+	TAtomic<uint8> RenderDepthReadyStreak_ { 0 };
 
 	/** Frame index in-flight through the GPU readback pipeline. */
 	uint64 PendingFrameIndex = 0;
 
-	/** Intermediate result: readback completed but sensor still busy. */
+	// -----------------------------------------------------------------------
+	// Game-thread-only readback hand-off state. Written by
+	// PollReadbackCompletion when a readback finishes but the sensor task is
+	// still busy on the previous frame; read by DispatchQueuedResultIfFree
+	// the next time it runs (both on the game thread). NOT atomic — moving
+	// any access off-thread would introduce a silent race. Guards live at the
+	// accessor sites (checkSlow(IsInGameThread())).
+	// -----------------------------------------------------------------------
 	TArray<FColor>   CompletedPixels_;
 	TArray<float>    CompletedDepth_;
 	FCamSimTelemetry CompletedTelemetry_;

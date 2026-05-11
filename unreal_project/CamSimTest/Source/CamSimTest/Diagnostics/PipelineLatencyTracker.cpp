@@ -6,18 +6,40 @@ FPipelineLatencyTracker::FPipelineLatencyTracker(int32 InBufferSize)
 	: BufferCapacity(FMath::Max(10, InBufferSize))
 {
 	Records.SetNum(BufferCapacity);
-	FMemory::Memzero(CurrentFrame);
+	// Zero each atomic slot explicitly — Memzero on an array of TAtomic is
+	// not a defined operation (atomic types are not trivially constructible
+	// per the C++ standard, even though TAtomic in practice is).
+	for (TAtomic<uint64>& Slot : CurrentFrame.Stages)
+	{
+		Slot.Store(0, EMemoryOrder::Relaxed);
+	}
 }
 
 void FPipelineLatencyTracker::SetStageTimestamp(EPipelineStage Stage, uint64 Cycles)
 {
-	CurrentFrame.Stages[static_cast<int32>(Stage)] = Cycles;
+	// SeqCst store: pairs with the SeqCst load in CommitFrame so any data
+	// the producer thread wrote before calling Mark() is visible to the
+	// committer thread when it snapshots the stage value. (UE5's EMemoryOrder
+	// enum has only Relaxed and SequentiallyConsistent — SeqCst is the
+	// project-wide substitute for release/acquire; see CamSimCamera.h:191-193.)
+	CurrentFrame.Stages[static_cast<int32>(Stage)].Store(Cycles, EMemoryOrder::SequentiallyConsistent);
 }
 
 void FPipelineLatencyTracker::CommitFrame()
 {
 	const uint64 Idx = WriteIndex.Load(EMemoryOrder::Relaxed);
-	Records[static_cast<int32>(Idx % BufferCapacity)] = CurrentFrame;
+	FLatencyRecord& Slot = Records[static_cast<int32>(Idx % BufferCapacity)];
+
+	// Snapshot each stage timestamp with a SeqCst load and zero the slot in
+	// the same step. Per-slot atomicity is what makes this race-free even
+	// though we never lock — each slot has at most one writer, and the
+	// committer is the only reader, so writer/reader is the only contention.
+	for (int32 s = 0; s < static_cast<int32>(EPipelineStage::Count); ++s)
+	{
+		Slot.Stages[s] = CurrentFrame.Stages[s].Load(EMemoryOrder::SequentiallyConsistent);
+		CurrentFrame.Stages[s].Store(0, EMemoryOrder::Relaxed);
+	}
+
 	WriteIndex.Store(Idx + 1, EMemoryOrder::SequentiallyConsistent);
 
 	const int32 Count = CommittedCount.Load(EMemoryOrder::Relaxed);
@@ -25,8 +47,6 @@ void FPipelineLatencyTracker::CommitFrame()
 	{
 		CommittedCount.Store(Count + 1, EMemoryOrder::SequentiallyConsistent);
 	}
-
-	FMemory::Memzero(CurrentFrame);
 }
 
 int32 FPipelineLatencyTracker::GetCommittedCount() const
