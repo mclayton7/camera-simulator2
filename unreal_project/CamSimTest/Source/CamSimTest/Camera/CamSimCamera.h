@@ -104,21 +104,6 @@ public:
 	/** Phase 28G: set the pipeline latency tracker (owned by subsystem, nullable). */
 	void SetLatencyTracker(FPipelineLatencyTracker* Tracker) { LatencyTracker_ = Tracker; }
 
-	/**
-	 * Apply Cesium tileset streaming parameters (SSE, cache, culling, physics)
-	 * to every ACesium3DTileset in the world. Called from BeginPlay() once and
-	 * again from UCamSimSubsystem::HotReloadConfig() so runtime tuning takes
-	 * effect without a level reload. Safe to call with a null World (no-op).
-	 */
-	static void ApplyCesiumTilesetTuning(UWorld* World, const struct FCamSimConfig& Cfg);
-
-	/**
-	 * Pure derivation: scales the off-frustum culled-SSE with horizontal FoV so a narrow
-	 * sensor gets more aggressive culling (and a wide one less). Clamped at ≥100.
-	 * Extracted from ApplyCesiumTilesetTuning so it can be tested without a live world.
-	 */
-	static double ComputeCulledScreenSpaceError(double HFovDeg);
-
 private:
 	/** Explicit root scene component. */
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")

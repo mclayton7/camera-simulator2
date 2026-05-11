@@ -229,26 +229,26 @@ bool FPhase27_CulledSseDerivation::RunTest(const FString& Parameters)
 {
     // Reference case: 60° HFoV returns the base 200.0 unit.
     TestEqual(TEXT("60° HFoV → base SSE 200"),
-        ACamSimCamera::ComputeCulledScreenSpaceError(60.0), 200.0);
+        CamSim::Geospatial::ComputeCulledScreenSpaceError(60.0), 200.0);
 
     // Wide sensor scales up linearly: 120° → 400.
     TestEqual(TEXT("120° HFoV → 400"),
-        ACamSimCamera::ComputeCulledScreenSpaceError(120.0), 400.0);
+        CamSim::Geospatial::ComputeCulledScreenSpaceError(120.0), 400.0);
 
     // Narrow sensor would compute 200 * 5/60 ≈ 16.7 — clamped at the 100 floor.
     TestEqual(TEXT("5° HFoV clamped to floor 100"),
-        ACamSimCamera::ComputeCulledScreenSpaceError(5.0), 100.0);
+        CamSim::Geospatial::ComputeCulledScreenSpaceError(5.0), 100.0);
 
     // Pathological inputs do not crash or go negative.
     TestEqual(TEXT("0° HFoV treated as 1° (still floor 100)"),
-        ACamSimCamera::ComputeCulledScreenSpaceError(0.0), 100.0);
+        CamSim::Geospatial::ComputeCulledScreenSpaceError(0.0), 100.0);
     TestEqual(TEXT("Negative HFoV treated as 1° (still floor 100)"),
-        ACamSimCamera::ComputeCulledScreenSpaceError(-25.0), 100.0);
+        CamSim::Geospatial::ComputeCulledScreenSpaceError(-25.0), 100.0);
 
     // Monotonic: once past the clamp threshold (30°), growing HFoV grows SSE.
-    const double A = ACamSimCamera::ComputeCulledScreenSpaceError(45.0);
-    const double B = ACamSimCamera::ComputeCulledScreenSpaceError(60.0);
-    const double C = ACamSimCamera::ComputeCulledScreenSpaceError(90.0);
+    const double A = CamSim::Geospatial::ComputeCulledScreenSpaceError(45.0);
+    const double B = CamSim::Geospatial::ComputeCulledScreenSpaceError(60.0);
+    const double C = CamSim::Geospatial::ComputeCulledScreenSpaceError(90.0);
     TestTrue(TEXT("Monotonic above the floor"), A < B && B < C);
 
     return true;

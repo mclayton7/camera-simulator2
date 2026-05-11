@@ -8,6 +8,7 @@
 #include "CIGI/CigiSender.h"
 #include "CIGI/CigiQueryHandler.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
+#include "Geospatial/CesiumTuning.h"
 #include "Encoder/MultiViewFrameSink.h" // FMultiViewFrameSink (concrete IFrameSink)
 #include "Encoder/IFrameSink.h"
 #include "Metadata/KlvBuilder.h"        // FKlvBuilder::SetSecurityMetadata (Phase 12A)
@@ -241,7 +242,7 @@ void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)
 
 	// Reapply Cesium tileset tuning so runtime edits to SSE / cache / culling /
 	// descendant-limit take effect without reloading the level.
-	ACamSimCamera::ApplyCesiumTilesetTuning(GetWorld(), Config);
+	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Config);
 }
 
 TSharedRef<const FCamSimConfig, ESPMode::ThreadSafe> UCamSimSubsystem::GetConfigSnapshot() const

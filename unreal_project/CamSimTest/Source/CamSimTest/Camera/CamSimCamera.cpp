@@ -44,6 +44,8 @@
 #include "Cesium3DTileset.h"
 #include <Cesium3DTilesSelection/Tileset.h>
 
+#include "Geospatial/CesiumTuning.h"
+
 // -------------------------------------------------------------------------
 // Stats
 // -------------------------------------------------------------------------
@@ -51,65 +53,6 @@
 DECLARE_STATS_GROUP(TEXT("CamSim"), STATGROUP_CamSim, STATCAT_Advanced)
 DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Frames Dropped"), STAT_CamSimDropped, STATGROUP_CamSim)
 DECLARE_CYCLE_STAT(TEXT("Encode Latency"),  STAT_CamSimEncode,   STATGROUP_CamSim)
-
-// -------------------------------------------------------------------------
-// ApplyCesiumTilesetTuning – shared by BeginPlay() and HotReloadConfig()
-// -------------------------------------------------------------------------
-
-double ACamSimCamera::ComputeCulledScreenSpaceError(double HFovDeg)
-{
-	// Narrow-FOV sensors (e.g. 5° EO) can tolerate far more aggressive off-frustum
-	// culling than the default 60° tuning. Scale proportionally and clamp so a
-	// zoomed-out view doesn't collapse to nothing.
-	constexpr double ReferenceFovDeg      = 60.0;   // baseline horizontal FOV for tuning
-	constexpr double BaseCulledSseAtRef   = 200.0;  // SSE applied when HFovDeg == ReferenceFovDeg
-	constexpr double MinCulledSse         = 100.0;  // floor so wide-FOV tilesets still cull off-frustum geometry
-	constexpr double MinHFovClampDeg      = 1.0;    // guard against div-by-zero / runaway scaling
-
-	const double FovScale = FMath::Max(HFovDeg, MinHFovClampDeg) / ReferenceFovDeg;
-	return FMath::Max(BaseCulledSseAtRef * FovScale, MinCulledSse);
-}
-
-void ACamSimCamera::ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg)
-{
-	if (!World) return;
-
-	const double CulledSSE = ComputeCulledScreenSpaceError(static_cast<double>(Cfg.HFovDeg));
-
-	for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
-	{
-		It->MaximumSimultaneousTileLoads = Cfg.MaxSimultaneousTileLoads;
-		It->MaximumScreenSpaceError      = Cfg.MaximumScreenSpaceError;
-		if (Cfg.MaximumCachedBytesMB > 0)
-		{
-			It->MaximumCachedBytes =
-				static_cast<int64>(Cfg.MaximumCachedBytesMB) * 1024LL * 1024LL;
-		}
-		It->PreloadAncestors       = true;
-		It->PreloadSiblings        = false;  // prefetch camera already covers adjacent tiles
-		It->ForbidHoles            = false;  // true grows the render set linearly during camera motion
-		It->LoadingDescendantLimit = Cfg.LoadingDescendantLimit;
-
-		// Aggressively cull off-screen tiles (low-res placeholders outside frustum).
-		It->EnforceCulledScreenSpaceError = true;
-		It->CulledScreenSpaceError        = CulledSSE;
-
-		// Non-player ISR camera never collides — skip physics-mesh cook (saves VRAM + CPU).
-		// HAT/HOT terrain feedback uses Cesium's own sampling API, not physics queries.
-		It->SetCreatePhysicsMeshes(false);
-
-		It->SetUseLodTransitions(Cfg.bUseLodTransitions);
-		It->LodTransitionLength = Cfg.LodTransitionLength;
-		It->LogSelectionStats   = Cfg.bLogTileSelectionStats;
-
-		UE_LOG(LogCamSim, Log,
-			TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f@hfov=%.0f° cacheMB=%d descLimit=%d lodBlend=%d logStats=%d physicsMeshes=off)"),
-			*It->GetName(), Cfg.MaxSimultaneousTileLoads,
-			Cfg.MaximumScreenSpaceError, CulledSSE, Cfg.HFovDeg,
-			Cfg.MaximumCachedBytesMB, Cfg.LoadingDescendantLimit,
-			(int)Cfg.bUseLodTransitions, (int)Cfg.bLogTileSelectionStats);
-	}
-}
 
 // -------------------------------------------------------------------------
 // Constructor
@@ -272,7 +215,7 @@ void ACamSimCamera::BeginPlay()
 	// Tune Cesium3DTileset actors for smoother streaming and LOD quality.
 	// Shared helper is also used by UCamSimSubsystem::HotReloadConfig so runtime
 	// tuning edits don't need a level reload.
-	ApplyCesiumTilesetTuning(GetWorld(), Cfg);
+	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Cfg);
 
 	// Apply Cesium backend config (ion server, terrain source, imagery overlay).
 	// Must run after the streaming-params loop above.
