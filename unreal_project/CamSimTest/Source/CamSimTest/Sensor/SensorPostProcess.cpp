@@ -1789,7 +1789,14 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 			{
 				const FColor& P = Pixels[i];
 				const uint8 Luma = static_cast<uint8>((P.R * 77 + P.G * 150 + P.B * 29) >> 8);
-				Local[Luma]++;
+				// Histogram on the value AGC will actually stretch — i.e., the
+				// post-waveband-remap intensity (matches unfused ApplyRadianceAGC).
+				// Using raw luma would compute percentiles on pre-remap pixels and
+				// the stretch in Pass B would land on the wrong range.
+				const uint8 PostRemap = bIsIR  ? IRToneCurve[Luma]
+				                      : bIsNVG ? NVGGammaCurve[Luma]
+				                      : Luma;   // unreachable (bAGC requires IR/NVG)
+				Local[PostRemap]++;
 			}
 		}, EParallelForFlags::BackgroundPriority);
 
@@ -1802,9 +1809,12 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 				Hist[i] += Src[i];
 		}
 
-		// Find percentile thresholds
-		const int32 LoTarget = FMath::RoundToInt(Cfg.AGCLowPercentile * NumPixels);
-		const int32 HiTarget = FMath::RoundToInt(Cfg.AGCHighPercentile * NumPixels);
+		// Find percentile thresholds. Clamp to ≥1 so the cumulative walk skips
+		// empty leading bins — without this, AGCLowPercentile=0 makes the loop
+		// terminate immediately at bin 0 (since Accum=0 >= LoTarget=0 is true)
+		// instead of finding the first populated bin. Matches unfused ApplyRadianceAGC.
+		const int32 LoTarget = FMath::Max(1, FMath::RoundToInt(Cfg.AGCLowPercentile * NumPixels));
+		const int32 HiTarget = FMath::Max(1, FMath::RoundToInt(Cfg.AGCHighPercentile * NumPixels));
 		int32 Accum = 0;
 		for (int32 b = 0; b < 256; ++b)
 		{
@@ -1883,9 +1893,10 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 					                                        static_cast<int32>(P.G) * 150 +
 					                                        static_cast<int32>(P.B) * 29) >> 8);
 					const float V = static_cast<float>(NVGGammaCurve[Luma]);
-					R = V * 0.2f;
+					// P22 green phosphor tint — matches ApplyNVG (R=0, G=I, B=I*3/10).
+					R = 0.0f;
 					G = V;
-					B = V * 0.15f;
+					B = V * 0.3f;
 				}
 
 				// --- Gain/offset jitter (IR) ---
