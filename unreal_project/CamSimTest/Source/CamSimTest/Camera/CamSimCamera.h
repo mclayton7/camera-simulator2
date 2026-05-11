@@ -218,7 +218,10 @@ private:
 	TArray<TUniquePtr<FRHIGPUTextureReadback>> ColorReadbackPool;
 
 	/** Set by render thread after EnqueueCopy; game thread polls IsReady() only after this is true.
-	 *  writer: render → reader: game (relaxed — just gates whether polling can start). */
+	 *  writer: render → reader: game (SeqCst — pairs with the EnqueueCopy
+	 *  data writes so they're visible to the game thread on observation; UE5
+	 *  EMemoryOrder has no Release/Acquire, so SeqCst is the project-wide
+	 *  substitute — see CamSimCamera.h:191-193). */
 	TAtomic<bool> bReadbackDMAIssued{false};
 
 	/**

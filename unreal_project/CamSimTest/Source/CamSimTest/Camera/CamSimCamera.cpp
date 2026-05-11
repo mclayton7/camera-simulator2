@@ -723,7 +723,7 @@ void ACamSimCamera::PollReadbackCompletion()
 	// the NEXT tick after bPollComplete_ becomes observable — no synchronous
 	// flush, so the render thread is free to keep rendering frame N+1 while
 	// frame N's DMA drains.
-	if (!bReadbackPending || !bReadbackDMAIssued.Load(EMemoryOrder::Relaxed)) return;
+	if (!bReadbackPending || !bReadbackDMAIssued.Load(EMemoryOrder::SequentiallyConsistent)) return;
 
 	// First: if a prior poll already completed, consume it now.
 	if (bPollComplete_.Load(EMemoryOrder::SequentiallyConsistent))
@@ -1468,7 +1468,7 @@ void ACamSimCamera::CaptureAndEncode()
 
 	// Reset game-thread readback state for the new capture. Bumping the poll
 	// generation is what lets stale polls from the previous frame safely no-op.
-	bReadbackDMAIssued.Store(false, EMemoryOrder::Relaxed);
+	bReadbackDMAIssued.Store(false, EMemoryOrder::SequentiallyConsistent);
 	bPollComplete_   .Store(false, EMemoryOrder::SequentiallyConsistent);
 	bPollFailed_     .Store(false, EMemoryOrder::SequentiallyConsistent);
 	PollGeneration_  .Store(PollGeneration_.Load(EMemoryOrder::Relaxed) + 1,
@@ -1548,7 +1548,12 @@ void ACamSimCamera::CaptureAndEncode()
 		}
 
 		// Signal game thread: DMA has been enqueued, safe to poll IsReady()
-		bReadbackDMAIssued.Store(true, EMemoryOrder::Relaxed);
+		// SeqCst: paired with the SeqCst load in PollReadbackCompletion so
+		// the render command's writes (Readback->EnqueueCopy, transition) are
+		// visible to the game thread once it observes bReadbackDMAIssued=true.
+		// (UE5's EMemoryOrder enum has only Relaxed and SequentiallyConsistent —
+		// SeqCst substitutes for release/acquire here.)
+		bReadbackDMAIssued.Store(true, EMemoryOrder::SequentiallyConsistent);
 	});
 }
 
