@@ -543,9 +543,15 @@ EOF
 
 ---
 
-## Task 6 — Extract `FGpuReadbackPipeline`
+## Task 6 — Extract `FGpuReadbackPipeline` (DEFERRED to Phase 3B)
 
-**Goal:** The biggest commit of Phase 3. Move the ping-pong readback pools, the state machine (from Task 2), the streak counters, and the async pixel/depth buffers out of `ACamSimCamera` into a new plain C++ class. `ACamSimCamera` keeps the orchestration (capture trigger, dispatch on completion) but delegates the GPU readback mechanics.
+**Status:** Deferred. The other six Phase 3 commits already deliver the clarity and correctness wins the design spec called for; the pipeline extraction is the highest-risk change in the plan and needs compile/test feedback to land safely.
+
+**Why deferred:** The DMA-enqueue and poll render-command lambdas in `CamSimCamera.cpp` capture eight pieces of camera state (`LatencyTracker_`, `bTrackFrameDrops_`, `FrameDropStats_`, `PendingTelemetry`, `PendingFrameIndex`, `Subsystem`, encoder thread, sensor pipeline). Moving the lambdas into `FGpuReadbackPipeline` without breaking those captures requires either threading every dependency through the new class's API or inverting the control flow. Doing this safely needs a UE5 build and ideally a smoke-harness run between drafts — the rest of Phase 3 doesn't.
+
+**Follow-up plan:** A future "Phase 3B" focused solely on this extraction, planned and executed when a UE5 build environment is available. The other Phase 3 wins (state-machine collapse, Cesium tuning extract, tileset cache, off-thread stat) ship in this PR.
+
+**Goal of the original task (for the follow-up):** Move the ping-pong readback pools, the state machine (from Task 2), the streak counters, and the async pixel/depth buffers out of `ACamSimCamera` into a new plain C++ class. `ACamSimCamera` keeps the orchestration (capture trigger, dispatch on completion) but delegates the GPU readback mechanics.
 
 **Files:** `Camera/GpuReadbackPipeline.h` (new), `Camera/GpuReadbackPipeline.cpp` (new), `Camera/CamSimCamera.{h,cpp}` (modify)
 
