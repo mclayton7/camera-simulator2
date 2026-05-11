@@ -17,10 +17,12 @@ FPipelineLatencyTracker::FPipelineLatencyTracker(int32 InBufferSize)
 
 void FPipelineLatencyTracker::SetStageTimestamp(EPipelineStage Stage, uint64 Cycles)
 {
-	// Release store: pairs with the Acquire load in CommitFrame so any data
+	// SeqCst store: pairs with the SeqCst load in CommitFrame so any data
 	// the producer thread wrote before calling Mark() is visible to the
-	// committer thread when it snapshots the stage value.
-	CurrentFrame.Stages[static_cast<int32>(Stage)].Store(Cycles, EMemoryOrder::Release);
+	// committer thread when it snapshots the stage value. (UE5's EMemoryOrder
+	// enum has only Relaxed and SequentiallyConsistent — SeqCst is the
+	// project-wide substitute for release/acquire; see CamSimCamera.h:191-193.)
+	CurrentFrame.Stages[static_cast<int32>(Stage)].Store(Cycles, EMemoryOrder::SequentiallyConsistent);
 }
 
 void FPipelineLatencyTracker::CommitFrame()
@@ -28,13 +30,13 @@ void FPipelineLatencyTracker::CommitFrame()
 	const uint64 Idx = WriteIndex.Load(EMemoryOrder::Relaxed);
 	FLatencyRecord& Slot = Records[static_cast<int32>(Idx % BufferCapacity)];
 
-	// Snapshot each stage timestamp with an Acquire load and zero the slot
-	// in the same step. Per-slot atomicity is what makes this race-free even
+	// Snapshot each stage timestamp with a SeqCst load and zero the slot in
+	// the same step. Per-slot atomicity is what makes this race-free even
 	// though we never lock — each slot has at most one writer, and the
 	// committer is the only reader, so writer/reader is the only contention.
 	for (int32 s = 0; s < static_cast<int32>(EPipelineStage::Count); ++s)
 	{
-		Slot.Stages[s] = CurrentFrame.Stages[s].Load(EMemoryOrder::Acquire);
+		Slot.Stages[s] = CurrentFrame.Stages[s].Load(EMemoryOrder::SequentiallyConsistent);
 		CurrentFrame.Stages[s].Store(0, EMemoryOrder::Relaxed);
 	}
 

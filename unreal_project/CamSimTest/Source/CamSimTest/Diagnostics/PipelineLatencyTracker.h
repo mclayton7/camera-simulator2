@@ -67,10 +67,14 @@ private:
 
 	// CurrentFrame is the cross-thread staging area: producers call Mark() on
 	// the slot for "their" stage; the committer thread snapshots all slots
-	// into the ring on CommitFrame(). Per-slot TAtomic gives the producer
-	// a Release store and the committer an Acquire load, which is enough to
-	// make the C++ memory model happy even though each slot in practice has
-	// only one writer.
+	// into the ring on CommitFrame(). Per-slot TAtomic with SeqCst on both
+	// sides publishes the producer's data writes to the committer. Each slot
+	// has exactly one producer thread in practice; the atomics are what makes
+	// the cross-thread visibility guarantee explicit at the C++-memory-model
+	// level. (UE5's EMemoryOrder enum is just Relaxed/SequentiallyConsistent;
+	// SeqCst is the project-wide substitute for release/acquire — see
+	// CamSimCamera.h:179-194 for the convention.)
+	// Stages[i]: producer thread for stage i  →  committer thread (SeqCst)
 	struct FCurrentFrame
 	{
 		TAtomic<uint64> Stages[static_cast<int32>(EPipelineStage::Count)] = {};

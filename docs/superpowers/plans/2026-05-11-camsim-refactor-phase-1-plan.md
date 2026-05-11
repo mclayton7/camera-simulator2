@@ -4,7 +4,7 @@
 
 **Goal:** Eliminate every cross-thread race in the CamSim pipeline that today relies on x86's strong memory model — making the codebase correct on Apple Silicon dev workstations and any future ARM Linux deployment.
 
-**Architecture:** Convert four cross-thread fields to use explicit C++ memory ordering: (1) `FPipelineLatencyTracker::CurrentFrame.Stages[]` → per-stage `TAtomic<uint64>` with release/acquire pairing; (2) `bReadbackDMAIssued` → `Release`/`Acquire`; (3) `RenderReadyStreak_` / `RenderDepthReadyStreak_` → `TAtomic<uint8>` relaxed; (4) game-thread-only readback hand-off state gets explicit `checkSlow(IsInGameThread())` guards. Add one new automation test that stresses the latency tracker under multi-threaded write load.
+**Architecture:** Convert four cross-thread fields to use explicit C++ memory ordering: (1) `FPipelineLatencyTracker::CurrentFrame.Stages[]` → per-stage `TAtomic<uint64>` with SeqCst pairing (UE5's `EMemoryOrder` enum has no `Release`/`Acquire`; SeqCst is the project-wide substitute — see `CamSimCamera.h:191-193`); (2) `bReadbackDMAIssued` → SeqCst on both ends; (3) `RenderReadyStreak_` / `RenderDepthReadyStreak_` → `TAtomic<uint8>` relaxed; (4) game-thread-only readback hand-off state gets explicit `checkSlow(IsInGameThread())` guards. Add one new automation test that stresses the latency tracker under multi-threaded write load.
 
 **Tech Stack:** Unreal Engine 5.7 (`TAtomic`, `EMemoryOrder`, `FRunnable`, `IMPLEMENT_SIMPLE_AUTOMATION_TEST`), C++17.
 
@@ -22,13 +22,13 @@
    - `Mark()` is called from the game thread (4 stages), sensor task thread (2 stages), and encoder thread (1 stage + `CommitFrame`).
    - The current code (`PipelineLatencyTracker.cpp:14`) writes to `CurrentFrame.Stages[idx]` non-atomically. The encoder thread then does `Records[idx] = CurrentFrame;` and `FMemory::Memzero(CurrentFrame);` (lines 20, 29) — concurrent struct-copy + memzero while other threads write individual slots is a C++ data race even though each `uint64` slot is touched by exactly one thread.
    - On x86 the aligned `uint64` writes are atomic at the hardware level so this is invisible today, but on ARM (Apple Silicon dev workstations) the C++ memory model permits torn reads and reordering.
-   - Fix: change `CurrentFrame.Stages[]` from `uint64[]` to `TAtomic<uint64>[]`. Writers store with `Release`; `CommitFrame` loads each slot with `Acquire`. Zero contention because each writer hits a different slot.
+   - Fix: change `CurrentFrame.Stages[]` from `uint64[]` to `TAtomic<uint64>[]`. Writers store with SeqCst; `CommitFrame` loads each slot with SeqCst. (UE5's `EMemoryOrder` enum has no `Release`/`Acquire`; SeqCst is the project-wide substitute — see `CamSimCamera.h:191-193`.) Zero contention because each writer hits a different slot.
 
 2. **`bReadbackDMAIssued` uses Relaxed ordering for a flag that gates downstream data reads.**
    - Set to `true` on the render thread inside the DMA-enqueue command (`CamSimCamera.cpp:1551`).
    - Read on the game thread to decide whether polling can start (`CamSimCamera.cpp:726`).
    - On ARM, the relaxed pair allows the game thread to observe the flag flip before any data writes that preceded it in program order on the render thread. The `bPollComplete_` SeqCst pair is the primary signal, but `bReadbackDMAIssued` is a secondary gate and should match.
-   - Fix: store with `Release`, load with `Acquire`.
+   - Fix: store with SeqCst, load with SeqCst. (UE5's `EMemoryOrder` enum has no `Release`/`Acquire`; SeqCst is the project-wide substitute.)
 
 3. **`RenderReadyStreak_` and `RenderDepthReadyStreak_` are plain `uint8` touched by two threads.**
    - Game thread zeros them in `CaptureAndEncode` before enqueueing the render command (`CamSimCamera.cpp:1476-1477`).
@@ -46,9 +46,9 @@
 | File | Action | Responsibility |
 |------|--------|---|
 | `unreal_project/CamSimTest/Source/CamSimTest/Diagnostics/PipelineLatencyTracker.h` | Modify | Promote `CurrentFrame.Stages[]` to `TAtomic<uint64>[]` |
-| `unreal_project/CamSimTest/Source/CamSimTest/Diagnostics/PipelineLatencyTracker.cpp` | Modify | Release stores in `SetStageTimestamp`, Acquire loads in `CommitFrame`, atomic-aware memzero |
+| `unreal_project/CamSimTest/Source/CamSimTest/Diagnostics/PipelineLatencyTracker.cpp` | Modify | SeqCst stores in `SetStageTimestamp`, SeqCst loads in `CommitFrame`, atomic-aware memzero |
 | `unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.h` | Modify | Atomic types for streak fields; `// game-thread-only` annotations |
-| `unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.cpp` | Modify | Release/Acquire on `bReadbackDMAIssued`; atomic streak `.Load()/.Store()`; `checkSlow(IsInGameThread())` in `DispatchQueuedResultIfFree` |
+| `unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.cpp` | Modify | SeqCst on `bReadbackDMAIssued`; atomic streak `.Load()/.Store()`; `checkSlow(IsInGameThread())` in `DispatchQueuedResultIfFree` |
 | `unreal_project/CamSimTest/Source/CamSimTest/Tests/PipelineLatencyTrackerConcurrencyTest.cpp` | Create | New stress test: 3 producer threads + 1 reader thread, 2-second run, no asserts trip, percentile sanity |
 | `unreal_project/CamSimTest/Source/CamSimTest/CamSimTest.Build.cs` | Verify | No change expected — new test file auto-picked up by UBT |
 
@@ -125,8 +125,9 @@ Create the file with the following exact contents:
 // the hardware level. On ARM (Apple Silicon, ARM Linux) torn reads of the
 // non-atomic CurrentFrame.Stages slots are permitted by the C++ memory
 // model. After Task 2 of the Phase 1 plan, all per-stage writes use
-// Release/Acquire on TAtomic<uint64>, so the test passes correctly on both
-// platforms.
+// SeqCst on TAtomic<uint64> (UE5's EMemoryOrder enum has no Release/
+// Acquire; SeqCst is the project-wide substitute — see CamSimCamera.h:
+// 191-193), so the test passes correctly on both platforms.
 //
 // This test is also intended to be run under ThreadSanitizer when available.
 // On a build with -fsanitize=thread, the pre-fix code reports a data race
@@ -299,7 +300,7 @@ Expected: commit succeeds; no pre-commit hook failures.
 
 ## Task 2 — Fix `FPipelineLatencyTracker::CurrentFrame.Stages[]` thread safety
 
-**Goal:** Convert `CurrentFrame.Stages[]` from non-atomic `uint64[]` to `TAtomic<uint64>[]` with explicit Release/Acquire ordering. `CommitFrame` snapshots each slot into the ring with Acquire loads. The new concurrency test from Task 1 must continue to pass; under TSan (if run) it must now report zero races.
+**Goal:** Convert `CurrentFrame.Stages[]` from non-atomic `uint64[]` to `TAtomic<uint64>[]` with explicit SeqCst ordering on both ends (UE5's `EMemoryOrder` enum lacks `Release`/`Acquire`; SeqCst is the project-wide substitute — see `CamSimCamera.h:191-193`). `CommitFrame` snapshots each slot into the ring with SeqCst loads. The new concurrency test from Task 1 must continue to pass; under TSan (if run) it must now report zero races.
 
 **Files:**
 - Modify: `unreal_project/CamSimTest/Source/CamSimTest/Diagnostics/PipelineLatencyTracker.h`
@@ -320,10 +321,14 @@ private:
 
 	// CurrentFrame is the cross-thread staging area: producers call Mark() on
 	// the slot for "their" stage; the committer thread snapshots all slots
-	// into the ring on CommitFrame(). Per-slot TAtomic gives the producer
-	// a Release store and the committer an Acquire load, which is enough to
-	// make the C++ memory model happy even though each slot in practice has
-	// only one writer.
+	// into the ring on CommitFrame(). Per-slot TAtomic with SeqCst on both
+	// sides publishes the producer's data writes to the committer. Each slot
+	// has exactly one producer thread in practice; the atomics are what makes
+	// the cross-thread visibility guarantee explicit at the C++-memory-model
+	// level. (UE5's EMemoryOrder enum is just Relaxed/SequentiallyConsistent;
+	// SeqCst is the project-wide substitute for release/acquire — see
+	// CamSimCamera.h:179-194 for the convention.)
+	// Stages[i]: producer thread for stage i  →  committer thread (SeqCst)
 	struct FCurrentFrame
 	{
 		TAtomic<uint64> Stages[static_cast<int32>(EPipelineStage::Count)] = {};
@@ -366,10 +371,12 @@ FPipelineLatencyTracker::FPipelineLatencyTracker(int32 InBufferSize)
 
 void FPipelineLatencyTracker::SetStageTimestamp(EPipelineStage Stage, uint64 Cycles)
 {
-	// Release store: pairs with the Acquire load in CommitFrame so any data
+	// SeqCst store: pairs with the SeqCst load in CommitFrame so any data
 	// the producer thread wrote before calling Mark() is visible to the
-	// committer thread when it snapshots the stage value.
-	CurrentFrame.Stages[static_cast<int32>(Stage)].Store(Cycles, EMemoryOrder::Release);
+	// committer thread when it snapshots the stage value. (UE5's EMemoryOrder
+	// enum has only Relaxed and SequentiallyConsistent — SeqCst is the
+	// project-wide substitute for release/acquire; see CamSimCamera.h:191-193.)
+	CurrentFrame.Stages[static_cast<int32>(Stage)].Store(Cycles, EMemoryOrder::SequentiallyConsistent);
 }
 
 void FPipelineLatencyTracker::CommitFrame()
@@ -377,13 +384,13 @@ void FPipelineLatencyTracker::CommitFrame()
 	const uint64 Idx = WriteIndex.Load(EMemoryOrder::Relaxed);
 	FLatencyRecord& Slot = Records[static_cast<int32>(Idx % BufferCapacity)];
 
-	// Snapshot each stage timestamp with an Acquire load and zero the slot
-	// in the same step. Per-slot atomicity is what makes this race-free even
+	// Snapshot each stage timestamp with a SeqCst load and zero the slot in
+	// the same step. Per-slot atomicity is what makes this race-free even
 	// though we never lock — each slot has at most one writer, and the
 	// committer is the only reader, so writer/reader is the only contention.
 	for (int32 s = 0; s < static_cast<int32>(EPipelineStage::Count); ++s)
 	{
-		Slot.Stages[s] = CurrentFrame.Stages[s].Load(EMemoryOrder::Acquire);
+		Slot.Stages[s] = CurrentFrame.Stages[s].Load(EMemoryOrder::SequentiallyConsistent);
 		CurrentFrame.Stages[s].Store(0, EMemoryOrder::Relaxed);
 	}
 
@@ -415,8 +422,8 @@ Run: `git diff unreal_project/CamSimTest/Source/CamSimTest/Diagnostics/PipelineL
 Visually confirm:
 - `FLatencyRecord` is unchanged (plain `uint64[]`).
 - `FCurrentFrame` is new, with `TAtomic<uint64>[]`.
-- `SetStageTimestamp` uses `Store(Cycles, EMemoryOrder::Release)`.
-- `CommitFrame` snapshots each slot with `Load(EMemoryOrder::Acquire)` and zeroes with `Store(0, Relaxed)`.
+- `SetStageTimestamp` uses `Store(Cycles, EMemoryOrder::SequentiallyConsistent)`.
+- `CommitFrame` snapshots each slot with `Load(EMemoryOrder::SequentiallyConsistent)` and zeroes with `Store(0, Relaxed)`.
 - No `FMemory::Memzero(CurrentFrame)` remains.
 
 If `clang-format-17` is available, run it on both files in-place.
@@ -435,11 +442,13 @@ CurrentFrame.Stages[] was non-atomic uint64[] written by 3+ threads
 because aligned uint64 stores are hardware-atomic, but undefined on ARM
 (Apple Silicon dev workstations).
 
-Promote each stage slot to TAtomic<uint64> with explicit Release stores
-in SetStageTimestamp and Acquire loads in CommitFrame's snapshot pass.
-Each slot still has exactly one writer in practice; the atomics give
-the C++ memory model what it needs to make the cross-thread visibility
-guarantee explicit.
+Promote each stage slot to TAtomic<uint64> with explicit SeqCst stores
+in SetStageTimestamp and SeqCst loads in CommitFrame's snapshot pass.
+(UE5's EMemoryOrder enum has only Relaxed and SequentiallyConsistent;
+SeqCst is the project-wide substitute for release/acquire — see
+CamSimCamera.h:191-193.) Each slot still has exactly one writer in
+practice; the atomics give the C++ memory model what it needs to make
+the cross-thread visibility guarantee explicit.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
@@ -450,9 +459,9 @@ Expected: commit succeeds.
 
 ---
 
-## Task 3 — `bReadbackDMAIssued`: Relaxed → Release/Acquire
+## Task 3 — `bReadbackDMAIssued`: Relaxed → SeqCst
 
-**Goal:** Change the render-thread store and game-thread load of `bReadbackDMAIssued` from `EMemoryOrder::Relaxed` to `Release`/`Acquire`. This hardens the secondary gate for the readback pipeline against ARM-permitted reorderings. The primary gate (`bPollComplete_`) is already SeqCst and unchanged.
+**Goal:** Change the render-thread store and game-thread load of `bReadbackDMAIssued` from `EMemoryOrder::Relaxed` to `EMemoryOrder::SequentiallyConsistent`. This hardens the secondary gate for the readback pipeline against ARM-permitted reorderings. The primary gate (`bPollComplete_`) is already SeqCst and unchanged. (UE5's `EMemoryOrder` enum has only `Relaxed` and `SequentiallyConsistent` — SeqCst is the project-wide substitute for release/acquire; see `CamSimCamera.h:191-193`.)
 
 Note: this flag is deleted entirely in Phase 3 as part of the state-machine collapse. Fixing it here ensures correctness if Phase 3 slips.
 
@@ -470,10 +479,12 @@ In `unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.cpp`, find l
 Change to:
 
 ```cpp
-		// Release: paired with the Acquire load in PollReadbackCompletion so
+		// SeqCst: paired with the SeqCst load in PollReadbackCompletion so
 		// the render command's writes (Readback->EnqueueCopy, transition) are
 		// visible to the game thread once it observes bReadbackDMAIssued=true.
-		bReadbackDMAIssued.Store(true, EMemoryOrder::Release);
+		// (UE5's EMemoryOrder enum has only Relaxed and SequentiallyConsistent —
+		// SeqCst substitutes for release/acquire here.)
+		bReadbackDMAIssued.Store(true, EMemoryOrder::SequentiallyConsistent);
 ```
 
 - [ ] **Step 2: Update the game-thread load site.**
@@ -487,7 +498,7 @@ In the same file, find line 726:
 Change to:
 
 ```cpp
-	if (!bReadbackPending || !bReadbackDMAIssued.Load(EMemoryOrder::Acquire)) return;
+	if (!bReadbackPending || !bReadbackDMAIssued.Load(EMemoryOrder::SequentiallyConsistent)) return;
 ```
 
 - [ ] **Step 3: Update the reset store site.**
@@ -501,7 +512,7 @@ In the same file, find line 1471:
 This is the game-thread reset before enqueuing the new DMA command. The `ENQUEUE_RENDER_COMMAND` that follows establishes the happens-before edge between this store and the next render-thread load, so Relaxed is technically sufficient here. But for consistency with the new ordering rule, change to:
 
 ```cpp
-	bReadbackDMAIssued.Store(false, EMemoryOrder::Release);
+	bReadbackDMAIssued.Store(false, EMemoryOrder::SequentiallyConsistent);
 ```
 
 - [ ] **Step 4: Update the header comment that documents the ordering.**
@@ -518,16 +529,18 @@ Change to:
 
 ```cpp
 	/** Set by render thread after EnqueueCopy; game thread polls IsReady() only after this is true.
-	 *  writer: render → reader: game (Release/Acquire — pairs with the EnqueueCopy
-	 *  data writes so they're visible to the game thread on observation). */
+	 *  writer: render → reader: game (SeqCst — pairs with the EnqueueCopy
+	 *  data writes so they're visible to the game thread on observation; UE5
+	 *  EMemoryOrder has no Release/Acquire, so SeqCst is the project-wide
+	 *  substitute — see CamSimCamera.h:191-193). */
 	TAtomic<bool> bReadbackDMAIssued{false};
 ```
 
 - [ ] **Step 5: Verify the changes.**
 
-Run: `git diff unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.cpp | grep -E '(Relaxed|Release|Acquire)' | head -20`
+Run: `git diff unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.cpp | grep -E '(Relaxed|SequentiallyConsistent)' | head -20`
 
-Expected: three changed lines — two using `Release`, one using `Acquire`, no remaining `Relaxed` references for `bReadbackDMAIssued`.
+Expected: three changed lines all using `SequentiallyConsistent`, no remaining `Relaxed` references for `bReadbackDMAIssued`.
 
 Run: `grep -n 'bReadbackDMAIssued.*EMemoryOrder::Relaxed' unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.cpp`
 Expected: no output. If any line is printed, you missed one — go back and fix it.
@@ -539,7 +552,7 @@ Run:
 git add unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.h \
         unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.cpp
 git commit -m "$(cat <<'EOF'
-fix(camsim): tighten bReadbackDMAIssued to Release/Acquire ordering
+fix(camsim): tighten bReadbackDMAIssued to SeqCst ordering
 
 The render thread sets bReadbackDMAIssued=true after EnqueueCopy; the
 game thread loads it to decide whether to start polling IsReady().
@@ -547,10 +560,13 @@ With Relaxed ordering, ARM can reorder render-side writes (the texture
 transition, EnqueueCopy itself) past the flag flip, making them
 invisible to the game-thread reader.
 
-Pair the render-thread Store with Release and the game-thread Load
-with Acquire. The reset Store on the game thread (CaptureAndEncode)
-moves to Release for consistency with the rule, though the
-ENQUEUE_RENDER_COMMAND barrier already provides happens-before there.
+Pair the render-thread Store and the game-thread Load with SeqCst.
+(UE5's EMemoryOrder enum has only Relaxed and SequentiallyConsistent —
+SeqCst is the project-wide substitute for release/acquire; see
+CamSimCamera.h:191-193.) The reset Store on the game thread
+(CaptureAndEncode) moves to SeqCst for consistency with the rule,
+though the ENQUEUE_RENDER_COMMAND barrier already provides
+happens-before there.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
@@ -825,7 +841,7 @@ Expected: five commits, in this order:
 ```
 <sha> docs(camsim): annotate game-thread-only readback hand-off state
 <sha> fix(camsim): make readback streak counters atomic
-<sha> fix(camsim): tighten bReadbackDMAIssued to Release/Acquire ordering
+<sha> fix(camsim): tighten bReadbackDMAIssued to SeqCst ordering
 <sha> fix(camsim): make FPipelineLatencyTracker stage slots atomic
 <sha> test(camsim): add FPipelineLatencyTrackerConcurrencyTest
 ```
@@ -840,7 +856,7 @@ Expected: 4-5 files changed, roughly: `PipelineLatencyTracker.h` (~10 lines), `P
 
 If the diff is dramatically larger, you've scope-crept beyond Phase 1 — revert the excess.
 
-- [ ] **Step 3: Audit for any remaining Relaxed orderings on cross-thread flags that should be Release/Acquire.**
+- [ ] **Step 3: Audit for any remaining Relaxed orderings on cross-thread flags that should be SeqCst.**
 
 Run: `grep -n 'EMemoryOrder::Relaxed' unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.cpp unreal_project/CamSimTest/Source/CamSimTest/Camera/CamSimCamera.h`
 
@@ -881,8 +897,8 @@ Run:
 git push -u origin HEAD
 gh pr create --title "refactor(camsim): Phase 1 — P0 cross-thread correctness" --body "$(cat <<'EOF'
 ## Summary
-- Promotes `FPipelineLatencyTracker::CurrentFrame.Stages[]` from non-atomic `uint64[]` to per-stage `TAtomic<uint64>` with explicit Release/Acquire pairing — fixes a real C++ data race that is invisible on x86 but undefined on Apple Silicon dev workstations.
-- Tightens `bReadbackDMAIssued` to Release store / Acquire load so render-thread DMA-side writes are guaranteed visible to the game thread on observation.
+- Promotes `FPipelineLatencyTracker::CurrentFrame.Stages[]` from non-atomic `uint64[]` to per-stage `TAtomic<uint64>` with explicit SeqCst pairing (UE5's `EMemoryOrder` enum has no `Release`/`Acquire`; SeqCst is the project-wide substitute) — fixes a real C++ data race that is invisible on x86 but undefined on Apple Silicon dev workstations.
+- Tightens `bReadbackDMAIssued` to SeqCst store and load so render-thread DMA-side writes are guaranteed visible to the game thread on observation.
 - Promotes `RenderReadyStreak_` / `RenderDepthReadyStreak_` to `TAtomic<uint8>` (Relaxed) to remove latent cross-thread fragility on the streak counters.
 - Annotates the game-thread-only readback hand-off block with `// NOT atomic` comments and `checkSlow(IsInGameThread())` guards at both accessor sites.
 - Adds `FPipelineLatencyTrackerConcurrencyTest` — 3-producer / 1-committer / 1-reader stress test that exercises the exact contention pattern the subsystem uses in production.
@@ -908,7 +924,7 @@ Expected: PR created; CI starts. Wait for the verification gate; do not merge be
 
 - **The plan does not require local UE5 builds.** Every code edit is mechanical and verifiable by visual diff inspection. CI is the source of truth.
 - **Five separate commits** is intentional — they map directly to the five fixes the design spec calls out and make bisection trivial if anything regresses.
-- **Phase 3 deletes some of this work.** `bReadbackDMAIssued`, `bPollComplete_`, `bPollFailed_`, and `bReadbackPending` collapse into a single `EReadbackState` enum in Phase 3. The Phase 1 fixes are not throwaway — the correct memory ordering rules transfer to the new state machine — but be aware the diff history will show Phase 1's `Relaxed → Release/Acquire` changes being subsumed by Phase 3's enum.
+- **Phase 3 deletes some of this work.** `bReadbackDMAIssued`, `bPollComplete_`, `bPollFailed_`, and `bReadbackPending` collapse into a single `EReadbackState` enum in Phase 3. The Phase 1 fixes are not throwaway — the correct memory ordering rules transfer to the new state machine — but be aware the diff history will show Phase 1's `Relaxed → SeqCst` changes being subsumed by Phase 3's enum.
 - **`checkSlow` vs `check`.** `checkSlow` is compiled out of shipping builds (Test/Shipping configs) and is the right choice for invariant guards on hot paths.
 - **Do not attempt to fix `bPollComplete_` / `bPollFailed_` here.** They are already SeqCst, which is correct. Phase 3 collapses them into the enum.
 
@@ -916,7 +932,7 @@ Expected: PR created; CI starts. Wait for the verification gate; do not merge be
 
 **1. Spec coverage:**
 - Spec item 1 (`RenderReadyStreak_` / `RenderDepthReadyStreak_` → atomic) → Task 4 ✓
-- Spec item 2 (`bReadbackDMAIssued` Release/Acquire) → Task 3 ✓
+- Spec item 2 (`bReadbackDMAIssued` SeqCst) → Task 3 ✓
 - Spec item 3 (game-thread-only annotations + `checkSlow`) → Task 5 ✓
 - Spec item 4 (`FPipelineLatencyTracker` audit + fix) → Task 1 (test) + Task 2 (fix) ✓
 - Spec verification (new concurrency test) → Task 1 ✓
@@ -924,4 +940,4 @@ Expected: PR created; CI starts. Wait for the verification gate; do not merge be
 
 **2. Placeholder scan:** All code blocks are complete. All file paths are absolute or repo-rooted. All commit messages and `gh pr create` body are inline. No TBDs.
 
-**3. Type consistency:** `FCurrentFrame` is introduced in Task 2 Step 1 and consumed in Task 2 Step 2. `EMemoryOrder::Release` / `Acquire` / `Relaxed` are used consistently across Tasks 2–4. `TAtomic<uint8>` and `TAtomic<uint64>` are spelled identically everywhere they appear.
+**3. Type consistency:** `FCurrentFrame` is introduced in Task 2 Step 1 and consumed in Task 2 Step 2. `EMemoryOrder::SequentiallyConsistent` / `Relaxed` are used consistently across Tasks 2–4 (UE5's `EMemoryOrder` enum has no `Release`/`Acquire`; SeqCst is the project-wide substitute). `TAtomic<uint8>` and `TAtomic<uint64>` are spelled identically everywhere they appear.
