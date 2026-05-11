@@ -106,6 +106,16 @@ void FSensorPostProcess::Initialize(int32 InWidth, int32 InHeight,
 	AGCHistogram.SetNumZeroed(256);
 
 	// -------------------------------------------------------------------------
+	// Phase 2: Pre-size scratch buffers so per-frame Apply* code can reuse
+	// existing capacity instead of allocating. SetNumUninitialized is OK here
+	// because every Apply* that uses these writes every pixel before reading.
+	// -------------------------------------------------------------------------
+	const int32 NumPixels = InWidth * InHeight;
+	BlurTemp_     .SetNumUninitialized(NumPixels);
+	ScratchFrameA_.SetNumUninitialized(NumPixels);
+	ScratchFrameB_.SetNumUninitialized(NumPixels);
+
+	// -------------------------------------------------------------------------
 	// 16B: Bayer ordered dither matrix (4x4)
 	// Values in [0, 15] — thresholded against quantization step.
 	// -------------------------------------------------------------------------
