@@ -2,6 +2,7 @@
 
 #include "Encoder/VideoEncoder.h"
 #include "CamSimTest.h"
+#include "Sensor/SensorTypes.h"
 
 // -------------------------------------------------------------------------
 // Constructor / Destructor
@@ -498,7 +499,8 @@ void FVideoEncoder::EncodeFrame(
 	// IR/NVG fast path: frame is already grayscale after sensor post-process.
 	// Y = R channel (all channels equal after ApplyIR/ApplyNVG), Cb=Cr=128.
 	// Skips sws_scale entirely, saving 2-3ms per frame.
-	const bool bGrayscaleMode = (Telemetry.SensorMode == 1 || Telemetry.SensorMode == 2);
+	const ESensorMode SM = static_cast<ESensorMode>(Telemetry.SensorMode);
+	const bool bGrayscaleMode = (SM == ESensorMode::IR || SM == ESensorMode::NVG);
 	if (bGrayscaleMode)
 	{
 		const int32 W = Config.CaptureWidth;
