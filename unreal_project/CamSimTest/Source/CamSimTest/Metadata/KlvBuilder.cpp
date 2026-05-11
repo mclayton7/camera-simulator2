@@ -298,9 +298,19 @@ void FKlvBuilder::BuildMisbST0601Into(const FCamSimTelemetry& T, TArray<uint8>& 
 	// Caller keeps Packet alive across frames so the allocation is amortised.
 	Packet.Reset();
 
-	// Build value payload by iterating the descriptor table
-	TArray<uint8> Value;
-	Value.Reserve(200);
+	// Phase 2: reuse a thread-local scratch buffer instead of allocating per call.
+	// FKlvBuilder is a fully-static class (no instance state) and BuildMisbST0601Into
+	// can be called concurrently from multiple encoder threads (one per output view),
+	// so thread_local gives each caller thread its own amortised TArray without any
+	// cross-thread synchronisation. Reset(/*AllowShrink=*/false) preserves capacity
+	// across frames.
+	thread_local TArray<uint8> ValueScratch;
+	ValueScratch.Reset(/*AllowShrink=*/false);
+	if (ValueScratch.GetSlack() < 200)
+	{
+		ValueScratch.Reserve(200);
+	}
+	TArray<uint8>& Value = ValueScratch;
 
 	for (const FKlvTagDescriptor& Desc : KlvTagTable)
 	{
