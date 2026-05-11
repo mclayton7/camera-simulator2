@@ -85,7 +85,7 @@ struct FCommitter : public FRunnable
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPipelineLatencyTrackerConcurrencyTest,
 	"CamSim.Phase1.Latency.ConcurrencyStress",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FPipelineLatencyTrackerConcurrencyTest::RunTest(const FString& Parameters)
 {
@@ -103,10 +103,21 @@ bool FPipelineLatencyTrackerConcurrencyTest::RunTest(const FString& Parameters)
 	FRunnableThread* ThreadC  = FRunnableThread::Create(&ProdC,     TEXT("LatTestProdC"));
 	FRunnableThread* ThreadCm = FRunnableThread::Create(&Committer, TEXT("LatTestCommit"));
 
-	if (!TestNotNull(TEXT("ProdA thread"),  ThreadA))  return false;
-	if (!TestNotNull(TEXT("ProdB thread"),  ThreadB))  return false;
-	if (!TestNotNull(TEXT("ProdC thread"),  ThreadC))  return false;
-	if (!TestNotNull(TEXT("Commit thread"), ThreadCm)) return false;
+	const bool bAllCreated =
+		(ThreadA != nullptr) && (ThreadB != nullptr) &&
+		(ThreadC != nullptr) && (ThreadCm != nullptr);
+
+	if (!TestTrue(TEXT("all four threads created"), bAllCreated))
+	{
+		// Cleanly shut down any threads that DID start before unwinding,
+		// otherwise they'd keep running against stack-allocated runnables.
+		ProdA.Stop();      ProdB.Stop();      ProdC.Stop();      Committer.Stop();
+		if (ThreadA)  { ThreadA->WaitForCompletion();  delete ThreadA;  }
+		if (ThreadB)  { ThreadB->WaitForCompletion();  delete ThreadB;  }
+		if (ThreadC)  { ThreadC->WaitForCompletion();  delete ThreadC;  }
+		if (ThreadCm) { ThreadCm->WaitForCompletion(); delete ThreadCm; }
+		return false;
+	}
 
 	// Run for ~2 seconds, polling ComputePercentiles() from the main thread
 	// the whole time. This is the exact contention pattern the subsystem
