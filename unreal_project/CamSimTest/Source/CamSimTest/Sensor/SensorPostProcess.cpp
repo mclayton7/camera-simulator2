@@ -1819,11 +1819,36 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 			AGCHistogram.SetNumZeroed(256);
 		FMemory::Memzero(AGCHistogram.GetData(), 256 * sizeof(int32));
 
-		for (int32 i = 0; i < NumPixels; ++i)
+		// Phase 2: parallel histogram build across kParallelBands. Each band
+		// keeps a private 256-bin histogram (1 KB, fits in L1), then we reduce
+		// serially into AGCHistogram. Per-pixel work is unchanged; only the
+		// loop structure moves.
+		TArray<TArray<int32>> BandHistograms;
+		BandHistograms.SetNum(kParallelBands);
+		for (int32 b = 0; b < kParallelBands; ++b)
+			BandHistograms[b].SetNumZeroed(256);
+
+		ParallelFor(kParallelBands, [&](int32 Band)
 		{
-			const FColor& P = Pixels[i];
-			const uint8 Luma = static_cast<uint8>((P.R * 77 + P.G * 150 + P.B * 29) >> 8);
-			AGCHistogram[Luma]++;
+			const int32 PixPerBand = (NumPixels + kParallelBands - 1) / kParallelBands;
+			const int32 Start      = Band * PixPerBand;
+			const int32 End        = FMath::Min(Start + PixPerBand, NumPixels);
+			int32* Local           = BandHistograms[Band].GetData();
+			for (int32 i = Start; i < End; ++i)
+			{
+				const FColor& P = Pixels[i];
+				const uint8 Luma = static_cast<uint8>((P.R * 77 + P.G * 150 + P.B * 29) >> 8);
+				Local[Luma]++;
+			}
+		}, EParallelForFlags::BackgroundPriority);
+
+		// Serial reduce.
+		int32* Hist = AGCHistogram.GetData();
+		for (int32 b = 0; b < kParallelBands; ++b)
+		{
+			const int32* Src = BandHistograms[b].GetData();
+			for (int32 i = 0; i < 256; ++i)
+				Hist[i] += Src[i];
 		}
 
 		// Find percentile thresholds
