@@ -420,9 +420,12 @@ bool FSensorACBandingTest::RunTest(const FString& Parameters)
 	FCamSimTelemetry T;
 	PP.Process(Pixels, ESensorMode::IR, 0, T, 0);
 
-	// Different rows should have different brightness
+	// Different rows should have different brightness. With Frequency=4 cycles
+	// per Height, one cycle is H/4 rows — so sampling at H/4 lands on the same
+	// sine zero-crossing as Row 0. Pick H/16 (a quarter-cycle into the first
+	// wave) to land near a sine peak.
 	const uint8 Row0 = Pixels[0].R;
-	const uint8 RowM = Pixels[(H / 4) * W].R;  // quarter row for sin phase difference
+	const uint8 RowM = Pixels[(H / 16) * W].R;
 	TestTrue(TEXT("AC banding produces row variation"), Row0 != RowM);
 
 	return true;

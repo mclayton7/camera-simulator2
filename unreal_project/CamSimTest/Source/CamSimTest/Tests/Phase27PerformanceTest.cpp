@@ -30,7 +30,10 @@ bool FPhase27_ConfigDefaults::RunTest(const FString& Parameters)
 
 	// 27E
 	TestEqual(TEXT("TilePrefetchSlewThresholdDegPerSec default 10.0"), C.TilePrefetchSlewThresholdDegPerSec, 10.0f);
-	TestEqual(TEXT("TilePrefetchFovBoost default 2.0"),               C.TilePrefetchFovBoost,               2.0f);
+	// Default 1.0 = "no boost" — also matches deploy/camsim_config.yaml. The use
+	// site (CamSimCamera.cpp) clamps to >= 1.0 anyway, so 1.0 is the meaningful
+	// disabled-by-default value.
+	TestEqual(TEXT("TilePrefetchFovBoost default 1.0"),               C.TilePrefetchFovBoost,               1.0f);
 	TestEqual(TEXT("TilePrefetchBoostFrames default 30"),             C.TilePrefetchBoostFrames,             30);
 
 	// 27F

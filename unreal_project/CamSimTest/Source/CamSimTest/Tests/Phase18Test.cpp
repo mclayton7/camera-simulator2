@@ -65,7 +65,12 @@ bool FPhase18PrecipNoOpTest::RunTest(const FString& Parameters)
 
 	FSensorPostProcess FX;
 	TMap<ESensorMode, FSensorModeConfig> Configs;
-	Configs.Add(ESensorMode::EO, FSensorModeConfig{});
+	// FSensorModeConfig defaults Vignetting=0.15, which would otherwise
+	// trip the fused per-pixel path and darken corner pixels. Zero it so
+	// this test exercises *only* the precipitation toggle.
+	FSensorModeConfig EoCfg;
+	EoCfg.Vignetting = 0.0f;
+	Configs.Add(ESensorMode::EO, EoCfg);
 	FSensorQualityConfig Quality;
 	FX.Initialize(W, H, Configs, Quality);
 

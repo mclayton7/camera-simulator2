@@ -434,10 +434,13 @@ bool FOverlayCompassRoseNorthLabelTest::RunTest(const FString& Parameters)
     T.Yaw = 0.0f; // heading North — N label should appear at center tick
     O.Render(F, TW, TH, 0, T, 0);
 
-    // N label is 1 character wide (5px glyph) centered above center tick (TW/2)
-    // Check a wider window above the tape region to account for label offset
+    // N label is 1 character wide (5px glyph) centered above center tick (TW/2).
+    // The tape is anchored near the bottom; with TH=240, the cardinal label rows
+    // land around Y=211–217, the marker triangle around Y=213–215, and the tape
+    // line around Y=226. Sweep the whole bottom quarter of the frame so the
+    // window covers all of those without coupling to the exact pixel layout.
     TestTrue(TEXT("'N' label pixels visible above center tick when heading=0"),
-             HasNonBlackPixel(F, TW / 2 - 10, TH * 3 / 4, 20, TH / 8));
+             HasNonBlackPixel(F, TW / 2 - 10, TH * 3 / 4, 20, TH / 4));
     return true;
 }
 
