@@ -879,7 +879,7 @@ void ACamSimCamera::PollReadbackCompletion()
 			RenderDepthReadyStreak_.Store(0, EMemoryOrder::Relaxed);
 		}
 
-		// Release-store: data writes above are visible to the game thread
+		// SeqCst store: data writes above are visible to the game thread
 		// once it observes bPollComplete_ = true.
 		bPollComplete_.Store(true, EMemoryOrder::SequentiallyConsistent);
 	});

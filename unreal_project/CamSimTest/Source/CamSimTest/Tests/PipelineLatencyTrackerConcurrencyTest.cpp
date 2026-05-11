@@ -23,8 +23,10 @@
 // the hardware level. On ARM (Apple Silicon, ARM Linux) torn reads of the
 // non-atomic CurrentFrame.Stages slots are permitted by the C++ memory
 // model. After Task 2 of the Phase 1 plan, all per-stage writes use
-// Release/Acquire on TAtomic<uint64>, so the test passes correctly on both
-// platforms.
+// SeqCst on TAtomic<uint64> (UE5's EMemoryOrder has only Relaxed and
+// SequentiallyConsistent — SeqCst is the project-wide substitute for
+// release/acquire; see CamSimCamera.h:191-193), so the test passes
+// correctly on both platforms.
 //
 // This test is also intended to be run under ThreadSanitizer when available.
 // On a build with -fsanitize=thread, the pre-fix code reports a data race
