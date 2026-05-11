@@ -716,6 +716,8 @@ bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 
 void ACamSimCamera::PollReadbackCompletion()
 {
+	checkSlow(IsInGameThread());  // function reads game-thread-only state and enqueues render commands.
+
 	// Complete pending readback (async; no FlushRenderingCommands). We enqueue
 	// a non-blocking render command each tick while a readback is in flight.
 	// The command polls IsReady(); on success it copies the data into
@@ -723,7 +725,7 @@ void ACamSimCamera::PollReadbackCompletion()
 	// the NEXT tick after bPollComplete_ becomes observable — no synchronous
 	// flush, so the render thread is free to keep rendering frame N+1 while
 	// frame N's DMA drains.
-	if (!bReadbackPending || !bReadbackDMAIssued.Load(EMemoryOrder::Relaxed)) return;
+	if (!bReadbackPending || !bReadbackDMAIssued.Load(EMemoryOrder::SequentiallyConsistent)) return;
 
 	// First: if a prior poll already completed, consume it now.
 	if (bPollComplete_.Load(EMemoryOrder::SequentiallyConsistent))
@@ -807,11 +809,14 @@ void ACamSimCamera::PollReadbackCompletion()
 
 		if (!Readback || !Readback->IsReady())
 		{
-			RenderReadyStreak_ = 0;
+			RenderReadyStreak_.Store(0, EMemoryOrder::Relaxed);
 			return;
 		}
-		if (RenderReadyStreak_ < 255) ++RenderReadyStreak_;
-		if (RenderReadyStreak_ < ReadyPollsRequired) return;
+		{
+			const uint8 Cur = RenderReadyStreak_.Load(EMemoryOrder::Relaxed);
+			if (Cur < 255) RenderReadyStreak_.Store(Cur + 1, EMemoryOrder::Relaxed);
+		}
+		if (RenderReadyStreak_.Load(EMemoryOrder::Relaxed) < ReadyPollsRequired) return;
 
 		int32 RowPitch = 0;
 		void* RawData = Readback->Lock(RowPitch);
@@ -844,8 +849,11 @@ void ACamSimCamera::PollReadbackCompletion()
 		AsyncDepth_.Reset();
 		if (DepthReadback && DepthReadback->IsReady())
 		{
-			if (RenderDepthReadyStreak_ < 255) ++RenderDepthReadyStreak_;
-			if (RenderDepthReadyStreak_ >= ReadyPollsRequired)
+			{
+				const uint8 Cur = RenderDepthReadyStreak_.Load(EMemoryOrder::Relaxed);
+				if (Cur < 255) RenderDepthReadyStreak_.Store(Cur + 1, EMemoryOrder::Relaxed);
+			}
+			if (RenderDepthReadyStreak_.Load(EMemoryOrder::Relaxed) >= ReadyPollsRequired)
 			{
 				int32 DepthRowPitch = 0;
 				void* DepthRaw = DepthReadback->Lock(DepthRowPitch);
@@ -868,10 +876,10 @@ void ACamSimCamera::PollReadbackCompletion()
 		}
 		else
 		{
-			RenderDepthReadyStreak_ = 0;
+			RenderDepthReadyStreak_.Store(0, EMemoryOrder::Relaxed);
 		}
 
-		// Release-store: data writes above are visible to the game thread
+		// SeqCst store: data writes above are visible to the game thread
 		// once it observes bPollComplete_ = true.
 		bPollComplete_.Store(true, EMemoryOrder::SequentiallyConsistent);
 	});
@@ -879,6 +887,11 @@ void ACamSimCamera::PollReadbackCompletion()
 
 void ACamSimCamera::DispatchQueuedResultIfFree()
 {
+	// All reads and writes of CompletedPixels_/CompletedDepth_/CompletedTelemetry_/
+	// CompletedFrameIndex_/bReadbackResultReady_ are game-thread-only — none
+	// of these are atomic. The guard makes the constraint loud.
+	checkSlow(IsInGameThread());
+
 	if (bReadbackResultReady_ && !bSensorBusy)
 	{
 		bSensorBusy = true;
@@ -1468,13 +1481,13 @@ void ACamSimCamera::CaptureAndEncode()
 
 	// Reset game-thread readback state for the new capture. Bumping the poll
 	// generation is what lets stale polls from the previous frame safely no-op.
-	bReadbackDMAIssued.Store(false, EMemoryOrder::Relaxed);
+	bReadbackDMAIssued.Store(false, EMemoryOrder::SequentiallyConsistent);
 	bPollComplete_   .Store(false, EMemoryOrder::SequentiallyConsistent);
 	bPollFailed_     .Store(false, EMemoryOrder::SequentiallyConsistent);
 	PollGeneration_  .Store(PollGeneration_.Load(EMemoryOrder::Relaxed) + 1,
 	                        EMemoryOrder::SequentiallyConsistent);
-	RenderReadyStreak_      = 0;
-	RenderDepthReadyStreak_ = 0;
+	RenderReadyStreak_     .Store(0, EMemoryOrder::Relaxed);
+	RenderDepthReadyStreak_.Store(0, EMemoryOrder::Relaxed);
 	bReadbackPending = true;
 
 	// Trigger depth capture alongside color (Phase 17A)
@@ -1548,7 +1561,12 @@ void ACamSimCamera::CaptureAndEncode()
 		}
 
 		// Signal game thread: DMA has been enqueued, safe to poll IsReady()
-		bReadbackDMAIssued.Store(true, EMemoryOrder::Relaxed);
+		// SeqCst: paired with the SeqCst load in PollReadbackCompletion so
+		// the render command's writes (Readback->EnqueueCopy, transition) are
+		// visible to the game thread once it observes bReadbackDMAIssued=true.
+		// (UE5's EMemoryOrder enum has only Relaxed and SequentiallyConsistent —
+		// SeqCst substitutes for release/acquire here.)
+		bReadbackDMAIssued.Store(true, EMemoryOrder::SequentiallyConsistent);
 	});
 }
 
