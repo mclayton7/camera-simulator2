@@ -598,22 +598,27 @@ void ACamSimCamera::EmitHeartbeatIfDue()
 		WallDeltaSec, EffectiveFps);
 
 	// Tile loading stats — report per-tileset load progress and memory.
-	for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+	if (Subsystem)
 	{
-		const float Progress = It->GetLoadProgress();
-		int32 TilesLoaded = 0;
-		int64 DataBytes = 0;
-		if (auto* Tileset = It->GetTileset())
+		for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Subsystem->GetCachedTilesets())
 		{
-			TilesLoaded = Tileset->getNumberOfTilesLoaded();
-			DataBytes = Tileset->getTotalDataBytes();
+			ACesium3DTileset* T = Weak.Get();
+			if (!T) continue;
+			const float Progress = T->GetLoadProgress();
+			int32 TilesLoaded = 0;
+			int64 DataBytes = 0;
+			if (auto* Tileset = T->GetTileset())
+			{
+				TilesLoaded = Tileset->getNumberOfTilesLoaded();
+				DataBytes = Tileset->getTotalDataBytes();
+			}
+			UE_LOG(LogCamSim, Log,
+				TEXT("ACamSimCamera: tileset='%s' progress=%.1f%% SSE=%.1f loaded=%d dataMB=%.1f maxLoads=%d"),
+				*T->GetName(), Progress * 100.0f,
+				T->MaximumScreenSpaceError,
+				TilesLoaded, DataBytes / (1024.0 * 1024.0),
+				T->MaximumSimultaneousTileLoads);
 		}
-		UE_LOG(LogCamSim, Log,
-			TEXT("ACamSimCamera: tileset='%s' progress=%.1f%% SSE=%.1f loaded=%d dataMB=%.1f maxLoads=%d"),
-			*It->GetName(), Progress * 100.0f,
-			It->MaximumScreenSpaceError,
-			TilesLoaded, DataBytes / (1024.0 * 1024.0),
-			It->MaximumSimultaneousTileLoads);
 	}
 }
 
@@ -1022,11 +1027,17 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 				}
 
 				// Apply or restore Cesium SSE based on current counter
-				for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+				if (Subsystem)
 				{
-					It->MaximumScreenSpaceError = (TilePrefetchBoostFramesRemaining_ > 0)
-						? Cfg.MaximumScreenSpaceError / FMath::Max(Cfg.Performance.TilePrefetchFovBoost, 1.0f)
-						: Cfg.MaximumScreenSpaceError;
+					for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Subsystem->GetCachedTilesets())
+					{
+						if (ACesium3DTileset* T = Weak.Get())
+						{
+							T->MaximumScreenSpaceError = (TilePrefetchBoostFramesRemaining_ > 0)
+								? Cfg.MaximumScreenSpaceError / FMath::Max(Cfg.Performance.TilePrefetchFovBoost, 1.0f)
+								: Cfg.MaximumScreenSpaceError;
+						}
+					}
 				}
 			}
 
@@ -1066,9 +1077,15 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 		}
 
 		// Apply adapted SSE to all tilesets
-		for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+		if (Subsystem)
 		{
-			It->MaximumScreenSpaceError = CurrentAdaptiveSSE_;
+			for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Subsystem->GetCachedTilesets())
+			{
+				if (ACesium3DTileset* T = Weak.Get())
+				{
+					T->MaximumScreenSpaceError = CurrentAdaptiveSSE_;
+				}
+			}
 		}
 	}
 
