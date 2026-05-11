@@ -10,6 +10,21 @@
 static constexpr int32 kParallelBands = 8;
 
 // ---------------------------------------------------------------------------
+// ForEachPixelBand — split [0, Height) into kParallelBands disjoint row ranges
+// and run Fn(RowStart, RowEnd) on each, in parallel. Replaces a 6-line
+// boilerplate header that previously appeared at every per-pixel ParallelFor
+// site in this file.
+// ---------------------------------------------------------------------------
+template<typename FnT>
+static FORCEINLINE void ForEachPixelBand(int32 Height, FnT&& Fn)
+{
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
+	{
+		Fn(RowStart, RowEnd);
+	});
+}
+
+// ---------------------------------------------------------------------------
 // Initialize — bake LUTs and pre-generate noise buffers
 // ---------------------------------------------------------------------------
 
@@ -503,11 +518,8 @@ void FSensorPostProcess::ApplyIR(TArray<FColor>& Pixels, uint8 Polarity)
 	const int32 NumPixels = Width * Height;
 	const uint8* Lut = IRToneCurve;
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		const int32 IdxStart    = RowStart * Width;
 		const int32 IdxEnd      = RowEnd   * Width;
 
@@ -519,7 +531,7 @@ void FSensorPostProcess::ApplyIR(TArray<FColor>& Pixels, uint8 Polarity)
 			if (bBlackHot) I = static_cast<uint8>(255 - I);
 			P.R = I; P.G = I; P.B = I; P.A = 255;
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -530,11 +542,8 @@ void FSensorPostProcess::ApplyNVG(TArray<FColor>& Pixels)
 {
 	const uint8* Lut = NVGGammaCurve;
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
@@ -546,7 +555,7 @@ void FSensorPostProcess::ApplyNVG(TArray<FColor>& Pixels)
 			P.B = static_cast<uint8>(static_cast<uint32>(I) * 3u / 10u);
 			P.A = 255;
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -561,11 +570,8 @@ void FSensorPostProcess::ApplyIRExtinction(TArray<FColor>& Pixels,
 
 	constexpr uint8 FogVal = 128;
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
@@ -574,7 +580,7 @@ void FSensorPostProcess::ApplyIRExtinction(TArray<FColor>& Pixels,
 			P.G = static_cast<uint8>(P.G + (FogVal - P.G) * extinction);
 			P.B = static_cast<uint8>(P.B + (FogVal - P.B) * extinction);
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -589,11 +595,8 @@ void FSensorPostProcess::ApplyNoise(TArray<FColor>& Pixels, float NETD, uint64 F
 	const float Scale     = NETD * 255.0f / 127.5f;
 	const int16* Ring     = NoiseRing.GetData();
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		const int32 IdxStart    = RowStart * Width;
 		const int32 IdxEnd      = RowEnd   * Width;
 
@@ -606,7 +609,7 @@ void FSensorPostProcess::ApplyNoise(TArray<FColor>& Pixels, float NETD, uint64 F
 			P.G = static_cast<uint8>(FMath::Clamp(static_cast<int32>(P.G) + Delta, 0, 255));
 			P.B = static_cast<uint8>(FMath::Clamp(static_cast<int32>(P.B) + Delta, 0, 255));
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -618,11 +621,8 @@ void FSensorPostProcess::ApplyFixedPatternNoise(TArray<FColor>& Pixels, float FP
 	const float  Scale = FPNAmplitude * 255.0f / 127.0f;
 	const int16* FPN   = FixedPatternMap.GetData();
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		const int32 IdxStart    = RowStart * Width;
 		const int32 IdxEnd      = RowEnd   * Width;
 
@@ -634,7 +634,7 @@ void FSensorPostProcess::ApplyFixedPatternNoise(TArray<FColor>& Pixels, float FP
 			P.G = static_cast<uint8>(FMath::Clamp(static_cast<int32>(P.G) + Delta, 0, 255));
 			P.B = static_cast<uint8>(FMath::Clamp(static_cast<int32>(P.B) + Delta, 0, 255));
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -645,11 +645,8 @@ void FSensorPostProcess::ApplyVignetting(TArray<FColor>& Pixels, float Strength)
 {
 	const float* Vig = VignetteWeights.GetData();
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		const int32 IdxStart    = RowStart * Width;
 		const int32 IdxEnd      = RowEnd   * Width;
 
@@ -662,7 +659,7 @@ void FSensorPostProcess::ApplyVignetting(TArray<FColor>& Pixels, float Strength)
 			P.G = static_cast<uint8>(FMath::RoundToInt(P.G * W));
 			P.B = static_cast<uint8>(FMath::RoundToInt(P.B * W));
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -716,11 +713,8 @@ void FSensorPostProcess::ApplyAtmosphericAttenuation(TArray<FColor>& Pixels,
 	if (Atten <= 0.0f) return;
 
 	constexpr uint8 FogVal = 128;
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
@@ -729,7 +723,7 @@ void FSensorPostProcess::ApplyAtmosphericAttenuation(TArray<FColor>& Pixels,
 			P.G = static_cast<uint8>(P.G + (FogVal - P.G) * Atten);
 			P.B = static_cast<uint8>(P.B + (FogVal - P.B) * Atten);
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -759,11 +753,8 @@ void FSensorPostProcess::ApplyColorTemperature(TArray<FColor>& Pixels, float Kel
 	const float GScale = FMath::Clamp(Green / 255.0f, 0.0f, 2.0f);
 	const float BScale = FMath::Clamp(Blue / 255.0f, 0.0f, 2.0f);
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
@@ -772,7 +763,7 @@ void FSensorPostProcess::ApplyColorTemperature(TArray<FColor>& Pixels, float Kel
 			P.G = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.G * GScale), 0, 255));
 			P.B = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.B * BScale), 0, 255));
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -784,11 +775,8 @@ void FSensorPostProcess::ApplyContrastBrightness(TArray<FColor>& Pixels,
                                                  float BrightnessBias)
 {
 	const float Bias = BrightnessBias * 255.0f;
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
@@ -802,7 +790,7 @@ void FSensorPostProcess::ApplyContrastBrightness(TArray<FColor>& Pixels,
 			P.G = Adjust(P.G);
 			P.B = Adjust(P.B);
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -823,11 +811,8 @@ void FSensorPostProcess::ApplyBoxBlur(TArray<FColor>& Pixels, int32 Radius)
 	const int32 Kernel = Radius * 2 + 1;
 
 	// Horizontal pass
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 Y = RowStart; Y < RowEnd; ++Y)
 		{
 			for (int32 X = 0; X < Width; ++X)
@@ -848,14 +833,11 @@ void FSensorPostProcess::ApplyBoxBlur(TArray<FColor>& Pixels, int32 Radius)
 				D.A = 255;
 			}
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 
 	// Vertical pass
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 Y = RowStart; Y < RowEnd; ++Y)
 		{
 			for (int32 X = 0; X < Width; ++X)
@@ -876,7 +858,7 @@ void FSensorPostProcess::ApplyBoxBlur(TArray<FColor>& Pixels, int32 Radius)
 				D.A = 255;
 			}
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -943,11 +925,8 @@ void FSensorPostProcess::ApplyLensDistortion(TArray<FColor>& Pixels)
 	const FColor* SrcData = Src.GetData();
 	const float* Remap = DistortionRemap.GetData();
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 
 		for (int32 Y = RowStart; Y < RowEnd; ++Y)
 		{
@@ -985,7 +964,7 @@ void FSensorPostProcess::ApplyLensDistortion(TArray<FColor>& Pixels)
 				D.A = 255;
 			}
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1049,18 +1028,15 @@ void FSensorPostProcess::ApplyRadianceAGC(TArray<FColor>& Pixels, const FSensorM
 		StretchLut[i] = static_cast<uint8>(FMath::Clamp(
 			FMath::RoundToInt(static_cast<float>(i - Lo) * Scale), 0, 255));
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
 			FColor& P = Pixels[i];
 			const uint8 V = StretchLut[P.R];
 			P.R = V; P.G = V; P.B = V;
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1069,11 +1045,8 @@ void FSensorPostProcess::ApplyRadianceAGC(TArray<FColor>& Pixels, const FSensorM
 
 void FSensorPostProcess::ApplyManualGain(TArray<FColor>& Pixels, float Level, float Gain)
 {
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
 			FColor& P = Pixels[i];
@@ -1081,7 +1054,7 @@ void FSensorPostProcess::ApplyManualGain(TArray<FColor>& Pixels, float Level, fl
 			const uint8 Out = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(V), 0, 255));
 			P.R = Out; P.G = Out; P.B = Out;
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1093,11 +1066,8 @@ void FSensorPostProcess::ApplyQuantization(TArray<FColor>& Pixels, int32 Bits, b
 	const int32 Shift = 8 - Bits;
 	const int32 Step  = 1 << Shift;
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 Y = RowStart; Y < RowEnd; ++Y)
 		{
 			for (int32 X = 0; X < Width; ++X)
@@ -1115,7 +1085,7 @@ void FSensorPostProcess::ApplyQuantization(TArray<FColor>& Pixels, int32 Bits, b
 				P.R = Q; P.G = Q; P.B = Q;
 			}
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1172,11 +1142,8 @@ void FSensorPostProcess::ApplyGaussianBlur(TArray<FColor>& Pixels, float Sigma)
 	TArray<FColor>& Temp = BlurTemp_;
 
 	// Horizontal pass
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 Y = RowStart; Y < RowEnd; ++Y)
 		{
 			for (int32 X = 0; X < Width; ++X)
@@ -1198,14 +1165,11 @@ void FSensorPostProcess::ApplyGaussianBlur(TArray<FColor>& Pixels, float Sigma)
 				D.A = 255;
 			}
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 
 	// Vertical pass
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 Y = RowStart; Y < RowEnd; ++Y)
 		{
 			for (int32 X = 0; X < Width; ++X)
@@ -1227,7 +1191,7 @@ void FSensorPostProcess::ApplyGaussianBlur(TArray<FColor>& Pixels, float Sigma)
 				D.A = 255;
 			}
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1241,11 +1205,8 @@ void FSensorPostProcess::ApplyACBanding(TArray<FColor>& Pixels,
 	// Temporal drift: 2-second cycle at 30fps
 	const float Phase = FMath::Fmod(static_cast<float>(FrameIndex), 60.0f) * (2.0f * PI / 60.0f);
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 Y = RowStart; Y < RowEnd; ++Y)
 		{
 			const float NormY = static_cast<float>(Y) / Height;
@@ -1259,7 +1220,7 @@ void FSensorPostProcess::ApplyACBanding(TArray<FColor>& Pixels,
 				P.R = V; P.G = V; P.B = V;
 			}
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1402,11 +1363,8 @@ void FSensorPostProcess::ApplyThermalDrift(TArray<FColor>& Pixels,
 	const int32 Offset = FMath::RoundToInt(DriftAccumulatorDN);
 	if (Offset == 0) return;
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
 			FColor& P = Pixels[i];
@@ -1414,7 +1372,7 @@ void FSensorPostProcess::ApplyThermalDrift(TArray<FColor>& Pixels,
 				static_cast<int32>(P.R) + Offset, 0, 255));
 			P.R = V; P.G = V; P.B = V;
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1495,11 +1453,8 @@ void FSensorPostProcess::ApplyVibration(TArray<FColor>& Pixels, float Amplitude,
 	TArray<FColor>& Src = ScratchFrameA_;
 	const FColor* SrcData = Src.GetData();
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 Y = RowStart; Y < RowEnd; ++Y)
 		{
 			for (int32 X = 0; X < Width; ++X)
@@ -1534,7 +1489,7 @@ void FSensorPostProcess::ApplyVibration(TArray<FColor>& Pixels, float Amplitude,
 				D.A = 255;
 			}
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1554,11 +1509,8 @@ void FSensorPostProcess::ApplyGainOffsetJitter(TArray<FColor>& Pixels,
 
 	if (FMath::IsNearlyEqual(Gain, 1.0f, 1e-5f) && FMath::IsNearlyZero(Offset, 0.1f)) return;
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
 			FColor& P = Pixels[i];
@@ -1566,7 +1518,7 @@ void FSensorPostProcess::ApplyGainOffsetJitter(TArray<FColor>& Pixels,
 				FMath::RoundToInt(static_cast<float>(P.R) * Gain + Offset), 0, 255));
 			P.R = V; P.G = V; P.B = V;
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1587,11 +1539,8 @@ void FSensorPostProcess::ApplySunGlint(TArray<FColor>& Pixels,
 	const float Range     = 255.0f - Threshold;
 	if (Range <= 0.0f) return;
 
-	ParallelFor(kParallelBands, [&](int32 Band)
+	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
 	{
-		const int32 RowsPerBand = (Height + kParallelBands - 1) / kParallelBands;
-		const int32 RowStart    = Band * RowsPerBand;
-		const int32 RowEnd      = FMath::Min(RowStart + RowsPerBand, Height);
 		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
 		{
 			FColor& P = Pixels[i];
@@ -1605,7 +1554,7 @@ void FSensorPostProcess::ApplySunGlint(TArray<FColor>& Pixels,
 			P.G = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.G + Boost), 0, 255));
 			P.B = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(P.B + Boost), 0, 255));
 		}
-	}, EParallelForFlags::BackgroundPriority);
+	});
 }
 
 // -------------------------------------------------------------------------
