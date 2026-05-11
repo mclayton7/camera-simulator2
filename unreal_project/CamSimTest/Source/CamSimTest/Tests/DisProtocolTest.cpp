@@ -185,20 +185,20 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisEcefToGeodeticTest,
 
 bool FDisEcefToGeodeticTest::RunTest(const FString& Parameters)
 {
-	// Test point: Washington DC (38.8977°N, -77.0365°W, 0m altitude)
-	// Pre-computed ECEF for this geodetic point:
-	//   X = 1115076.853
-	//   Y = -4844133.139
-	//   Z = 3982816.376
-	const double EcefX = 1115076.853;
-	const double EcefY = -4844133.139;
-	const double EcefZ = 3982816.376;
+	// Test point: Washington DC (38.8977°N, -77.0365°W, 0m altitude).
+	// ECEF computed against the WGS84 ellipsoid (a=6378137, e²=0.00669437999013):
+	//   N    = a / sqrt(1 − e² sin²φ) ≈ 6386586.85
+	//   X    = N cosφ cosλ
+	//   Y    = N cosφ sinλ
+	//   Z    = N(1 − e²) sinφ
+	const double EcefX =  1115026.199;
+	const double EcefY = -4843785.082;
+	const double EcefZ =  3983484.768;
 
 	double Lat, Lon, Alt;
 	FDisEntityAdapter::EcefToGeodetic(EcefX, EcefY, EcefZ, Lat, Lon, Alt);
 
-	// Allow 0.0001 degree tolerance (~11m) for this test
-	// The ECEF values above were computed with limited precision
+	// Sub-millidegree tolerance (~100m, well within Bowring iteration accuracy).
 	TestTrue(TEXT("Latitude within tolerance"),
 		FMath::Abs(Lat - 38.8977) < 0.001);
 	TestTrue(TEXT("Longitude within tolerance"),

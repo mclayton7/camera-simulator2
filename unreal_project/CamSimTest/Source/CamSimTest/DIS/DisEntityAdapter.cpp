@@ -310,16 +310,24 @@ void FDisEntityAdapter::BuildTypeMaps()
 	{
 		ExactTypeMap.Add(Mapping.Key, Mapping.Value);
 
-		// Also add a fuzzy key (kind:domain:category) if not already present
+		// Also add a fuzzy key (kind:domain:category).
 		// Key format: "kind:domain:country:category:subcategory:specific:extra"
-		// Fuzzy uses indices 0, 1, 3 (kind, domain, category — skipping country)
+		// Fuzzy uses indices 0, 1, 3 (kind, domain, category — skipping country).
 		TArray<FString> Parts;
 		Mapping.Key.ParseIntoArray(Parts, TEXT(":"));
-		if (Parts.Num() >= 4)
+		if (Parts.Num() >= 5)
 		{
 			const FString FuzzyKey = FString::Printf(TEXT("%s:%s:%s"),
 				*Parts[0], *Parts[1], *Parts[3]);
-			if (!FuzzyTypeMap.Contains(FuzzyKey))
+
+			// Multiple mappings can produce the same fuzzy key (e.g. one specific
+			// to a country/subcategory and one with country=0:sub=0 covering the
+			// whole class). Prefer the most generic mapping — country=0 AND
+			// subcategory=0 — since that's the one whose intent is "this is the
+			// fallback for kind:domain:category". TMap iteration order is
+			// unspecified, so a "first wins" policy would be non-deterministic.
+			const bool bIsGeneric = (Parts[2] == TEXT("0") && Parts[4] == TEXT("0"));
+			if (!FuzzyTypeMap.Contains(FuzzyKey) || bIsGeneric)
 			{
 				FuzzyTypeMap.Add(FuzzyKey, Mapping.Value);
 			}
