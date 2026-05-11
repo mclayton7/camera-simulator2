@@ -32,6 +32,8 @@ unreal_project/CamSimTest/camsim_config.yaml
 .cache/ue-ddc/
 # PID file written by run.sh --detach
 .cache/camsim.pid
+# Headless automation test reports (JSON + HTML, regenerated each run)
+.cache/automation-report/
 .worktrees/
 .superpowers/
 .claude/

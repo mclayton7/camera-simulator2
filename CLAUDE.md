@@ -90,11 +90,28 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (29 tests across 5 files)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (183 tests across 22 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
+  - Run headlessly (any host with UE5.7 installed):
+    ```bash
+    "$UE_BIN" unreal_project/CamSimTest/CamSimTest.uproject \
+      -ExecCmds="Automation RunTests CamSim+Quit" \
+      -TestExit="Automation Test Queue Empty" \
+      -ReportExportPath=.cache/automation-report \
+      -unattended -nullrhi -nosound -nosplash -log -stdout -FullStdOutLogOutput
+    ```
+    `NullRHI` keeps it under 10 s end-to-end (no shader compile, no display). JSON results land at `.cache/automation-report/index.json` (UTF-8 BOM — read with `encoding="utf-8-sig"`).
+  - Filter narrower: replace `CamSim` in `RunTests` with e.g. `CamSim.Sensor` or a single test path.
 - **Python validation**: `scripts/validate_klv.py`, `scripts/test_video_output.sh`
 - **Integration**: `scripts/ci_validate.sh` (Docker headless + health wait + ffprobe + KLV check)
 - **CIGI testing**: `scripts/send_cigi_test.py --sweep` or `--circle` for motion patterns
+
+### UE5 toolchain
+
+- **Linux**: UE5.7 lives at `/opt/UE`. `UE_BIN=/opt/UE/Engine/Binaries/Linux/UnrealEditor`. `scripts/run.sh` auto-discovers this via `find /opt $HOME -path '*/Binaries/Linux/UnrealEditor'`, so no env vars are needed for `--build` / `--build-only`.
+- **Build**: `scripts/run.sh --build-only` invokes `/opt/UE/Engine/Build/BatchFiles/Linux/Build.sh CamSimTestEditor Linux Development`. Incremental rebuilds finish in ~10 s; cold rebuilds depend on UBA cache.
+- **Don't pipe `run.sh` through `tee` without `set -o pipefail`** — the script propagates UBT failures via exit code, but `tee` succeeding will mask them. Either run `run.sh` foreground or wrap the pipeline with `set -o pipefail` so a failed compile actually surfaces.
+- **No CI coverage today**: `.github/workflows/ci.yml` `unit-tests` / `integration-test` jobs cascade-skip behind `vars.CAMSIM_UE5_RUNNER_AVAILABLE != 'true'`. Until that gate flips, every C++/test change should be exercised locally with the headless invocation above before pushing.
 
 ## Gotchas
 
@@ -109,7 +126,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **rapidyaml bundled**: Source in `Config/ryml/` — excluded from pre-commit linting
 - **KLV checksum**: Uses CRC-16/CCITT (not BCC-16 per spec) — intentional, matches validate_klv.py
 - **RHI readback is render-thread only**: `FRHIGPUTextureReadback::IsReady()/Lock()/Unlock()` assert `IsInRenderingThread()`. Use `ENQUEUE_RENDER_COMMAND` + `FlushRenderingCommands()` for synchronous game-thread access (see CamSimCamera.cpp Phase 1 readback pattern)
-- **UE5 TAtomic uses EMemoryOrder**: `TAtomic<T>::Load()/Store()` take `EMemoryOrder` enum, NOT `std::memory_order`
+- **UE5 TAtomic uses EMemoryOrder, except `Exchange`**: `TAtomic<T>::Load()/Store()` take `EMemoryOrder` enum, NOT `std::memory_order`. But `TAtomic<T>::Exchange(T)` is single-arg in 5.7 (delegates to `std::atomic::exchange`, default seq_cst) — passing `EMemoryOrder` to `Exchange` is a compile error.
 - **HTTP health server is on by default**: `operational.health_http_enabled` defaults to `true` for sim-environment REST orchestrator compatibility. Binds `0.0.0.0:8080`. To disable: `CAMSIM_HEALTH_HTTP_ENABLED=0`. `/live` and `/health` are route aliases pointing at the same 5-second watchdog. K8s probes that target `/live` still work unchanged.
 - **HTTP automation tests need two tickers** (load-bearing test invariant — if you skip this, the test hangs silently instead of failing):
   - `FCamSimHealthServer` is built on `FHttpServerModule`. The **listener** is pumped by `FTSTicker::GetCoreTicker()`.
