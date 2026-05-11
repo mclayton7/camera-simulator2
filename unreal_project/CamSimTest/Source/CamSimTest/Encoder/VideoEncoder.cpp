@@ -4,6 +4,21 @@
 #include "CamSimTest.h"
 #include "Sensor/SensorTypes.h"
 
+// ---------------------------------------------------------------------------
+// Helper: configure an AVStream as a STANAG 4609 KLV metadata stream.
+// Used by both OpenKlvStream (primary multicast output) and
+// OpenRecordingContext (local .ts recording). Keeps the four required field
+// assignments in one place so a future STANAG compliance fix only changes one
+// site.
+// ---------------------------------------------------------------------------
+static void ConfigureKlvStream(struct AVStream* S)
+{
+	S->codecpar->codec_type = AVMEDIA_TYPE_DATA;
+	S->codecpar->codec_id   = AV_CODEC_ID_SMPTE_KLV;
+	S->codecpar->codec_tag  = MKTAG('K','L','V','A');
+	S->time_base            = AVRational{1, 90000};
+}
+
 // -------------------------------------------------------------------------
 // Constructor / Destructor
 // -------------------------------------------------------------------------
@@ -413,10 +428,7 @@ bool FVideoEncoder::OpenKlvStream()
 	// - TS packet size 1316 bytes set via pkt_size option in OpenOutputContext
 	// - PAT at PID 0x0000 (FFmpeg default) per STANAG 4609 §4.1
 	// - PMT contains video (stream_type 0x1B for H.264 / 0x24 for H.265) + KLV
-	KlvStream->codecpar->codec_type = AVMEDIA_TYPE_DATA;
-	KlvStream->codecpar->codec_id   = AV_CODEC_ID_SMPTE_KLV;
-	KlvStream->codecpar->codec_tag  = MKTAG('K','L','V','A');
-	KlvStream->time_base            = AVRational{1, 90000};
+	ConfigureKlvStream(KlvStream);
 
 	return true;
 }
@@ -448,10 +460,7 @@ bool FVideoEncoder::OpenRecordingContext()
 	RecordKlvStream = avformat_new_stream(RecordFmtCtx, nullptr);
 	if (!RecordKlvStream) return false;
 	RecordKlvStream->id = 1;
-	RecordKlvStream->codecpar->codec_type = AVMEDIA_TYPE_DATA;
-	RecordKlvStream->codecpar->codec_id   = AV_CODEC_ID_SMPTE_KLV;
-	RecordKlvStream->codecpar->codec_tag  = MKTAG('K','L','V','A');
-	RecordKlvStream->time_base            = AVRational{1, 90000};
+	ConfigureKlvStream(RecordKlvStream);
 
 	Ret = avio_open(&RecordFmtCtx->pb, PathStr, AVIO_FLAG_WRITE);
 	if (Ret < 0)
