@@ -933,7 +933,13 @@ void FSensorPostProcess::ApplyLensDistortion(TArray<FColor>& Pixels)
 {
 	if (DistortionRemap.Num() != Width * Height * 2) return;
 
-	TArray<FColor> Src = Pixels;
+	// Phase 2: reuse ScratchFrameA_ instead of allocating + copying every call.
+	// The Apply* pipeline is strictly serial on the encoder task thread, so
+	// ScratchFrameA_ is guaranteed not to be in use by a sibling function.
+	ScratchFrameA_.SetNumUninitialized(Pixels.Num());
+	FMemory::Memcpy(ScratchFrameA_.GetData(), Pixels.GetData(),
+	                Pixels.Num() * sizeof(FColor));
+	TArray<FColor>& Src = ScratchFrameA_;
 	const FColor* SrcData = Src.GetData();
 	const float* Remap = DistortionRemap.GetData();
 
@@ -1421,7 +1427,13 @@ void FSensorPostProcess::ApplyRollingShutter(TArray<FColor>& Pixels, float Stren
 	const bool bHasPrevious = (PreviousFrame.Num() == NumPixels);
 
 	// Store the unblended frame BEFORE blending to avoid feedback loop (I2 fix)
-	TArray<FColor> Unblended = Pixels;
+	// Phase 2: reuse ScratchFrameB_ for the unblended snapshot. Using B (not A)
+	// reserves A for ApplyLensDistortion/ApplyVibration in case a future change
+	// chains them differently.
+	ScratchFrameB_.SetNumUninitialized(Pixels.Num());
+	FMemory::Memcpy(ScratchFrameB_.GetData(), Pixels.GetData(),
+	                Pixels.Num() * sizeof(FColor));
+	TArray<FColor>& Unblended = ScratchFrameB_;
 
 	if (bHasPrevious)
 	{
@@ -1474,7 +1486,13 @@ void FSensorPostProcess::ApplyVibration(TArray<FColor>& Pixels, float Amplitude,
 	if (FMath::Abs(dx) < 0.01f && FMath::Abs(dy) < 0.01f) return;
 
 	// Bilinear warp with flat offset (like lens distortion but uniform shift)
-	TArray<FColor> Src = Pixels;
+	// Phase 2: reuse ScratchFrameA_ instead of allocating + copying every call.
+	// The Apply* pipeline is strictly serial on the encoder task thread, so
+	// ScratchFrameA_ is guaranteed not to be in use by a sibling function.
+	ScratchFrameA_.SetNumUninitialized(Pixels.Num());
+	FMemory::Memcpy(ScratchFrameA_.GetData(), Pixels.GetData(),
+	                Pixels.Num() * sizeof(FColor));
+	TArray<FColor>& Src = ScratchFrameA_;
 	const FColor* SrcData = Src.GetData();
 
 	ParallelFor(kParallelBands, [&](int32 Band)
