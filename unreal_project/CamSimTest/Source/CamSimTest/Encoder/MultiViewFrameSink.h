@@ -39,6 +39,11 @@ private:
 		float OutputHFovDeg = 0.0f;
 		FString RouteLabel;
 		TUniquePtr<FVideoEncoder> Encoder;
+
+		// Phase 2: per-view zoom scratch — sized lazily on first zoomed frame
+		// and reused thereafter. EncodeFrame writes into this instead of
+		// allocating a fresh TArray<FColor> per view per frame.
+		TArray<FColor> ZoomedScratch;
 	};
 
 	const FCamSimConfig& Config;

@@ -3,6 +3,7 @@
 #include "Encoder/MultiViewFrameSink.h"
 #include "CamSimTest.h"
 
+#include "Async/ParallelFor.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -101,7 +102,9 @@ void FMultiViewFrameSink::EncodeFrame(const TArray<FColor>& PixelData,
 			: SourceHFov;
 
 		const TArray<FColor>* PixelsForView = &PixelData;
-		TArray<FColor> ZoomedPixels;
+		// Phase 2: reuse the per-view ZoomedScratch buffer instead of
+		// allocating a fresh TArray<FColor> per view per frame.
+		TArray<FColor>& ZoomedPixels = View.ZoomedScratch;
 		if (TargetHFov + KINDA_SMALL_NUMBER < SourceHFov)
 		{
 			ApplyDigitalZoom(PixelData, Width, Height, SourceHFov, TargetHFov, ZoomedPixels);
@@ -277,7 +280,9 @@ void FMultiViewFrameSink::ApplyDigitalZoom(const TArray<FColor>& SourcePixels,
 	const int32 StartX = (Width - CropW) / 2;
 	const int32 StartY = (Height - CropH) / 2;
 
-	for (int32 Y = 0; Y < Height; ++Y)
+	// Phase 2: parallelize across rows — each output pixel reads from a
+	// distinct source location, so the loop is embarrassingly parallel.
+	ParallelFor(Height, [&](int32 Y)
 	{
 		const int32 SrcY = StartY + FMath::Clamp((Y * CropH) / Height, 0, CropH - 1);
 		for (int32 X = 0; X < Width; ++X)
@@ -285,5 +290,5 @@ void FMultiViewFrameSink::ApplyDigitalZoom(const TArray<FColor>& SourcePixels,
 			const int32 SrcX = StartX + FMath::Clamp((X * CropW) / Width, 0, CropW - 1);
 			OutPixels[Y * Width + X] = SourcePixels[SrcY * Width + SrcX];
 		}
-	}
+	}, EParallelForFlags::BackgroundPriority);
 }
