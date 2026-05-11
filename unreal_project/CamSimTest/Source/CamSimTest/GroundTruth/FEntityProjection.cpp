@@ -83,12 +83,21 @@ FMatrix FEntityProjection::BuildViewProjectionMatrix(
     int32  ImageHeight,
     float  NearClipCm)
 {
-	// View matrix: world → camera space.
-	// UE row-major convention: translate world point to camera-local origin first,
-	// then rotate into camera axes.  Order must be translation * rotation.
+	// View matrix: world → camera space → graphics-camera axes.
+	// UE world is X-forward, Y-right, Z-up; the perspective matrix below
+	// expects Z-forward, X-right, Y-up. Apply the standard axis swap so a
+	// point straight ahead in UE (+X) lands on the projection's depth axis (+Z)
+	// — without it, every Clip.W is negative and ProjectAABB rejects every corner.
+	// Matches the swap in USceneCaptureComponent2D::CalcSceneView.
+	static const FMatrix UEToGraphics(
+	    FPlane(0, 0, 1, 0),  // UE +X → +Z
+	    FPlane(1, 0, 0, 0),  // UE +Y → +X
+	    FPlane(0, 1, 0, 0),  // UE +Z → +Y
+	    FPlane(0, 0, 0, 1));
 	const FMatrix ViewMatrix =
 	    FTranslationMatrix(-CameraLocation) *
-	    FInverseRotationMatrix(CameraRotation);
+	    FInverseRotationMatrix(CameraRotation) *
+	    UEToGraphics;
 
 	// Perspective projection matching UE5's SceneCapture2D convention.
 	// HalfFovH is half the horizontal FOV in radians.
