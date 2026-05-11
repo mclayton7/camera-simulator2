@@ -53,6 +53,11 @@ private:
 		float  PauseRemaining   = 0.0f;
 		bool   bPaused          = false;
 		bool   bFinished        = false;
+		// Set to true the first tick we initialize SegmentStartTime to SpawnTimeSec.
+		// A separate flag is needed because SpawnTimeSec can legally be 0 — sentinel
+		// values on SegmentStartTime alone would either fail to detect "uninitialized"
+		// or treat a valid spawn time of 0 as uninitialized forever.
+		bool   bSegmentStarted  = false;
 	};
 
 	struct FTriggerState

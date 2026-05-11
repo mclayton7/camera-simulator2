@@ -150,10 +150,15 @@ FCigiEntityState FScenarioEngine::InterpolateWaypoints(
 	const int32 NumWps = Wps.Num();
 	const uint16 EId = static_cast<uint16>(FMath::Clamp(Spec.EntityId, 0, 65535));
 
-	// Initialize segment start time on first call
-	if (State.SegmentStartTime <= 0.0 && !State.bFinished)
+	// Initialize segment start time on first call. Anchor to SpawnTimeSec, NOT
+	// the current ScenarioElapsedSec — otherwise the entity always thinks it just
+	// started moving on the tick we first observe it, so any tick that arrives
+	// with significant elapsed time post-spawn computes Alpha = 0 and the entity
+	// stays glued to WpA instead of progressing toward WpB.
+	if (!State.bSegmentStarted && !State.bFinished)
 	{
-		State.SegmentStartTime = FMath::Max(ScenarioElapsedSec, static_cast<double>(Spec.SpawnTimeSec));
+		State.SegmentStartTime = static_cast<double>(Spec.SpawnTimeSec);
+		State.bSegmentStarted  = true;
 	}
 
 	// If finished (non-looping), hold at last waypoint
