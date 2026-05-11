@@ -142,6 +142,18 @@ private:
 	/** Pre-allocated 256-bin histogram scratch buffer (avoids per-frame alloc). */
 	TArray<int32> AGCHistogram;
 
+	// -- Per-frame scratch buffers (Phase 2: avoid hot-path heap allocs) ----
+	// Sized once in Initialize(W, H). Each Apply* function that needed a local
+	// TArray<FColor> now uses one of these. They are NOT concurrently used — the
+	// Apply* pipeline is strictly serial on the encoder task thread.
+	//   - BlurTemp_      : separable-blur intermediate (ApplyBoxBlur, ApplyGaussianBlur)
+	//   - ScratchFrameA_ : full-frame source snapshot (ApplyLensDistortion, ApplyVibration)
+	//   - ScratchFrameB_ : reserved for a second snapshot if a future effect needs one
+	//                      (ApplyRollingShutter uses it for the unblended snapshot)
+	TArray<FColor> BlurTemp_;
+	TArray<FColor> ScratchFrameA_;
+	TArray<FColor> ScratchFrameB_;
+
 	/** Pre-baked 4x4 Bayer ordered dither matrix [0, 15]. */
 	uint8 BayerMatrix[16] = {};
 

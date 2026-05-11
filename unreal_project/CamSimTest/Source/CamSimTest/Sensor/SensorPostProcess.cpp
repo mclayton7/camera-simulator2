@@ -106,6 +106,16 @@ void FSensorPostProcess::Initialize(int32 InWidth, int32 InHeight,
 	AGCHistogram.SetNumZeroed(256);
 
 	// -------------------------------------------------------------------------
+	// Phase 2: Pre-size scratch buffers so per-frame Apply* code can reuse
+	// existing capacity instead of allocating. SetNumUninitialized is OK here
+	// because every Apply* that uses these writes every pixel before reading.
+	// -------------------------------------------------------------------------
+	const int32 NumPixels = InWidth * InHeight;
+	BlurTemp_     .SetNumUninitialized(NumPixels);
+	ScratchFrameA_.SetNumUninitialized(NumPixels);
+	ScratchFrameB_.SetNumUninitialized(NumPixels);
+
+	// -------------------------------------------------------------------------
 	// 16B: Bayer ordered dither matrix (4x4)
 	// Values in [0, 15] — thresholded against quantization step.
 	// -------------------------------------------------------------------------
@@ -803,8 +813,12 @@ void FSensorPostProcess::ApplyBoxBlur(TArray<FColor>& Pixels, int32 Radius)
 {
 	if (Radius <= 0 || Pixels.Num() != Width * Height) return;
 
-	TArray<FColor> Temp;
-	Temp.SetNumUninitialized(Pixels.Num());
+	// Phase 2: reuse the pre-sized BlurTemp_ member instead of allocating per call.
+	// SetNumUninitialized is a no-op if the buffer is already the right size, which
+	// it is after Initialize(W, H) — but we call it anyway in case the resolution
+	// has changed since Initialize.
+	BlurTemp_.SetNumUninitialized(Pixels.Num());
+	TArray<FColor>& Temp = BlurTemp_;
 
 	const int32 Kernel = Radius * 2 + 1;
 
@@ -919,7 +933,13 @@ void FSensorPostProcess::ApplyLensDistortion(TArray<FColor>& Pixels)
 {
 	if (DistortionRemap.Num() != Width * Height * 2) return;
 
-	TArray<FColor> Src = Pixels;
+	// Phase 2: reuse ScratchFrameA_ instead of allocating + copying every call.
+	// The Apply* pipeline is strictly serial on the encoder task thread, so
+	// ScratchFrameA_ is guaranteed not to be in use by a sibling function.
+	ScratchFrameA_.SetNumUninitialized(Pixels.Num());
+	FMemory::Memcpy(ScratchFrameA_.GetData(), Pixels.GetData(),
+	                Pixels.Num() * sizeof(FColor));
+	TArray<FColor>& Src = ScratchFrameA_;
 	const FColor* SrcData = Src.GetData();
 	const float* Remap = DistortionRemap.GetData();
 
@@ -1144,8 +1164,12 @@ void FSensorPostProcess::ApplyGaussianBlur(TArray<FColor>& Pixels, float Sigma)
 	for (float& v : Kernel) v /= KSum;
 
 	const float* Kd = Kernel.GetData();
-	TArray<FColor> Temp;
-	Temp.SetNumUninitialized(Pixels.Num());
+	// Phase 2: reuse the pre-sized BlurTemp_ member instead of allocating per call.
+	// SetNumUninitialized is a no-op if the buffer is already the right size, which
+	// it is after Initialize(W, H) — but we call it anyway in case the resolution
+	// has changed since Initialize.
+	BlurTemp_.SetNumUninitialized(Pixels.Num());
+	TArray<FColor>& Temp = BlurTemp_;
 
 	// Horizontal pass
 	ParallelFor(kParallelBands, [&](int32 Band)
@@ -1403,7 +1427,13 @@ void FSensorPostProcess::ApplyRollingShutter(TArray<FColor>& Pixels, float Stren
 	const bool bHasPrevious = (PreviousFrame.Num() == NumPixels);
 
 	// Store the unblended frame BEFORE blending to avoid feedback loop (I2 fix)
-	TArray<FColor> Unblended = Pixels;
+	// Phase 2: reuse ScratchFrameB_ for the unblended snapshot. Using B (not A)
+	// reserves A for ApplyLensDistortion/ApplyVibration in case a future change
+	// chains them differently.
+	ScratchFrameB_.SetNumUninitialized(Pixels.Num());
+	FMemory::Memcpy(ScratchFrameB_.GetData(), Pixels.GetData(),
+	                Pixels.Num() * sizeof(FColor));
+	TArray<FColor>& Unblended = ScratchFrameB_;
 
 	if (bHasPrevious)
 	{
@@ -1456,7 +1486,13 @@ void FSensorPostProcess::ApplyVibration(TArray<FColor>& Pixels, float Amplitude,
 	if (FMath::Abs(dx) < 0.01f && FMath::Abs(dy) < 0.01f) return;
 
 	// Bilinear warp with flat offset (like lens distortion but uniform shift)
-	TArray<FColor> Src = Pixels;
+	// Phase 2: reuse ScratchFrameA_ instead of allocating + copying every call.
+	// The Apply* pipeline is strictly serial on the encoder task thread, so
+	// ScratchFrameA_ is guaranteed not to be in use by a sibling function.
+	ScratchFrameA_.SetNumUninitialized(Pixels.Num());
+	FMemory::Memcpy(ScratchFrameA_.GetData(), Pixels.GetData(),
+	                Pixels.Num() * sizeof(FColor));
+	TArray<FColor>& Src = ScratchFrameA_;
 	const FColor* SrcData = Src.GetData();
 
 	ParallelFor(kParallelBands, [&](int32 Band)
@@ -1783,11 +1819,36 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 			AGCHistogram.SetNumZeroed(256);
 		FMemory::Memzero(AGCHistogram.GetData(), 256 * sizeof(int32));
 
-		for (int32 i = 0; i < NumPixels; ++i)
+		// Phase 2: parallel histogram build across kParallelBands. Each band
+		// keeps a private 256-bin histogram (1 KB, fits in L1), then we reduce
+		// serially into AGCHistogram. Per-pixel work is unchanged; only the
+		// loop structure moves.
+		TArray<TArray<int32>> BandHistograms;
+		BandHistograms.SetNum(kParallelBands);
+		for (int32 b = 0; b < kParallelBands; ++b)
+			BandHistograms[b].SetNumZeroed(256);
+
+		ParallelFor(kParallelBands, [&](int32 Band)
 		{
-			const FColor& P = Pixels[i];
-			const uint8 Luma = static_cast<uint8>((P.R * 77 + P.G * 150 + P.B * 29) >> 8);
-			AGCHistogram[Luma]++;
+			const int32 PixPerBand = (NumPixels + kParallelBands - 1) / kParallelBands;
+			const int32 Start      = Band * PixPerBand;
+			const int32 End        = FMath::Min(Start + PixPerBand, NumPixels);
+			int32* Local           = BandHistograms[Band].GetData();
+			for (int32 i = Start; i < End; ++i)
+			{
+				const FColor& P = Pixels[i];
+				const uint8 Luma = static_cast<uint8>((P.R * 77 + P.G * 150 + P.B * 29) >> 8);
+				Local[Luma]++;
+			}
+		}, EParallelForFlags::BackgroundPriority);
+
+		// Serial reduce.
+		int32* Hist = AGCHistogram.GetData();
+		for (int32 b = 0; b < kParallelBands; ++b)
+		{
+			const int32* Src = BandHistograms[b].GetData();
+			for (int32 i = 0; i < 256; ++i)
+				Hist[i] += Src[i];
 		}
 
 		// Find percentile thresholds

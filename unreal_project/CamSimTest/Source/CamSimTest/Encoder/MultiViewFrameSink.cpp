@@ -3,7 +3,10 @@
 #include "Encoder/MultiViewFrameSink.h"
 #include "CamSimTest.h"
 
+#include "Async/ParallelFor.h"
+#include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
@@ -65,8 +68,22 @@ bool FMultiViewFrameSink::Open()
 	}
 	if (bGroundTruthEnabled)
 	{
-		FFileHelper::SaveStringToFile(TEXT(""), *GroundTruthPath);
-		UE_LOG(LogCamSim, Log, TEXT("FMultiViewFrameSink: ground-truth sidecar enabled -> %s"), *GroundTruthPath);
+		// Phase 2: open a persistent append handle instead of using
+		// FFileHelper::SaveStringToFile per line — saves 30 open/close
+		// syscall cycles per second at 30 fps with ground truth on.
+		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+		PlatformFile.DeleteFile(*GroundTruthPath);
+		GroundTruthHandle_ = PlatformFile.OpenWrite(*GroundTruthPath, /*bAppend=*/true);
+		if (!GroundTruthHandle_)
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FMultiViewFrameSink: could not open ground-truth sidecar at %s"), *GroundTruthPath);
+			bGroundTruthEnabled = false;
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Log, TEXT("FMultiViewFrameSink: ground-truth sidecar enabled -> %s"), *GroundTruthPath);
+		}
 	}
 
 	bIsOpen = true;
@@ -101,7 +118,9 @@ void FMultiViewFrameSink::EncodeFrame(const TArray<FColor>& PixelData,
 			: SourceHFov;
 
 		const TArray<FColor>* PixelsForView = &PixelData;
-		TArray<FColor> ZoomedPixels;
+		// Phase 2: reuse the per-view ZoomedScratch buffer instead of
+		// allocating a fresh TArray<FColor> per view per frame.
+		TArray<FColor>& ZoomedPixels = View.ZoomedScratch;
 		if (TargetHFov + KINDA_SMALL_NUMBER < SourceHFov)
 		{
 			ApplyDigitalZoom(PixelData, Width, Height, SourceHFov, TargetHFov, ZoomedPixels);
@@ -130,6 +149,13 @@ void FMultiViewFrameSink::Close()
 {
 	if (!bIsOpen) return;
 	bIsOpen = false;
+
+	// Phase 2: close the persistent ground-truth handle.
+	if (GroundTruthHandle_)
+	{
+		delete GroundTruthHandle_;
+		GroundTruthHandle_ = nullptr;
+	}
 
 	for (FViewRuntime& View : Views)
 	{
@@ -248,11 +274,11 @@ void FMultiViewFrameSink::WriteGroundTruthLine(const FCamSimTelemetry& Telemetry
 		static_cast<unsigned>(Telemetry.SensorPolarity),
 		EncodedViewCount, Views.Num(), *ViewsJson);
 
-	FFileHelper::SaveStringToFile(
-		Line, *GroundTruthPath,
-		FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
-		&IFileManager::Get(),
-		FILEWRITE_Append | FILEWRITE_AllowRead);
+	// Phase 2: write through the persistent handle (opened in Open()).
+	if (!GroundTruthHandle_) return;
+
+	const FTCHARToUTF8 Utf8(*Line);
+	GroundTruthHandle_->Write(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
 }
 
 void FMultiViewFrameSink::ApplyDigitalZoom(const TArray<FColor>& SourcePixels,
@@ -277,7 +303,9 @@ void FMultiViewFrameSink::ApplyDigitalZoom(const TArray<FColor>& SourcePixels,
 	const int32 StartX = (Width - CropW) / 2;
 	const int32 StartY = (Height - CropH) / 2;
 
-	for (int32 Y = 0; Y < Height; ++Y)
+	// Phase 2: parallelize across rows — each output pixel reads from a
+	// distinct source location, so the loop is embarrassingly parallel.
+	ParallelFor(Height, [&](int32 Y)
 	{
 		const int32 SrcY = StartY + FMath::Clamp((Y * CropH) / Height, 0, CropH - 1);
 		for (int32 X = 0; X < Width; ++X)
@@ -285,5 +313,5 @@ void FMultiViewFrameSink::ApplyDigitalZoom(const TArray<FColor>& SourcePixels,
 			const int32 SrcX = StartX + FMath::Clamp((X * CropW) / Width, 0, CropW - 1);
 			OutPixels[Y * Width + X] = SourcePixels[SrcY * Width + SrcX];
 		}
-	}
+	}, EParallelForFlags::BackgroundPriority);
 }

@@ -4,6 +4,8 @@
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
 #include "Camera/CamSimCamera.h"
+#include "HAL/PlatformMemory.h"
+#include "Metadata/KlvBuilder.h"
 
 // -------------------------------------------------------------------------
 // Phase 27 — Performance & Optimization Config Tests
@@ -250,6 +252,77 @@ bool FPhase27_CulledSseDerivation::RunTest(const FString& Parameters)
     const double B = ACamSimCamera::ComputeCulledScreenSpaceError(60.0);
     const double C = ACamSimCamera::ComputeCulledScreenSpaceError(90.0);
     TestTrue(TEXT("Monotonic above the floor"), A < B && B < C);
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — KLV per-frame allocation regression net
+//
+// FKlvBuilder::BuildMisbST0601Into runs once per encoded frame on the encoder
+// thread. Before Phase 2 it allocated a fresh TArray<uint8> Value; per call.
+// After Phase 2 the scratch is thread_local and amortises across calls.
+//
+// This test runs the builder in a tight loop and watches the process's used
+// heap counter. After a few warmup iterations the per-call heap delta must
+// be near-zero (occasional spikes from OS allocator rebalancing are tolerated
+// via the byte-budget threshold below).
+//
+// The placeholder budget = 0 means the test is informational until CI fills
+// in a real budget that survives the inevitable allocator noise. Real values
+// observed during Phase 2 CI runs go into kPhase2KlvBytesPerCallBudget below.
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase2_KlvAllocationBudget,
+    "CamSim.Phase2.KlvAllocationBudget",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FPhase2_KlvAllocationBudget::RunTest(const FString& Parameters)
+{
+    constexpr int32 kWarmupIters = 32;
+    constexpr int32 kMeasuredIters = 256;
+
+    // Set this to a non-zero value once you have a steady-state baseline from
+    // CI runs. Until then the assertion is informational only.
+    constexpr uint64 kPhase2KlvBytesPerCallBudget = 0;
+
+    FCamSimTelemetry T;
+    T.TimestampUs = 1700000000000000ULL;
+    T.Latitude = 37.7749; T.Longitude = -122.4194; T.Altitude = 100.0;
+    T.HFovDeg = 60.0f;    T.VFovDeg = 33.75f;
+
+    TArray<uint8> Packet;
+    Packet.Reserve(512);
+
+    // Warmup so thread_local scratch grows to its steady-state capacity.
+    for (int32 i = 0; i < kWarmupIters; ++i)
+    {
+        FKlvBuilder::BuildMisbST0601Into(T, Packet);
+    }
+
+    const SIZE_T UsedBefore = FPlatformMemory::GetStats().UsedPhysical;
+
+    for (int32 i = 0; i < kMeasuredIters; ++i)
+    {
+        FKlvBuilder::BuildMisbST0601Into(T, Packet);
+    }
+
+    const SIZE_T UsedAfter = FPlatformMemory::GetStats().UsedPhysical;
+    const int64  Delta = static_cast<int64>(UsedAfter) - static_cast<int64>(UsedBefore);
+    const int64  BytesPerCall = (Delta > 0) ? (Delta / kMeasuredIters) : 0;
+
+    AddInfo(FString::Printf(TEXT("KLV bytes/call after %d iters: %lld (delta=%lld bytes)"),
+                            kMeasuredIters, (long long)BytesPerCall, (long long)Delta));
+
+    if (kPhase2KlvBytesPerCallBudget > 0)
+    {
+        TestTrue(
+            FString::Printf(TEXT("Phase 2 KLV: %lld bytes/call ≤ %llu (budget)"),
+                            (long long)BytesPerCall, (unsigned long long)kPhase2KlvBytesPerCallBudget),
+            BytesPerCall <= static_cast<int64>(kPhase2KlvBytesPerCallBudget));
+    }
+    else
+    {
+        AddInfo(TEXT("kPhase2KlvBytesPerCallBudget = 0 (placeholder); update once CI baseline is known."));
+    }
 
     return true;
 }
