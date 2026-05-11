@@ -43,7 +43,6 @@
 #include "CesiumCamera.h"
 #include "Cesium3DTileset.h"
 #include <Cesium3DTilesSelection/Tileset.h>
-#include "EngineUtils.h"
 
 // -------------------------------------------------------------------------
 // Stats
