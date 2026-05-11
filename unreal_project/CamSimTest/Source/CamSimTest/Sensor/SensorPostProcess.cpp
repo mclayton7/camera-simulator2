@@ -813,8 +813,12 @@ void FSensorPostProcess::ApplyBoxBlur(TArray<FColor>& Pixels, int32 Radius)
 {
 	if (Radius <= 0 || Pixels.Num() != Width * Height) return;
 
-	TArray<FColor> Temp;
-	Temp.SetNumUninitialized(Pixels.Num());
+	// Phase 2: reuse the pre-sized BlurTemp_ member instead of allocating per call.
+	// SetNumUninitialized is a no-op if the buffer is already the right size, which
+	// it is after Initialize(W, H) — but we call it anyway in case the resolution
+	// has changed since Initialize.
+	BlurTemp_.SetNumUninitialized(Pixels.Num());
+	TArray<FColor>& Temp = BlurTemp_;
 
 	const int32 Kernel = Radius * 2 + 1;
 
@@ -1154,8 +1158,12 @@ void FSensorPostProcess::ApplyGaussianBlur(TArray<FColor>& Pixels, float Sigma)
 	for (float& v : Kernel) v /= KSum;
 
 	const float* Kd = Kernel.GetData();
-	TArray<FColor> Temp;
-	Temp.SetNumUninitialized(Pixels.Num());
+	// Phase 2: reuse the pre-sized BlurTemp_ member instead of allocating per call.
+	// SetNumUninitialized is a no-op if the buffer is already the right size, which
+	// it is after Initialize(W, H) — but we call it anyway in case the resolution
+	// has changed since Initialize.
+	BlurTemp_.SetNumUninitialized(Pixels.Num());
+	TArray<FColor>& Temp = BlurTemp_;
 
 	// Horizontal pass
 	ParallelFor(kParallelBands, [&](int32 Band)
