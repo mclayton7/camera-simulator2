@@ -1,0 +1,52 @@
+{
+  "devices": [],
+  "reportCreatedOn": "2026.05.11-22.48.31",
+  "succeeded": 1,
+  "succeededWithWarnings": 0,
+  "failed": 1,
+  "notRun": 0,
+  "inProcess": 0,
+  "totalDuration": 0.20,
+  "comparisonExported": false,
+  "comparisonExportDirectory": "",
+  "tests": [
+    {
+      "testDisplayName": "ConfigDefaults",
+      "fullTestPath": "CamSim.Config.ConfigDefaults",
+      "tags": "",
+      "state": "Success",
+      "deviceInstance": [],
+      "duration": 0.04,
+      "dateTime": "2026.05.11-22.48.31",
+      "entries": [],
+      "warnings": 0,
+      "errors": 0,
+      "artifacts": []
+    },
+    {
+      "testDisplayName": "BrokenInvariant",
+      "fullTestPath": "CamSim.Phase28.BrokenInvariant",
+      "tags": "",
+      "state": "Fail",
+      "deviceInstance": [],
+      "duration": 0.16,
+      "dateTime": "2026.05.11-22.48.34",
+      "entries": [
+        {
+          "event": {
+            "type": "Error",
+            "message": "Expected 42 but got 0 at HttpServerLifecycleTest.cpp:88",
+            "context": "log",
+            "artifact": "00000000000000000000000000000000"
+          },
+          "filename": "HttpServerLifecycleTest.cpp",
+          "lineNumber": 88,
+          "timestamp": "2026.05.11-22.48.34"
+        }
+      ],
+      "warnings": 0,
+      "errors": 1,
+      "artifacts": []
+    }
+  ]
+}

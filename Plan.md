@@ -466,7 +466,7 @@ Production-grade reliability for 24/7 deployment.
 
 | Item                               | Description                                                                    | Effort |
 | ---------------------------------- | ------------------------------------------------------------------------------ | ------ |
-| **28A** Unit Tests in CI           | Run UE automation tests in GitHub Actions (UE test runner step)                | M      |
+| **28A** Unit Tests in CI           | ✅ Headless `Automation RunTests CamSim+Quit` on self-hosted `camsim-ue5` runner; JSON report parsed by `scripts/parse_automation_report.py`; integration test runs packaged Docker on push-to-main (Sprint 1, 2026-05-11) | M      |
 | **28B** Structured JSON Logging    | Machine-parseable log output for ELK/Datadog aggregation                       | M      |
 | **28C** HTTP Health Endpoints      | ✅ `/live`, `/health` (alias), `/ready`, `/metrics` on :8080 — K8s + sim-environment orchestrator (§10.4 metrics done 2026-04-11) | M      |
 | **28D** Config Validation          | Pre-flight range checks on all config values with meaningful error messages    | S      |

@@ -105,27 +105,33 @@ jobs:
         run: uv run --with pytest pytest scripts/tests/ -v
 
   # -------------------------------------------------------------------
-  # Phase 14B: Docker image build
+  # Phase 28A: Docker image build (self-hosted runner with UE5)
   #
-  # Disabled: deploy/Dockerfile COPYs staged/LinuxNoEditor/, which is the
-  # output of UE5 RunUAT.sh BuildCookRun. ubuntu-latest runners don't have
-  # UE5 installed, so there's no way to produce that directory here.
-  # Re-enable once a self-hosted runner (or prebuilt UE5 container) is
-  # wired up and a packaging job stages LinuxNoEditor/ as an artifact for
-  # this job to download.
+  # deploy/Dockerfile COPYs deploy/staged/LinuxNoEditor/, which is the
+  # output of UE5 RunUAT.sh BuildCookRun. The self-hosted runner labelled
+  # `camsim-ue5` has UE5.7 installed at /opt/UE; scripts/package_for_docker.sh
+  # invokes BuildCookRun and copies the staged output into deploy/staged/
+  # before the docker build runs.
   #
   # unit-tests, integration-test, and docker-release are all gated behind
-  # the same CAMSIM_UE5_RUNNER_AVAILABLE repo variable — no hidden cascade
-  # via `needs:`. Each job bootstraps its own image or compose stack, so
-  # they do not consume an artifact from this job.
+  # the same CAMSIM_UE5_RUNNER_AVAILABLE repo variable as a manual
+  # kill-switch. Each job bootstraps its own staged build / compose stack,
+  # so they do not consume an artifact from this job.
   # -------------------------------------------------------------------
   docker-build:
     name: Build Docker Image
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, camsim-ue5]
     needs: [lint]
     if: ${{ vars.CAMSIM_UE5_RUNNER_AVAILABLE == 'true' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Build ThirdParty libs (cached)
+        run: bash scripts/build_thirdparty_linux.sh
+
+      - name: Package CamSim (RunUAT BuildCookRun)
+        run: bash scripts/package_for_docker.sh
+        timeout-minutes: 45
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -139,72 +145,88 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Cleanup staged tree
+        if: always()
+        run: rm -rf deploy/staged
+
   # -------------------------------------------------------------------
-  # Phase 28A: UE5 unit tests (headless, no GPU)
+  # Phase 28A: UE5 unit tests (editor target, headless, NullRHI)
   #
-  # Gated on CAMSIM_UE5_RUNNER_AVAILABLE (see docker-build rationale).
-  # Builds its own test image via docker/build-push-action, so no
-  # `needs: [docker-build]` dependency — the two jobs are independent.
+  # Runs directly on a self-hosted runner with UE5.7 at /opt/UE — no Docker.
+  # Builds the editor target with scripts/run.sh --build-only, then runs the
+  # Automation RunTests CamSim+Quit suite (~185 tests, ~10 s) and parses the
+  # JSON report with scripts/parse_automation_report.py.
+  #
+  # Gated on CAMSIM_UE5_RUNNER_AVAILABLE as a manual kill-switch (see
+  # docker-build rationale).
   # -------------------------------------------------------------------
   unit-tests:
     name: UE5 Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, camsim-ue5]
     needs: [lint]
     if: ${{ vars.CAMSIM_UE5_RUNNER_AVAILABLE == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Build ThirdParty libs (cached)
+        run: bash scripts/build_thirdparty_linux.sh
 
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: deploy/
-          push: false
-          load: true
-          tags: camsim:test-${{ github.sha }}
-          cache-from: type=gha
+      - name: Build editor target
+        run: bash scripts/run.sh --build-only
+        timeout-minutes: 20
+
+      - name: Locate UnrealEditor
+        id: ue
+        run: |
+          BIN="$(find /opt -maxdepth 6 -path '*/Binaries/Linux/UnrealEditor' 2>/dev/null | head -n1)"
+          if [ -z "$BIN" ]; then
+            echo "::error::UnrealEditor not found under /opt"
+            exit 1
+          fi
+          echo "bin=$BIN" >> "$GITHUB_OUTPUT"
 
       - name: Run UE5 automation tests
+        env:
+          UE_BIN: ${{ steps.ue.outputs.bin }}
         run: |
-          docker run --rm --name camsim-unit-tests \
-            -e CAMSIM_CIGI_PORT=0 \
-            camsim:test-${{ github.sha }} \
-            /opt/camsim/CamSimTest/Binaries/Linux/UnrealEditor-Cmd \
-            /opt/camsim/CamSimTest/CamSimTest.uproject \
-            -ExecCmds="Automation RunAll; Quit" \
-            -NullRHI -NoSound -Unattended \
-            -log 2>&1 | tee /tmp/ue5-test-output.txt
-
-          if grep -q "Test Completed. Result={Fail}" /tmp/ue5-test-output.txt; then
-            echo "::error::UE5 automation tests failed"
-            exit 1
-          fi
-          if grep -q "LogAutomationController.*Fail" /tmp/ue5-test-output.txt; then
-            echo "::error::UE5 automation tests failed"
-            exit 1
-          fi
-          echo "All UE5 automation tests passed"
+          rm -rf .cache/automation-report
+          "$UE_BIN" \
+            "$PWD/unreal_project/CamSimTest/CamSimTest.uproject" \
+            -ExecCmds="Automation RunTests CamSim+Quit" \
+            -TestExit="Automation Test Queue Empty" \
+            -ReportExportPath="$PWD/.cache/automation-report" \
+            -unattended -nullrhi -nosound -nosplash \
+            -log -stdout -FullStdOutLogOutput
         timeout-minutes: 10
 
-      - name: Upload test log
-        if: failure()
+      - name: Parse automation report
+        run: python3 scripts/parse_automation_report.py .cache/automation-report
+
+      - name: Upload automation report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ue5-test-log
-          path: /tmp/ue5-test-output.txt
+          name: ue5-automation-report
+          path: .cache/automation-report/
+          if-no-files-found: warn
+
+      - name: Cleanup automation report
+        if: always()
+        run: rm -rf .cache/automation-report
 
   # -------------------------------------------------------------------
-  # Phase 14B: Integration test (headless Docker)
+  # Phase 28A: Integration test (packaged Docker, headless)
   #
-  # Gated on CAMSIM_UE5_RUNNER_AVAILABLE (see docker-build rationale).
-  # Runs `docker compose up --build`, so no `needs: [docker-build]`.
-  # Additionally branch-gated to pushes to main.
+  # Runs on the self-hosted runner with UE5: packages the project via
+  # RunUAT BuildCookRun (~5-30 min depending on cache state), then brings
+  # the docker compose stack up and validates video / KLV output.
+  #
+  # Gated on CAMSIM_UE5_RUNNER_AVAILABLE (see docker-build rationale) and
+  # additionally branch-gated to pushes to main to keep PRs fast.
   # -------------------------------------------------------------------
   integration-test:
     name: Integration Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, camsim-ue5]
     needs: [lint]
     if: >-
       ${{ vars.CAMSIM_UE5_RUNNER_AVAILABLE == 'true'
@@ -213,11 +235,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Build ThirdParty libs (cached)
+        run: bash scripts/build_thirdparty_linux.sh
+
+      - name: Package CamSim (RunUAT BuildCookRun)
+        run: bash scripts/package_for_docker.sh
+        timeout-minutes: 45
+
       - name: Build and start CamSim (headless)
         run: |
           cd deploy
           docker compose up -d --build
-        timeout-minutes: 10
+        timeout-minutes: 15
 
       - name: Wait for health file
         run: |
@@ -249,21 +278,33 @@ jobs:
         if: always()
         run: docker compose -f deploy/docker-compose.yml down -v
 
+      - name: Cleanup staged tree
+        if: always()
+        run: rm -rf deploy/staged
+
   # -------------------------------------------------------------------
-  # Phase 14C: Docker image versioning + registry push (releases only)
+  # Phase 28A: Docker image versioning + registry push (releases only)
+  #
+  # Runs on the self-hosted runner with UE5: stages the LinuxNoEditor
+  # build via scripts/package_for_docker.sh, then builds and pushes the
+  # image to GHCR. Triggered by tag pushes only (see top-level `on:`).
   # -------------------------------------------------------------------
-  # Disabled for the same reason as docker-build: the Dockerfile requires
-  # a staged UE5 binary (deploy/staged/LinuxNoEditor/) that CI cannot
-  # produce on ubuntu-latest. Gated on CAMSIM_UE5_RUNNER_AVAILABLE.
   docker-release:
     name: Push Docker Image
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, camsim-ue5]
     needs: [lint, python-tests]
     if: ${{ vars.CAMSIM_UE5_RUNNER_AVAILABLE == 'true' }}
     permissions:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Build ThirdParty libs (cached)
+        run: bash scripts/build_thirdparty_linux.sh
+
+      - name: Package CamSim (RunUAT BuildCookRun)
+        run: bash scripts/package_for_docker.sh
+        timeout-minutes: 45
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -289,3 +330,7 @@ jobs:
             ghcr.io/${{ github.repository }}/camsim:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Cleanup staged tree
+        if: always()
+        run: rm -rf deploy/staged

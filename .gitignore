@@ -34,6 +34,9 @@ unreal_project/CamSimTest/camsim_config.yaml
 .cache/camsim.pid
 # Headless automation test reports (JSON + HTML, regenerated each run)
 .cache/automation-report/
+# UE5 BuildCookRun archive output (consumed by deploy/Dockerfile)
+.cache/staged/
+deploy/staged/
 .worktrees/
 .superpowers/
 .claude/

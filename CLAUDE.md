@@ -90,7 +90,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (183 tests across 22 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (185 tests across 22 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.7 installed):
     ```bash
@@ -111,7 +111,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Linux**: UE5.7 lives at `/opt/UE`. `UE_BIN=/opt/UE/Engine/Binaries/Linux/UnrealEditor`. `scripts/run.sh` auto-discovers this via `find /opt $HOME -path '*/Binaries/Linux/UnrealEditor'`, so no env vars are needed for `--build` / `--build-only`.
 - **Build**: `scripts/run.sh --build-only` invokes `/opt/UE/Engine/Build/BatchFiles/Linux/Build.sh CamSimTestEditor Linux Development`. Incremental rebuilds finish in ~10 s; cold rebuilds depend on UBA cache.
 - **Don't pipe `run.sh` through `tee` without `set -o pipefail`** — the script propagates UBT failures via exit code, but `tee` succeeding will mask them. Either run `run.sh` foreground or wrap the pipeline with `set -o pipefail` so a failed compile actually surfaces.
-- **No CI coverage today**: `.github/workflows/ci.yml` `unit-tests` / `integration-test` jobs cascade-skip behind `vars.CAMSIM_UE5_RUNNER_AVAILABLE != 'true'`. Until that gate flips, every C++/test change should be exercised locally with the headless invocation above before pushing.
+- **CI coverage** (Phase 28A): `.github/workflows/ci.yml` `unit-tests` runs the headless automation suite on every PR and push; `integration-test` runs the packaged Docker stack on push-to-`main`; both target the `[self-hosted, camsim-ue5]` runner. Failures are parsed from `.cache/automation-report/index.json` by `scripts/parse_automation_report.py` and surfaced as `::error::` annotations. Kill-switch: set `vars.CAMSIM_UE5_RUNNER_AVAILABLE=false` to skip the four UE5-dependent jobs. Runner registration: `docs/ci-runner-setup.md`.
 
 ## Gotchas
 
