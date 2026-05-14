@@ -8,6 +8,8 @@
 
 class FCigiReceiver;
 struct FCamSimConfig;
+struct FCigiViewControl;
+struct FCigiArtPartControl;
 
 /**
  * UCamSimGimbalComponent
@@ -35,6 +37,23 @@ public:
 	 * each game tick before applying the result to the scene capture.
 	 */
 	void TickGimbal(float DeltaTime, FCigiReceiver* Receiver, const FCamSimConfig& Config);
+
+	/**
+	 * Apply a single ViewControl packet (opcode 16). Snaps yaw/pitch/roll
+	 * to the packet's values, gated by its enable flags, then clamps the
+	 * result to the configured gimbal axis limits. No slew.
+	 *
+	 * Exposed so unit tests can drive the gimbal without an FCigiReceiver.
+	 */
+	void ApplyViewControl(const FCigiViewControl& ViewCtrl, const FCamSimConfig& Config);
+
+	/**
+	 * Apply a single ArtPart packet (opcode 6) as a slew target. Rate-limited
+	 * by Config.GimbalMaxSlewRateDegPerSec and clamped to axis limits.
+	 *
+	 * Exposed so unit tests can drive the gimbal without an FCigiReceiver.
+	 */
+	void ApplyArtPart(const FCigiArtPartControl& Art, float DeltaTime, const FCamSimConfig& Config);
 
 	/** Returns the current gimbal orientation as a Rotator (Pitch, Yaw, Roll). */
 	FRotator GetGimbalRelativeRotation() const

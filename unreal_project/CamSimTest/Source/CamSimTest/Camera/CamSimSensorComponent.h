@@ -10,6 +10,7 @@
 class FCigiReceiver;
 class USceneCaptureComponent2D;
 struct FCamSimConfig;
+struct FCigiSensorControl;
 
 /**
  * UCamSimSensorComponent
@@ -35,6 +36,17 @@ public:
 	 */
 	void TickSensor(FCigiReceiver* Receiver, const FCamSimConfig& Config,
 	                USceneCaptureComponent2D* SceneCapture);
+
+	/**
+	 * Apply a single SensorControl packet. Updates on/off, polarity, mode and
+	 * (if SceneCapture is non-null) selects the FOV preset indexed by Gain.
+	 *
+	 * Returns the FOV applied to the SceneCapture (or the current FOV unchanged
+	 * if no presets are configured). Exposed so unit tests can drive the
+	 * component without an FCigiReceiver.
+	 */
+	float ApplySensorControl(const FCigiSensorControl& Sensor, const FCamSimConfig& Config,
+	                         USceneCaptureComponent2D* SceneCapture);
 
 	bool        IsOn()       const { return bSensorOn; }
 	uint8       GetPolarity() const { return SensorPolarity; }
