@@ -63,6 +63,10 @@ DECLARE_CYCLE_STAT(TEXT("Encode Latency"),  STAT_CamSimEncode,   STATGROUP_CamSi
 ACamSimCamera::ACamSimCamera()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	// Capture last: after FCamSimEntityManager (a tickable object, which runs
+	// between TG_PostPhysics and TG_PostUpdateWork) has applied this frame's
+	// CIGI entity states and attachments, so the image shows them this frame.
+	PrimaryActorTick.TickGroup = TG_PostUpdateWork;
 
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
@@ -123,6 +127,14 @@ void ACamSimCamera::BeginPlay()
 		return;
 	}
 	Subsystem->RegisterCamera(this);
+
+	// Environment (sun, fog, weather) also ticks in TG_PostUpdateWork: apply it
+	// before this frame's capture. ACamSimEnvironment adds the same
+	// prerequisite if it begins play after us.
+	for (TActorIterator<ACamSimEnvironment> It(GetWorld()); It; ++It)
+	{
+		AddTickPrerequisiteActor(*It);
+	}
 
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 
@@ -943,6 +955,91 @@ bool ACamSimCamera::ShouldSkipFrameForDecimation()
 }
 
 // -------------------------------------------------------------------------
+// Platform pose — Camera Entity Control (opcode 2)
+// -------------------------------------------------------------------------
+
+void ACamSimCamera::ApplyHostPlatformState()
+{
+	if (PlatformStateFrame_ == GFrameCounter) return;
+	PlatformStateFrame_ = GFrameCounter;
+
+	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
+	if (!Receiver) return;
+
+	FCigiEntityState EntityState;
+	bool bGotState = false;
+	while (Receiver->DequeueCameraEntityState(EntityState))
+	{
+		bGotState = true;
+	}
+
+	if (bGotState && GlobeAnchor)
+	{
+		if (FMath::IsNaN(EntityState.Latitude) || FMath::IsNaN(EntityState.Longitude) ||
+			FMath::IsNaN(EntityState.Altitude) || FMath::IsNaN(EntityState.Yaw) ||
+			FMath::IsNaN(EntityState.Pitch)    || FMath::IsNaN(EntityState.Roll))
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("ACamSimCamera: CIGI entity state contains NaN - skipping"));
+			return;
+		}
+
+		// Throttled to ~1 Hz at 30fps so the trace stays readable when
+		// Verbose is on. UE_LOG elides the printf args when Verbose is
+		// suppressed, so this path is free when the category is off.
+		if ((TickCount % 30) == 0)
+		{
+			UE_LOG(LogCamSim, Verbose,
+				TEXT("ACamSimCamera: CIGI -> lat=%.6f lon=%.6f alt=%.1f yaw=%.1f pitch=%.1f roll=%.1f"),
+				EntityState.Latitude, EntityState.Longitude, EntityState.Altitude,
+				EntityState.Yaw, EntityState.Pitch, EntityState.Roll);
+		}
+
+		bCameraAttached_ = EntityState.bAttached;
+		if (bCameraAttached_)
+		{
+			// Attached to a platform entity: Lat/Lon/Alt are X/Y/Z offsets
+			// in the parent's body frame. Resolved by FollowAttachParent().
+			CameraAttachParentId_  = EntityState.ParentId;
+			CameraAttachOffsetFrd_ = FVector(EntityState.Latitude, EntityState.Longitude, EntityState.Altitude);
+			CameraAttachRotation_  = FRotator(EntityState.Pitch, EntityState.Yaw, EntityState.Roll);
+		}
+		else
+		{
+			CamSimFrames::FGeoPose Pose;
+			Pose.Lat = EntityState.Latitude;
+			Pose.Lon = EntityState.Longitude;
+			Pose.Alt = EntityState.Altitude;
+			Pose.Neu = CamSimFrames::CigiToNeu(EntityState.Yaw, EntityState.Pitch, EntityState.Roll);
+			// Ground speed uses the *host* time of the update.
+			ApplyPlatformPose(Pose, EntityState.HostTimeSec);
+		}
+	}
+}
+
+void ACamSimCamera::FollowAttachParent()
+{
+	if (AttachFollowFrame_ == GFrameCounter) return;
+	AttachFollowFrame_ = GFrameCounter;
+	if (!Subsystem) return;
+
+	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+	// Attached camera platforms follow their parent every tick, including
+	// ticks without a host update (the parent may be dead-reckoning).
+	if (bCameraAttached_ && GlobeAnchor)
+	{
+		CamSimFrames::FGeoPose ParentPose;
+		if (CameraAttachParentId_ != static_cast<uint16>(Cfg.CameraEntityId)
+			&& Subsystem->GetEntityGeoPose(CameraAttachParentId_, ParentPose))
+		{
+			ApplyPlatformPose(CamSimFrames::AttachedChildPose(ParentPose, CameraAttachOffsetFrd_,
+				CameraAttachRotation_.Yaw, CameraAttachRotation_.Pitch, CameraAttachRotation_.Roll),
+				GetWorld()->GetTimeSeconds());
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
 // ApplyCigiState – consume CIGI queues on game thread
 // -------------------------------------------------------------------------
 
@@ -953,74 +1050,11 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 
-	// -----------------------------------------------------------------------
-	// Camera Entity Control (opcode 2) → platform pose
-	// -----------------------------------------------------------------------
-	{
-		FCigiEntityState EntityState;
-		bool bGotState = false;
-		while (Receiver->DequeueCameraEntityState(EntityState))
-		{
-			bGotState = true;
-		}
-
-		if (bGotState && GlobeAnchor)
-		{
-			if (FMath::IsNaN(EntityState.Latitude) || FMath::IsNaN(EntityState.Longitude) ||
-				FMath::IsNaN(EntityState.Altitude) || FMath::IsNaN(EntityState.Yaw) ||
-				FMath::IsNaN(EntityState.Pitch)    || FMath::IsNaN(EntityState.Roll))
-			{
-				UE_LOG(LogCamSim, Warning,
-					TEXT("ACamSimCamera: CIGI entity state contains NaN - skipping"));
-				return;
-			}
-
-			// Throttled to ~1 Hz at 30fps so the trace stays readable when
-			// Verbose is on. UE_LOG elides the printf args when Verbose is
-			// suppressed, so this path is free when the category is off.
-			if ((TickCount % 30) == 0)
-			{
-				UE_LOG(LogCamSim, Verbose,
-					TEXT("ACamSimCamera: CIGI -> lat=%.6f lon=%.6f alt=%.1f yaw=%.1f pitch=%.1f roll=%.1f"),
-					EntityState.Latitude, EntityState.Longitude, EntityState.Altitude,
-					EntityState.Yaw, EntityState.Pitch, EntityState.Roll);
-			}
-
-			bCameraAttached_ = EntityState.bAttached;
-			if (bCameraAttached_)
-			{
-				// Attached to a platform entity: Lat/Lon/Alt are X/Y/Z offsets
-				// in the parent's body frame. Resolved below every tick.
-				CameraAttachParentId_  = EntityState.ParentId;
-				CameraAttachOffsetFrd_ = FVector(EntityState.Latitude, EntityState.Longitude, EntityState.Altitude);
-				CameraAttachRotation_  = FRotator(EntityState.Pitch, EntityState.Yaw, EntityState.Roll);
-			}
-			else
-			{
-				CamSimFrames::FGeoPose Pose;
-				Pose.Lat = EntityState.Latitude;
-				Pose.Lon = EntityState.Longitude;
-				Pose.Alt = EntityState.Altitude;
-				Pose.Neu = CamSimFrames::CigiToNeu(EntityState.Yaw, EntityState.Pitch, EntityState.Roll);
-				// Ground speed uses the *host* time of the update.
-				ApplyPlatformPose(Pose, EntityState.HostTimeSec);
-			}
-		}
-
-		// Attached camera platforms follow their parent every tick, including
-		// ticks without a host update (the parent may be dead-reckoning).
-		if (bCameraAttached_ && GlobeAnchor)
-		{
-			CamSimFrames::FGeoPose ParentPose;
-			if (CameraAttachParentId_ != static_cast<uint16>(Cfg.CameraEntityId)
-				&& Subsystem->GetEntityGeoPose(CameraAttachParentId_, ParentPose))
-			{
-				ApplyPlatformPose(CamSimFrames::AttachedChildPose(ParentPose, CameraAttachOffsetFrd_,
-					CameraAttachRotation_.Yaw, CameraAttachRotation_.Pitch, CameraAttachRotation_.Roll),
-					GetWorld()->GetTimeSeconds());
-			}
-		}
-	}
+	// Platform pose (CIGI Entity Control for the camera entity). Normally
+	// already applied this frame by FCamSimEntityManager, in order with the
+	// other entities; this covers running without one.
+	ApplyHostPlatformState();
+	FollowAttachParent();
 
 	// -----------------------------------------------------------------------
 	// View Definition (opcode 20) → apply HFOV

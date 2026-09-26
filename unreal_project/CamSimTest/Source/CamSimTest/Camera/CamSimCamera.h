@@ -100,6 +100,17 @@ public:
 	/** Frames dropped because the encoder thread's queue was full. */
 	uint64 GetDroppedFrameCount() const;
 
+	/**
+	 * Apply this frame's host platform state (CIGI Entity Control for the
+	 * camera entity). FCamSimEntityManager calls this before resolving
+	 * attachments, so entities attached to the platform use this frame's pose.
+	 * Runs once per frame; Tick() calls it too in case nothing else did.
+	 */
+	void ApplyHostPlatformState();
+
+	/** If the platform is attached to an entity, follow it. Call after the parent is placed. */
+	void FollowAttachParent();
+
 	/** False while frames are held waiting for terrain tiles to load. */
 	bool IsTerrainReady() const { return TerrainGate_.IsReady(); }
 
@@ -319,6 +330,10 @@ private:
 
 	/** Move the platform to a geodetic pose and update pose telemetry. */
 	void ApplyPlatformPose(const CamSimFrames::FGeoPose& Pose, double TimeSec);
+
+	// GFrameCounter of the last ApplyHostPlatformState / FollowAttachParent run.
+	uint64 PlatformStateFrame_ = MAX_uint64;
+	uint64 AttachFollowFrame_  = MAX_uint64;
 
 	/** Phase 28G: per-frame pipeline latency tracker (owned by subsystem, nullable). */
 	FPipelineLatencyTracker* LatencyTracker_ = nullptr;

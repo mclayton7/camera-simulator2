@@ -2,6 +2,7 @@
 
 #include "Entity/CamSimEntityManager.h"
 #include "Entity/CamSimEntity.h"
+#include "Camera/CamSimCamera.h"
 #include "Entity/EntityTypeTable.h"
 #include "GroundTruth/FEntityProjection.h"
 #include "Subsystem/CamSimSubsystem.h"
@@ -63,9 +64,15 @@ TStatId FCamSimEntityManager::GetStatId() const
 
 void FCamSimEntityManager::Tick(float DeltaTime)
 {
+	// One ordered pass: host states (camera platform included), then
+	// attachments parent-first, then the camera if it is itself attached.
+	// ACamSimCamera ticks later (TG_PostUpdateWork) and captures the result.
+	ACamSimCamera* Camera = Subsystem ? Subsystem->GetCamera() : nullptr;
 	PurgeStaleEntities();
 	ProcessEntityStates(DeltaTime);
+	if (Camera) Camera->ApplyHostPlatformState();
 	ResolveAttachedEntities();
+	if (Camera) Camera->FollowAttachParent();
 	ProcessConfClampEntities();
 	ProcessRateControls();
 	ProcessArtPartControls();

@@ -27,7 +27,8 @@ ACamSimEnvironment::ACamSimEnvironment()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	// Tick after camera so environment state is applied before next capture
+	// Same group as ACamSimCamera, which lists this actor as a tick
+	// prerequisite so environment changes reach the same frame's capture.
 	PrimaryActorTick.TickGroup = TG_PostUpdateWork;
 }
 
@@ -38,6 +39,11 @@ ACamSimEnvironment::ACamSimEnvironment()
 void ACamSimEnvironment::BeginPlay()
 {
 	Super::BeginPlay();
+
+	for (TActorIterator<ACamSimCamera> It(GetWorld()); It; ++It)
+	{
+		It->AddTickPrerequisiteActor(this);
+	}
 
 	Subsystem = GetGameInstance()->GetSubsystem<UCamSimSubsystem>();
 	if (!Subsystem)
