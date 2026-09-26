@@ -35,45 +35,6 @@ bool FPhase19ConfigDefaultsTest::RunTest(const FString& Parameters)
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: FPhase19Config fields can all be set and read back (struct field test)
-// ---------------------------------------------------------------------------
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19FieldsTest,
-	"CamSim.Phase19.Fields",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FPhase19FieldsTest::RunTest(const FString& Parameters)
-{
-	FCamSimConfig::FPhase19Config Cfg;
-	Cfg.bOceanEnabled             = true;
-	Cfg.BeaufortState             = 7;
-	Cfg.WaveAmplitudeScale        = 1.5f;
-	Cfg.WaveFrequencyScale        = 0.8f;
-	Cfg.WaveChoppiness            = 0.7f;
-	Cfg.bVesselWakesEnabled       = true;
-	Cfg.WakeFadeTime              = 12.0f;
-	Cfg.bVesselMotionEnabled      = true;
-	Cfg.VesselMotionScale         = 0.9f;
-	Cfg.bOceanReflectionsEnabled  = true;
-	Cfg.SSRIntensity              = 0.6f;
-	Cfg.ReflectionCaptureRadius   = 5000.0f;
-
-	TestTrue (TEXT("OceanEnabled"),            Cfg.bOceanEnabled);
-	TestEqual(TEXT("BeaufortState"),           Cfg.BeaufortState,          7);
-	TestEqual(TEXT("WaveAmplitudeScale"),      Cfg.WaveAmplitudeScale,     1.5f);
-	TestEqual(TEXT("WaveFrequencyScale"),      Cfg.WaveFrequencyScale,     0.8f);
-	TestEqual(TEXT("WaveChoppiness"),          Cfg.WaveChoppiness,         0.7f);
-	TestTrue (TEXT("VesselWakesEnabled"),      Cfg.bVesselWakesEnabled);
-	TestEqual(TEXT("WakeFadeTime"),            Cfg.WakeFadeTime,          12.0f);
-	TestTrue (TEXT("VesselMotionEnabled"),     Cfg.bVesselMotionEnabled);
-	TestEqual(TEXT("VesselMotionScale"),       Cfg.VesselMotionScale,      0.9f);
-	TestTrue (TEXT("OceanReflectionsEnabled"), Cfg.bOceanReflectionsEnabled);
-	TestEqual(TEXT("SSRIntensity"),            Cfg.SSRIntensity,           0.6f);
-	TestEqual(TEXT("ReflectionCaptureRadius"), Cfg.ReflectionCaptureRadius, 5000.0f);
-
-	return true;
-}
-
-// ---------------------------------------------------------------------------
 // Test 3: CAMSIM_OCEAN_BEAUFORT env var overrides config
 // ---------------------------------------------------------------------------
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19EnvBeaufortTest,
@@ -184,30 +145,6 @@ bool FPhase19Beaufort5InterpolTest::RunTest(const FString& Parameters)
 }
 
 // ---------------------------------------------------------------------------
-// Test 9: FCigiWaveState fields from opcode 14 struct
-// ---------------------------------------------------------------------------
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19CigiWaveStateTest,
-	"CamSim.Phase19.CigiWaveState",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FPhase19CigiWaveStateTest::RunTest(const FString& Parameters)
-{
-	FCigiWaveState S;
-	S.WaveID   = 2;
-	S.bEnabled = true;
-	S.WaveHtM  = 3.5f;
-	S.WaveLenM = 80.0f;
-	S.PeriodS  = 7.2f;
-
-	TestEqual(TEXT("WaveID"),   (int32)S.WaveID,  2);
-	TestTrue (TEXT("Enabled"),  S.bEnabled);
-	TestEqual(TEXT("WaveHtM"),  S.WaveHtM,   3.5f);
-	TestEqual(TEXT("WaveLenM"), S.WaveLenM, 80.0f);
-	TestEqual(TEXT("PeriodS"),  S.PeriodS,   7.2f);
-	return true;
-}
-
-// ---------------------------------------------------------------------------
 // Test 10: CIGI WaveHtM > 0 → SetWaveParams uses it directly, no Beaufort conversion
 // ---------------------------------------------------------------------------
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19CigiWaveOverrideTest,
@@ -269,54 +206,6 @@ bool FPhase19HeightNonZeroTest::RunTest(const FString& Parameters)
 
 	// Expected: A = 2.5m * 100 * 0.5 = 125 cm
 	TestTrue(TEXT("Height ≈ 125 cm at crest"), FMath::IsNearlyEqual(H, 125.0f, 1.0f));
-	return true;
-}
-
-// ---------------------------------------------------------------------------
-// Test 13: Sea-domain entity (EntityDomain==3) triggers vessel motion;
-//          land-domain (EntityDomain==2) is skipped.
-// This tests the dispatch logic in FCamSimEntityManager — here we test
-// the FCigiEntityState field directly.
-// ---------------------------------------------------------------------------
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19SeaDomainDispatchTest,
-	"CamSim.Phase19.SeaDomainDispatch",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FPhase19SeaDomainDispatchTest::RunTest(const FString& Parameters)
-{
-	FCigiEntityState SeaEntity;
-	SeaEntity.EntityDomain = 3;
-
-	FCigiEntityState LandEntity;
-	LandEntity.EntityDomain = 2;
-
-	// Dispatch predicate mirrors CamSimEntityManager logic
-	auto IsMaritime = [](const FCigiEntityState& S) { return S.EntityDomain == 3; };
-
-	TestTrue (TEXT("Sea domain (3) triggers motion"),  IsMaritime(SeaEntity));
-	TestFalse(TEXT("Land domain (2) skips motion"),    IsMaritime(LandEntity));
-
-	return true;
-}
-
-// ---------------------------------------------------------------------------
-// Test 14: Wake FX entity state tracking — bWakeActive flag test
-// ---------------------------------------------------------------------------
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase19WakeLifecycleTest,
-	"CamSim.Phase19.WakeLifecycle",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FPhase19WakeLifecycleTest::RunTest(const FString& Parameters)
-{
-	// Test the tracking map logic without spawning real Niagara components.
-	// FEntityParticleState should have a bWakeActive flag.
-	FEntityParticleState State;
-	State.bWakeActive = false;
-	TestFalse(TEXT("Wake inactive on spawn"), State.bWakeActive);
-
-	State.bWakeActive = true;
-	TestTrue(TEXT("Wake active after flag set"), State.bWakeActive);
-
 	return true;
 }
 

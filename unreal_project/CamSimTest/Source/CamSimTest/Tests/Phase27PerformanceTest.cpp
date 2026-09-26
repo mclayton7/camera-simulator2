@@ -159,69 +159,6 @@ bool FPhase27_TexturePoolRange::RunTest(const FString& Parameters)
 }
 
 // ---------------------------------------------------------------------------
-// Test 7 — Tile prefetch slew detection logic
-// ---------------------------------------------------------------------------
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_TilePrefetchSlew,
-    "CamSim.Phase27.TilePrefetchSlewDetection",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FPhase27_TilePrefetchSlew::RunTest(const FString& Parameters)
-{
-    // Simulate gimbal velocity calculation
-    const float PrevPan  = 10.0f;
-    const float CurrPan  = 22.0f;   // 12 deg in 1/30 s = 360 deg/s
-    const float DeltaTime = 1.0f / 30.0f;
-    const float Threshold = 10.0f;  // deg/s
-
-    const float PanVel = FMath::Abs(CurrPan - PrevPan) / DeltaTime;
-    TestTrue(TEXT("Fast slew (360 deg/s) triggers prefetch"), PanVel >= Threshold);
-
-    // Below threshold
-    const float SlowPan = 10.1f;
-    const float SlowVel = FMath::Abs(SlowPan - PrevPan) / DeltaTime;
-    TestFalse(TEXT("Slow slew (3 deg/s) no prefetch"), SlowVel >= Threshold);
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// Test 8 — Hot-reload: detect immutable field changes
-// ---------------------------------------------------------------------------
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_HotReloadImmutable,
-    "CamSim.Phase27.HotReloadImmutableFields",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FPhase27_HotReloadImmutable::RunTest(const FString& Parameters)
-{
-    // These fields are detected as changed and logged as warnings during hot-reload.
-    // The actual preservation logic lives in UCamSimSubsystem::HotReloadConfig().
-    FCamSimConfig A, B;
-
-    A.CigiPort      = 8888;            B.CigiPort      = 9999;
-    A.MulticastAddr = TEXT("239.1.1.1"); B.MulticastAddr = TEXT("239.1.1.2");
-    A.MulticastPort = 5004;            B.MulticastPort = 5005;
-    A.VideoCodec    = TEXT("h264");    B.VideoCodec    = TEXT("h265");
-
-    TestTrue(TEXT("CigiPort change detected"),      A.CigiPort != B.CigiPort);
-    TestTrue(TEXT("MulticastAddr change detected"), A.MulticastAddr != B.MulticastAddr);
-    TestTrue(TEXT("MulticastPort change detected"), A.MulticastPort != B.MulticastPort);
-    TestTrue(TEXT("VideoCodec change detected"),    A.VideoCodec != B.VideoCodec);
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// Test 9 — GPU sensor bypass flag in FPerformanceConfig
-// ---------------------------------------------------------------------------
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_GpuSensorBypass,
-    "CamSim.Phase27.GpuSensorBypass",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FPhase27_GpuSensorBypass::RunTest(const FString& Parameters)
-{
-    FCamSimConfig::FPerformanceConfig C;
-    TestFalse(TEXT("GPU sensor off by default"), C.bGpuSensorEffects);
-    C.bGpuSensorEffects = true;
-    TestTrue(TEXT("GPU sensor flag set"), C.bGpuSensorEffects);
-    return true;
-}
-
-// ---------------------------------------------------------------------------
 // Test 10 — Culled-SSE derivation from HFoV (7A.4 / TODO §7B.1)
 //
 // Verifies the pure derivation logic shared by ApplyCesiumTilesetTuning

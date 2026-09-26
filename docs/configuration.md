@@ -1,7 +1,8 @@
 # Configuration Reference
 
 CamSim reads `camsim_config.yaml` from the project directory (or the binary
-directory as a fallback). Environment variables override any YAML value.
+directory as a fallback). Environment variables override any YAML value. Boolean
+variables accept `1`/`0`, `true`/`false`, `yes`/`no` and `on`/`off`.
 
 **YAML format:** The config file uses YAML with native `#` comments for clean,
 readable configuration. Keys are unquoted; string values only need quotes when

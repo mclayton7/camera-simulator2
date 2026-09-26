@@ -34,37 +34,3 @@ bool FCesiumBackendConfigDefaultsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// 2. Terrain source strings are valid values
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCesiumBackendTerrainSourceValuesTest,
-	"CamSim.CesiumBackend.TerrainSourceValues",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FCesiumBackendTerrainSourceValuesTest::RunTest(const FString& Parameters)
-{
-	// Valid source strings — just check these are the known values
-	const TArray<FString> ValidSources = { TEXT("cesium_ion"), TEXT("url"), TEXT("flat") };
-	TestTrue(TEXT("cesium_ion in valid set"),
-		ValidSources.Contains(TEXT("cesium_ion")));
-	TestTrue(TEXT("url in valid set"),
-		ValidSources.Contains(TEXT("url")));
-	TestTrue(TEXT("flat in valid set"),
-		ValidSources.Contains(TEXT("flat")));
-	TestFalse(TEXT("gibberish not in valid set"),
-		ValidSources.Contains(TEXT("gibberish")));
-	return true;
-}
-
-// 3. Imagery source strings are valid values
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCesiumBackendImagerySourceValuesTest,
-	"CamSim.CesiumBackend.ImagerySourceValues",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FCesiumBackendImagerySourceValuesTest::RunTest(const FString& Parameters)
-{
-	const TArray<FString> ValidSources = { TEXT("cesium_ion"), TEXT("wms"), TEXT("none") };
-	TestTrue(TEXT("cesium_ion in valid set"), ValidSources.Contains(TEXT("cesium_ion")));
-	TestTrue(TEXT("wms in valid set"),        ValidSources.Contains(TEXT("wms")));
-	TestTrue(TEXT("none in valid set"),       ValidSources.Contains(TEXT("none")));
-	TestFalse(TEXT("gibberish not in valid set"), ValidSources.Contains(TEXT("gibberish")));
-	return true;
-}

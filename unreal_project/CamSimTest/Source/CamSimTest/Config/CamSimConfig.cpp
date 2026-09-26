@@ -53,7 +53,13 @@ static float GetEnvFloat(const TCHAR* Key, float Default)
 static bool GetEnvBool(const TCHAR* Key, bool Default)
 {
 	FString Value = FPlatformMisc::GetEnvironmentVariable(Key);
-	return Value.IsEmpty() ? Default : FCString::Atoi(*Value) != 0;
+	Value.TrimStartAndEndInline();
+	if (Value.IsEmpty()) return Default;
+	// Accept true/yes/on as well as numbers ("true" used to parse as 0 = off).
+	return Value.Equals(TEXT("true"), ESearchCase::IgnoreCase)
+		|| Value.Equals(TEXT("yes"), ESearchCase::IgnoreCase)
+		|| Value.Equals(TEXT("on"), ESearchCase::IgnoreCase)
+		|| FCString::Atoi(*Value) != 0;
 }
 
 static FCamSimConfig::EReadbackFormat ParseReadbackFormat(const FString& Value)

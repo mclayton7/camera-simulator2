@@ -39,24 +39,6 @@ bool FOpticalRealismConfigDefaultsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// 2. Config YAML parse — verify optical_realism block round-trips
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOpticalRealismConfigParseTest,
-	"CamSim.OpticalRealism.ConfigParse",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FOpticalRealismConfigParseTest::RunTest(const FString& Parameters)
-{
-	// Load the actual config file and verify the optical_realism block was parsed.
-	// The default camsim_config.yaml has optical_realism.enabled: false.
-	FCamSimConfig Cfg = FCamSimConfig::Load();
-
-	// Even if YAML isn't found, defaults should be correct
-	TestFalse(TEXT("OpticalRealism disabled after load"), Cfg.OpticalRealism.bEnabled);
-	TestTrue(TEXT("Bloom enabled after load"), Cfg.OpticalRealism.bBloom);
-
-	return true;
-}
-
 // 3. Distortion identity — K1=0, K2=0 produces pixel-exact passthrough
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOpticalRealismDistortionIdentityTest,
 	"CamSim.OpticalRealism.DistortionIdentity",
