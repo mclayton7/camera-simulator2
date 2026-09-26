@@ -97,6 +97,9 @@ public:
 	const FFrameDropStats& GetFrameDropStats() const { return FrameDropStats_; }
 	bool IsTrackingFrameDrops()                const { return bTrackFrameDrops_; }
 
+	/** Frames dropped because the encoder thread's queue was full. */
+	uint64 GetDroppedFrameCount() const;
+
 	/** False while frames are held waiting for terrain tiles to load. */
 	bool IsTerrainReady() const { return TerrainGate_.IsReady(); }
 
@@ -268,10 +271,6 @@ private:
 
 	/** Telemetry snapshot captured at the same time as the in-flight frame. */
 	FCamSimTelemetry PendingTelemetry;
-
-	/** Monotonically increasing count of frames dropped due to encoder busy.
-	 *  writer: game → readers: game (heartbeat log) + HTTP /metrics (relaxed). */
-	TAtomic<uint64> DroppedFrameCount { 0 };
 
 	/** Telemetry cached from the last applied CIGI state. */
 	FCamSimTelemetry CurrentTelemetry;

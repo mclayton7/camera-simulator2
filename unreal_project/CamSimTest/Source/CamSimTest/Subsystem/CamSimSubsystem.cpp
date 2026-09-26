@@ -864,11 +864,12 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		const double UptimeSec = FPlatformTime::Seconds() - Impl->StartTimeSec;
 
 		FString HealthJson = FString::Printf(
-			TEXT("{\"frame\":%u,\"encoder_ok\":%s,\"frames_encoded\":%llu,\"cigi_rx\":%llu,\"dropped\":%u,\"uptime_s\":%.1f,\"last_host_frame\":%u,\"terrain_ready\":%s"),
+			TEXT("{\"frame\":%u,\"encoder_ok\":%s,\"frames_encoded\":%llu,\"cigi_rx\":%llu,\"dropped\":%llu,\"watchdog_reconnects\":%u,\"uptime_s\":%.1f,\"last_host_frame\":%u,\"terrain_ready\":%s"),
 			Impl->FrameCntr,
 			(Encoder && Encoder->IsOpen()) ? TEXT("true") : TEXT("false"),
 			EncOk,
 			CigiRx,
+			Camera_.Get() ? Camera_->GetDroppedFrameCount() : 0ull,
 			Impl->WatchdogReconnectCount,
 			UptimeSec,
 			LastHost,
@@ -904,8 +905,17 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		// Dispatch the SaveStringToFile off the game thread — rewriting the
 		// file every 3 s shouldn't cost game-thread frame time. Task scheduler
 		// serialises background tasks so we won't race ourselves.
-		const FString HealthPath =
-			FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_health.json"));
+		// Packaged builds (Docker) write next to the executable. When running
+		// through the editor binary that directory is the shared engine
+		// install, so use the project's Saved/ instead.
+		static const FString HealthPath = []
+		{
+			const FString BaseDir = FPaths::ConvertRelativePathToFull(FPlatformProcess::BaseDir());
+			const bool bEngineBinary = FPaths::IsUnderDirectory(BaseDir,
+				FPaths::ConvertRelativePathToFull(FPaths::EngineDir()));
+			return FPaths::Combine(bEngineBinary ? FPaths::ProjectSavedDir() : BaseDir,
+				TEXT("camsim_health.json"));
+		}();
 		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
 			[Body = MoveTemp(HealthJson), Path = HealthPath]()
 		{

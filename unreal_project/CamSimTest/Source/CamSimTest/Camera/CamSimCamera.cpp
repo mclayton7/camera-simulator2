@@ -94,6 +94,11 @@ ACamSimCamera::ACamSimCamera()
 	SceneCapture->ShowFlags.SetMaterialNormal(true);
 }
 
+uint64 ACamSimCamera::GetDroppedFrameCount() const
+{
+	return EncoderThread ? EncoderThread->GetDroppedFrameCount() : 0;
+}
+
 // Out-of-line definition so the header can forward-declare FEncoderThread.
 // Every TU that destructs a TUniquePtr<FEncoderThread, FEncoderThreadDeleter>
 // (including UHT's .gen.cpp) emits only a CALL to this operator; `delete` is
@@ -647,7 +652,7 @@ void ACamSimCamera::EmitHeartbeatIfDue()
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: tick=%llu busy=%d readback=%d sensor=%d frames_encoded=%llu dropped=%llu cap_idx=%d pending_idx=%d ready_polls=%d wall_dt=%.1fs fps=%.1f"),
 		TickCount, (int)(bool)bSensorBusy,
 		(int)(ReadbackState_.Load(EMemoryOrder::Relaxed) != EReadbackState::Idle),
-		(int)(SensorComp && SensorComp->IsOn()), FrameIndex, (uint64)DroppedFrameCount,
+		(int)(SensorComp && SensorComp->IsOn()), FrameIndex, GetDroppedFrameCount(),
 		CaptureTargetIndex, PendingReadbackTargetIndex, ReadyPollsRequired,
 		WallDeltaSec, EffectiveFps);
 
