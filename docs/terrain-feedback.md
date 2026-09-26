@@ -66,8 +66,9 @@ A conformant CIGI IG must send a Start-of-Frame packet to the host every frame.
 `FCigiSender::FlushFrame()` is called once per game tick (from
 `UCamSimSubsystem::Tick()`, which is driven by `FCamSimEntityManager::Tick()`).
 
-The SOF packet carries the IG frame counter, which is incremented each tick.
-The host uses this to detect IG frame drops.
+The SOF packet carries the IG frame counter, which is incremented each tick,
+and echoes the full 32-bit frame counter of the last IG Control packet received.
+The host uses these to detect IG frame drops and measure IG lag.
 
 ---
 

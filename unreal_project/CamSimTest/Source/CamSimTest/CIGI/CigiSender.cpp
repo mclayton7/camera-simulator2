@@ -118,7 +118,7 @@ void FCigiSender::Close()
 // Per-frame flush
 // -------------------------------------------------------------------------
 
-void FCigiSender::FlushFrame(uint32 FrameCntr, uint8 LastHostFrame, uint8 IGMode)
+void FCigiSender::FlushFrame(uint32 FrameCntr, uint32 LastHostFrame, uint8 IGMode)
 {
 	if (!bOpen || !OutgoingMsg || !SofPacket)
 	{

@@ -740,7 +740,7 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 	if (Impl->CigiSender)
 	{
 		const uint32 LastHostFrame = Impl->CigiReceiver ? Impl->CigiReceiver->GetLastHostFrame() : 0;
-		Impl->CigiSender->FlushFrame(Impl->FrameCntr, static_cast<uint8>(LastHostFrame), Impl->IGMode);
+		Impl->CigiSender->FlushFrame(Impl->FrameCntr, LastHostFrame, Impl->IGMode);
 	}
 
 	// -----------------------------------------------------------------------
