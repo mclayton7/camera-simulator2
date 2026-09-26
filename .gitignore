@@ -40,3 +40,5 @@ deploy/staged/
 .worktrees/
 .superpowers/
 .claude/
+# Local test reports and UE derived-data cache (scripts/run.sh, automation runs)
+.cache/

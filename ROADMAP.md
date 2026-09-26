@@ -26,16 +26,19 @@ Guiding rules:
 
 Small, independent fixes. Each gets its own commit and a regression test.
 
-| ID  | Issue | Where | Fix |
-| --- | ----- | ----- | --- |
-| 0.1 | **Heading ~90° off; frame tilts away from the origin.** Rotations are set in UE world space, but Cesium world space is +X=East. A CIGI heading of 0° (north) renders facing east, and the local up/north frame drifts with distance from the georeference origin. | `Camera/CamSimCamera.cpp:163,936,1279`, `Entity/CamSimEntity.cpp` (`SetActorRotation`) | Use `GlobeAnchor->SetEastSouthUpRotation()` with yaw = heading − 90°. Route every conversion through `Geospatial/` (see 2.2). Test: heading 0 looks north at lat 0 and lat 60, and 500 km from the origin. |
-| 0.2 | **KLV Tag 2 is not UTC.** It uses `FPlatformTime::Seconds()` (a monotonic clock since boot), so decoders show 1970 dates. | `Camera/CamSimCamera.cpp:1455` | Short term: capture the UTC↔monotonic offset once at startup. Long term: use the sim clock (2.1). |
-| 0.3 | **KLV fails the downstream decoder.** See the misb.js conformance section below. | `Metadata/KlvBuilder.cpp`, `scripts/validate_klv.py`, `deploy/camsim_config.yaml:130-135` | Fix all items in the section below. Add the misb.js conformance test to CI. |
-| 0.4 | **Entity-relative CIGI coordinates ignored.** Offsets in metres are read as lat/lon degrees for attached Entity Control, HAT/HOT requests, and LOS segment/vector requests. | `CIGI/CigiReceiver.cpp` (entity ctrl, HAT/HOT, LOS processors), `CIGI/CigiQueryHandler.cpp` | Carry `AttachState`/`ParentID` and the source/destination coordinate-system flags through. Resolve the offset in the parent entity's frame. |
-| 0.5 | **SOF echoes only 8 bits of the host frame counter** (it's 32-bit on the wire), so the value wraps every 256 frames. | `Subsystem/CamSimSubsystem.cpp:744`, `CIGI/CigiSender.h:50` | Pass `uint32` end to end. |
-| 0.6 | **Ground speed (Tag 8) wrong.** It's zeroed on any tick without a host update, and divided by the IG's frame time rather than the host's update interval. | `Camera/CamSimCamera.cpp:961,971` | Derive speed from host timestamps or Rate Control. Hold the last value between updates. |
-| 0.7 | **Frames stream before terrain is loaded.** Startup and teleports emit low-detail terrain with no signal, which is bad data for ATR training. | `Camera/CamSimCamera.cpp:607` (only logged) | Gate capture/encode on tileset load progress around the camera. Report `terrain_ready` in `/ready` and the health JSON. |
-| 0.8 | **libx264 has no VBV cap**, so bitrate spikes burst over UDP (bad on ROVER/ATAK links). | `Encoder/VideoEncoder.cpp` | Set `nal-hrd=cbr`, `vbv-maxrate`, and `vbv-bufsize` (~1–1.5× target). |
+**Status (2026-09-26): all eight fixed** — see "Milestone 0 results" below. Remaining exit
+criterion: a live recorded stream through CI (see there).
+
+| ID  | Issue                                                                                                                                                                                                                                                             | Where                                                                                       | Fix                                                                                                                                                                                                        |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1 | **Heading ~90° off; frame tilts away from the origin.** Rotations are set in UE world space, but Cesium world space is +X=East. A CIGI heading of 0° (north) renders facing east, and the local up/north frame drifts with distance from the georeference origin. | `Camera/CamSimCamera.cpp:163,936,1279`, `Entity/CamSimEntity.cpp` (`SetActorRotation`)      | Use `GlobeAnchor->SetEastSouthUpRotation()` with yaw = heading − 90°. Route every conversion through `Geospatial/` (see 2.2). Test: heading 0 looks north at lat 0 and lat 60, and 500 km from the origin. |
+| 0.2 | **KLV Tag 2 is not UTC.** It uses `FPlatformTime::Seconds()` (a monotonic clock since boot), so decoders show 1970 dates.                                                                                                                                         | `Camera/CamSimCamera.cpp:1455`                                                              | Short term: capture the UTC↔monotonic offset once at startup. Long term: use the sim clock (2.1).                                                                                                          |
+| 0.3 | **KLV fails the downstream decoder.** See the misb.js conformance section below.                                                                                                                                                                                  | `Metadata/KlvBuilder.cpp`, `scripts/validate_klv.py`, `deploy/camsim_config.yaml:130-135`   | Fix all items in the section below. Add the misb.js conformance test to CI.                                                                                                                                |
+| 0.4 | **Entity-relative CIGI coordinates ignored.** Offsets in metres are read as lat/lon degrees for attached Entity Control, HAT/HOT requests, and LOS segment/vector requests.                                                                                       | `CIGI/CigiReceiver.cpp` (entity ctrl, HAT/HOT, LOS processors), `CIGI/CigiQueryHandler.cpp` | Carry `AttachState`/`ParentID` and the source/destination coordinate-system flags through. Resolve the offset in the parent entity's frame.                                                                |
+| 0.5 | **SOF echoes only 8 bits of the host frame counter** (it's 32-bit on the wire), so the value wraps every 256 frames.                                                                                                                                              | `Subsystem/CamSimSubsystem.cpp:744`, `CIGI/CigiSender.h:50`                                 | Pass `uint32` end to end.                                                                                                                                                                                  |
+| 0.6 | **Ground speed (Tag 8) wrong.** It's zeroed on any tick without a host update, and divided by the IG's frame time rather than the host's update interval.                                                                                                         | `Camera/CamSimCamera.cpp:961,971`                                                           | Derive speed from host timestamps or Rate Control. Hold the last value between updates.                                                                                                                    |
+| 0.7 | **Frames stream before terrain is loaded.** Startup and teleports emit low-detail terrain with no signal, which is bad data for ATR training.                                                                                                                     | `Camera/CamSimCamera.cpp:607` (only logged)                                                 | Gate capture/encode on tileset load progress around the camera. Report `terrain_ready` in `/ready` and the health JSON.                                                                                    |
+| 0.8 | **libx264 has no VBV cap**, so bitrate spikes burst over UDP (bad on ROVER/ATAK links).                                                                                                                                                                           | `Encoder/VideoEncoder.cpp`                                                                  | Set `nal-hrd=cbr`, `vbv-maxrate`, and `vbv-bufsize` (~1–1.5× target).                                                                                                                                      |
 
 ### 0.3: KLV conformance with misb.js
 
@@ -46,16 +49,16 @@ it defines "correct" for this project. It replaces the old spec PDF.
 These problems were found on 2026-09-26 by running a port of `FKlvBuilder` through
 `st0601.parse()`:
 
-| # | Problem | What misb.js does with it | Fix |
-| - | ------- | ------------------------- | --- |
-| a | **Wrong checksum algorithm.** It defaults to CRC-16/CCITT; misb.js expects a 16-bit running sum. | Marks every packet `checksum.valid = false`. | Use the running sum only and remove the `crc16` option and config key. |
-| b | **Wrong checksum range.** Even `bcc16` mode sums before appending the checksum's own `01 02` bytes. misb.js sums everything except the final 2 value bytes. | Still `valid = false`. | Append `01 02`, *then* sum. |
-| c | **Target track gate written as tags 40/41.** In ST 0601 those are Target Location Lat/Lon (4 bytes each); gate width/height are **43/44**. | **Parsing throws `RangeError` and the whole packet is lost** whenever `target_track_gate_*` is non-zero. | Move the gate values to tags 43/44. misb.js decodes them as `2 × value` pixels, so encode `width / 2`. |
-| d | **Tag 47 flag bits wrong.** The spec numbers bits from 1 at the least-significant end. CamSim sets `0x20` for black-hot and `0x08` for slant range. | Black-hot reads as **"Image Invalid"** (bit 6); slant range reads as **"Icing Detected"** (bit 4). | IR black-hot = `0x04` (bit 3). The slant-range bit (`0x10`, bit 5) means "measured"; CamSim's slant range is calculated, so leave it at 0. |
-| e | **Ground speed sent as Tag 8.** Tag 8 is Platform *True Airspeed*; ground speed is **Tag 56**. | Decoded as airspeed. | Emit Tag 56. Emit Tag 8 only with a real airspeed. Combines with 0.6. |
-| f | **ST 0102 country codes in the wrong tag.** The country-code string goes in tag 12, which is *Object Country Coding Method* (a 1-byte code). | Decodes as "No reference for 85". | Tag 12 = `1` (ISO-3166 two-letter); country string in **tag 13**. Check tag 13's string encoding against misb.js `st0102.js`. |
-| g | **Tag 2 is not UTC.** (Same as 0.2.) | Shows a 1970 date. | See 0.2 / 2.1. |
-| h | **`validate_klv.py` passes broken output.** It shares CamSim's checksum-range bug, accepts either algorithm, and doesn't check tag semantics. | n/a | Replace the Python validator with a Node check that uses misb.js. |
+| #   | Problem                                                                                                                                                     | What misb.js does with it                                                                                | Fix                                                                                                                                        |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| a   | **Wrong checksum algorithm.** It defaults to CRC-16/CCITT; misb.js expects a 16-bit running sum.                                                            | Marks every packet `checksum.valid = false`.                                                             | Use the running sum only and remove the `crc16` option and config key.                                                                     |
+| b   | **Wrong checksum range.** Even `bcc16` mode sums before appending the checksum's own `01 02` bytes. misb.js sums everything except the final 2 value bytes. | Still `valid = false`.                                                                                   | Append `01 02`, *then* sum.                                                                                                                |
+| c   | **Target track gate written as tags 40/41.** In ST 0601 those are Target Location Lat/Lon (4 bytes each); gate width/height are **43/44**.                  | **Parsing throws `RangeError` and the whole packet is lost** whenever `target_track_gate_*` is non-zero. | Move the gate values to tags 43/44. misb.js decodes them as `2 × value` pixels, so encode `width / 2`.                                     |
+| d   | **Tag 47 flag bits wrong.** The spec numbers bits from 1 at the least-significant end. CamSim sets `0x20` for black-hot and `0x08` for slant range.         | Black-hot reads as **"Image Invalid"** (bit 6); slant range reads as **"Icing Detected"** (bit 4).       | IR black-hot = `0x04` (bit 3). The slant-range bit (`0x10`, bit 5) means "measured"; CamSim's slant range is calculated, so leave it at 0. |
+| e   | **Ground speed sent as Tag 8.** Tag 8 is Platform *True Airspeed*; ground speed is **Tag 56**.                                                              | Decoded as airspeed.                                                                                     | Emit Tag 56. Emit Tag 8 only with a real airspeed. Combines with 0.6.                                                                      |
+| f   | **ST 0102 country codes in the wrong tag.** The country-code string goes in tag 12, which is *Object Country Coding Method* (a 1-byte code).                | Decodes as "No reference for 85".                                                                        | Tag 12 = `1` (ISO-3166 two-letter); country string in **tag 13**. Check tag 13's string encoding against misb.js `st0102.js`.              |
+| g   | **Tag 2 is not UTC.** (Same as 0.2.)                                                                                                                        | Shows a 1970 date.                                                                                       | See 0.2 / 2.1.                                                                                                                             |
+| h   | **`validate_klv.py` passes broken output.** It shares CamSim's checksum-range bug, accepts either algorithm, and doesn't check tag semantics.               | n/a                                                                                                      | Replace the Python validator with a Node check that uses misb.js.                                                                          |
 
 **Conformance test (CI gate):**
 
@@ -76,19 +79,45 @@ conformance suite when it moves.
 conformance test in CI, and a scripted CIGI host (heading sweep plus an attached child
 entity) renders correctly.
 
+### Milestone 0 results
+
+| ID  | Change | Regression tests (`CamSim.*`) |
+| --- | ------ | ----------------------------- |
+| 0.1 | `Geospatial/CigiFrames.h` converts CIGI heading/pitch/roll to Cesium East-South-Up; the camera, entities and first-person view use `SetEastSouthUpRotation`. Also fixed: dead-reckoned entities pitched nose-up *descended* (body Z sign), and the laser-designator overlay projected from the actor instead of the gimballed sensor. | `CigiFrames.Math`, `CigiFrames.HeadingNorthAwayFromOrigin` (real Cesium georeference: origin, 500 km away, lat 60, equator, southern hemisphere) |
+| 0.2 | `Metadata/UtcClock` anchors the monotonic clock to UTC once; Tag 2 uses it. | `UtcClock.*` |
+| 0.3 | All eight items (a–h) fixed. `klv_checksum` config key removed. Tags 21/23–25 are now omitted together when the boresight has no ground intersection (they carried stale/zero frame centres). `scripts/validate_klv.py` replaced by `scripts/klv_conformance/check.js`, which CI runs on exported packets (unit-tests job) and on the captured stream (`ci_validate.sh`). | `Phase26.*`, `KlvConformance.ExportPackets` + misb.js check |
+| 0.4 | Receiver carries attach state, parent id and coordinate-system flags (casting to the CCL classes a 3.3 session actually builds). Attached entities and an attached camera platform follow their parent every tick; entity-relative HAT/HOT, LOS segment (incl. Destination Entity ID) and LOS vector requests are resolved to geodetic first. | `CigiEntityRelative.Math`, `CigiEntityRelative.ReceiverCarriesFlags` (real CCL host packets over UDP) |
+| 0.5 | SOF echoes the full 32-bit host frame counter. | `CigiSender.SofEchoesFull32BitHostFrame` |
+| 0.6 | `FCigiHostClock` stamps each update with host time (IG Control timestamp when valid, arrival time otherwise); `FGroundSpeedEstimator` holds the estimate between updates. Speed moved to Tag 56. | `GroundSpeed.*` |
+| 0.7 | `FTerrainReadinessGate` holds capture until tilesets report ≥ 99% (re-arms on teleports > 5 km, 30 s timeout); `terrain_ready` in `/ready` and `camsim_health.json`; `terrain_gate:` config block. Also fixed: the heartbeat log reported tile progress ×100. | `TerrainReadinessGate.HoldsUntilLoaded` |
+| 0.8 | `rc_max_rate` = bitrate, 0.5 s VBV buffer, `nal-hrd=cbr` for libx264. Without it a single noise frame hit 81 KB against a 37 KB budget. | `VideoEncoder.VbvCapsBurstsOnNoise` |
+
+Every new test was checked to fail with its fix reverted. Full suite: 208 tests pass
+(macOS, UE 5.7).
+
+**Not yet verified end to end:** a live headless run. On the macOS dev box it needs the
+Xcode Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`); the Linux CI
+integration job covers it once 1.1 lands.
+
 ---
 
 ## Milestone 1: Engineering health
 
-| ID  | Item |
-| --- | ---- |
-| 1.1 | Remove `|| true` from the `integration-test` job (`.github/workflows/ci.yml:264`) so video/KLV validation can actually fail CI. |
+| ID  | Item                                                                                                                                                                                                                |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.1 | Remove `\|\| true` from the `integration-test` job (`.github/workflows/ci.yml:264`) so video/KLV validation can actually fail CI. |
 | 1.2 | Replace tautological tests (e.g. `Tests/Phase19OceanTest.cpp` "fields" tests that assert a value equals what was just assigned) with tests that go through `FCamSimConfig::Load()` using YAML and env-var fixtures. |
-| 1.3 | Warn on YAML keys that are never read, so typos stop silently falling back to defaults. (A cheap pass over ryml nodes; no reflection rewrite.) |
-| 1.4 | Split `ACamSimCamera` (~1,600 lines) into: **sensor rig** (pose + gimbal), **capture pipeline** (render targets, readback), **telemetry/KLV assembly**, and **Cesium streaming controller**. |
-| 1.5 | Sensor CPU path: reuse scratch buffers in blur, lens distortion, vibration, and Gaussian MTF (currently a full-frame allocation per effect per frame). Parallelize the AGC histogram build. |
-| 1.6 | Smaller fixes: keep the gimbal slewing toward its target between host packets; have a hot-reload parse failure skip only the reload block instead of returning out of `Tick()`. |
+| 1.3 | Warn on YAML keys that are never read, so typos stop silently falling back to defaults. (A cheap pass over ryml nodes; no reflection rewrite.)                                                                      |
+| 1.4 | Split `ACamSimCamera` (~1,600 lines) into: **sensor rig** (pose + gimbal), **capture pipeline** (render targets, readback), **telemetry/KLV assembly**, and **Cesium streaming controller**.                        |
+| 1.5 | Sensor CPU path: reuse scratch buffers in blur, lens distortion, vibration, and Gaussian MTF (currently a full-frame allocation per effect per frame). Parallelize the AGC histogram build.                         |
+| 1.6 | Smaller fixes: keep the gimbal slewing toward its target between host packets; have a hot-reload parse failure skip only the reload block instead of returning out of `Tick()`.                                     |
 | 1.7 | Branch hygiene: delete the six merged `refactor/camsim-phase-*` branches on origin. (Stale local branches, including the abandoned ocean branch, were removed on 2026-09-26.) |
+| 1.8 | LOS responses report `Valid = false` when the path is clear. In CIGI, Valid means the test could be performed; Visible carries the result. (`CIGI/CigiQueryHandler.cpp`) |
+| 1.9 | Extended HAT/HOT and LOS responses (intersection point, normal, `Response Coordinate System`) aren't implemented; extended requests get basic responses. |
+| 1.10 | The remaining CCL packet processors `static_cast` to `…V3` classes while a 3.3 session builds `…V3_2`/`…V3_3` siblings. It works only because all fields live in the shared base classes; cast to the class CCL actually creates (done for entity control, HAT/HOT and LOS in 0.4). |
+| 1.11 | KLV Tags 15/25 are defined as MSL but carry ellipsoid height (Cesium HAE). Convert with a geoid model (EGM96) and emit HAE in Tags 75/78. |
+| 1.12 | `camsim_health.json` field `dropped` actually reports encoder watchdog reconnects. (`cigi_rx`, which reported encoded frames, was fixed in 0.7.) |
+| 1.13 | An attached camera platform can lag its parent by one frame (actor tick order vs. the entity manager). Resolve both in one ordered pass. |
 
 ---
 
@@ -188,25 +217,25 @@ budget on the reference GPU. The pipeline benchmark is tracked in CI.
 Today IR is the luma of the EO image pushed through a curve. So hot/cold relationships
 follow visible albedo, night IR goes dark, and ATR models learn EO cues.
 
-| ID  | Item |
-| --- | ---- |
-| 4.1 | **Thermal material model:** a data asset keyed by physical material / class ID holding base temperature, emissivity, thermal inertia, and solar-loading response. |
-| 4.2 | **Terrain classification:** drape a land-cover raster (e.g. ESA WorldCover) as a Cesium raster overlay so terrain and photogrammetry get thermal classes. |
-| 4.3 | **Entity thermal state:** engine, exhaust, and skin temperatures driven by entity state (running, speed, damage) through the component/CIGI interface. |
+| ID  | Item                                                                                                                                                                                                             |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4.1 | **Thermal material model:** a data asset keyed by physical material / class ID holding base temperature, emissivity, thermal inertia, and solar-loading response.                                                |
+| 4.2 | **Terrain classification:** drape a land-cover raster (e.g. ESA WorldCover) as a Cesium raster overlay so terrain and photogrammetry get thermal classes.                                                        |
+| 4.3 | **Entity thermal state:** engine, exhaust, and skin temperatures driven by entity state (running, speed, damage) through the component/CIGI interface.                                                           |
 | 4.4 | **Thermal render pass:** compute in-band radiance (MWIR/LWIR) from temperature, emissivity, sky/solar terms, and path attenuation, independent of visible lighting. Feed it into the Milestone 3 detector model. |
-| 4.5 | **Class-ID stencil reuse:** the same stencil gives semantic and instance segmentation for ML ground truth. |
-| 4.6 | **Validation:** compare against reference imagery / published contrast data (e.g. NETD-limited scenes, diurnal crossover). |
+| 4.5 | **Class-ID stencil reuse:** the same stencil gives semantic and instance segmentation for ML ground truth.                                                                                                       |
+| 4.6 | **Validation:** compare against reference imagery / published contrast data (e.g. NETD-limited scenes, diurnal crossover).                                                                                       |
 
 ---
 
 ## Milestone 5: Drone-community interfaces
 
-| ID  | Item |
-| --- | ---- |
+| ID  | Item                                                                                                             |
+| --- | ---------------------------------------------------------------------------------------------------------------- |
 | 5.1 | **MAVLink adapter:** PX4/ArduPilot software-in-the-loop sims drive vehicle pose and gimbal (Gimbal Protocol v2). |
-| 5.2 | **RTSP/RTP output** alongside MPEG-TS multicast, for the autonomy/QGroundControl toolchain. |
-| 5.3 | **ROS 2 bridge** (images + camera info + TF) via the control API. |
-| 5.4 | **CIGI 4.0** adapter. |
+| 5.2 | **RTSP/RTP output** alongside MPEG-TS multicast, for the autonomy/QGroundControl toolchain.                      |
+| 5.3 | **ROS 2 bridge** (images + camera info + TF) via the control API.                                                |
+| 5.4 | **CIGI 4.0** adapter.                                                                                            |
 
 ---
 
