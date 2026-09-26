@@ -12,6 +12,7 @@
 #include "Sensor/SensorPostProcess.h"  // FSensorPostProcess concrete type
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Environment/CamSimEnvironment.h"
+#include "Metadata/UtcClock.h"
 
 #include "Encoder/IFrameSink.h"
 #include "GroundTruth/FGroundTruthCollector.h"
@@ -1452,8 +1453,7 @@ void ACamSimCamera::CaptureAndEncode()
 	SceneCapture->TextureTarget = CaptureRT;
 
 	// Snapshot telemetry immediately before capture so KLV timestamp is accurate
-	CurrentTelemetry.TimestampUs =
-		static_cast<uint64>(FPlatformTime::Seconds() * 1'000'000.0);
+	CurrentTelemetry.TimestampUs = FUtcClock::NowMicros();
 
 	SceneCapture->CaptureScene();
 	PendingReadbackTargetIndex = CaptureTargetIndex;

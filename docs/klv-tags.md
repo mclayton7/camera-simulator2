@@ -39,8 +39,10 @@ Tags are written in ascending numerical order as required by ST 0601.
 | Units | Microseconds since Unix epoch (UTC) |
 | Range | 0 .. 2^64-1 |
 
-**Source:** `ACamSimCamera::BuildTelemetry()` — `FDateTime::UtcNow()` converted to
-microseconds at the start of each `Tick()` before frame capture.
+**Source:** `FUtcClock::NowMicros()`, sampled in `ACamSimCamera::CaptureAndEncode()`
+immediately before the scene capture. The clock anchors the monotonic platform timer to
+UTC once at startup, so timestamps are real UTC but never jump if the system clock is
+adjusted mid-run.
 
 ---
 
@@ -429,7 +431,7 @@ CIGI Sensor Control (opcode 17)
         ├─> Tag 11  (sensor name string)
         └─> Tag 47  (flag bitmask)
 
-System clock (FDateTime::UtcNow)
+FUtcClock (UTC, monotonic)
   └─> Tag 2
 
 Static / derived
