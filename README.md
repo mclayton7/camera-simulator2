@@ -197,7 +197,7 @@ camsim/
   | `NS_Contrail` | Niagara System | `Width` (float), `Opacity` (float) |
   | `M_Crater` | Decal Material | Normal map input, burn ring albedo, opacity mask |
 
-  Asset paths are configurable via `phase18.niagara_*` and `phase18.crater_decal_material` in `camsim_config.yaml` — point them at existing content if you have preferred Niagara systems in another folder. The full editor-side checklist (including sun/sky actors, HUD widgets, and entity glTF paths) lives in [`TODO.md`](TODO.md).
+  Asset paths are configurable via `phase18.niagara_*` and `phase18.crater_decal_material` in `camsim_config.yaml` — point them at existing content if you have preferred Niagara systems in another folder.
 
 ## Links
 

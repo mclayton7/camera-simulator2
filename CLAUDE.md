@@ -13,7 +13,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 ## Notes
 
 - Keep `ROADMAP.md` up to date as milestones are implemented.
-- Document any editor changes that need to be made by a human in `TODO.md`. These may include new assets, textures, materials, etc.
+- Record editor changes that need to be made by a human (new assets, textures, materials, etc.) in `ROADMAP.md`.
 
 ## Commands
 
