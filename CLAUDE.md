@@ -19,7 +19,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 
 | Command                        | Description                                                   |
 | ------------------------------ | ------------------------------------------------------------- |
-| `scripts/repo_setup.sh`        | One-time: fetch Cesium + glTFRuntime plugins                  |
+| `scripts/repo_setup.sh`        | One-time: fetch glTFRuntime, install Cesium into the engine   |
 | `scripts/build_thirdparty.sh`  | Build CCL + FFmpeg static libs (cached in .build_tmp/)        |
 | `scripts/run.sh`               | Launch UE5 in game mode (supports --build, --headless, --log) |
 | `scripts/run.sh --build`       | Build + launch                                                |
@@ -115,7 +115,8 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Gotchas
 
-- **Targets must stay on `BuildSettingsVersion.V7`**: UE 5.8 refuses an editor target whose build settings differ from the installed engine's ("modifies the values of properties … not allowed"). V7 makes unreachable code an error for plugins too, so `repo_setup.sh` patches Cesium's `*.Build.cs` down to a warning and fixes a self-capture in `IonQuickAddPanel.cpp`. Re-run `repo_setup.sh` after replacing the Cesium plugin.
+- **Targets must stay on `BuildSettingsVersion.V7`**: UE 5.8 refuses an editor target whose build settings differ from the installed engine's ("modifies the values of properties … not allowed").
+- **Cesium lives in the engine, not the project**: `repo_setup.sh` installs it into `$UE_ROOT/Engine/Plugins/Marketplace/CesiumForUnreal` (auto-detected, or set `UE_ROOT`), where UBT uses the release zip's prebuilt binaries. Never put it back in `unreal_project/CamSimTest/Plugins/`: a project plugin overrides the engine one and gets rebuilt from source with the project's settings (~20 min), and Cesium 2.29.1 doesn't compile that way under Apple clang 21 (`IonQuickAddPanel.cpp` self-capture). Bump `CESIUM_VERSION` in `repo_setup.sh` to upgrade.
 - **ThirdParty must be built first**: Run `scripts/build_thirdparty.sh` before UE build — CCL + FFmpeg are static libs not checked in
 - **Cesium coord order**: `TransformLongitudeLatitudeHeightPositionToUnreal(FVector(Lon, Lat, Alt))` — Longitude first, not Latitude
 - **Never pass CIGI angles to `SetActorRotation`**: UE world axes are Cesium East-South-Up only at the georeference origin (+X = East, so heading 0 would face east). Use `GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::CigiToEastSouthUp(...))` from `Geospatial/CigiFrames.h`

@@ -109,10 +109,15 @@ integration job covers it once 1.1 lands.
 | FFmpeg n7.0 (libavcodec 61) | n8.1.3 (libavcodec 62). `FF_PROFILE_*` → `AV_PROFILE_*`. |
 
 - UE 5.8 requires editor targets on an installed engine to match its build settings, so the
-  targets must use V7, which makes unreachable code an error in plugins too. `repo_setup.sh` now
-  downgrades that to a warning in Cesium's `*.Build.cs`, and fixes a lambda in
-  `IonQuickAddPanel.cpp` that captures a variable inside its own initializer (Apple clang 21
-  rejects it). It also replaces a Cesium install at the wrong version and fast-forwards glTFRuntime.
+  targets must use V7.
+- Cesium for Unreal is now installed into the engine (`$UE_ROOT/Engine/Plugins/Marketplace`) instead
+  of the project's `Plugins/`, so UBT uses the release zip's prebuilt binaries. As a project plugin
+  it was rebuilt from source (~20 min), which needed `repo_setup.sh` to patch Cesium: 2.29.1's
+  `IonQuickAddPanel.cpp` captures a variable inside its own initializer, which Apple clang 21
+  rejects. With the engine install, `repo_setup.sh` patches nothing. (Of the old patches, the
+  `CesiumCartographicPolygon.cpp` include was already upstream, and on macOS V7 only warns about
+  Cesium's unreachable code.) `repo_setup.sh` also replaces a Cesium install at the wrong version
+  and fast-forwards glTFRuntime.
 - V7's `-Wunreachable-code-loop-increment` found a real bug: a designer-placed `ACamSimCamera`
   made `ACamSimGameMode::BeginPlay` return before spawning `ACamSimEnvironment`.
 - `encoder: videotoolbox` (macOS hardware H.264/HEVC). It is opt-in: on pure noise it overshoots
@@ -127,6 +132,9 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
 **Human follow-ups:**
 - The Linux CI runner (`/opt/UE`) needs UE 5.8 installed, then `scripts/repo_setup.sh` and
   `scripts/build_thirdparty.sh` (FFmpeg 8 + fresh Linux libs) re-run before the UE5 jobs go green.
+  `repo_setup.sh` writes Cesium into `/opt/UE/Engine/Plugins/Marketplace`, so run it as a user who
+  can write there (or with sudo). Not yet verified on Linux: that packaging (`BuildCookRun`) uses
+  the prebuilt `UnrealGame` libs and doesn't rebuild Cesium.
 - Open `CamSimTest` once in the 5.8 editor and resave the maps, so assets stop loading through
   the 5.7 upgrade path.
 - VideoToolbox adds about 10 frames (~330 ms at 30 fps) of pipeline latency. FFmpeg exposes no

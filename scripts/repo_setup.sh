@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # repo_setup.sh
 #
-# One-time setup: clone/download third-party plugins (glTFRuntime and
-# Cesium for Unreal) into the UE project's Plugins directory.
+# One-time setup: clone glTFRuntime into the UE project's Plugins directory
+# and install Cesium for Unreal into the engine's Plugins/Marketplace.
 #
 # Run this once after cloning the repository, before opening the project.
 #
 # Usage:
 #   ./scripts/repo_setup.sh
+#   UE_ROOT=/path/to/UE_5.8 ./scripts/repo_setup.sh   # pick the engine explicitly
 
 set -euo pipefail
 
@@ -37,69 +38,78 @@ else
         "${PLUGIN_DIR}/glTFRuntime"
 fi
 
-# Download and extract the Cesium for Unreal plugin. An existing install at a
-# different version (e.g. left over from an engine upgrade) is moved aside to
-# .build_tmp/ and replaced.
-CESIUM_UPLUGIN="${PLUGIN_DIR}/CesiumForUnreal/CesiumForUnreal.uplugin"
-INSTALLED_CESIUM=""
-if [ -f "${CESIUM_UPLUGIN}" ]; then
-    INSTALLED_CESIUM="$(sed -n 's/.*"VersionName": *"\([^"]*\)".*/\1/p' "${CESIUM_UPLUGIN}")"
+# Cesium for Unreal goes into the engine's Plugins/Marketplace directory, as
+# the release zip intends. UBT then uses the zip's prebuilt binaries. A copy in
+# the project's Plugins/ is rebuilt from source with the project's settings
+# (~20 min), and 2.29.1 does not compile that way under Apple clang 21.
+#
+# Set UE_ROOT to pick the engine explicitly (the directory containing Engine/).
+UE_ROOT="${UE_ROOT:-}"
+if [ -z "${UE_ROOT}" ]; then
+    for CANDIDATE in \
+        "/Users/Shared/Epic Games/UE_5.8" \
+        "/opt/UE" \
+        "/opt/Epic/UE_5.8" \
+        "/opt/UnrealEngine" \
+        "${HOME}/UnrealEngine" \
+        "${HOME}/.local/share/UnrealEngine"; do
+        [ -f "${CANDIDATE}/Engine/Build/Build.version" ] && { UE_ROOT="${CANDIDATE}"; break; }
+    done
 fi
+if [ -z "${UE_ROOT}" ] || [ ! -f "${UE_ROOT}/Engine/Build/Build.version" ]; then
+    echo "[ERROR] UE 5.8 engine not found. Set UE_ROOT to the directory containing Engine/." >&2
+    exit 1
+fi
+ENGINE_VERSION="$(sed -n 's/.*"MajorVersion": *\([0-9]*\).*/\1/p' "${UE_ROOT}/Engine/Build/Build.version")$(sed -n 's/.*"MinorVersion": *\([0-9]*\).*/\1/p' "${UE_ROOT}/Engine/Build/Build.version")"
+if [ "${ENGINE_VERSION}" != "${CESIUM_UE}" ]; then
+    echo "[ERROR] ${UE_ROOT} is UE ${ENGINE_VERSION}, but Cesium ${CESIUM_VERSION} is set up for UE ${CESIUM_UE}." >&2
+    exit 1
+fi
+
+MARKETPLACE_DIR="${UE_ROOT}/Engine/Plugins/Marketplace"
+CESIUM_DIR="${MARKETPLACE_DIR}/CesiumForUnreal"
+BACKUP_DIR="$(dirname "${CESIUM_ZIP}")"
+
+cesium_version() {
+    [ -f "$1/CesiumForUnreal.uplugin" ] \
+        && sed -n 's/.*"VersionName": *"\([^"]*\)".*/\1/p' "$1/CesiumForUnreal.uplugin"
+    return 0
+}
+
+# A project-local copy would override the engine one, so move it aside.
+if [ -d "${PLUGIN_DIR}/CesiumForUnreal" ]; then
+    OLD_VERSION="$(cesium_version "${PLUGIN_DIR}/CesiumForUnreal")"
+    OLD_CESIUM="${BACKUP_DIR}/CesiumForUnreal-project-v${OLD_VERSION:-unknown}.bak"
+    echo "==> Moving project-local CesiumForUnreal ${OLD_VERSION:-unknown} to ${OLD_CESIUM}"
+    rm -rf "${OLD_CESIUM}"
+    mv "${PLUGIN_DIR}/CesiumForUnreal" "${OLD_CESIUM}"
+fi
+
+INSTALLED_CESIUM="$(cesium_version "${CESIUM_DIR}")"
 if [ "${INSTALLED_CESIUM}" = "${CESIUM_VERSION}" ]; then
-    echo "==> CesiumForUnreal ${CESIUM_VERSION} already present, skipping download."
+    echo "==> CesiumForUnreal ${CESIUM_VERSION} already installed in ${MARKETPLACE_DIR}, skipping download."
 else
-    if [ -d "${PLUGIN_DIR}/CesiumForUnreal" ]; then
-        OLD_CESIUM="$(dirname "${CESIUM_ZIP}")/CesiumForUnreal-v${INSTALLED_CESIUM:-unknown}.bak"
+    if ! mkdir -p "${MARKETPLACE_DIR}" 2>/dev/null || [ ! -w "${MARKETPLACE_DIR}" ]; then
+        echo "[ERROR] ${MARKETPLACE_DIR} is not writable." >&2
+        echo "        Make it writable by this user, or re-run this script with sudo." >&2
+        exit 1
+    fi
+    if [ -d "${CESIUM_DIR}" ]; then
+        OLD_CESIUM="${BACKUP_DIR}/CesiumForUnreal-v${INSTALLED_CESIUM:-unknown}.bak"
         echo "==> Replacing CesiumForUnreal ${INSTALLED_CESIUM:-unknown} (moved to ${OLD_CESIUM})"
         rm -rf "${OLD_CESIUM}"
-        mv "${PLUGIN_DIR}/CesiumForUnreal" "${OLD_CESIUM}"
+        mv "${CESIUM_DIR}" "${OLD_CESIUM}"
     fi
     echo "==> Downloading Cesium for Unreal ${CESIUM_VERSION} (UE ${CESIUM_UE})..."
     curl -fSL "${CESIUM_REPO}" -o "${CESIUM_ZIP}"
-    echo "==> Extracting..."
-    unzip -q "${CESIUM_ZIP}" -d "${PLUGIN_DIR}"
-    rm "${CESIUM_ZIP}"
+    echo "==> Extracting to ${MARKETPLACE_DIR}..."
+    # Extract beside the target and move into place, so an interrupted unzip
+    # never leaves a half-installed plugin that the version check accepts.
+    EXTRACT_DIR="$(mktemp -d "${MARKETPLACE_DIR}/.cesium-extract.XXXXXX")"
+    unzip -q "${CESIUM_ZIP}" -d "${EXTRACT_DIR}"
+    mv "${EXTRACT_DIR}/CesiumForUnreal" "${CESIUM_DIR}"
+    rm -rf "${EXTRACT_DIR}" "${CESIUM_ZIP}"
 fi
-
-# Patch: CesiumCartographicPolygon.cpp uses ACesiumGeoreference methods but
-# never includes CesiumGeoreference.h — only gets a forward declaration via
-# CesiumGlobeAnchorComponent.h, causing an incomplete-type error on Linux.
-POLYGON_CPP="${PLUGIN_DIR}/CesiumForUnreal/Source/CesiumRuntime/Private/CesiumCartographicPolygon.cpp"
-if [ -f "${POLYGON_CPP}" ] && ! grep -q '"CesiumGeoreference.h"' "${POLYGON_CPP}"; then
-    # Use a portable sed command (no -i '' vs -i difference needed here because
-    # we write via a temp file)
-    TMP_CPP="$(mktemp)"
-    sed 's|#include "CesiumActors.h"|#include "CesiumActors.h"\n#include "CesiumGeoreference.h"|' \
-        "${POLYGON_CPP}" > "${TMP_CPP}"
-    mv "${TMP_CPP}" "${POLYGON_CPP}"
-    echo "==> Patched CesiumCartographicPolygon.cpp: added #include \"CesiumGeoreference.h\""
-fi
-
-# Patch: IonQuickAddPanel.cpp (Cesium 2.29.1) captures AssetDepotConfirmWindow
-# by reference inside its own initializer, which Apple clang 21 rejects
-# (-Werror,-Wuninitialized). Declare the pointer first, then assign it; the
-# modal window blocks until closed, so the by-reference capture stays valid.
-QUICKADD_CPP="${PLUGIN_DIR}/CesiumForUnreal/Source/CesiumEditor/Private/IonQuickAddPanel.cpp"
-if [ -f "${QUICKADD_CPP}" ] && grep -q 'TSharedRef<SWindow> AssetDepotConfirmWindow =' "${QUICKADD_CPP}"; then
-    perl -0pi -e '
-        s/TSharedRef<SWindow> AssetDepotConfirmWindow =(\r?\n)/TSharedPtr<SWindow> AssetDepotConfirmWindow;$1  AssetDepotConfirmWindow =$1/;
-        s/EditorAddModalWindow\(AssetDepotConfirmWindow\)/EditorAddModalWindow(AssetDepotConfirmWindow.ToSharedRef())/;
-    ' "${QUICKADD_CPP}"
-    echo "==> Patched IonQuickAddPanel.cpp: AssetDepotConfirmWindow self-capture"
-fi
-
-# Patch: UE 5.8 editor targets on an installed engine must use
-# BuildSettingsVersion.V7, which makes unreachable code an error for every
-# module, plugins included. Cesium 2.29.1 has unreachable code (e.g.
-# CesiumGaussianSplatSubsystem.cpp), so downgrade it to a warning in Cesium's
-# own module rules.
-for CESIUM_BUILD_CS in "${PLUGIN_DIR}"/CesiumForUnreal/Source/Cesium{Runtime,Editor}/*.Build.cs; do
-    if [ -f "${CESIUM_BUILD_CS}" ] && ! grep -q 'UnreachableCodeWarningLevel' "${CESIUM_BUILD_CS}"; then
-        perl -0pi -e 's/(: base\(Target\)\r?\n\s*\{(\r?\n))/$1        CppCompileWarningSettings.UnreachableCodeWarningLevel = WarningLevel.Warning;$2/' \
-            "${CESIUM_BUILD_CS}"
-        echo "==> Patched $(basename "${CESIUM_BUILD_CS}"): unreachable code is a warning"
-    fi
-done
 
 echo ""
 echo "==> Plugin setup complete."

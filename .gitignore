@@ -22,9 +22,6 @@ __pycache__/
 *.app/
 .venv/
 
-unreal_project/CamSimTest/Plugins/CesiumForUnreal/Binaries/
-unreal_project/CamSimTest/Plugins/CesiumForUnreal/Intermediate/
-
 # Runtime copy of the config — generated from deploy/camsim_config.yaml by run.sh
 unreal_project/CamSimTest/camsim_config.yaml
 

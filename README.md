@@ -62,6 +62,7 @@ CIGI 3.3 UDP ──► FCigiReceiver ──► UE5 Game Thread ──► SceneCa
 
 ```bash
 # One-time: install Homebrew dependencies and fetch plugins
+# (installs Cesium for Unreal into the engine's Plugins/Marketplace)
 ./scripts/repo_setup.sh
 brew install cmake ninja nasm git pkg-config
 
@@ -81,13 +82,15 @@ uv run scripts/send_cigi_test.py --lat 37.6213 --lon -122.379 --alt 1000 --pitch
 ### Linux (native development)
 
 ```bash
-# One-time: install build tools and fetch plugins
+# One-time: install build tools and fetch plugins. repo_setup.sh installs
+# Cesium for Unreal into $UE_ROOT/Engine/Plugins/Marketplace, which must be
+# writable (or run it with sudo).
 sudo apt-get install -y cmake ninja-build nasm git build-essential
+export UE_ROOT=/path/to/UE_5.8
 ./scripts/repo_setup.sh
 
 # Build third-party libraries (CCL + FFmpeg with libx264)
-# Set UE_ROOT if you want to use UE's bundled clang toolchain
-export UE_ROOT=/path/to/UE_5.8
+# UE_ROOT also selects UE's bundled clang toolchain
 ./scripts/build_thirdparty.sh
 
 # Run the UE5 editor build in game mode (headless + unicast for dev)
@@ -154,7 +157,7 @@ camsim/
 │   └── camsim_config.yaml          Canonical runtime configuration (source of truth)
 ├── docs/                           Documentation
 ├── scripts/                        Development and test utilities
-│   ├── repo_setup.sh               One-time: fetch glTFRuntime + Cesium plugins
+│   ├── repo_setup.sh               One-time: fetch glTFRuntime, install Cesium into the engine
 │   ├── build_thirdparty.sh         Build CCL + FFmpeg (macOS and Linux)
 │   ├── run.sh                      Launch UE5 in game mode (macOS and Linux)
 │   ├── send_cigi_test.py           CIGI camera/environment test sender
