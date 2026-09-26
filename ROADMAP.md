@@ -179,7 +179,7 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
 | 1.7 | Branch hygiene: delete the six merged `refactor/camsim-phase-*` branches on origin. (Stale local branches, including the abandoned ocean branch, were removed on 2026-09-26.) |
 | 1.8 | ~~LOS responses report `Valid = false` when the path is clear.~~ **Not a bug.** CIGI 3.3 §4.2.4 defines Valid as "whether the Range parameter is valid. The range will be invalid if no intersection occurs", so a clear segment is correctly `Valid = 0, Visible = 1`. Real follow-up: a segment whose destination lies on the terrain surface can hit the surface at the destination itself and report Occluded; consider treating a hit within a small tolerance of the destination as Visible. |
 | 1.9 | Extended HAT/HOT and LOS responses (intersection point, normal, `Response Coordinate System`) aren't implemented; extended requests get basic responses. |
-| 1.10 | The remaining CCL packet processors `static_cast` to `…V3` classes while a 3.3 session builds `…V3_2`/`…V3_3` siblings. It works only because all fields live in the shared base classes; cast to the class CCL actually creates (done for entity control, HAT/HOT and LOS in 0.4). |
+| 1.10 | ~~CCL packet processors `static_cast` to the wrong versioned class.~~ **Done 2026-09-26.** CCL builds a different class per host minor version (e.g. `CigiRateCtrlV3` for 3.0/3.1, `…V3_2` for 3.2+) and stamps the packet with it, and the accessors live on those classes rather than the `CigiBase*` class. `VisitVersioned` in `CigiReceiver.cpp` now casts to the class CCL actually built for Entity, Rate, Component, IG Control, HAT/HOT and both LOS requests (0.4's fixed V3_x casts were wrong for 3.0 hosts). This also found that **Rate Control's Coordinate System was ignored**: rates were always integrated as body-frame, but World/Parent (the 3.2+ default) means North/East/Down and heading/pitch/roll rates. `CamSimFrames::IntegrateRates` handles both, and dead reckoning now uses the WGS-84 radii instead of a flat 111,320 m/°. Tests: `CigiFrames.RateControlFrames`, `CigiEntityRelative.ReceiverCarriesFlags` (Entity ID + Rate Control coordinate system from a CCL 3.3 host). |
 | 1.11 | KLV Tags 15/25 are defined as MSL but carry ellipsoid height (Cesium HAE). Convert with a geoid model (EGM96) and emit HAE in Tags 75/78. |
 | 1.12 | `camsim_health.json` field `dropped` actually reports encoder watchdog reconnects. (`cigi_rx`, which reported encoded frames, was fixed in 0.7.) |
 | 1.13 | An attached camera platform can lag its parent by one frame (actor tick order vs. the entity manager). Resolve both in one ordered pass. |
@@ -208,8 +208,14 @@ It replaces two stopgaps from Milestone 0: `FUtcClock` (KLV Tag 2, wall-clock UT
 
 Started in Milestone 0: `Geospatial/CigiFrames.h` covers CIGI heading/pitch/roll, local
 North-East-Up, Cesium East-South-Up and entity-relative (body-frame) offsets, with tests.
-Remaining: DIS ECEF orientation, and moving the DIS adapter and ad-hoc flat-earth maths
-(e.g. `ComputeGeometricLOS` fallback, LOS vector end point, dead-reckoning position) onto it.
+Remaining: DIS ECEF orientation and velocity, and moving the DIS adapter and ad-hoc flat-earth
+maths (e.g. `ComputeGeometricLOS` fallback, LOS vector end point) onto it. (Dead-reckoning
+position moved onto it in 1.10.)
+
+DIS is wrong in two ways today: `DisEntityAdapter` passes the Entity State PDU's psi/theta/phi
+(Euler angles relative to ECEF) straight through as local heading/pitch/roll, and it treats the
+Entity Linear Velocity (world ECEF for dead-reckoning algorithms 2–5) as body-frame. Both need
+ECEF → local NED at the entity's position.
 
 All conversions live in `Geospatial/` with round-trip unit tests:
 

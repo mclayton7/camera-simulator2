@@ -138,7 +138,9 @@ void FDisEntityAdapter::ProcessPdu(const FDisEntityStatePdu& Pdu)
 		Rate.ArtPartId       = 0;
 		Rate.bApplyToArtPart = false;
 
-		// DIS linear velocity is in entity body frame (m/s)
+		// Treated as body frame (m/s). IEEE 1278.1 actually gives FPW/FPB
+		// velocity in world (ECEF) coordinates; see ROADMAP 2.2.
+		Rate.bLocalFrame = true;
 		Rate.XRate = Pdu.DeadReckoning.VelX;
 		Rate.YRate = Pdu.DeadReckoning.VelY;
 		Rate.ZRate = Pdu.DeadReckoning.VelZ;

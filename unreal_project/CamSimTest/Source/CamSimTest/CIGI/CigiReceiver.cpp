@@ -18,14 +18,21 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiEntityCtrlV3_3.h"
 #include "cigicl/CigiViewDefV3.h"
 #include "cigicl/CigiRateCtrlV3.h"      // opcode 8
+#include "cigicl/CigiRateCtrlV3_2.h"
 #include "cigicl/CigiArtPartCtrlV3.h"   // opcode 6
 #include "cigicl/CigiCompCtrlV3.h"      // opcode 4
+#include "cigicl/CigiCompCtrlV3_3.h"
 #include "cigicl/CigiSensorCtrlV3.h"    // opcode 17
 #include "cigicl/CigiViewCtrlV3.h"      // opcode 16
-#include "cigicl/CigiHatHotReqV3_2.h"   // opcode 24 (class CCL builds for 3.2/3.3)
-#include "cigicl/CigiLosSegReqV3_2.h"   // opcode 25
-#include "cigicl/CigiLosVectReqV3_2.h"  // opcode 26
+#include "cigicl/CigiHatHotReqV3.h"     // opcode 24
+#include "cigicl/CigiHatHotReqV3_2.h"
+#include "cigicl/CigiLosSegReqV3.h"     // opcode 25
+#include "cigicl/CigiLosSegReqV3_2.h"
+#include "cigicl/CigiLosVectReqV3.h"    // opcode 26
+#include "cigicl/CigiLosVectReqV3_2.h"
 #include "cigicl/CigiIGCtrlV3.h"       // opcode 1 (IG Control — host frame counter)
+#include "cigicl/CigiIGCtrlV3_2.h"
+#include "cigicl/CigiIGCtrlV3_3.h"
 #include "cigicl/CigiWaveCtrlV3.h"     // opcode 14 (Wave Control — ocean waves)
 #include "cigicl/CigiConfClampEntityCtrlV3.h" // opcode 3  (Conformal Clamped Entity)
 #include "cigicl/CigiCollDetSegDefV3.h"       // opcode 7  (Collision Detection Segment Def)
@@ -43,6 +50,27 @@ THIRD_PARTY_INCLUDES_END
 // CCL event processor subclasses (defined here; friended by FCigiReceiver)
 // -------------------------------------------------------------------------
 
+// CCL builds a different class for the same opcode depending on the host's CIGI
+// minor version (e.g. CigiRateCtrlV3 for 3.0/3.1, CigiRateCtrlV3_2 for 3.2+) and
+// stamps the packet with that minor version. The accessors live on those
+// classes, not the CigiBase* class, so visit the packet as the class CCL built.
+// (UE builds without RTTI, so dynamic_cast is not an option.)
+template <typename TV3, typename TV3x, typename FVisitor>
+static void VisitVersioned(CigiBasePacket* Packet, int V3xMinorVersion, FVisitor&& Visit)
+{
+	if (Packet->GetMinorVersion() >= V3xMinorVersion)
+	{
+		Visit(*static_cast<TV3x*>(Packet));
+	}
+	else
+	{
+		Visit(*static_cast<TV3*>(Packet));
+	}
+}
+
+template <typename TPacket, typename TClass>
+inline constexpr bool IsPacketClass = std::is_same_v<std::decay_t<TPacket>, TClass>;
+
 class FEntityCtrlProcessor : public CigiBaseEventProcessor
 {
 	FCigiReceiver* Receiver;
@@ -51,22 +79,23 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		// CCL builds CigiEntityCtrlV3_3 for a 3.3 session; all fields live in the base.
-		auto* Pkt = static_cast<CigiEntityCtrlV3_3*>(Packet);
-		if (!Receiver || !Pkt) return;
+		if (!Receiver || !Packet) return;
 
 		FCigiEntityState State;
-		State.EntityId    = static_cast<uint16>(Pkt->GetEntityID());
-		State.bAttached   = (Pkt->GetAttachState() == CigiBaseEntityCtrl::Attach);
-		State.ParentId    = static_cast<uint16>(Pkt->GetParentID());
-		State.EntityState = static_cast<uint8>(Pkt->GetEntityState());
-		State.EntityType  = static_cast<uint16>(Pkt->GetEntityType());
-		State.Latitude    = Pkt->GetLat();
-		State.Longitude   = Pkt->GetLon();
-		State.Altitude    = static_cast<float>(Pkt->GetAlt());
-		State.Yaw         = static_cast<float>(Pkt->GetYaw());
-		State.Pitch       = static_cast<float>(Pkt->GetPitch());
-		State.Roll        = static_cast<float>(Pkt->GetRoll());
+		VisitVersioned<CigiEntityCtrlV3, CigiEntityCtrlV3_3>(Packet, 3, [&](auto& Pkt)
+		{
+			State.EntityId    = static_cast<uint16>(Pkt.GetEntityID());
+			State.bAttached   = (Pkt.GetAttachState() == CigiBaseEntityCtrl::Attach);
+			State.ParentId    = static_cast<uint16>(Pkt.GetParentID());
+			State.EntityState = static_cast<uint8>(Pkt.GetEntityState());
+			State.EntityType  = static_cast<uint16>(Pkt.GetEntityType());
+			State.Latitude    = Pkt.GetLat();
+			State.Longitude   = Pkt.GetLon();
+			State.Altitude    = static_cast<float>(Pkt.GetAlt());
+			State.Yaw         = static_cast<float>(Pkt.GetYaw());
+			State.Pitch       = static_cast<float>(Pkt.GetPitch());
+			State.Roll        = static_cast<float>(Pkt.GetRoll());
+		});
 		State.HostTimeSec = Receiver->HostClock.Now();
 		// CIGI V3 EntityCtrl has no Kind/Domain/Category fields; leave at defaults (0).
 
@@ -115,19 +144,26 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiRateCtrlV3*>(Packet);
-		if (!Receiver || !Pkt) return;
+		if (!Receiver || !Packet) return;
 
 		FCigiRateControl Rate;
-		Rate.EntityId        = static_cast<uint16>(Pkt->GetEntityID());
-		Rate.ArtPartId       = static_cast<uint8>(Pkt->GetArtPartID());
-		Rate.bApplyToArtPart = Pkt->GetApplyToArtPart();
-		Rate.XRate           = static_cast<float>(Pkt->GetXRate());
-		Rate.YRate           = static_cast<float>(Pkt->GetYRate());
-		Rate.ZRate           = static_cast<float>(Pkt->GetZRate());
-		Rate.RollRate        = static_cast<float>(Pkt->GetRollRate());
-		Rate.PitchRate       = static_cast<float>(Pkt->GetPitchRate());
-		Rate.YawRate         = static_cast<float>(Pkt->GetYawRate());
+		VisitVersioned<CigiRateCtrlV3, CigiRateCtrlV3_2>(Packet, 2, [&Rate](auto& Pkt)
+		{
+			Rate.EntityId        = static_cast<uint16>(Pkt.GetEntityID());
+			Rate.ArtPartId       = static_cast<uint8>(Pkt.GetArtPartID());
+			Rate.bApplyToArtPart = Pkt.GetApplyToArtPart();
+			Rate.XRate           = static_cast<float>(Pkt.GetXRate());
+			Rate.YRate           = static_cast<float>(Pkt.GetYRate());
+			Rate.ZRate           = static_cast<float>(Pkt.GetZRate());
+			Rate.RollRate        = static_cast<float>(Pkt.GetRollRate());
+			Rate.PitchRate       = static_cast<float>(Pkt.GetPitchRate());
+			Rate.YawRate         = static_cast<float>(Pkt.GetYawRate());
+			// CIGI 3.0/3.1 has no Coordinate System field: rates are body-frame.
+			if constexpr (IsPacketClass<decltype(Pkt), CigiRateCtrlV3_2>)
+			{
+				Rate.bLocalFrame = (Pkt.GetCoordSys() == CigiBaseRateCtrl::Local);
+			}
+		});
 
 		Receiver->RateCtrlQueue.Enqueue(Rate);
 	}
@@ -181,14 +217,16 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiCompCtrlV3*>(Packet);
-		if (!Receiver || !Pkt) return;
+		if (!Receiver || !Packet) return;
 
 		FCigiComponentControl Comp;
-		Comp.EntityId  = static_cast<uint16>(Pkt->GetInstanceID());  // CCL uses InstanceID
-		Comp.CompId    = static_cast<uint16>(Pkt->GetCompID());
-		Comp.CompClass = static_cast<uint8>(Pkt->GetCompClassV3());
-		Comp.CompState = static_cast<uint8>(Pkt->GetCompState());
+		VisitVersioned<CigiCompCtrlV3, CigiCompCtrlV3_3>(Packet, 3, [&Comp](auto& Pkt)
+		{
+			Comp.EntityId  = static_cast<uint16>(Pkt.GetInstanceID());  // CCL uses InstanceID
+			Comp.CompId    = static_cast<uint16>(Pkt.GetCompID());
+			Comp.CompClass = static_cast<uint8>(Pkt.GetCompClassV3());
+			Comp.CompState = static_cast<uint8>(Pkt.GetCompState());
+		});
 
 		Receiver->CompCtrlQueue.Enqueue(Comp);
 	}
@@ -257,17 +295,19 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiHatHotReqV3_2*>(Packet);
-		if (!Receiver || !Pkt) return;
+		if (!Receiver || !Packet) return;
 
 		FCigiHatHotRequest Req;
-		Req.HatHotId     = static_cast<uint16>(Pkt->GetHatHotID());
-		Req.ReqType      = static_cast<uint8>(Pkt->GetReqType());
-		Req.EntityId     = static_cast<uint16>(Pkt->GetEntityID());
-		Req.bEntityRelative = (Pkt->GetSrcCoordSys() == CigiBaseHatHotReq::Entity);
-		Req.Lat          = Pkt->GetLat();
-		Req.Lon          = Pkt->GetLon();
-		Req.Alt          = Pkt->GetAlt();
+		VisitVersioned<CigiHatHotReqV3, CigiHatHotReqV3_2>(Packet, 2, [&Req](auto& Pkt)
+		{
+			Req.HatHotId     = static_cast<uint16>(Pkt.GetHatHotID());
+			Req.ReqType      = static_cast<uint8>(Pkt.GetReqType());
+			Req.EntityId     = static_cast<uint16>(Pkt.GetEntityID());
+			Req.bEntityRelative = (Pkt.GetSrcCoordSys() == CigiBaseHatHotReq::Entity);
+			Req.Lat          = Pkt.GetLat();
+			Req.Lon          = Pkt.GetLon();
+			Req.Alt          = Pkt.GetAlt();
+		});
 
 		Receiver->HatHotReqQueue.Enqueue(Req);
 	}
@@ -281,23 +321,29 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiLosSegReqV3_2*>(Packet);
-		if (!Receiver || !Pkt) return;
+		if (!Receiver || !Packet) return;
 
 		FCigiLosSegRequest Req;
-		Req.LosId    = static_cast<uint16>(Pkt->GetLosID());
-		Req.ReqType  = static_cast<uint8>(Pkt->GetReqType());
-		Req.EntityId = static_cast<uint16>(Pkt->GetEntityID());
-		Req.bSrcEntityRelative = (Pkt->GetSrcCoordSys() == CigiBaseLosSegReq::Entity);
-		Req.bDstEntityRelative = (Pkt->GetDstCoordSys() == CigiBaseLosSegReq::Entity);
-		Req.bDestEntityIDValid = Pkt->GetDestEntityIDValid();
-		Req.DestEntityId       = static_cast<uint16>(Pkt->GetDestEntityID());
-		Req.SrcLat   = Pkt->GetSrcLat();
-		Req.SrcLon   = Pkt->GetSrcLon();
-		Req.SrcAlt   = Pkt->GetSrcAlt();
-		Req.DstLat   = Pkt->GetDstLat();
-		Req.DstLon   = Pkt->GetDstLon();
-		Req.DstAlt   = Pkt->GetDstAlt();
+		VisitVersioned<CigiLosSegReqV3, CigiLosSegReqV3_2>(Packet, 2, [&Req](auto& Pkt)
+		{
+			Req.LosId    = static_cast<uint16>(Pkt.GetLosID());
+			Req.ReqType  = static_cast<uint8>(Pkt.GetReqType());
+			Req.EntityId = static_cast<uint16>(Pkt.GetEntityID());
+			Req.bSrcEntityRelative = (Pkt.GetSrcCoordSys() == CigiBaseLosSegReq::Entity);
+			Req.bDstEntityRelative = (Pkt.GetDstCoordSys() == CigiBaseLosSegReq::Entity);
+			Req.SrcLat   = Pkt.GetSrcLat();
+			Req.SrcLon   = Pkt.GetSrcLon();
+			Req.SrcAlt   = Pkt.GetSrcAlt();
+			Req.DstLat   = Pkt.GetDstLat();
+			Req.DstLon   = Pkt.GetDstLon();
+			Req.DstAlt   = Pkt.GetDstAlt();
+			// Destination Entity ID was added in CIGI 3.2.
+			if constexpr (IsPacketClass<decltype(Pkt), CigiLosSegReqV3_2>)
+			{
+				Req.bDestEntityIDValid = Pkt.GetDestEntityIDValid();
+				Req.DestEntityId       = static_cast<uint16>(Pkt.GetDestEntityID());
+			}
+		});
 
 		Receiver->LosSegReqQueue.Enqueue(Req);
 	}
@@ -311,21 +357,23 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiLosVectReqV3_2*>(Packet);
-		if (!Receiver || !Pkt) return;
+		if (!Receiver || !Packet) return;
 
 		FCigiLosVectRequest Req;
-		Req.LosId        = static_cast<uint16>(Pkt->GetLosID());
-		Req.ReqType      = static_cast<uint8>(Pkt->GetReqType());
-		Req.EntityId     = static_cast<uint16>(Pkt->GetEntityID());
-		Req.bEntityRelative = (Pkt->GetSrcCoordSys() == CigiBaseLosVectReq::Entity);
-		Req.VectAz       = Pkt->GetVectAz();
-		Req.VectEl       = Pkt->GetVectEl();
-		Req.MinRange     = Pkt->GetMinRange();
-		Req.MaxRange     = Pkt->GetMaxRange();
-		Req.SrcLat       = Pkt->GetSrcLat();
-		Req.SrcLon       = Pkt->GetSrcLon();
-		Req.SrcAlt       = Pkt->GetSrcAlt();
+		VisitVersioned<CigiLosVectReqV3, CigiLosVectReqV3_2>(Packet, 2, [&Req](auto& Pkt)
+		{
+			Req.LosId        = static_cast<uint16>(Pkt.GetLosID());
+			Req.ReqType      = static_cast<uint8>(Pkt.GetReqType());
+			Req.EntityId     = static_cast<uint16>(Pkt.GetEntityID());
+			Req.bEntityRelative = (Pkt.GetSrcCoordSys() == CigiBaseLosVectReq::Entity);
+			Req.VectAz       = Pkt.GetVectAz();
+			Req.VectEl       = Pkt.GetVectEl();
+			Req.MinRange     = Pkt.GetMinRange();
+			Req.MaxRange     = Pkt.GetMaxRange();
+			Req.SrcLat       = Pkt.GetSrcLat();
+			Req.SrcLon       = Pkt.GetSrcLon();
+			Req.SrcAlt       = Pkt.GetSrcAlt();
+		});
 
 		Receiver->LosVectReqQueue.Enqueue(Req);
 	}
@@ -339,13 +387,22 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiIGCtrlV3*>(Packet);
-		if (!Receiver || !Pkt) return;
+		if (!Receiver || !Packet) return;
 
-		Receiver->LastHostFrameCntr.Store(
-			static_cast<uint32>(Pkt->GetFrameCntr()));
-		Receiver->HostClock.OnIgControl(Pkt->GetTimeStampValid(),
-			static_cast<uint32>(Pkt->GetTimeStamp()));
+		auto Apply = [this](auto& Pkt)
+		{
+			Receiver->LastHostFrameCntr.Store(static_cast<uint32>(Pkt.GetFrameCntr()));
+			Receiver->HostClock.OnIgControl(Pkt.GetTimeStampValid(),
+				static_cast<uint32>(Pkt.GetTimeStamp()));
+		};
+		if (Packet->GetMinorVersion() >= 3)
+		{
+			Apply(*static_cast<CigiIGCtrlV3_3*>(Packet));
+		}
+		else
+		{
+			VisitVersioned<CigiIGCtrlV3, CigiIGCtrlV3_2>(Packet, 2, Apply);
+		}
 	}
 };
 

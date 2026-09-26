@@ -18,6 +18,7 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiHatHotReqV3_2.h"
 #include "cigicl/CigiLosSegReqV3_2.h"
 #include "cigicl/CigiLosVectReqV3_2.h"
+#include "cigicl/CigiRateCtrlV3_2.h"
 THIRD_PARTY_INCLUDES_END
 
 // -------------------------------------------------------------------------
@@ -129,9 +130,15 @@ bool FCigiEntityRelativeParseTest::RunTest(const FString& Parameters)
 	LosVect.SetVectEl(-20.0f);
 	LosVect.SetMaxRange(5000.0f);
 
+	CigiRateCtrlV3_2 Rate;
+	Rate.SetEntityID(5);
+	Rate.SetCoordSys(CigiBaseRateCtrl::World);
+	Rate.SetXRate(40.0f);
+
 	Out.BeginMsg();
 	Out << IgCtrl;
 	Out << Child;
+	Out << Rate;
 	Out << HatHot;
 	Out << LosSeg;
 	Out << LosVect;
@@ -157,10 +164,12 @@ bool FCigiEntityRelativeParseTest::RunTest(const FString& Parameters)
 	FCigiHatHotRequest HatReq;
 	FCigiLosSegRequest SegReq;
 	FCigiLosVectRequest VectReq;
-	bool bState = false, bHat = false, bSeg = false, bVect = false;
+	FCigiRateControl RateCtrl;
+	bool bState = false, bHat = false, bSeg = false, bVect = false, bRate = false;
 	const double Deadline = FPlatformTime::Seconds() + 2.0;
-	while (FPlatformTime::Seconds() < Deadline && !(bState && bHat && bSeg && bVect))
+	while (FPlatformTime::Seconds() < Deadline && !(bState && bHat && bSeg && bVect && bRate))
 	{
+		bRate  |= Receiver.DequeueRateControl(RateCtrl);
 		bState |= Receiver.DequeueEntityState(State);
 		bHat   |= Receiver.DequeueHatHotRequest(HatReq);
 		bSeg   |= Receiver.DequeueLosSegRequest(SegReq);
@@ -172,11 +181,18 @@ bool FCigiEntityRelativeParseTest::RunTest(const FString& Parameters)
 
 	if (TestTrue(TEXT("Entity Control received"), bState))
 	{
+		TestEqual(TEXT("Entity id"), State.EntityId, static_cast<uint16>(5));
 		TestTrue(TEXT("Attach state carried"), State.bAttached);
 		TestEqual(TEXT("Parent id"), State.ParentId, static_cast<uint16>(1));
 		TestTrue(TEXT("Offsets kept as metres"), FMath::IsNearlyEqual(State.Latitude, 12.5)
 			&& FMath::IsNearlyEqual(State.Longitude, -3.0) && FMath::IsNearlyEqual(State.Altitude, 2.0f));
 		TestTrue(TEXT("Host timestamp used (5.0 s)"), FMath::IsNearlyEqual(State.HostTimeSec, 5.0, 1e-6));
+	}
+	if (TestTrue(TEXT("Rate Control received"), bRate))
+	{
+		TestEqual(TEXT("Rate entity id"), RateCtrl.EntityId, static_cast<uint16>(5));
+		TestFalse(TEXT("World/Parent coordinate system carried"), RateCtrl.bLocalFrame);
+		TestTrue(TEXT("X rate"), FMath::IsNearlyEqual(RateCtrl.XRate, 40.0f));
 	}
 	if (TestTrue(TEXT("HAT/HOT request received"), bHat))
 	{

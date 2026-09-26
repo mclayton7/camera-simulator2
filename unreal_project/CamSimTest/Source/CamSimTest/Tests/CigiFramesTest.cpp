@@ -108,3 +108,62 @@ bool FCigiFramesGlobeTest::RunTest(const FString& Parameters)
 	World->DestroyWorld(false);
 	return true;
 }
+
+// -------------------------------------------------------------------------
+// CIGI Rate Control coordinate system (ICD 3.3 section 4.1.8): Local rates are
+// body-frame; World/Parent rates are North/East/Down and heading/pitch/roll
+// rates, whatever the entity's attitude.
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCigiFramesRateControlTest,
+	"CamSim.CigiFrames.RateControlFrames",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCigiFramesRateControlTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSimFrames;
+
+	// Metres moved north/east/up between two poses (small displacements).
+	auto Moved = [](const FGeoPose& A, const FGeoPose& B)
+	{
+		const double MPerDegLat = 111132.0;
+		const double MPerDegLon = 111320.0 * FMath::Cos(FMath::DegreesToRadians(A.Lat));
+		return FVector((B.Lat - A.Lat) * MPerDegLat, (B.Lon - A.Lon) * MPerDegLon, B.Alt - A.Alt);
+	};
+
+	FGeoPose Start;
+	Start.Lat = 45.0;
+	Start.Lon = 10.0;
+	Start.Alt = 1000.0;
+	Start.Neu = CigiToNeu(90.0, 0.0, 0.0);  // facing east
+
+	FGeoPose Local = Start;
+	IntegrateRates(Local, FVector(100, 0, 10), FVector::ZeroVector, /*bLocalFrame=*/true, 1.0);
+	const FVector LocalMove = Moved(Start, Local);
+	TestTrue(FString::Printf(TEXT("Local X rate moves along the nose (east): %s"), *LocalMove.ToString()),
+		LocalMove.Equals(FVector(0, 100, -10), 1.0));
+
+	FGeoPose World = Start;
+	IntegrateRates(World, FVector(100, 0, 10), FVector::ZeroVector, /*bLocalFrame=*/false, 1.0);
+	const FVector WorldMove = Moved(Start, World);
+	TestTrue(FString::Printf(TEXT("World X rate moves north regardless of heading: %s"), *WorldMove.ToString()),
+		WorldMove.Equals(FVector(100, 0, -10), 1.0));
+
+	// World angular rates are Euler-angle rates: a yaw rate while pitched up
+	// changes heading only.
+	FGeoPose Turning = Start;
+	Turning.Neu = CigiToNeu(90.0, 30.0, 0.0);
+	IntegrateRates(Turning, FVector::ZeroVector, FVector(0, 0, 10), /*bLocalFrame=*/false, 1.0);
+	const FRotator Hpr = Turning.Neu.Rotator();
+	TestTrue(FString::Printf(TEXT("World yaw rate: heading 100, pitch 30, roll 0 (got %s)"), *Hpr.ToString()),
+		FMath::IsNearlyEqual(Hpr.Yaw, 100.0, 1e-3) && FMath::IsNearlyEqual(Hpr.Pitch, 30.0, 1e-3)
+		&& FMath::IsNearlyZero(Hpr.Roll, 1e-3));
+
+	// A body yaw rate while pitched up is not the same motion.
+	FGeoPose BodyTurn = Start;
+	BodyTurn.Neu = CigiToNeu(90.0, 30.0, 0.0);
+	IntegrateRates(BodyTurn, FVector::ZeroVector, FVector(0, 0, 10), /*bLocalFrame=*/true, 1.0);
+	TestFalse(TEXT("Local yaw rate while pitched up also rolls the entity"),
+		FMath::IsNearlyZero(BodyTurn.Neu.Rotator().Roll, 0.1));
+	return true;
+}

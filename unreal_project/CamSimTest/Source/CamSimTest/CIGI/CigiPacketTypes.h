@@ -52,9 +52,13 @@ struct FCigiRateControl
 	uint16 EntityId        = 0;
 	uint8  ArtPartId       = 0;
 	bool   bApplyToArtPart = false;
-	float  XRate           = 0.0f;   // m/s body-frame forward
-	float  YRate           = 0.0f;   // m/s body-frame right
-	float  ZRate           = 0.0f;   // m/s body-frame down
+	// Frame of the rates below. Local: body frame (X forward, Y right, Z down),
+	// rotation about body axes. World/Parent (CIGI 3.2+ default): X north,
+	// Y east, Z down, and heading/pitch/roll rates. CIGI 3.0/3.1 is always Local.
+	bool   bLocalFrame     = true;
+	float  XRate           = 0.0f;   // m/s
+	float  YRate           = 0.0f;   // m/s
+	float  ZRate           = 0.0f;   // m/s
 	float  RollRate        = 0.0f;   // deg/s
 	float  PitchRate       = 0.0f;   // deg/s
 	float  YawRate         = 0.0f;   // deg/s

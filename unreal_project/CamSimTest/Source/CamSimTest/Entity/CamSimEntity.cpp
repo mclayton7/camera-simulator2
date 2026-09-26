@@ -470,6 +470,7 @@ void ACamSimEntity::SetRateControl(const FCigiRateControl& R)
 	DR.YawRate   = R.YawRate;
 	DR.PitchRate = R.PitchRate;
 	DR.RollRate  = R.RollRate;
+	DR.bLocalFrame = R.bLocalFrame;
 	DR.bHasRate  = true;
 }
 
@@ -735,35 +736,19 @@ void ACamSimEntity::UpdateDeadReckoning(float Dt)
 {
 	if (!DR.bHasRate || !GlobeAnchor || bAttached) return;  // children follow their parent
 
-	// Integrate body-frame angular velocity directly on the quaternion.
-	// Omega axes match UE's FRotator convention: X=Roll, Y=Pitch, Z=Yaw.
-	// Building the delta quaternion from an axis-angle pair (rather than from
-	// a FRotator) dodges the FRotator→FQuat gimbal-lock singularity at
-	// pitch = ±90° that would otherwise produce discontinuous heading.
-	const FVector Omega(
-		FMath::DegreesToRadians(DR.RollRate),
-		FMath::DegreesToRadians(DR.PitchRate),
-		FMath::DegreesToRadians(DR.YawRate));
-	const float OmegaMag = Omega.Size();
-	const FQuat DeltaRot = (OmegaMag > SMALL_NUMBER)
-		? FQuat(Omega / OmegaMag, OmegaMag * Dt)
-		: FQuat::Identity;
-	DR.Orientation = (DR.Orientation * DeltaRot).GetNormalized();
+	CamSimFrames::FGeoPose Pose;
+	Pose.Lat = DR.Lat;
+	Pose.Lon = DR.Lon;
+	Pose.Alt = DR.Alt;
+	Pose.Neu = DR.Orientation;
+	CamSimFrames::IntegrateRates(Pose, FVector(DR.XRate, DR.YRate, DR.ZRate),
+		FVector(DR.RollRate, DR.PitchRate, DR.YawRate), DR.bLocalFrame, Dt);
 
-	// CIGI body rates (X forward, Y right, Z down) -> local North/East/Up
-	const FVector WorldVel = CamSimFrames::BodyVelocityToNeu(
-		DR.Orientation, FVector(DR.XRate, DR.YRate, DR.ZRate));
+	DR.Lat = Pose.Lat;
+	DR.Lon = Pose.Lon;
+	DR.Alt = static_cast<float>(Pose.Alt);
+	DR.Orientation = Pose.Neu;
 
-	// Integrate position in WGS-84 (linear approximation valid for small Dt)
-	const double NewLat = DR.Lat + (WorldVel.X * Dt) / 111320.0;
-	const double NewLon = DR.Lon + (WorldVel.Y * Dt) /
-		(111320.0 * FMath::Cos(DR.Lat * PI / 180.0));
-	const float  NewAlt = DR.Alt + WorldVel.Z * Dt;
-
-	DR.Lat = NewLat;
-	DR.Lon = NewLon;
-	DR.Alt = NewAlt;
-
-	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(NewLon, NewLat, NewAlt));
+	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(DR.Lon, DR.Lat, DR.Alt));
 	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::NeuToEastSouthUp(DR.Orientation));
 }

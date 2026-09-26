@@ -170,8 +170,9 @@ private:
 		double  Lat = 0.0, Lon = 0.0;
 		float   Alt = 0.0f;
 		FQuat   Orientation = FQuat::Identity;                 // single source of truth
-		float   XRate = 0.0f, YRate = 0.0f, ZRate = 0.0f;     // m/s body-frame
-		float   YawRate = 0.0f, PitchRate = 0.0f, RollRate = 0.0f; // deg/s body-frame
+		float   XRate = 0.0f, YRate = 0.0f, ZRate = 0.0f;     // m/s
+		float   YawRate = 0.0f, PitchRate = 0.0f, RollRate = 0.0f; // deg/s
+		bool    bLocalFrame = true;  // see FCigiRateControl::bLocalFrame
 		bool    bHasRate = false;
 	} DR;
 
