@@ -80,6 +80,7 @@ static FCamSimConfig::EEncoderPreference ParseEncoderPreference(const FString& V
 	if (Lower == TEXT("nvenc"))   return FCamSimConfig::EEncoderPreference::Nvenc;
 	if (Lower == TEXT("libx264")) return FCamSimConfig::EEncoderPreference::LibX264;
 	if (Lower == TEXT("libx265")) return FCamSimConfig::EEncoderPreference::LibX265;
+	if (Lower == TEXT("videotoolbox")) return FCamSimConfig::EEncoderPreference::VideoToolbox;
 	if (Lower == TEXT("auto") || Lower.IsEmpty())
 		return FCamSimConfig::EEncoderPreference::Auto;
 	UE_LOG(LogCamSim, Warning,

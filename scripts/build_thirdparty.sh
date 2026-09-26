@@ -112,7 +112,7 @@ else
             for CANDIDATE in \
                 "${HOME}/UnrealEngine" \
                 "/opt/UnrealEngine" \
-                "/opt/Epic/UE_5.7" \
+                "/opt/Epic/UE_5.8" \
                 "${HOME}/.local/share/UnrealEngine"
             do
                 if [ -f "${CANDIDATE}/Engine/Binaries/Linux/UnrealEditor" ]; then
@@ -142,7 +142,7 @@ else
             fi
         else
             echo "[WARN] UE_ROOT not set and UnrealEditor not found in standard locations."
-            echo "       Falling back to system compiler.  Fix: export UE_ROOT=/path/to/UE_5.7"
+            echo "       Falling back to system compiler.  Fix: export UE_ROOT=/path/to/UE_5.8"
             CCL_CXX_FLAGS=""
         fi
     else
@@ -248,9 +248,19 @@ FFMPEG_INSTALL="${BUILD_DIR}/ffmpeg_install"
 FFMPEG_DST="${THIRDPARTY}/FFmpeg/lib/$([ "${PLATFORM}" = "mac" ] && echo "Mac" || echo "Linux")"
 FFMPEG_INC="${THIRDPARTY}/FFmpeg/include"
 
+# FFmpeg 8 (libavcodec 62) removed FF_PROFILE_*; use AV_PROFILE_* instead.
+FFMPEG_TAG="n8.1.3"
+
+# Re-clone when the cached source is at a different tag (e.g. after a bump).
+if [ -d "${FFMPEG_SRC}" ] && \
+   [ "$(git -C "${FFMPEG_SRC}" describe --tags --exact-match 2>/dev/null)" != "${FFMPEG_TAG}" ]; then
+    echo "==> Cached FFmpeg source is not ${FFMPEG_TAG}; re-cloning..."
+    rm -rf "${FFMPEG_SRC}" "${FFMPEG_INSTALL}"
+fi
+
 if [ ! -d "${FFMPEG_SRC}" ]; then
-    echo "==> Cloning FFmpeg (n7.0)..."
-    git clone --depth 1 --branch n7.0 \
+    echo "==> Cloning FFmpeg (${FFMPEG_TAG})..."
+    git clone --depth 1 --branch "${FFMPEG_TAG}" \
         https://github.com/FFmpeg/FFmpeg.git "${FFMPEG_SRC}"
 fi
 
@@ -302,6 +312,8 @@ cp "${FFMPEG_INSTALL}/lib/libavutil.a"     "${FFMPEG_DST}/"
 cp "${FFMPEG_INSTALL}/lib/libswscale.a"    "${FFMPEG_DST}/"
 cp "${FFMPEG_INSTALL}/lib/libswresample.a" "${FFMPEG_DST}/"
 cp "${X264_INSTALL}/lib/libx264.a"         "${FFMPEG_DST}/"
+# Replace (not merge) headers so ones dropped by an FFmpeg bump don't linger.
+rm -rf "${FFMPEG_INC:?}/"*
 cp -r "${FFMPEG_INSTALL}/include/"*        "${FFMPEG_INC}/"
 
 # Linux: inject compat stubs into FFmpeg archives too

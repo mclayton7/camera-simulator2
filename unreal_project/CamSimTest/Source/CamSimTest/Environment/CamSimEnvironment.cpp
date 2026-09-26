@@ -47,46 +47,39 @@ void ACamSimEnvironment::BeginPlay()
 	}
 
 	// Find existing environment actors placed in the level
-	for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
+	if (TActorIterator<ADirectionalLight> It(GetWorld()); It)
 	{
 		SunLight = *It;
-		break;
 	}
-	for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
+	if (TActorIterator<ASkyLight> It(GetWorld()); It)
 	{
 		SkyLight = *It;
-		break;
 	}
-	for (TActorIterator<ASkyAtmosphere> It(GetWorld()); It; ++It)
+	if (TActorIterator<ASkyAtmosphere> It(GetWorld()); It)
 	{
 		SkyAtmosphere = *It;
-		break;
 	}
-	for (TActorIterator<AExponentialHeightFog> It(GetWorld()); It; ++It)
+	if (TActorIterator<AExponentialHeightFog> It(GetWorld()); It)
 	{
 		HeightFog = *It;
-		break;
 	}
 
 	// VolumetricCloud is optional — not all levels will have one
-	for (TActorIterator<AVolumetricCloud> It(GetWorld()); It; ++It)
+	if (TActorIterator<AVolumetricCloud> It(GetWorld()); It)
 	{
 		CloudActor = *It;
-		break;
 	}
 
 	// CesiumSunSky drives the directional light when present — preferred path
-	for (TActorIterator<ACesiumSunSky> It(GetWorld()); It; ++It)
+	if (TActorIterator<ACesiumSunSky> It(GetWorld()); It)
 	{
 		CesiumSunSkyActor = *It;
-		break;
 	}
 
 	// Phase 19 — cache camera reference for ocean plane tracking (avoid per-tick scan)
-	for (TActorIterator<ACamSimCamera> It(GetWorld()); It; ++It)
+	if (TActorIterator<ACamSimCamera> It(GetWorld()); It)
 	{
 		CamSimCameraActor = *It;
-		break;
 	}
 
 	// Copy Phase 18 config once at startup

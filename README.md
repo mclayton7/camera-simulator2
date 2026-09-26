@@ -87,7 +87,7 @@ sudo apt-get install -y cmake ninja-build nasm git build-essential
 
 # Build third-party libraries (CCL + FFmpeg with libx264)
 # Set UE_ROOT if you want to use UE's bundled clang toolchain
-export UE_ROOT=/path/to/UE_5.7
+export UE_ROOT=/path/to/UE_5.8
 ./scripts/build_thirdparty.sh
 
 # Run the UE5 editor build in game mode (headless + unicast for dev)

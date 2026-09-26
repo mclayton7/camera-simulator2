@@ -99,6 +99,39 @@ Every new test was checked to fail with its fix reverted. Full suite: 208 tests 
 Xcode Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`); the Linux CI
 integration job covers it once 1.1 lands.
 
+### Engine and dependency upgrade (2026-09-26)
+
+| From | To |
+| ---- | -- |
+| UE 5.7 | UE 5.8.3 (`EngineAssociation` `"5.8"`, `BuildSettingsVersion.V7`, `Unreal5_8` include order) |
+| Cesium for Unreal 2.23.0 | 2.29.1 (`CesiumForUnreal-58`). Camera registration moved from the deprecated `AddCamera`/`UpdateCamera`/`RemoveCamera` to `AdditionalCameras`. |
+| glTFRuntime 20260113 | 20260826 (upstream UE 5.8 fixes) |
+| FFmpeg n7.0 (libavcodec 61) | n8.1.3 (libavcodec 62). `FF_PROFILE_*` → `AV_PROFILE_*`. |
+
+- UE 5.8 requires editor targets on an installed engine to match its build settings, so the
+  targets must use V7, which makes unreachable code an error in plugins too. `repo_setup.sh` now
+  downgrades that to a warning in Cesium's `*.Build.cs`, and fixes a lambda in
+  `IonQuickAddPanel.cpp` that captures a variable inside its own initializer (Apple clang 21
+  rejects it). It also replaces a Cesium install at the wrong version and fast-forwards glTFRuntime.
+- V7's `-Wunreachable-code-loop-increment` found a real bug: a designer-placed `ACamSimCamera`
+  made `ACamSimGameMode::BeginPlay` return before spawning `ACamSimEnvironment`.
+- `encoder: videotoolbox` (macOS hardware H.264/HEVC). It is opt-in: on pure noise it overshoots
+  `rc_max_rate` about 3.6× even with `qmax=51` and `constant_bit_rate`, so `auto` stays NVENC →
+  libx264. An encoder that fails `avcodec_open2` now falls through to the next candidate.
+- Fixed: `FVideoEncoder::Close()` flushed packets without rescaling timestamps or writing them to
+  the local recording. It had never been hit before, because libx264 in zero-latency mode buffers
+  nothing, while VideoToolbox holds about 10 frames.
+
+Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check passes.
+
+**Human follow-ups:**
+- The Linux CI runner (`/opt/UE`) needs UE 5.8 installed, then `scripts/repo_setup.sh` and
+  `scripts/build_thirdparty.sh` (FFmpeg 8 + fresh Linux libs) re-run before the UE5 jobs go green.
+- Open `CamSimTest` once in the 5.8 editor and resave the maps, so assets stop loading through
+  the 5.7 upgrade path.
+- VideoToolbox adds about 10 frames (~330 ms at 30 fps) of pipeline latency. FFmpeg exposes no
+  `MaxFrameDelayCount` option, so reducing it needs a patch or a direct VT session.
+
 ---
 
 ## Milestone 1: Engineering health

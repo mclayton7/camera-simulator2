@@ -57,6 +57,7 @@ private:
 	const FCamSimConfig& Config;
 	bool bIsOpen = false;
 	bool bUsingNvenc = false;
+	bool bUsingVideoToolbox = false;
 
 	/** Incremented after each successful av_interleaved_write_frame call. */
 	TAtomic<uint64> SuccessfulFrameCount { 0 };
@@ -109,13 +110,18 @@ private:
 	bool OpenVideoStream();
 	bool OpenKlvStream();
 	bool OpenRecordingContext();
+	/** Rescales Pkt to the stream time base and writes it to the stream and recording. */
+	void WriteVideoPacket();
 	void WriteKlvPacket(const FCamSimTelemetry& Telemetry, uint64 FrameIdx);
 	void LogFfmpegError(int Err, const TCHAR* Context);
 
 	// OpenVideoStream sub-helpers (split for readability).
-	// Picks the H.264 or H.265 encoder honouring Config.Encoder (auto/nvenc/libx*).
-	// Returns nullptr on failure and logs the reason.
-	const AVCodec* SelectVideoCodec(bool& bOutWantH265);
+	// Lists the H.264 or H.265 encoders to try, in order, honouring
+	// Config.Encoder (auto/nvenc/videotoolbox/libx*). Empty on failure (logged).
+	TArray<const AVCodec*> SelectVideoCodecs(bool& bOutWantH265);
+	// Allocates and opens VideoCodecCtx for one encoder. On failure the context
+	// is freed so the next candidate can be tried.
+	bool TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265);
 	// Writes preset/tune/rc/profile options onto VideoCodecCtx->priv_data.
 	void ApplyEncoderOptions(bool bWantH265);
 	// Sets up SwsCtx (BGRA → YUV420P BT.709 limited range). Runs a verify+retry

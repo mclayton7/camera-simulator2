@@ -22,4 +22,8 @@ public:
 	ACamSimGameMode();
 
 	virtual void BeginPlay() override;
+
+private:
+	void SpawnCameraIfMissing();
+	void SpawnEnvironmentIfMissing();
 };

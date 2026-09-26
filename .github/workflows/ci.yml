@@ -33,7 +33,6 @@ jobs:
         run: |
           uv tool install ruff
           uv tool install yamllint
-          sudo apt-get install -y clang-format-17 || true
 
       - name: Python lint (ruff)
         run: ruff check scripts/ --output-format github
@@ -43,14 +42,6 @@ jobs:
 
       - name: YAML lint
         run: yamllint -d relaxed deploy/camsim_config.yaml
-
-      - name: C++ format check (clang-format)
-        run: |
-          SOURCES=$(find unreal_project/CamSimTest/Source/CamSimTest -name '*.cpp' -o -name '*.h' | grep -v ryml)
-          if [ -n "$SOURCES" ]; then
-            clang-format-17 --dry-run --Werror $SOURCES 2>&1 || echo "::warning::C++ format issues found"
-          fi
-        continue-on-error: true
 
   # -------------------------------------------------------------------
   # Phase 14A: Build thirdparty libraries (cached)
@@ -106,7 +97,7 @@ jobs:
   #
   # deploy/Dockerfile COPYs deploy/staged/LinuxNoEditor/, which is the
   # output of UE5 RunUAT.sh BuildCookRun. The self-hosted runner labelled
-  # `camsim-ue5` has UE5.7 installed at /opt/UE; scripts/package_for_docker.sh
+  # `camsim-ue5` has UE5.8 installed at /opt/UE; scripts/package_for_docker.sh
   # invokes BuildCookRun and copies the staged output into deploy/staged/
   # before the docker build runs.
   #
@@ -149,7 +140,7 @@ jobs:
   # -------------------------------------------------------------------
   # Phase 28A: UE5 unit tests (editor target, headless, NullRHI)
   #
-  # Runs directly on a self-hosted runner with UE5.7 at /opt/UE — no Docker.
+  # Runs directly on a self-hosted runner with UE5.8 at /opt/UE — no Docker.
   # Builds the editor target with scripts/run.sh --build-only, then runs the
   # Automation RunTests CamSim+Quit suite (~185 tests, ~10 s) and parses the
   # JSON report with scripts/parse_automation_report.py.

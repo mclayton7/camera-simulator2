@@ -209,7 +209,7 @@ void ACamSimCamera::BeginPlay()
 			GetActorLocation(),
 			GetActorRotation(),
 			Cfg.HFovDeg);
-		CesiumCameraId = CamMgr->AddCamera(PrimaryCam);
+		CesiumCameraId = CamMgr->AdditionalCameras.Add(PrimaryCam);
 
 		// Prefetch camera — inflated FOV for anticipatory tile loading
 		const float PreloadFov = FMath::Clamp(Cfg.HFovDeg * Cfg.TilePreloadFovScale, Cfg.HFovDeg, 179.0f);
@@ -218,7 +218,7 @@ void ACamSimCamera::BeginPlay()
 			GetActorLocation(),
 			GetActorRotation(),
 			PreloadFov);
-		CesiumPrefetchCameraId = CamMgr->AddCamera(PrefetchCam);
+		CesiumPrefetchCameraId = CamMgr->AdditionalCameras.Add(PrefetchCam);
 
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: registered with CesiumCameraManager (primary id=%d FOV=%.0f, prefetch id=%d FOV=%.0f)"),
 			CesiumCameraId, Cfg.HFovDeg, CesiumPrefetchCameraId, PreloadFov);
@@ -511,17 +511,19 @@ void ACamSimCamera::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		ACesiumCameraManager* CamMgr = ACesiumCameraManager::GetDefaultCameraManager(this);
 		if (CamMgr)
 		{
-			if (CesiumCameraId >= 0)
+			// Remove the higher slot first so the lower index stays valid.
+			TArray<FCesiumCamera>& Cameras = CamMgr->AdditionalCameras;
+			for (const int32 Slot : { FMath::Max(CesiumCameraId, CesiumPrefetchCameraId),
+			                          FMath::Min(CesiumCameraId, CesiumPrefetchCameraId) })
 			{
-				CamMgr->RemoveCamera(CesiumCameraId);
-				CesiumCameraId = -1;
-			}
-			if (CesiumPrefetchCameraId >= 0)
-			{
-				CamMgr->RemoveCamera(CesiumPrefetchCameraId);
-				CesiumPrefetchCameraId = -1;
+				if (Cameras.IsValidIndex(Slot))
+				{
+					Cameras.RemoveAt(Slot);
+				}
 			}
 		}
+		CesiumCameraId = -1;
+		CesiumPrefetchCameraId = -1;
 	}
 
 	// Stop encoder thread before encoder Close (subsystem owns the encoder)
@@ -701,7 +703,7 @@ bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 	}
 
 	// Consume the flag on the game thread.
-	// TAtomic<T>::Exchange in UE 5.7 is single-arg; std::atomic::exchange
+	// TAtomic<T>::Exchange in UE 5.7/5.8 is single-arg; std::atomic::exchange
 	// defaults to seq_cst, which matches the paired Store call above.
 	if (!bHotReloadFileChanged_.Exchange(false))
 	{
@@ -1264,7 +1266,7 @@ void ACamSimCamera::ReadEnvironmentTelemetry()
 {
 	if (UWorld* W = GetWorld())
 	{
-		for (TActorIterator<ACamSimEnvironment> It(W); It; ++It)
+		if (TActorIterator<ACamSimEnvironment> It(W); It)
 		{
 			CurrentTelemetry.SunElevationDeg = It->GetSunElevationDeg();
 
@@ -1278,7 +1280,6 @@ void ACamSimCamera::ReadEnvironmentTelemetry()
 
 			// 18L: update environment with camera position for zone blending
 			It->SetCameraPosition(CurrentTelemetry.Latitude, CurrentTelemetry.Longitude);
-			break;
 		}
 	}
 }
@@ -1459,26 +1460,25 @@ void ACamSimCamera::UpdateCesiumCamera()
 	const float LiveHFov = SceneCapture ? SceneCapture->FOVAngle : Cfg.HFovDeg;
 
 	// Primary camera — actual render FOV for accurate tile LOD/SSE
-	if (CesiumCameraId >= 0)
+	TArray<FCesiumCamera>& Cameras = CamMgr->AdditionalCameras;
+	if (Cameras.IsValidIndex(CesiumCameraId))
 	{
-		FCesiumCamera PrimaryCam(
+		Cameras[CesiumCameraId] = FCesiumCamera(
 			FVector2D(Cfg.CaptureWidth, Cfg.CaptureHeight),
 			SceneCapture->GetComponentLocation(),
 			SceneCapture->GetComponentRotation(),
 			LiveHFov);
-		CamMgr->UpdateCamera(CesiumCameraId, PrimaryCam);
 	}
 
 	// Prefetch camera — inflated FOV for anticipatory tile loading
-	if (CesiumPrefetchCameraId >= 0)
+	if (Cameras.IsValidIndex(CesiumPrefetchCameraId))
 	{
 		const float PreloadFov = FMath::Clamp(LiveHFov * Cfg.TilePreloadFovScale, LiveHFov, 179.0f);
-		FCesiumCamera PrefetchCam(
+		Cameras[CesiumPrefetchCameraId] = FCesiumCamera(
 			FVector2D(Cfg.CaptureWidth, Cfg.CaptureHeight),
 			SceneCapture->GetComponentLocation(),
 			SceneCapture->GetComponentRotation(),
 			PreloadFov);
-		CamMgr->UpdateCamera(CesiumPrefetchCameraId, PrefetchCam);
 	}
 }
 

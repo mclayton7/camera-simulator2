@@ -62,7 +62,8 @@ struct FCamSimConfig
 		Auto    = 0,
 		Nvenc,
 		LibX264,
-		LibX265
+		LibX265,
+		VideoToolbox
 	};
 
 	enum class EEncoderWatchdogPolicy : uint8
@@ -146,8 +147,9 @@ struct FCamSimConfig
 	int32   EncoderWatchdogIntervalTicks = 150;
 	int32   WatchdogMaxReconnects = 3;
 
-	// Encoder selection: "auto" tries NVENC first, falls back to libx264.
-	// Explicit values: "nvenc", "libx264", "libx265".
+	// Encoder selection: "auto" tries NVENC, then libx264/libx265. Explicit
+	// values: "nvenc", "videotoolbox" (macOS, opt-in: overshoots the rate cap
+	// on noisy scenes), "libx264", "libx265".
 	//
 	// Phase 4: the raw string is preserved (for YAML/env-var round-trip
 	// compatibility) and parsed into EncoderPref at load time. Consumers

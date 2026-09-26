@@ -9,7 +9,7 @@ labelled `camsim-ue5`. This document covers one-time setup.
 | Requirement                                 | Why                                                                |
 | ------------------------------------------- | ------------------------------------------------------------------ |
 | Linux x86_64 (Ubuntu 22.04 tested)          | Matches `deploy/Dockerfile` base image                             |
-| UE5.7 at `/opt/UE/Engine/Binaries/Linux/UnrealEditor` | `scripts/run.sh` and `scripts/package_for_docker.sh` auto-discover via `find /opt -path '*/Binaries/Linux/UnrealEditor'` |
+| UE5.8 at `/opt/UE/Engine/Binaries/Linux/UnrealEditor` | `scripts/run.sh` and `scripts/package_for_docker.sh` auto-discover via `find /opt -path '*/Binaries/Linux/UnrealEditor'` |
 | Docker + Docker Buildx                      | `integration-test` runs `docker compose up`, `docker-release` pushes to GHCR |
 | Python 3.10+                                | `scripts/parse_automation_report.py` (stdlib only)                 |
 | Build deps: `cmake nasm yasm pkg-config libx264-dev libssl-dev` | `scripts/build_thirdparty_linux.sh` first run                 |
@@ -17,11 +17,11 @@ labelled `camsim-ue5`. This document covers one-time setup.
 
 ## One-time registration
 
-1. **Provision UE5.7** at `/opt/UE` on the host. If it's already a CamSim
+1. **Provision UE5.8** at `/opt/UE` on the host. If it's already a CamSim
    development box, this is already done; otherwise install via Epic Games
    Launcher or the official Linux tarball and symlink:
    ```bash
-   sudo ln -s /opt/UnrealEngine-5.7 /opt/UE
+   sudo ln -s /opt/UnrealEngine-5.8 /opt/UE
    ```
    Verify:
    ```bash

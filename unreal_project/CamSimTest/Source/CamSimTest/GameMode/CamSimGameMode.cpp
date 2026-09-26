@@ -16,8 +16,14 @@ void ACamSimGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
+	SpawnCameraIfMissing();
+	SpawnEnvironmentIfMissing();
+}
+
+void ACamSimGameMode::SpawnCameraIfMissing()
+{
 	// If ACamSimCamera was placed in the level by the designer, use it as-is.
-	for (TActorIterator<ACamSimCamera> It(GetWorld()); It; ++It)
+	if (TActorIterator<ACamSimCamera> It(GetWorld()); It)
 	{
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimGameMode: found existing ACamSimCamera '%s' in level"),
 			*(*It)->GetName());
@@ -39,9 +45,11 @@ void ACamSimGameMode::BeginPlay()
 	{
 		UE_LOG(LogCamSim, Error, TEXT("ACamSimGameMode: SpawnActor<ACamSimCamera> FAILED"));
 	}
+}
 
-	// Spawn environment actor if not already in the level
-	for (TActorIterator<ACamSimEnvironment> It(GetWorld()); It; ++It)
+void ACamSimGameMode::SpawnEnvironmentIfMissing()
+{
+	if (TActorIterator<ACamSimEnvironment> It(GetWorld()); It)
 	{
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimGameMode: found existing ACamSimEnvironment '%s' in level"),
 			*(*It)->GetName());

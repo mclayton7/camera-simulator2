@@ -116,11 +116,10 @@ void FOceanManager::OnAtmosphereChanged()
 
 void FOceanManager::EnableSSR(UWorld* World, float Intensity)
 {
-	for (TActorIterator<APostProcessVolume> It(World); It; ++It)
+	if (TActorIterator<APostProcessVolume> It(World); It) // Use first (global) PPV
 	{
 		PostProcessVolume = *It;
 		PostProcessVolume->Settings.bOverride_ScreenSpaceReflectionIntensity = true;
 		PostProcessVolume->Settings.ScreenSpaceReflectionIntensity = Intensity;
-		break; // Use first (global) PPV
 	}
 }

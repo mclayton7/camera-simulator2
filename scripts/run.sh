@@ -121,7 +121,7 @@ UE_BINARY="${UE_BINARY:-}"
 if [ "${PLATFORM}" = "mac" ]; then
     STAGED_APP="${REPO_ROOT}/unreal_project/CamSimTest/Saved/StagedBuilds/Mac/CamSimTest.app"
     UE_SEARCH_PATHS=(
-        "/Users/Shared/Epic Games/UE_5.7/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor"
+        "/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor"
         "/Applications/UnrealEditor.app/Contents/MacOS/UnrealEditor"
     )
     for CANDIDATE in "${UE_SEARCH_PATHS[@]}"; do
@@ -129,14 +129,14 @@ if [ "${PLATFORM}" = "mac" ]; then
     done
     if [ -z "${UE_BINARY}" ]; then
         UE_BINARY="$(mdfind 'kMDItemFSName == "UnrealEditor"' 2>/dev/null \
-            | grep -i 'UE_5.7.*MacOS/UnrealEditor$' | head -1 || true)"
+            | grep -i 'UE_5.8.*MacOS/UnrealEditor$' | head -1 || true)"
     fi
 else
     STAGED_DIR="${REPO_ROOT}/unreal_project/CamSimTest/Saved/StagedBuilds/Linux/CamSimTest"
     UE_SEARCH_PATHS=(
         "${HOME}/UnrealEngine/Engine/Binaries/Linux/UnrealEditor"
         "/opt/UnrealEngine/Engine/Binaries/Linux/UnrealEditor"
-        "/opt/Epic/UE_5.7/Engine/Binaries/Linux/UnrealEditor"
+        "/opt/Epic/UE_5.8/Engine/Binaries/Linux/UnrealEditor"
         "${HOME}/.local/share/UnrealEngine/Engine/Binaries/Linux/UnrealEditor"
     )
     for CANDIDATE in "${UE_SEARCH_PATHS[@]}"; do
@@ -150,7 +150,7 @@ fi
 
 if [ -z "${UE_BINARY}" ]; then
     echo "[ERROR] UnrealEditor not found."
-    echo "        Install UE 5.7 via Epic Games Launcher (macOS) or from source (Linux), or:"
+    echo "        Install UE 5.8 via Epic Games Launcher (macOS) or from source (Linux), or:"
     echo "        export UE_BINARY=/path/to/UnrealEditor"
     exit 1
 fi

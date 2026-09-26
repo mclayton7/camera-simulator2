@@ -9,14 +9,14 @@ public class CamSimTest : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		// With BuildSettingsVersion.V6 + UseExplicitOrSharedPCHs, UBT no longer
+		// With BuildSettingsVersion.V6+ and UseExplicitOrSharedPCHs, UBT no longer
 		// implicitly adds the module root to the compiler -I flags.  Adding it
 		// explicitly lets all subdirectory .cpp files use includes like
 		// #include "Encoder/VideoEncoder.h" without further path gymnastics.
 		PrivateIncludePaths.Add(ModuleDirectory);
 
 		// Suppress warnings from FFmpeg C headers included via extern "C"
-		bEnableUndefinedIdentifierWarnings = false;
+		CppCompileWarningSettings.UndefinedIdentifierWarningLevel = WarningLevel.Off;
 
 		PublicDependencyModuleNames.AddRange(new string[]
 		{

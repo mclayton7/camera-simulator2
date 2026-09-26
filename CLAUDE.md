@@ -36,7 +36,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 
 ```
 camsim/
-  unreal_project/CamSimTest/       # UE5.7 project root
+  unreal_project/CamSimTest/       # UE5.8 project root
     Source/CamSimTest/             # C++ module
       Camera/                      # SceneCapture2D, GPU readback, gimbal, sensor components
       CIGI/                        # UDP receiver/sender, packet parsing, terrain queries
@@ -49,7 +49,7 @@ camsim/
       Sensor/                      # CPU post-process: EO/IR/NVG effects
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (208 tests across 31 files)
+      Tests/                       # UE5 Automation tests (209 tests across 31 files)
     Source/ThirdParty/
       CCL/                         # CIGI Class Library (static lib)
       FFmpeg/                      # libavcodec/format/util/swscale + libx264
@@ -84,15 +84,14 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - PascalCase everywhere; verb-first functions (`CaptureAndEncode`, `DequeueEntityState`)
 - `#include "CoreMinimal.h"` first, `.generated.h` last
 - Forward declarations preferred over includes in headers
-- `bEnableUndefinedIdentifierWarnings = false` in Build.cs — intentional for FFmpeg C headers
+- `CppCompileWarningSettings.UndefinedIdentifierWarningLevel = WarningLevel.Off` in Build.cs — intentional for FFmpeg C headers
 - Copyright: `// Copyright CamSim Contributors. All Rights Reserved.`
-- CI runs `clang-format-17` (no local .clang-format file — uses default)
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (208 tests across 31 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (209 tests across 31 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
-  - Run headlessly (any host with UE5.7 installed):
+  - Run headlessly (any host with UE5.8 installed):
     ```bash
     "$UE_BIN" unreal_project/CamSimTest/CamSimTest.uproject \
       -ExecCmds="Automation RunTests CamSim+Quit" \
@@ -109,13 +108,14 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ### UE5 toolchain
 
-- **Linux**: UE5.7 lives at `/opt/UE`. `UE_BIN=/opt/UE/Engine/Binaries/Linux/UnrealEditor`. `scripts/run.sh` auto-discovers this via `find /opt $HOME -path '*/Binaries/Linux/UnrealEditor'`, so no env vars are needed for `--build` / `--build-only`.
+- **Linux**: UE5.8 lives at `/opt/UE`. `UE_BIN=/opt/UE/Engine/Binaries/Linux/UnrealEditor`. `scripts/run.sh` auto-discovers this via `find /opt $HOME -path '*/Binaries/Linux/UnrealEditor'`, so no env vars are needed for `--build` / `--build-only`.
 - **Build**: `scripts/run.sh --build-only` invokes `/opt/UE/Engine/Build/BatchFiles/Linux/Build.sh CamSimTestEditor Linux Development`. Incremental rebuilds finish in ~10 s; cold rebuilds depend on UBA cache.
 - **Don't pipe `run.sh` through `tee` without `set -o pipefail`** — the script propagates UBT failures via exit code, but `tee` succeeding will mask them. Either run `run.sh` foreground or wrap the pipeline with `set -o pipefail` so a failed compile actually surfaces.
 - **CI coverage** (Phase 28A): `.github/workflows/ci.yml` `unit-tests` runs the headless automation suite on every PR and push; `integration-test` runs the packaged Docker stack on push-to-`main`; both target the `[self-hosted, camsim-ue5]` runner. Failures are parsed from `.cache/automation-report/index.json` by `scripts/parse_automation_report.py` and surfaced as `::error::` annotations. Kill-switch: set `vars.CAMSIM_UE5_RUNNER_AVAILABLE=false` to skip the four UE5-dependent jobs. Runner registration: `docs/ci-runner-setup.md`.
 
 ## Gotchas
 
+- **Targets must stay on `BuildSettingsVersion.V7`**: UE 5.8 refuses an editor target whose build settings differ from the installed engine's ("modifies the values of properties … not allowed"). V7 makes unreachable code an error for plugins too, so `repo_setup.sh` patches Cesium's `*.Build.cs` down to a warning and fixes a self-capture in `IonQuickAddPanel.cpp`. Re-run `repo_setup.sh` after replacing the Cesium plugin.
 - **ThirdParty must be built first**: Run `scripts/build_thirdparty.sh` before UE build — CCL + FFmpeg are static libs not checked in
 - **Cesium coord order**: `TransformLongitudeLatitudeHeightPositionToUnreal(FVector(Lon, Lat, Alt))` — Longitude first, not Latitude
 - **Never pass CIGI angles to `SetActorRotation`**: UE world axes are Cesium East-South-Up only at the georeference origin (+X = East, so heading 0 would face east). Use `GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::CigiToEastSouthUp(...))` from `Geospatial/CigiFrames.h`
@@ -130,7 +130,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **rapidyaml bundled**: Source in `Config/ryml/` — excluded from pre-commit linting
 - **KLV reference decoder is misb.js**: [vidterra/misb.js](https://github.com/vidterra/misb.js) (v0.1.30, commit `52c3837`) is what parses our KLV downstream, so it is the gold standard for ST 0601/0102 encoding — not the spec PDF, and not `validate_klv.py`. Checksum = 16-bit running sum over everything from the UL key through the checksum's own `01 02` bytes. misb.js throws on any tag shorter than its expected size (the whole packet is lost) and marks bad checksums `valid: false` rather than throwing. See ROADMAP.md 0.3.
 - **RHI readback is render-thread only**: `FRHIGPUTextureReadback::IsReady()/Lock()/Unlock()` assert `IsInRenderingThread()`. Use `ENQUEUE_RENDER_COMMAND` + `FlushRenderingCommands()` for synchronous game-thread access (see CamSimCamera.cpp Phase 1 readback pattern)
-- **UE5 TAtomic uses EMemoryOrder, except `Exchange`**: `TAtomic<T>::Load()/Store()` take `EMemoryOrder` enum, NOT `std::memory_order`. But `TAtomic<T>::Exchange(T)` is single-arg in 5.7 (delegates to `std::atomic::exchange`, default seq_cst) — passing `EMemoryOrder` to `Exchange` is a compile error.
+- **UE5 TAtomic uses EMemoryOrder, except `Exchange`**: `TAtomic<T>::Load()/Store()` take `EMemoryOrder` enum, NOT `std::memory_order`. But `TAtomic<T>::Exchange(T)` is single-arg in 5.7 and 5.8 (delegates to `std::atomic::exchange`, default seq_cst) — passing `EMemoryOrder` to `Exchange` is a compile error.
 - **HTTP health server is on by default**: `operational.health_http_enabled` defaults to `true` for sim-environment REST orchestrator compatibility. Binds `0.0.0.0:8080`. To disable: `CAMSIM_HEALTH_HTTP_ENABLED=0`. `/live` and `/health` are route aliases pointing at the same 5-second watchdog. K8s probes that target `/live` still work unchanged.
 - **HTTP automation tests need two tickers** (load-bearing test invariant — if you skip this, the test hangs silently instead of failing):
   - `FCamSimHealthServer` is built on `FHttpServerModule`. The **listener** is pumped by `FTSTicker::GetCoreTicker()`.
@@ -153,7 +153,7 @@ Only the vars you need at the console every day are listed below:
 
 - `CAMSIM_CIGI_PORT` — CIGI listen port (default 8888)
 - `CAMSIM_MULTICAST_ADDR` — output address (default 239.1.1.1)
-- `CAMSIM_ENCODER` — `auto` | `nvenc` | `libx264` (default auto; force `libx264` on non-NVIDIA)
+- `CAMSIM_ENCODER` — `auto` | `nvenc` | `videotoolbox` | `libx264` (default auto: NVENC → libx264; `videotoolbox` is opt-in on macOS)
 - `CAMSIM_HEALTH_HTTP_ENABLED` / `CAMSIM_HEALTH_HTTP_PORT` — K8s probe server (default 1, 8080)
 - `CAMSIM_STRUCTURED_LOG_PATH` — JSONL logs for ELK/Datadog (empty = disabled)
 

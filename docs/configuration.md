@@ -231,7 +231,7 @@ entity_types:
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
 | `video_codec` | string | `"h264"` | `CAMSIM_VIDEO_CODEC` | Video codec: `h264` or `h265`/`hevc` (STANAG 4609 Ed4). |
-| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | Encoder implementation: `auto` (tries NVENC first, falls back to libx264/libx265), `nvenc`, `libx264`, or `libx265`. |
+| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | Encoder implementation: `auto` (tries NVENC, then libx264/libx265; an encoder that fails to open falls through to the next), `nvenc`, `videotoolbox`, `libx264`, or `libx265`. `videotoolbox` is the macOS hardware encoder: much lower CPU cost, but it only approximates the bitrate cap and can run ~3.6× over it on very noisy scenes (IR/NVG grain), so `auto` never picks it. |
 | `encoder_watchdog_policy` | string | `"reconnect"` | `CAMSIM_ENCODER_WATCHDOG_POLICY` | Encoder watchdog action when no frames are written for `encoder_watchdog_interval_ticks`: `reconnect`, `log_only`, or `fail_fast`. |
 | `encoder_watchdog_interval_ticks` | int | `150` | `CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS` | Tick interval used by the encoder watchdog and runtime health checks. |
 | `watchdog_max_reconnects` | int | `3` | -- | Maximum encoder reconnect attempts before `RequestExit`. `0` = unlimited retries. |
@@ -436,7 +436,7 @@ Per-entry fields in `scenario.entities[]`:
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
 | `video_codec` | string | `"h264"` | `CAMSIM_VIDEO_CODEC` | Video codec: `h264` or `h265`/`hevc` (STANAG 4609 Ed4). |
-| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | Encoder implementation: `auto` (tries NVENC, falls back to libx264/libx265), `nvenc`, `libx264`, or `libx265`. |
+| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | Encoder implementation: `auto` (tries NVENC, then libx264/libx265), `nvenc`, `videotoolbox` (macOS, opt-in), `libx264`, or `libx265`. |
 
 ### Security Metadata (Phase 12A, MISB ST 0102)
 

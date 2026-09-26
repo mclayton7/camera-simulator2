@@ -197,8 +197,10 @@ hfov_deg: 60.0
 # Env: CAMSIM_VIDEO_CODEC
 video_codec: h264
 
-# Encoder implementation: "auto" tries NVENC first, falls back to
-# libx264/libx265. Explicit values: "nvenc", "libx264", "libx265".
+# Encoder implementation: "auto" tries NVENC, then libx264/libx265.
+# Explicit values: "nvenc", "videotoolbox", "libx264", "libx265".
+# "videotoolbox" (macOS hardware) is opt-in: it can overshoot the bitrate
+# cap on very noisy scenes.
 # Env: CAMSIM_ENCODER
 encoder: auto
 

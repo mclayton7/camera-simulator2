@@ -276,7 +276,12 @@ private:
 	/** Telemetry cached from the last applied CIGI state. */
 	FCamSimTelemetry CurrentTelemetry;
 
-	/** Cesium camera manager registration IDs (-1 = not registered). */
+	/**
+	 * Slots in ACesiumCameraManager::AdditionalCameras (-1 = not registered).
+	 * The array has no stable IDs, so these indices are only valid while
+	 * nothing else inserts/removes entries ahead of ours — true for CamSim,
+	 * which spawns a single ACamSimCamera.
+	 */
 	int32 CesiumCameraId = -1;
 	int32 CesiumPrefetchCameraId = -1;
 

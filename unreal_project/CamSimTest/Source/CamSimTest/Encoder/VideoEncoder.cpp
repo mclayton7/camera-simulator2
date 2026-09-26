@@ -144,47 +144,61 @@ bool FVideoEncoder::Open()
 // OpenVideoStream
 // -------------------------------------------------------------------------
 
-const AVCodec* FVideoEncoder::SelectVideoCodec(bool& bOutWantH265)
+TArray<const AVCodec*> FVideoEncoder::SelectVideoCodecs(bool& bOutWantH265)
 {
 	using EPref = FCamSimConfig::EEncoderPreference;
 	const EPref EncoderPref   = Config.EncoderPref;
 	const FString CodecPref   = Config.VideoCodec.ToLower().TrimStartAndEnd();
 	bOutWantH265              = (CodecPref == TEXT("h265") || CodecPref == TEXT("hevc"));
 
-	const char* NvencName   = bOutWantH265 ? "hevc_nvenc" : "h264_nvenc";
-	const char* SoftwareName = bOutWantH265 ? "libx265"    : "libx264";
-	const AVCodecID FallbackId = bOutWantH265 ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
+	const char* NvencName        = bOutWantH265 ? "hevc_nvenc"        : "h264_nvenc";
+	const char* VideoToolboxName = bOutWantH265 ? "hevc_videotoolbox" : "h264_videotoolbox";
+	const char* SoftwareName     = bOutWantH265 ? "libx265"           : "libx264";
+	const AVCodecID FallbackId   = bOutWantH265 ? AV_CODEC_ID_HEVC    : AV_CODEC_ID_H264;
 
-	const AVCodec* Codec = nullptr;
-	if (EncoderPref == EPref::Nvenc || EncoderPref == EPref::Auto)
+	TArray<const AVCodec*> Candidates;
+
+	// Hardware encoders. An explicit request uses only that encoder and fails
+	// if it is missing. Auto tries NVENC but not VideoToolbox: VT can't hold
+	// rc_max_rate on noisy scenes (IR/NVG grain), so it is opt-in.
+	auto AddHardware = [&](EPref Pref, const char* Name) -> bool
 	{
-		Codec = avcodec_find_encoder_by_name(NvencName);
-		if (Codec)
+		if (EncoderPref != Pref && EncoderPref != EPref::Auto) return true;
+		if (const AVCodec* Codec = avcodec_find_encoder_by_name(Name))
 		{
-			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found NVENC encoder %s"),
-				ANSI_TO_TCHAR(NvencName));
+			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: found hardware encoder %s"),
+				ANSI_TO_TCHAR(Name));
+			Candidates.Add(Codec);
+			return true;
 		}
-		else if (EncoderPref == EPref::Nvenc)
+		if (EncoderPref == Pref)
 		{
-			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: NVENC requested but %s not available"),
-				ANSI_TO_TCHAR(NvencName));
-			return nullptr;
+			UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: %s requested but not available"),
+				ANSI_TO_TCHAR(Name));
+			return false;
 		}
-		else
-		{
-			UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: %s not available, falling back to %s"),
-				ANSI_TO_TCHAR(NvencName), ANSI_TO_TCHAR(SoftwareName));
-		}
+		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: %s not available"), ANSI_TO_TCHAR(Name));
+		return true;
+	};
+	if (!AddHardware(EPref::Nvenc, NvencName) ||
+	    (EncoderPref == EPref::VideoToolbox && !AddHardware(EPref::VideoToolbox, VideoToolboxName)))
+	{
+		return {};
+	}
+	if (EncoderPref == EPref::Nvenc || EncoderPref == EPref::VideoToolbox)
+	{
+		return Candidates;
 	}
 
-	if (!Codec) Codec = avcodec_find_encoder_by_name(SoftwareName);
-	if (!Codec) Codec = avcodec_find_encoder(FallbackId);
-	if (!Codec)
+	// Software fallback (and the only choice for explicit libx264/libx265).
+	if (const AVCodec* Codec = avcodec_find_encoder_by_name(SoftwareName)) Candidates.AddUnique(Codec);
+	if (const AVCodec* Codec = avcodec_find_encoder(FallbackId))           Candidates.AddUnique(Codec);
+	if (Candidates.IsEmpty())
 	{
 		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: %s encoder not found"),
 			bOutWantH265 ? TEXT("H.265/HEVC") : TEXT("H.264"));
 	}
-	return Codec;
+	return Candidates;
 }
 
 void FVideoEncoder::ApplyEncoderOptions(bool bWantH265)
@@ -195,6 +209,15 @@ void FVideoEncoder::ApplyEncoderOptions(bool bWantH265)
 		av_opt_set(VideoCodecCtx->priv_data, "tune",   "ll",  0); // low latency
 		av_opt_set(VideoCodecCtx->priv_data, "rc",     "cbr", 0);
 		av_opt_set(VideoCodecCtx->priv_data, "gpu",    "0",   0);
+	}
+	else if (bUsingVideoToolbox)
+	{
+		// Low-latency session; preset/tune are x264 concepts with no VT analogue.
+		av_opt_set_int(VideoCodecCtx->priv_data, "realtime",   1, 0);
+		av_opt_set_int(VideoCodecCtx->priv_data, "prio_speed", 1, 0); // macOS 13+, ignored otherwise
+		// VT's default QP ceiling stops it from degrading far enough to hold
+		// rc_max_rate on busy scenes; allow the full H.264 range.
+		VideoCodecCtx->qmax = 51;
 	}
 	else if (bWantH265)
 	{
@@ -218,8 +241,10 @@ void FVideoEncoder::ApplyEncoderOptions(bool bWantH265)
 	// Phase 21E.1 — ROVER Baseline profile override.
 	if (Config.Streaming.bRoverCompat && !bUsingNvenc && !bWantH265)
 	{
-		VideoCodecCtx->profile = FF_PROFILE_H264_CONSTRAINED_BASELINE;
-		av_opt_set(VideoCodecCtx->priv_data, "profile", "baseline", 0);
+		VideoCodecCtx->profile = AV_PROFILE_H264_CONSTRAINED_BASELINE;
+		// libx264 takes "baseline" + constraint flags; VT names the profile directly.
+		av_opt_set(VideoCodecCtx->priv_data, "profile",
+			bUsingVideoToolbox ? "constrained_baseline" : "baseline", 0);
 		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: ROVER Baseline profile set"));
 	}
 }
@@ -319,27 +344,12 @@ bool FVideoEncoder::ConfigureColorSpace()
 	return true;
 }
 
-bool FVideoEncoder::OpenVideoStream()
+bool FVideoEncoder::TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265)
 {
-	bool bWantH265 = false;
-	const AVCodec* Codec = SelectVideoCodec(bWantH265);
-	if (!Codec) return false;
-
-	bUsingNvenc = (FCStringAnsi::Strstr(Codec->name, "nvenc") != nullptr);
-	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: using encoder %s (codec=%s)"),
+	bUsingNvenc        = (FCStringAnsi::Strstr(Codec->name, "nvenc") != nullptr);
+	bUsingVideoToolbox = (FCStringAnsi::Strstr(Codec->name, "videotoolbox") != nullptr);
+	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: opening encoder %s (codec=%s)"),
 		ANSI_TO_TCHAR(Codec->name), bWantH265 ? TEXT("H.265") : TEXT("H.264"));
-	UE_LOG(LogCamSim, Log,
-		TEXT("FVideoEncoder: libswscale %d.%d.%d  libavcodec %d.%d.%d"),
-		LIBSWSCALE_VERSION_MAJOR, LIBSWSCALE_VERSION_MINOR, LIBSWSCALE_VERSION_MICRO,
-		LIBAVCODEC_VERSION_MAJOR, LIBAVCODEC_VERSION_MINOR, LIBAVCODEC_VERSION_MICRO);
-
-	VideoStream = avformat_new_stream(FmtCtx, nullptr);
-	if (!VideoStream)
-	{
-		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: could not create video stream"));
-		return false;
-	}
-	VideoStream->id = 0;
 
 	VideoCodecCtx = avcodec_alloc_context3(Codec);
 	if (!VideoCodecCtx)
@@ -360,6 +370,8 @@ bool FVideoEncoder::OpenVideoStream()
 	// Cap the peak rate so complex frames can't burst past the link budget:
 	// over any window of T seconds the stream stays within
 	// bitrate * (T + VbvBufferSec). Honoured by libx264, libx265 and NVENC.
+	// VideoToolbox ignores rc_buffer_size and applies rc_max_rate as a
+	// per-second data-rate limit instead.
 	VideoCodecCtx->rc_max_rate    = Config.VideoBitrate;
 	VideoCodecCtx->rc_buffer_size = static_cast<int>(Config.VideoBitrate * VbvBufferSec);
 	VideoCodecCtx->gop_size     = (int)FMath::RoundToInt(EffectiveFps);
@@ -378,14 +390,56 @@ bool FVideoEncoder::OpenVideoStream()
 
 	ApplyEncoderOptions(bWantH265);
 
-	int Ret = avcodec_open2(VideoCodecCtx, Codec, nullptr);
+	const int Ret = avcodec_open2(VideoCodecCtx, Codec, nullptr);
 	if (Ret < 0)
 	{
-		LogFfmpegError(Ret, TEXT("avcodec_open2 (H.264)"));
+		LogFfmpegError(Ret, TEXT("avcodec_open2"));
+		avcodec_free_context(&VideoCodecCtx);
 		return false;
 	}
+	return true;
+}
 
-	Ret = avcodec_parameters_from_context(VideoStream->codecpar, VideoCodecCtx);
+bool FVideoEncoder::OpenVideoStream()
+{
+	bool bWantH265 = false;
+	const TArray<const AVCodec*> Candidates = SelectVideoCodecs(bWantH265);
+	if (Candidates.IsEmpty()) return false;
+
+	UE_LOG(LogCamSim, Log,
+		TEXT("FVideoEncoder: libswscale %d.%d.%d  libavcodec %d.%d.%d"),
+		LIBSWSCALE_VERSION_MAJOR, LIBSWSCALE_VERSION_MINOR, LIBSWSCALE_VERSION_MICRO,
+		LIBAVCODEC_VERSION_MAJOR, LIBAVCODEC_VERSION_MINOR, LIBAVCODEC_VERSION_MICRO);
+
+	VideoStream = avformat_new_stream(FmtCtx, nullptr);
+	if (!VideoStream)
+	{
+		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: could not create video stream"));
+		return false;
+	}
+	VideoStream->id = 0;
+
+	// A hardware encoder can be built in yet fail to open (no NVIDIA GPU, a
+	// Mac VM without a media engine), so fall through to the next candidate.
+	const AVCodec* Opened = nullptr;
+	for (const AVCodec* Codec : Candidates)
+	{
+		if (TryOpenVideoCodec(Codec, bWantH265))
+		{
+			Opened = Codec;
+			break;
+		}
+		UE_LOG(LogCamSim, Warning, TEXT("FVideoEncoder: could not open %s"),
+			ANSI_TO_TCHAR(Codec->name));
+	}
+	if (!Opened)
+	{
+		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: no video encoder could be opened"));
+		return false;
+	}
+	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: using encoder %s"), ANSI_TO_TCHAR(Opened->name));
+
+	int Ret = avcodec_parameters_from_context(VideoStream->codecpar, VideoCodecCtx);
 	if (Ret < 0)
 	{
 		LogFfmpegError(Ret, TEXT("avcodec_parameters_from_context"));
@@ -626,23 +680,7 @@ void FVideoEncoder::EncodeFrame(
 			break;
 		}
 
-		Pkt->stream_index = VideoStream->index;
-		av_packet_rescale_ts(Pkt, VideoCodecCtx->time_base, VideoStream->time_base);
-
-		// Duplicate to local recording before writing (write_frame takes ownership of timing)
-		if (bRecording && RecordFmtCtx)
-		{
-			AVPacket* RecPkt = av_packet_clone(Pkt);
-			if (RecPkt)
-			{
-				RecPkt->stream_index = RecordVideoStream->index;
-				av_interleaved_write_frame(RecordFmtCtx, RecPkt);
-				av_packet_free(&RecPkt);
-			}
-		}
-
-		av_interleaved_write_frame(FmtCtx, Pkt);
-		av_packet_unref(Pkt);
+		WriteVideoPacket();
 	}
 
 	// Write KLV metadata packet for this frame
@@ -655,6 +693,27 @@ void FVideoEncoder::EncodeFrame(
 // -------------------------------------------------------------------------
 // WriteKlvPacket
 // -------------------------------------------------------------------------
+
+void FVideoEncoder::WriteVideoPacket()
+{
+	Pkt->stream_index = VideoStream->index;
+	av_packet_rescale_ts(Pkt, VideoCodecCtx->time_base, VideoStream->time_base);
+
+	// Duplicate to local recording before writing (write_frame takes ownership of timing)
+	if (bRecording && RecordFmtCtx)
+	{
+		AVPacket* RecPkt = av_packet_clone(Pkt);
+		if (RecPkt)
+		{
+			RecPkt->stream_index = RecordVideoStream->index;
+			av_interleaved_write_frame(RecordFmtCtx, RecPkt);
+			av_packet_free(&RecPkt);
+		}
+	}
+
+	av_interleaved_write_frame(FmtCtx, Pkt);
+	av_packet_unref(Pkt);
+}
 
 void FVideoEncoder::WriteKlvPacket(const FCamSimTelemetry& Telemetry, uint64 FrameIdx)
 {
@@ -713,9 +772,8 @@ void FVideoEncoder::Close()
 	{
 		int Ret = avcodec_receive_packet(VideoCodecCtx, Pkt);
 		if (Ret == AVERROR_EOF || Ret < 0) break;
-		Pkt->stream_index = VideoStream->index;
-		av_interleaved_write_frame(FmtCtx, Pkt);
-		av_packet_unref(Pkt);
+		// Encoders with a pipeline delay (VideoToolbox) still hold frames here.
+		WriteVideoPacket();
 	}
 
 	av_write_trailer(FmtCtx);
