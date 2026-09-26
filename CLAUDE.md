@@ -39,7 +39,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 camsim/
   unreal_project/CamSimTest/       # UE5.8 project root
     Source/CamSimTest/             # C++ module
-      Camera/                      # SceneCapture2D, GPU readback, gimbal, sensor components
+      Camera/                      # Sensor actor + rig, capture pipeline, telemetry, Cesium streaming
       CIGI/                        # UDP receiver/sender, packet parsing, terrain queries
       Config/                      # YAML config loader (rapidyaml) + env var overrides
       Encoder/                     # FFmpeg H.264/H.265 → MPEG-TS → UDP multicast
@@ -50,7 +50,7 @@ camsim/
       Sensor/                      # CPU post-process: EO/IR/NVG effects
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (200 tests across 35 files)
+      Tests/                       # UE5 Automation tests (202 tests across 36 files)
     Source/ThirdParty/
       CCL/                         # CIGI Class Library (static lib)
       FFmpeg/                      # libavcodec/format/util/swscale + libx264
@@ -64,7 +64,7 @@ camsim/
 
 ```
 CIGI UDP → FCigiReceiver (FRunnable thread) → TSpscQueue
-Game Thread → ACamSimCamera::Tick() → GlobeAnchor + SceneCapture
+Game Thread → FCamSimEntityManager (entities + camera platform) → ACamSimCamera::Tick() → SceneCapture
 Render Thread → GPU readback (FRHIGPUTextureReadback)
 Task Thread → FSensorPostProcess → FVideoEncoder → MPEG-TS + KLV → UDP multicast
 ```
@@ -77,7 +77,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - `deploy/camsim_config.yaml` — canonical runtime config (100+ params, all have `CAMSIM_*` env overrides)
 - `Source/CamSimTest/Config/CamSimConfig.h` — `FCamSimConfig` struct, YAML + env var loading
 - `Source/CamSimTest/Subsystem/CamSimSubsystem.h` — lifecycle owner, Pimpl pattern (`FSubsystemImpl`)
-- `Source/CamSimTest/Camera/CamSimCamera.h` — main actor: capture, gimbal, sensor, encode dispatch
+- `Source/CamSimTest/Camera/CamSimCamera.h` — sensor actor; delegates to `CamSimPlatformRig`, `CamSimCaptureComponent`, `CamSimTelemetryAssembler`, `CamSimStreamingController`
 
 ## Code Style
 
@@ -90,7 +90,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (200 tests across 35 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (202 tests across 36 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash

@@ -21,13 +21,15 @@ Four threads collaborate with explicit ownership boundaries:
                            │ TSpscQueue (lock-free)
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  Game Thread                                                    │
-│  • ACamSimCamera::Tick()    — drains CameraEntityQueue          │
 │  • FCamSimEntityManager::Tick() — drains EntityStateQueue       │
+│      then CameraEntityQueue (ACamSimCamera::ApplyHostPlatform…) │
 │                                   RateCtrlQueue                 │
 │                                   ArtPartQueue                  │
 │                                   CompCtrlQueue                 │
 │                                   scenario.entities             │
 │  • ACamSimEnvironment::Tick() — drains Celestial/Atmos/Weather  │
+│  • ACamSimCamera::Tick() (TG_PostUpdateWork, last) — View/Sensor│
+│      Ctrl, ArtPart queues; captures the frame                   │
 │  • FCigiQueryHandler::Tick() — drains HatHotReqQueue            │
 │                                        LosSegReqQueue           │
 │                                        LosVectReqQueue          │
@@ -105,9 +107,15 @@ UCamSimSubsystem  (UGameInstanceSubsystem — created with GameInstance)
 ├── FCigiSender*           (raw ptr — opened in Initialize; FlushFrame() called via Tick())
 └── FCigiQueryHandler*     (raw ptr — Tick() called from FCamSimEntityManager::Tick())
 
-ACamSimCamera  (AActor — placed in level or spawned by GameMode)
+ACamSimCamera  (AActor — placed in level or spawned by GameMode; orchestrates the tick)
 └── UCesiumGlobeAnchorComponent
-└── USceneCaptureComponent2D → UTextureRenderTarget2D
+└── USceneCaptureComponent2D                 (the sensor view)
+└── UCamSimGimbalComponent                   (gimbal angles, slew)
+└── UCamSimSensorComponent                   (waveband, polarity, FOV presets)
+└── UCamSimCaptureComponent                  (render targets, readback, sensor model, encoder thread)
+└── FCamSimPlatformRig         (value)       (platform pose, attachment, first-person view)
+└── FCamSimTelemetryAssembler  (value)       (KLV telemetry: pose, gimbal, FOV, frame centre)
+└── FCamSimStreamingController (value)       (Cesium streaming cameras, LOD, terrain gate)
 
 ACamSimEnvironment  (AActor — spawned by GameMode)
 └── references to ADirectionalLight, ASkyAtmosphere, ASkyLight,
@@ -133,7 +141,11 @@ receives `Tick()` calls without being an `AActor`.
 | `CIGI/CigiQueryHandler.h/.cpp` | Drain query queues, run UE line traces, stage responses via provider-neutral geospatial transforms |
 | `Geospatial/CamSimGeospatialProvider.h/.cpp` | Geospatial provider facade (Phase F foundation, Cesium adapter) |
 | `CIGI/CigiPacketTypes.h` | All CIGI struct definitions |
-| `Camera/CamSimCamera.h/.cpp` | Capture, GPU readback, encoder dispatch |
+| `Camera/CamSimCamera.h/.cpp` | Sensor actor: tick orchestration, CIGI view state, hot reload |
+| `Camera/CamSimPlatformRig.h/.cpp` | Platform pose from CIGI, attachment, first-person view |
+| `Camera/CamSimCaptureComponent.h/.cpp` | Capture, async GPU readback, sensor model dispatch, encoder thread |
+| `Camera/CamSimTelemetryAssembler.h/.cpp` | Telemetry behind the KLV tags, boresight frame centre |
+| `Camera/CamSimStreamingController.h/.cpp` | Cesium streaming cameras, slew prefetch, adaptive SSE, terrain gate |
 | `Entity/CamSimEntityManager.h/.cpp` | Entity lifecycle management |
 | `Entity/CamSimEntity.h/.cpp` | Per-entity actor, DR, art parts, lights |
 | `Entity/EntityTypeTable.h/.cpp` | Type ID → asset path lookup |
