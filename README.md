@@ -165,7 +165,7 @@ camsim/
 │   ├── check_cigi_responses.py     Validates IG→Host CIGI response heartbeat traffic
 │   ├── test_video_output.sh        ffprobe + ffplay stream validation
 │   ├── test_matrix.sh              Cross-platform smoke matrix runner
-│   └── validate_klv.py             MPEG-TS KLV packet decoder
+│   └── klv_conformance/            KLV check against misb.js (reference decoder)
 └── unreal_project/CamSimTest/
     └── Source/CamSimTest/
         ├── Camera/                 ACamSimCamera — capture + encode

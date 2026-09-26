@@ -14,22 +14,25 @@ data stream (PID assigned by FFmpeg alongside the H.264 video PID).
 
 Each TLV triplet: `[tag: uint8] [length: uint8] [value: N bytes]`.
 
+## Reference decoder
+
+The KLV is parsed downstream by [misb.js](https://github.com/vidterra/misb.js)
+(`@vidterra/misb.js` 0.1.30), so misb.js defines "correct" for this project. Every tag
+below is checked against it by `scripts/klv_conformance/check.js` (see Validation).
+
 ## Checksum
 
-CamSim supports two checksum algorithms, configurable via `phase26.klv_checksum` in
-`camsim_config.yaml` or `CAMSIM_KLV_CHECKSUM` env var:
-
-- **`crc16`** (default): CRC-16/CCITT (polynomial 0x1021, init 0xFFFF). Matches
-  `scripts/validate_klv.py` and most third-party decoders.
-- **`bcc16`**: BCC-16 (running 16-bit modular sum), per ST 0601 spec §12.
-
-`scripts/validate_klv.py` auto-detects both algorithms.
+Tag 1 is a running 16-bit sum: even-indexed bytes are added to the high byte and
+odd-indexed bytes to the low byte, modulo 2^16. It covers every byte from the first byte
+of the Universal Label through the checksum item's own tag and length bytes (`01 02`),
+i.e. everything except the two checksum value bytes. This matches misb.js
+`klv.calculateChecksum`. misb.js marks packets with a wrong checksum `valid: false`.
 
 ---
 
 ## Tags Implemented
 
-Tags are written in ascending numerical order as required by ST 0601.
+Tag 2 is first and Tag 1 last, as ST 0601 requires; the rest are in ascending order.
 
 ### Tag 2 — UNIX Time Stamp
 
@@ -96,21 +99,6 @@ for a fixed-wing platform.
 | Encoding | `round(roll / 50.0 * 32767)`, clamped to ±50° |
 
 **Source:** `FCigiEntityState.Roll` — from CIGI Entity Control. Positive = right wing down.
-
----
-
-### Tag 8 — Platform Ground Speed (Phase 26C)
-
-| Field | Value |
-|-------|-------|
-| Format | `uint8`, 1 byte |
-| Units | Metres/second, 0..255 |
-| Encoding | `clamp(round(speed_mps), 0, 255)` |
-| Omitted | Tag is not written if `GroundSpeedMps <= 0` |
-
-**Source:** Computed from successive WGS-84 position deltas in `ACamSimCamera::ApplyCigiState()`.
-Uses an equirectangular distance approximation (cos(mean_lat) scaling on longitude delta)
-divided by frame delta time.
 
 ---
 
@@ -326,52 +314,73 @@ stays `0.0`, which encodes as 0 m MSL — not physically meaningful but not corr
 
 ---
 
-### Tag 40 — Target Track Gate Width (Phase 26D)
+### Tags 43, 44 — Target Track Gate Width / Height (Phase 26D)
 
 | Field | Value |
 |-------|-------|
-| Format | `uint8`, 1 byte |
-| Units | Pixels |
-| Range | 0..255 |
-| Omitted | Tag is not written if `target_track_gate_width == 0` |
+| Format | `uint8`, 1 byte each |
+| Units | Pixels / 2 (misb.js decodes `2 × value`) |
+| Range | 0..510 px |
+| Omitted | Not written when `target_track_gate_width` / `_height` is 0 |
 
-**Source:** Config value `phase26.target_track_gate_width` / `CAMSIM_TARGET_TRACK_GATE_WIDTH`.
-Static — set once at startup. Represents the width of the target tracker's gate overlay.
+**Source:** Config values `phase26.target_track_gate_width` / `_height` (pixels) or
+`CAMSIM_TARGET_TRACK_GATE_WIDTH` / `_HEIGHT`. Static — set once at startup.
 
----
-
-### Tag 41 — Target Track Gate Height (Phase 26D)
-
-| Field | Value |
-|-------|-------|
-| Format | `uint8`, 1 byte |
-| Units | Pixels |
-| Range | 0..255 |
-| Omitted | Tag is not written if `target_track_gate_height == 0` |
-
-**Source:** Config value `phase26.target_track_gate_height` / `CAMSIM_TARGET_TRACK_GATE_HEIGHT`.
-Static — set once at startup. Represents the height of the target tracker's gate overlay.
+Tags 40/41 are Target Location Latitude/Longitude (4 bytes each). Writing a 1-byte gate
+value there makes misb.js throw and drop the whole packet.
 
 ---
 
-### Tag 47 — Generic Flag Data 01
+### Tag 47 — Generic Flag Data
 
 | Field | Value |
 |-------|-------|
 | Format | `uint8`, 1 byte, bitmask |
 
-Bit numbering is MSB-first (bit 7 = most significant):
+Bits are numbered from 1 at the least-significant end:
 
-| Bit | Mask | Name | Set when |
-|-----|------|------|----------|
-| 5 | `0x20` | IR Polarity | `SensorPolarity == 1` (black-hot) |
-| 3 | `0x08` | Slant Range valid | `SlantRangeM > 0` (range is computed) |
-| others | — | Reserved | Always 0 |
+| Bit | Mask | Name | CamSim |
+|-----|------|------|--------|
+| 1 | `0x01` | Laser Range | 0 |
+| 2 | `0x02` | Auto-Track | 0 |
+| 3 | `0x04` | IR Polarity (1 = black-hot) | Set when `SensorPolarity == 1` |
+| 4 | `0x08` | Icing Detected | 0 |
+| 5 | `0x10` | Slant Range (1 = measured, 0 = calculated) | 0 — the range is ray-cast |
+| 6 | `0x20` | Image Invalid | 0 |
 
-**Source:**
-- Polarity: `UCamSimSensorComponent::GetPolarity()` — set by CIGI Sensor Control `SensorOn`
-  field; toggled via `--polarity` in `send_cigi_test.py`.
-- Slant Range valid: `FCamSimTelemetry.SlantRangeM > 0` — same value that drives Tag 21.
+**Source:** `UCamSimSensorComponent::GetPolarity()` — set by CIGI Sensor Control;
+toggled via `--polarity` in `send_cigi_test.py`.
+
+---
+
+### Tag 48 — Security Local Set (ST 0102)
+
+Nested ST 0102 TLVs, built once by `FKlvBuilder::SetSecurityMetadata()`:
+
+| ST 0102 tag | Name | Encoding |
+|-------------|------|----------|
+| 1 | Security Classification | `uint8` enum (1 = UNCLASSIFIED … 5 = TOP SECRET) |
+| 2 | CC/RI Coding Method | `1` (ISO-3166 two letter) |
+| 3 | Classifying Country | ISO 646 string, e.g. `//US` |
+| 5 | Caveats | ISO 646 string (optional) |
+| 6 | Releasing Instructions | ISO 646 string (optional) |
+| 12 | Object Country Coding Method | `1` (ISO-3166 two letter) |
+| 13 | Object Country Codes | UTF-16BE string, e.g. `00 55 00 53` = "US" |
+| 22 | Version | `uint16` = 12 |
+
+---
+
+### Tag 56 — Platform Ground Speed (Phase 26C)
+
+| Field | Value |
+|-------|-------|
+| Format | `uint8`, 1 byte |
+| Units | Metres/second, 0..255 |
+| Encoding | `clamp(round(speed_mps), 0, 255)` |
+| Omitted | Not written if `GroundSpeedMps <= 0` |
+
+**Source:** Computed from successive WGS-84 position deltas in `ACamSimCamera::ApplyCigiState()`,
+divided by frame delta time. Tag 8 (True Airspeed) is not emitted; CamSim doesn't model airspeed.
 
 ---
 
@@ -392,8 +401,8 @@ decoders to select the correct tag dictionary.
 | Field | Value |
 |-------|-------|
 | Format | `uint16`, 2 bytes, big-endian |
-| Algorithm | CRC-16/CCITT (default) or BCC-16 (configurable) |
-| Coverage | Universal Label + BER length + all TLV payload |
+| Algorithm | Running 16-bit sum (see Checksum above) |
+| Coverage | Universal Label through the checksum's own `01 02` bytes |
 
 Always the final tag in the packet. See checksum note at the top of this document.
 
@@ -405,12 +414,11 @@ Always the final tag in the packet. See checksum note at the top of this documen
 CIGI Entity Control (opcode 2)
   └─> FCigiEntityState.{Lat,Lon,Alt,Yaw,Pitch,Roll}
         ├─> Tags 5, 6, 7, 13, 14, 15
-        └─> Position delta → Tag 8 (ground speed)
+        └─> Position delta → Tag 56 (ground speed)
 
 Config (camsim_config.yaml / env vars)
   ├─> phase26.platform_tail_number → Tag 4
-  ├─> phase26.target_track_gate_width/height → Tags 40, 41
-  └─> phase26.klv_checksum → Tag 1 algorithm
+  └─> phase26.target_track_gate_width/height → Tags 43, 44
 
 CIGI View Definition (opcode 21)
   └─> SceneCapture->FOVAngle
@@ -425,6 +433,7 @@ CIGI Art-Part Control on camera entity (opcode 6)
               │     └─> Tags 21, 23, 24, 25
               └─> Flat-earth fallback
                     └─> Tags 21, 23, 24  (Tag 25 = 0)
+              (Tags 21, 23-25 omitted when the boresight is above the horizon)
 
 CIGI Sensor Control (opcode 17)
   └─> UCamSimSensorComponent.{Mode,Polarity}
@@ -437,21 +446,29 @@ FUtcClock (UTC, monotonic)
 Static / derived
   └─> Tag 12  ("Geodetic WGS84")
   └─> Tag 65  (version = 9)
-  └─> Tag 1   (checksum: CRC-16 or BCC-16)
+  └─> Tag 1   (checksum: running 16-bit sum)
 ```
 
 ---
 
 ## Validation
 
-Use `scripts/validate_klv.py` against a live stream:
+`scripts/klv_conformance/check.js` decodes KLV with pinned misb.js and fails on parse
+errors, bad checksums, unknown tags, or a non-UTC timestamp:
 
 ```sh
+cd scripts/klv_conformance && npm ci
+
+# Packets exported by the CamSim.KlvConformance.ExportPackets automation test —
+# every tag is compared against the telemetry that produced it
+node check.js packets ../../unreal_project/CamSimTest/Saved/KlvConformance/packets.jsonl
+
+# A recording or a live stream (captured for --duration-sec)
+node check.js stream /tmp/capture.ts
+node check.js stream udp://239.1.1.1:5004 --duration-sec 5
+
 # Add multicast route if needed (macOS)
 sudo route add -net 239.0.0.0/8 -interface lo0
-
-# Validate KLV in the MPEG-TS stream
-uv run scripts/validate_klv.py udp://239.1.1.1:5004
 
 # Exercise platform attitude tags
 uv run scripts/send_cigi_test.py --sweep
@@ -460,7 +477,5 @@ uv run scripts/send_cigi_test.py --sweep
 uv run scripts/send_cigi_test.py --sensor-id 1 --polarity 1
 ```
 
-The validator auto-detects both CRC-16/CCITT and BCC-16 checksums. Tag 65 should appear in
-every packet with value `9`. Tags 5/6/7 should change during `--sweep`. Tag 11 should
-change string value when `--sensor-id` is varied. Tag 4 appears when `platform_tail_number`
-is configured. Tag 8 appears when the platform is in motion.
+CI runs the `packets` check after the automation tests and the `stream` check in
+`scripts/ci_validate.sh`.

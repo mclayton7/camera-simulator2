@@ -23,10 +23,8 @@ static const uint8 kST0601_UL[16] = {
 static TArray<uint8> CachedST0102Payload;
 
 // -------------------------------------------------------------------------
-// Phase 26: configurable checksum algorithm + cached config statics
+// Phase 26: cached config statics
 // -------------------------------------------------------------------------
-enum class EKlvChecksumAlgo : uint8 { CRC16, BCC16 };
-static EKlvChecksumAlgo GKlvChecksumAlgo = EKlvChecksumAlgo::CRC16;
 static TArray<uint8> GCachedTailNumberAnsi;
 static uint8  GCachedTargetGateWidth  = 0;
 static uint8  GCachedTargetGateHeight = 0;
@@ -103,14 +101,6 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		int16 R = FKlvBuilder::MapPlatformRoll(T.Roll);
 		uint8 Tmp[2] = { uint8((R >> 8) & 0xFF), uint8(R & 0xFF) };
 		FKlvBuilder::AppendTag(V, 7, Tmp, 2);
-	}},
-
-	// Tag 8 – Platform Ground Speed, 1-byte unsigned, 0..255 m/s (Phase 26C)
-	{ 8, [](TArray<uint8>& V, const FCamSimTelemetry& T)
-	{
-		if (T.GroundSpeedMps <= 0.0f) return;
-		uint8 Spd = FKlvBuilder::MapGroundSpeed(T.GroundSpeedMps);
-		FKlvBuilder::AppendTag(V, 8, &Spd, 1);
 	}},
 
 	// Tag 11 – Image Source Sensor, ISO 646 string
@@ -209,48 +199,54 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		FKlvBuilder::AppendTag(V, 21, Tmp, 4);
 	}},
 
+	// Tags 23-25 – Frame Center, omitted with Tag 21 when the boresight has no
+	// ground intersection (FrameCenter* would be stale or zero).
 	// Tag 23 – Frame Center Latitude, 4-byte signed ±90°
 	{ 23, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
+		if (T.SlantRangeM <= 0.0) return;  // no ground intersection
 		AppendLatLon4(V, 23, T.FrameCenterLat, 90.0);
 	}},
 
 	// Tag 24 – Frame Center Longitude, 4-byte signed ±180°
 	{ 24, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
+		if (T.SlantRangeM <= 0.0) return;  // no ground intersection
 		AppendLatLon4(V, 24, T.FrameCenterLon, 180.0);
 	}},
 
 	// Tag 25 – Frame Center Elevation, 2-byte unsigned −900..19000 m
 	{ 25, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
+		if (T.SlantRangeM <= 0.0) return;  // no ground intersection
 		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.FrameCenterElev));
 		uint8 Tmp[2] = { uint8((Alt >> 8) & 0xFF), uint8(Alt & 0xFF) };
 		FKlvBuilder::AppendTag(V, 25, Tmp, 2);
 	}},
 
-	// Tag 40 – Target Track Gate Width, 1-byte unsigned, pixels (Phase 26D)
-	{ 40, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	// Tag 43 – Target Track Gate Width, 1-byte unsigned, value = pixels / 2
+	{ 43, [](TArray<uint8>& V, const FCamSimTelemetry&)
 	{
 		if (GCachedTargetGateWidth == 0) return;
-		FKlvBuilder::AppendTag(V, 40, &GCachedTargetGateWidth, 1);
+		FKlvBuilder::AppendTag(V, 43, &GCachedTargetGateWidth, 1);
 	}},
 
-	// Tag 41 – Target Track Gate Height, 1-byte unsigned, pixels (Phase 26D)
-	{ 41, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	// Tag 44 – Target Track Gate Height, 1-byte unsigned, value = pixels / 2
+	{ 44, [](TArray<uint8>& V, const FCamSimTelemetry&)
 	{
 		if (GCachedTargetGateHeight == 0) return;
-		FKlvBuilder::AppendTag(V, 41, &GCachedTargetGateHeight, 1);
+		FKlvBuilder::AppendTag(V, 44, &GCachedTargetGateHeight, 1);
 	}},
 
-	// Tag 47 – Generic Flag Data 01, 1-byte bitmask
-	//   Bit 5 (0x20): IR Polarity — 1 = black-hot
-	//   Bit 3 (0x08): Slant Range valid — 1 = range is computed
+	// Tag 47 – Generic Flag Data, 1-byte bitmask. Bits are numbered from 1 at
+	// the LSB:
+	//   Bit 3 (0x04): IR Polarity — 1 = black-hot, 0 = white-hot
+	//   Bit 5 (0x10): Slant Range — 1 = measured, 0 = calculated (always
+	//                 calculated here: CamSim ray-casts, it has no rangefinder)
 	{ 47, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
 		uint8 Flags = 0;
-		if (T.SensorPolarity == 1) Flags |= 0x20;
-		if (T.SlantRangeM   >  0) Flags |= 0x08;
+		if (T.SensorPolarity == 1) Flags |= FKlvBuilder::GenericFlagIrBlackHot;
 		FKlvBuilder::AppendTag(V, 47, &Flags, 1);
 	}},
 
@@ -272,6 +268,14 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 			V.Add(static_cast<uint8>(PayloadLen));
 		}
 		V.Append(CachedST0102Payload);
+	}},
+
+	// Tag 56 – Platform Ground Speed, 1-byte unsigned, 0..255 m/s
+	{ 56, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (T.GroundSpeedMps <= 0.0f) return;
+		uint8 Spd = FKlvBuilder::MapGroundSpeed(T.GroundSpeedMps);
+		FKlvBuilder::AppendTag(V, 56, &Spd, 1);
 	}},
 
 	// Tag 65 – UAS LS Version Number, 1-byte unsigned, value=9 (ST 0601.9)
@@ -317,16 +321,16 @@ void FKlvBuilder::BuildMisbST0601Into(const FCamSimTelemetry& T, TArray<uint8>& 
 		Desc.Encode(Value, T);
 	}
 
-	// Reserve 4 bytes for CRC tag (written after CRC computation)
-	constexpr int32 CrcTagLen = 4;  // tag(1) + len(1) + crc(2)
+	// Reserve 4 bytes for the checksum item (written after the sum is computed)
+	constexpr int32 ChecksumTagLen = 4;  // tag(1) + len(1) + value(2)
 
-	// Assemble full packet: UL key + BER length + TLV payload + CRC tag
+	// Assemble full packet: UL key + BER length + TLV payload + checksum item
 	// (Packet was Reset() above; Reserve preserves the amortised capacity.)
-	Packet.Reserve(16 + 3 + Value.Num() + CrcTagLen);
+	Packet.Reserve(16 + 3 + Value.Num() + ChecksumTagLen);
 
 	Packet.Append(kST0601_UL, 16);
 
-	const int32 TotalValueLen = Value.Num() + CrcTagLen;
+	const int32 TotalValueLen = Value.Num() + ChecksumTagLen;
 	if (TotalValueLen < 128)
 	{
 		Packet.Add(static_cast<uint8>(TotalValueLen));
@@ -345,13 +349,11 @@ void FKlvBuilder::BuildMisbST0601Into(const FCamSimTelemetry& T, TArray<uint8>& 
 
 	Packet.Append(Value);
 
-	// Checksum over everything so far (UL + length + TLVs)
-	const uint16 Checksum = (GKlvChecksumAlgo == EKlvChecksumAlgo::BCC16)
-		? ComputeBcc16(Packet.GetData(), Packet.Num())
-		: ComputeCrc16(Packet.GetData(), Packet.Num());
-
+	// The checksum covers everything from the UL key through the checksum
+	// item's own tag and length bytes, so append those first.
 	Packet.Add(1);   // Tag 1 (checksum)
 	Packet.Add(2);   // length
+	const uint16 Checksum = ComputeChecksum(Packet.GetData(), Packet.Num());
 	Packet.Add(static_cast<uint8>((Checksum >> 8) & 0xFF));
 	Packet.Add(static_cast<uint8>(Checksum & 0xFF));
 }
@@ -461,7 +463,8 @@ uint32 FKlvBuilder::MapSlantRange(double Metres)
 //   Tag  3 – Classifying Country      (variable string, e.g. "//US")
 //   Tag  5 – Caveats                  (variable string, optional)
 //   Tag  6 – Releasing Instructions   (variable string, optional)
-//   Tag 12 – Object Country Codes     (variable string, e.g. "US")
+//   Tag 12 – Object Country Coding Method (1 byte, 1=ISO-3166 Two Letter)
+//   Tag 13 – Object Country Codes     (UTF-16BE string, e.g. "US")
 //   Tag 22 – ST 0102 Version Number   (2 bytes, uint16, value=12)
 // -------------------------------------------------------------------------
 
@@ -517,12 +520,21 @@ void FKlvBuilder::SetSecurityMetadata(const FString& Classification,
 		          static_cast<uint8>(FMath::Min(Ansi.Length(), 255)));
 	}
 
-	// Tag 12 – Object Country Codes (variable string)
+	// Tag 12 – Object Country Coding Method (1 byte, 1 = ISO-3166 Two Letter)
+	constexpr uint8 ObjectCcMethod = 1;
+	AppendTag(CachedST0102Payload, 12, &ObjectCcMethod, 1);
+
+	// Tag 13 – Object Country Codes (UTF-16BE string)
 	{
-		auto Ansi = StringCast<ANSICHAR>(*ObjectCountryCodes);
-		AppendTag(CachedST0102Payload, 12,
-		          reinterpret_cast<const uint8*>(Ansi.Get()),
-		          static_cast<uint8>(FMath::Min(Ansi.Length(), 255)));
+		TArray<uint8> Utf16Be;
+		for (const TCHAR Ch : ObjectCountryCodes)
+		{
+			if (Utf16Be.Num() + 2 > 254) break;
+			const uint16 Unit = static_cast<uint16>(Ch);
+			Utf16Be.Add(static_cast<uint8>((Unit >> 8) & 0xFF));
+			Utf16Be.Add(static_cast<uint8>(Unit & 0xFF));
+		}
+		AppendTag(CachedST0102Payload, 13, Utf16Be.GetData(), static_cast<uint8>(Utf16Be.Num()));
 	}
 
 	// Tag 22 – ST 0102 Version Number (2 bytes, uint16 = 12)
@@ -536,46 +548,22 @@ void FKlvBuilder::SetSecurityMetadata(const FString& Classification,
 }
 
 // -------------------------------------------------------------------------
-// CRC-16/CCITT (polynomial 0x1021, initial value 0xFFFF)
+// ST 0601 checksum: running 16-bit sum. Even-indexed bytes accumulate into
+// the high byte, odd into the low byte. Matches misb.js klv.calculateChecksum.
 // -------------------------------------------------------------------------
 
-uint16 FKlvBuilder::ComputeCrc16(const uint8* Data, int32 Len)
+uint16 FKlvBuilder::ComputeChecksum(const uint8* Data, int32 Len)
 {
-	uint16 Crc = 0xFFFF;
+	uint16 Sum = 0;
 	for (int32 i = 0; i < Len; ++i)
 	{
-		Crc ^= static_cast<uint16>(Data[i]) << 8;
-		for (int b = 0; b < 8; ++b)
-		{
-			if (Crc & 0x8000)
-				Crc = static_cast<uint16>((Crc << 1) ^ 0x1021);
-			else
-				Crc <<= 1;
-		}
+		Sum += static_cast<uint16>(Data[i]) << ((i & 1) ? 0 : 8);
 	}
-	return Crc;
+	return Sum;
 }
 
 // -------------------------------------------------------------------------
-// BCC-16: running 16-bit modular sum (ST 0601 spec checksum)
-// Even-indexed bytes accumulate into the high byte, odd into the low byte.
-// NOTE: This matches the common JMISB / impleotv interpretation. Verify
-// against the MISB ST 0601.9 §12 reference vector if strict compliance is
-// required. CRC-16 (the default) is recommended for most integrations.
-// -------------------------------------------------------------------------
-
-uint16 FKlvBuilder::ComputeBcc16(const uint8* Data, int32 Len)
-{
-	uint16 Bcc = 0;
-	for (int32 i = 0; i < Len; ++i)
-	{
-		Bcc += static_cast<uint16>(Data[i]) << ((i & 1) ? 0 : 8);
-	}
-	return Bcc;
-}
-
-// -------------------------------------------------------------------------
-// MapGroundSpeed — 1-byte unsigned, 0..255 m/s (Tag 8)
+// MapGroundSpeed — 1-byte unsigned, 0..255 m/s (Tag 56)
 // -------------------------------------------------------------------------
 
 uint8 FKlvBuilder::MapGroundSpeed(float MetresPerSec)
@@ -585,29 +573,13 @@ uint8 FKlvBuilder::MapGroundSpeed(float MetresPerSec)
 }
 
 // -------------------------------------------------------------------------
-// Phase 26: Configure — set checksum algorithm and cached tag values
+// Phase 26: Configure — set cached tag values
 // -------------------------------------------------------------------------
 
-void FKlvBuilder::Configure(const FString& ChecksumAlgo,
-                             const FString& TailNumber,
+void FKlvBuilder::Configure(const FString& TailNumber,
                              float TargetTrackGateWidth,
                              float TargetTrackGateHeight)
 {
-	const FString AlgoLower = ChecksumAlgo.ToLower();
-	if (AlgoLower == TEXT("bcc16"))
-	{
-		GKlvChecksumAlgo = EKlvChecksumAlgo::BCC16;
-	}
-	else
-	{
-		if (AlgoLower != TEXT("crc16") && !AlgoLower.IsEmpty())
-		{
-			UE_LOG(LogCamSim, Warning,
-				TEXT("FKlvBuilder::Configure: unknown checksum '%s', defaulting to crc16"), *ChecksumAlgo);
-		}
-		GKlvChecksumAlgo = EKlvChecksumAlgo::CRC16;
-	}
-
 	// Pre-convert tail number to ANSI bytes (avoids per-frame StringCast allocation)
 	GCachedTailNumberAnsi.Reset();
 	if (!TailNumber.IsEmpty())
@@ -616,12 +588,21 @@ void FKlvBuilder::Configure(const FString& ChecksumAlgo,
 		const int32 Len = FMath::Min(Ansi.Length(), 127);
 		GCachedTailNumberAnsi.Append(reinterpret_cast<const uint8*>(Ansi.Get()), Len);
 	}
-	GCachedTargetGateWidth  = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(TargetTrackGateWidth),  0, 255));
-	GCachedTargetGateHeight = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(TargetTrackGateHeight), 0, 255));
+	GCachedTargetGateWidth  = MapTrackGate(TargetTrackGateWidth);
+	GCachedTargetGateHeight = MapTrackGate(TargetTrackGateHeight);
 
 	UE_LOG(LogCamSim, Log,
-		TEXT("FKlvBuilder: Phase 26 configured (checksum=%s, tail=%s, gate=%dx%d)"),
-		GKlvChecksumAlgo == EKlvChecksumAlgo::BCC16 ? TEXT("bcc16") : TEXT("crc16"),
+		TEXT("FKlvBuilder: Phase 26 configured (tail=%s, gate=%.0fx%.0f px)"),
 		TailNumber.IsEmpty() ? TEXT("(none)") : *TailNumber,
-		GCachedTargetGateWidth, GCachedTargetGateHeight);
+		TargetTrackGateWidth, TargetTrackGateHeight);
+}
+
+// -------------------------------------------------------------------------
+// MapTrackGate — Tags 43/44 carry half the gate size in pixels (0..510 px)
+// -------------------------------------------------------------------------
+
+uint8 FKlvBuilder::MapTrackGate(float Pixels)
+{
+	if (!FMath::IsFinite(Pixels)) Pixels = 0.0f;
+	return static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(Pixels * 0.5f), 0, 255));
 }

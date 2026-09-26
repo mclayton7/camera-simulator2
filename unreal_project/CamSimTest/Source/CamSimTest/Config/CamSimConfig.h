@@ -712,13 +712,10 @@ struct FCamSimConfig
 		// Tag 4: Platform Tail Number (ISO 646, up to 127 chars; empty = omit)
 		FString PlatformTailNumber;
 
-		// Checksum algorithm: "crc16" (default, matches validate_klv.py) or "bcc16" (ST 0601 spec)
-		FString KlvChecksum = TEXT("crc16");
-
-		// Tag 40: Target Track Gate Width uncertainty (pixels, 0 = omit)
+		// Tag 43: Target Track Gate Width (pixels, 0 = omit)
 		float TargetTrackGateWidth = 0.0f;
 
-		// Tag 41: Target Track Gate Height uncertainty (pixels, 0 = omit)
+		// Tag 44: Target Track Gate Height (pixels, 0 = omit)
 		float TargetTrackGateHeight = 0.0f;
 	};
 	FPhase26Config Phase26;

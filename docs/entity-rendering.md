@@ -436,7 +436,7 @@ uv run scripts/send_cigi_test.py --entity-id 0 --tour &
 uv run scripts/test_entity_rendering.py spawn --entity-id 1 --duration 60
 ```
 
-KLV metadata should continue updating correctly (`validate_klv.py`) and there
+KLV metadata should continue updating correctly (`scripts/klv_conformance/check.js`) and there
 should be no frame drops.
 
 ---

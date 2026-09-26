@@ -24,7 +24,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/run.sh`               | Launch UE5 in game mode (supports --build, --headless, --log) |
 | `scripts/run.sh --build`       | Build + launch                                                |
 | `scripts/send_cigi_test.py`    | Send CIGI 3.3 test packets (--sweep, --circle)                |
-| `scripts/validate_klv.py`      | Decode/validate MISB ST 0601 KLV from UDP or .ts file         |
+| `scripts/klv_conformance/check.js` | Check KLV against misb.js (packets.jsonl, .ts, or udp://) |
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
 | `scripts/ci_validate.sh`       | Integration test (health wait + video/KLV validation)         |
 
@@ -102,7 +102,8 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
     ```
     `NullRHI` keeps it under 10 s end-to-end (no shader compile, no display). JSON results land at `.cache/automation-report/index.json` (UTF-8 BOM — read with `encoding="utf-8-sig"`).
   - Filter narrower: replace `CamSim` in `RunTests` with e.g. `CamSim.Sensor` or a single test path.
-- **Python validation**: `scripts/validate_klv.py`, `scripts/test_video_output.sh`
+- **KLV conformance**: `node scripts/klv_conformance/check.js` (misb.js; run `npm ci` in that directory first)
+- **Python validation**: `scripts/test_video_output.sh`
 - **Integration**: `scripts/ci_validate.sh` (Docker headless + health wait + ffprobe + KLV check)
 - **CIGI testing**: `scripts/send_cigi_test.py --sweep` or `--circle` for motion patterns
 

@@ -5,7 +5,7 @@
 # validates H.264 + KLV streams via ffprobe, and captures a short segment
 # to check for decode errors.
 #
-# Requirements: docker, ffprobe, ffmpeg, uv (for validate_klv.py)
+# Requirements: docker, ffprobe, ffmpeg, node + npm (for the misb.js KLV check)
 #
 # Usage:
 #   ./scripts/ci_validate.sh [image_name]
@@ -101,11 +101,17 @@ else
 fi
 
 # -----------------------------------------------------------------------
-# Validate KLV (if script is available)
+# Validate KLV against misb.js, the reference downstream decoder
 # -----------------------------------------------------------------------
-if [ -f "${REPO_ROOT}/scripts/validate_klv.py" ] && [ -f /tmp/camsim_ci_capture.ts ]; then
-    echo "==> Validating KLV..."
-    uv run "${REPO_ROOT}/scripts/validate_klv.py" /tmp/camsim_ci_capture.ts --check-crc || true
+KLV_STATUS=0
+if [ -s /tmp/camsim_ci_capture.ts ]; then
+    echo "==> Validating KLV with misb.js..."
+    KLV_DIR="${REPO_ROOT}/scripts/klv_conformance"
+    (cd "${KLV_DIR}" && npm ci --no-audit --no-fund --silent) \
+        && node "${KLV_DIR}/check.js" stream /tmp/camsim_ci_capture.ts --max-age-sec 600 --min-packets 10 \
+        || KLV_STATUS=1
+else
+    echo "[WARN] No capture file; skipping KLV validation"
 fi
 
 # -----------------------------------------------------------------------
@@ -115,5 +121,9 @@ HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${CONTAINER_
 echo "[ci] Container health status: ${HEALTH_STATUS}"
 
 echo ""
+if [ "${KLV_STATUS}" -ne 0 ]; then
+    echo "[FAIL] KLV does not conform to misb.js"
+    exit 1
+fi
 echo "==> CI validation complete"
 exit 0

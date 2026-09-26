@@ -125,11 +125,7 @@ phase26:
   # Env: CAMSIM_PLATFORM_TAIL_NUMBER
   platform_tail_number: ""
 
-  # KLV checksum algorithm: "crc16" (default) or "bcc16" (ST 0601 spec)
-  # Env: CAMSIM_KLV_CHECKSUM
-  klv_checksum: "crc16"
-
-  # Target track gate dimensions in pixels (Tags 40/41, 0 = omit)
+  # Target track gate dimensions in pixels (Tags 43/44, 0 = omit)
   # Env: CAMSIM_TARGET_TRACK_GATE_WIDTH / CAMSIM_TARGET_TRACK_GATE_HEIGHT
   target_track_gate_width:  0
   target_track_gate_height: 0
@@ -191,8 +187,6 @@ hfov_deg: 60.0
 # Video codec: "h264" (default) or "h265" (STANAG 4609 Ed4).
 # Env: CAMSIM_VIDEO_CODEC
 video_codec: h264
-
-# KLV checksum algorithm — see phase26.klv_checksum above (env CAMSIM_KLV_CHECKSUM).
 
 # Encoder implementation: "auto" tries NVENC first, falls back to
 # libx264/libx265. Explicit values: "nvenc", "libx264", "libx265".

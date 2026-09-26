@@ -1,0 +1,11 @@
+{
+  "name": "camsim-klv-conformance",
+  "private": true,
+  "description": "Checks CamSim KLV against misb.js, the reference downstream decoder",
+  "scripts": {
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "@vidterra/misb.js": "0.1.30"
+  }
+}

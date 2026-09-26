@@ -10,7 +10,7 @@
 #
 # Validates:
 #   1) MPEG-TS video stream present (test_video_output.sh)
-#   2) KLV metadata decodes (validate_klv.py)
+#   2) KLV metadata conforms to misb.js (klv_conformance/check.js)
 #   3) CIGI response heartbeat received (check_cigi_responses.py)
 #
 # Usage:
@@ -157,11 +157,10 @@ run_native_profile() {
     if [[ "${SKIP_KLV}" -eq 0 ]]; then
         echo "==> [${platform_label}] validating KLV stream"
         run_checked "[${platform_label}] KLV validator" "/tmp/camsim_matrix_klv.log" \
-        uv run "${SCRIPT_DIR}/validate_klv.py" \
-            --addr "${VIDEO_ADDR}" \
-            --port "${VIDEO_PORT}" \
-            --count 1 \
-            --timeout 30 || { cleanup_native; return 1; }
+        node "${SCRIPT_DIR}/klv_conformance/check.js" stream \
+            "udp://${VIDEO_ADDR}:${VIDEO_PORT}" \
+            --duration-sec "${PROBE_DURATION}" \
+            --max-age-sec 600 || { cleanup_native; return 1; }
     fi
 
     if [[ "${SKIP_CIGI_RESP}" -eq 0 ]]; then
@@ -241,11 +240,10 @@ run_linux_container() {
     if [[ "${SKIP_KLV}" -eq 0 ]]; then
         echo "==> [linux-container] validating KLV stream"
         run_checked "[linux-container] KLV validator" "/tmp/camsim_matrix_klv_container.log" \
-        uv run "${SCRIPT_DIR}/validate_klv.py" \
-            --addr "${VIDEO_ADDR}" \
-            --port "${VIDEO_PORT}" \
-            --count 1 \
-            --timeout 30 || { cleanup_container; return 1; }
+        node "${SCRIPT_DIR}/klv_conformance/check.js" stream \
+            "udp://${VIDEO_ADDR}:${VIDEO_PORT}" \
+            --duration-sec "${PROBE_DURATION}" \
+            --max-age-sec 600 || { cleanup_container; return 1; }
     fi
 
     if [[ "${SKIP_CIGI_RESP}" -eq 0 ]]; then
@@ -291,6 +289,14 @@ run_profile() {
 if [[ "${SKIP_VIDEO}" -eq 0 ]] && ! command -v ffprobe >/dev/null 2>&1; then
     echo "[ERROR] ffprobe is required for video integrity checks; install ffmpeg or pass --skip-video"
     exit 1
+fi
+
+if [[ "${SKIP_KLV}" -eq 0 ]]; then
+    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+        echo "[ERROR] node + npm are required for the misb.js KLV check; install Node.js or pass --skip-klv"
+        exit 1
+    fi
+    (cd "${SCRIPT_DIR}/klv_conformance" && npm ci --no-audit --no-fund --silent) || exit 1
 fi
 
 echo "==> CamSim test matrix: profile=${PROFILE}"

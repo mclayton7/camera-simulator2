@@ -95,9 +95,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Validate KLV parser (import + --help smoke)
-        run: uv run scripts/validate_klv.py --help
-
       - name: Validate CIGI test sender (import + --help smoke)
         run: uv run scripts/send_cigi_test.py --help
 
@@ -202,6 +199,16 @@ jobs:
       - name: Parse automation report
         run: python3 scripts/parse_automation_report.py .cache/automation-report
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: KLV conformance (misb.js)
+        working-directory: scripts/klv_conformance
+        run: |
+          npm ci --no-audit --no-fund
+          node check.js packets "$GITHUB_WORKSPACE/unreal_project/CamSimTest/Saved/KlvConformance/packets.jsonl"
+
       - name: Upload automation report
         if: always()
         uses: actions/upload-artifact@v4
@@ -259,6 +266,10 @@ jobs:
           done
           echo "Health file not found after 60s"
           exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Run CI validation
         run: bash scripts/ci_validate.sh || true

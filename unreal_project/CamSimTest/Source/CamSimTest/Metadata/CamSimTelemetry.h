@@ -43,7 +43,7 @@ struct FCamSimTelemetry
 	double FrameCenterElev = 0.0;  // metres above ellipsoid  — Tag 25 (from terrain hit)
 
 	// Phase 26: additional ST 0601.9 fields
-	float  GroundSpeedMps  = 0.0f; // metres/sec — Tag 8 (0 = omit)
+	float  GroundSpeedMps  = 0.0f; // metres/sec — Tag 56 (0 = omit)
 
 	// Active sensor state snapshot (for optional sidecar ground-truth output).
 	uint8 SensorMode      = 0;    // 0=EO, 1=IR, 2=NVG

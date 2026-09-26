@@ -11,14 +11,16 @@
  * Static helper (with one-time configuration) that encodes an FCamSimTelemetry into a MISB ST 0601
  * KLV Local Set byte buffer ready to be written to an FFmpeg data-stream packet.
  *
+ * The reference decoder is misb.js (github.com/vidterra/misb.js): every tag
+ * here must decode correctly with its st0601.parse().
+ *
  * Tags implemented (ST 0601.9, ascending order):
- *   Tag  1  – Checksum (CRC-16/CCITT or BCC-16, configurable)
+ *   Tag  1  – Checksum                   (uint16 running sum, see ComputeChecksum)
  *   Tag  2  – UNIX Time Stamp            (uint64, μs, 8 bytes)
  *   Tag  4  – Platform Tail Number       (ISO 646 string, configurable)
  *   Tag  5  – Platform Heading Angle     (uint16, 0..360°)
  *   Tag  6  – Platform Pitch Angle       (int16,  ±20°)
  *   Tag  7  – Platform Roll Angle        (int16,  ±50°)
- *   Tag  8  – Platform Ground Speed      (uint8, 0..255 m/s)
  *   Tag 11  – Image Source Sensor        (ISO 646 string: "EO Nose" / "LWIR" / "NVG")
  *   Tag 12  – Image Coordinate System    (ISO 646 string: "Geodetic WGS84")
  *   Tag 13  – Sensor Latitude            (int32,  ±90°)
@@ -33,13 +35,12 @@
  *   Tag 23  – Frame Center Latitude      (int32,  ±90°)
  *   Tag 24  – Frame Center Longitude     (int32,  ±180°)
  *   Tag 25  – Frame Center Elevation     (uint16, −900..19000 m)
- *   Tag 40  – Target Track Gate Width    (uint8, pixels, configurable)
- *   Tag 41  – Target Track Gate Height   (uint8, pixels, configurable)
- *   Tag 47  – Generic Flag Data 01       (uint8 bitmask: bit5=IR polarity, bit3=range valid)
+ *   Tag 43  – Target Track Gate Width    (uint8, pixels / 2, configurable)
+ *   Tag 44  – Target Track Gate Height   (uint8, pixels / 2, configurable)
+ *   Tag 47  – Generic Flag Data          (uint8 bitmask: bit 3 = IR black-hot)
+ *   Tag 48  – Security Local Set         (ST 0102, when configured)
+ *   Tag 56  – Platform Ground Speed      (uint8, 0..255 m/s)
  *   Tag 65  – UAS LS Version Number      (uint8, value=9)
- *
- * Checksum: default is CRC-16/CCITT (poly 0x1021, init 0xFFFF) to match validate_klv.py.
- * Configure() can switch to BCC-16 (running 16-bit modular sum) per ST 0601 spec.
  */
 class FKlvBuilder
 {
@@ -76,11 +77,10 @@ public:
 	                                const FString& ReleasingInstructions = FString());
 
 	/**
-	 * Phase 26: one-time configuration for checksum algorithm, tail number,
-	 * and target track gate dimensions. Called at startup from subsystem init.
+	 * Phase 26: one-time configuration for tail number and target track gate
+	 * dimensions (in pixels). Called at startup from subsystem init.
 	 */
-	static void Configure(const FString& ChecksumAlgo,
-	                       const FString& TailNumber,
+	static void Configure(const FString& TailNumber,
 	                       float TargetTrackGateWidth,
 	                       float TargetTrackGateHeight);
 
@@ -101,8 +101,14 @@ public:
 	static int16  MapPlatformRoll(float Degrees);          // signed,   2-byte, ±50°
 	static uint32 MapSlantRange(double Metres);            // unsigned, 4-byte, 0..5000000 m
 	static uint8  MapGroundSpeed(float MetresPerSec);      // unsigned, 1-byte, 0..255 m/s
+	static uint8  MapTrackGate(float Pixels);              // unsigned, 1-byte, pixels / 2
 
-	// Checksum helpers (public for testing)
-	static uint16 ComputeCrc16(const uint8* Data, int32 Len);
-	static uint16 ComputeBcc16(const uint8* Data, int32 Len);
+	// Tag 47 Generic Flag Data bits (bit 1 = LSB)
+	static constexpr uint8 GenericFlagIrBlackHot = 0x04;   // bit 3
+
+	/**
+	 * ST 0601 checksum: running 16-bit sum over [Data, Data + Len). For a full
+	 * packet, Len covers the UL key through the checksum item's "01 02" bytes.
+	 */
+	static uint16 ComputeChecksum(const uint8* Data, int32 Len);
 };

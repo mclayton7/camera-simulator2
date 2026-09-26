@@ -1220,7 +1220,6 @@ FCamSimConfig FCamSimConfig::Load()
 		{
 			ryml::ConstNodeRef P = Root["phase26"];
 			YamlString(P, "platform_tail_number",     Cfg.Phase26.PlatformTailNumber);
-			YamlString(P, "klv_checksum",             Cfg.Phase26.KlvChecksum);
 			YamlFloat (P, "target_track_gate_width",  Cfg.Phase26.TargetTrackGateWidth);
 			YamlFloat (P, "target_track_gate_height", Cfg.Phase26.TargetTrackGateHeight);
 		}
@@ -1630,7 +1629,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	{
 		FPhase26Config& P = Cfg.Phase26;
 		P.PlatformTailNumber    = GetEnv     (TEXT("CAMSIM_PLATFORM_TAIL_NUMBER"),      P.PlatformTailNumber);
-		P.KlvChecksum           = GetEnv     (TEXT("CAMSIM_KLV_CHECKSUM"),              P.KlvChecksum);
 		P.TargetTrackGateWidth  = GetEnvFloat(TEXT("CAMSIM_TARGET_TRACK_GATE_WIDTH"),   P.TargetTrackGateWidth);
 		P.TargetTrackGateHeight = GetEnvFloat(TEXT("CAMSIM_TARGET_TRACK_GATE_HEIGHT"),  P.TargetTrackGateHeight);
 	}
