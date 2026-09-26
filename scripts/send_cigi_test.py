@@ -101,16 +101,18 @@ def pack_ig_control(frame_ctr: int, db_number: int = 0) -> bytes:
       2     uint8   Major Version (0x03)
       3     int8    Database Number
       4     uint8   IG Mode (bits 0-1) | Timestamp Valid (bit 2) |
-                    Smoothing Enable (bit 3)
+                    Smoothing Enable (bit 3) | Minor Version (bits 4-7)
       5     uint8   reserved
       6-7   uint16  Byte Swap Magic (0x8000 in sender byte order)
       8-11  uint32  Host Frame Counter
-      12-15 uint32  Timestamp (100-microsecond ticks since midnight UTC)
+      12-15 uint32  Timestamp (10-microsecond ticks since midnight UTC)
       16-19 uint32  Last Received IG Frame
       20-23         reserved (zero)
     """
-    # IG Mode = 1 (Operate), timestamp valid = 1 (bit 2), smoothing = 0
-    ig_mode_byte = 0x05  # bits: 0b00000101 = Operate(1) | TS_Valid(1<<2)
+    # IG Mode = 1 (Operate), timestamp valid = 1 (bit 2), smoothing = 0,
+    # Minor Version = 3 (bits 4-7) identifies a CIGI 3.3 host; CCL reads 2 as 3.2
+    # and 0 as 3.0.
+    ig_mode_byte = 0x35  # Minor(3<<4) | TS_Valid(1<<2) | Operate(1)
 
     # Byte Swap Magic: 0x8000 in sender byte order.
     # We use big-endian ('>'), so on-wire bytes 6-7 = 0x80 0x00.
@@ -118,8 +120,8 @@ def pack_ig_control(frame_ctr: int, db_number: int = 0) -> bytes:
     # detect whether byte swapping is needed.
     BYTE_SWAP_MAGIC = 0x8000
 
-    # 100-us ticks since midnight UTC
-    ts = int((time.time() % 86400) * 10_000) & 0xFFFF_FFFF
+    # 10-us ticks since midnight UTC (ICD 4.1.1: Timestamp units are 10 us)
+    ts = int((time.time() % 86400) * 100_000) & 0xFFFF_FFFF
 
     return struct.pack(
         ">BBBbBxHIIII",
@@ -629,7 +631,7 @@ def main():
     ap.add_argument(
         "--entity-id",
         type=int,
-        default=0,
+        default=1,
         help="CIGI entity ID for the camera (must match camera_entity_id in config)",
     )
     ap.add_argument(
