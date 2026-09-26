@@ -113,6 +113,70 @@ static void ResolveActiveSensorQuality(FCamSimConfig& Cfg)
 // ryml YAML helpers — mirror the old TryGet*Field call pattern
 // ---------------------------------------------------------------------------
 
+// Records which YAML nodes a setting looked up, so keys nobody reads (typos,
+// stale settings) can be reported instead of silently falling back to defaults.
+struct FYamlKeyTracker
+{
+	TSet<ryml::id_type> Read;         // nodes found by YamlHas
+	TSet<ryml::id_type> DataParents;  // maps whose keys are data (entity types, preset names)
+	TSet<ryml::id_type> Elsewhere;    // subtrees another module parses from the same file
+};
+static FYamlKeyTracker* GYamlKeyTracker = nullptr;  // set for the duration of one load (game thread)
+
+static bool YamlHas(ryml::ConstNodeRef Node, c4::csubstr Key)
+{
+	const ryml::id_type Child = Node.tree()->find_child(Node.id(), Key);
+	if (Child == ryml::NONE) return false;
+	if (GYamlKeyTracker) GYamlKeyTracker->Read.Add(Child);
+	return true;
+}
+
+/** Mark a map whose keys are names chosen by the user rather than settings. */
+static void YamlKeysAreData(ryml::ConstNodeRef Node)
+{
+	if (GYamlKeyTracker) GYamlKeyTracker->DataParents.Add(Node.id());
+}
+
+/** Mark a top-level section as parsed by another module (not checked here). */
+static void YamlReadElsewhere(ryml::ConstNodeRef Root, c4::csubstr Key)
+{
+	const ryml::id_type Child = Root.tree()->find_child(Root.id(), Key);
+	if (Child != ryml::NONE && GYamlKeyTracker)
+	{
+		GYamlKeyTracker->Read.Add(Child);
+		GYamlKeyTracker->Elsewhere.Add(Child);
+	}
+}
+
+/** Dotted paths of map keys that no setting read. Unknown subtrees are reported once. */
+static void CollectUnknownYamlKeys(ryml::ConstNodeRef Node, const FString& Path,
+                                   const FYamlKeyTracker& Tracker, TArray<FString>& Out)
+{
+	int32 Index = 0;
+	for (ryml::ConstNodeRef Child : Node.children())
+	{
+		FString ChildPath;
+		if (Node.is_map())
+		{
+			const FString Key = FString(static_cast<int32>(Child.key().len), UTF8_TO_TCHAR(Child.key().str));
+			ChildPath = Path.IsEmpty() ? Key : Path + TEXT(".") + Key;
+			if (!Tracker.Read.Contains(Child.id()) && !Tracker.DataParents.Contains(Node.id()))
+			{
+				Out.Add(ChildPath);
+				continue;
+			}
+		}
+		else
+		{
+			ChildPath = FString::Printf(TEXT("%s[%d]"), *Path, Index++);
+		}
+		if ((Child.is_map() || Child.is_seq()) && !Tracker.Elsewhere.Contains(Child.id()))
+		{
+			CollectUnknownYamlKeys(Child, ChildPath, Tracker, Out);
+		}
+	}
+}
+
 static FString RymlToFString(c4::csubstr S)
 {
 	return FString(static_cast<int32>(S.len), UTF8_TO_TCHAR(S.str));
@@ -120,7 +184,7 @@ static FString RymlToFString(c4::csubstr S)
 
 static bool YamlString(ryml::ConstNodeRef Node, c4::csubstr Key, FString& Out)
 {
-	if (!Node.has_child(Key)) return false;
+	if (!YamlHas(Node, Key)) return false;
 	ryml::ConstNodeRef Child = Node[Key];
 	if (!Child.has_val()) return false;
 	Out = RymlToFString(Child.val());
@@ -129,7 +193,7 @@ static bool YamlString(ryml::ConstNodeRef Node, c4::csubstr Key, FString& Out)
 
 static bool YamlInt(ryml::ConstNodeRef Node, c4::csubstr Key, int32& Out)
 {
-	if (!Node.has_child(Key)) return false;
+	if (!YamlHas(Node, Key)) return false;
 	ryml::ConstNodeRef Child = Node[Key];
 	if (!Child.has_val()) return false;
 	FString Str = RymlToFString(Child.val());
@@ -139,7 +203,7 @@ static bool YamlInt(ryml::ConstNodeRef Node, c4::csubstr Key, int32& Out)
 
 static bool YamlFloat(ryml::ConstNodeRef Node, c4::csubstr Key, float& Out)
 {
-	if (!Node.has_child(Key)) return false;
+	if (!YamlHas(Node, Key)) return false;
 	ryml::ConstNodeRef Child = Node[Key];
 	if (!Child.has_val()) return false;
 	FString Str = RymlToFString(Child.val());
@@ -149,7 +213,7 @@ static bool YamlFloat(ryml::ConstNodeRef Node, c4::csubstr Key, float& Out)
 
 static bool YamlDouble(ryml::ConstNodeRef Node, c4::csubstr Key, double& Out)
 {
-	if (!Node.has_child(Key)) return false;
+	if (!YamlHas(Node, Key)) return false;
 	ryml::ConstNodeRef Child = Node[Key];
 	if (!Child.has_val()) return false;
 	FString Str = RymlToFString(Child.val());
@@ -159,7 +223,7 @@ static bool YamlDouble(ryml::ConstNodeRef Node, c4::csubstr Key, double& Out)
 
 static bool YamlBool(ryml::ConstNodeRef Node, c4::csubstr Key, bool& Out)
 {
-	if (!Node.has_child(Key)) return false;
+	if (!YamlHas(Node, Key)) return false;
 	ryml::ConstNodeRef Child = Node[Key];
 	if (!Child.has_val()) return false;
 	c4::csubstr Val = Child.val();
@@ -202,6 +266,23 @@ FString FCamSimConfig::GetConfigFilePath()
 // ---------------------------------------------------------------------------
 
 FCamSimConfig FCamSimConfig::Load()
+{
+	const FString YamlPath = GetConfigFilePath();
+	FString YamlContent;
+	if (!FFileHelper::LoadFileToString(YamlContent, *YamlPath))
+	{
+		UE_LOG(LogCamSim, Log, TEXT("No config file found at %s - using defaults"), *YamlPath);
+		return LoadFromYaml(nullptr, YamlPath);
+	}
+	return LoadFromYaml(&YamlContent, YamlPath);
+}
+
+FCamSimConfig FCamSimConfig::LoadFromYamlString(const FString& YamlContent, const FString& SourceName)
+{
+	return LoadFromYaml(&YamlContent, SourceName);
+}
+
+FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FString& YamlPath)
 {
 	FCamSimConfig Cfg; // default values from member initialisers
 
@@ -321,14 +402,10 @@ FCamSimConfig FCamSimConfig::Load()
 		Cfg.ActiveSensorQuality = Medium;
 	}
 
-	// Attempt to read YAML config
-	FString YamlPath = GetConfigFilePath();
-
-	FString YamlContent;
-	if (FFileHelper::LoadFileToString(YamlContent, *YamlPath))
+	if (YamlContent)
 	{
 		// Convert FString (UTF-16) to UTF-8 std::string for ryml
-		FTCHARToUTF8 Utf8(*YamlContent);
+		FTCHARToUTF8 Utf8(**YamlContent);
 		c4::csubstr Src(Utf8.Get(), Utf8.Length());
 
 		ryml::Tree Tree;
@@ -345,6 +422,9 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		ryml::ConstNodeRef Root = Tree.rootref();
+		FYamlKeyTracker KeyTracker;
+		GYamlKeyTracker = &KeyTracker;
+		ON_SCOPE_EXIT { GYamlKeyTracker = nullptr; };
 
 		YamlString(Root, "cigi_bind_addr",      Cfg.CigiBindAddr);
 		YamlInt   (Root, "cigi_port",           Cfg.CigiPort);
@@ -384,12 +464,12 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlString(Root, "terrain_provider", Cfg.TerrainProvider);
 		YamlString(Root, "imagery_provider", Cfg.ImageryProvider);
 
-		if (Root.has_child("terrain"))
+		if (YamlHas(Root, "terrain"))
 		{
 			ryml::ConstNodeRef TerrainNode = Root["terrain"];
 			YamlString(TerrainNode, "provider", Cfg.TerrainProvider);
 		}
-		if (Root.has_child("imagery"))
+		if (YamlHas(Root, "imagery"))
 		{
 			ryml::ConstNodeRef ImageryNode = Root["imagery"];
 			YamlString(ImageryNode, "provider", Cfg.ImageryProvider);
@@ -419,7 +499,7 @@ FCamSimConfig FCamSimConfig::Load()
 
 		// FOV presets: optional YAML array of floats (wide -> narrow)
 		// Replaces the defaults set above when present in config.
-		if (Root.has_child("sensor_fov_presets"))
+		if (YamlHas(Root, "sensor_fov_presets"))
 		{
 			ryml::ConstNodeRef PresetsNode = Root["sensor_fov_presets"];
 			if (PresetsNode.is_seq())
@@ -439,13 +519,13 @@ FCamSimConfig FCamSimConfig::Load()
 		// sensor_modes: per-waveband simulation parameters (Phase 11)
 		// Overwrites the defaults set above with YAML values where present.
 		// -------------------------------------------------------------------
-		if (Root.has_child("sensor_modes"))
+		if (YamlHas(Root, "sensor_modes"))
 		{
 			ryml::ConstNodeRef ModesNode = Root["sensor_modes"];
 
 			auto ParseMode = [&](c4::csubstr Key, ESensorMode M)
 			{
-				if (!ModesNode.has_child(Key)) return;
+				if (!YamlHas(ModesNode, Key)) return;
 				ryml::ConstNodeRef ModeNode = ModesNode[Key];
 
 				FSensorModeConfig& MC = Cfg.SensorModeConfigs.FindOrAdd(M);
@@ -522,11 +602,12 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Optional user-defined sensor quality profiles.
-		if (Root.has_child("sensor_quality_profiles"))
+		if (YamlHas(Root, "sensor_quality_profiles"))
 		{
 			ryml::ConstNodeRef ProfilesNode = Root["sensor_quality_profiles"];
 			if (ProfilesNode.is_map())
 			{
+				YamlKeysAreData(ProfilesNode);
 				for (ryml::ConstNodeRef ProfileChild : ProfilesNode)
 				{
 					const FString PresetKey = NormalizeQualityPreset(RymlToFString(ProfileChild.key()));
@@ -550,7 +631,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Active sensor quality preset and optional inline overrides.
-		if (Root.has_child("sensor_quality"))
+		if (YamlHas(Root, "sensor_quality"))
 		{
 			ryml::ConstNodeRef QualityNode = Root["sensor_quality"];
 
@@ -580,7 +661,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Optional multi-stream output views.
-		if (Root.has_child("output_views"))
+		if (YamlHas(Root, "output_views"))
 		{
 			ryml::ConstNodeRef ViewsNode = Root["output_views"];
 			if (ViewsNode.is_seq())
@@ -615,7 +696,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Optional ground-truth sidecar output.
-		if (Root.has_child("ground_truth"))
+		if (YamlHas(Root, "ground_truth"))
 		{
 			ryml::ConstNodeRef GTNode = Root["ground_truth"];
 			YamlBool  (GTNode, "enabled",         Cfg.GroundTruth.bEnabled);
@@ -637,7 +718,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// ML Training Data Generation (Phase 17).
-		if (Root.has_child("ml_training"))
+		if (YamlHas(Root, "ml_training"))
 		{
 			ryml::ConstNodeRef MLNode = Root["ml_training"];
 			YamlBool  (MLNode, "enabled",                  Cfg.MLTraining.bEnabled);
@@ -655,18 +736,19 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Entity runtime scale controls (LOD/culling/update throttling).
-		if (Root.has_child("entity_scale"))
+		if (YamlHas(Root, "entity_scale"))
 		{
 			ryml::ConstNodeRef ScaleNode = Root["entity_scale"];
 			YamlFloat(ScaleNode, "max_draw_distance_m",      Cfg.EntityScale.MaxDrawDistanceM);
 			YamlFloat(ScaleNode, "tick_rate_hz",              Cfg.EntityScale.TickRateHz);
 			YamlFloat(ScaleNode, "default_max_update_rate_hz", Cfg.EntityScale.DefaultMaxUpdateRateHz);
 
-			if (ScaleNode.has_child("max_update_rate_hz_overrides"))
+			if (YamlHas(ScaleNode, "max_update_rate_hz_overrides"))
 			{
 				ryml::ConstNodeRef OverridesNode = ScaleNode["max_update_rate_hz_overrides"];
 				if (OverridesNode.is_map())
 				{
+					YamlKeysAreData(OverridesNode);
 					for (ryml::ConstNodeRef Override : OverridesNode)
 					{
 						FString KeyStr = RymlToFString(Override.key());
@@ -687,14 +769,14 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlFloat(Root, "entity_default_max_update_rate_hz",  Cfg.EntityScale.DefaultMaxUpdateRateHz);
 
 		// Optional scenario entity orchestration block.
-		if (Root.has_child("scenario"))
+		if (YamlHas(Root, "scenario"))
 		{
 			ryml::ConstNodeRef ScenarioNode = Root["scenario"];
 			YamlBool (ScenarioNode, "enabled",    Cfg.bScenarioEnabled);
 			YamlFloat(ScenarioNode, "time_scale", Cfg.ScenarioTimeScale);
 			YamlFloat(ScenarioNode, "start_hour", Cfg.ScenarioStartHour);
 
-			if (ScenarioNode.has_child("entities"))
+			if (YamlHas(ScenarioNode, "entities"))
 			{
 				ryml::ConstNodeRef EntitiesNode = ScenarioNode["entities"];
 				if (EntitiesNode.is_seq())
@@ -726,7 +808,7 @@ FCamSimConfig FCamSimConfig::Load()
 						// Phase 23A: Waypoint trajectories
 						YamlBool (EntityNode, "loop_waypoints", Spec.bLoopWaypoints);
 						YamlFloat(EntityNode, "base_speed_mps", Spec.BaseSpeedMps);
-						if (EntityNode.has_child("waypoints"))
+						if (YamlHas(EntityNode, "waypoints"))
 						{
 							ryml::ConstNodeRef WpNode = EntityNode["waypoints"];
 							if (WpNode.is_seq())
@@ -749,7 +831,7 @@ FCamSimConfig FCamSimConfig::Load()
 						// Phase 23D: Formation flying
 						YamlInt (EntityNode, "leader_entity_id", Spec.LeaderEntityId);
 						YamlBool(EntityNode, "inherit_heading",  Spec.bInheritHeading);
-						if (EntityNode.has_child("formation_offset_m"))
+						if (YamlHas(EntityNode, "formation_offset_m"))
 						{
 							ryml::ConstNodeRef OffNode = EntityNode["formation_offset_m"];
 							if (OffNode.is_seq() && OffNode.num_children() >= 3)
@@ -768,7 +850,7 @@ FCamSimConfig FCamSimConfig::Load()
 
 						// Phase 23C: Activity schedule
 						YamlString(EntityNode, "activity_profile", Spec.ActivityProfile);
-						if (EntityNode.has_child("activity_schedule"))
+						if (YamlHas(EntityNode, "activity_schedule"))
 						{
 							ryml::ConstNodeRef ActNode = EntityNode["activity_schedule"];
 							if (ActNode.is_seq())
@@ -793,7 +875,7 @@ FCamSimConfig FCamSimConfig::Load()
 			}
 
 			// Phase 23B: Scenario triggers
-			if (ScenarioNode.has_child("triggers"))
+			if (YamlHas(ScenarioNode, "triggers"))
 			{
 				ryml::ConstNodeRef TriggersNode = ScenarioNode["triggers"];
 				if (TriggersNode.is_seq())
@@ -807,7 +889,7 @@ FCamSimConfig FCamSimConfig::Load()
 						YamlBool  (TrigNode, "repeat", Trig.bRepeat);
 						YamlFloat (TrigNode, "cooldown_sec", Trig.CooldownSec);
 
-						if (TrigNode.has_child("condition"))
+						if (YamlHas(TrigNode, "condition"))
 						{
 							ryml::ConstNodeRef CondNode = TrigNode["condition"];
 							FString CondType;
@@ -826,7 +908,7 @@ FCamSimConfig FCamSimConfig::Load()
 							YamlInt   (CondNode, "frame_threshold", Trig.Condition.FrameThreshold);
 						}
 
-						if (TrigNode.has_child("action"))
+						if (YamlHas(TrigNode, "action"))
 						{
 							ryml::ConstNodeRef ActNode = TrigNode["action"];
 							FString ActType;
@@ -862,7 +944,7 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlFloat(Root, "scenario_time_scale", Cfg.ScenarioTimeScale);
 
 		// Phase 22C: Damage transition FX
-		if (Root.has_child("damage_transition"))
+		if (YamlHas(Root, "damage_transition"))
 		{
 			ryml::ConstNodeRef DmgNode = Root["damage_transition"];
 			YamlBool (DmgNode, "enabled",           Cfg.DamageTransition.bDamageTransitionFX);
@@ -872,7 +954,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Security metadata (MISB ST 0102, Phase 12A)
-		if (Root.has_child("security_metadata"))
+		if (YamlHas(Root, "security_metadata"))
 		{
 			ryml::ConstNodeRef SecNode = Root["security_metadata"];
 			YamlString(SecNode, "classification",       Cfg.SecurityMetadata.Classification);
@@ -889,7 +971,7 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlString(Root, "prometheus_metrics_path", Cfg.PrometheusMetricsPath);
 
 		// Recording & playback (Phase 12E)
-		if (Root.has_child("recording"))
+		if (YamlHas(Root, "recording"))
 		{
 			ryml::ConstNodeRef RecNode = Root["recording"];
 			YamlString(RecNode, "cigi_record_path",   Cfg.Recording.CigiRecordPath);
@@ -898,7 +980,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Optical realism (Phase 15)
-		if (Root.has_child("optical_realism"))
+		if (YamlHas(Root, "optical_realism"))
 		{
 			ryml::ConstNodeRef OptNode = Root["optical_realism"];
 			YamlBool (OptNode, "enabled",                        Cfg.OpticalRealism.bEnabled);
@@ -924,7 +1006,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Phase 18: weather, atmosphere & particle effects
-		if (Root.has_child("phase18"))
+		if (YamlHas(Root, "phase18"))
 		{
 			ryml::ConstNodeRef P18 = Root["phase18"];
 			YamlBool (P18, "second_fog",                Cfg.Phase18.bSecondFog);
@@ -945,7 +1027,7 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlFloat(P18, "cloud_shadow_strength",       Cfg.Phase18.CloudShadowStrength);
 			// 18L Weather zones -- array of {id, lat, lon, radius_m}
 			YamlBool (P18, "weather_zones",               Cfg.Phase18.bWeatherZones);
-			if (P18.has_child("zone_positions") && P18["zone_positions"].is_seq())
+			if (YamlHas(P18, "zone_positions") && P18["zone_positions"].is_seq())
 			{
 				for (const ryml::ConstNodeRef& ZNode : P18["zone_positions"])
 				{
@@ -978,7 +1060,7 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlFloat (P18, "crater_default_radius_m",     Cfg.Phase18.CraterDefaultRadiusM);
 		}
 
-		if (Root.has_child("rendering_quality"))
+		if (YamlHas(Root, "rendering_quality"))
 		{
 			ryml::ConstNodeRef RQNode = Root["rendering_quality"];
 			FRenderingQualityConfig& RQ = Cfg.RenderingQuality;
@@ -996,7 +1078,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Phase 27: Performance
-		if (Root.has_child("performance"))
+		if (YamlHas(Root, "performance"))
 		{
 			ryml::ConstNodeRef PerfNode = Root["performance"];
 			FPerformanceConfig& Perf = Cfg.Performance;
@@ -1018,7 +1100,7 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlBool (PerfNode, "track_pipeline_latency",              Perf.bTrackPipelineLatency);
 		}
 
-		if (Root.has_child("phase19"))
+		if (YamlHas(Root, "phase19"))
 		{
 			ryml::ConstNodeRef P19 = Root["phase19"];
 			YamlBool  (P19, "ocean_enabled",            Cfg.Phase19.bOceanEnabled);
@@ -1038,14 +1120,14 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Cesium backend: ion server, terrain source, imagery overlay
-		if (Root.has_child("cesium"))
+		if (YamlHas(Root, "cesium"))
 		{
 			ryml::ConstNodeRef Cs = Root["cesium"];
 			YamlString(Cs, "ion_portal_url", Cfg.CesiumBackend.IonPortalUrl);
 			YamlString(Cs, "ion_api_url",    Cfg.CesiumBackend.IonApiUrl);
 			YamlString(Cs, "ion_token",      Cfg.CesiumBackend.IonToken);
 
-			if (Cs.has_child("terrain"))
+			if (YamlHas(Cs, "terrain"))
 			{
 				ryml::ConstNodeRef Tr = Cs["terrain"];
 				YamlString(Tr, "source",       Cfg.CesiumBackend.Terrain.Source);
@@ -1053,7 +1135,7 @@ FCamSimConfig FCamSimConfig::Load()
 				YamlString(Tr, "url",          Cfg.CesiumBackend.Terrain.Url);
 			}
 
-			if (Cs.has_child("imagery"))
+			if (YamlHas(Cs, "imagery"))
 			{
 				ryml::ConstNodeRef Im = Cs["imagery"];
 				YamlString(Im, "source",          Cfg.CesiumBackend.Imagery.Source);
@@ -1069,7 +1151,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Phase 20: overlay HUD/OSD
-		if (Root.has_child("overlay"))
+		if (YamlHas(Root, "overlay"))
 		{
 			ryml::ConstNodeRef Ov = Root["overlay"];
 
@@ -1150,7 +1232,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Phase 21: DIS protocol config
-		if (Root.has_child("dis"))
+		if (YamlHas(Root, "dis"))
 		{
 			ryml::ConstNodeRef D = Root["dis"];
 			YamlBool  (D, "enabled",               Cfg.DIS.bEnabled);
@@ -1165,11 +1247,12 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlInt   (D, "default_entity_type_id", Cfg.DIS.DefaultEntityTypeId);
 
 			// Entity type mappings: dis.entity_type_map
-			if (D.has_child("entity_type_map"))
+			if (YamlHas(D, "entity_type_map"))
 			{
 				ryml::ConstNodeRef MapNode = D["entity_type_map"];
 				if (MapNode.is_map())
 				{
+					YamlKeysAreData(MapNode);
 					for (ryml::ConstNodeRef Entry : MapNode)
 					{
 						if (Entry.has_key() && Entry.has_val())
@@ -1185,7 +1268,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Phase 21 Sprint 2: streaming config
-		if (Root.has_child("streaming"))
+		if (YamlHas(Root, "streaming"))
 		{
 			ryml::ConstNodeRef S = Root["streaming"];
 			YamlBool  (S, "cot_enabled",       Cfg.Streaming.bCotEnabled);
@@ -1205,7 +1288,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Phase 21 Sprint 2: laser designator config
-		if (Root.has_child("laser_designator"))
+		if (YamlHas(Root, "laser_designator"))
 		{
 			ryml::ConstNodeRef L = Root["laser_designator"];
 			YamlBool  (L, "enabled",          Cfg.LaserDesignator.bEnabled);
@@ -1217,7 +1300,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Phase 26: standards compliance config
-		if (Root.has_child("phase26"))
+		if (YamlHas(Root, "phase26"))
 		{
 			ryml::ConstNodeRef P = Root["phase26"];
 			YamlString(P, "platform_tail_number",     Cfg.Phase26.PlatformTailNumber);
@@ -1226,7 +1309,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Terrain readiness gate
-		if (Root.has_child("terrain_gate"))
+		if (YamlHas(Root, "terrain_gate"))
 		{
 			ryml::ConstNodeRef G = Root["terrain_gate"];
 			float TeleportM = static_cast<float>(Cfg.TerrainGate.TeleportDistanceM);
@@ -1242,7 +1325,7 @@ FCamSimConfig FCamSimConfig::Load()
 		YamlFloat(Root, "fps_eye_height_m", Cfg.FpsEyeHeightM);
 
 		// Phase 23E: Randomization engine
-		if (Root.has_child("randomization"))
+		if (YamlHas(Root, "randomization"))
 		{
 			ryml::ConstNodeRef RandNode = Root["randomization"];
 			YamlBool (RandNode, "enabled",                 Cfg.Randomization.bEnabled);
@@ -1253,7 +1336,7 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlBool (RandNode, "randomize_weather",       Cfg.Randomization.bRandomizeWeather);
 			YamlFloat(RandNode, "weather_probability",     Cfg.Randomization.WeatherProbability);
 
-			if (RandNode.has_child("entity_entries") && RandNode["entity_entries"].is_seq())
+			if (YamlHas(RandNode, "entity_entries") && RandNode["entity_entries"].is_seq())
 			{
 				for (ryml::ConstNodeRef EE : RandNode["entity_entries"])
 				{
@@ -1272,7 +1355,7 @@ FCamSimConfig FCamSimConfig::Load()
 		}
 
 		// Phase 28: operational config
-		if (Root.has_child("operational"))
+		if (YamlHas(Root, "operational"))
 		{
 			ryml::ConstNodeRef OpNode = Root["operational"];
 			YamlString(OpNode, "structured_log_path", Cfg.Operational.StructuredLogPath);
@@ -1281,11 +1364,19 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlInt(OpNode, "health_http_port", Cfg.Operational.HealthHttpPort);
 		}
 
+		YamlReadElsewhere(Root, "entity_types");  // FEntityTypeTable
+
+		if (Root.is_map())
+		{
+			CollectUnknownYamlKeys(Root, FString(), KeyTracker, Cfg.UnknownYamlKeys);
+		}
+		for (const FString& Key : Cfg.UnknownYamlKeys)
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("Config: unknown key '%s' in %s is ignored (typo or removed setting?)"),
+				*Key, *YamlPath);
+		}
+
 		UE_LOG(LogCamSim, Log, TEXT("Loaded config from %s"), *YamlPath);
-	}
-	else
-	{
-		UE_LOG(LogCamSim, Log, TEXT("No config file found at %s - using defaults"), *YamlPath);
 	}
 
 	ApplyEnvOverrides(Cfg);

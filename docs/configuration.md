@@ -13,6 +13,12 @@ directory before launch; the container `entrypoint.sh` copies it into the
 binary directory. Edit only `deploy/camsim_config.yaml`; the project-dir copy
 is generated and is listed in `.gitignore`.
 
+**Unknown keys:** a key that no setting reads (a typo such as `cigi_prot`, or a
+removed setting) is logged at load as
+`Config: unknown key 'section.key' in <file> is ignored`, instead of silently
+falling back to the default. The `CamSim.Config.CanonicalConfigHasNoUnknownKeys`
+test keeps `deploy/camsim_config.yaml` free of them.
+
 ## Full Example
 
 ```yaml

@@ -789,6 +789,12 @@ struct FCamSimConfig
 	/** Load from YAML file, then apply env var overrides. */
 	static FCamSimConfig Load();
 
+	/** Parse YAML text (defaults for anything absent), then apply env var overrides. */
+	static FCamSimConfig LoadFromYamlString(const FString& YamlContent, const FString& SourceName = TEXT("<string>"));
+
+	/** YAML keys no setting reads (typos, removed settings), as dotted paths. Warned at load. */
+	TArray<FString> UnknownYamlKeys;
+
 	/** Return the path to the resolved config file (for re-parsing by other modules). */
 	static FString GetConfigFilePath();
 
@@ -796,5 +802,6 @@ struct FCamSimConfig
 	TArray<FString> Validate() const;
 
 private:
+	static FCamSimConfig LoadFromYaml(const FString* YamlContent, const FString& YamlPath);
 	static void ApplyEnvOverrides(FCamSimConfig& Cfg);
 };
