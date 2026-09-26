@@ -2,6 +2,7 @@
 
 #include "CIGI/CigiSender.h"
 #include "CamSimTest.h"
+#include "CIGI/CigiPacketTypes.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "Common/UdpSocketBuilder.h"
@@ -12,6 +13,8 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiIGSession.h"
 #include "cigicl/CigiOutgoingMsg.h"
 #include "cigicl/CigiSOFV3_2.h"
+#include "cigicl/CigiHatHotXRespV3_2.h"
+#include "cigicl/CigiLosXRespV3_2.h"
 #include "cigicl/CigiBaseSOF.h"        // CigiBaseSOF::IGModeGrp (Phase 12D)
 #include "cigicl/CigiHatHotRespV3.h"
 #include "cigicl/CigiLosRespV3.h"
@@ -153,6 +156,18 @@ void FCigiSender::FlushFrame(uint32 FrameCntr, uint32 LastHostFrame, uint8 IGMod
 	}
 	LosInUse = 0;
 
+	for (int32 Idx = 0; Idx < HatHotXInUse; ++Idx)
+	{
+		*OutgoingMsg << *static_cast<CigiBasePacket*>(HatHotXPool[Idx].Get());
+	}
+	HatHotXInUse = 0;
+
+	for (int32 Idx = 0; Idx < LosXInUse; ++Idx)
+	{
+		*OutgoingMsg << *static_cast<CigiBasePacket*>(LosXPool[Idx].Get());
+	}
+	LosXInUse = 0;
+
 	// Pack the single-slot sensor extended response if one was staged.
 	if (bSensorXRespPending && SensorXResp.IsValid())
 	{
@@ -205,6 +220,58 @@ void FCigiSender::EnqueueHatHotResponse(uint16 HatHotId, bool bValid,
 	// slot could surface stale metres from a prior valid response.
 	Resp->SetHat(bValid ? Hat : 0.0);
 	Resp->SetHot(bValid ? Hot : 0.0);
+}
+
+void FCigiSender::EnqueueHatHotExtendedResponse(uint16 HatHotId, bool bValid, double Hat, double Hot,
+                                                uint32 Material, float NormalAzDeg, float NormalElDeg)
+{
+	if (!bOpen) return;
+
+	if (HatHotXInUse >= HatHotXPool.Num())
+	{
+		HatHotXPool.Emplace(MakeUnique<CigiHatHotXRespV3_2>());
+	}
+	CigiHatHotXRespV3_2* Resp = HatHotXPool[HatHotXInUse++].Get();
+
+	// Every field is written so a recycled slot never carries stale data.
+	Resp->SetHatHotID(static_cast<Cigi_uint16>(HatHotId));
+	Resp->SetValid(bValid);
+	Resp->SetHat(bValid ? Hat : 0.0);
+	Resp->SetHot(bValid ? Hot : 0.0);
+	Resp->SetMaterial(bValid ? Material : 0);
+	Resp->SetNormAz(bValid ? FMath::Clamp(NormalAzDeg, -180.0f, 180.0f) : 0.0f, false);
+	Resp->SetNormEl(bValid ? FMath::Clamp(NormalElDeg, -90.0f, 90.0f) : 0.0f, false);
+}
+
+void FCigiSender::EnqueueLosExtendedResponse(const FCigiLosExtendedResponse& R)
+{
+	if (!bOpen) return;
+
+	if (LosXInUse >= LosXPool.Num())
+	{
+		LosXPool.Emplace(MakeUnique<CigiLosXRespV3_2>());
+	}
+	CigiLosXRespV3_2* Resp = LosXPool[LosXInUse++].Get();
+
+	Resp->SetLosID(static_cast<Cigi_uint16>(R.LosId));
+	Resp->SetValid(R.bValid);
+	Resp->SetRangeValid(R.bValid && R.bRangeValid);
+	Resp->SetVisible(R.bVisible);
+	Resp->SetEntityIDValid(R.bEntityIdValid);
+	Resp->SetEntityID(R.bEntityIdValid ? static_cast<Cigi_uint16>(R.EntityId) : 0);
+	Resp->SetRespCount(1);
+	Resp->SetRange(R.bValid ? R.Range : 0.0);
+	// Latitude/X etc. share storage; the Xoff setters skip the ±90/±180 bounds.
+	Resp->SetXoff(R.bValid ? R.LatOrX : 0.0, false);
+	Resp->SetYoff(R.bValid ? R.LonOrY : 0.0, false);
+	Resp->SetZoff(R.bValid ? R.AltOrZ : 0.0, false);
+	Resp->SetRed(0);
+	Resp->SetGreen(0);
+	Resp->SetBlue(0);
+	Resp->SetAlpha(0);
+	Resp->SetMaterial(R.bValid ? R.Material : 0);
+	Resp->SetNormalAz(R.bValid ? FMath::Clamp(R.NormalAzDeg, -180.0f, 180.0f) : 0.0f, false);
+	Resp->SetNormalEl(R.bValid ? FMath::Clamp(R.NormalElDeg, -90.0f, 90.0f) : 0.0f, false);
 }
 
 void FCigiSender::EnqueueLosResponse(uint16 LosId, bool bValid, bool bVisible,

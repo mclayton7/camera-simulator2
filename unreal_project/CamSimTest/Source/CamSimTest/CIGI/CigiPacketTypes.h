@@ -243,6 +243,27 @@ struct FCigiHatHotRequest
  * Tests line-of-sight between two geodetic points.
  * ReqType: 0=Basic, 1=Extended.
  */
+/**
+ * FCigiLosExtendedResponse
+ *
+ * Contents of a CIGI 3.3 Line of Sight Extended Response (opcode 105).
+ */
+struct FCigiLosExtendedResponse
+{
+	uint16 LosId          = 0;
+	bool   bValid         = false;  // an intersection (or, for a clear segment, the destination) is reported
+	bool   bRangeValid    = false;  // always false for segment requests
+	bool   bVisible       = false;  // segment requests only
+	bool   bEntityIdValid = false;
+	uint16 EntityId       = 0;
+	bool   bEntityCs      = false;  // position is X/Y/Z offsets in EntityId's body frame
+	double Range          = 0.0;    // metres from the source point
+	double LatOrX = 0.0, LonOrY = 0.0, AltOrZ = 0.0;
+	uint32 Material       = 0;
+	float  NormalAzDeg    = 0.0f;   // true north, -180..180
+	float  NormalElDeg    = 0.0f;   // above the local horizontal
+};
+
 struct FCigiLosSegRequest
 {
 	uint16 LosId             = 0;
@@ -256,6 +277,9 @@ struct FCigiLosSegRequest
 	// bDestEntityIDValid, otherwise to EntityId.
 	bool   bSrcEntityRelative = false;
 	bool   bDstEntityRelative = false;
+	// Response Coordinate System = Entity (extended responses): report the
+	// intersection as X/Y/Z offsets in the intersected entity's body frame.
+	bool   bResponseEntityCs  = false;
 	double SrcLat = 0.0, SrcLon = 0.0, SrcAlt = 0.0;
 	double DstLat = 0.0, DstLon = 0.0, DstAlt = 0.0;
 };
@@ -277,6 +301,7 @@ struct FCigiLosVectRequest
 	// Entity-relative: Src* hold X/Y/Z body-frame offsets from EntityId, and
 	// VectAz/VectEl are measured from its +X axis / XY plane (+El = up).
 	bool   bEntityRelative = false;
+	bool   bResponseEntityCs = false;  // see FCigiLosSegRequest
 	float  VectAz       = 0.0f;  // true-north azimuth, degrees
 	float  VectEl       = 0.0f;  // elevation angle, degrees (+up)
 	float  MinRange     = 0.0f;  // metres

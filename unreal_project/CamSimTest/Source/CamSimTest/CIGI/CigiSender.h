@@ -11,6 +11,9 @@ class CigiOutgoingMsg;
 class CigiSOFV3_2;
 class CigiHatHotRespV3;
 class CigiLosRespV3;
+class CigiHatHotXRespV3_2;
+class CigiLosXRespV3_2;
+struct FCigiLosExtendedResponse;
 class CigiSensorXRespV3;
 
 /**
@@ -53,6 +56,13 @@ public:
 	void EnqueueHatHotResponse(uint16 HatHotId, bool bValid, uint8 ReqType,
 	                           double Hat, double Hot);
 
+	/** Stage a HAT/HOT Extended Response (opcode 103) for the current frame. */
+	void EnqueueHatHotExtendedResponse(uint16 HatHotId, bool bValid, double Hat, double Hot,
+	                                   uint32 Material, float NormalAzDeg, float NormalElDeg);
+
+	/** Stage a LOS Extended Response (opcode 105) for the current frame. */
+	void EnqueueLosExtendedResponse(const FCigiLosExtendedResponse& Response);
+
 	/** Stage a LOS response for the current frame. */
 	void EnqueueLosResponse(uint16 LosId, bool bValid, bool bVisible,
 	                        double Range, double HitLat, double HitLon, double HitAlt,
@@ -83,6 +93,10 @@ private:
 	int32 HatHotInUse = 0;
 	TArray<TUniquePtr<CigiLosRespV3>>    LosPool;
 	int32 LosInUse = 0;
+	TArray<TUniquePtr<CigiHatHotXRespV3_2>> HatHotXPool;
+	int32 HatHotXInUse = 0;
+	TArray<TUniquePtr<CigiLosXRespV3_2>>    LosXPool;
+	int32 LosXInUse = 0;
 
 	// At most one sensor response per frame — single-slot "pool".
 	TUniquePtr<CigiSensorXRespV3> SensorXResp;

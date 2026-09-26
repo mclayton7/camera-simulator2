@@ -342,6 +342,7 @@ public:
 			{
 				Req.bDestEntityIDValid = Pkt.GetDestEntityIDValid();
 				Req.DestEntityId       = static_cast<uint16>(Pkt.GetDestEntityID());
+				Req.bResponseEntityCs  = (Pkt.GetResponseCoordSys() == CigiBaseLosSegReq::Entity);
 			}
 		});
 
@@ -373,6 +374,10 @@ public:
 			Req.SrcLat       = Pkt.GetSrcLat();
 			Req.SrcLon       = Pkt.GetSrcLon();
 			Req.SrcAlt       = Pkt.GetSrcAlt();
+			if constexpr (IsPacketClass<decltype(Pkt), CigiLosVectReqV3_2>)
+			{
+				Req.bResponseEntityCs = (Pkt.GetResponseCoordSys() == CigiBaseLosVectReq::Entity);
+			}
 		});
 
 		Receiver->LosVectReqQueue.Enqueue(Req);

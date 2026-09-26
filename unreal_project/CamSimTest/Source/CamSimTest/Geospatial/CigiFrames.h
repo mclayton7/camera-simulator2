@@ -87,6 +87,38 @@ namespace CamSimFrames
 		OutAlt = Alt + NeuM.Z;
 	}
 
+	/** Local (North, East, Up) metres from one geodetic point to another; inverse of OffsetGeodetic. */
+	inline FVector GeodeticDeltaToNeu(double Lat0, double Lon0, double Alt0, double Lat1, double Lon1, double Alt1)
+	{
+		constexpr double A  = 6378137.0;
+		constexpr double E2 = 6.69437999014e-3;
+		const double LatRad = FMath::DegreesToRadians(Lat0);
+		const double S2     = FMath::Square(FMath::Sin(LatRad));
+		const double W      = FMath::Sqrt(1.0 - E2 * S2);
+		const double Rm     = A * (1.0 - E2) / (W * W * W);
+		const double Rn     = A / W;
+		return FVector(
+			FMath::DegreesToRadians(Lat1 - Lat0) * (Rm + Alt0),
+			FMath::DegreesToRadians(FRotator::NormalizeAxis(Lon1 - Lon0)) * (Rn + Alt0) * FMath::Cos(LatRad),
+			Alt1 - Alt0);
+	}
+
+	/** Azimuth from true north (-180..180) and elevation above the local horizontal of a NEU vector. */
+	inline void NeuToAzEl(const FVector& Neu, double& OutAzDeg, double& OutElDeg)
+	{
+		const FVector Dir = Neu.GetSafeNormal();
+		OutAzDeg = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
+		OutElDeg = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(Dir.Z, -1.0, 1.0)));
+	}
+
+	/** A geodetic point as an offset in an entity's body frame (X forward, Y right, Z down). */
+	inline FVector GeodeticToBodyOffset(const FGeoPose& Entity, double Lat, double Lon, double Alt)
+	{
+		const FVector BodyUp = Entity.Neu.UnrotateVector(
+			GeodeticDeltaToNeu(Entity.Lat, Entity.Lon, Entity.Alt, Lat, Lon, Alt));
+		return FVector(BodyUp.X, BodyUp.Y, -BodyUp.Z);
+	}
+
 	/** A point given in an entity's body frame (X forward, Y right, Z down), in geodetic. */
 	inline void BodyOffsetToGeodetic(const FGeoPose& Entity, const FVector& OffsetFrdM,
 	                                 double& OutLat, double& OutLon, double& OutAlt)

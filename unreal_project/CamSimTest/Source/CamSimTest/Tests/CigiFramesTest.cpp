@@ -167,3 +167,46 @@ bool FCigiFramesRateControlTest::RunTest(const FString& Parameters)
 		FMath::IsNearlyZero(BodyTurn.Neu.Rotator().Roll, 0.1));
 	return true;
 }
+
+// -------------------------------------------------------------------------
+// Geodetic -> local and entity-frame conversions invert their forward forms.
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCigiFramesInverseTest,
+	"CamSim.CigiFrames.GeodeticInverse",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCigiFramesInverseTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSimFrames;
+
+	double Lat, Lon, Alt;
+	const FVector Neu(1234.5, -678.25, 90.0);
+	OffsetGeodetic(47.0, 8.0, 500.0, Neu, Lat, Lon, Alt);
+	TestTrue(TEXT("GeodeticDeltaToNeu inverts OffsetGeodetic"),
+		GeodeticDeltaToNeu(47.0, 8.0, 500.0, Lat, Lon, Alt).Equals(Neu, 1e-6));
+
+	const FVector AcrossDateLine = GeodeticDeltaToNeu(0.0, 179.9999, 0.0, 0.0, -179.9999, 0.0);
+	TestTrue(FString::Printf(TEXT("Delta across 180 deg is ~22 m east (%s)"), *AcrossDateLine.ToString()),
+		FMath::IsNearlyEqual(AcrossDateLine.Y, 22.26, 0.05) && FMath::Abs(AcrossDateLine.X) < 1e-6);
+
+	FGeoPose Entity;
+	Entity.Lat = -33.9; Entity.Lon = 151.2; Entity.Alt = 1200.0;
+	Entity.Neu = CigiToNeu(37.0, 10.0, -20.0);
+	const FVector Offset(120.0, -45.0, 8.0);
+	BodyOffsetToGeodetic(Entity, Offset, Lat, Lon, Alt);
+	const FVector Back = GeodeticToBodyOffset(Entity, Lat, Lon, Alt);
+	TestTrue(FString::Printf(TEXT("GeodeticToBodyOffset inverts BodyOffsetToGeodetic (%s)"), *Back.ToString()),
+		Back.Equals(Offset, 1e-3));
+
+	double Az, El;
+	NeuToAzEl(FVector(1, 0, 0), Az, El);
+	TestTrue(TEXT("north = az 0, el 0"), FMath::IsNearlyZero(Az, 1e-9) && FMath::IsNearlyZero(El, 1e-9));
+	NeuToAzEl(FVector(0, 1, 0), Az, El);
+	TestTrue(TEXT("east = az 90"), FMath::IsNearlyEqual(Az, 90.0, 1e-9));
+	NeuToAzEl(FVector(-1, -1, 0), Az, El);
+	TestTrue(TEXT("south-west = az -135"), FMath::IsNearlyEqual(Az, -135.0, 1e-9));
+	NeuToAzEl(FVector(0, 0, 1), Az, El);
+	TestTrue(TEXT("up = el 90"), FMath::IsNearlyEqual(El, 90.0, 1e-9));
+	return true;
+}

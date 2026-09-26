@@ -60,22 +60,19 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospa
 	FCigiHatHotRequest Req;
 	while (Receiver->DequeueHatHotRequest(Req))
 	{
+		const bool bExtended = (Req.ReqType == 2);
+		auto RespondInvalid = [&]()
+		{
+			if (bExtended) Sender->EnqueueHatHotExtendedResponse(Req.HatHotId, false, 0.0, 0.0, 0, 0.0f, 0.0f);
+			else           Sender->EnqueueHatHotResponse(Req.HatHotId, false, Req.ReqType, 0.0, 0.0);
+		};
 		if (Req.ReqType > 2)
 		{
 			UE_LOG(LogCamSim, Warning,
 				TEXT("FCigiQueryHandler: unsupported HAT/HOT ReqType=%u (id=%u) -> invalid response"),
 				static_cast<uint32>(Req.ReqType), static_cast<uint32>(Req.HatHotId));
-			Sender->EnqueueHatHotResponse(Req.HatHotId, false, 0, 0.0, 0.0);
+			RespondInvalid();
 			continue;
-		}
-
-		if (Req.ReqType == 2)
-		{
-			// CIGI v3.3 response packet does not provide extended fields.
-			// We downgrade to basic semantics and return HAT/HOT values.
-			UE_LOG(LogCamSim, Verbose,
-				TEXT("FCigiQueryHandler: HAT/HOT ReqType=2 (extended) downgraded to basic response (id=%u)"),
-				static_cast<uint32>(Req.HatHotId));
 		}
 
 		if (!ResolvePoint(Req.bEntityRelative, Req.EntityId, Req.Lat, Req.Lon, Req.Alt, Req.Lat, Req.Lon, Req.Alt))
@@ -83,7 +80,7 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospa
 			UE_LOG(LogCamSim, Warning,
 				TEXT("FCigiQueryHandler: HAT/HOT id=%u relative to unknown entity %u"),
 				static_cast<uint32>(Req.HatHotId), static_cast<uint32>(Req.EntityId));
-			Sender->EnqueueHatHotResponse(Req.HatHotId, false, 0, 0.0, 0.0);
+			RespondInvalid();
 			continue;
 		}
 
@@ -98,7 +95,7 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospa
 			UE_LOG(LogCamSim, Warning,
 				TEXT("FCigiQueryHandler: failed geo->world for HAT/HOT id=%u lat=%.6f lon=%.6f"),
 				static_cast<uint32>(Req.HatHotId), Req.Lat, Req.Lon);
-			Sender->EnqueueHatHotResponse(Req.HatHotId, false, 0, 0.0, 0.0);
+			RespondInvalid();
 			continue;
 		}
 
@@ -122,14 +119,27 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospa
 			{
 				UE_LOG(LogCamSim, Warning, TEXT("FCigiQueryHandler: failed world->geo transform for HAT/HOT id=%u"),
 					static_cast<uint32>(Req.HatHotId));
-				Sender->EnqueueHatHotResponse(Req.HatHotId, false, 0, 0.0, 0.0);
+				RespondInvalid();
 				continue;
 			}
 			HAT    = Req.Alt - HOT;  // height above terrain
 			bValid = true;
 		}
 
-		Sender->EnqueueHatHotResponse(Req.HatHotId, bValid, Req.ReqType, HAT, HOT);
+		if (bExtended)
+		{
+			// CamSim has no terrain material data yet: material code 0.
+			float NormalAz = 0.0f, NormalEl = 90.0f;
+			if (bValid)
+			{
+				SurfaceNormalAzEl(World, GeoProvider, HitResult, NormalAz, NormalEl);
+			}
+			Sender->EnqueueHatHotExtendedResponse(Req.HatHotId, bValid, HAT, HOT, 0, NormalAz, NormalEl);
+		}
+		else
+		{
+			Sender->EnqueueHatHotResponse(Req.HatHotId, bValid, Req.ReqType, HAT, HOT);
+		}
 	}
 }
 
@@ -154,7 +164,7 @@ void FCigiQueryHandler::ProcessLosSegRequests(UWorld* World, const FCamSimGeospa
 			UE_LOG(LogCamSim, Warning,
 				TEXT("FCigiQueryHandler: LOS seg id=%u relative to unknown entity"),
 				static_cast<uint32>(Req.LosId));
-			Sender->EnqueueLosResponse(Req.LosId, false, false, 0.0, 0.0, 0.0, 0.0, 0, false);
+			RespondLosInvalid(Req.LosId, Req.ReqType);
 			continue;
 		}
 
@@ -166,7 +176,7 @@ void FCigiQueryHandler::ProcessLosSegRequests(UWorld* World, const FCamSimGeospa
 			UE_LOG(LogCamSim, Warning,
 				TEXT("FCigiQueryHandler: failed geo->world for LOS seg id=%u"),
 				static_cast<uint32>(Req.LosId));
-			Sender->EnqueueLosResponse(Req.LosId, false, false, 0.0, 0.0, 0.0, 0.0, 0, false);
+			RespondLosInvalid(Req.LosId, Req.ReqType);
 			continue;
 		}
 
@@ -177,43 +187,8 @@ void FCigiQueryHandler::ProcessLosSegRequests(UWorld* World, const FCamSimGeospa
 		const bool bHit = World->LineTraceSingleByChannel(
 			HitResult, SrcWorld, DstWorld, ECC_Visibility, QueryParams);
 
-		bool   bValid       = bHit;
-		bool   bVisible     = !bHit;   // visible = no obstruction
-		double Range        = 0.0;
-		double HitLat       = 0.0;
-		double HitLon       = 0.0;
-		double HitAlt       = 0.0;
-		uint16 EntityId     = 0;
-		bool   bEntityValid = false;
-
-		if (bHit)
-		{
-			// Range in metres (Dist returns UE units = cm)
-			Range = static_cast<double>(FVector::Dist(SrcWorld, HitResult.Location))
-			        / UE_CM_PER_METRE;
-
-			// Convert hit back to geodetic
-			const bool bGeoOk = WorldToGeo(World, GeoProvider, HitResult.Location, HitLat, HitLon, HitAlt);
-			if (!bGeoOk)
-			{
-				UE_LOG(LogCamSim, Warning, TEXT("FCigiQueryHandler: failed world->geo transform for LOS seg id=%u"),
-					static_cast<uint32>(Req.LosId));
-				bValid = false;
-				bVisible = false;
-				Range = 0.0;
-				HitLat = 0.0;
-				HitLon = 0.0;
-				HitAlt = 0.0;
-			}
-			else
-			{
-				EntityId     = ResolveEntityId(HitResult.GetActor());
-				bEntityValid = (EntityId != 0);
-			}
-		}
-
-		Sender->EnqueueLosResponse(Req.LosId, bValid, bVisible,
-			Range, HitLat, HitLon, HitAlt, EntityId, bEntityValid);
+		RespondLos(World, GeoProvider, Req.LosId, Req.ReqType, /*bSegment=*/true, Req.bResponseEntityCs,
+			bHit ? &HitResult : nullptr, SrcWorld, DstWorld, Req.DstLat, Req.DstLon, Req.DstAlt);
 	}
 }
 
@@ -238,7 +213,7 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, const FCamSimGeosp
 				UE_LOG(LogCamSim, Warning,
 					TEXT("FCigiQueryHandler: LOS vect id=%u relative to unknown entity %u"),
 					static_cast<uint32>(Req.LosId), static_cast<uint32>(Req.EntityId));
-				Sender->EnqueueLosResponse(Req.LosId, false, false, 0.0, 0.0, 0.0, 0.0, 0, false);
+				RespondLosInvalid(Req.LosId, Req.ReqType);
 				continue;
 			}
 			CamSimFrames::BodyOffsetToGeodetic(Ref, FVector(Req.SrcLat, Req.SrcLon, Req.SrcAlt),
@@ -280,7 +255,7 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, const FCamSimGeosp
 			UE_LOG(LogCamSim, Warning,
 				TEXT("FCigiQueryHandler: failed geo->world for LOS vect id=%u"),
 				static_cast<uint32>(Req.LosId));
-			Sender->EnqueueLosResponse(Req.LosId, false, false, 0.0, 0.0, 0.0, 0.0, 0, false);
+			RespondLosInvalid(Req.LosId, Req.ReqType);
 			continue;
 		}
 
@@ -299,42 +274,9 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, const FCamSimGeosp
 		const bool bHit = World->LineTraceSingleByChannel(
 			HitResult, TraceStart, EndWorld, ECC_Visibility, QueryParams);
 
-		bool   bValid       = bHit;
-		bool   bVisible     = !bHit;
-		double Range        = 0.0;
-		double HitLat       = 0.0;
-		double HitLon       = 0.0;
-		double HitAlt       = 0.0;
-		uint16 EntityId     = 0;
-		bool   bEntityValid = false;
-
-		if (bHit)
-		{
-			// Range measured from original source point
-			Range = static_cast<double>(FVector::Dist(SrcWorld, HitResult.Location))
-			        / UE_CM_PER_METRE;
-
-			const bool bGeoOk = WorldToGeo(World, GeoProvider, HitResult.Location, HitLat, HitLon, HitAlt);
-			if (!bGeoOk)
-			{
-				UE_LOG(LogCamSim, Warning, TEXT("FCigiQueryHandler: failed world->geo transform for LOS vect id=%u"),
-					static_cast<uint32>(Req.LosId));
-				bValid = false;
-				bVisible = false;
-				Range = 0.0;
-				HitLat = 0.0;
-				HitLon = 0.0;
-				HitAlt = 0.0;
-			}
-			else
-			{
-				EntityId     = ResolveEntityId(HitResult.GetActor());
-				bEntityValid = (EntityId != 0);
-			}
-		}
-
-		Sender->EnqueueLosResponse(Req.LosId, bValid, bVisible,
-			Range, HitLat, HitLon, HitAlt, EntityId, bEntityValid);
+		// Range is measured from the source point, not the min-range start.
+		RespondLos(World, GeoProvider, Req.LosId, Req.ReqType, /*bSegment=*/false, Req.bResponseEntityCs,
+			bHit ? &HitResult : nullptr, SrcWorld, EndWorld, EndLat, EndLon, EndAlt);
 	}
 }
 
@@ -383,4 +325,98 @@ uint16 FCigiQueryHandler::ResolveEntityId(const AActor* HitActor) const
 		return Entity->EntityId;
 	}
 	return 0;
+}
+
+bool FCigiQueryHandler::SurfaceNormalAzEl(UWorld* World, const FCamSimGeospatialProvider& GeoProvider,
+	const FHitResult& Hit, float& OutAzDeg, float& OutElDeg) const
+{
+	// Geodetic positions of the hit and of a point 1 m along the normal give
+	// the normal in the local North-East-Up frame at the hit.
+	double Lat0, Lon0, Alt0, Lat1, Lon1, Alt1;
+	if (!WorldToGeo(World, GeoProvider, Hit.ImpactPoint, Lat0, Lon0, Alt0) ||
+	    !WorldToGeo(World, GeoProvider, Hit.ImpactPoint + Hit.ImpactNormal * UE_CM_PER_METRE, Lat1, Lon1, Alt1))
+	{
+		return false;
+	}
+	double Az, El;
+	CamSimFrames::NeuToAzEl(CamSimFrames::GeodeticDeltaToNeu(Lat0, Lon0, Alt0, Lat1, Lon1, Alt1), Az, El);
+	OutAzDeg = static_cast<float>(Az);
+	OutElDeg = static_cast<float>(El);
+	return true;
+}
+
+void FCigiQueryHandler::RespondLosInvalid(uint16 LosId, uint8 ReqType)
+{
+	if (ReqType == 1)
+	{
+		FCigiLosExtendedResponse Resp;
+		Resp.LosId = LosId;
+		Sender->EnqueueLosExtendedResponse(Resp);
+	}
+	else
+	{
+		Sender->EnqueueLosResponse(LosId, false, false, 0.0, 0.0, 0.0, 0.0, 0, false);
+	}
+}
+
+void FCigiQueryHandler::RespondLos(UWorld* World, const FCamSimGeospatialProvider& GeoProvider,
+	uint16 LosId, uint8 ReqType, bool bSegment, bool bResponseEntityCs,
+	const FHitResult* Hit, const FVector& SrcWorld, const FVector& DstWorld,
+	double DstLat, double DstLon, double DstAlt)
+{
+	// Intersection point (or, for a clear segment, the destination) in geodetic.
+	double Lat = DstLat, Lon = DstLon, Alt = DstAlt;
+	double Range = FVector::Dist(SrcWorld, DstWorld) / UE_CM_PER_METRE;
+	uint16 EntityId = 0;
+	if (Hit)
+	{
+		if (!WorldToGeo(World, GeoProvider, Hit->Location, Lat, Lon, Alt))
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("FCigiQueryHandler: failed world->geo transform for LOS id=%u"),
+				static_cast<uint32>(LosId));
+			RespondLosInvalid(LosId, ReqType);
+			return;
+		}
+		Range    = FVector::Dist(SrcWorld, Hit->Location) / UE_CM_PER_METRE;
+		EntityId = ResolveEntityId(Hit->GetActor());
+	}
+
+	if (ReqType != 1)
+	{
+		// Basic response (ICD 4.2.4): Valid means the Range is valid, i.e. an
+		// intersection was found; Visible = the segment is unobstructed.
+		Sender->EnqueueLosResponse(LosId, Hit != nullptr, bSegment && Hit == nullptr,
+			Range, Lat, Lon, Alt, EntityId, EntityId != 0);
+		return;
+	}
+
+	// Extended response (ICD 4.2.5). A segment always reports a point: the
+	// occluding surface, or the destination when it is visible; its Range is
+	// flagged invalid. A vector reports only an intersection.
+	FCigiLosExtendedResponse Resp;
+	Resp.LosId          = LosId;
+	Resp.bValid         = bSegment || Hit != nullptr;
+	Resp.bRangeValid    = !bSegment && Hit != nullptr;
+	Resp.bVisible       = bSegment && Hit == nullptr;
+	Resp.EntityId       = EntityId;
+	Resp.bEntityIdValid = EntityId != 0;
+	Resp.Range          = Range;
+	Resp.LatOrX = Lat;
+	Resp.LonOrY = Lon;
+	Resp.AltOrZ = Alt;
+
+	CamSimFrames::FGeoPose EntityPose;
+	if (bResponseEntityCs && Resp.bEntityIdValid && Subsystem->GetEntityGeoPose(EntityId, EntityPose))
+	{
+		const FVector Offset = CamSimFrames::GeodeticToBodyOffset(EntityPose, Lat, Lon, Alt);
+		Resp.bEntityCs = true;
+		Resp.LatOrX = Offset.X;
+		Resp.LonOrY = Offset.Y;
+		Resp.AltOrZ = Offset.Z;
+	}
+	if (Hit)
+	{
+		SurfaceNormalAzEl(World, GeoProvider, *Hit, Resp.NormalAzDeg, Resp.NormalElDeg);
+	}
+	Sender->EnqueueLosExtendedResponse(Resp);
 }

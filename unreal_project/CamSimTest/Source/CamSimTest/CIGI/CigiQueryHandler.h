@@ -7,6 +7,7 @@
 class UCamSimSubsystem;
 class FCigiSender;
 class FCamSimGeospatialProvider;
+struct FHitResult;
 
 /**
  * FCigiQueryHandler
@@ -48,6 +49,23 @@ private:
 
 	/** If HitActor is an ACamSimEntity, return its EntityId; otherwise 0. */
 	uint16 ResolveEntityId(const AActor* HitActor) const;
+
+	/** True-north azimuth / elevation of the surface normal at a trace hit. */
+	bool SurfaceNormalAzEl(UWorld* World, const FCamSimGeospatialProvider& GeoProvider,
+		const FHitResult& Hit, float& OutAzDeg, float& OutElDeg) const;
+
+	/**
+	 * Stage the basic (ReqType 0) or extended (1) response to an LOS test.
+	 * Hit is null when nothing was intersected. For a segment, Dst* is the
+	 * destination point (reported by an extended response when it is visible).
+	 */
+	void RespondLos(UWorld* World, const FCamSimGeospatialProvider& GeoProvider,
+		uint16 LosId, uint8 ReqType, bool bSegment, bool bResponseEntityCs,
+		const FHitResult* Hit, const FVector& SrcWorld, const FVector& DstWorld,
+		double DstLat, double DstLon, double DstAlt);
+
+	/** Stage an invalid response (the test could not be performed). */
+	void RespondLosInvalid(uint16 LosId, uint8 ReqType);
 
 	UCamSimSubsystem* Subsystem = nullptr;
 	FCigiSender*      Sender    = nullptr;
