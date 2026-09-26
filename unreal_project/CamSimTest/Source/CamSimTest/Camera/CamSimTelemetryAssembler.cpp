@@ -2,6 +2,7 @@
 
 #include "Camera/CamSimTelemetryAssembler.h"
 #include "Environment/CamSimEnvironment.h"
+#include "Geospatial/CigiFrames.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Time/SimClock.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -113,8 +114,8 @@ bool FCamSimTelemetryAssembler::FlatEarthFrameCenter(double Lat, double Lon, dou
 	OutSlantRangeM = AltM / FMath::Sin(DepressRad);
 	const double GroundM = AltM / FMath::Tan(DepressRad);
 
-	const double LatRad = FMath::DegreesToRadians(Lat);
-	OutLat = Lat + (GroundM * FMath::Cos(AzimuthRad)) / 111320.0;
-	OutLon = Lon + (GroundM * FMath::Sin(AzimuthRad)) / (111320.0 * FMath::Cos(LatRad));
+	double Alt;
+	CamSimFrames::OffsetGeodetic(Lat, Lon, AltM,
+		FVector(GroundM * FMath::Cos(AzimuthRad), GroundM * FMath::Sin(AzimuthRad), -AltM), OutLat, OutLon, Alt);
 	return true;
 }

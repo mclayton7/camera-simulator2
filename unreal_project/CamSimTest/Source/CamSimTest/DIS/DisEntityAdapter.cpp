@@ -4,14 +4,10 @@
 #include "DIS/DisReceiver.h"
 #include "Config/CamSimConfig.h"
 #include "CamSimTest.h"
+#include "Geospatial/EcefFrames.h"
 
-// WGS-84 ellipsoid constants (double precision)
 namespace
 {
-	constexpr double WGS84_A  = 6378137.0;            // semi-major axis (m)
-	constexpr double WGS84_B  = 6356752.314245;       // semi-minor axis (m)
-	constexpr double WGS84_E2 = 0.00669437999014;     // first eccentricity squared
-	constexpr double WGS84_EP2 = 0.00673949674228;    // second eccentricity squared
 	constexpr double RAD_TO_DEG = 180.0 / PI;
 }
 
@@ -102,7 +98,7 @@ void FDisEntityAdapter::ProcessPdu(const FDisEntityStatePdu& Pdu)
 
 	// ECEF → geodetic
 	double Lat, Lon, Alt;
-	EcefToGeodetic(Pdu.LocationX, Pdu.LocationY, Pdu.LocationZ, Lat, Lon, Alt);
+	CamSimFrames::EcefToGeodetic(FVector(Pdu.LocationX, Pdu.LocationY, Pdu.LocationZ), Lat, Lon, Alt);
 
 	// Build FCigiEntityState
 	FCigiEntityState State;
@@ -113,14 +109,12 @@ void FDisEntityAdapter::ProcessPdu(const FDisEntityStatePdu& Pdu)
 	State.Longitude   = Lon;
 	State.Altitude    = static_cast<float>(Alt);
 
-	// DIS orientation: radians (psi/theta/phi, NED body-to-world) → degrees
-	State.Yaw   = static_cast<float>(Pdu.Psi   * RAD_TO_DEG);
-	State.Pitch = static_cast<float>(Pdu.Theta * RAD_TO_DEG);
-	State.Roll  = static_cast<float>(Pdu.Phi   * RAD_TO_DEG);
-
-	// Normalize yaw to [0, 360)
-	while (State.Yaw < 0.0f)   State.Yaw += 360.0f;
-	while (State.Yaw >= 360.0f) State.Yaw -= 360.0f;
+	// DIS orientation is Euler angles from the ECEF axes; CIGI's are from
+	// local North-East-Down at the entity.
+	const FRotator Hpr = CamSimFrames::DisEulerToCigi(Pdu.Psi, Pdu.Theta, Pdu.Phi, Lat, Lon);
+	State.Yaw   = static_cast<float>(Hpr.Yaw);
+	State.Pitch = static_cast<float>(Hpr.Pitch);
+	State.Roll  = static_cast<float>(Hpr.Roll);
 
 	// Copy DIS entity classification for particle effects etc.
 	State.EntityKind     = Pdu.EntityType.EntityKind;
@@ -129,31 +123,34 @@ void FDisEntityAdapter::ProcessPdu(const FDisEntityStatePdu& Pdu)
 
 	PendingEntityStates.Add(State);
 
-	// Build FCigiRateControl from DIS dead reckoning params
-	// DR algorithms 2 (FPW) and 5 (FPB) use linear velocity
-	if (Pdu.DeadReckoning.Algorithm == 2 || Pdu.DeadReckoning.Algorithm == 5)
+	// Dead reckoning (IEEE 1278.1): algorithms 2-5 give the Entity Linear
+	// Velocity in world (ECEF) coordinates, 6-9 in body coordinates; the
+	// rotating ones (3, 4, 7, 8) add body angular velocity. Acceleration
+	// (4, 5, 8, 9) is not modelled yet (ROADMAP 2.3). 1 = static.
+	const uint8 Algorithm = Pdu.DeadReckoning.Algorithm;
+	if (Algorithm >= 2 && Algorithm <= 9)
 	{
+		const bool bWorld    = Algorithm <= 5;
+		const bool bRotating = Algorithm == 3 || Algorithm == 4 || Algorithm == 7 || Algorithm == 8;
+		const FVector Velocity(Pdu.DeadReckoning.VelX, Pdu.DeadReckoning.VelY, Pdu.DeadReckoning.VelZ);
+
 		FCigiRateControl Rate;
-		Rate.EntityId        = CamSimId;
-		Rate.ArtPartId       = 0;
-		Rate.bApplyToArtPart = false;
-
-		// Treated as body frame (m/s). IEEE 1278.1 actually gives FPW/FPB
-		// velocity in world (ECEF) coordinates; see ROADMAP 2.2.
-		Rate.bLocalFrame = true;
-		Rate.XRate = Pdu.DeadReckoning.VelX;
-		Rate.YRate = Pdu.DeadReckoning.VelY;
-		Rate.ZRate = Pdu.DeadReckoning.VelZ;
-
-		// DIS angular velocity is rad/s → convert to deg/s
-		// DR algo 5 includes angular velocity; algo 2 does not
-		if (Pdu.DeadReckoning.Algorithm == 5)
+		Rate.EntityId           = CamSimId;
+		Rate.ArtPartId          = 0;
+		Rate.bApplyToArtPart    = false;
+		Rate.bLocalFrame        = !bWorld;  // world: North/East/Down; body: forward/right/down
+		Rate.bAngularLocalFrame = true;     // DIS angular velocity is always body-axis
+		const FVector Linear = bWorld ? CamSimFrames::EcefVectorToNed(Velocity, Lat, Lon) : Velocity;
+		Rate.XRate = static_cast<float>(Linear.X);
+		Rate.YRate = static_cast<float>(Linear.Y);
+		Rate.ZRate = static_cast<float>(Linear.Z);
+		if (bRotating)
 		{
+			// rad/s about the body X (roll), Y (pitch), Z (yaw) axes
 			Rate.RollRate  = static_cast<float>(Pdu.DeadReckoning.AngVelX * RAD_TO_DEG);
 			Rate.PitchRate = static_cast<float>(Pdu.DeadReckoning.AngVelY * RAD_TO_DEG);
 			Rate.YawRate   = static_cast<float>(Pdu.DeadReckoning.AngVelZ * RAD_TO_DEG);
 		}
-
 		PendingRateControls.Add(Rate);
 	}
 }
@@ -195,48 +192,6 @@ void FDisEntityAdapter::SweepTimeouts()
 		}
 		EntityTimestamps.Remove(DisId);
 	}
-}
-
-// -------------------------------------------------------------------------
-// ECEF → Geodetic conversion (Bowring iterative method)
-// -------------------------------------------------------------------------
-
-void FDisEntityAdapter::EcefToGeodetic(double X, double Y, double Z,
-                                       double& OutLat, double& OutLon, double& OutAlt)
-{
-	// Longitude is straightforward
-	OutLon = FMath::Atan2(Y, X) * RAD_TO_DEG;
-
-	// Distance from Z-axis
-	const double P = FMath::Sqrt(X * X + Y * Y);
-
-	// Initial approximation using spherical latitude
-	double Lat = FMath::Atan2(Z, P * (1.0 - WGS84_E2));
-
-	// Iterative Bowring method (converges in 2-3 iterations for <1mm accuracy)
-	for (int32 i = 0; i < 5; ++i)
-	{
-		const double SinLat = FMath::Sin(Lat);
-		const double CosLat = FMath::Cos(Lat);
-		const double N = WGS84_A / FMath::Sqrt(1.0 - WGS84_E2 * SinLat * SinLat);
-		Lat = FMath::Atan2(Z + WGS84_E2 * N * SinLat, P);
-	}
-
-	// Compute altitude
-	const double SinLat = FMath::Sin(Lat);
-	const double CosLat = FMath::Cos(Lat);
-	const double N = WGS84_A / FMath::Sqrt(1.0 - WGS84_E2 * SinLat * SinLat);
-
-	if (FMath::Abs(CosLat) > 1e-10)
-	{
-		OutAlt = P / CosLat - N;
-	}
-	else
-	{
-		OutAlt = FMath::Abs(Z) - WGS84_B;
-	}
-
-	OutLat = Lat * RAD_TO_DEG;
 }
 
 // -------------------------------------------------------------------------
@@ -365,7 +320,7 @@ void FDisEntityAdapter::DrainDesignatorPdus()
 	while (Receiver->DequeueDesignatorPdu(Pdu))
 	{
 		// Convert ECEF spot → geodetic
-		EcefToGeodetic(Pdu.SpotLocationX, Pdu.SpotLocationY, Pdu.SpotLocationZ,
+		CamSimFrames::EcefToGeodetic(FVector(Pdu.SpotLocationX, Pdu.SpotLocationY, Pdu.SpotLocationZ),
 			DesignatorLat, DesignatorLon, DesignatorAlt);
 		DesignatorCode = static_cast<int32>(Pdu.DesignatorCode);
 		DesignatorUpdateTimeSec = NowSec;

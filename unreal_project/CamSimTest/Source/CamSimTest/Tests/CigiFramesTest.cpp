@@ -9,6 +9,7 @@
 #include "CesiumGeoreference.h"
 #include "CesiumGlobeAnchorComponent.h"
 #include "Geospatial/CigiFrames.h"
+#include "Geospatial/EcefFrames.h"
 
 // -------------------------------------------------------------------------
 // CIGI heading 0 must look north everywhere — not east (UE world +X), and not
@@ -208,5 +209,78 @@ bool FCigiFramesInverseTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("south-west = az -135"), FMath::IsNearlyEqual(Az, -135.0, 1e-9));
 	NeuToAzEl(FVector(0, 0, 1), Az, El);
 	TestTrue(TEXT("up = el 90"), FMath::IsNearlyEqual(El, 90.0, 1e-9));
+	return true;
+}
+
+// -------------------------------------------------------------------------
+// ECEF / DIS conversions.
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEcefFramesTest,
+	"CamSim.CigiFrames.DisEcef",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEcefFramesTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSimFrames;
+
+	// Geodetic <-> ECEF round trip
+	for (const FVector& Llh : { FVector(37.7749, -122.4194, 1000.0), FVector(-33.9, 151.2, 50.0), FVector(89.9, 10.0, 0.0) })
+	{
+		double Lat, Lon, Alt;
+		EcefToGeodetic(GeodeticToEcef(Llh.X, Llh.Y, Llh.Z), Lat, Lon, Alt);
+		TestTrue(FString::Printf(TEXT("ECEF round trip %s"), *Llh.ToString()),
+			FMath::IsNearlyEqual(Lat, Llh.X, 1e-9) && FMath::IsNearlyEqual(Lon, Llh.Y, 1e-9) && FMath::IsNearlyEqual(Alt, Llh.Z, 1e-4));
+	}
+
+	// Known case: at (0N, 0E), level and facing north, the body X axis is ECEF +Z,
+	// Y is +Y and Z (down) is -X — DIS psi=0, theta=-90 deg, phi=0.
+	const FRotator AtOrigin = DisEulerToCigi(0.0, -HALF_PI, 0.0, 0.0, 0.0);
+	TestTrue(FString::Printf(TEXT("DIS (0,-90,0) at 0N 0E is level, heading north (%s)"), *AtOrigin.ToString()),
+		FMath::IsNearlyZero(AtOrigin.Pitch, 1e-4) && FMath::IsNearlyZero(FRotator::NormalizeAxis(AtOrigin.Yaw), 1e-4)
+		&& FMath::IsNearlyZero(AtOrigin.Roll, 1e-4));
+
+	// Round trip through DIS at several places and attitudes
+	for (const FVector& Place : { FVector(37.77, -122.42, 0), FVector(-45.0, 170.0, 0), FVector(60.0, 25.0, 0) })
+	{
+		for (const FVector& Hpr : { FVector(0, 0, 0), FVector(123, 10, -20), FVector(300, -35, 60) })
+		{
+			double Psi, Theta, Phi;
+			CigiToDisEuler(Hpr.X, Hpr.Y, Hpr.Z, Place.X, Place.Y, Psi, Theta, Phi);
+			const FRotator Back = DisEulerToCigi(Psi, Theta, Phi, Place.X, Place.Y);
+			TestTrue(FString::Printf(TEXT("DIS round trip hpr %s at %s -> %s"), *Hpr.ToString(), *Place.ToString(), *Back.ToString()),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Back.Yaw, Hpr.X), 1e-6)
+				&& FMath::IsNearlyEqual(Back.Pitch, Hpr.Y, 1e-6) && FMath::IsNearlyEqual(Back.Roll, Hpr.Z, 1e-6));
+		}
+	}
+
+	// World velocity: moving due east at 0N 0E is ECEF +Y
+	const FVector Ned = EcefVectorToNed(FVector(0, 10, 0), 0.0, 0.0);
+	TestTrue(FString::Printf(TEXT("ECEF +Y at 0N 0E is east (%s)"), *Ned.ToString()), Ned.Equals(FVector(0, 10, 0), 1e-9));
+	// Climbing at the north pole: ECEF +Z is up = -Down
+	TestTrue(TEXT("ECEF +Z at the pole is up"), EcefVectorToNed(FVector(0, 0, 5), 90.0, 0.0).Equals(FVector(0, 0, -5), 1e-9));
+	return true;
+}
+
+// Body rates in the CIGI sense: + yaw turns right, + pitch raises the nose,
+// + roll lowers the right wing.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBodyRateSignsTest,
+	"CamSim.CigiFrames.BodyRateSigns",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FBodyRateSignsTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSimFrames;
+	auto After = [](const FVector& RollPitchYaw)
+	{
+		FGeoPose Pose;
+		Pose.Neu = CigiToNeu(0.0, 0.0, 0.0);
+		IntegrateRates(Pose, FVector::ZeroVector, RollPitchYaw, /*bLocalFrame=*/true, 1.0);
+		return Pose.Neu.Rotator();
+	};
+	const FRotator Yaw = After(FVector(0, 0, 10)), Pitch = After(FVector(0, 10, 0)), Roll = After(FVector(10, 0, 0));
+	TestTrue(FString::Printf(TEXT("+yaw rate turns right (%s)"), *Yaw.ToString()), FMath::IsNearlyEqual(Yaw.Yaw, 10.0, 1e-3));
+	TestTrue(FString::Printf(TEXT("+pitch rate raises the nose (%s)"), *Pitch.ToString()), FMath::IsNearlyEqual(Pitch.Pitch, 10.0, 1e-3));
+	TestTrue(FString::Printf(TEXT("+roll rate rolls right (%s)"), *Roll.ToString()), FMath::IsNearlyEqual(Roll.Roll, 10.0, 1e-3));
 	return true;
 }

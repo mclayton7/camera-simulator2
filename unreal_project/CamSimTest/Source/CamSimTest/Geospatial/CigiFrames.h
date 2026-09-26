@@ -144,32 +144,32 @@ namespace CamSimFrames
 	 * One dead-reckoning step for CIGI Rate Control (ICD 3.3 section 4.1.8).
 	 *
 	 * Linear rates are metres/second and angular rates degrees/second, as
-	 * (X, Y, Z) and (Roll, Pitch, Yaw). With bLocalFrame (Coordinate System =
-	 * Local, and always for CIGI 3.0/3.1) they are in the entity's body frame:
-	 * X forward, Y right, Z down, rotating about the body axes. Otherwise
-	 * (World/Parent, the 3.2+ default, for a top-level entity) the linear rates
-	 * are North/East/Down along the geoid and the angular rates are rates of
-	 * change of heading, pitch and roll.
+	 * (X, Y, Z) and (Roll, Pitch, Yaw). Local (CIGI Coordinate System = Local,
+	 * and always for CIGI 3.0/3.1): the entity's body frame — X forward,
+	 * Y right, Z down, rotating about the body axes. World (World/Parent, the
+	 * 3.2+ default, for a top-level entity): linear rates North/East/Down along
+	 * the geoid, angular rates the rates of change of heading, pitch and roll.
+	 * DIS world-frame dead reckoning mixes them: world velocity, body rotation.
 	 */
 	inline void IntegrateRates(FGeoPose& Pose, const FVector& LinearRate, const FVector& RollPitchYawRate,
-	                           bool bLocalFrame, double Dt)
+	                           bool bLinearLocal, bool bAngularLocal, double Dt)
 	{
-		FVector NeuVelocity;
-		if (bLocalFrame)
+		if (bAngularLocal)
 		{
 			// Axis-angle on the quaternion avoids the FRotator gimbal-lock
-			// singularity at pitch = +/-90 deg. Omega axes match UE's FRotator
-			// convention: X = roll, Y = pitch, Z = yaw.
+			// singularity at pitch = +/-90 deg. In UE's left-handed frame a
+			// positive angle about +X rolls left and about +Y pitches down,
+			// so CIGI's roll and pitch rates (right wing down, nose up) are
+			// negated; yaw about +Z already turns right.
 			const FVector Omega(
-				FMath::DegreesToRadians(RollPitchYawRate.X),
-				FMath::DegreesToRadians(RollPitchYawRate.Y),
+				-FMath::DegreesToRadians(RollPitchYawRate.X),
+				-FMath::DegreesToRadians(RollPitchYawRate.Y),
 				FMath::DegreesToRadians(RollPitchYawRate.Z));
 			const double OmegaMag = Omega.Size();
 			if (OmegaMag > UE_SMALL_NUMBER)
 			{
 				Pose.Neu = (Pose.Neu * FQuat(Omega / OmegaMag, OmegaMag * Dt)).GetNormalized();
 			}
-			NeuVelocity = BodyVelocityToNeu(Pose.Neu, LinearRate);
 		}
 		else
 		{
@@ -178,9 +178,18 @@ namespace CamSimFrames
 			Hpr.Pitch += RollPitchYawRate.Y * Dt;
 			Hpr.Yaw   += RollPitchYawRate.Z * Dt;
 			Pose.Neu = Hpr.Quaternion();
-			NeuVelocity = FVector(LinearRate.X, LinearRate.Y, -LinearRate.Z);
 		}
+		const FVector NeuVelocity = bLinearLocal
+			? BodyVelocityToNeu(Pose.Neu, LinearRate)
+			: FVector(LinearRate.X, LinearRate.Y, -LinearRate.Z);
 		OffsetGeodetic(Pose.Lat, Pose.Lon, Pose.Alt, NeuVelocity * Dt, Pose.Lat, Pose.Lon, Pose.Alt);
+	}
+
+	/** Linear and angular rates in the same frame (CIGI Rate Control). */
+	inline void IntegrateRates(FGeoPose& Pose, const FVector& LinearRate, const FVector& RollPitchYawRate,
+	                           bool bLocalFrame, double Dt)
+	{
+		IntegrateRates(Pose, LinearRate, RollPitchYawRate, bLocalFrame, bLocalFrame, Dt);
 	}
 
 	/**

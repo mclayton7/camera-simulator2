@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "CoreMinimal.h"
+#include "Geospatial/EcefFrames.h"
 #include "Misc/AutomationTest.h"
 #include "DIS/DisPduTypes.h"
 #include "DIS/DisEntityAdapter.h"
@@ -196,7 +197,7 @@ bool FDisEcefToGeodeticTest::RunTest(const FString& Parameters)
 	const double EcefZ =  3983484.768;
 
 	double Lat, Lon, Alt;
-	FDisEntityAdapter::EcefToGeodetic(EcefX, EcefY, EcefZ, Lat, Lon, Alt);
+	CamSimFrames::EcefToGeodetic(FVector(EcefX, EcefY, EcefZ), Lat, Lon, Alt);
 
 	// Sub-millidegree tolerance (~100m, well within Bowring iteration accuracy).
 	TestTrue(TEXT("Latitude within tolerance"),
@@ -209,7 +210,7 @@ bool FDisEcefToGeodeticTest::RunTest(const FString& Parameters)
 	// Test point 2: Equator prime meridian at sea level
 	// Lat=0, Lon=0, Alt=0 → ECEF = (6378137, 0, 0)
 	double Lat2, Lon2, Alt2;
-	FDisEntityAdapter::EcefToGeodetic(6378137.0, 0.0, 0.0, Lat2, Lon2, Alt2);
+	CamSimFrames::EcefToGeodetic(FVector(6378137.0, 0.0, 0.0), Lat2, Lon2, Alt2);
 
 	TestTrue(TEXT("Equator lat"),  FMath::Abs(Lat2) < 0.001);
 	TestTrue(TEXT("Prime lon"),    FMath::Abs(Lon2) < 0.001);
@@ -218,7 +219,7 @@ bool FDisEcefToGeodeticTest::RunTest(const FString& Parameters)
 	// Test point 3: North pole
 	// Lat=90, Lon=0, Alt=0 → ECEF = (0, 0, 6356752.314)
 	double Lat3, Lon3, Alt3;
-	FDisEntityAdapter::EcefToGeodetic(0.0, 0.0, 6356752.314245, Lat3, Lon3, Alt3);
+	CamSimFrames::EcefToGeodetic(FVector(0.0, 0.0, 6356752.314245), Lat3, Lon3, Alt3);
 
 	TestTrue(TEXT("North pole lat"), FMath::Abs(Lat3 - 90.0) < 0.001);
 	TestTrue(TEXT("North pole alt"), FMath::Abs(Alt3) < 1.0);
@@ -488,7 +489,7 @@ bool FDisDRVelocityTest::RunTest(const FString& Parameters)
 	WriteF32BE(Buf + 120, 0.05f);   // AngVelY (pitch rate, rad/s)
 	WriteF32BE(Buf + 124, -0.02f);  // AngVelZ (yaw rate, rad/s)
 
-	// Set DR algo to 5 (FPB — includes angular velocity)
+	// DR algorithm 5 (FVW); this test only checks the PDU fields are parsed
 	Buf[88] = 5;
 
 	FDisEntityStatePdu Pdu;
@@ -549,5 +550,70 @@ bool FDisEntityStatePduTooShortTest::RunTest(const FString& Parameters)
 	FDisEntityStatePdu Pdu;
 	TestFalse(TEXT("143 bytes too short"), FDisEntityStatePdu::Parse(Buf, 143, Pdu));
 
+	return true;
+}
+
+// =========================================================================
+// Test: the adapter converts DIS (ECEF-referenced) orientation and velocity
+// into CIGI's local frame, per dead-reckoning algorithm.
+// =========================================================================
+
+#include "DIS/DisEntityAdapter.h"
+#include "Config/CamSimConfig.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisAdapterFramesTest,
+	"CamSim.Phase21.AdapterConvertsEcefFrames",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDisAdapterFramesTest::RunTest(const FString& Parameters)
+{
+	const double Lat = 37.77, Lon = -122.42, Alt = 1500.0;
+	const FVector Ecef = CamSimFrames::GeodeticToEcef(Lat, Lon, Alt);
+	double Psi, Theta, Phi;
+	CamSimFrames::CigiToDisEuler(90.0, 10.0, -5.0, Lat, Lon, Psi, Theta, Phi);  // heading east, nose up 10
+
+	// 100 m/s due east, as a world (ECEF) vector
+	const FVector EastEcef = CamSimFrames::NedToEcef(Lat, Lon) * FVector(0.0, 100.0, 0.0);
+
+	auto MakePdu = [&](uint8 Algorithm, const FVector& Velocity)
+	{
+		FDisEntityStatePdu Pdu;
+		Pdu.EntityId.Entity = static_cast<uint16>(Algorithm);
+		Pdu.LocationX = Ecef.X; Pdu.LocationY = Ecef.Y; Pdu.LocationZ = Ecef.Z;
+		Pdu.Psi = Psi; Pdu.Theta = Theta; Pdu.Phi = Phi;
+		Pdu.DeadReckoning.Algorithm = Algorithm;
+		Pdu.DeadReckoning.VelX = Velocity.X; Pdu.DeadReckoning.VelY = Velocity.Y; Pdu.DeadReckoning.VelZ = Velocity.Z;
+		Pdu.DeadReckoning.AngVelZ = 0.1f;  // body yaw rate, rad/s
+		return Pdu;
+	};
+
+	FCamSimConfig Config;
+	FDisEntityAdapter Adapter(Config, nullptr);
+	Adapter.ProcessPdu(MakePdu(4, EastEcef));                        // RVW: world velocity, rotating
+	Adapter.ProcessPdu(MakePdu(2, EastEcef));                        // FPW: world velocity, fixed orientation
+	Adapter.ProcessPdu(MakePdu(8, FVector(100.0, 0.0, 0.0)));        // RVB: body velocity, rotating
+
+	FCigiEntityState State;
+	if (TestTrue(TEXT("entity state"), Adapter.DequeueEntityState(State)))
+	{
+		TestTrue(FString::Printf(TEXT("local attitude h=%.3f p=%.3f r=%.3f"), State.Yaw, State.Pitch, State.Roll),
+			FMath::IsNearlyEqual(State.Yaw, 90.0f, 1e-3f) && FMath::IsNearlyEqual(State.Pitch, 10.0f, 1e-3f)
+			&& FMath::IsNearlyEqual(State.Roll, -5.0f, 1e-3f));
+		TestTrue(TEXT("position"), FMath::IsNearlyEqual(State.Latitude, Lat, 1e-9) && FMath::IsNearlyEqual(State.Longitude, Lon, 1e-9));
+	}
+
+	FCigiRateControl Rvw, Fpw, Rvb;
+	TestTrue(TEXT("three rate controls"),
+		Adapter.DequeueRateControl(Rvw) && Adapter.DequeueRateControl(Fpw) && Adapter.DequeueRateControl(Rvb));
+
+	TestFalse(TEXT("RVW: world-frame velocity"), Rvw.bLocalFrame);
+	TestTrue(FString::Printf(TEXT("RVW: ECEF east -> NED east (%.2f, %.2f, %.2f)"), Rvw.XRate, Rvw.YRate, Rvw.ZRate),
+		FVector(Rvw.XRate, Rvw.YRate, Rvw.ZRate).Equals(FVector(0.0, 100.0, 0.0), 0.01));
+	TestTrue(TEXT("RVW: body yaw rate"), Rvw.bAngularLocalFrame && FMath::IsNearlyEqual(Rvw.YawRate, 5.7296f, 1e-3f));
+
+	TestTrue(TEXT("FPW: fixed orientation, no rotation"), FMath::IsNearlyZero(Fpw.YawRate));
+
+	TestTrue(TEXT("RVB: body-frame velocity passed through"),
+		Rvb.bLocalFrame && FVector(Rvb.XRate, Rvb.YRate, Rvb.ZRate).Equals(FVector(100.0, 0.0, 0.0), 0.01));
 	return true;
 }

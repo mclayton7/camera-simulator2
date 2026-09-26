@@ -43,21 +43,13 @@ public:
 	/** Dequeue a converted rate control. Returns false if empty. */
 	bool DequeueRateControl(FCigiRateControl& Out);
 
+	/** Convert one Entity State PDU into pending entity state and rate control (public for tests). */
+	void ProcessPdu(const FDisEntityStatePdu& Pdu);
+
 	// -----------------------------------------------------------------------
 	// Static utility: ECEF → geodetic conversion (double precision)
 	// -----------------------------------------------------------------------
 
-	/**
-	 * Convert ECEF (Earth-Centered, Earth-Fixed) coordinates to geodetic.
-	 * Uses iterative Bowring method for sub-centimetre accuracy.
-	 *
-	 * @param X, Y, Z  ECEF position in metres.
-	 * @param OutLat   WGS-84 latitude in decimal degrees.
-	 * @param OutLon   WGS-84 longitude in decimal degrees.
-	 * @param OutAlt   Height above WGS-84 ellipsoid in metres.
-	 */
-	static void EcefToGeodetic(double X, double Y, double Z,
-	                           double& OutLat, double& OutLon, double& OutAlt);
 
 	// -----------------------------------------------------------------------
 	// ID Translation
@@ -133,7 +125,7 @@ private:
 
 	void DrainDesignatorPdus();
 
-	void ProcessPdu(const FDisEntityStatePdu& Pdu);
+
 	void SweepTimeouts();
 	void BuildTypeMaps();
 };

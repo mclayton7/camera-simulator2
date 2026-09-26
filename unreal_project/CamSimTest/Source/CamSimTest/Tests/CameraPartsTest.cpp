@@ -5,6 +5,7 @@
 #include "Camera/CamSimStreamingController.h"
 #include "Camera/CamSimTelemetryAssembler.h"
 #include "Config/CamSimConfig.h"
+#include "Geospatial/CigiFrames.h"
 
 // -------------------------------------------------------------------------
 // FCamSimStreamingController: gimbal-slew prefetch boost and adaptive SSE.
@@ -73,13 +74,13 @@ bool FCameraFlatEarthFrameCenterTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("below the horizon"),
 		FCamSimTelemetryAssembler::FlatEarthFrameCenter(10.0, 20.0, 1000.0, -45.0f, 0.0f, Range, Lat, Lon));
 	TestTrue(FString::Printf(TEXT("slant range %.1f"), Range), FMath::IsNearlyEqual(Range, 1414.21, 0.01));
-	TestTrue(TEXT("frame centre 1000 m north"), FMath::IsNearlyEqual((Lat - 10.0) * 111320.0, 1000.0, 0.01)
-		&& FMath::IsNearlyEqual(Lon, 20.0, 1e-9));
+	TestTrue(TEXT("frame centre 1000 m north"),
+		CamSimFrames::GeodeticDeltaToNeu(10.0, 20.0, 1000.0, Lat, Lon, 1000.0).Equals(FVector(1000.0, 0.0, 0.0), 0.01));
 
 	// Looking east
 	FCamSimTelemetryAssembler::FlatEarthFrameCenter(0.0, 0.0, 1000.0, -45.0f, 90.0f, Range, Lat, Lon);
-	TestTrue(TEXT("frame centre 1000 m east"), FMath::IsNearlyEqual(Lon * 111320.0, 1000.0, 0.01)
-		&& FMath::IsNearlyZero(Lat, 1e-9));
+	TestTrue(TEXT("frame centre 1000 m east"),
+		CamSimFrames::GeodeticDeltaToNeu(0.0, 0.0, 1000.0, Lat, Lon, 1000.0).Equals(FVector(0.0, 1000.0, 0.0), 0.01));
 
 	TestFalse(TEXT("level boresight never meets flat ground"),
 		FCamSimTelemetryAssembler::FlatEarthFrameCenter(0.0, 0.0, 1000.0, 0.0f, 0.0f, Range, Lat, Lon));

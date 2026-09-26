@@ -172,7 +172,8 @@ private:
 		FQuat   Orientation = FQuat::Identity;                 // single source of truth
 		float   XRate = 0.0f, YRate = 0.0f, ZRate = 0.0f;     // m/s
 		float   YawRate = 0.0f, PitchRate = 0.0f, RollRate = 0.0f; // deg/s
-		bool    bLocalFrame = true;  // see FCigiRateControl::bLocalFrame
+		bool    bLocalFrame = true;         // see FCigiRateControl::bLocalFrame
+		bool    bAngularLocalFrame = true;  // see FCigiRateControl::bAngularLocalFrame
 		bool    bHasRate = false;
 	} DR;
 

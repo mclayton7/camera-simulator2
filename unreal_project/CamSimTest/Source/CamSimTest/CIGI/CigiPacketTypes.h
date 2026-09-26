@@ -56,6 +56,9 @@ struct FCigiRateControl
 	// rotation about body axes. World/Parent (CIGI 3.2+ default): X north,
 	// Y east, Z down, and heading/pitch/roll rates. CIGI 3.0/3.1 is always Local.
 	bool   bLocalFrame     = true;
+	// Frame of the angular rates alone; CIGI uses bLocalFrame for both. DIS
+	// world-frame dead reckoning has world velocity but body angular rates.
+	bool   bAngularLocalFrame = true;
 	float  XRate           = 0.0f;   // m/s
 	float  YRate           = 0.0f;   // m/s
 	float  ZRate           = 0.0f;   // m/s

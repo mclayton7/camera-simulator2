@@ -78,12 +78,13 @@ struct FDisDeadReckoningParams
 {
 	uint8 Algorithm = 0;  // DR algorithm code (1-9)
 
-	// Linear velocity (m/s) in entity body coordinates
+	// Entity Linear Velocity (m/s): world (ECEF) coordinates for dead-reckoning
+	// algorithms 2-5, entity body coordinates for 6-9
 	float VelX = 0.0f;
 	float VelY = 0.0f;
 	float VelZ = 0.0f;
 
-	// Linear acceleration (m/s^2) in entity body coordinates
+	// Linear acceleration (m/s^2): world for algorithms 2-5, body for 6-9
 	float AccelX = 0.0f;
 	float AccelY = 0.0f;
 	float AccelZ = 0.0f;

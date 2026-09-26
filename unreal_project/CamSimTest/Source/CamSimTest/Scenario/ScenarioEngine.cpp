@@ -6,7 +6,7 @@
 #include "CesiumGlobeAnchorComponent.h"
 
 static constexpr uint8  CIGI_ENTITY_ACTIVE = 1;
-#include "Geospatial/GeoConstants.h"
+#include "Geospatial/CigiFrames.h"
 static constexpr double DEG_TO_RAD = PI / 180.0;
 
 // ---------------------------------------------------------------------------
@@ -319,15 +319,14 @@ FCigiEntityState FScenarioEngine::BuildLinearState(
     double ScenarioElapsedSec) const
 {
 	const double TimeSinceSpawn = FMath::Max(0.0, ScenarioElapsedSec - static_cast<double>(Spec.SpawnTimeSec));
-	const double LatRad = FMath::DegreesToRadians(Spec.StartLatitude);
-	const double CosLat = FMath::Max(0.01, FMath::Abs(FMath::Cos(LatRad)));
 
 	FCigiEntityState Out;
 	Out.EntityId    = static_cast<uint16>(FMath::Clamp(Spec.EntityId, 0, 65535));
 	Out.EntityType  = static_cast<uint16>(FMath::Clamp(Spec.EntityType, 0, 65535));
 	Out.EntityState = CIGI_ENTITY_ACTIVE;
-	Out.Latitude    = Spec.StartLatitude  + (static_cast<double>(Spec.NorthRateMps) * TimeSinceSpawn) / METRES_PER_DEGREE_LAT;
-	Out.Longitude   = Spec.StartLongitude + (static_cast<double>(Spec.EastRateMps) * TimeSinceSpawn)  / (METRES_PER_DEGREE_LAT * CosLat);
+	double Unused;
+	CamSimFrames::OffsetGeodetic(Spec.StartLatitude, Spec.StartLongitude, 0.0,
+		FVector(Spec.NorthRateMps, Spec.EastRateMps, 0.0) * TimeSinceSpawn, Out.Latitude, Out.Longitude, Unused);
 	Out.Altitude    = static_cast<float>(Spec.StartAltitude + static_cast<double>(Spec.UpRateMps) * TimeSinceSpawn);
 	Out.Yaw         = Spec.StartYaw   + Spec.YawRateDegPerSec   * static_cast<float>(TimeSinceSpawn);
 	Out.Pitch       = Spec.StartPitch + Spec.PitchRateDegPerSec * static_cast<float>(TimeSinceSpawn);
@@ -525,10 +524,10 @@ void FScenarioEngine::ApplyFormationOffsets(TArray<FCigiEntityState>& Output)
 		const double OffsetEastM  = Spec->FormationOffsetM.X * SinH + Spec->FormationOffsetM.Y * CosH;
 		const double OffsetAltM   = -Spec->FormationOffsetM.Z; // Z=down in body frame, alt is up
 
-		const double CosLat = FMath::Max(0.001, FMath::Abs(FMath::Cos(FMath::DegreesToRadians(Leader->Latitude))));
-		Follower.Latitude  = Leader->Latitude  + OffsetNorthM / METRES_PER_DEGREE_LAT;
-		Follower.Longitude = Leader->Longitude + OffsetEastM  / (METRES_PER_DEGREE_LAT * CosLat);
-		Follower.Altitude  = Leader->Altitude  + static_cast<float>(OffsetAltM);
+		double FollowerAlt;
+		CamSimFrames::OffsetGeodetic(Leader->Latitude, Leader->Longitude, Leader->Altitude,
+			FVector(OffsetNorthM, OffsetEastM, OffsetAltM), Follower.Latitude, Follower.Longitude, FollowerAlt);
+		Follower.Altitude  = static_cast<float>(FollowerAlt);
 
 		if (Spec->bInheritHeading)
 		{

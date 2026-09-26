@@ -20,7 +20,7 @@
 static constexpr uint8 CIGI_ENTITY_STANDBY = 0;
 static constexpr uint8 CIGI_ENTITY_ACTIVE  = 1;
 static constexpr uint8 CIGI_ENTITY_REMOVE  = 2;
-#include "Geospatial/GeoConstants.h"
+#include "Geospatial/CigiFrames.h"
 
 // -------------------------------------------------------------------------
 // Constructor / Destructor
@@ -575,15 +575,14 @@ FCigiEntityState FCamSimEntityManager::BuildScenarioState(
 	double ScenarioElapsedSeconds) const
 {
 	const double TimeSinceSpawn = FMath::Max(0.0, ScenarioElapsedSeconds - static_cast<double>(Spec.SpawnTimeSec));
-	const double LatRad = FMath::DegreesToRadians(Spec.StartLatitude);
-	const double CosLat = FMath::Max(0.01, FMath::Abs(FMath::Cos(LatRad)));
 
 	FCigiEntityState Out;
 	Out.EntityId = static_cast<uint16>(FMath::Clamp(Spec.EntityId, 0, 65535));
 	Out.EntityType = static_cast<uint16>(FMath::Clamp(Spec.EntityType, 0, 65535));
 	Out.EntityState = CIGI_ENTITY_ACTIVE;
-	Out.Latitude = Spec.StartLatitude + (static_cast<double>(Spec.NorthRateMps) * TimeSinceSpawn) / METRES_PER_DEGREE_LAT;
-	Out.Longitude = Spec.StartLongitude + (static_cast<double>(Spec.EastRateMps) * TimeSinceSpawn) / (METRES_PER_DEGREE_LAT * CosLat);
+	double Unused;
+	CamSimFrames::OffsetGeodetic(Spec.StartLatitude, Spec.StartLongitude, 0.0,
+		FVector(Spec.NorthRateMps, Spec.EastRateMps, 0.0) * TimeSinceSpawn, Out.Latitude, Out.Longitude, Unused);
 	Out.Altitude = static_cast<float>(Spec.StartAltitude + static_cast<double>(Spec.UpRateMps) * TimeSinceSpawn);
 	Out.Yaw = Spec.StartYaw + Spec.YawRateDegPerSec * static_cast<float>(TimeSinceSpawn);
 	Out.Pitch = Spec.StartPitch + Spec.PitchRateDegPerSec * static_cast<float>(TimeSinceSpawn);

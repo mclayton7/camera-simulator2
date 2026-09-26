@@ -471,6 +471,7 @@ void ACamSimEntity::SetRateControl(const FCigiRateControl& R)
 	DR.PitchRate = R.PitchRate;
 	DR.RollRate  = R.RollRate;
 	DR.bLocalFrame = R.bLocalFrame;
+	DR.bAngularLocalFrame = R.bAngularLocalFrame;
 	DR.bHasRate  = true;
 }
 
@@ -717,11 +718,11 @@ void ACamSimEntity::ApplyVesselMotion(IOceanSurface* Ocean,
 	const float RollRad  = FMath::Atan2(hStbd - hPort, HalfBeamCm   * 2.0f) * MotionScale;
 	const float HeaveZ   = (hBow + hStern + hPort + hStbd) * 0.25f * MotionScale;
 
-	// Apply as delta on top of current CIGI-commanded pose
-	FRotator NewRot = Rot;
-	NewRot.Pitch += FMath::RadiansToDegrees(PitchRad);
-	NewRot.Roll  += FMath::RadiansToDegrees(RollRad);
-	SetActorRotation(NewRot);
+	// Pitch/roll the hull about its own axes, on top of the commanded pose.
+	// (Adding them to the world FRotator would tilt about UE world axes, which
+	// are not the local horizon away from the georeference origin.)
+	const FQuat WaveTilt = FRotator(FMath::RadiansToDegrees(PitchRad), 0.0, FMath::RadiansToDegrees(RollRad)).Quaternion();
+	SetActorRotation(GetActorQuat() * WaveTilt);
 
 	FVector NewLoc = Loc;
 	NewLoc.Z += HeaveZ;
@@ -742,7 +743,7 @@ void ACamSimEntity::UpdateDeadReckoning(float Dt)
 	Pose.Alt = DR.Alt;
 	Pose.Neu = DR.Orientation;
 	CamSimFrames::IntegrateRates(Pose, FVector(DR.XRate, DR.YRate, DR.ZRate),
-		FVector(DR.RollRate, DR.PitchRate, DR.YawRate), DR.bLocalFrame, Dt);
+		FVector(DR.RollRate, DR.PitchRate, DR.YawRate), DR.bLocalFrame, DR.bAngularLocalFrame, Dt);
 
 	DR.Lat = Pose.Lat;
 	DR.Lon = Pose.Lon;

@@ -255,6 +255,26 @@ DIS is wrong in two ways today: `DisEntityAdapter` passes the Entity State PDU's
 Entity Linear Velocity (world ECEF for dead-reckoning algorithms 2–5) as body-frame. Both need
 ECEF → local NED at the entity's position.
 
+**Status (2026-09-26): done.** `Geospatial/EcefFrames.h` adds WGS-84 geodetic ↔ ECEF, the
+NED ↔ ECEF rotation, ECEF vectors → NED, and DIS Euler angles ↔ CIGI heading/pitch/roll.
+`CigiFrames.h` gains the inverses (`GeodeticDeltaToNeu`, `GeodeticToBodyOffset`, `NeuToAzEl`).
+- DIS: orientation is converted from ECEF-referenced Euler angles to local heading/pitch/roll,
+  and dead reckoning now follows IEEE 1278.1 per algorithm — world (ECEF → NED) velocity for
+  2–5, body velocity for 6–9, body angular velocity only for the rotating ones (3, 4, 7, 8).
+  Previously only 2 and 5 were handled, both as body-frame, and 5 (a fixed-orientation
+  algorithm) rotated. Rate control now carries separate linear and angular frames.
+- Found: **body-frame angular rates pitched and rolled the wrong way** (UE's axis-angle
+  quaternions about X and Y run opposite to CIGI's), so every CIGI Local-frame rate-controlled
+  entity pitched/rolled backwards. Fixed; `CigiFrames.BodyRateSigns` pins the signs.
+- The flat-earth maths (LOS vector end point, frame-centre fallback, scenario linear motion,
+  formation offsets, randomizer jitter) now goes through `OffsetGeodetic`; `GeoConstants.h`
+  (111,320 m/°) is gone. The DIS adapter's private ECEF conversion moved into the module.
+- Vessel wave motion tilted the hull about UE world axes (wrong away from the georeference
+  origin); it now tilts about the hull's own axes. The ocean surface itself is still a flat
+  UE-world plane (parked).
+- Tests: `CigiFrames.DisEcef`, `CigiFrames.BodyRateSigns`, `Phase21.AdapterConvertsEcefFrames`.
+- Not verified against a live DIS federate (none available here).
+
 All conversions live in `Geospatial/` with round-trip unit tests:
 
 - CIGI north-referenced heading/pitch/roll, with entity-relative offsets

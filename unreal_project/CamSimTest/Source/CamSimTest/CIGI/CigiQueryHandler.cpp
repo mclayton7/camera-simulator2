@@ -224,8 +224,7 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, const FCamSimGeosp
 			Req.VectEl = static_cast<float>(TrueEl);
 		}
 
-		// Compute the end point of the vector in geodetic using a flat-earth
-		// approximation at the source location (consistent with ComputeGeometricLOS).
+		// End point of the vector: a local North/East/Up displacement from the source.
 		const double AzRad   = FMath::DegreesToRadians(static_cast<double>(Req.VectAz));
 		const double ElRad   = FMath::DegreesToRadians(static_cast<double>(Req.VectEl));
 		const double MaxRngM = static_cast<double>(Req.MaxRange);
@@ -238,14 +237,9 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, const FCamSimGeosp
 		const double NorthM = HorizM * FMath::Cos(AzRad);
 		const double EastM  = HorizM * FMath::Sin(AzRad);
 
-		// Flat-earth conversion to geodetic delta
-		const double LatRad   = FMath::DegreesToRadians(Req.SrcLat);
-		const double DeltaLat = NorthM / 111320.0;
-		const double DeltaLon = EastM  / (111320.0 * FMath::Cos(LatRad));
-
-		const double EndLat = Req.SrcLat + DeltaLat;
-		const double EndLon = Req.SrcLon + DeltaLon;
-		const double EndAlt = Req.SrcAlt + UpM;
+		double EndLat, EndLon, EndAlt;
+		CamSimFrames::OffsetGeodetic(Req.SrcLat, Req.SrcLon, Req.SrcAlt, FVector(NorthM, EastM, UpM),
+			EndLat, EndLon, EndAlt);
 
 		FVector SrcWorld = FVector::ZeroVector;
 		FVector EndWorld = FVector::ZeroVector;

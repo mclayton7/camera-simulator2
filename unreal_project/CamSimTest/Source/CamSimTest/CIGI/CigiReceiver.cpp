@@ -161,7 +161,8 @@ public:
 			// CIGI 3.0/3.1 has no Coordinate System field: rates are body-frame.
 			if constexpr (IsPacketClass<decltype(Pkt), CigiRateCtrlV3_2>)
 			{
-				Rate.bLocalFrame = (Pkt.GetCoordSys() == CigiBaseRateCtrl::Local);
+				Rate.bLocalFrame        = (Pkt.GetCoordSys() == CigiBaseRateCtrl::Local);
+				Rate.bAngularLocalFrame = Rate.bLocalFrame;
 			}
 		});
 

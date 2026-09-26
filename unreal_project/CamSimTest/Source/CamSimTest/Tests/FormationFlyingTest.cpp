@@ -5,7 +5,6 @@
 #include "Scenario/ScenarioEngine.h"
 #include "Config/CamSimConfig.h"
 
-#include "Geospatial/GeoConstants.h"
 
 // ---------------------------------------------------------------------------
 // Test 1: FormationBasicOffset — 100m right offset shifts follower east

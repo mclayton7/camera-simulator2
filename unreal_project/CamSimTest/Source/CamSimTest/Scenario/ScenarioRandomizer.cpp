@@ -5,7 +5,7 @@
 #include "Math/RandomStream.h"
 #include "HAL/PlatformTime.h"
 
-#include "Geospatial/GeoConstants.h"
+#include "Geospatial/CigiFrames.h"
 
 void FScenarioRandomizer::Randomize(FCamSimConfig& Cfg)
 {
@@ -91,13 +91,11 @@ void FScenarioRandomizer::RandomizeEntities(FCamSimConfig& Cfg, FRandomStream& R
 		// Jitter the template entity's position
 		if (Entry.PositionJitterM > 0.0f)
 		{
-			const double LatJitterDeg = Entry.PositionJitterM / METRES_PER_DEGREE_LAT;
-			const double CosLat = FMath::Max(0.001,
-				FMath::Abs(FMath::Cos(FMath::DegreesToRadians(Template->StartLatitude))));
-			const double LonJitterDeg = Entry.PositionJitterM / (METRES_PER_DEGREE_LAT * CosLat);
-
-			Template->StartLatitude  += Rng.FRandRange(-LatJitterDeg, LatJitterDeg);
-			Template->StartLongitude += Rng.FRandRange(-LonJitterDeg, LonJitterDeg);
+			const double NorthM = Rng.FRandRange(-Entry.PositionJitterM, Entry.PositionJitterM);
+			const double EastM  = Rng.FRandRange(-Entry.PositionJitterM, Entry.PositionJitterM);
+			double Unused;
+			CamSimFrames::OffsetGeodetic(Template->StartLatitude, Template->StartLongitude, 0.0,
+				FVector(NorthM, EastM, 0.0), Template->StartLatitude, Template->StartLongitude, Unused);
 		}
 
 		// Determine entity count
@@ -124,13 +122,11 @@ void FScenarioRandomizer::RandomizeEntities(FCamSimConfig& Cfg, FRandomStream& R
 			// Jitter position within spawn radius
 			if (Entry.SpawnRadiusM > 0.0f)
 			{
-				const double LatJitterDeg = Entry.SpawnRadiusM / METRES_PER_DEGREE_LAT;
-				const double CosLat = FMath::Max(0.001,
-					FMath::Abs(FMath::Cos(FMath::DegreesToRadians(Template->StartLatitude))));
-				const double LonJitterDeg = Entry.SpawnRadiusM / (METRES_PER_DEGREE_LAT * CosLat);
-
-				Clone.StartLatitude  = Template->StartLatitude  + Rng.FRandRange(-LatJitterDeg, LatJitterDeg);
-				Clone.StartLongitude = Template->StartLongitude + Rng.FRandRange(-LonJitterDeg, LonJitterDeg);
+				const double NorthM = Rng.FRandRange(-Entry.SpawnRadiusM, Entry.SpawnRadiusM);
+				const double EastM  = Rng.FRandRange(-Entry.SpawnRadiusM, Entry.SpawnRadiusM);
+				double Unused;
+				CamSimFrames::OffsetGeodetic(Template->StartLatitude, Template->StartLongitude, 0.0,
+					FVector(NorthM, EastM, 0.0), Clone.StartLatitude, Clone.StartLongitude, Unused);
 			}
 
 			// Jitter speed
