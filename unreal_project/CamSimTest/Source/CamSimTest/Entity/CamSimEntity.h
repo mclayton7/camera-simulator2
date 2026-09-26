@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "CIGI/CigiPacketTypes.h"
+#include "Sim/Commands.h"
 #include "Geospatial/CigiFrames.h"
 #include "Ocean/IOceanSurface.h"
 // StreamableManager gives us the complete FStreamableHandle type — needed so
@@ -45,7 +45,10 @@ class CAMSIMTEST_API ACamSimEntity : public AActor
 public:
 	ACamSimEntity();
 
-	// Entity identity — set by EntityManager at spawn time
+	// Entity identity — set by EntityManager at spawn time. Key is the
+	// entity's identity (source + ID); EntityId is its ID within the source,
+	// truncated to 16 bits, for logs and ground-truth labels.
+	FEntityKey Key;
 	uint16 EntityId   = 0;
 	uint16 EntityType = 0;
 
@@ -59,11 +62,12 @@ public:
 	void SetEntityType(uint16 Type);
 
 	/**
-	 * Snap position and orientation from an incoming CIGI packet. For an
-	 * attached (child) entity this records the offset from its parent; the
-	 * entity manager then places it every tick via ApplyGeoPose().
+	 * Snap position and orientation from an entity command (and take its
+	 * motion model, if it carries one). For an attached (child) entity this
+	 * records the offset from its parent; the entity manager then places it
+	 * every tick via ApplyGeoPose().
 	 */
-	void ApplyPose(const FCigiEntityState& S);
+	void ApplyCommand(const FEntityCommand& Command);
 
 	/** Place the entity at a resolved geodetic pose (orientation in local NEU). */
 	void ApplyGeoPose(const CamSimFrames::FGeoPose& Pose);
@@ -71,20 +75,20 @@ public:
 	/** Current geodetic pose, read back from the globe anchor. */
 	bool GetGeoPose(CamSimFrames::FGeoPose& OutPose) const;
 
-	/** CIGI attachment (Entity Control Attach State = Attach). */
+	/** Attached to a parent entity (e.g. CIGI Attach State = Attach). */
 	bool     IsAttached() const              { return bAttached; }
-	uint16   GetParentId() const             { return AttachParentId; }
+	const FEntityKey& GetParentKey() const   { return AttachParent; }
 	FVector  GetAttachOffsetFrd() const      { return AttachOffsetFrd; }
 	FRotator GetAttachRotation() const       { return AttachRotation; }  // Pitch, Yaw, Roll relative to parent
 
-	/** Store linear/angular rates for dead-reckoning between CIGI updates. */
-	void SetRateControl(const FCigiRateControl& R);
+	/** How the entity moves (dead reckoning) between pose updates. */
+	void SetMotion(const FMotionModel& Motion);
 
 	/** Apply an articulated part offset/rotation to the skeletal mesh. */
-	void ApplyArtPart(const FCigiArtPartControl& P);
+	void ApplyArticulation(const FArticulationCommand& P);
 
 	/** Handle component control (lights, damage state, etc.). */
-	void ApplyComponentControl(const FCigiComponentControl& C);
+	void ApplyComponent(const FComponentCommand& C);
 
 	/** Apply runtime culling and tick-rate controls for large scene scaling. */
 	void ApplyScaleControls(float MaxDrawDistanceM, float TickRateHz);
@@ -170,17 +174,14 @@ private:
 		double  Lat = 0.0, Lon = 0.0;
 		float   Alt = 0.0f;
 		FQuat   Orientation = FQuat::Identity;                 // single source of truth
-		float   XRate = 0.0f, YRate = 0.0f, ZRate = 0.0f;     // m/s
-		float   YawRate = 0.0f, PitchRate = 0.0f, RollRate = 0.0f; // deg/s
-		bool    bLocalFrame = true;         // see FCigiRateControl::bLocalFrame
-		bool    bAngularLocalFrame = true;  // see FCigiRateControl::bAngularLocalFrame
-		bool    bHasRate = false;
+		FMotionModel Motion;
+		bool    bHasMotion = false;
 	} DR;
 
 	// CIGI attachment: while attached, pose follows the parent and dead
 	// reckoning is suspended.
 	bool     bAttached       = false;
-	uint16   AttachParentId  = 0;
+	FEntityKey AttachParent;
 	FVector  AttachOffsetFrd = FVector::ZeroVector;    // metres, parent body frame
 	FRotator AttachRotation  = FRotator::ZeroRotator;  // relative to parent axes
 

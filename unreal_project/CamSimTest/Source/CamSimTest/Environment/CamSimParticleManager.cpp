@@ -3,7 +3,6 @@
 #include "CamSimTest.h"
 #include "Config/CamSimConfig.h"
 #include "Subsystem/CamSimSubsystem.h"
-#include "CIGI/CigiPacketTypes.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "NiagaraFunctionLibrary.h"
@@ -53,41 +52,41 @@ void FCamSimParticleManager::Initialize(const FCamSimConfig& Config)
     }
 }
 
-void FCamSimParticleManager::OnEntitySpawned(uint16 EntityID, AActor* Actor,
-                                              const FCigiEntityState& State)
+void FCamSimParticleManager::OnEntitySpawned(const FEntityKey& EntityID, AActor* Actor,
+                                              const FEntityCommand& State)
 {
     if (!Actor) return;
     EntityParticles.FindOrAdd(EntityID);
 
     // 18F: Rotary-wing entities get rotor wash immediately on spawn
-    if (State.EntityKind == KindPlatform && State.EntityDomain == DomainAir
-        && State.EntityCategory == CatRotaryWing)
+    if (State.Classification.Kind == KindPlatform && State.Classification.Domain == DomainAir
+        && State.Classification.Category == CatRotaryWing)
     {
         SpawnRotorWash(EntityID, Actor);
     }
 
 	// 19B: Sea-domain entities get wake FX
 	if (bVesselWakesEnabled &&
-	    State.EntityDomain == 3 && WakeAsset)
+	    State.Classification.Domain == 3 && WakeAsset)
 	{
 		SpawnWake(EntityID, Actor);
 	}
 }
 
-void FCamSimParticleManager::OnEntityUpdated(uint16 EntityID, AActor* Actor,
-                                              const FCigiEntityState& State)
+void FCamSimParticleManager::OnEntityUpdated(const FEntityKey& EntityID, AActor* Actor,
+                                              const FEntityCommand& State)
 {
     if (!Actor) return;
 
-    // 18H: Fixed-wing contrails — altitude threshold only (speed not in FCigiEntityState)
-    if (State.EntityKind == KindPlatform && State.EntityDomain == DomainAir
-        && State.EntityCategory == CatFixedWing)
+    // 18H: Fixed-wing contrails — altitude threshold only (no airspeed in entity commands)
+    if (State.Classification.Kind == KindPlatform && State.Classification.Domain == DomainAir
+        && State.Classification.Category == CatFixedWing)
     {
-        UpdateContrail(EntityID, Actor, State.Altitude);
+        UpdateContrail(EntityID, Actor, static_cast<float>(State.Pose.Alt));
     }
 }
 
-void FCamSimParticleManager::OnEntityRemoved(uint16 EntityID)
+void FCamSimParticleManager::OnEntityRemoved(const FEntityKey& EntityID)
 {
     if (FEntityParticleState* PS = EntityParticles.Find(EntityID))
     {
@@ -96,16 +95,16 @@ void FCamSimParticleManager::OnEntityRemoved(uint16 EntityID)
     }
 }
 
-void FCamSimParticleManager::OnComponentControl(uint16 EntityID, AActor* Actor,
-                                                 const FCigiComponentControl& Pkt)
+void FCamSimParticleManager::OnComponentControl(const FEntityKey& EntityID, AActor* Actor,
+                                                 const FComponentCommand& Pkt)
 {
     if (!Actor) return;
-    if (Pkt.CompId == static_cast<uint16>(SmokeComponentID))  { ActivateSmoke(EntityID, Actor); return; }
-    if (Pkt.CompId == static_cast<uint16>(FireComponentID))   { ActivateFire(EntityID, Actor);  return; }
-    if (Pkt.CompId == static_cast<uint16>(CraterComponentID)) { SpawnCraterDecal(Actor);         return; }
+    if (Pkt.ComponentId == static_cast<uint16>(SmokeComponentID))  { ActivateSmoke(EntityID, Actor); return; }
+    if (Pkt.ComponentId == static_cast<uint16>(FireComponentID))   { ActivateFire(EntityID, Actor);  return; }
+    if (Pkt.ComponentId == static_cast<uint16>(CraterComponentID)) { SpawnCraterDecal(Actor);         return; }
 }
 
-void FCamSimParticleManager::OnDamageStateChanged(uint16 EntityID, AActor* Actor,
+void FCamSimParticleManager::OnDamageStateChanged(const FEntityKey& EntityID, AActor* Actor,
                                                    uint8 OldState, uint8 NewState)
 {
     if (!Actor) return;
@@ -115,8 +114,8 @@ void FCamSimParticleManager::OnDamageStateChanged(uint16 EntityID, AActor* Actor
         // Damage escalation
         if (NewState >= 1) ActivateSmoke(EntityID, Actor);
         if (NewState >= 2) ActivateFire(EntityID, Actor);
-        UE_LOG(LogCamSim, Log, TEXT("ParticleManager: entity %u damage FX %u -> %u"),
-            EntityID, OldState, NewState);
+        UE_LOG(LogCamSim, Log, TEXT("ParticleManager: entity %s damage FX %u -> %u"),
+            *EntityID.ToString(), OldState, NewState);
     }
     else if (NewState < OldState)
     {
@@ -132,8 +131,8 @@ void FCamSimParticleManager::OnDamageStateChanged(uint16 EntityID, AActor* Actor
             PS.SmokeComp->Deactivate();
             PS.bSmokeActive = false;
         }
-        UE_LOG(LogCamSim, Log, TEXT("ParticleManager: entity %u damage FX repair %u -> %u"),
-            EntityID, OldState, NewState);
+        UE_LOG(LogCamSim, Log, TEXT("ParticleManager: entity %s damage FX repair %u -> %u"),
+            *EntityID.ToString(), OldState, NewState);
     }
 }
 
@@ -144,7 +143,7 @@ void FCamSimParticleManager::Tick(float DeltaTime)
 
 // ─── Private ──────────────────────────────────────────────────────────────────
 
-void FCamSimParticleManager::SpawnRotorWash(uint16 EntityID, AActor* Actor)
+void FCamSimParticleManager::SpawnRotorWash(const FEntityKey& EntityID, AActor* Actor)
 {
     if (!RotorWashAsset) return;
     FEntityParticleState& PS = EntityParticles.FindOrAdd(EntityID);
@@ -155,7 +154,7 @@ void FCamSimParticleManager::SpawnRotorWash(uint16 EntityID, AActor* Actor)
         EAttachLocation::KeepRelativeOffset, /*bAutoDestroy=*/false);
 }
 
-void FCamSimParticleManager::SpawnWake(uint16 EntityID, AActor* Actor)
+void FCamSimParticleManager::SpawnWake(const FEntityKey& EntityID, AActor* Actor)
 {
 	FEntityParticleState& PS = EntityParticles.FindOrAdd(EntityID);
 	if (PS.WakeComp || !WakeAsset) return;
@@ -172,7 +171,7 @@ void FCamSimParticleManager::SpawnWake(uint16 EntityID, AActor* Actor)
 	}
 }
 
-void FCamSimParticleManager::UpdateContrail(uint16 EntityID, AActor* Actor, float AltitudeM)
+void FCamSimParticleManager::UpdateContrail(const FEntityKey& EntityID, AActor* Actor, float AltitudeM)
 {
     FEntityParticleState& PS = EntityParticles.FindOrAdd(EntityID);
     const bool bShouldBeActive = (AltitudeM >= ContrailAltM);
@@ -196,7 +195,7 @@ void FCamSimParticleManager::UpdateContrail(uint16 EntityID, AActor* Actor, floa
     }
 }
 
-void FCamSimParticleManager::ActivateSmoke(uint16 EntityID, AActor* Actor)
+void FCamSimParticleManager::ActivateSmoke(const FEntityKey& EntityID, AActor* Actor)
 {
     if (!SmokeAsset) return;
     FEntityParticleState& PS = EntityParticles.FindOrAdd(EntityID);
@@ -212,7 +211,7 @@ void FCamSimParticleManager::ActivateSmoke(uint16 EntityID, AActor* Actor)
     PS.bSmokeActive = true;
 }
 
-void FCamSimParticleManager::ActivateFire(uint16 EntityID, AActor* Actor)
+void FCamSimParticleManager::ActivateFire(const FEntityKey& EntityID, AActor* Actor)
 {
     if (!FireAsset) return;
     FEntityParticleState& PS = EntityParticles.FindOrAdd(EntityID);

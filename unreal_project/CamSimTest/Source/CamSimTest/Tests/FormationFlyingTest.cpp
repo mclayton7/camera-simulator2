@@ -45,7 +45,7 @@ bool FFormationBasicOffsetTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 	TArray<FCigiEntityState> States = Engine.Tick(1.0, 1.0f / 30.0f, 12.0f, EmptyMap);
 
 	TestTrue(TEXT("Got 2 entity states"), States.Num() == 2);
@@ -106,7 +106,7 @@ bool FFormationHeadingRotationTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 	TArray<FCigiEntityState> States = Engine.Tick(1.0, 1.0f / 30.0f, 12.0f, EmptyMap);
 
 	TestTrue(TEXT("Got 2 entity states"), States.Num() == 2);
@@ -160,7 +160,7 @@ bool FFormationLeaderLossTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 
 	// Tick 1: both active
 	TArray<FCigiEntityState> States1 = Engine.Tick(1.0, 1.0f / 30.0f, 12.0f, EmptyMap);
@@ -248,7 +248,7 @@ bool FFormationInheritHeadingFalseTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 	TArray<FCigiEntityState> States = Engine.Tick(1.0, 1.0f / 30.0f, 12.0f, EmptyMap);
 
 	TestTrue(TEXT("Got 2 entity states"), States.Num() == 2);
@@ -313,7 +313,7 @@ bool FFormationDependencySortTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 	TArray<FCigiEntityState> States = Engine.Tick(1.0, 1.0f / 30.0f, 12.0f, EmptyMap);
 
 	// Both should produce valid output despite reversed declaration order

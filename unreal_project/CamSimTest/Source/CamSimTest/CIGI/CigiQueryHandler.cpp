@@ -208,7 +208,7 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, const FCamSimGeosp
 		{
 			// Source offset and vector are both in the entity's body frame.
 			CamSimFrames::FGeoPose Ref;
-			if (!Subsystem->GetEntityGeoPose(Req.EntityId, Ref))
+			if (!Subsystem->GetEntityGeoPose(FEntityKey(EHostSource::Cigi, Req.EntityId), Ref))
 			{
 				UE_LOG(LogCamSim, Warning,
 					TEXT("FCigiQueryHandler: LOS vect id=%u relative to unknown entity %u"),
@@ -307,16 +307,19 @@ bool FCigiQueryHandler::ResolvePoint(bool bEntityRelative, uint16 EntityId, doub
 		return true;
 	}
 	CamSimFrames::FGeoPose Ref;
-	if (!Subsystem->GetEntityGeoPose(EntityId, Ref)) return false;
+	if (!Subsystem->GetEntityGeoPose(FEntityKey(EHostSource::Cigi, EntityId), Ref)) return false;
 	CamSimFrames::BodyOffsetToGeodetic(Ref, FVector(A, B, C), OutLat, OutLon, OutAlt);
 	return true;
 }
 
 uint16 FCigiQueryHandler::ResolveEntityId(const AActor* HitActor) const
 {
-	if (const ACamSimEntity* Entity = Cast<ACamSimEntity>(HitActor))
+	// Only the CIGI host's own entities: another source's ID would mean
+	// nothing to it (DIS and scenario entities are "not an entity").
+	const ACamSimEntity* Entity = Cast<ACamSimEntity>(HitActor);
+	if (Entity && Entity->Key.Source == EHostSource::Cigi && Entity->Key.Id <= MAX_uint16)
 	{
-		return Entity->EntityId;
+		return static_cast<uint16>(Entity->Key.Id);
 	}
 	return 0;
 }
@@ -400,7 +403,7 @@ void FCigiQueryHandler::RespondLos(UWorld* World, const FCamSimGeospatialProvide
 	Resp.AltOrZ = Alt;
 
 	CamSimFrames::FGeoPose EntityPose;
-	if (bResponseEntityCs && Resp.bEntityIdValid && Subsystem->GetEntityGeoPose(EntityId, EntityPose))
+	if (bResponseEntityCs && Resp.bEntityIdValid && Subsystem->GetEntityGeoPose(FEntityKey(EHostSource::Cigi, EntityId), EntityPose))
 	{
 		const FVector Offset = CamSimFrames::GeodeticToBodyOffset(EntityPose, Lat, Lon, Alt);
 		Resp.bEntityCs = true;

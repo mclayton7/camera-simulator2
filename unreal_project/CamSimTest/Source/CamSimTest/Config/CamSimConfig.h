@@ -708,7 +708,6 @@ struct FCamSimConfig
 		int32   SiteId                = 1;
 		int32   ApplicationId         = 1;
 		float   HeartbeatTimeoutSec   = 12.0f;
-		int32   IdBaseOffset          = 1000;            // CamSim IDs start here for DIS
 		int32   DefaultEntityTypeId   = 1001;            // fallback CamSim entity type
 
 		// DIS entity type → CamSim type ID mappings from YAML

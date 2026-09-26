@@ -397,27 +397,26 @@ void ACamSimEntity::InitAnimatedCharacter(const FEntityTypeEntry& Entry)
 // ApplyPose — snap position + orientation from CIGI packet
 // -------------------------------------------------------------------------
 
-void ACamSimEntity::ApplyPose(const FCigiEntityState& S)
+void ACamSimEntity::ApplyCommand(const FEntityCommand& Command)
 {
 	if (!GlobeAnchor) return;
 
-	bAttached = S.bAttached;
+	if (Command.Motion.IsSet())
+	{
+		SetMotion(*Command.Motion);
+	}
+
+	bAttached = Command.Attachment.IsSet();
 	if (bAttached)
 	{
-		// Lat/Lon/Alt carry X/Y/Z offsets; the manager resolves the pose from
-		// the parent each tick.
-		AttachParentId  = S.ParentId;
-		AttachOffsetFrd = FVector(S.Latitude, S.Longitude, S.Altitude);
-		AttachRotation  = FRotator(S.Pitch, S.Yaw, S.Roll);
+		// The manager resolves the pose from the parent each tick.
+		AttachParent    = Command.Attachment->Parent;
+		AttachOffsetFrd = Command.Attachment->OffsetFrd;
+		AttachRotation  = Command.Attachment->Rotation;
 		return;
 	}
 
-	CamSimFrames::FGeoPose Pose;
-	Pose.Lat = S.Latitude;
-	Pose.Lon = S.Longitude;
-	Pose.Alt = S.Altitude;
-	Pose.Neu = CamSimFrames::CigiToNeu(S.Yaw, S.Pitch, S.Roll);
-	ApplyGeoPose(Pose);
+	ApplyGeoPose(Command.Pose);
 
 	// One-time log to confirm the entity reached a real UE world position.
 	// (If this prints 0,0,0 the GlobeAnchor has not found a CesiumGeoreference.)
@@ -426,7 +425,7 @@ void ACamSimEntity::ApplyPose(const FCigiEntityState& S)
 		bPoseLogged = true;
 		UE_LOG(LogCamSim, Log,
 			TEXT("ACamSimEntity[%u]: first pose lat=%.4f lon=%.4f alt=%.0f -> UE world %s"),
-			EntityId, S.Latitude, S.Longitude, S.Altitude,
+			EntityId, Command.Pose.Lat, Command.Pose.Lon, Command.Pose.Alt,
 			*GetActorLocation().ToString());
 	}
 }
@@ -460,31 +459,22 @@ bool ACamSimEntity::GetGeoPose(CamSimFrames::FGeoPose& OutPose) const
 // SetRateControl — store rates for dead-reckoning
 // -------------------------------------------------------------------------
 
-void ACamSimEntity::SetRateControl(const FCigiRateControl& R)
+void ACamSimEntity::SetMotion(const FMotionModel& Motion)
 {
-	if (R.bApplyToArtPart) return; // art-part rates handled separately
-
-	DR.XRate     = R.XRate;
-	DR.YRate     = R.YRate;
-	DR.ZRate     = R.ZRate;
-	DR.YawRate   = R.YawRate;
-	DR.PitchRate = R.PitchRate;
-	DR.RollRate  = R.RollRate;
-	DR.bLocalFrame = R.bLocalFrame;
-	DR.bAngularLocalFrame = R.bAngularLocalFrame;
-	DR.bHasRate  = true;
+	DR.Motion     = Motion;
+	DR.bHasMotion = true;
 }
 
 // -------------------------------------------------------------------------
 // ApplyArtPart — set bone transform on skeletal mesh
 // -------------------------------------------------------------------------
 
-void ACamSimEntity::ApplyArtPart(const FCigiArtPartControl& P)
+void ACamSimEntity::ApplyArticulation(const FArticulationCommand& P)
 {
-	if (!P.bArtPartEn || !SkelMeshComp || !SkelMeshComp->GetSkinnedAsset()) return;
+	if (!P.bEnabled || !SkelMeshComp || !SkelMeshComp->GetSkinnedAsset()) return;
 
 	// Bone naming: ArtPart_XX where XX is zero-padded decimal ArtPartId
-	FName BoneName = FName(*FString::Printf(TEXT("ArtPart_%02d"), P.ArtPartId));
+	FName BoneName = FName(*FString::Printf(TEXT("ArtPart_%02d"), P.PartId));
 
 	int32 BoneIdx = SkelMeshComp->GetBoneIndex(BoneName);
 	if (BoneIdx == INDEX_NONE) return;
@@ -495,12 +485,12 @@ void ACamSimEntity::ApplyArtPart(const FCigiArtPartControl& P)
 	FVector   Loc = BoneTM.GetLocation();
 	FRotator  Rot = BoneTM.GetRotation().Rotator();
 
-	if (P.bXOffEn)  Loc.X     = P.XOff;
-	if (P.bYOffEn)  Loc.Y     = P.YOff;
-	if (P.bZOffEn)  Loc.Z     = P.ZOff;
-	if (P.bRollEn)  Rot.Roll  = P.Roll;
-	if (P.bPitchEn) Rot.Pitch = P.Pitch;
-	if (P.bYawEn)   Rot.Yaw   = P.Yaw;
+	if (P.bXEn)     Loc.X     = P.Offset.X;
+	if (P.bYEn)     Loc.Y     = P.Offset.Y;
+	if (P.bZEn)     Loc.Z     = P.Offset.Z;
+	if (P.bRollEn)  Rot.Roll  = P.Rotation.Roll;
+	if (P.bPitchEn) Rot.Pitch = P.Rotation.Pitch;
+	if (P.bYawEn)   Rot.Yaw   = P.Rotation.Yaw;
 
 	FTransform NewTM(Rot, Loc);
 	SkelMeshComp->SetBoneTransformByName(BoneName, NewTM, EBoneSpaces::ComponentSpace);
@@ -510,15 +500,15 @@ void ACamSimEntity::ApplyArtPart(const FCigiArtPartControl& P)
 // ApplyComponentControl — lights, damage state
 // -------------------------------------------------------------------------
 
-void ACamSimEntity::ApplyComponentControl(const FCigiComponentControl& C)
+void ACamSimEntity::ApplyComponent(const FComponentCommand& C)
 {
-	if (C.CompClass != 0) return; // only handle entity-class components
+	if (C.ComponentClass != 0) return; // only handle entity-class components
 
-	switch (C.CompId)
+	switch (C.ComponentId)
 	{
 	case 0: // Nav lights (red/green/white)
 		{
-			const bool bOn = (C.CompState == 1);
+			const bool bOn = (C.State == 1);
 			if (NavLightRed)   NavLightRed->SetVisibility(bOn);
 			if (NavLightGreen) NavLightGreen->SetVisibility(bOn);
 			if (NavLightWhite) NavLightWhite->SetVisibility(bOn);
@@ -528,7 +518,7 @@ void ACamSimEntity::ApplyComponentControl(const FCigiComponentControl& C)
 		break;
 
 	case 1: // Anti-collision strobe
-		bStrobeEnabled = (C.CompState == 1);
+		bStrobeEnabled = (C.State == 1);
 		if (!bStrobeEnabled && StrobeLight)
 		{
 			StrobeLight->SetVisibility(false);
@@ -539,7 +529,7 @@ void ACamSimEntity::ApplyComponentControl(const FCigiComponentControl& C)
 
 	case 2: // Landing lights
 		{
-			const bool bOn = (C.CompState == 1);
+			const bool bOn = (C.State == 1);
 			if (LandingLight) LandingLight->SetVisibility(bOn);
 			UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: landing lights %s"),
 				EntityId, bOn ? TEXT("ON") : TEXT("OFF"));
@@ -549,7 +539,7 @@ void ACamSimEntity::ApplyComponentControl(const FCigiComponentControl& C)
 	case 10: // Damage state — swap mesh asset (Phase 22C: gradual interpolation)
 		{
 			const uint8 OldDamageState = DamageState;
-			const uint8 NewDamageState = FMath::Min(C.CompState, static_cast<uint8>(2));
+			const uint8 NewDamageState = FMath::Min(C.State, static_cast<uint8>(2));
 			static const TCHAR* DamageNames[] = { TEXT("intact"), TEXT("damaged"), TEXT("destroyed") };
 			UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: damage state -> %u (%s)"),
 				EntityId, NewDamageState,
@@ -597,8 +587,8 @@ void ACamSimEntity::ApplyComponentControl(const FCigiComponentControl& C)
 		{
 			if (UCamSimAnimInstance* Anim = Cast<UCamSimAnimInstance>(AnimMeshComp->GetAnimInstance()))
 			{
-				Anim->AnimStateIndex = FMath::Clamp(static_cast<int32>(C.CompState), 0, 4);
-				Anim->bManualState = (C.CompState >= 3); // manual for crouch/prone
+				Anim->AnimStateIndex = FMath::Clamp(static_cast<int32>(C.State), 0, 4);
+				Anim->bManualState = (C.State >= 3); // manual for crouch/prone
 				UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: anim stance -> %d"),
 					EntityId, Anim->AnimStateIndex);
 			}
@@ -658,7 +648,7 @@ void ACamSimEntity::Tick(float DeltaTime)
 	// Phase 22D: Push ground speed to animation instance
 	if (AnimMeshComp && AnimMeshComp->IsVisible())
 	{
-		CachedGroundSpeed = FMath::Sqrt(DR.XRate * DR.XRate + DR.YRate * DR.YRate);
+		CachedGroundSpeed = static_cast<float>(DR.Motion.Velocity.Size2D());
 		if (UCamSimAnimInstance* Anim = Cast<UCamSimAnimInstance>(AnimMeshComp->GetAnimInstance()))
 		{
 			Anim->GroundSpeed = CachedGroundSpeed;
@@ -735,15 +725,15 @@ void ACamSimEntity::ApplyVesselMotion(IOceanSurface* Ocean,
 
 void ACamSimEntity::UpdateDeadReckoning(float Dt)
 {
-	if (!DR.bHasRate || !GlobeAnchor || bAttached) return;  // children follow their parent
+	if (!DR.bHasMotion || !GlobeAnchor || bAttached) return;  // children follow their parent
 
 	CamSimFrames::FGeoPose Pose;
 	Pose.Lat = DR.Lat;
 	Pose.Lon = DR.Lon;
 	Pose.Alt = DR.Alt;
 	Pose.Neu = DR.Orientation;
-	CamSimFrames::IntegrateRates(Pose, FVector(DR.XRate, DR.YRate, DR.ZRate),
-		FVector(DR.RollRate, DR.PitchRate, DR.YawRate), DR.bLocalFrame, DR.bAngularLocalFrame, Dt);
+	CamSimFrames::IntegrateRates(Pose, DR.Motion.Velocity, DR.Motion.AngularRate,
+		DR.Motion.LinearFrame == FMotionModel::EFrame::Body, DR.Motion.AngularFrame == FMotionModel::EFrame::Body, Dt);
 
 	DR.Lat = Pose.Lat;
 	DR.Lon = Pose.Lon;

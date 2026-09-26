@@ -74,7 +74,7 @@ bool FDisPduHeader::Parse(const uint8* Data, int32 DataLen, FDisPduHeader& OutHd
 //   Offset 19: Num Articulation Params (1 byte)
 //   Offset 20: Entity Type (8 bytes: kind, domain, country, cat, subcat, specific, extra)
 //   Offset 28: Alternative Entity Type (8 bytes)
-//   Offset 36: Linear Velocity (12 bytes: 3x float32 — entity body frame, m/s)
+//   Offset 36: Linear Velocity (12 bytes: 3x float32, m/s — world ECEF for DR 2-5, body for 6-9)
 //   Offset 48: Entity Location (24 bytes: 3x float64 — ECEF metres)
 //   Offset 72: Entity Orientation (12 bytes: 3x float32 — psi/theta/phi radians)
 //   Offset 84: Entity Appearance (4 bytes: uint32)

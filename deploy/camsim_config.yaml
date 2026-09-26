@@ -60,11 +60,6 @@ dis:
   # Env: CAMSIM_DIS_HEARTBEAT_TIMEOUT
   heartbeat_timeout_sec: 12.0
 
-  # CamSim entity ID range start for DIS entities. IDs 0-999 are reserved
-  # for CIGI entities; DIS entities get IDs starting at this offset.
-  # Env: CAMSIM_DIS_ID_BASE_OFFSET
-  id_base_offset: 1000
-
   # Default CamSim entity type ID for unmapped DIS entity types.
   # Env: CAMSIM_DIS_DEFAULT_ENTITY_TYPE
   default_entity_type_id: 1001

@@ -5,6 +5,7 @@
 #include "Misc/AutomationTest.h"
 #include "DIS/DisPduTypes.h"
 #include "DIS/DisEntityAdapter.h"
+#include "Sim/CommandSink.h"
 #include "Config/CamSimConfig.h"
 
 // -------------------------------------------------------------------------
@@ -227,120 +228,7 @@ bool FDisEcefToGeodeticTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// =========================================================================
-// Test: DIS Entity ID → CamSim uint16 allocation (monotonic, non-recycling)
-// =========================================================================
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisIdTranslationTest,
-	"CamSim.Phase21.IdTranslation",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FDisIdTranslationTest::RunTest(const FString& Parameters)
-{
-	FCamSimConfig Config;
-	Config.DIS.bEnabled = true;
-	Config.DIS.IdBaseOffset = 1000;
-
-	FDisEntityAdapter Adapter(Config, nullptr);
-
-	FDisEntityId Id1 { 1, 2, 47 };
-	FDisEntityId Id2 { 1, 2, 48 };
-	FDisEntityId Id3 { 3, 1, 1 };
-
-	const uint16 CamId1 = Adapter.GetOrAllocateId(Id1);
-	const uint16 CamId2 = Adapter.GetOrAllocateId(Id2);
-	const uint16 CamId3 = Adapter.GetOrAllocateId(Id3);
-
-	// All IDs should be unique
-	TestTrue(TEXT("IDs unique 1-2"), CamId1 != CamId2);
-	TestTrue(TEXT("IDs unique 1-3"), CamId1 != CamId3);
-	TestTrue(TEXT("IDs unique 2-3"), CamId2 != CamId3);
-
-	// IDs should be >= base offset
-	TestTrue(TEXT("ID1 >= 1000"), CamId1 >= 1000);
-	TestTrue(TEXT("ID2 >= 1000"), CamId2 >= 1000);
-
-	// Same DIS ID should return same CamSim ID
-	TestEqual(TEXT("ID1 stable"), Adapter.GetOrAllocateId(Id1), CamId1);
-
-	// Release + re-allocate a fresh DIS triple: post 7C.4, IDs are monotonic
-	// and never recycled. CamId4 must NOT equal the freed CamId1.
-	Adapter.ReleaseId(Id1);
-	FDisEntityId Id4 { 5, 5, 5 };
-	const uint16 CamId4 = Adapter.GetOrAllocateId(Id4);
-	TestNotEqual(TEXT("No ID recycling after release"), CamId4, CamId1);
-	TestTrue(TEXT("CamId4 monotonically greater than prior peak"), CamId4 > CamId3);
-
-	return true;
-}
-
-// =========================================================================
-// Test: DIS ID pool exhaustion sentinel (7C.4)
-//
-// After 4096 unique DIS entities have been allocated, further allocations
-// return the sentinel MaxId == IdBaseOffset + 4096 rather than silently
-// corrupting the map. The exhaustion log fires once, not per-allocation.
-// =========================================================================
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisIdPoolExhaustionTest,
-	"CamSim.Phase21.IdPoolExhaustion",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FDisIdPoolExhaustionTest::RunTest(const FString& Parameters)
-{
-	FCamSimConfig Config;
-	Config.DIS.bEnabled = true;
-	Config.DIS.IdBaseOffset = 0;  // keep arithmetic simple: IDs run 0..4095
-
-	// The adapter emits a single Error-level log when the pool is first exhausted.
-	// Declare it expected so the automation framework doesn't promote it to a failure.
-	AddExpectedError(TEXT("DIS entity ID pool exhausted"),
-		EAutomationExpectedErrorFlags::Contains, 1);
-
-	FDisEntityAdapter Adapter(Config, nullptr);
-
-	constexpr uint16 PoolSize = 4096;
-	const uint16 Sentinel = static_cast<uint16>(Config.DIS.IdBaseOffset + PoolSize);
-
-	// Fill the pool. Each allocation should return a fresh unique ID < Sentinel.
-	TSet<uint16> SeenIds;
-	SeenIds.Reserve(PoolSize);
-	for (uint32 I = 0; I < PoolSize; ++I)
-	{
-		// Three-tuple must be unique per allocation; vary Entity field since it's 16-bit.
-		FDisEntityId DisId { 1, 1, static_cast<uint16>(I) };
-		const uint16 CamId = Adapter.GetOrAllocateId(DisId);
-
-		if (CamId >= Sentinel)
-		{
-			AddError(FString::Printf(
-				TEXT("Allocation %u returned sentinel (%u) before pool was full"), I, CamId));
-			return false;
-		}
-		SeenIds.Add(CamId);
-	}
-	TestEqual(TEXT("Full pool produces 4096 unique IDs"), SeenIds.Num(), static_cast<int32>(PoolSize));
-
-	// One past the cap: must return the sentinel.
-	FDisEntityId Overflow1 { 2, 2, 1 };
-	const uint16 CamOverflow1 = Adapter.GetOrAllocateId(Overflow1);
-	TestEqual(TEXT("First post-exhaustion allocation returns sentinel"),
-		CamOverflow1, Sentinel);
-
-	// Repeated overflow — still the sentinel, no crash, no corruption of prior mappings.
-	FDisEntityId Overflow2 { 3, 3, 1 };
-	const uint16 CamOverflow2 = Adapter.GetOrAllocateId(Overflow2);
-	TestEqual(TEXT("Second post-exhaustion allocation also returns sentinel"),
-		CamOverflow2, Sentinel);
-
-	// Re-querying an in-pool entity must still return its original mapping — the
-	// sentinel path must not pollute the DisIdMap.
-	FDisEntityId InPool { 1, 1, 0 };
-	const uint16 FirstId = Adapter.GetOrAllocateId(InPool);
-	TestTrue(TEXT("Prior mapping survives overflow"), FirstId < Sentinel);
-
-	return true;
-}
 
 // =========================================================================
 // Test: DIS entity type mapping (exact, fuzzy, default)
@@ -429,7 +317,6 @@ bool FDisConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Default site ID"), Cfg.DIS.SiteId, 1);
 	TestEqual(TEXT("Default app ID"), Cfg.DIS.ApplicationId, 1);
 	TestTrue(TEXT("Default timeout > 0"), Cfg.DIS.HeartbeatTimeoutSec > 0.0f);
-	TestEqual(TEXT("Default ID base"), Cfg.DIS.IdBaseOffset, 1000);
 	TestEqual(TEXT("Default entity type"), Cfg.DIS.DefaultEntityTypeId, 1001);
 
 	return true;
@@ -587,33 +474,41 @@ bool FDisAdapterFramesTest::RunTest(const FString& Parameters)
 		return Pdu;
 	};
 
+	struct FCapture : ISimCommandSink
+	{
+		TArray<FEntityCommand> Entities;
+		virtual void Submit(const FEntityCommand& C) override { Entities.Add(C); }
+		virtual void Submit(const FEntityMotionCommand&) override {}
+		virtual void Submit(const FArticulationCommand&) override {}
+		virtual void Submit(const FComponentCommand&) override {}
+	} Sink;
+
 	FCamSimConfig Config;
 	FDisEntityAdapter Adapter(Config, nullptr);
-	Adapter.ProcessPdu(MakePdu(4, EastEcef));                        // RVW: world velocity, rotating
-	Adapter.ProcessPdu(MakePdu(2, EastEcef));                        // FPW: world velocity, fixed orientation
-	Adapter.ProcessPdu(MakePdu(8, FVector(100.0, 0.0, 0.0)));        // RVB: body velocity, rotating
+	Adapter.ProcessPdu(MakePdu(4, EastEcef), Sink);                        // RVW: world velocity, rotating
+	Adapter.ProcessPdu(MakePdu(2, EastEcef), Sink);                        // FPW: world velocity, fixed orientation
+	Adapter.ProcessPdu(MakePdu(8, FVector(100.0, 0.0, 0.0)), Sink);        // RVB: body velocity, rotating
+	if (!TestEqual(TEXT("three entity commands"), Sink.Entities.Num(), 3)) return false;
 
-	FCigiEntityState State;
-	if (TestTrue(TEXT("entity state"), Adapter.DequeueEntityState(State)))
+	const FEntityCommand& Rvw = Sink.Entities[0];
+	TestEqual(TEXT("keyed in the DIS namespace"), Rvw.Key.Source, EHostSource::Dis);
+	const FRotator Hpr = Rvw.Pose.Neu.Rotator();
+	TestTrue(FString::Printf(TEXT("local attitude %s"), *Hpr.ToString()),
+		FMath::IsNearlyEqual(Hpr.Yaw, 90.0, 1e-3) && FMath::IsNearlyEqual(Hpr.Pitch, 10.0, 1e-3)
+		&& FMath::IsNearlyEqual(Hpr.Roll, -5.0, 1e-3));
+	TestTrue(TEXT("position"), FMath::IsNearlyEqual(Rvw.Pose.Lat, Lat, 1e-9) && FMath::IsNearlyEqual(Rvw.Pose.Lon, Lon, 1e-9));
+	if (TestTrue(TEXT("RVW motion"), Rvw.Motion.IsSet()))
 	{
-		TestTrue(FString::Printf(TEXT("local attitude h=%.3f p=%.3f r=%.3f"), State.Yaw, State.Pitch, State.Roll),
-			FMath::IsNearlyEqual(State.Yaw, 90.0f, 1e-3f) && FMath::IsNearlyEqual(State.Pitch, 10.0f, 1e-3f)
-			&& FMath::IsNearlyEqual(State.Roll, -5.0f, 1e-3f));
-		TestTrue(TEXT("position"), FMath::IsNearlyEqual(State.Latitude, Lat, 1e-9) && FMath::IsNearlyEqual(State.Longitude, Lon, 1e-9));
+		TestTrue(TEXT("RVW: world-frame velocity, ECEF east -> NED east"),
+			Rvw.Motion->LinearFrame == FMotionModel::EFrame::World && Rvw.Motion->Velocity.Equals(FVector(0.0, 100.0, 0.0), 0.01));
+		TestTrue(TEXT("RVW: body yaw rate"),
+			Rvw.Motion->AngularFrame == FMotionModel::EFrame::Body && FMath::IsNearlyEqual(Rvw.Motion->AngularRate.Z, 5.7296, 1e-3));
 	}
-
-	FCigiRateControl Rvw, Fpw, Rvb;
-	TestTrue(TEXT("three rate controls"),
-		Adapter.DequeueRateControl(Rvw) && Adapter.DequeueRateControl(Fpw) && Adapter.DequeueRateControl(Rvb));
-
-	TestFalse(TEXT("RVW: world-frame velocity"), Rvw.bLocalFrame);
-	TestTrue(FString::Printf(TEXT("RVW: ECEF east -> NED east (%.2f, %.2f, %.2f)"), Rvw.XRate, Rvw.YRate, Rvw.ZRate),
-		FVector(Rvw.XRate, Rvw.YRate, Rvw.ZRate).Equals(FVector(0.0, 100.0, 0.0), 0.01));
-	TestTrue(TEXT("RVW: body yaw rate"), Rvw.bAngularLocalFrame && FMath::IsNearlyEqual(Rvw.YawRate, 5.7296f, 1e-3f));
-
-	TestTrue(TEXT("FPW: fixed orientation, no rotation"), FMath::IsNearlyZero(Fpw.YawRate));
-
+	TestTrue(TEXT("FPW: fixed orientation, no rotation"),
+		Sink.Entities[1].Motion.IsSet() && Sink.Entities[1].Motion->AngularRate.IsZero());
+	const FEntityCommand& Rvb = Sink.Entities[2];
 	TestTrue(TEXT("RVB: body-frame velocity passed through"),
-		Rvb.bLocalFrame && FVector(Rvb.XRate, Rvb.YRate, Rvb.ZRate).Equals(FVector(100.0, 0.0, 0.0), 0.01));
+		Rvb.Motion.IsSet() && Rvb.Motion->LinearFrame == FMotionModel::EFrame::Body
+		&& Rvb.Motion->Velocity.Equals(FVector(100.0, 0.0, 0.0), 0.01));
 	return true;
 }

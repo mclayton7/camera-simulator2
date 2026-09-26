@@ -4,27 +4,20 @@
 
 #include "CoreMinimal.h"
 #include "DIS/DisPduTypes.h"
-#include "CIGI/CigiPacketTypes.h"
 
 struct FCamSimConfig;
 class FDisReceiver;
+class ISimCommandSink;
 
 /**
  * FDisEntityAdapter
  *
- * Game-thread component that bridges DIS protocol to the CamSim entity pipeline.
- *
- * Each game tick it:
- *   1. Drains FDisReceiver's SPSC queue of FDisEntityStatePdu
- *   2. Translates DIS Entity IDs to CamSim uint16 IDs
- *   3. Converts ECEF → WGS-84 geodetic coordinates
- *   4. Converts DIS orientation (radians, NED) → CIGI convention (degrees)
- *   5. Maps DIS DR algorithms to FCigiRateControl
- *   6. Maps DIS entity types to CamSim type IDs
- *   7. Sweeps for timed-out entities and emits Remove states
- *
- * Output: FCigiEntityState + FCigiRateControl structs, consumed by
- * FCamSimEntityManager via dequeue accessors.
+ * The DIS host adapter (passive "stealth viewer"). Each frame it drains
+ * FDisReceiver's Entity State PDUs and submits canonical entity commands
+ * (Hosts/DisCommands.h: ECEF → geodetic and local attitude, dead-reckoning
+ * motion model), keyed by the DIS entity ID in the DIS namespace; maps DIS
+ * entity types to CamSim types; removes entities that time out; and tracks
+ * the latest laser designator spot.
  */
 class FDisEntityAdapter
 {
@@ -32,37 +25,15 @@ public:
 	explicit FDisEntityAdapter(const FCamSimConfig& InConfig, FDisReceiver* InReceiver);
 
 	/**
-	 * Process pending DIS PDUs and timeout checks.
-	 * Called once per game tick from UCamSimSubsystem or FCamSimEntityManager.
+	 * Drain received PDUs and submit entity commands (with dead-reckoning
+	 * motion); remove entities that stopped sending. Game thread, once a frame.
 	 */
-	void Tick(float DeltaTime);
+	void Poll(ISimCommandSink& Sink);
 
-	/** Dequeue a converted entity state. Returns false if empty. */
-	bool DequeueEntityState(FCigiEntityState& Out);
-
-	/** Dequeue a converted rate control. Returns false if empty. */
-	bool DequeueRateControl(FCigiRateControl& Out);
-
-	/** Convert one Entity State PDU into pending entity state and rate control (public for tests). */
-	void ProcessPdu(const FDisEntityStatePdu& Pdu);
-
-	// -----------------------------------------------------------------------
-	// Static utility: ECEF → geodetic conversion (double precision)
-	// -----------------------------------------------------------------------
+	/** One Entity State PDU → entity command (public for tests). */
+	void ProcessPdu(const FDisEntityStatePdu& Pdu, ISimCommandSink& Sink);
 
 
-	// -----------------------------------------------------------------------
-	// ID Translation
-	// -----------------------------------------------------------------------
-
-	/**
-	 * Get or allocate a CamSim uint16 ID for a DIS entity ID triple.
-	 * IDs start at DisIdBaseOffset (default 1000) to avoid collision with CIGI IDs.
-	 */
-	uint16 GetOrAllocateId(const FDisEntityId& DisId);
-
-	/** Drop the DIS→CamSim mapping for this entity. IDs are never recycled (see DisIdMap). */
-	void ReleaseId(const FDisEntityId& DisId);
 
 	// -----------------------------------------------------------------------
 	// Entity Type Mapping
@@ -83,22 +54,6 @@ public:
 private:
 	const FCamSimConfig& Config;
 	FDisReceiver*        Receiver = nullptr;
-
-	// Output queues (game-thread — adapter produces, entity manager consumes)
-	TArray<FCigiEntityState> PendingEntityStates;
-	TArray<FCigiRateControl> PendingRateControls;
-	int32 EntityDrainIndex = 0;
-	int32 RateDrainIndex   = 0;
-
-	// ID translation: DIS triple → CamSim uint16.
-	//
-	// IDs are allocated monotonically from [IdBaseOffset, IdBaseOffset+4096) and
-	// never recycled — aliasing stale consumer-side handles onto reused IDs
-	// caused subtle bugs. A long run that churns through 4096 unique DIS entities
-	// will hit the cap; bIdPoolExhaustedLogged_ ensures we only log once.
-	TMap<FDisEntityId, uint16>   DisIdMap;
-	uint16                       NextId = 0;
-	bool                         bIdPoolExhaustedLogged_ = false;
 
 	// Entity timeout tracking
 	struct FEntityTimestamp
@@ -126,6 +81,6 @@ private:
 	void DrainDesignatorPdus();
 
 
-	void SweepTimeouts();
+	void SweepTimeouts(ISimCommandSink& Sink);
 	void BuildTypeMaps();
 };

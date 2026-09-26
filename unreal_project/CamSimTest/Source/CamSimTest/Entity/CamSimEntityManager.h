@@ -6,7 +6,7 @@
 #include "Tickable.h"
 #include "Containers/Set.h"
 #include "Config/CamSimConfig.h"
-#include "CIGI/CigiPacketTypes.h"
+#include "Sim/CommandSink.h"
 #include "GroundTruth/AnnotationTypes.h"
 #include "Ocean/IOceanSurface.h"
 
@@ -15,6 +15,7 @@ class ACamSimEntity;
 class UWorld;
 class FEntityTypeTable;
 class FScenarioEngine;
+class FCigiHostAdapter;
 
 /**
  * FCamSimEntityManager
@@ -31,7 +32,7 @@ class FScenarioEngine;
  * Entity states are keyed by EntityId; last packet per frame wins.
  * CCL enum: Standby=0, Active=1, Remove=2.
  */
-class FCamSimEntityManager : public FTickableGameObject
+class FCamSimEntityManager : public FTickableGameObject, public ISimCommandSink
 {
 public:
 	explicit FCamSimEntityManager(UCamSimSubsystem* InSubsystem,
@@ -68,45 +69,46 @@ public:
 	/** Called from FOceanManager::Init() after ocean surface is created. */
 	void SetOceanSurface(IOceanSurface* Ocean);
 
-	/** Phase 22G: Find a live entity actor by CIGI EntityId. Returns nullptr if not found. */
-	ACamSimEntity* FindEntity(uint16 EntityId) const;
+	/** A live entity actor by key, or nullptr. */
+	ACamSimEntity* FindEntity(const FEntityKey& Key) const;
 
 	/** Current number of live entity actors (for /metrics camsim_entity_count). */
 	int32 GetEntityCount() const { return EntityMap.Num(); }
+
+	// ISimCommandSink — applied immediately
+	virtual void Submit(const FEntityCommand& Command) override;
+	virtual void Submit(const FEntityMotionCommand& Command) override;
+	virtual void Submit(const FArticulationCommand& Command) override;
+	virtual void Submit(const FComponentCommand& Command) override;
 
 private:
 	UCamSimSubsystem*       Subsystem  = nullptr;
 	const FEntityTypeTable* TypeTable  = nullptr;
 
-	// Live entity actors, keyed by CIGI EntityId
-	TMap<uint16, ACamSimEntity*> EntityMap;
+	// Live entity actors. Each source (CIGI, DIS, scenario) has its own IDs.
+	TMap<FEntityKey, ACamSimEntity*> EntityMap;
 
-	// Drain helpers — called from Tick()
-	void ProcessEntityStates(float DeltaTime);
+	TUniquePtr<FCigiHostAdapter> CigiAdapter;
+
 	/** Place attached (child) entities relative to their parents' current poses. */
 	void ResolveAttachedEntities();
 	static constexpr int32 MaxAttachDepth = 8;
-	void ProcessConfClampEntities();
-	void ProcessRateControls();
-	void ProcessArtPartControls();
-	void ProcessComponentControls();
 	void ProcessScenarioEntities();
-	void ApplyEntityState(const FCigiEntityState& S, double NowSeconds, bool bBypassRateLimit = false);
-	float GetEntityMaxUpdateRateHz(uint16 EntityId) const;
-	FCigiEntityState BuildScenarioState(const FCamSimConfig::FScenarioEntityConfig& Spec,
-	                                    double ScenarioElapsedSeconds) const;
+	void ApplyEntityCommand(const FEntityCommand& Command, double NowSeconds, bool bBypassRateLimit);
+	float GetEntityMaxUpdateRateHz(const FEntityKey& Key) const;
 
 	// Spawn a new ACamSimEntity with the given initial state
-	ACamSimEntity* SpawnEntity(const FCigiEntityState& S);
+	ACamSimEntity* SpawnEntity(const FEntityCommand& Command);
 
 	// Remove a stale (pending-kill) entry from EntityMap
 	void PurgeStaleEntities();
+	void ForgetEntity(const FEntityKey& Key);
 
 	IOceanSurface* OceanSurface = nullptr;
 
 	// Runtime update throttling to reduce transform churn under large-entity loads.
-	TMap<uint16, double> LastPoseApplySeconds;
-	TMap<uint16, double> LastScenarioUpdateSeconds;
+	TMap<FEntityKey, double> LastPoseApplySeconds;
+	TMap<uint16, double> LastScenarioUpdateSeconds;   // scenario entity IDs
 	uint64 ScenarioStartMicros = 0;   // sim time the scenario started
 	uint64 LastScenarioMicros  = 0;   // sim time of the previous scenario tick
 	double ScenarioLongitude   = 0.0; // for local solar time of day

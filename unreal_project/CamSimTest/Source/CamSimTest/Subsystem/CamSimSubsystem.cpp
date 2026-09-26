@@ -219,15 +219,15 @@ ACamSimCamera* UCamSimSubsystem::GetCamera() const
 	return Camera_.Get();
 }
 
-bool UCamSimSubsystem::GetEntityGeoPose(uint16 EntityId, CamSimFrames::FGeoPose& OutPose) const
+bool UCamSimSubsystem::GetEntityGeoPose(const FEntityKey& Key, CamSimFrames::FGeoPose& OutPose) const
 {
-	if (EntityId == static_cast<uint16>(Config.CameraEntityId))
+	if (Key == FEntityKey(EHostSource::Cigi, static_cast<uint16>(Config.CameraEntityId)))
 	{
 		const ACamSimCamera* Cam = GetCamera();
 		return Cam && Cam->GetPlatformGeoPose(OutPose);
 	}
 	const FCamSimEntityManager* Mgr = GetEntityManager();
-	const ACamSimEntity* Entity = Mgr ? Mgr->FindEntity(EntityId) : nullptr;
+	const ACamSimEntity* Entity = Mgr ? Mgr->FindEntity(Key) : nullptr;
 	return IsValid(Entity) && Entity->GetGeoPose(OutPose);
 }
 

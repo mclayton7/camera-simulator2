@@ -2,11 +2,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Sim/Commands.h"
 
 class UCamSimSubsystem;
 struct FCamSimConfig;
-struct FCigiComponentControl;
-struct FCigiEntityState;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class UDecalComponent;
@@ -33,10 +32,10 @@ struct FEntityParticleState
  * Manages entity-attached Niagara particle effects and decal craters.
  * Owned by UCamSimSubsystem::FSubsystemImpl. Game-thread only.
  *
- * Entity IDs use uint16 throughout to match the rest of the entity system.
+ * Entities are identified by FEntityKey (source + ID), like the rest of the entity system.
  *
  * Phase 18: 18F (rotor wash), 18G (smoke/fire), 18H (contrails), 18I (craters).
- * Note: contrail speed gate is not enforced — FCigiEntityState has no velocity field.
+ * Note: contrail speed gate is not enforced — entity commands carry no airspeed.
  * Contrails activate on altitude threshold only.
  */
 class FCamSimParticleManager
@@ -47,19 +46,19 @@ public:
 
     void Initialize(const FCamSimConfig& Config);
 
-    void OnEntitySpawned(uint16 EntityID, AActor* Actor, const FCigiEntityState& State);
-    void OnEntityUpdated(uint16 EntityID, AActor* Actor, const FCigiEntityState& State);
-    void OnEntityRemoved(uint16 EntityID);
-    void OnComponentControl(uint16 EntityID, AActor* Actor, const FCigiComponentControl& Pkt);
-    void OnDamageStateChanged(uint16 EntityID, AActor* Actor, uint8 OldState, uint8 NewState);
+    void OnEntitySpawned(const FEntityKey& EntityID, AActor* Actor, const FEntityCommand& State);
+    void OnEntityUpdated(const FEntityKey& EntityID, AActor* Actor, const FEntityCommand& State);
+    void OnEntityRemoved(const FEntityKey& EntityID);
+    void OnComponentControl(const FEntityKey& EntityID, AActor* Actor, const FComponentCommand& Pkt);
+    void OnDamageStateChanged(const FEntityKey& EntityID, AActor* Actor, uint8 OldState, uint8 NewState);
     void Tick(float DeltaTime);
 
 private:
-    void SpawnRotorWash(uint16 EntityID, AActor* Actor);
-    void SpawnWake(uint16 EntityID, AActor* Actor);
-    void UpdateContrail(uint16 EntityID, AActor* Actor, float AltitudeM);
-    void ActivateSmoke(uint16 EntityID, AActor* Actor);
-    void ActivateFire(uint16 EntityID, AActor* Actor);
+    void SpawnRotorWash(const FEntityKey& EntityID, AActor* Actor);
+    void SpawnWake(const FEntityKey& EntityID, AActor* Actor);
+    void UpdateContrail(const FEntityKey& EntityID, AActor* Actor, float AltitudeM);
+    void ActivateSmoke(const FEntityKey& EntityID, AActor* Actor);
+    void ActivateFire(const FEntityKey& EntityID, AActor* Actor);
     void SpawnCraterDecal(AActor* Actor);
     void DetachAll(FEntityParticleState& State);
 
@@ -86,6 +85,6 @@ private:
     int32 MaxCraters        = 32;
     float CraterRadiusM     = 5.0f;
 
-    TMap<uint16, FEntityParticleState> EntityParticles;
+    TMap<FEntityKey, FEntityParticleState> EntityParticles;
     TArray<UDecalComponent*>           ActiveCraters;  // ring buffer
 };

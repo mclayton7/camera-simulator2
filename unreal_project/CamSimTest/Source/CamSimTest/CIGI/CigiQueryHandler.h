@@ -47,7 +47,7 @@ private:
 	bool ResolvePoint(bool bEntityRelative, uint16 EntityId, double A, double B, double C,
 		double& OutLat, double& OutLon, double& OutAlt) const;
 
-	/** If HitActor is an ACamSimEntity, return its EntityId; otherwise 0. */
+	/** The CIGI entity ID of a hit CIGI entity; 0 for anything else (other sources' entities too). */
 	uint16 ResolveEntityId(const AActor* HitActor) const;
 
 	/** True-north azimuth / elevation of the surface normal at a trace hit. */

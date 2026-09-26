@@ -12,14 +12,12 @@
 #include "Scenario/ScenarioRandomizer.h"
 #include "CIGI/CigiReceiver.h"
 #include "DIS/DisEntityAdapter.h"
+#include "Hosts/CigiCommands.h"
+#include "Hosts/CigiHostAdapter.h"
 #include "CamSimTest.h"
 
 #include "Engine/World.h"
 
-// CCL EntityState enum values (from CigiBaseEntityCtrl.h)
-static constexpr uint8 CIGI_ENTITY_STANDBY = 0;
-static constexpr uint8 CIGI_ENTITY_ACTIVE  = 1;
-static constexpr uint8 CIGI_ENTITY_REMOVE  = 2;
 #include "Geospatial/CigiFrames.h"
 
 // -------------------------------------------------------------------------
@@ -70,14 +68,21 @@ void FCamSimEntityManager::Tick(float DeltaTime)
 	// ACamSimCamera ticks later (TG_PostUpdateWork) and captures the result.
 	ACamSimCamera* Camera = Subsystem ? Subsystem->GetCamera() : nullptr;
 	PurgeStaleEntities();
-	ProcessEntityStates(DeltaTime);
+
+	// Host adapters submit this frame's commands (each source has its own entity IDs).
+	if (!CigiAdapter && Subsystem && Subsystem->GetCigiReceiver())
+	{
+		CigiAdapter = MakeUnique<FCigiHostAdapter>(Subsystem->GetCigiReceiver());
+	}
+	if (CigiAdapter) CigiAdapter->PollEntities(*this);
+	if (FDisEntityAdapter* DisAdapter = Subsystem ? Subsystem->GetDisAdapter() : nullptr)
+	{
+		DisAdapter->Poll(*this);
+	}
+
 	if (Camera) Camera->ApplyHostPlatformState();
 	ResolveAttachedEntities();
 	if (Camera) Camera->FollowAttachParent();
-	ProcessConfClampEntities();
-	ProcessRateControls();
-	ProcessArtPartControls();
-	ProcessComponentControls();
 	ProcessScenarioEntities();
 
 	// Drive CIGI query handler and sender flush (SOF + HAT/HOT + LOS responses)
@@ -97,9 +102,9 @@ void FCamSimEntityManager::ResolveAttachedEntities()
 
 	// Parents before children: repeatedly place children whose parent is
 	// top-level or already placed this tick. Bounded by the hierarchy depth.
-	TSet<uint16> Placed;
+	TSet<FEntityKey> Placed;
 	TArray<ACamSimEntity*> Pending;
-	for (const TPair<uint16, ACamSimEntity*>& Pair : EntityMap)
+	for (const TPair<FEntityKey, ACamSimEntity*>& Pair : EntityMap)
 	{
 		if (IsValid(Pair.Value) && Pair.Value->IsAttached())
 		{
@@ -112,283 +117,171 @@ void FCamSimEntityManager::ResolveAttachedEntities()
 		for (int32 i = Pending.Num() - 1; i >= 0; --i)
 		{
 			ACamSimEntity* Child = Pending[i];
-			const uint16 ParentId = Child->GetParentId();
-			const ACamSimEntity* Parent = FindEntity(ParentId);
-			const bool bParentReady = !IsValid(Parent) || !Parent->IsAttached() || Placed.Contains(ParentId);
+			const FEntityKey& ParentKey = Child->GetParentKey();
+			const ACamSimEntity* Parent = FindEntity(ParentKey);
+			const bool bParentReady = !IsValid(Parent) || !Parent->IsAttached() || Placed.Contains(ParentKey);
 			if (!bParentReady) continue;
 
 			CamSimFrames::FGeoPose ParentPose;
-			if (ParentId != Child->EntityId && Subsystem->GetEntityGeoPose(ParentId, ParentPose))
+			if (ParentKey != Child->Key && Subsystem->GetEntityGeoPose(ParentKey, ParentPose))
 			{
 				const FRotator Rel = Child->GetAttachRotation();
 				Child->ApplyGeoPose(CamSimFrames::AttachedChildPose(
 					ParentPose, Child->GetAttachOffsetFrd(), Rel.Yaw, Rel.Pitch, Rel.Roll));
 			}
 			// else: parent missing — hold the child's last pose
-			Placed.Add(Child->EntityId);
+			Placed.Add(Child->Key);
 			Pending.RemoveAtSwap(i);
 		}
 	}
 	for (const ACamSimEntity* Orphan : Pending)
 	{
-		UE_LOG(LogCamSim, Verbose, TEXT("EntityManager: entity %u attachment chain too deep or cyclic"),
-			Orphan->EntityId);
+		UE_LOG(LogCamSim, Verbose, TEXT("EntityManager: entity %s attachment chain too deep or cyclic"),
+			*Orphan->Key.ToString());
 	}
 }
 
 // -------------------------------------------------------------------------
-// Drain helpers
+// ISimCommandSink
 // -------------------------------------------------------------------------
 
-void FCamSimEntityManager::ProcessEntityStates(float DeltaTime)
+void FCamSimEntityManager::Submit(const FEntityCommand& Command)
 {
-	// Collect last state per entity ID this frame (last write wins)
-	TMap<uint16, FCigiEntityState> FrameStates;
-	FCigiEntityState State;
+	ApplyEntityCommand(Command, FPlatformTime::Seconds(), false);
+}
 
-	// Drain CIGI entity states
-	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
-	if (Receiver)
+void FCamSimEntityManager::Submit(const FEntityMotionCommand& Command)
+{
+	if (ACamSimEntity* Entity = FindEntity(Command.Key))
 	{
-		while (Receiver->DequeueEntityState(State))
-		{
-			FrameStates.Add(State.EntityId, State);
-		}
-	}
-
-	// Drain DIS entity states (Phase 21) — tick adapter first to process PDUs
-	FDisEntityAdapter* DisAdapter = Subsystem ? Subsystem->GetDisAdapter() : nullptr;
-	if (DisAdapter)
-	{
-		DisAdapter->Tick(DeltaTime);
-		while (DisAdapter->DequeueEntityState(State))
-		{
-			FrameStates.Add(State.EntityId, State);
-		}
-	}
-
-	const double NowSeconds = FPlatformTime::Seconds();
-	for (const auto& Pair : FrameStates)
-	{
-		ApplyEntityState(Pair.Value, NowSeconds, false);
+		Entity->SetMotion(Command.Motion);
 	}
 }
 
-void FCamSimEntityManager::ApplyEntityState(const FCigiEntityState& S, double NowSeconds, bool bBypassRateLimit)
+void FCamSimEntityManager::Submit(const FArticulationCommand& Command)
 {
-	if (S.EntityState == CIGI_ENTITY_ACTIVE)
+	if (ACamSimEntity* Entity = FindEntity(Command.Key))
 	{
-		ACamSimEntity** ExistingPtr = EntityMap.Find(S.EntityId);
-		ACamSimEntity*  Entity = ExistingPtr ? *ExistingPtr : nullptr;
-		bool bTypeChanged  = false;
-		const bool bJustSpawned = !IsValid(Entity);
-
-		if (bJustSpawned)
-		{
-			Entity = SpawnEntity(S);
-			if (!Entity)
-			{
-				UE_LOG(LogCamSim, Warning, TEXT("EntityManager: failed to spawn entity %u"), S.EntityId);
-				return;
-			}
-			EntityMap.Add(S.EntityId, Entity);
-			UE_LOG(LogCamSim, Log, TEXT("EntityManager: spawned entity %u (type %u)"),
-				S.EntityId, S.EntityType);
-		}
-		else if (Entity->EntityType != S.EntityType)
-		{
-			bTypeChanged = true;
-			UE_LOG(LogCamSim, Log, TEXT("EntityManager: entity %u type change %u -> %u"),
-				S.EntityId, Entity->EntityType, S.EntityType);
-			Entity->SetEntityType(S.EntityType);
-		}
-
-		bool bApplyPose = true;
-		if (!bBypassRateLimit && !bTypeChanged)
-		{
-			const float MaxHz = GetEntityMaxUpdateRateHz(S.EntityId);
-			if (MaxHz > 0.0f)
-			{
-				const double MinInterval = 1.0 / static_cast<double>(MaxHz);
-				if (const double* LastApply = LastPoseApplySeconds.Find(S.EntityId))
-				{
-					if ((NowSeconds - *LastApply) < MinInterval)
-					{
-						bApplyPose = false;
-					}
-				}
-			}
-		}
-
-		if (bApplyPose)
-		{
-			Entity->ApplyPose(S);
-			LastPoseApplySeconds.Add(S.EntityId, NowSeconds);
-		}
-		Entity->SetActorHiddenInGame(false);
-		if (!bJustSpawned)
-		{
-			if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
-			{
-				PM->OnEntityUpdated(S.EntityId, Entity, S);
-			}
-		}
-		// Phase 19C: vessel motion for sea-domain entities
-		if (OceanSurface && S.EntityDomain == 3 && Subsystem->GetConfig().Phase19.bVesselMotionEnabled)
-		{
-			const FEntityTypeEntry* TypeEntry = TypeTable->FindEntry(S.EntityType);
-			const float HalfLen = TypeEntry ? TypeEntry->HalfLengthCm : 0.0f;
-			const float HalfBm  = TypeEntry ? TypeEntry->HalfBeamCm   : 0.0f;
-			Entity->ApplyVesselMotion(OceanSurface, HalfLen, HalfBm,
-			                          Subsystem->GetConfig().Phase19.VesselMotionScale);
-		}
-		return;
-	}
-
-	if (S.EntityState == CIGI_ENTITY_STANDBY)
-	{
-		ACamSimEntity** EntityPtr = EntityMap.Find(S.EntityId);
-		if (EntityPtr && IsValid(*EntityPtr))
-		{
-			(*EntityPtr)->SetActorHiddenInGame(true);
-		}
-		return;
-	}
-
-	if (S.EntityState == CIGI_ENTITY_REMOVE)
-	{
-		ACamSimEntity** EntityPtr = EntityMap.Find(S.EntityId);
-		if (EntityPtr && IsValid(*EntityPtr))
-		{
-			(*EntityPtr)->Destroy();
-		}
-		if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
-		{
-			PM->OnEntityRemoved(S.EntityId);
-		}
-		EntityMap.Remove(S.EntityId);
-		LastPoseApplySeconds.Remove(S.EntityId);
-		LastScenarioUpdateSeconds.Remove(S.EntityId);
-		UE_LOG(LogCamSim, Log, TEXT("EntityManager: removed entity %u"), S.EntityId);
+		Entity->ApplyArticulation(Command);
 	}
 }
 
-void FCamSimEntityManager::ProcessConfClampEntities()
+void FCamSimEntityManager::Submit(const FComponentCommand& Command)
 {
-	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
-	if (!Receiver) return;
+	ACamSimEntity* Entity = FindEntity(Command.Key);
 
-	FCigiConfClampEntityState Clamp;
-	const double NowSeconds = FPlatformTime::Seconds();
+	// Phase 22C: component 10 of class 0 is the damage state
+	const bool bDamage = Command.ComponentClass == 0 && Command.ComponentId == 10;
+	const uint8 OldDamageState = (Entity && bDamage) ? Entity->GetDamageState() : 0;
 
-	while (Receiver->DequeueConfClampEntity(Clamp))
+	if (Entity)
 	{
-		// Convert to standard entity state: Active, clamped to terrain (pitch=0, roll=0)
-		FCigiEntityState State;
-		State.EntityId    = Clamp.EntityId;
-		State.EntityState = CIGI_ENTITY_ACTIVE;
-		State.Latitude    = Clamp.Latitude;
-		State.Longitude   = Clamp.Longitude;
-		State.Yaw         = Clamp.Yaw;
-		State.Pitch       = 0.0f;
-		State.Roll        = 0.0f;
-
-		// Altitude: conformal clamped entities sit on terrain surface.
-		// Set to 0 (MSL); Cesium globe anchor + terrain mesh will place the
-		// entity visually on the terrain.  A more accurate implementation
-		// would perform a downward line trace to get exact terrain height.
-		State.Altitude = 0.0f;
-
-		ApplyEntityState(State, NowSeconds, false);
+		Entity->ApplyComponent(Command);
 	}
-}
-
-void FCamSimEntityManager::ProcessRateControls()
-{
-	FCigiRateControl Rate;
-
-	// Drain CIGI rate controls
-	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
-	if (Receiver)
+	if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
 	{
-		while (Receiver->DequeueRateControl(Rate))
+		PM->OnComponentControl(Command.Key, Entity, Command);
+		if (Entity && bDamage)
 		{
-			ACamSimEntity** EntityPtr = EntityMap.Find(Rate.EntityId);
-			if (EntityPtr && IsValid(*EntityPtr))
+			const uint8 NewDamageState = FMath::Min(Command.State, static_cast<uint8>(2));
+			if (OldDamageState != NewDamageState)
 			{
-				(*EntityPtr)->SetRateControl(Rate);
-			}
-		}
-	}
-
-	// Drain DIS rate controls (Phase 21)
-	FDisEntityAdapter* DisAdapter = Subsystem ? Subsystem->GetDisAdapter() : nullptr;
-	if (DisAdapter)
-	{
-		while (DisAdapter->DequeueRateControl(Rate))
-		{
-			ACamSimEntity** EntityPtr = EntityMap.Find(Rate.EntityId);
-			if (EntityPtr && IsValid(*EntityPtr))
-			{
-				(*EntityPtr)->SetRateControl(Rate);
+				PM->OnDamageStateChanged(Command.Key, Entity, OldDamageState, NewDamageState);
 			}
 		}
 	}
 }
 
-void FCamSimEntityManager::ProcessArtPartControls()
+void FCamSimEntityManager::ApplyEntityCommand(const FEntityCommand& C, double NowSeconds, bool bBypassRateLimit)
 {
-	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
-	if (!Receiver) return;
+	ACamSimEntity* Entity = FindEntity(C.Key);
 
-	FCigiArtPartControl Art;
-	while (Receiver->DequeueArtPart(Art))
+	if (C.Lifecycle == EEntityLifecycle::Remove)
 	{
-		ACamSimEntity** EntityPtr = EntityMap.Find(Art.EntityId);
-		if (EntityPtr && IsValid(*EntityPtr))
-		{
-			(*EntityPtr)->ApplyArtPart(Art);
-		}
-	}
-}
-
-void FCamSimEntityManager::ProcessComponentControls()
-{
-	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
-	if (!Receiver) return;
-
-	FCigiComponentControl Comp;
-	while (Receiver->DequeueCompCtrl(Comp))
-	{
-		ACamSimEntity** EntityPtr = EntityMap.Find(Comp.EntityId);
-		ACamSimEntity*  Entity = (EntityPtr && IsValid(*EntityPtr)) ? *EntityPtr : nullptr;
-
-		// Phase 22C: track old damage state for FX callback
-		uint8 OldDamageState = 0;
-		if (Entity && Comp.CompClass == 0 && Comp.CompId == 10)
-		{
-			OldDamageState = Entity->GetDamageState();
-		}
-
 		if (Entity)
 		{
-			Entity->ApplyComponentControl(Comp);
+			Entity->Destroy();
 		}
+		ForgetEntity(C.Key);
+		UE_LOG(LogCamSim, Log, TEXT("EntityManager: removed entity %s"), *C.Key.ToString());
+		return;
+	}
+
+	if (C.Lifecycle == EEntityLifecycle::Hidden)
+	{
+		if (Entity)
+		{
+			Entity->SetActorHiddenInGame(true);
+		}
+		return;
+	}
+
+	bool bTypeChanged = false;
+	const bool bJustSpawned = (Entity == nullptr);
+	if (bJustSpawned)
+	{
+		Entity = SpawnEntity(C);
+		if (!Entity)
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("EntityManager: failed to spawn entity %s"), *C.Key.ToString());
+			return;
+		}
+		EntityMap.Add(C.Key, Entity);
+		UE_LOG(LogCamSim, Log, TEXT("EntityManager: spawned entity %s (type %u)"), *C.Key.ToString(), C.TypeId);
+	}
+	else if (Entity->EntityType != C.TypeId)
+	{
+		bTypeChanged = true;
+		UE_LOG(LogCamSim, Log, TEXT("EntityManager: entity %s type change %u -> %u"),
+			*C.Key.ToString(), Entity->EntityType, C.TypeId);
+		Entity->SetEntityType(C.TypeId);
+	}
+
+	bool bApplyPose = true;
+	if (!bBypassRateLimit && !bTypeChanged)
+	{
+		const float MaxHz = GetEntityMaxUpdateRateHz(C.Key);
+		const double* LastApply = LastPoseApplySeconds.Find(C.Key);
+		if (MaxHz > 0.0f && LastApply && (NowSeconds - *LastApply) < 1.0 / static_cast<double>(MaxHz))
+		{
+			bApplyPose = false;
+		}
+	}
+	if (bApplyPose)
+	{
+		Entity->ApplyCommand(C);
+		LastPoseApplySeconds.Add(C.Key, NowSeconds);
+	}
+	Entity->SetActorHiddenInGame(false);
+
+	if (!bJustSpawned)
+	{
 		if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
 		{
-			PM->OnComponentControl(Comp.EntityId,
-				Entity ? static_cast<AActor*>(Entity) : nullptr, Comp);
-
-			// Phase 22C: damage transition FX
-			if (Entity && Comp.CompClass == 0 && Comp.CompId == 10)
-			{
-				const uint8 NewDamageState = FMath::Min(Comp.CompState, static_cast<uint8>(2));
-				if (OldDamageState != NewDamageState)
-				{
-					PM->OnDamageStateChanged(Comp.EntityId, Entity, OldDamageState, NewDamageState);
-				}
-			}
+			PM->OnEntityUpdated(C.Key, Entity, C);
 		}
+	}
+	// Phase 19C: vessel motion for sea-domain entities
+	if (OceanSurface && C.Classification.Domain == 3 && Subsystem->GetConfig().Phase19.bVesselMotionEnabled)
+	{
+		const FEntityTypeEntry* TypeEntry = TypeTable->FindEntry(C.TypeId);
+		Entity->ApplyVesselMotion(OceanSurface,
+			TypeEntry ? TypeEntry->HalfLengthCm : 0.0f, TypeEntry ? TypeEntry->HalfBeamCm : 0.0f,
+			Subsystem->GetConfig().Phase19.VesselMotionScale);
+	}
+}
+
+void FCamSimEntityManager::ForgetEntity(const FEntityKey& Key)
+{
+	if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
+	{
+		PM->OnEntityRemoved(Key);
+	}
+	EntityMap.Remove(Key);
+	LastPoseApplySeconds.Remove(Key);
+	if (Key.Source == EHostSource::Scenario)
+	{
+		LastScenarioUpdateSeconds.Remove(static_cast<uint16>(Key.Id));
 	}
 }
 
@@ -396,7 +289,7 @@ void FCamSimEntityManager::ProcessComponentControls()
 // SpawnEntity
 // -------------------------------------------------------------------------
 
-ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
+ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FEntityCommand& C)
 {
 	// Enforce entity budget (Phase 4)
 	if (Subsystem)
@@ -405,8 +298,8 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
 		if (MaxEntities > 0 && EntityMap.Num() >= MaxEntities)
 		{
 			UE_LOG(LogCamSim, Warning,
-				TEXT("EntityManager: entity budget exhausted (%d/%d), rejecting entity %u"),
-				EntityMap.Num(), MaxEntities, S.EntityId);
+				TEXT("EntityManager: entity budget exhausted (%d/%d), rejecting entity %s"),
+				EntityMap.Num(), MaxEntities, *C.Key.ToString());
 			return nullptr;
 		}
 	}
@@ -423,9 +316,10 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
 
 	if (!Entity) return nullptr;
 
-	Entity->EntityId = S.EntityId;
+	Entity->Key      = C.Key;
+	Entity->EntityId = static_cast<uint16>(C.Key.Id & 0xFFFF);
 	Entity->SetEntityTypeTable(TypeTable);
-	Entity->SetEntityType(S.EntityType);
+	Entity->SetEntityType(C.TypeId);
 	if (Subsystem)
 	{
 		const FCamSimConfig& Cfg = Subsystem->GetConfig();
@@ -437,10 +331,10 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FCigiEntityState& S)
 			Entity->SetDamageInterpolation(true, Cfg.DamageTransition.DamageInterpolationSec);
 		}
 	}
-	Entity->ApplyPose(S);
+	Entity->ApplyCommand(C);
 	if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
 	{
-		PM->OnEntitySpawned(S.EntityId, Entity, S);
+		PM->OnEntitySpawned(C.Key, Entity, C);
 	}
 
 	return Entity;
@@ -529,7 +423,7 @@ void FCamSimEntityManager::GetEntitySnapshot(
 
 void FCamSimEntityManager::PurgeStaleEntities()
 {
-	TArray<uint16> ToRemove;
+	TArray<FEntityKey> ToRemove;
 	for (const auto& Pair : EntityMap)
 	{
 		if (!IsValid(Pair.Value))
@@ -537,15 +431,9 @@ void FCamSimEntityManager::PurgeStaleEntities()
 			ToRemove.Add(Pair.Key);
 		}
 	}
-	for (uint16 Id : ToRemove)
+	for (const FEntityKey& Key : ToRemove)
 	{
-		if (FCamSimParticleManager* PM = Subsystem ? Subsystem->GetParticleManager() : nullptr)
-		{
-			PM->OnEntityRemoved(Id);
-		}
-		EntityMap.Remove(Id);
-		LastPoseApplySeconds.Remove(Id);
-		LastScenarioUpdateSeconds.Remove(Id);
+		ForgetEntity(Key);
 	}
 	if (!ToRemove.IsEmpty())
 	{
@@ -553,41 +441,22 @@ void FCamSimEntityManager::PurgeStaleEntities()
 	}
 }
 
-float FCamSimEntityManager::GetEntityMaxUpdateRateHz(uint16 EntityId) const
+float FCamSimEntityManager::GetEntityMaxUpdateRateHz(const FEntityKey& Key) const
 {
 	if (!Subsystem) return 0.0f;
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
-	if (const float* OverrideHz = Cfg.EntityScale.MaxUpdateRateHzOverrides.Find(static_cast<int32>(EntityId)))
+	// Overrides are keyed by the entity's ID within its source.
+	if (const float* OverrideHz = Cfg.EntityScale.MaxUpdateRateHzOverrides.Find(static_cast<int32>(Key.Id)))
 	{
 		return FMath::Max(0.0f, *OverrideHz);
 	}
 	return FMath::Max(0.0f, Cfg.EntityScale.DefaultMaxUpdateRateHz);
 }
 
-ACamSimEntity* FCamSimEntityManager::FindEntity(uint16 EntityId) const
+ACamSimEntity* FCamSimEntityManager::FindEntity(const FEntityKey& Key) const
 {
-	ACamSimEntity* const* Found = EntityMap.Find(EntityId);
+	ACamSimEntity* const* Found = EntityMap.Find(Key);
 	return (Found && IsValid(*Found)) ? *Found : nullptr;
-}
-
-FCigiEntityState FCamSimEntityManager::BuildScenarioState(
-	const FCamSimConfig::FScenarioEntityConfig& Spec,
-	double ScenarioElapsedSeconds) const
-{
-	const double TimeSinceSpawn = FMath::Max(0.0, ScenarioElapsedSeconds - static_cast<double>(Spec.SpawnTimeSec));
-
-	FCigiEntityState Out;
-	Out.EntityId = static_cast<uint16>(FMath::Clamp(Spec.EntityId, 0, 65535));
-	Out.EntityType = static_cast<uint16>(FMath::Clamp(Spec.EntityType, 0, 65535));
-	Out.EntityState = CIGI_ENTITY_ACTIVE;
-	double Unused;
-	CamSimFrames::OffsetGeodetic(Spec.StartLatitude, Spec.StartLongitude, 0.0,
-		FVector(Spec.NorthRateMps, Spec.EastRateMps, 0.0) * TimeSinceSpawn, Out.Latitude, Out.Longitude, Unused);
-	Out.Altitude = static_cast<float>(Spec.StartAltitude + static_cast<double>(Spec.UpRateMps) * TimeSinceSpawn);
-	Out.Yaw = Spec.StartYaw + Spec.YawRateDegPerSec * static_cast<float>(TimeSinceSpawn);
-	Out.Pitch = Spec.StartPitch + Spec.PitchRateDegPerSec * static_cast<float>(TimeSinceSpawn);
-	Out.Roll = Spec.StartRoll + Spec.RollRateDegPerSec * static_cast<float>(TimeSinceSpawn);
-	return Out;
 }
 
 void FCamSimEntityManager::ProcessScenarioEntities()
@@ -649,10 +518,10 @@ void FCamSimEntityManager::ProcessScenarioEntities()
 
 		if (bShouldDespawn && !ScenarioRemovedEntities.Contains(ScenarioEntityId))
 		{
-			FCigiEntityState RemoveState;
-			RemoveState.EntityId = ScenarioEntityId;
-			RemoveState.EntityState = CIGI_ENTITY_REMOVE;
-			ApplyEntityState(RemoveState, NowSeconds, true);
+			FEntityCommand Remove;
+			Remove.Key = FEntityKey(EHostSource::Scenario, ScenarioEntityId);
+			Remove.Lifecycle = EEntityLifecycle::Remove;
+			ApplyEntityCommand(Remove, NowSeconds, true);
 			ScenarioRemovedEntities.Add(ScenarioEntityId);
 		}
 	}
@@ -687,15 +556,19 @@ void FCamSimEntityManager::ProcessScenarioEntities()
 			}
 		}
 		LastScenarioUpdateSeconds.Add(EId, NowSeconds);
-		ApplyEntityState(S, NowSeconds, false);
+		// The scenario engine still speaks CIGI entity states internally
+		// (ROADMAP 2.3 phase 7); its entities live in the scenario namespace.
+		FEntityCommand Command = CamSim::Cigi::ToEntityCommand(S);
+		Command.Key = FEntityKey(EHostSource::Scenario, EId);
+		ApplyEntityCommand(Command, NowSeconds, false);
 	}
 
 	// Process removals from triggers
 	for (uint16 RemoveId : ScenarioEngine->GetPendingRemovals())
 	{
-		FCigiEntityState RemoveState;
-		RemoveState.EntityId = RemoveId;
-		RemoveState.EntityState = CIGI_ENTITY_REMOVE;
-		ApplyEntityState(RemoveState, NowSeconds, true);
+		FEntityCommand Remove;
+		Remove.Key = FEntityKey(EHostSource::Scenario, RemoveId);
+		Remove.Lifecycle = EEntityLifecycle::Remove;
+		ApplyEntityCommand(Remove, NowSeconds, true);
 	}
 }

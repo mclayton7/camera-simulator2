@@ -91,7 +91,7 @@ TArray<uint16> FScenarioEngine::GetPendingRemovals() const
 TArray<FCigiEntityState> FScenarioEngine::Tick(
     double ScenarioElapsedSec, float DeltaTimeSec,
     float TimeOfDayHours,
-    const TMap<uint16, ACamSimEntity*>& EntityMap)
+    const TMap<FEntityKey, ACamSimEntity*>& EntityMap)
 {
 	PendingRemovals.Reset();
 	++FrameCount;
@@ -340,7 +340,7 @@ FCigiEntityState FScenarioEngine::BuildLinearState(
 
 void FScenarioEngine::EvaluateTriggers(
     double ScenarioElapsedSec,
-    const TMap<uint16, ACamSimEntity*>& EntityMap)
+    const TMap<FEntityKey, ACamSimEntity*>& EntityMap)
 {
 	for (int32 i = 0; i < Triggers.Num(); ++i)
 	{
@@ -369,7 +369,7 @@ void FScenarioEngine::EvaluateTriggers(
 bool FScenarioEngine::CheckCondition(
     const FCamSimConfig::FScenarioCondition& C,
     double ScenarioElapsedSec,
-    const TMap<uint16, ACamSimEntity*>& EntityMap) const
+    const TMap<FEntityKey, ACamSimEntity*>& EntityMap) const
 {
 	switch (C.Type)
 	{
@@ -379,7 +379,7 @@ bool FScenarioEngine::CheckCondition(
 	case FCamSimConfig::EScenarioConditionType::EntityInArea:
 	{
 		const uint16 EIdA = static_cast<uint16>(C.EntityIdA);
-		ACamSimEntity* const* EntPtr = EntityMap.Find(EIdA);
+		ACamSimEntity* const* EntPtr = EntityMap.Find(FEntityKey(EHostSource::Scenario, EIdA));
 		if (!EntPtr || !IsValid(*EntPtr)) return false;
 		const UCesiumGlobeAnchorComponent* GA = (*EntPtr)->FindComponentByClass<UCesiumGlobeAnchorComponent>();
 		if (!GA) return false;
@@ -392,8 +392,8 @@ bool FScenarioEngine::CheckCondition(
 	{
 		const uint16 EIdA = static_cast<uint16>(C.EntityIdA);
 		const uint16 EIdB = static_cast<uint16>(C.EntityIdB);
-		ACamSimEntity* const* PtrA = EntityMap.Find(EIdA);
-		ACamSimEntity* const* PtrB = EntityMap.Find(EIdB);
+		ACamSimEntity* const* PtrA = EntityMap.Find(FEntityKey(EHostSource::Scenario, EIdA));
+		ACamSimEntity* const* PtrB = EntityMap.Find(FEntityKey(EHostSource::Scenario, EIdB));
 		if (!PtrA || !IsValid(*PtrA) || !PtrB || !IsValid(*PtrB)) return false;
 		// Use UE world distance and convert cm -> m
 		const double DistCm = FVector::Dist((*PtrA)->GetActorLocation(), (*PtrB)->GetActorLocation());

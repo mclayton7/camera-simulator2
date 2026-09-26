@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Sim/Commands.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Templates/PimplPtr.h"
 #include "Config/CamSimConfig.h"
@@ -106,12 +107,12 @@ public:
 	ACamSimCamera*   GetCamera() const;
 
 	/**
-	 * Current geodetic pose of a CIGI entity — the camera's platform when
-	 * EntityId is the configured camera entity, otherwise a managed entity.
-	 * Used to resolve entity-relative CIGI coordinates (attachment, HAT/HOT,
-	 * LOS). Returns false if the entity doesn't exist.
+	 * Current geodetic pose of an entity — the camera's platform for the
+	 * configured camera entity (CIGI namespace), otherwise a managed entity.
+	 * Used to resolve entity-relative coordinates (attachment, HAT/HOT, LOS).
+	 * Returns false if the entity doesn't exist.
 	 */
-	bool GetEntityGeoPose(uint16 EntityId, CamSimFrames::FGeoPose& OutPose) const;
+	bool GetEntityGeoPose(const FEntityKey& Key, CamSimFrames::FGeoPose& OutPose) const;
 
 	/**
 	 * Phase 3: cached tileset pointer list. Populated lazily on first access

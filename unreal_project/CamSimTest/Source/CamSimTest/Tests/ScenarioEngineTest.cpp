@@ -40,7 +40,7 @@ bool FWaypointLinearInterpTest::RunTest(const FString& Parameters)
 	const double SegDist = FScenarioEngine::DistanceM(38.0, -77.0, 38.001, -77.0);
 	const double HalfTime = (SegDist / 10.0) * 0.5;
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 	TArray<FCigiEntityState> States = Engine.Tick(HalfTime, 1.0f/30.0f, 12.0f, EmptyMap);
 
 	TestTrue(TEXT("Got 1 entity state"), States.Num() == 1);
@@ -90,7 +90,7 @@ bool FWaypointPauseTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 
 	// After arriving at WpB (fast speed, should arrive by T=1), entity should hold at WpB
 	TArray<FCigiEntityState> States = Engine.Tick(1.0, 1.0f/30.0f, 12.0f, EmptyMap);
@@ -130,7 +130,7 @@ bool FWaypointPauseSimTimeTest::RunTest(const FString& Parameters)
 
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 
 	Engine.Tick(1.0, 1.0f / 30.0f, 12.0f, EmptyMap);    // arrives at WpB, pause starts
 	Engine.Tick(7.0, 6.0f, 12.0f, EmptyMap);            // 6 s later: pause over
@@ -173,7 +173,7 @@ bool FWaypointLoopTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 
 	// Tick past multiple loop completions (fast speed means multiple loops in 10s)
 	TArray<FCigiEntityState> S1 = Engine.Tick(5.0, 1.0f/30.0f, 12.0f, EmptyMap);
@@ -256,7 +256,7 @@ bool FWaypointFallbackTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 	TArray<FCigiEntityState> States = Engine.Tick(10.0, 1.0f/30.0f, 12.0f, EmptyMap);
 
 	TestTrue(TEXT("Linear fallback produces state"), States.Num() == 1);
@@ -296,7 +296,7 @@ bool FTriggerTimeSecTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 
 	// Before threshold — trigger should NOT fire
 	TArray<FCigiEntityState> S1 = Engine.Tick(20.0, 1.0f/30.0f, 12.0f, EmptyMap);
@@ -362,7 +362,7 @@ bool FTriggerRepeatCooldownTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 
 	// First fire at T=5
 	Engine.Tick(5.0, 1.0f/30.0f, 12.0f, EmptyMap);
@@ -434,7 +434,7 @@ bool FActivityScheduleResolutionTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 
 	// At 8:00 (morning) — entity should be active
 	TArray<FCigiEntityState> MorningStates = Engine.Tick(1.0, 1.0f/30.0f, 8.0f, EmptyMap);
@@ -473,7 +473,7 @@ bool FActivityScheduleGapTest::RunTest(const FString& Parameters)
 	FScenarioEngine Engine;
 	Engine.Initialize(Cfg);
 
-	TMap<uint16, ACamSimEntity*> EmptyMap;
+	TMap<FEntityKey, ACamSimEntity*> EmptyMap;
 
 	// At 14:00 — outside the 8-10 window
 	TArray<FCigiEntityState> States = Engine.Tick(1.0, 1.0f/30.0f, 14.0f, EmptyMap);

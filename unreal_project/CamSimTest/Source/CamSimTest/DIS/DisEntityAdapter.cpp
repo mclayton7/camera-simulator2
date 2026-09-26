@@ -5,11 +5,9 @@
 #include "Config/CamSimConfig.h"
 #include "CamSimTest.h"
 #include "Geospatial/EcefFrames.h"
+#include "Hosts/DisCommands.h"
+#include "Sim/CommandSink.h"
 
-namespace
-{
-	constexpr double RAD_TO_DEG = 180.0 / PI;
-}
 
 // -------------------------------------------------------------------------
 // Constructor
@@ -18,7 +16,6 @@ namespace
 FDisEntityAdapter::FDisEntityAdapter(const FCamSimConfig& InConfig, FDisReceiver* InReceiver)
 	: Config(InConfig)
 	, Receiver(InReceiver)
-	, NextId(static_cast<uint16>(InConfig.DIS.IdBaseOffset))
 {
 	BuildTypeMaps();
 }
@@ -27,145 +24,42 @@ FDisEntityAdapter::FDisEntityAdapter(const FCamSimConfig& InConfig, FDisReceiver
 // Tick — drain DIS PDUs, convert, sweep timeouts
 // -------------------------------------------------------------------------
 
-void FDisEntityAdapter::Tick(float DeltaTime)
+void FDisEntityAdapter::Poll(ISimCommandSink& Sink)
 {
 	if (!Receiver) return;
 
-	// Reset output queues for this tick
-	PendingEntityStates.Reset();
-	PendingRateControls.Reset();
-	EntityDrainIndex = 0;
-	RateDrainIndex   = 0;
-
-	// Drain all pending DIS PDUs
 	FDisEntityStatePdu Pdu;
 	while (Receiver->DequeueEntityStatePdu(Pdu))
 	{
-		ProcessPdu(Pdu);
+		ProcessPdu(Pdu, Sink);
 	}
-
-	// Sweep for timed-out entities
-	SweepTimeouts();
-
-	// Drain Designator PDUs (Phase 21F.2)
-	DrainDesignatorPdus();
+	SweepTimeouts(Sink);
+	DrainDesignatorPdus();  // Phase 21F.2
 }
 
 // -------------------------------------------------------------------------
-// Dequeue accessors (consumed by FCamSimEntityManager)
+// ProcessPdu — one DIS Entity State PDU → entity command
 // -------------------------------------------------------------------------
 
-bool FDisEntityAdapter::DequeueEntityState(FCigiEntityState& Out)
+void FDisEntityAdapter::ProcessPdu(const FDisEntityStatePdu& Pdu, ISimCommandSink& Sink)
 {
-	if (EntityDrainIndex >= PendingEntityStates.Num())
-	{
-		// All consumed — reset for next tick
-		PendingEntityStates.Reset();
-		EntityDrainIndex = 0;
-		return false;
-	}
-	Out = PendingEntityStates[EntityDrainIndex++];
-	return true;
-}
-
-bool FDisEntityAdapter::DequeueRateControl(FCigiRateControl& Out)
-{
-	if (RateDrainIndex >= PendingRateControls.Num())
-	{
-		PendingRateControls.Reset();
-		RateDrainIndex = 0;
-		return false;
-	}
-	Out = PendingRateControls[RateDrainIndex++];
-	return true;
-}
-
-// -------------------------------------------------------------------------
-// ProcessPdu — convert one DIS Entity State PDU to CamSim structs
-// -------------------------------------------------------------------------
-
-void FDisEntityAdapter::ProcessPdu(const FDisEntityStatePdu& Pdu)
-{
-	const double NowSec = FPlatformTime::Seconds();
-
-	// Update timestamp for timeout tracking
 	FEntityTimestamp& Ts = EntityTimestamps.FindOrAdd(Pdu.EntityId);
 	Ts.DisId = Pdu.EntityId;
-	Ts.LastUpdateSec = NowSec;
+	Ts.LastUpdateSec = FPlatformTime::Seconds();
 
-	// ID translation
-	const uint16 CamSimId = GetOrAllocateId(Pdu.EntityId);
-
-	// ECEF → geodetic
-	double Lat, Lon, Alt;
-	CamSimFrames::EcefToGeodetic(FVector(Pdu.LocationX, Pdu.LocationY, Pdu.LocationZ), Lat, Lon, Alt);
-
-	// Build FCigiEntityState
-	FCigiEntityState State;
-	State.EntityId    = CamSimId;
-	State.EntityState = 1;  // Active (DIS has no explicit standby/remove)
-	State.EntityType  = MapEntityType(Pdu.EntityType);
-	State.Latitude    = Lat;
-	State.Longitude   = Lon;
-	State.Altitude    = static_cast<float>(Alt);
-
-	// DIS orientation is Euler angles from the ECEF axes; CIGI's are from
-	// local North-East-Down at the entity.
-	const FRotator Hpr = CamSimFrames::DisEulerToCigi(Pdu.Psi, Pdu.Theta, Pdu.Phi, Lat, Lon);
-	State.Yaw   = static_cast<float>(Hpr.Yaw);
-	State.Pitch = static_cast<float>(Hpr.Pitch);
-	State.Roll  = static_cast<float>(Hpr.Roll);
-
-	// Copy DIS entity classification for particle effects etc.
-	State.EntityKind     = Pdu.EntityType.EntityKind;
-	State.EntityDomain   = Pdu.EntityType.Domain;
-	State.EntityCategory = Pdu.EntityType.Category;
-
-	PendingEntityStates.Add(State);
-
-	// Dead reckoning (IEEE 1278.1): algorithms 2-5 give the Entity Linear
-	// Velocity in world (ECEF) coordinates, 6-9 in body coordinates; the
-	// rotating ones (3, 4, 7, 8) add body angular velocity. Acceleration
-	// (4, 5, 8, 9) is not modelled yet (ROADMAP 2.3). 1 = static.
-	const uint8 Algorithm = Pdu.DeadReckoning.Algorithm;
-	if (Algorithm >= 2 && Algorithm <= 9)
-	{
-		const bool bWorld    = Algorithm <= 5;
-		const bool bRotating = Algorithm == 3 || Algorithm == 4 || Algorithm == 7 || Algorithm == 8;
-		const FVector Velocity(Pdu.DeadReckoning.VelX, Pdu.DeadReckoning.VelY, Pdu.DeadReckoning.VelZ);
-
-		FCigiRateControl Rate;
-		Rate.EntityId           = CamSimId;
-		Rate.ArtPartId          = 0;
-		Rate.bApplyToArtPart    = false;
-		Rate.bLocalFrame        = !bWorld;  // world: North/East/Down; body: forward/right/down
-		Rate.bAngularLocalFrame = true;     // DIS angular velocity is always body-axis
-		const FVector Linear = bWorld ? CamSimFrames::EcefVectorToNed(Velocity, Lat, Lon) : Velocity;
-		Rate.XRate = static_cast<float>(Linear.X);
-		Rate.YRate = static_cast<float>(Linear.Y);
-		Rate.ZRate = static_cast<float>(Linear.Z);
-		if (bRotating)
-		{
-			// rad/s about the body X (roll), Y (pitch), Z (yaw) axes
-			Rate.RollRate  = static_cast<float>(Pdu.DeadReckoning.AngVelX * RAD_TO_DEG);
-			Rate.PitchRate = static_cast<float>(Pdu.DeadReckoning.AngVelY * RAD_TO_DEG);
-			Rate.YawRate   = static_cast<float>(Pdu.DeadReckoning.AngVelZ * RAD_TO_DEG);
-		}
-		PendingRateControls.Add(Rate);
-	}
+	Sink.Submit(CamSim::Dis::ToEntityCommand(Pdu, MapEntityType(Pdu.EntityType)));
 }
 
 // -------------------------------------------------------------------------
 // SweepTimeouts — remove entities that haven't sent an update
 // -------------------------------------------------------------------------
 
-void FDisEntityAdapter::SweepTimeouts()
+void FDisEntityAdapter::SweepTimeouts(ISimCommandSink& Sink)
 {
 	const double NowSec = FPlatformTime::Seconds();
 	const double TimeoutSec = static_cast<double>(Config.DIS.HeartbeatTimeoutSec);
 
 	TArray<FDisEntityId> TimedOut;
-
 	for (const auto& Pair : EntityTimestamps)
 	{
 		if ((NowSec - Pair.Value.LastUpdateSec) >= TimeoutSec)
@@ -173,65 +67,15 @@ void FDisEntityAdapter::SweepTimeouts()
 			TimedOut.Add(Pair.Key);
 		}
 	}
-
 	for (const FDisEntityId& DisId : TimedOut)
 	{
-		const uint16* CamSimIdPtr = DisIdMap.Find(DisId);
-		if (CamSimIdPtr)
-		{
-			// Emit a Remove state
-			FCigiEntityState RemoveState;
-			RemoveState.EntityId    = *CamSimIdPtr;
-			RemoveState.EntityState = 2;  // Remove
-			PendingEntityStates.Add(RemoveState);
-
-			UE_LOG(LogCamSim, Log, TEXT("FDisEntityAdapter: entity %s timed out → remove (id=%u)"),
-				*DisId.ToString(), *CamSimIdPtr);
-
-			ReleaseId(DisId);
-		}
+		FEntityCommand Remove;
+		Remove.Key = CamSim::Dis::Key(DisId);
+		Remove.Lifecycle = EEntityLifecycle::Remove;
+		Sink.Submit(Remove);
+		UE_LOG(LogCamSim, Log, TEXT("FDisEntityAdapter: entity %s timed out → remove"), *DisId.ToString());
 		EntityTimestamps.Remove(DisId);
 	}
-}
-
-// -------------------------------------------------------------------------
-// ID Translation
-// -------------------------------------------------------------------------
-
-uint16 FDisEntityAdapter::GetOrAllocateId(const FDisEntityId& DisId)
-{
-	if (const uint16* Existing = DisIdMap.Find(DisId))
-	{
-		return *Existing;
-	}
-
-	// Monotonic allocation — no recycling. Dropping the free-list prevents stale
-	// consumer-side handles from aliasing onto a reused ID (7C.4).
-	const uint16 MaxId = static_cast<uint16>(Config.DIS.IdBaseOffset + 4096);
-	if (NextId >= MaxId)
-	{
-		if (!bIdPoolExhaustedLogged_)
-		{
-			UE_LOG(LogCamSim, Error,
-				TEXT("FDisEntityAdapter: DIS entity ID pool exhausted at %d live entities ")
-				TEXT("(IdBaseOffset=%d, cap=4096). Further DIS entities will collide on the ")
-				TEXT("sentinel ID %u. Suppressing further exhaustion logs."),
-				DisIdMap.Num(), Config.DIS.IdBaseOffset, MaxId);
-			bIdPoolExhaustedLogged_ = true;
-		}
-		// Sentinel — aliased but deterministic; better than silent corruption.
-		return MaxId;
-	}
-
-	const uint16 NewId = NextId++;
-	DisIdMap.Add(DisId, NewId);
-	return NewId;
-}
-
-void FDisEntityAdapter::ReleaseId(const FDisEntityId& DisId)
-{
-	// Map removal only — released IDs are not recycled (see GetOrAllocateId).
-	DisIdMap.Remove(DisId);
 }
 
 // -------------------------------------------------------------------------

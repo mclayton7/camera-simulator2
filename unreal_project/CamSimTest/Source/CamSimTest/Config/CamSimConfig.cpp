@@ -1252,7 +1252,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlInt   (D, "site_id",                Cfg.DIS.SiteId);
 			YamlInt   (D, "application_id",         Cfg.DIS.ApplicationId);
 			YamlFloat (D, "heartbeat_timeout_sec",  Cfg.DIS.HeartbeatTimeoutSec);
-			YamlInt   (D, "id_base_offset",         Cfg.DIS.IdBaseOffset);
 			YamlInt   (D, "default_entity_type_id", Cfg.DIS.DefaultEntityTypeId);
 
 			// Entity type mappings: dis.entity_type_map
@@ -1707,7 +1706,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		D.SiteId              = GetEnvInt  (TEXT("CAMSIM_DIS_SITE_ID"),         D.SiteId);
 		D.ApplicationId       = GetEnvInt  (TEXT("CAMSIM_DIS_APP_ID"),          D.ApplicationId);
 		D.HeartbeatTimeoutSec = GetEnvFloat(TEXT("CAMSIM_DIS_HEARTBEAT_TIMEOUT"), D.HeartbeatTimeoutSec);
-		D.IdBaseOffset        = GetEnvInt  (TEXT("CAMSIM_DIS_ID_BASE_OFFSET"),  D.IdBaseOffset);
 		D.DefaultEntityTypeId = GetEnvInt  (TEXT("CAMSIM_DIS_DEFAULT_ENTITY_TYPE"), D.DefaultEntityTypeId);
 	}
 

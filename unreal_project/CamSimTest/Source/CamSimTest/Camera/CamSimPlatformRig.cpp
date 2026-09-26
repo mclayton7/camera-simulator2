@@ -103,7 +103,7 @@ void FCamSimPlatformRig::FollowAttachParent()
 	if (!bAttached || !Anchor || !Subsystem) return;
 	CamSimFrames::FGeoPose ParentPose;
 	if (AttachParentId != static_cast<uint16>(Subsystem->GetConfig().CameraEntityId)
-		&& Subsystem->GetEntityGeoPose(AttachParentId, ParentPose))
+		&& Subsystem->GetEntityGeoPose(FEntityKey(EHostSource::Cigi, AttachParentId), ParentPose))
 	{
 		ApplyPose(CamSimFrames::AttachedChildPose(ParentPose, AttachOffsetFrd,
 			AttachRotation.Yaw, AttachRotation.Pitch, AttachRotation.Roll),
@@ -128,7 +128,7 @@ void FCamSimPlatformRig::UpdateFirstPersonView(uint16 ViewControlEntityId)
 	if (FpsEntityId == 0 || !Subsystem || !Anchor) return;
 
 	FCamSimEntityManager* Mgr = Subsystem->GetEntityManager();
-	ACamSimEntity* Entity = Mgr ? Mgr->FindEntity(FpsEntityId) : nullptr;
+	ACamSimEntity* Entity = Mgr ? Mgr->FindEntity(FEntityKey(EHostSource::Cigi, FpsEntityId)) : nullptr;
 	if (!IsValid(Entity)) return;  // not spawned yet: hold the current position
 	UCesiumGlobeAnchorComponent* EntityAnchor = Entity->FindComponentByClass<UCesiumGlobeAnchorComponent>();
 	if (!EntityAnchor) return;

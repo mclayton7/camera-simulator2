@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Sim/Commands.h"
 #include "Config/CamSimConfig.h"
 #include "CIGI/CigiPacketTypes.h"
 
@@ -30,7 +31,7 @@ public:
 	 */
 	TArray<FCigiEntityState> Tick(double ScenarioElapsedSec, float DeltaTimeSec,
 	                              float TimeOfDayHours,
-	                              const TMap<uint16, ACamSimEntity*>& EntityMap);
+	                              const TMap<FEntityKey, ACamSimEntity*>& EntityMap);
 
 	/** Entity IDs that should be removed (from DespawnEntity triggers). */
 	TArray<uint16> GetPendingRemovals() const;
@@ -93,10 +94,10 @@ private:
 
 	// 23B: Trigger evaluation
 	void EvaluateTriggers(double ScenarioElapsedSec,
-	                      const TMap<uint16, ACamSimEntity*>& EntityMap);
+	                      const TMap<FEntityKey, ACamSimEntity*>& EntityMap);
 	bool CheckCondition(const FCamSimConfig::FScenarioCondition& C,
 	                    double ScenarioElapsedSec,
-	                    const TMap<uint16, ACamSimEntity*>& EntityMap) const;
+	                    const TMap<FEntityKey, ACamSimEntity*>& EntityMap) const;
 	void ExecuteAction(const FCamSimConfig::FScenarioAction& A, double ScenarioElapsedSec);
 
 	// 23C: Activity schedule resolution

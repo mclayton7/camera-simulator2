@@ -38,6 +38,20 @@ struct FEntityKey
 
 	bool operator==(const FEntityKey& Other) const { return Source == Other.Source && Id == Other.Id; }
 	bool operator!=(const FEntityKey& Other) const { return !(*this == Other); }
+	/** "cigi:7", "dis:1.2.3", … for logs. */
+	FString ToString() const
+	{
+		switch (Source)
+		{
+		case EHostSource::Cigi:       return FString::Printf(TEXT("cigi:%llu"), Id);
+		case EHostSource::Dis:        return FString::Printf(TEXT("dis:%llu.%llu.%llu"), (Id >> 32) & 0xFFFF, (Id >> 16) & 0xFFFF, Id & 0xFFFF);
+		case EHostSource::Scenario:   return FString::Printf(TEXT("scenario:%llu"), Id);
+		case EHostSource::ControlApi: return FString::Printf(TEXT("api:%llu"), Id);
+		case EHostSource::Mavlink:    return FString::Printf(TEXT("mavlink:%llu"), Id);
+		}
+		return FString::Printf(TEXT("?:%llu"), Id);
+	}
+
 	friend uint32 GetTypeHash(const FEntityKey& Key)
 	{
 		return HashCombine(::GetTypeHash(static_cast<uint8>(Key.Source)), ::GetTypeHash(Key.Id));

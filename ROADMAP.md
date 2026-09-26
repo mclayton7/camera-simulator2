@@ -305,6 +305,18 @@ Scenario file ┘
     today only algorithms 2 and 5 extrapolate.
 - **HLA:** support it through an external HLA↔DIS gateway, not natively.
 
+Design: `docs/superpowers/specs/2026-09-26-host-adapter-layer-design.md` (approved).
+Progress:
+- Phase 1 (done): canonical commands (`Sim/Commands.h`) and pure CIGI/DIS converters
+  (`Hosts/CigiCommands`, `Hosts/DisCommands`) with tests.
+- Phase 2 (done): entities are keyed per source (`FEntityKey`). The entity manager is an
+  `ISimCommandSink` fed by `FCigiHostAdapter`, the DIS adapter (now emitting commands with its
+  dead-reckoning motion model; its ID allocator and `dis.id_base_offset` are gone) and the
+  scenario (its own namespace). `ACamSimEntity` and the particle manager consume commands.
+  CIGI entity 1000 and DIS entity 1000 are now different entities (verified live); previously
+  DIS silently overwrote CIGI and the scenario overwrote both. Rate limiting is per key. CIGI
+  query responses report only CIGI entities.
+
 ### 2.4 Control API (Python/gRPC)
 
 Set up a scene, spawn entities, randomize, step the clock, and capture frames plus ground
