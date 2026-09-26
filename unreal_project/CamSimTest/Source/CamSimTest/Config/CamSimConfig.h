@@ -130,6 +130,10 @@ struct FCamSimConfig
 	// Duration of LOD crossfade in seconds (only used when bUseLodTransitions=true)
 	// Env: CAMSIM_LOD_TRANSITION_LENGTH
 	float   LodTransitionLength = 0.0f;
+	// Cook collision for Cesium tiles. CIGI HAT/HOT and LOS queries and the KLV
+	// frame centre (Tags 21, 23-25, 78) are line traces against it.
+	// Env: CAMSIM_CREATE_PHYSICS_MESHES
+	bool    bCreatePhysicsMeshes = true;
 
 	// Default camera start position (WGS-84) -- used before first CIGI packet
 	double  StartLatitude   = 38.8977;     // Washington DC

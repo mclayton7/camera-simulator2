@@ -47,20 +47,21 @@ namespace CamSim::Geospatial
 			It->EnforceCulledScreenSpaceError = true;
 			It->CulledScreenSpaceError        = CulledSSE;
 
-			// Non-player ISR camera never collides — skip physics-mesh cook (saves VRAM + CPU).
-			// HAT/HOT terrain feedback uses Cesium's own sampling API, not physics queries.
-			It->SetCreatePhysicsMeshes(false);
+			// CIGI HAT/HOT + LOS queries and the KLV frame centre are line traces,
+			// which need tile collision. Turning it off saves cook time and memory
+			// but makes every one of them miss the terrain.
+			It->SetCreatePhysicsMeshes(Cfg.bCreatePhysicsMeshes);
 
 			It->SetUseLodTransitions(Cfg.bUseLodTransitions);
 			It->LodTransitionLength = Cfg.LodTransitionLength;
 			It->LogSelectionStats   = Cfg.bLogTileSelectionStats;
 
 			UE_LOG(LogCamSim, Log,
-				TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f@hfov=%.0f° cacheMB=%d descLimit=%d lodBlend=%d logStats=%d physicsMeshes=off)"),
+				TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f@hfov=%.0f° cacheMB=%d descLimit=%d lodBlend=%d logStats=%d physicsMeshes=%d)"),
 				*It->GetName(), Cfg.MaxSimultaneousTileLoads,
 				Cfg.MaximumScreenSpaceError, CulledSSE, Cfg.HFovDeg,
 				Cfg.MaximumCachedBytesMB, Cfg.LoadingDescendantLimit,
-				(int)Cfg.bUseLodTransitions, (int)Cfg.bLogTileSelectionStats);
+				(int)Cfg.bUseLodTransitions, (int)Cfg.bLogTileSelectionStats, (int)Cfg.bCreatePhysicsMeshes);
 		}
 	}
 }

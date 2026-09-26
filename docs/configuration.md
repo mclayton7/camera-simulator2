@@ -279,6 +279,7 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 | `tile_preload_fov_scale` | float | `2.0` | `CAMSIM_TILE_FOV_SCALE` | Multiplier applied to `hfov_deg` when registering with `ACesiumCameraManager`. Values above 1.0 pre-fetch tiles outside the visible frustum to reduce pop-in when the camera pans. |
 | `max_simultaneous_tile_loads` | int | `40` | `CAMSIM_MAX_TILE_LOADS` | Maximum concurrent Cesium tile HTTP requests. Higher values speed up initial scene load at the cost of network/CPU. |
 | `maximum_screen_space_error` | float | `2.0` | `CAMSIM_MAX_SSE` | Cesium LOD quality: lower = sharper terrain. Cesium default is 16; 2.0 is high quality for ISR imagery. |
+| `create_physics_meshes` | bool | `true` | `CAMSIM_CREATE_PHYSICS_MESHES` | Cook collision for Cesium tiles. CIGI HAT/HOT and LOS queries and the KLV frame centre (Tags 21, 23–25, 78) are line traces against it; with it off they never hit the terrain. |
 | `maximum_cached_bytes_mb` | int | `2048` | `CAMSIM_MAX_CACHED_MB` | Cesium tile cache budget in MB. `0` = Cesium default (uncapped). |
 
 ### Terrain Readiness Gate

@@ -264,6 +264,12 @@ use_lod_transitions: false
 # Env: CAMSIM_LOD_TRANSITION_LENGTH
 lod_transition_length: 0.0
 
+# Cook collision meshes for Cesium tiles. CIGI HAT/HOT and LOS queries and the
+# KLV frame centre (Tags 21, 23-25, 78) are line traces against them; with this
+# off they never hit the terrain.
+# Env: CAMSIM_CREATE_PHYSICS_MESHES
+create_physics_meshes: true
+
 # --- Camera Start Position (WGS-84) ---
 # Initial camera pose before the first CIGI Entity Control packet.
 

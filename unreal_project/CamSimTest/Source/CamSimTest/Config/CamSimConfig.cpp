@@ -488,6 +488,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		YamlInt   (Root, "maximum_cached_bytes_mb",    Cfg.MaximumCachedBytesMB);
 		YamlInt  (Root, "loading_descendant_limit", Cfg.LoadingDescendantLimit);
 		YamlBool (Root, "use_lod_transitions",      Cfg.bUseLodTransitions);
+		YamlBool (Root, "create_physics_meshes",    Cfg.bCreatePhysicsMeshes);
 		YamlFloat(Root, "lod_transition_length",    Cfg.LodTransitionLength);
 		YamlDouble(Root, "start_latitude",   Cfg.StartLatitude);
 		YamlDouble(Root, "start_longitude",  Cfg.StartLongitude);
@@ -1430,6 +1431,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.MaximumCachedBytesMB    = GetEnvInt(TEXT("CAMSIM_MAX_CACHED_MB"),         Cfg.MaximumCachedBytesMB);
 	Cfg.LoadingDescendantLimit  = GetEnvInt  (TEXT("CAMSIM_LOADING_DESCENDANT_LIMIT"), Cfg.LoadingDescendantLimit);
 	Cfg.bUseLodTransitions      = GetEnvBool (TEXT("CAMSIM_USE_LOD_TRANSITIONS"),      Cfg.bUseLodTransitions);
+	Cfg.bCreatePhysicsMeshes    = GetEnvBool (TEXT("CAMSIM_CREATE_PHYSICS_MESHES"),    Cfg.bCreatePhysicsMeshes);
 	Cfg.LodTransitionLength     = GetEnvFloat(TEXT("CAMSIM_LOD_TRANSITION_LENGTH"),    Cfg.LodTransitionLength);
 	Cfg.Encoder = GetEnv(TEXT("CAMSIM_ENCODER"), Cfg.Encoder);
 	Cfg.EncoderPref = ParseEncoderPreference(Cfg.Encoder);
