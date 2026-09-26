@@ -401,15 +401,23 @@ void ACamSimEntity::ApplyPose(const FCigiEntityState& S)
 {
 	if (!GlobeAnchor) return;
 
-	// Update DR base so dead-reckoning doesn't drift after a new packet
-	DR.Lat = S.Latitude;
-	DR.Lon = S.Longitude;
-	DR.Alt = S.Altitude;
-	DR.Orientation = CamSimFrames::CigiToNeu(S.Yaw, S.Pitch, S.Roll);
+	bAttached = S.bAttached;
+	if (bAttached)
+	{
+		// Lat/Lon/Alt carry X/Y/Z offsets; the manager resolves the pose from
+		// the parent each tick.
+		AttachParentId  = S.ParentId;
+		AttachOffsetFrd = FVector(S.Latitude, S.Longitude, S.Altitude);
+		AttachRotation  = FRotator(S.Pitch, S.Yaw, S.Roll);
+		return;
+	}
 
-	GlobeAnchor->MoveToLongitudeLatitudeHeight(
-		FVector(S.Longitude, S.Latitude, S.Altitude));
-	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::NeuToEastSouthUp(DR.Orientation));
+	CamSimFrames::FGeoPose Pose;
+	Pose.Lat = S.Latitude;
+	Pose.Lon = S.Longitude;
+	Pose.Alt = S.Altitude;
+	Pose.Neu = CamSimFrames::CigiToNeu(S.Yaw, S.Pitch, S.Roll);
+	ApplyGeoPose(Pose);
 
 	// One-time log to confirm the entity reached a real UE world position.
 	// (If this prints 0,0,0 the GlobeAnchor has not found a CesiumGeoreference.)
@@ -421,6 +429,31 @@ void ACamSimEntity::ApplyPose(const FCigiEntityState& S)
 			EntityId, S.Latitude, S.Longitude, S.Altitude,
 			*GetActorLocation().ToString());
 	}
+}
+
+void ACamSimEntity::ApplyGeoPose(const CamSimFrames::FGeoPose& Pose)
+{
+	if (!GlobeAnchor) return;
+
+	// Update DR base so dead-reckoning doesn't drift after a new packet
+	DR.Lat = Pose.Lat;
+	DR.Lon = Pose.Lon;
+	DR.Alt = static_cast<float>(Pose.Alt);
+	DR.Orientation = Pose.Neu;
+
+	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(Pose.Lon, Pose.Lat, Pose.Alt));
+	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::NeuToEastSouthUp(Pose.Neu));
+}
+
+bool ACamSimEntity::GetGeoPose(CamSimFrames::FGeoPose& OutPose) const
+{
+	if (!GlobeAnchor) return false;
+	const FVector Llh = GlobeAnchor->GetLongitudeLatitudeHeight();
+	OutPose.Lon = Llh.X;
+	OutPose.Lat = Llh.Y;
+	OutPose.Alt = Llh.Z;
+	OutPose.Neu = CamSimFrames::EastSouthUpToNeu(GlobeAnchor->GetEastSouthUpRotation());
+	return true;
 }
 
 // -------------------------------------------------------------------------
@@ -700,7 +733,7 @@ void ACamSimEntity::ApplyVesselMotion(IOceanSurface* Ocean,
 
 void ACamSimEntity::UpdateDeadReckoning(float Dt)
 {
-	if (!DR.bHasRate || !GlobeAnchor) return;
+	if (!DR.bHasRate || !GlobeAnchor || bAttached) return;  // children follow their parent
 
 	// Integrate body-frame angular velocity directly on the quaternion.
 	// Omega axes match UE's FRotator convention: X=Roll, Y=Pitch, Z=Yaw.

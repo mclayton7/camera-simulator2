@@ -83,6 +83,9 @@ private:
 
 	// Drain helpers — called from Tick()
 	void ProcessEntityStates(float DeltaTime);
+	/** Place attached (child) entities relative to their parents' current poses. */
+	void ResolveAttachedEntities();
+	static constexpr int32 MaxAttachDepth = 8;
 	void ProcessConfClampEntities();
 	void ProcessRateControls();
 	void ProcessArtPartControls();

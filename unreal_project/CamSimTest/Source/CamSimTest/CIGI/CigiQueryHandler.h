@@ -38,6 +38,14 @@ private:
 	bool WorldToGeo(UWorld* World, const FCamSimGeospatialProvider& GeoProvider,
 		const FVector& WorldPos, double& OutLat, double& OutLon, double& OutAltM) const;
 
+	/**
+	 * Resolve a CIGI point to geodetic. When bEntityRelative, (A, B, C) are
+	 * X/Y/Z offsets in the body frame of EntityId; otherwise (lat, lon, alt).
+	 * Returns false if the reference entity doesn't exist.
+	 */
+	bool ResolvePoint(bool bEntityRelative, uint16 EntityId, double A, double B, double C,
+		double& OutLat, double& OutLon, double& OutAlt) const;
+
 	/** If HitActor is an ACamSimEntity, return its EntityId; otherwise 0. */
 	uint16 ResolveEntityId(const AActor* HitActor) const;
 

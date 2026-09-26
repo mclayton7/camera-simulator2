@@ -4,6 +4,7 @@
 #include "Camera/CamSimCamera.h"
 #include "Camera/CamSimSensorComponent.h"
 #include "Entity/CamSimEntityManager.h"
+#include "Entity/CamSimEntity.h"
 #include "CIGI/CigiReceiver.h"
 #include "CIGI/CigiSender.h"
 #include "CIGI/CigiQueryHandler.h"
@@ -215,6 +216,18 @@ void UCamSimSubsystem::RegisterCamera(ACamSimCamera* Camera)
 ACamSimCamera* UCamSimSubsystem::GetCamera() const
 {
 	return Camera_.Get();
+}
+
+bool UCamSimSubsystem::GetEntityGeoPose(uint16 EntityId, CamSimFrames::FGeoPose& OutPose) const
+{
+	if (EntityId == static_cast<uint16>(Config.CameraEntityId))
+	{
+		const ACamSimCamera* Cam = GetCamera();
+		return Cam && Cam->GetPlatformGeoPose(OutPose);
+	}
+	const FCamSimEntityManager* Mgr = GetEntityManager();
+	const ACamSimEntity* Entity = Mgr ? Mgr->FindEntity(EntityId) : nullptr;
+	return IsValid(Entity) && Entity->GetGeoPose(OutPose);
 }
 
 void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)

@@ -7,6 +7,7 @@
 #include "Templates/PimplPtr.h"
 #include "Config/CamSimConfig.h"
 #include "Entity/EntityTypeTable.h"
+#include "Geospatial/CigiFrames.h"
 #include "CamSimSubsystem.generated.h"
 
 class FCigiReceiver;
@@ -103,6 +104,14 @@ public:
 	// Phase 27B — camera registration for health JSON frame drop stats
 	void             RegisterCamera(ACamSimCamera* Camera);
 	ACamSimCamera*   GetCamera() const;
+
+	/**
+	 * Current geodetic pose of a CIGI entity — the camera's platform when
+	 * EntityId is the configured camera entity, otherwise a managed entity.
+	 * Used to resolve entity-relative CIGI coordinates (attachment, HAT/HOT,
+	 * LOS). Returns false if the entity doesn't exist.
+	 */
+	bool GetEntityGeoPose(uint16 EntityId, CamSimFrames::FGeoPose& OutPose) const;
 
 	/**
 	 * Phase 3: cached tileset pointer list. Populated lazily on first access

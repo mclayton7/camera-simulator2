@@ -10,6 +10,7 @@
 #include "Sensor/SensorTypes.h"      // ESensorMode
 #include "Sensor/IPixelPipeline.h"   // IPixelPipeline
 #include "Geospatial/GroundSpeedEstimator.h"
+#include "Geospatial/CigiFrames.h"
 // FEncoderThread is intentionally held behind a TUniquePtr with a custom
 // forward-declared deleter (see `FEncoderThreadDeleter` below). UHT's
 // generated .gen.cpp emits DEFINE_VTABLE_PTR_HELPER_CTOR_NS(, ACamSimCamera),
@@ -94,6 +95,9 @@ public:
 	// Phase 27B — expose drop stats to subsystem for health JSON
 	const FFrameDropStats& GetFrameDropStats() const { return FrameDropStats_; }
 	bool IsTrackingFrameDrops()                const { return bTrackFrameDrops_; }
+
+	/** Current platform geodetic pose (orientation in local NEU). */
+	bool GetPlatformGeoPose(CamSimFrames::FGeoPose& OutPose) const;
 
 	/** Return a snapshot of the current telemetry for external consumers (e.g. CoT sender). */
 	FCamSimTelemetry GetCurrentTelemetry() const { return CurrentTelemetry; }
@@ -290,6 +294,15 @@ private:
 
 	// Ground speed (KLV Tag 56) from position deltas over host time
 	FGroundSpeedEstimator GroundSpeed_;
+
+	// CIGI attachment of the camera platform to a parent entity
+	bool     bCameraAttached_       = false;
+	uint16   CameraAttachParentId_  = 0;
+	FVector  CameraAttachOffsetFrd_ = FVector::ZeroVector;
+	FRotator CameraAttachRotation_  = FRotator::ZeroRotator;
+
+	/** Move the platform to a geodetic pose and update pose telemetry. */
+	void ApplyPlatformPose(const CamSimFrames::FGeoPose& Pose, double TimeSec);
 
 	/** Phase 28G: per-frame pipeline latency tracker (owned by subsystem, nullable). */
 	FPipelineLatencyTracker* LatencyTracker_ = nullptr;

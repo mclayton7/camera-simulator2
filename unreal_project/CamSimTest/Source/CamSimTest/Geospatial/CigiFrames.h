@@ -61,4 +61,65 @@ namespace CamSimFrames
 		const FVector BodyUp(BodyForwardRightDown.X, BodyForwardRightDown.Y, -BodyForwardRightDown.Z);
 		return Neu.RotateVector(BodyUp);
 	}
+
+	/** Geodetic position plus orientation in the local NEU frame. */
+	struct FGeoPose
+	{
+		double Lat = 0.0;  // degrees
+		double Lon = 0.0;  // degrees
+		double Alt = 0.0;  // metres above the WGS-84 ellipsoid
+		FQuat  Neu = FQuat::Identity;
+	};
+
+	/** Move a geodetic point by a local (North, East, Up) displacement in metres. */
+	inline void OffsetGeodetic(double Lat, double Lon, double Alt, const FVector& NeuM,
+	                           double& OutLat, double& OutLon, double& OutAlt)
+	{
+		constexpr double A  = 6378137.0;           // WGS-84 semi-major axis
+		constexpr double E2 = 6.69437999014e-3;    // first eccentricity squared
+		const double LatRad = FMath::DegreesToRadians(Lat);
+		const double S2     = FMath::Square(FMath::Sin(LatRad));
+		const double W      = FMath::Sqrt(1.0 - E2 * S2);
+		const double Rm     = A * (1.0 - E2) / (W * W * W);   // meridional radius
+		const double Rn     = A / W;                          // prime-vertical radius
+		OutLat = Lat + FMath::RadiansToDegrees(NeuM.X / (Rm + Alt));
+		OutLon = Lon + FMath::RadiansToDegrees(NeuM.Y / ((Rn + Alt) * FMath::Max(FMath::Cos(LatRad), 1e-9)));
+		OutAlt = Alt + NeuM.Z;
+	}
+
+	/** A point given in an entity's body frame (X forward, Y right, Z down), in geodetic. */
+	inline void BodyOffsetToGeodetic(const FGeoPose& Entity, const FVector& OffsetFrdM,
+	                                 double& OutLat, double& OutLon, double& OutAlt)
+	{
+		OffsetGeodetic(Entity.Lat, Entity.Lon, Entity.Alt,
+			BodyVelocityToNeu(Entity.Neu, OffsetFrdM), OutLat, OutLon, OutAlt);
+	}
+
+	/**
+	 * Pose of a CIGI child entity (Attach State = Attach): offset in the parent's
+	 * body frame, and yaw/pitch/roll relative to the parent's axes.
+	 */
+	inline FGeoPose AttachedChildPose(const FGeoPose& Parent, const FVector& OffsetFrdM,
+	                                  double RelYawDeg, double RelPitchDeg, double RelRollDeg)
+	{
+		FGeoPose Child;
+		BodyOffsetToGeodetic(Parent, OffsetFrdM, Child.Lat, Child.Lon, Child.Alt);
+		Child.Neu = Parent.Neu * FRotator(RelPitchDeg, RelYawDeg, RelRollDeg).Quaternion();
+		return Child;
+	}
+
+	/**
+	 * An entity-relative LOS vector (azimuth from the entity's +X axis, positive
+	 * elevation towards its -Z/up axis) as true-north azimuth and elevation.
+	 */
+	inline void BodyAzElToTrueAzEl(const FQuat& EntityNeu, double AzDeg, double ElDeg,
+	                               double& OutAzDeg, double& OutElDeg)
+	{
+		const double Az = FMath::DegreesToRadians(AzDeg);
+		const double El = FMath::DegreesToRadians(ElDeg);
+		const FVector BodyFrd(FMath::Cos(El) * FMath::Cos(Az), FMath::Cos(El) * FMath::Sin(Az), -FMath::Sin(El));
+		const FVector Neu = BodyVelocityToNeu(EntityNeu, BodyFrd);
+		OutAzDeg = FRotator::ClampAxis(FMath::RadiansToDegrees(FMath::Atan2(Neu.Y, Neu.X)));
+		OutElDeg = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(Neu.Z, -1.0, 1.0)));
+	}
 }

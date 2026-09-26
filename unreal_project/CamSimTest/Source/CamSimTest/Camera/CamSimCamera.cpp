@@ -931,29 +931,39 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 					EntityState.Yaw, EntityState.Pitch, EntityState.Roll);
 			}
 
-			GlobeAnchor->MoveToLongitudeLatitudeHeight(
-				FVector(EntityState.Longitude, EntityState.Latitude, EntityState.Altitude));
-			// Cesium's ENU transform can emit a NaN world scale during origin rebasing;
-			// unconditionally reset to (1,1,1) to prevent the UE SetRelativeScale3D warning.
-			SetActorScale3D(FVector::OneVector);
-			GlobeAnchor->SetEastSouthUpRotation(
-				CamSimFrames::CigiToEastSouthUp(EntityState.Yaw, EntityState.Pitch, EntityState.Roll));
+			bCameraAttached_ = EntityState.bAttached;
+			if (bCameraAttached_)
+			{
+				// Attached to a platform entity: Lat/Lon/Alt are X/Y/Z offsets
+				// in the parent's body frame. Resolved below every tick.
+				CameraAttachParentId_  = EntityState.ParentId;
+				CameraAttachOffsetFrd_ = FVector(EntityState.Latitude, EntityState.Longitude, EntityState.Altitude);
+				CameraAttachRotation_  = FRotator(EntityState.Pitch, EntityState.Yaw, EntityState.Roll);
+			}
+			else
+			{
+				CamSimFrames::FGeoPose Pose;
+				Pose.Lat = EntityState.Latitude;
+				Pose.Lon = EntityState.Longitude;
+				Pose.Alt = EntityState.Altitude;
+				Pose.Neu = CamSimFrames::CigiToNeu(EntityState.Yaw, EntityState.Pitch, EntityState.Roll);
+				// Ground speed uses the *host* time of the update.
+				ApplyPlatformPose(Pose, EntityState.HostTimeSec);
+			}
+		}
 
-			CurrentTelemetry.Latitude  = EntityState.Latitude;
-			CurrentTelemetry.Longitude = EntityState.Longitude;
-			CurrentTelemetry.Altitude  = EntityState.Altitude;
-			CurrentTelemetry.Yaw       = EntityState.Yaw;
-			CurrentTelemetry.Pitch     = EntityState.Pitch;
-			CurrentTelemetry.Roll      = EntityState.Roll;
-			CurrentTelemetry.HFovDeg   = SceneCapture->FOVAngle;
-			CurrentTelemetry.VFovDeg   = SceneCapture->FOVAngle *
-				static_cast<float>(Cfg.CaptureHeight) /
-				static_cast<float>(Cfg.CaptureWidth);
-
-			// Ground speed (Tag 56): position delta over *host* time. The
-			// estimate is held on ticks without a host update.
-			GroundSpeed_.AddFix(EntityState.Latitude, EntityState.Longitude, EntityState.HostTimeSec);
-			CurrentTelemetry.GroundSpeedMps = GroundSpeed_.GetSpeedMps();
+		// Attached camera platforms follow their parent every tick, including
+		// ticks without a host update (the parent may be dead-reckoning).
+		if (bCameraAttached_ && GlobeAnchor)
+		{
+			CamSimFrames::FGeoPose ParentPose;
+			if (CameraAttachParentId_ != static_cast<uint16>(Cfg.CameraEntityId)
+				&& Subsystem->GetEntityGeoPose(CameraAttachParentId_, ParentPose))
+			{
+				ApplyPlatformPose(CamSimFrames::AttachedChildPose(ParentPose, CameraAttachOffsetFrd_,
+					CameraAttachRotation_.Yaw, CameraAttachRotation_.Pitch, CameraAttachRotation_.Roll),
+					GetWorld()->GetTimeSeconds());
+			}
 		}
 	}
 
@@ -1270,6 +1280,43 @@ void ACamSimCamera::ApplyFpsPose()
 	CurrentTelemetry.Yaw       = EntityRot.Yaw;
 	CurrentTelemetry.Pitch     = 0.0f;
 	CurrentTelemetry.Roll      = 0.0f;
+}
+
+bool ACamSimCamera::GetPlatformGeoPose(CamSimFrames::FGeoPose& OutPose) const
+{
+	if (!GlobeAnchor) return false;
+	const FVector Llh = GlobeAnchor->GetLongitudeLatitudeHeight();
+	OutPose.Lon = Llh.X;
+	OutPose.Lat = Llh.Y;
+	OutPose.Alt = Llh.Z;
+	OutPose.Neu = CamSimFrames::EastSouthUpToNeu(GlobeAnchor->GetEastSouthUpRotation());
+	return true;
+}
+
+void ACamSimCamera::ApplyPlatformPose(const CamSimFrames::FGeoPose& Pose, double TimeSec)
+{
+	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(Pose.Lon, Pose.Lat, Pose.Alt));
+	// Cesium's ENU transform can emit a NaN world scale during origin rebasing;
+	// unconditionally reset to (1,1,1) to prevent the UE SetRelativeScale3D warning.
+	SetActorScale3D(FVector::OneVector);
+	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::NeuToEastSouthUp(Pose.Neu));
+
+	const FRotator Hpr = Pose.Neu.Rotator();
+	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+	CurrentTelemetry.Latitude  = Pose.Lat;
+	CurrentTelemetry.Longitude = Pose.Lon;
+	CurrentTelemetry.Altitude  = Pose.Alt;
+	CurrentTelemetry.Yaw       = FRotator::ClampAxis(Hpr.Yaw);
+	CurrentTelemetry.Pitch     = Hpr.Pitch;
+	CurrentTelemetry.Roll      = Hpr.Roll;
+	CurrentTelemetry.HFovDeg   = SceneCapture->FOVAngle;
+	CurrentTelemetry.VFovDeg   = SceneCapture->FOVAngle *
+		static_cast<float>(Cfg.CaptureHeight) /
+		static_cast<float>(Cfg.CaptureWidth);
+
+	// Ground speed (Tag 56); the estimate is held between fixes.
+	GroundSpeed_.AddFix(Pose.Lat, Pose.Lon, TimeSec);
+	CurrentTelemetry.GroundSpeedMps = GroundSpeed_.GetSpeedMps();
 }
 
 void ACamSimCamera::ComputeGeometricLOS()

@@ -65,6 +65,7 @@ void FCamSimEntityManager::Tick(float DeltaTime)
 {
 	PurgeStaleEntities();
 	ProcessEntityStates(DeltaTime);
+	ResolveAttachedEntities();
 	ProcessConfClampEntities();
 	ProcessRateControls();
 	ProcessArtPartControls();
@@ -75,6 +76,55 @@ void FCamSimEntityManager::Tick(float DeltaTime)
 	if (Subsystem)
 	{
 		Subsystem->Tick(DeltaTime);
+	}
+}
+
+// -------------------------------------------------------------------------
+// CIGI attachment
+// -------------------------------------------------------------------------
+
+void FCamSimEntityManager::ResolveAttachedEntities()
+{
+	if (!Subsystem) return;
+
+	// Parents before children: repeatedly place children whose parent is
+	// top-level or already placed this tick. Bounded by the hierarchy depth.
+	TSet<uint16> Placed;
+	TArray<ACamSimEntity*> Pending;
+	for (const TPair<uint16, ACamSimEntity*>& Pair : EntityMap)
+	{
+		if (IsValid(Pair.Value) && Pair.Value->IsAttached())
+		{
+			Pending.Add(Pair.Value);
+		}
+	}
+
+	for (int32 Pass = 0; Pass < MaxAttachDepth && Pending.Num() > 0; ++Pass)
+	{
+		for (int32 i = Pending.Num() - 1; i >= 0; --i)
+		{
+			ACamSimEntity* Child = Pending[i];
+			const uint16 ParentId = Child->GetParentId();
+			const ACamSimEntity* Parent = FindEntity(ParentId);
+			const bool bParentReady = !IsValid(Parent) || !Parent->IsAttached() || Placed.Contains(ParentId);
+			if (!bParentReady) continue;
+
+			CamSimFrames::FGeoPose ParentPose;
+			if (ParentId != Child->EntityId && Subsystem->GetEntityGeoPose(ParentId, ParentPose))
+			{
+				const FRotator Rel = Child->GetAttachRotation();
+				Child->ApplyGeoPose(CamSimFrames::AttachedChildPose(
+					ParentPose, Child->GetAttachOffsetFrd(), Rel.Yaw, Rel.Pitch, Rel.Roll));
+			}
+			// else: parent missing — hold the child's last pose
+			Placed.Add(Child->EntityId);
+			Pending.RemoveAtSwap(i);
+		}
+	}
+	for (const ACamSimEntity* Orphan : Pending)
+	{
+		UE_LOG(LogCamSim, Verbose, TEXT("EntityManager: entity %u attachment chain too deep or cyclic"),
+			Orphan->EntityId);
 	}
 }
 

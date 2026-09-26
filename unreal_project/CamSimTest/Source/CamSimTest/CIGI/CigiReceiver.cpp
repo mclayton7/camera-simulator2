@@ -15,15 +15,16 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiIncomingMsg.h"
 #include "cigicl/CigiBaseEventProcessor.h"
 #include "cigicl/CigiEntityCtrlV3.h"
+#include "cigicl/CigiEntityCtrlV3_3.h"
 #include "cigicl/CigiViewDefV3.h"
 #include "cigicl/CigiRateCtrlV3.h"      // opcode 8
 #include "cigicl/CigiArtPartCtrlV3.h"   // opcode 6
 #include "cigicl/CigiCompCtrlV3.h"      // opcode 4
 #include "cigicl/CigiSensorCtrlV3.h"    // opcode 17
 #include "cigicl/CigiViewCtrlV3.h"      // opcode 16
-#include "cigicl/CigiHatHotReqV3.h"     // opcode 24
-#include "cigicl/CigiLosSegReqV3.h"     // opcode 25
-#include "cigicl/CigiLosVectReqV3.h"    // opcode 26
+#include "cigicl/CigiHatHotReqV3_2.h"   // opcode 24 (class CCL builds for 3.2/3.3)
+#include "cigicl/CigiLosSegReqV3_2.h"   // opcode 25
+#include "cigicl/CigiLosVectReqV3_2.h"  // opcode 26
 #include "cigicl/CigiIGCtrlV3.h"       // opcode 1 (IG Control — host frame counter)
 #include "cigicl/CigiWaveCtrlV3.h"     // opcode 14 (Wave Control — ocean waves)
 #include "cigicl/CigiConfClampEntityCtrlV3.h" // opcode 3  (Conformal Clamped Entity)
@@ -50,11 +51,14 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiEntityCtrlV3*>(Packet);
+		// CCL builds CigiEntityCtrlV3_3 for a 3.3 session; all fields live in the base.
+		auto* Pkt = static_cast<CigiEntityCtrlV3_3*>(Packet);
 		if (!Receiver || !Pkt) return;
 
 		FCigiEntityState State;
 		State.EntityId    = static_cast<uint16>(Pkt->GetEntityID());
+		State.bAttached   = (Pkt->GetAttachState() == CigiBaseEntityCtrl::Attach);
+		State.ParentId    = static_cast<uint16>(Pkt->GetParentID());
 		State.EntityState = static_cast<uint8>(Pkt->GetEntityState());
 		State.EntityType  = static_cast<uint16>(Pkt->GetEntityType());
 		State.Latitude    = Pkt->GetLat();
@@ -253,13 +257,14 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiHatHotReqV3*>(Packet);
+		auto* Pkt = static_cast<CigiHatHotReqV3_2*>(Packet);
 		if (!Receiver || !Pkt) return;
 
 		FCigiHatHotRequest Req;
 		Req.HatHotId     = static_cast<uint16>(Pkt->GetHatHotID());
 		Req.ReqType      = static_cast<uint8>(Pkt->GetReqType());
 		Req.EntityId     = static_cast<uint16>(Pkt->GetEntityID());
+		Req.bEntityRelative = (Pkt->GetSrcCoordSys() == CigiBaseHatHotReq::Entity);
 		Req.Lat          = Pkt->GetLat();
 		Req.Lon          = Pkt->GetLon();
 		Req.Alt          = Pkt->GetAlt();
@@ -276,20 +281,23 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiLosSegReqV3*>(Packet);
+		auto* Pkt = static_cast<CigiLosSegReqV3_2*>(Packet);
 		if (!Receiver || !Pkt) return;
 
 		FCigiLosSegRequest Req;
 		Req.LosId    = static_cast<uint16>(Pkt->GetLosID());
 		Req.ReqType  = static_cast<uint8>(Pkt->GetReqType());
 		Req.EntityId = static_cast<uint16>(Pkt->GetEntityID());
+		Req.bSrcEntityRelative = (Pkt->GetSrcCoordSys() == CigiBaseLosSegReq::Entity);
+		Req.bDstEntityRelative = (Pkt->GetDstCoordSys() == CigiBaseLosSegReq::Entity);
+		Req.bDestEntityIDValid = Pkt->GetDestEntityIDValid();
+		Req.DestEntityId       = static_cast<uint16>(Pkt->GetDestEntityID());
 		Req.SrcLat   = Pkt->GetSrcLat();
 		Req.SrcLon   = Pkt->GetSrcLon();
 		Req.SrcAlt   = Pkt->GetSrcAlt();
 		Req.DstLat   = Pkt->GetDstLat();
 		Req.DstLon   = Pkt->GetDstLon();
 		Req.DstAlt   = Pkt->GetDstAlt();
-		// Note: DestEntityIDValid/DestEntityId only available in CIGI 3.2; default to false/0
 
 		Receiver->LosSegReqQueue.Enqueue(Req);
 	}
@@ -303,13 +311,14 @@ public:
 
 	void OnPacketReceived(CigiBasePacket* Packet) override
 	{
-		auto* Pkt = static_cast<CigiLosVectReqV3*>(Packet);
+		auto* Pkt = static_cast<CigiLosVectReqV3_2*>(Packet);
 		if (!Receiver || !Pkt) return;
 
 		FCigiLosVectRequest Req;
 		Req.LosId        = static_cast<uint16>(Pkt->GetLosID());
 		Req.ReqType      = static_cast<uint8>(Pkt->GetReqType());
 		Req.EntityId     = static_cast<uint16>(Pkt->GetEntityID());
+		Req.bEntityRelative = (Pkt->GetSrcCoordSys() == CigiBaseLosVectReq::Entity);
 		Req.VectAz       = Pkt->GetVectAz();
 		Req.VectEl       = Pkt->GetVectEl();
 		Req.MinRange     = Pkt->GetMinRange();

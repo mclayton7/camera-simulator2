@@ -16,6 +16,12 @@ struct FCigiEntityState
 	uint8  EntityState = 0;  // CCL enum: 0=Standby, 1=Active, 2=Remove
 	uint16 EntityType  = 0;  // Model lookup key (maps to FEntityTypeEntry)
 
+	// When bAttached is true these are the X/Y/Z offsets (metres) in the
+	// parent's body frame (X forward, Y right, Z down), and Yaw/Pitch/Roll are
+	// relative to the parent's axes. Otherwise they are geodetic.
+	bool   bAttached = false;
+	uint16 ParentId  = 0;
+
 	double Latitude  = 0.0;   // WGS-84 decimal degrees
 	double Longitude = 0.0;   // WGS-84 decimal degrees
 	float  Altitude  = 0.0f;  // metres above ellipsoid
@@ -218,6 +224,9 @@ struct FCigiHatHotRequest
 	uint8  ReqType     = 0;    // 0=HAT, 1=HOT, 2=Extended
 	uint8  UpdatePeriod = 0;   // frames between periodic updates (0=one-shot)
 	uint16 EntityId    = 0;
+	// Coordinate System = Entity: Lat/Lon/Alt hold X/Y/Z offsets (metres) in
+	// the body frame of EntityId (X forward, Y right, Z down).
+	bool   bEntityRelative = false;
 	double Lat         = 0.0;  // WGS-84 decimal degrees
 	double Lon         = 0.0;
 	double Alt         = 0.0;  // metres above ellipsoid
@@ -238,6 +247,11 @@ struct FCigiLosSegRequest
 	bool   bDestEntityIDValid = false;
 	uint16 EntityId          = 0;
 	uint16 DestEntityId      = 0;
+	// Entity-relative endpoints hold X/Y/Z body-frame offsets (metres). The
+	// source is relative to EntityId; the destination to DestEntityId when
+	// bDestEntityIDValid, otherwise to EntityId.
+	bool   bSrcEntityRelative = false;
+	bool   bDstEntityRelative = false;
 	double SrcLat = 0.0, SrcLon = 0.0, SrcAlt = 0.0;
 	double DstLat = 0.0, DstLon = 0.0, DstAlt = 0.0;
 };
@@ -256,6 +270,9 @@ struct FCigiLosVectRequest
 	uint8  ReqType      = 0;     // 0=Basic, 1=Extended
 	uint8  UpdatePeriod = 0;
 	uint16 EntityId     = 0;
+	// Entity-relative: Src* hold X/Y/Z body-frame offsets from EntityId, and
+	// VectAz/VectEl are measured from its +X axis / XY plane (+El = up).
+	bool   bEntityRelative = false;
 	float  VectAz       = 0.0f;  // true-north azimuth, degrees
 	float  VectEl       = 0.0f;  // elevation angle, degrees (+up)
 	float  MinRange     = 0.0f;  // metres

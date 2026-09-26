@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "CIGI/CigiPacketTypes.h"
+#include "Geospatial/CigiFrames.h"
 #include "Ocean/IOceanSurface.h"
 // StreamableManager gives us the complete FStreamableHandle type — needed so
 // the UHT-generated CamSimEntity.gen.cpp can destruct TSharedPtr<FStreamableHandle>.
@@ -57,8 +58,24 @@ public:
 	 */
 	void SetEntityType(uint16 Type);
 
-	/** Snap position and orientation from an incoming CIGI packet. */
+	/**
+	 * Snap position and orientation from an incoming CIGI packet. For an
+	 * attached (child) entity this records the offset from its parent; the
+	 * entity manager then places it every tick via ApplyGeoPose().
+	 */
 	void ApplyPose(const FCigiEntityState& S);
+
+	/** Place the entity at a resolved geodetic pose (orientation in local NEU). */
+	void ApplyGeoPose(const CamSimFrames::FGeoPose& Pose);
+
+	/** Current geodetic pose, read back from the globe anchor. */
+	bool GetGeoPose(CamSimFrames::FGeoPose& OutPose) const;
+
+	/** CIGI attachment (Entity Control Attach State = Attach). */
+	bool     IsAttached() const              { return bAttached; }
+	uint16   GetParentId() const             { return AttachParentId; }
+	FVector  GetAttachOffsetFrd() const      { return AttachOffsetFrd; }
+	FRotator GetAttachRotation() const       { return AttachRotation; }  // Pitch, Yaw, Roll relative to parent
 
 	/** Store linear/angular rates for dead-reckoning between CIGI updates. */
 	void SetRateControl(const FCigiRateControl& R);
@@ -157,6 +174,13 @@ private:
 		float   YawRate = 0.0f, PitchRate = 0.0f, RollRate = 0.0f; // deg/s body-frame
 		bool    bHasRate = false;
 	} DR;
+
+	// CIGI attachment: while attached, pose follows the parent and dead
+	// reckoning is suspended.
+	bool     bAttached       = false;
+	uint16   AttachParentId  = 0;
+	FVector  AttachOffsetFrd = FVector::ZeroVector;    // metres, parent body frame
+	FRotator AttachRotation  = FRotator::ZeroRotator;  // relative to parent axes
 
 	// Strobe state
 	bool  bStrobeEnabled = false;

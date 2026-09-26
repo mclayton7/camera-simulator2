@@ -149,6 +149,26 @@ slant ranges (< 50 km).
 
 ---
 
+## Entity-relative coordinates
+
+HAT/HOT, LOS Segment and LOS Vector requests whose coordinate system is Entity (1)
+give their points as X/Y/Z offsets in metres in the reference entity's body frame
+(X forward, Y right, Z down), not latitude/longitude/altitude.
+`FCigiQueryHandler::ResolvePoint()` converts them to geodetic using the entity's
+current pose (`UCamSimSubsystem::GetEntityGeoPose()`), then runs the normal query.
+
+- HAT/HOT and LOS Vector: relative to `Entity ID`.
+- LOS Segment: the source is relative to `Entity ID`; the destination is relative to
+  `Destination Entity ID` when *Destination Entity ID Valid* is set, otherwise to
+  `Entity ID`.
+- LOS Vector: azimuth is measured from the entity's +X axis and elevation from its
+  XY plane (positive = up); they are converted to true-north azimuth/elevation.
+- A request relative to an entity that doesn't exist gets an invalid response.
+
+The camera's own entity (`camera_entity_id`) can be used as the reference entity.
+
+---
+
 ## Entity ID in LOS Responses
 
 If the ray hits an actor that is an `ACamSimEntity`, the response includes the

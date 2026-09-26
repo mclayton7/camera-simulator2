@@ -78,6 +78,15 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospa
 				static_cast<uint32>(Req.HatHotId));
 		}
 
+		if (!ResolvePoint(Req.bEntityRelative, Req.EntityId, Req.Lat, Req.Lon, Req.Alt, Req.Lat, Req.Lon, Req.Alt))
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FCigiQueryHandler: HAT/HOT id=%u relative to unknown entity %u"),
+				static_cast<uint32>(Req.HatHotId), static_cast<uint32>(Req.EntityId));
+			Sender->EnqueueHatHotResponse(Req.HatHotId, false, 0, 0.0, 0.0);
+			continue;
+		}
+
 		// Trace from high above the query point straight down to below sea level.
 		// The query altitude is the reference point; we start the trace above any
 		// possible terrain regardless of query alt.
@@ -136,6 +145,19 @@ void FCigiQueryHandler::ProcessLosSegRequests(UWorld* World, const FCamSimGeospa
 	FCigiLosSegRequest Req;
 	while (Receiver->DequeueLosSegRequest(Req))
 	{
+		const uint16 DstRefId = Req.bDestEntityIDValid ? Req.DestEntityId : Req.EntityId;
+		if (!ResolvePoint(Req.bSrcEntityRelative, Req.EntityId, Req.SrcLat, Req.SrcLon, Req.SrcAlt,
+		                  Req.SrcLat, Req.SrcLon, Req.SrcAlt) ||
+		    !ResolvePoint(Req.bDstEntityRelative, DstRefId, Req.DstLat, Req.DstLon, Req.DstAlt,
+		                  Req.DstLat, Req.DstLon, Req.DstAlt))
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("FCigiQueryHandler: LOS seg id=%u relative to unknown entity"),
+				static_cast<uint32>(Req.LosId));
+			Sender->EnqueueLosResponse(Req.LosId, false, false, 0.0, 0.0, 0.0, 0.0, 0, false);
+			continue;
+		}
+
 		FVector SrcWorld = FVector::ZeroVector;
 		FVector DstWorld = FVector::ZeroVector;
 		if (!GeoToWorld(World, GeoProvider, Req.SrcLat, Req.SrcLon, Req.SrcAlt, SrcWorld) ||
@@ -207,6 +229,26 @@ void FCigiQueryHandler::ProcessLosVectRequests(UWorld* World, const FCamSimGeosp
 	FCigiLosVectRequest Req;
 	while (Receiver->DequeueLosVectRequest(Req))
 	{
+		if (Req.bEntityRelative)
+		{
+			// Source offset and vector are both in the entity's body frame.
+			CamSimFrames::FGeoPose Ref;
+			if (!Subsystem->GetEntityGeoPose(Req.EntityId, Ref))
+			{
+				UE_LOG(LogCamSim, Warning,
+					TEXT("FCigiQueryHandler: LOS vect id=%u relative to unknown entity %u"),
+					static_cast<uint32>(Req.LosId), static_cast<uint32>(Req.EntityId));
+				Sender->EnqueueLosResponse(Req.LosId, false, false, 0.0, 0.0, 0.0, 0.0, 0, false);
+				continue;
+			}
+			CamSimFrames::BodyOffsetToGeodetic(Ref, FVector(Req.SrcLat, Req.SrcLon, Req.SrcAlt),
+				Req.SrcLat, Req.SrcLon, Req.SrcAlt);
+			double TrueAz = 0.0, TrueEl = 0.0;
+			CamSimFrames::BodyAzElToTrueAzEl(Ref.Neu, Req.VectAz, Req.VectEl, TrueAz, TrueEl);
+			Req.VectAz = static_cast<float>(TrueAz);
+			Req.VectEl = static_cast<float>(TrueEl);
+		}
+
 		// Compute the end point of the vector in geodetic using a flat-earth
 		// approximation at the source location (consistent with ComputeGeometricLOS).
 		const double AzRad   = FMath::DegreesToRadians(static_cast<double>(Req.VectAz));
@@ -318,6 +360,20 @@ bool FCigiQueryHandler::WorldToGeo(
 	const FVector& WorldPos, double& OutLat, double& OutLon, double& OutAltM) const
 {
 	return GeoProvider.WorldToGeo(World, WorldPos, OutLat, OutLon, OutAltM);
+}
+
+bool FCigiQueryHandler::ResolvePoint(bool bEntityRelative, uint16 EntityId, double A, double B, double C,
+	double& OutLat, double& OutLon, double& OutAlt) const
+{
+	if (!bEntityRelative)
+	{
+		OutLat = A; OutLon = B; OutAlt = C;
+		return true;
+	}
+	CamSimFrames::FGeoPose Ref;
+	if (!Subsystem->GetEntityGeoPose(EntityId, Ref)) return false;
+	CamSimFrames::BodyOffsetToGeodetic(Ref, FVector(A, B, C), OutLat, OutLon, OutAlt);
+	return true;
 }
 
 uint16 FCigiQueryHandler::ResolveEntityId(const AActor* HitActor) const
