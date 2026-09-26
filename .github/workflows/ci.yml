@@ -263,7 +263,7 @@ jobs:
           node-version: 20
 
       - name: Run CI validation
-        run: bash scripts/ci_validate.sh || true
+        run: bash scripts/ci_validate.sh
 
       - name: Collect logs
         if: always()

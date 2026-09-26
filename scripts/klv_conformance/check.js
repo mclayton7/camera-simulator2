@@ -10,10 +10,13 @@
 //
 //   node check.js stream <file.ts | klv.bin | udp://addr:port> [--max-age-sec N]
 //                        [--min-packets N] [--duration-sec N]
+//                        [--expect-position LAT,LON,ALT]
 //       Extracts the KLV data stream (via ffmpeg for .ts and udp://, which is
 //       captured for --duration-sec, default 5) and checks every
 //       ST 0601 packet: parses, checksum valid, no unknown tags, and the
-//       timestamp (tag 2) is UTC within N seconds of now.
+//       timestamp (tag 2) is UTC within N seconds of now. With
+//       --expect-position, the sensor position (tags 13/14/15) must match the
+//       pose the CIGI host commanded, which proves the camera follows the host.
 //
 // Exit code 0 = conformant, 1 = failures, 2 = usage / IO error.
 
@@ -200,7 +203,7 @@ function berLength(buf, pos) {
 	return { header: 1 + n, length }
 }
 
-function checkStream(path, maxAgeSec, minPackets, durationSec) {
+function checkStream(path, maxAgeSec, minPackets, durationSec, expectPosition) {
 	const data = extractKlv(path, durationSec)
 	const nowUs = Date.now() * 1000
 	let count = 0
@@ -224,6 +227,12 @@ function checkStream(path, maxAgeSec, minPackets, durationSec) {
 			if (prevTs !== null && ts < prevTs) fail(ctx, 'timestamp went backwards')
 			prevTs = ts
 		}
+		if (byKey && expectPosition) {
+			const [lat, lon, alt] = expectPosition
+			near(ctx, byKey, 13, lat, 1e-4)
+			near(ctx, byKey, 14, lon, 1e-4)
+			near(ctx, byKey, 15, alt, 5)
+		}
 		count++
 		pos = data.indexOf(ST0601_KEY, end)
 	}
@@ -233,20 +242,26 @@ function checkStream(path, maxAgeSec, minPackets, durationSec) {
 
 function main() {
 	const [mode, path, ...rest] = process.argv.slice(2)
-	const opt = (name, dflt) => {
+	const optStr = name => {
 		const i = rest.indexOf(name)
-		return i === -1 ? dflt : Number(rest[i + 1])
+		return i === -1 ? undefined : rest[i + 1]
+	}
+	const opt = (name, dflt) => optStr(name) === undefined ? dflt : Number(optStr(name))
+	const position = optStr('--expect-position')?.split(',').map(Number)
+	if (position && (position.length !== 3 || position.some(Number.isNaN))) {
+		console.error('--expect-position takes LAT,LON,ALT')
+		process.exit(2)
 	}
 	if (!path || !['packets', 'stream'].includes(mode)) {
 		console.error('usage: check.js packets <packets.jsonl>')
-		console.error('       check.js stream <file.ts|klv.bin|udp://addr:port> [--max-age-sec N] [--min-packets N] [--duration-sec N]')
+		console.error('       check.js stream <file.ts|klv.bin|udp://addr:port> [--max-age-sec N] [--min-packets N] [--duration-sec N] [--expect-position LAT,LON,ALT]')
 		process.exit(2)
 	}
 	let count
 	try {
 		count = mode === 'packets'
 			? checkPackets(path)
-			: checkStream(path, opt('--max-age-sec', 3600), opt('--min-packets', 1), opt('--duration-sec', 5))
+			: checkStream(path, opt('--max-age-sec', 3600), opt('--min-packets', 1), opt('--duration-sec', 5), position)
 	} catch (e) {
 		console.error(`error: ${e.message}`)
 		process.exit(2)

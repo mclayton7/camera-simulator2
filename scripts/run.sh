@@ -378,7 +378,12 @@ if [ "${MODE}" = "packaged" ]; then
     echo "    Binary: ${BINARY}"
     env "${DDC_ENV[@]}" "${BINARY}" "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
 else
-    LOG_FILE="${LOG_DIR}/CamSimTest.log"
+    if [ "${PLATFORM}" = "mac" ]; then
+        # UE on macOS logs to ~/Library/Logs/<Project>, not the project Saved/ dir
+        LOG_FILE="${HOME}/Library/Logs/CamSimTest/CamSimTest.log"
+    else
+        LOG_FILE="${LOG_DIR}/CamSimTest.log"
+    fi
     echo "    Editor: ${UE_BINARY}"
     env "${DDC_ENV[@]}" "${UE_BINARY}" "${UE_PROJECT}" -game "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
 fi
