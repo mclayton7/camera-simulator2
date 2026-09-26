@@ -211,6 +211,8 @@ void FVideoEncoder::ApplyEncoderOptions(bool bWantH265)
 	{
 		av_opt_set(VideoCodecCtx->priv_data, "preset", TCHAR_TO_ANSI(*Config.H264Preset), 0);
 		av_opt_set(VideoCodecCtx->priv_data, "tune",   TCHAR_TO_ANSI(*Config.H264Tune),   0);
+		// Signal CBR HRD so downstream links and decoders see a constant rate.
+		av_opt_set(VideoCodecCtx->priv_data, "nal-hrd", "cbr", 0);
 	}
 
 	// Phase 21E.1 — ROVER Baseline profile override.
@@ -355,6 +357,11 @@ bool FVideoEncoder::OpenVideoStream()
 	VideoCodecCtx->time_base    = AVRational{1, (int)FMath::RoundToInt(EffectiveFps)};
 	VideoCodecCtx->framerate    = AVRational{(int)FMath::RoundToInt(EffectiveFps), 1};
 	VideoCodecCtx->bit_rate     = Config.VideoBitrate;
+	// Cap the peak rate so complex frames can't burst past the link budget:
+	// over any window of T seconds the stream stays within
+	// bitrate * (T + VbvBufferSec). Honoured by libx264, libx265 and NVENC.
+	VideoCodecCtx->rc_max_rate    = Config.VideoBitrate;
+	VideoCodecCtx->rc_buffer_size = static_cast<int>(Config.VideoBitrate * VbvBufferSec);
 	VideoCodecCtx->gop_size     = (int)FMath::RoundToInt(EffectiveFps);
 	VideoCodecCtx->max_b_frames = 0; // zero-latency
 

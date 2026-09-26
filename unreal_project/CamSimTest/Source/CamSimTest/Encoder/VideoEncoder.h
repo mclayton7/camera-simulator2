@@ -50,6 +50,9 @@ public:
 	virtual bool IsOpen() const override { return bIsOpen; }
 	virtual uint64 GetSuccessfulFrameCount() const override { return (uint64)SuccessfulFrameCount; }
 
+	/** VBV buffer, in seconds of VideoBitrate. Bounds bursts on the UDP link. */
+	static constexpr double VbvBufferSec = 0.5;
+
 private:
 	const FCamSimConfig& Config;
 	bool bIsOpen = false;
