@@ -445,7 +445,8 @@ entity_scale:
 # Env: CAMSIM_SCENARIO_ENABLED, CAMSIM_SCENARIO_TIME_SCALE
 scenario:
   enabled: false
-  # Time multiplier. 2.0 = double speed.
+  # Scenario time is the sim clock. time_scale multiplies the clock's rate
+  # when the scenario starts (2.0 = double speed; sim_time_rate is preferred).
   time_scale: 1.0
   entities:
     - entity_id: 2001
@@ -502,8 +503,9 @@ scenario:
       leader_entity_id: 0
       # formation_offset_m: [0, 0, 0]
       inherit_heading: true
-  # Phase 23C — Scenario time-of-day start hour (0-24).
-  # Env: CAMSIM_SCENARIO_START_HOUR
+  # Phase 23C — local solar hour (0-24) the sim clock is set to when the
+  # scenario starts (sun and pattern-of-life schedules follow it). Remove to
+  # keep the sim clock's own time. Env: CAMSIM_SCENARIO_START_HOUR
   start_hour: 6.0
   # Phase 23B — Event triggers (condition → action).
   # Env: none (YAML only).

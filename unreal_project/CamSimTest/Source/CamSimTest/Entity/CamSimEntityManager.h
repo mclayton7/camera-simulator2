@@ -107,7 +107,9 @@ private:
 	// Runtime update throttling to reduce transform churn under large-entity loads.
 	TMap<uint16, double> LastPoseApplySeconds;
 	TMap<uint16, double> LastScenarioUpdateSeconds;
-	double ScenarioStartSeconds = 0.0;
+	uint64 ScenarioStartMicros = 0;   // sim time the scenario started
+	uint64 LastScenarioMicros  = 0;   // sim time of the previous scenario tick
+	double ScenarioLongitude   = 0.0; // for local solar time of day
 	TSet<uint16> ScenarioRemovedEntities;
 
 	// Phase 23: Scenario engine (waypoints, triggers, pattern-of-life)

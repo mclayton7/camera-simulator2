@@ -34,7 +34,7 @@ void FScenarioRandomizer::RandomizeEnvironment(FCamSimConfig& Cfg, FRandomStream
 	const FCamSimConfig::FRandomizationConfig& R = Cfg.Randomization;
 
 	// Time-of-day jitter
-	if (R.StartHourJitterHrs > 0.0f)
+	if (R.StartHourJitterHrs > 0.0f && Cfg.ScenarioStartHour >= 0.0f)
 	{
 		Cfg.ScenarioStartHour += Rng.FRandRange(-R.StartHourJitterHrs, R.StartHourJitterHrs);
 		Cfg.ScenarioStartHour = FMath::Fmod(Cfg.ScenarioStartHour + 24.0f, 24.0f);

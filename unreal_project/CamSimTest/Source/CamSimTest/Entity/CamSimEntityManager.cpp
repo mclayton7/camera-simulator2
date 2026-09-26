@@ -8,6 +8,7 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "Environment/CamSimParticleManager.h"
 #include "Scenario/ScenarioEngine.h"
+#include "Time/SimClock.h"
 #include "Scenario/ScenarioRandomizer.h"
 #include "CIGI/CigiReceiver.h"
 #include "DIS/DisEntityAdapter.h"
@@ -596,11 +597,14 @@ void FCamSimEntityManager::ProcessScenarioEntities()
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 	if (!Cfg.bScenarioEnabled || Cfg.ScenarioEntities.IsEmpty()) return;
 
+	// Wall time only for per-entity update rate limiting.
 	const double NowSeconds = FPlatformTime::Seconds();
-	if (ScenarioStartSeconds <= 0.0)
-	{
-		ScenarioStartSeconds = NowSeconds;
 
+	// Scenario time is sim time (ROADMAP 2.1): it pauses, scales and steps
+	// with the sim clock, and its time of day matches the sun's.
+	FSimClock& Clock = FSimClock::Get();
+	if (!ScenarioEngine)
+	{
 		// Phase 23E: Apply randomization to a config copy before initializing
 		FCamSimConfig WorkCfg = Cfg;
 		if (WorkCfg.Randomization.bEnabled)
@@ -608,15 +612,33 @@ void FCamSimEntityManager::ProcessScenarioEntities()
 			FScenarioRandomizer::Randomize(WorkCfg);
 		}
 
+		// scenario.start_hour is local solar time at the start position.
+		if (WorkCfg.ScenarioStartHour >= 0.0f)
+		{
+			const double UtcHour = FMath::Fmod(WorkCfg.ScenarioStartHour - WorkCfg.StartLongitude / 15.0 + 48.0, 24.0);
+			Clock.SetUtc(Clock.NowUtc().GetDate() + FTimespan::FromHours(UtcHour));
+		}
+		if (!FMath::IsNearlyEqual(WorkCfg.ScenarioTimeScale, 1.0f))
+		{
+			Clock.SetRate(Clock.GetRate() * FMath::Max(0.0f, WorkCfg.ScenarioTimeScale));
+		}
+
 		ScenarioEngine = MakeUnique<FScenarioEngine>();
 		ScenarioEngine->Initialize(WorkCfg);
-		UE_LOG(LogCamSim, Log, TEXT("EntityManager: scenario orchestration enabled (%d entities, %d triggers, time_scale=%.2f)"),
-			WorkCfg.ScenarioEntities.Num(), WorkCfg.ScenarioTriggers.Num(), WorkCfg.ScenarioTimeScale);
+		ScenarioStartMicros = LastScenarioMicros = Clock.NowMicros();
+		ScenarioLongitude = WorkCfg.StartLongitude;
+		UE_LOG(LogCamSim, Log, TEXT("EntityManager: scenario orchestration enabled (%d entities, %d triggers) at sim time %s, clock rate %.2f"),
+			WorkCfg.ScenarioEntities.Num(), WorkCfg.ScenarioTriggers.Num(), *Clock.NowUtc().ToIso8601(), Clock.GetRate());
 	}
 
-	const double ScenarioElapsed = (NowSeconds - ScenarioStartSeconds) * FMath::Max(0.0f, Cfg.ScenarioTimeScale);
-	const float  DeltaTime = 1.0f / 30.0f; // fixed frame rate
-	const float  TOD = FMath::Fmod(Cfg.ScenarioStartHour + static_cast<float>(ScenarioElapsed / 3600.0), 24.0f);
+	const uint64 SimMicros = Clock.NowMicros();
+	const double ScenarioElapsed = (SimMicros - ScenarioStartMicros) / 1e6;
+	const float  DeltaTime = static_cast<float>((SimMicros - FMath::Min(LastScenarioMicros, SimMicros)) / 1e6);
+	LastScenarioMicros = SimMicros;
+	// Local solar time of day, for pattern-of-life schedules.
+	const FDateTime SimNow = FSimClock::FromMicros(SimMicros);
+	const float TOD = static_cast<float>(FMath::Fmod(
+		SimNow.GetTimeOfDay().GetTotalHours() + ScenarioLongitude / 15.0 + 48.0, 24.0));
 
 	// Despawn check (still handled here for rate-limiting integration)
 	for (const FCamSimConfig::FScenarioEntityConfig& Spec : Cfg.ScenarioEntities)

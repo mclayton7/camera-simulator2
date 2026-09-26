@@ -368,7 +368,7 @@ struct FCamSimConfig
 
 	bool bScenarioEnabled = false;
 	float ScenarioTimeScale = 1.0f;
-	float ScenarioStartHour = 6.0f;
+	float ScenarioStartHour = -1.0f;  // local solar hour applied to the sim clock at scenario start; <0 = don't
 	TArray<FScenarioEntityConfig> ScenarioEntities;
 	TArray<FScenarioTrigger> ScenarioTriggers;
 	FDamageTransitionConfig DamageTransition;

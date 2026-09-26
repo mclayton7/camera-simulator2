@@ -229,6 +229,15 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 		return;
 	}
 
+	// Sim time since the previous frame (frames carry sim-clock timestamps).
+	// Without a usable pair of timestamps assume the nominal 30 fps.
+	FrameDeltaSec = 1.0f / 30.0f;
+	if (Telemetry.TimestampUs != 0 && LastFrameTimestampUs != 0 && Telemetry.TimestampUs >= LastFrameTimestampUs)
+	{
+		FrameDeltaSec = FMath::Min(static_cast<float>((Telemetry.TimestampUs - LastFrameTimestampUs) / 1e6), 1.0f);
+	}
+	LastFrameTimestampUs = Telemetry.TimestampUs;
+
 	// 27A — GPU post-process material handles tone mapping and noise on GPU.
 	// Only run cheap stateful CPU effects (defect pixels, quantization, overlay).
 	if (bGpuSensorEffectsActive_)
@@ -352,8 +361,7 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 		// Step 1.5: 16E — Thermal drift (IR only, after AGC/quantization)
 		if (Mode == ESensorMode::IR && Cfg.bThermalDriftEnabled)
 		{
-			// Assume 30fps (matches DefaultEngine.ini FixedFrameRate=30)
-			ApplyThermalDrift(Pixels, Cfg, 1.0f / 30.0f);
+			ApplyThermalDrift(Pixels, Cfg, FrameDeltaSec);
 		}
 
 		// Step 1C: 16L — NVG IR pointer (NVG only, after waveband remap)
@@ -1675,7 +1683,7 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 	float DriftDN = 0.0f;
 	if (bIsIR && Cfg.bThermalDriftEnabled)
 	{
-		const float Dt = 1.0f / 30.0f;
+		const float Dt = FrameDeltaSec;
 		DriftElapsedSec += Dt;
 		DriftAccumulatorDN += Cfg.ThermalDriftRate * Dt;
 		if (Cfg.NUCIntervalSec > 0.0f && DriftElapsedSec >= Cfg.NUCIntervalSec)

@@ -188,6 +188,8 @@ private:
 	// 16E: Thermal drift state
 	float DriftAccumulatorDN = 0.0f;   // current baseline shift in DN
 	float DriftElapsedSec    = 0.0f;   // time since last NUC reset
+	uint64 LastFrameTimestampUs = 0;   // sim time of the previous frame
+	float  FrameDeltaSec     = 1.0f / 30.0f;  // sim time since the previous frame
 
 	// 16G: AGC lag smoothed thresholds
 	float AGCSmoothedLo = -1.0f;       // -1 = not yet initialized

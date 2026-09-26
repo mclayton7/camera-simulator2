@@ -95,6 +95,7 @@ TArray<FCigiEntityState> FScenarioEngine::Tick(
 {
 	PendingRemovals.Reset();
 	++FrameCount;
+	LastDeltaSec = DeltaTimeSec;
 
 	TArray<FCigiEntityState> Output;
 	Output.Reserve(EntityConfigs.Num());
@@ -182,7 +183,7 @@ FCigiEntityState FScenarioEngine::InterpolateWaypoints(
 	// Handle pause at current waypoint
 	if (State.bPaused)
 	{
-		State.PauseRemaining -= (1.0f / 30.0f); // fixed frame time
+		State.PauseRemaining -= LastDeltaSec;
 		if (State.PauseRemaining <= 0.0f)
 		{
 			State.bPaused = false;

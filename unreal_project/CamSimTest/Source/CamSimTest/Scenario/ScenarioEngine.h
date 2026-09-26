@@ -73,6 +73,7 @@ private:
 	int32 FrameCount = 0;
 
 	TMap<uint16, FWaypointState> WaypointStates;
+	float LastDeltaSec = 0.0f;  // scenario seconds since the previous Tick
 	TArray<FTriggerState>        TriggerStates;
 	TMap<uint16, float>          SpeedOverrides;
 	TArray<uint16>               PendingRemovals;

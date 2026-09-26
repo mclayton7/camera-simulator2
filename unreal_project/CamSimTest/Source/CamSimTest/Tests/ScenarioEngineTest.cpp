@@ -106,6 +106,44 @@ bool FWaypointPauseTest::RunTest(const FString& Parameters)
 }
 
 // ---------------------------------------------------------------------------
+// Test 2b: the pause counts scenario (sim) time, not frames: one tick that
+// advances 6 s ends a 5 s pause, whatever the frame rate.
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWaypointPauseSimTimeTest,
+	"CamSim.Phase23.ScenarioEngine.WaypointPauseUsesSimTime",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FWaypointPauseSimTimeTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Cfg;
+	FCamSimConfig::FScenarioEntityConfig Spec;
+	Spec.EntityId = 1;
+	Spec.EntityType = 1001;
+	Spec.BaseSpeedMps = 1000.0f;
+	FCamSimConfig::FWaypointConfig WpA, WpB, WpC;
+	WpA.Latitude = 38.0;    WpA.Longitude = -77.0;
+	WpB.Latitude = 38.0001; WpB.Longitude = -77.0; WpB.PauseSec = 5.0f;
+	WpC.Latitude = 38.0002; WpC.Longitude = -77.0;
+	Spec.Waypoints = { WpA, WpB, WpC };
+	Cfg.ScenarioEntities.Add(Spec);
+	Cfg.bScenarioEnabled = true;
+
+	FScenarioEngine Engine;
+	Engine.Initialize(Cfg);
+	TMap<uint16, ACamSimEntity*> EmptyMap;
+
+	Engine.Tick(1.0, 1.0f / 30.0f, 12.0f, EmptyMap);    // arrives at WpB, pause starts
+	Engine.Tick(7.0, 6.0f, 12.0f, EmptyMap);            // 6 s later: pause over
+	const TArray<FCigiEntityState> States = Engine.Tick(20.0, 13.0f, 12.0f, EmptyMap);
+	if (TestEqual(TEXT("one state"), States.Num(), 1))
+	{
+		TestTrue(FString::Printf(TEXT("left WpB for WpC (lat %.6f)"), States[0].Latitude),
+			FMath::Abs(States[0].Latitude - 38.0002) < 0.00002);
+	}
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 // Test 3: WaypointLoop — entity loops with bLoopWaypoints=true
 // ---------------------------------------------------------------------------
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWaypointLoopTest,

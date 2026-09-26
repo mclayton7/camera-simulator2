@@ -427,7 +427,8 @@ scenario authoring and CI smoke scenes.
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
 | `scenario.enabled` | bool | `false` | `CAMSIM_SCENARIO_ENABLED` | Enable built-in scenario entity orchestration. |
-| `scenario.time_scale` | float | `1.0` | `CAMSIM_SCENARIO_TIME_SCALE` | Multiplier for scenario time progression. |
+| `scenario.time_scale` | float | `1.0` | `CAMSIM_SCENARIO_TIME_SCALE` | Scenario time is the sim clock; this multiplies the clock's rate when the scenario starts (prefer `sim_time_rate`). |
+| `scenario.start_hour` | float | *(unset)* | `CAMSIM_SCENARIO_START_HOUR` | Local solar hour (0–24, at the start position) the sim clock is set to when the scenario starts; the sun and pattern-of-life schedules follow it. Unset: keep the sim clock's time. |
 | `scenario.entities` | array | `[]` | -- | Scripted entity definitions. |
 
 Per-entry fields in `scenario.entities[]`:

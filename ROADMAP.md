@@ -227,11 +227,17 @@ Bugs found and fixed along the way:
 - The fallback sun model (no CesiumSunSky) got UTC instead of local solar time and a
   compass azimuth 180° off; the telemetry sun elevation only updated on sky-light recaptures.
 
+Scenario and time steps (done 2026-09-26): scenario time is sim time. Elapsed time,
+`DeltaTime` and the pattern-of-life time of day (local solar time) come from the clock,
+`scenario.start_hour` sets the clock when the scenario starts, and `scenario.time_scale`
+multiplies its rate. The fixed 1/30 s steps are gone: waypoint pauses use the tick's
+scenario delta, and IR thermal drift/NUC use the time between frames' sim timestamps (so
+a frozen clock freezes drift). Test: `Phase23.ScenarioEngine.WaypointPauseUsesSimTime`.
+
 Still open for 2.1:
-- The scenario engine keeps its own clock (`FPlatformTime` × `ScenarioTimeScale`, from
-  `ScenarioStartHour`); it should read the sim clock.
-- Fixed `1/30 s` time steps: scenario `DeltaTime`, waypoint pauses, IR thermal drift.
-- Lockstep needs a driver (the 2.4 control API) and must also gate the engine tick.
+- Lockstep needs a driver (the 2.4 control API) and must also gate the engine tick; other
+  per-tick integrations (dead reckoning, gimbal slew, ocean waves) still use UE's
+  `DeltaTime` rather than sim time.
 - DIS PDU timestamps are parsed but unused (2.3).
 - Night renders as daylight: the scene capture's auto exposure brightens a sun-below-horizon
   scene. Needs a sensor exposure model (Milestone 3).
