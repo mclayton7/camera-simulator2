@@ -130,6 +130,15 @@ phase26:
   target_track_gate_width:  0
   target_track_gate_height: 0
 
+# --- Terrain readiness gate ---
+# Hold frames until Cesium tiles for the view have loaded (startup + teleports).
+# Env: CAMSIM_TERRAIN_GATE_ENABLED / _MIN_LOAD_PROGRESS / _TIMEOUT_SEC / _TELEPORT_M
+terrain_gate:
+  enabled: true
+  min_load_progress: 99.0    # percent, 0-100
+  timeout_sec: 30.0          # stream anyway after this long
+  teleport_distance_m: 5000  # a larger jump in one tick re-arms the gate
+
 # --- Video Output ---
 
 # UDP multicast group (or unicast address) for the MPEG-TS output stream.

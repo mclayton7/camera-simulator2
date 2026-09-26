@@ -11,6 +11,7 @@
 #include "Sensor/IPixelPipeline.h"   // IPixelPipeline
 #include "Geospatial/GroundSpeedEstimator.h"
 #include "Geospatial/CigiFrames.h"
+#include "Geospatial/TerrainReadinessGate.h"
 // FEncoderThread is intentionally held behind a TUniquePtr with a custom
 // forward-declared deleter (see `FEncoderThreadDeleter` below). UHT's
 // generated .gen.cpp emits DEFINE_VTABLE_PTR_HELPER_CTOR_NS(, ACamSimCamera),
@@ -95,6 +96,9 @@ public:
 	// Phase 27B — expose drop stats to subsystem for health JSON
 	const FFrameDropStats& GetFrameDropStats() const { return FrameDropStats_; }
 	bool IsTrackingFrameDrops()                const { return bTrackFrameDrops_; }
+
+	/** False while frames are held waiting for terrain tiles to load. */
+	bool IsTerrainReady() const { return TerrainGate_.IsReady(); }
 
 	/** Current platform geodetic pose (orientation in local NEU). */
 	bool GetPlatformGeoPose(CamSimFrames::FGeoPose& OutPose) const;
@@ -300,6 +304,14 @@ private:
 	uint16   CameraAttachParentId_  = 0;
 	FVector  CameraAttachOffsetFrd_ = FVector::ZeroVector;
 	FRotator CameraAttachRotation_  = FRotator::ZeroRotator;
+
+	// Terrain readiness gate (holds frames until tiles for the view load)
+	FTerrainReadinessGate TerrainGate_;
+	double GatePrevLat_      = 0.0;
+	double GatePrevLon_      = 0.0;
+	bool   bHasGatePosition_ = false;
+	/** Update the gate from tileset load progress; returns true if frames may be emitted. */
+	bool UpdateTerrainGate();
 
 	/** Move the platform to a geodetic pose and update pose telemetry. */
 	void ApplyPlatformPose(const CamSimFrames::FGeoPose& Pose, double TimeSec);

@@ -14,7 +14,7 @@ class IHttpRouter;
  *
  * Routes:
  *   GET /live    -- 200 if game loop ticked within 5s
- *   GET /ready   -- 200 if encoder + CIGI + first frame all OK
+ *   GET /ready   -- 200 if encoder + CIGI + first frame + terrain all OK
  *   GET /metrics -- Prometheus exposition format
  */
 struct FCamSimHealthServer
@@ -27,6 +27,7 @@ struct FCamSimHealthServer
 	           FStatusQueryFn InIsEncoderReady,
 	           FStatusQueryFn InIsCigiReady,
 	           FStatusQueryFn InHasFirstFrame,
+	           FStatusQueryFn InIsTerrainReady,
 	           TFunction<FString()> InGetPrometheusMetrics);
 
 	/** Stop the HTTP server. */
@@ -52,6 +53,7 @@ private:
 	FStatusQueryFn IsEncoderReady;
 	FStatusQueryFn IsCigiReady;
 	FStatusQueryFn HasFirstFrame;
+	FStatusQueryFn IsTerrainReady;
 	TFunction<FString()> GetPrometheusMetrics;
 
 	/**

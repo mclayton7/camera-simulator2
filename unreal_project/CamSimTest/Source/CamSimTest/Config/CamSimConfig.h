@@ -720,6 +720,17 @@ struct FCamSimConfig
 	};
 	FPhase26Config Phase26;
 
+	// Terrain readiness gate: hold frame output until Cesium tiles for the
+	// view have loaded (startup and teleports). See FTerrainReadinessGate.
+	struct FTerrainGateConfig
+	{
+		bool   bEnabled           = true;
+		float  MinLoadProgressPct = 99.0f;   // 0-100
+		float  TimeoutSec         = 30.0f;
+		double TeleportDistanceM  = 5000.0;
+	};
+	FTerrainGateConfig TerrainGate;
+
 	// HUD/OSD overlay burn-in (Phase 20)
 	FHudOverlayConfig OverlayConfig;
 

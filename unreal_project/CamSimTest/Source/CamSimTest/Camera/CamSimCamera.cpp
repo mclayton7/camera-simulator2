@@ -122,6 +122,15 @@ void ACamSimCamera::BeginPlay()
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 
 	bTrackFrameDrops_ = Cfg.Performance.bTrackFrameDropsByCategory;
+
+	{
+		FTerrainReadinessGate::FSettings GateSettings;
+		GateSettings.bEnabled           = Cfg.TerrainGate.bEnabled;
+		GateSettings.MinLoadProgressPct = Cfg.TerrainGate.MinLoadProgressPct;
+		GateSettings.TimeoutSec         = Cfg.TerrainGate.TimeoutSec;
+		GateSettings.TeleportDistanceM  = Cfg.TerrainGate.TeleportDistanceM;
+		TerrainGate_.Configure(GateSettings);
+	}
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: FrameDropTracking=%s"),
 		bTrackFrameDrops_ ? TEXT("enabled") : TEXT("disabled"));
 
@@ -569,6 +578,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 	DispatchQueuedResultIfFree();
 
 	if (SensorComp && !SensorComp->IsOn()) return;
+	if (!UpdateTerrainGate())              return;
 	if (ShouldSkipFrameForDecimation())    return;
 
 	// Issue new capture if the readback slot is free (state is Idle — no DMA
@@ -577,6 +587,45 @@ void ACamSimCamera::Tick(float DeltaTime)
 	{
 		CaptureAndEncode();
 	}
+}
+
+bool ACamSimCamera::UpdateTerrainGate()
+{
+	float MinProgressPct = -1.0f;  // < 0 = no tilesets
+	for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Subsystem->GetCachedTilesets())
+	{
+		if (const ACesium3DTileset* T = Weak.Get())
+		{
+			const float P = T->GetLoadProgress();
+			MinProgressPct = (MinProgressPct < 0.0f) ? P : FMath::Min(MinProgressPct, P);
+		}
+	}
+
+	const double MovedM = bHasGatePosition_
+		? FGroundSpeedEstimator::DistanceM(GatePrevLat_, GatePrevLon_,
+			CurrentTelemetry.Latitude, CurrentTelemetry.Longitude)
+		: 0.0;
+	GatePrevLat_ = CurrentTelemetry.Latitude;
+	GatePrevLon_ = CurrentTelemetry.Longitude;
+	bHasGatePosition_ = true;
+
+	const bool bWasReady = TerrainGate_.IsReady();
+	const bool bReady = TerrainGate_.Update(FPlatformTime::Seconds(), MinProgressPct, MovedM);
+	if (bReady != bWasReady)
+	{
+		if (bReady && TerrainGate_.DidTimeOut())
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("ACamSimCamera: terrain gate timed out at %.1f%% loaded — streaming anyway"), MinProgressPct);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: terrain %s (load progress %.1f%%)"),
+				bReady ? TEXT("ready — streaming frames") : TEXT("reloading after teleport — holding frames"),
+				MinProgressPct);
+		}
+	}
+	return bReady;
 }
 
 void ACamSimCamera::EmitHeartbeatIfDue()
@@ -617,7 +666,7 @@ void ACamSimCamera::EmitHeartbeatIfDue()
 			}
 			UE_LOG(LogCamSim, Log,
 				TEXT("ACamSimCamera: tileset='%s' progress=%.1f%% SSE=%.1f loaded=%d dataMB=%.1f maxLoads=%d"),
-				*T->GetName(), Progress * 100.0f,
+				*T->GetName(), Progress,  // GetLoadProgress() is already 0-100
 				T->MaximumScreenSpaceError,
 				TilesLoaded, DataBytes / (1024.0 * 1024.0),
 				T->MaximumSimultaneousTileLoads);

@@ -1224,6 +1224,18 @@ FCamSimConfig FCamSimConfig::Load()
 			YamlFloat (P, "target_track_gate_height", Cfg.Phase26.TargetTrackGateHeight);
 		}
 
+		// Terrain readiness gate
+		if (Root.has_child("terrain_gate"))
+		{
+			ryml::ConstNodeRef G = Root["terrain_gate"];
+			float TeleportM = static_cast<float>(Cfg.TerrainGate.TeleportDistanceM);
+			YamlBool  (G, "enabled",              Cfg.TerrainGate.bEnabled);
+			YamlFloat (G, "min_load_progress",    Cfg.TerrainGate.MinLoadProgressPct);
+			YamlFloat (G, "timeout_sec",          Cfg.TerrainGate.TimeoutSec);
+			YamlFloat (G, "teleport_distance_m",  TeleportM);
+			Cfg.TerrainGate.TeleportDistanceM = TeleportM;
+		}
+
 		// Phase 22G: First-person view
 		YamlInt  (Root, "fps_entity_id",    Cfg.FpsEntityId);
 		YamlFloat(Root, "fps_eye_height_m", Cfg.FpsEyeHeightM);
@@ -1631,6 +1643,16 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		P.PlatformTailNumber    = GetEnv     (TEXT("CAMSIM_PLATFORM_TAIL_NUMBER"),      P.PlatformTailNumber);
 		P.TargetTrackGateWidth  = GetEnvFloat(TEXT("CAMSIM_TARGET_TRACK_GATE_WIDTH"),   P.TargetTrackGateWidth);
 		P.TargetTrackGateHeight = GetEnvFloat(TEXT("CAMSIM_TARGET_TRACK_GATE_HEIGHT"),  P.TargetTrackGateHeight);
+	}
+
+	// Terrain readiness gate env var overrides
+	{
+		FCamSimConfig::FTerrainGateConfig& G = Cfg.TerrainGate;
+		G.bEnabled           = GetEnvBool (TEXT("CAMSIM_TERRAIN_GATE_ENABLED"),           G.bEnabled);
+		G.MinLoadProgressPct = GetEnvFloat(TEXT("CAMSIM_TERRAIN_GATE_MIN_LOAD_PROGRESS"), G.MinLoadProgressPct);
+		G.TimeoutSec         = GetEnvFloat(TEXT("CAMSIM_TERRAIN_GATE_TIMEOUT_SEC"),       G.TimeoutSec);
+		G.TeleportDistanceM  = GetEnvFloat(TEXT("CAMSIM_TERRAIN_GATE_TELEPORT_M"),
+		                                   static_cast<float>(G.TeleportDistanceM));
 	}
 
 	// Phase 28: operational env var overrides

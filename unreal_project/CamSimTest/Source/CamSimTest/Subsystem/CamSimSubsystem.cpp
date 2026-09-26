@@ -449,6 +449,8 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			[ImplPtr]() { return ImplPtr->CigiReceiver && ImplPtr->CigiReceiver->GetReceivedPacketCount() > 0; },
 			// HasFirstFrame
 			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->GetSuccessfulFrameCount() > 0; },
+			// IsTerrainReady
+			[this]() { const ACamSimCamera* Cam = GetCamera(); return Cam && Cam->IsTerrainReady(); },
 			// §10.4 contract: gauges render_fps, output_fps, entity_count, uptime_seconds;
 			// counters frame_drops_total, cigi_packets_total, dis_packets_total, frames_encoded_total.
 			// Optional histogram frame_latency_ms when pipeline latency tracking is enabled.
@@ -862,13 +864,15 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		const double UptimeSec = FPlatformTime::Seconds() - Impl->StartTimeSec;
 
 		FString HealthJson = FString::Printf(
-			TEXT("{\"frame\":%u,\"encoder_ok\":%s,\"cigi_rx\":%llu,\"dropped\":%u,\"uptime_s\":%.1f,\"last_host_frame\":%u"),
+			TEXT("{\"frame\":%u,\"encoder_ok\":%s,\"frames_encoded\":%llu,\"cigi_rx\":%llu,\"dropped\":%u,\"uptime_s\":%.1f,\"last_host_frame\":%u,\"terrain_ready\":%s"),
 			Impl->FrameCntr,
 			(Encoder && Encoder->IsOpen()) ? TEXT("true") : TEXT("false"),
 			EncOk,
+			CigiRx,
 			Impl->WatchdogReconnectCount,
 			UptimeSec,
-			LastHost);
+			LastHost,
+			(Camera_.Get() && Camera_->IsTerrainReady()) ? TEXT("true") : TEXT("false"));
 
 		// Phase 27B — append per-category frame drop stats when tracking is enabled
 		if (ACamSimCamera* Cam = Camera_.Get())

@@ -274,6 +274,28 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 | `maximum_screen_space_error` | float | `2.0` | `CAMSIM_MAX_SSE` | Cesium LOD quality: lower = sharper terrain. Cesium default is 16; 2.0 is high quality for ISR imagery. |
 | `maximum_cached_bytes_mb` | int | `2048` | `CAMSIM_MAX_CACHED_MB` | Cesium tile cache budget in MB. `0` = Cesium default (uncapped). |
 
+### Terrain Readiness Gate
+
+Holds frame output until Cesium has loaded tiles for the view, at startup and after a
+teleport, so coarse placeholder terrain is never streamed as real imagery. Once open, the
+gate stays open during normal flight. `/ready` and `camsim_health.json` report
+`terrain_ready`.
+
+```yaml
+terrain_gate:
+  enabled: true
+  min_load_progress: 99.0
+  timeout_sec: 30.0
+  teleport_distance_m: 5000.0
+```
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `terrain_gate.enabled` | bool | `true` | `CAMSIM_TERRAIN_GATE_ENABLED` | Enable the gate. With no Cesium tilesets in the level it never blocks. |
+| `terrain_gate.min_load_progress` | float | `99.0` | `CAMSIM_TERRAIN_GATE_MIN_LOAD_PROGRESS` | Lowest tileset load progress (0-100) at which frames start. Cesium reports 99-99.99% for a few frames while occlusion results settle. |
+| `terrain_gate.timeout_sec` | float | `30.0` | `CAMSIM_TERRAIN_GATE_TIMEOUT_SEC` | Start streaming anyway after this long (logged as a warning). |
+| `terrain_gate.teleport_distance_m` | float | `5000.0` | `CAMSIM_TERRAIN_GATE_TELEPORT_M` | A platform jump larger than this in one tick re-arms the gate. |
+
 ### Camera Start Position
 
 Used as the initial camera pose before the first CIGI Entity Control packet arrives.

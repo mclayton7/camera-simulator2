@@ -36,6 +36,7 @@ bool FHttpServerLifecycleHealthAliasTest::RunTest(const FString& Parameters)
         /*IsEncoderReady*/ [](){ return true; },
         /*IsCigiReady*/    [](){ return true; },
         /*HasFirstFrame*/  [](){ return true; },
+        /*IsTerrainReady*/ [](){ return true; },
         /*GetPrometheusMetrics*/ []() -> FString { return TEXT(""); });
 
     if (!TestTrue(TEXT("server started"), bStarted))

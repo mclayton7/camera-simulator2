@@ -13,12 +13,14 @@ bool FCamSimHealthServer::Start(int32 Port,
                                 FStatusQueryFn InIsEncoderReady,
                                 FStatusQueryFn InIsCigiReady,
                                 FStatusQueryFn InHasFirstFrame,
+                                FStatusQueryFn InIsTerrainReady,
                                 TFunction<FString()> InGetPrometheusMetrics)
 {
 	IsAlive = MoveTemp(InIsAlive);
 	IsEncoderReady = MoveTemp(InIsEncoderReady);
 	IsCigiReady = MoveTemp(InIsCigiReady);
 	HasFirstFrame = MoveTemp(InHasFirstFrame);
+	IsTerrainReady = MoveTemp(InIsTerrainReady);
 	GetPrometheusMetrics = MoveTemp(InGetPrometheusMetrics);
 	ListenPort = Port;
 	LastTickTimeSec = FPlatformTime::Seconds();
@@ -65,14 +67,16 @@ bool FCamSimHealthServer::Start(int32 Port,
 			const bool bEncoder = IsEncoderReady ? IsEncoderReady() : false;
 			const bool bCigi = IsCigiReady ? IsCigiReady() : false;
 			const bool bFrame = HasFirstFrame ? HasFirstFrame() : false;
-			const bool bReady = bEncoder && bCigi && bFrame;
+			const bool bTerrain = IsTerrainReady ? IsTerrainReady() : false;
+			const bool bReady = bEncoder && bCigi && bFrame && bTerrain;
 
 			FString Body = FString::Printf(
-				TEXT("{\"status\":\"%s\",\"encoder\":%s,\"cigi\":%s,\"first_frame\":%s}"),
+				TEXT("{\"status\":\"%s\",\"encoder\":%s,\"cigi\":%s,\"first_frame\":%s,\"terrain_ready\":%s}"),
 				bReady ? TEXT("ready") : TEXT("not_ready"),
 				bEncoder ? TEXT("true") : TEXT("false"),
 				bCigi ? TEXT("true") : TEXT("false"),
-				bFrame ? TEXT("true") : TEXT("false"));
+				bFrame ? TEXT("true") : TEXT("false"),
+				bTerrain ? TEXT("true") : TEXT("false"));
 
 			auto Response = FHttpServerResponse::Create(Body, TEXT("application/json"));
 			if (!bReady)
