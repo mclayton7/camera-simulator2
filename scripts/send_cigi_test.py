@@ -303,12 +303,9 @@ def pack_celestial_control(
       3     uint8   Minute (0-59)
       4     uint8   Ephemeris En (bit 0) | Sun En (bit 1) | Moon En (bit 2) |
                     Star Field En (bit 3) | Date Valid (bit 4)
-      5     uint8   reserved
-      6     uint8   Month (1-12)
-      7     uint8   Day (1-31)
-      8-9   uint16  Year
-      10-13 float32 Star Field Intensity (0.0-1.0)
-      14-15         reserved (zero)
+      5-7           reserved
+      8-11  uint32  Date, MMDDYYYY = month * 1000000 + day * 10000 + year
+      12-15 float32 Star Field Intensity (percent)
     """
     flags = 0
     if ephemeris_en:
@@ -320,17 +317,14 @@ def pack_celestial_control(
     flags |= 0x10  # Date Valid
 
     return struct.pack(
-        ">BBBBBxBBHfH",
+        ">BBBBBxxxIf",
         9,  # Packet ID
         16,  # Packet Size
         hour & 0xFF,
         minute & 0xFF,
         flags,
-        month & 0xFF,
-        day & 0xFF,
-        year & 0xFFFF,
+        month * 1_000_000 + day * 10_000 + year,
         0.0,  # Star field intensity
-        0,  # reserved
     )
 
 
@@ -351,23 +345,23 @@ def pack_atmos_control(
       0     uint8   Packet ID (0x0A)
       1     uint8   Packet Size (0x20 = 32)
       2     uint8   Atmospheric Model En (bit 0)
-      3     uint8   reserved
-      4-7   float32 Humidity (%)
-      8-11  float32 Air Temp (°C)
-      12-15 float32 Visibility Range (m)
-      16-19 float32 Horiz Wind Speed (m/s)
-      20-23 float32 Vert Wind Speed (m/s)
-      24-27 float32 Wind Direction (°)
-      28-31 float32 Barometric Pressure (mb)
+      3     uint8   Global Humidity (%)
+      4-7   float32 Air Temp (°C)
+      8-11  float32 Visibility Range (m)
+      12-15 float32 Horiz Wind Speed (m/s)
+      16-19 float32 Vert Wind Speed (m/s)
+      20-23 float32 Wind Direction (°)
+      24-27 float32 Barometric Pressure (mb)
+      28-31         reserved
     """
     flags = 0x01 if atmos_en else 0x00
 
     return struct.pack(
-        ">BBBxfffffff",
+        ">BBBBffffffxxxx",
         10,  # Packet ID
         32,  # Packet Size
         flags,
-        humidity,
+        max(0, min(100, round(humidity))),  # uint8 percent
         air_temp,
         visibility,
         horiz_wind_sp,

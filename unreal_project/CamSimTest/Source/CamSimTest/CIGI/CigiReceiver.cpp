@@ -419,41 +419,68 @@ public:
 // it unreliable for our per-packet event model.  Instead we parse these three
 // packet types directly from the raw UDP buffer before CCL sees them.
 //
-// All values are big-endian on the wire (CIGI 3.3 ICD convention).
+// Layouts match CCL's CigiCelestialCtrl / CigiAtmosCtrl / CigiWeatherCtrlV3
+// Pack(). Multi-byte fields are in the host's byte order, which the IG
+// Control packet at the start of each message declares with its Byte Swap
+// Magic (0x8000 in the sender's order): CCL hosts send native order, which is
+// little-endian on x86 and ARM.
 // -------------------------------------------------------------------------
 
 class FCigiRawEnvParser
 {
 public:
 
-static float ReadF32BE(const uint8* P)
+struct FReader
 {
-	union { uint32 I; float F; } U;
-	U.I = (uint32(P[0]) << 24) | (uint32(P[1]) << 16) | (uint32(P[2]) << 8) | uint32(P[3]);
-	return U.F;
-}
+	bool bBigEndian = true;
 
-static uint16 ReadU16BE(const uint8* P)
+	uint16 U16(const uint8* P) const
+	{
+		return bBigEndian ? uint16((P[0] << 8) | P[1]) : uint16((P[1] << 8) | P[0]);
+	}
+	uint32 U32(const uint8* P) const
+	{
+		return bBigEndian
+			? (uint32(P[0]) << 24) | (uint32(P[1]) << 16) | (uint32(P[2]) << 8) | uint32(P[3])
+			: (uint32(P[3]) << 24) | (uint32(P[2]) << 16) | (uint32(P[1]) << 8) | uint32(P[0]);
+	}
+	float F32(const uint8* P) const
+	{
+		const uint32 Bits = U32(P);
+		float F;
+		FMemory::Memcpy(&F, &Bits, sizeof(F));
+		return F;
+	}
+};
+
+/** Byte order declared by the message's leading IG Control (big-endian if absent). */
+static FReader ReaderForMessage(const uint8* Buf, int32 Len)
 {
-	return (uint16(P[0]) << 8) | uint16(P[1]);
+	FReader R;
+	if (Len >= 8 && Buf[0] == 1)  // IG Control, Byte Swap Magic at bytes 6-7
+	{
+		R.bBigEndian = !(Buf[6] == 0x00 && Buf[7] == 0x80);
+	}
+	return R;
 }
 
 /** Scan raw CIGI datagram for environment packets and enqueue them. */
 static void PreParseEnvPackets(const uint8* Buf, int32 Len, FCigiReceiver* Receiver)
 {
+	const FReader R = ReaderForMessage(Buf, Len);
 	int32 Pos = 0;
 	while (Pos + 2 <= Len)
 	{
 		const uint8 PktId   = Buf[Pos];
 		const uint8 PktSize = Buf[Pos + 1];
 		if (PktSize < 2 || Pos + PktSize > Len) break;
+		const uint8* P = Buf + Pos;
 
 		if (PktId == CIGI_CELESTIAL_CTRL_PACKET_ID_V3 && PktSize >= 16)
 		{
 			// Celestial Sphere Control (opcode 9, 16 bytes)
-			// Byte layout: [0]id [1]size [2]hour [3]minute [4]flags [5]rsvd
-			//              [6]month [7]day [8-9]year [10-13]starInt [14-15]rsvd
-			const uint8* P = Buf + Pos;
+			// [2]hour [3]minute [4]flags [5-7]reserved
+			// [8-11]date uint32 MMDDYYYY [12-15]star intensity float
 			FCigiCelestialState State;
 			State.Hour         = FMath::Clamp((int32)P[2], 0, 23);
 			State.Minute       = FMath::Clamp((int32)P[3], 0, 59);
@@ -463,43 +490,41 @@ static void PreParseEnvPackets(const uint8* Buf, int32 Len, FCigiReceiver* Recei
 			State.bMoonEn      = (Flags & 0x04) != 0;
 			State.bStarEn      = (Flags & 0x08) != 0;
 			State.bDateVld     = (Flags & 0x10) != 0;
-			State.Month        = P[6];
-			State.Day          = P[7];
-			State.Year         = ReadU16BE(P + 8);
-			State.StarInt      = ReadF32BE(P + 10);
+			const uint32 Date  = R.U32(P + 8);
+			State.Month        = static_cast<uint8>(Date / 1000000);
+			State.Day          = static_cast<uint8>((Date / 10000) % 100);
+			State.Year         = static_cast<uint16>(Date % 10000);
+			State.StarInt      = R.F32(P + 12);
 			Receiver->CelestialQueue.Enqueue(State);
 		}
 		else if (PktId == CIGI_ATMOS_CTRL_PACKET_ID_V3 && PktSize >= 32)
 		{
 			// Atmosphere Control (opcode 10, 32 bytes)
-			// [0]id [1]size [2]flags [3]rsvd [4-7]humidity(float)
-			// [8-11]airTemp [12-15]visibility [16-19]horizWind
-			// [20-23]vertWind [24-27]windDir [28-31]baroPress
-			const uint8* P = Buf + Pos;
+			// [2]flags [3]humidity uint8 % [4]airTemp [8]visibility
+			// [12]horizWind [16]vertWind [20]windDir [24]baroPress [28-31]reserved
 			FCigiAtmosphereState State;
 			State.bAtmosEn    = (P[2] & 0x01) != 0;
-			State.Humidity    = ReadF32BE(P + 4);
-			State.AirTemp     = ReadF32BE(P + 8);
-			State.Visibility  = ReadF32BE(P + 12);
-			State.HorizWindSp = ReadF32BE(P + 16);
-			State.VertWindSp  = ReadF32BE(P + 20);
-			State.WindDir     = ReadF32BE(P + 24);
-			State.BaroPress   = ReadF32BE(P + 28);
+			State.Humidity    = P[3];
+			State.AirTemp     = R.F32(P + 4);
+			State.Visibility  = R.F32(P + 8);
+			State.HorizWindSp = R.F32(P + 12);
+			State.VertWindSp  = R.F32(P + 16);
+			State.WindDir     = R.F32(P + 20);
+			State.BaroPress   = R.F32(P + 24);
 			Receiver->AtmosphereQueue.Enqueue(State);
 		}
 		else if (PktId == CIGI_WEATHER_CTRL_PACKET_ID_V3 && PktSize >= 56)
 		{
 			// Weather Control (opcode 12, 56 bytes)
-			// [0]id [1]size [2-3]regionId [4]layerId [5]humidity(u8)
+			// [2-3]regionId/entityId [4]layerId [5]humidity(u8)
 			// [6]flags(weatherEn bit0, cloudType bits4-7)
 			// [7]scope(bits0-1) | severity(bits2-4)
 			// [8-11]airTemp [12-15]visibilityRng [16-19]scudFreq
 			// [20-23]coverage [24-27]baseElev [28-31]thickness
 			// [32-35]transition [36-39]horizWind [40-43]vertWind
 			// [44-47]windDir [48-51]baroPress [52-55]aerosol
-			const uint8* P = Buf + Pos;
 			FCigiWeatherState State;
-			State.RegionId      = ReadU16BE(P + 2);
+			State.RegionId      = R.U16(P + 2);
 			State.LayerId       = P[4];
 			const uint8 Flags   = P[6];
 			State.bWeatherEn    = (Flags & 0x01) != 0;
@@ -507,14 +532,14 @@ static void PreParseEnvPackets(const uint8* Buf, int32 Len, FCigiReceiver* Recei
 			const uint8 ScopeSev = P[7];
 			State.Scope         = ScopeSev & 0x03;
 			State.Severity      = (ScopeSev >> 2) & 0x07;
-			State.VisibilityRng = ReadF32BE(P + 12);
-			State.Coverage      = ReadF32BE(P + 20);
-			State.BaseElev      = ReadF32BE(P + 24);
-			State.Thickness     = ReadF32BE(P + 28);
-			State.Transition    = ReadF32BE(P + 32);
-			State.HorizWindSp   = ReadF32BE(P + 36);
-			State.VertWindSp    = ReadF32BE(P + 40);
-			State.WindDir       = ReadF32BE(P + 44);
+			State.VisibilityRng = R.F32(P + 12);
+			State.Coverage      = R.F32(P + 20);
+			State.BaseElev      = R.F32(P + 24);
+			State.Thickness     = R.F32(P + 28);
+			State.Transition    = R.F32(P + 32);
+			State.HorizWindSp   = R.F32(P + 36);
+			State.VertWindSp    = R.F32(P + 40);
+			State.WindDir       = R.F32(P + 44);
 			Receiver->WeatherQueue.Enqueue(State);
 		}
 
