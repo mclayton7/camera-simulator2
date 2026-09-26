@@ -105,10 +105,10 @@ integration job covers it once 1.1 lands.
 
 | ID  | Item                                                                                                                                                                                                                |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.1 | Remove `\|\| true` from the `integration-test` job (`.github/workflows/ci.yml:264`) so video/KLV validation can actually fail CI. |
+| 1.1 | Remove `\|\| true` from the `integration-test` job (`.github/workflows/ci.yml:275`) so video/KLV validation can actually fail CI. |
 | 1.2 | Replace tautological tests (e.g. `Tests/Phase19OceanTest.cpp` "fields" tests that assert a value equals what was just assigned) with tests that go through `FCamSimConfig::Load()` using YAML and env-var fixtures. |
 | 1.3 | Warn on YAML keys that are never read, so typos stop silently falling back to defaults. (A cheap pass over ryml nodes; no reflection rewrite.)                                                                      |
-| 1.4 | Split `ACamSimCamera` (~1,600 lines) into: **sensor rig** (pose + gimbal), **capture pipeline** (render targets, readback), **telemetry/KLV assembly**, and **Cesium streaming controller**.                        |
+| 1.4 | Split `ACamSimCamera` (~1,700 lines) into: **sensor rig** (pose + gimbal), **capture pipeline** (render targets, readback), **telemetry/KLV assembly**, and **Cesium streaming controller**.                        |
 | 1.5 | Sensor CPU path: reuse scratch buffers in blur, lens distortion, vibration, and Gaussian MTF (currently a full-frame allocation per effect per frame). Parallelize the AGC histogram build.                         |
 | 1.6 | Smaller fixes: keep the gimbal slewing toward its target between host packets; have a hot-reload parse failure skip only the reload block instead of returning out of `Tick()`.                                     |
 | 1.7 | Branch hygiene: delete the six merged `refactor/camsim-phase-*` branches on origin. (Stale local branches, including the abandoned ocean branch, were removed on 2026-09-26.) |
@@ -136,7 +136,15 @@ position, HUD time, annotations, and dead reckoning. It can be set from:
 It supports real-time, faster/slower than real time, and **deterministic lockstep**
 (needed for reproducible ML datasets).
 
+It replaces two stopgaps from Milestone 0: `FUtcClock` (KLV Tag 2, wall-clock UTC) and
+`FCigiHostClock` (host time per CIGI message, used for ground speed).
+
 ### 2.2 Coordinate-frame module
+
+Started in Milestone 0: `Geospatial/CigiFrames.h` covers CIGI heading/pitch/roll, local
+North-East-Up, Cesium East-South-Up and entity-relative (body-frame) offsets, with tests.
+Remaining: DIS ECEF orientation, and moving the DIS adapter and ad-hoc flat-earth maths
+(e.g. `ComputeGeometricLOS` fallback, LOS vector end point, dead-reckoning position) onto it.
 
 All conversions live in `Geospatial/` with round-trip unit tests:
 
@@ -198,8 +206,9 @@ Target path:
 4. **Convert RGB/gray → NV12 on the GPU**, then either:
    - encode directly from GPU memory with NVENC (see UE AVCodecs / Pixel Streaming 2), or
    - read back only NV12 (1.5 bytes/px instead of 4).
-5. Readback is a ring of render-thread-polled readbacks. Nothing flushes the render thread
-   in steady state.
+5. Readback is a ring of render-thread-polled readbacks. (The per-tick
+   `FlushRenderingCommands` is already gone; today only one readback is in flight at a
+   time, gated on `EReadbackState::Idle`.)
 6. Retire the parallel CPU pipeline (`Sensor/SensorPostProcess.cpp`) and the partial
    material-based GPU path. Keep one reference implementation, used for tests and as the
    fallback when no NVIDIA GPU is present (Mesa/llvmpipe).
