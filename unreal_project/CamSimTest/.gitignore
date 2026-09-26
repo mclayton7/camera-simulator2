@@ -28,6 +28,9 @@ Source/ThirdParty/**/*.dylib
 !/Content/**/*.uasset
 !/Content/**/*.umap
 
+# Loose runtime data staged as non-UFS files (see DefaultGame.ini).
+!/Content/NonUFS/**
+
 # Allow any files from /RawContent dir.
 # Any file in /RawContent dir will be managed by git lfs.
 !/RawContent/**/*

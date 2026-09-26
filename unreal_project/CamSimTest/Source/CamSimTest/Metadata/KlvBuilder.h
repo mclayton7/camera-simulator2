@@ -25,7 +25,7 @@
  *   Tag 12  – Image Coordinate System    (ISO 646 string: "Geodetic WGS84")
  *   Tag 13  – Sensor Latitude            (int32,  ±90°)
  *   Tag 14  – Sensor Longitude           (int32,  ±180°)
- *   Tag 15  – Sensor True Altitude       (uint16, −900..19000 m)
+ *   Tag 15  – Sensor True Altitude       (uint16, −900..19000 m MSL; omitted without the geoid grid)
  *   Tag 16  – Sensor Horizontal FOV      (uint16, 0..180°)
  *   Tag 17  – Sensor Vertical FOV        (uint16, 0..180°)
  *   Tag 18  – Sensor Relative Azimuth    (uint32, 0..360°, gimbal yaw)
@@ -34,13 +34,18 @@
  *   Tag 21  – Slant Range                (uint32, 0..5 000 000 m)
  *   Tag 23  – Frame Center Latitude      (int32,  ±90°)
  *   Tag 24  – Frame Center Longitude     (int32,  ±180°)
- *   Tag 25  – Frame Center Elevation     (uint16, −900..19000 m)
+ *   Tag 25  – Frame Center Elevation     (uint16, −900..19000 m MSL; omitted without the geoid grid)
  *   Tag 43  – Target Track Gate Width    (uint8, pixels / 2, configurable)
  *   Tag 44  – Target Track Gate Height   (uint8, pixels / 2, configurable)
  *   Tag 47  – Generic Flag Data          (uint8 bitmask: bit 3 = IR black-hot)
  *   Tag 48  – Security Local Set         (ST 0102, when configured)
  *   Tag 56  – Platform Ground Speed      (uint8, 0..255 m/s)
  *   Tag 65  – UAS LS Version Number      (uint8, value=9)
+ *   Tag 75  – Sensor Ellipsoid Height    (uint16, −900..19000 m WGS-84)
+ *   Tag 78  – Frame Center HAE           (uint16, −900..19000 m WGS-84)
+ *
+ * Telemetry altitudes are WGS-84 ellipsoid heights (Cesium's datum). MSL tags
+ * subtract the EGM96 undulation from Geospatial/Geoid.h.
  */
 class FKlvBuilder
 {

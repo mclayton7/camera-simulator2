@@ -2,6 +2,7 @@
 
 #include "Metadata/KlvBuilder.h"
 #include "CamSimTest.h"
+#include "Geospatial/Geoid.h"
 
 // -------------------------------------------------------------------------
 // MISB ST 0601 Universal Label (16 bytes)
@@ -130,10 +131,13 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		AppendLatLon4(V, 14, T.Longitude, 180.0);
 	}},
 
-	// Tag 15 – Sensor True Altitude, 2-byte unsigned −900..19000 m
+	// Tag 15 – Sensor True Altitude (MSL, EGM96), 2-byte unsigned −900..19000 m.
+	// Telemetry altitudes are WGS-84 ellipsoid heights; omitted without a geoid.
 	{ 15, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.Altitude));
+		const TOptional<double> Undulation = CamSim::Geospatial::GetGeoidUndulation(T.Latitude, T.Longitude);
+		if (!Undulation) return;
+		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.Altitude - *Undulation));
 		uint8 Tmp[2] = { uint8((Alt >> 8) & 0xFF), uint8(Alt & 0xFF) };
 		FKlvBuilder::AppendTag(V, 15, Tmp, 2);
 	}},
@@ -215,11 +219,14 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		AppendLatLon4(V, 24, T.FrameCenterLon, 180.0);
 	}},
 
-	// Tag 25 – Frame Center Elevation, 2-byte unsigned −900..19000 m
+	// Tag 25 – Frame Center Elevation (MSL, EGM96), 2-byte unsigned −900..19000 m
 	{ 25, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
 		if (T.SlantRangeM <= 0.0) return;  // no ground intersection
-		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.FrameCenterElev));
+		const TOptional<double> Undulation =
+			CamSim::Geospatial::GetGeoidUndulation(T.FrameCenterLat, T.FrameCenterLon);
+		if (!Undulation) return;
+		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.FrameCenterElev - *Undulation));
 		uint8 Tmp[2] = { uint8((Alt >> 8) & 0xFF), uint8(Alt & 0xFF) };
 		FKlvBuilder::AppendTag(V, 25, Tmp, 2);
 	}},
@@ -283,6 +290,23 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 	{
 		constexpr uint8 Version = 9;
 		FKlvBuilder::AppendTag(V, 65, &Version, 1);
+	}},
+
+	// Tag 75 – Sensor Ellipsoid Height (WGS-84), 2-byte unsigned −900..19000 m
+	{ 75, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.Altitude));
+		uint8 Tmp[2] = { uint8((Alt >> 8) & 0xFF), uint8(Alt & 0xFF) };
+		FKlvBuilder::AppendTag(V, 75, Tmp, 2);
+	}},
+
+	// Tag 78 – Frame Center Height Above Ellipsoid, 2-byte unsigned −900..19000 m
+	{ 78, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (T.SlantRangeM <= 0.0) return;  // no ground intersection
+		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.FrameCenterElev));
+		uint8 Tmp[2] = { uint8((Alt >> 8) & 0xFF), uint8(Alt & 0xFF) };
+		FKlvBuilder::AppendTag(V, 78, Tmp, 2);
 	}},
 };
 

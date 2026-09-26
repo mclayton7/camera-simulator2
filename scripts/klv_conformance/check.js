@@ -15,8 +15,9 @@
 //       captured for --duration-sec, default 5) and checks every
 //       ST 0601 packet: parses, checksum valid, no unknown tags, and the
 //       timestamp (tag 2) is UTC within N seconds of now. With
-//       --expect-position, the sensor position (tags 13/14/15) must match the
-//       pose the CIGI host commanded, which proves the camera follows the host.
+//       --expect-position (ALT is WGS-84 ellipsoid height, like CIGI's), the
+//       sensor position (tags 13/14/15/75) must match the pose the CIGI host
+//       commanded, which proves the camera follows the host.
 //
 // Exit code 0 = conformant, 1 = failures, 2 = usage / IO error.
 
@@ -30,7 +31,25 @@ const ST0601_KEY = st0601.key
 
 // Tags CamSim emits. Anything else in a decoded packet is a failure.
 const KNOWN_TAGS = new Set([1, 2, 4, 5, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-	23, 24, 25, 43, 44, 47, 48, 56, 65])
+	23, 24, 25, 43, 44, 47, 48, 56, 65, 75, 78])
+
+// EGM96 geoid height above WGS-84 (m), bilinear over the same 15' grid CamSim
+// ships, implemented independently of CamSim's C++ (Geospatial/Geoid.cpp). Tags 15/25
+// are MSL = ellipsoid height - undulation; tags 75/78 are ellipsoid heights.
+const GEOID_GRID = require('path').join(__dirname, '../../unreal_project/CamSimTest/Content/NonUFS/Geoid/WW15MGH.DAC')
+let geoidGrid = null
+function geoidUndulation(lat, lon) {
+	geoidGrid ??= fs.readFileSync(GEOID_GRID)
+	const at = (row, col) => geoidGrid.readInt16BE(2 * (row * 1440 + (col % 1440))) / 100
+	const y = (90 - lat) / 0.25
+	const x = (((lon % 360) + 360) % 360) / 0.25
+	const r = Math.min(Math.floor(y), 719)
+	const c = Math.floor(x)
+	const fy = y - r
+	const fx = x - c
+	return (at(r, c) * (1 - fx) + at(r, c + 1) * fx) * (1 - fy)
+		+ (at(r + 1, c) * (1 - fx) + at(r + 1, c + 1) * fx) * fy
+}
 
 // One least-significant-bit of each fixed-point mapping, used as tolerance.
 const LSB = {
@@ -135,7 +154,8 @@ function checkPackets(path) {
 		equal(ctx, byKey, 12, 'Geodetic WGS84')
 		near(ctx, byKey, 13, t.lat, 1.5 * LSB.lat)
 		near(ctx, byKey, 14, t.lon, 1.5 * LSB.lon)
-		near(ctx, byKey, 15, t.alt, 1.5 * LSB.alt)
+		near(ctx, byKey, 15, t.alt - geoidUndulation(t.lat, t.lon), 1.5 * LSB.alt + 0.1)
+		near(ctx, byKey, 75, t.alt, 1.5 * LSB.alt)
 		near(ctx, byKey, 16, t.hfov, 1.5 * LSB.fov)
 		near(ctx, byKey, 17, t.vfov, 1.5 * LSB.fov)
 		near(ctx, byKey, 18, ((t.gimbalYaw % 360) + 360) % 360, 1.5 * LSB.az, { wrap: 360 })
@@ -146,10 +166,11 @@ function checkPackets(path) {
 			near(ctx, byKey, 21, t.slantRange, 1.5 * LSB.range)
 			near(ctx, byKey, 23, t.fcLat, 1.5 * LSB.lat)
 			near(ctx, byKey, 24, t.fcLon, 1.5 * LSB.lon)
-			near(ctx, byKey, 25, t.fcElev, 1.5 * LSB.alt)
+			near(ctx, byKey, 25, t.fcElev - geoidUndulation(t.fcLat, t.fcLon), 1.5 * LSB.alt + 0.1)
+			near(ctx, byKey, 78, t.fcElev, 1.5 * LSB.alt)
 		} else {
 			absent(ctx, byKey, 21, 'slant range is 0')
-			for (const key of [23, 24, 25]) absent(ctx, byKey, key, 'no ground intersection')
+			for (const key of [23, 24, 25, 78]) absent(ctx, byKey, key, 'no ground intersection')
 		}
 
 		const [gateW, gateH] = c.gate
@@ -231,7 +252,8 @@ function checkStream(path, maxAgeSec, minPackets, durationSec, expectPosition) {
 			const [lat, lon, alt] = expectPosition
 			near(ctx, byKey, 13, lat, 1e-4)
 			near(ctx, byKey, 14, lon, 1e-4)
-			near(ctx, byKey, 15, alt, 5)
+			near(ctx, byKey, 15, alt - geoidUndulation(lat, lon), 5)
+			near(ctx, byKey, 75, alt, 5)
 		}
 		count++
 		pos = data.indexOf(ST0601_KEY, end)
