@@ -11,6 +11,7 @@
 #include "Components/PointLightComponent.h"
 #include "Entity/CamSimAnimInstance.h"
 #include "CesiumGlobeAnchorComponent.h"
+#include "Geospatial/CigiFrames.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/AssetManager.h"
@@ -404,12 +405,11 @@ void ACamSimEntity::ApplyPose(const FCigiEntityState& S)
 	DR.Lat = S.Latitude;
 	DR.Lon = S.Longitude;
 	DR.Alt = S.Altitude;
-	const FRotator PoseRot(S.Pitch, S.Yaw, S.Roll);
-	DR.Orientation = PoseRot.Quaternion();
+	DR.Orientation = CamSimFrames::CigiToNeu(S.Yaw, S.Pitch, S.Roll);
 
 	GlobeAnchor->MoveToLongitudeLatitudeHeight(
 		FVector(S.Longitude, S.Latitude, S.Altitude));
-	SetActorRotation(PoseRot);
+	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::NeuToEastSouthUp(DR.Orientation));
 
 	// One-time log to confirm the entity reached a real UE world position.
 	// (If this prints 0,0,0 the GlobeAnchor has not found a CesiumGeoreference.)
@@ -717,20 +717,20 @@ void ACamSimEntity::UpdateDeadReckoning(float Dt)
 		: FQuat::Identity;
 	DR.Orientation = (DR.Orientation * DeltaRot).GetNormalized();
 
-	// Body → NED linear velocity: X=forward(North), Y=right(East), Z=down
-	const FVector WorldVel =
-		DR.Orientation.RotateVector(FVector(DR.XRate, DR.YRate, DR.ZRate));
+	// CIGI body rates (X forward, Y right, Z down) -> local North/East/Up
+	const FVector WorldVel = CamSimFrames::BodyVelocityToNeu(
+		DR.Orientation, FVector(DR.XRate, DR.YRate, DR.ZRate));
 
 	// Integrate position in WGS-84 (linear approximation valid for small Dt)
 	const double NewLat = DR.Lat + (WorldVel.X * Dt) / 111320.0;
 	const double NewLon = DR.Lon + (WorldVel.Y * Dt) /
 		(111320.0 * FMath::Cos(DR.Lat * PI / 180.0));
-	const float  NewAlt = DR.Alt - WorldVel.Z * Dt;  // CIGI Z=down, alt increases upward
+	const float  NewAlt = DR.Alt + WorldVel.Z * Dt;
 
 	DR.Lat = NewLat;
 	DR.Lon = NewLon;
 	DR.Alt = NewAlt;
 
 	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(NewLon, NewLat, NewAlt));
-	SetActorRotation(DR.Orientation.Rotator());
+	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::NeuToEastSouthUp(DR.Orientation));
 }

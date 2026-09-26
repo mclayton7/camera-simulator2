@@ -13,6 +13,7 @@
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Environment/CamSimEnvironment.h"
 #include "Metadata/UtcClock.h"
+#include "Geospatial/CigiFrames.h"
 
 #include "Encoder/IFrameSink.h"
 #include "GroundTruth/FGroundTruthCollector.h"
@@ -161,7 +162,8 @@ void ACamSimCamera::BeginPlay()
 		GlobeAnchor->MoveToLongitudeLatitudeHeight(
 			FVector(Cfg.StartLongitude, Cfg.StartLatitude, Cfg.StartAltitude));
 		SetActorScale3D(FVector::OneVector);
-		SetActorRotation(FRotator(Cfg.StartPitch, Cfg.StartYaw, Cfg.StartRoll));
+		GlobeAnchor->SetEastSouthUpRotation(
+			CamSimFrames::CigiToEastSouthUp(Cfg.StartYaw, Cfg.StartPitch, Cfg.StartRoll));
 
 		// Seed telemetry with start position
 		CurrentTelemetry.Latitude  = Cfg.StartLatitude;
@@ -934,7 +936,8 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 			// Cesium's ENU transform can emit a NaN world scale during origin rebasing;
 			// unconditionally reset to (1,1,1) to prevent the UE SetRelativeScale3D warning.
 			SetActorScale3D(FVector::OneVector);
-			SetActorRotation(FRotator(EntityState.Pitch, EntityState.Yaw, EntityState.Roll));
+			GlobeAnchor->SetEastSouthUpRotation(
+				CamSimFrames::CigiToEastSouthUp(EntityState.Yaw, EntityState.Pitch, EntityState.Roll));
 
 			CurrentTelemetry.Latitude  = EntityState.Latitude;
 			CurrentTelemetry.Longitude = EntityState.Longitude;
@@ -1131,9 +1134,9 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 				LaserCfg.bEnabled = true;
 				LaserCfg.DesignatorCode = DesigCode;
 
-				// Build view projection matrix from current camera pose
-				const FVector CamLoc = GetActorLocation();
-				const FRotator CamRot = GetActorRotation();
+				// Build view projection matrix from the sensor pose (includes gimbal)
+				const FVector CamLoc = SceneCapture ? SceneCapture->GetComponentLocation() : GetActorLocation();
+				const FRotator CamRot = SceneCapture ? SceneCapture->GetComponentRotation() : GetActorRotation();
 				const float HFOV = SceneCapture ? SceneCapture->FOVAngle : DesigCfg.HFovDeg;
 
 				FMatrix ViewProj = FEntityProjection::BuildViewProjectionMatrix(
@@ -1257,8 +1260,8 @@ void ACamSimCamera::ApplyFpsPose()
 	SetActorScale3D(FVector::OneVector);
 
 	// Inherit entity heading; gimbal applies freelook on top
-	const FRotator EntityRot = Entity->GetActorRotation();
-	SetActorRotation(FRotator(0.0f, EntityRot.Yaw, 0.0f));
+	const FRotator EntityRot = CamSimFrames::EastSouthUpToCigi(EntGa->GetEastSouthUpRotation());
+	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::CigiToEastSouthUp(EntityRot.Yaw, 0.0, 0.0));
 
 	// Update telemetry from entity pose
 	CurrentTelemetry.Latitude  = EntityLat;
