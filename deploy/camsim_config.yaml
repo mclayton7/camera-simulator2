@@ -951,7 +951,7 @@ operational:
   # GET /ready — 200 when encoder + CIGI + first frame all OK
   # GET /metrics — Prometheus exposition format
   # Env: CAMSIM_HEALTH_HTTP_ENABLED / CAMSIM_HEALTH_HTTP_PORT
-  health_http_enabled: false
+  health_http_enabled: true
   health_http_port: 8080
 
 # --- Entity Types ---
