@@ -4,6 +4,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "Camera/CamSimGimbalComponent.h"
+#include "CIGI/CigiReceiver.h"
 #include "Camera/CamSimSensorComponent.h"
 #include "CIGI/CigiPacketTypes.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -189,6 +190,44 @@ bool FCamSimGimbalArtPartSlewRateTest::RunTest(const FString& /*Parameters*/)
 	Pkt.Yaw = 120.0f;
 	Gimbal->ApplyArtPart(Pkt, 0.0001f, Cfg);
 	TestEqual(TEXT("rate=0 snaps to target"), Gimbal->GetGimbalYaw(), 120.0f);
+	return true;
+}
+
+// Hosts send ArtPart slower than the frame rate: ticks without a packet must
+// keep slewing toward the last target, and a ViewControl snap cancels it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCamSimGimbalSlewBetweenPacketsTest,
+	"CamSim.Camera.Gimbal.ArtPart_SlewContinuesBetweenPackets",
+	kAutomationFlags)
+
+bool FCamSimGimbalSlewBetweenPacketsTest::RunTest(const FString& /*Parameters*/)
+{
+	UCamSimGimbalComponent* Gimbal = NewGimbal();
+	FCamSimConfig Cfg;
+	Cfg.GimbalMaxSlewRateDegPerSec = 60.0f;
+	Cfg.GimbalPitchMin = -180.0f; Cfg.GimbalPitchMax = 180.0f;
+	Cfg.GimbalYawMin   = -180.0f; Cfg.GimbalYawMax   = 180.0f;
+	FCigiReceiver IdleReceiver(Cfg);  // never started: every queue is empty
+
+	FCigiViewControl Reset;
+	Reset.bYawEn = true; Reset.Yaw = 0.0f;
+	Gimbal->ApplyViewControl(Reset, Cfg);
+
+	FCigiArtPartControl Pkt;
+	Pkt.bArtPartEn = true;
+	Pkt.bYawEn = true; Pkt.Yaw = 60.0f;
+	Gimbal->ApplyArtPart(Pkt, 0.25f, Cfg);
+	TestEqual(TEXT("first tick slews 15 deg"), Gimbal->GetGimbalYaw(), 15.0f);
+
+	Gimbal->TickGimbal(0.25f, &IdleReceiver, Cfg);
+	TestEqual(TEXT("tick without a packet keeps slewing"), Gimbal->GetGimbalYaw(), 30.0f);
+	Gimbal->TickGimbal(1.0f, &IdleReceiver, Cfg);
+	TestEqual(TEXT("reaches the target and stops"), Gimbal->GetGimbalYaw(), 60.0f);
+
+	FCigiViewControl Snap;
+	Snap.bYawEn = true; Snap.Yaw = -20.0f;
+	Gimbal->ApplyViewControl(Snap, Cfg);
+	Gimbal->TickGimbal(1.0f, &IdleReceiver, Cfg);
+	TestEqual(TEXT("ViewControl snap cancels the ArtPart target"), Gimbal->GetGimbalYaw(), -20.0f);
 	return true;
 }
 

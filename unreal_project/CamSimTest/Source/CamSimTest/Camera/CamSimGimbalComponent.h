@@ -49,11 +49,15 @@ public:
 
 	/**
 	 * Apply a single ArtPart packet (opcode 6) as a slew target. Rate-limited
-	 * by Config.GimbalMaxSlewRateDegPerSec and clamped to axis limits.
+	 * by Config.GimbalMaxSlewRateDegPerSec and clamped to axis limits. The
+	 * target persists: AdvanceSlew() keeps moving toward it on later ticks.
 	 *
 	 * Exposed so unit tests can drive the gimbal without an FCigiReceiver.
 	 */
 	void ApplyArtPart(const FCigiArtPartControl& Art, float DeltaTime, const FCamSimConfig& Config);
+
+	/** Continue slewing toward the last ArtPart target (ticks with no new packet). */
+	void AdvanceSlew(float DeltaTime, const FCamSimConfig& Config);
 
 	/** Returns the current gimbal orientation as a Rotator (Pitch, Yaw, Roll). */
 	FRotator GetGimbalRelativeRotation() const
@@ -80,6 +84,11 @@ private:
 	float GimbalYaw   =   0.0f;
 	float GimbalPitch = -90.0f;
 	float GimbalRoll  =   0.0f;
+
+	/** Slew target from the last ArtPart packet; equals the current angles otherwise. */
+	float SlewTargetYaw   =   0.0f;
+	float SlewTargetPitch = -90.0f;
+	float SlewTargetRoll  =   0.0f;
 
 	/**
 	 * Slew current angles toward target, respecting max slew rate and axis limits.

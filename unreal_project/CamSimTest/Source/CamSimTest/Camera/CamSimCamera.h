@@ -371,8 +371,8 @@ private:
 
 	// Tick() helpers (decomposition of the former 300-line function).
 	void EmitHeartbeatIfDue();
-	// Returns false if the caller should abort this tick (parse failure).
-	bool PollHotReloadConfig(float DeltaTime);
+	// A parse failure keeps the current config and lets the tick carry on.
+	void PollHotReloadConfig(float DeltaTime);
 	void PollReadbackCompletion();
 	void DispatchQueuedResultIfFree();
 	// Returns true if this render frame should be skipped to honour OutputFps.

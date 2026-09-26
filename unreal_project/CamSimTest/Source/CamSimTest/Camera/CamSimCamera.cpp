@@ -566,7 +566,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 
 	++TickCount;
 	EmitHeartbeatIfDue();
-	if (!PollHotReloadConfig(DeltaTime)) return;
+	PollHotReloadConfig(DeltaTime);
 
 	// Phase 28G: mark pipeline latency at start of game tick
 	if (LatencyTracker_) LatencyTracker_->Mark(EPipelineStage::GameTickStart);
@@ -681,10 +681,10 @@ void ACamSimCamera::EmitHeartbeatIfDue()
 	}
 }
 
-bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
+void ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 {
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
-	if (!Cfg.Performance.bHotReloadConfig) return true;
+	if (!Cfg.Performance.bHotReloadConfig) return;
 
 	// Phase 3: kick off the stat syscall on a background thread so it never
 	// blocks the game thread on slow storage (NFS, container FUSE overlays).
@@ -712,7 +712,7 @@ bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 	// defaults to seq_cst, which matches the paired Store call above.
 	if (!bHotReloadFileChanged_.Exchange(false))
 	{
-		return true;
+		return;
 	}
 
 	const FCamSimConfig OldCfg = Cfg;
@@ -721,7 +721,7 @@ bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 	if (!NewCfg.bLoadedSuccessfully)
 	{
 		UE_LOG(LogCamSim, Warning, TEXT("HotReload: config parse failed — keeping current config"));
-		return false;
+		return;
 	}
 
 	// Warn on immutable field changes (require restart).
@@ -740,7 +740,6 @@ bool ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 	SensorFX->SetLaserDesignatorConfig(NewCfg.LaserDesignator);
 
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: HotReload applied from %s"), *CfgPath);
-	return true;
 }
 
 void ACamSimCamera::PollReadbackCompletion()

@@ -54,6 +54,11 @@ void UCamSimGimbalComponent::TickGimbal(float DeltaTime, FCigiReceiver* Receiver
 		{
 			ApplyArtPart(Coalesced, DeltaTime, Config);
 		}
+		else
+		{
+			// Hosts often send ArtPart slower than the frame rate: keep moving.
+			AdvanceSlew(DeltaTime, Config);
+		}
 	}
 }
 
@@ -72,6 +77,11 @@ void UCamSimGimbalComponent::ApplyViewControl(const FCigiViewControl& ViewCtrl, 
 	// matches.
 	GimbalPitch = FMath::Clamp(GimbalPitch, Config.GimbalPitchMin, Config.GimbalPitchMax);
 	GimbalYaw   = FMath::Clamp(GimbalYaw,   Config.GimbalYawMin,   Config.GimbalYawMax);
+
+	// A snap replaces any ArtPart slew in progress.
+	SlewTargetYaw   = GimbalYaw;
+	SlewTargetPitch = GimbalPitch;
+	SlewTargetRoll  = GimbalRoll;
 
 	// Phase 22G: Capture FPS view activation from ViewControl EntityId
 	if (ViewCtrl.EntityId != 0)
@@ -101,11 +111,16 @@ void UCamSimGimbalComponent::ApplyArtPart(const FCigiArtPartControl& Art, float 
 {
 	if (!Art.bArtPartEn) return;
 
-	const float TargetYaw   = Art.bYawEn   ? Art.Yaw   : GimbalYaw;
-	const float TargetPitch = Art.bPitchEn ? Art.Pitch : GimbalPitch;
-	const float TargetRoll  = Art.bRollEn  ? Art.Roll  : GimbalRoll;
+	if (Art.bYawEn)   SlewTargetYaw   = Art.Yaw;
+	if (Art.bPitchEn) SlewTargetPitch = Art.Pitch;
+	if (Art.bRollEn)  SlewTargetRoll  = Art.Roll;
 
-	ApplyGimbalSlew(TargetYaw, TargetPitch, TargetRoll, DeltaTime, Config);
+	ApplyGimbalSlew(SlewTargetYaw, SlewTargetPitch, SlewTargetRoll, DeltaTime, Config);
+}
+
+void UCamSimGimbalComponent::AdvanceSlew(float DeltaTime, const FCamSimConfig& Config)
+{
+	ApplyGimbalSlew(SlewTargetYaw, SlewTargetPitch, SlewTargetRoll, DeltaTime, Config);
 }
 
 // -------------------------------------------------------------------------
