@@ -26,8 +26,9 @@ Guiding rules:
 
 Small, independent fixes. Each gets its own commit and a regression test.
 
-**Status (2026-09-26): all eight fixed** — see "Milestone 0 results" below. Remaining exit
-criterion: a live recorded stream through CI (see there).
+**Status (2026-09-26): done.** All eight are fixed (see "Milestone 0 results" below), and a live
+stream driven by a scripted CIGI host passes the misb.js check on macOS
+(`scripts/ci_validate.sh --native`).
 
 | ID  | Issue                                                                                                                                                                                                                                                             | Where                                                                                       | Fix                                                                                                                                                                                                        |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -95,9 +96,31 @@ entity) renders correctly.
 Every new test was checked to fail with its fix reverted. Full suite: 208 tests pass
 (macOS, UE 5.7).
 
-**Not yet verified end to end:** a live headless run. On the macOS dev box it needs the
-Xcode Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`); the Linux CI
-integration job covers it once 1.1 lands.
+**Verified end to end on macOS (2026-09-26):** `scripts/ci_validate.sh --native` launches CamSim
+headless, drives it with `send_cigi_test.py --sweep`, waits for `/ready`, captures 5 s of the
+stream and checks it: H.264 + KLVA present, no decode errors, all 150 KLV packets conform to
+misb.js, and the KLV sensor position (tags 13/14/15) matches the pose the host commanded. That
+last check was added because the first live run passed while the camera ignored the host
+entirely (see below). About 30 s warm; a cold start adds a few minutes of shader compiles. It
+needs the Xcode Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`).
+
+Bugs the live run found:
+
+- `send_cigi_test.py` defaulted `--entity-id` to 0, but `camera_entity_id` has been 1 since
+  April (to match trillium-cigi), so its Entity Control spawned a stray entity 0 and the camera
+  never moved. It also identified itself as CIGI 3.0 (IG Control minor version 0; CCL reads 3 as
+  3.3) and sent 100 µs timestamp ticks instead of the ICD's 10 µs, which made the host-time
+  ground speed (0.6) 10× too high.
+- `deploy/camsim_config.yaml` still had `health_http_enabled: false`, overriding the code
+  default, so `/live`, `/ready` and `/metrics` were off in the shipped config (and in Docker).
+- UE's HTTP server binds to 127.0.0.1 unless configured, so the health server was unreachable from
+  outside the host/container. `DefaultEngine.ini` now sets `[HTTPServer.Listeners]
+  DefaultBindAddress=0.0.0.0`.
+- `ci_validate.sh` could not fail: missing streams and decode errors were only warnings, and its
+  capture had no `-map 0`, so the KLV stream was never recorded for the misb.js check. Every
+  check is now a hard failure, and it no longer needs coreutils `timeout` (absent on macOS).
+- `run.sh` printed the wrong log path for the macOS editor (UE logs to
+  `~/Library/Logs/CamSimTest/`).
 
 ### Engine and dependency upgrade (2026-09-26)
 
@@ -130,7 +153,8 @@ integration job covers it once 1.1 lands.
 Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check passes.
 
 **Human follow-ups:**
-- The Linux CI runner (`/opt/UE`) needs UE 5.8 installed, then `scripts/repo_setup.sh` and
+- *(Deferred — there is no Linux CI runner for now; macOS is the reference platform.)* The Linux
+  CI runner (`/opt/UE`) needs UE 5.8 installed, then `scripts/repo_setup.sh` and
   `scripts/build_thirdparty.sh` (FFmpeg 8 + fresh Linux libs) re-run before the UE5 jobs go green.
   `repo_setup.sh` writes Cesium into `/opt/UE/Engine/Plugins/Marketplace`, so run it as a user who
   can write there (or with sudo). Not yet verified on Linux: that packaging (`BuildCookRun`) uses
@@ -146,14 +170,14 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
 
 | ID  | Item                                                                                                                                                                                                                |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.1 | Remove `\|\| true` from the `integration-test` job (`.github/workflows/ci.yml:275`) so video/KLV validation can actually fail CI. |
+| 1.1 | ~~Remove `\|\| true` from the `integration-test` job so video/KLV validation can actually fail CI.~~ **Done 2026-09-26**, along with making `ci_validate.sh` strict (see Milestone 0 results). Until a Linux runner exists, run `scripts/ci_validate.sh --native` on macOS before merging. |
 | 1.2 | Replace tautological tests (e.g. `Tests/Phase19OceanTest.cpp` "fields" tests that assert a value equals what was just assigned) with tests that go through `FCamSimConfig::Load()` using YAML and env-var fixtures. |
 | 1.3 | Warn on YAML keys that are never read, so typos stop silently falling back to defaults. (A cheap pass over ryml nodes; no reflection rewrite.)                                                                      |
 | 1.4 | Split `ACamSimCamera` (~1,700 lines) into: **sensor rig** (pose + gimbal), **capture pipeline** (render targets, readback), **telemetry/KLV assembly**, and **Cesium streaming controller**.                        |
 | 1.5 | Sensor CPU path: reuse scratch buffers in blur, lens distortion, vibration, and Gaussian MTF (currently a full-frame allocation per effect per frame). Parallelize the AGC histogram build.                         |
 | 1.6 | Smaller fixes: keep the gimbal slewing toward its target between host packets; have a hot-reload parse failure skip only the reload block instead of returning out of `Tick()`.                                     |
 | 1.7 | Branch hygiene: delete the six merged `refactor/camsim-phase-*` branches on origin. (Stale local branches, including the abandoned ocean branch, were removed on 2026-09-26.) |
-| 1.8 | LOS responses report `Valid = false` when the path is clear. In CIGI, Valid means the test could be performed; Visible carries the result. (`CIGI/CigiQueryHandler.cpp`) |
+| 1.8 | ~~LOS responses report `Valid = false` when the path is clear.~~ **Not a bug.** CIGI 3.3 §4.2.4 defines Valid as "whether the Range parameter is valid. The range will be invalid if no intersection occurs", so a clear segment is correctly `Valid = 0, Visible = 1`. Real follow-up: a segment whose destination lies on the terrain surface can hit the surface at the destination itself and report Occluded; consider treating a hit within a small tolerance of the destination as Visible. |
 | 1.9 | Extended HAT/HOT and LOS responses (intersection point, normal, `Response Coordinate System`) aren't implemented; extended requests get basic responses. |
 | 1.10 | The remaining CCL packet processors `static_cast` to `…V3` classes while a 3.3 session builds `…V3_2`/`…V3_3` siblings. It works only because all fields live in the shared base classes; cast to the class CCL actually creates (done for entity control, HAT/HOT and LOS in 0.4). |
 | 1.11 | KLV Tags 15/25 are defined as MSL but carry ellipsoid height (Cesium HAE). Convert with a geoid model (EGM96) and emit HAE in Tags 75/78. |
