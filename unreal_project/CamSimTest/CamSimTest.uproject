@@ -29,6 +29,10 @@
 				"Android",
 				"IOS"
 			]
+		},
+		{
+			"Name": "FunctionalTestingEditor",
+			"Enabled": true
 		}
 	]
 }
