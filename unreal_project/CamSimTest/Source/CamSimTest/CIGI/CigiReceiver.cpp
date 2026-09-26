@@ -63,6 +63,7 @@ public:
 		State.Yaw         = static_cast<float>(Pkt->GetYaw());
 		State.Pitch       = static_cast<float>(Pkt->GetPitch());
 		State.Roll        = static_cast<float>(Pkt->GetRoll());
+		State.HostTimeSec = Receiver->HostClock.Now();
 		// CIGI V3 EntityCtrl has no Kind/Domain/Category fields; leave at defaults (0).
 
 		// Route by entity ID: camera entity → CameraEntityQueue; others → EntityStateQueue
@@ -334,6 +335,8 @@ public:
 
 		Receiver->LastHostFrameCntr.Store(
 			static_cast<uint32>(Pkt->GetFrameCntr()));
+		Receiver->HostClock.OnIgControl(Pkt->GetTimeStampValid(),
+			static_cast<uint32>(Pkt->GetTimeStamp()));
 	}
 };
 
@@ -773,6 +776,7 @@ uint32 FCigiReceiver::Run()
 			PrevTimestamp = Timestamp;
 
 			++ReceivedPacketCount;
+			HostClock.BeginMessage(FPlatformTime::Seconds());
 			FCigiRawEnvParser::PreParseEnvPackets(RecvBuf, static_cast<int32>(Length), this);
 			try
 			{
@@ -818,6 +822,7 @@ uint32 FCigiReceiver::Run()
 
 			// Pre-parse environment packets directly from raw buffer
 			// (bypasses CCL's hold mechanism for celestial/atmos/weather)
+			HostClock.BeginMessage(FPlatformTime::Seconds());
 			FCigiRawEnvParser::PreParseEnvPackets(RecvBuf, BytesRead, this);
 
 			// Feed raw bytes to CCL parser for entity/view/other packets

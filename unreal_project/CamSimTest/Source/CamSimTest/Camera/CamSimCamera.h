@@ -9,6 +9,7 @@
 #include "Metadata/KlvBuilder.h"
 #include "Sensor/SensorTypes.h"      // ESensorMode
 #include "Sensor/IPixelPipeline.h"   // IPixelPipeline
+#include "Geospatial/GroundSpeedEstimator.h"
 // FEncoderThread is intentionally held behind a TUniquePtr with a custom
 // forward-declared deleter (see `FEncoderThreadDeleter` below). UHT's
 // generated .gen.cpp emits DEFINE_VTABLE_PTR_HELPER_CTOR_NS(, ACamSimCamera),
@@ -287,10 +288,8 @@ private:
 	FFrameDropStats FrameDropStats_;
 	bool            bTrackFrameDrops_ = false;
 
-	// Phase 26C — Ground speed from position delta (Tag 8)
-	double PrevGeoLatDeg_   = 0.0;
-	double PrevGeoLonDeg_   = 0.0;
-	bool   bHasPrevGeoPos_  = false;
+	// Ground speed (KLV Tag 56) from position deltas over host time
+	FGroundSpeedEstimator GroundSpeed_;
 
 	/** Phase 28G: per-frame pipeline latency tracker (owned by subsystem, nullable). */
 	FPipelineLatencyTracker* LatencyTracker_ = nullptr;

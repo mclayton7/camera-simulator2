@@ -379,8 +379,10 @@ Nested ST 0102 TLVs, built once by `FKlvBuilder::SetSecurityMetadata()`:
 | Encoding | `clamp(round(speed_mps), 0, 255)` |
 | Omitted | Not written if `GroundSpeedMps <= 0` |
 
-**Source:** Computed from successive WGS-84 position deltas in `ACamSimCamera::ApplyCigiState()`,
-divided by frame delta time. Tag 8 (True Airspeed) is not emitted; CamSim doesn't model airspeed.
+**Source:** `FGroundSpeedEstimator` — distance between successive platform fixes divided
+by the *host* time between them (IG Control timestamp when valid, otherwise message
+arrival time). The last estimate is held between host updates. Tag 8 (True Airspeed) is
+not emitted; CamSim doesn't model airspeed.
 
 ---
 
@@ -414,7 +416,7 @@ Always the final tag in the packet. See checksum note at the top of this documen
 CIGI Entity Control (opcode 2)
   └─> FCigiEntityState.{Lat,Lon,Alt,Yaw,Pitch,Roll}
         ├─> Tags 5, 6, 7, 13, 14, 15
-        └─> Position delta → Tag 56 (ground speed)
+        └─> Position delta / host time → Tag 56 (ground speed)
 
 Config (camsim_config.yaml / env vars)
   ├─> phase26.platform_tail_number → Tag 4

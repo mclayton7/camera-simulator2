@@ -947,29 +947,10 @@ void ACamSimCamera::ApplyCigiState(float DeltaTime)
 				static_cast<float>(Cfg.CaptureHeight) /
 				static_cast<float>(Cfg.CaptureWidth);
 
-			// Phase 26C: compute ground speed from position delta (Tag 8)
-			if (bHasPrevGeoPos_ && DeltaTime > 0.0f)
-			{
-				// Haversine approximation using Unreal's cosine
-				constexpr double EarthR = 6371000.0; // metres
-				const double DLat = FMath::DegreesToRadians(EntityState.Latitude  - PrevGeoLatDeg_);
-				const double DLon = FMath::DegreesToRadians(EntityState.Longitude - PrevGeoLonDeg_);
-				const double MeanLat = FMath::DegreesToRadians(
-					(EntityState.Latitude + PrevGeoLatDeg_) * 0.5);
-				const double Dx = DLon * FMath::Cos(MeanLat) * EarthR;
-				const double Dy = DLat * EarthR;
-				const double DistM = FMath::Sqrt(Dx * Dx + Dy * Dy);
-				CurrentTelemetry.GroundSpeedMps = static_cast<float>(DistM / DeltaTime);
-			}
-			PrevGeoLatDeg_  = EntityState.Latitude;
-			PrevGeoLonDeg_  = EntityState.Longitude;
-			bHasPrevGeoPos_ = true;
-
-		}
-		else if (!bGotState)
-		{
-			// No CIGI update this frame — decay ground speed to zero
-			CurrentTelemetry.GroundSpeedMps = 0.0f;
+			// Ground speed (Tag 56): position delta over *host* time. The
+			// estimate is held on ticks without a host update.
+			GroundSpeed_.AddFix(EntityState.Latitude, EntityState.Longitude, EntityState.HostTimeSec);
+			CurrentTelemetry.GroundSpeedMps = GroundSpeed_.GetSpeedMps();
 		}
 	}
 

@@ -24,6 +24,10 @@ struct FCigiEntityState
 	float  Pitch      = 0.0f;  // degrees, positive = nose up
 	float  Roll       = 0.0f;  // degrees, positive = right wing down
 
+	// Host time of the message carrying this update (seconds; only differences
+	// are meaningful). See FCigiHostClock.
+	double HostTimeSec = 0.0;
+
 	// Entity classification from CIGI EntityCtrlV3 — used by FCamSimParticleManager
 	// Kind=1 (Platform), Domain=1 (Air), Category=2=fixed-wing, Category=3=rotary-wing
 	uint8 EntityKind     = 0;

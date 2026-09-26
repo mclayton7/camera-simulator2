@@ -7,6 +7,7 @@
 #include "CIGI/BoundedSpscQueue.h"
 #include "Config/CamSimConfig.h"
 #include "CIGI/CigiPacketTypes.h"
+#include "CIGI/CigiHostClock.h"
 
 // Forward declarations for CCL types (avoid pulling CCL headers into every TU)
 class CigiBaseEventProcessor;
@@ -145,6 +146,7 @@ private:
 	FEvent*          ShutdownEvent = nullptr;
 	TAtomic<uint64>  ReceivedPacketCount { 0 };
 	TAtomic<uint32>  LastHostFrameCntr { 0 };
+	FCigiHostClock   HostClock;  // receiver thread only
 
 	// Bounded SPSC queues: receiver thread produces, game thread consumes.
 	// Camera entity is routed separately so ACamSimCamera and FCamSimEntityManager
