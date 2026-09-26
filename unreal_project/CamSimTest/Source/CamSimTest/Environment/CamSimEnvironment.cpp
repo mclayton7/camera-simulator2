@@ -5,6 +5,7 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "CIGI/CigiReceiver.h"
 #include "Camera/CamSimCamera.h"
+#include "Time/SimClock.h"
 
 #include "CesiumSunSky.h"
 #include "Engine/DirectionalLight.h"
@@ -102,13 +103,14 @@ void ACamSimEnvironment::BeginPlay()
 		ActiveWeatherZones.Add(Z);
 	}
 
-	// Initialise sun from config StartHour
+	// The sim clock is UTC: CesiumSunSky must not apply a zone or DST.
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
-	CurrentCelestial.Hour   = static_cast<uint8>(FMath::FloorToInt(Cfg.StartHour));
-	CurrentCelestial.Minute = static_cast<uint8>(FMath::FloorToInt(FMath::Fmod(Cfg.StartHour, 1.0f) * 60.0f));
-
-	// Apply initial state
-	ApplyCelestial();
+	if (CesiumSunSkyActor)
+	{
+		CesiumSunSkyActor->TimeZone = 0.0;
+		CesiumSunSkyActor->UseDaylightSavingTime = false;
+	}
+	ApplySun(FSimClock::Get().NowUtc());
 
 	const FString SunName     = SunLight           ? SunLight->GetName()           : TEXT("NONE");
 	const FString SkyName     = SkyLight           ? SkyLight->GetName()           : TEXT("NONE");
@@ -117,8 +119,8 @@ void ACamSimEnvironment::BeginPlay()
 	const FString CloudName   = CloudActor         ? CloudActor->GetName()         : TEXT("NONE");
 	const FString CesiumName  = CesiumSunSkyActor  ? CesiumSunSkyActor->GetName()  : TEXT("NONE");
 	UE_LOG(LogCamSim, Log,
-		TEXT("ACamSimEnvironment: CesiumSunSky=%s Sun=%s SkyLight=%s SkyAtmos=%s Fog=%s Cloud=%s  StartHour=%.1f"),
-		*CesiumName, *SunName, *SkyName, *AtmosName, *FogName, *CloudName, Cfg.StartHour);
+		TEXT("ACamSimEnvironment: CesiumSunSky=%s Sun=%s SkyLight=%s SkyAtmos=%s Fog=%s Cloud=%s  sim time %s"),
+		*CesiumName, *SunName, *SkyName, *AtmosName, *FogName, *CloudName, *FSimClock::Get().NowUtc().ToIso8601());
 
 	// Phase 19 — Ocean
 	OceanManager.Init(GetWorld(), this, Subsystem, Subsystem->GetConfig().Phase19);
@@ -146,14 +148,16 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 	}
 	if (bGotCelestial)
 	{
-		CurrentCelestial = CelState;
-		if (!bReceivedCelestial)
-		{
-			UE_LOG(LogCamSim, Log, TEXT("ACamSimEnvironment: first celestial packet received (time=%02d:%02d)"),
-				CelState.Hour, CelState.Minute);
-		}
-		bReceivedCelestial = true;
-		ApplyCelestial();
+		ApplyCelestialControl(CelState);
+	}
+
+	// The sun follows the sim clock; the sun moves ~0.004 deg/s, so once a
+	// sim second is plenty (and catches clock jumps immediately).
+	const uint64 NowMicros = FSimClock::Get().NowMicros();
+	if (LastSunMicros == 0 || NowMicros < LastSunMicros || NowMicros - LastSunMicros >= 1'000'000)
+	{
+		ApplySun(FSimClock::FromMicros(NowMicros));
+		LastSunMicros = NowMicros;
 	}
 
 	FCigiAtmosphereState AtmState;
@@ -274,67 +278,94 @@ FVector2D ACamSimEnvironment::ComputeSunPosition(
 	                     + FMath::Cos(LatRad) * FMath::Cos(DeclRad) * FMath::Cos(HARad);
 	const float Elevation = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(SinElev, -1.0f, 1.0f)));
 
-	// Solar azimuth angle (measured from south, converted to compass bearing)
+	// Solar azimuth, a compass bearing from north: the formula gives the angle
+	// from north in [0, 180]; afternoon (positive hour angle) is west of south.
 	const float CosAz = (FMath::Sin(DeclRad) - FMath::Sin(LatRad) * SinElev)
 	                   / FMath::Max(FMath::Cos(LatRad) * FMath::Cos(FMath::DegreesToRadians(Elevation)), 0.001f);
 	float Azimuth = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(CosAz, -1.0f, 1.0f)));
-
-	// Azimuth convention: compass bearing from north
 	if (HourAngle > 0.0f)
 	{
 		Azimuth = 360.0f - Azimuth;
 	}
-	// Shift from "from south" to "from north"
-	Azimuth = FMath::Fmod(Azimuth + 180.0f, 360.0f);
 
 	return FVector2D(Elevation, Azimuth);
 }
 
 // -------------------------------------------------------------------------
-// ApplyCelestial — sun/moon positioning
+// ApplyCelestialControl — CIGI Celestial Sphere Control → sim clock
 // -------------------------------------------------------------------------
 
-void ACamSimEnvironment::ApplyCelestial()
+void ACamSimEnvironment::ApplyCelestialControl(const FCigiCelestialState& Cel)
 {
-	const float HourDecimal = static_cast<float>(CurrentCelestial.Hour)
-	                        + static_cast<float>(CurrentCelestial.Minute) / 60.0f;
+	// Hosts may send the packet every frame: only a change moves the clock,
+	// otherwise time would stick at hh:mm:00.
+	const bool bChanged = !bReceivedCelestial
+		|| Cel.Hour != LastCelestial.Hour || Cel.Minute != LastCelestial.Minute
+		|| Cel.Day != LastCelestial.Day || Cel.Month != LastCelestial.Month || Cel.Year != LastCelestial.Year
+		|| Cel.bDateVld != LastCelestial.bDateVld || Cel.bEphemerisEn != LastCelestial.bEphemerisEn;
+	if (!bChanged) return;
+	LastCelestial = Cel;
+	bReceivedCelestial = true;
 
-	// Approximate day-of-year from month/day
-	static const int32 DaysBeforeMonth[] = { 0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
-	const int32 MonthIdx = FMath::Clamp(static_cast<int32>(CurrentCelestial.Month), 1, 12);
-	const int32 DayOfYear = DaysBeforeMonth[MonthIdx] + FMath::Clamp(static_cast<int32>(CurrentCelestial.Day), 1, 31);
+	// ICD 4.1.9: Hour/Minute/Date override the IG's date and time only when
+	// Date/Time Valid is set; Ephemeris Model Enable = continuous time of day.
+	FSimClock& Clock = FSimClock::Get();
+	if (Cel.bDateVld)
+	{
+		if (FDateTime::Validate(Cel.Year, Cel.Month, Cel.Day, Cel.Hour, Cel.Minute, 0, 0))
+		{
+			Clock.SetUtc(FDateTime(Cel.Year, Cel.Month, Cel.Day, Cel.Hour, Cel.Minute));
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("ACamSimEnvironment: celestial date %02d/%02d/%04d %02d:%02d is invalid — ignored"),
+				Cel.Month, Cel.Day, Cel.Year, Cel.Hour, Cel.Minute);
+		}
+	}
+	Clock.SetRate(Cel.bEphemerisEn ? Subsystem->GetConfig().SimTimeRate : 0.0);
+	UE_LOG(LogCamSim, Log, TEXT("ACamSimEnvironment: Celestial Sphere Control -> sim time %s, %s"),
+		*Clock.NowUtc().ToIso8601(), Cel.bEphemerisEn ? TEXT("continuous") : TEXT("static"));
 
-	// Use camera start latitude for sun position (good enough for visual fidelity)
-	const double Latitude = Subsystem ? Subsystem->GetConfig().StartLatitude : 38.0;
+	LastSunMicros = 0;  // re-apply the sun on this tick
+}
 
-	const FVector2D SunPos = ComputeSunPosition(HourDecimal, DayOfYear, Latitude);
+// -------------------------------------------------------------------------
+// ApplySun — sun position and lighting for a UTC time
+// -------------------------------------------------------------------------
+
+void ACamSimEnvironment::ApplySun(const FDateTime& Utc)
+{
+	const double UtcHours = Utc.GetHour() + Utc.GetMinute() / 60.0 + Utc.GetSecond() / 3600.0;
+
+	// The approximate model below wants local solar time: shift by longitude.
+	double Latitude  = Subsystem ? Subsystem->GetConfig().StartLatitude  : 38.0;
+	double Longitude = Subsystem ? Subsystem->GetConfig().StartLongitude : 0.0;
+	if (const ACamSimCamera* Cam = Subsystem ? Subsystem->GetCamera() : nullptr)
+	{
+		const FCamSimTelemetry T = Cam->GetCurrentTelemetry();
+		Latitude  = T.Latitude;
+		Longitude = T.Longitude;
+	}
+	const float LocalSolarHour = static_cast<float>(FMath::Fmod(UtcHours + Longitude / 15.0 + 48.0, 24.0));
+	const int32 DayOfYear = Utc.GetDayOfYear();
+
+	const FVector2D SunPos = ComputeSunPosition(LocalSolarHour, DayOfYear, Latitude);
 	const float SunElevation = SunPos.X;
 	const float SunAzimuth   = SunPos.Y;
+	SunElevationDeg = SunElevation;
 
-	UE_LOG(LogCamSim, Log,
-		TEXT("ACamSimEnvironment: time=%02d:%02d  sun elev=%.1f az=%.1f"),
-		CurrentCelestial.Hour, CurrentCelestial.Minute, SunElevation, SunAzimuth);
+	UE_LOG(LogCamSim, Verbose, TEXT("ACamSimEnvironment: sim time %s  sun elev=%.1f az=%.1f"),
+		*Utc.ToIso8601(), SunElevation, SunAzimuth);
 
 	// Drive CesiumSunSky's solar time — it owns the directional light rotation.
 	// Fall back to manual rotation only when no CesiumSunSky is in the level.
 	if (CesiumSunSkyActor)
 	{
-		CesiumSunSkyActor->SolarTime = static_cast<double>(HourDecimal);
-		if (CurrentCelestial.bDateVld)
-		{
-			CesiumSunSkyActor->Month = FMath::Clamp(static_cast<int32>(CurrentCelestial.Month), 1, 12);
-			CesiumSunSkyActor->Day   = FMath::Clamp(static_cast<int32>(CurrentCelestial.Day),   1, 31);
-			const int32 Year = static_cast<int32>(CurrentCelestial.Year);
-			if (Year >= 1800 && Year <= 2200)
-			{
-				CesiumSunSkyActor->Year = Year;
-			}
-			else
-			{
-				UE_LOG(LogCamSim, Warning,
-					TEXT("ACamSimEnvironment: celestial packet has invalid year %d — skipping date update"), Year);
-			}
-		}
+		// TimeZone is 0 and DST off (BeginPlay), so SolarTime is UTC.
+		CesiumSunSkyActor->SolarTime = FMath::Min(UtcHours, 23.9999);
+		CesiumSunSkyActor->Day   = Utc.GetDay();
+		CesiumSunSkyActor->Month = Utc.GetMonth();
+		CesiumSunSkyActor->Year  = Utc.GetYear();
 		CesiumSunSkyActor->UpdateSun();
 	}
 	else if (SunLight)
@@ -426,11 +457,7 @@ void ACamSimEnvironment::ApplyAtmosphere()
 	FogComp->SetFogDensity(Density);
 
 	// Inscattering color based on time-of-day
-	const float HourDecimal = static_cast<float>(CurrentCelestial.Hour)
-	                         + static_cast<float>(CurrentCelestial.Minute) / 60.0f;
-	const FVector2D SunPos = ComputeSunPosition(HourDecimal,
-		FMath::Clamp(static_cast<int32>(CurrentCelestial.Day), 1, 365),
-		Subsystem ? Subsystem->GetConfig().StartLatitude : 38.0);
+	const FVector2D SunPos(SunElevationDeg, 0.0f);
 
 	if (SunPos.X > 10.0f)
 	{

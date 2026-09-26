@@ -41,7 +41,7 @@ public:
 	void UpdateFrameCenter(UWorld* World, const USceneCaptureComponent2D& Sensor, const AActor* IgnoreActor,
 		const FCamSimGeospatialProvider* GeoProvider);
 
-	/** Stamp the UTC time (Tag 2) and return the snapshot for the frame being captured. */
+	/** Stamp the sim time (UTC, Tag 2) and return the snapshot for the frame being captured. */
 	FCamSimTelemetry Snapshot();
 
 	/**

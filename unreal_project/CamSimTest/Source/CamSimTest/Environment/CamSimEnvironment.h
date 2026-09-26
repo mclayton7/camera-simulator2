@@ -56,7 +56,13 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 	/** Current sun elevation in degrees above horizon (Phase 16K). */
-	float GetSunElevationDeg() const { return PrevSunElevation; }
+	float GetSunElevationDeg() const { return SunElevationDeg; }
+
+	/**
+	 * Simplified solar position for local solar time Hour: (elevation above the
+	 * horizon, compass azimuth from north), degrees.
+	 */
+	static FVector2D ComputeSunPosition(float Hour, int32 DayOfYear, double Latitude);
 
 	/** Atmospheric state snapshot for the task thread (Phase 18). */
 	struct FAtmosphericSnapshot
@@ -90,7 +96,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<ACamSimCamera>    CamSimCameraActor;
 
 	// Latest state from CIGI queues
-	FCigiCelestialState  CurrentCelestial;
+	FCigiCelestialState  LastCelestial;   // last Celestial Sphere Control applied to the sim clock
 	FCigiAtmosphereState CurrentAtmosphere;
 	FCigiWeatherState    CurrentWeather;
 
@@ -99,7 +105,9 @@ private:
 	bool bReceivedWeather    = false;
 
 	// Previous sun elevation for sky-light recapture hysteresis
-	float PrevSunElevation = 0.0f;
+	float PrevSunElevation = 0.0f;   // at the last sky-light recapture
+	float SunElevationDeg  = 0.0f;   // current
+	uint64 LastSunMicros   = 0;      // sim time the sun was last applied (0 = now)
 
 	// Cached atmospheric snapshot (Phase 18) — updated each time atmosphere/weather changes
 	FAtmosphericSnapshot CachedAtmosSnapshot;
@@ -116,7 +124,10 @@ private:
 	double                CameraLatDeg = 0.0;   // updated each tick via SetCameraPosition()
 	double                CameraLonDeg = 0.0;
 
-	void ApplyCelestial();
+	/** CIGI Celestial Sphere Control → sim clock date/time and rate. */
+	void ApplyCelestialControl(const FCigiCelestialState& Cel);
+	/** Sun position and lighting for a UTC time. */
+	void ApplySun(const FDateTime& Utc);
 	void ApplyAtmosphere();
 	void ApplyWeather();
 
@@ -131,6 +142,4 @@ private:
 	void  BlendWeatherZones();
 	static float GreatCircleApproxM(double Lat1, double Lon1, double Lat2, double Lon2);
 
-	/** Simplified solar position: returns (elevation, azimuth) in degrees. */
-	static FVector2D ComputeSunPosition(float Hour, int32 DayOfYear, double Latitude);
 };

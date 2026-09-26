@@ -63,7 +63,9 @@ start_altitude: 1500.0
 start_yaw: 200.0
 start_pitch: 0.0
 start_roll: 0.0
-start_hour: 12.0
+# start_datetime: "2025-03-01T06:30:00Z"   # sim clock start (default: wall-clock now)
+# start_hour: 12.0                         # or: this UTC hour, today
+sim_time_rate: 1.0
 
 gimbal_max_slew_rate: 0.0
 gimbal_pitch_min: -90.0
@@ -316,7 +318,9 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 | `start_yaw` | float | `200.0` | `CAMSIM_START_YAW` | Initial heading in degrees [0, 360). |
 | `start_pitch` | float | `0.0` | `CAMSIM_START_PITCH` | Initial pitch in degrees. Negative = looking down. |
 | `start_roll` | float | `0.0` | `CAMSIM_START_ROLL` | Initial roll in degrees. |
-| `start_hour` | float | `12.0` | `CAMSIM_START_HOUR` | Initial time of day (0-24). Used to set sun position before a CIGI Celestial Control packet is received. |
+| `start_datetime` | string | *(unset)* | `CAMSIM_START_DATETIME` | Sim clock start, ISO 8601 UTC (e.g. `2025-03-01T06:30:00Z`). Unset: the clock starts at the wall-clock time. One clock drives the sun, KLV Tag 2, CoT, the HUD time and ground truth; a CIGI Celestial Sphere Control with Date/Time Valid sets it at runtime. |
+| `start_hour` | float | *(unset)* | `CAMSIM_START_HOUR` | Start at this UTC hour (0-24) on today's date. Ignored when `start_datetime` is set. |
+| `sim_time_rate` | float | `1.0` | `CAMSIM_SIM_TIME_RATE` | Sim clock rate: 1 = real time, 0 = frozen, >1 faster. A Celestial Sphere Control with Ephemeris Model Enable = 0 freezes it (static time of day). |
 
 ### Gimbal and Sensor (Phase 9)
 
@@ -555,7 +559,8 @@ CAMSIM_START_ALT=1500.0
 CAMSIM_START_YAW=200.0
 CAMSIM_START_PITCH=0.0
 CAMSIM_START_ROLL=0.0
-CAMSIM_START_HOUR=12.0
+CAMSIM_START_DATETIME=2025-03-01T06:30:00Z   # or CAMSIM_START_HOUR=12.0
+CAMSIM_SIM_TIME_RATE=1.0
 
 # Cesium
 CAMSIM_TILE_FOV_SCALE=2.0

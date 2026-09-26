@@ -497,6 +497,8 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		YamlFloat (Root, "start_pitch",      Cfg.StartPitch);
 		YamlFloat (Root, "start_roll",       Cfg.StartRoll);
 		YamlFloat (Root, "start_hour",       Cfg.StartHour);
+		YamlString(Root, "start_datetime",   Cfg.StartDatetime);
+		YamlFloat (Root, "sim_time_rate",    Cfg.SimTimeRate);
 		YamlInt   (Root, "camera_entity_id",           Cfg.CameraEntityId);
 		YamlFloat (Root, "gimbal_max_slew_rate",       Cfg.GimbalMaxSlewRateDegPerSec);
 		YamlFloat (Root, "gimbal_pitch_min",           Cfg.GimbalPitchMin);
@@ -1445,6 +1447,8 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.StartPitch     = GetEnvFloat(TEXT("CAMSIM_START_PITCH"),  Cfg.StartPitch);
 	Cfg.StartRoll      = GetEnvFloat(TEXT("CAMSIM_START_ROLL"),   Cfg.StartRoll);
 	Cfg.StartHour      = GetEnvFloat(TEXT("CAMSIM_START_HOUR"),   Cfg.StartHour);
+	Cfg.StartDatetime  = GetEnv     (TEXT("CAMSIM_START_DATETIME"), Cfg.StartDatetime);
+	Cfg.SimTimeRate    = GetEnvFloat(TEXT("CAMSIM_SIM_TIME_RATE"),  Cfg.SimTimeRate);
 
 	{
 		const FString Preset = GetEnv(TEXT("CAMSIM_SENSOR_QUALITY_PRESET"), TEXT(""));
@@ -1843,7 +1847,16 @@ TArray<FString> FCamSimConfig::Validate() const
 	RangeCheckInt(TEXT("MaxEntities"), MaxEntities, 1, 10000);
 
 	// Time
-	RangeCheckFloat(TEXT("StartHour"), StartHour, 0.0f, 24.0f);
+	if (StartHour >= 0.0f) RangeCheckFloat(TEXT("StartHour"), StartHour, 0.0f, 24.0f);
+	RangeCheckFloat(TEXT("SimTimeRate"), SimTimeRate, 0.0f, 10000.0f);
+	if (!StartDatetime.IsEmpty())
+	{
+		FDateTime Parsed;
+		if (!FDateTime::ParseIso8601(*StartDatetime, Parsed))
+		{
+			Errors.Add(FString::Printf(TEXT("StartDatetime '%s' is not ISO 8601 (e.g. 2025-03-01T06:30:00Z)"), *StartDatetime));
+		}
+	}
 
 	// Watchdog
 	RangeCheckInt(TEXT("WatchdogMaxReconnects"), WatchdogMaxReconnects, 0, 100);

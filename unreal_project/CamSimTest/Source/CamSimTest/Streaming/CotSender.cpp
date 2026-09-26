@@ -2,6 +2,7 @@
 
 #include "Streaming/CotSender.h"
 #include "Config/CamSimConfig.h"
+#include "Time/SimClock.h"
 #include "CamSimTest.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
@@ -135,7 +136,9 @@ FString FCotSender::BuildCotXml(const FCamSimTelemetry& Telemetry) const
 		return FString();
 	}
 
-	const FDateTime Now = FDateTime::UtcNow();
+	// Sim time, like KLV Tag 2. TAK clients drop events whose stale time is
+	// already past on the device clock, so a past sim date hides them.
+	const FDateTime Now = FSimClock::Get().NowUtc();
 	const FDateTime Stale = Now + FTimespan::FromSeconds(
 		static_cast<double>(Config.Streaming.CotIntervalSec) * 2.0);
 

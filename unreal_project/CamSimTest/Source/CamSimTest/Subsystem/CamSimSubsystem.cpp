@@ -21,6 +21,7 @@
 #include "Logging/CamSimJsonLogger.h"
 #include "Diagnostics/PipelineLatencyTracker.h"
 #include "Health/CamSimHealthServer.h"
+#include "Time/SimClock.h"
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -366,6 +367,11 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 
 	EntityTypeTable.LoadFromConfig();
+
+	// Sim clock (ROADMAP 2.1): configured start and rate, until CIGI sets it.
+	FSimClock::Get().Start(Config.StartDatetime, Config.StartHour, Config.SimTimeRate);
+	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: sim clock %s UTC, rate %.2f"),
+		*FSimClock::Get().NowUtc().ToIso8601(), FSimClock::Get().GetRate());
 
 	const FString RHIName = GDynamicRHI ? GDynamicRHI->GetName() : TEXT("Unknown");
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: initializing"));

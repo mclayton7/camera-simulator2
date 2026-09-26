@@ -204,6 +204,38 @@ It supports real-time, faster/slower than real time, and **deterministic lockste
 It replaces two stopgaps from Milestone 0: `FUtcClock` (KLV Tag 2, wall-clock UTC) and
 `FCigiHostClock` (host time per CIGI message, used for ground speed).
 
+**Status (2026-09-26): core done.** `Time/SimClock.h` (`FSimClock`): a UTC epoch advancing
+at a rate (1 = real time, 0 = frozen, >1 faster) from a monotonic source, with lockstep
+`Step()` for 2.4. It starts at the wall-clock time (`start_datetime` / `start_hour` override;
+`sim_time_rate`), and CIGI Celestial Sphere Control sets it: Date/Time Valid → date and time,
+Ephemeris Model Enable → running or static (applied only when the packet changes, since hosts
+may resend it every frame). It drives KLV Tag 2, CoT, the HUD date-time group, ground truth
+and the sun (CesiumSunSky now updates continuously). `FUtcClock` is gone. `FCigiHostClock`
+stays: it measures host-relative differences (ground speed, ordering), a different quantity
+from IG sim time. Tests: `SimClock.*`, `CigiEntityRelative.EnvironmentPacketsFromCclHost`.
+
+Bugs found and fixed along the way:
+- Celestial Sphere Control's date was read from the wrong bytes (CIGI 3.3: `uint32`
+  MMDDYYYY at bytes 8–11), and Atmosphere Control was read one field late (humidity is a
+  byte, not a float), so the "visibility" driving fog was the host's horizontal wind speed.
+  The raw environment parser also assumed big-endian, while CCL hosts send native
+  (little-endian) order declared by the IG Control byte-swap magic. A real CCL host's
+  Celestial/Atmosphere/Weather values all came out wrong (year 47605, every float 0).
+  `send_cigi_test.py` shared the wrong layouts and is fixed too.
+- CesiumSunSky interprets `SolarTime` in its `TimeZone` (default −5, with DST); CamSim fed it
+  UTC hours, so the sun was 4–5 h off. Now `TimeZone = 0`, DST off.
+- The fallback sun model (no CesiumSunSky) got UTC instead of local solar time and a
+  compass azimuth 180° off; the telemetry sun elevation only updated on sky-light recaptures.
+
+Still open for 2.1:
+- The scenario engine keeps its own clock (`FPlatformTime` × `ScenarioTimeScale`, from
+  `ScenarioStartHour`); it should read the sim clock.
+- Fixed `1/30 s` time steps: scenario `DeltaTime`, waypoint pauses, IR thermal drift.
+- Lockstep needs a driver (the 2.4 control API) and must also gate the engine tick.
+- DIS PDU timestamps are parsed but unused (2.3).
+- Night renders as daylight: the scene capture's auto exposure brightens a sun-below-horizon
+  scene. Needs a sensor exposure model (Milestone 3).
+
 ### 2.2 Coordinate-frame module
 
 Started in Milestone 0: `Geospatial/CigiFrames.h` covers CIGI heading/pitch/roll, local

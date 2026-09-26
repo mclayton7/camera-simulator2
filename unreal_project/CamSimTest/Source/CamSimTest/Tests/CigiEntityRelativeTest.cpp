@@ -19,6 +19,9 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiLosSegReqV3_2.h"
 #include "cigicl/CigiLosVectReqV3_2.h"
 #include "cigicl/CigiRateCtrlV3_2.h"
+#include "cigicl/CigiCelestialCtrl.h"
+#include "cigicl/CigiAtmosCtrl.h"
+#include "cigicl/CigiWeatherCtrlV3.h"
 THIRD_PARTY_INCLUDES_END
 
 // -------------------------------------------------------------------------
@@ -210,6 +213,117 @@ bool FCigiEntityRelativeParseTest::RunTest(const FString& Parameters)
 	{
 		TestTrue(TEXT("LOS vector entity-relative"), VectReq.bEntityRelative);
 		TestTrue(TEXT("LOS vector azimuth kept body-relative"), FMath::IsNearlyEqual(VectReq.VectAz, 15.0f));
+	}
+	return true;
+}
+
+// -------------------------------------------------------------------------
+// Celestial, Atmosphere and Weather Control are parsed from the raw datagram
+// (bypassing CCL's hold mechanism). A CCL 3.3 host sends its native byte
+// order — little-endian here — and CCL's field layout.
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCigiEnvironmentPacketsTest,
+	"CamSim.CigiEntityRelative.EnvironmentPacketsFromCclHost",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCigiEnvironmentPacketsTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Config;
+	Config.CigiBindAddr = TEXT("127.0.0.1");
+	Config.CigiPort     = 48872;
+	FCigiReceiver Receiver(Config);
+	if (!TestTrue(TEXT("Receiver started"), Receiver.Start())) return false;
+
+	CigiHostSession Session(1, 4096, 2, 4096);
+	Session.SetCigiVersion(3, 3);
+	CigiOutgoingMsg& Out = Session.GetOutgoingMsgMgr();
+
+	CigiIGCtrlV3_3 IgCtrl;
+	CigiCelestialCtrlV3 Cel;
+	Cel.SetHour(6);
+	Cel.SetMinute(30);
+	Cel.SetMonth(3);
+	Cel.SetDay(1);
+	Cel.SetYear(2025);
+	Cel.SetDateVld(true);
+	Cel.SetEphemerisEn(false);
+	Cel.SetStarInt(40.0f);
+
+	CigiAtmosCtrlV3 Atmos;
+	Atmos.SetAtmosEn(true);
+	Atmos.SetHumidity(55);
+	Atmos.SetAirTemp(-5.0f);
+	Atmos.SetVisibility(1234.0f);
+	Atmos.SetHorizWindSp(7.0f);
+	Atmos.SetBaroPress(990.0f);
+
+	CigiWeatherCtrlV3 Weather;
+	Weather.SetScope(CigiBaseWeatherCtrl::Regional);
+	Weather.SetRegionID(3);
+	Weather.SetWeatherEn(true);
+	Weather.SetVisibilityRng(800.0f);
+	Weather.SetCoverage(75.0f);
+
+	Out.BeginMsg();
+	Out << IgCtrl;
+	Out << Cel;
+	Out << Atmos;
+	Out << Weather;
+	Cigi_uint8* Buf = nullptr;
+	int Len = 0;
+	const bool bPackaged = (Out.PackageMsg(&Buf, Len) == CIGI_SUCCESS) && Buf && Len > 0;
+	TestTrue(TEXT("Host message packaged"), bPackaged);
+
+	ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	FSocket* Tx = FUdpSocketBuilder(TEXT("CigiEnvTestHost")).Build();
+	TSharedRef<FInternetAddr> Dest = SS->CreateInternetAddr();
+	bool bValidIp = false;
+	Dest->SetIp(TEXT("127.0.0.1"), bValidIp);
+	Dest->SetPort(Config.CigiPort);
+	int32 Sent = 0;
+	if (bPackaged && Tx)
+	{
+		Tx->SendTo(Buf, Len, Sent, *Dest);
+		Out.FreeMsg();
+	}
+
+	FCigiCelestialState CelState;
+	FCigiAtmosphereState AtmState;
+	FCigiWeatherState WxState;
+	bool bCel = false, bAtm = false, bWx = false;
+	const double Deadline = FPlatformTime::Seconds() + 2.0;
+	while (FPlatformTime::Seconds() < Deadline && !(bCel && bAtm && bWx))
+	{
+		bCel |= Receiver.DequeueCelestialState(CelState);
+		bAtm |= Receiver.DequeueAtmosphereState(AtmState);
+		bWx  |= Receiver.DequeueWeatherState(WxState);
+		FPlatformProcess::Sleep(0.005f);
+	}
+	Receiver.Stop();
+	if (Tx) SS->DestroySocket(Tx);
+
+	if (TestTrue(TEXT("Celestial received"), bCel))
+	{
+		TestTrue(FString::Printf(TEXT("date %02d/%02d/%04d %02d:%02d"), CelState.Month, CelState.Day, CelState.Year,
+			CelState.Hour, CelState.Minute),
+			CelState.Month == 3 && CelState.Day == 1 && CelState.Year == 2025 && CelState.Hour == 6 && CelState.Minute == 30);
+		TestTrue(TEXT("date valid, ephemeris off"), CelState.bDateVld && !CelState.bEphemerisEn);
+		TestEqual(TEXT("star intensity"), CelState.StarInt, 40.0f);
+	}
+	if (TestTrue(TEXT("Atmosphere received"), bAtm))
+	{
+		TestEqual(TEXT("humidity"), AtmState.Humidity, 55.0f);
+		TestEqual(TEXT("air temperature"), AtmState.AirTemp, -5.0f);
+		TestEqual(TEXT("visibility"), AtmState.Visibility, 1234.0f);
+		TestEqual(TEXT("horizontal wind"), AtmState.HorizWindSp, 7.0f);
+		TestEqual(TEXT("barometric pressure"), AtmState.BaroPress, 990.0f);
+	}
+	if (TestTrue(TEXT("Weather received"), bWx))
+	{
+		TestEqual(TEXT("region id"), WxState.RegionId, static_cast<uint16>(3));
+		TestEqual(TEXT("visibility range"), WxState.VisibilityRng, 800.0f);
+		TestEqual(TEXT("coverage"), WxState.Coverage, 75.0f);
 	}
 	return true;
 }

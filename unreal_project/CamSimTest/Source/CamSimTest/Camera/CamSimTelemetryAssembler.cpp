@@ -3,7 +3,7 @@
 #include "Camera/CamSimTelemetryAssembler.h"
 #include "Environment/CamSimEnvironment.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
-#include "Metadata/UtcClock.h"
+#include "Time/SimClock.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -94,7 +94,7 @@ void FCamSimTelemetryAssembler::UpdateFrameCenter(UWorld* World, const USceneCap
 
 FCamSimTelemetry FCamSimTelemetryAssembler::Snapshot()
 {
-	Telemetry.TimestampUs = FUtcClock::NowMicros();
+	Telemetry.TimestampUs = FSimClock::Get().NowMicros();
 	return Telemetry;
 }
 

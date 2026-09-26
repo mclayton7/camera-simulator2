@@ -294,9 +294,16 @@ start_pitch: 0.0
 # Env: CAMSIM_START_ROLL
 start_roll: 0.0
 
-# Time of day (0-24). Sets sun position before a CIGI Celestial Control.
-# Env: CAMSIM_START_HOUR
-start_hour: 12.0
+# --- Sim clock (UTC) ---
+# One clock drives the sun, KLV Tag 2, CoT, the HUD time and ground truth.
+# It starts at the wall-clock time unless one of these is set, and a CIGI
+# Celestial Sphere Control (Date/Time Valid) sets it at runtime.
+# Start date and time, ISO 8601. Env: CAMSIM_START_DATETIME
+# start_datetime: "2025-03-01T06:30:00Z"
+# Start time of day (UTC hours 0-24) on today's date. Env: CAMSIM_START_HOUR
+# start_hour: 12.0
+# 1 = real time, 0 = frozen, >1 faster than real time. Env: CAMSIM_SIM_TIME_RATE
+sim_time_rate: 1.0
 
 # CIGI Entity ID that drives the camera. All other entity IDs are managed
 # by the entity renderer. Must match --entity-id in send_cigi_test.py.

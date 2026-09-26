@@ -143,8 +143,14 @@ struct FCamSimConfig
 	float   StartPitch      = -45.0f;      // look downward
 	float   StartRoll       = 0.0f;
 
-	// Default time-of-day (hours 0-24) used before first CIGI celestial packet
-	float   StartHour       = 12.0f;
+	// Sim clock start (UTC), until a CIGI Celestial Sphere Control sets it.
+	// StartDatetime (ISO 8601, e.g. "2025-03-01T06:30:00Z") wins; otherwise
+	// StartHour >= 0 sets that UTC hour on today's date; otherwise the clock
+	// starts at the wall-clock time.
+	FString StartDatetime;
+	float   StartHour       = -1.0f;
+	// Sim time rate: 1 = real time, 0 = frozen, >1 faster than real time.
+	float   SimTimeRate     = 1.0f;
 
 	// Encoder watchdog behavior
 	EEncoderWatchdogPolicy EncoderWatchdogPolicy = EEncoderWatchdogPolicy::Reconnect;

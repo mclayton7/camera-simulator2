@@ -42,10 +42,13 @@ Tag 2 is first and Tag 1 last, as ST 0601 requires; the rest are in ascending or
 | Units | Microseconds since Unix epoch (UTC) |
 | Range | 0 .. 2^64-1 |
 
-**Source:** `FUtcClock::NowMicros()`, sampled in `ACamSimCamera::CaptureAndEncode()`
-immediately before the scene capture. The clock anchors the monotonic platform timer to
-UTC once at startup, so timestamps are real UTC but never jump if the system clock is
-adjusted mid-run.
+**Source:** the sim clock (`FSimClock::Get().NowMicros()`, `Time/SimClock.h`), sampled in
+`FCamSimTelemetryAssembler::Snapshot()` immediately before the scene capture. It is the same
+time the sun, CoT, the HUD date-time group and ground-truth annotations use. It starts at the
+wall-clock UTC time (or `start_datetime` / `start_hour`) and a CIGI Celestial Sphere Control
+with Date/Time Valid sets it, so after a host sets a scenario date the timestamps carry that
+date, not today's. It advances from a monotonic timer, so it never jumps if the system clock
+is adjusted mid-run.
 
 ---
 
@@ -476,7 +479,7 @@ CIGI Sensor Control (opcode 17)
         ├─> Tag 11  (sensor name string)
         └─> Tag 47  (flag bitmask)
 
-FUtcClock (UTC, monotonic)
+FSimClock (sim time, UTC; set by config / CIGI Celestial Sphere Control)
   └─> Tag 2
 
 Static / derived
