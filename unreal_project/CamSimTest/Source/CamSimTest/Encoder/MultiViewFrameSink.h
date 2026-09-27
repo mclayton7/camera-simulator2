@@ -24,7 +24,7 @@ public:
 
 	// IFrameSink interface
 	virtual bool Open() override;
-	virtual void EncodeFrame(const TArray<FColor>& PixelData,
+	virtual void EncodeFrame(const FSensorFrame& Frame,
 	                         const FCamSimTelemetry& Telemetry,
 	                         uint64 FrameIdx) override;
 	virtual void Close() override;
@@ -42,8 +42,8 @@ private:
 
 		// Phase 2: per-view zoom scratch — sized lazily on first zoomed frame
 		// and reused thereafter. EncodeFrame writes into this instead of
-		// allocating a fresh TArray<FColor> per view per frame.
-		TArray<FColor> ZoomedScratch;
+		// allocating a fresh TArray<FColor>/TArray<uint8> per view per frame.
+		FSensorFrame ZoomedScratch;
 	};
 
 	const FCamSimConfig& Config;
@@ -67,4 +67,10 @@ private:
 	                             int32 Width, int32 Height,
 	                             float SourceHFovDeg, float TargetHFovDeg,
 	                             TArray<FColor>& OutPixels);
+	/** NV12 counterpart of ApplyDigitalZoom: same crop/nearest-neighbour mapping,
+	 *  applied to the Y plane at full resolution and the UV plane at half resolution. */
+	static void ApplyDigitalZoomNv12(const TArray<uint8>& SourceNv12,
+	                             int32 Width, int32 Height,
+	                             float SourceHFovDeg, float TargetHFovDeg,
+	                             TArray<uint8>& OutNv12);
 };

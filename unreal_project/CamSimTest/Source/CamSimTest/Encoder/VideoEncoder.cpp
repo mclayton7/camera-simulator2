@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Encoder/VideoEncoder.h"
+#include "Encoder/Nv12.h"
 #include "CamSimTest.h"
 #include "Sensor/SensorTypes.h"
 
@@ -551,20 +552,40 @@ bool FVideoEncoder::OpenRecordingContext()
 // -------------------------------------------------------------------------
 
 void FVideoEncoder::EncodeFrame(
-	const TArray<FColor>& PixelData,
+	const FSensorFrame& Frame,
 	const FCamSimTelemetry& Telemetry,
 	uint64 FrameIdx)
 {
-	if (!bIsOpen || PixelData.Num() == 0) return;
+	if (!bIsOpen || Frame.IsEmpty()) return;
 
 	// Confirm the encoder is receiving frames (first 3 only to avoid spam).
 	if (FrameIdx < 3)
 	{
-		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: encoding frame %llu (%d pixels)"), FrameIdx, PixelData.Num());
+		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: encoding frame %llu (%d %s)"), FrameIdx,
+			Frame.Format == ESensorPixelFormat::NV12 ? Frame.Nv12.Num() : Frame.Bgra.Num(),
+			Frame.Format == ESensorPixelFormat::NV12 ? TEXT("NV12 bytes") : TEXT("pixels"));
 	}
 
-	// Convert BGRA → YUV420P
 	av_frame_make_writable(YuvFrame);
+
+	if (Frame.Format == ESensorPixelFormat::NV12)
+	{
+		// GPU sensor path (ROADMAP 3B): already BT.709 limited-range YUV; just de-interleave.
+		if (Frame.Nv12.Num() != CamSimNv12::NumBytes(Config.CaptureWidth, Config.CaptureHeight))
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("FVideoEncoder: NV12 frame %llu has %d bytes, expected %d — skipped"),
+				FrameIdx, Frame.Nv12.Num(), CamSimNv12::NumBytes(Config.CaptureWidth, Config.CaptureHeight));
+			return;
+		}
+		CamSimNv12::SplitToYuv420p(Frame.Nv12.GetData(), Config.CaptureWidth, Config.CaptureHeight,
+			YuvFrame->data[0], YuvFrame->linesize[0], YuvFrame->data[1], YuvFrame->linesize[1],
+			YuvFrame->data[2], YuvFrame->linesize[2]);
+	}
+	else
+	{
+	const TArray<FColor>& PixelData = Frame.Bgra;
+
+	// Convert BGRA → YUV420P
 
 	// IR/NVG fast path: frame is already grayscale after sensor post-process.
 	// Y = R channel (all channels equal after ApplyIR/ApplyNVG), Cb=Cr=128.
@@ -649,6 +670,7 @@ void FVideoEncoder::EncodeFrame(
 			CX, CY, P.B, P.G, P.R, P.A, Y_val, Cb_val, Cr_val,
 			YuvFrame->linesize[0], YuvFrame->linesize[1], YuvFrame->linesize[2]);
 	}
+	} // end BGRA path
 
 	// Monotonic PTS — one tick per encoded frame so the MPEG-TS stream has
 	// uniform frame spacing.  Wall-clock PTS caused stutter when frames were

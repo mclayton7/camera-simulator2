@@ -20,7 +20,7 @@ namespace
 	public:
 		explicit FSlowCountingSink(float InEncodeMs) : EncodeMs(InEncodeMs) {}
 		virtual bool Open() override { return true; }
-		virtual void EncodeFrame(const TArray<FColor>&, const FCamSimTelemetry&, uint64) override
+		virtual void EncodeFrame(const FSensorFrame&, const FCamSimTelemetry&, uint64) override
 		{
 			FPlatformProcess::SleepNoStats(EncodeMs / 1000.0f);
 			Encoded.Store(Encoded.Load() + 1);

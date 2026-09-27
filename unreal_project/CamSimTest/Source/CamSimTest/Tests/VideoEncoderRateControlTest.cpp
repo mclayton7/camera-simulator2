@@ -101,10 +101,12 @@ namespace
 				return false;
 			}
 			FRandomStream Rng(1234);
-			TArray<FColor> Pixels;
+			FSensorFrame Frame;
+			Frame.Format = ESensorPixelFormat::BGRA8;
+			TArray<FColor>& Pixels = Frame.Bgra;
 			Pixels.SetNumUninitialized(Config.CaptureWidth * Config.CaptureHeight);
 			FCamSimTelemetry T;
-			for (int32 Frame = 0; Frame < NumFrames; ++Frame)
+			for (int32 FrameI = 0; FrameI < NumFrames; ++FrameI)
 			{
 				for (int32 i = 0; i < Pixels.Num(); ++i)
 				{
@@ -115,11 +117,11 @@ namespace
 						continue;
 					}
 					const int32 X = i % Width, Y = i / Width;
-					const int32 Base = (X + Y + Frame * 8) & 255;
+					const int32 Base = (X + Y + FrameI * 8) & 255;
 					const uint8 V = (uint8)FMath::Clamp(Base + Rng.RandRange(-GrainAmp, GrainAmp), 0, 255);
 					C = FColor(V, V, V, 255);
 				}
-				Encoder.EncodeFrame(Pixels, T, Frame);
+				Encoder.EncodeFrame(Frame, T, FrameI);
 			}
 			Encoder.Close();
 		}

@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Encoder/MultiViewFrameSink.h"
+#include "Encoder/Nv12.h"
 #include "CamSimTest.h"
 
 #include "Async/ParallelFor.h"
@@ -90,19 +91,22 @@ bool FMultiViewFrameSink::Open()
 	return true;
 }
 
-void FMultiViewFrameSink::EncodeFrame(const TArray<FColor>& PixelData,
+void FMultiViewFrameSink::EncodeFrame(const FSensorFrame& Frame,
                                       const FCamSimTelemetry& Telemetry,
                                       uint64 FrameIdx)
 {
-	if (!bIsOpen || PixelData.Num() == 0) return;
+	if (!bIsOpen || Frame.IsEmpty()) return;
 
 	const int32 Width = Config.CaptureWidth;
 	const int32 Height = Config.CaptureHeight;
-	if (PixelData.Num() != Width * Height)
+	const bool bNv12 = Frame.Format == ESensorPixelFormat::NV12;
+	const int32 ExpectedNum = bNv12 ? CamSimNv12::NumBytes(Width, Height) : Width * Height;
+	const int32 ActualNum = bNv12 ? Frame.Nv12.Num() : Frame.Bgra.Num();
+	if (ActualNum != ExpectedNum)
 	{
 		UE_LOG(LogCamSim, Warning,
 			TEXT("FMultiViewFrameSink: unexpected pixel buffer size (%d, expected %d)"),
-			PixelData.Num(), Width * Height);
+			ActualNum, ExpectedNum);
 		return;
 	}
 
@@ -117,20 +121,28 @@ void FMultiViewFrameSink::EncodeFrame(const TArray<FColor>& PixelData,
 			? FMath::Clamp(View.OutputHFovDeg, 1.0f, SourceHFov)
 			: SourceHFov;
 
-		const TArray<FColor>* PixelsForView = &PixelData;
+		const FSensorFrame* FrameForView = &Frame;
 		// Phase 2: reuse the per-view ZoomedScratch buffer instead of
-		// allocating a fresh TArray<FColor> per view per frame.
-		TArray<FColor>& ZoomedPixels = View.ZoomedScratch;
+		// allocating a fresh TArray per view per frame.
+		FSensorFrame& ZoomedFrame = View.ZoomedScratch;
 		if (TargetHFov + KINDA_SMALL_NUMBER < SourceHFov)
 		{
-			ApplyDigitalZoom(PixelData, Width, Height, SourceHFov, TargetHFov, ZoomedPixels);
-			PixelsForView = &ZoomedPixels;
+			ZoomedFrame.Format = Frame.Format;
+			if (bNv12)
+			{
+				ApplyDigitalZoomNv12(Frame.Nv12, Width, Height, SourceHFov, TargetHFov, ZoomedFrame.Nv12);
+			}
+			else
+			{
+				ApplyDigitalZoom(Frame.Bgra, Width, Height, SourceHFov, TargetHFov, ZoomedFrame.Bgra);
+			}
+			FrameForView = &ZoomedFrame;
 		}
 
 		ViewTelemetry.HFovDeg = TargetHFov;
 		ViewTelemetry.VFovDeg = TargetHFov * static_cast<float>(Height) / static_cast<float>(Width);
 
-		View.Encoder->EncodeFrame(*PixelsForView, ViewTelemetry, FrameIdx);
+		View.Encoder->EncodeFrame(*FrameForView, ViewTelemetry, FrameIdx);
 		++EncodedViews;
 	}
 
@@ -312,6 +324,66 @@ void FMultiViewFrameSink::ApplyDigitalZoom(const TArray<FColor>& SourcePixels,
 		{
 			const int32 SrcX = StartX + FMath::Clamp((X * CropW) / Width, 0, CropW - 1);
 			OutPixels[Y * Width + X] = SourcePixels[SrcY * Width + SrcX];
+		}
+	}, EParallelForFlags::BackgroundPriority);
+}
+
+void FMultiViewFrameSink::ApplyDigitalZoomNv12(const TArray<uint8>& SourceNv12,
+                                           int32 Width, int32 Height,
+                                           float SourceHFovDeg, float TargetHFovDeg,
+                                           TArray<uint8>& OutNv12)
+{
+	OutNv12.SetNumUninitialized(SourceNv12.Num());
+	if (TargetHFovDeg >= SourceHFovDeg || Width <= 1 || Height <= 1)
+	{
+		FMemory::Memcpy(OutNv12.GetData(), SourceNv12.GetData(), SourceNv12.Num());
+		return;
+	}
+
+	const float SrcHalf = FMath::DegreesToRadians(SourceHFovDeg * 0.5f);
+	const float DstHalf = FMath::DegreesToRadians(TargetHFovDeg * 0.5f);
+	const float Zoom = FMath::Tan(SrcHalf) / FMath::Max(KINDA_SMALL_NUMBER, FMath::Tan(DstHalf));
+	const float CropFactor = FMath::Clamp(1.0f / Zoom, 0.05f, 1.0f);
+
+	const int32 CropW = FMath::Clamp(FMath::RoundToInt(Width * CropFactor), 1, Width);
+	const int32 CropH = FMath::Clamp(FMath::RoundToInt(Height * CropFactor), 1, Height);
+	const int32 StartX = (Width - CropW) / 2;
+	const int32 StartY = (Height - CropH) / 2;
+
+	const uint8* SrcYPlane  = SourceNv12.GetData();
+	const uint8* SrcUVPlane = SrcYPlane + Width * Height;
+	uint8* DstYPlane  = OutNv12.GetData();
+	uint8* DstUVPlane = DstYPlane + Width * Height;
+
+	// Y plane: identical crop/nearest-neighbour mapping to ApplyDigitalZoom.
+	ParallelFor(Height, [&](int32 Y)
+	{
+		const int32 SrcY = StartY + FMath::Clamp((Y * CropH) / Height, 0, CropH - 1);
+		for (int32 X = 0; X < Width; ++X)
+		{
+			const int32 SrcX = StartX + FMath::Clamp((X * CropW) / Width, 0, CropW - 1);
+			DstYPlane[Y * Width + X] = SrcYPlane[SrcY * Width + SrcX];
+		}
+	}, EParallelForFlags::BackgroundPriority);
+
+	// UV plane: sample at (SrcY/2, (SrcX/2)*2), where SrcX/SrcY are the Y-plane
+	// mapping evaluated at the even destination pixel each chroma pair covers.
+	const int32 HalfW = Width / 2;
+	const int32 HalfH = Height / 2;
+	ParallelFor(HalfH, [&](int32 DstChromaY)
+	{
+		const int32 Y = DstChromaY * 2;
+		const int32 SrcY = StartY + FMath::Clamp((Y * CropH) / Height, 0, CropH - 1);
+		const int32 SrcChromaRow = SrcY / 2;
+		for (int32 DstChromaX = 0; DstChromaX < HalfW; ++DstChromaX)
+		{
+			const int32 X = DstChromaX * 2;
+			const int32 SrcX = StartX + FMath::Clamp((X * CropW) / Width, 0, CropW - 1);
+			const int32 SrcChromaCol = SrcX / 2;
+			const uint8* SrcPair = SrcUVPlane + SrcChromaRow * Width + SrcChromaCol * 2;
+			uint8* DstPair = DstUVPlane + DstChromaY * Width + DstChromaX * 2;
+			DstPair[0] = SrcPair[0];
+			DstPair[1] = SrcPair[1];
 		}
 	}, EParallelForFlags::BackgroundPriority);
 }

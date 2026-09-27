@@ -5,6 +5,24 @@
 #include "CoreMinimal.h"
 #include "Metadata/KlvBuilder.h"  // FCamSimTelemetry
 
+/** Pixel format carried by FSensorFrame. */
+enum class ESensorPixelFormat : uint8 { BGRA8, NV12 };
+
+/**
+ * FSensorFrame
+ *
+ * One sensor frame for the encoder: BGRA8 (legacy CPU path) or NV12
+ * (GPU sensor path, ROADMAP 3B). Only the array matching Format is
+ * populated; the other stays empty.
+ */
+struct FSensorFrame
+{
+	ESensorPixelFormat Format = ESensorPixelFormat::BGRA8;
+	TArray<FColor>     Bgra;   // W*H
+	TArray<uint8>      Nv12;   // W*H*3/2, BT.709 limited range
+	bool IsEmpty() const { return Format == ESensorPixelFormat::NV12 ? Nv12.Num() == 0 : Bgra.Num() == 0; }
+};
+
 /**
  * IFrameSink
  *
@@ -27,10 +45,10 @@ public:
 	virtual bool Open() = 0;
 
 	/**
-	 * Encode and write one BGRA frame.
+	 * Encode one sensor frame (BGRA8 or NV12).
 	 * Called from a single background task thread (serialised by bEncoderBusy).
 	 */
-	virtual void EncodeFrame(const TArray<FColor>& PixelData,
+	virtual void EncodeFrame(const FSensorFrame& Frame,
 	                         const FCamSimTelemetry& Telemetry,
 	                         uint64 FrameIdx) = 0;
 

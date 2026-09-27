@@ -9,6 +9,7 @@
 #include "CIGI/BoundedSpscQueue.h"
 #include "Metadata/KlvBuilder.h"
 #include "Diagnostics/PipelineLatencyTracker.h"
+#include "Encoder/IFrameSink.h"  // FSensorFrame
 
 class IFrameSink;
 
@@ -18,9 +19,9 @@ class IFrameSink;
  */
 struct FProcessedFrame
 {
-	TArray<FColor>        Pixels;
-	FCamSimTelemetry      Telemetry;
-	uint64                FrameIndex = 0;
+	FSensorFrame           Frame;
+	FCamSimTelemetry       Telemetry;
+	uint64                 FrameIndex = 0;
 };
 
 /**

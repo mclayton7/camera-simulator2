@@ -43,7 +43,7 @@ public:
 
 	// IFrameSink interface
 	virtual bool Open() override;
-	virtual void EncodeFrame(const TArray<FColor>& PixelData,
+	virtual void EncodeFrame(const FSensorFrame& Frame,
 	                         const FCamSimTelemetry& Telemetry,
 	                         uint64 FrameIdx) override;
 	virtual void Close() override;

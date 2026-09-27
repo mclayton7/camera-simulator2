@@ -88,7 +88,7 @@ uint32 FEncoderThread::Run()
 			LastSendTimeSec = FPlatformTime::Seconds();
 			if (Encoder && Encoder->IsOpen())
 			{
-				Encoder->EncodeFrame(Frame.Pixels, Frame.Telemetry, Frame.FrameIndex);
+				Encoder->EncodeFrame(Frame.Frame, Frame.Telemetry, Frame.FrameIndex);
 			}
 
 			// Phase 28G: mark encode complete and commit latency record
@@ -112,7 +112,7 @@ uint32 FEncoderThread::Run()
 	{
 		if (Encoder && Encoder->IsOpen())
 		{
-			Encoder->EncodeFrame(Remaining.Pixels, Remaining.Telemetry, Remaining.FrameIndex);
+			Encoder->EncodeFrame(Remaining.Frame, Remaining.Telemetry, Remaining.FrameIndex);
 		}
 	}
 

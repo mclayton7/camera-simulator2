@@ -737,9 +737,10 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 		}
 
 		FProcessedFrame Frame;
-		Frame.Pixels     = MoveTemp(Pixels);
-		Frame.Telemetry  = Telemetry;
-		Frame.FrameIndex = FrameIdx;
+		Frame.Frame.Format = ESensorPixelFormat::BGRA8;
+		Frame.Frame.Bgra   = MoveTemp(Pixels);
+		Frame.Telemetry    = Telemetry;
+		Frame.FrameIndex   = FrameIdx;
 		EncThread->Enqueue(MoveTemp(Frame));  // non-blocking
 
 		bSensorBusy = false;  // the next capture can start; encode runs independently
