@@ -103,6 +103,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
     ```
     `NullRHI` keeps it under 10 s end-to-end (no shader compile, no display). JSON results land at `.cache/automation-report/index.json` (UTF-8 BOM — read with `encoding="utf-8-sig"`).
   - Filter narrower: replace `CamSim` in `RunTests` with e.g. `CamSim.Sensor` or a single test path.
+- **GPU tests** (`CamSim.GPU.*`, real RHI; skipped under NullRHI): `scripts/run_gpu_tests.sh [filter]` (Metal on macOS; first run compiles shaders)
 - **KLV conformance**: `node scripts/klv_conformance/check.js` (misb.js; run `npm ci` in that directory first)
 - **Python validation**: `scripts/test_video_output.sh`
 - **Integration**: `scripts/ci_validate.sh` (Docker headless + health wait + ffprobe + KLV check)

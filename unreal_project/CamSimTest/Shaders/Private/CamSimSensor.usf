@@ -1,3 +1,147 @@
 // Copyright CamSim Contributors. All Rights Reserved.
-// GPU sensor model (ROADMAP 3B). Kernels are added in Task 5.
+// GPU sensor model (ROADMAP 3B). Order of operations: see Sensor/SensorReference.h.
+// Plain compute: integer atomics only, no wave intrinsics (Metal + Vulkan).
+
 #include "/Engine/Public/Platform.ush"
+#if USE_VIEW_PREEXPOSURE
+#include "/Engine/Private/Common.ush"   // View.OneOverPreExposure
+#endif
+
+#define HIST_BINS 256
+#define HIST_MIN_LOG2 (-16.0)
+#define HIST_BINS_PER_STOP 8.0
+
+Texture2D<float4> SceneColor;
+SamplerState SceneColorSampler;
+float2 SceneUvMin;      // UV of the view rect's top-left
+float2 SceneUvSize;     // UV extent of the view rect
+int2   SceneViewMin;    // texel of the view rect's top-left (exact path)
+uint   bExactInput;     // view rect size == OutputSize: Load instead of sampling
+Texture2D<float4> Bloom;
+SamplerState BloomSampler;
+float2 BloomUvMin;
+float2 BloomUvSize;
+float  BloomWeight;     // 0 without bloom
+float  InputScale;      // tests; runtime multiplies View.OneOverPreExposure in as well
+int2   OutputSize;
+uint   Mode;            // 0 EO, 1 IR, 2 NVG
+uint   bBlackHot;
+float  Gain;
+float  Offset;
+float3 SignalWeights;
+float  KneeStart;
+float3 DisplayTint;
+
+RWTexture2D<float4> OutSensorRgb;
+RWStructuredBuffer<uint> OutHistogram;
+
+groupshared uint LocalHistogram[HIST_BINS];
+
+float Sanitize(float V) { return (V != V) ? 0.0 : clamp(V, 0.0, 65504.0); }
+
+float Knee(float X, float K)
+{
+	if (X <= K || K >= 1.0) return X;
+	return K + (1.0 - K) * (1.0 - exp(-(X - K) / (1.0 - K)));
+}
+
+float Oetf709(float L)
+{
+	L = saturate(L);
+	return L < 0.018 ? 4.5 * L : 1.099 * pow(L, 0.45) - 0.099;
+}
+
+uint BinOf(float S)
+{
+	if (!(S > 0.0)) return 0;
+	return (uint)clamp((int)floor((log2(S) - HIST_MIN_LOG2) * HIST_BINS_PER_STOP), 0, HIST_BINS - 1);
+}
+
+[numthreads(8, 8, 1)]
+void ApplyCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint GroupIndex : SV_GroupIndex)
+{
+	for (uint I = GroupIndex; I < HIST_BINS; I += 64) LocalHistogram[I] = 0;
+	GroupMemoryBarrierWithGroupSync();
+
+	const int2 P = int2(DispatchThreadId.xy);
+	if (all(P < OutputSize))
+	{
+		const float2 Frac = (float2(P) + 0.5) / float2(OutputSize);
+		float3 C = (bExactInput != 0)
+			? SceneColor.Load(int3(SceneViewMin + P, 0)).rgb
+			: SceneColor.SampleLevel(SceneColorSampler, SceneUvMin + Frac * SceneUvSize, 0).rgb;
+		if (BloomWeight > 0.0)
+		{
+			C += BloomWeight * Bloom.SampleLevel(BloomSampler, BloomUvMin + Frac * BloomUvSize, 0).rgb;
+		}
+		float Scale = InputScale;
+#if USE_VIEW_PREEXPOSURE
+		Scale *= View.OneOverPreExposure;
+#endif
+		C = float3(Sanitize(C.r), Sanitize(C.g), Sanitize(C.b)) * Scale;
+		const float S = dot(C, SignalWeights);
+		InterlockedAdd(LocalHistogram[BinOf(S)], 1u);
+
+		float4 Out;
+		if (Mode == 0)
+		{
+			const float3 G = C * Gain;
+			Out = float4(Oetf709(Knee(G.r, KneeStart)), Oetf709(Knee(G.g, KneeStart)), Oetf709(Knee(G.b, KneeStart)), 1.0);
+		}
+		else
+		{
+			float V = saturate(S * Gain + Offset);
+			if (bBlackHot != 0) V = 1.0 - V;
+			Out = float4(V * DisplayTint, V);
+		}
+		OutSensorRgb[P] = Out;
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+	for (uint J = GroupIndex; J < HIST_BINS; J += 64)
+	{
+		if (LocalHistogram[J] != 0) InterlockedAdd(OutHistogram[J], LocalHistogram[J]);
+	}
+}
+
+Texture2D<float4> SensorRgb;
+RWStructuredBuffer<uint> OutNv12;
+
+uint ToLimited(float V) { return (uint)clamp((int)round(16.0 + 219.0 * V), 0, 255); }
+uint ToChroma(float C)  { return (uint)clamp((int)round(128.0 + 224.0 * C), 0, 255); }
+
+float LumaOf(float4 O) { return (Mode == 0) ? dot(O.rgb, float3(0.2126, 0.7152, 0.0722)) : O.a; }
+
+/** One thread per 4x2 block: two uints of Y, one uint of UV (U0 V0 U1 V1). */
+[numthreads(8, 8, 1)]
+void PackNv12CS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const int2 Block = int2(DispatchThreadId.xy);
+	const int2 P0 = Block * int2(4, 2);
+	if (any(P0 >= OutputSize)) return;
+
+	uint Y0 = 0, Y1 = 0, UV = 0;
+	[unroll] for (int Pair = 0; Pair < 2; ++Pair)
+	{
+		float3 Sum = 0;
+		[unroll] for (int Dx = 0; Dx < 2; ++Dx)
+		{
+			const int X = P0.x + Pair * 2 + Dx;
+			const float4 A = SensorRgb.Load(int3(X, P0.y, 0));
+			const float4 B = SensorRgb.Load(int3(X, P0.y + 1, 0));
+			const uint Shift = (uint)(Pair * 2 + Dx) * 8;
+			Y0 |= ToLimited(LumaOf(A)) << Shift;
+			Y1 |= ToLimited(LumaOf(B)) << Shift;
+			Sum += A.rgb + B.rgb;
+		}
+		const float3 M = Sum * 0.25;
+		const float Ym = dot(M, float3(0.2126, 0.7152, 0.0722));
+		const uint U = (Mode == 0) ? ToChroma((M.b - Ym) / 1.8556) : 128;
+		const uint V = (Mode == 0) ? ToChroma((M.r - Ym) / 1.5748) : 128;
+		UV |= (U << (Pair * 16)) | (V << (Pair * 16 + 8));
+	}
+	const uint W = (uint)OutputSize.x;
+	OutNv12[(P0.y * W + P0.x) / 4]           = Y0;
+	OutNv12[((P0.y + 1) * W + P0.x) / 4]     = Y1;
+	OutNv12[(W * (uint)OutputSize.y + (P0.y / 2) * W + P0.x) / 4] = UV;
+}
