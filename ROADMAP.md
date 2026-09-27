@@ -545,6 +545,23 @@ percentiles and the bright clouds on the horizon set the top. Thermal radiance i
 Next: the 3B.2 plan (port the optics and detector effects so `auto` selects the GPU path with the
 default config).
 
+Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
+- Shader hardening: a NaN test that survives fast-math (`asuint` bit test, not `V != V`);
+  `floor(x + 0.5)` instead of HLSL `round` in the NV12 packing (Y is at the 1 DN tolerance on
+  Metal); clamp the bilinear scene and bloom UVs to their view rects.
+- GPU tests: a size with partial thread groups (e.g. 68×34, or 1080p-shaped), and scene + bloom
+  against the reference.
+- Tests for the NV12 digital zoom (`ApplyDigitalZoomNv12`), the NV12 branches of
+  `OfferSnapshot`/`SubmitFrameToEncoder`.
+- Cleanup: the `SensorGraph.h` comments (`.a` is luma only for IR/NVG; doc block order around
+  `IsSensorGraphSupported`), the stale `FSensorGpuTimer` comment/include, reset `LatestMs` to −1
+  if the GPU profiler stops reporting.
+- Docs: compare against `macos-m1pro-3a1-720p-exposure.json` too; note that the luma criteria are
+  full-range RGB luma (the stream's limited-range Y reads ~38.7 on `night_slant`).
+- Known, pre-existing: `FVideoEncoder` reads the subsystem's config while a hot reload
+  move-assigns it (the capture size and sensor path are now pinned; other fields can still tear).
+- 3B.4 deletes the unused BGRA render-target ring and colour readback pool on the GPU path.
+
 ---
 
 ## Milestone 4: Physically based IR (flagship)
