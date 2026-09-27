@@ -373,7 +373,48 @@ budget on the reference GPU (RTX 5090). The pipeline benchmark is tracked in CI.
 current path probably renders the scene twice (main viewport + `SceneCapture2D`). 3A targets
 macOS (M1 Pro) only; Linux/5090 runs are deferred.
 
-Design: `docs/superpowers/specs/2026-09-26-render-path-design.md` (in review).
+Design: `docs/superpowers/specs/2026-09-26-render-path-design.md` (approved); plan:
+`docs/superpowers/plans/2026-09-26-render-path.md`.
+
+**3A status (2026-09-27): implemented on macOS; awaiting visual review.** Measured with
+`scripts/bench/` on an M1 Pro, 1280x720, warm cache (baseline → 3A final, per phase):
+
+| Metric | Baseline (SceneCapture2D) | 3A (primary view) |
+| --- | --- | --- |
+| Scene renders per frame | 1.50 (the unused game viewport rendered too) | **1.00** |
+| Pop-in (frames with tiles loading) | orbit 0.48, slew 0.09, far 0.87 | **0.18, 0.03, 0.53** |
+| Frames > 66 ms (orbit + low pass) | 8 | **2** (hitch counts are noisy run to run) |
+| Frame time p99 | 34.7–37.7 ms | 34.8–37.3 ms |
+| GPU p50 | 14.7–16.5 ms | 16.8–18.9 ms at 100% TSR; **13.4–15.4 ms at 75%** |
+| Output frame rate | 14.9 fps | 14.9 fps (unchanged: see below) |
+
+- The sensor is the game viewport's view (TSR, full Lumen/VSM/exposure history); a scene view
+  extension grabs the final image into the existing readback ring. `render.view_source:
+  scene_capture` keeps the old path (now without the unused viewport render) until 3B.
+- Cesium LOD crossfade on (0.5 s); only the slew-prefetch stand-in camera remains; origin shift
+  every 20 km (`render.origin_shift_distance_m`); TSR history reset on pose jumps.
+- 1080p30 holds on the M1 Pro at defaults (p95 33.9–35.6 ms, GPU 17–19 ms); no dev profile needed.
+  75% TSR is visually indistinguishable and saves 20–30% GPU (documented, not default).
+- SSE stays 16: 8 costs GPU and pop-in, 4 collapses (277 hitches in the slew phase).
+- The per-render GPU cost of the primary view (~18 ms) is higher than a SceneCapture render
+  (~10 ms); the baseline's cost was dominated by the wasted viewport render.
+
+Exit criteria (macOS): one render per frame ✅; fewer hitches ✅; less pop-in ✅; SSE ≤ 16 ✅;
+1080p30 config ✅; tests ✅ (219 automation + bench pytest); **orbit GPU below baseline ❌ at
+100% TSR (✅ at 75%)**; **visual review by the user: pending**; `ci_validate` smoke skipped
+(CI deferred by the user). Deferred: RTX 5090 runs.
+
+Findings for follow-up:
+- **Output is ~15 fps, not 30**: one readback in flight gates `Capture()` to every other tick.
+  The 3B readback ring fixes it; consider pulling it forward.
+- **Over-exposure**: Lumen warns auto-exposure (EV 13.5) is outside the cached-lighting
+  pre-exposure range; every shot is washed out. Needs an exposure/calibration decision.
+- Restarting within ~30 s fails to bind the health port (:8080, TIME_WAIT) while logging
+  "listening".
+- A View Definition FOV and a Sensor Control gain in the same host frame fight (the preset wins
+  every frame).
+- `scripts/tests/test_send_cigi.py::test_pack_ig_control_header` is stale (expects 0x05, the
+  packet correctly sends 0x35).
 
 ---
 

@@ -35,13 +35,17 @@ Four threads collaborate with explicit ownership boundaries:
 │                                        LosVectReqQueue          │
 │                               UE line traces → FCigiSender      │
 │  • FCigiSender::FlushFrame() — SOF + response datagram → host   │
-│  • Calls SceneCaptureComponent2D::CaptureScene()                │
+│  • Primary view (default): queues a grab request; the game      │
+│    viewport renders the sensor view (TSR) after the tick        │
+│  • scene_capture: SceneCaptureComponent2D::CaptureScene()       │
 │  • Enqueues render command for GPU readback                     │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ ENQUEUE_RENDER_COMMAND
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  Render Thread                                                  │
-│  • RHICmdList.ReadSurfaceData() → TArray<FColor>                │
+│  • FCamSimFrameGrabExtension: viewport image → grab target     │
+│    (AddDrawTexturePass) → FRHIGPUTextureReadback (async)        │
+│  • Poll command: readback ready → TArray<FColor>                │
 │  • Dispatches async task for encoding                           │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ AsyncTask(AnyBackgroundThreadNormalTask)
@@ -109,7 +113,9 @@ UCamSimSubsystem  (UGameInstanceSubsystem — created with GameInstance)
 
 ACamSimCamera  (AActor — placed in level or spawned by GameMode; orchestrates the tick)
 └── UCesiumGlobeAnchorComponent
-└── USceneCaptureComponent2D                 (the sensor view)
+└── USceneCaptureComponent2D                 (sensor pose/FOV/post-process; renders only in scene_capture mode)
+    └── UCameraComponent SensorCamera        (the player's view target in primary mode, ROADMAP 3A)
+└── UCesiumOriginShiftComponent              (rebases the georeference every render.origin_shift_distance_m)
 └── UCamSimGimbalComponent                   (gimbal angles, slew)
 └── UCamSimSensorComponent                   (waveband, polarity, FOV presets)
 └── UCamSimCaptureComponent                  (render targets, readback, sensor model, encoder thread)
@@ -143,7 +149,10 @@ receives `Tick()` calls without being an `AActor`.
 | `CIGI/CigiPacketTypes.h` | All CIGI struct definitions |
 | `Camera/CamSimCamera.h/.cpp` | Sensor actor: tick orchestration, CIGI view state, hot reload |
 | `Camera/CamSimPlatformRig.h/.cpp` | Platform pose from CIGI, attachment, first-person view |
-| `Camera/CamSimCaptureComponent.h/.cpp` | Capture, async GPU readback, sensor model dispatch, encoder thread |
+| `Camera/CamSimCaptureComponent.h/.cpp` | Capture (grab request or SceneCapture), async GPU readback, sensor model dispatch, encoder thread |
+| `Camera/CamSimFrameGrabExtension.h/.cpp` | Scene view extension: copies the game viewport's final image into the readback ring (primary view) |
+| `Camera/CamSimFrameStats.h/.cpp` | Per-frame render stats JSONL and scene-render counter (bench harness) |
+| `Health/CamSimSnapshotService.h/.cpp` | `GET /snapshot`: next pre-sensor frame as PNG |
 | `Camera/CamSimTelemetryAssembler.h/.cpp` | Telemetry behind the KLV tags, boresight frame centre |
 | `Camera/CamSimStreamingController.h/.cpp` | Cesium streaming cameras, slew prefetch, adaptive SSE, terrain gate |
 | `Entity/CamSimEntityManager.h/.cpp` | Entity lifecycle management |

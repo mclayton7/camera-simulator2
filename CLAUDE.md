@@ -28,6 +28,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
 | `scripts/ci_validate.sh`       | Integration test (health wait + video/KLV validation)         |
 | `scripts/ci_validate.sh --native` | Same, without Docker (macOS): launch headless + CIGI host + checks |
+| `scripts/bench/run_bench.py` | Render benchmark + reference shots (`--smoke`, `--view-source`); `compare.py` diffs two runs |
 
 ## Documentation
 
@@ -50,7 +51,7 @@ camsim/
       Sensor/                      # CPU post-process: EO/IR/NVG effects
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (210 tests across 37 files)
+      Tests/                       # UE5 Automation tests (219 tests across 40 files)
     Source/ThirdParty/
       CCL/                         # CIGI Class Library (static lib)
       FFmpeg/                      # libavcodec/format/util/swscale + libx264
@@ -90,7 +91,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (210 tests across 37 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (219 tests across 40 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -128,7 +129,10 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **UE unit scale**: 1 UE unit = 1 cm — divide `FVector::Dist()` by 100 for metres
 - **macOS multicast**: UDP multicast to 239.x.x.x on loopback requires `sudo route add -net 239.0.0.0/8 -interface lo0`, or use unicast: `CAMSIM_MULTICAST_ADDR=127.0.0.1`
 - **CCL API quirk**: `GetDestEntityIDValid()`/`GetDestEntityID()` only in `CigiLosSegReqV3_2`, not V3
-- **Fixed framerate**: Engine locked to 30fps via DefaultEngine.ini (`bUseFixedFrameRate=True`)
+- **Fixed framerate**: Engine locked to 30fps via DefaultEngine.ini (`bUseFixedFrameRate=True`). `DeltaTime` is therefore constant: measure frame time with the wall clock (the bench does)
+- **The sensor is the primary view** (`render.view_source: primary`, ROADMAP 3A): the game viewport renders it with TSR and `FCamSimFrameGrabExtension` grabs the result. `SceneCapture` only holds pose/FOV/post-process until 3B; don't call `CaptureScene()` in primary mode. Screen messages are disabled in primary mode, since the viewport canvas would be burned into the video
+- **Output is ~15 fps at a 30 Hz tick**: only one readback is in flight (`EReadbackState`), so `Capture()` runs every other tick. Fixing it is the 3B readback ring
+- **Health port restart**: restarting CamSim within ~30 s of the last run fails to bind :8080 (TIME_WAIT; UE's listener doesn't set SO_REUSEADDR) while still logging "listening". `run_bench.py` waits it out
 - **IDE false positives**: clang diagnostics for UE types are wrong — UBT handles includes at build time
 - **Docker networking**: `network_mode: host` required for UDP multicast routing
 - **rapidyaml bundled**: Source in `Config/ryml/` — excluded from pre-commit linting
