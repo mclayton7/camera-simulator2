@@ -421,12 +421,25 @@ Findings for follow-up:
   ≈200 → ≈170. `r.EyeAdaptation.CachedLightingPreExposure=8` covers the physically bright sun
   (it removes Lumen's clipping warning but was not the cause). Remaining: a flat bluish aerial
   haze from the atmosphere — a separate follow-up if wanted.
-- Restarting within ~30 s fails to bind the health port (:8080, TIME_WAIT) while logging
-  "listening".
-- A View Definition FOV and a Sensor Control gain in the same host frame fight (the preset wins
-  every frame).
-- `scripts/tests/test_send_cigi.py::test_pack_ig_control_header` is stale (expects 0x05, the
-  packet correctly sends 0x35).
+- ~~Restarting within ~30 s fails to bind the health port (:8080, TIME_WAIT) while logging
+  "listening".~~ **Fixed (2026-09-27)**: the bind failure is detected
+  (`GetHttpRouter(..., bFailOnBindFailure)`); the server logs that it is not listening and
+  retries every 2 s until the port frees (verified live: up 18 s after a restart into
+  TIME_WAIT). Address reuse stays off (UE's option also sets SO_REUSEPORT).
+- ~~A View Definition FOV and a Sensor Control gain in the same host frame fight (the preset wins
+  every frame).~~ **Fixed (2026-09-27)**: a gain changes the FOV only when it selects a
+  different preset, and View Definition is applied after Sensor Control. Verified live: a host
+  sending Sensor Control every frame plus a 30° View Definition gets HFOV 30.0° in all 300 KLV
+  packets.
+- ~~`scripts/tests/test_send_cigi.py::test_pack_ig_control_header` is stale~~ **Fixed
+  (2026-09-27)**.
+- ~~Ten minor items from the 3A final review~~ **Fixed (2026-09-27)**: snapshot requests are
+  answered 503 at shutdown and the PNG encode holds no module reference; non-positive camera-cut
+  thresholds are a validation error and skipped; a stretched grab (view aspect ≠ capture) is
+  logged once; the unread `GrabCount` is gone; a relative `frame_stats_path` is taken from the
+  launch directory; `use_lod_transitions` applies only in the primary view; the bench tolerates
+  a partial frame-stats line, checks only the local address for a busy port, and stops waiting
+  if no pid file appears.
 
 ---
 
