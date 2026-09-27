@@ -31,6 +31,9 @@ public:
 	/** Register the streaming cameras and configure the terrain gate. */
 	void Initialize(AActor* Owner, const FCamSimConfig& Cfg);
 
+	/** Cesium stand-in cameras this view source needs: primary + prefetch, or prefetch only (ROADMAP 3A). */
+	static int32 NumStreamingCameras(const FCamSimConfig& Cfg);
+
 	/** Remove the streaming cameras. */
 	void Shutdown(AActor* Owner);
 

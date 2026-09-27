@@ -10,6 +10,8 @@
 #include "Serialization/JsonSerializer.h"
 #include "Camera/CamSimFrameStats.h"
 #include "Camera/FrameGrabRequestQueue.h"
+#include "Camera/CamSimStreamingController.h"
+#include "Config/CamSimConfig.h"
 
 // -------------------------------------------------------------------------
 // ROADMAP 3A: frame-stats rows are valid JSON with the keys the bench
@@ -117,5 +119,20 @@ bool FFrameGrabQueueTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("second"), Q.PopCurrent(4, Out));
 	TestEqual(TEXT("FIFO second"), Out.FrameIndex, (uint64)21);
 	TestFalse(TEXT("each request grabbed once"), Q.PopCurrent(4, Out));
+	return true;
+}
+
+// Primary view: Cesium already streams for the player camera, so only the
+// inflated prefetch camera is registered. SceneCapture needs both.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStreamingCamerasTest,
+	"CamSim.Render.Streaming.CamerasPerViewSource",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStreamingCamerasTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Cfg;
+	TestEqual(TEXT("primary: prefetch only"), FCamSimStreamingController::NumStreamingCameras(Cfg), 1);
+	Cfg.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::SceneCapture;
+	TestEqual(TEXT("scene capture: primary + prefetch"), FCamSimStreamingController::NumStreamingCameras(Cfg), 2);
 	return true;
 }

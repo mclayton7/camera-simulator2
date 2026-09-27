@@ -123,13 +123,14 @@ struct FCamSimConfig
 	// Max descendant tiles to load simultaneously (Cesium default 20; higher = better low-alt detail)
 	// Env: CAMSIM_LOADING_DESCENDANT_LIMIT
 	int32   LoadingDescendantLimit = 20;
-	// Enable smooth opacity crossfade when tile LOD level changes (Cesium UseLodTransitions).
-	// Disabled by default: crossfade blur compounds with SceneCapture AA on moving cameras.
+	// Cesium's dithered LOD crossfade (UseLodTransitions). Needs temporal AA to
+	// resolve the dither, so it only looks right with render.view_source =
+	// primary (TSR); with scene_capture (FXAA) it blurs moving views.
 	// Env: CAMSIM_USE_LOD_TRANSITIONS
-	bool    bUseLodTransitions = false;
+	bool    bUseLodTransitions = true;
 	// Duration of LOD crossfade in seconds (only used when bUseLodTransitions=true)
 	// Env: CAMSIM_LOD_TRANSITION_LENGTH
-	float   LodTransitionLength = 0.0f;
+	float   LodTransitionLength = 0.5f;
 	// Cook collision for Cesium tiles. CIGI HAT/HOT and LOS queries and the KLV
 	// frame centre (Tags 21, 23-25, 78) are line traces against it.
 	// Env: CAMSIM_CREATE_PHYSICS_MESHES

@@ -15,6 +15,10 @@
 #include "Subsystem/CamSimSubsystem.h"
 
 #include "Components/SceneCaptureComponent2D.h"
+#include "Camera/CameraComponent.h"
+#include "GameFramework/PlayerController.h"
+#include "Engine/GameViewportClient.h"
+#include "UnrealEngine.h"  // FSystemResolution
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h" // TActorIterator
 #include "DynamicRHI.h"
@@ -39,6 +43,11 @@ ACamSimCamera::ACamSimCamera()
 
 	SceneCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("SceneCapture"));
 	SceneCapture->SetupAttachment(Root);
+
+	SensorCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("SensorCamera"));
+	SensorCamera->SetupAttachment(SceneCapture);
+	SensorCamera->bConstrainAspectRatio = false;
+	SensorCamera->bUsePawnControlRotation = false;
 
 	GimbalComp  = CreateDefaultSubobject<UCamSimGimbalComponent>(TEXT("GimbalComp"));
 	SensorComp  = CreateDefaultSubobject<UCamSimSensorComponent>(TEXT("SensorComp"));
@@ -93,6 +102,17 @@ void ACamSimCamera::BeginPlay()
 	// imagery). The tuning helper is shared with UCamSimSubsystem::HotReloadConfig.
 	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Cfg);
 	Subsystem->StoreCesiumIonServer(ApplyCesiumBackendConfig(GetWorld(), Cfg.CesiumBackend));
+
+	if (Cfg.Render.IsPrimary())
+	{
+		// The game viewport renders at the stream resolution (ROADMAP 3A).
+		FSystemResolution::RequestResolutionChange(Cfg.CaptureWidth, Cfg.CaptureHeight, EWindowMode::Windowed);
+	}
+	else if (UGameViewportClient* GVC = GetWorld()->GetGameViewport())
+	{
+		// Legacy path: don't pay for a second, unused render of the world.
+		GVC->bDisableWorldRendering = true;
+	}
 
 	CaptureComp->Initialize(SceneCapture, Subsystem, Cfg);
 	SetLatencyTracker(Subsystem->GetLatencyTracker());
@@ -169,6 +189,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 
 	UpdateLaserDesignator();
 	UpdateAutoFocus();
+	ApplyPrimaryView();
 
 	if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::CigiDequeue);
 
@@ -219,6 +240,26 @@ void ACamSimCamera::RecordFrameStats()
 
 	FrameStats.Record(S);
 	LastStatsWallSec = NowSec;
+}
+
+void ACamSimCamera::ApplyPrimaryView()
+{
+	if (!Subsystem->GetConfig().Render.IsPrimary()) return;
+
+	// SceneCapture holds pose (via attachment), FOV and post-process; mirror them.
+	SensorCamera->SetFieldOfView(SceneCapture->FOVAngle);
+	SensorCamera->PostProcessSettings = SceneCapture->PostProcessSettings;
+	SensorCamera->PostProcessBlendWeight = 1.0f;
+
+	if (!bViewTargetApplied)
+	{
+		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+		{
+			PC->SetViewTarget(this);
+			bViewTargetApplied = true;
+			UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: sensor is the primary view (%s)"), *PC->GetName());
+		}
+	}
 }
 
 void ACamSimCamera::CaptureAndEncode()

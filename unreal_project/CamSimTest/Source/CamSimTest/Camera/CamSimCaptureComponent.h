@@ -19,6 +19,7 @@ class UMaterialInterface;
 class UMaterialParameterCollection;
 class UCamSimSubsystem;
 class FEncoderThread;
+class FCamSimFrameGrabExtension;
 struct FPipelineLatencyTracker;
 struct FCamSimConfig;
 
@@ -152,6 +153,10 @@ private:
 	 */
 	TArray<TUniquePtr<FRHIGPUTextureReadback>> ColorReadbackPool;
 	TArray<TUniquePtr<FRHIGPUTextureReadback>> DepthReadbackPool;
+
+	/** ROADMAP 3A: grabs the game viewport when the sensor is the primary view (null otherwise). */
+	TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> GrabExtension;
+	bool bPrimaryView = false;
 
 	/** CPU-side sensor post-processing pipeline (Phase 11). */
 	TUniquePtr<IPixelPipeline> SensorFX;

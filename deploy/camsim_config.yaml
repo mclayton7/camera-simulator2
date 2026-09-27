@@ -250,14 +250,15 @@ maximum_cached_bytes_mb: 1024
 # Env: CAMSIM_LOADING_DESCENDANT_LIMIT
 loading_descendant_limit: 20
 
-# Enable smooth opacity crossfade when tile LOD level changes (Cesium UseLodTransitions).
-# Disabled: crossfade causes blur on moving cameras with SceneCapture2D.
+# Cesium's dithered LOD crossfade (UseLodTransitions): hides tile LOD pops.
+# Needs temporal AA to resolve the dither, so it's for render.view_source =
+# primary (TSR); with scene_capture (FXAA) it blurs moving views.
 # Env: CAMSIM_USE_LOD_TRANSITIONS
-use_lod_transitions: false
+use_lod_transitions: true
 
 # Duration of LOD crossfade in seconds (only used when use_lod_transitions=true).
 # Env: CAMSIM_LOD_TRANSITION_LENGTH
-lod_transition_length: 0.0
+lod_transition_length: 0.5
 
 # Cook collision meshes for Cesium tiles. CIGI HAT/HOT and LOS queries and the
 # KLV frame centre (Tags 21, 23-25, 78) are line traces against them; with this

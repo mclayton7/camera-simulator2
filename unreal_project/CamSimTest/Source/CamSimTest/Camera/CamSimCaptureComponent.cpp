@@ -2,6 +2,9 @@
 
 #include "Camera/CamSimCaptureComponent.h"
 #include "Health/CamSimSnapshotService.h"
+#include "Camera/CamSimFrameGrabExtension.h"
+#include "Engine/GameViewportClient.h"
+#include "SceneViewExtension.h"
 #include "Camera/CamSimPixelConvert.h"
 #include "CamSimTest.h"
 #include "Config/CamSimConfig.h"
@@ -71,6 +74,15 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 	Sensor->TextureTarget = RenderTargets[CaptureTargetIndex];
 	Sensor->FOVAngle = Cfg.HFovDeg;
 
+	bPrimaryView = Cfg.Render.IsPrimary();
+	if (bPrimaryView)
+	{
+		FViewport* Viewport = (GEngine && GEngine->GameViewport) ? GEngine->GameViewport->Viewport : nullptr;
+		GrabExtension = FSceneViewExtensions::NewExtension<FCamSimFrameGrabExtension>(Viewport);
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — grabbing the game viewport (%s)"),
+			Viewport ? TEXT("ok") : TEXT("NO VIEWPORT"));
+	}
+
 	ColorReadbackPool.Reset();
 	for (int32 Idx = 0; Idx < RenderTargets.Num(); ++Idx)
 	{
@@ -117,9 +129,12 @@ void UCamSimCaptureComponent::Shutdown()
 		EncoderThread.Reset();
 	}
 
+	if (GrabExtension) { GrabExtension->Detach_GameThread(); }
+
 	// No in-flight poll command may touch the pools after we drop them. The
 	// tick path never flushes; teardown is the one place we must.
 	FlushRenderingCommands();
+	GrabExtension.Reset();
 	ColorReadbackPool.Reset();
 	DepthReadbackPool.Reset();
 }
@@ -168,12 +183,23 @@ void UCamSimCaptureComponent::CreateDepthCapture(const FCamSimConfig& Cfg)
 void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 {
 	FPostProcessSettings& PP = Sensor->PostProcessSettings;
+	// Primary view: the game viewport's show flags get the same values as the capture's.
+	FEngineShowFlags* ViewFlags = (Cfg.Render.IsPrimary() && GEngine && GEngine->GameViewport)
+		? &GEngine->GameViewport->EngineShowFlags : nullptr;
+	if (Cfg.Render.IsPrimary())
+	{
+		// The game viewport's canvas (map warnings, renderer notices such as
+		// Lumen's exposure-range warning, debug messages) would be burned into
+		// the grabbed frame. Screenshots and movie dumps suppress it the same way.
+		GAreScreenMessagesEnabled = false;
+	}
 
 	// Phase 15 — GPU-side optical realism
 	if (Cfg.OpticalRealism.bEnabled)
 	{
 		const auto& O = Cfg.OpticalRealism;
-		Sensor->ShowFlags.SetMotionBlur(O.bMotionBlur);  // 15A
+		Sensor->ShowFlags.SetMotionBlur(O.bMotionBlur);
+		if (ViewFlags) ViewFlags->SetMotionBlur(O.bMotionBlur);  // 15A
 		if (O.bMotionBlur)
 		{
 			PP.bOverride_MotionBlurAmount = true;
@@ -181,7 +207,8 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 			PP.bOverride_MotionBlurMax = true;
 			PP.MotionBlurMax = static_cast<float>(O.MotionBlurMax);
 		}
-		Sensor->ShowFlags.SetBloom(O.bBloom);  // 15C
+		Sensor->ShowFlags.SetBloom(O.bBloom);
+		if (ViewFlags) ViewFlags->SetBloom(O.bBloom);  // 15C
 		if (O.bBloom)
 		{
 			PP.bOverride_BloomIntensity = true;
@@ -206,7 +233,8 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 				PP.DepthOfFieldFocalDistance = O.FocalDistance;
 			}
 		}
-		Sensor->ShowFlags.SetLensFlares(O.bLensFlare);  // 15F
+		Sensor->ShowFlags.SetLensFlares(O.bLensFlare);
+		if (ViewFlags) ViewFlags->SetLensFlares(O.bLensFlare);  // 15F
 		if (O.bLensFlare)
 		{
 			PP.bOverride_LensFlareIntensity = true;
@@ -223,7 +251,8 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 	// Phase 24 — rendering quality
 	{
 		const FCamSimConfig::FRenderingQualityConfig& RQ = Cfg.RenderingQuality;
-		Sensor->ShowFlags.SetContactShadows(RQ.bContactShadows);  // 24A (per-light length set in editor)
+		Sensor->ShowFlags.SetContactShadows(RQ.bContactShadows);
+		if (ViewFlags) ViewFlags->SetContactShadows(RQ.bContactShadows);  // 24A (per-light length set in editor)
 		if (RQ.AOIntensity > 0.0f)  // 24B
 		{
 			PP.bOverride_AmbientOcclusionIntensity = true;
@@ -249,15 +278,16 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 		{
 			SetCVarI(TEXT("r.ScreenPercentage"), RQ.TSRScreenPercentage);
 		}
-		// FXAA (1): TSR (4) ghosts on off-screen captures; FXAA is stateless.
-		SetCVarI(TEXT("r.AntiAliasingMethod"), 1);
+		// Primary view: TSR (4) with full view history. SceneCapture: FXAA (1),
+		// because TSR ghosts on off-screen captures (no persistent history).
+		SetCVarI(TEXT("r.AntiAliasingMethod"), Cfg.Render.IsPrimary() ? 4 : 1);
 
 		UE_LOG(LogCamSim, Log,
 			TEXT("ACamSimCamera: RenderingQuality — shadows=%d contactShadow=%d AO=%.2f "
-			     "RTRefl=%d shadowDist=%.1f VSMBias=%d TSR%%=%d AA=FXAA"),
+			     "RTRefl=%d shadowDist=%.1f VSMBias=%d TSR%%=%d AA=%s"),
 			(int)RQ.bEntityShadows, (int)RQ.bContactShadows, RQ.AOIntensity,
 			(int)RQ.bRayTracedReflections, RQ.ShadowDistanceScale,
-			RQ.VSMResolutionBias, RQ.TSRScreenPercentage);
+			RQ.VSMResolutionBias, RQ.TSRScreenPercentage, Cfg.Render.IsPrimary() ? TEXT("TSR") : TEXT("FXAA"));
 	}
 
 	// 27F — configurable render frame rate
@@ -374,8 +404,12 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 
 	UTextureRenderTarget2D* RT = RenderTargets[CaptureTargetIndex].Get();
 	FRHIGPUTextureReadback* Readback = ColorReadbackPool[CaptureTargetIndex].Get();
-	Sensor->TextureTarget = RT;
-	Sensor->CaptureScene();
+	const int32 TargetIdx = CaptureTargetIndex;
+	if (!bPrimaryView)
+	{
+		Sensor->TextureTarget = RT;
+		Sensor->CaptureScene();
+	}
 	PendingReadbackTargetIndex = CaptureTargetIndex;
 	CaptureTargetIndex = (CaptureTargetIndex + 1) % RenderTargets.Num();
 
@@ -403,6 +437,36 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 		DepthReadback = DepthReadbackPool.IsValidIndex(DepthCaptureTargetIndex)
 			? DepthReadbackPool[DepthCaptureTargetIndex].Get() : nullptr;
 		DepthCaptureTargetIndex = (DepthCaptureTargetIndex + 1) % DepthRenderTargets.Num();
+	}
+
+	if (bPrimaryView)
+	{
+		// The game viewport renders after this tick; the extension copies that
+		// frame into RT and queues the readback. Enqueued now, so the request is
+		// queued before this frame's scene render command.
+		const uint32 Gen = PollGeneration.Load(EMemoryOrder::Relaxed);
+		const uint64 FrameIdx = PendingFrameIndex;
+		TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> Ext = GrabExtension;
+		ENQUEUE_RENDER_COMMAND(CamSimRequestGrab)(
+			[Ext, RT, Readback, Gen, FrameIdx, TargetIdx, DepthRT, DepthReadback](FRHICommandListImmediate& RHICmdList)
+		{
+			FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
+			if (!Ext || !Resource) return;
+			Ext->SetCurrentGeneration_RenderThread(Gen);
+			Ext->PushRequest_RenderThread({ FrameIdx, Gen, TargetIdx }, Resource->GetRenderTargetTexture(), Readback);
+			// Depth (ML) still comes from its own SceneCapture, copied as before.
+			if (DepthRT && DepthReadback)
+			{
+				FTextureRenderTargetResource* DepthRes = DepthRT->GetRenderTargetResource();
+				if (FRHITexture* DepthTex = DepthRes ? DepthRes->GetRenderTargetTexture() : nullptr)
+				{
+					RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::RTV, ERHIAccess::CopySrc));
+					DepthReadback->EnqueueCopy(RHICmdList, DepthTex);
+					RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::CopySrc, ERHIAccess::RTV));
+				}
+			}
+		});
+		return;
 	}
 
 	// Async GPU→CPU DMA on the render thread (returns immediately).

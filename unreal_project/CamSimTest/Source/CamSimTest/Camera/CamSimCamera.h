@@ -12,6 +12,7 @@
 #include "CamSimCamera.generated.h"
 
 class USceneCaptureComponent2D;
+class UCameraComponent;
 class UCesiumGlobeAnchorComponent;
 class UCamSimSubsystem;
 class UCamSimGimbalComponent;
@@ -95,6 +96,14 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")
 	TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
+	/**
+	 * The player's view when render.view_source = primary (ROADMAP 3A). Child of
+	 * SceneCapture with an identity transform; FOV and post-process are copied
+	 * from SceneCapture every tick, which stays the source of truth until 3B.
+	 */
+	UPROPERTY(VisibleAnywhere, Category = "CamSim")
+	TObjectPtr<UCameraComponent> SensorCamera;
+
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")
 	TObjectPtr<UCamSimGimbalComponent> GimbalComp;
 
@@ -141,6 +150,9 @@ private:
 	void EmitHeartbeatIfDue();
 	/** Append this tick's render stats (ROADMAP 3A). */
 	void RecordFrameStats();
+	/** Primary view: mirror FOV/post-process to SensorCamera and make it the view target. */
+	void ApplyPrimaryView();
+	bool bViewTargetApplied = false;
 	/** A parse failure keeps the current config and lets the tick carry on. */
 	void PollHotReloadConfig(float DeltaTime);
 };

@@ -283,6 +283,8 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 | `maximum_screen_space_error` | float | `2.0` | `CAMSIM_MAX_SSE` | Cesium LOD quality: lower = sharper terrain. Cesium default is 16; 2.0 is high quality for ISR imagery. |
 | `create_physics_meshes` | bool | `true` | `CAMSIM_CREATE_PHYSICS_MESHES` | Cook collision for Cesium tiles. CIGI HAT/HOT and LOS queries and the KLV frame centre (Tags 21, 23–25, 78) are line traces against it; with it off they never hit the terrain. |
 | `maximum_cached_bytes_mb` | int | `2048` | `CAMSIM_MAX_CACHED_MB` | Cesium tile cache budget in MB. `0` = Cesium default (uncapped). |
+| `use_lod_transitions` | bool | `true` | `CAMSIM_USE_LOD_TRANSITIONS` | Cesium's dithered LOD crossfade, which hides tile LOD pops. Needs temporal AA to resolve the dither: use with `render.view_source: primary` (TSR). With `scene_capture` (FXAA) it blurs moving views. |
+| `lod_transition_length` | float | `0.5` | `CAMSIM_LOD_TRANSITION_LENGTH` | Crossfade duration in seconds. |
 
 ### Terrain Readiness Gate
 
