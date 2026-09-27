@@ -2,6 +2,7 @@
 
 #include "Config/CamSimConfig.h"
 #include "CamSimTest.h"
+#include "Sensor/SensorPath.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
@@ -316,6 +317,12 @@ void FCamSimConfig::KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSi
 	Reloaded.Render.ViewSource           = Running.Render.ViewSource;
 	Reloaded.Render.ViewSourceMode       = Running.Render.ViewSourceMode;
 	Reloaded.Render.OriginShiftDistanceM = Running.Render.OriginShiftDistanceM;
+	// ROADMAP 3B: render targets, readback buffers, the encoder and the sensor
+	// graph are sized, and the sensor path chosen, once per session.
+	Reloaded.CaptureWidth           = Running.CaptureWidth;
+	Reloaded.CaptureHeight          = Running.CaptureHeight;
+	Reloaded.Render.SensorPath      = Running.Render.SensorPath;
+	Reloaded.Render.SensorPathMode  = Running.Render.SensorPathMode;
 }
 
 FCamSimConfig FCamSimConfig::LoadFromYamlString(const FString& YamlContent, const FString& SourceName)
@@ -1931,10 +1938,12 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(FString::Printf(TEXT("CaptureHeight=%d must be even (H.264 requirement)"), CaptureHeight));
 	}
 
-	// NV12 packing writes 4 bytes per uint (ROADMAP 3B)
-	if (CaptureWidth % 4 != 0)
+	// NV12 packing writes 4 bytes per uint (ROADMAP 3B). Only the GPU sensor path
+	// packs NV12; the legacy path takes any even width. When it's wanted, the
+	// selector falls back to legacy (FSensorPathSelector::Decide) and this says why.
+	if (CaptureWidth % 4 != 0 && FSensorPathSelector::WantsGpu(*this))
 	{
-		Errors.Add(FString::Printf(TEXT("CaptureWidth=%d must be a multiple of 4 (NV12 packing)"), CaptureWidth));
+		Errors.Add(FString::Printf(TEXT("CaptureWidth=%d must be a multiple of 4 (NV12 packing, GPU sensor path)"), CaptureWidth));
 	}
 	for (const TPair<ESensorMode, FSensorModeConfig>& Pair : SensorModeConfigs)
 	{

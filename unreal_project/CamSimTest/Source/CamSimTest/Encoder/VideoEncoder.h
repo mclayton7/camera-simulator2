@@ -6,6 +6,7 @@
 #include "Config/CamSimConfig.h"
 #include "Metadata/KlvBuilder.h"
 #include "Encoder/IFrameSink.h"
+#include "Sensor/SensorPath.h"
 
 // FFmpeg headers — wrap in extern "C" to handle C linkage
 THIRD_PARTY_INCLUDES_START
@@ -38,7 +39,8 @@ THIRD_PARTY_INCLUDES_END
 class FVideoEncoder : public IFrameSink
 {
 public:
-	explicit FVideoEncoder(const FCamSimConfig& InConfig);
+	/** SensorPath: the session's sensor pipeline (UCamSimSubsystem decides it); sets the transfer tag. */
+	FVideoEncoder(const FCamSimConfig& InConfig, ESensorPipelinePath InSensorPath);
 	virtual ~FVideoEncoder() override;
 
 	// IFrameSink interface
@@ -55,6 +57,7 @@ public:
 
 private:
 	const FCamSimConfig& Config;
+	const ESensorPipelinePath SensorPath;
 	bool bIsOpen = false;
 	bool bUsingNvenc = false;
 	bool bUsingVideoToolbox = false;

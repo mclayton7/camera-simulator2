@@ -37,6 +37,8 @@ namespace
 			Add(M.SunGlintIntensity > 0.0f,        TEXT("sun_glint_intensity"));
 		}
 		if (Cfg.OpticalRealism.bEnabled && Cfg.OpticalRealism.bLensDistortion) Out.Add(TEXT("lens_distortion"));
+		// UE 5.8 applies SceneFringeIntensity inside the tonemapper, which the GPU path replaces.
+		if (Cfg.OpticalRealism.bEnabled && Cfg.OpticalRealism.bChromaticAberration) Out.Add(TEXT("chromatic_aberration"));
 		if (Cfg.Phase18.bPrecipitation)        Out.Add(TEXT("precipitation"));
 		if (Cfg.Phase18.bDynamicIRExtinction)  Out.Add(TEXT("dynamic_ir_extinction"));
 		if (Cfg.OverlayConfig.bEnabled)        Out.Add(TEXT("overlay"));
@@ -58,7 +60,8 @@ namespace
 	}
 }
 
-FSensorPathDecision FSensorPathSelector::Decide(const FCamSimConfig& Cfg)
+/** The choice from config and enabled effects alone (before the NV12 dimension check). */
+static FSensorPathDecision DecideFromEffects(const FCamSimConfig& Cfg)
 {
 	using ESP = FCamSimConfig::FRenderConfig::ESensorPath;
 	FSensorPathDecision D;
@@ -87,4 +90,29 @@ FSensorPathDecision FSensorPathSelector::Decide(const FCamSimConfig& Cfg)
 			: FString::Printf(TEXT("sensor path: legacy (unported: %s)"), *List);
 	}
 	return D;
+}
+
+bool FSensorPathSelector::WantsGpu(const FCamSimConfig& Cfg)
+{
+	return DecideFromEffects(Cfg).Path == ESensorPipelinePath::Gpu;
+}
+
+FSensorPathDecision FSensorPathSelector::Decide(const FCamSimConfig& Cfg)
+{
+	FSensorPathDecision D = DecideFromEffects(Cfg);
+	// NV12 packing writes 4 luma bytes per uint and 2x2 chroma: width % 4, even height.
+	if (D.Path == ESensorPipelinePath::Gpu && (Cfg.CaptureWidth % 4 != 0 || Cfg.CaptureHeight % 2 != 0))
+	{
+		DowngradeToLegacy(D, FString::Printf(
+			TEXT("capture %dx%d: NV12 needs width %% 4 == 0 and an even height"), Cfg.CaptureWidth, Cfg.CaptureHeight));
+	}
+	return D;
+}
+
+void FSensorPathSelector::DowngradeToLegacy(FSensorPathDecision& D, const FString& Why)
+{
+	if (D.Path != ESensorPipelinePath::Gpu) return;
+	D.Path = ESensorPipelinePath::Legacy;
+	D.bError = true;
+	D.Reason = FString::Printf(TEXT("sensor path: legacy (the GPU path can't run: %s)"), *Why);
 }

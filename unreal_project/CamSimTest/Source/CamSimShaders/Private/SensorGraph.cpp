@@ -70,6 +70,40 @@ public:
 };
 IMPLEMENT_GLOBAL_SHADER(FCamSimSensorPackNv12CS, "/CamSim/Private/CamSimSensor.usf", "PackNv12CS", SF_Compute);
 
+bool IsSensorGraphSupported(FString& OutWhy)
+{
+	if (GUsingNullRHI)
+	{
+		OutWhy = TEXT("NullRHI has no GPU");
+		return false;
+	}
+	if (GMaxRHIFeatureLevel < ERHIFeatureLevel::SM5)
+	{
+		OutWhy = TEXT("the RHI's max feature level is below SM5 (no compute)");
+		return false;
+	}
+	const FGlobalShaderMap* Map = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+	if (!Map)
+	{
+		OutWhy = TEXT("no global shader map");
+		return false;
+	}
+	for (int32 Perm = 0; Perm < FCamSimSensorApplyCS::FPermutationDomain::PermutationCount; ++Perm)
+	{
+		if (!Map->HasShader(&FCamSimSensorApplyCS::GetStaticType(), Perm))
+		{
+			OutWhy = FString::Printf(TEXT("FCamSimSensorApplyCS permutation %d missing from the global shader map"), Perm);
+			return false;
+		}
+	}
+	if (!Map->HasShader(&FCamSimSensorPackNv12CS::GetStaticType(), 0))
+	{
+		OutWhy = TEXT("FCamSimSensorPackNv12CS missing from the global shader map");
+		return false;
+	}
+	return true;
+}
+
 FSensorGraphOutputs AddSensorPasses(FRDGBuilder& GraphBuilder, const FSensorGraphInputs& In, const FSensorFrameParams& P)
 {
 	check(In.SceneColor && In.OutputSize.X % 4 == 0 && In.OutputSize.Y % 2 == 0);

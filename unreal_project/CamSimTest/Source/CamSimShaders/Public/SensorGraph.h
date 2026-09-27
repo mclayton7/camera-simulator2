@@ -32,5 +32,12 @@ struct FSensorGraphOutputs
  * PackNv12CS: BT.709 limited-range NV12) to GraphBuilder. Order of operations
  * follows CamSimSensorRef (Sensor/SensorReference.h) exactly.
  */
+/**
+ * Whether this RHI can run the sensor graph: a real RHI (not NullRHI), SM5
+ * compute, and both compute shaders (every permutation) in the global shader
+ * map. Game thread, after RHI init. On false, OutWhy says what's missing.
+ */
+CAMSIMSHADERS_API bool IsSensorGraphSupported(FString& OutWhy);
+
 CAMSIMSHADERS_API FSensorGraphOutputs AddSensorPasses(FRDGBuilder& GraphBuilder, const FSensorGraphInputs& In,
 	const FSensorFrameParams& Params);

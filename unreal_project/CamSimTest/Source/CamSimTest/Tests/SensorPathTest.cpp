@@ -132,6 +132,64 @@ bool FSensorPathQualityPresetTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathNv12DimsTest, "CamSim.Sensor.Path.GpuNeedsNv12Dimensions",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPathNv12DimsTest::RunTest(const FString& Parameters)
+{
+	using ESP = FCamSimConfig::FRenderConfig::ESensorPath;
+	FCamSimConfig Cfg = CleanGpuConfig();
+	Cfg.Render.SensorPathMode = ESP::Gpu;
+	Cfg.CaptureWidth = 1366;   // even, not a multiple of 4
+	Cfg.CaptureHeight = 768;
+	FSensorPathDecision D = FSensorPathSelector::Decide(Cfg);
+	TestTrue(TEXT("forced gpu + 1366 wide -> legacy"), D.Path == ESensorPipelinePath::Legacy);
+	TestTrue(TEXT("width fallback is an error"), D.bError);
+	TestTrue(TEXT("reason names the width"), D.Reason.Contains(TEXT("1366")));
+	TestTrue(TEXT("still wanted gpu"), FSensorPathSelector::WantsGpu(Cfg));
+
+	Cfg.CaptureWidth = 1280;
+	Cfg.CaptureHeight = 721;
+	D = FSensorPathSelector::Decide(Cfg);
+	TestTrue(TEXT("forced gpu + odd height -> legacy"), D.Path == ESensorPipelinePath::Legacy);
+	TestTrue(TEXT("height fallback is an error"), D.bError);
+	TestTrue(TEXT("reason names the height"), D.Reason.Contains(TEXT("721")));
+
+	Cfg = CleanGpuConfig();
+	Cfg.CaptureWidth = 1366;
+	Cfg.CaptureHeight = 768;
+	D = FSensorPathSelector::Decide(Cfg);
+	TestTrue(TEXT("auto + 1366 wide -> legacy"), D.Path == ESensorPipelinePath::Legacy);
+	TestTrue(TEXT("auto fallback reason names the width"), D.Reason.Contains(TEXT("1366")));
+
+	Cfg.CaptureWidth = 1280;
+	Cfg.CaptureHeight = 720;
+	D = FSensorPathSelector::Decide(Cfg);
+	TestTrue(TEXT("1280x720 -> gpu"), D.Path == ESensorPipelinePath::Gpu);
+	TestFalse(TEXT("no error"), D.bError);
+
+	FSensorPathSelector::DowngradeToLegacy(D, TEXT("NullRHI"));
+	TestTrue(TEXT("runtime downgrade -> legacy"), D.Path == ESensorPipelinePath::Legacy);
+	TestTrue(TEXT("runtime downgrade is an error"), D.bError);
+	TestTrue(TEXT("runtime downgrade names why"), D.Reason.Contains(TEXT("NullRHI")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathChromaticAberrationTest, "CamSim.Sensor.Path.ChromaticAberrationIsUnported",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPathChromaticAberrationTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Cfg = CleanGpuConfig();
+	Cfg.OpticalRealism.bEnabled = false;
+	Cfg.OpticalRealism.bChromaticAberration = true;
+	TestTrue(TEXT("optical realism off -> gpu"), FSensorPathSelector::Decide(Cfg).Path == ESensorPipelinePath::Gpu);
+	Cfg.OpticalRealism.bEnabled = true;
+	Cfg.OpticalRealism.bLensDistortion = false;
+	const FSensorPathDecision D = FSensorPathSelector::Decide(Cfg);
+	TestTrue(TEXT("chromatic aberration -> legacy"), D.Path == ESensorPipelinePath::Legacy);
+	TestTrue(TEXT("names chromatic_aberration"), D.Unported.Contains(TEXT("chromatic_aberration")));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorMailboxTest, "CamSim.Sensor.Mailbox.NewestWins",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorMailboxTest::RunTest(const FString& Parameters)

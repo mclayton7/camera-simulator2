@@ -190,6 +190,12 @@ private:
 	/** Which sensor pipeline this session runs (fixed at Initialize). */
 	FSensorPathDecision SensorPath;
 	bool bGpuSensor = false;
+	/** Size the sensor graph and NV12 readbacks were set up with (never the live, hot-reloadable config). */
+	FIntPoint GpuSensorSize = FIntPoint::ZeroValue;
+	/** GPU path: consecutive failed readbacks (usually never grabbed); logged once at GpuStallLogThreshold. */
+	int32 ConsecutiveGpuFailures = 0;
+	bool  bLoggedGpuStall = false;
+	static constexpr int32 GpuStallLogThreshold = 60;
 	/** One NV12 readback per ring slot (GPU path only). */
 	TArray<TUniquePtr<FRHIGPUBufferReadback>> Nv12ReadbackPool;
 	FSensorController   SensorController;

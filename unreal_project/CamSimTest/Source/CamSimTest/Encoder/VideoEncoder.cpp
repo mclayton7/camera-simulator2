@@ -25,8 +25,9 @@ static void ConfigureKlvStream(struct AVStream* S)
 // Constructor / Destructor
 // -------------------------------------------------------------------------
 
-FVideoEncoder::FVideoEncoder(const FCamSimConfig& InConfig)
+FVideoEncoder::FVideoEncoder(const FCamSimConfig& InConfig, ESensorPipelinePath InSensorPath)
 	: Config(InConfig)
+	, SensorPath(InSensorPath)
 {
 }
 
@@ -384,7 +385,7 @@ bool FVideoEncoder::TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265)
 	// the matching values into the H.264 VUI / SPS here.
 	// Transfer: the legacy path encodes UE's sRGB output (SCS_FinalColorLDR); the
 	// GPU sensor path (ROADMAP 3B) applies the BT.709 OETF itself, so tag BT.709.
-	const bool bGpuSensorPath = FSensorPathSelector::Decide(Config).Path == ESensorPipelinePath::Gpu;
+	const bool bGpuSensorPath = SensorPath == ESensorPipelinePath::Gpu;
 	ColorTrc = bGpuSensorPath ? AVCOL_TRC_BT709 : AVCOL_TRC_IEC61966_2_1;
 	VideoCodecCtx->color_range     = AVCOL_RANGE_MPEG;        // limited (16-235/16-240)
 	VideoCodecCtx->color_primaries = AVCOL_PRI_BT709;

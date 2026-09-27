@@ -93,9 +93,14 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigHotReloadTest,
 
 bool FRenderConfigHotReloadTest::RunTest(const FString& Parameters)
 {
+	using ESP = FCamSimConfig::FRenderConfig::ESensorPath;
 	FCamSimConfig Running;
 	Running.CigiPort = 8888;
 	Running.Render.OriginShiftDistanceM = 20000.0;
+	Running.CaptureWidth = 1280;
+	Running.CaptureHeight = 720;
+	Running.Render.SensorPath = TEXT("gpu");
+	Running.Render.SensorPathMode = ESP::Gpu;
 
 	FCamSimConfig Reloaded;
 	Reloaded.CigiPort = 9999;
@@ -103,6 +108,12 @@ bool FRenderConfigHotReloadTest::RunTest(const FString& Parameters)
 	Reloaded.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::SceneCapture;
 	Reloaded.Render.OriginShiftDistanceM = 5000.0;
 	Reloaded.Render.CameraCutAngleDeg = 12.0f;   // live-tunable: takes effect
+	// ROADMAP 3B: capture size and sensor path size the readback buffers and the
+	// encoder, and are chosen once per session.
+	Reloaded.CaptureWidth = 1920;
+	Reloaded.CaptureHeight = 1080;
+	Reloaded.Render.SensorPath = TEXT("legacy");
+	Reloaded.Render.SensorPathMode = ESP::Legacy;
 
 	FCamSimConfig::KeepRestartOnlySettings(Running, Reloaded);
 
@@ -111,6 +122,10 @@ bool FRenderConfigHotReloadTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("view source name kept"), Reloaded.Render.ViewSource, FString(TEXT("primary")));
 	TestEqual(TEXT("origin shift kept"), Reloaded.Render.OriginShiftDistanceM, 20000.0);
 	TestEqual(TEXT("camera cut threshold reloads"), Reloaded.Render.CameraCutAngleDeg, 12.0f);
+	TestEqual(TEXT("capture width kept"), Reloaded.CaptureWidth, 1280);
+	TestEqual(TEXT("capture height kept"), Reloaded.CaptureHeight, 720);
+	TestEqual(TEXT("sensor path name kept"), Reloaded.Render.SensorPath, FString(TEXT("gpu")));
+	TestTrue(TEXT("sensor path mode kept"), Reloaded.Render.SensorPathMode == ESP::Gpu);
 	return true;
 }
 

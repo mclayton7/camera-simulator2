@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
+#include "Sensor/SensorPath.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
@@ -64,16 +65,27 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorNv12DimsTest,
 
 bool FSensorNv12DimsTest::RunTest(const FString& Parameters)
 {
+	using ESP = FCamSimConfig::FRenderConfig::ESensorPath;
 	FCamSimConfig Cfg;
+	Cfg.Render.SensorPathMode = ESP::Gpu;
 	Cfg.CaptureWidth = 1282;   // even, but not a multiple of 4
 	Cfg.CaptureHeight = 720;
 	auto HasError = [](const TArray<FString>& Errors, const TCHAR* Needle)
 	{
 		return Errors.ContainsByPredicate([Needle](const FString& E) { return E.Contains(Needle); });
 	};
-	TestTrue(TEXT("width % 4 reported"), HasError(Cfg.Validate(), TEXT("multiple of 4")));
+	TestTrue(TEXT("forced gpu: width % 4 reported"), HasError(Cfg.Validate(), TEXT("multiple of 4")));
 	Cfg.CaptureWidth = 1280;
 	TestFalse(TEXT("1280 accepted"), HasError(Cfg.Validate(), TEXT("multiple of 4")));
+
+	// Legacy path: BGRA readback + sws_scale take any even width (no NV12 packing).
+	FCamSimConfig Legacy = FCamSimConfig::LoadFromYamlString(TEXT("render:\n  sensor_path: legacy\n"));
+	Legacy.CaptureWidth = 1366;
+	Legacy.CaptureHeight = 768;
+	TestEqual(TEXT("legacy 1366x768 validates clean"), Legacy.Validate().Num(), 0);
+	Legacy.Render.SensorPathMode = ESP::Gpu;
+	TestTrue(TEXT("forced gpu 1366 reports it"), HasError(Legacy.Validate(), TEXT("multiple of 4")));
+	TestTrue(TEXT("forced gpu 1366 falls back"), FSensorPathSelector::Decide(Legacy).Path == ESensorPipelinePath::Legacy);
 
 	FSensorModeConfig& Eo = Cfg.SensorModeConfigs.FindOrAdd(ESensorMode::EO);
 	Eo.Exposure.MinGainEv = 3.0f;

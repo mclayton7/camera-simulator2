@@ -9,6 +9,7 @@
 #include "Config/CamSimConfig.h"
 #include "Entity/EntityTypeTable.h"
 #include "Geospatial/CigiFrames.h"
+#include "Sensor/SensorPath.h"
 #include "CamSimSubsystem.generated.h"
 
 class FCigiReceiver;
@@ -92,6 +93,13 @@ public:
 	const FEntityTypeTable& GetEntityTypeTable() const { return EntityTypeTable; }
 
 	/**
+	 * ROADMAP 3B: the sensor pipeline for this session, decided once in
+	 * Initialize (config, NV12 dimensions, and whether this RHI can run the GPU
+	 * graph). The capture component and the encoder both follow it.
+	 */
+	const FSensorPathDecision& GetSensorPathDecision() const { return SensorPathDecision; }
+
+	/**
 	 * Thread-safe snapshot of the current config. Takes the hot-reload
 	 * read lock, returns a shared copy that the caller can keep for the
 	 * duration of its work without worrying about a concurrent HotReloadConfig
@@ -134,6 +142,7 @@ public:
 
 private:
 	FCamSimConfig    Config;
+	FSensorPathDecision SensorPathDecision;
 	FEntityTypeTable EntityTypeTable;
 	/** Serialises HotReloadConfig writes against cross-thread Config snapshot reads. */
 	mutable FRWLock  ConfigLock_;

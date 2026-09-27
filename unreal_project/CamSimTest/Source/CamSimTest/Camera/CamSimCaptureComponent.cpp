@@ -77,12 +77,14 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 
 	bPrimaryView = Cfg.Render.IsPrimary();
 
-	// ROADMAP 3B: the sensor pipeline is chosen once per session.
-	SensorPath = FSensorPathSelector::Decide(Cfg);
+	// ROADMAP 3B: the sensor pipeline is chosen once per session, by the
+	// subsystem (it logs the reason), so the encoder's transfer tag agrees.
+	SensorPath = Subsystem->GetSensorPathDecision();
 	bGpuSensor = SensorPath.Path == ESensorPipelinePath::Gpu;
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: %s"), *SensorPath.Reason);
 	if (bGpuSensor)
 	{
+		GpuSensorSize = FIntPoint(Cfg.CaptureWidth, Cfg.CaptureHeight);
 		Nv12ReadbackPool.Reset();
 		for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
 		{
@@ -139,10 +141,9 @@ bool UCamSimCaptureComponent::EnsureGrabExtension()
 	FViewport* Viewport = (GEngine && GEngine->GameViewport) ? GEngine->GameViewport->Viewport : nullptr;
 	if (!Viewport) return false;
 	GrabExtension = FSceneViewExtensions::NewExtension<FCamSimFrameGrabExtension>(Viewport);
-	if (bGpuSensor && Subsystem)
+	if (bGpuSensor)
 	{
-		const FCamSimConfig& Cfg = Subsystem->GetConfig();
-		GrabExtension->EnableGpuSensor_GameThread(FIntPoint(Cfg.CaptureWidth, Cfg.CaptureHeight), &StatsMailbox);
+		GrabExtension->EnableGpuSensor_GameThread(GpuSensorSize, &StatsMailbox);
 	}
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — grabbing the game viewport%s"),
 		bGpuSensor ? TEXT(" (GPU sensor replaces the tonemapper)") : TEXT(""));
@@ -602,6 +603,14 @@ void UCamSimCaptureComponent::Poll()
 		{
 			if (bTrackFrameDrops) FrameDropStats.ReadbackTimeout++;
 			UE_LOG(LogCamSim, Warning, TEXT("CamSimReadback frame %llu: readback failed or timed out (lock null, bad format, or never grabbed)"), FrameIdx);
+			if (bGpuSensor && ++ConsecutiveGpuFailures >= GpuStallLogThreshold && !bLoggedGpuStall)
+			{
+				bLoggedGpuStall = true;
+				UE_LOG(LogCamSim, Error, TEXT("ACamSimCamera: GPU sensor path: %d consecutive frames were never delivered. ")
+					TEXT("The sensor graph replaces UE's tonemapper pass: if that pass is disabled (e.g. ShowFlag.Tonemapper 0 ")
+					TEXT("or ShowFlag.PostProcessing 0) the graph never runs. Re-enable it, or restart with render.sensor_path: legacy."),
+					ConsecutiveGpuFailures);
+			}
 			S.Pixels.Reset();
 			S.Nv12.Reset();
 			S.Depth.Reset();
@@ -609,6 +618,7 @@ void UCamSimCaptureComponent::Poll()
 			continue;
 		}
 		if (bSensorBusy) break;
+		ConsecutiveGpuFailures = 0;
 
 		if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::ReadbackComplete);
 
@@ -680,7 +690,8 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 	const int32  CaptureH       = Cfg.CaptureHeight;
 	const auto   ReadbackFormat = Cfg.ReadbackFormat;
 	const bool   bSwapRB        = Cfg.bSwapRBReadback;
-	const uint32 Nv12Bytes      = static_cast<uint32>(CamSimNv12::NumBytes(Cfg.CaptureWidth, Cfg.CaptureHeight));
+	// The buffer's size, not the live config's (the graph was enabled at GpuSensorSize).
+	const uint32 Nv12Bytes      = bGpuSensor ? static_cast<uint32>(CamSimNv12::NumBytes(GpuSensorSize.X, GpuSensorSize.Y)) : 0u;
 	FSlot&       S              = Slots[Slot];
 	const uint64 FrameIdx       = Ring.GetFrameIndex(Slot);
 	const uint32 CaptureGen     = S.Generation.Load(EMemoryOrder::SequentiallyConsistent);

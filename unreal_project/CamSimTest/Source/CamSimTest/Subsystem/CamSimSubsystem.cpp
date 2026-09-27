@@ -23,6 +23,7 @@
 #include "Health/CamSimHealthServer.h"
 #include "Health/CamSimSnapshotService.h"
 #include "Time/SimClock.h"
+#include "SensorGraph.h"                // IsSensorGraphSupported (ROADMAP 3B)
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -373,6 +374,24 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		}
 	}
 
+	// ROADMAP 3B: choose the sensor pipeline once, before the encoder opens (it
+	// tags the transfer function) and the camera sizes its readbacks. A wanted
+	// GPU path that can't run here falls back to legacy with an error.
+	SensorPathDecision = FSensorPathSelector::Decide(Config);
+	if (SensorPathDecision.Path == ESensorPipelinePath::Gpu)
+	{
+		FString Why;
+		if (!IsSensorGraphSupported(Why)) FSensorPathSelector::DowngradeToLegacy(SensorPathDecision, Why);
+	}
+	if (SensorPathDecision.bError)
+	{
+		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: %s"), *SensorPathDecision.Reason);
+	}
+	else
+	{
+		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: %s"), *SensorPathDecision.Reason);
+	}
+
 	EntityTypeTable.LoadFromConfig();
 
 	// Sim clock (ROADMAP 2.1): configured start and rate, until CIGI sets it.
@@ -601,7 +620,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 
 	// Start FFmpeg encoder / MPEG-TS muxer(s)
-	Impl->VideoEncoder = MakeUnique<FMultiViewFrameSink>(Config);
+	Impl->VideoEncoder = MakeUnique<FMultiViewFrameSink>(Config, SensorPathDecision.Path);
 	if (!Impl->VideoEncoder->Open())
 	{
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: failed to open video encoder"));
