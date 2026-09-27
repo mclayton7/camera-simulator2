@@ -278,11 +278,11 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
-| `tile_preload_fov_scale` | float | `2.0` | `CAMSIM_TILE_FOV_SCALE` | Multiplier applied to `hfov_deg` when registering with `ACesiumCameraManager`. Values above 1.0 pre-fetch tiles outside the visible frustum to reduce pop-in when the camera pans. |
-| `max_simultaneous_tile_loads` | int | `40` | `CAMSIM_MAX_TILE_LOADS` | Maximum concurrent Cesium tile HTTP requests. Higher values speed up initial scene load at the cost of network/CPU. |
-| `maximum_screen_space_error` | float | `2.0` | `CAMSIM_MAX_SSE` | Cesium LOD quality: lower = sharper terrain. Cesium default is 16; 2.0 is high quality for ISR imagery. |
+| `tile_preload_fov_scale` | float | `1.5` | `CAMSIM_TILE_FOV_SCALE` | Multiplier applied to `hfov_deg` when registering with `ACesiumCameraManager`. Values above 1.0 pre-fetch tiles outside the visible frustum to reduce pop-in when the camera pans. |
+| `max_simultaneous_tile_loads` | int | `20` | `CAMSIM_MAX_TILE_LOADS` | Maximum concurrent Cesium tile HTTP requests. Higher values speed up initial scene load at the cost of network/CPU. |
+| `maximum_screen_space_error` | float | `16.0` | `CAMSIM_MAX_SSE` | Cesium LOD quality: lower = sharper terrain (Cesium default 16). On an M1 Pro, 8 raises GPU time and pop-in, and 4 causes hundreds of hitches during gimbal slews (ROADMAP 3A sweep); adaptive SSE raises it further when over budget. |
 | `create_physics_meshes` | bool | `true` | `CAMSIM_CREATE_PHYSICS_MESHES` | Cook collision for Cesium tiles. CIGI HAT/HOT and LOS queries and the KLV frame centre (Tags 21, 23–25, 78) are line traces against it; with it off they never hit the terrain. |
-| `maximum_cached_bytes_mb` | int | `2048` | `CAMSIM_MAX_CACHED_MB` | Cesium tile cache budget in MB. `0` = Cesium default (uncapped). |
+| `maximum_cached_bytes_mb` | int | `1024` | `CAMSIM_MAX_CACHED_MB` | Cesium tile cache budget in MB. `0` = Cesium default (uncapped). |
 | `use_lod_transitions` | bool | `true` | `CAMSIM_USE_LOD_TRANSITIONS` | Cesium's dithered LOD crossfade, which hides tile LOD pops. Needs temporal AA to resolve the dither: use with `render.view_source: primary` (TSR). With `scene_capture` (FXAA) it blurs moving views. |
 | `lod_transition_length` | float | `0.5` | `CAMSIM_LOD_TRANSITION_LENGTH` | Crossfade duration in seconds. |
 
@@ -653,7 +653,7 @@ render:
   view_source: primary
   camera_cut_distance_m: 500.0
   camera_cut_angle_deg: 30.0
-  origin_shift_distance_m: 0.0
+  origin_shift_distance_m: 20000.0
 ```
 
 | Key | Env | Default | Description |
@@ -661,7 +661,13 @@ render:
 | `render.view_source` | `CAMSIM_RENDER_VIEW_SOURCE` | `primary` | `primary`: the sensor is the game viewport's view (TSR, one scene render per frame). `scene_capture`: legacy `SceneCapture2D` path, kept for A/B comparison until ROADMAP 3B. Unknown values warn and use `primary`. |
 | `render.camera_cut_distance_m` | `CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M` | `500.0` | A camera move larger than this in one frame (teleport, origin rebase) resets TSR history. |
 | `render.camera_cut_angle_deg` | `CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG` | `30.0` | A view rotation larger than this in one frame resets TSR history. |
-| `render.origin_shift_distance_m` | `CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M` | `0.0` | Rebase the Cesium georeference (`CesiumOriginShiftComponent`, `ChangeCesiumGeoreference` mode) when the camera is this far from the origin. Keeps local "up" = +Z and coordinates small. `0` disables. |
+| `render.origin_shift_distance_m` | `CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M` | `20000.0` | Rebase the Cesium georeference (`CesiumOriginShiftComponent`, `ChangeCesiumGeoreference` mode) when the camera is this far from the origin. Keeps local "up" = +Z and coordinates small. `0` disables. |
+
+**Render resolution (TSR).** With `view_source: primary`, `rendering_quality.tsr_screen_percentage`
+(`CAMSIM_TSR_SCREEN_PERCENTAGE`, default `100`) renders below the output size and lets TSR
+upscale. Measured on an Apple M1 Pro (ROADMAP 3A bench, San Francisco): at 1080p30, 100% holds
+30 fps with 17–19 ms GPU per frame; 75% cuts that to 12–15 ms with no visible difference in the
+reference shots. Use 75 when GPU headroom matters (e.g. for GPU sensor effects).
 
 ### Per-Frame Latency Tracking (28G)
 

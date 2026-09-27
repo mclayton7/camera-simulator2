@@ -715,7 +715,9 @@ rendering_quality:
   vsm_resolution_bias: 0
   vsm_max_physical_pages: 2048
 
-  # 24F: TSR screen percentage (100=native, >100=super-sample for crisp entity edges)
+  # 24F: TSR screen percentage (100=native, >100=super-sample for crisp entity edges,
+  # <100=render smaller and let TSR upscale; 75 saves ~25% GPU on an M1 Pro with no
+  # visible difference — ROADMAP 3A). Applies to render.view_source=primary.
   # Env: CAMSIM_TSR_SCREEN_PERCENTAGE
   tsr_screen_percentage: 100
 
@@ -989,7 +991,7 @@ render:
   # Rebase the Cesium georeference when the camera is this far (m) from the
   # origin, keeping "up" = +Z and coordinates small. 0 = disabled.
   # Env: CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M
-  origin_shift_distance_m: 0.0
+  origin_shift_distance_m: 20000.0
 
 # --- Entity Types ---
 # Maps CIGI EntityType uint16 to asset paths.

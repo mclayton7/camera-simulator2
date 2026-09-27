@@ -817,7 +817,7 @@ struct FCamSimConfig
 
 		// Rebase the Cesium georeference when the camera is this far from the
 		// origin, in metres. 0 = disabled. Env: CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M
-		double OriginShiftDistanceM = 0.0;
+		double OriginShiftDistanceM = 20000.0;
 
 		bool IsPrimary() const { return ViewSourceMode == EViewSource::Primary; }
 	};

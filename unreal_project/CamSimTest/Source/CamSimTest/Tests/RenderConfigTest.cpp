@@ -19,7 +19,7 @@ bool FRenderConfigSectionTest::RunTest(const FString& Parameters)
 
 	const FCamSimConfig D;
 	TestTrue(TEXT("default view source is primary"), D.Render.IsPrimary());
-	TestEqual(TEXT("origin shift off by default"), D.Render.OriginShiftDistanceM, 0.0);
+	TestEqual(TEXT("origin shift every 20 km by default"), D.Render.OriginShiftDistanceM, 20000.0);
 	TestFalse(TEXT("snapshot endpoint off by default"), D.Operational.bSnapshotEndpointEnabled);
 	TestTrue(TEXT("frame stats off by default"), D.Operational.FrameStatsPath.IsEmpty());
 
