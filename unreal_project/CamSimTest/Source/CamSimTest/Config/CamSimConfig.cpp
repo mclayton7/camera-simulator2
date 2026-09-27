@@ -419,6 +419,8 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		NvgCfg.Exposure.HighlightPercentile = 0.97f;
 		NvgCfg.Exposure.LagFrames           = 2;
 		NvgCfg.Exposure.ManualGainEv        = -12.0f;
+		// Photocathode response is red/NIR-heavy (the green is only the phosphor).
+		NvgCfg.SignalWeights = FVector3f(0.6f, 0.3f, 0.1f);
 		Cfg.SensorModeConfigs.Add(ESensorMode::NVG, NvgCfg);
 	}
 

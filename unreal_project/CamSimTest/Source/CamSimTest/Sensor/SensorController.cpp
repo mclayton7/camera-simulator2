@@ -75,14 +75,22 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	}
 	const bool bIrAgc = (In.Mode == ESensorGraphMode::IR) && Cfg.bAGCEnabled;
 
+	// Smoothing runs only when a histogram arrives, so it uses all the sim time
+	// since the last one it consumed: the lag doesn't depend on histogram timing.
+	// A frozen or backwards clock adds nothing (hold).
+	if (In.DeltaSimSec > 0.0) PendingDeltaSimSec += In.DeltaSimSec;
+
 	if (In.NewHistogram)
 	{
 		TicksSinceHistogram = 0;
 		const bool bSnap = !bInitialized || (bSnapPending && In.NewHistogram->Serial >= SnapAfterSerial);
 		if (In.NewHistogram->Total() > 0)
 		{
-			if (bIrAgc) UpdateIrAgc(*In.NewHistogram, Cfg, In, bSnap);
-			else        UpdateAe(*In.NewHistogram, Cfg, In, bSnap);
+			FSensorControllerInput Step = In;
+			Step.DeltaSimSec = PendingDeltaSimSec;
+			PendingDeltaSimSec = 0.0;
+			if (bIrAgc) UpdateIrAgc(*In.NewHistogram, Cfg, Step, bSnap);
+			else        UpdateAe(*In.NewHistogram, Cfg, Step, bSnap);
 			if (bSnap) { bInitialized = true; bSnapPending = false; }
 		}
 	}

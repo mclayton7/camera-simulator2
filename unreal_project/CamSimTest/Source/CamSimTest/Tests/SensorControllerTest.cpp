@@ -196,6 +196,30 @@ bool FSensorManualTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorAeSparseHistogramLagTest, "CamSim.Sensor.Controller.LagIndependentOfHistogramRate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorAeSparseHistogramLagTest::RunTest(const FString& Parameters)
+{
+	// tau = 3 frames at 30 Hz = 0.1 s. Histograms arrive only every 2nd tick: the
+	// ticks without one must still count towards the time constant.
+	FSensorController C;
+	FSensorModeConfig Cfg = EoCfg();
+	Cfg.Exposure.LagFrames = 3;
+	const FSensorHistogram A = Flat(12.0f, 1);
+	C.Update(In(&A, 1), Cfg);                 // first frame snaps
+	const float Start = C.GetGainEv();
+	auto Frac = [&]() { return (C.GetGainEv() - Start) / 2.0f; };  // step: 2 stops darker
+	for (int32 Tick = 1; Tick <= 6; ++Tick)
+	{
+		const uint32 Serial = 1 + Tick;
+		const FSensorHistogram B = Flat(10.0f, Serial);
+		C.Update(In((Tick % 2 == 1) ? &B : nullptr, Serial, 1.0 / 30.0), Cfg);
+		if (Tick == 3) TestEqual(TEXT("63% at tau"), Frac(), 1.0f - FMath::Exp(-1.0f), 0.02f);
+		if (Tick == 5) TestEqual(TEXT("81% at 5/3 tau"), Frac(), 1.0f - FMath::Exp(-5.0f / 3.0f), 0.02f);
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorZeroDtTest, "CamSim.Sensor.Controller.ZeroDeltaHolds",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorZeroDtTest::RunTest(const FString& Parameters)

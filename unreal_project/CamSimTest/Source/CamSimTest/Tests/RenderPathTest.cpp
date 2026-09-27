@@ -35,7 +35,7 @@ bool FFrameStatsRowTest::RunTest(const FString& Parameters)
 	S.WallMs = 33.5; S.GameMs = 4.0; S.RenderMs = 8.0; S.RhiMs = 2.0; S.GpuMs = 21.0;
 	S.FramesEmitted = 42; S.FramesDropped = 1;
 	S.MinLoadProgressPct = 87.5f; S.Sse = 16.0; S.bCameraCut = true; S.ViewFamilies = 2;
-	S.SensorGpuMs = 1.25; S.SensorGainEv = -13.5; S.SceneMedianLog2 = 11.0;
+	S.SensorGpuMs = 1.25; S.SensorGainEv = -13.5; S.SceneMedianLog2 = 11.0; S.bHasSensorStats = true;
 
 	const FString Row = CamSimFormatFrameStatsRow(S);
 	TestFalse(TEXT("no newline"), Row.Contains(TEXT("\n")));
@@ -61,6 +61,19 @@ bool FFrameStatsRowTest::RunTest(const FString& Parameters)
 	{
 		TestTrue(FString::Printf(TEXT("has %s"), Key), Obj->HasField(Key));
 	}
+
+	// Legacy path: no sensor controller runs, so its gain/median are null, not fake values.
+	S.bHasSensorStats = false;
+	S.SensorGpuMs = -1.0f;
+	TSharedPtr<FJsonObject> Legacy;
+	if (!TestTrue(TEXT("legacy row valid JSON"),
+		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(CamSimFormatFrameStatsRow(S)), Legacy) && Legacy.IsValid()))
+	{
+		return false;
+	}
+	TestTrue(TEXT("legacy sensor_gain_ev null"), Legacy->HasTypedField<EJson::Null>(TEXT("sensor_gain_ev")));
+	TestTrue(TEXT("legacy scene_median_log2 null"), Legacy->HasTypedField<EJson::Null>(TEXT("scene_median_log2")));
+	TestEqual(TEXT("legacy sensor_gpu_ms"), Legacy->GetNumberField(TEXT("sensor_gpu_ms")), -1.0);
 	return true;
 }
 

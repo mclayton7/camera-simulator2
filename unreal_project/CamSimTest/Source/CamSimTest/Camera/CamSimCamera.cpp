@@ -261,6 +261,7 @@ void ACamSimCamera::RecordFrameStats()
 	S.SensorGpuMs      = CaptureComp->GetSensorGpuMs();
 	S.SensorGainEv     = CaptureComp->GetSensorGainEv();
 	S.SceneMedianLog2  = CaptureComp->GetSceneMedianLog2();
+	S.bHasSensorStats  = CaptureComp->GetSensorPath() == ESensorPipelinePath::Gpu;
 
 	float MinLoad = 100.0f;
 	double Sse = 0.0;

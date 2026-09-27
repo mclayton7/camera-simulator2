@@ -25,6 +25,7 @@ struct FCamSimFrameStatsSample
 	float  SensorGpuMs        = -1.0f;  // GPU time of the sensor graph, -1 when unavailable (ROADMAP 3B)
 	float  SensorGainEv       = 0.0f;   // log2 sensor gain
 	float  SceneMedianLog2    = 0.0f;   // log2 histogram median of the detector signal
+	bool   bHasSensorStats    = false;  // false: SensorGainEv/SceneMedianLog2 are written as null (legacy path)
 };
 
 /** One JSON object, no trailing newline. Keys are the harness's contract (scripts/bench/analyze.py). */

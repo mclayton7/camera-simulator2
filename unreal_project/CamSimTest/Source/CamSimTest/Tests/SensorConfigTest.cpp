@@ -138,6 +138,13 @@ namespace
 			T.TestEqual(FString::Printf(TEXT("%s: %s lag_frames"), Source, E.Name), X.LagFrames, 2);
 			T.TestEqual(FString::Printf(TEXT("%s: %s manual_gain_ev"), Source, E.Name), X.ManualGainEv, -12.0f);
 		}
+		// NVG photocathode: red/NIR-heavy detector response (signal_weight_r/g/b).
+		if (const FSensorModeConfig* Nvg = Cfg.SensorModeConfigs.Find(ESensorMode::NVG))
+		{
+			T.TestEqual(FString::Printf(TEXT("%s: nvg signal_weight_r"), Source), Nvg->SignalWeights.X, 0.6f);
+			T.TestEqual(FString::Printf(TEXT("%s: nvg signal_weight_g"), Source), Nvg->SignalWeights.Y, 0.3f);
+			T.TestEqual(FString::Printf(TEXT("%s: nvg signal_weight_b"), Source), Nvg->SignalWeights.Z, 0.1f);
+		}
 	}
 }
 

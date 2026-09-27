@@ -44,5 +44,6 @@ private:
 	float  IrHiLog2        = 1.0f;
 	float  LastMedianLog2  = 0.0f;
 	int32  TicksSinceHistogram = 0;
+	double PendingDeltaSimSec  = 0.0;  // sim time since the last histogram was consumed
 	uint32 StaleEpisodes   = 0;
 };
