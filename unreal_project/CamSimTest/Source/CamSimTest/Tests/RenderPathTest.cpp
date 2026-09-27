@@ -310,3 +310,48 @@ bool FExposureBiasTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("follows a different project default"), CamSimRender::AutoExposureBias(0.5f, -1.0f), -0.5f);
 	return true;
 }
+
+// -------------------------------------------------------------------------
+// Motion blur is explicit: UE's default (on, amount 0.5) must not leak into
+// the sensor when optical realism is off ("clean ML frames").
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderMotionBlurTest,
+	"CamSim.Render.MotionBlurOnlyWhenEnabled",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderMotionBlurTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig::FOpticalRealismConfig O;   // bEnabled = false, bMotionBlur = true by default
+	{
+		FPostProcessSettings PP;
+		FEngineShowFlags Flags(ESFIM_Game);
+		TestTrue(TEXT("UE default has motion blur on"), Flags.MotionBlur != 0);
+		CamSimRender::ApplyMotionBlur(O, PP, Flags);
+		TestFalse(TEXT("optical realism off: show flag off"), Flags.MotionBlur != 0);
+		TestTrue(TEXT("optical realism off: amount overridden"), PP.bOverride_MotionBlurAmount != 0);
+		TestEqual(TEXT("optical realism off: amount 0"), PP.MotionBlurAmount, 0.0f);
+	}
+	{
+		O.bEnabled = true;
+		O.bMotionBlur = false;
+		FPostProcessSettings PP;
+		FEngineShowFlags Flags(ESFIM_Game);
+		CamSimRender::ApplyMotionBlur(O, PP, Flags);
+		TestFalse(TEXT("motion_blur false: show flag off"), Flags.MotionBlur != 0);
+		TestEqual(TEXT("motion_blur false: amount 0"), PP.MotionBlurAmount, 0.0f);
+	}
+	{
+		O.bEnabled = true;
+		O.bMotionBlur = true;
+		O.MotionBlurAmount = 0.3f;
+		O.MotionBlurMax = 4;
+		FPostProcessSettings PP;
+		FEngineShowFlags Flags(ESFIM_Game);
+		CamSimRender::ApplyMotionBlur(O, PP, Flags);
+		TestTrue(TEXT("enabled: show flag on"), Flags.MotionBlur != 0);
+		TestEqual(TEXT("enabled: amount"), PP.MotionBlurAmount, 0.3f);
+		TestEqual(TEXT("enabled: max"), PP.MotionBlurMax, 4.0f);
+	}
+	return true;
+}

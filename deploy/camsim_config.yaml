@@ -698,8 +698,8 @@ sensor_modes:
 # GPU-side + CPU-side optical effects for camera realism.
 # Master toggle: enabled=false gives clean ML training frames.
 optical_realism:
-  enabled: false
-  # 15A Motion Blur (GPU)
+  enabled: false   # false = clean frames: UE motion blur is forced off (UE's own default is on)
+  # 15A Motion Blur (GPU) — only when enabled is true
   motion_blur: true
   motion_blur_amount: 0.5
   motion_blur_max: 5

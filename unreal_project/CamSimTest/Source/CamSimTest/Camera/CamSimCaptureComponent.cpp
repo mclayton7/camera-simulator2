@@ -224,19 +224,15 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 		GAreScreenMessagesEnabled = false;
 	}
 
+	// 15A motion blur: always explicit (off unless optical realism enables it),
+	// on both the capture and the primary view.
+	CamSimRender::ApplyMotionBlur(Cfg.OpticalRealism, PP, Sensor->ShowFlags);
+	if (ViewFlags) ViewFlags->SetMotionBlur(Sensor->ShowFlags.MotionBlur != 0);
+
 	// Phase 15 — GPU-side optical realism
 	if (Cfg.OpticalRealism.bEnabled)
 	{
 		const auto& O = Cfg.OpticalRealism;
-		Sensor->ShowFlags.SetMotionBlur(O.bMotionBlur);
-		if (ViewFlags) ViewFlags->SetMotionBlur(O.bMotionBlur);  // 15A
-		if (O.bMotionBlur)
-		{
-			PP.bOverride_MotionBlurAmount = true;
-			PP.MotionBlurAmount = O.MotionBlurAmount;
-			PP.bOverride_MotionBlurMax = true;
-			PP.MotionBlurMax = static_cast<float>(O.MotionBlurMax);
-		}
 		Sensor->ShowFlags.SetBloom(O.bBloom);
 		if (ViewFlags) ViewFlags->SetBloom(O.bBloom);  // 15C
 		if (O.bBloom)
