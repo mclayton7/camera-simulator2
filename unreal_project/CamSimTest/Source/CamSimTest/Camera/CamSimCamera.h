@@ -153,6 +153,12 @@ private:
 	/** Primary view: mirror FOV/post-process to SensorCamera and make it the view target. */
 	void ApplyPrimaryView();
 	bool bViewTargetApplied = false;
+
+	/** Reset TSR history when the view jumps (teleport, origin rebase) (ROADMAP 3A). */
+	void UpdateCameraCut();
+	FVector PrevViewLocCm = FVector::ZeroVector;
+	FQuat   PrevViewRot   = FQuat::Identity;
+	bool    bHasPrevView  = false;
 	/** A parse failure keeps the current config and lets the tick carry on. */
 	void PollHotReloadConfig(float DeltaTime);
 };

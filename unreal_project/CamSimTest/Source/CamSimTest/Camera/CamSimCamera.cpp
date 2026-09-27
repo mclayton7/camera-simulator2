@@ -19,6 +19,8 @@
 #include "GameFramework/PlayerController.h"
 #include "Engine/GameViewportClient.h"
 #include "UnrealEngine.h"  // FSystemResolution
+#include "Camera/CamSimRenderPath.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h" // TActorIterator
 #include "DynamicRHI.h"
@@ -190,6 +192,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 	UpdateLaserDesignator();
 	UpdateAutoFocus();
 	ApplyPrimaryView();
+	UpdateCameraCut();
 
 	if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::CigiDequeue);
 
@@ -260,6 +263,29 @@ void ACamSimCamera::ApplyPrimaryView()
 			UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: sensor is the primary view (%s)"), *PC->GetName());
 		}
 	}
+}
+
+void ACamSimCamera::UpdateCameraCut()
+{
+	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+	const FVector Loc = SceneCapture->GetComponentLocation();
+	const FQuat   Rot = SceneCapture->GetComponentQuat();
+	if (bHasPrevView && CamSimRender::ShouldCutCamera(PrevViewLocCm, PrevViewRot, Loc, Rot,
+		Cfg.Render.CameraCutDistanceM, Cfg.Render.CameraCutAngleDeg))
+	{
+		bCameraCutThisFrame = true;
+		if (Cfg.Render.IsPrimary())
+		{
+			if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+			{
+				if (PC->PlayerCameraManager) PC->PlayerCameraManager->SetGameCameraCutThisFrame();
+			}
+		}
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: camera cut (moved %.0f m)"), FVector::Dist(PrevViewLocCm, Loc) / 100.0);
+	}
+	PrevViewLocCm = Loc;
+	PrevViewRot   = Rot;
+	bHasPrevView  = true;
 }
 
 void ACamSimCamera::CaptureAndEncode()

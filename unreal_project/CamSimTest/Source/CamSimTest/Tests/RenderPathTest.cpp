@@ -10,6 +10,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Camera/CamSimFrameStats.h"
 #include "Camera/FrameGrabRequestQueue.h"
+#include "Camera/CamSimRenderPath.h"
 #include "Camera/CamSimStreamingController.h"
 #include "Config/CamSimConfig.h"
 
@@ -134,5 +135,36 @@ bool FStreamingCamerasTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("primary: prefetch only"), FCamSimStreamingController::NumStreamingCameras(Cfg), 1);
 	Cfg.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::SceneCapture;
 	TestEqual(TEXT("scene capture: primary + prefetch"), FCamSimStreamingController::NumStreamingCameras(Cfg), 2);
+	return true;
+}
+
+// A pose jump beyond either threshold in one frame resets TSR history. This
+// covers CIGI teleports and Cesium origin rebases, which move the camera's UE
+// location by kilometres even though the view doesn't change.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraCutThresholdTest,
+	"CamSim.Render.CameraCut.Thresholds",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCameraCutThresholdTest::RunTest(const FString& Parameters)
+{
+	using CamSimRender::ShouldCutCamera;
+	const FQuat Level = FRotator(-30.0, 0.0, 0.0).Quaternion();
+	const FVector Origin(0.0);
+	const double DistM = 500.0, AngDeg = 30.0;
+
+	TestFalse(TEXT("still"), ShouldCutCamera(Origin, Level, Origin, Level, DistM, AngDeg));
+	// 100 m/s at 30 fps = 3.3 m per frame: normal flight.
+	TestFalse(TEXT("normal flight"), ShouldCutCamera(Origin, Level, FVector(333.0, 0, 0), Level, DistM, AngDeg));
+	// 60 deg/s gimbal slew = 2 deg per frame.
+	TestFalse(TEXT("fast slew"), ShouldCutCamera(Origin, Level, Origin, FRotator(-30.0, 2.0, 0.0).Quaternion(), DistM, AngDeg));
+	// Teleport 300 km.
+	TestTrue(TEXT("teleport"), ShouldCutCamera(Origin, Level, FVector(3.0e7, 0, 0), Level, DistM, AngDeg));
+	// Origin rebase: the camera's UE location jumps back toward zero.
+	TestTrue(TEXT("rebase"), ShouldCutCamera(FVector(2.0e6, -1.5e6, 3.0e5), Level, FVector(0, 0, 3.0e5), Level, DistM, AngDeg));
+	// Snap the view 90 deg.
+	TestTrue(TEXT("view snap"), ShouldCutCamera(Origin, Level, Origin, FRotator(-30.0, 90.0, 0.0).Quaternion(), DistM, AngDeg));
+	// Just under / just over the distance threshold (cm).
+	TestFalse(TEXT("499 m"), ShouldCutCamera(Origin, Level, FVector(49900.0, 0, 0), Level, DistM, AngDeg));
+	TestTrue(TEXT("501 m"), ShouldCutCamera(Origin, Level, FVector(50100.0, 0, 0), Level, DistM, AngDeg));
 	return true;
 }
