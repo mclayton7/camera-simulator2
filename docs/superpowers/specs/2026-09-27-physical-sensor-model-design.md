@@ -21,11 +21,26 @@ blur are not physically meaningful.
 - **Purpose: ATR/ML training data.** Image statistics must follow the physics of a real camera,
   with parameters taken from datasheets, so models trained on CamSim imagery transfer. Output is
   deterministic and seedable.
-- **Sensor types: EO and IR (LWIR) only.** NVG is removed.
+- **Sensor types: EO and IR only.** NVG is removed. IR defaults to a cooled MWIR photon detector;
+  an uncooled LWIR microbolometer is an alternative preset.
 - **One path.** The GPU sensor model is the only sensor path; the legacy CPU model and everything
   that only it needed are deleted (this was 3B.4's job, pulled forward).
 - **No burned-in overlays.** The HUD, laser spot and precipitation overlay are deleted; the stream
   is the sensor image and the telemetry travels in the KLV.
+
+## Target payloads
+
+The payloads to emulate are gimballed ISR turrets: Trillium HD55, L3Harris WESCAM MX-10 and MX-25,
+and at the high end Raytheon MTS-B and CSP. Their thermal channels are mostly cooled MWIR
+(3–5 µm, InSb or HOT MCT) photon detectors; their EO channels are HD CMOS sensors behind long
+continuous-zoom optics. So:
+
+- The presets are generic **sensor classes** (`eo_hd_cmos`, `mwir_cooled`, `lwir_uncooled`), not
+  product names: exact datasheet values for these payloads are not reliably public and several are
+  export-controlled. A specific payload is matched by overriding parameters.
+- Diffraction blur in pixels depends on f-number, wavelength and pixel pitch, not on zoom, so a
+  continuous-zoom lens needs no extra model beyond the live FOV CamSim already streams.
+- Resolution stays `capture_width`/`capture_height`; presets don't change it.
 
 ## Model and data flow
 
@@ -45,7 +60,9 @@ HDR scene-linear RGB (÷ View.OneOverPreExposure, as in 3B.1)
 - The histogram measures the noiseless scene signal, so AE/AGC never chases noise.
 - EO runs the detector per RGB channel (a 3-chip / ideal-demosaic approximation; no Bayer
   demosaicing). IR is monochrome: `signal = dot(RGB, signal_weights)` as in 3B.1, the
-  visible-light proxy until Milestone 4 supplies radiance.
+  visible-light proxy until Milestone 4 supplies MWIR/LWIR radiance.
+- Two detector types: **photon** (EO CMOS and cooled MWIR: electrons, shot noise) and
+  **microbolometer** (uncooled LWIR: fractions of full scale, no shot noise).
 - **Randomness:** every random field is a PCG hash of (pixel x, pixel y, frame index, seed,
   stream id) turned into a unit Gaussian (Box-Muller from two hashed uniforms). Temporal fields
   (shot, read, temporal noise) include the frame index; fixed-pattern fields (PRNU, DSNU,
@@ -83,7 +100,7 @@ noisy, as real cameras do. `FSensorFrameParams` carries both gains.
 
 ### 3. Detector
 
-**CMOS (EO, per channel):**
+**Photon detector (EO CMOS per channel; cooled MWIR mono):**
 
 ```
 e1 = e × (1 + prnu·n1)                      fixed
@@ -93,17 +110,20 @@ e4 = e3 + read_noise_e·n4                   temporal
 e5 = clamp(e4, 0, full_well_e) × analog_gain
 ```
 
-**Microbolometer (IR, mono; fractions of full scale until Milestone 4 supplies temperatures):**
+**Microbolometer (`lwir_uncooled` only; fractions of full scale until Milestone 4 supplies
+temperatures):**
 
 ```
 v = signal_norm + temporal_noise·n2 + pixel_fpn·n1 + column_fpn·nc(x) + row_fpn·nr(y)
 ```
 
 No shot noise (thermal detector). Column/row FPN is the characteristic microbolometer striping.
-`signal_norm = signal × photon_gain`, where the controller computes the IR photon gain the same way
-as EO's (median to `target_grey` of full scale, so the 14-bit range is used). The IR AGC stretch
-(3B.1 percentiles) then runs in the display stage on `DN / (2^adc_bits − 1)`, with its band taken
-from the noiseless histogram scaled by that photon gain.
+**IR exposure (both IR types):** the controller computes the IR photon gain the same way as EO's
+(median to `target_grey` of full scale, so the 14-bit range is used); a photon detector collects
+`e = signal × photon_gain × full_well_e`, a microbolometer takes `signal_norm = signal ×
+photon_gain`. The IR AGC stretch (3B.1 percentiles) then runs in the display stage on
+`DN / (2^adc_bits − 1)`, with its band taken from the noiseless histogram scaled by that photon
+gain.
 
 **Defects (both):** per pixel, a hash against `hot_pixel_fraction` / `dead_pixel_fraction`: hot
 reads full scale, dead reads 0.
@@ -118,22 +138,23 @@ reads full scale, dead reads 0.
 
 ```yaml
 sensor_modes:
-  eo: {preset: eo_cmos, seed: 1, optics: {...}, detector: {...}, exposure: {...}}
-  ir: {preset: lwir_microbolometer, seed: 1, optics: {...}, detector: {...}, exposure: {...}}
+  eo: {preset: eo_hd_cmos,  seed: 1, optics: {...}, detector: {...}, exposure: {...}}
+  ir: {preset: mwir_cooled, seed: 1, optics: {...}, detector: {...}, exposure: {...}}
 ```
 
 A preset supplies defaults; any key overrides them.
 
-| Parameter | `eo_cmos` (2/3" industrial CMOS) | `lwir_microbolometer` (640×512 VOx) |
-|---|---|---|
-| full_well_e / read_noise_e | 10,000 / 2.5 | — |
-| prnu / dsnu_e / dark_current_e_s | 0.01 / 1 / 5 | — |
-| temporal / pixel / column / row noise | — | 0.004 / 0.003 / 0.0015 / 0.001 |
-| adc_bits | 12 | 14 |
-| max_analog_gain_db | 24 | — (AGC) |
-| f_number / pixel_pitch_um / wavelength_um | 4 / 3.45 / 0.55 | 1.2 / 12 / 10 |
-| hot / dead pixel fraction | 1e-5 / 1e-5 | 1e-4 / 1e-4 |
-| vignetting_exponent / extra_blur_px / k1 / k2 | 4 / 0 / 0 / 0 | 4 / 0 / 0 / 0 |
+| Parameter | `eo_hd_cmos` (1080p industrial CMOS) | `mwir_cooled` (640×512 InSb) | `lwir_uncooled` (640×512 VOx) |
+|---|---|---|---|
+| detector type | photon | photon | microbolometer |
+| full_well_e / read_noise_e | 10,000 / 2 | 7,000,000 / 400 | — |
+| prnu / dsnu_e / dark_current_e_s | 0.01 / 1 / 5 | 0.001 / 2,000 / 0 (residual after NUC; cooled) | — |
+| temporal / pixel / column / row noise | — | — | 0.004 / 0.003 / 0.0015 / 0.001 |
+| adc_bits | 12 | 14 | 14 |
+| max_analog_gain_db | 30 | — (AGC) | — (AGC) |
+| f_number / pixel_pitch_um / wavelength_um | 4 / 2.9 / 0.55 | 4 / 15 / 4.0 | 1.2 / 12 / 10 |
+| hot / dead pixel fraction | 1e-5 / 1e-5 | 1e-4 / 1e-4 | 1e-4 / 1e-4 |
+| vignetting_exponent / extra_blur_px / k1 / k2 | 4 / 0 / 0 / 0 | 4 / 0 / 0 / 0 | 4 / 0 / 0 / 0 |
 
 The `exposure:` block and IR AGC keys from 3B.1 stay; `max_photon_gain_ev` joins them. Presets
 are typical datasheet values; the display targets are calibrated on the bench.
@@ -160,14 +181,14 @@ keys and `sensor_modes.nvg` produce the standard unknown-key warning.
 ## Testing
 
 1. **Physics tests on the CPU reference** (NullRHI, CI):
-   - photon transfer (EMVA 1288 style): flat fields at 8 levels, two frames each; temporal variance
+   - photon transfer (EMVA 1288 style; `eo_hd_cmos` and `mwir_cooled`): flat fields at 8 levels, two frames each; temporal variance
      `e + read_noise²` within 5%; fixed-pattern variance `(prnu·e)² + dsnu²` within 5%;
    - MTF: step edge; fitted edge-spread σ equals the configured PSF σ within 5%;
    - distortion: grid points match the forward Brown-Conrady model within 0.1 px;
    - vignetting: flat field falloff equals cos^n θ within 1%;
    - determinism: same seed + frame bit-identical; consecutive-frame temporal correlation < 0.05;
      fixed patterns identical across frames; a new seed changes them;
-   - microbolometer: std of column means = `column_fpn` within 10% (rows likewise); no signal
+   - microbolometer (`lwir_uncooled`): std of column means = `column_fpn` within 10% (rows likewise); no signal
      dependence;
    - defects: counts match fractions within binomial tolerance;
    - exposure split: photon gain exhausted before analog gain; SNR falls as analog gain rises.
@@ -194,8 +215,10 @@ rounding, clamping bilinear scene and bloom UVs to their view rects.
 
 ## Later
 
-- **3B.3:** rolling shutter and platform jitter; the LWIR NUC/drift cycle; Bayer demosaicing if EO
-  colour-noise realism turns out to matter.
+- **3B.3:** rolling shutter and platform jitter; the IR NUC/drift cycle; range-dependent
+  atmospheric turbulence blur (dominant for long-range narrow-FOV turret imagery); Bayer
+  demosaicing if EO colour-noise realism turns out to matter; payload image processing (sharpening,
+  local contrast / haze enhancement) if matching specific turret video matters.
 - **3C** (GPU-texture encode) and **3D** (CI performance gate) unchanged.
-- **Milestone 4:** thermal radiance feeds the microbolometer detector; its noise moves to NETD in
-  kelvin.
+- **Milestone 4:** in-band thermal radiance (MWIR 3–5 µm, LWIR 8–12 µm) feeds the IR detector;
+  IR noise is then specified as NETD in kelvin.
