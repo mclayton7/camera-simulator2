@@ -440,7 +440,7 @@ Findings for follow-up:
   a partial frame-stats line, checks only the local address for a busy port, and stops waiting
   if no pid file appears.
 
-**3B.1 status (2026-09-27): GPU sensor pipeline implemented on macOS; awaiting visual review.**
+**3B.1 status (2026-09-27): GPU sensor pipeline implemented on macOS; visual review signed off by the user (2026-09-27).**
 Spec: `docs/superpowers/specs/2026-09-27-gpu-sensor-model-design.md`; plan:
 `docs/superpowers/plans/2026-09-27-gpu-sensor-3b1-pipeline.md`. With
 `render.sensor_path: gpu` the sensor model replaces UE's tonemapper
@@ -503,7 +503,7 @@ packets conformant in 5 s).
 | 3 | `sensor_gpu_ms` p95 ≤ 4 ms at 1080p, all effects; controller < 0.2 ms; 1.5 B/px readback | ✅ 0.40 ms p95 (3B.1 core only; effects come in 3B.2/3B.3); controller not isolated (game thread +0.3–0.4 ms p50 vs legacy, an upper bound); NV12 readback ✅ |
 | 4 | night EO < 40; daylight EO 90–170, < 1% clipped; cut converges in one frame | ✅ 26; 105–114, ≤ 0.02%. ◐ cut: the controller snaps on the first histogram rendered after the cut, which reaches it 1–3 frames later (stats readback latency), so the stream converges 1–3 frames after a cut, not in one; only the controller is tested (`CamSim.Sensor.Controller.CutAndModeSwitchSnap`) |
 | 5 | NullRHI tests, `CamSim.GPU.Sensor.*` on Metal, `ci_validate --native` | ✅ |
-| 6 | Visual review of EO/IR/NVG post-sensor shots | ⏳ shot set `scripts/bench/shots/macos/3b1/` |
+| 6 | Visual review of EO/IR/NVG post-sensor shots | ✅ signed off 2026-09-27 (`scripts/bench/shots/macos/3b1/`) |
 | 7 | Docs | ✅ this section, `docs/configuration.md`, CLAUDE.md |
 
 Final-review fixes (2026-09-27): the sensor path is decided once by `UCamSimSubsystem` (the
