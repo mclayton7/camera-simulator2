@@ -262,8 +262,11 @@ loading_descendant_limit: 20
 # Cesium's dithered LOD crossfade (UseLodTransitions): hides tile LOD pops.
 # Needs temporal AA to resolve the dither, so it is applied only with
 # render.view_source = primary (TSR); scene_capture (FXAA) would blur it.
+# Off by default: while on, Cesium updates every tile in the render set each
+# frame (off-screen tiles included): ~6 ms of game thread and twice the
+# streaming hitches with culled_screen_space_error at full detail.
 # Env: CAMSIM_USE_LOD_TRANSITIONS
-use_lod_transitions: true
+use_lod_transitions: false
 
 # Duration of LOD crossfade in seconds (only used when use_lod_transitions=true).
 # Env: CAMSIM_LOD_TRANSITION_LENGTH

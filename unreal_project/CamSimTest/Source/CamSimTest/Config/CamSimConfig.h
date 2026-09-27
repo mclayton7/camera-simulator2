@@ -131,8 +131,11 @@ struct FCamSimConfig
 	// Cesium's dithered LOD crossfade (UseLodTransitions). Needs temporal AA to
 	// resolve the dither, so it is applied only with render.view_source =
 	// primary (TSR); with scene_capture (FXAA) it would blur moving views.
+	// Off by default: Cesium updates the fade of every tile in the render set each
+	// frame, off-screen tiles included, which cost ~6 ms of game thread and doubled
+	// streaming hitches once culled_screen_space_error kept full detail off screen.
 	// Env: CAMSIM_USE_LOD_TRANSITIONS
-	bool    bUseLodTransitions = true;
+	bool    bUseLodTransitions = false;
 	// Duration of LOD crossfade in seconds (only used when bUseLodTransitions=true)
 	// Env: CAMSIM_LOD_TRANSITION_LENGTH
 	float   LodTransitionLength = 0.5f;

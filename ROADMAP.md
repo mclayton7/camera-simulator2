@@ -557,6 +557,14 @@ Terrain snap check (2026-09-27, Yosemite Valley, 3,200 m, 90° gimbal snaps and 
 - **Encoder watchdog killed CamSim during a slow first tile load** (frames held by the terrain
   gate counted as a dead encoder). A stall now needs frames submitted and none written.
 - Continuous pans at 18 and 60°/s kept tiles 100% loaded before and after the change.
+- **The extra hitches were Cesium's LOD crossfade**, not collision cooking. With
+  `use_lod_transitions` on, Cesium calls `UpdateFade` on every tile in the render set every frame
+  (`Cesium3DTileset.cpp`, `updateTileFades`), and the render set includes the off-screen tiles
+  now kept at full detail: game thread p50 3–4 → 8–12 ms (Insights: UpdateTileFades +2.0 ms,
+  updateView +1.3 ms, ShowTilesToRender/SetCollisionEnabled +1.1 ms per frame). Crossfade length
+  made no difference. `use_lod_transitions` now defaults to false: SF bench game thread p50
+  2.4–3.2 ms, hitches > 66 ms orbit/slew/low pass/far origin 3/1/1/5 (3A.1: 4/0/3/6), frame p95
+  33.8–35.0 ms. Cost: tile refinements switch instead of dithering in.
 
 Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
 - Shader hardening: a NaN test that survives fast-math (`asuint` bit test, not `V != V`);

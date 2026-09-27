@@ -153,7 +153,12 @@ bool FRenderConfigLodTransitionsPrimaryOnlyTest::RunTest(const FString& Paramete
 	using CamSim::Geospatial::UseLodTransitions;
 	using EViewSource = FCamSimConfig::FRenderConfig::EViewSource;
 	FCamSimConfig Cfg;
-	TestTrue(TEXT("on by default in the primary view (TSR resolves the dither)"), UseLodTransitions(Cfg));
+	// Off by default: Cesium updates the fade of every tile in the render set each
+	// frame (including the off-screen tiles culled_screen_space_error keeps), which
+	// cost ~6 ms of game thread and doubled streaming hitches (2026-09-27 bench).
+	TestFalse(TEXT("off by default"), UseLodTransitions(Cfg));
+	Cfg.bUseLodTransitions = true;
+	TestTrue(TEXT("on when enabled in the primary view (TSR resolves the dither)"), UseLodTransitions(Cfg));
 	Cfg.Render.ViewSourceMode = EViewSource::SceneCapture;
 	TestFalse(TEXT("off with scene_capture (FXAA would blur it), keeping the A/B baseline unchanged"), UseLodTransitions(Cfg));
 	Cfg.Render.ViewSourceMode = EViewSource::Primary;
