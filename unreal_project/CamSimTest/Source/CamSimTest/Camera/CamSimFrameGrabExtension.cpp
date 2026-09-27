@@ -49,6 +49,17 @@ void FCamSimFrameGrabExtension::PostRenderViewFamily_RenderThread(FRDGBuilder& G
 	// the view (DPI scale, window chrome). The draw scales to the grab target.
 	const FSceneView& View = *InViewFamily.Views[0];
 	const FIntRect SrcRect = View.UnscaledViewRect;
+	// A uniform scale (Retina 2x) is harmless; a different aspect (e.g. a window
+	// that doesn't fit on screen) stretches the image, so its vertical FOV no
+	// longer matches the KLV.
+	const FIntPoint DestSize = Dest->Desc.Extent;
+	if (!bWarnedViewSize && SrcRect.Height() > 0 && DestSize.Y > 0
+		&& !FMath::IsNearlyEqual(double(SrcRect.Width()) / SrcRect.Height(), double(DestSize.X) / DestSize.Y, 0.005))
+	{
+		bWarnedViewSize = true;
+		UE_LOG(LogCamSim, Warning, TEXT("FrameGrab: view is %dx%d but the capture is %dx%d; the image is stretched and its vertical FOV won't match the KLV"),
+			SrcRect.Width(), SrcRect.Height(), DestSize.X, DestSize.Y);
+	}
 	AddDrawTexturePass(GraphBuilder, FScreenPassViewInfo(View), Source, Dest,
 		SrcRect.Min, SrcRect.Size(), FIntPoint::ZeroValue, Dest->Desc.Extent);
 
@@ -64,5 +75,4 @@ void FCamSimFrameGrabExtension::PostRenderViewFamily_RenderThread(FRDGBuilder& G
 		Readback->EnqueueCopy(RHICmdList, Dest->GetRHI());
 		Grabbed->Store(Gen, EMemoryOrder::SequentiallyConsistent);
 	});
-	GrabCount.Store(GrabCount.Load(EMemoryOrder::Relaxed) + 1, EMemoryOrder::Relaxed);
 }

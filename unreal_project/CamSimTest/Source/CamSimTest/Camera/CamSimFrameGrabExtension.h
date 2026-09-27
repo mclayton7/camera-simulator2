@@ -39,9 +39,6 @@ public:
 	/** Game thread: stop matching any viewport (before the owner is destroyed). */
 	void Detach_GameThread() { GameViewport.Store(nullptr); }
 
-	/** Frames grabbed so far (heartbeat / diagnostics). */
-	uint64 GetGrabCount() const { return GrabCount.Load(EMemoryOrder::Relaxed); }
-
 protected:
 	virtual bool IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const override;
 
@@ -56,5 +53,5 @@ private:
 	TAtomic<FViewport*>    GameViewport { nullptr };
 	FFrameGrabRequestQueue Requests;        // render thread
 	TMap<int32, FTargets>  TargetsBySlot;   // render thread
-	TAtomic<uint64>        GrabCount { 0 };
+	bool                   bWarnedViewSize = false;  // render thread
 };
