@@ -47,3 +47,13 @@ def test_load_rows_skips_a_partial_last_line_from_a_crashed_run(tmp_path, capsys
     rows = analyze.load_rows(p)
     assert [r["t"] for r in rows] == [0, 1]
     assert "skipped 1" in capsys.readouterr().err
+
+
+def test_sensor_gpu_ms_is_summarised_only_when_measured():
+    rows = [{"t": 1.0 + i, "wall_ms": 33.3, "game_ms": 1, "render_ms": 1, "rhi_ms": 1, "gpu_ms": 10,
+             "load_pct": 100.0, "families": 1, "dropped": 0, "emitted": i, "sensor_gpu_ms": v}
+            for i, v in enumerate([1.0, 2.0, 3.0, -1.0])]
+    out = analyze.summarize(rows, [{"name": "orbit", "start": 0.0, "end": 10.0, "measured": True}])
+    assert out["orbit"]["sensor_gpu_ms_p50"] == 2.0
+    legacy = [dict(r, sensor_gpu_ms=-1.0) for r in rows]
+    assert "sensor_gpu_ms_p50" not in analyze.summarize(legacy, [{"name": "orbit", "start": 0.0, "end": 10.0, "measured": True}])["orbit"]

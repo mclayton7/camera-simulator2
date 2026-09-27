@@ -39,3 +39,9 @@ def test_wait_ready_gives_up_when_no_pid_file_appears(tmp_path, monkeypatch):
     monkeypatch.setattr(run_bench, "http_json", lambda path: None)
     with pytest.raises(SystemExit, match="pid file"):
         run_bench.wait_ready(tmp_path / "camsim.pid", pid_grace_s=0.0)
+
+
+def test_sensor_path_is_read_from_metrics():
+    text = "# HELP x\ncamsim_uptime_seconds 3\ncamsim_sensor_path{path=\"gpu\"} 1\n"
+    assert run_bench.sensor_path_from_metrics(text) == "gpu"
+    assert run_bench.sensor_path_from_metrics("camsim_uptime_seconds 3\n") is None

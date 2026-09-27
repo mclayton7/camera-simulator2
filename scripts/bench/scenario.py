@@ -30,6 +30,7 @@ class Pose:
     gimbal_yaw: float = 0.0
     gimbal_pitch: float = -30.0
     fov_h: float = 60.0  # = sensor_fov_presets[0]; Sensor Control gain 0 re-applies it every frame
+    sensor_id: int = 0   # 0 EO, 1 IR, 2 NVG
     utc_hour: int = 19   # 12:00 PDT
     utc_minute: int = 0
     month: int = 6
@@ -105,7 +106,8 @@ def build_shots(smoke: bool = False) -> list[Shot]:
     horizon = Pose(BASE_LAT, BASE_LON, 1500.0, yaw=270.0, gimbal_pitch=-2.0)
     low_oblique = Pose(BASE_LAT, BASE_LON - 0.03, 400.0, yaw=90.0, gimbal_pitch=-12.0)
     far_slant = replace(slant, lon=FAR_LON)
-    return [
+    night = replace(slant, utc_hour=4, utc_minute=40, day=22)  # ~21:40 PDT, sun ~10 deg below the horizon
+    shots = [
         Shot("nadir_3km", nadir),
         Shot("slant_10km", slant),
         Shot("horizon", horizon),
@@ -114,13 +116,20 @@ def build_shots(smoke: bool = False) -> list[Shot]:
         Shot("dusk_slant", replace(slant, utc_hour=3, utc_minute=15, day=22)),   # ~20:15 PDT
         Shot("far_origin_slant", far_slant),
         Shot("far_origin_nadir", replace(nadir, lon=FAR_LON)),
+        Shot("night_slant", night),
     ]
+    by_name = {s.name: s.pose for s in shots}
+    for base in ("nadir_3km", "dusk_slant", "night_slant"):
+        shots.append(Shot(f"{base}_ir", replace(by_name[base], sensor_id=1)))
+        shots.append(Shot(f"{base}_nvg", replace(by_name[base], sensor_id=2)))
+    return shots
 
 
 def host_datagram(frame_ctr: int, pose: Pose, entity_id: int = CAMERA_ENTITY_ID) -> bytes:
     celestial = {"hour": pose.utc_hour, "minute": pose.utc_minute,
                  "month": pose.month, "day": pose.day, "year": 2026}
     dgram = sc.build_host_frame(frame_ctr, entity_id, pose.lat, pose.lon, pose.alt,
-                                pose.yaw, pose.pitch, pose.roll, fov_h=pose.fov_h, celestial=celestial)
+                                pose.yaw, pose.pitch, pose.roll, fov_h=pose.fov_h,
+                                sensor_id=pose.sensor_id, celestial=celestial)
     return dgram + sc.pack_art_part_control(entity_id, GIMBAL_ART_PART_ID,
                                             pitch=pose.gimbal_pitch, yaw=pose.gimbal_yaw)

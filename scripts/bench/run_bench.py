@@ -69,6 +69,14 @@ def http_json(path: str) -> dict | None:
         return None
 
 
+def http_text(path: str) -> str | None:
+    try:
+        with urllib.request.urlopen(HEALTH + path, timeout=3) as r:
+            return r.read().decode("utf-8")
+    except Exception:
+        return None
+
+
 def camsim_alive(pid_file: Path) -> bool | None:
     """True/False from the pid in run.sh's pid file; None if there is no pid file."""
     if not pid_file.exists():
@@ -103,14 +111,21 @@ def wait_terrain(timeout_s: float = 60.0) -> bool:
     return False
 
 
-def fetch_snapshot(dest: Path) -> bool:
+def fetch_snapshot(dest: Path, route: str = "/snapshot") -> bool:
     try:
-        with urllib.request.urlopen(HEALTH + "/snapshot", timeout=10) as r:
+        with urllib.request.urlopen(HEALTH + route, timeout=10) as r:
             dest.write_bytes(r.read())
             return True
     except Exception as e:  # noqa: BLE001 - report and carry on to the next shot
         print(f"[bench] snapshot {dest.name} failed: {e}")
         return False
+
+
+def sensor_path_from_metrics(text: str) -> str | None:
+    for line in text.splitlines():
+        if line.startswith("camsim_sensor_path{"):
+            return line.split('path="', 1)[1].split('"', 1)[0]
+    return None
 
 
 def port_busy(netstat: str, port: int) -> bool:
@@ -140,6 +155,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
     ap.add_argument("--view-source", choices=["primary", "scene_capture"], default=None)
+    ap.add_argument("--sensor-path", choices=["auto", "gpu", "legacy"], default=None)
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--trace", action="store_true", help="also record an Unreal Insights trace")
     ap.add_argument("--skip-warmup", action="store_true")
@@ -158,6 +174,8 @@ def main() -> int:
                CAMSIM_SNAPSHOT_ENDPOINT_ENABLED="1")
     if args.view_source:
         env["CAMSIM_RENDER_VIEW_SOURCE"] = args.view_source
+    if args.sensor_path:
+        env["CAMSIM_RENDER_SENSOR_PATH"] = args.sensor_path
     extra = ["-trace=cpu,gpu,frame", f"-tracefile={out / 'trace.utrace'}"] if args.trace else []
 
     wait_port_free(int(HEALTH.rsplit(":", 1)[1]))
@@ -166,8 +184,14 @@ def main() -> int:
     subprocess.run([str(REPO / "scripts" / "run.sh"), "--headless", "--local", "--detach", *extra],
                    env=env, check=True, stdout=subprocess.DEVNULL)
     phases_log: list[dict] = []
+    sensor_path: str | None = None
     try:
         wait_ready(pid_file)
+        metrics = http_text("/metrics") or ""
+        sensor_path = sensor_path_from_metrics(metrics)
+        print(f"[bench] sensor path: {sensor_path}", flush=True)
+        if args.sensor_path in ("gpu", "legacy") and sensor_path != args.sensor_path:
+            sys.exit(f"[bench] expected sensor path {args.sensor_path}, CamSim reports {sensor_path}")
         for ph in scenario.build_phases(smoke=args.smoke):
             if ph.name == "warmup" and args.skip_warmup:
                 continue
@@ -198,6 +222,7 @@ def main() -> int:
                 print(f"[bench] shot {shot.name}: terrain gate never opened")
             time.sleep(SHOT_SETTLE_S)
             fetch_snapshot(out / "shots" / f"{shot.name}.png")
+            fetch_snapshot(out / "shots" / f"{shot.name}_sensor.png", route="/snapshot/sensor")
     finally:
         host.stop.set()
         subprocess.run([str(REPO / "scripts" / "stop.sh")], check=False, stdout=subprocess.DEVNULL)
@@ -208,6 +233,7 @@ def main() -> int:
     results = {
         "meta": {"label": args.label, "git": sha, "platform": platform.platform(),
                  "machine": platform.machine(), "view_source": args.view_source or "config default",
+                 "sensor_path": sensor_path,
                  "warmup_ran": not args.skip_warmup, "smoke": args.smoke},
         "phases": analyze.summarize(rows, phases_log),
     }

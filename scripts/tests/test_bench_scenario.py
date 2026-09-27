@@ -57,3 +57,20 @@ def test_shot_names_are_unique_and_filesystem_safe():
     names = [s.name for s in scenario.build_shots()]
     assert len(names) == len(set(names)) >= 6
     assert all(n.replace("_", "").isalnum() for n in names)
+
+
+def test_shots_cover_ir_nvg_and_night():
+    shots = {s.name: s for s in scenario.build_shots()}
+    assert len(shots) == 15
+    assert shots["night_slant"].pose.utc_hour == 4 and shots["night_slant"].pose.day == 22
+    for base in ("nadir_3km", "dusk_slant", "night_slant"):
+        assert shots[f"{base}_ir"].pose.sensor_id == 1
+        assert shots[f"{base}_nvg"].pose.sensor_id == 2
+    assert all(s.pose.sensor_id == 0 for n, s in shots.items() if not n.endswith(("_ir", "_nvg")))
+
+
+def test_host_datagram_carries_the_sensor_id():
+    pose = scenario.Pose(37.0, -122.0, 1000.0, sensor_id=2)
+    dgram = scenario.host_datagram(1, pose)
+    i = dgram.index(bytes([17, 24]))       # Sensor Control: packet id 17, size 24
+    assert dgram[i + 4] == 2               # byte 4 = Sensor ID

@@ -57,4 +57,8 @@ def summarize(rows: list[dict], phases: list[dict]) -> dict:
             # Frames handed to the sensor model/encoder per second (the stream's real rate).
             "emitted_fps": ((sel[-1]["emitted"] - sel[0]["emitted"]) / span) if span > 0 else 0.0,
         }
+        sensor = [r["sensor_gpu_ms"] for r in sel if r.get("sensor_gpu_ms", -1.0) >= 0.0]
+        if sensor:
+            out[ph["name"]]["sensor_gpu_ms_p50"] = _pct(sensor, 50)
+            out[ph["name"]]["sensor_gpu_ms_p95"] = _pct(sensor, 95)
     return out
