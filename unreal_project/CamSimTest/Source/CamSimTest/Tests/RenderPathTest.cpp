@@ -9,6 +9,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Camera/CamSimFrameStats.h"
+#include "Camera/FrameGrabRequestQueue.h"
 
 // -------------------------------------------------------------------------
 // ROADMAP 3A: frame-stats rows are valid JSON with the keys the bench
@@ -86,5 +87,35 @@ bool FFrameStatsOpenFailureTest::RunTest(const FString& Parameters)
 	FCamSimFrameStatsSample S;
 	Recorder.Record(S);  // must be a silent no-op
 	TestFalse(TEXT("still closed"), Recorder.IsOpen());
+	return true;
+}
+
+// The render thread grabs each requested frame exactly once, oldest first, and
+// never a request the game thread has already given up on.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFrameGrabQueueTest,
+	"CamSim.Render.FrameGrab.RequestQueue",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FFrameGrabQueueTest::RunTest(const FString& Parameters)
+{
+	FFrameGrabRequestQueue Q;
+	FFrameGrabRequest Out;
+	TestFalse(TEXT("empty queue pops nothing"), Q.PopCurrent(1, Out));
+
+	Q.Push({ 10, 1, 0 });
+	Q.Push({ 11, 2, 1 });
+	Q.Push({ 12, 3, 2 });
+
+	TestTrue(TEXT("pops current"), Q.PopCurrent(3, Out));
+	TestEqual(TEXT("stale generations 1-2 dropped, 3 returned"), Out.FrameIndex, (uint64)12);
+	TestEqual(TEXT("queue drained"), Q.Num(), 0);
+
+	Q.Push({ 20, 4, 0 });
+	Q.Push({ 21, 4, 1 });
+	TestTrue(TEXT("first of same generation"), Q.PopCurrent(4, Out));
+	TestEqual(TEXT("FIFO"), Out.FrameIndex, (uint64)20);
+	TestTrue(TEXT("second"), Q.PopCurrent(4, Out));
+	TestEqual(TEXT("FIFO second"), Out.FrameIndex, (uint64)21);
+	TestFalse(TEXT("each request grabbed once"), Q.PopCurrent(4, Out));
 	return true;
 }
