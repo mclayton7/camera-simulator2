@@ -98,8 +98,9 @@ bool FFrameStatsOpenFailureTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// The render thread grabs each requested frame exactly once, oldest first, and
-// never a request the game thread has already given up on.
+// Each render grabs the newest request: it was enqueued during this tick, so
+// it's for the frame being drawn now. Older requests were for frames that
+// never rendered; they're dropped (their slots time out), never grabbed late.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFrameGrabQueueTest,
 	"CamSim.Render.FrameGrab.RequestQueue",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -108,23 +109,18 @@ bool FFrameGrabQueueTest::RunTest(const FString& Parameters)
 {
 	FFrameGrabRequestQueue Q;
 	FFrameGrabRequest Out;
-	TestFalse(TEXT("empty queue pops nothing"), Q.PopCurrent(1, Out));
+	TestFalse(TEXT("empty queue pops nothing"), Q.PopLatest(Out));
 
 	Q.Push({ 10, 1, 0 });
-	Q.Push({ 11, 2, 1 });
+	TestTrue(TEXT("one request"), Q.PopLatest(Out));
+	TestEqual(TEXT("that request"), Out.FrameIndex, (uint64)10);
+	TestFalse(TEXT("grabbed once"), Q.PopLatest(Out));
+
+	Q.Push({ 11, 2, 1 });  // its frame never rendered
 	Q.Push({ 12, 3, 2 });
-
-	TestTrue(TEXT("pops current"), Q.PopCurrent(3, Out));
-	TestEqual(TEXT("stale generations 1-2 dropped, 3 returned"), Out.FrameIndex, (uint64)12);
-	TestEqual(TEXT("queue drained"), Q.Num(), 0);
-
-	Q.Push({ 20, 4, 0 });
-	Q.Push({ 21, 4, 1 });
-	TestTrue(TEXT("first of same generation"), Q.PopCurrent(4, Out));
-	TestEqual(TEXT("FIFO"), Out.FrameIndex, (uint64)20);
-	TestTrue(TEXT("second"), Q.PopCurrent(4, Out));
-	TestEqual(TEXT("FIFO second"), Out.FrameIndex, (uint64)21);
-	TestFalse(TEXT("each request grabbed once"), Q.PopCurrent(4, Out));
+	TestTrue(TEXT("pops"), Q.PopLatest(Out));
+	TestEqual(TEXT("newest request wins"), Out.FrameIndex, (uint64)12);
+	TestEqual(TEXT("older request dropped"), Q.Num(), 0);
 	return true;
 }
 

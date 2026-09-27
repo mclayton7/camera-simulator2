@@ -11,6 +11,7 @@
 // FRHIGPUTextureReadback needs a complete type here because the UHT-generated
 // .gen.cpp instantiates TArray<TUniquePtr<FRHIGPUTextureReadback>>'s destructor.
 #include "RHIGPUReadback.h"
+#include "Camera/ReadbackRing.h"
 #include "CamSimCaptureComponent.generated.h"
 
 class USceneCaptureComponent2D;
@@ -84,8 +85,11 @@ public:
 	/** Consume a finished readback and hand frames to the sensor task. Call every tick. */
 	void Poll();
 
-	/** True when no readback is in flight, so Capture() may run. */
+	/** True when a readback slot is free, so Capture() may run (ROADMAP 3A.1: up to three in flight). */
 	bool IsReadyForCapture() const;
+
+	/** Count a frame skipped because every readback slot was busy (the sensor/encoder is behind). */
+	void NoteCaptureSkipped();
 
 	/** Capture the scene now, tagged with Telemetry, and start its async readback. */
 	void Capture(const FCamSimTelemetry& Telemetry);
@@ -106,15 +110,18 @@ public:
 	uint64 GetDroppedFrameCount() const;
 	uint64 GetFramesCaptured() const { return FrameIndex; }
 	bool   IsSensorBusy() const { return bSensorBusy; }
-	bool   IsReadbackInFlight() const { return ReadbackState.Load(EMemoryOrder::Relaxed) != EReadbackState::Idle; }
-	int32  GetCaptureTargetIndex() const { return CaptureTargetIndex; }
-	int32  GetPendingReadbackTargetIndex() const { return PendingReadbackTargetIndex; }
+	bool   IsReadbackInFlight() const { return Ring.NumInFlight() > 0; }
+	int32  GetReadbacksInFlight() const { return Ring.NumInFlight(); }
+	int32  GetCaptureTargetIndex() const { return Ring.GetNextSlot(); }
+	int32  GetPendingReadbackTargetIndex() const { return Ring.NumInFlight() > 0 ? Ring.GetOrder()[0] : INDEX_NONE; }
 
 private:
 	void ApplyRenderSettings(const FCamSimConfig& Cfg);
 	void CreateDepthCapture(const FCamSimConfig& Cfg);
 	void SnapshotGroundTruthEntities();
-	void EnqueuePoll();
+	/** One render-thread poll per in-flight slot. */
+	void EnqueuePolls();
+	void EnqueuePoll(int32 Slot);
 	void SubmitFrameToEncoder(TArray<FColor> PixelData, FCamSimTelemetry Telemetry,
 	                          uint64 FrameIdx, TArray<float> DepthMetres);
 
@@ -132,7 +139,7 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<USceneCaptureComponent2D> DepthCapture;
 
-	/** Ping-pong render targets for async depth readback (PF_R32_FLOAT). */
+	/** Depth render targets, one per readback slot (PF_R32_FLOAT). */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextureRenderTarget2D>> DepthRenderTargets;
 
@@ -142,14 +149,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> GpuSensorMat;
 
-	int32 CaptureTargetIndex         = 0;
-	int32 PendingReadbackTargetIndex = INDEX_NONE;
-	int32 DepthCaptureTargetIndex         = 0;
-	int32 PendingDepthReadbackTargetIndex = INDEX_NONE;
-
 	/**
-	 * One readback helper per render target, so the EnqueueCopy of frame N+1
-	 * can't race the Lock/Unlock still targeting frame N.
+	 * One readback helper per slot, so the EnqueueCopy of a newer frame can't
+	 * race the Lock/Unlock still targeting an older one.
 	 */
 	TArray<TUniquePtr<FRHIGPUTextureReadback>> ColorReadbackPool;
 	TArray<TUniquePtr<FRHIGPUTextureReadback>> DepthReadbackPool;
@@ -167,8 +169,7 @@ private:
 	 * matches the capture's generation.
 	 * writer: render (grab pass) → reader: render (poll) (SeqCst).
 	 */
-	static constexpr int32 NumCaptureTargets = 3;
-	TAtomic<uint32> GrabbedGeneration[NumCaptureTargets];
+	TAtomic<uint32> GrabbedGeneration[FReadbackRing::NumSlots];
 
 	/** CPU-side sensor post-processing pipeline (Phase 11). */
 	TUniquePtr<IPixelPipeline> SensorFX;
@@ -192,55 +193,35 @@ private:
 	FThreadSafeBool bSensorBusy;
 
 	/**
-	 * Readback hand-off (render thread writes → game thread reads). The render
-	 * command fills AsyncPixels/AsyncDepth, then moves ReadbackState to
-	 * Complete (SeqCst); the game thread's SeqCst load makes the arrays visible.
+	 * ROADMAP 3A.1 — readback ring. A capture takes the next free slot, so up
+	 * to NumSlots readbacks are in flight and a frame can be captured every
+	 * tick. Slot states and in-order delivery live in FReadbackRing; per-slot
+	 * data below. The render thread writes a slot's Pixels/Depth, then marks it
+	 * Complete (SeqCst); the game thread's SeqCst load in PeekFinished makes the
+	 * arrays visible.
 	 */
-	TArray<FColor> AsyncPixels;
-	TArray<float>  AsyncDepth;
+	FReadbackRing Ring;
 
-	/**
-	 * Readback state machine:
-	 *   Idle      → DMAQueued  (game thread, before ENQUEUE_RENDER_COMMAND)
-	 *   DMAQueued → Complete   (render thread, after pixels copied)
-	 *   DMAQueued → Failed     (render thread, on Lock/Unlock error)
-	 *   Complete  → Idle       (game thread, after dispatch)
-	 *   Failed    → Idle       (game thread, after logging)
-	 * SeqCst on every Store/Load; paired with the AsyncPixels/AsyncDepth writes.
-	 */
-	enum class EReadbackState : uint8 { Idle, DMAQueued, Complete, Failed };
-	TAtomic<EReadbackState> ReadbackState { EReadbackState::Idle };
+	struct FSlot
+	{
+		FCamSimTelemetry Telemetry;               // game thread
+		/** This capture's generation: stale poll commands for a reused slot no-op. writer: game → reader: render. */
+		TAtomic<uint32>  Generation       { 0 };
+		TArray<FColor>   Pixels;                  // render writes → game reads after Complete
+		TArray<float>    Depth;
+		// Reset by the game thread at capture, advanced by the render thread's polls.
+		TAtomic<uint8>   ReadyStreak      { 0 };  // "N consecutive Ready polls before consuming"
+		TAtomic<uint8>   DepthReadyStreak { 0 };
+		TAtomic<uint32>  PollAttempts     { 0 };  // past MaxReadbackPolls the slot fails
+	};
+	FSlot Slots[FReadbackRing::NumSlots];
 
-	/**
-	 * Poll generation — bumped on every Capture(). Each poll command captures
-	 * it by value and no-ops if it has advanced, so a stale poll can't
-	 * resurrect an already-consumed result.
-	 * writer: game → reader: render (relaxed; equality only).
-	 */
-	TAtomic<uint32> PollGeneration { 0 };
-
-	// "N consecutive Ready polls before consuming" debounce. Reset by the game
-	// thread before enqueuing, incremented by the render thread.
-	// writer: game (reset) + render (increment) → readers: render (relaxed)
-	TAtomic<uint8> RenderReadyStreak      { 0 };
-
-	/** Polls of the current capture so far; past the budget the render thread gives up (Failed). */
-	TAtomic<uint32> RenderPollAttempts { 0 };
 	static constexpr uint32 MaxReadbackPolls = 60;  // ~2 s at 30 Hz
-	TAtomic<uint8> RenderDepthReadyStreak { 0 };
 
-	/** Frame counter for PTS calculation, and the frame in flight. */
-	uint64 FrameIndex        = 0;
-	uint64 PendingFrameIndex = 0;
-	FCamSimTelemetry PendingTelemetry;
+	uint32 NextGeneration = 0;  // game thread
 
-	// Game-thread-only: a finished readback waiting for the sensor task to
-	// free up. NOT atomic — guarded by checkSlow(IsInGameThread()).
-	TArray<FColor>   CompletedPixels;
-	TArray<float>    CompletedDepth;
-	FCamSimTelemetry CompletedTelemetry;
-	uint64           CompletedFrameIndex  = 0;
-	bool             bReadbackResultReady = false;
+	/** Frame counter for PTS calculation. */
+	uint64 FrameIndex = 0;
 
 	/** Phase 27B — per-category frame drop counters. */
 	FFrameDropStats FrameDropStats;

@@ -59,19 +59,17 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: FrameDropTracking=%s"),
 		bTrackFrameDrops ? TEXT("enabled") : TEXT("disabled"));
 
-	// Triple-buffered render targets: frame N+2 renders while N+1 reads back
-	// and N encodes (+3.5 MB VRAM at 1280x720).
+	// One render target per readback slot: up to three frames in flight
+	// (+3.5 MB VRAM at 1280x720).
 	RenderTargets.Reset();
-	for (int32 Idx = 0; Idx < 3; ++Idx)
+	for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
 	{
 		UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(this, *FString::Printf(TEXT("CamSimRT_%d"), Idx));
 		RT->InitCustomFormat(Cfg.CaptureWidth, Cfg.CaptureHeight, PF_B8G8R8A8, /*bInForceLinearGamma=*/false);
 		RT->UpdateResource();
 		RenderTargets.Add(RT);
 	}
-	CaptureTargetIndex = 0;
-	PendingReadbackTargetIndex = INDEX_NONE;
-	Sensor->TextureTarget = RenderTargets[CaptureTargetIndex];
+	Sensor->TextureTarget = RenderTargets[0];
 	Sensor->FOVAngle = Cfg.HFovDeg;
 
 	bPrimaryView = Cfg.Render.IsPrimary();
@@ -169,14 +167,13 @@ void UCamSimCaptureComponent::CreateDepthCapture(const FCamSimConfig& Cfg)
 	DepthCapture->RegisterComponent();
 
 	DepthRenderTargets.Reset();
-	for (int32 Idx = 0; Idx < 2; ++Idx)
+	for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
 	{
 		UTextureRenderTarget2D* DRT = NewObject<UTextureRenderTarget2D>(this, *FString::Printf(TEXT("CamSimDepthRT_%d"), Idx));
 		DRT->InitCustomFormat(Cfg.CaptureWidth, Cfg.CaptureHeight, PF_R32_FLOAT, /*bInForceLinearGamma=*/true);
 		DRT->UpdateResource();
 		DepthRenderTargets.Add(DRT);
 	}
-	DepthCaptureTargetIndex = 0;
 	DepthCapture->TextureTarget = DepthRenderTargets[0];
 
 	DepthReadbackPool.Reset();
@@ -374,8 +371,13 @@ bool UCamSimCaptureComponent::ShouldSkipFrameForDecimation(const FCamSimConfig& 
 
 bool UCamSimCaptureComponent::IsReadyForCapture() const
 {
-	// Idle: no DMA in flight and no completed result awaiting consumption.
-	return ReadbackState.Load(EMemoryOrder::SequentiallyConsistent) == EReadbackState::Idle;
+	return Ring.CanAcquire();
+}
+
+void UCamSimCaptureComponent::NoteCaptureSkipped()
+{
+	// Every slot is in flight or waiting for the sensor task: downstream is behind.
+	if (bTrackFrameDrops) FrameDropStats.EncoderBusy++;
 }
 
 void UCamSimCaptureComponent::SnapshotGroundTruthEntities()
@@ -404,86 +406,85 @@ void UCamSimCaptureComponent::SnapshotGroundTruthEntities()
 void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 {
 	if (!Sensor) return;
-	if (!RenderTargets.IsValidIndex(CaptureTargetIndex) || !RenderTargets[CaptureTargetIndex]) return;
-	if (!ColorReadbackPool.IsValidIndex(CaptureTargetIndex) || !ColorReadbackPool[CaptureTargetIndex]) return;
 	if (bPrimaryView && !EnsureGrabExtension()) return;  // nothing to grab yet
-	if (bPrimaryView && CaptureTargetIndex >= NumCaptureTargets) return;
+	if (!Ring.CanAcquire()) { NoteCaptureSkipped(); return; }
+
+	const uint64 FrameIdx = FrameIndex;
+	const int32  Slot     = Ring.Acquire(FrameIdx);
+	if (!RenderTargets.IsValidIndex(Slot) || !RenderTargets[Slot]
+		|| !ColorReadbackPool.IsValidIndex(Slot) || !ColorReadbackPool[Slot])
+	{
+		Ring.MarkFailed(Slot);  // released by Poll() like any failed readback
+		return;
+	}
+	++FrameIndex;
 
 	// Entity annotation snapshot for this exact view (Phase 17D).
 	if (Subsystem) SnapshotGroundTruthEntities();
 
-	UTextureRenderTarget2D* RT = RenderTargets[CaptureTargetIndex].Get();
-	FRHIGPUTextureReadback* Readback = ColorReadbackPool[CaptureTargetIndex].Get();
-	const int32 TargetIdx = CaptureTargetIndex;
+	FSlot& S = Slots[Slot];
+	const uint32 Gen = ++NextGeneration;
+	S.Telemetry = Telemetry;
+	S.ReadyStreak     .Store(0, EMemoryOrder::Relaxed);
+	S.DepthReadyStreak.Store(0, EMemoryOrder::Relaxed);
+	S.PollAttempts    .Store(0, EMemoryOrder::Relaxed);
+	// SeqCst: the resets above are visible to any poll that sees the new generation.
+	S.Generation.Store(Gen, EMemoryOrder::SequentiallyConsistent);
+
+	UTextureRenderTarget2D* RT = RenderTargets[Slot].Get();
+	FRHIGPUTextureReadback* Readback = ColorReadbackPool[Slot].Get();
 	if (!bPrimaryView)
 	{
 		Sensor->TextureTarget = RT;
 		Sensor->CaptureScene();
 	}
-	PendingReadbackTargetIndex = CaptureTargetIndex;
-	CaptureTargetIndex = (CaptureTargetIndex + 1) % RenderTargets.Num();
 
-	PendingFrameIndex = FrameIndex++;
-	PendingTelemetry  = Telemetry;
-
-	// Enter DMAQueued and bump the poll generation so stale polls from the
-	// previous frame no-op.
-	PollGeneration.Store(PollGeneration.Load(EMemoryOrder::Relaxed) + 1, EMemoryOrder::SequentiallyConsistent);
-	RenderReadyStreak     .Store(0, EMemoryOrder::Relaxed);
-	RenderPollAttempts    .Store(0, EMemoryOrder::Relaxed);
-	RenderDepthReadyStreak.Store(0, EMemoryOrder::Relaxed);
-	ReadbackState.Store(EReadbackState::DMAQueued, EMemoryOrder::SequentiallyConsistent);
-
-	// Depth alongside color (Phase 17A)
+	// Depth alongside color (Phase 17A), in the same slot.
 	UTextureRenderTarget2D* DepthRT = nullptr;
 	FRHIGPUTextureReadback* DepthReadback = nullptr;
-	PendingDepthReadbackTargetIndex = INDEX_NONE;
-	if (DepthCapture && DepthRenderTargets.IsValidIndex(DepthCaptureTargetIndex))
+	if (DepthCapture && DepthRenderTargets.IsValidIndex(Slot))
 	{
-		DepthRT = DepthRenderTargets[DepthCaptureTargetIndex].Get();
+		DepthRT = DepthRenderTargets[Slot].Get();
 		DepthCapture->TextureTarget = DepthRT;
 		DepthCapture->SetRelativeRotation(Sensor->GetRelativeRotation());  // align with color
 		DepthCapture->CaptureScene();
-		PendingDepthReadbackTargetIndex = DepthCaptureTargetIndex;
-		DepthReadback = DepthReadbackPool.IsValidIndex(DepthCaptureTargetIndex)
-			? DepthReadbackPool[DepthCaptureTargetIndex].Get() : nullptr;
-		DepthCaptureTargetIndex = (DepthCaptureTargetIndex + 1) % DepthRenderTargets.Num();
+		DepthReadback = DepthReadbackPool.IsValidIndex(Slot) ? DepthReadbackPool[Slot].Get() : nullptr;
 	}
+
+	auto EnqueueDepthCopy = [](FRHICommandListImmediate& RHICmdList, UTextureRenderTarget2D* DRT, FRHIGPUTextureReadback* DRB)
+	{
+		if (!DRT || !DRB) return;
+		FTextureRenderTargetResource* DepthRes = DRT->GetRenderTargetResource();
+		if (FRHITexture* DepthTex = DepthRes ? DepthRes->GetRenderTargetTexture() : nullptr)
+		{
+			RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::RTV, ERHIAccess::CopySrc));
+			DRB->EnqueueCopy(RHICmdList, DepthTex);
+			RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::CopySrc, ERHIAccess::RTV));
+		}
+	};
 
 	if (bPrimaryView)
 	{
 		// The game viewport renders after this tick; the extension copies that
-		// frame into RT and queues the readback. Enqueued now, so the request is
-		// queued before this frame's scene render command.
-		const uint32 Gen = PollGeneration.Load(EMemoryOrder::Relaxed);
-		const uint64 FrameIdx = PendingFrameIndex;
+		// frame into RT and queues the readback. Enqueued now, so it's the newest
+		// request when this frame's scene render runs.
 		TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> Ext = GrabExtension;
+		TAtomic<uint32>* Grabbed = &GrabbedGeneration[Slot];
 		ENQUEUE_RENDER_COMMAND(CamSimRequestGrab)(
-			[this, Ext, RT, Readback, Gen, FrameIdx, TargetIdx, DepthRT, DepthReadback](FRHICommandListImmediate& RHICmdList)
+			[Ext, RT, Readback, Gen, FrameIdx, Slot, Grabbed, DepthRT, DepthReadback, EnqueueDepthCopy](FRHICommandListImmediate& RHICmdList)
 		{
 			FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
 			if (!Ext || !Resource) return;
-			Ext->SetCurrentGeneration_RenderThread(Gen);
-			Ext->PushRequest_RenderThread({ FrameIdx, Gen, TargetIdx }, Resource->GetRenderTargetTexture(), Readback,
-				&GrabbedGeneration[TargetIdx]);
-			// Depth (ML) still comes from its own SceneCapture, copied as before.
-			if (DepthRT && DepthReadback)
-			{
-				FTextureRenderTargetResource* DepthRes = DepthRT->GetRenderTargetResource();
-				if (FRHITexture* DepthTex = DepthRes ? DepthRes->GetRenderTargetTexture() : nullptr)
-				{
-					RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::RTV, ERHIAccess::CopySrc));
-					DepthReadback->EnqueueCopy(RHICmdList, DepthTex);
-					RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::CopySrc, ERHIAccess::RTV));
-				}
-			}
+			Ext->PushRequest_RenderThread({ FrameIdx, Gen, Slot }, Resource->GetRenderTargetTexture(), Readback, Grabbed);
+			// Depth (ML) still comes from its own SceneCapture, copied directly.
+			EnqueueDepthCopy(RHICmdList, DepthRT, DepthReadback);
 		});
 		return;
 	}
 
 	// Async GPU→CPU DMA on the render thread (returns immediately).
 	ENQUEUE_RENDER_COMMAND(CamSimEnqueueReadback)(
-		[RT, Readback, DepthRT, DepthReadback](FRHICommandListImmediate& RHICmdList)
+		[RT, Readback, DepthRT, DepthReadback, EnqueueDepthCopy](FRHICommandListImmediate& RHICmdList)
 	{
 		FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
 		if (!Resource) return;
@@ -491,20 +492,10 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 
 		// Explicit barriers: Metal tracks resources implicitly, Vulkan does not.
 		RHICmdList.Transition(FRHITransitionInfo(SourceTexture, ERHIAccess::RTV, ERHIAccess::CopySrc));
-		Readback->EnqueueCopy(RHICmdList, SourceTexture);  // non-blocking; Poll() checks IsReady()
+		Readback->EnqueueCopy(RHICmdList, SourceTexture);  // non-blocking; the slot's poll checks IsReady()
 		RHICmdList.Transition(FRHITransitionInfo(SourceTexture, ERHIAccess::CopySrc, ERHIAccess::RTV));
 
-		if (DepthRT && DepthReadback)
-		{
-			FTextureRenderTargetResource* DepthRes = DepthRT->GetRenderTargetResource();
-			if (FRHITexture* DepthTex = DepthRes ? DepthRes->GetRenderTargetTexture() : nullptr)
-			{
-				RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::RTV, ERHIAccess::CopySrc));
-				DepthReadback->EnqueueCopy(RHICmdList, DepthTex);
-				RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::CopySrc, ERHIAccess::RTV));
-			}
-		}
-		// State stays DMAQueued; the poll command reads ReadbackState directly.
+		EnqueueDepthCopy(RHICmdList, DepthRT, DepthReadback);
 	});
 }
 
@@ -516,12 +507,27 @@ void UCamSimCaptureComponent::Poll()
 {
 	checkSlow(IsInGameThread());  // reads game-thread-only state
 
-	const EReadbackState State = ReadbackState.Load(EMemoryOrder::SequentiallyConsistent);
-	if (State == EReadbackState::Complete)
+	// Deliver finished readbacks strictly in capture order. A finished frame
+	// waits (in its slot) while the sensor task is busy; the ring backs up
+	// and new captures are skipped rather than delivered out of order.
+	int32 Slot = INDEX_NONE;
+	bool  bFailed = false;
+	while (Ring.PeekFinished(Slot, bFailed))
 	{
-		if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::ReadbackComplete);
+		FSlot& S = Slots[Slot];
+		const uint64 FrameIdx = Ring.GetFrameIndex(Slot);
+		if (bFailed)
+		{
+			if (bTrackFrameDrops) FrameDropStats.ReadbackTimeout++;
+			UE_LOG(LogCamSim, Warning, TEXT("CamSimReadback frame %llu: readback failed or timed out (lock null, bad format, or never grabbed)"), FrameIdx);
+			S.Pixels.Reset();
+			S.Depth.Reset();
+			Ring.Release(Slot);
+			continue;
+		}
+		if (bSensorBusy) break;
 
-		TArray<FColor> Pixels = MoveTemp(AsyncPixels);
+		if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::ReadbackComplete);
 
 		// ROADMAP 3A reference shots: the pre-sensor frame, lossless.
 		if (FCamSimSnapshotService* Snap = Subsystem ? Subsystem->GetSnapshotService() : nullptr)
@@ -529,121 +535,96 @@ void UCamSimCaptureComponent::Poll()
 			if (Snap->WantsFrame())
 			{
 				const FCamSimConfig& SnapCfg = Subsystem->GetConfig();
-				Snap->OfferFrame(Pixels, SnapCfg.CaptureWidth, SnapCfg.CaptureHeight);
+				Snap->OfferFrame(S.Pixels, SnapCfg.CaptureWidth, SnapCfg.CaptureHeight);
 			}
 		}
-		TArray<float>  Depth  = MoveTemp(AsyncDepth);
-		ReadbackState.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
-		PendingReadbackTargetIndex      = INDEX_NONE;
-		PendingDepthReadbackTargetIndex = INDEX_NONE;
 
-		if (!bSensorBusy)
-		{
-			bSensorBusy = true;
-			SubmitFrameToEncoder(MoveTemp(Pixels), PendingTelemetry, PendingFrameIndex, MoveTemp(Depth));
-		}
-		else
-		{
-			// Hold for dispatch when the sensor task frees up.
-			CompletedPixels      = MoveTemp(Pixels);
-			CompletedDepth       = MoveTemp(Depth);
-			CompletedTelemetry   = PendingTelemetry;
-			CompletedFrameIndex  = PendingFrameIndex;
-			bReadbackResultReady = true;
-		}
-	}
-	else if (State == EReadbackState::Failed)
-	{
-		if (bTrackFrameDrops) FrameDropStats.ReadbackTimeout++;
-		UE_LOG(LogCamSim, Warning, TEXT("CamSimReadback frame %llu: readback failed or timed out (lock null, bad format, or never grabbed)"), PendingFrameIndex);
-		AsyncPixels.Reset();
-		AsyncDepth.Reset();
-		ReadbackState.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
-		PendingReadbackTargetIndex      = INDEX_NONE;
-		PendingDepthReadbackTargetIndex = INDEX_NONE;
-	}
-	else if (State == EReadbackState::DMAQueued)
-	{
-		EnqueuePoll();
-	}
-
-	// A held result goes out as soon as the sensor task is free.
-	if (bReadbackResultReady && !bSensorBusy)
-	{
 		bSensorBusy = true;
-		SubmitFrameToEncoder(MoveTemp(CompletedPixels), CompletedTelemetry, CompletedFrameIndex, MoveTemp(CompletedDepth));
-		bReadbackResultReady = false;
+		SubmitFrameToEncoder(MoveTemp(S.Pixels), S.Telemetry, FrameIdx, MoveTemp(S.Depth));
+		S.Pixels.Reset();
+		S.Depth.Reset();
+		Ring.Release(Slot);
 	}
+
+	EnqueuePolls();
 }
 
-void UCamSimCaptureComponent::EnqueuePoll()
+void UCamSimCaptureComponent::EnqueuePolls()
 {
-	// A non-blocking render command polls IsReady(); on success it copies the
-	// pixels into AsyncPixels and moves ReadbackState to Complete (SeqCst). The
-	// game thread consumes it on a later tick, so the render thread keeps
-	// rendering frame N+1 while frame N's DMA drains. Everything the lambda
-	// needs is captured by value.
+	bool bAny = false;
+	for (const int32 Slot : Ring.GetOrder())
+	{
+		if (Ring.GetState(Slot) == EReadbackSlotState::InFlight)
+		{
+			EnqueuePoll(Slot);
+			bAny = true;
+		}
+	}
+	if (bAny && LatencyTracker) LatencyTracker->Mark(EPipelineStage::ReadbackIssue);
+}
+
+void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
+{
+	// A non-blocking render command polls the slot's IsReady(); on success it
+	// copies the pixels into the slot and marks it Complete (SeqCst). The game
+	// thread consumes it on a later tick, so rendering never waits on the DMA.
+	// Everything the lambda needs is captured by value.
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 	const int32 ReadyPollsRequired = FMath::Max(1, Cfg.ReadbackReadyPolls);
-	FRHIGPUTextureReadback* Readback = ColorReadbackPool.IsValidIndex(PendingReadbackTargetIndex)
-		? ColorReadbackPool[PendingReadbackTargetIndex].Get() : nullptr;
-	FRHIGPUTextureReadback* DepthReadback = DepthReadbackPool.IsValidIndex(PendingDepthReadbackTargetIndex)
-		? DepthReadbackPool[PendingDepthReadbackTargetIndex].Get() : nullptr;
-	UTextureRenderTarget2D* RT = RenderTargets.IsValidIndex(PendingReadbackTargetIndex)
-		? RenderTargets[PendingReadbackTargetIndex].Get() : nullptr;
-
-	if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::ReadbackIssue);
+	FRHIGPUTextureReadback* Readback = ColorReadbackPool.IsValidIndex(Slot) ? ColorReadbackPool[Slot].Get() : nullptr;
+	FRHIGPUTextureReadback* DepthReadback = DepthReadbackPool.IsValidIndex(Slot) ? DepthReadbackPool[Slot].Get() : nullptr;
+	UTextureRenderTarget2D* RT = RenderTargets.IsValidIndex(Slot) ? RenderTargets[Slot].Get() : nullptr;
 
 	const int32  CaptureW       = Cfg.CaptureWidth;
 	const int32  CaptureH       = Cfg.CaptureHeight;
 	const auto   ReadbackFormat = Cfg.ReadbackFormat;
 	const bool   bSwapRB        = Cfg.bSwapRBReadback;
-	const uint64 FrameIdx       = PendingFrameIndex;
-	const uint32 CaptureGen     = PollGeneration.Load(EMemoryOrder::Relaxed);
-
+	FSlot&       S              = Slots[Slot];
+	const uint64 FrameIdx       = Ring.GetFrameIndex(Slot);
+	const uint32 CaptureGen     = S.Generation.Load(EMemoryOrder::SequentiallyConsistent);
 	const bool   bNeedsGrab     = bPrimaryView;
-	TAtomic<uint32>* Grabbed    = (bPrimaryView && PendingReadbackTargetIndex >= 0 && PendingReadbackTargetIndex < NumCaptureTargets)
-		? &GrabbedGeneration[PendingReadbackTargetIndex] : nullptr;
+	TAtomic<uint32>* Grabbed    = bPrimaryView ? &GrabbedGeneration[Slot] : nullptr;
+	FReadbackRing* RingPtr      = &Ring;
 
 	ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
-		[this, Readback, DepthReadback, RT, ReadyPollsRequired,
+		[RingPtr, &S, Slot, Readback, DepthReadback, RT, ReadyPollsRequired,
 		 CaptureW, CaptureH, ReadbackFormat, bSwapRB, FrameIdx, CaptureGen, bNeedsGrab, Grabbed]
 		(FRHICommandListImmediate&)
 	{
-		// Stale poll from a previous frame — the game thread has moved on.
-		if (PollGeneration.Load(EMemoryOrder::Relaxed) != CaptureGen) return;
-		// Only in DMAQueued: an earlier poll on this frame may already have delivered.
-		if (ReadbackState.Load(EMemoryOrder::Relaxed) != EReadbackState::DMAQueued) return;
+		// Stale poll: the slot was delivered (and maybe reused) since it was enqueued.
+		if (S.Generation.Load(EMemoryOrder::SequentiallyConsistent) != CaptureGen) return;
+		// Only while in flight: an earlier poll this tick may already have delivered.
+		if (RingPtr->GetState(Slot) != EReadbackSlotState::InFlight) return;
 
-		const uint32 Attempt = RenderPollAttempts.Load(EMemoryOrder::Relaxed) + 1;
-		RenderPollAttempts.Store(Attempt, EMemoryOrder::Relaxed);
+		const uint32 Attempt = S.PollAttempts.Load(EMemoryOrder::Relaxed) + 1;
+		S.PollAttempts.Store(Attempt, EMemoryOrder::Relaxed);
 		const CamSimReadback::EPollDecision Decision = CamSimReadback::DecidePoll(
 			bNeedsGrab, Grabbed ? Grabbed->Load(EMemoryOrder::SequentiallyConsistent) : 0, CaptureGen,
 			[Readback]() { return Readback && Readback->IsReady(); }, Attempt, MaxReadbackPolls);
 		if (Decision == CamSimReadback::EPollDecision::TimedOut)
 		{
 			// Never grabbed (viewport not drawn, request dropped) or a stuck fence:
-			// give up so the pipeline recovers instead of holding DMAQueued forever.
-			ReadbackState.Store(EReadbackState::Failed, EMemoryOrder::SequentiallyConsistent);
+			// fail the slot so the ring keeps moving.
+			RingPtr->MarkFailed(Slot);
 			return;
 		}
 		if (Decision == CamSimReadback::EPollDecision::Wait)
 		{
-			RenderReadyStreak.Store(0, EMemoryOrder::Relaxed);
+			S.ReadyStreak.Store(0, EMemoryOrder::Relaxed);
 			return;
 		}
 		{
-			const uint8 Cur = RenderReadyStreak.Load(EMemoryOrder::Relaxed);
-			if (Cur < 255) RenderReadyStreak.Store(Cur + 1, EMemoryOrder::Relaxed);
+			const uint8 Cur = S.ReadyStreak.Load(EMemoryOrder::Relaxed);
+			if (Cur < 255) S.ReadyStreak.Store(Cur + 1, EMemoryOrder::Relaxed);
 		}
-		if (RenderReadyStreak.Load(EMemoryOrder::Relaxed) < ReadyPollsRequired) return;
+		if (S.ReadyStreak.Load(EMemoryOrder::Relaxed) < ReadyPollsRequired) return;
 
 		int32 RowPitch = 0;
 		void* RawData = Readback->Lock(RowPitch);
 		if (!RawData || !RT)
 		{
 			if (RawData) Readback->Unlock();
-			ReadbackState.Store(EReadbackState::Failed, EMemoryOrder::SequentiallyConsistent);
+			RingPtr->MarkFailed(Slot);
 			return;
 		}
 
@@ -653,46 +634,46 @@ void UCamSimCaptureComponent::EnqueuePoll()
 		if (PixelFormat != PF_B8G8R8A8 && PixelFormat != PF_R8G8B8A8)
 		{
 			Readback->Unlock();
-			ReadbackState.Store(EReadbackState::Failed, EMemoryOrder::SequentiallyConsistent);
+			RingPtr->MarkFailed(Slot);
 			return;
 		}
 
-		AsyncPixels.SetNumUninitialized(W * H);
-		CamSimConvertReadbackPixels(RawData, RowPitch, W, H, PixelFormat, ReadbackFormat, bSwapRB, AsyncPixels, FrameIdx);
+		S.Pixels.SetNumUninitialized(W * H);
+		CamSimConvertReadbackPixels(RawData, RowPitch, W, H, PixelFormat, ReadbackFormat, bSwapRB, S.Pixels, FrameIdx);
 		Readback->Unlock();
 
 		// Opportunistic depth: it may lag color; skip this frame's if so.
-		AsyncDepth.Reset();
+		S.Depth.Reset();
 		if (DepthReadback && DepthReadback->IsReady())
 		{
 			{
-				const uint8 Cur = RenderDepthReadyStreak.Load(EMemoryOrder::Relaxed);
-				if (Cur < 255) RenderDepthReadyStreak.Store(Cur + 1, EMemoryOrder::Relaxed);
+				const uint8 Cur = S.DepthReadyStreak.Load(EMemoryOrder::Relaxed);
+				if (Cur < 255) S.DepthReadyStreak.Store(Cur + 1, EMemoryOrder::Relaxed);
 			}
-			if (RenderDepthReadyStreak.Load(EMemoryOrder::Relaxed) >= ReadyPollsRequired)
+			if (S.DepthReadyStreak.Load(EMemoryOrder::Relaxed) >= ReadyPollsRequired)
 			{
 				int32 DepthRowPitch = 0;
 				if (void* DepthRaw = DepthReadback->Lock(DepthRowPitch))  // null: do NOT Unlock (UB)
 				{
-					AsyncDepth.SetNumUninitialized(CaptureW * CaptureH);
+					S.Depth.SetNumUninitialized(CaptureW * CaptureH);
 					const uint8* Src = static_cast<const uint8*>(DepthRaw);
-					float*       Dst = AsyncDepth.GetData();
+					float*       Dst = S.Depth.GetData();
 					for (int32 Row = 0; Row < CaptureH; ++Row)
 					{
 						FMemory::Memcpy(Dst + Row * CaptureW, Src + Row * DepthRowPitch, CaptureW * sizeof(float));
 					}
-					for (float& V : AsyncDepth) { V /= 100.0f; }  // cm -> m
+					for (float& V : S.Depth) { V /= 100.0f; }  // cm -> m
 					DepthReadback->Unlock();
 				}
 			}
 		}
 		else
 		{
-			RenderDepthReadyStreak.Store(0, EMemoryOrder::Relaxed);
+			S.DepthReadyStreak.Store(0, EMemoryOrder::Relaxed);
 		}
 
-		// SeqCst: the array writes above are visible once the game thread sees Complete.
-		ReadbackState.Store(EReadbackState::Complete, EMemoryOrder::SequentiallyConsistent);
+		// SeqCst: the slot's arrays are visible once the game thread sees Complete.
+		RingPtr->MarkComplete(Slot);
 	});
 }
 

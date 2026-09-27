@@ -233,6 +233,10 @@ void ACamSimCamera::Tick(float DeltaTime)
 	{
 		CaptureAndEncode();
 	}
+	else
+	{
+		CaptureComp->NoteCaptureSkipped();  // all readback slots busy: the sensor/encoder is behind
+	}
 }
 
 void ACamSimCamera::RecordFrameStats()

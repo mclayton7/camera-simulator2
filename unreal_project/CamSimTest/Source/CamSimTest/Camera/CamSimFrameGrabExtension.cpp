@@ -32,7 +32,7 @@ void FCamSimFrameGrabExtension::PushRequest_RenderThread(const FFrameGrabRequest
 void FCamSimFrameGrabExtension::PostRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily)
 {
 	FFrameGrabRequest Req;
-	if (!Requests.PopCurrent(CurrentGeneration, Req)) return;
+	if (!Requests.PopLatest(Req)) return;  // this frame's request; older ones never rendered
 	const FTargets* T = TargetsBySlot.Find(Req.TargetIndex);
 	if (!T || !T->Target || !T->Readback || !T->GrabbedGeneration || !InViewFamily.RenderTarget || InViewFamily.Views.Num() == 0) return;
 

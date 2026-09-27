@@ -8,33 +8,28 @@
 struct FFrameGrabRequest
 {
 	uint64 FrameIndex  = 0;
-	uint32 Generation  = 0;           // UCamSimCaptureComponent::PollGeneration at request time
+	uint32 Generation  = 0;           // the slot's capture generation at request time
 	int32  TargetIndex = INDEX_NONE;  // grab render target / readback slot
 };
 
 /**
- * FIFO of grab requests. Render-thread only: the game thread reaches it through
- * ENQUEUE_RENDER_COMMAND, so no locking. Requests from an older generation were
- * abandoned by the game thread and are dropped rather than grabbed.
+ * Grab requests, render-thread only (the game thread reaches it through
+ * ENQUEUE_RENDER_COMMAND, so no locking). Each render grabs the newest
+ * request: the game thread enqueues it during the tick whose frame is being
+ * drawn. Older requests are for frames that never rendered (viewport not
+ * drawn); they're dropped and their readback slots time out.
  */
 class FFrameGrabRequestQueue
 {
 public:
 	void Push(const FFrameGrabRequest& R) { Requests.Add(R); }
 
-	bool PopCurrent(uint32 CurrentGeneration, FFrameGrabRequest& Out)
+	bool PopLatest(FFrameGrabRequest& Out)
 	{
-		while (Requests.Num() > 0)
-		{
-			const FFrameGrabRequest Front = Requests[0];
-			Requests.RemoveAt(0, EAllowShrinking::No);
-			if (Front.Generation >= CurrentGeneration)
-			{
-				Out = Front;
-				return true;
-			}
-		}
-		return false;
+		if (Requests.Num() == 0) return false;
+		Out = Requests.Last();
+		Requests.Reset();
+		return true;
 	}
 
 	int32 Num() const { return Requests.Num(); }

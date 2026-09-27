@@ -35,7 +35,6 @@ public:
 	 */
 	void PushRequest_RenderThread(const FFrameGrabRequest& R, FRHITexture* Target, FRHIGPUTextureReadback* Readback,
 		TAtomic<uint32>* GrabbedGeneration);
-	void SetCurrentGeneration_RenderThread(uint32 Gen) { CurrentGeneration = Gen; }
 
 	/** Game thread: stop matching any viewport (before the owner is destroyed). */
 	void Detach_GameThread() { GameViewport.Store(nullptr); }
@@ -57,6 +56,5 @@ private:
 	TAtomic<FViewport*>    GameViewport { nullptr };
 	FFrameGrabRequestQueue Requests;        // render thread
 	TMap<int32, FTargets>  TargetsBySlot;   // render thread
-	uint32                 CurrentGeneration = 0;  // render thread
 	TAtomic<uint64>        GrabCount { 0 };
 };

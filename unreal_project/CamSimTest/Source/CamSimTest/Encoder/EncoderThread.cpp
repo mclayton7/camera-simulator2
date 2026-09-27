@@ -70,25 +70,26 @@ uint32 FEncoderThread::Run()
 		FProcessedFrame Frame;
 		while (Queue.Dequeue(Frame))
 		{
-			// Output pacing — wait until at least FrameIntervalSec has elapsed
-			// since the last send.  This prevents UDP packet bunching that causes
-			// VLC stutter even when PTS is monotonically correct.
-			if (LastSendTimeSec > 0.0)
+			// Output pacing — space sends FrameIntervalSec apart, start to start,
+			// to avoid the UDP packet bunching that makes VLC stutter even when
+			// PTS is monotonic. Measured from the previous send's START: measuring
+			// from its end made every frame cost interval + encode time (~26 fps
+			// with a 4 ms encode) and the queue overflowed. With a backlog, send
+			// immediately to catch up rather than falling further behind.
+			if (LastSendTimeSec > 0.0 && Queue.IsEmpty())
 			{
-				const double NowSec = FPlatformTime::Seconds();
-				const double ElapsedSec = NowSec - LastSendTimeSec;
+				const double ElapsedSec = FPlatformTime::Seconds() - LastSendTimeSec;
 				if (ElapsedSec < FrameIntervalSec)
 				{
-					const double SleepMs = (FrameIntervalSec - ElapsedSec) * 1000.0;
-					FPlatformProcess::SleepNoStats(static_cast<float>(SleepMs * 0.001));
+					FPlatformProcess::SleepNoStats(static_cast<float>(FrameIntervalSec - ElapsedSec));
 				}
 			}
 
+			LastSendTimeSec = FPlatformTime::Seconds();
 			if (Encoder && Encoder->IsOpen())
 			{
 				Encoder->EncodeFrame(Frame.Pixels, Frame.Telemetry, Frame.FrameIndex);
 			}
-			LastSendTimeSec = FPlatformTime::Seconds();
 
 			// Phase 28G: mark encode complete and commit latency record
 			if (LatencyTracker)

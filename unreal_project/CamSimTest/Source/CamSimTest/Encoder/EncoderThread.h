@@ -70,6 +70,6 @@ private:
 	TAtomic<bool>                  bRunning  { false };
 	TUniquePtr<FRunnableThread>    Thread;
 	double                         FrameIntervalSec = 1.0 / 30.0;  // output pacing interval
-	double                         LastSendTimeSec  = 0.0;          // wall-clock of last encode
+	double                         LastSendTimeSec  = 0.0;          // wall-clock start of the last send
 	FPipelineLatencyTracker*       LatencyTracker   = nullptr;
 };
