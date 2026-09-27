@@ -1,7 +1,8 @@
 # Sensor Model on the GPU — Design Spec (ROADMAP 3B)
 
 **Date:** 2026-09-27
-**Status:** Design approved section by section 2026-09-27; awaiting written-spec review
+**Status:** Approved 2026-09-27. 3B.1 built. **3B.2–3B.4 superseded** by
+`2026-09-27-physical-sensor-model-design.md` (legacy effects were notional; replaced by a physical model, NVG and overlays removed).
 **Scope:** Second sub-project of Milestone 3. Replace UE's tonemapper with an RDG compute sensor
 model on HDR scene-linear input, own exposure with a sensor AE/AGC loop, output NV12, port every
 existing sensor effect, and retire the CPU pipeline, the SceneCapture path and the material path.
