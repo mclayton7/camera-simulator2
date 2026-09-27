@@ -158,3 +158,27 @@ bool FSnapshotPngTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("opaque even though the frame's alpha was 0"), static_cast<int32>(Raw[3]), 255);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSnapshotShutdownAnswersTest,
+	"CamSim.Health.Snapshot.ShutdownAnswersWaitingRequests",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSnapshotShutdownAnswersTest::RunTest(const FString& Parameters)
+{
+	TArray<int32> Codes;
+	auto Record = [&Codes](TUniquePtr<FHttpServerResponse>&& R) { Codes.Add(R.IsValid() ? static_cast<int32>(R->Code) : 0); };
+	{
+		FCamSimSnapshotService Service;
+		Service.Request(Record);                          // waiting for a frame
+		Service.Request(Record);
+		const TArray<FColor> Frame = { FColor::Red };
+		Service.OfferFrame(Frame, 1, 1);                  // both now in flight (encoding)
+		Service.Request(Record);                          // waiting again
+	}
+	TestEqual(TEXT("every waiting and in-flight request is answered once"), Codes.Num(), 3);
+	for (int32 Code : Codes)
+	{
+		TestEqual(TEXT("503 on shutdown"), Code, 503);
+	}
+	return true;
+}

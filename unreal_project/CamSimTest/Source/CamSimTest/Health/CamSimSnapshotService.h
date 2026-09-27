@@ -18,6 +18,13 @@
 class FCamSimSnapshotService
 {
 public:
+	FCamSimSnapshotService() = default;
+	FCamSimSnapshotService(const FCamSimSnapshotService&) = delete;
+	FCamSimSnapshotService& operator=(const FCamSimSnapshotService&) = delete;
+
+	/** Answers 503 to every request still waiting or encoding, so each callback completes once. */
+	~FCamSimSnapshotService();
+
 	/** Queue a request; answered by a Tick() after the next OfferFrame(), or 503 after TimeoutSec. */
 	void Request(FHttpResultCallback OnComplete);
 
