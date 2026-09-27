@@ -258,6 +258,9 @@ void ACamSimCamera::RecordFrameStats()
 	S.FramesDropped = CaptureComp->GetDroppedFrameCount();
 	S.bCameraCut    = bCameraCutThisFrame;
 	S.ViewFamilies  = ViewFamilyCounter ? ViewFamilyCounter->ConsumeCount() : 0;
+	S.SensorGpuMs      = CaptureComp->GetSensorGpuMs();
+	S.SensorGainEv     = CaptureComp->GetSensorGainEv();
+	S.SceneMedianLog2  = CaptureComp->GetSceneMedianLog2();
 
 	float MinLoad = 100.0f;
 	double Sse = 0.0;

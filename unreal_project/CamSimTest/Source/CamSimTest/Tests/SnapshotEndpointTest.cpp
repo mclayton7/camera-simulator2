@@ -110,7 +110,7 @@ bool FSnapshotTimeoutTest::RunTest(const FString& Parameters)
 	Service.TimeoutSec = 0.5;
 	FCamSimHealthServer Server;
 	if (!TestTrue(TEXT("started"), StartServer(Server, Port))) return false;
-	Server.BindSnapshotRoute([&Service](FHttpResultCallback OnComplete) { Service.Request(MoveTemp(OnComplete)); });
+	Server.BindSnapshotRoute(TEXT("/snapshot"), [&Service](FHttpResultCallback OnComplete) { Service.Request(MoveTemp(OnComplete)); });
 
 	const FGetResult R = HttpGet(Port, TEXT("/snapshot"), [&Service]() { Service.Tick(FPlatformTime::Seconds()); });
 	Server.Stop();
@@ -131,13 +131,52 @@ bool FSnapshotPngTest::RunTest(const FString& Parameters)
 	FCamSimSnapshotService Service;
 	FCamSimHealthServer Server;
 	if (!TestTrue(TEXT("started"), StartServer(Server, Port))) return false;
-	Server.BindSnapshotRoute([&Service](FHttpResultCallback OnComplete) { Service.Request(MoveTemp(OnComplete)); });
+	Server.BindSnapshotRoute(TEXT("/snapshot"), [&Service](FHttpResultCallback OnComplete) { Service.Request(MoveTemp(OnComplete)); });
 
 	// Alpha 0, as the primary view's final image delivers it: the PNG must still
 	// be opaque, or viewers show a blank/white image.
 	TArray<FColor> Pixels;
 	Pixels.Init(FColor(10, 200, 30, 0), W * H);
 	const FGetResult R = HttpGet(Port, TEXT("/snapshot"), [&]()
+	{
+		if (Service.WantsFrame()) Service.OfferFrame(Pixels, W, H);
+		Service.Tick(FPlatformTime::Seconds());
+	});
+	Server.Stop();
+
+	TestEqual(TEXT("200"), R.Code, 200);
+	TestTrue(TEXT("image/png"), R.ContentType.Contains(TEXT("image/png")));
+
+	IImageWrapperModule& IWM = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+	TSharedPtr<IImageWrapper> Png = IWM.CreateImageWrapper(EImageFormat::PNG);
+	if (!TestTrue(TEXT("decodes"), Png.IsValid() && Png->SetCompressed(R.Body.GetData(), R.Body.Num()))) return false;
+	TestEqual(TEXT("width"), static_cast<int32>(Png->GetWidth()), W);
+	TestEqual(TEXT("height"), static_cast<int32>(Png->GetHeight()), H);
+	TArray64<uint8> Raw;
+	TestTrue(TEXT("raw"), Png->GetRaw(ERGBFormat::BGRA, 8, Raw));
+	TestEqual(TEXT("green channel survives"), static_cast<int32>(Raw[1]), 200);
+	TestEqual(TEXT("opaque even though the frame's alpha was 0"), static_cast<int32>(Raw[3]), 255);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSnapshotSensorRouteTest,
+	"CamSim.Health.Snapshot.SensorRoute",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSnapshotSensorRouteTest::RunTest(const FString& Parameters)
+{
+	constexpr int32 Port = SnapshotTestPort;
+	constexpr int32 W = 64, H = 36;
+	FCamSimSnapshotService Service;
+	FCamSimHealthServer Server;
+	if (!TestTrue(TEXT("started"), StartServer(Server, Port))) return false;
+	Server.BindSnapshotRoute(TEXT("/snapshot/sensor"), [&Service](FHttpResultCallback OnComplete) { Service.Request(MoveTemp(OnComplete)); });
+
+	// Alpha 0, as the primary view's final image delivers it: the PNG must still
+	// be opaque, or viewers show a blank/white image.
+	TArray<FColor> Pixels;
+	Pixels.Init(FColor(10, 200, 30, 0), W * H);
+	const FGetResult R = HttpGet(Port, TEXT("/snapshot/sensor"), [&]()
 	{
 		if (Service.WantsFrame()) Service.OfferFrame(Pixels, W, H);
 		Service.Tick(FPlatformTime::Seconds());

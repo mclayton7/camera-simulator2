@@ -22,6 +22,9 @@ struct FCamSimFrameStatsSample
 	double Sse                = 0.0;  // current Cesium maximum screen-space error
 	bool   bCameraCut         = false;
 	int32  ViewFamilies       = 0;    // scene renders this frame (viewport + captures)
+	float  SensorGpuMs        = -1.0f;  // GPU time of the sensor graph, -1 when unavailable (ROADMAP 3B)
+	float  SensorGainEv       = 0.0f;   // log2 sensor gain
+	float  SceneMedianLog2    = 0.0f;   // log2 histogram median of the detector signal
 };
 
 /** One JSON object, no trailing newline. Keys are the harness's contract (scripts/bench/analyze.py). */

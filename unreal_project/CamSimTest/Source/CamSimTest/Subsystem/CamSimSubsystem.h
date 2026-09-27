@@ -69,6 +69,8 @@ public:
 
 	/** GET /snapshot service (ROADMAP 3A); null unless operational.snapshot_endpoint_enabled. */
 	FCamSimSnapshotService* GetSnapshotService() const;
+	/** GET /snapshot/sensor service (ROADMAP 3B); null unless operational.snapshot_endpoint_enabled. */
+	FCamSimSnapshotService* GetSensorSnapshotService() const;
 	FCamSimParticleManager* GetParticleManager() const;
 	FDisReceiver*          GetDisReceiver()     const;
 	FDisEntityAdapter*     GetDisAdapter()      const;

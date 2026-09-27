@@ -619,6 +619,10 @@ void UCamSimCaptureComponent::Poll()
 		{
 			if (Snap->WantsFrame()) OfferSnapshot(*Snap, S);
 		}
+		if (FCamSimSnapshotService* SensorSnap = Subsystem ? Subsystem->GetSensorSnapshotService() : nullptr)
+		{
+			if (SensorSnap->WantsFrame()) OfferSnapshot(*SensorSnap, S);
+		}
 
 		bSensorBusy = true;
 		SubmitFrameToEncoder(MoveTemp(S.Pixels), MoveTemp(S.Nv12), S.Telemetry, FrameIdx, MoveTemp(S.Depth));

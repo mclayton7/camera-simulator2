@@ -35,6 +35,7 @@ bool FFrameStatsRowTest::RunTest(const FString& Parameters)
 	S.WallMs = 33.5; S.GameMs = 4.0; S.RenderMs = 8.0; S.RhiMs = 2.0; S.GpuMs = 21.0;
 	S.FramesEmitted = 42; S.FramesDropped = 1;
 	S.MinLoadProgressPct = 87.5f; S.Sse = 16.0; S.bCameraCut = true; S.ViewFamilies = 2;
+	S.SensorGpuMs = 1.25; S.SensorGainEv = -13.5; S.SceneMedianLog2 = 11.0;
 
 	const FString Row = CamSimFormatFrameStatsRow(S);
 	TestFalse(TEXT("no newline"), Row.Contains(TEXT("\n")));
@@ -53,6 +54,9 @@ bool FFrameStatsRowTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("sse"), Obj->GetNumberField(TEXT("sse")), 16.0);
 	TestTrue(TEXT("cut"), Obj->GetBoolField(TEXT("cut")));
 	TestEqual(TEXT("families"), static_cast<int32>(Obj->GetNumberField(TEXT("families"))), 2);
+	TestEqual(TEXT("sensor_gpu_ms"), Obj->GetNumberField(TEXT("sensor_gpu_ms")), 1.25);
+	TestEqual(TEXT("sensor_gain_ev"), Obj->GetNumberField(TEXT("sensor_gain_ev")), -13.5);
+	TestEqual(TEXT("scene_median_log2"), Obj->GetNumberField(TEXT("scene_median_log2")), 11.0);
 	for (const TCHAR* Key : { TEXT("game_ms"), TEXT("render_ms"), TEXT("rhi_ms") })
 	{
 		TestTrue(FString::Printf(TEXT("has %s"), Key), Obj->HasField(Key));

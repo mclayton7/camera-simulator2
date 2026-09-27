@@ -7,6 +7,8 @@ Phases: `warmup` (unmeasured, fills Cesium's disk cache), `orbit` (3 km),
 `slew` (fast gimbal sweeps: pop-in and hitch stressor), `low_pass` (600 m at
 100 m/s), `far_origin` (jump ~300 km east: origin shift and lighting).
 Then about eight fixed shots via `GET /snapshot` (pre-sensor, lossless).
+`GET /snapshot/sensor` (ROADMAP 3B) returns the encoded sensor image as PNG;
+on the legacy path it's the same as `/snapshot`.
 
 ## Run
 

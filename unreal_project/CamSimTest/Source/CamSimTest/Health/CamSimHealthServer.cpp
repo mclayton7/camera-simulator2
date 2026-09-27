@@ -68,15 +68,22 @@ bool FCamSimHealthServer::TryListen()
 	if (!Router) return false;
 
 	BindRoutes();
+
+	FString SnapshotSuffix;
+	for (const auto& Pair : SnapshotHandlers)
+	{
+		SnapshotSuffix += TEXT(" ") + Pair.Key;
+	}
+
 	if (BindFailedSinceSec > 0.0)
 	{
 		UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: listening on port %d after %.0f s (/live /health /ready /metrics%s)"),
-			ListenPort, FPlatformTime::Seconds() - BindFailedSinceSec, SnapshotHandler ? TEXT(" /snapshot") : TEXT(""));
+			ListenPort, FPlatformTime::Seconds() - BindFailedSinceSec, *SnapshotSuffix);
 	}
 	else
 	{
 		UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: listening on port %d (/live /health /ready /metrics%s)"),
-			ListenPort, SnapshotHandler ? TEXT(" /snapshot") : TEXT(""));
+			ListenPort, *SnapshotSuffix);
 	}
 	return true;
 }
@@ -154,29 +161,29 @@ void FCamSimHealthServer::BindRoutes()
 			return true;
 		})));
 
-	if (SnapshotHandler)
+	for (const auto& Pair : SnapshotHandlers)
 	{
-		BindSnapshotHandler();
+		BindSnapshotHandler(Pair.Key);
 	}
 }
 
-void FCamSimHealthServer::BindSnapshotHandler()
+void FCamSimHealthServer::BindSnapshotHandler(const FString& Path)
 {
-	RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/snapshot")), EHttpServerRequestVerbs::VERB_GET,
-		FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest&, const FHttpResultCallback& OnComplete)
+	RouteHandles.Add(Router->BindRoute(FHttpPath(Path), EHttpServerRequestVerbs::VERB_GET,
+		FHttpRequestHandler::CreateLambda([this, Path](const FHttpServerRequest&, const FHttpResultCallback& OnComplete)
 		{
-			SnapshotHandler(OnComplete);
+			SnapshotHandlers[Path](OnComplete);
 			return true;
 		})));
 }
 
-void FCamSimHealthServer::BindSnapshotRoute(TFunction<void(FHttpResultCallback)> Handler)
+void FCamSimHealthServer::BindSnapshotRoute(const FString& Path, TFunction<void(FHttpResultCallback)> Handler)
 {
-	const bool bRebind = SnapshotHandler.IsSet();
-	SnapshotHandler = MoveTemp(Handler);
+	const bool bRebind = SnapshotHandlers.Contains(Path);
+	SnapshotHandlers.Add(Path, MoveTemp(Handler));
 	if (!Router || bRebind) return;   // bound with the other routes once listening
-	BindSnapshotHandler();
-	UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: /snapshot enabled on port %d"), ListenPort);
+	BindSnapshotHandler(Path);
+	UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: %s enabled on port %d"), *Path, ListenPort);
 }
 
 void FCamSimHealthServer::Stop()

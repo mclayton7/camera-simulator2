@@ -152,7 +152,7 @@ receives `Tick()` calls without being an `AActor`.
 | `Camera/CamSimCaptureComponent.h/.cpp` | Capture (grab request or SceneCapture), async GPU readback, sensor model dispatch, encoder thread |
 | `Camera/CamSimFrameGrabExtension.h/.cpp` | Scene view extension: copies the game viewport's final image into the readback ring (primary view) |
 | `Camera/CamSimFrameStats.h/.cpp` | Per-frame render stats JSONL and scene-render counter (bench harness) |
-| `Health/CamSimSnapshotService.h/.cpp` | `GET /snapshot`: next pre-sensor frame as PNG |
+| `Health/CamSimSnapshotService.h/.cpp` | `GET /snapshot`: next pre-sensor frame as PNG; `GET /snapshot/sensor` (ROADMAP 3B): the encoded sensor image as PNG, legacy path same as `/snapshot` |
 | `Camera/CamSimTelemetryAssembler.h/.cpp` | Telemetry behind the KLV tags, boresight frame centre |
 | `Camera/CamSimStreamingController.h/.cpp` | Cesium streaming cameras, slew prefetch, adaptive SSE, terrain gate |
 | `Entity/CamSimEntityManager.h/.cpp` | Entity lifecycle management |

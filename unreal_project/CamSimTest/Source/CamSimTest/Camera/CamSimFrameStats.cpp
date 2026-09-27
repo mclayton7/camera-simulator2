@@ -9,10 +9,12 @@ FString CamSimFormatFrameStatsRow(const FCamSimFrameStatsSample& S)
 {
 	return FString::Printf(
 		TEXT("{\"t\":%.6f,\"wall_ms\":%.3f,\"game_ms\":%.3f,\"render_ms\":%.3f,\"rhi_ms\":%.3f,\"gpu_ms\":%.3f,")
-		TEXT("\"emitted\":%llu,\"dropped\":%llu,\"load_pct\":%.2f,\"sse\":%.3f,\"cut\":%s,\"families\":%d}"),
+		TEXT("\"emitted\":%llu,\"dropped\":%llu,\"load_pct\":%.2f,\"sse\":%.3f,\"cut\":%s,\"families\":%d,")
+		TEXT("\"sensor_gpu_ms\":%.3f,\"sensor_gain_ev\":%.3f,\"scene_median_log2\":%.3f}"),
 		S.UtcSeconds, S.WallMs, S.GameMs, S.RenderMs, S.RhiMs, S.GpuMs,
 		static_cast<unsigned long long>(S.FramesEmitted), static_cast<unsigned long long>(S.FramesDropped),
-		S.MinLoadProgressPct, S.Sse, S.bCameraCut ? TEXT("true") : TEXT("false"), S.ViewFamilies);
+		S.MinLoadProgressPct, S.Sse, S.bCameraCut ? TEXT("true") : TEXT("false"), S.ViewFamilies,
+		S.SensorGpuMs, S.SensorGainEv, S.SceneMedianLog2);
 }
 
 bool FCamSimFrameStatsRecorder::Open(const FString& Path)

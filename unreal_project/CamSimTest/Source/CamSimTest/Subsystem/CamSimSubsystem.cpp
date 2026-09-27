@@ -65,6 +65,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FPipelineLatencyTracker>  LatencyTracker;
 	TUniquePtr<FCamSimHealthServer>     HealthServer;
 	TUniquePtr<FCamSimSnapshotService>  SnapshotService;  // ROADMAP 3A, null unless enabled
+	TUniquePtr<FCamSimSnapshotService>  SensorSnapshotService;  // ROADMAP 3B, null unless enabled
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -108,6 +109,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 		if (HealthServer) { HealthServer->Stop(); }
 		HealthServer.Reset();
 		SnapshotService.Reset();  // after the server: no handler can reach it now
+		SensorSnapshotService.Reset();
 		CesiumIonServerOverride.Reset();
 		QueryHandler.Reset();
 		GeospatialProvider.Reset();
@@ -190,6 +192,11 @@ FGroundTruthCollector* UCamSimSubsystem::GetGroundTruthCollector() const
 FCamSimSnapshotService* UCamSimSubsystem::GetSnapshotService() const
 {
 	return Impl ? Impl->SnapshotService.Get() : nullptr;
+}
+
+FCamSimSnapshotService* UCamSimSubsystem::GetSensorSnapshotService() const
+{
+	return Impl ? Impl->SensorSnapshotService.Get() : nullptr;
 }
 
 FCamSimParticleManager* UCamSimSubsystem::GetParticleManager() const
@@ -551,7 +558,13 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		{
 			Impl->SnapshotService = MakeUnique<FCamSimSnapshotService>();
 			FCamSimSnapshotService* Snap = Impl->SnapshotService.Get();
-			Impl->HealthServer->BindSnapshotRoute([Snap](FHttpResultCallback OnComplete) { Snap->Request(MoveTemp(OnComplete)); });
+			Impl->HealthServer->BindSnapshotRoute(TEXT("/snapshot"), [Snap](FHttpResultCallback OnComplete) { Snap->Request(MoveTemp(OnComplete)); });
+
+			// ROADMAP 3B: GET /snapshot/sensor -- the encoded sensor image, separate
+			// from the legacy /snapshot service so both can be requested independently.
+			Impl->SensorSnapshotService = MakeUnique<FCamSimSnapshotService>();
+			FCamSimSnapshotService* SensorSnap = Impl->SensorSnapshotService.Get();
+			Impl->HealthServer->BindSnapshotRoute(TEXT("/snapshot/sensor"), [SensorSnap](FHttpResultCallback OnComplete) { SensorSnap->Request(MoveTemp(OnComplete)); });
 		}
 	}
 
@@ -718,6 +731,10 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 	if (Impl->SnapshotService)
 	{
 		Impl->SnapshotService->Tick(FPlatformTime::Seconds());
+	}
+	if (Impl->SensorSnapshotService)
+	{
+		Impl->SensorSnapshotService->Tick(FPlatformTime::Seconds());
 	}
 
 	// Drain HAT/HOT + LOS query queues and stage responses

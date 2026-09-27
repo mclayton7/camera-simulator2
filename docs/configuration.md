@@ -641,8 +641,8 @@ operational:
 |---|---|---|---|
 | `operational.health_http_enabled` | `CAMSIM_HEALTH_HTTP_ENABLED` | `true` | Master toggle. Default on for `sim-environment` Docker Compose compatibility. Set to `0` (env) or `false` (YAML) to disable. |
 | `operational.health_http_port` | `CAMSIM_HEALTH_HTTP_PORT` | `8080` | Listen port. Binds on all interfaces (0.0.0.0) — `FHttpServerModule::GetHttpRouter` does not take a bind address. |
-| `operational.snapshot_endpoint_enabled` | `CAMSIM_SNAPSHOT_ENDPOINT_ENABLED` | `false` | ROADMAP 3A. Binds `GET /snapshot`: returns the next grabbed frame as PNG (before sensor effects and encoding), 503 if no frame arrives within 5 s. For the bench harness (`scripts/bench/`). Unbound → 404. |
-| `operational.frame_stats_path` | `CAMSIM_FRAME_STATS_PATH` | `""` | ROADMAP 3A. Per-frame JSONL render stats (wall-clock frame time, `stat unit` thread/GPU times, frames emitted/dropped, tileset load %, SSE, camera cut, scene renders per frame). Empty disables. A relative path is taken from the directory CamSim was launched from. |
+| `operational.snapshot_endpoint_enabled` | `CAMSIM_SNAPSHOT_ENDPOINT_ENABLED` | `false` | ROADMAP 3A/3B. Binds `GET /snapshot`: returns the next grabbed frame as PNG (before sensor effects and encoding), 503 if no frame arrives within 5 s. Also binds `GET /snapshot/sensor` (ROADMAP 3B): the encoded sensor image as PNG; legacy path: same as `/snapshot`. Both are for the bench harness (`scripts/bench/`). Unbound → 404. |
+| `operational.frame_stats_path` | `CAMSIM_FRAME_STATS_PATH` | `""` | ROADMAP 3A/3B. Per-frame JSONL render stats (wall-clock frame time, `stat unit` thread/GPU times, frames emitted/dropped, tileset load %, SSE, camera cut, scene renders per frame, and — ROADMAP 3B — `sensor_gpu_ms`/`sensor_gain_ev`/`scene_median_log2` from the GPU sensor graph). Empty disables. A relative path is taken from the directory CamSim was launched from. |
 
 **Routes:**
 
@@ -652,6 +652,8 @@ operational:
 | `GET /health` | `sim-environment` REST orchestrator convention. **Alias for `/live`** — same handler, same semantics. Added so the orchestrator's generic `/health` probe naming works without breaking existing K8s manifests. | `{"status":"ok"}` | Same as `/live` |
 | `GET /ready` | Readiness: encoder open AND at least one CIGI packet received AND first frame successfully encoded. 200 only when all three gates pass. | `{"status":"ready","encoder":true,"cigi":true,"first_frame":true}` | `{"status":"not_ready","encoder":false,"cigi":true,"first_frame":false}` |
 | `GET /metrics` | Prometheus exposition format (`text/plain; charset=utf-8`, version 0.0.4). | See metric list below. | N/A — always 200. |
+| `GET /snapshot` | ROADMAP 3A. Only bound when `operational.snapshot_endpoint_enabled`. Next grabbed frame (before sensor effects and encoding) as PNG. | `image/png` | `{"status":"no_frame"}` if no frame arrives within 5 s |
+| `GET /snapshot/sensor` | ROADMAP 3B. Only bound when `operational.snapshot_endpoint_enabled`. The encoded sensor image as PNG; legacy path: same as `/snapshot`. | `image/png` | Same as `/snapshot` |
 
 **`/metrics` contract** (matches the `sim-environment` orchestrator spec §10.4):
 
