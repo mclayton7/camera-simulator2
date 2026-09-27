@@ -404,7 +404,7 @@ Design: `docs/superpowers/specs/2026-09-26-render-path-design.md` (approved); pl
 Exit criteria (macOS): one render per frame ✅; fewer hitches ✅; less pop-in ✅; SSE ≤ 16 ✅;
 1080p30 ⚠️ (holds 30 Hz with GPU headroom, but p95 33.9–35.6 ms misses the literal ≤ 33.3 ms; a
 fixed-step engine can't meet a p95 equal to its own step); tests ✅ (219 automation + bench pytest); **orbit GPU below baseline ❌ at
-100% TSR (✅ at 75%)**; **visual review by the user: pending**; `ci_validate` smoke skipped
+100% TSR (✅ at 75%)**; visual review by the user ✅ (2026-09-27, shots after the −1 EV exposure change); `ci_validate` smoke skipped
 (CI deferred by the user). Deferred: RTX 5090 runs.
 
 Findings for follow-up:
