@@ -75,12 +75,10 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 	Sensor->FOVAngle = Cfg.HFovDeg;
 
 	bPrimaryView = Cfg.Render.IsPrimary();
-	if (bPrimaryView)
+	for (TAtomic<uint32>& Gen : GrabbedGeneration) { Gen.Store(0); }
+	if (bPrimaryView && !EnsureGrabExtension())
 	{
-		FViewport* Viewport = (GEngine && GEngine->GameViewport) ? GEngine->GameViewport->Viewport : nullptr;
-		GrabExtension = FSceneViewExtensions::NewExtension<FCamSimFrameGrabExtension>(Viewport);
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — grabbing the game viewport (%s)"),
-			Viewport ? TEXT("ok") : TEXT("NO VIEWPORT"));
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — game viewport not created yet; grabbing starts when it is"));
 	}
 
 	ColorReadbackPool.Reset();
@@ -118,6 +116,16 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 		EncoderThread->Start();
 		if (LatencyTracker) EncoderThread->SetLatencyTracker(LatencyTracker);
 	}
+}
+
+bool UCamSimCaptureComponent::EnsureGrabExtension()
+{
+	if (GrabExtension) return true;
+	FViewport* Viewport = (GEngine && GEngine->GameViewport) ? GEngine->GameViewport->Viewport : nullptr;
+	if (!Viewport) return false;
+	GrabExtension = FSceneViewExtensions::NewExtension<FCamSimFrameGrabExtension>(Viewport);
+	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — grabbing the game viewport"));
+	return true;
 }
 
 void UCamSimCaptureComponent::Shutdown()
@@ -398,6 +406,8 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	if (!Sensor) return;
 	if (!RenderTargets.IsValidIndex(CaptureTargetIndex) || !RenderTargets[CaptureTargetIndex]) return;
 	if (!ColorReadbackPool.IsValidIndex(CaptureTargetIndex) || !ColorReadbackPool[CaptureTargetIndex]) return;
+	if (bPrimaryView && !EnsureGrabExtension()) return;  // nothing to grab yet
+	if (bPrimaryView && CaptureTargetIndex >= NumCaptureTargets) return;
 
 	// Entity annotation snapshot for this exact view (Phase 17D).
 	if (Subsystem) SnapshotGroundTruthEntities();
@@ -420,6 +430,7 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	// previous frame no-op.
 	PollGeneration.Store(PollGeneration.Load(EMemoryOrder::Relaxed) + 1, EMemoryOrder::SequentiallyConsistent);
 	RenderReadyStreak     .Store(0, EMemoryOrder::Relaxed);
+	RenderPollAttempts    .Store(0, EMemoryOrder::Relaxed);
 	RenderDepthReadyStreak.Store(0, EMemoryOrder::Relaxed);
 	ReadbackState.Store(EReadbackState::DMAQueued, EMemoryOrder::SequentiallyConsistent);
 
@@ -448,12 +459,13 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 		const uint64 FrameIdx = PendingFrameIndex;
 		TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> Ext = GrabExtension;
 		ENQUEUE_RENDER_COMMAND(CamSimRequestGrab)(
-			[Ext, RT, Readback, Gen, FrameIdx, TargetIdx, DepthRT, DepthReadback](FRHICommandListImmediate& RHICmdList)
+			[this, Ext, RT, Readback, Gen, FrameIdx, TargetIdx, DepthRT, DepthReadback](FRHICommandListImmediate& RHICmdList)
 		{
 			FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
 			if (!Ext || !Resource) return;
 			Ext->SetCurrentGeneration_RenderThread(Gen);
-			Ext->PushRequest_RenderThread({ FrameIdx, Gen, TargetIdx }, Resource->GetRenderTargetTexture(), Readback);
+			Ext->PushRequest_RenderThread({ FrameIdx, Gen, TargetIdx }, Resource->GetRenderTargetTexture(), Readback,
+				&GrabbedGeneration[TargetIdx]);
 			// Depth (ML) still comes from its own SceneCapture, copied as before.
 			if (DepthRT && DepthReadback)
 			{
@@ -543,7 +555,7 @@ void UCamSimCaptureComponent::Poll()
 	else if (State == EReadbackState::Failed)
 	{
 		if (bTrackFrameDrops) FrameDropStats.ReadbackTimeout++;
-		UE_LOG(LogCamSim, Warning, TEXT("CamSimReadback frame %llu: lock returned null or bad format"), PendingFrameIndex);
+		UE_LOG(LogCamSim, Warning, TEXT("CamSimReadback frame %llu: readback failed or timed out (lock null, bad format, or never grabbed)"), PendingFrameIndex);
 		AsyncPixels.Reset();
 		AsyncDepth.Reset();
 		ReadbackState.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
@@ -589,9 +601,13 @@ void UCamSimCaptureComponent::EnqueuePoll()
 	const uint64 FrameIdx       = PendingFrameIndex;
 	const uint32 CaptureGen     = PollGeneration.Load(EMemoryOrder::Relaxed);
 
+	const bool   bNeedsGrab     = bPrimaryView;
+	TAtomic<uint32>* Grabbed    = (bPrimaryView && PendingReadbackTargetIndex >= 0 && PendingReadbackTargetIndex < NumCaptureTargets)
+		? &GrabbedGeneration[PendingReadbackTargetIndex] : nullptr;
+
 	ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
 		[this, Readback, DepthReadback, RT, ReadyPollsRequired,
-		 CaptureW, CaptureH, ReadbackFormat, bSwapRB, FrameIdx, CaptureGen]
+		 CaptureW, CaptureH, ReadbackFormat, bSwapRB, FrameIdx, CaptureGen, bNeedsGrab, Grabbed]
 		(FRHICommandListImmediate&)
 	{
 		// Stale poll from a previous frame — the game thread has moved on.
@@ -599,7 +615,19 @@ void UCamSimCaptureComponent::EnqueuePoll()
 		// Only in DMAQueued: an earlier poll on this frame may already have delivered.
 		if (ReadbackState.Load(EMemoryOrder::Relaxed) != EReadbackState::DMAQueued) return;
 
-		if (!Readback || !Readback->IsReady())
+		const uint32 Attempt = RenderPollAttempts.Load(EMemoryOrder::Relaxed) + 1;
+		RenderPollAttempts.Store(Attempt, EMemoryOrder::Relaxed);
+		const CamSimReadback::EPollDecision Decision = CamSimReadback::DecidePoll(
+			bNeedsGrab, Grabbed ? Grabbed->Load(EMemoryOrder::SequentiallyConsistent) : 0, CaptureGen,
+			[Readback]() { return Readback && Readback->IsReady(); }, Attempt, MaxReadbackPolls);
+		if (Decision == CamSimReadback::EPollDecision::TimedOut)
+		{
+			// Never grabbed (viewport not drawn, request dropped) or a stuck fence:
+			// give up so the pipeline recovers instead of holding DMAQueued forever.
+			ReadbackState.Store(EReadbackState::Failed, EMemoryOrder::SequentiallyConsistent);
+			return;
+		}
+		if (Decision == CamSimReadback::EPollDecision::Wait)
 		{
 			RenderReadyStreak.Store(0, EMemoryOrder::Relaxed);
 			return;

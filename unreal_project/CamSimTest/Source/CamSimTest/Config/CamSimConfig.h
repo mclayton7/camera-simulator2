@@ -831,6 +831,12 @@ struct FCamSimConfig
 	static FCamSimConfig Load();
 
 	/** Parse YAML text (defaults for anything absent), then apply env var overrides. */
+	/**
+	 * Hot reload: copy the settings that only take effect at startup from the
+	 * running config into a freshly loaded one (network ports, codec, render path).
+	 */
+	static void KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSimConfig& Reloaded);
+
 	static FCamSimConfig LoadFromYamlString(const FString& YamlContent, const FString& SourceName = TEXT("<string>"));
 
 	/** YAML keys no setting reads (typos, removed settings), as dotted paths. Warned at load. */

@@ -28,8 +28,13 @@ public:
 	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override {}
 	virtual void PostRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily) override;
 
-	/** Render thread: grab the next game-viewport frame into Target, then EnqueueCopy into Readback. */
-	void PushRequest_RenderThread(const FFrameGrabRequest& R, FRHITexture* Target, FRHIGPUTextureReadback* Readback);
+	/**
+	 * Render thread: grab the next game-viewport frame into Target and EnqueueCopy
+	 * into Readback. GrabbedGeneration is set to R.Generation once the copy is
+	 * really issued, so the poll never trusts a fence left over from an earlier cycle.
+	 */
+	void PushRequest_RenderThread(const FFrameGrabRequest& R, FRHITexture* Target, FRHIGPUTextureReadback* Readback,
+		TAtomic<uint32>* GrabbedGeneration);
 	void SetCurrentGeneration_RenderThread(uint32 Gen) { CurrentGeneration = Gen; }
 
 	/** Game thread: stop matching any viewport (before the owner is destroyed). */
@@ -42,7 +47,12 @@ protected:
 	virtual bool IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const override;
 
 private:
-	struct FTargets { FRHITexture* Target = nullptr; FRHIGPUTextureReadback* Readback = nullptr; };
+	struct FTargets
+	{
+		FRHITexture*            Target            = nullptr;
+		FRHIGPUTextureReadback* Readback          = nullptr;
+		TAtomic<uint32>*        GrabbedGeneration = nullptr;
+	};
 
 	TAtomic<FViewport*>    GameViewport { nullptr };
 	FFrameGrabRequestQueue Requests;        // render thread

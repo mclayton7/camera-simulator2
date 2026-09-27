@@ -293,6 +293,19 @@ FCamSimConfig FCamSimConfig::Load()
 	return LoadFromYaml(&YamlContent, YamlPath);
 }
 
+void FCamSimConfig::KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSimConfig& Reloaded)
+{
+	Reloaded.CigiPort      = Running.CigiPort;
+	Reloaded.MulticastAddr = Running.MulticastAddr;
+	Reloaded.MulticastPort = Running.MulticastPort;
+	Reloaded.VideoCodec    = Running.VideoCodec;
+	// ROADMAP 3A: the render path is wired at BeginPlay (grab extension, AA,
+	// viewport rendering, Cesium cameras, origin shift component).
+	Reloaded.Render.ViewSource           = Running.Render.ViewSource;
+	Reloaded.Render.ViewSourceMode       = Running.Render.ViewSourceMode;
+	Reloaded.Render.OriginShiftDistanceM = Running.Render.OriginShiftDistanceM;
+}
+
 FCamSimConfig FCamSimConfig::LoadFromYamlString(const FString& YamlContent, const FString& SourceName)
 {
 	return LoadFromYaml(&YamlContent, SourceName);

@@ -22,10 +22,10 @@ bool FCamSimFrameGrabExtension::IsActiveThisFrame_Internal(const FSceneViewExten
 }
 
 void FCamSimFrameGrabExtension::PushRequest_RenderThread(const FFrameGrabRequest& R, FRHITexture* Target,
-	FRHIGPUTextureReadback* Readback)
+	FRHIGPUTextureReadback* Readback, TAtomic<uint32>* GrabbedGeneration)
 {
 	check(IsInRenderingThread());
-	TargetsBySlot.Add(R.TargetIndex, { Target, Readback });
+	TargetsBySlot.Add(R.TargetIndex, { Target, Readback, GrabbedGeneration });
 	Requests.Push(R);
 }
 
@@ -34,7 +34,7 @@ void FCamSimFrameGrabExtension::PostRenderViewFamily_RenderThread(FRDGBuilder& G
 	FFrameGrabRequest Req;
 	if (!Requests.PopCurrent(CurrentGeneration, Req)) return;
 	const FTargets* T = TargetsBySlot.Find(Req.TargetIndex);
-	if (!T || !T->Target || !T->Readback || !InViewFamily.RenderTarget || InViewFamily.Views.Num() == 0) return;
+	if (!T || !T->Target || !T->Readback || !T->GrabbedGeneration || !InViewFamily.RenderTarget || InViewFamily.Views.Num() == 0) return;
 
 	FRDGTextureRef Source = InViewFamily.RenderTarget->GetRenderTargetTexture(GraphBuilder);
 	if (!Source)
@@ -52,6 +52,17 @@ void FCamSimFrameGrabExtension::PostRenderViewFamily_RenderThread(FRDGBuilder& G
 	AddDrawTexturePass(GraphBuilder, FScreenPassViewInfo(View), Source, Dest,
 		SrcRect.Min, SrcRect.Size(), FIntPoint::ZeroValue, Dest->Desc.Extent);
 
-	AddEnqueueCopyPass(GraphBuilder, T->Readback, Dest);
+	// Inline on the render thread (AddEnqueueCopyPass runs as an async RDG task,
+	// which could clear the fence after the next poll already read it). The
+	// generation is published only once the copy is really queued.
+	FRHIGPUTextureReadback* Readback = T->Readback;
+	TAtomic<uint32>* Grabbed = T->GrabbedGeneration;
+	const uint32 Gen = Req.Generation;
+	AddReadbackTexturePass(GraphBuilder, RDG_EVENT_NAME("CamSimGrabReadback"), Dest,
+		[Readback, Dest, Grabbed, Gen](FRHICommandListImmediate& RHICmdList)
+	{
+		Readback->EnqueueCopy(RHICmdList, Dest->GetRHI());
+		Grabbed->Store(Gen, EMemoryOrder::SequentiallyConsistent);
+	});
 	GrabCount.Store(GrabCount.Load(EMemoryOrder::Relaxed) + 1, EMemoryOrder::Relaxed);
 }

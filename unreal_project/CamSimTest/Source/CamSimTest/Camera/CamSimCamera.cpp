@@ -213,6 +213,12 @@ void ACamSimCamera::Tick(float DeltaTime)
 	UpdateAutoFocus();
 	ApplyPrimaryView();
 	UpdateCameraCut();
+	if (Cfg.Render.IsPrimary())
+	{
+		// The engine updated the player camera before this tick group; render
+		// this frame's gimbal/FOV/post-process, the pose the KLV reports.
+		CamSimRender::RefreshPlayerView(GetWorld()->GetFirstPlayerController(), DeltaTime);
+	}
 
 	if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::CigiDequeue);
 
@@ -462,6 +468,9 @@ void ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 		UE_LOG(LogCamSim, Warning, TEXT("HotReload: video codec change ignored (requires restart)"));
 	if (NewCfg.MulticastPort != OldCfg.MulticastPort)
 		UE_LOG(LogCamSim, Warning, TEXT("HotReload: multicast port change ignored (requires restart)"));
+	if (NewCfg.Render.ViewSourceMode != OldCfg.Render.ViewSourceMode
+		|| NewCfg.Render.OriginShiftDistanceM != OldCfg.Render.OriginShiftDistanceM)
+		UE_LOG(LogCamSim, Warning, TEXT("HotReload: render.view_source / origin_shift_distance_m change ignored (requires restart)"));
 
 	Subsystem->HotReloadConfig(NewCfg);
 	if (IPixelPipeline* SensorFX = CaptureComp->GetSensorPipeline())

@@ -158,6 +158,18 @@ private:
 	TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> GrabExtension;
 	bool bPrimaryView = false;
 
+	/** Create the grab extension once the game viewport exists. False while it doesn't. */
+	bool EnsureGrabExtension();
+
+	/**
+	 * Per render-target slot: the capture generation whose copy the grab
+	 * extension really issued. The poll trusts a slot's fence only when this
+	 * matches the capture's generation.
+	 * writer: render (grab pass) → reader: render (poll) (SeqCst).
+	 */
+	static constexpr int32 NumCaptureTargets = 3;
+	TAtomic<uint32> GrabbedGeneration[NumCaptureTargets];
+
 	/** CPU-side sensor post-processing pipeline (Phase 11). */
 	TUniquePtr<IPixelPipeline> SensorFX;
 
@@ -211,6 +223,10 @@ private:
 	// thread before enqueuing, incremented by the render thread.
 	// writer: game (reset) + render (increment) → readers: render (relaxed)
 	TAtomic<uint8> RenderReadyStreak      { 0 };
+
+	/** Polls of the current capture so far; past the budget the render thread gives up (Failed). */
+	TAtomic<uint32> RenderPollAttempts { 0 };
+	static constexpr uint32 MaxReadbackPolls = 60;  // ~2 s at 30 Hz
 	TAtomic<uint8> RenderDepthReadyStreak { 0 };
 
 	/** Frame counter for PTS calculation, and the frame in flight. */

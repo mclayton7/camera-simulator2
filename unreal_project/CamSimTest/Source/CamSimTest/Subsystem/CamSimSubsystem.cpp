@@ -247,18 +247,10 @@ void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)
 		// struct whole — never a torn nested TMap mid-assignment.
 		FRWScopeLock Lock(ConfigLock_, SLT_Write);
 
-		// Preserve immutable fields that cannot change without a restart.
-		const int32   SavedCigiPort      = Config.CigiPort;
-		const FString SavedMulticastAddr = Config.MulticastAddr;
-		const int32   SavedMulticastPort = Config.MulticastPort;
-		const FString SavedVideoCodec    = Config.VideoCodec;
-
-		Config = NewCfg;
-
-		Config.CigiPort      = SavedCigiPort;
-		Config.MulticastAddr = SavedMulticastAddr;
-		Config.MulticastPort = SavedMulticastPort;
-		Config.VideoCodec    = SavedVideoCodec;
+		// Preserve fields that cannot change without a restart.
+		FCamSimConfig Reloaded = NewCfg;
+		FCamSimConfig::KeepRestartOnlySettings(Config, Reloaded);
+		Config = MoveTemp(Reloaded);
 	}
 
 	// Phase 22A: Re-parse entity types on hot-reload (no config lock — own data)

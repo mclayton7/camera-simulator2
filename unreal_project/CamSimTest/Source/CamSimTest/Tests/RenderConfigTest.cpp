@@ -77,3 +77,33 @@ bool FRenderConfigEnvTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("env frame stats"), Cfg.Operational.FrameStatsPath, FString(TEXT("/tmp/x.jsonl")));
 	return true;
 }
+
+// Hot reload can't switch the render path: the grab extension, AA, viewport
+// rendering, Cesium cameras and origin shift are all set up at BeginPlay.
+// A reload keeps the running values (final review, 3A).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigHotReloadTest,
+	"CamSim.Config.HotReloadKeepsRestartOnlySettings",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderConfigHotReloadTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Running;
+	Running.CigiPort = 8888;
+	Running.Render.OriginShiftDistanceM = 20000.0;
+
+	FCamSimConfig Reloaded;
+	Reloaded.CigiPort = 9999;
+	Reloaded.Render.ViewSource = TEXT("scene_capture");
+	Reloaded.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::SceneCapture;
+	Reloaded.Render.OriginShiftDistanceM = 5000.0;
+	Reloaded.Render.CameraCutAngleDeg = 12.0f;   // live-tunable: takes effect
+
+	FCamSimConfig::KeepRestartOnlySettings(Running, Reloaded);
+
+	TestEqual(TEXT("CIGI port kept"), Reloaded.CigiPort, 8888);
+	TestTrue(TEXT("view source kept"), Reloaded.Render.IsPrimary());
+	TestEqual(TEXT("view source name kept"), Reloaded.Render.ViewSource, FString(TEXT("primary")));
+	TestEqual(TEXT("origin shift kept"), Reloaded.Render.OriginShiftDistanceM, 20000.0);
+	TestEqual(TEXT("camera cut threshold reloads"), Reloaded.Render.CameraCutAngleDeg, 12.0f);
+	return true;
+}

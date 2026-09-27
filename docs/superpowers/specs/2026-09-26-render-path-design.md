@@ -87,8 +87,10 @@ decision.
 **Camera.** `ACamSimCamera` gains a `UCameraComponent` (`SensorCamera`) attached as a child of
 the `SceneCapture` with an identity transform, so it inherits the gimbal rotation. Once the
 first local player controller exists, it calls `SetViewTarget(this)` (retried each tick until
-it succeeds). UE updates player cameras after all tick groups, so the camera's
-`TG_PostUpdateWork` tick still sets pose and FOV before the frame renders.
+it succeeds). UE updates player cameras *before* `TG_PostUpdateWork` (LevelTick.cpp), where the
+camera applies gimbal, FOV and post-process, so the camera then re-runs
+`PlayerCameraManager->UpdateCamera()` with the final pose; otherwise the image would lag the KLV
+by one frame (found in the final review).
 
 For 3A the `SceneCapture` component stays the single source of truth for pose, FOV and
 post-process settings; it simply never captures in primary mode. Each tick the camera copies

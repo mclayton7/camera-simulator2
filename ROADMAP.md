@@ -393,14 +393,17 @@ Design: `docs/superpowers/specs/2026-09-26-render-path-design.md` (approved); pl
   scene_capture` keeps the old path (now without the unused viewport render) until 3B.
 - Cesium LOD crossfade on (0.5 s); only the slew-prefetch stand-in camera remains; origin shift
   every 20 km (`render.origin_shift_distance_m`); TSR history reset on pose jumps.
-- 1080p30 holds on the M1 Pro at defaults (p95 33.9–35.6 ms, GPU 17–19 ms); no dev profile needed.
+- 1080p runs at the engine's fixed 30 Hz on the M1 Pro at defaults: p50 33.3 ms, no frames
+  dropped to 15 Hz, GPU 17–19 ms (about 55% of the budget), but p95 is 33.9–35.6 ms, just over
+  the spec's literal 33.3 ms (fixed-step jitter). No dev profile was needed.
   75% TSR is visually indistinguishable and saves 20–30% GPU (documented, not default).
 - SSE stays 16: 8 costs GPU and pop-in, 4 collapses (277 hitches in the slew phase).
 - The per-render GPU cost of the primary view (~18 ms) is higher than a SceneCapture render
   (~10 ms); the baseline's cost was dominated by the wasted viewport render.
 
 Exit criteria (macOS): one render per frame ✅; fewer hitches ✅; less pop-in ✅; SSE ≤ 16 ✅;
-1080p30 config ✅; tests ✅ (219 automation + bench pytest); **orbit GPU below baseline ❌ at
+1080p30 ⚠️ (holds 30 Hz with GPU headroom, but p95 33.9–35.6 ms misses the literal ≤ 33.3 ms; a
+fixed-step engine can't meet a p95 equal to its own step); tests ✅ (219 automation + bench pytest); **orbit GPU below baseline ❌ at
 100% TSR (✅ at 75%)**; **visual review by the user: pending**; `ci_validate` smoke skipped
 (CI deferred by the user). Deferred: RTX 5090 runs.
 

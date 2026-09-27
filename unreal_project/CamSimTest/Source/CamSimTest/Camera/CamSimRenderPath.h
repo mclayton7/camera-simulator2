@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 
+class APlayerController;
+
 namespace CamSimRender
 {
 	/**
@@ -18,4 +20,13 @@ namespace CamSimRender
 		const double TurnedDeg = FMath::RadiansToDegrees(PrevRot.AngularDistance(CurRot));
 		return MovedM > CutDistanceM || TurnedDeg > CutAngleDeg;
 	}
+
+	/**
+	 * Re-run the player camera update with the sensor's final pose. The engine
+	 * updates player cameras before TG_PostUpdateWork, where CamSim applies
+	 * gimbal, FOV and post-process; without this the primary view renders the
+	 * previous frame's pose while the KLV describes this frame's. Keeps a
+	 * camera cut requested this frame.
+	 */
+	void RefreshPlayerView(APlayerController* PC, float DeltaSeconds);
 }
