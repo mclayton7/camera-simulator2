@@ -12,11 +12,13 @@
 #include "Diagnostics/PipelineLatencyTracker.h"
 #include "Encoder/EncoderThread.h"
 #include "Encoder/IFrameSink.h"
+#include "Encoder/Nv12.h"
 #include "Entity/CamSimEntityManager.h"
 #include "GroundTruth/FEntityProjection.h"
 #include "GroundTruth/FGroundTruthCollector.h"
 #include "Sensor/SensorPostProcess.h"  // FSensorPostProcess concrete type
 #include "Subsystem/CamSimSubsystem.h"
+#include "Time/SimClock.h"
 
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/Engine.h"
@@ -74,6 +76,20 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 	Sensor->FOVAngle = Cfg.HFovDeg;
 
 	bPrimaryView = Cfg.Render.IsPrimary();
+
+	// ROADMAP 3B: the sensor pipeline is chosen once per session.
+	SensorPath = FSensorPathSelector::Decide(Cfg);
+	bGpuSensor = SensorPath.Path == ESensorPipelinePath::Gpu;
+	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: %s"), *SensorPath.Reason);
+	if (bGpuSensor)
+	{
+		Nv12ReadbackPool.Reset();
+		for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
+		{
+			Nv12ReadbackPool.Add(MakeUnique<FRHIGPUBufferReadback>(*FString::Printf(TEXT("CamSimNv12Readback_%d"), Idx)));
+		}
+	}
+
 	for (TAtomic<uint32>& Gen : GrabbedGeneration) { Gen.Store(0); }
 	if (bPrimaryView && !EnsureGrabExtension())
 	{
@@ -123,7 +139,13 @@ bool UCamSimCaptureComponent::EnsureGrabExtension()
 	FViewport* Viewport = (GEngine && GEngine->GameViewport) ? GEngine->GameViewport->Viewport : nullptr;
 	if (!Viewport) return false;
 	GrabExtension = FSceneViewExtensions::NewExtension<FCamSimFrameGrabExtension>(Viewport);
-	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — grabbing the game viewport"));
+	if (bGpuSensor && Subsystem)
+	{
+		const FCamSimConfig& Cfg = Subsystem->GetConfig();
+		GrabExtension->EnableGpuSensor_GameThread(FIntPoint(Cfg.CaptureWidth, Cfg.CaptureHeight), &StatsMailbox, &GpuTimer);
+	}
+	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — grabbing the game viewport%s"),
+		bGpuSensor ? TEXT(" (GPU sensor replaces the tonemapper)") : TEXT(""));
 	return true;
 }
 
@@ -143,6 +165,7 @@ void UCamSimCaptureComponent::Shutdown()
 	FlushRenderingCommands();
 	GrabExtension.Reset();
 	ColorReadbackPool.Reset();
+	Nv12ReadbackPool.Reset();
 	DepthReadbackPool.Reset();
 }
 
@@ -254,9 +277,22 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 			O.bMotionBlur, O.bBloom, O.bChromaticAberration, O.bDepthOfField, O.bLensFlare, O.bLensDistortion);
 	}
 
-	// Auto-exposure stays on; the compensation shifts where it settles. Set on
-	// the SceneCapture's post-process, which the primary view mirrors.
+	if (bGpuSensor)
 	{
+		// ROADMAP 3B: the sensor owns exposure. UE runs manual so its eye adaptation
+		// never fights the sensor AE; UpdateSensorParams sets the bias each tick only
+		// to keep scene colour in fp16 range (the graph divides PreExposure back out).
+		PP.bOverride_AutoExposureMethod = true;
+		PP.AutoExposureMethod = AEM_Manual;
+		PP.bOverride_AutoExposureApplyPhysicalCameraExposure = true;
+		PP.AutoExposureApplyPhysicalCameraExposure = false;
+		PP.bOverride_AutoExposureBias = true;
+		PP.AutoExposureBias = 0.0f;
+	}
+	else
+	{
+		// Auto-exposure stays on; the compensation shifts where it settles. Set on
+		// the SceneCapture's post-process, which the primary view mirrors.
 		const IConsoleVariable* DefaultBias = IConsoleManager::Get().FindConsoleVariable(TEXT("r.DefaultFeature.AutoExposure.Bias"));
 		PP.bOverride_AutoExposureBias = true;
 		PP.AutoExposureBias = CamSimRender::AutoExposureBias(DefaultBias ? DefaultBias->GetFloat() : 1.0f,
@@ -354,12 +390,38 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 	}
 }
 
-void UCamSimCaptureComponent::UpdateGpuSensorParams(ESensorMode Mode, const FCamSimConfig& Cfg)
+void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarity, bool bCameraCut, const FCamSimConfig& Cfg)
 {
-	if (!GpuSensorMpc || !GetWorld()) return;
-	const FSensorModeConfig* IrCfg = Cfg.SensorModeConfigs.Find(ESensorMode::IR);
-	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), GpuSensorMpc, TEXT("SensorMode"), static_cast<float>(Mode));
-	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), GpuSensorMpc, TEXT("NoiseIntensity"), IrCfg ? IrCfg->NETD : 0.0f);
+	if (!bGpuSensor || !GrabExtension) return;
+
+	const double NowSimSec = static_cast<double>(FSimClock::Get().NowMicros()) * 1e-6;
+	const double Dt = LastSensorUpdateSimSec < 0.0 ? 0.0 : NowSimSec - LastSensorUpdateSimSec;
+	LastSensorUpdateSimSec = NowSimSec;
+
+	FSensorHistogram Hist;
+	const bool bHasHist = StatsMailbox.TakeLatest(Hist);
+
+	FSensorControllerInput In;
+	In.Mode         = static_cast<ESensorGraphMode>(FMath::Clamp(static_cast<int32>(Mode), 0, 2));
+	In.bBlackHot    = Polarity != 0;
+	In.bCameraCut   = bCameraCut;
+	In.DeltaSimSec  = Dt;
+	In.NewHistogram = bHasHist ? &Hist : nullptr;
+	In.ExposureCompensationEv = Cfg.Render.ExposureCompensationEV;
+	In.Serial       = ++ParamsSerial;
+	const FSensorModeConfig* ModeCfg = Cfg.SensorModeConfigs.Find(Mode);
+	const uint32 StaleBefore = SensorController.GetStaleEpisodes();
+	const FSensorFrameParams Params = SensorController.Update(In, ModeCfg ? *ModeCfg : FSensorModeConfig());
+	if (SensorController.GetStaleEpisodes() != StaleBefore && bTrackFrameDrops) FrameDropStats.SensorStatsStale++;
+
+	// Keep UE's pre-exposure near the sensor gain so scene colour stays in fp16 range.
+	Sensor->PostProcessSettings.AutoExposureBias = SensorController.GetGainEv() + UeExposureOffsetEv;
+
+	TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> Ext = GrabExtension;
+	ENQUEUE_RENDER_COMMAND(CamSimSensorParams)([Ext, Params](FRHICommandListImmediate&)
+	{
+		Ext->SetParams_RenderThread(Params);
+	});
 }
 
 bool UCamSimCaptureComponent::ShouldSkipFrameForDecimation(const FCamSimConfig& Cfg)
@@ -478,14 +540,25 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 		// The game viewport renders after this tick; the extension copies that
 		// frame into RT and queues the readback. Enqueued now, so it's the newest
 		// request when this frame's scene render runs.
+		// GPU sensor (3B): the sensor graph's NV12 output is read back instead.
 		TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> Ext = GrabExtension;
 		TAtomic<uint32>* Grabbed = &GrabbedGeneration[Slot];
+		FRHIGPUBufferReadback* Nv12Readback = (bGpuSensor && Nv12ReadbackPool.IsValidIndex(Slot)) ? Nv12ReadbackPool[Slot].Get() : nullptr;
+		const bool bGpu = bGpuSensor;
 		ENQUEUE_RENDER_COMMAND(CamSimRequestGrab)(
-			[Ext, RT, Readback, Gen, FrameIdx, Slot, Grabbed, DepthRT, DepthReadback, EnqueueDepthCopy](FRHICommandListImmediate& RHICmdList)
+			[Ext, RT, Readback, Nv12Readback, bGpu, Gen, FrameIdx, Slot, Grabbed, DepthRT, DepthReadback, EnqueueDepthCopy](FRHICommandListImmediate& RHICmdList)
 		{
-			FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
-			if (!Ext || !Resource) return;
-			Ext->PushRequest_RenderThread({ FrameIdx, Gen, Slot }, Resource->GetRenderTargetTexture(), Readback, Grabbed);
+			if (!Ext) return;
+			if (bGpu)
+			{
+				Ext->PushRequest_RenderThread({ FrameIdx, Gen, Slot }, nullptr, nullptr, Nv12Readback, Grabbed);
+			}
+			else
+			{
+				FTextureRenderTargetResource* Resource = RT->GetRenderTargetResource();
+				if (!Resource) return;
+				Ext->PushRequest_RenderThread({ FrameIdx, Gen, Slot }, Resource->GetRenderTargetTexture(), Readback, nullptr, Grabbed);
+			}
 			// Depth (ML) still comes from its own SceneCapture, copied directly.
 			EnqueueDepthCopy(RHICmdList, DepthRT, DepthReadback);
 		});
@@ -531,6 +604,7 @@ void UCamSimCaptureComponent::Poll()
 			if (bTrackFrameDrops) FrameDropStats.ReadbackTimeout++;
 			UE_LOG(LogCamSim, Warning, TEXT("CamSimReadback frame %llu: readback failed or timed out (lock null, bad format, or never grabbed)"), FrameIdx);
 			S.Pixels.Reset();
+			S.Nv12.Reset();
 			S.Depth.Reset();
 			Ring.Release(Slot);
 			continue;
@@ -539,24 +613,37 @@ void UCamSimCaptureComponent::Poll()
 
 		if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::ReadbackComplete);
 
-		// ROADMAP 3A reference shots: the pre-sensor frame, lossless.
+		// ROADMAP 3A reference shots, lossless: the pre-sensor frame on the
+		// legacy path, the sensor's NV12 output on the GPU path.
 		if (FCamSimSnapshotService* Snap = Subsystem ? Subsystem->GetSnapshotService() : nullptr)
 		{
-			if (Snap->WantsFrame())
-			{
-				const FCamSimConfig& SnapCfg = Subsystem->GetConfig();
-				Snap->OfferFrame(S.Pixels, SnapCfg.CaptureWidth, SnapCfg.CaptureHeight);
-			}
+			if (Snap->WantsFrame()) OfferSnapshot(*Snap, S);
 		}
 
 		bSensorBusy = true;
-		SubmitFrameToEncoder(MoveTemp(S.Pixels), S.Telemetry, FrameIdx, MoveTemp(S.Depth));
+		SubmitFrameToEncoder(MoveTemp(S.Pixels), MoveTemp(S.Nv12), S.Telemetry, FrameIdx, MoveTemp(S.Depth));
 		S.Pixels.Reset();
+		S.Nv12.Reset();
 		S.Depth.Reset();
 		Ring.Release(Slot);
 	}
 
 	EnqueuePolls();
+}
+
+void UCamSimCaptureComponent::OfferSnapshot(FCamSimSnapshotService& Snap, const FSlot& S) const
+{
+	const FCamSimConfig& C = Subsystem->GetConfig();
+	if (S.Nv12.Num() > 0)
+	{
+		TArray<FColor> Bgra;
+		CamSimNv12::ToBgra(S.Nv12.GetData(), C.CaptureWidth, C.CaptureHeight, Bgra);
+		Snap.OfferFrame(Bgra, C.CaptureWidth, C.CaptureHeight);
+	}
+	else
+	{
+		Snap.OfferFrame(S.Pixels, C.CaptureWidth, C.CaptureHeight);
+	}
 }
 
 void UCamSimCaptureComponent::EnqueuePolls()
@@ -583,12 +670,14 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 	const int32 ReadyPollsRequired = FMath::Max(1, Cfg.ReadbackReadyPolls);
 	FRHIGPUTextureReadback* Readback = ColorReadbackPool.IsValidIndex(Slot) ? ColorReadbackPool[Slot].Get() : nullptr;
 	FRHIGPUTextureReadback* DepthReadback = DepthReadbackPool.IsValidIndex(Slot) ? DepthReadbackPool[Slot].Get() : nullptr;
+	FRHIGPUBufferReadback*  Nv12Readback = (bGpuSensor && Nv12ReadbackPool.IsValidIndex(Slot)) ? Nv12ReadbackPool[Slot].Get() : nullptr;
 	UTextureRenderTarget2D* RT = RenderTargets.IsValidIndex(Slot) ? RenderTargets[Slot].Get() : nullptr;
 
 	const int32  CaptureW       = Cfg.CaptureWidth;
 	const int32  CaptureH       = Cfg.CaptureHeight;
 	const auto   ReadbackFormat = Cfg.ReadbackFormat;
 	const bool   bSwapRB        = Cfg.bSwapRBReadback;
+	const uint32 Nv12Bytes      = static_cast<uint32>(CamSimNv12::NumBytes(Cfg.CaptureWidth, Cfg.CaptureHeight));
 	FSlot&       S              = Slots[Slot];
 	const uint64 FrameIdx       = Ring.GetFrameIndex(Slot);
 	const uint32 CaptureGen     = S.Generation.Load(EMemoryOrder::SequentiallyConsistent);
@@ -597,7 +686,7 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 	FReadbackRing* RingPtr      = &Ring;
 
 	ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
-		[RingPtr, &S, Slot, Readback, DepthReadback, RT, ReadyPollsRequired,
+		[RingPtr, &S, Slot, Readback, DepthReadback, Nv12Readback, Nv12Bytes, RT, ReadyPollsRequired,
 		 CaptureW, CaptureH, ReadbackFormat, bSwapRB, FrameIdx, CaptureGen, bNeedsGrab, Grabbed]
 		(FRHICommandListImmediate&)
 	{
@@ -610,7 +699,8 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 		S.PollAttempts.Store(Attempt, EMemoryOrder::Relaxed);
 		const CamSimReadback::EPollDecision Decision = CamSimReadback::DecidePoll(
 			bNeedsGrab, Grabbed ? Grabbed->Load(EMemoryOrder::SequentiallyConsistent) : 0, CaptureGen,
-			[Readback]() { return Readback && Readback->IsReady(); }, Attempt, MaxReadbackPolls);
+			[Readback, Nv12Readback]() { return Nv12Readback ? Nv12Readback->IsReady() : (Readback && Readback->IsReady()); },
+			Attempt, MaxReadbackPolls);
 		if (Decision == CamSimReadback::EPollDecision::TimedOut)
 		{
 			// Never grabbed (viewport not drawn, request dropped) or a stuck fence:
@@ -629,28 +719,41 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 		}
 		if (S.ReadyStreak.Load(EMemoryOrder::Relaxed) < ReadyPollsRequired) return;
 
-		int32 RowPitch = 0;
-		void* RawData = Readback->Lock(RowPitch);
-		if (!RawData || !RT)
+		if (Nv12Readback)
 		{
-			if (RawData) Readback->Unlock();
-			RingPtr->MarkFailed(Slot);
-			return;
+			// GPU sensor (3B): the sensor graph's NV12 output, tightly packed.
+			const void* Raw = Nv12Readback->Lock(Nv12Bytes);
+			if (!Raw) { RingPtr->MarkFailed(Slot); return; }  // null: do NOT Unlock
+			S.Nv12.SetNumUninitialized(Nv12Bytes);
+			FMemory::Memcpy(S.Nv12.GetData(), Raw, Nv12Bytes);
+			Nv12Readback->Unlock();
+			S.Pixels.Reset();
 		}
-
-		const int32 W = RT->SizeX;
-		const int32 H = RT->SizeY;
-		const EPixelFormat PixelFormat = RT->GetFormat();
-		if (PixelFormat != PF_B8G8R8A8 && PixelFormat != PF_R8G8B8A8)
+		else
 		{
+			int32 RowPitch = 0;
+			void* RawData = Readback ? Readback->Lock(RowPitch) : nullptr;
+			if (!RawData || !RT)
+			{
+				if (RawData) Readback->Unlock();
+				RingPtr->MarkFailed(Slot);
+				return;
+			}
+
+			const int32 W = RT->SizeX;
+			const int32 H = RT->SizeY;
+			const EPixelFormat PixelFormat = RT->GetFormat();
+			if (PixelFormat != PF_B8G8R8A8 && PixelFormat != PF_R8G8B8A8)
+			{
+				Readback->Unlock();
+				RingPtr->MarkFailed(Slot);
+				return;
+			}
+
+			S.Pixels.SetNumUninitialized(W * H);
+			CamSimConvertReadbackPixels(RawData, RowPitch, W, H, PixelFormat, ReadbackFormat, bSwapRB, S.Pixels, FrameIdx);
 			Readback->Unlock();
-			RingPtr->MarkFailed(Slot);
-			return;
 		}
-
-		S.Pixels.SetNumUninitialized(W * H);
-		CamSimConvertReadbackPixels(RawData, RowPitch, W, H, PixelFormat, ReadbackFormat, bSwapRB, S.Pixels, FrameIdx);
-		Readback->Unlock();
 
 		// Opportunistic depth: it may lag color; skip this frame's if so.
 		S.Depth.Reset();
@@ -692,7 +795,7 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 // -------------------------------------------------------------------------
 
 void UCamSimCaptureComponent::SubmitFrameToEncoder(
-	TArray<FColor> PixelData, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres)
+	TArray<FColor> PixelData, TArray<uint8> Nv12Data, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres)
 {
 	if (!EncoderThread)
 	{
@@ -716,11 +819,14 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	// bSensorBusy is cleared after the sensor model + ML annotation, not after encode.
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
 		[this, EncThread, FX, Mode, Polarity, Collector, CaptureW, CaptureH, LT,
-		 Pixels = MoveTemp(PixelData), Telemetry, FrameIdx, Depth = MoveTemp(DepthMetres)]() mutable
+		 Pixels = MoveTemp(PixelData), Nv12 = MoveTemp(Nv12Data), Telemetry, FrameIdx, Depth = MoveTemp(DepthMetres)]() mutable
 	{
 		SCOPE_CYCLE_COUNTER(STAT_CamSimEncode);
+		// The CPU sensor model runs only on BGRA (legacy) frames; NV12 frames
+		// already went through the GPU sensor graph (3B).
+		const bool bNv12 = Nv12.Num() > 0;
 		if (LT) LT->Mark(EPipelineStage::SensorStart);
-		if (FX)
+		if (FX && !bNv12)
 		{
 			FX->Process(Pixels, Mode, Polarity, Telemetry, FrameIdx);
 		}
@@ -737,8 +843,16 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 		}
 
 		FProcessedFrame Frame;
-		Frame.Frame.Format = ESensorPixelFormat::BGRA8;
-		Frame.Frame.Bgra   = MoveTemp(Pixels);
+		if (bNv12)
+		{
+			Frame.Frame.Format = ESensorPixelFormat::NV12;
+			Frame.Frame.Nv12   = MoveTemp(Nv12);
+		}
+		else
+		{
+			Frame.Frame.Format = ESensorPixelFormat::BGRA8;
+			Frame.Frame.Bgra   = MoveTemp(Pixels);
+		}
 		Frame.Telemetry    = Telemetry;
 		Frame.FrameIndex   = FrameIdx;
 		EncThread->Enqueue(MoveTemp(Frame));  // non-blocking

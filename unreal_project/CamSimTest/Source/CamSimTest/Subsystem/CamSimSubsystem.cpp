@@ -519,6 +519,14 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 				Body += FString::Printf(TEXT("camsim_frames_encoded_total %llu\n"),
 					static_cast<unsigned long long>(EncodedFrames));
 
+				if (const ACamSimCamera* Cam = Camera_.Get())
+				{
+					Body += TEXT("# HELP camsim_sensor_path Sensor pipeline in use (ROADMAP 3B).\n");
+					Body += TEXT("# TYPE camsim_sensor_path gauge\n");
+					Body += FString::Printf(TEXT("camsim_sensor_path{path=\"%s\"} 1\n"),
+						FSensorPathSelector::ToString(Cam->GetSensorPath()));
+				}
+
 				// Optional histogram: only when latency tracking is enabled.
 				if (ImplPtr->LatencyTracker)
 				{
@@ -892,6 +900,10 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			UptimeSec,
 			LastHost,
 			(Camera_.Get() && Camera_->IsTerrainReady()) ? TEXT("true") : TEXT("false"));
+		if (const ACamSimCamera* Cam = Camera_.Get())
+		{
+			HealthJson += FString::Printf(TEXT(",\"sensor_path\":\"%s\""), FSensorPathSelector::ToString(Cam->GetSensorPath()));
+		}
 
 		// Phase 27B — append per-category frame drop stats when tracking is enabled
 		if (ACamSimCamera* Cam = Camera_.Get())
@@ -900,8 +912,8 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			{
 				const FFrameDropStats& D = Cam->GetFrameDropStats();
 				HealthJson += FString::Printf(
-					TEXT(",\"frame_drops\":{\"encoder_busy\":%d,\"readback_timeout\":%d,\"socket_error\":%d,\"total\":%d}"),
-					D.EncoderBusy.Load(), D.ReadbackTimeout.Load(), D.SocketError.Load(), D.Total());
+					TEXT(",\"frame_drops\":{\"encoder_busy\":%d,\"readback_timeout\":%d,\"socket_error\":%d,\"sensor_stats_stale\":%d,\"total\":%d}"),
+					D.EncoderBusy.Load(), D.ReadbackTimeout.Load(), D.SocketError.Load(), D.SensorStatsStale.Load(), D.Total());
 			}
 		}
 		// Phase 28G: pipeline latency percentiles

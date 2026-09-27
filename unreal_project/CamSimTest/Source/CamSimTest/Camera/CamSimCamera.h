@@ -59,6 +59,9 @@ public:
 	/** Frames dropped because the encoder thread's queue was full. */
 	uint64 GetDroppedFrameCount() const { return CaptureComp->GetDroppedFrameCount(); }
 
+	/** ROADMAP 3B: sensor pipeline this session runs. */
+	ESensorPipelinePath GetSensorPath() const { return CaptureComp->GetSensorPath(); }
+
 	/**
 	 * Apply this frame's host platform state (CIGI Entity Control for the
 	 * camera entity). FCamSimEntityManager calls this before resolving

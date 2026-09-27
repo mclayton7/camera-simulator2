@@ -12,6 +12,10 @@
 // .gen.cpp instantiates TArray<TUniquePtr<FRHIGPUTextureReadback>>'s destructor.
 #include "RHIGPUReadback.h"
 #include "Camera/ReadbackRing.h"
+#include "Camera/SensorGpuTimer.h"
+#include "Sensor/SensorController.h"
+#include "Sensor/SensorPath.h"
+#include "Sensor/SensorStatsMailbox.h"
 #include "CamSimCaptureComponent.generated.h"
 
 class USceneCaptureComponent2D;
@@ -21,6 +25,7 @@ class UMaterialParameterCollection;
 class UCamSimSubsystem;
 class FEncoderThread;
 class FCamSimFrameGrabExtension;
+class FCamSimSnapshotService;
 struct FPipelineLatencyTracker;
 struct FCamSimConfig;
 
@@ -47,6 +52,8 @@ struct FFrameDropStats
 	TAtomic<int32> EncoderBusy     { 0 };  // writer: game; readers: HTTP
 	TAtomic<int32> ReadbackTimeout { 0 };  // writer: game (observed from render); readers: HTTP
 	TAtomic<int32> SocketError     { 0 };  // writer: encoder thread; readers: HTTP
+	/** ROADMAP 3B: sensor histogram went stale (AE held). Not a frame drop, so not in Total(). */
+	TAtomic<int32> SensorStatsStale { 0 };  // writer: game; readers: HTTP
 	int32 Total() const { return EncoderBusy.Load() + ReadbackTimeout.Load() + SocketError.Load(); }
 };
 
@@ -97,8 +104,21 @@ public:
 	/** True if this render frame should be skipped to honour the output frame rate. */
 	bool ShouldSkipFrameForDecimation(const FCamSimConfig& Cfg);
 
-	/** Push per-frame parameters to the GPU sensor material (no-op without it). */
-	void UpdateGpuSensorParams(ESensorMode Mode, const FCamSimConfig& Cfg);
+	/**
+	 * ROADMAP 3B: run the sensor controller (AE / IR AGC) on the newest GPU
+	 * histogram and send this tick's parameters to the sensor graph. No-op on
+	 * the legacy path. Call every tick, before Poll().
+	 */
+	void UpdateSensorParams(ESensorMode Mode, uint8 Polarity, bool bCameraCut, const FCamSimConfig& Cfg);
+
+	/** Sensor pipeline this session runs (fixed at Initialize). */
+	ESensorPipelinePath GetSensorPath() const { return SensorPath.Path; }
+	/** GPU time of the sensor graph in ms; -1 when unknown or on the legacy path. */
+	float GetSensorGpuMs() const { return GpuTimer.GetLatestMs(); }
+	/** Log2 of the sensor gain emitted last tick (GPU path). */
+	float GetSensorGainEv() const { return SensorController.GetGainEv(); }
+	/** Median scene signal (log2) of the last histogram the controller used (GPU path). */
+	float GetSceneMedianLog2() const { return SensorController.GetLastMedianLog2(); }
 
 	IPixelPipeline* GetSensorPipeline() const { return SensorFX.Get(); }
 	void SetLatencyTracker(FPipelineLatencyTracker* Tracker);
@@ -122,7 +142,10 @@ private:
 	/** One render-thread poll per in-flight slot. */
 	void EnqueuePolls();
 	void EnqueuePoll(int32 Slot);
-	void SubmitFrameToEncoder(TArray<FColor> PixelData, FCamSimTelemetry Telemetry,
+	struct FSlot;
+	/** Offer a delivered frame to a snapshot service (NV12 converted to BGRA). */
+	void OfferSnapshot(FCamSimSnapshotService& Snap, const FSlot& S) const;
+	void SubmitFrameToEncoder(TArray<FColor> PixelData, TArray<uint8> Nv12, FCamSimTelemetry Telemetry,
 	                          uint64 FrameIdx, TArray<float> DepthMetres);
 
 	UPROPERTY(Transient)
@@ -162,6 +185,22 @@ private:
 
 	/** Create the grab extension once the game viewport exists. False while it doesn't. */
 	bool EnsureGrabExtension();
+
+	// ROADMAP 3B — GPU sensor model (game thread unless noted)
+	/** Which sensor pipeline this session runs (fixed at Initialize). */
+	FSensorPathDecision SensorPath;
+	bool bGpuSensor = false;
+	/** One NV12 readback per ring slot (GPU path only). */
+	TArray<TUniquePtr<FRHIGPUBufferReadback>> Nv12ReadbackPool;
+	FSensorController   SensorController;
+	/** Histograms, render thread → game thread. */
+	FSensorStatsMailbox StatsMailbox;
+	/** Render thread (via the extension), except GetLatestMs. */
+	FSensorGpuTimer     GpuTimer;
+	uint32 ParamsSerial = 0;
+	double LastSensorUpdateSimSec = -1.0;
+	/** Calibrated in Task 11 so View.PreExposure ≈ sensor gain. */
+	static constexpr float UeExposureOffsetEv = 0.0f;
 
 	/**
 	 * Per render-target slot: the capture generation whose copy the grab
@@ -208,6 +247,7 @@ private:
 		/** This capture's generation: stale poll commands for a reused slot no-op. writer: game → reader: render. */
 		TAtomic<uint32>  Generation       { 0 };
 		TArray<FColor>   Pixels;                  // render writes → game reads after Complete
+		TArray<uint8>    Nv12;                    // GPU sensor path, instead of Pixels
 		TArray<float>    Depth;
 		// Reset by the game thread at capture, advanced by the render thread's polls.
 		TAtomic<uint8>   ReadyStreak      { 0 };  // "N consecutive Ready polls before consuming"
