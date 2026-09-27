@@ -69,6 +69,8 @@ private:
 	AVStream*        VideoStream = nullptr;
 	AVCodecContext*  VideoCodecCtx = nullptr;
 	AVFrame*         YuvFrame    = nullptr;
+	/** Stream transfer tag: sRGB (legacy) or BT.709 (GPU sensor path), set in OpenVideoStream. */
+	AVColorTransferCharacteristic ColorTrc = AVCOL_TRC_IEC61966_2_1;
 	SwsContext*      SwsCtx      = nullptr;
 
 	/** True when sws_setColorspaceDetails successfully set srcRange=1.

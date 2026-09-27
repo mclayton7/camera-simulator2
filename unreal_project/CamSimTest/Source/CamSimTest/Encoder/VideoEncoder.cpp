@@ -3,6 +3,7 @@
 #include "Encoder/VideoEncoder.h"
 #include "Encoder/Nv12.h"
 #include "CamSimTest.h"
+#include "Sensor/SensorPath.h"
 #include "Sensor/SensorTypes.h"
 
 // ---------------------------------------------------------------------------
@@ -381,9 +382,13 @@ bool FVideoEncoder::TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265)
 	// Explicitly signal the color space so all decoders (VLC, ffplay, hardware) agree.
 	// sws_scale converts sRGB→YUV using BT.709 limited-range coefficients, so we stamp
 	// the matching values into the H.264 VUI / SPS here.
+	// Transfer: the legacy path encodes UE's sRGB output (SCS_FinalColorLDR); the
+	// GPU sensor path (ROADMAP 3B) applies the BT.709 OETF itself, so tag BT.709.
+	const bool bGpuSensorPath = FSensorPathSelector::Decide(Config).Path == ESensorPipelinePath::Gpu;
+	ColorTrc = bGpuSensorPath ? AVCOL_TRC_BT709 : AVCOL_TRC_IEC61966_2_1;
 	VideoCodecCtx->color_range     = AVCOL_RANGE_MPEG;        // limited (16-235/16-240)
 	VideoCodecCtx->color_primaries = AVCOL_PRI_BT709;
-	VideoCodecCtx->color_trc       = AVCOL_TRC_IEC61966_2_1;  // sRGB gamma (matches SCS_FinalColorLDR)
+	VideoCodecCtx->color_trc       = ColorTrc;
 	VideoCodecCtx->colorspace      = AVCOL_SPC_BT709;
 
 	if (FmtCtx->oformat->flags & AVFMT_GLOBALHEADER)
@@ -462,7 +467,7 @@ bool FVideoEncoder::OpenVideoStream()
 	YuvFrame->color_range     = AVCOL_RANGE_MPEG;
 	YuvFrame->colorspace      = AVCOL_SPC_BT709;
 	YuvFrame->color_primaries = AVCOL_PRI_BT709;
-	YuvFrame->color_trc       = AVCOL_TRC_IEC61966_2_1;
+	YuvFrame->color_trc       = ColorTrc;
 
 	return true;
 }
