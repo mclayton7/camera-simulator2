@@ -41,21 +41,24 @@ float UCamSimSensorComponent::ApplySensorControl(const FCigiSensorControl& Senso
 
 	float AppliedFov = SceneCapture ? SceneCapture->FOVAngle : 0.0f;
 
-	// Map Gain (0.0=wide → 1.0=narrow) to configured FOV preset
+	// Map Gain (0.0=wide → 1.0=narrow) to configured FOV preset. Hosts resend
+	// Sensor Control every frame, so only a gain that selects a different
+	// preset changes the FOV; otherwise a View Definition FOV would be
+	// overwritten every frame.
 	const TArray<float>& Presets = Config.SensorFovPresets;
 	if (Presets.Num() > 0 && SceneCapture)
 	{
 		const int32 Idx = FMath::Clamp(
 			FMath::FloorToInt(Sensor.Gain * Presets.Num()), 0, Presets.Num() - 1);
-		const float NewFov = FMath::Clamp(Presets[Idx], 1.0f, 179.0f);
-		if (NewFov != SceneCapture->FOVAngle)
+		if (Idx != LastPresetIdx)
 		{
-			SceneCapture->FOVAngle = NewFov;
+			LastPresetIdx = Idx;
+			SceneCapture->FOVAngle = FMath::Clamp(Presets[Idx], 1.0f, 179.0f);
 			UE_LOG(LogCamSim, Log,
 				TEXT("UCamSimSensorComponent: SensorCtrl gain=%.2f -> preset[%d]=%.1f°"),
-				Sensor.Gain, Idx, NewFov);
+				Sensor.Gain, Idx, SceneCapture->FOVAngle);
 		}
-		AppliedFov = NewFov;
+		AppliedFov = SceneCapture->FOVAngle;
 	}
 
 	UE_LOG(LogCamSim, Log,

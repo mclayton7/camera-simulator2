@@ -19,7 +19,8 @@ struct FCigiSensorControl;
  * Each Tick it drains FCigiReceiver::SensorCtrlQueue (opcode 17).
  *
  * Drives SceneCaptureComponent2D::FOVAngle when the gain field in a
- * SensorControl packet selects a new preset from FCamSimConfig::SensorFovPresets.
+ * SensorControl packet selects a new preset from FCamSimConfig::SensorFovPresets
+ * (a change of preset only; View Definition owns the FOV otherwise).
  */
 UCLASS(ClassGroup=CamSim, meta=(BlueprintSpawnableComponent))
 class CAMSIMTEST_API UCamSimSensorComponent : public UActorComponent
@@ -39,10 +40,12 @@ public:
 
 	/**
 	 * Apply a single SensorControl packet. Updates on/off, polarity, mode and
-	 * (if SceneCapture is non-null) selects the FOV preset indexed by Gain.
+	 * (if SceneCapture is non-null) selects the FOV preset indexed by Gain,
+	 * but only when Gain selects a different preset than the last packet did,
+	 * so a resent gain doesn't override a View Definition FOV.
 	 *
-	 * Returns the FOV applied to the SceneCapture (or the current FOV unchanged
-	 * if no presets are configured). Exposed so unit tests can drive the
+	 * Returns the SceneCapture's FOV after the packet (unchanged if no presets
+	 * are configured or the preset didn't change). Exposed so unit tests can drive the
 	 * component without an FCigiReceiver.
 	 */
 	float ApplySensorControl(const FCigiSensorControl& Sensor, const FCamSimConfig& Config,
@@ -56,4 +59,5 @@ private:
 	bool        bSensorOn          = true;
 	uint8       SensorPolarity     = 0;   // 0 = WhiteHot, 1 = BlackHot (IR only)
 	ESensorMode CurrentSensorMode  = ESensorMode::EO;
+	int32       LastPresetIdx      = INDEX_NONE;   // FOV preset the gain last selected
 };

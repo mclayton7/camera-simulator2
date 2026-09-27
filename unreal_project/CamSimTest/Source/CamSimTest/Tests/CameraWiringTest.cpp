@@ -314,6 +314,46 @@ bool FCamSimSensorGainToFovTest::RunTest(const FString& /*Parameters*/)
 }
 
 // -----------------------------------------------------------------------------
+// A repeated gain must not override a View Definition FOV. Hosts resend
+// Sensor Control every frame; only a gain that selects a different preset
+// changes the FOV.
+// -----------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCamSimSensorRepeatedGainKeepsViewDefFovTest,
+	"CamSim.Camera.Sensor.RepeatedGainKeepsViewDefFov",
+	kAutomationFlags)
+
+bool FCamSimSensorRepeatedGainKeepsViewDefFovTest::RunTest(const FString& /*Parameters*/)
+{
+	UCamSimSensorComponent*    Sensor    = NewSensor();
+	USceneCaptureComponent2D*  Capture   = NewSceneCapture();
+	FCamSimConfig Cfg;
+	Cfg.SensorFovPresets = { 60.0f, 30.0f, 10.0f, 2.0f };
+
+	FCigiSensorControl Pkt;
+	Pkt.bSensorOn = true;
+	Pkt.Gain      = 0.0f;
+	Sensor->ApplySensorControl(Pkt, Cfg, Capture);
+	TestEqual(TEXT("first packet selects its preset"), Capture->FOVAngle, 60.0f);
+
+	Capture->FOVAngle = 25.0f;   // a View Definition sets the FOV
+	for (int32 Frame = 0; Frame < 3; ++Frame)
+	{
+		Sensor->ApplySensorControl(Pkt, Cfg, Capture);
+	}
+	TestEqual(TEXT("same gain resent keeps the View Definition FOV"), Capture->FOVAngle, 25.0f);
+
+	Pkt.Gain = 0.01f;            // still preset[0]
+	Sensor->ApplySensorControl(Pkt, Cfg, Capture);
+	TestEqual(TEXT("gain jitter within a preset keeps the FOV"), Capture->FOVAngle, 25.0f);
+
+	Pkt.Gain = 0.5f;
+	Sensor->ApplySensorControl(Pkt, Cfg, Capture);
+	TestEqual(TEXT("a gain that selects another preset changes the FOV"), Capture->FOVAngle, 10.0f);
+	return true;
+}
+
+// -----------------------------------------------------------------------------
 // Empty preset table — sensor should leave FOV untouched
 // -----------------------------------------------------------------------------
 

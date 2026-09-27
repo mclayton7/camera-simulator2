@@ -334,7 +334,12 @@ void ACamSimCamera::ApplyCigiViewState(float DeltaTime)
 	if (!Receiver) return;
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 
-	// View Definition (opcode 21) → horizontal FOV
+	// Sensor Control (opcode 17): a gain that selects a new preset sets the FOV.
+	SensorComp->TickSensor(Receiver, Cfg, SceneCapture);
+	Telemetry.SetSensor(static_cast<uint8>(SensorComp->GetMode()), SensorComp->GetPolarity());
+
+	// View Definition (opcode 21) → horizontal FOV. Applied after Sensor Control
+	// so an explicit FOV wins when both arrive in the same host frame.
 	FCigiViewDefinition ViewDef;
 	while (Receiver->DequeueViewDefinition(ViewDef))
 	{
@@ -345,10 +350,6 @@ void ACamSimCamera::ApplyCigiViewState(float DeltaTime)
 			UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ViewDef -> HFOV=%.1f°"), NewHFov);
 		}
 	}
-
-	// Sensor Control (opcode 17)
-	SensorComp->TickSensor(Receiver, Cfg, SceneCapture);
-	Telemetry.SetSensor(static_cast<uint8>(SensorComp->GetMode()), SensorComp->GetPolarity());
 
 	// View Control (opcode 16) + camera Art Part → gimbal; a View Control
 	// naming an entity starts the first-person view (Phase 22G).

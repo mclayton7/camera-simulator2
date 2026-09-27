@@ -333,7 +333,7 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 | `gimbal_pitch_max` | float | `30.0` | Upper pitch limit in degrees. |
 | `gimbal_yaw_min` | float | `-180.0` | Left yaw limit in degrees relative to platform heading. |
 | `gimbal_yaw_max` | float | `180.0` | Right yaw limit in degrees relative to platform heading. |
-| `sensor_fov_presets` | float[] | `[60.0, 20.0, 5.0]` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0-1.0) selects the preset by index. |
+| `sensor_fov_presets` | float[] | `[60.0, 20.0, 5.0]` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0-1.0) selects the preset by index. A preset is applied only when the gain selects a different one, so a host that resends the same gain keeps a View Definition FOV; a View Definition in the same frame as a preset change wins. |
 
 ### Sensor Quality (Phase D1)
 
