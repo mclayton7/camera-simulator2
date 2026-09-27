@@ -1801,6 +1801,12 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Operational.HealthHttpPort        = GetEnvInt (TEXT("CAMSIM_HEALTH_HTTP_PORT"),      Cfg.Operational.HealthHttpPort);
 	Cfg.Operational.bSnapshotEndpointEnabled = GetEnvBool(TEXT("CAMSIM_SNAPSHOT_ENDPOINT_ENABLED"), Cfg.Operational.bSnapshotEndpointEnabled);
 	Cfg.Operational.FrameStatsPath           = GetEnv    (TEXT("CAMSIM_FRAME_STATS_PATH"),          Cfg.Operational.FrameStatsPath);
+	// A relative path means the directory CamSim was launched from; UE would
+	// otherwise resolve it against the engine's Binaries directory.
+	if (!Cfg.Operational.FrameStatsPath.IsEmpty() && FPaths::IsRelative(Cfg.Operational.FrameStatsPath))
+	{
+		Cfg.Operational.FrameStatsPath = FPaths::ConvertRelativePathToFull(FPaths::LaunchDir(), Cfg.Operational.FrameStatsPath);
+	}
 
 	// ROADMAP 3A: render path env overrides. view_source is re-parsed only when
 	// the env var is set, so a YAML typo is reported once, not twice.

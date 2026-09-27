@@ -112,3 +112,18 @@ bool FRenderConfigHotReloadTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("camera cut threshold reloads"), Reloaded.Render.CameraCutAngleDeg, 12.0f);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigRelativeFrameStatsPathTest,
+	"CamSim.Config.FrameStatsRelativePathUsesLaunchDir",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderConfigRelativeFrameStatsPathTest::RunTest(const FString& Parameters)
+{
+	// Not the engine's Binaries directory, where UE resolves relative paths.
+	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT(
+		"operational:\n"
+		"  frame_stats_path: \"bench/frames.jsonl\"\n"));
+	TestEqual(TEXT("relative path resolved against the launch directory"), Cfg.Operational.FrameStatsPath,
+		FPaths::ConvertRelativePathToFull(FPaths::LaunchDir(), TEXT("bench/frames.jsonl")));
+	return true;
+}

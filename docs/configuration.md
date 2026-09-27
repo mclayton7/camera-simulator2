@@ -627,7 +627,7 @@ operational:
 | `operational.health_http_enabled` | `CAMSIM_HEALTH_HTTP_ENABLED` | `true` | Master toggle. Default on for `sim-environment` Docker Compose compatibility. Set to `0` (env) or `false` (YAML) to disable. |
 | `operational.health_http_port` | `CAMSIM_HEALTH_HTTP_PORT` | `8080` | Listen port. Binds on all interfaces (0.0.0.0) — `FHttpServerModule::GetHttpRouter` does not take a bind address. |
 | `operational.snapshot_endpoint_enabled` | `CAMSIM_SNAPSHOT_ENDPOINT_ENABLED` | `false` | ROADMAP 3A. Binds `GET /snapshot`: returns the next grabbed frame as PNG (before sensor effects and encoding), 503 if no frame arrives within 5 s. For the bench harness (`scripts/bench/`). Unbound → 404. |
-| `operational.frame_stats_path` | `CAMSIM_FRAME_STATS_PATH` | `""` | ROADMAP 3A. Per-frame JSONL render stats (wall-clock frame time, `stat unit` thread/GPU times, frames emitted/dropped, tileset load %, SSE, camera cut, scene renders per frame). Empty disables. |
+| `operational.frame_stats_path` | `CAMSIM_FRAME_STATS_PATH` | `""` | ROADMAP 3A. Per-frame JSONL render stats (wall-clock frame time, `stat unit` thread/GPU times, frames emitted/dropped, tileset load %, SSE, camera cut, scene renders per frame). Empty disables. A relative path is taken from the directory CamSim was launched from. |
 
 **Routes:**
 
