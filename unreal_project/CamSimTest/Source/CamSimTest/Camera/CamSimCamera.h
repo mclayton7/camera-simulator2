@@ -13,6 +13,7 @@
 
 class USceneCaptureComponent2D;
 class UCameraComponent;
+class UCesiumOriginShiftComponent;
 class UCesiumGlobeAnchorComponent;
 class UCamSimSubsystem;
 class UCamSimGimbalComponent;
@@ -103,6 +104,10 @@ private:
 	 */
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")
 	TObjectPtr<UCameraComponent> SensorCamera;
+
+	/** Rebases the georeference as the sensor travels (ROADMAP 3A); inactive when distance = 0. */
+	UPROPERTY(VisibleAnywhere, Category = "CamSim")
+	TObjectPtr<UCesiumOriginShiftComponent> OriginShift;
 
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")
 	TObjectPtr<UCamSimGimbalComponent> GimbalComp;

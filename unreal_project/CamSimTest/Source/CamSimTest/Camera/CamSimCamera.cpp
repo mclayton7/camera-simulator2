@@ -29,6 +29,7 @@
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
 #include "CesiumGlobeAnchorComponent.h"
+#include "CesiumOriginShiftComponent.h"
 
 ACamSimCamera::ACamSimCamera()
 {
@@ -50,6 +51,9 @@ ACamSimCamera::ACamSimCamera()
 	SensorCamera->SetupAttachment(SceneCapture);
 	SensorCamera->bConstrainAspectRatio = false;
 	SensorCamera->bUsePawnControlRotation = false;
+
+	OriginShift = CreateDefaultSubobject<UCesiumOriginShiftComponent>(TEXT("OriginShift"));
+	OriginShift->SetMode(ECesiumOriginShiftMode::Disabled);  // configured in BeginPlay
 
 	GimbalComp  = CreateDefaultSubobject<UCamSimGimbalComponent>(TEXT("GimbalComp"));
 	SensorComp  = CreateDefaultSubobject<UCamSimSensorComponent>(TEXT("SensorComp"));
@@ -99,6 +103,22 @@ void ACamSimCamera::BeginPlay()
 
 	Platform.Initialize(this, GlobeAnchor, Subsystem, &Telemetry, Cfg);
 	Streaming.Initialize(this, Cfg);
+
+	if (Cfg.Render.OriginShiftDistanceM > 0.0)
+	{
+		// ChangeCesiumGeoreference moves tilesets, so they must be Movable. The
+		// sky (CesiumSunSky) and globe-anchored actors follow the georeference.
+		for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
+		{
+			if (USceneComponent* TilesetRoot = It->GetRootComponent())
+			{
+				TilesetRoot->SetMobility(EComponentMobility::Movable);
+			}
+		}
+		OriginShift->SetDistance(Cfg.Render.OriginShiftDistanceM * 100.0);  // m -> UE cm (compared to GetActorLocation)
+		OriginShift->SetMode(ECesiumOriginShiftMode::ChangeCesiumGeoreference);
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: origin shift every %.0f m"), Cfg.Render.OriginShiftDistanceM);
+	}
 
 	// Tileset streaming parameters and the Cesium backend (ion server, terrain,
 	// imagery). The tuning helper is shared with UCamSimSubsystem::HotReloadConfig.
