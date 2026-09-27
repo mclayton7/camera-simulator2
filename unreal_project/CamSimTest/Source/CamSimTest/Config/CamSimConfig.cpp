@@ -104,6 +104,18 @@ static FCamSimConfig::FRenderConfig::EViewSource ParseViewSource(const FString& 
 	return EViewSource::Primary;
 }
 
+static FCamSimConfig::FRenderConfig::ESensorPath ParseSensorPath(const FString& S)
+{
+	using E = FCamSimConfig::FRenderConfig::ESensorPath;
+	if (S.Equals(TEXT("gpu"), ESearchCase::IgnoreCase))    return E::Gpu;
+	if (S.Equals(TEXT("legacy"), ESearchCase::IgnoreCase)) return E::Legacy;
+	if (!S.Equals(TEXT("auto"), ESearchCase::IgnoreCase))
+	{
+		UE_LOG(LogCamSim, Warning, TEXT("Config: render.sensor_path '%s' is not auto|gpu|legacy; using auto"), *S);
+	}
+	return E::Auto;
+}
+
 static FString NormalizeQualityPreset(const FString& Value)
 {
 	return Value.TrimStartAndEnd().ToLower();
@@ -626,6 +638,21 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				YamlFloat(ModeNode, "sun_glint_intensity",      MC.SunGlintIntensity);
 				YamlFloat(ModeNode, "sun_glint_threshold",      MC.SunGlintThreshold);
 				YamlFloat(ModeNode, "sun_glint_spread",         MC.SunGlintSpread);
+				// ROADMAP 3B.1: detector spectral response + auto-exposure
+				YamlFloat(ModeNode, "signal_weight_r", MC.SignalWeights.X);
+				YamlFloat(ModeNode, "signal_weight_g", MC.SignalWeights.Y);
+				YamlFloat(ModeNode, "signal_weight_b", MC.SignalWeights.Z);
+				if (YamlHas(ModeNode, "exposure"))
+				{
+					ryml::ConstNodeRef ENode = ModeNode["exposure"];
+					YamlBool (ENode, "auto",                 MC.Exposure.bAuto);
+					YamlFloat(ENode, "min_gain_ev",          MC.Exposure.MinGainEv);
+					YamlFloat(ENode, "max_gain_ev",          MC.Exposure.MaxGainEv);
+					YamlFloat(ENode, "target_grey",          MC.Exposure.TargetGrey);
+					YamlFloat(ENode, "highlight_percentile", MC.Exposure.HighlightPercentile);
+					YamlInt  (ENode, "lag_frames",           MC.Exposure.LagFrames);
+					YamlFloat(ENode, "manual_gain_ev",       MC.Exposure.ManualGainEv);
+				}
 			};
 
 			ParseMode("eo",  ESensorMode::EO);
@@ -1406,7 +1433,9 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlFloat (RNode, "camera_cut_angle_deg",    Cfg.Render.CameraCutAngleDeg);
 			YamlDouble(RNode, "origin_shift_distance_m", Cfg.Render.OriginShiftDistanceM);
 			YamlFloat (RNode, "exposure_compensation_ev", Cfg.Render.ExposureCompensationEV);
+			YamlString(RNode, "sensor_path",             Cfg.Render.SensorPath);
 			Cfg.Render.ViewSourceMode = ParseViewSource(Cfg.Render.ViewSource);
+			Cfg.Render.SensorPathMode = ParseSensorPath(Cfg.Render.SensorPath);
 		}
 
 		YamlReadElsewhere(Root, "entity_types");  // FEntityTypeTable
@@ -1820,6 +1849,16 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Render.CameraCutAngleDeg    = GetEnvFloat (TEXT("CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG"),    Cfg.Render.CameraCutAngleDeg);
 	Cfg.Render.OriginShiftDistanceM = GetEnvDouble(TEXT("CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M"), Cfg.Render.OriginShiftDistanceM);
 	Cfg.Render.ExposureCompensationEV = GetEnvFloat(TEXT("CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV"), Cfg.Render.ExposureCompensationEV);
+
+	// ROADMAP 3B.1: sensor_path env override. Same "only re-parse when the env
+	// var is actually set" pattern as view_source above, so an empty env value
+	// (e.g. a test's cleanup) is treated as unset, not as an override to "".
+	const FString EnvSensorPath = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_RENDER_SENSOR_PATH"));
+	if (!EnvSensorPath.IsEmpty())
+	{
+		Cfg.Render.SensorPath     = EnvSensorPath;
+		Cfg.Render.SensorPathMode = ParseSensorPath(EnvSensorPath);
+	}
 	Cfg.Performance.bTrackPipelineLatency = GetEnvBool(TEXT("CAMSIM_TRACK_PIPELINE_LATENCY"), Cfg.Performance.bTrackPipelineLatency);
 
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping
@@ -1870,6 +1909,32 @@ TArray<FString> FCamSimConfig::Validate() const
 	if (CaptureHeight % 2 != 0)
 	{
 		Errors.Add(FString::Printf(TEXT("CaptureHeight=%d must be even (H.264 requirement)"), CaptureHeight));
+	}
+
+	// NV12 packing writes 4 bytes per uint (ROADMAP 3B)
+	if (CaptureWidth % 4 != 0)
+	{
+		Errors.Add(FString::Printf(TEXT("CaptureWidth=%d must be a multiple of 4 (NV12 packing)"), CaptureWidth));
+	}
+	for (const TPair<ESensorMode, FSensorModeConfig>& Pair : SensorModeConfigs)
+	{
+		const FSensorModeConfig& M = Pair.Value;
+		const int32 ModeId = static_cast<int32>(Pair.Key);
+		if (M.Exposure.MinGainEv > M.Exposure.MaxGainEv)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].exposure: min_gain_ev (%.1f) > max_gain_ev (%.1f)"),
+				ModeId, M.Exposure.MinGainEv, M.Exposure.MaxGainEv));
+		}
+		if (M.Exposure.HighlightPercentile <= 0.0f || M.Exposure.HighlightPercentile > 1.0f)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].exposure: highlight_percentile=%.3f out of (0, 1]"),
+				ModeId, M.Exposure.HighlightPercentile));
+		}
+		if (M.AGCLowPercentile < 0.0f || M.AGCHighPercentile > 1.0f || M.AGCLowPercentile >= M.AGCHighPercentile)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d]: agc_low_percentile (%.3f) / agc_high_percentile (%.3f) must satisfy 0 <= low < high <= 1"),
+				ModeId, M.AGCLowPercentile, M.AGCHighPercentile));
+		}
 	}
 
 	// Video

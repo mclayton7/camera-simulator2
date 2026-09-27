@@ -15,6 +15,26 @@ enum class ESensorMode : uint8
 };
 
 // ---------------------------------------------------------------------------
+// FSensorExposureConfig — sensor auto-exposure (ROADMAP 3B). Gains are log2 of
+// the multiplier applied to absolute scene-linear values: higher = brighter.
+// ---------------------------------------------------------------------------
+struct FSensorExposureConfig
+{
+	/** Auto-exposure on; false uses ManualGainEv. */
+	bool  bAuto               = true;
+	/** Camera limits: shortest integration / lowest gain … highest gain. */
+	float MinGainEv           = -20.0f;
+	float MaxGainEv           = -6.0f;
+	/** Linear value the histogram median is exposed to. */
+	float TargetGrey          = 0.18f;
+	/** This percentile of the histogram is kept below clipping. */
+	float HighlightPercentile = 0.99f;
+	/** Convergence time constant in frames at 30 Hz (sim time); 0 = instant. */
+	int32 LagFrames           = 2;
+	float ManualGainEv        = -12.0f;
+};
+
+// ---------------------------------------------------------------------------
 // FSensorModeConfig — per-mode tuning, loaded from camsim_config.yaml
 // ---------------------------------------------------------------------------
 struct FSensorModeConfig
@@ -51,6 +71,12 @@ struct FSensorModeConfig
 
 	/** Brightness bias in normalized range [-1, 1]. */
 	float BrightnessBias = 0.0f;
+
+	/** Detector spectral response: signal = dot(scene RGB, SignalWeights). Default BT.709 luminance. */
+	FVector3f SignalWeights = FVector3f(0.2126f, 0.7152f, 0.0722f);
+
+	/** Sensor auto-exposure (GPU sensor path, ROADMAP 3B). */
+	FSensorExposureConfig Exposure;
 
 	/** Post-effect blur radius in pixels (0 = off). */
 	int32 BlurRadius = 0;

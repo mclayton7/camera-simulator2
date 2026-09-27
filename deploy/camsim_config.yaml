@@ -587,6 +587,14 @@ sensor_modes:
     sun_glint_intensity: 0.0       # 0 = disabled
     sun_glint_threshold: 220.0
     sun_glint_spread: 2.0
+    # ROADMAP 3B — auto-exposure (GPU sensor path). Provisional; calibrated in Task 11.
+    exposure:
+      min_gain_ev: -20
+      max_gain_ev: -6
+      target_grey: 0.18
+      highlight_percentile: 0.99
+      lag_frames: 2
+      manual_gain_ev: -12
   ir:
     noise_netd: 0.01
     fixed_pattern_noise: 0.005
@@ -629,6 +637,14 @@ sensor_modes:
     # 16J — Sensor gain/offset noise (IR only)
     gain_jitter: 0.005          # fractional gain variation per frame
     offset_jitter: 1.0          # DN offset variation per frame
+    # ROADMAP 3B — auto-exposure (GPU sensor path). Provisional; calibrated in Task 11.
+    exposure:
+      min_gain_ev: -20
+      max_gain_ev: -6
+      target_grey: 0.18
+      highlight_percentile: 0.99
+      lag_frames: 2
+      manual_gain_ev: -12
   nvg:
     noise_netd: 0.03
     fixed_pattern_noise: 0.0
@@ -654,6 +670,19 @@ sensor_modes:
     ir_pointer_y: 0.5
     ir_pointer_radius: 8.0
     ir_pointer_intensity: 240.0
+    # Detector spectral response (dot product with scene RGB); default is
+    # BT.709 luminance elsewhere but NVG green-phosphor tubes weight green heavily.
+    signal_weight_r: 0.6
+    signal_weight_g: 0.3
+    signal_weight_b: 0.1
+    # ROADMAP 3B — auto-exposure (GPU sensor path). Provisional; calibrated in Task 11.
+    exposure:
+      min_gain_ev: -20
+      max_gain_ev: 6
+      target_grey: 0.3
+      highlight_percentile: 0.99
+      lag_frames: 2
+      manual_gain_ev: -12
 
 # --- Optical Realism (Phase 15) ---
 # GPU-side + CPU-side optical effects for camera realism.
@@ -998,6 +1027,12 @@ render:
   # metering of sunlit terrain; 0 = UE default (washed out). Applied at startup.
   # Env: CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV
   exposure_compensation_ev: -1.0
+
+  # auto: GPU sensor path once every enabled effect is ported, else legacy.
+  # gpu: force the GPU sensor model (unported effects are logged and skipped).
+  # legacy: force the UE tonemapper + CPU sensor model (ROADMAP 3B).
+  # Env: CAMSIM_RENDER_SENSOR_PATH
+  sensor_path: auto  # auto | gpu | legacy (ROADMAP 3B)
 
 # --- Entity Types ---
 # Maps CIGI EntityType uint16 to asset paths.

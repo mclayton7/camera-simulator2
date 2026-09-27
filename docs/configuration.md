@@ -371,6 +371,21 @@ Per-waveband CPU-side post-processing parameters. Configured under `sensor_modes
 | `contrast` | float | `1.0` | `1.1` | `1.2` | Contrast multiplier. |
 | `brightness_bias` | float | `0.0` | `-0.03` | `0.02` | Brightness offset `[-1, 1]`. |
 | `blur_radius` | int | `0` | `0` | `0` | Post-effect blur in pixels. |
+| `signal_weight_r` | float | `0.2126` | `0.2126` | `0.6` | Detector spectral response: signal = dot(scene RGB, signal_weight_*). Default is BT.709 luminance; NVG green-phosphor tubes weight green heavily. No env override. |
+| `signal_weight_g` | float | `0.7152` | `0.7152` | `0.3` | See `signal_weight_r`. No env override. |
+| `signal_weight_b` | float | `0.0722` | `0.0722` | `0.1` | See `signal_weight_r`. No env override. |
+
+**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). Provisional defaults; calibrated in Task 11. No env overrides — per-mode only.
+
+| Field | Type | EO/IR default | NVG default | Description |
+|-------|------|----------------|--------------|-------------|
+| `exposure.auto` | bool | `true` | `true` | Auto-exposure on; `false` uses `manual_gain_ev`. |
+| `exposure.min_gain_ev` | float | `-20.0` | `-20.0` | Lowest gain the simulated camera can select, log2 of the scene-linear multiplier. |
+| `exposure.max_gain_ev` | float | `-6.0` | `6.0` | Highest gain the simulated camera can select. |
+| `exposure.target_grey` | float | `0.18` | `0.3` | Linear value the histogram median is exposed to. |
+| `exposure.highlight_percentile` | float | `0.99` | `0.99` | This percentile of the histogram is kept below clipping. |
+| `exposure.lag_frames` | int | `2` | `2` | Convergence time constant in frames at 30 Hz (sim time); `0` = instant. |
+| `exposure.manual_gain_ev` | float | `-12.0` | `-12.0` | Gain used when `exposure.auto` is `false`. |
 
 ### Multi-stream Output Views (Phase D2)
 
@@ -655,6 +670,7 @@ render:
   camera_cut_angle_deg: 30.0
   origin_shift_distance_m: 20000.0
   exposure_compensation_ev: -1.0
+  sensor_path: auto
 ```
 
 | Key | Env | Default | Description |
@@ -664,6 +680,7 @@ render:
 | `render.camera_cut_angle_deg` | `CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG` | `30.0` | A view rotation larger than this in one frame resets TSR history. Must be > 0: a non-positive value is a validation error and that check is skipped. |
 | `render.exposure_compensation_ev` | `CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV` | `-1.0` | Auto-exposure compensation (EV), applied as the sensor view's `AutoExposureBias`. Auto-exposure stays on; this shifts where it settles. UE's default metering (0) over-brightens sunlit Cesium terrain by about 1 EV. Applied at startup. |
 | `render.origin_shift_distance_m` | `CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M` | `20000.0` | Rebase the Cesium georeference (`CesiumOriginShiftComponent`, `ChangeCesiumGeoreference` mode) when the camera is this far from the origin. Keeps local "up" = +Z and coordinates small. `0` disables. |
+| `render.sensor_path` | `CAMSIM_RENDER_SENSOR_PATH` | `auto` | ROADMAP 3B. `auto`: GPU sensor model once every enabled effect is ported, else legacy. `gpu`: force the GPU sensor model (unported effects are logged and ignored). `legacy`: force the UE tonemapper + CPU sensor model (3B.1 default behaviour). Unknown values warn and use `auto`. |
 
 **Render resolution (TSR).** With `view_source: primary`, `rendering_quality.tsr_screen_percentage`
 (`CAMSIM_TSR_SCREEN_PERCENTAGE`, default `100`) renders below the output size and lets TSR

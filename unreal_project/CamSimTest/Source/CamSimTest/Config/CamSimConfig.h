@@ -825,6 +825,16 @@ struct FCamSimConfig
 		// Env: CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV
 		float ExposureCompensationEV = -1.0f;
 
+		enum class ESensorPath : uint8
+		{
+			Auto = 0,  // GPU when every enabled effect is ported, else legacy (ROADMAP 3B)
+			Gpu,       // force the GPU sensor model; unported effects are ignored (logged)
+			Legacy,    // force UE tonemapper + CPU sensor model
+		};
+		// auto | gpu | legacy. Env: CAMSIM_RENDER_SENSOR_PATH
+		FString     SensorPath     = TEXT("auto");
+		ESensorPath SensorPathMode = ESensorPath::Auto;
+
 		bool IsPrimary() const { return ViewSourceMode == EViewSource::Primary; }
 	};
 	FRenderConfig Render;
