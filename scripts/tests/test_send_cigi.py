@@ -13,8 +13,8 @@ def test_pack_ig_control_header():
     assert pkt[2] == 3
     # Byte 3: database number (signed int8, zero here).
     assert pkt[3] == 0
-    # Byte 4: IG mode = Operate + Timestamp-valid flag (0x05).
-    assert pkt[4] == 0x05
+    # Byte 4: Minor Version 3 (bits 4-7) | Timestamp Valid | IG Mode Operate.
+    assert pkt[4] == 0x35
     # Bytes 6-7: byte swap magic (big-endian 0x8000).
     assert struct.unpack(">H", pkt[6:8])[0] == 0x8000
     # Bytes 8-11: host frame counter (big-endian).
