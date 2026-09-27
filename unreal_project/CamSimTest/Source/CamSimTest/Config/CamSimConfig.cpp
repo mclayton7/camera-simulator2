@@ -94,6 +94,16 @@ static FCamSimConfig::EEncoderPreference ParseEncoderPreference(const FString& V
 	return FCamSimConfig::EEncoderPreference::Auto;
 }
 
+static FCamSimConfig::FRenderConfig::EViewSource ParseViewSource(const FString& Value)
+{
+	using EViewSource = FCamSimConfig::FRenderConfig::EViewSource;
+	const FString Lower = Value.ToLower().TrimStartAndEnd();
+	if (Lower == TEXT("scene_capture")) return EViewSource::SceneCapture;
+	if (Lower == TEXT("primary") || Lower.IsEmpty()) return EViewSource::Primary;
+	UE_LOG(LogCamSim, Warning, TEXT("Unknown render.view_source '%s' — using primary"), *Value);
+	return EViewSource::Primary;
+}
+
 static FString NormalizeQualityPreset(const FString& Value)
 {
 	return Value.TrimStartAndEnd().ToLower();
@@ -1370,6 +1380,19 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlInt(OpNode, "structured_log_max_mb", Cfg.Operational.StructuredLogMaxMB);
 			YamlBool(OpNode, "health_http_enabled", Cfg.Operational.bHealthHttpEnabled);
 			YamlInt(OpNode, "health_http_port", Cfg.Operational.HealthHttpPort);
+			YamlBool  (OpNode, "snapshot_endpoint_enabled", Cfg.Operational.bSnapshotEndpointEnabled);
+			YamlString(OpNode, "frame_stats_path",          Cfg.Operational.FrameStatsPath);
+		}
+
+		// ROADMAP 3A: render path
+		if (YamlHas(Root, "render"))
+		{
+			ryml::ConstNodeRef RNode = Root["render"];
+			YamlString(RNode, "view_source",             Cfg.Render.ViewSource);
+			YamlFloat (RNode, "camera_cut_distance_m",   Cfg.Render.CameraCutDistanceM);
+			YamlFloat (RNode, "camera_cut_angle_deg",    Cfg.Render.CameraCutAngleDeg);
+			YamlDouble(RNode, "origin_shift_distance_m", Cfg.Render.OriginShiftDistanceM);
+			Cfg.Render.ViewSourceMode = ParseViewSource(Cfg.Render.ViewSource);
 		}
 
 		YamlReadElsewhere(Root, "entity_types");  // FEntityTypeTable
@@ -1762,6 +1785,20 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Operational.StructuredLogMaxMB    = GetEnvInt (TEXT("CAMSIM_STRUCTURED_LOG_MAX_MB"), Cfg.Operational.StructuredLogMaxMB);
 	Cfg.Operational.bHealthHttpEnabled    = GetEnvBool(TEXT("CAMSIM_HEALTH_HTTP_ENABLED"),   Cfg.Operational.bHealthHttpEnabled);
 	Cfg.Operational.HealthHttpPort        = GetEnvInt (TEXT("CAMSIM_HEALTH_HTTP_PORT"),      Cfg.Operational.HealthHttpPort);
+	Cfg.Operational.bSnapshotEndpointEnabled = GetEnvBool(TEXT("CAMSIM_SNAPSHOT_ENDPOINT_ENABLED"), Cfg.Operational.bSnapshotEndpointEnabled);
+	Cfg.Operational.FrameStatsPath           = GetEnv    (TEXT("CAMSIM_FRAME_STATS_PATH"),          Cfg.Operational.FrameStatsPath);
+
+	// ROADMAP 3A: render path env overrides. view_source is re-parsed only when
+	// the env var is set, so a YAML typo is reported once, not twice.
+	const FString EnvViewSource = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_RENDER_VIEW_SOURCE"));
+	if (!EnvViewSource.IsEmpty())
+	{
+		Cfg.Render.ViewSource     = EnvViewSource;
+		Cfg.Render.ViewSourceMode = ParseViewSource(EnvViewSource);
+	}
+	Cfg.Render.CameraCutDistanceM   = GetEnvFloat (TEXT("CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M"),   Cfg.Render.CameraCutDistanceM);
+	Cfg.Render.CameraCutAngleDeg    = GetEnvFloat (TEXT("CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG"),    Cfg.Render.CameraCutAngleDeg);
+	Cfg.Render.OriginShiftDistanceM = GetEnvDouble(TEXT("CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M"), Cfg.Render.OriginShiftDistanceM);
 	Cfg.Performance.bTrackPipelineLatency = GetEnvBool(TEXT("CAMSIM_TRACK_PIPELINE_LATENCY"), Cfg.Performance.bTrackPipelineLatency);
 
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping

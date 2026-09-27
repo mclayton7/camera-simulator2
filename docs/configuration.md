@@ -624,6 +624,8 @@ operational:
 |---|---|---|---|
 | `operational.health_http_enabled` | `CAMSIM_HEALTH_HTTP_ENABLED` | `true` | Master toggle. Default on for `sim-environment` Docker Compose compatibility. Set to `0` (env) or `false` (YAML) to disable. |
 | `operational.health_http_port` | `CAMSIM_HEALTH_HTTP_PORT` | `8080` | Listen port. Binds on all interfaces (0.0.0.0) — `FHttpServerModule::GetHttpRouter` does not take a bind address. |
+| `operational.snapshot_endpoint_enabled` | `CAMSIM_SNAPSHOT_ENDPOINT_ENABLED` | `false` | ROADMAP 3A. Binds `GET /snapshot`: returns the next grabbed frame as PNG (before sensor effects and encoding), 503 if no frame arrives within 5 s. For the bench harness (`scripts/bench/`). Unbound → 404. |
+| `operational.frame_stats_path` | `CAMSIM_FRAME_STATS_PATH` | `""` | ROADMAP 3A. Per-frame JSONL render stats (wall-clock frame time, `stat unit` thread/GPU times, frames emitted/dropped, tileset load %, SSE, camera cut, scene renders per frame). Empty disables. |
 
 **Routes:**
 
@@ -641,6 +643,23 @@ operational:
 - **Histograms (optional):** `camsim_frame_latency_ms` — P50/P95/P99 from `FPipelineLatencyTracker`. Only emitted when `performance.track_pipeline_latency = true`.
 
 The render/output FPS gauges are 1Hz rolling measurements updated from the subsystem's `Tick()` (not target values from config). FPS is `(frame_count_delta) / (wall_clock_delta)` over approximately one second.
+
+### Render Path (ROADMAP 3A)
+
+```yaml
+render:
+  view_source: primary
+  camera_cut_distance_m: 500.0
+  camera_cut_angle_deg: 30.0
+  origin_shift_distance_m: 0.0
+```
+
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `render.view_source` | `CAMSIM_RENDER_VIEW_SOURCE` | `primary` | `primary`: the sensor is the game viewport's view (TSR, one scene render per frame). `scene_capture`: legacy `SceneCapture2D` path, kept for A/B comparison until ROADMAP 3B. Unknown values warn and use `primary`. |
+| `render.camera_cut_distance_m` | `CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M` | `500.0` | A camera move larger than this in one frame (teleport, origin rebase) resets TSR history. |
+| `render.camera_cut_angle_deg` | `CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG` | `30.0` | A view rotation larger than this in one frame resets TSR history. |
+| `render.origin_shift_distance_m` | `CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M` | `0.0` | Rebase the Cesium georeference (`CesiumOriginShiftComponent`, `ChangeCesiumGeoreference` mode) when the camera is this far from the origin. Keeps local "up" = +Z and coordinates small. `0` disables. |
 
 ### Per-Frame Latency Tracking (28G)
 

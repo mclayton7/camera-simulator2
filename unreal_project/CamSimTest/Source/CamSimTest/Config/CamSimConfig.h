@@ -788,8 +788,39 @@ struct FCamSimConfig
 		// that don't want the server can set CAMSIM_HEALTH_HTTP_ENABLED=0.
 		bool  bHealthHttpEnabled = true;
 		int32 HealthHttpPort     = 8080;
+
+		// 3A: GET /snapshot returns the next grabbed frame as PNG (bench harness).
+		bool    bSnapshotEndpointEnabled = false;
+		// 3A: per-frame JSONL render stats for the bench harness (empty = disabled).
+		FString FrameStatsPath;
 	};
 	FOperationalConfig Operational;
+
+	// ROADMAP 3A — render path
+	struct FRenderConfig
+	{
+		enum class EViewSource : uint8
+		{
+			Primary = 0,   // the sensor is the game viewport's view (TSR, one render)
+			SceneCapture,  // legacy SceneCapture2D path, kept for A/B until 3B
+		};
+
+		// primary | scene_capture. Env: CAMSIM_RENDER_VIEW_SOURCE
+		FString     ViewSource     = TEXT("primary");
+		EViewSource ViewSourceMode = EViewSource::Primary;
+
+		// Pose jumps above either threshold in one frame reset TSR history.
+		// Env: CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M / CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG
+		float CameraCutDistanceM = 500.0f;
+		float CameraCutAngleDeg  = 30.0f;
+
+		// Rebase the Cesium georeference when the camera is this far from the
+		// origin, in metres. 0 = disabled. Env: CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M
+		double OriginShiftDistanceM = 0.0;
+
+		bool IsPrimary() const { return ViewSourceMode == EViewSource::Primary; }
+	};
+	FRenderConfig Render;
 
 	// Phase 13C: set to true when config was loaded (or defaults are valid).
 	// Set to false only if YAML parsing fails AND no defaults are available.

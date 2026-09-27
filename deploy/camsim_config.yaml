@@ -964,6 +964,32 @@ operational:
   health_http_enabled: true
   health_http_port: 8080
 
+  # 3A: GET /snapshot on the health port returns the next grabbed frame as PNG
+  # (lossless, before sensor effects). For the bench harness; off in production.
+  # Env: CAMSIM_SNAPSHOT_ENDPOINT_ENABLED
+  snapshot_endpoint_enabled: false
+
+  # 3A: per-frame JSONL render stats (frame time, thread/GPU time, tiles, SSE).
+  # Empty = disabled. Env: CAMSIM_FRAME_STATS_PATH
+  frame_stats_path: ""
+
+# --- Render path (ROADMAP 3A) ---
+render:
+  # primary: the sensor is the game viewport's view (TSR, one scene render per frame).
+  # scene_capture: legacy SceneCapture2D path, kept for A/B comparison until 3B.
+  # Env: CAMSIM_RENDER_VIEW_SOURCE
+  view_source: primary
+
+  # A pose jump above either threshold in one frame resets TSR history (camera cut).
+  # Env: CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M / CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG
+  camera_cut_distance_m: 500.0
+  camera_cut_angle_deg: 30.0
+
+  # Rebase the Cesium georeference when the camera is this far (m) from the
+  # origin, keeping "up" = +Z and coordinates small. 0 = disabled.
+  # Env: CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M
+  origin_shift_distance_m: 0.0
+
 # --- Entity Types ---
 # Maps CIGI EntityType uint16 to asset paths.
 # Use .gltf/.glb paths (relative to entities/) for runtime loading,
