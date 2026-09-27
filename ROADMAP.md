@@ -468,9 +468,10 @@ shots (nadir, slant, horizon, low oblique, far-origin slant/nadir) mean **105–
 clipped; dawn 93, dusk 78 (twilight: both clamp slightly at `max_gain_ev`); `night_slant` EO
 **26** (clamped at `max_gain_ev` −12.5); `night_slant_nvg` 67 at gain −8.8 (not clamped). 1080p
 agrees within ±5. Calibration: scene medians are 2^10.9–2^12.4 in daylight, 2^9.4 dawn, 2^8.9
-dusk, 2^6.6 night. EO's −1 EV `render.exposure_compensation_ev` also applies to the sensor AE, so
-the provisional `target_grey` 0.18 put the median at 0.09 (mean luma ~73); EO's `target_grey`
-is now 0.36 (median → 0.18), EO `max_gain_ev` −12.5, NVG `highlight_percentile` 0.97 (0.99 held
+dusk, 2^6.6 night. The provisional run was dark (mean luma ~73) because EO's −1 EV
+`render.exposure_compensation_ev` was added to the sensor AE target (median at 0.09); that bias
+no longer applies to the GPU path (refinement 10), so EO `target_grey` 0.18 puts the median at
+18% grey. EO `max_gain_ev` −12.5, NVG `highlight_percentile` 0.97 (0.99 held
 night NVG at gain −10.7, luma 25). UE's pre-exposure equals 2^`AutoExposureBias` exactly under
 manual exposure, so `UeExposureOffsetEv` stays 0. The legacy `/snapshot` is pre-CPU-sensor UE AE
 output (daylight ~170, night 161: UE's AE brightens night), so it is not a like-for-like
@@ -482,7 +483,7 @@ the graph is now timed through the GPU profiler (`RDG_EVENT_SCOPE_STAT` + `FGPUS
 `Camera/SensorGpuTimer.h`). The GPU-path stream is tagged BT.709 transfer (it applies the BT.709
 OETF; legacy stays sRGB), verified with ffprobe.
 
-Tests: 272 automation tests pass under NullRHI (270 + 2 with expected warnings; includes the 5
+Tests: 274 automation tests pass under NullRHI (272 + 2 with expected warnings; includes the 5
 `CamSim.GPU.*`, skipped there); `scripts/run_gpu_tests.sh` 5/5 on Metal; bench/CIGI pytest 42/42;
 KLV conformance export OK (misb.js 0.1.30); `scripts/ci_validate.sh --native` passes on both paths
 (`CAMSIM_RENDER_SENSOR_PATH=gpu` and default/legacy: H.264 + KLV, no decode errors, 150/150 KLV
@@ -517,6 +518,10 @@ Refinements to the spec made while planning 3B.1:
 8. Exposure keys are `min_gain_ev` / `max_gain_ev` (log2 of the gain on absolute scene-linear
    values); detector weights are per-mode `signal_weight_r/g/b`.
 9. NV12 digital zoom is nearest-neighbour, as the BGRA path's.
+10. `render.exposure_compensation_ev` applies only to UE's auto-exposure (legacy path); the GPU
+    sensor AE target is `exposure.target_grey` alone. This overrides the spec's "keeps its meaning
+    as a bias on the EO AE target": the −1 EV was a 3A correction for UE's own over-bright
+    metering, meaningless for the sensor AE, and applying it silently halved the EO target.
 
 Open points for the visual review: the NVG stream is monochrome (the green tint is applied only
 to the viewport display; NV12 chroma is neutral for IR/NVG); IR at night is dark (mean luma 14,

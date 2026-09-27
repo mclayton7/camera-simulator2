@@ -407,7 +407,6 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	In.bCameraCut   = bCameraCut;
 	In.DeltaSimSec  = Dt;
 	In.NewHistogram = bHasHist ? &Hist : nullptr;
-	In.ExposureCompensationEv = Cfg.Render.ExposureCompensationEV;
 	In.Serial       = ++ParamsSerial;
 	const FSensorModeConfig* ModeCfg = Cfg.SensorModeConfigs.Find(Mode);
 	const uint32 StaleBefore = SensorController.GetStaleEpisodes();

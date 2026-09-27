@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorExposureYamlTest,
 	"CamSim.Sensor.Config.ExposureFromYaml",
@@ -97,5 +99,61 @@ bool FSensorPathEnvTest::RunTest(const FString& Parameters)
 	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT("render:\n  sensor_path: gpu\n"));
 	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_RENDER_SENSOR_PATH"), TEXT(""));
 	TestTrue(TEXT("env wins"), Cfg.Render.SensorPathMode == FCamSimConfig::FRenderConfig::ESensorPath::Legacy);
+	return true;
+}
+
+namespace
+{
+	/** ROADMAP 3B.1 calibrated per-mode exposure (deploy/camsim_config.yaml). */
+	void TestCalibratedExposure(FAutomationTestBase& T, const FCamSimConfig& Cfg, const TCHAR* Source)
+	{
+		struct FExpect { ESensorMode Mode; const TCHAR* Name; float Min, Max, Grey, HiPct; };
+		const FExpect Expected[] = {
+			{ ESensorMode::EO,  TEXT("eo"),  -20.0f, -12.5f, 0.18f, 0.99f },
+			{ ESensorMode::IR,  TEXT("ir"),  -20.0f,  -6.0f, 0.18f, 0.99f },
+			{ ESensorMode::NVG, TEXT("nvg"), -20.0f,   6.0f, 0.30f, 0.97f },
+		};
+		for (const FExpect& E : Expected)
+		{
+			const FSensorModeConfig* M = Cfg.SensorModeConfigs.Find(E.Mode);
+			if (!T.TestNotNull(FString::Printf(TEXT("%s: %s present"), Source, E.Name), M)) continue;
+			const FSensorExposureConfig& X = M->Exposure;
+			T.TestTrue (FString::Printf(TEXT("%s: %s auto"), Source, E.Name), X.bAuto);
+			T.TestEqual(FString::Printf(TEXT("%s: %s min_gain_ev"), Source, E.Name), X.MinGainEv, E.Min);
+			T.TestEqual(FString::Printf(TEXT("%s: %s max_gain_ev"), Source, E.Name), X.MaxGainEv, E.Max);
+			T.TestEqual(FString::Printf(TEXT("%s: %s target_grey"), Source, E.Name), X.TargetGrey, E.Grey);
+			T.TestEqual(FString::Printf(TEXT("%s: %s highlight_percentile"), Source, E.Name), X.HighlightPercentile, E.HiPct);
+			T.TestEqual(FString::Printf(TEXT("%s: %s lag_frames"), Source, E.Name), X.LagFrames, 2);
+			T.TestEqual(FString::Printf(TEXT("%s: %s manual_gain_ev"), Source, E.Name), X.ManualGainEv, -12.0f);
+		}
+	}
+}
+
+// Built-in defaults and the canonical yaml must both carry the calibrated
+// per-mode exposure, so neither silently falls back to the neutral struct defaults.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPerModeExposureDefaultsTest,
+	"CamSim.Sensor.Config.PerModeExposureDefaults",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSensorPerModeExposureDefaultsTest::RunTest(const FString& Parameters)
+{
+	TestCalibratedExposure(*this, FCamSimConfig::LoadFromYamlString(TEXT("")), TEXT("built-in"));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPerModeExposureCanonicalTest,
+	"CamSim.Sensor.Config.PerModeExposureCanonicalConfig",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSensorPerModeExposureCanonicalTest::RunTest(const FString& Parameters)
+{
+	const FString Path = FPaths::ConvertRelativePathToFull(
+		FPaths::Combine(FPaths::ProjectDir(), TEXT("../../deploy/camsim_config.yaml")));
+	FString Yaml;
+	if (!TestTrue(FString::Printf(TEXT("read %s"), *Path), FFileHelper::LoadFileToString(Yaml, *Path)))
+	{
+		return false;
+	}
+	TestCalibratedExposure(*this, FCamSimConfig::LoadFromYamlString(Yaml, Path), TEXT("deploy/camsim_config.yaml"));
 	return true;
 }

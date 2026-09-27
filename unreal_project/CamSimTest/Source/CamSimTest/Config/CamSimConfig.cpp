@@ -343,6 +343,14 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		EoCfg.SunGlintIntensity      = 0.0f;
 		EoCfg.SunGlintThreshold      = 220.0f;
 		EoCfg.SunGlintSpread         = 2.0f;
+		// ROADMAP 3B.1 calibrated exposure (must match deploy/camsim_config.yaml;
+		// CamSim.Sensor.Config.PerModeExposureDefaults checks both).
+		EoCfg.Exposure.MinGainEv           = -20.0f;
+		EoCfg.Exposure.MaxGainEv           = -12.5f;
+		EoCfg.Exposure.TargetGrey          = 0.18f;
+		EoCfg.Exposure.HighlightPercentile = 0.99f;
+		EoCfg.Exposure.LagFrames           = 2;
+		EoCfg.Exposure.ManualGainEv        = -12.0f;
 		Cfg.SensorModeConfigs.Add(ESensorMode::EO, EoCfg);
 
 		FSensorModeConfig IrCfg;
@@ -373,6 +381,12 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		IrCfg.AGCLagFrames         = 2;
 		IrCfg.GainJitter           = 0.005f;
 		IrCfg.OffsetJitter         = 1.0f;
+		IrCfg.Exposure.MinGainEv           = -20.0f;
+		IrCfg.Exposure.MaxGainEv           = -6.0f;
+		IrCfg.Exposure.TargetGrey          = 0.18f;
+		IrCfg.Exposure.HighlightPercentile = 0.99f;
+		IrCfg.Exposure.LagFrames           = 2;
+		IrCfg.Exposure.ManualGainEv        = -12.0f;
 		Cfg.SensorModeConfigs.Add(ESensorMode::IR, IrCfg);
 
 		FSensorModeConfig NvgCfg;
@@ -392,6 +406,12 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		NvgCfg.AGCHighPercentile = 0.98f;
 		NvgCfg.AGCManualLevel    = -1.0f;
 		NvgCfg.AGCLagFrames      = 1;
+		NvgCfg.Exposure.MinGainEv           = -20.0f;
+		NvgCfg.Exposure.MaxGainEv           = 6.0f;
+		NvgCfg.Exposure.TargetGrey          = 0.3f;
+		NvgCfg.Exposure.HighlightPercentile = 0.97f;
+		NvgCfg.Exposure.LagFrames           = 2;
+		NvgCfg.Exposure.ManualGainEv        = -12.0f;
 		Cfg.SensorModeConfigs.Add(ESensorMode::NVG, NvgCfg);
 	}
 

@@ -13,7 +13,6 @@ struct FSensorControllerInput
 	bool                    bCameraCut  = false;
 	double                  DeltaSimSec = 0.0;
 	const FSensorHistogram* NewHistogram = nullptr;  // newest delivered this tick, or null
-	float                   ExposureCompensationEv = 0.0f;  // EO only
 	uint32                  Serial      = 0;          // this tick's params serial (monotonic)
 };
 

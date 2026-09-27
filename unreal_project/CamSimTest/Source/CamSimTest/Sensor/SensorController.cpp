@@ -40,8 +40,7 @@ void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeCon
 		LastMedianLog2 = Median;
 		if (E.bAuto)
 		{
-			const float Comp = (In.Mode == ESensorGraphMode::EO) ? In.ExposureCompensationEv : 0.0f;
-			const float ToGrey = FMath::Log2(FMath::Max(E.TargetGrey, 1e-6f)) + Comp - Median;
+			const float ToGrey = FMath::Log2(FMath::Max(E.TargetGrey, 1e-6f)) - Median;
 			const float NoClip = FMath::Log2(ClipLinear) - High;
 			Target = FMath::Min(ToGrey, NoClip);
 		}

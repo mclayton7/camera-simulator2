@@ -23,11 +23,12 @@ struct FSensorExposureConfig
 	/** Auto-exposure on; false uses ManualGainEv. */
 	bool  bAuto               = true;
 	/** Camera limits: shortest integration / lowest gain … highest gain.
-	 *  Defaults = the calibrated EO camera (deploy/camsim_config.yaml, ROADMAP 3B.1). */
+	 *  Neutral values; the calibrated per-mode cameras are set in
+	 *  FCamSimConfig's built-in defaults and deploy/camsim_config.yaml. */
 	float MinGainEv           = -20.0f;
-	float MaxGainEv           = -12.5f;
-	/** Linear value the histogram median is exposed to (before EO's exposure compensation). */
-	float TargetGrey          = 0.36f;
+	float MaxGainEv           = -6.0f;
+	/** Linear value the histogram median is exposed to. */
+	float TargetGrey          = 0.18f;
 	/** This percentile of the histogram is kept below clipping. */
 	float HighlightPercentile = 0.99f;
 	/** Convergence time constant in frames at 30 Hz (sim time); 0 = instant. */

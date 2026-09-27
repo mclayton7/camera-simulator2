@@ -51,7 +51,7 @@ camsim/
       Sensor/                      # Sensor model: AE/AGC controller, path selector, CPU reference + legacy CPU effects
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (272 tests across 49 files)
+      Tests/                       # UE5 Automation tests (274 tests across 49 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir + GPU sensor RDG graph (ROADMAP 3B)
     Shaders/Private/               # CamSimSensor.usf (virtual path /CamSim)
     Source/ThirdParty/
@@ -93,7 +93,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (272 tests across 49 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (274 tests across 49 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash

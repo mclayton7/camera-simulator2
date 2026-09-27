@@ -589,14 +589,14 @@ sensor_modes:
     sun_glint_spread: 2.0
     # ROADMAP 3B — auto-exposure (GPU sensor path), calibrated 2026-09-27 on the bench shots
     # (M1 Pro, SF). Scene median (log2 of absolute scene-linear luminance): daylight 10.9–12.4,
-    # dawn 9.4, dusk 8.9, night_slant 6.6. render.exposure_compensation_ev (-1) applies to EO,
-    # so target_grey 0.36 exposes the median to 0.18 (daylight gain -13.4…-14.9, mean luma
-    # 105–114, <0.1% clipped). max_gain_ev -12.5 makes night_slant clamp (mean luma 26);
-    # dawn/dusk clamp slightly too (luma 93/78).
+    # dawn 9.4, dusk 8.9, night_slant 6.6. target_grey 0.18 exposes the median to 18% grey
+    # (daylight gain -13.4…-14.9, mean luma 105–114, <0.1% clipped); render.exposure_compensation_ev
+    # does not apply here (legacy path only). max_gain_ev -12.5 makes night_slant clamp
+    # (mean luma 26); dawn/dusk clamp slightly too (luma 93/78).
     exposure:
       min_gain_ev: -20
       max_gain_ev: -12.5
-      target_grey: 0.36
+      target_grey: 0.18
       highlight_percentile: 0.99
       lag_frames: 2
       manual_gain_ev: -12
@@ -681,8 +681,8 @@ sensor_modes:
     signal_weight_r: 0.6
     signal_weight_g: 0.3
     signal_weight_b: 0.1
-    # ROADMAP 3B — auto-exposure (GPU sensor path), calibrated 2026-09-27. NVG takes no
-    # exposure compensation. night_slant median 6.4 → gain -8.8 (highlight-limited, well
+    # ROADMAP 3B — auto-exposure (GPU sensor path), calibrated 2026-09-27.
+    # night_slant median 6.4 → gain -8.8 (highlight-limited, well
     # under max_gain_ev: not clamped), mean luma 67; 0.97 lets the brightest 3% (lights,
     # sky) bloom to white as a tube does; 0.99 held the scene ~2 EV darker (gain -10.7, luma 25).
     exposure:
@@ -1034,6 +1034,7 @@ render:
   # Auto-exposure compensation in EV. Auto-exposure stays on (the camera adapts
   # to the scene); this shifts where it settles. -1 counters the over-bright
   # metering of sunlit terrain; 0 = UE default (washed out). Applied at startup.
+  # Legacy sensor path only: the GPU path uses sensor_modes.*.exposure.target_grey.
   # Env: CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV
   exposure_compensation_ev: -1.0
 
