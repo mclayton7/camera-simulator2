@@ -29,7 +29,7 @@ class Pose:
     roll: float = 0.0
     gimbal_yaw: float = 0.0
     gimbal_pitch: float = -30.0
-    fov_h: float = 30.0
+    fov_h: float = 60.0  # = sensor_fov_presets[0]; Sensor Control gain 0 re-applies it every frame
     utc_hour: int = 19   # 12:00 PDT
     utc_minute: int = 0
     month: int = 6

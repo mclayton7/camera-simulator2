@@ -1,0 +1,81 @@
+{
+  "meta": {
+    "label": "baseline-b",
+    "git": "6f9f15d",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "view_source": "config default",
+    "warmup_ran": false,
+    "smoke": false
+  },
+  "phases": {
+    "orbit": {
+      "frames": 3590,
+      "wall_ms_p50": 33.331,
+      "wall_ms_p95": 34.171,
+      "wall_ms_p99": 34.699,
+      "game_ms_p50": 2.984,
+      "render_ms_p50": 5.141,
+      "rhi_ms_p50": 2.466,
+      "gpu_ms_p50": 14.663,
+      "gpu_ms_p95": 23.781,
+      "hitches_66": 3,
+      "hitches_100": 2,
+      "popin_fraction": 0.4766016713091922,
+      "families_mean": 1.4994428969359332,
+      "dropped": 0,
+      "emitted_fps": 14.93557365537536
+    },
+    "slew": {
+      "frames": 1799,
+      "wall_ms_p50": 33.33,
+      "wall_ms_p95": 34.286,
+      "wall_ms_p99": 37.655,
+      "game_ms_p50": 3.649,
+      "render_ms_p50": 5.219,
+      "rhi_ms_p50": 2.601,
+      "gpu_ms_p50": 15.748,
+      "gpu_ms_p95": 23.762,
+      "hitches_66": 0,
+      "hitches_100": 0,
+      "popin_fraction": 0.0867148415786548,
+      "families_mean": 1.499722067815453,
+      "dropped": 0,
+      "emitted_fps": 14.973904064579388
+    },
+    "low_pass": {
+      "frames": 2685,
+      "wall_ms_p50": 33.318,
+      "wall_ms_p95": 34.662,
+      "wall_ms_p99": 36.37,
+      "game_ms_p50": 4.742,
+      "render_ms_p50": 5.535,
+      "rhi_ms_p50": 2.672,
+      "gpu_ms_p50": 16.482,
+      "gpu_ms_p95": 23.51,
+      "hitches_66": 5,
+      "hitches_100": 3,
+      "popin_fraction": 0.45735567970204843,
+      "families_mean": 1.4986964618249534,
+      "dropped": 0,
+      "emitted_fps": 14.887702903581486
+    },
+    "far_origin": {
+      "frames": 2693,
+      "wall_ms_p50": 33.306,
+      "wall_ms_p95": 35.291,
+      "wall_ms_p99": 36.546,
+      "game_ms_p50": 4.249,
+      "render_ms_p50": 5.586,
+      "rhi_ms_p50": 2.661,
+      "gpu_ms_p50": 15.159,
+      "gpu_ms_p95": 21.888,
+      "hitches_66": 4,
+      "hitches_100": 1,
+      "popin_fraction": 0.8666914222057185,
+      "families_mean": 1.499814333457111,
+      "dropped": 0,
+      "emitted_fps": 14.964035155497863
+    }
+  }
+}

@@ -107,6 +107,19 @@ def fetch_snapshot(dest: Path) -> bool:
         return False
 
 
+def wait_port_free(port: int, timeout_s: float = 90.0) -> None:
+    """Wait out TIME_WAIT on the health port: UE's HTTP listener binds without
+    SO_REUSEADDR, so a restart within ~30 s fails to bind (and /ready never answers)."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        netstat = subprocess.run(["netstat", "-an", "-p", "tcp"], capture_output=True, text=True).stdout
+        busy = [l for l in netstat.splitlines() if (f".{port} " in l or f":{port} " in l)]
+        if not busy:
+            return
+        time.sleep(2)
+    print(f"[bench] warning: port {port} still busy after {timeout_s:.0f}s")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
@@ -117,7 +130,8 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
-    out = args.out or REPO / ".cache" / "bench" / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.label}"
+    # Absolute: CamSim resolves relative paths against its own working directory.
+    out = (args.out or REPO / ".cache" / "bench" / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.label}").resolve()
     (out / "shots").mkdir(parents=True, exist_ok=True)
     pid_file = REPO / ".cache" / "camsim.pid"
     if pid_file.exists() and camsim_alive(pid_file):
@@ -130,6 +144,7 @@ def main() -> int:
         env["CAMSIM_RENDER_VIEW_SOURCE"] = args.view_source
     extra = ["-trace=cpu,gpu,frame", f"-tracefile={out / 'trace.utrace'}"] if args.trace else []
 
+    wait_port_free(int(HEALTH.rsplit(":", 1)[1]))
     host = Host()
     host.thread.start()   # /ready needs CIGI traffic
     subprocess.run([str(REPO / "scripts" / "run.sh"), "--headless", "--local", "--detach", *extra],

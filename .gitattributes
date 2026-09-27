@@ -1,3 +1,4 @@
 *.glb filter=lfs diff=lfs merge=lfs -text
 *.pdf filter=lfs diff=lfs merge=lfs -text
 *.DAC filter=lfs diff=lfs merge=lfs -text
+scripts/bench/shots/**/*.png filter=lfs diff=lfs merge=lfs -text
