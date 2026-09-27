@@ -161,3 +161,30 @@ bool FRenderConfigLodTransitionsPrimaryOnlyTest::RunTest(const FString& Paramete
 	TestFalse(TEXT("off when disabled"), UseLodTransitions(Cfg));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigCulledSseTest,
+	"CamSim.Config.CulledScreenSpaceError",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderConfigCulledSseTest::RunTest(const FString& Parameters)
+{
+	using CamSim::Geospatial::ResolveCulledScreenSpaceError;
+	FCamSimConfig Def;
+	// Auto (0): off-screen tiles keep the on-screen detail, so a gimbal snap
+	// never shows coarse placeholder tiles (Yosemite snap test, 2026-09-27).
+	TestEqual(TEXT("0 = auto = maximum_screen_space_error"), ResolveCulledScreenSpaceError(Def),
+		static_cast<double>(Def.MaximumScreenSpaceError));
+	Def.MaximumScreenSpaceError = 8.0f;
+	TestEqual(TEXT("auto follows a changed SSE"), ResolveCulledScreenSpaceError(Def), 8.0);
+	TestEqual(TEXT("cache default leaves headroom for the off-screen tiles"), FCamSimConfig().MaximumCachedBytesMB, 2048);
+
+	const FCamSimConfig Yaml = FCamSimConfig::LoadFromYamlString(TEXT("culled_screen_space_error: 24\n"));
+	TestEqual(TEXT("yaml value used"), ResolveCulledScreenSpaceError(Yaml), 24.0);
+	TestEqual(TEXT("no unknown keys"), Yaml.UnknownYamlKeys.Num(), 0);
+
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_CULLED_SSE"), TEXT("48"));
+	const FCamSimConfig Env = FCamSimConfig::LoadFromYamlString(TEXT("culled_screen_space_error: 24\n"));
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_CULLED_SSE"), TEXT(""));
+	TestEqual(TEXT("env overrides yaml"), ResolveCulledScreenSpaceError(Env), 48.0);
+	return true;
+}

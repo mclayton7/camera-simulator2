@@ -549,6 +549,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		YamlFloat (Root, "tile_preload_fov_scale",     Cfg.TilePreloadFovScale);
 		YamlInt   (Root, "max_simultaneous_tile_loads", Cfg.MaxSimultaneousTileLoads);
 		YamlFloat (Root, "maximum_screen_space_error", Cfg.MaximumScreenSpaceError);
+		YamlFloat (Root, "culled_screen_space_error",  Cfg.CulledScreenSpaceError);
 		YamlInt   (Root, "maximum_cached_bytes_mb",    Cfg.MaximumCachedBytesMB);
 		YamlInt  (Root, "loading_descendant_limit", Cfg.LoadingDescendantLimit);
 		YamlBool (Root, "use_lod_transitions",      Cfg.bUseLodTransitions);
@@ -1524,6 +1525,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.TilePreloadFovScale     = GetEnvFloat(TEXT("CAMSIM_TILE_FOV_SCALE"),       Cfg.TilePreloadFovScale);
 	Cfg.MaxSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_MAX_TILE_LOADS"),        Cfg.MaxSimultaneousTileLoads);
 	Cfg.MaximumScreenSpaceError = GetEnvFloat(TEXT("CAMSIM_MAX_SSE"),             Cfg.MaximumScreenSpaceError);
+	Cfg.CulledScreenSpaceError  = GetEnvFloat(TEXT("CAMSIM_CULLED_SSE"),          Cfg.CulledScreenSpaceError);
 	Cfg.MaximumCachedBytesMB    = GetEnvInt(TEXT("CAMSIM_MAX_CACHED_MB"),         Cfg.MaximumCachedBytesMB);
 	Cfg.LoadingDescendantLimit  = GetEnvInt  (TEXT("CAMSIM_LOADING_DESCENDANT_LIMIT"), Cfg.LoadingDescendantLimit);
 	Cfg.bUseLodTransitions      = GetEnvBool (TEXT("CAMSIM_USE_LOD_TRANSITIONS"),      Cfg.bUseLodTransitions);

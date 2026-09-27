@@ -117,9 +117,14 @@ struct FCamSimConfig
 	// Cesium LOD quality: lower = sharper terrain (Cesium default 16).
 	// For quantized-mesh terrain (CWT), internally divided by 8: so 8.0 → effective 1.0 px.
 	float   MaximumScreenSpaceError = 16.0f;
+	// Detail kept for tiles outside the view (Cesium CulledScreenSpaceError; higher =
+	// coarser). Tiles that enter the view after a gimbal snap show at this detail until
+	// they refine to MaximumScreenSpaceError. 0 = auto (= MaximumScreenSpaceError).
+	// Env: CAMSIM_CULLED_SSE
+	float   CulledScreenSpaceError = 0.0f;
 	// Tile cache budget in MB per tileset (0 = Cesium default / uncapped).
 	// Large cache avoids re-downloading tiles when revisiting areas.
-	int32   MaximumCachedBytesMB = 1024;
+	int32   MaximumCachedBytesMB = 2048;
 	// Max descendant tiles to load simultaneously (Cesium default 20; higher = better low-alt detail)
 	// Env: CAMSIM_LOADING_DESCENDANT_LIMIT
 	int32   LoadingDescendantLimit = 20;

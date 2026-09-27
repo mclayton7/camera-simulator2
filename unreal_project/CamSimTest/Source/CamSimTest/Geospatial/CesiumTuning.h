@@ -26,11 +26,9 @@ namespace CamSim::Geospatial
 	bool UseLodTransitions(const FCamSimConfig& Cfg);
 
 	/**
-	 * Pure derivation: scales the off-frustum culled-SSE with horizontal FoV so
-	 * a narrow sensor (e.g. 5° EO) gets more aggressive culling and a wide one
-	 * gets less. Clamped at ≥100 so very-narrow FoVs don't collapse the cull
-	 * threshold to zero. Extracted from ApplyCesiumTilesetTuning so it can be
-	 * tested without a live world.
+	 * Detail for tiles outside the view: culled_screen_space_error if set (> 0),
+	 * else maximum_screen_space_error, so a gimbal snap lands on tiles already
+	 * at full detail instead of coarse placeholders.
 	 */
-	double ComputeCulledScreenSpaceError(double HFovDeg);
+	double ResolveCulledScreenSpaceError(const FCamSimConfig& Cfg);
 }

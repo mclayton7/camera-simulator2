@@ -9,18 +9,11 @@
 
 namespace CamSim::Geospatial
 {
-	double ComputeCulledScreenSpaceError(double HFovDeg)
+	double ResolveCulledScreenSpaceError(const FCamSimConfig& Cfg)
 	{
-		// Narrow-FOV sensors (e.g. 5° EO) can tolerate far more aggressive off-frustum
-		// culling than the default 60° tuning. Scale proportionally and clamp so a
-		// zoomed-out view doesn't collapse to nothing.
-		constexpr double ReferenceFovDeg      = 60.0;   // baseline horizontal FOV for tuning
-		constexpr double BaseCulledSseAtRef   = 200.0;  // SSE applied when HFovDeg == ReferenceFovDeg
-		constexpr double MinCulledSse         = 100.0;  // floor so wide-FOV tilesets still cull off-frustum geometry
-		constexpr double MinHFovClampDeg      = 1.0;    // guard against div-by-zero / runaway scaling
-
-		const double FovScale = FMath::Max(HFovDeg, MinHFovClampDeg) / ReferenceFovDeg;
-		return FMath::Max(BaseCulledSseAtRef * FovScale, MinCulledSse);
+		return Cfg.CulledScreenSpaceError > 0.0f
+			? static_cast<double>(Cfg.CulledScreenSpaceError)
+			: static_cast<double>(Cfg.MaximumScreenSpaceError);
 	}
 
 	bool UseLodTransitions(const FCamSimConfig& Cfg)
@@ -32,7 +25,7 @@ namespace CamSim::Geospatial
 	{
 		if (!World) return;
 
-		const double CulledSSE = ComputeCulledScreenSpaceError(static_cast<double>(Cfg.HFovDeg));
+		const double CulledSSE = ResolveCulledScreenSpaceError(Cfg);
 
 		for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
 		{
@@ -48,7 +41,9 @@ namespace CamSim::Geospatial
 			It->ForbidHoles            = false;  // true grows the render set linearly during camera motion
 			It->LoadingDescendantLimit = Cfg.LoadingDescendantLimit;
 
-			// Aggressively cull off-screen tiles (low-res placeholders outside frustum).
+			// Off-screen tiles stay loaded at the on-screen detail by default. The old
+			// coarse setting (SSE 200) left a third of the view blurry for ~2 s after
+			// a 90° gimbal snap; SSE 16 costs ~60% more tiles and no frame time.
 			It->EnforceCulledScreenSpaceError = true;
 			It->CulledScreenSpaceError        = CulledSSE;
 
@@ -62,9 +57,9 @@ namespace CamSim::Geospatial
 			It->LogSelectionStats   = Cfg.bLogTileSelectionStats;
 
 			UE_LOG(LogCamSim, Log,
-				TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f@hfov=%.0f° cacheMB=%d descLimit=%d lodBlend=%d logStats=%d physicsMeshes=%d)"),
+				TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f cacheMB=%d descLimit=%d lodBlend=%d logStats=%d physicsMeshes=%d)"),
 				*It->GetName(), Cfg.MaxSimultaneousTileLoads,
-				Cfg.MaximumScreenSpaceError, CulledSSE, Cfg.HFovDeg,
+				Cfg.MaximumScreenSpaceError, CulledSSE,
 				Cfg.MaximumCachedBytesMB, Cfg.LoadingDescendantLimit,
 				(int)UseLodTransitions(Cfg), (int)Cfg.bLogTileSelectionStats, (int)Cfg.bCreatePhysicsMeshes);
 		}

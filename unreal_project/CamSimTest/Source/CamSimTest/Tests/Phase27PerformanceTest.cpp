@@ -4,7 +4,6 @@
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
 #include "Camera/CamSimCamera.h"
-#include "Geospatial/CesiumTuning.h"
 #include "HAL/PlatformMemory.h"
 #include "Metadata/KlvBuilder.h"
 
@@ -156,45 +155,6 @@ bool FPhase27_TexturePoolRange::RunTest(const FString& Parameters)
 	C.TexturePoolBudgetMB = 4096;
 	TestTrue("4096 MB valid", C.TexturePoolBudgetMB > 0);
 	return true;
-}
-
-// ---------------------------------------------------------------------------
-// Test 10 — Culled-SSE derivation from HFoV (7A.4 / TODO §7B.1)
-//
-// Verifies the pure derivation logic shared by ApplyCesiumTilesetTuning
-// and hot-reload: narrow sensors tolerate more aggressive off-frustum
-// culling, and the floor clamps at 100.
-// ---------------------------------------------------------------------------
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_CulledSseDerivation,
-    "CamSim.Phase27.CulledSseDerivation",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FPhase27_CulledSseDerivation::RunTest(const FString& Parameters)
-{
-    // Reference case: 60° HFoV returns the base 200.0 unit.
-    TestEqual(TEXT("60° HFoV → base SSE 200"),
-        CamSim::Geospatial::ComputeCulledScreenSpaceError(60.0), 200.0);
-
-    // Wide sensor scales up linearly: 120° → 400.
-    TestEqual(TEXT("120° HFoV → 400"),
-        CamSim::Geospatial::ComputeCulledScreenSpaceError(120.0), 400.0);
-
-    // Narrow sensor would compute 200 * 5/60 ≈ 16.7 — clamped at the 100 floor.
-    TestEqual(TEXT("5° HFoV clamped to floor 100"),
-        CamSim::Geospatial::ComputeCulledScreenSpaceError(5.0), 100.0);
-
-    // Pathological inputs do not crash or go negative.
-    TestEqual(TEXT("0° HFoV treated as 1° (still floor 100)"),
-        CamSim::Geospatial::ComputeCulledScreenSpaceError(0.0), 100.0);
-    TestEqual(TEXT("Negative HFoV treated as 1° (still floor 100)"),
-        CamSim::Geospatial::ComputeCulledScreenSpaceError(-25.0), 100.0);
-
-    // Monotonic: once past the clamp threshold (30°), growing HFoV grows SSE.
-    const double A = CamSim::Geospatial::ComputeCulledScreenSpaceError(45.0);
-    const double B = CamSim::Geospatial::ComputeCulledScreenSpaceError(60.0);
-    const double C = CamSim::Geospatial::ComputeCulledScreenSpaceError(90.0);
-    TestTrue(TEXT("Monotonic above the floor"), A < B && B < C);
-
-    return true;
 }
 
 // ---------------------------------------------------------------------------
