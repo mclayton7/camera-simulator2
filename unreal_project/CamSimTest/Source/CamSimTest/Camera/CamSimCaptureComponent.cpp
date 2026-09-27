@@ -142,7 +142,7 @@ bool UCamSimCaptureComponent::EnsureGrabExtension()
 	if (bGpuSensor && Subsystem)
 	{
 		const FCamSimConfig& Cfg = Subsystem->GetConfig();
-		GrabExtension->EnableGpuSensor_GameThread(FIntPoint(Cfg.CaptureWidth, Cfg.CaptureHeight), &StatsMailbox, &GpuTimer);
+		GrabExtension->EnableGpuSensor_GameThread(FIntPoint(Cfg.CaptureWidth, Cfg.CaptureHeight), &StatsMailbox);
 	}
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — grabbing the game viewport%s"),
 		bGpuSensor ? TEXT(" (GPU sensor replaces the tonemapper)") : TEXT(""));

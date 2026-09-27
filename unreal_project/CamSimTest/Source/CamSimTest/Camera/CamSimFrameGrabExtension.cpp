@@ -88,12 +88,10 @@ void FCamSimFrameGrabExtension::PostRenderViewFamily_RenderThread(FRDGBuilder& G
 // ROADMAP 3B — GPU sensor in place of the tonemapper
 // ---------------------------------------------------------------------------
 
-void FCamSimFrameGrabExtension::EnableGpuSensor_GameThread(FIntPoint InCaptureSize, FSensorStatsMailbox* InMailbox,
-	FSensorGpuTimer* InTimer)
+void FCamSimFrameGrabExtension::EnableGpuSensor_GameThread(FIntPoint InCaptureSize, FSensorStatsMailbox* InMailbox)
 {
 	CaptureSize = InCaptureSize;
 	Mailbox = InMailbox;
-	Timer = InTimer;
 	bGpuSensor.Store(true);  // SeqCst: the fields above are visible to whoever sees it
 }
 
@@ -171,9 +169,12 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunSensor_RenderThread(FRDGBuilder
 			SceneColor.ViewRect.Width(), SceneColor.ViewRect.Height(), CaptureSize.X, CaptureSize.Y);
 	}
 
-	if (Timer) Timer->Begin(GraphBuilder);
-	const FSensorGraphOutputs Out = AddSensorPasses(GraphBuilder, In, Params);
-	if (Timer) Timer->End(GraphBuilder);
+	FSensorGraphOutputs Out;
+	{
+		// Timed by the GPU profiler; FSensorGpuTimer reads the result (see SensorGpuTimer.h).
+		RDG_EVENT_SCOPE_STAT(GraphBuilder, CamSimSensor, "CamSimSensor");
+		Out = AddSensorPasses(GraphBuilder, In, Params);
+	}
 	ReadStats_RenderThread(GraphBuilder, Out.Histogram, Params.Serial);
 
 	FFrameGrabRequest Req;

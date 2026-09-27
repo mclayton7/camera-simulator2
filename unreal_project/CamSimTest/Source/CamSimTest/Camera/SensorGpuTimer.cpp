@@ -1,52 +1,24 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Camera/SensorGpuTimer.h"
-#include "RenderGraphBuilder.h"
-#include "RHICommandList.h"
-#include "DynamicRHI.h"
 
-void FSensorGpuTimer::Harvest()
+FCamSimSensorGpuStat GPUStat_CamSimSensor;
+
+FCamSimSensorGpuStat::EOnTimingResultsAction FCamSimSensorGpuStat::OnTimingResults(
+	UE::RHI::GPUProfiler::FQueue Queue, double BusyMs, double /*IdleMs*/, double /*WaitMs*/)
 {
-	for (FPair& P : Pairs)
+	if (Queue.Type == UE::RHI::GPUProfiler::FQueue::EType::Graphics && Queue.Index == 0)
 	{
-		if (!P.bPending) continue;
-		uint64 StartUs = 0, StopUs = 0;
-		if (RHIGetRenderQueryResult(P.Start, StartUs, /*bWait=*/false) && RHIGetRenderQueryResult(P.Stop, StopUs, /*bWait=*/false))
-		{
-			P.bPending = false;
-			if (StopUs >= StartUs) LatestMs.Store(static_cast<float>(StopUs - StartUs) / 1000.0f, EMemoryOrder::Relaxed);
-		}
+		LatestMs.Store(static_cast<float>(BusyMs), EMemoryOrder::Relaxed);
 	}
+	return EOnTimingResultsAction::Keep;
 }
 
-void FSensorGpuTimer::Begin(FRDGBuilder& GraphBuilder)
+float FSensorGpuTimer::GetLatestMs() const
 {
-	if (!GSupportsTimestampRenderQueries) return;
-	Current = (Current + 1) % NumFrames;
-	GraphBuilder.AddPass(RDG_EVENT_NAME("CamSimSensorTimerBegin"), ERDGPassFlags::None | ERDGPassFlags::NeverCull,
-		[this, Index = Current](FRHICommandListImmediate& RHICmdList)
-	{
-		Harvest();
-		FPair& P = Pairs[Index];
-		if (P.bPending) return;  // still unread after NumFrames: skip this measurement
-		if (!P.Start)
-		{
-			P.Start = RHICreateRenderQuery(RQT_AbsoluteTime);
-			P.Stop  = RHICreateRenderQuery(RQT_AbsoluteTime);
-		}
-		RHICmdList.EndRenderQuery(P.Start);
-	});
-}
-
-void FSensorGpuTimer::End(FRDGBuilder& GraphBuilder)
-{
-	if (!GSupportsTimestampRenderQueries) return;
-	GraphBuilder.AddPass(RDG_EVENT_NAME("CamSimSensorTimerEnd"), ERDGPassFlags::None | ERDGPassFlags::NeverCull,
-		[this, Index = Current](FRHICommandListImmediate& RHICmdList)
-	{
-		FPair& P = Pairs[Index];
-		if (!P.Stop || P.bPending) return;
-		RHICmdList.EndRenderQuery(P.Stop);
-		P.bPending = true;
-	});
+#if HAS_GPU_STATS
+	return GPUStat_CamSimSensor.LatestMs.Load(EMemoryOrder::Relaxed);
+#else
+	return -1.0f;
+#endif
 }

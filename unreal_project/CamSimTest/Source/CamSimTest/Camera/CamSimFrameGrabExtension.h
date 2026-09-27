@@ -12,7 +12,6 @@ class FRHIGPUTextureReadback;
 class FRHITexture;
 class FViewport;
 class FSensorStatsMailbox;
-class FSensorGpuTimer;
 struct FPostProcessMaterialInputs;
 struct FScreenPassTexture;
 
@@ -45,10 +44,10 @@ public:
 
 	/**
 	 * Game thread, once, before any request: run the GPU sensor model in place
-	 * of the tonemapper (ROADMAP 3B). Mailbox and Timer must outlive the
+	 * of the tonemapper (ROADMAP 3B). Mailbox must outlive the
 	 * extension's last render (the owner flushes rendering commands first).
 	 */
-	void EnableGpuSensor_GameThread(FIntPoint InCaptureSize, FSensorStatsMailbox* InMailbox, FSensorGpuTimer* InTimer);
+	void EnableGpuSensor_GameThread(FIntPoint InCaptureSize, FSensorStatsMailbox* InMailbox);
 	/** Render thread: parameters for the next frames the graph runs. */
 	void SetParams_RenderThread(const FSensorFrameParams& P) { Params = P; }
 
@@ -90,7 +89,6 @@ private:
 	TAtomic<bool>        bGpuSensor { false };                 // writer: game (once) → readers: game/render (SeqCst)
 	FIntPoint            CaptureSize = FIntPoint::ZeroValue;   // set before bGpuSensor
 	FSensorStatsMailbox* Mailbox = nullptr;                    // set before bGpuSensor
-	FSensorGpuTimer*     Timer   = nullptr;                    // set before bGpuSensor
 	FSensorFrameParams   Params;                               // render thread
 	struct FStatsSlot { TUniquePtr<FRHIGPUBufferReadback> Readback; uint32 Serial = 0; bool bPending = false; };
 	static constexpr int32 NumStatsSlots = 4;
