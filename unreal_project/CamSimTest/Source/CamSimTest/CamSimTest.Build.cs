@@ -48,6 +48,8 @@ public class CamSimTest : ModuleRules
 			"HTTPServer",
 			// HTTP client for automation tests of the HTTP server
 			"HTTP",
+			// GPU sensor model shader module (Phase 3B)
+			"CamSimShaders",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

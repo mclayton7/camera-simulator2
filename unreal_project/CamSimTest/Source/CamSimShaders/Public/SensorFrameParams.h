@@ -1,0 +1,41 @@
+// Copyright CamSim Contributors. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Containers/StaticArray.h"
+
+enum class ESensorGraphMode : uint32 { EO = 0, IR = 1, NVG = 2 };
+
+struct FSensorHistogram
+{
+	static constexpr int32 NumBins     = 256;
+	static constexpr float MinLog2     = -16.0f;
+	static constexpr float BinsPerStop = 8.0f;
+	TStaticArray<uint32, NumBins> Bins;
+	uint32 Serial = 0;   // FSensorFrameParams::Serial of the frame it measured
+	FSensorHistogram() { for (uint32& B : Bins) B = 0; }
+	uint64 Total() const { uint64 T = 0; for (uint32 B : Bins) T += B; return T; }
+	static float BinCentreLog2(int32 Bin) { return MinLog2 + (Bin + 0.5f) / BinsPerStop; }
+	/** Histogram bin of a detector signal; <= 2^MinLog2, 0 and NaN land in bin 0. */
+	static int32 BinOf(float Signal)
+	{
+		if (!(Signal > 0.0f)) return 0;
+		const int32 B = FMath::FloorToInt32((FMath::Log2(Signal) - MinLog2) * BinsPerStop);
+		return FMath::Clamp(B, 0, NumBins - 1);
+	}
+};
+
+/** Everything one frame of the sensor graph needs besides its input textures. */
+struct FSensorFrameParams
+{
+	ESensorGraphMode Mode = ESensorGraphMode::EO;
+	uint32    bBlackHot     = 0;          // IR/NVG polarity: 1 inverts after gain/offset
+	float     Gain          = 1.0f;       // linear multiplier on absolute scene-linear signal
+	float     Offset        = 0.0f;       // added after Gain (IR AGC), normalised units
+	FVector3f SignalWeights = FVector3f(0.2126f, 0.7152f, 0.0722f);
+	float     KneeStart     = 0.8f;       // EO soft highlight knee (linear)
+	FVector3f DisplayTint   = FVector3f(1.0f, 1.0f, 1.0f);  // viewport only (NVG green)
+	float     InputScale    = 1.0f;       // multiplies scene colour; tests only (runtime uses View.OneOverPreExposure)
+	uint32    Serial        = 0;          // tags the histogram this frame produces
+};

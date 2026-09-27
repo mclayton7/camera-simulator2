@@ -5,6 +5,11 @@
 	"Description": "",
 	"Modules": [
 		{
+			"Name": "CamSimShaders",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
 			"Name": "CamSimTest",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"

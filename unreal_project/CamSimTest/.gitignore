@@ -12,6 +12,7 @@
 !/Source/**
 !/Config/**
 !/Plugins/**
+!/Shaders/**
 
 # ThirdParty compiled binaries are generated locally by scripts/build_thirdparty.sh
 # — do not commit them, but do commit Build.cs files and .gitkeep placeholders.
