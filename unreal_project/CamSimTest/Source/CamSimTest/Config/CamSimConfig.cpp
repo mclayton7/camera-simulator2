@@ -1935,6 +1935,16 @@ TArray<FString> FCamSimConfig::Validate() const
 	}
 
 	// Performance
+	// A non-positive threshold would cut every frame; ShouldCutCamera skips it instead.
+	if (Render.CameraCutDistanceM <= 0.0f)
+	{
+		Errors.Add(FString::Printf(TEXT("render.camera_cut_distance_m=%.2f must be > 0 (check skipped)"), Render.CameraCutDistanceM));
+	}
+	if (Render.CameraCutAngleDeg <= 0.0f)
+	{
+		Errors.Add(FString::Printf(TEXT("render.camera_cut_angle_deg=%.2f must be > 0 (check skipped)"), Render.CameraCutAngleDeg));
+	}
+
 	RangeCheckFloat(TEXT("Performance.RenderFrameRateHz"), Performance.RenderFrameRateHz, 1.0f, 120.0f);
 	if (Performance.OutputFrameRateHz < 1.0f || Performance.OutputFrameRateHz > Performance.RenderFrameRateHz)
 	{

@@ -167,6 +167,27 @@ bool FCameraCutThresholdTest::RunTest(const FString& Parameters)
 	// Just under / just over the distance threshold (cm).
 	TestFalse(TEXT("499 m"), ShouldCutCamera(Origin, Level, FVector(49900.0, 0, 0), Level, DistM, AngDeg));
 	TestTrue(TEXT("501 m"), ShouldCutCamera(Origin, Level, FVector(50100.0, 0, 0), Level, DistM, AngDeg));
+	// A non-positive threshold skips that check instead of cutting every frame
+	// (which would silently turn TSR into no anti-aliasing).
+	TestFalse(TEXT("zero distance: normal flight"), ShouldCutCamera(Origin, Level, FVector(333.0, 0, 0), Level, 0.0, AngDeg));
+	TestFalse(TEXT("negative angle: fast slew"), ShouldCutCamera(Origin, Level, Origin, FRotator(-30.0, 2.0, 0.0).Quaternion(), DistM, -1.0));
+	TestTrue(TEXT("zero distance: angle still cuts"), ShouldCutCamera(Origin, Level, Origin, FRotator(-30.0, 90.0, 0.0).Quaternion(), 0.0, AngDeg));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraCutValidateTest,
+	"CamSim.Render.CameraCut.ValidateRejectsNonPositive",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCameraCutValidateTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Cfg;
+	TestEqual(TEXT("defaults valid"), Cfg.Validate().Num(), 0);
+	Cfg.Render.CameraCutDistanceM = 0.0f;
+	Cfg.Render.CameraCutAngleDeg  = -5.0f;
+	const FString All = FString::Join(Cfg.Validate(), TEXT("\n"));
+	TestTrue(TEXT("distance reported"), All.Contains(TEXT("camera_cut_distance_m")));
+	TestTrue(TEXT("angle reported"), All.Contains(TEXT("camera_cut_angle_deg")));
 	return true;
 }
 

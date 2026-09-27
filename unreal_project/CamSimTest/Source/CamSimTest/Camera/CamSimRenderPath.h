@@ -10,7 +10,9 @@ namespace CamSimRender
 {
 	/**
 	 * True when the view moved too far in one frame for TSR to reproject
-	 * (teleport, origin rebase, view snap). Locations in UE units (cm).
+	 * (teleport, origin rebase, view snap). Locations in UE units (cm). A
+	 * non-positive threshold skips that check (Validate() reports it) rather
+	 * than cutting every frame, which would turn TSR into no anti-aliasing.
 	 */
 	inline bool ShouldCutCamera(const FVector& PrevLocCm, const FQuat& PrevRot,
 	                            const FVector& CurLocCm, const FQuat& CurRot,
@@ -18,7 +20,8 @@ namespace CamSimRender
 	{
 		const double MovedM = FVector::Dist(PrevLocCm, CurLocCm) / 100.0;
 		const double TurnedDeg = FMath::RadiansToDegrees(PrevRot.AngularDistance(CurRot));
-		return MovedM > CutDistanceM || TurnedDeg > CutAngleDeg;
+		return (CutDistanceM > 0.0 && MovedM > CutDistanceM)
+		    || (CutAngleDeg > 0.0 && TurnedDeg > CutAngleDeg);
 	}
 
 	/**
