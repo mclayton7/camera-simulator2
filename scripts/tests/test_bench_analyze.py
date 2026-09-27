@@ -39,3 +39,11 @@ def test_empty_phase_reports_zero_frames_not_an_error():
     out = analyze.summarize([], [{"name": "orbit", "start": 0, "end": 1, "measured": True}])
     assert out["orbit"]["frames"] == 0
     assert out["orbit"]["emitted_fps"] == 0.0
+
+
+def test_load_rows_skips_a_partial_last_line_from_a_crashed_run(tmp_path, capsys):
+    p = tmp_path / "frames.jsonl"
+    p.write_text('{"t": 0, "wall_ms": 33.0}\n{"t": 1, "wall_ms": 34.0}\n{"t": 2, "wal')
+    rows = analyze.load_rows(p)
+    assert [r["t"] for r in rows] == [0, 1]
+    assert "skipped 1" in capsys.readouterr().err

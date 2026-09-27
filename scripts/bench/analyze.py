@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 HITCH_MS = 66.7        # two frames at 30 fps
@@ -17,11 +18,18 @@ def _pct(values: list[float], p: float) -> float:
 
 
 def load_rows(path: Path) -> list[dict]:
-    rows = []
+    """Rows that parse; a crashed run can leave a partial last line."""
+    rows, bad = [], 0
     for line in path.read_text().splitlines():
         line = line.strip()
-        if line:
+        if not line:
+            continue
+        try:
             rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            bad += 1
+    if bad:
+        print(f"[analyze] {path}: skipped {bad} unparseable line(s)", file=sys.stderr)
     return rows
 
 

@@ -32,6 +32,7 @@ HEALTH = f"http://127.0.0.1:{os.environ.get('CAMSIM_HEALTH_HTTP_PORT', '8080')}"
 CIGI_PORT = int(os.environ.get("CAMSIM_CIGI_PORT", "8888"))
 STREAM_PORT = int(os.environ.get("CAMSIM_MULTICAST_PORT", "5004"))
 READY_TIMEOUT_S = 900       # a cold start compiles shaders
+PID_FILE_GRACE_S = 30.0     # run.sh --detach writes it before returning
 SHOT_SETTLE_S = 2.0         # TSR / Lumen history after the terrain gate opens
 
 
@@ -68,18 +69,23 @@ def http_json(path: str) -> dict | None:
         return None
 
 
-def camsim_alive(pid_file: Path) -> bool:
+def camsim_alive(pid_file: Path) -> bool | None:
+    """True/False from the pid in run.sh's pid file; None if there is no pid file."""
     if not pid_file.exists():
-        return True  # run.sh has not written it yet
+        return None
     pid = pid_file.read_text().split()[0]
     return subprocess.run(["kill", "-0", pid], capture_output=True).returncode == 0
 
 
-def wait_ready(pid_file: Path) -> None:
-    deadline = time.time() + READY_TIMEOUT_S
+def wait_ready(pid_file: Path, pid_grace_s: float = PID_FILE_GRACE_S) -> None:
+    start = time.time()
+    deadline = start + READY_TIMEOUT_S
     while time.time() < deadline:
-        if not camsim_alive(pid_file):
+        alive = camsim_alive(pid_file)
+        if alive is False:
             sys.exit("CamSim exited during startup")
+        if alive is None and time.time() - start >= pid_grace_s:
+            sys.exit(f"run.sh --detach wrote no pid file ({pid_file}) within {pid_grace_s:.0f}s")
         body = http_json("/ready")
         if body and body.get("status") == "ready":
             return
@@ -107,14 +113,24 @@ def fetch_snapshot(dest: Path) -> bool:
         return False
 
 
+def port_busy(netstat: str, port: int) -> bool:
+    """True if a `netstat -an` socket has `port` as its LOCAL address (4th
+    column): macOS writes 127.0.0.1.8080, Linux 127.0.0.1:8080. An outbound
+    connection to a remote port 8080 doesn't count."""
+    for line in netstat.splitlines():
+        cols = line.split()
+        if len(cols) >= 4 and cols[0].startswith("tcp") and cols[3].endswith((f".{port}", f":{port}")):
+            return True
+    return False
+
+
 def wait_port_free(port: int, timeout_s: float = 90.0) -> None:
-    """Wait out TIME_WAIT on the health port: UE's HTTP listener binds without
-    SO_REUSEADDR, so a restart within ~30 s fails to bind (and /ready never answers)."""
+    """Wait out TIME_WAIT on the health port so timings start clean. (CamSim
+    would retry the bind itself, but /ready would come up late.)"""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         netstat = subprocess.run(["netstat", "-an", "-p", "tcp"], capture_output=True, text=True).stdout
-        busy = [l for l in netstat.splitlines() if (f".{port} " in l or f":{port} " in l)]
-        if not busy:
+        if not port_busy(netstat, port):
             return
         time.sleep(2)
     print(f"[bench] warning: port {port} still busy after {timeout_s:.0f}s")
@@ -134,7 +150,7 @@ def main() -> int:
     out = (args.out or REPO / ".cache" / "bench" / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.label}").resolve()
     (out / "shots").mkdir(parents=True, exist_ok=True)
     pid_file = REPO / ".cache" / "camsim.pid"
-    if pid_file.exists() and camsim_alive(pid_file):
+    if camsim_alive(pid_file):
         sys.exit("A CamSim instance is already running (scripts/stop.sh to stop it)")
 
     env = dict(os.environ,

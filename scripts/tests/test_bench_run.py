@@ -1,0 +1,41 @@
+"""Launch helpers in run_bench.py: port and process checks."""
+import os
+
+import pytest
+from bench import run_bench
+
+NETSTAT = """Active Internet connections (including servers)
+Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)
+tcp4       0      0  192.168.1.20.52344     93.184.216.34.8080     ESTABLISHED
+tcp4       0      0  127.0.0.1.8080         127.0.0.1.52311        TIME_WAIT
+"""
+
+
+def test_port_busy_matches_the_local_address_only():
+    outbound_only = "\n".join(NETSTAT.splitlines()[:3])
+    assert not run_bench.port_busy(outbound_only, 8080)
+    assert run_bench.port_busy(NETSTAT, 8080)
+    assert not run_bench.port_busy(NETSTAT, 80)
+
+
+def test_port_busy_reads_linux_style_addresses():
+    linux = "tcp        0      0 0.0.0.0:8080            0.0.0.0:*               LISTEN\n"
+    assert run_bench.port_busy(linux, 8080)
+
+
+def test_camsim_alive_is_unknown_without_a_pid_file(tmp_path):
+    assert run_bench.camsim_alive(tmp_path / "camsim.pid") is None
+
+
+def test_camsim_alive_checks_the_pid(tmp_path):
+    pid_file = tmp_path / "camsim.pid"
+    pid_file.write_text(f"{os.getpid()}\n\n")
+    assert run_bench.camsim_alive(pid_file) is True
+    pid_file.write_text("999999\n\n")
+    assert run_bench.camsim_alive(pid_file) is False
+
+
+def test_wait_ready_gives_up_when_no_pid_file_appears(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_bench, "http_json", lambda path: None)
+    with pytest.raises(SystemExit, match="pid file"):
+        run_bench.wait_ready(tmp_path / "camsim.pid", pid_grace_s=0.0)
