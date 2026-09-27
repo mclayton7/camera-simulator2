@@ -48,10 +48,12 @@ camsim/
       Environment/                 # Sky, fog, weather, day/night
       Geospatial/                  # Cesium terrain queries, WGS84 conversions
       Metadata/                    # MISB ST 0601/ST 0102 KLV builder
-      Sensor/                      # CPU post-process: EO/IR/NVG effects
+      Sensor/                      # Sensor model: AE/AGC controller, path selector, CPU reference + legacy CPU effects
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (234 tests across 42 files)
+      Tests/                       # UE5 Automation tests (272 tests across 49 files)
+    Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir + GPU sensor RDG graph (ROADMAP 3B)
+    Shaders/Private/               # CamSimSensor.usf (virtual path /CamSim)
     Source/ThirdParty/
       CCL/                         # CIGI Class Library (static lib)
       FFmpeg/                      # libavcodec/format/util/swscale + libx264
@@ -91,7 +93,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (234 tests across 42 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (272 tests across 49 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -132,7 +134,10 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **CCL API quirk**: `GetDestEntityIDValid()`/`GetDestEntityID()` only in `CigiLosSegReqV3_2`, not V3
 - **Fixed framerate**: Engine locked to 30fps via DefaultEngine.ini (`bUseFixedFrameRate=True`). `DeltaTime` is therefore constant: measure frame time with the wall clock (the bench does)
 - **The sensor is the primary view** (`render.view_source: primary`, ROADMAP 3A): the game viewport renders it with TSR and `FCamSimFrameGrabExtension` grabs the result. `SceneCapture` only holds pose/FOV/post-process until 3B; don't call `CaptureScene()` in primary mode. Screen messages are disabled in primary mode, since the viewport canvas would be burned into the video
-- **Readback ring** (`Camera/ReadbackRing.h`): up to three captures in flight, delivered strictly in capture order; a full ring skips the new frame (counted as `EncoderBusy`). The CPU sensor model and the encoder each have ~33 ms per frame at 30 fps; if the sensor model can't keep up (e.g. 1080p with heavy effects), frames are skipped until 3B moves it to the GPU
+- **Readback ring** (`Camera/ReadbackRing.h`): up to three captures in flight, delivered strictly in capture order; a full ring skips the new frame (counted as `EncoderBusy`). On the GPU sensor path the ring carries NV12 (1.5 bytes/px) and the CPU only de-interleaves UV before encoding; on the legacy path the CPU sensor model still has ~33 ms per frame
+- **Sensor path** (`render.sensor_path`, ROADMAP 3B): `gpu` replaces UE's tonemapper via `ISceneViewExtension::EPostProcessingPass::ReplacingTonemapper`; UE exposure is manual and driven by the sensor AE (`AutoExposureBias` = sensor gain, so `View.PreExposure` tracks it and the shader divides it out); `auto` falls back to legacy while any unported effect is enabled (the default config does, so the default is legacy until 3B.2/3B.3). The path is fixed at startup. GPU-path streams are tagged BT.709 transfer, legacy sRGB
+- **Shaders** live in `unreal_project/CamSimTest/Shaders/` (virtual path `/CamSim`), compiled by the `CamSimShaders` module (`PostConfigInit`)
+- **GPU pass timing on Metal**: `RQT_AbsoluteTime` render queries resolve to the command buffer's end time truncated to whole seconds, so they can't time a pass. Use an `RDG_EVENT_SCOPE_STAT` with an `FGPUStat` subclass (`OnTimingResults`) as `Camera/SensorGpuTimer.h` does
 - **Health port restart**: restarting CamSim within ~30 s of the last run finds :8080 in TIME_WAIT. The health server logs "port 8080 is busy … NOT listening" and retries every 2 s until it binds (no reuse flag: UE's only option also sets SO_REUSEPORT, which would let two CamSims share the port). `run_bench.py` still waits the port out before launching
 - **IDE false positives**: clang diagnostics for UE types are wrong — UBT handles includes at build time
 - **Docker networking**: `network_mode: host` required for UDP multicast routing

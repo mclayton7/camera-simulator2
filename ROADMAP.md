@@ -347,9 +347,8 @@ Target path:
 4. **Convert RGB/gray → NV12 on the GPU**, then either:
    - encode directly from GPU memory with NVENC (see UE AVCodecs / Pixel Streaming 2), or
    - read back only NV12 (1.5 bytes/px instead of 4).
-5. Readback is a ring of render-thread-polled readbacks. (The per-tick
-   `FlushRenderingCommands` is already gone; today only one readback is in flight at a
-   time, gated on `EReadbackState::Idle`.)
+5. Readback is a ring of render-thread-polled readbacks. (Done in 3A.1: a three-slot ring,
+   `Camera/ReadbackRing.h`, delivers frames in capture order; 3B.1 puts NV12 through it.)
 6. Retire the parallel CPU pipeline (`Sensor/SensorPostProcess.cpp`) and the partial
    material-based GPU path. Keep one reference implementation, used for tests and as the
    fallback when no NVIDIA GPU is present (Mesa/llvmpipe).
@@ -440,6 +439,92 @@ Findings for follow-up:
   launch directory; `use_lod_transitions` applies only in the primary view; the bench tolerates
   a partial frame-stats line, checks only the local address for a busy port, and stops waiting
   if no pid file appears.
+
+**3B.1 status (2026-09-27): GPU sensor pipeline implemented on macOS; awaiting visual review.**
+Spec: `docs/superpowers/specs/2026-09-27-gpu-sensor-model-design.md`; plan:
+`docs/superpowers/plans/2026-09-27-gpu-sensor-3b1-pipeline.md`. With
+`render.sensor_path: gpu` the sensor model replaces UE's tonemapper
+(`EPostProcessingPass::ReplacingTonemapper`) as RDG compute on HDR scene-linear input: a histogram
+accumulated in the same pass feeds a CPU AE/AGC controller, gain + BT.709 OETF (EO) or detector
+signal + AGC/polarity (IR/NVG), then NV12 packing on the GPU and a 1.5 bytes/px readback through the
+3A.1 ring. `auto` (the default) still selects legacy, because the default config enables effects
+that arrive in 3B.2/3B.3.
+
+Measured with `scripts/bench/` on an M1 Pro, warm cache, per phase (orbit / slew / low pass / far
+origin); baselines `scripts/bench/baselines/macos-m1pro-3b1-{720p,1080p}.json`:
+
+| Metric | 3A.1 baseline 720p | Legacy 720p (3B.1 build) | GPU 720p | GPU 1080p (3A.1 1080p baseline) |
+| --- | --- | --- | --- | --- |
+| Frame time p95 (ms) | 37.1 / 35.0 / 34.8 / 36.0 | 33.9 / 34.5 / 34.7 / 36.2 | 34.0 / 34.7 / 35.1 / 36.3 | 34.1 / 34.8 / 35.0 / 36.3 (34.1 / 34.7 / 34.8 / 35.9) |
+| GPU frame p50 (ms) | 19.4 / 18.3 / 19.0 / 19.0 | 16.8 / 16.6 / 18.1 / 18.4 | 16.9 / 12.9 / 18.0 / 19.4 | 17.1 / 18.0 / 18.4 / 19.2 |
+| Sensor graph GPU p50 / p95 (ms) | — | — (CPU model) | 0.14–0.17 / 0.16–0.18 | 0.33–0.37 / 0.36–0.40 |
+| Emitted fps | 29.8–29.9 | 29.7–30.0 | 29.7–30.0 | 29.8–29.9 |
+| Dropped frames | 0 | 0 | 0 | 0 |
+| Render thread p50 (ms) | 5.7–6.1 | 5.5–6.0 | 2.7–3.1 | 2.8–3.2 |
+| Game thread p50 (ms) | 3.8–4.6 | 3.1–4.1 | 3.4–4.5 | 3.4–4.5 |
+
+Exposure (GPU path, 720p `*_sensor.png`, BT.709 luma of the decoded frame, 0–255): daylight EO
+shots (nadir, slant, horizon, low oblique, far-origin slant/nadir) mean **105–114**, ≤ 0.02%
+clipped; dawn 93, dusk 78 (twilight: both clamp slightly at `max_gain_ev`); `night_slant` EO
+**26** (clamped at `max_gain_ev` −12.5); `night_slant_nvg` 67 at gain −8.8 (not clamped). 1080p
+agrees within ±5. Calibration: scene medians are 2^10.9–2^12.4 in daylight, 2^9.4 dawn, 2^8.9
+dusk, 2^6.6 night. EO's −1 EV `render.exposure_compensation_ev` also applies to the sensor AE, so
+the provisional `target_grey` 0.18 put the median at 0.09 (mean luma ~73); EO's `target_grey`
+is now 0.36 (median → 0.18), EO `max_gain_ev` −12.5, NVG `highlight_percentile` 0.97 (0.99 held
+night NVG at gain −10.7, luma 25). UE's pre-exposure equals 2^`AutoExposureBias` exactly under
+manual exposure, so `UeExposureOffsetEv` stays 0. The legacy `/snapshot` is pre-CPU-sensor UE AE
+output (daylight ~170, night 161: UE's AE brightens night), so it is not a like-for-like
+exposure comparison.
+
+Found and fixed during calibration: `sensor_gpu_ms` read 0 on every frame, because MetalRHI
+resolves `RQT_AbsoluteTime` queries to the command buffer's end time truncated to whole seconds;
+the graph is now timed through the GPU profiler (`RDG_EVENT_SCOPE_STAT` + `FGPUStat::OnTimingResults`,
+`Camera/SensorGpuTimer.h`). The GPU-path stream is tagged BT.709 transfer (it applies the BT.709
+OETF; legacy stays sRGB), verified with ffprobe.
+
+Tests: 272 automation tests pass under NullRHI (270 + 2 with expected warnings; includes the 5
+`CamSim.GPU.*`, skipped there); `scripts/run_gpu_tests.sh` 5/5 on Metal; bench/CIGI pytest 42/42;
+KLV conformance export OK (misb.js 0.1.30); `scripts/ci_validate.sh --native` passes on both paths
+(`CAMSIM_RENDER_SENSOR_PATH=gpu` and default/legacy: H.264 + KLV, no decode errors, 150/150 KLV
+packets conformant in 5 s).
+
+3B exit criteria (spec) after 3B.1, macOS:
+
+| # | Criterion | 3B.1 |
+| --- | --- | --- |
+| 1 | `sensor_path=gpu` whole run; legacy CPU/SceneCapture/material paths deleted | ✅ gpu for every run; deletion is 3B.4 |
+| 2 | 30 fps, 0 dropped per phase; frame p95 ≤ 3A.1 + 1 ms | ✅ 29.7–30.0 fps, 0 dropped; worst p95 delta +0.33 ms (1080p far origin) |
+| 3 | `sensor_gpu_ms` p95 ≤ 4 ms at 1080p, all effects; controller < 0.2 ms; 1.5 B/px readback | ✅ 0.40 ms p95 (3B.1 core only; effects come in 3B.2/3B.3); controller not isolated (game thread +0.3–0.4 ms p50 vs legacy, an upper bound); NV12 readback ✅ |
+| 4 | night EO < 40; daylight EO 90–170, < 1% clipped; cut converges in one frame | ✅ 26; 105–114, ≤ 0.02%; snap on cut/mode switch covered by `CamSim.Sensor.Controller.CutAndModeSwitchSnap` |
+| 5 | NullRHI tests, `CamSim.GPU.Sensor.*` on Metal, `ci_validate --native` | ✅ |
+| 6 | Visual review of EO/IR/NVG post-sensor shots | ⏳ shot set `scripts/bench/shots/macos/3b1/` |
+| 7 | Docs | ✅ this section, `docs/configuration.md`, CLAUDE.md |
+
+Refinements to the spec made while planning 3B.1:
+1. UE exposure is manual but not constant: the controller sets UE's `AutoExposureBias` each tick
+   so scene colour stays in fp16 range, and the shader divides out `View.OneOverPreExposure`.
+2. The histogram is accumulated inside the Apply pass (no separate stats pass) and reaches the
+   game thread through a mailbox fed by its own readback ring, not the NV12 ring.
+3. `render.sensor_path: auto | gpu | legacy` (`CAMSIM_RENDER_SENSOR_PATH`, default `auto`); 3B.1's
+   bench runs with `gpu`.
+4. The path is fixed for the session; no hot switching (legacy is deleted in 3B.4).
+5. `GET /snapshot/sensor` is a second route instead of `?stage=sensor`; in 3B.1's GPU path it
+   equals `/snapshot`.
+6. Path reporting goes to `/metrics` (`camsim_sensor_path{path=...}`) and `camsim_health.json`;
+   `/health` stays the liveness watchdog.
+7. The encoder keeps YUV420P input: NV12 is de-interleaved on the CPU (no `sws_scale`).
+   Codec-native NV12 / GPU textures are 3C.
+8. Exposure keys are `min_gain_ev` / `max_gain_ev` (log2 of the gain on absolute scene-linear
+   values); detector weights are per-mode `signal_weight_r/g/b`.
+9. NV12 digital zoom is nearest-neighbour, as the BGRA path's.
+
+Open points for the visual review: the NVG stream is monochrome (the green tint is applied only
+to the viewport display; NV12 chroma is neutral for IR/NVG); IR at night is dark (mean luma 14,
+22% black) because its AGC stretches the visible-light proxy between the 1st and 99th
+percentiles and the bright clouds on the horizon set the top. Thermal radiance is Milestone 4.
+
+Next: the 3B.2 plan (port the optics and detector effects so `auto` selects the GPU path with the
+default config).
 
 ---
 
