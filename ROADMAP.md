@@ -358,7 +358,22 @@ Target path:
    features, and avoids paying for a second scene render if the main viewport also renders.
 
 **Exit criteria:** 1080p30 EO and IR with all sensor effects enabled, below 50% of the frame
-budget on the reference GPU. The pipeline benchmark is tracked in CI.
+budget on the reference GPU (RTX 5090). The pipeline benchmark is tracked in CI.
+
+**Plan (2026-09-26).** Split into four sub-projects, each with its own spec and plan:
+
+| #  | Sub-project                 | Covers                                                                                                                              |
+| -- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 3A | Render path + measurement   | Benchmark/reference-shot harness; sensor rendered as the primary view (TSR, one scene render, Cesium LOD transitions, origin shift); hitch and SSE tuning. Item 7 above. |
+| 3B | Sensor model on the GPU     | Items 1–3, 5, 6: tonemapper replaced by RDG compute on HDR input (minimal core effects first, auto-fallback to CPU), NV12, readback ring. |
+| 3C | GPU-texture encode          | Item 4: UE `AVCodecs` NVENC/VideoToolbox from GPU textures; FFmpeg for TS/KLV muxing only.                                          |
+| 3D | CI performance gate         | Exit criterion: 3A's harness as a tracked CI threshold.                                                                             |
+
+3A is first because the user-visible problems are tile pop-in and frame rate/hitches, and the
+current path probably renders the scene twice (main viewport + `SceneCapture2D`). 3A targets
+macOS (M1 Pro) only; Linux/5090 runs are deferred.
+
+Design: `docs/superpowers/specs/2026-09-26-render-path-design.md` (in review).
 
 ---
 
