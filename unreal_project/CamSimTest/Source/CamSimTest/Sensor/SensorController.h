@@ -23,7 +23,8 @@ public:
 	static constexpr int32 StaleAfterTicks = 10;
 	static constexpr float ClipLinear      = 2.0f;  // the knee maps 2.0 to ~255/255
 	FSensorFrameParams Update(const FSensorControllerInput& In, const FSensorModeConfig& Cfg);
-	float  GetGainEv() const          { return GainEv; }
+	/** Log2 of the gain actually emitted last tick (AE gain in EO/NVG, IR AGC stretch in IR AGC). */
+	float  GetGainEv() const          { return LastEmittedGainEv; }
 	float  GetLastMedianLog2() const  { return LastMedianLog2; }
 	uint32 GetStaleEpisodes() const   { return StaleEpisodes; }
 	/** Percentile P in [0,1] of H as log2 signal; false for an empty histogram. */
@@ -38,7 +39,8 @@ private:
 	bool   bSnapPending    = false;
 	uint32 SnapAfterSerial = 0;
 	ESensorGraphMode LastMode = ESensorGraphMode::EO;
-	float  GainEv          = -12.0f;
+	float  GainEv          = -12.0f;   // AE loop state only; never written by IR AGC
+	float  LastEmittedGainEv = -12.0f; // log2 of the gain actually emitted last tick
 	float  IrLoLog2        = 0.0f;
 	float  IrHiLog2        = 1.0f;
 	float  LastMedianLog2  = 0.0f;

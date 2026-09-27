@@ -103,11 +103,15 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 		const float Lo = FMath::Exp2(IrLoLog2), Hi = FMath::Exp2(IrHiLog2);
 		P.Gain   = 1.0f / FMath::Max(Hi - Lo, 1e-30f);
 		P.Offset = -Lo * P.Gain;
-		GainEv   = FMath::Log2(P.Gain);
+		LastEmittedGainEv = FMath::Log2(P.Gain);
 	}
 	else
 	{
-		P.Gain = FMath::Exp2(GainEv);
+		// Clamp against the CURRENT mode's config: GainEv may have converged
+		// under a different mode's Min/MaxGainEv (see IR AGC excursion above).
+		const float ClampedEv = FMath::Clamp(GainEv, Cfg.Exposure.MinGainEv, Cfg.Exposure.MaxGainEv);
+		P.Gain = FMath::Exp2(ClampedEv);
+		LastEmittedGainEv = ClampedEv;
 	}
 	return P;
 }

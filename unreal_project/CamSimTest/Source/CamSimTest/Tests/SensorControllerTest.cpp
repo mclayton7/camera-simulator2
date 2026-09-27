@@ -230,3 +230,85 @@ bool FSensorStaleTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("empty histogram keeps gain"), C.GetGainEv(), FMath::Log2(First.Gain), 1e-5f);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorIrAgcToEoTest, "CamSim.Sensor.Controller.IrAgcToEoKeepsAeState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorIrAgcToEoTest::RunTest(const FString& Parameters)
+{
+	// The IR-AGC stretch factor must never leak into the AE loop's GainEv
+	// state: after IR(AGC) -> EO with no new histogram, the emitted gain
+	// must be exactly the EO AE gain from before the IR excursion, and it
+	// must stay within the EO camera's [MinGainEv, MaxGainEv].
+	FSensorController C;
+	FSensorModeConfig Cfg = EoCfg();
+	Cfg.bAGCEnabled = true;
+	Cfg.AGCLowPercentile = 0.01f;
+	Cfg.AGCHighPercentile = 0.99f;
+	Cfg.AGCLagFrames = 0;
+
+	// EO AE converges on a histogram.
+	const FSensorHistogram Eo = Flat(12.0f, 1);
+	C.Update(In(&Eo, 1), Cfg);
+	const float EoGain = C.GetGainEv();
+
+	// Switch to IR with AGC enabled and deliver an IR histogram: emitted
+	// gain becomes the (very different) percentile-stretch factor.
+	FSensorHistogram Ir;
+	const int32 LoBin = FSensorHistogram::BinOf(FMath::Exp2(4.0f));
+	const int32 HiBin = FSensorHistogram::BinOf(FMath::Exp2(6.0f));
+	Ir.Bins[LoBin] = 500; Ir.Bins[HiBin] = 500; Ir.Serial = 2;
+	FSensorControllerInput IrIn = In(&Ir, 2);
+	IrIn.Mode = ESensorGraphMode::IR;
+	C.Update(IrIn, Cfg);
+	TestTrue(TEXT("IR AGC gain differs from EO AE gain"), FMath::Abs(C.GetGainEv() - EoGain) > 0.5f);
+
+	// Switch back to EO with no histogram for a few ticks: must report the
+	// EO AE gain unchanged, not the stale IR stretch factor.
+	for (int32 I = 0; I < 3; ++I)
+	{
+		FSensorControllerInput BackIn = In(nullptr, 3 + I);
+		BackIn.Mode = ESensorGraphMode::EO;
+		C.Update(BackIn, Cfg);
+	}
+	TestEqual(TEXT("EO AE state preserved across IR excursion"), C.GetGainEv(), EoGain, FMath::Abs(EoGain) * 1e-5f + 1e-6f);
+	TestTrue(TEXT("within EO camera limits"),
+		C.GetGainEv() >= Cfg.Exposure.MinGainEv && C.GetGainEv() <= Cfg.Exposure.MaxGainEv);
+
+	// A post-switch EO histogram still snaps to its own target.
+	const float MedianLog2 = FSensorHistogram::BinCentreLog2(FSensorHistogram::BinOf(FMath::Exp2(10.0f)));
+	const float ExpectedEv = FMath::Clamp(FMath::Log2(Cfg.Exposure.TargetGrey) - MedianLog2,
+		Cfg.Exposure.MinGainEv, Cfg.Exposure.MaxGainEv);
+	const FSensorHistogram Eo2 = Flat(10.0f, 6);
+	FSensorControllerInput Eo2In = In(&Eo2, 6);
+	Eo2In.Mode = ESensorGraphMode::EO;
+	C.Update(Eo2In, Cfg);
+	TestEqual(TEXT("post-switch histogram snaps to its own target"), C.GetGainEv(), ExpectedEv, 0.01f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorIrAgcZeroWidthTest, "CamSim.Sensor.Controller.IrAgcZeroWidthBand",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorIrAgcZeroWidthTest::RunTest(const FString& Parameters)
+{
+	// All pixels in a single bin: low and high percentile land in the same
+	// bin, so the AGC band must be widened to exactly one bin (1/BinsPerStop
+	// stops) rather than collapsing to zero width.
+	FSensorController C;
+	FSensorModeConfig Cfg = EoCfg();
+	Cfg.bAGCEnabled = true;
+	Cfg.AGCLowPercentile = 0.01f;
+	Cfg.AGCHighPercentile = 0.99f;
+	Cfg.AGCLagFrames = 0;
+	FSensorHistogram H;
+	const int32 Bin = FSensorHistogram::BinOf(FMath::Exp2(5.0f));
+	H.Bins[Bin] = 1000; H.Serial = 1;
+	FSensorControllerInput I = In(&H, 1);
+	I.Mode = ESensorGraphMode::IR;
+	const FSensorFrameParams P = C.Update(I, Cfg);
+	TestTrue(TEXT("gain finite and positive"), FMath::IsFinite(P.Gain) && P.Gain > 0.0f);
+	const float Lo = FSensorHistogram::BinCentreLog2(Bin);
+	TestEqual(TEXT("low percentile -> 0"), FMath::Exp2(Lo) * P.Gain + P.Offset, 0.0f, 1e-4f);
+	TestEqual(TEXT("band is exactly one bin wide"),
+		FMath::Exp2(Lo + 1.0f / FSensorHistogram::BinsPerStop) * P.Gain + P.Offset, 1.0f, 1e-4f);
+	return true;
+}
