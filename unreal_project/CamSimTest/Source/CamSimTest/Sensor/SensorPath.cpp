@@ -42,6 +42,19 @@ namespace
 		if (Cfg.OverlayConfig.bEnabled)        Out.Add(TEXT("overlay"));
 		if (Cfg.LaserDesignator.bEnabled)      Out.Add(TEXT("laser_designator"));
 		if (Cfg.Performance.bGpuSensorEffects) Out.Add(TEXT("gpu_sensor_effects"));
+
+		// ActiveSensorQuality: NoiseScale/VignettingScale/ScanLineScale/AtmosphereScale/
+		// GaussianSigmaScale are multiplicative on a per-mode base that's already listed
+		// above when non-zero, so they're no-ops here. Contrast, BrightnessBias and
+		// BlurRadius are independent of the per-mode base (Contrast multiplies, but a
+		// non-1 quality Contrast still changes the effective value even when the
+		// per-mode Contrast is neutral at 1.0; BrightnessBias/BlurRadius are additive)
+		// and quality presets ("high"/"ultra") set them non-neutral, so they must be
+		// checked on their own.
+		const FSensorQualityConfig& Q = Cfg.ActiveSensorQuality;
+		if (!FMath::IsNearlyEqual(Q.Contrast, 1.0f)) Out.Add(TEXT("quality.contrast"));
+		if (Q.BrightnessBias != 0.0f)                Out.Add(TEXT("quality.brightness_bias"));
+		if (Q.BlurRadius > 0)                        Out.Add(TEXT("quality.blur_radius"));
 	}
 }
 

@@ -106,6 +106,32 @@ bool FSensorPathColorTempTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathQualityPresetTest, "CamSim.Sensor.Path.QualityPresetEffectsAreUnported",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPathQualityPresetTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Cfg = CleanGpuConfig();
+	TestTrue(TEXT("clean config -> gpu"), FSensorPathSelector::Decide(Cfg).Path == ESensorPipelinePath::Gpu);
+
+	Cfg.ActiveSensorQuality.BlurRadius = 1;
+	FSensorPathDecision D = FSensorPathSelector::Decide(Cfg);
+	TestTrue(TEXT("quality blur -> legacy"), D.Path == ESensorPipelinePath::Legacy);
+	TestTrue(TEXT("names quality.blur_radius"), D.Unported.Contains(TEXT("quality.blur_radius")));
+
+	Cfg = CleanGpuConfig();
+	Cfg.ActiveSensorQuality.Contrast = 1.05f;
+	D = FSensorPathSelector::Decide(Cfg);
+	TestTrue(TEXT("quality contrast -> legacy"), D.Path == ESensorPipelinePath::Legacy);
+	TestTrue(TEXT("names quality.contrast"), D.Unported.Contains(TEXT("quality.contrast")));
+
+	Cfg = CleanGpuConfig();
+	Cfg.ActiveSensorQuality.BrightnessBias = 0.1f;
+	D = FSensorPathSelector::Decide(Cfg);
+	TestTrue(TEXT("quality brightness_bias -> legacy"), D.Path == ESensorPipelinePath::Legacy);
+	TestTrue(TEXT("names quality.brightness_bias"), D.Unported.Contains(TEXT("quality.brightness_bias")));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorMailboxTest, "CamSim.Sensor.Mailbox.NewestWins",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorMailboxTest::RunTest(const FString& Parameters)
