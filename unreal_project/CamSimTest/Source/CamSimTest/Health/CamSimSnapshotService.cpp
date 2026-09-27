@@ -26,8 +26,12 @@ void FCamSimSnapshotService::OfferFrame(const TArray<FColor>& Pixels, int32 Widt
 	InFlight.Add({ Job, MoveTemp(Pending) });
 	Pending.Reset();
 
-	Async(EAsyncExecution::ThreadPool, [&IWM, Job, Frame = TArray<FColor>(Pixels), Width, Height]()
+	Async(EAsyncExecution::ThreadPool, [&IWM, Job, Frame = TArray<FColor>(Pixels), Width, Height]() mutable
 	{
+		// A video frame is opaque. The primary view's final image carries alpha 0
+		// (the old SceneCapture wrote 255), which viewers show as blank/white.
+		for (FColor& P : Frame) { P.A = 255; }
+
 		TSharedPtr<IImageWrapper> Png = IWM.CreateImageWrapper(EImageFormat::PNG);
 		if (Png.IsValid() && Png->SetRaw(Frame.GetData(), Frame.Num() * sizeof(FColor), Width, Height, ERGBFormat::BGRA, 8))
 		{
