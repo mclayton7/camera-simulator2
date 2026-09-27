@@ -199,7 +199,13 @@ private:
 	FSensorGpuTimer     GpuTimer;
 	uint32 ParamsSerial = 0;
 	double LastSensorUpdateSimSec = -1.0;
-	/** Calibrated in Task 11 so View.PreExposure ≈ sensor gain. */
+	/**
+	 * EV added to the sensor gain for UE's manual AutoExposureBias, so the
+	 * view's pre-exposure tracks the gain and scene colour stays in fp16 range.
+	 * Measured 2026-09-27 (M1 Pro, orbit): with AEM_Manual and physical camera
+	 * exposure off, View.PreExposure == 2^AutoExposureBias exactly
+	 * (log2 PreExposure = log2 Gain = -15.5 in daylight), so no offset is needed.
+	 */
 	static constexpr float UeExposureOffsetEv = 0.0f;
 
 	/**
