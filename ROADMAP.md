@@ -448,7 +448,12 @@ Spec: `docs/superpowers/specs/2026-09-27-gpu-sensor-model-design.md`; plan:
 accumulated in the same pass feeds a CPU AE/AGC controller, gain + BT.709 OETF (EO) or detector
 signal + AGC/polarity (IR/NVG), then NV12 packing on the GPU and a 1.5 bytes/px readback through the
 3A.1 ring. `auto` (the default) still selects legacy, because the default config enables effects
-that arrive in 3B.2/3B.3.
+that arrive in 3B.2/3B.3. Chromatic aberration is one of them (3B.3): UE 5.8 applies it inside the
+tonemapper the graph replaces, so `auto` treats `optical_realism.chromatic_aberration` as unported.
+The other tonemapper-stage UE effects (vignette, film grain, colour grading, bloom dirt mask) don't
+apply on the GPU path either. A GPU path that can't run falls back to legacy with an error log: a
+capture width not a multiple of 4 or an odd height (NV12), NullRHI, no SM5 compute, or missing
+sensor shaders.
 
 Measured with `scripts/bench/` on an M1 Pro, warm cache, per phase (orbit / slew / low pass / far
 origin); baselines `scripts/bench/baselines/macos-m1pro-3b1-{720p,1080p}.json`:
@@ -483,8 +488,8 @@ the graph is now timed through the GPU profiler (`RDG_EVENT_SCOPE_STAT` + `FGPUS
 `Camera/SensorGpuTimer.h`). The GPU-path stream is tagged BT.709 transfer (it applies the BT.709
 OETF; legacy stays sRGB), verified with ffprobe.
 
-Tests: 274 automation tests pass under NullRHI (272 + 2 with expected warnings; includes the 5
-`CamSim.GPU.*`, skipped there); `scripts/run_gpu_tests.sh` 5/5 on Metal; bench/CIGI pytest 42/42;
+Tests: 278 automation tests pass under NullRHI (276 + 2 with expected warnings; includes the 5
+`CamSim.GPU.*`, skipped there; 274 before the final-review fixes); `scripts/run_gpu_tests.sh` 5/5 on Metal; bench/CIGI pytest 42/42;
 KLV conformance export OK (misb.js 0.1.30); `scripts/ci_validate.sh --native` passes on both paths
 (`CAMSIM_RENDER_SENSOR_PATH=gpu` and default/legacy: H.264 + KLV, no decode errors, 150/150 KLV
 packets conformant in 5 s).
@@ -496,10 +501,18 @@ packets conformant in 5 s).
 | 1 | `sensor_path=gpu` whole run; legacy CPU/SceneCapture/material paths deleted | ✅ gpu for every run; deletion is 3B.4 |
 | 2 | 30 fps, 0 dropped per phase; frame p95 ≤ 3A.1 + 1 ms | ✅ 29.7–30.0 fps, 0 dropped; worst p95 delta +0.33 ms (1080p far origin) |
 | 3 | `sensor_gpu_ms` p95 ≤ 4 ms at 1080p, all effects; controller < 0.2 ms; 1.5 B/px readback | ✅ 0.40 ms p95 (3B.1 core only; effects come in 3B.2/3B.3); controller not isolated (game thread +0.3–0.4 ms p50 vs legacy, an upper bound); NV12 readback ✅ |
-| 4 | night EO < 40; daylight EO 90–170, < 1% clipped; cut converges in one frame | ✅ 26; 105–114, ≤ 0.02%; snap on cut/mode switch covered by `CamSim.Sensor.Controller.CutAndModeSwitchSnap` |
+| 4 | night EO < 40; daylight EO 90–170, < 1% clipped; cut converges in one frame | ✅ 26; 105–114, ≤ 0.02%. ◐ cut: the controller snaps on the first histogram rendered after the cut, which reaches it 1–3 frames later (stats readback latency), so the stream converges 1–3 frames after a cut, not in one; only the controller is tested (`CamSim.Sensor.Controller.CutAndModeSwitchSnap`) |
 | 5 | NullRHI tests, `CamSim.GPU.Sensor.*` on Metal, `ci_validate --native` | ✅ |
 | 6 | Visual review of EO/IR/NVG post-sensor shots | ⏳ shot set `scripts/bench/shots/macos/3b1/` |
 | 7 | Docs | ✅ this section, `docs/configuration.md`, CLAUDE.md |
+
+Final-review fixes (2026-09-27): the sensor path is decided once by `UCamSimSubsystem` (the
+capture and the encoder's transfer tag follow it) and falls back to legacy with an error when the
+GPU path can't run (verified live: forced `gpu` at 1366×720 runs legacy, sRGB-tagged, no crash); a
+hot reload can't change `capture_width`/`capture_height`/`render.sensor_path`; the NV12 width check
+is a validation error only when the GPU path is wanted (legacy 1366×768 validates clean again);
+built-in NVG defaults carry the red-heavy `signal_weight_*`; AE/AGC lag no longer depends on when
+histograms arrive; legacy frame stats write `sensor_gain_ev`/`scene_median_log2` as `null`.
 
 Refinements to the spec made while planning 3B.1:
 1. UE exposure is manual but not constant: the controller sets UE's `AutoExposureBias` each tick
@@ -510,7 +523,8 @@ Refinements to the spec made while planning 3B.1:
    bench runs with `gpu`.
 4. The path is fixed for the session; no hot switching (legacy is deleted in 3B.4).
 5. `GET /snapshot/sensor` is a second route instead of `?stage=sensor`; in 3B.1's GPU path it
-   equals `/snapshot`.
+   equals `/snapshot` (both return the sensor image: the graph replaces the tonemapper, so there
+   is no pre-sensor frame to grab).
 6. Path reporting goes to `/metrics` (`camsim_sensor_path{path=...}`) and `camsim_health.json`;
    `/health` stays the liveness watchdog.
 7. The encoder keeps YUV420P input: NV12 is de-interleaved on the CPU (no `sws_scale`).

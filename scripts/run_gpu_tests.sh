@@ -7,10 +7,15 @@ UE_BIN="${UE_BIN:-/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEdit
 FILTER="${1:-CamSim.GPU}"
 OUT="$REPO/.cache/automation-report-gpu"
 rm -rf "$OUT"
+mkdir -p "$REPO/.cache"
 "$UE_BIN" "$REPO/unreal_project/CamSimTest/CamSimTest.uproject" \
   -ExecCmds="Automation RunTests ${FILTER}+Quit" -TestExit="Automation Test Queue Empty" \
   -ReportExportPath="$OUT" -unattended -nosound -nosplash -DisablePython -RenderOffscreen \
   -log -stdout -FullStdOutLogOutput > "$REPO/.cache/automation-gpu.log" 2>&1 || true
+if [[ ! -f "$OUT/index.json" ]]; then
+  echo "no report — see .cache/automation-gpu.log" >&2
+  exit 1
+fi
 python3 - "$OUT/index.json" <<'EOF'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8-sig"))

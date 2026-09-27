@@ -677,7 +677,8 @@ sensor_modes:
     ir_pointer_radius: 8.0
     ir_pointer_intensity: 240.0
     # Detector spectral response (dot product with scene RGB); default is
-    # BT.709 luminance elsewhere but NVG green-phosphor tubes weight green heavily.
+    # BT.709 luminance elsewhere, but the NVG photocathode is red/NIR-sensitive
+    # (the green is only the phosphor display), so NVG weights red heavily.
     signal_weight_r: 0.6
     signal_weight_g: 0.3
     signal_weight_b: 0.1
