@@ -545,6 +545,19 @@ percentiles and the bright clouds on the horizon set the top. Thermal radiance i
 Next: the 3B.2 plan (port the optics and detector effects so `auto` selects the GPU path with the
 default config).
 
+Terrain snap check (2026-09-27, Yosemite Valley, 3,200 m, 90° gimbal snaps and 18–60°/s pans):
+- **Coarse tiles after a snap, fixed.** Off-screen tiles were kept at culled SSE 200 (FOV-scaled),
+  so 30–80% of a newly snapped-to view stayed coarse for ~2 s. `culled_screen_space_error` now
+  defaults to `maximum_screen_space_error` (16): 0% coarse, no settling, for ~60% more tiles
+  (~930 MB; cache default raised to 2,048 MB) and no frame-time cost. SF bench vs 3A.1: pop-in
+  orbit 0.16 → 0.001, slew 0.04 → 0, low pass 0.40 → 0.22; hitches > 66 ms low pass 3 → 11, far
+  origin 6 → 12 (collision cooking for the extra tiles is the likely cause; hitch counts are noisy).
+- **UE motion blur leaked in** with `optical_realism.enabled: false` (UE default on, 0.5): pans
+  smeared. Now off unless optical realism enables it.
+- **Encoder watchdog killed CamSim during a slow first tile load** (frames held by the terrain
+  gate counted as a dead encoder). A stall now needs frames submitted and none written.
+- Continuous pans at 18 and 60°/s kept tiles 100% loaded before and after the change.
+
 Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
 - Shader hardening: a NaN test that survives fast-math (`asuint` bit test, not `V != V`);
   `floor(x + 0.5)` instead of HLSL `round` in the NV12 packing (Y is at the 1 DN tolerance on
