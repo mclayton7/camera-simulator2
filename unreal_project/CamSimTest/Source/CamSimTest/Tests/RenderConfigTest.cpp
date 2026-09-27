@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
+#include "Geospatial/CesiumTuning.h"
 
 // -------------------------------------------------------------------------
 // ROADMAP 3A: render path, snapshot endpoint and frame-stats settings reach
@@ -125,5 +126,23 @@ bool FRenderConfigRelativeFrameStatsPathTest::RunTest(const FString& Parameters)
 		"  frame_stats_path: \"bench/frames.jsonl\"\n"));
 	TestEqual(TEXT("relative path resolved against the launch directory"), Cfg.Operational.FrameStatsPath,
 		FPaths::ConvertRelativePathToFull(FPaths::LaunchDir(), TEXT("bench/frames.jsonl")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigLodTransitionsPrimaryOnlyTest,
+	"CamSim.Config.LodTransitionsOnlyInPrimaryView",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderConfigLodTransitionsPrimaryOnlyTest::RunTest(const FString& Parameters)
+{
+	using CamSim::Geospatial::UseLodTransitions;
+	using EViewSource = FCamSimConfig::FRenderConfig::EViewSource;
+	FCamSimConfig Cfg;
+	TestTrue(TEXT("on by default in the primary view (TSR resolves the dither)"), UseLodTransitions(Cfg));
+	Cfg.Render.ViewSourceMode = EViewSource::SceneCapture;
+	TestFalse(TEXT("off with scene_capture (FXAA would blur it), keeping the A/B baseline unchanged"), UseLodTransitions(Cfg));
+	Cfg.Render.ViewSourceMode = EViewSource::Primary;
+	Cfg.bUseLodTransitions = false;
+	TestFalse(TEXT("off when disabled"), UseLodTransitions(Cfg));
 	return true;
 }

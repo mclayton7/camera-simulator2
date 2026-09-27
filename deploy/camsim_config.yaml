@@ -251,8 +251,8 @@ maximum_cached_bytes_mb: 1024
 loading_descendant_limit: 20
 
 # Cesium's dithered LOD crossfade (UseLodTransitions): hides tile LOD pops.
-# Needs temporal AA to resolve the dither, so it's for render.view_source =
-# primary (TSR); with scene_capture (FXAA) it blurs moving views.
+# Needs temporal AA to resolve the dither, so it is applied only with
+# render.view_source = primary (TSR); scene_capture (FXAA) would blur it.
 # Env: CAMSIM_USE_LOD_TRANSITIONS
 use_lod_transitions: true
 

@@ -19,6 +19,13 @@ namespace CamSim::Geospatial
 	void ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg);
 
 	/**
+	 * Cesium's dithered LOD crossfade: use_lod_transitions, applied only in the
+	 * primary view. It needs TSR to resolve the dither; the scene_capture path
+	 * (FXAA) would blur moving views, and it stays the pre-3A A/B baseline.
+	 */
+	bool UseLodTransitions(const FCamSimConfig& Cfg);
+
+	/**
 	 * Pure derivation: scales the off-frustum culled-SSE with horizontal FoV so
 	 * a narrow sensor (e.g. 5° EO) gets more aggressive culling and a wide one
 	 * gets less. Clamped at ≥100 so very-narrow FoVs don't collapse the cull

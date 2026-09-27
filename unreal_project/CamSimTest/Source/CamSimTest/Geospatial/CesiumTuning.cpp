@@ -23,6 +23,11 @@ namespace CamSim::Geospatial
 		return FMath::Max(BaseCulledSseAtRef * FovScale, MinCulledSse);
 	}
 
+	bool UseLodTransitions(const FCamSimConfig& Cfg)
+	{
+		return Cfg.bUseLodTransitions && Cfg.Render.IsPrimary();
+	}
+
 	void ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg)
 	{
 		if (!World) return;
@@ -52,7 +57,7 @@ namespace CamSim::Geospatial
 			// but makes every one of them miss the terrain.
 			It->SetCreatePhysicsMeshes(Cfg.bCreatePhysicsMeshes);
 
-			It->SetUseLodTransitions(Cfg.bUseLodTransitions);
+			It->SetUseLodTransitions(UseLodTransitions(Cfg));
 			It->LodTransitionLength = Cfg.LodTransitionLength;
 			It->LogSelectionStats   = Cfg.bLogTileSelectionStats;
 
@@ -61,7 +66,7 @@ namespace CamSim::Geospatial
 				*It->GetName(), Cfg.MaxSimultaneousTileLoads,
 				Cfg.MaximumScreenSpaceError, CulledSSE, Cfg.HFovDeg,
 				Cfg.MaximumCachedBytesMB, Cfg.LoadingDescendantLimit,
-				(int)Cfg.bUseLodTransitions, (int)Cfg.bLogTileSelectionStats, (int)Cfg.bCreatePhysicsMeshes);
+				(int)UseLodTransitions(Cfg), (int)Cfg.bLogTileSelectionStats, (int)Cfg.bCreatePhysicsMeshes);
 		}
 	}
 }

@@ -283,7 +283,7 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 | `maximum_screen_space_error` | float | `16.0` | `CAMSIM_MAX_SSE` | Cesium LOD quality: lower = sharper terrain (Cesium default 16). On an M1 Pro, 8 raises GPU time and pop-in, and 4 causes hundreds of hitches during gimbal slews (ROADMAP 3A sweep); adaptive SSE raises it further when over budget. |
 | `create_physics_meshes` | bool | `true` | `CAMSIM_CREATE_PHYSICS_MESHES` | Cook collision for Cesium tiles. CIGI HAT/HOT and LOS queries and the KLV frame centre (Tags 21, 23–25, 78) are line traces against it; with it off they never hit the terrain. |
 | `maximum_cached_bytes_mb` | int | `1024` | `CAMSIM_MAX_CACHED_MB` | Cesium tile cache budget in MB. `0` = Cesium default (uncapped). |
-| `use_lod_transitions` | bool | `true` | `CAMSIM_USE_LOD_TRANSITIONS` | Cesium's dithered LOD crossfade, which hides tile LOD pops. Needs temporal AA to resolve the dither: use with `render.view_source: primary` (TSR). With `scene_capture` (FXAA) it blurs moving views. |
+| `use_lod_transitions` | bool | `true` | `CAMSIM_USE_LOD_TRANSITIONS` | Cesium's dithered LOD crossfade, which hides tile LOD pops. Needs temporal AA to resolve the dither, so it is applied only with `render.view_source: primary` (TSR); with `scene_capture` (FXAA) it would blur moving views, so it stays off there. |
 | `lod_transition_length` | float | `0.5` | `CAMSIM_LOD_TRANSITION_LENGTH` | Crossfade duration in seconds. |
 
 ### Terrain Readiness Gate

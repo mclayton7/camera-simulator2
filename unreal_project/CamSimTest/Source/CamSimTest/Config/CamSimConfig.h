@@ -124,8 +124,8 @@ struct FCamSimConfig
 	// Env: CAMSIM_LOADING_DESCENDANT_LIMIT
 	int32   LoadingDescendantLimit = 20;
 	// Cesium's dithered LOD crossfade (UseLodTransitions). Needs temporal AA to
-	// resolve the dither, so it only looks right with render.view_source =
-	// primary (TSR); with scene_capture (FXAA) it blurs moving views.
+	// resolve the dither, so it is applied only with render.view_source =
+	// primary (TSR); with scene_capture (FXAA) it would blur moving views.
 	// Env: CAMSIM_USE_LOD_TRANSITIONS
 	bool    bUseLodTransitions = true;
 	// Duration of LOD crossfade in seconds (only used when bUseLodTransitions=true)
