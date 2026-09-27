@@ -22,6 +22,7 @@
 #include "Diagnostics/PipelineLatencyTracker.h"
 #include "Health/CamSimHealthServer.h"
 #include "Health/CamSimSnapshotService.h"
+#include "Subsystem/EncoderWatchdog.h"
 #include "Time/SimClock.h"
 #include "SensorGraph.h"                // IsSensorGraphSupported (ROADMAP 3B)
 #include "CamSimTest.h"
@@ -77,8 +78,10 @@ struct UCamSimSubsystem::FSubsystemImpl
 
 	// Encoder watchdog
 	uint64 WatchdogLastSuccessFrame = 0;
+	uint64 WatchdogLastCapturedFrame = 0;
 	uint32 WatchdogLastCheckTick    = 0;
-	uint32 WatchdogReconnectCount   = 0;
+	uint32 WatchdogReconnectCount   = 0;  // total, reported in health/metrics
+	uint32 WatchdogConsecutiveReconnects = 0;  // since frames last flowed; bounded by watchdog_max_reconnects
 	uint32 HealthFileTick           = 0;
 
 	// Runtime health snapshot counters
@@ -830,7 +833,14 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		if ((Impl->FrameCntr - Impl->WatchdogLastCheckTick) >= WatchdogInterval)
 		{
 			const uint64 CurrentSuccess = Encoder->GetSuccessfulFrameCount();
-			if (CurrentSuccess == Impl->WatchdogLastSuccessFrame)
+			const ACamSimCamera* Cam = Camera_.Get();
+			const uint64 CurrentCaptured = Cam ? Cam->GetFramesCaptured() : 0;
+			if (CurrentSuccess != Impl->WatchdogLastSuccessFrame)
+			{
+				Impl->WatchdogConsecutiveReconnects = 0;  // healthy again: a later stall gets the full budget
+			}
+			if (CamSimWatchdog::IsStalled(Impl->WatchdogLastSuccessFrame, CurrentSuccess,
+				Impl->WatchdogLastCapturedFrame, CurrentCaptured))
 			{
 				switch (Config.EncoderWatchdogPolicy)
 				{
@@ -849,18 +859,19 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 					case FCamSimConfig::EEncoderWatchdogPolicy::Reconnect:
 					default:
 						++Impl->WatchdogReconnectCount;
+						++Impl->WatchdogConsecutiveReconnects;
 						if (Config.WatchdogMaxReconnects > 0 &&
-							static_cast<int32>(Impl->WatchdogReconnectCount) >= Config.WatchdogMaxReconnects)
+							static_cast<int32>(Impl->WatchdogConsecutiveReconnects) >= Config.WatchdogMaxReconnects)
 						{
 							UE_LOG(LogCamSim, Error,
 								TEXT("UCamSimSubsystem: encoder watchdog — %u reconnects exhausted, failing fast"),
-								Impl->WatchdogReconnectCount);
+								Impl->WatchdogConsecutiveReconnects);
 							FPlatformMisc::RequestExit(true);
 							break;
 						}
 						UE_LOG(LogCamSim, Warning,
 							TEXT("UCamSimSubsystem: encoder watchdog — no frames written in %u ticks, reconnecting (%u/%d)"),
-							WatchdogInterval, Impl->WatchdogReconnectCount, Config.WatchdogMaxReconnects);
+							WatchdogInterval, Impl->WatchdogConsecutiveReconnects, Config.WatchdogMaxReconnects);
 						Encoder->Close();
 						if (!Encoder->Open())
 						{
@@ -870,6 +881,7 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 				}
 			}
 			Impl->WatchdogLastSuccessFrame = Encoder->GetSuccessfulFrameCount();
+			Impl->WatchdogLastCapturedFrame = Cam ? Cam->GetFramesCaptured() : 0;
 			Impl->WatchdogLastCheckTick    = Impl->FrameCntr;
 		}
 	}

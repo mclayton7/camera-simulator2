@@ -58,6 +58,8 @@ public:
 
 	/** Frames dropped because the encoder thread's queue was full. */
 	uint64 GetDroppedFrameCount() const { return CaptureComp->GetDroppedFrameCount(); }
+	/** Frames captured (handed to readback → sensor → encoder) so far. */
+	uint64 GetFramesCaptured() const { return CaptureComp->GetFramesCaptured(); }
 
 	/** ROADMAP 3B: sensor pipeline this session runs. */
 	ESensorPipelinePath GetSensorPath() const { return CaptureComp->GetSensorPath(); }
