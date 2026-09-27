@@ -3,6 +3,7 @@
 #include "Camera/CamSimCaptureComponent.h"
 #include "Health/CamSimSnapshotService.h"
 #include "Camera/CamSimFrameGrabExtension.h"
+#include "Camera/CamSimRenderPath.h"
 #include "Engine/GameViewportClient.h"
 #include "SceneViewExtension.h"
 #include "Camera/CamSimPixelConvert.h"
@@ -251,6 +252,15 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 		}
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: optical realism enabled (blur=%d bloom=%d CA=%d DoF=%d flare=%d distort=%d)"),
 			O.bMotionBlur, O.bBloom, O.bChromaticAberration, O.bDepthOfField, O.bLensFlare, O.bLensDistortion);
+	}
+
+	// Auto-exposure stays on; the compensation shifts where it settles. Set on
+	// the SceneCapture's post-process, which the primary view mirrors.
+	{
+		const IConsoleVariable* DefaultBias = IConsoleManager::Get().FindConsoleVariable(TEXT("r.DefaultFeature.AutoExposure.Bias"));
+		PP.bOverride_AutoExposureBias = true;
+		PP.AutoExposureBias = CamSimRender::AutoExposureBias(DefaultBias ? DefaultBias->GetFloat() : 1.0f,
+			Cfg.Render.ExposureCompensationEV);
 	}
 
 	// Phase 24 — rendering quality

@@ -654,6 +654,7 @@ render:
   camera_cut_distance_m: 500.0
   camera_cut_angle_deg: 30.0
   origin_shift_distance_m: 20000.0
+  exposure_compensation_ev: -1.0
 ```
 
 | Key | Env | Default | Description |
@@ -661,6 +662,7 @@ render:
 | `render.view_source` | `CAMSIM_RENDER_VIEW_SOURCE` | `primary` | `primary`: the sensor is the game viewport's view (TSR, one scene render per frame). `scene_capture`: legacy `SceneCapture2D` path, kept for A/B comparison until ROADMAP 3B. Unknown values warn and use `primary`. |
 | `render.camera_cut_distance_m` | `CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M` | `500.0` | A camera move larger than this in one frame (teleport, origin rebase) resets TSR history. |
 | `render.camera_cut_angle_deg` | `CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG` | `30.0` | A view rotation larger than this in one frame resets TSR history. |
+| `render.exposure_compensation_ev` | `CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV` | `-1.0` | Auto-exposure compensation (EV), applied as the sensor view's `AutoExposureBias`. Auto-exposure stays on; this shifts where it settles. UE's default metering (0) over-brightens sunlit Cesium terrain by about 1 EV. Applied at startup. |
 | `render.origin_shift_distance_m` | `CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M` | `20000.0` | Rebase the Cesium georeference (`CesiumOriginShiftComponent`, `ChangeCesiumGeoreference` mode) when the camera is this far from the origin. Keeps local "up" = +Z and coordinates small. `0` disables. |
 
 **Render resolution (TSR).** With `view_source: primary`, `rendering_quality.tsr_screen_percentage`

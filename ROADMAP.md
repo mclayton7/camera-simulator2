@@ -416,8 +416,11 @@ Findings for follow-up:
   with 33.3 ms PTS spacing; KLV conformant. The CPU sensor model keeps up at 1080p with the
   default effects. The CPU sensor model now has ~33 ms per frame; if it falls behind, frames are
   skipped until 3B's GPU sensor model (decision 2026-09-27).
-- **Over-exposure**: Lumen warns auto-exposure (EV 13.5) is outside the cached-lighting
-  pre-exposure range; every shot is washed out. Needs an exposure/calibration decision.
+- ~~**Over-exposure**~~ **Addressed (2026-09-27)**: auto-exposure kept (user decision) with
+  `render.exposure_compensation_ev` = −1 EV relative to UE's default bias (+1); mean shot luma
+  ≈200 → ≈170. `r.EyeAdaptation.CachedLightingPreExposure=8` covers the physically bright sun
+  (it removes Lumen's clipping warning but was not the cause). Remaining: a flat bluish aerial
+  haze from the atmosphere — a separate follow-up if wanted.
 - Restarting within ~30 s fails to bind the health port (:8080, TIME_WAIT) while logging
   "listening".
 - A View Definition FOV and a Sensor Control gain in the same host frame fight (the preset wins

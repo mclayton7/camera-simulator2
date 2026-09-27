@@ -1405,6 +1405,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlFloat (RNode, "camera_cut_distance_m",   Cfg.Render.CameraCutDistanceM);
 			YamlFloat (RNode, "camera_cut_angle_deg",    Cfg.Render.CameraCutAngleDeg);
 			YamlDouble(RNode, "origin_shift_distance_m", Cfg.Render.OriginShiftDistanceM);
+			YamlFloat (RNode, "exposure_compensation_ev", Cfg.Render.ExposureCompensationEV);
 			Cfg.Render.ViewSourceMode = ParseViewSource(Cfg.Render.ViewSource);
 		}
 
@@ -1812,6 +1813,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Render.CameraCutDistanceM   = GetEnvFloat (TEXT("CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M"),   Cfg.Render.CameraCutDistanceM);
 	Cfg.Render.CameraCutAngleDeg    = GetEnvFloat (TEXT("CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG"),    Cfg.Render.CameraCutAngleDeg);
 	Cfg.Render.OriginShiftDistanceM = GetEnvDouble(TEXT("CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M"), Cfg.Render.OriginShiftDistanceM);
+	Cfg.Render.ExposureCompensationEV = GetEnvFloat(TEXT("CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV"), Cfg.Render.ExposureCompensationEV);
 	Cfg.Performance.bTrackPipelineLatency = GetEnvBool(TEXT("CAMSIM_TRACK_PIPELINE_LATENCY"), Cfg.Performance.bTrackPipelineLatency);
 
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping

@@ -20,6 +20,7 @@ bool FRenderConfigSectionTest::RunTest(const FString& Parameters)
 	const FCamSimConfig D;
 	TestTrue(TEXT("default view source is primary"), D.Render.IsPrimary());
 	TestEqual(TEXT("origin shift every 20 km by default"), D.Render.OriginShiftDistanceM, 20000.0);
+	TestEqual(TEXT("auto-exposure compensation -1 EV by default"), D.Render.ExposureCompensationEV, -1.0f);
 	TestFalse(TEXT("snapshot endpoint off by default"), D.Operational.bSnapshotEndpointEnabled);
 	TestTrue(TEXT("frame stats off by default"), D.Operational.FrameStatsPath.IsEmpty());
 
@@ -29,6 +30,7 @@ bool FRenderConfigSectionTest::RunTest(const FString& Parameters)
 		"  camera_cut_distance_m: 250.0\n"
 		"  camera_cut_angle_deg: 15.0\n"
 		"  origin_shift_distance_m: 20000.0\n"
+		"  exposure_compensation_ev: -0.5\n"
 		"operational:\n"
 		"  snapshot_endpoint_enabled: true\n"
 		"  frame_stats_path: \"/tmp/camsim-frames.jsonl\"\n"));
@@ -38,6 +40,7 @@ bool FRenderConfigSectionTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("cut distance"), Cfg.Render.CameraCutDistanceM, 250.0f);
 	TestEqual(TEXT("cut angle"), Cfg.Render.CameraCutAngleDeg, 15.0f);
 	TestEqual(TEXT("origin shift distance"), Cfg.Render.OriginShiftDistanceM, 20000.0);
+	TestEqual(TEXT("exposure compensation"), Cfg.Render.ExposureCompensationEV, -0.5f);
 	TestTrue(TEXT("snapshot enabled"), Cfg.Operational.bSnapshotEndpointEnabled);
 	TestEqual(TEXT("frame stats path"), Cfg.Operational.FrameStatsPath, FString(TEXT("/tmp/camsim-frames.jsonl")));
 
@@ -61,6 +64,7 @@ bool FRenderConfigEnvTest::RunTest(const FString& Parameters)
 		{ TEXT("CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M"), TEXT("5000") },
 		{ TEXT("CAMSIM_SNAPSHOT_ENDPOINT_ENABLED"),      TEXT("1") },
 		{ TEXT("CAMSIM_FRAME_STATS_PATH"),               TEXT("/tmp/x.jsonl") },
+		{ TEXT("CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV"), TEXT("-1.5") },
 	};
 	for (const FEnv& V : Vars) { FPlatformMisc::SetEnvironmentVar(V.Key, V.Value); }
 
@@ -75,6 +79,7 @@ bool FRenderConfigEnvTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("env origin shift"), Cfg.Render.OriginShiftDistanceM, 5000.0);
 	TestTrue(TEXT("env snapshot"), Cfg.Operational.bSnapshotEndpointEnabled);
 	TestEqual(TEXT("env frame stats"), Cfg.Operational.FrameStatsPath, FString(TEXT("/tmp/x.jsonl")));
+	TestEqual(TEXT("env exposure compensation"), Cfg.Render.ExposureCompensationEV, -1.5f);
 	return true;
 }
 

@@ -257,3 +257,18 @@ bool FReadbackPollDecisionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("a ready frame on the last attempt still wins"), DecidePoll(true, 7, 7, Ready, Max, Max) == EPollDecision::Consume);
 	return true;
 }
+
+// Exposure compensation is relative to the engine's default bias (+1 EV in
+// UE 5.8 with the extended luminance range): 0 must leave UE's metering
+// unchanged, -1 must be one stop darker than it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FExposureBiasTest,
+	"CamSim.Render.Exposure.CompensationIsRelativeToEngineDefault",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FExposureBiasTest::RunTest(const FString& Parameters)
+{
+	TestEqual(TEXT("0 = engine default"), CamSimRender::AutoExposureBias(1.0f, 0.0f), 1.0f);
+	TestEqual(TEXT("-1 = one stop below the default"), CamSimRender::AutoExposureBias(1.0f, -1.0f), 0.0f);
+	TestEqual(TEXT("follows a different project default"), CamSimRender::AutoExposureBias(0.5f, -1.0f), -0.5f);
+	return true;
+}

@@ -819,6 +819,12 @@ struct FCamSimConfig
 		// origin, in metres. 0 = disabled. Env: CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M
 		double OriginShiftDistanceM = 20000.0;
 
+		// Auto-exposure compensation in EV (the view's AutoExposureBias). The camera
+		// still adapts to the scene; this shifts where it settles. -1 counters the
+		// over-bright metering of sunlit Cesium terrain. Applied at startup.
+		// Env: CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV
+		float ExposureCompensationEV = -1.0f;
+
 		bool IsPrimary() const { return ViewSourceMode == EViewSource::Primary; }
 	};
 	FRenderConfig Render;

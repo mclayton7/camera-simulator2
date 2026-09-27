@@ -993,6 +993,12 @@ render:
   # Env: CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M
   origin_shift_distance_m: 20000.0
 
+  # Auto-exposure compensation in EV. Auto-exposure stays on (the camera adapts
+  # to the scene); this shifts where it settles. -1 counters the over-bright
+  # metering of sunlit terrain; 0 = UE default (washed out). Applied at startup.
+  # Env: CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV
+  exposure_compensation_ev: -1.0
+
 # --- Entity Types ---
 # Maps CIGI EntityType uint16 to asset paths.
 # Use .gltf/.glb paths (relative to entities/) for runtime loading,
