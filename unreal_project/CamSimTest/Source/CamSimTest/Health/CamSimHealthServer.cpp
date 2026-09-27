@@ -56,12 +56,12 @@ bool FCamSimHealthServer::Start(int32 Port,
 		});
 
 	// GET /live — K8s liveness probe convention
-	Router->BindRoute(FHttpPath(TEXT("/live")),   EHttpServerRequestVerbs::VERB_GET, LivenessHandler);
+	RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/live")),   EHttpServerRequestVerbs::VERB_GET, LivenessHandler));
 	// GET /health — sim-environment REST orchestrator convention (same handler)
-	Router->BindRoute(FHttpPath(TEXT("/health")), EHttpServerRequestVerbs::VERB_GET, LivenessHandler);
+	RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/health")), EHttpServerRequestVerbs::VERB_GET, LivenessHandler));
 
 	// GET /ready
-	Router->BindRoute(FHttpPath(TEXT("/ready")), EHttpServerRequestVerbs::VERB_GET,
+	RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/ready")), EHttpServerRequestVerbs::VERB_GET,
 		FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest& Req, const FHttpResultCallback& OnComplete)
 		{
 			const bool bEncoder = IsEncoderReady ? IsEncoderReady() : false;
@@ -85,12 +85,12 @@ bool FCamSimHealthServer::Start(int32 Port,
 			}
 			OnComplete(MoveTemp(Response));
 			return true;
-		}));
+		})));
 
 	// GET /metrics — serve the game-thread-cached snapshot so the HTTP handler
 	// doesn't run expensive work (entity walks, percentile calcs) on the
 	// listener thread while the scraper holds the socket open.
-	Router->BindRoute(FHttpPath(TEXT("/metrics")), EHttpServerRequestVerbs::VERB_GET,
+	RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/metrics")), EHttpServerRequestVerbs::VERB_GET,
 		FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest& Req, const FHttpResultCallback& OnComplete)
 		{
 			TSharedRef<FString, ESPMode::ThreadSafe> Snapshot = [this]()
@@ -101,17 +101,36 @@ bool FCamSimHealthServer::Start(int32 Port,
 			auto Response = FHttpServerResponse::Create(*Snapshot, TEXT("text/plain; charset=utf-8"));
 			OnComplete(MoveTemp(Response));
 			return true;
-		}));
+		})));
 
 	FHttpServerModule::Get().StartAllListeners();
 	UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: listening on port %d (/live /health /ready /metrics)"), Port);
 	return true;
 }
 
+void FCamSimHealthServer::BindSnapshotRoute(TFunction<void(FHttpResultCallback)> Handler)
+{
+	if (!Router) return;
+	RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/snapshot")), EHttpServerRequestVerbs::VERB_GET,
+		FHttpRequestHandler::CreateLambda([Handler = MoveTemp(Handler)](const FHttpServerRequest&, const FHttpResultCallback& OnComplete)
+		{
+			Handler(OnComplete);
+			return true;
+		})));
+	UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: /snapshot enabled on port %d"), ListenPort);
+}
+
 void FCamSimHealthServer::Stop()
 {
 	if (Router)
 	{
+		// Unbind so a later Start() on the same port starts from a clean router
+		// (FHttpServerModule keeps one router per port for the process lifetime).
+		for (const FHttpRouteHandle& Handle : RouteHandles)
+		{
+			if (Handle) Router->UnbindRoute(Handle);
+		}
+		RouteHandles.Reset();
 		FHttpServerModule::Get().StopAllListeners();
 		Router.Reset();
 		UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: stopped"));

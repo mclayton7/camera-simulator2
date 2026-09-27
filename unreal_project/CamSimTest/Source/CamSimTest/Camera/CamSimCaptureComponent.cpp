@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Camera/CamSimCaptureComponent.h"
+#include "Health/CamSimSnapshotService.h"
 #include "Camera/CamSimPixelConvert.h"
 #include "CamSimTest.h"
 #include "Config/CamSimConfig.h"
@@ -445,6 +446,16 @@ void UCamSimCaptureComponent::Poll()
 		if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::ReadbackComplete);
 
 		TArray<FColor> Pixels = MoveTemp(AsyncPixels);
+
+		// ROADMAP 3A reference shots: the pre-sensor frame, lossless.
+		if (FCamSimSnapshotService* Snap = Subsystem ? Subsystem->GetSnapshotService() : nullptr)
+		{
+			if (Snap->WantsFrame())
+			{
+				const FCamSimConfig& SnapCfg = Subsystem->GetConfig();
+				Snap->OfferFrame(Pixels, SnapCfg.CaptureWidth, SnapCfg.CaptureHeight);
+			}
+		}
 		TArray<float>  Depth  = MoveTemp(AsyncDepth);
 		ReadbackState.Store(EReadbackState::Idle, EMemoryOrder::SequentiallyConsistent);
 		PendingReadbackTargetIndex      = INDEX_NONE;

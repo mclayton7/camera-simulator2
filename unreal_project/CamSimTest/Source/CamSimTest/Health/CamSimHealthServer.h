@@ -3,6 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "HttpResultCallback.h"
+#include "HttpRouteHandle.h"
 
 class IHttpRouter;
 
@@ -16,6 +18,7 @@ class IHttpRouter;
  *   GET /live    -- 200 if game loop ticked within 5s
  *   GET /ready   -- 200 if encoder + CIGI + first frame + terrain all OK
  *   GET /metrics -- Prometheus exposition format
+ *   GET /snapshot -- next grabbed frame as PNG (only after BindSnapshotRoute)
  */
 struct FCamSimHealthServer
 {
@@ -29,6 +32,12 @@ struct FCamSimHealthServer
 	           FStatusQueryFn InHasFirstFrame,
 	           FStatusQueryFn InIsTerrainReady,
 	           TFunction<FString()> InGetPrometheusMetrics);
+
+	/**
+	 * Bind GET /snapshot (ROADMAP 3A). Unbound, the router answers 404. The
+	 * handler owns the callback and must complete it exactly once.
+	 */
+	void BindSnapshotRoute(TFunction<void(FHttpResultCallback)> Handler);
 
 	/** Stop the HTTP server. */
 	void Stop();
@@ -46,6 +55,7 @@ struct FCamSimHealthServer
 
 private:
 	TSharedPtr<IHttpRouter> Router;
+	TArray<FHttpRouteHandle> RouteHandles;
 	double LastTickTimeSec = 0.0;
 	int32 ListenPort = 0;
 

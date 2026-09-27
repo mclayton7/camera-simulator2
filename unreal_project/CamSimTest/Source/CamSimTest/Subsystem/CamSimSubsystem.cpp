@@ -21,6 +21,7 @@
 #include "Logging/CamSimJsonLogger.h"
 #include "Diagnostics/PipelineLatencyTracker.h"
 #include "Health/CamSimHealthServer.h"
+#include "Health/CamSimSnapshotService.h"
 #include "Time/SimClock.h"
 #include "CamSimTest.h"
 #include "Engine/World.h"
@@ -63,6 +64,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCamSimJsonLogger>        JsonLogger;
 	TUniquePtr<FPipelineLatencyTracker>  LatencyTracker;
 	TUniquePtr<FCamSimHealthServer>     HealthServer;
+	TUniquePtr<FCamSimSnapshotService>  SnapshotService;  // ROADMAP 3A, null unless enabled
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -105,6 +107,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 		// TUniquePtr destructors handle null checks automatically.
 		if (HealthServer) { HealthServer->Stop(); }
 		HealthServer.Reset();
+		SnapshotService.Reset();  // after the server: no handler can reach it now
 		CesiumIonServerOverride.Reset();
 		QueryHandler.Reset();
 		GeospatialProvider.Reset();
@@ -182,6 +185,11 @@ FCamSimGeospatialProvider* UCamSimSubsystem::GetGeospatialProvider() const
 FGroundTruthCollector* UCamSimSubsystem::GetGroundTruthCollector() const
 {
 	return ImplGet(Impl, &FSubsystemImpl::GroundTruthCollector);
+}
+
+FCamSimSnapshotService* UCamSimSubsystem::GetSnapshotService() const
+{
+	return Impl ? Impl->SnapshotService.Get() : nullptr;
 }
 
 FCamSimParticleManager* UCamSimSubsystem::GetParticleManager() const
@@ -537,6 +545,14 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 				return Body;
 			}
 		);
+
+		// ROADMAP 3A: GET /snapshot for the bench harness
+		if (Config.Operational.bSnapshotEndpointEnabled)
+		{
+			Impl->SnapshotService = MakeUnique<FCamSimSnapshotService>();
+			FCamSimSnapshotService* Snap = Impl->SnapshotService.Get();
+			Impl->HealthServer->BindSnapshotRoute([Snap](FHttpResultCallback OnComplete) { Snap->Request(MoveTemp(OnComplete)); });
+		}
 	}
 
 	// Start CIGI receiver thread
@@ -698,6 +714,10 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 	if (Impl->HealthServer)
 	{
 		Impl->HealthServer->UpdateTick();
+	}
+	if (Impl->SnapshotService)
+	{
+		Impl->SnapshotService->Tick(FPlatformTime::Seconds());
 	}
 
 	// Drain HAT/HOT + LOS query queues and stage responses

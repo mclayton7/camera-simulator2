@@ -18,6 +18,7 @@ class FCigiSender;
 class FCigiQueryHandler;
 class FCamSimGeospatialProvider;
 class FGroundTruthCollector;
+class FCamSimSnapshotService;
 class FCamSimParticleManager;
 class FDisReceiver;
 class FDisEntityAdapter;
@@ -65,6 +66,9 @@ public:
 	FCigiQueryHandler*    GetQueryHandler()  const;
 	FCamSimGeospatialProvider* GetGeospatialProvider() const;
 	FGroundTruthCollector* GetGroundTruthCollector() const;
+
+	/** GET /snapshot service (ROADMAP 3A); null unless operational.snapshot_endpoint_enabled. */
+	FCamSimSnapshotService* GetSnapshotService() const;
 	FCamSimParticleManager* GetParticleManager() const;
 	FDisReceiver*          GetDisReceiver()     const;
 	FDisEntityAdapter*     GetDisAdapter()      const;
