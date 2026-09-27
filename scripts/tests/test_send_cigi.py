@@ -78,3 +78,12 @@ def test_orbit_position_returns_offset_and_inward_yaw():
     assert abs(lat - center_lat) < 1e-3  # due east: latitude ~unchanged
     # Yaw back toward centre: heading + 180 = 270° (west).
     assert abs(yaw - 270.0) < 1e-9
+
+
+def test_pack_art_part_control_layout():
+    pkt = sc.pack_art_part_control(1, 0, pitch=-30.0, yaw=45.0)
+    assert len(pkt) == 32 and pkt[0] == 6 and pkt[1] == 32
+    assert struct.unpack(">H", pkt[2:4])[0] == 1
+    assert pkt[4] == 0 and pkt[5] == 0x71
+    roll, pitch, yaw = struct.unpack(">fff", pkt[20:32])
+    assert (roll, pitch, yaw) == (0.0, -30.0, 45.0)

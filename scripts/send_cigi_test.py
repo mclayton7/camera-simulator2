@@ -283,6 +283,35 @@ def pack_sensor_control(
     )
 
 
+def pack_art_part_control(
+    entity_id: int,
+    art_part_id: int,
+    *,
+    roll: float = 0.0,
+    pitch: float = 0.0,
+    yaw: float = 0.0,
+) -> bytes:
+    """Articulated Part Control — packet ID 6, 32 bytes (CIGI 3.3)."""
+    # art_part_en(0x01) | roll_en(0x10) | pitch_en(0x20) | yaw_en(0x40)
+    flags = 0x01 | 0x10 | 0x20 | 0x40
+    pkt = struct.pack(
+        ">BBHBBxxffffff",
+        6,
+        32,
+        entity_id & 0xFFFF,
+        art_part_id & 0xFF,
+        flags,
+        0.0,
+        0.0,
+        0.0,  # x/y/z offsets (not enabled)
+        roll,
+        pitch,
+        yaw,
+    )
+    assert len(pkt) == 32
+    return pkt
+
+
 def pack_celestial_control(
     hour: int = 12,
     minute: int = 0,
