@@ -24,14 +24,65 @@ bool FCamSimHealthServer::Start(int32 Port,
 	GetPrometheusMetrics = MoveTemp(InGetPrometheusMetrics);
 	ListenPort = Port;
 	LastTickTimeSec = FPlatformTime::Seconds();
+	BindFailedSinceSec = 0.0;
 
-	Router = FHttpServerModule::Get().GetHttpRouter(Port);
-	if (!Router)
+	if (TryListen()) return true;
+
+	// The engine's only reuse option also sets SO_REUSEPORT, which would let a
+	// second CamSim share the port silently, so wait for the port instead.
+	BindFailedSinceSec = FPlatformTime::Seconds();
+	bReportedStillBusy = false;
+	UE_LOG(LogCamSim, Warning,
+		TEXT("FCamSimHealthServer: port %d is busy (another process, or TIME_WAIT from a run restarted within ~30 s); NOT listening, retrying every %.0f s"),
+		Port, BindRetryIntervalSec);
+	RetryHandle = FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateRaw(this, &FCamSimHealthServer::RetryListen), BindRetryIntervalSec);
+	return false;
+}
+
+bool FCamSimHealthServer::RetryListen(float /*DeltaTime*/)
+{
+	if (TryListen())
 	{
-		UE_LOG(LogCamSim, Error, TEXT("FCamSimHealthServer: failed to get HTTP router on port %d"), Port);
-		return false;
+		RetryHandle.Reset();
+		return false;   // stop ticking
 	}
+	const double BusySec = FPlatformTime::Seconds() - BindFailedSinceSec;
+	if (!bReportedStillBusy && BusySec > 60.0)
+	{
+		bReportedStillBusy = true;
+		UE_LOG(LogCamSim, Error,
+			TEXT("FCamSimHealthServer: port %d still busy after %.0f s; is another process using it? Still retrying"),
+			ListenPort, BusySec);
+	}
+	return true;
+}
 
+bool FCamSimHealthServer::TryListen()
+{
+	// With listeners enabled first, GetHttpRouter binds immediately, and
+	// bFailOnBindFailure makes a failed bind return null instead of a router
+	// that never answers.
+	FHttpServerModule::Get().StartAllListeners();
+	Router = FHttpServerModule::Get().GetHttpRouter(ListenPort, /*bFailOnBindFailure=*/true);
+	if (!Router) return false;
+
+	BindRoutes();
+	if (BindFailedSinceSec > 0.0)
+	{
+		UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: listening on port %d after %.0f s (/live /health /ready /metrics%s)"),
+			ListenPort, FPlatformTime::Seconds() - BindFailedSinceSec, SnapshotHandler ? TEXT(" /snapshot") : TEXT(""));
+	}
+	else
+	{
+		UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: listening on port %d (/live /health /ready /metrics%s)"),
+			ListenPort, SnapshotHandler ? TEXT(" /snapshot") : TEXT(""));
+	}
+	return true;
+}
+
+void FCamSimHealthServer::BindRoutes()
+{
 	// Shared liveness handler — used for both /live (K8s convention) and
 	// /health (sim-environment REST orchestrator convention). Both names
 	// probe the same watchdog: 200 when Tick() fired within 5s, 503 with
@@ -103,25 +154,38 @@ bool FCamSimHealthServer::Start(int32 Port,
 			return true;
 		})));
 
-	FHttpServerModule::Get().StartAllListeners();
-	UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: listening on port %d (/live /health /ready /metrics)"), Port);
-	return true;
+	if (SnapshotHandler)
+	{
+		BindSnapshotHandler();
+	}
+}
+
+void FCamSimHealthServer::BindSnapshotHandler()
+{
+	RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/snapshot")), EHttpServerRequestVerbs::VERB_GET,
+		FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest&, const FHttpResultCallback& OnComplete)
+		{
+			SnapshotHandler(OnComplete);
+			return true;
+		})));
 }
 
 void FCamSimHealthServer::BindSnapshotRoute(TFunction<void(FHttpResultCallback)> Handler)
 {
-	if (!Router) return;
-	RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/snapshot")), EHttpServerRequestVerbs::VERB_GET,
-		FHttpRequestHandler::CreateLambda([Handler = MoveTemp(Handler)](const FHttpServerRequest&, const FHttpResultCallback& OnComplete)
-		{
-			Handler(OnComplete);
-			return true;
-		})));
+	const bool bRebind = SnapshotHandler.IsSet();
+	SnapshotHandler = MoveTemp(Handler);
+	if (!Router || bRebind) return;   // bound with the other routes once listening
+	BindSnapshotHandler();
 	UE_LOG(LogCamSim, Log, TEXT("FCamSimHealthServer: /snapshot enabled on port %d"), ListenPort);
 }
 
 void FCamSimHealthServer::Stop()
 {
+	if (RetryHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(RetryHandle);
+		RetryHandle.Reset();
+	}
 	if (Router)
 	{
 		// Unbind so a later Start() on the same port starts from a clean router

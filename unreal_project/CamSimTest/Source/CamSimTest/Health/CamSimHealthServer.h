@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "HttpResultCallback.h"
 #include "HttpRouteHandle.h"
+#include "Containers/Ticker.h"
 
 class IHttpRouter;
 
@@ -24,7 +25,17 @@ struct FCamSimHealthServer
 {
 	using FStatusQueryFn = TFunction<bool()>;
 
-	/** Start the HTTP server on the given port. */
+	/** Seconds between bind attempts while the port is busy. */
+	static constexpr float BindRetryIntervalSec = 2.0f;
+
+	~FCamSimHealthServer() { Stop(); }
+
+	/**
+	 * Start the HTTP server on the given port. Returns true when it is
+	 * listening. If the port is busy (another process, or TIME_WAIT from a
+	 * run restarted within ~30 s) it returns false, logs it, and retries on
+	 * the core ticker every BindRetryIntervalSec until the bind succeeds.
+	 */
 	bool Start(int32 Port,
 	           FStatusQueryFn InIsAlive,
 	           FStatusQueryFn InIsEncoderReady,
@@ -39,8 +50,11 @@ struct FCamSimHealthServer
 	 */
 	void BindSnapshotRoute(TFunction<void(FHttpResultCallback)> Handler);
 
-	/** Stop the HTTP server. */
+	/** Stop the HTTP server (and any pending bind retry). */
 	void Stop();
+
+	/** True once the port is bound and the routes answer. */
+	bool IsListening() const { return Router.IsValid(); }
 
 	/** Call from game thread tick to update the liveness timestamp. */
 	void UpdateTick();
@@ -54,10 +68,20 @@ struct FCamSimHealthServer
 	void UpdateMetricsSnapshot();
 
 private:
+	/** Bind the port and the routes. False if the port is busy. */
+	bool TryListen();
+	void BindRoutes();
+	void BindSnapshotHandler();
+	bool RetryListen(float DeltaTime);
+
 	TSharedPtr<IHttpRouter> Router;
 	TArray<FHttpRouteHandle> RouteHandles;
 	double LastTickTimeSec = 0.0;
 	int32 ListenPort = 0;
+	TFunction<void(FHttpResultCallback)> SnapshotHandler;   // bound once listening
+	FTSTicker::FDelegateHandle RetryHandle;
+	double BindFailedSinceSec = 0.0;
+	bool bReportedStillBusy = false;
 
 	FStatusQueryFn IsAlive;
 	FStatusQueryFn IsEncoderReady;
