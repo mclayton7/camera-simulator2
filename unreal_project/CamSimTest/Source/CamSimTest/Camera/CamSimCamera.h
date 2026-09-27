@@ -8,6 +8,7 @@
 #include "Camera/CamSimPlatformRig.h"
 #include "Camera/CamSimStreamingController.h"
 #include "Camera/CamSimTelemetryAssembler.h"
+#include "Camera/CamSimFrameStats.h"
 #include "CamSimCamera.generated.h"
 
 class USceneCaptureComponent2D;
@@ -111,6 +112,13 @@ private:
 	FCamSimPlatformRig         Platform;
 	FCamSimStreamingController Streaming;
 
+	/** ROADMAP 3A bench stats (off unless operational.frame_stats_path is set). */
+	FCamSimFrameStatsRecorder FrameStats;
+	TSharedPtr<FCamSimViewFamilyCounter, ESPMode::ThreadSafe> ViewFamilyCounter;
+	double LastStatsWallSec = 0.0;
+	/** Set by the camera-cut check; recorded in frame stats. */
+	bool bCameraCutThisFrame = false;
+
 	FPipelineLatencyTracker* LatencyTracker = nullptr;
 
 	// Phase 27D — config hot reload. The mtime stat runs on a background task
@@ -131,6 +139,8 @@ private:
 	/** Focus depth of field at the slant range (Phase 15E). */
 	void UpdateAutoFocus();
 	void EmitHeartbeatIfDue();
+	/** Append this tick's render stats (ROADMAP 3A). */
+	void RecordFrameStats();
 	/** A parse failure keeps the current config and lets the tick carry on. */
 	void PollHotReloadConfig(float DeltaTime);
 };

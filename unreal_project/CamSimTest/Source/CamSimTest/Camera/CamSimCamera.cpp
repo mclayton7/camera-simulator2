@@ -18,6 +18,8 @@
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h" // TActorIterator
 #include "DynamicRHI.h"
+#include "RenderTimer.h"      // GGameThreadTime, GRenderThreadTime, GRHIThreadTime
+#include "Cesium3DTileset.h"
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
 #include "CesiumGlobeAnchorComponent.h"
@@ -95,6 +97,12 @@ void ACamSimCamera::BeginPlay()
 	CaptureComp->Initialize(SceneCapture, Subsystem, Cfg);
 	SetLatencyTracker(Subsystem->GetLatencyTracker());
 
+	if (!Cfg.Operational.FrameStatsPath.IsEmpty() && FrameStats.Open(Cfg.Operational.FrameStatsPath))
+	{
+		ViewFamilyCounter = FSceneViewExtensions::NewExtension<FCamSimViewFamilyCounter>();
+		LastStatsWallSec = FPlatformTime::Seconds();
+	}
+
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ready (%dx%d @ %.0ffps)"),
 		Cfg.CaptureWidth, Cfg.CaptureHeight, Cfg.FrameRate);
 }
@@ -103,6 +111,8 @@ void ACamSimCamera::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Streaming.Shutdown(this);
 	CaptureComp->Shutdown();
+	FrameStats.Close();
+	ViewFamilyCounter.Reset();
 
 	// Phase 27B — deregister so the health writer doesn't touch a dangling pointer.
 	if (Subsystem)
@@ -126,6 +136,9 @@ void ACamSimCamera::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	if (!Subsystem) return;
+
+	RecordFrameStats();  // stats for the frame that just finished
+	bCameraCutThisFrame = false;
 
 	++TickCount;
 	EmitHeartbeatIfDue();
@@ -170,6 +183,42 @@ void ACamSimCamera::Tick(float DeltaTime)
 	{
 		CaptureAndEncode();
 	}
+}
+
+void ACamSimCamera::RecordFrameStats()
+{
+	if (!FrameStats.IsOpen()) return;
+
+	const double NowSec = FPlatformTime::Seconds();
+	const double MsPerCycle = FPlatformTime::GetSecondsPerCycle() * 1000.0;
+
+	FCamSimFrameStatsSample S;
+	S.UtcSeconds    = (FDateTime::UtcNow() - FDateTime(1970, 1, 1)).GetTotalSeconds();
+	S.WallMs        = (NowSec - LastStatsWallSec) * 1000.0;
+	S.GameMs        = GGameThreadTime   * MsPerCycle;
+	S.RenderMs      = GRenderThreadTime * MsPerCycle;
+	S.RhiMs         = GRHIThreadTime    * MsPerCycle;
+	S.GpuMs         = RHIGetGPUFrameCycles(0) * MsPerCycle;
+	S.FramesEmitted = CaptureComp->GetFramesCaptured();
+	S.FramesDropped = CaptureComp->GetDroppedFrameCount();
+	S.bCameraCut    = bCameraCutThisFrame;
+	S.ViewFamilies  = ViewFamilyCounter ? ViewFamilyCounter->ConsumeCount() : 0;
+
+	float MinLoad = 100.0f;
+	double Sse = 0.0;
+	for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Subsystem->GetCachedTilesets())
+	{
+		if (ACesium3DTileset* T = Weak.Get())
+		{
+			MinLoad = FMath::Min(MinLoad, T->GetLoadProgress());  // already 0-100
+			Sse = T->GetMaximumScreenSpaceError();
+		}
+	}
+	S.MinLoadProgressPct = MinLoad;
+	S.Sse = Sse;
+
+	FrameStats.Record(S);
+	LastStatsWallSec = NowSec;
 }
 
 void ACamSimCamera::CaptureAndEncode()
