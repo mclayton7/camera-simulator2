@@ -51,7 +51,7 @@ camsim/
       Sensor/                      # CPU post-process: EO/IR/NVG effects
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (219 tests across 40 files)
+      Tests/                       # UE5 Automation tests (227 tests across 42 files)
     Source/ThirdParty/
       CCL/                         # CIGI Class Library (static lib)
       FFmpeg/                      # libavcodec/format/util/swscale + libx264
@@ -131,7 +131,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **CCL API quirk**: `GetDestEntityIDValid()`/`GetDestEntityID()` only in `CigiLosSegReqV3_2`, not V3
 - **Fixed framerate**: Engine locked to 30fps via DefaultEngine.ini (`bUseFixedFrameRate=True`). `DeltaTime` is therefore constant: measure frame time with the wall clock (the bench does)
 - **The sensor is the primary view** (`render.view_source: primary`, ROADMAP 3A): the game viewport renders it with TSR and `FCamSimFrameGrabExtension` grabs the result. `SceneCapture` only holds pose/FOV/post-process until 3B; don't call `CaptureScene()` in primary mode. Screen messages are disabled in primary mode, since the viewport canvas would be burned into the video
-- **Output is ~15 fps at a 30 Hz tick**: only one readback is in flight (`EReadbackState`), so `Capture()` runs every other tick. Fixing it is the 3B readback ring
+- **Readback ring** (`Camera/ReadbackRing.h`): up to three captures in flight, delivered strictly in capture order; a full ring skips the new frame (counted as `EncoderBusy`). The CPU sensor model and the encoder each have ~33 ms per frame at 30 fps; if the sensor model can't keep up (e.g. 1080p with heavy effects), frames are skipped until 3B moves it to the GPU
 - **Health port restart**: restarting CamSim within ~30 s of the last run fails to bind :8080 (TIME_WAIT; UE's listener doesn't set SO_REUSEADDR) while still logging "listening". `run_bench.py` waits it out
 - **IDE false positives**: clang diagnostics for UE types are wrong — UBT handles includes at build time
 - **Docker networking**: `network_mode: host` required for UDP multicast routing

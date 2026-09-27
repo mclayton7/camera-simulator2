@@ -365,7 +365,7 @@ budget on the reference GPU (RTX 5090). The pipeline benchmark is tracked in CI.
 | #  | Sub-project                 | Covers                                                                                                                              |
 | -- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | 3A | Render path + measurement   | Benchmark/reference-shot harness; sensor rendered as the primary view (TSR, one scene render, Cesium LOD transitions, origin shift); hitch and SSE tuning. Item 7 above. |
-| 3B | Sensor model on the GPU     | Items 1–3, 5, 6: tonemapper replaced by RDG compute on HDR input (minimal core effects first, auto-fallback to CPU), NV12, readback ring. |
+| 3B | Sensor model on the GPU     | Items 1–3, 6 (item 5, the readback ring, done early as 3A.1): tonemapper replaced by RDG compute on HDR input (minimal core effects first, auto-fallback to CPU), NV12, readback ring. |
 | 3C | GPU-texture encode          | Item 4: UE `AVCodecs` NVENC/VideoToolbox from GPU textures; FFmpeg for TS/KLV muxing only.                                          |
 | 3D | CI performance gate         | Exit criterion: 3A's harness as a tracked CI threshold.                                                                             |
 
@@ -408,8 +408,14 @@ fixed-step engine can't meet a p95 equal to its own step); tests ✅ (219 automa
 (CI deferred by the user). Deferred: RTX 5090 runs.
 
 Findings for follow-up:
-- **Output is ~15 fps, not 30**: one readback in flight gates `Capture()` to every other tick.
-  The 3B readback ring fixes it; consider pulling it forward.
+- ~~**Output is ~15 fps, not 30**~~ **Fixed in 3A.1** (pulled forward from 3B item 5): a
+  three-slot readback ring (`Camera/ReadbackRing.h`) delivers frames in order, and
+  `FEncoderThread` now paces start to start (it slept a full interval after each encode, capping
+  output near 26 fps once input reached 30). Full bench on the M1 Pro: 29.7–29.9 fps in every
+  phase at 720p and 1080p (was 14.8–15.0), 0 dropped, frame time p95 34–36 ms; stream 30.0 fps
+  with 33.3 ms PTS spacing; KLV conformant. The CPU sensor model keeps up at 1080p with the
+  default effects. The CPU sensor model now has ~33 ms per frame; if it falls behind, frames are
+  skipped until 3B's GPU sensor model (decision 2026-09-27).
 - **Over-exposure**: Lumen warns auto-exposure (EV 13.5) is outside the cached-lighting
   pre-exposure range; every shot is washed out. Needs an exposure/calibration decision.
 - Restarting within ~30 s fails to bind the health port (:8080, TIME_WAIT) while logging
