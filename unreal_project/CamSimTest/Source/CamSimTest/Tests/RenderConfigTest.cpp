@@ -204,3 +204,25 @@ bool FRenderConfigCulledSseTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("env overrides yaml"), ResolveCulledScreenSpaceError(Env), 48.0);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigFrustumCullingTest,
+	"CamSim.Config.FrustumCulling",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderConfigFrustumCullingTest::RunTest(const FString& Parameters)
+{
+	// Off by default: Cesium applies culled_screen_space_error only to tiles culled
+	// by a disabled stage, so frustum culling left snaps on coarse tiles for ~2 s
+	// (Yosemite snap test, 2026-09-28).
+	TestFalse(TEXT("off by default"), FCamSimConfig().bFrustumCulling);
+
+	const FCamSimConfig Yaml = FCamSimConfig::LoadFromYamlString(TEXT("frustum_culling: true\n"));
+	TestTrue(TEXT("yaml value used"), Yaml.bFrustumCulling);
+	TestEqual(TEXT("no unknown keys"), Yaml.UnknownYamlKeys.Num(), 0);
+
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_FRUSTUM_CULLING"), TEXT("0"));
+	const FCamSimConfig Env = FCamSimConfig::LoadFromYamlString(TEXT("frustum_culling: true\n"));
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_FRUSTUM_CULLING"), TEXT(""));
+	TestFalse(TEXT("env overrides yaml"), Env.bFrustumCulling);
+	return true;
+}

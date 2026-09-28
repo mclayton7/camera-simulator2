@@ -109,6 +109,12 @@ struct FCamSimConfig
 	// they refine to MaximumScreenSpaceError. 0 = auto (= MaximumScreenSpaceError).
 	// Env: CAMSIM_CULLED_SSE
 	float   CulledScreenSpaceError = 0.0f;
+	// Cesium tile-selection frustum culling (EnableFrustumCulling; UE's render
+	// culling is unaffected). Off by default: Cesium applies CulledScreenSpaceError
+	// only to tiles culled by a disabled stage, so with this on, tiles outside the
+	// view stay coarse and a gimbal snap shows them until they refine (~2 s).
+	// Env: CAMSIM_FRUSTUM_CULLING
+	bool    bFrustumCulling = false;
 	// Tile cache budget in MB per tileset (0 = Cesium default / uncapped).
 	// Large cache avoids re-downloading tiles when revisiting areas.
 	int32   MaximumCachedBytesMB = 2048;

@@ -221,10 +221,18 @@ maximum_screen_space_error: 16.0
 # Detail kept for tiles outside the view (higher = coarser). After a gimbal snap
 # the new view shows these tiles until they refine. 0 = same as
 # maximum_screen_space_error: snaps land on full-detail tiles (Yosemite, M1 Pro:
-# ~60% more tiles, ~930 MB, no frame-time cost). The old value, 200, left a third
+# ~60% more tiles, ~930 MB; needs frustum_culling: false). The old value, 200, left a third
 # of the view coarse for ~2 s after a 90-degree snap.
 # Env: CAMSIM_CULLED_SSE
 culled_screen_space_error: 0
+
+# Cesium's tile-selection frustum culling (UE still culls rendering). Off: Cesium
+# applies culled_screen_space_error only when this is off, so with it on, tiles
+# outside the view stay coarse and a gimbal snap shows them for ~2 s.
+# Off costs ~2-3 ms of game thread and more streaming hitches (SF bench, M1 Pro);
+# set true for smooth steady flight when the gimbal doesn't snap.
+# Env: CAMSIM_FRUSTUM_CULLING
+frustum_culling: false
 
 # Cesium tile cache budget in MB (per tileset). 0 = Cesium default (uncapped).
 # Large cache avoids re-downloading tiles when revisiting areas; sized for the

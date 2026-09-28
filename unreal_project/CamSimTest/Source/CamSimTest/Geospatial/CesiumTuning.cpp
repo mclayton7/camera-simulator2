@@ -43,9 +43,13 @@ namespace CamSim::Geospatial
 
 			// Off-screen tiles stay loaded at the on-screen detail by default. The old
 			// coarse setting (SSE 200) left a third of the view blurry for ~2 s after
-			// a 90° gimbal snap; SSE 16 costs ~60% more tiles and no frame time.
+			// a 90° gimbal snap; SSE 16 costs ~60% more tiles (needs frustum culling off).
 			It->EnforceCulledScreenSpaceError = true;
 			It->CulledScreenSpaceError        = CulledSSE;
+			// CulledScreenSpaceError only reaches tiles culled by a *disabled* culling
+			// stage, so with frustum culling on, tiles outside the view stay coarse
+			// and a gimbal snap shows them for ~2 s (Yosemite snap test, 2026-09-28).
+			It->EnableFrustumCulling = Cfg.bFrustumCulling;
 
 			// CIGI HAT/HOT + LOS queries and the KLV frame centre are line traces,
 			// which need tile collision. Turning it off saves cook time and memory
@@ -57,11 +61,11 @@ namespace CamSim::Geospatial
 			It->LogSelectionStats   = Cfg.bLogTileSelectionStats;
 
 			UE_LOG(LogCamSim, Log,
-				TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f cacheMB=%d descLimit=%d lodBlend=%d logStats=%d physicsMeshes=%d)"),
+				TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f cacheMB=%d descLimit=%d frustumCull=%d lodBlend=%d logStats=%d physicsMeshes=%d)"),
 				*It->GetName(), Cfg.MaxSimultaneousTileLoads,
 				Cfg.MaximumScreenSpaceError, CulledSSE,
 				Cfg.MaximumCachedBytesMB, Cfg.LoadingDescendantLimit,
-				(int)UseLodTransitions(Cfg), (int)Cfg.bLogTileSelectionStats, (int)Cfg.bCreatePhysicsMeshes);
+				(int)Cfg.bFrustumCulling, (int)UseLodTransitions(Cfg), (int)Cfg.bLogTileSelectionStats, (int)Cfg.bCreatePhysicsMeshes);
 		}
 	}
 }
