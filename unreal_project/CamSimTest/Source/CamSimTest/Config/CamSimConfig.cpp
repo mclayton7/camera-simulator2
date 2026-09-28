@@ -62,16 +62,6 @@ static bool GetEnvBool(const TCHAR* Key, bool Default)
 		|| FCString::Atoi(*Value) != 0;
 }
 
-static FCamSimConfig::EReadbackFormat ParseReadbackFormat(const FString& Value)
-{
-	const FString Lower = Value.ToLower();
-	if (Lower == TEXT("bgra")) return FCamSimConfig::EReadbackFormat::BGRA;
-	if (Lower == TEXT("rgba")) return FCamSimConfig::EReadbackFormat::RGBA;
-	if (Lower == TEXT("argb")) return FCamSimConfig::EReadbackFormat::ARGB;
-	if (Lower == TEXT("abgr")) return FCamSimConfig::EReadbackFormat::ABGR;
-	return FCamSimConfig::EReadbackFormat::Auto;
-}
-
 static FCamSimConfig::EEncoderWatchdogPolicy ParseWatchdogPolicy(const FString& Value)
 {
 	const FString Lower = Value.ToLower();
@@ -92,16 +82,6 @@ static FCamSimConfig::EEncoderPreference ParseEncoderPreference(const FString& V
 	UE_LOG(LogCamSim, Warning,
 		TEXT("Unknown Encoder preference '%s' — defaulting to Auto"), *Value);
 	return FCamSimConfig::EEncoderPreference::Auto;
-}
-
-static FCamSimConfig::FRenderConfig::EViewSource ParseViewSource(const FString& Value)
-{
-	using EViewSource = FCamSimConfig::FRenderConfig::EViewSource;
-	const FString Lower = Value.ToLower().TrimStartAndEnd();
-	if (Lower == TEXT("scene_capture")) return EViewSource::SceneCapture;
-	if (Lower == TEXT("primary") || Lower.IsEmpty()) return EViewSource::Primary;
-	UE_LOG(LogCamSim, Warning, TEXT("Unknown render.view_source '%s' — using primary"), *Value);
-	return EViewSource::Primary;
 }
 
 static FString NormalizeQualityPreset(const FString& Value)
@@ -301,8 +281,6 @@ void FCamSimConfig::KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSi
 	Reloaded.VideoCodec    = Running.VideoCodec;
 	// ROADMAP 3A: the render path is wired at BeginPlay (grab extension, AA,
 	// viewport rendering, Cesium cameras, origin shift component).
-	Reloaded.Render.ViewSource           = Running.Render.ViewSource;
-	Reloaded.Render.ViewSourceMode       = Running.Render.ViewSourceMode;
 	Reloaded.Render.OriginShiftDistanceM = Running.Render.OriginShiftDistanceM;
 	// ROADMAP 3B: render targets, readback buffers, the encoder and the sensor
 	// graph are sized once per session.
@@ -466,15 +444,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		YamlInt   (Root, "capture_width",    Cfg.CaptureWidth);
 		YamlInt   (Root, "capture_height",   Cfg.CaptureHeight);
 		YamlFloat (Root, "frame_rate",       Cfg.FrameRate);
-		YamlBool  (Root, "swap_rb_readback", Cfg.bSwapRBReadback);
 		YamlInt   (Root, "readback_ready_polls", Cfg.ReadbackReadyPolls);
-		{
-			FString ReadbackFmt;
-			if (YamlString(Root, "readback_format", ReadbackFmt))
-			{
-				Cfg.ReadbackFormat = ParseReadbackFormat(ReadbackFmt);
-			}
-		}
 		{
 			FString WatchdogPolicy;
 			if (YamlString(Root, "encoder_watchdog_policy", WatchdogPolicy))
@@ -1314,11 +1284,9 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		if (YamlHas(Root, "render"))
 		{
 			ryml::ConstNodeRef RNode = Root["render"];
-			YamlString(RNode, "view_source",             Cfg.Render.ViewSource);
 			YamlFloat (RNode, "camera_cut_distance_m",   Cfg.Render.CameraCutDistanceM);
 			YamlFloat (RNode, "camera_cut_angle_deg",    Cfg.Render.CameraCutAngleDeg);
 			YamlDouble(RNode, "origin_shift_distance_m", Cfg.Render.OriginShiftDistanceM);
-			Cfg.Render.ViewSourceMode = ParseViewSource(Cfg.Render.ViewSource);
 		}
 
 		YamlReadElsewhere(Root, "entity_types");  // FEntityTypeTable
@@ -1355,15 +1323,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.MulticastPort  = GetEnvInt(TEXT("CAMSIM_MULTICAST_PORT"),Cfg.MulticastPort);
 	Cfg.VideoBitrate   = GetEnvInt(TEXT("CAMSIM_VIDEO_BITRATE"),  Cfg.VideoBitrate);
 	Cfg.H264Preset     = GetEnv(TEXT("CAMSIM_H264_PRESET"),      Cfg.H264Preset);
-	Cfg.bSwapRBReadback = GetEnvInt(TEXT("CAMSIM_SWAP_RB_READBACK"),
-		Cfg.bSwapRBReadback ? 1 : 0) != 0;
-	{
-		const FString ReadbackEnv = GetEnv(TEXT("CAMSIM_READBACK_FORMAT"), TEXT(""));
-		if (!ReadbackEnv.IsEmpty())
-		{
-			Cfg.ReadbackFormat = ParseReadbackFormat(ReadbackEnv);
-		}
-	}
 	Cfg.ReadbackReadyPolls = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_READBACK_READY_POLLS"), Cfg.ReadbackReadyPolls));
 	{
 		const FString WatchdogPolicy = GetEnv(TEXT("CAMSIM_ENCODER_WATCHDOG_POLICY"), TEXT(""));
@@ -1673,14 +1632,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		Cfg.Operational.FrameStatsPath = FPaths::ConvertRelativePathToFull(FPaths::LaunchDir(), Cfg.Operational.FrameStatsPath);
 	}
 
-	// ROADMAP 3A: render path env overrides. view_source is re-parsed only when
-	// the env var is set, so a YAML typo is reported once, not twice.
-	const FString EnvViewSource = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_RENDER_VIEW_SOURCE"));
-	if (!EnvViewSource.IsEmpty())
-	{
-		Cfg.Render.ViewSource     = EnvViewSource;
-		Cfg.Render.ViewSourceMode = ParseViewSource(EnvViewSource);
-	}
+	// ROADMAP 3A: render path env overrides.
 	Cfg.Render.CameraCutDistanceM   = GetEnvFloat (TEXT("CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M"),   Cfg.Render.CameraCutDistanceM);
 	Cfg.Render.CameraCutAngleDeg    = GetEnvFloat (TEXT("CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG"),    Cfg.Render.CameraCutAngleDeg);
 	Cfg.Render.OriginShiftDistanceM = GetEnvDouble(TEXT("CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M"), Cfg.Render.OriginShiftDistanceM);

@@ -20,7 +20,7 @@ uv run --with numpy --with pillow python scripts/bench/run_bench.py --label myte
 uv run --with numpy --with pillow python scripts/bench/run_bench.py --label smoke --smoke
 ```
 
-Flags: `--view-source primary|scene_capture`, `--skip-warmup` (only when the cache is
+Flags: `--skip-warmup` (only when the cache is
 already warm), `--trace` (Unreal Insights `trace.utrace`), `--out DIR`.
 Output (default `.cache/bench/<time>-<label>/`): `results.json` (`meta.sensor_path`
 is what CamSim's `/metrics` reported: `gpu` — the GPU sensor graph is the only path since 3B.2), `frames.jsonl`, `phases.json`,

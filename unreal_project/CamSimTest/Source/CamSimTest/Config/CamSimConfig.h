@@ -20,7 +20,6 @@
  *   CAMSIM_MULTICAST_PORT         - UDP port for output stream; also overrides output_views routes when set (default 5004)
  *   CAMSIM_VIDEO_BITRATE          - Target H.264 bitrate in bps                  (default 4000000)
  *   CAMSIM_H264_PRESET            - libx264 preset string                        (default ultrafast)
- *   CAMSIM_SWAP_RB_READBACK       - Force red/blue swap on GPU readback          (default 0)
  *   CAMSIM_READBACK_READY_POLLS   - Consecutive IsReady polls before Lock         (default 2)
  *   CAMSIM_ENCODER_WATCHDOG_POLICY - reconnect|log_only|fail_fast                 (default reconnect)
  *   CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS - watchdog check interval              (default 150)
@@ -47,15 +46,6 @@
  */
 struct FCamSimConfig
 {
-	enum class EReadbackFormat : uint8
-	{
-		Auto = 0,
-		BGRA,
-		RGBA,
-		ARGB,
-		ABGR
-	};
-
 	enum class EEncoderPreference : uint8
 	{
 		Auto    = 0,
@@ -90,8 +80,6 @@ struct FCamSimConfig
 	int32   CaptureWidth    = 1920;
 	int32   CaptureHeight   = 1080;
 	float   FrameRate       = 30.0f;
-	bool    bSwapRBReadback = false;
-	EReadbackFormat ReadbackFormat = EReadbackFormat::Auto;
 	int32   ReadbackReadyPolls = 1; // require N consecutive IsReady() polls before Lock()
 
 	// Horizontal field of view in degrees (used for KLV metadata)
@@ -127,9 +115,8 @@ struct FCamSimConfig
 	// Max descendant tiles to load simultaneously (Cesium default 20; higher = better low-alt detail)
 	// Env: CAMSIM_LOADING_DESCENDANT_LIMIT
 	int32   LoadingDescendantLimit = 20;
-	// Cesium's dithered LOD crossfade (UseLodTransitions). Needs temporal AA to
-	// resolve the dither, so it is applied only with render.view_source =
-	// primary (TSR); with scene_capture (FXAA) it would blur moving views.
+	// Cesium's dithered LOD crossfade (UseLodTransitions). Needs temporal AA
+	// (TSR, the primary view's anti-aliasing) to resolve the dither.
 	// Off by default: Cesium updates the fade of every tile in the render set each
 	// frame, off-screen tiles included, which cost ~6 ms of game thread and doubled
 	// streaming hitches once culled_screen_space_error kept full detail off screen.
@@ -782,16 +769,6 @@ struct FCamSimConfig
 	// ROADMAP 3A — render path
 	struct FRenderConfig
 	{
-		enum class EViewSource : uint8
-		{
-			Primary = 0,   // the sensor is the game viewport's view (TSR, one render)
-			SceneCapture,  // legacy SceneCapture2D path, kept for A/B until 3B
-		};
-
-		// primary | scene_capture. Env: CAMSIM_RENDER_VIEW_SOURCE
-		FString     ViewSource     = TEXT("primary");
-		EViewSource ViewSourceMode = EViewSource::Primary;
-
 		// Pose jumps above either threshold in one frame reset TSR history.
 		// Env: CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M / CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG
 		float CameraCutDistanceM = 500.0f;
@@ -800,8 +777,6 @@ struct FCamSimConfig
 		// Rebase the Cesium georeference when the camera is this far from the
 		// origin, in metres. 0 = disabled. Env: CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M
 		double OriginShiftDistanceM = 20000.0;
-
-		bool IsPrimary() const { return ViewSourceMode == EViewSource::Primary; }
 	};
 	FRenderConfig Render;
 

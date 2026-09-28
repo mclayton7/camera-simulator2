@@ -7,6 +7,7 @@
 #include "HAL/FileManager.h"
 #include "Math/RandomStream.h"
 #include "Encoder/VideoEncoder.h"
+#include "Encoder/Nv12.h"
 #include "Config/CamSimConfig.h"
 #include "Metadata/CamSimTelemetry.h"
 
@@ -102,24 +103,29 @@ namespace
 			}
 			FRandomStream Rng(1234);
 			FSensorFrame Frame;
-			Frame.Format = ESensorPixelFormat::BGRA8;
-			TArray<FColor>& Pixels = Frame.Bgra;
-			Pixels.SetNumUninitialized(Config.CaptureWidth * Config.CaptureHeight);
+			const int32 NumPixels = Config.CaptureWidth * Config.CaptureHeight;
+			Frame.Nv12.SetNumUninitialized(CamSimNv12::NumBytes(Config.CaptureWidth, Config.CaptureHeight));
+			uint8* YPlane = Frame.Nv12.GetData();
+			// Neutral chroma: only the Y plane carries the grain/noise below.
+			FMemory::Memset(YPlane + NumPixels, 128, Frame.Nv12.Num() - NumPixels);
 			FCamSimTelemetry T;
 			for (int32 FrameI = 0; FrameI < NumFrames; ++FrameI)
 			{
-				for (int32 i = 0; i < Pixels.Num(); ++i)
+				for (int32 i = 0; i < NumPixels; ++i)
 				{
-					FColor& C = Pixels[i];
+					uint8 V;
 					if (GrainAmp >= 255)
 					{
-						C = FColor(Rng.RandRange(0, 255), Rng.RandRange(0, 255), Rng.RandRange(0, 255), 255);
-						continue;
+						V = (uint8)Rng.RandRange(0, 255);
 					}
-					const int32 X = i % Width, Y = i / Width;
-					const int32 Base = (X + Y + FrameI * 8) & 255;
-					const uint8 V = (uint8)FMath::Clamp(Base + Rng.RandRange(-GrainAmp, GrainAmp), 0, 255);
-					C = FColor(V, V, V, 255);
+					else
+					{
+						const int32 X = i % Width, Y = i / Width;
+						const int32 Base = (X + Y + FrameI * 8) & 255;
+						V = (uint8)FMath::Clamp(Base + Rng.RandRange(-GrainAmp, GrainAmp), 0, 255);
+					}
+					// Map full range [0,255] -> limited range [16,235].
+					YPlane[i] = static_cast<uint8>(16 + (V * 219 + 127) / 255);
 				}
 				Encoder.EncodeFrame(Frame, T, FrameI);
 			}

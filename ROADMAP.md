@@ -595,6 +595,18 @@ Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
   only path: `UCamSimSubsystem::IsSensorGraphAvailable()` is decided at startup; without it no
   frames are produced and `/ready` stays false. Streams are always tagged BT.709. The BGRA
   render-target ring, colour readback pool and backbuffer grab are gone (NV12 readback only).
+- Task 3: primary view only — `render.view_source` / `EViewSource` / `CAMSIM_RENDER_VIEW_SOURCE`
+  are gone (`scene_capture` reports as an unknown YAML key). Every `IsPrimary()` branch collapsed
+  to its primary-view side (`FCamSimStreamingController::NumStreamingCameras` always 1,
+  `CamSim::Geospatial::UseLodTransitions` follows `bUseLodTransitions` alone,
+  `UCamSimSubsystem::CanRunSensorGraph` no longer checks the view source). The encoder takes NV12
+  only: `FSensorFrame` is `{ TArray<uint8> Nv12 }` (no format enum), `FVideoEncoder` dropped
+  `SwsCtx`/`RgbCompressedScratch`/`bSwsColorSpaceApplied` and the BGRA/sws_scale/IR-grayscale
+  encode path, and `FMultiViewFrameSink::ApplyDigitalZoom` (BGRA) is gone (`ApplyDigitalZoomNv12`
+  only). `Camera/CamSimPixelConvert.h` (BGRA readback conversion) and `swap_rb_readback` /
+  `readback_format` / `CAMSIM_SWAP_RB_READBACK` / `CAMSIM_READBACK_FORMAT` are deleted
+  (`readback_ready_polls` stays — the NV12 poll still uses it). `FrameGrabRequestQueue::DecidePoll`
+  dropped its now-always-true `bNeedsGrab` parameter.
 
 ---
 

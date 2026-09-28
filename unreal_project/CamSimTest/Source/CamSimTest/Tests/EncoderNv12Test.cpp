@@ -67,7 +67,6 @@ bool FEncoderNv12RoundTripTest::RunTest(const FString& Parameters)
 	Config.Recording.VideoRecordPath = Path;
 
 	FSensorFrame F;
-	F.Format = ESensorPixelFormat::NV12;
 	F.Nv12.SetNumUninitialized(CamSimNv12::NumBytes(W, H));
 	for (int32 R = 0; R < H; ++R) for (int32 X = 0; X < W; ++X) F.Nv12[R * W + X] = static_cast<uint8>(16 + ((X + R) * 219) / (W + H));
 	for (int32 I = W * H; I < F.Nv12.Num(); ++I) F.Nv12[I] = (I & 1) ? 150 : 110;
@@ -108,7 +107,6 @@ bool FEncoderTransferIsBt709Test::RunTest(const FString& Parameters)
 	Config.Recording.VideoRecordPath = Path;
 
 	FSensorFrame F;
-	F.Format = ESensorPixelFormat::NV12;
 	F.Nv12.Init(128, CamSimNv12::NumBytes(W, H));
 	IFileManager::Get().Delete(*Path);
 	{

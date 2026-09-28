@@ -322,19 +322,6 @@ void UCamSimSubsystem::StoreCesiumIonServer(UCesiumIonServer* Server)
 
 namespace
 {
-const TCHAR* ReadbackFormatToString(FCamSimConfig::EReadbackFormat Fmt)
-{
-	switch (Fmt)
-	{
-		case FCamSimConfig::EReadbackFormat::BGRA: return TEXT("bgra");
-		case FCamSimConfig::EReadbackFormat::RGBA: return TEXT("rgba");
-		case FCamSimConfig::EReadbackFormat::ARGB: return TEXT("argb");
-		case FCamSimConfig::EReadbackFormat::ABGR: return TEXT("abgr");
-		case FCamSimConfig::EReadbackFormat::Auto:
-		default: return TEXT("auto");
-	}
-}
-
 const TCHAR* WatchdogPolicyToString(FCamSimConfig::EEncoderWatchdogPolicy Policy)
 {
 	switch (Policy)
@@ -349,11 +336,6 @@ const TCHAR* WatchdogPolicyToString(FCamSimConfig::EEncoderWatchdogPolicy Policy
 
 bool UCamSimSubsystem::CanRunSensorGraph(const FCamSimConfig& Cfg, FString& OutWhy)
 {
-	if (!Cfg.Render.IsPrimary())
-	{
-		OutWhy = TEXT("render.view_source is scene_capture: the sensor graph runs only in the primary view");
-		return false;
-	}
 	// NV12 packing writes 4 luma bytes per uint and 2x2 chroma.
 	if (Cfg.CaptureWidth % 4 != 0 || Cfg.CaptureHeight % 2 != 0)
 	{
@@ -422,7 +404,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	UE_LOG(LogCamSim, Log,
 		TEXT("CamSim startup diagnostics: platform=%s rhi=%s ffmpeg(libavcodec=%d.%d.%d libswscale=%d.%d.%d) ")
 		TEXT("video=udp://%s:%d cigi_in=%s:%d cigi_resp=%s:%d capture=%dx%d@%.1ffps ")
-		TEXT("readback=%s swap_rb=%d ready_polls=%d bitrate=%d preset=%s tune=%s watchdog_policy=%s watchdog_ticks=%d ")
+		TEXT("ready_polls=%d bitrate=%d preset=%s tune=%s watchdog_policy=%s watchdog_ticks=%d ")
 		TEXT("sensor_quality=%s views=%d ground_truth=%d"),
 		ANSI_TO_TCHAR(FPlatformProperties::IniPlatformName()), *RHIName,
 		LIBAVCODEC_VERSION_MAJOR, LIBAVCODEC_VERSION_MINOR, LIBAVCODEC_VERSION_MICRO,
@@ -431,7 +413,6 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		*Config.CigiBindAddr, Config.CigiPort,
 		*Config.CigiResponseAddr, Config.CigiResponsePort,
 		Config.CaptureWidth, Config.CaptureHeight, Config.FrameRate,
-		ReadbackFormatToString(Config.ReadbackFormat), Config.bSwapRBReadback ? 1 : 0,
 		Config.ReadbackReadyPolls,
 		Config.VideoBitrate, *Config.H264Preset, *Config.H264Tune,
 		WatchdogPolicyToString(Config.EncoderWatchdogPolicy), Config.EncoderWatchdogIntervalTicks,

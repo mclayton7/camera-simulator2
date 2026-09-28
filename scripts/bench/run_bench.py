@@ -6,7 +6,7 @@ then writes per-phase metrics.
 
 Usage:
   uv run --with numpy --with pillow python scripts/bench/run_bench.py --label baseline
-  ... --view-source scene_capture | --smoke | --trace | --skip-warmup | --out DIR
+  ... --smoke | --trace | --skip-warmup | --out DIR
 """
 from __future__ import annotations
 
@@ -154,7 +154,6 @@ def wait_port_free(port: int, timeout_s: float = 90.0) -> None:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
-    ap.add_argument("--view-source", choices=["primary", "scene_capture"], default=None)
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--trace", action="store_true", help="also record an Unreal Insights trace")
     ap.add_argument("--skip-warmup", action="store_true")
@@ -175,8 +174,6 @@ def main() -> int:
     env = dict(os.environ,
                CAMSIM_FRAME_STATS_PATH=str(out / "frames.jsonl"),
                CAMSIM_SNAPSHOT_ENDPOINT_ENABLED="1")
-    if args.view_source:
-        env["CAMSIM_RENDER_VIEW_SOURCE"] = args.view_source
     extra = ["-trace=cpu,gpu,frame", f"-tracefile={out / 'trace.utrace'}"] if args.trace else []
 
     wait_port_free(int(HEALTH.rsplit(":", 1)[1]))
@@ -231,7 +228,7 @@ def main() -> int:
     sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=REPO).stdout.strip()
     results = {
         "meta": {"label": args.label, "git": sha, "platform": platform.platform(),
-                 "machine": platform.machine(), "view_source": args.view_source or "config default",
+                 "machine": platform.machine(),
                  "sensor_path": sensor_path,
                  "warmup_ran": not args.skip_warmup, "smoke": args.smoke},
         "phases": analyze.summarize(rows, phases_log),

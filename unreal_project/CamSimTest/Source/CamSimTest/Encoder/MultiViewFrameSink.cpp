@@ -99,9 +99,8 @@ void FMultiViewFrameSink::EncodeFrame(const FSensorFrame& Frame,
 
 	const int32 Width = Config.CaptureWidth;
 	const int32 Height = Config.CaptureHeight;
-	const bool bNv12 = Frame.Format == ESensorPixelFormat::NV12;
-	const int32 ExpectedNum = bNv12 ? CamSimNv12::NumBytes(Width, Height) : Width * Height;
-	const int32 ActualNum = bNv12 ? Frame.Nv12.Num() : Frame.Bgra.Num();
+	const int32 ExpectedNum = CamSimNv12::NumBytes(Width, Height);
+	const int32 ActualNum = Frame.Nv12.Num();
 	if (ActualNum != ExpectedNum)
 	{
 		UE_LOG(LogCamSim, Warning,
@@ -127,15 +126,7 @@ void FMultiViewFrameSink::EncodeFrame(const FSensorFrame& Frame,
 		FSensorFrame& ZoomedFrame = View.ZoomedScratch;
 		if (TargetHFov + KINDA_SMALL_NUMBER < SourceHFov)
 		{
-			ZoomedFrame.Format = Frame.Format;
-			if (bNv12)
-			{
-				ApplyDigitalZoomNv12(Frame.Nv12, Width, Height, SourceHFov, TargetHFov, ZoomedFrame.Nv12);
-			}
-			else
-			{
-				ApplyDigitalZoom(Frame.Bgra, Width, Height, SourceHFov, TargetHFov, ZoomedFrame.Bgra);
-			}
+			ApplyDigitalZoomNv12(Frame.Nv12, Width, Height, SourceHFov, TargetHFov, ZoomedFrame.Nv12);
 			FrameForView = &ZoomedFrame;
 		}
 
@@ -291,41 +282,6 @@ void FMultiViewFrameSink::WriteGroundTruthLine(const FCamSimTelemetry& Telemetry
 
 	const FTCHARToUTF8 Utf8(*Line);
 	GroundTruthHandle_->Write(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
-}
-
-void FMultiViewFrameSink::ApplyDigitalZoom(const TArray<FColor>& SourcePixels,
-                                           int32 Width, int32 Height,
-                                           float SourceHFovDeg, float TargetHFovDeg,
-                                           TArray<FColor>& OutPixels)
-{
-	OutPixels.SetNumUninitialized(SourcePixels.Num());
-	if (TargetHFovDeg >= SourceHFovDeg || Width <= 1 || Height <= 1)
-	{
-		FMemory::Memcpy(OutPixels.GetData(), SourcePixels.GetData(), SourcePixels.Num() * sizeof(FColor));
-		return;
-	}
-
-	const float SrcHalf = FMath::DegreesToRadians(SourceHFovDeg * 0.5f);
-	const float DstHalf = FMath::DegreesToRadians(TargetHFovDeg * 0.5f);
-	const float Zoom = FMath::Tan(SrcHalf) / FMath::Max(KINDA_SMALL_NUMBER, FMath::Tan(DstHalf));
-	const float CropFactor = FMath::Clamp(1.0f / Zoom, 0.05f, 1.0f);
-
-	const int32 CropW = FMath::Clamp(FMath::RoundToInt(Width * CropFactor), 1, Width);
-	const int32 CropH = FMath::Clamp(FMath::RoundToInt(Height * CropFactor), 1, Height);
-	const int32 StartX = (Width - CropW) / 2;
-	const int32 StartY = (Height - CropH) / 2;
-
-	// Phase 2: parallelize across rows — each output pixel reads from a
-	// distinct source location, so the loop is embarrassingly parallel.
-	ParallelFor(Height, [&](int32 Y)
-	{
-		const int32 SrcY = StartY + FMath::Clamp((Y * CropH) / Height, 0, CropH - 1);
-		for (int32 X = 0; X < Width; ++X)
-		{
-			const int32 SrcX = StartX + FMath::Clamp((X * CropW) / Width, 0, CropW - 1);
-			OutPixels[Y * Width + X] = SourcePixels[SrcY * Width + SrcX];
-		}
-	}, EParallelForFlags::BackgroundPriority);
 }
 
 void FMultiViewFrameSink::ApplyDigitalZoomNv12(const TArray<uint8>& SourceNv12,

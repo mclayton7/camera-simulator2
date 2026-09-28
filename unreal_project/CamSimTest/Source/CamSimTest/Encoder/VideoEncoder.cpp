@@ -3,7 +3,6 @@
 #include "Encoder/VideoEncoder.h"
 #include "Encoder/Nv12.h"
 #include "CamSimTest.h"
-#include "Sensor/SensorTypes.h"
 
 // ---------------------------------------------------------------------------
 // Helper: configure an AVStream as a STANAG 4609 KLV metadata stream.
@@ -122,12 +121,6 @@ bool FVideoEncoder::Open()
 	}
 
 	bIsOpen = true;
-
-	// Pre-allocate the fallback-path BGRA scratch buffer now so EncodeFrame()
-	// doesn't thrash the heap every frame if sws_setColorspaceDetails didn't
-	// take (which otherwise allocates ~3.6 MB / frame at 720p).
-	RgbCompressedScratch.SetNumUninitialized(
-		Config.CaptureWidth * Config.CaptureHeight * 4);
 
 	const TCHAR* CodecLabel = Config.VideoCodec.ToLower().Contains(TEXT("265"))
 		? TEXT("H.265") : TEXT("H.264");
@@ -250,101 +243,6 @@ void FVideoEncoder::ApplyEncoderOptions(bool bWantH265)
 	}
 }
 
-bool FVideoEncoder::ConfigureColorSpace()
-{
-	// Create sws context: BGRA → YUV420P (BT.709, limited range).
-	SwsCtx = sws_getContext(
-		Config.CaptureWidth, Config.CaptureHeight, AV_PIX_FMT_BGRA,
-		Config.CaptureWidth, Config.CaptureHeight, AV_PIX_FMT_YUV420P,
-		SWS_BILINEAR, nullptr, nullptr, nullptr);
-	if (!SwsCtx)
-	{
-		UE_LOG(LogCamSim, Error, TEXT("FVideoEncoder: sws_getContext failed"));
-		return false;
-	}
-
-	// CRITICAL: sws_getContext defaults to srcRange=0 (limited-range 16-235 RGB),
-	// but GPU readback delivers full-range 0-255 RGB. Without correcting this,
-	// values below 16 or above 235 cause chroma overflow → pink/green banding.
-	const int* BT709Coeffs = sws_getCoefficients(SWS_CS_ITU709);
-	int ScsRet = sws_setColorspaceDetails(
-		SwsCtx,
-		BT709Coeffs, /*srcRange=*/1,   // full-range RGB in (0-255)
-		BT709Coeffs, /*dstRange=*/0,   // limited-range YUV out (16-235/16-240)
-		0, 1 << 16, 1 << 16);
-	if (ScsRet < 0)
-	{
-		UE_LOG(LogCamSim, Error,
-			TEXT("FVideoEncoder: sws_setColorspaceDetails FAILED (ret=%d). "
-			     "Pink/green artifacts are likely."), ScsRet);
-	}
-
-	// Verify the color parameters actually took effect; some sws builds need an
-	// explicit sws_alloc_context / sws_init_context sequence to honour them.
-	int *InvTbl = nullptr, *Tbl = nullptr;
-	int VerifySrcRange = -1, VerifyDstRange = -1;
-	int Bri = 0, Con = 0, Sat = 0;
-	sws_getColorspaceDetails(SwsCtx, &InvTbl, &VerifySrcRange,
-	                         &Tbl, &VerifyDstRange, &Bri, &Con, &Sat);
-
-	UE_LOG(LogCamSim, Log,
-		TEXT("FVideoEncoder: sws colorspace verified → srcRange=%d dstRange=%d "
-		     "(expected srcRange=1 dstRange=0)"),
-		VerifySrcRange, VerifyDstRange);
-
-	if (VerifySrcRange != 1 || VerifyDstRange != 0)
-	{
-		UE_LOG(LogCamSim, Warning,
-			TEXT("FVideoEncoder: sws color params NOT applied correctly! "
-			     "srcRange=%d (want 1) dstRange=%d (want 0). Retrying with context reinit..."),
-			VerifySrcRange, VerifyDstRange);
-
-		sws_freeContext(SwsCtx);
-		SwsCtx = sws_alloc_context();
-		if (SwsCtx)
-		{
-			av_opt_set_int(SwsCtx, "srcw",       Config.CaptureWidth,  0);
-			av_opt_set_int(SwsCtx, "srch",       Config.CaptureHeight, 0);
-			av_opt_set_int(SwsCtx, "src_format", AV_PIX_FMT_BGRA,      0);
-			av_opt_set_int(SwsCtx, "dstw",       Config.CaptureWidth,  0);
-			av_opt_set_int(SwsCtx, "dsth",       Config.CaptureHeight, 0);
-			av_opt_set_int(SwsCtx, "dst_format", AV_PIX_FMT_YUV420P,   0);
-			av_opt_set_int(SwsCtx, "sws_flags",  SWS_BILINEAR,         0);
-
-			const int InitRet = sws_init_context(SwsCtx, nullptr, nullptr);
-			if (InitRet < 0)
-			{
-				UE_LOG(LogCamSim, Error,
-					TEXT("FVideoEncoder: sws_init_context fallback failed (ret=%d)"), InitRet);
-				sws_freeContext(SwsCtx);
-				SwsCtx = nullptr;
-				return false;
-			}
-
-			ScsRet = sws_setColorspaceDetails(
-				SwsCtx,
-				BT709Coeffs, /*srcRange=*/1,
-				BT709Coeffs, /*dstRange=*/0,
-				0, 1 << 16, 1 << 16);
-
-			sws_getColorspaceDetails(SwsCtx, &InvTbl, &VerifySrcRange,
-			                         &Tbl, &VerifyDstRange, &Bri, &Con, &Sat);
-			UE_LOG(LogCamSim, Log,
-				TEXT("FVideoEncoder: sws fallback → srcRange=%d dstRange=%d ret=%d"),
-				VerifySrcRange, VerifyDstRange, ScsRet);
-		}
-	}
-
-	bSwsColorSpaceApplied = (VerifySrcRange == 1 && VerifyDstRange == 0);
-	if (!bSwsColorSpaceApplied)
-	{
-		UE_LOG(LogCamSim, Warning,
-			TEXT("FVideoEncoder: sws color space NOT active — EncodeFrame will "
-			     "pre-compress BGRA to limited range (16-235) to avoid pink/green"));
-	}
-	return true;
-}
-
 bool FVideoEncoder::TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265)
 {
 	bUsingNvenc        = (FCStringAnsi::Strstr(Codec->name, "nvenc") != nullptr);
@@ -378,9 +276,8 @@ bool FVideoEncoder::TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265)
 	VideoCodecCtx->gop_size     = (int)FMath::RoundToInt(EffectiveFps);
 	VideoCodecCtx->max_b_frames = 0; // zero-latency
 
-	// Explicitly signal the color space so all decoders (VLC, ffplay, hardware) agree.
-	// sws_scale converts sRGB→YUV using BT.709 limited-range coefficients, so we stamp
-	// the matching values into the H.264 VUI / SPS here.
+	// Explicitly signal the color space so all decoders (VLC, ffplay, hardware) agree,
+	// matching the BT.709 limited-range values the GPU sensor graph already applies.
 	// Transfer: the GPU sensor graph (ROADMAP 3B) applies the BT.709 OETF itself.
 	ColorTrc = AVCOL_TRC_BT709;
 	VideoCodecCtx->color_range     = AVCOL_RANGE_MPEG;        // limited (16-235/16-240)
@@ -409,9 +306,7 @@ bool FVideoEncoder::OpenVideoStream()
 	const TArray<const AVCodec*> Candidates = SelectVideoCodecs(bWantH265);
 	if (Candidates.IsEmpty()) return false;
 
-	UE_LOG(LogCamSim, Log,
-		TEXT("FVideoEncoder: libswscale %d.%d.%d  libavcodec %d.%d.%d"),
-		LIBSWSCALE_VERSION_MAJOR, LIBSWSCALE_VERSION_MINOR, LIBSWSCALE_VERSION_MICRO,
+	UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: libavcodec %d.%d.%d"),
 		LIBAVCODEC_VERSION_MAJOR, LIBAVCODEC_VERSION_MINOR, LIBAVCODEC_VERSION_MICRO);
 
 	VideoStream = avformat_new_stream(FmtCtx, nullptr);
@@ -451,16 +346,14 @@ bool FVideoEncoder::OpenVideoStream()
 
 	VideoStream->time_base = VideoCodecCtx->time_base;
 
-	// Allocate YUV frame for sws_scale output.
+	// Allocate the YUV420P frame EncodeFrame de-interleaves NV12 into.
 	YuvFrame = av_frame_alloc();
 	YuvFrame->format = AV_PIX_FMT_YUV420P;
 	YuvFrame->width  = Config.CaptureWidth;
 	YuvFrame->height = Config.CaptureHeight;
 	av_frame_get_buffer(YuvFrame, 0);
 
-	if (!ConfigureColorSpace()) return false;
-
-	// Stamp color properties on the YUV frame to match VUI and sws output.
+	// Stamp color properties on the YUV frame to match the VUI.
 	YuvFrame->color_range     = AVCOL_RANGE_MPEG;
 	YuvFrame->colorspace      = AVCOL_SPC_BT709;
 	YuvFrame->color_primaries = AVCOL_PRI_BT709;
@@ -563,116 +456,23 @@ void FVideoEncoder::EncodeFrame(
 	// Confirm the encoder is receiving frames (first 3 only to avoid spam).
 	if (FrameIdx < 3)
 	{
-		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: encoding frame %llu (%d %s)"), FrameIdx,
-			Frame.Format == ESensorPixelFormat::NV12 ? Frame.Nv12.Num() : Frame.Bgra.Num(),
-			Frame.Format == ESensorPixelFormat::NV12 ? TEXT("NV12 bytes") : TEXT("pixels"));
+		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: encoding frame %llu (%d NV12 bytes)"), FrameIdx,
+			Frame.Nv12.Num());
 	}
 
 	av_frame_make_writable(YuvFrame);
 
-	if (Frame.Format == ESensorPixelFormat::NV12)
+	// GPU sensor graph (the only sensor path): already BT.709 limited-range
+	// YUV, so EncodeFrame only de-interleaves NV12 into planar YUV420P.
+	if (Frame.Nv12.Num() != CamSimNv12::NumBytes(Config.CaptureWidth, Config.CaptureHeight))
 	{
-		// GPU sensor path (ROADMAP 3B): already BT.709 limited-range YUV; just de-interleave.
-		if (Frame.Nv12.Num() != CamSimNv12::NumBytes(Config.CaptureWidth, Config.CaptureHeight))
-		{
-			UE_LOG(LogCamSim, Warning, TEXT("FVideoEncoder: NV12 frame %llu has %d bytes, expected %d — skipped"),
-				FrameIdx, Frame.Nv12.Num(), CamSimNv12::NumBytes(Config.CaptureWidth, Config.CaptureHeight));
-			return;
-		}
-		CamSimNv12::SplitToYuv420p(Frame.Nv12.GetData(), Config.CaptureWidth, Config.CaptureHeight,
-			YuvFrame->data[0], YuvFrame->linesize[0], YuvFrame->data[1], YuvFrame->linesize[1],
-			YuvFrame->data[2], YuvFrame->linesize[2]);
+		UE_LOG(LogCamSim, Warning, TEXT("FVideoEncoder: NV12 frame %llu has %d bytes, expected %d — skipped"),
+			FrameIdx, Frame.Nv12.Num(), CamSimNv12::NumBytes(Config.CaptureWidth, Config.CaptureHeight));
+		return;
 	}
-	else
-	{
-	const TArray<FColor>& PixelData = Frame.Bgra;
-
-	// Convert BGRA → YUV420P
-
-	// IR fast path: frame is already grayscale after sensor post-process.
-	// Y = R channel (all channels equal after ApplyIR), Cb=Cr=128.
-	// Skips sws_scale entirely, saving 2-3ms per frame.
-	const ESensorMode SM = static_cast<ESensorMode>(Telemetry.SensorMode);
-	const bool bGrayscaleMode = (SM == ESensorMode::IR);
-	if (bGrayscaleMode)
-	{
-		const int32 W = Config.CaptureWidth;
-		const int32 H = Config.CaptureHeight;
-		const FColor* RESTRICT Src = PixelData.GetData();
-
-		// Y plane: BT.601 luma from BGRA (limited range for MPEG compliance)
-		for (int32 y = 0; y < H; ++y)
-		{
-			uint8* RESTRICT YRow = YuvFrame->data[0] + y * YuvFrame->linesize[0];
-			const FColor* RESTRICT SrcRow = Src + y * W;
-			for (int32 x = 0; x < W; ++x)
-			{
-				// For grayscale, R≈G≈B. Use R directly, map to limited range.
-				YRow[x] = static_cast<uint8>(16 + (SrcRow[x].R * 219 + 127) / 255);
-			}
-		}
-		// U/V planes: neutral chroma (128)
-		const int32 HalfW = W / 2;
-		const int32 HalfH = H / 2;
-		FMemory::Memset(YuvFrame->data[1], 128, YuvFrame->linesize[1] * HalfH);
-		FMemory::Memset(YuvFrame->data[2], 128, YuvFrame->linesize[2] * HalfH);
-	}
-	else
-	{
-	// Full color path: BGRA → YUV420P via sws_scale
-	const uint8* SrcPtr = reinterpret_cast<const uint8*>(PixelData.GetData());
-
-	// If sws color space details didn't take, sws_scale treats input as
-	// limited-range RGB [16-235].  Pre-compress full-range [0-255] → [16-235]
-	// to prevent chroma overflow that causes pink/green banding.
-	// RgbCompressedScratch is sized once in Open() so this path allocates
-	// zero memory per frame.
-	if (!bSwsColorSpaceApplied)
-	{
-		const int32 NumBytes = PixelData.Num() * 4;
-		if (RgbCompressedScratch.Num() < NumBytes)
-		{
-			// Resize only on the unusual path where CaptureWidth/Height changed
-			// after Open() (e.g. mid-run config push). Normal case: no-op.
-			RgbCompressedScratch.SetNumUninitialized(NumBytes);
-		}
-		uint8* Dst = RgbCompressedScratch.GetData();
-		for (int32 i = 0; i < NumBytes; ++i)
-		{
-			// Map [0,255] → [16,235]: out = 16 + in * 219/255
-			Dst[i] = static_cast<uint8>(16 + (SrcPtr[i] * 219 + 127) / 255);
-		}
-		SrcPtr = RgbCompressedScratch.GetData();
-	}
-
-	const uint8* SrcData[1] = { SrcPtr };
-	int SrcLinesize[1]      = { Config.CaptureWidth * 4 };  // 4 bytes per BGRA pixel
-
-	sws_scale(SwsCtx,
-		SrcData, SrcLinesize,
-		0, Config.CaptureHeight,
-		YuvFrame->data, YuvFrame->linesize);
-	} // end color path
-
-	// Diagnostic: dump sample pixel values for first frame to verify conversion
-	if (FrameIdx == 0 && PixelData.Num() > 0)
-	{
-		// Sample a pixel from near the center of the frame
-		const int32 CX = Config.CaptureWidth / 2;
-		const int32 CY = Config.CaptureHeight / 2;
-		const int32 Idx = CY * Config.CaptureWidth + CX;
-		const FColor& P = PixelData[Idx];
-		const uint8 Y_val  = YuvFrame->data[0][CY * YuvFrame->linesize[0] + CX];
-		const uint8 Cb_val = YuvFrame->data[1][(CY/2) * YuvFrame->linesize[1] + (CX/2)];
-		const uint8 Cr_val = YuvFrame->data[2][(CY/2) * YuvFrame->linesize[2] + (CX/2)];
-		UE_LOG(LogCamSim, Log,
-			TEXT("FVideoEncoder: frame 0 center pixel (%d,%d): "
-			     "BGRA=[B=%u G=%u R=%u A=%u] → YCbCr=[Y=%u Cb=%u Cr=%u]  "
-			     "(linesize Y=%d U=%d V=%d)"),
-			CX, CY, P.B, P.G, P.R, P.A, Y_val, Cb_val, Cr_val,
-			YuvFrame->linesize[0], YuvFrame->linesize[1], YuvFrame->linesize[2]);
-	}
-	} // end BGRA path
+	CamSimNv12::SplitToYuv420p(Frame.Nv12.GetData(), Config.CaptureWidth, Config.CaptureHeight,
+		YuvFrame->data[0], YuvFrame->linesize[0], YuvFrame->data[1], YuvFrame->linesize[1],
+		YuvFrame->data[2], YuvFrame->linesize[2]);
 
 	// Monotonic PTS — one tick per encoded frame so the MPEG-TS stream has
 	// uniform frame spacing.  Wall-clock PTS caused stutter when frames were
@@ -816,7 +616,6 @@ void FVideoEncoder::Close()
 	}
 
 	// Free resources
-	if (SwsCtx)        { sws_freeContext(SwsCtx); SwsCtx = nullptr; }
 	if (YuvFrame)      { av_frame_free(&YuvFrame); }
 	if (Pkt)           { av_packet_free(&Pkt); }
 	if (KlvPkt)        { av_packet_free(&KlvPkt); }

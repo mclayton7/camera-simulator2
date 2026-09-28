@@ -18,7 +18,7 @@ namespace CamSim::Geospatial
 
 	bool UseLodTransitions(const FCamSimConfig& Cfg)
 	{
-		return Cfg.bUseLodTransitions && Cfg.Render.IsPrimary();
+		return Cfg.bUseLodTransitions;
 	}
 
 	void ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg)

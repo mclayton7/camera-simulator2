@@ -63,12 +63,8 @@ private:
 
 	void BuildViewRuntimes();
 	void WriteGroundTruthLine(const FCamSimTelemetry& Telemetry, uint64 FrameIdx, int32 EncodedViewCount) const;
-	static void ApplyDigitalZoom(const TArray<FColor>& SourcePixels,
-	                             int32 Width, int32 Height,
-	                             float SourceHFovDeg, float TargetHFovDeg,
-	                             TArray<FColor>& OutPixels);
-	/** NV12 counterpart of ApplyDigitalZoom: same crop/nearest-neighbour mapping,
-	 *  applied to the Y plane at full resolution and the UV plane at half resolution. */
+	/** Crop/nearest-neighbour digital zoom on an NV12 frame: applied to the Y
+	 *  plane at full resolution and the UV plane at half resolution. */
 	static void ApplyDigitalZoomNv12(const TArray<uint8>& SourceNv12,
 	                             int32 Width, int32 Height,
 	                             float SourceHFovDeg, float TargetHFovDeg,

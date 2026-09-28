@@ -6,9 +6,24 @@
 #include "Geospatial/CesiumTuning.h"
 
 // -------------------------------------------------------------------------
-// ROADMAP 3A: render path, snapshot endpoint and frame-stats settings reach
-// FCamSimConfig from YAML and from env vars; a bad view_source falls back.
+// ROADMAP 3A/3B.2: render path, snapshot endpoint and frame-stats settings
+// reach FCamSimConfig from YAML and from env vars. The sensor is the primary
+// view only (3B.2): render.view_source is gone, so it now reports as an
+// unknown key rather than selecting a legacy path.
 // -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigViewSourceKeyRemovedTest,
+	"CamSim.Config.ViewSourceKeyRemoved",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderConfigViewSourceKeyRemovedTest::RunTest(const FString& Parameters)
+{
+	AddExpectedMessage(TEXT("Config: unknown key 'render.view_source'"), EAutomationExpectedErrorFlags::Contains, 1);
+	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT("render:\n  view_source: scene_capture\n"));
+	TestTrue(TEXT("view_source reported unknown"),
+		Cfg.UnknownYamlKeys.ContainsByPredicate([](const FString& K) { return K.Contains(TEXT("view_source")); }));
+	return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigSectionTest,
 	"CamSim.Config.RenderSection",
@@ -16,17 +31,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigSectionTest,
 
 bool FRenderConfigSectionTest::RunTest(const FString& Parameters)
 {
-	using EViewSource = FCamSimConfig::FRenderConfig::EViewSource;
-
 	const FCamSimConfig D;
-	TestTrue(TEXT("default view source is primary"), D.Render.IsPrimary());
 	TestEqual(TEXT("origin shift every 20 km by default"), D.Render.OriginShiftDistanceM, 20000.0);
 	TestFalse(TEXT("snapshot endpoint off by default"), D.Operational.bSnapshotEndpointEnabled);
 	TestTrue(TEXT("frame stats off by default"), D.Operational.FrameStatsPath.IsEmpty());
 
 	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT(
 		"render:\n"
-		"  view_source: scene_capture\n"
 		"  camera_cut_distance_m: 250.0\n"
 		"  camera_cut_angle_deg: 15.0\n"
 		"  origin_shift_distance_m: 20000.0\n"
@@ -34,17 +45,11 @@ bool FRenderConfigSectionTest::RunTest(const FString& Parameters)
 		"  snapshot_endpoint_enabled: true\n"
 		"  frame_stats_path: \"/tmp/camsim-frames.jsonl\"\n"));
 	TestEqual(TEXT("no unknown keys"), Cfg.UnknownYamlKeys.Num(), 0);
-	TestTrue(TEXT("scene_capture parsed"), Cfg.Render.ViewSourceMode == EViewSource::SceneCapture);
-	TestFalse(TEXT("IsPrimary false"), Cfg.Render.IsPrimary());
 	TestEqual(TEXT("cut distance"), Cfg.Render.CameraCutDistanceM, 250.0f);
 	TestEqual(TEXT("cut angle"), Cfg.Render.CameraCutAngleDeg, 15.0f);
 	TestEqual(TEXT("origin shift distance"), Cfg.Render.OriginShiftDistanceM, 20000.0);
 	TestTrue(TEXT("snapshot enabled"), Cfg.Operational.bSnapshotEndpointEnabled);
 	TestEqual(TEXT("frame stats path"), Cfg.Operational.FrameStatsPath, FString(TEXT("/tmp/camsim-frames.jsonl")));
-
-	AddExpectedMessage(TEXT("Unknown render.view_source 'primery'"), EAutomationExpectedErrorFlags::Contains, 1);
-	const FCamSimConfig Bad = FCamSimConfig::LoadFromYamlString(TEXT("render:\n  view_source: primery\n"));
-	TestTrue(TEXT("typo falls back to primary"), Bad.Render.IsPrimary());
 	return true;
 }
 
@@ -56,7 +61,6 @@ bool FRenderConfigEnvTest::RunTest(const FString& Parameters)
 {
 	struct FEnv { const TCHAR* Key; const TCHAR* Value; };
 	const FEnv Vars[] = {
-		{ TEXT("CAMSIM_RENDER_VIEW_SOURCE"),             TEXT("scene_capture") },
 		{ TEXT("CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M"),   TEXT("123") },
 		{ TEXT("CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG"),    TEXT("12") },
 		{ TEXT("CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M"), TEXT("5000") },
@@ -70,7 +74,6 @@ bool FRenderConfigEnvTest::RunTest(const FString& Parameters)
 
 	for (const FEnv& V : Vars) { FPlatformMisc::SetEnvironmentVar(V.Key, TEXT("")); }
 
-	TestFalse(TEXT("env view source"), Cfg.Render.IsPrimary());
 	TestEqual(TEXT("env cut distance"), Cfg.Render.CameraCutDistanceM, 123.0f);
 	TestEqual(TEXT("env cut angle"), Cfg.Render.CameraCutAngleDeg, 12.0f);
 	TestEqual(TEXT("env origin shift"), Cfg.Render.OriginShiftDistanceM, 5000.0);
@@ -96,8 +99,6 @@ bool FRenderConfigHotReloadTest::RunTest(const FString& Parameters)
 
 	FCamSimConfig Reloaded;
 	Reloaded.CigiPort = 9999;
-	Reloaded.Render.ViewSource = TEXT("scene_capture");
-	Reloaded.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::SceneCapture;
 	Reloaded.Render.OriginShiftDistanceM = 5000.0;
 	Reloaded.Render.CameraCutAngleDeg = 12.0f;   // live-tunable: takes effect
 	// ROADMAP 3B: capture size sizes the readback buffers, the sensor graph and
@@ -108,8 +109,6 @@ bool FRenderConfigHotReloadTest::RunTest(const FString& Parameters)
 	FCamSimConfig::KeepRestartOnlySettings(Running, Reloaded);
 
 	TestEqual(TEXT("CIGI port kept"), Reloaded.CigiPort, 8888);
-	TestTrue(TEXT("view source kept"), Reloaded.Render.IsPrimary());
-	TestEqual(TEXT("view source name kept"), Reloaded.Render.ViewSource, FString(TEXT("primary")));
 	TestEqual(TEXT("origin shift kept"), Reloaded.Render.OriginShiftDistanceM, 20000.0);
 	TestEqual(TEXT("camera cut threshold reloads"), Reloaded.Render.CameraCutAngleDeg, 12.0f);
 	TestEqual(TEXT("capture width kept"), Reloaded.CaptureWidth, 1280);
@@ -132,24 +131,20 @@ bool FRenderConfigRelativeFrameStatsPathTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigLodTransitionsPrimaryOnlyTest,
-	"CamSim.Config.LodTransitionsOnlyInPrimaryView",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigLodTransitionsFollowsFlagTest,
+	"CamSim.Config.LodTransitionsFollowsFlag",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-bool FRenderConfigLodTransitionsPrimaryOnlyTest::RunTest(const FString& Parameters)
+bool FRenderConfigLodTransitionsFollowsFlagTest::RunTest(const FString& Parameters)
 {
 	using CamSim::Geospatial::UseLodTransitions;
-	using EViewSource = FCamSimConfig::FRenderConfig::EViewSource;
 	FCamSimConfig Cfg;
 	// Off by default: Cesium updates the fade of every tile in the render set each
 	// frame (including the off-screen tiles culled_screen_space_error keeps), which
 	// cost ~6 ms of game thread and doubled streaming hitches (2026-09-27 bench).
 	TestFalse(TEXT("off by default"), UseLodTransitions(Cfg));
 	Cfg.bUseLodTransitions = true;
-	TestTrue(TEXT("on when enabled in the primary view (TSR resolves the dither)"), UseLodTransitions(Cfg));
-	Cfg.Render.ViewSourceMode = EViewSource::SceneCapture;
-	TestFalse(TEXT("off with scene_capture (FXAA would blur it), keeping the A/B baseline unchanged"), UseLodTransitions(Cfg));
-	Cfg.Render.ViewSourceMode = EViewSource::Primary;
+	TestTrue(TEXT("on when enabled (TSR resolves the dither)"), UseLodTransitions(Cfg));
 	Cfg.bUseLodTransitions = false;
 	TestFalse(TEXT("off when disabled"), UseLodTransitions(Cfg));
 	return true;

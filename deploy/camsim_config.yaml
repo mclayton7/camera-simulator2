@@ -154,20 +154,10 @@ capture_height: 720
 # Fixed tick rate. Must match DefaultEngine.ini FixedFrameRate setting.
 frame_rate: 30.0
 
-# Force a red/blue channel swap on GPU readback. Enable if the platform
-# reports BGRA but delivers RGBA (rare).
-# Env: CAMSIM_SWAP_RB_READBACK (0 or 1)
-swap_rb_readback: false
-
 # Consecutive FRHIGPUTextureReadback::IsReady() polls required before
 # Lock(). Increase on Linux/Vulkan if occasional partial-row tearing.
 # Env: CAMSIM_READBACK_READY_POLLS
 readback_ready_polls: 1
-
-# Override readback byte order: auto, bgra, rgba, argb, abgr.
-# "auto" uses the render target's native format.
-# Env: CAMSIM_READBACK_FORMAT
-readback_format: auto
 
 # Horizontal field of view in degrees. Used for KLV metadata and Cesium
 # tile preloading. Overridden per-frame by CIGI View Definition packets.
@@ -247,8 +237,7 @@ maximum_cached_bytes_mb: 2048
 loading_descendant_limit: 20
 
 # Cesium's dithered LOD crossfade (UseLodTransitions): hides tile LOD pops.
-# Needs temporal AA to resolve the dither, so it is applied only with
-# render.view_source = primary (TSR); scene_capture (FXAA) would blur it.
+# Needs temporal AA (TSR, the primary view's anti-aliasing) to resolve the dither.
 # Off by default: while on, Cesium updates every tile in the render set each
 # frame (off-screen tiles included): ~6 ms of game thread and twice the
 # streaming hitches with culled_screen_space_error at full detail.
@@ -710,7 +699,7 @@ rendering_quality:
 
   # 24F: TSR screen percentage (100=native, >100=super-sample for crisp entity edges,
   # <100=render smaller and let TSR upscale; 75 saves ~25% GPU on an M1 Pro with no
-  # visible difference — ROADMAP 3A). Applies to render.view_source=primary.
+  # visible difference — ROADMAP 3A).
   # Env: CAMSIM_TSR_SCREEN_PERCENTAGE
   tsr_screen_percentage: 100
 
@@ -922,13 +911,9 @@ operational:
   frame_stats_path: ""
 
 # --- Render path (ROADMAP 3A) ---
+# The sensor is always the primary view (the game viewport's view: TSR, one
+# scene render per frame). Since 3B.2 this is the only render path.
 render:
-  # primary: the sensor is the game viewport's view (TSR, one scene render per frame).
-  # scene_capture: legacy SceneCapture2D path. Since 3B.2 the GPU sensor graph is the only
-  #   sensor path and runs only in the primary view, so scene_capture produces no frames.
-  # Env: CAMSIM_RENDER_VIEW_SOURCE
-  view_source: primary
-
   # A pose jump above either threshold in one frame resets TSR history (camera cut).
   # Env: CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M / CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG
   camera_cut_distance_m: 500.0

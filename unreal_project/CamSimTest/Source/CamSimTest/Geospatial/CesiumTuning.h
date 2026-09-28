@@ -19,9 +19,8 @@ namespace CamSim::Geospatial
 	void ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg);
 
 	/**
-	 * Cesium's dithered LOD crossfade: use_lod_transitions, applied only in the
-	 * primary view. It needs TSR to resolve the dither; the scene_capture path
-	 * (FXAA) would blur moving views, and it stays the pre-3A A/B baseline.
+	 * Cesium's dithered LOD crossfade: use_lod_transitions. It needs TSR (the
+	 * primary view's anti-aliasing) to resolve the dither.
 	 */
 	bool UseLodTransitions(const FCamSimConfig& Cfg);
 

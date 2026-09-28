@@ -76,12 +76,6 @@ bool FSensorGraphPreconditionsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("reason names the height"), Why.Contains(TEXT("721")));
 
 	Cfg.CaptureHeight = 720;
-	Cfg.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::SceneCapture;
-	Why.Reset();
-	TestFalse(TEXT("scene_capture -> unavailable"), UCamSimSubsystem::CanRunSensorGraph(Cfg, Why));
-	TestTrue(TEXT("reason names view_source"), Why.Contains(TEXT("view_source")));
-
-	Cfg.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::Primary;
 	Why.Reset();
 	const bool bOk = UCamSimSubsystem::CanRunSensorGraph(Cfg, Why);
 	if (GUsingNullRHI)

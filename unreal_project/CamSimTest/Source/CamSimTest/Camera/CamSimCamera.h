@@ -100,9 +100,9 @@ private:
 	TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
 	/**
-	 * The player's view when render.view_source = primary (ROADMAP 3A). Child of
+	 * The player's view — the sensor is the primary view (ROADMAP 3A). Child of
 	 * SceneCapture with an identity transform; FOV and post-process are copied
-	 * from SceneCapture every tick, which stays the source of truth until 3B.
+	 * from SceneCapture every tick, which stays the source of truth.
 	 */
 	UPROPERTY(VisibleAnywhere, Category = "CamSim")
 	TObjectPtr<UCameraComponent> SensorCamera;

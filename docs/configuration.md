@@ -42,9 +42,7 @@ encoder: auto
 capture_width: 1920
 capture_height: 1080
 frame_rate: 30.0
-swap_rb_readback: false
 readback_ready_polls: 2
-readback_format: auto
 encoder_watchdog_policy: reconnect
 encoder_watchdog_interval_ticks: 150
 watchdog_max_reconnects: 3
@@ -216,9 +214,7 @@ entity_types:
 | `capture_width` | int | `1920` | Render target width in pixels. |
 | `capture_height` | int | `1080` | Render target height in pixels. |
 | `frame_rate` | float | `30.0` | Fixed tick rate (must match `DefaultEngine.ini` `FixedFrameRate`). |
-| `swap_rb_readback` | bool | `false` | `CAMSIM_SWAP_RB_READBACK` | Force a red/blue swap on GPU readback if the platform reports BGRA but delivers RGBA. |
 | `readback_ready_polls` | int | `2` | `CAMSIM_READBACK_READY_POLLS` | Number of consecutive `FRHIGPUTextureReadback::IsReady()` polls required before `Lock()`. Increase on Linux/Vulkan if occasional partial-row tearing appears. |
-| `readback_format` | string | `"auto"` | `CAMSIM_READBACK_FORMAT` | Override readback byte order: `bgra`, `rgba`, `argb`, `abgr`, or `auto` (use render target format). |
 | `hfov_deg` | float | `60.0` | Horizontal field of view in degrees. Used for KLV metadata and Cesium tile preloading. Overridden per-frame by CIGI View Definition packets. |
 
 ### Runtime Hardening
@@ -269,7 +265,7 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 | `create_physics_meshes` | bool | `true` | `CAMSIM_CREATE_PHYSICS_MESHES` | Cook collision for Cesium tiles. CIGI HAT/HOT and LOS queries and the KLV frame centre (Tags 21, 23–25, 78) are line traces against it; with it off they never hit the terrain. |
 | `culled_screen_space_error` | float | `0` | `CAMSIM_CULLED_SSE` | Detail kept for tiles outside the view (Cesium `CulledScreenSpaceError`; higher = coarser). After a gimbal snap the new view shows these tiles until they refine. `0` = same as `maximum_screen_space_error`, so snaps land on full-detail tiles. Measured over Yosemite (M1 Pro, 90° snaps): 200 (the old value) left 30–80% of the view coarse for ~2 s; 32 about 1–16% for ~1.5 s; 16 none, for ~60% more tiles (~930 MB) and no frame-time cost. |
 | `maximum_cached_bytes_mb` | int | `2048` | `CAMSIM_MAX_CACHED_MB` | Cesium tile cache budget in MB. `0` = Cesium default (uncapped). Sized for the off-screen tiles `culled_screen_space_error` keeps loaded. |
-| `use_lod_transitions` | bool | `false` | `CAMSIM_USE_LOD_TRANSITIONS` | Cesium's dithered LOD crossfade, which hides tile LOD pops. Off by default: Cesium updates every tile in the render set each frame while it's on, off-screen tiles included, which cost ~6 ms of game thread per frame and doubled hitches in moving-camera phases (SF bench, M1 Pro, culled SSE 16). Needs temporal AA to resolve the dither, so it is applied only with `render.view_source: primary` (TSR); with `scene_capture` (FXAA) it would blur moving views, so it stays off there. |
+| `use_lod_transitions` | bool | `false` | `CAMSIM_USE_LOD_TRANSITIONS` | Cesium's dithered LOD crossfade, which hides tile LOD pops. Off by default: Cesium updates every tile in the render set each frame while it's on, off-screen tiles included, which cost ~6 ms of game thread per frame and doubled hitches in moving-camera phases (SF bench, M1 Pro, culled SSE 16). Needs temporal AA (TSR, the primary view's anti-aliasing) to resolve the dither. |
 | `lod_transition_length` | float | `0.5` | `CAMSIM_LOD_TRANSITION_LENGTH` | Crossfade duration in seconds. |
 
 ### Terrain Readiness Gate
@@ -656,7 +652,6 @@ The render/output FPS gauges are 1Hz rolling measurements updated from the subsy
 
 ```yaml
 render:
-  view_source: primary
   camera_cut_distance_m: 500.0
   camera_cut_angle_deg: 30.0
   origin_shift_distance_m: 20000.0
@@ -664,15 +659,16 @@ render:
 
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `render.view_source` | `CAMSIM_RENDER_VIEW_SOURCE` | `primary` | `primary`: the sensor is the game viewport's view (TSR, one scene render per frame). `scene_capture`: legacy `SceneCapture2D` path; since 3B.2 the GPU sensor graph (the only sensor path) runs only in the primary view, so `scene_capture` produces no frames (startup error "sensor graph unavailable", `/ready` false). Unknown values warn and use `primary`. |
 | `render.camera_cut_distance_m` | `CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M` | `500.0` | A camera move larger than this in one frame (teleport, origin rebase) resets TSR history. Must be > 0: a non-positive value is a validation error and that check is skipped. |
 | `render.camera_cut_angle_deg` | `CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG` | `30.0` | A view rotation larger than this in one frame resets TSR history. Must be > 0: a non-positive value is a validation error and that check is skipped. |
 | `render.origin_shift_distance_m` | `CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M` | `20000.0` | Rebase the Cesium georeference (`CesiumOriginShiftComponent`, `ChangeCesiumGeoreference` mode) when the camera is this far from the origin. Keeps local "up" = +Z and coordinates small. `0` disables. |
 
-**Sensor graph (ROADMAP 3B).** The GPU sensor graph replaces UE's tonemapper in the primary view and is the only sensor path: UE's tonemapper-stage effects (vignette, film grain, colour grading, bloom dirt mask) don't apply. The stream's transfer characteristic is tagged BT.709 (the graph applies the BT.709 OETF). It needs NV12-compatible dimensions (`capture_width` a multiple of 4 — also a config validation error — and an even `capture_height`), `view_source: primary`, and a real RHI with SM5 compute and the sensor shaders. Checked once at startup: without it CamSim logs `sensor graph unavailable: <reason>` as an error, produces no frames, and `/ready` stays false. When it runs, `/metrics` reports `camsim_sensor_path{path="gpu"} 1` and the legacy `camsim_health.json` has `"sensor_path":"gpu"`.
+**Sensor graph (ROADMAP 3B).** The GPU sensor graph replaces UE's tonemapper in the primary view (the sensor is the game viewport's view — TSR, one scene render per frame; this is the only render path since 3B.2) and is the only sensor path: UE's tonemapper-stage effects (vignette, film grain, colour grading, bloom dirt mask) don't apply. The stream's transfer characteristic is tagged BT.709 (the graph applies the BT.709 OETF). It needs NV12-compatible dimensions (`capture_width` a multiple of 4 — also a config validation error — and an even `capture_height`) and a real RHI with SM5 compute and the sensor shaders. Checked once at startup: without it CamSim logs `sensor graph unavailable: <reason>` as an error, produces no frames, and `/ready` stays false. When it runs, `/metrics` reports `camsim_sensor_path{path="gpu"} 1` and the legacy `camsim_health.json` has `"sensor_path":"gpu"`.
 
-**Removed in 3B.2** (the legacy CPU sensor path; the YAML keys now produce the standard unknown-key warning and the env vars are ignored):
+**Removed in 3B.2** (the legacy CPU sensor path and scene-capture render path; the YAML keys now produce the standard unknown-key warning and the env vars are ignored):
 
+- `render.view_source` / `CAMSIM_RENDER_VIEW_SOURCE` — the sensor is always the primary view; the `scene_capture` path (and its BGRA readback/encode) is gone.
+- `swap_rb_readback` / `CAMSIM_SWAP_RB_READBACK`, `readback_format` / `CAMSIM_READBACK_FORMAT` — BGRA readback-format handling; the sensor graph writes NV12 directly.
 - `render.sensor_path` / `CAMSIM_RENDER_SENSOR_PATH` — the GPU sensor graph is the only path.
 - `render.exposure_compensation_ev` / `CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV` — UE's auto-exposure bias, legacy path only; the sensor AE uses `sensor_modes.*.exposure`.
 - `performance.gpu_sensor_effects`, `performance.gpu_sensor_material_path`, `performance.gpu_sensor_mpc_path` / `CAMSIM_PERF_GPU_SENSOR` — the 27A material path.
@@ -681,7 +677,7 @@ render:
 - `phase18.precipitation`, `phase18.rain_intensity`, `phase18.snow_intensity` / `CAMSIM_PRECIPITATION`, `CAMSIM_RAIN_INTENSITY`, `CAMSIM_SNOW_INTENSITY` — the CPU precipitation overlay. CIGI weather and UE/Niagara effects are unaffected.
 - `randomization.randomize_weather`, `randomization.weather_probability` — they only toggled the precipitation overlay.
 
-**Render resolution (TSR).** With `view_source: primary`, `rendering_quality.tsr_screen_percentage`
+**Render resolution (TSR).** `rendering_quality.tsr_screen_percentage`
 (`CAMSIM_TSR_SCREEN_PERCENTAGE`, default `100`) renders below the output size and lets TSR
 upscale. Measured on an Apple M1 Pro (ROADMAP 3A bench, San Francisco): at 1080p30, 100% holds
 30 fps with 17–19 ms GPU per frame; 75% cuts that to 12–15 ms with no visible difference in the

@@ -173,16 +173,13 @@ void UCamSimCaptureComponent::CreateDepthCapture(const FCamSimConfig& Cfg)
 void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 {
 	FPostProcessSettings& PP = Sensor->PostProcessSettings;
-	// Primary view: the game viewport's show flags get the same values as the capture's.
-	FEngineShowFlags* ViewFlags = (Cfg.Render.IsPrimary() && GEngine && GEngine->GameViewport)
+	// The primary view's game viewport show flags get the same values as the capture's.
+	FEngineShowFlags* ViewFlags = (GEngine && GEngine->GameViewport)
 		? &GEngine->GameViewport->EngineShowFlags : nullptr;
-	if (Cfg.Render.IsPrimary())
-	{
-		// The game viewport's canvas (map warnings, renderer notices such as
-		// Lumen's exposure-range warning, debug messages) would be burned into
-		// the grabbed frame. Screenshots and movie dumps suppress it the same way.
-		GAreScreenMessagesEnabled = false;
-	}
+	// The game viewport's canvas (map warnings, renderer notices such as
+	// Lumen's exposure-range warning, debug messages) would be burned into
+	// the grabbed frame. Screenshots and movie dumps suppress it the same way.
+	GAreScreenMessagesEnabled = false;
 
 	// 15A motion blur: always explicit (off unless optical realism enables it),
 	// on both the capture and the primary view.
@@ -274,16 +271,15 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 		{
 			SetCVarI(TEXT("r.ScreenPercentage"), RQ.TSRScreenPercentage);
 		}
-		// Primary view: TSR (4) with full view history. SceneCapture: FXAA (1),
-		// because TSR ghosts on off-screen captures (no persistent history).
-		SetCVarI(TEXT("r.AntiAliasingMethod"), Cfg.Render.IsPrimary() ? 4 : 1);
+		// Primary view: TSR (4) with full view history.
+		SetCVarI(TEXT("r.AntiAliasingMethod"), 4);
 
 		UE_LOG(LogCamSim, Log,
 			TEXT("ACamSimCamera: RenderingQuality — shadows=%d contactShadow=%d AO=%.2f "
 			     "RTRefl=%d shadowDist=%.1f VSMBias=%d TSR%%=%d AA=%s"),
 			(int)RQ.bEntityShadows, (int)RQ.bContactShadows, RQ.AOIntensity,
 			(int)RQ.bRayTracedReflections, RQ.ShadowDistanceScale,
-			RQ.VSMResolutionBias, RQ.TSRScreenPercentage, Cfg.Render.IsPrimary() ? TEXT("TSR") : TEXT("FXAA"));
+			RQ.VSMResolutionBias, RQ.TSRScreenPercentage, TEXT("TSR"));
 	}
 
 	// 27F — configurable render frame rate
@@ -576,7 +572,7 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 		const uint32 Attempt = S.PollAttempts.Load(EMemoryOrder::Relaxed) + 1;
 		S.PollAttempts.Store(Attempt, EMemoryOrder::Relaxed);
 		const CamSimReadback::EPollDecision Decision = CamSimReadback::DecidePoll(
-			/*bNeedsGrab=*/true, Grabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen,
+			Grabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen,
 			[Nv12Readback]() { return Nv12Readback && Nv12Readback->IsReady(); },
 			Attempt, MaxReadbackPolls);
 		if (Decision == CamSimReadback::EPollDecision::TimedOut)
@@ -683,7 +679,6 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 		if (LT) LT->Mark(EPipelineStage::SensorEnd);
 
 		FProcessedFrame Frame;
-		Frame.Frame.Format = ESensorPixelFormat::NV12;
 		Frame.Frame.Nv12   = MoveTemp(Nv12);
 		Frame.Telemetry    = Telemetry;
 		Frame.FrameIndex   = FrameIdx;

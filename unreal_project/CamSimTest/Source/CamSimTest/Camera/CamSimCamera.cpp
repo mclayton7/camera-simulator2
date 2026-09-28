@@ -15,7 +15,6 @@
 #include "Components/SceneCaptureComponent2D.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PlayerController.h"
-#include "Engine/GameViewportClient.h"
 #include "UnrealEngine.h"  // FSystemResolution
 #include "Camera/CamSimRenderPath.h"
 #include "Camera/PlayerCameraManager.h"
@@ -123,16 +122,8 @@ void ACamSimCamera::BeginPlay()
 	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Cfg);
 	Subsystem->StoreCesiumIonServer(ApplyCesiumBackendConfig(GetWorld(), Cfg.CesiumBackend));
 
-	if (Cfg.Render.IsPrimary())
-	{
-		// The game viewport renders at the stream resolution (ROADMAP 3A).
-		FSystemResolution::RequestResolutionChange(Cfg.CaptureWidth, Cfg.CaptureHeight, EWindowMode::Windowed);
-	}
-	else if (UGameViewportClient* GVC = GetWorld()->GetGameViewport())
-	{
-		// Legacy path: don't pay for a second, unused render of the world.
-		GVC->bDisableWorldRendering = true;
-	}
+	// The game viewport renders at the stream resolution (ROADMAP 3A).
+	FSystemResolution::RequestResolutionChange(Cfg.CaptureWidth, Cfg.CaptureHeight, EWindowMode::Windowed);
 
 	CaptureComp->Initialize(SceneCapture, Subsystem, Cfg);
 	SetLatencyTracker(Subsystem->GetLatencyTracker());
@@ -210,12 +201,9 @@ void ACamSimCamera::Tick(float DeltaTime)
 	UpdateAutoFocus();
 	ApplyPrimaryView();
 	UpdateCameraCut();
-	if (Cfg.Render.IsPrimary())
-	{
-		// The engine updated the player camera before this tick group; render
-		// this frame's gimbal/FOV/post-process, the pose the KLV reports.
-		CamSimRender::RefreshPlayerView(GetWorld()->GetFirstPlayerController(), DeltaTime);
-	}
+	// The engine updated the player camera before this tick group; render
+	// this frame's gimbal/FOV/post-process, the pose the KLV reports.
+	CamSimRender::RefreshPlayerView(GetWorld()->GetFirstPlayerController(), DeltaTime);
 
 	if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::CigiDequeue);
 
@@ -279,8 +267,6 @@ void ACamSimCamera::RecordFrameStats()
 
 void ACamSimCamera::ApplyPrimaryView()
 {
-	if (!Subsystem->GetConfig().Render.IsPrimary()) return;
-
 	// SceneCapture holds pose (via attachment), FOV and post-process; mirror them.
 	SensorCamera->SetFieldOfView(SceneCapture->FOVAngle);
 	SensorCamera->PostProcessSettings = SceneCapture->PostProcessSettings;
@@ -306,12 +292,9 @@ void ACamSimCamera::UpdateCameraCut()
 		Cfg.Render.CameraCutDistanceM, Cfg.Render.CameraCutAngleDeg))
 	{
 		bCameraCutThisFrame = true;
-		if (Cfg.Render.IsPrimary())
+		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
 		{
-			if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
-			{
-				if (PC->PlayerCameraManager) PC->PlayerCameraManager->SetGameCameraCutThisFrame();
-			}
+			if (PC->PlayerCameraManager) PC->PlayerCameraManager->SetGameCameraCutThisFrame();
 		}
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: camera cut (moved %.0f m)"), FVector::Dist(PrevViewLocCm, Loc) / 100.0);
 	}
@@ -442,9 +425,8 @@ void ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 		UE_LOG(LogCamSim, Warning, TEXT("HotReload: video codec change ignored (requires restart)"));
 	if (NewCfg.MulticastPort != OldCfg.MulticastPort)
 		UE_LOG(LogCamSim, Warning, TEXT("HotReload: multicast port change ignored (requires restart)"));
-	if (NewCfg.Render.ViewSourceMode != OldCfg.Render.ViewSourceMode
-		|| NewCfg.Render.OriginShiftDistanceM != OldCfg.Render.OriginShiftDistanceM)
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: render.view_source / origin_shift_distance_m change ignored (requires restart)"));
+	if (NewCfg.Render.OriginShiftDistanceM != OldCfg.Render.OriginShiftDistanceM)
+		UE_LOG(LogCamSim, Warning, TEXT("HotReload: origin_shift_distance_m change ignored (requires restart)"));
 	if (NewCfg.CaptureWidth != OldCfg.CaptureWidth || NewCfg.CaptureHeight != OldCfg.CaptureHeight)
 		UE_LOG(LogCamSim, Warning, TEXT("HotReload: capture_width / capture_height change ignored (requires restart)"));
 

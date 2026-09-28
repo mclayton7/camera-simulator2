@@ -51,7 +51,7 @@ Four threads collaborate with explicit ownership boundaries:
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  Task Thread (pool)                                             │
 │  • Fan-out to one or more output views                          │
-│  • Per-view: sws_scale + libx264 + KLV + MPEG-TS UDP send       │
+│  • Per-view: NV12 de-interleave + libx264 + KLV + MPEG-TS send  │
 │  • Optional JSONL ground-truth sidecar write                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -111,7 +111,7 @@ UCamSimSubsystem  (UGameInstanceSubsystem — created with GameInstance)
 
 ACamSimCamera  (AActor — placed in level or spawned by GameMode; orchestrates the tick)
 └── UCesiumGlobeAnchorComponent
-└── USceneCaptureComponent2D                 (sensor pose/FOV/post-process; renders only in scene_capture mode)
+└── USceneCaptureComponent2D                 (sensor pose/FOV/post-process holder; never captured — the GPU sensor graph reads the primary view instead)
     └── UCameraComponent SensorCamera        (the player's view target in primary mode, ROADMAP 3A)
 └── UCesiumOriginShiftComponent              (rebases the georeference every render.origin_shift_distance_m)
 └── UCamSimGimbalComponent                   (gimbal angles, slew)
@@ -147,7 +147,7 @@ receives `Tick()` calls without being an `AActor`.
 | `CIGI/CigiPacketTypes.h` | All CIGI struct definitions |
 | `Camera/CamSimCamera.h/.cpp` | Sensor actor: tick orchestration, CIGI view state, hot reload |
 | `Camera/CamSimPlatformRig.h/.cpp` | Platform pose from CIGI, attachment, first-person view |
-| `Camera/CamSimCaptureComponent.h/.cpp` | Capture (grab request or SceneCapture), async GPU readback, sensor model dispatch, encoder thread |
+| `Camera/CamSimCaptureComponent.h/.cpp` | Capture (grab request), async GPU readback, sensor model dispatch, encoder thread |
 | `Camera/CamSimFrameGrabExtension.h/.cpp` | Scene view extension: copies the game viewport's final image into the readback ring (primary view) |
 | `Camera/CamSimFrameStats.h/.cpp` | Per-frame render stats JSONL and scene-render counter (bench harness) |
 | `Health/CamSimSnapshotService.h/.cpp` | `GET /snapshot`: next pre-sensor frame as PNG; `GET /snapshot/sensor` (ROADMAP 3B): the encoded sensor image as PNG, legacy path same as `/snapshot` |

@@ -142,7 +142,7 @@ bool FFrameGrabQueueTest::RunTest(const FString& Parameters)
 }
 
 // Primary view: Cesium already streams for the player camera, so only the
-// inflated prefetch camera is registered. SceneCapture needs both.
+// inflated prefetch camera is registered.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStreamingCamerasTest,
 	"CamSim.Render.Streaming.CamerasPerViewSource",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -151,8 +151,6 @@ bool FStreamingCamerasTest::RunTest(const FString& Parameters)
 {
 	FCamSimConfig Cfg;
 	TestEqual(TEXT("primary: prefetch only"), FCamSimStreamingController::NumStreamingCameras(Cfg), 1);
-	Cfg.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::SceneCapture;
-	TestEqual(TEXT("scene capture: primary + prefetch"), FCamSimStreamingController::NumStreamingCameras(Cfg), 2);
 	return true;
 }
 
@@ -276,23 +274,17 @@ bool FReadbackPollDecisionTest::RunTest(const FString& Parameters)
 	auto Ready    = [&FenceChecks]() { ++FenceChecks; return true; };
 	auto NotReady = [&FenceChecks]() { ++FenceChecks; return false; };
 
-	// SceneCapture: no grab step; the fence decides.
-	TestTrue(TEXT("capture: ready consumes"), DecidePoll(false, 0, 7, Ready, 1, Max) == EPollDecision::Consume);
-	TestTrue(TEXT("capture: not ready waits"), DecidePoll(false, 0, 7, NotReady, 1, Max) == EPollDecision::Wait);
-
-	// Primary: grab for this capture (gen 7) not issued yet; old fence says ready.
-	FenceChecks = 0;
+	// Grab for this capture (gen 7) not issued yet; old fence says ready.
 	TestTrue(TEXT("stale fence from an earlier cycle is not consumed"),
-		DecidePoll(true, /*Grabbed*/ 4, /*Capture*/ 7, Ready, 1, Max) == EPollDecision::Wait);
+		DecidePoll(/*Grabbed*/ 4, /*Capture*/ 7, Ready, 1, Max) == EPollDecision::Wait);
 	TestEqual(TEXT("fence not even checked before the grab"), FenceChecks, 0);
 
-	TestTrue(TEXT("grabbed + ready consumes"), DecidePoll(true, 7, 7, Ready, 2, Max) == EPollDecision::Consume);
-	TestTrue(TEXT("grabbed, copy in flight waits"), DecidePoll(true, 7, 7, NotReady, 2, Max) == EPollDecision::Wait);
+	TestTrue(TEXT("grabbed + ready consumes"), DecidePoll(7, 7, Ready, 2, Max) == EPollDecision::Consume);
+	TestTrue(TEXT("grabbed, copy in flight waits"), DecidePoll(7, 7, NotReady, 2, Max) == EPollDecision::Wait);
 
 	// Never grabbed (viewport not drawn, request dropped): give up.
-	TestTrue(TEXT("budget spent times out"), DecidePoll(true, 4, 7, Ready, Max, Max) == EPollDecision::TimedOut);
-	TestTrue(TEXT("stuck fence times out too"), DecidePoll(false, 0, 7, NotReady, Max, Max) == EPollDecision::TimedOut);
-	TestTrue(TEXT("a ready frame on the last attempt still wins"), DecidePoll(true, 7, 7, Ready, Max, Max) == EPollDecision::Consume);
+	TestTrue(TEXT("budget spent times out"), DecidePoll(4, 7, Ready, Max, Max) == EPollDecision::TimedOut);
+	TestTrue(TEXT("a ready frame on the last attempt still wins"), DecidePoll(7, 7, Ready, Max, Max) == EPollDecision::Consume);
 	return true;
 }
 

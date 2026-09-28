@@ -14,9 +14,10 @@ struct FCamSimConfig;
  * FCamSimStreamingController
  *
  * Keeps Cesium tile streaming matched to the sensor for ACamSimCamera:
- *   - registers two streaming cameras with ACesiumCameraManager (the sensor's
- *     real FOV, and an inflated one that prefetches for gimbal slews) and
- *     moves them with the sensor every frame;
+ *   - registers a prefetch streaming camera with ACesiumCameraManager (an
+ *     inflated FOV that preloads tiles for gimbal slews; Cesium already
+ *     streams for the primary view's real FOV) and moves it with the sensor
+ *     every frame;
  *   - lowers the screen-space error while the gimbal slews fast, and adapts
  *     it to the frame budget (adaptive SSE);
  *   - holds frames until the tiles for the view have loaded (terrain gate).
@@ -31,7 +32,7 @@ public:
 	/** Register the streaming cameras and configure the terrain gate. */
 	void Initialize(AActor* Owner, const FCamSimConfig& Cfg);
 
-	/** Cesium stand-in cameras this view source needs: primary + prefetch, or prefetch only (ROADMAP 3A). */
+	/** Cesium stand-in cameras the primary view needs: the prefetch camera only (ROADMAP 3A). */
 	static int32 NumStreamingCameras(const FCamSimConfig& Cfg);
 
 	/** Remove the streaming cameras. */

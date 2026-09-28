@@ -22,18 +22,12 @@ void FCamSimStreamingController::Initialize(AActor* Owner, const FCamSimConfig& 
 	TerrainGate.Configure(GateSettings);
 
 	// Prefetch (inflated FOV) preloads tiles outside the frustum for gimbal
-	// slews. With SceneCapture a primary stand-in (actual FOV) also drives
-	// SSE/LOD for visible tiles; as the primary view, Cesium already selects
-	// tiles for the player camera (ROADMAP 3A).
+	// slews. As the primary view, Cesium already selects tiles for the
+	// player camera (ROADMAP 3A), so only the prefetch camera is registered.
 	ACesiumCameraManager* CamMgr = ACesiumCameraManager::GetDefaultCameraManager(Owner);
 	if (!CamMgr) return;
 
 	const FVector2D Viewport(Cfg.CaptureWidth, Cfg.CaptureHeight);
-	if (NumStreamingCameras(Cfg) == 2)
-	{
-		PrimaryCameraSlot = CamMgr->AdditionalCameras.Add(
-			FCesiumCamera(Viewport, Owner->GetActorLocation(), Owner->GetActorRotation(), Cfg.HFovDeg));
-	}
 
 	const float PreloadFov = FMath::Clamp(Cfg.HFovDeg * Cfg.TilePreloadFovScale, Cfg.HFovDeg, 179.0f);
 	PrefetchCameraSlot = CamMgr->AdditionalCameras.Add(
@@ -44,9 +38,9 @@ void FCamSimStreamingController::Initialize(AActor* Owner, const FCamSimConfig& 
 		PrimaryCameraSlot, Cfg.HFovDeg, PrefetchCameraSlot, PreloadFov);
 }
 
-int32 FCamSimStreamingController::NumStreamingCameras(const FCamSimConfig& Cfg)
+int32 FCamSimStreamingController::NumStreamingCameras(const FCamSimConfig& /*Cfg*/)
 {
-	return Cfg.Render.IsPrimary() ? 1 : 2;
+	return 1;
 }
 
 void FCamSimStreamingController::Shutdown(AActor* Owner)

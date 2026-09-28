@@ -44,18 +44,18 @@ namespace CamSimReadback
 
 	/**
 	 * One render-thread poll of an in-flight readback (ROADMAP 3A).
-	 *  - bNeedsGrab: primary view, where the copy is issued by the grab
-	 *    extension; the slot's fence is trusted only once GrabbedGeneration
-	 *    equals CaptureGeneration (a fence signalled by an earlier cycle would
-	 *    otherwise return an old frame).
+	 *  - The copy is issued by the grab extension; the slot's fence is
+	 *    trusted only once GrabbedGeneration equals CaptureGeneration (a
+	 *    fence signalled by an earlier cycle would otherwise return an old
+	 *    frame).
 	 *  - Attempt/MaxAttempts: a grab that never happens (viewport not drawn,
 	 *    request dropped) times out instead of holding DMAQueued forever.
 	 */
 	template <typename FIsFenceReady>
-	EPollDecision DecidePoll(bool bNeedsGrab, uint32 GrabbedGeneration, uint32 CaptureGeneration,
+	EPollDecision DecidePoll(uint32 GrabbedGeneration, uint32 CaptureGeneration,
 	                         FIsFenceReady&& IsFenceReady, uint32 Attempt, uint32 MaxAttempts)
 	{
-		const bool bCopyIssued = !bNeedsGrab || GrabbedGeneration == CaptureGeneration;
+		const bool bCopyIssued = GrabbedGeneration == CaptureGeneration;
 		if (bCopyIssued && IsFenceReady())
 		{
 			return EPollDecision::Consume;

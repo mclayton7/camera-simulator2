@@ -15,20 +15,20 @@ extern "C"
 #include "libavformat/avformat.h"
 #include "libavutil/avutil.h"
 #include "libavutil/opt.h"
-#include "libswscale/swscale.h"
 }
 THIRD_PARTY_INCLUDES_END
 
 /**
  * FVideoEncoder
  *
- * Encodes raw BGRA8 frame data to H.264 and muxes it as MPEG-TS over UDP
- * multicast.  A second data stream (PID tagged as KLVA) carries MISB ST 0601
- * KLV metadata interleaved with each video frame.
+ * Encodes NV12 frame data (the GPU sensor graph's output, already BT.709
+ * limited-range YUV) to H.264 and muxes it as MPEG-TS over UDP multicast.
+ * A second data stream (PID tagged as KLVA) carries MISB ST 0601 KLV
+ * metadata interleaved with each video frame.
  *
  * Lifecycle:
  *   Open()  – allocate FFmpeg contexts, write MPEG-TS header
- *   EncodeFrame() – convert BGRA→YUV, encode, write video + KLV packets
+ *   EncodeFrame() – de-interleave NV12, encode, write video + KLV packets
  *   Close() – flush encoder, write MPEG-TS trailer, free contexts
  *
  * Thread safety: EncodeFrame() is called from a single background task thread
@@ -69,28 +69,14 @@ private:
 	AVStream*        VideoStream = nullptr;
 	AVCodecContext*  VideoCodecCtx = nullptr;
 	AVFrame*         YuvFrame    = nullptr;
-	/** Stream transfer tag: sRGB (legacy) or BT.709 (GPU sensor path), set in OpenVideoStream. */
+	/** Stream transfer tag: the GPU sensor graph applies the BT.709 OETF itself. */
 	AVColorTransferCharacteristic ColorTrc = AVCOL_TRC_BT709;
-	SwsContext*      SwsCtx      = nullptr;
-
-	/** True when sws_setColorspaceDetails successfully set srcRange=1.
-	 *  When false, sws_scale treats input as limited-range RGB, so EncodeFrame
-	 *  must pre-compress pixel data to [16,235] before conversion. */
-	bool bSwsColorSpaceApplied = false;
 
 	// KLV data stream (SMPTE 336M / KLVA)
 	AVStream*        KlvStream   = nullptr;
 
 	// Scratch packet for av_interleaved_write_frame
 	AVPacket*        Pkt         = nullptr;
-
-	/**
-	 * Scratch buffer reused across frames when the limited-range chroma
-	 * fallback path runs (i.e. sws_setColorspaceDetails didn't take).
-	 * Sized once in Open() to CaptureWidth * CaptureHeight * 4. Pre-allocating
-	 * avoids ~3.6 MB / frame heap churn at 720p on the fallback path.
-	 */
-	TArray<uint8>    RgbCompressedScratch;
 
 	// KLV scratch — reused across frames so we don't av_packet_alloc +
 	// TArray<uint8> allocate + free every single frame. Lifecycle mirrors Pkt.
@@ -126,8 +112,4 @@ private:
 	bool TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265);
 	// Writes preset/tune/rc/profile options onto VideoCodecCtx->priv_data.
 	void ApplyEncoderOptions(bool bWantH265);
-	// Sets up SwsCtx (BGRA → YUV420P BT.709 limited range). Runs a verify+retry
-	// path if the initial sws_setColorspaceDetails call didn't stick. Returns
-	// false on unrecoverable sws failure.
-	bool ConfigureColorSpace();
 };
