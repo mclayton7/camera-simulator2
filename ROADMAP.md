@@ -690,6 +690,10 @@ Carried to 3B.3 (found in the 3B.2 final review):
   (gitignored; `run.sh` refreshes it, a direct test run doesn't) — make the tests self-contained;
   add GPU tests for a NaN bloom texel and for non-same-size + bloom + blur partial thread groups;
   lavapipe (Mesa Vulkan) may lack what the sensor graph needs.
+- **Config NaN checks**: `highlight_percentile`, the AGC percentiles and `max_photon_gain_ev` still
+  use range checks that a NaN passes; make them NaN-safe like the other sensor keys.
+- **Python floor**: `scripts/check_cigi_responses.py` and `scripts/capture_cigi_stream.py` catch
+  `TimeoutError`, which only covers socket timeouts on Python ≥ 3.10; declare it (PEP 723 header).
 
 Removed in 3B.2: NVG (SensorId 2); the legacy CPU sensor path (`FSensorPostProcess`,
 `IPixelPipeline`, the path selector, `render.sensor_path`); the 27A material path; the scene-capture
