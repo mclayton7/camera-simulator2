@@ -55,5 +55,5 @@ struct FSensorFrameParams
 	// Optics (filled from Task 10; 0 = optics off)
 	float FocalPx = 0.0f;
 	float K1 = 0.0f, K2 = 0.0f, VignettingExponent = 0.0f;
-	float PsfSigmaPx = 0.0f;
+	float PsfSigmaPx = 0.0f;              // OPTICAL sigma (CamSimOptics::PsfOpticalSigmaPx); pixel aperture comes from tap integration
 };

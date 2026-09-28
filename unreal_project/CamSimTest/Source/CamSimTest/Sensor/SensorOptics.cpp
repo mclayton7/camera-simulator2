@@ -2,6 +2,7 @@
 
 #include "Sensor/SensorOptics.h"
 #include "Sensor/SensorTypes.h"
+#include <cmath>
 
 namespace CamSimOptics
 {
@@ -36,22 +37,31 @@ namespace CamSimOptics
 		return FMath::Sqrt(Airy * Airy + 0.29f * 0.29f + O.ExtraBlurPx * O.ExtraBlurPx);
 	}
 
-	void PsfTaps(float SigmaPx, TArray<float>& OutTaps)
+	float PsfOpticalSigmaPx(const FSensorOpticsConfig& O)
+	{
+		const float Airy = 0.42f * O.WavelengthUm * O.FNumber / O.PixelPitchUm;
+		return FMath::Sqrt(Airy * Airy + O.ExtraBlurPx * O.ExtraBlurPx);
+	}
+
+	void PsfTaps(float SigmaO, TArray<float>& OutTaps)
 	{
 		OutTaps.Reset();
-		if (!(SigmaPx > 0.0f))
+		if (!(SigmaO > 0.0f))
 		{
 			OutTaps.Add(1.0f);
 			return;
 		}
-		const int32 Radius = FMath::Min(FMath::CeilToInt32(3.0f * SigmaPx), MaxPsfRadius);
-		OutTaps.SetNumUninitialized(Radius + 1);
-		float Total = 0.0f;
+		const int32 Radius = FMath::Min(FMath::CeilToInt32(3.0f * SigmaO) + 1, MaxPsfRadius);
+		auto Phi = [S = static_cast<double>(SigmaO)](double X) { return 0.5 * (1.0 + std::erf(X / (S * UE_DOUBLE_SQRT_2))); };
+		TArray<double> T;
+		T.SetNumUninitialized(Radius + 1);
+		double Total = 0.0;
 		for (int32 K = 0; K <= Radius; ++K)
 		{
-			OutTaps[K] = FMath::Exp(-static_cast<float>(K * K) / (2.0f * SigmaPx * SigmaPx));
-			Total += K == 0 ? OutTaps[K] : 2.0f * OutTaps[K];
+			T[K] = Phi(K + 0.5) - Phi(K - 0.5);
+			Total += K == 0 ? T[K] : 2.0 * T[K];
 		}
-		for (float& T : OutTaps) T /= Total;
+		OutTaps.SetNumUninitialized(Radius + 1);
+		for (int32 K = 0; K <= Radius; ++K) OutTaps[K] = static_cast<float>(T[K] / Total);
 	}
 }

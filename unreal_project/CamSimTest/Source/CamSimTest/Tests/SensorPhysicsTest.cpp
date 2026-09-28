@@ -388,6 +388,7 @@ bool FSensorPhysicsVignettingTest::RunTest(const FString& Parameters)
 	FSensorFrameParams Off = P; Off.FocalPx = 0.0f;
 	CamSimSensorRef::Optics(SolidScene(W, H, FLinearColor(1, 1, 1)), W, H, W, H, Off, Rgb, Hist);
 	TestEqual(TEXT("optics off: corner untouched"), Rgb[0].X, 1.0f);
+	TestEqual(TEXT("histogram reset on entry (second call counts W*H, not 2*W*H)"), Hist.Total(), (uint64)(W * H));
 	return true;
 }
 
@@ -395,17 +396,18 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsPsfEdgeTest, "CamSim.Sensor.Physi
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorPhysicsPsfEdgeTest::RunTest(const FString& Parameters)
 {
-	// Vertical step edge 0 | 1 between columns W/2-1 and W/2, blurred with sigma 1.3 px. Fit the
-	// edge spread function 0.5 (1 + erf((x - e) / (sigma sqrt 2))) over (e, sigma) by least squares.
-	// Expected fit ~2.6% low: the taps are a point-sampled Gaussian (kernel std 1.296 after the 3.08
-	// sigma truncation), while a continuous erf sampled at pixel centres models a pixel-integrated
-	// LSF, which carries an extra 1/12 px^2 of variance: sigma_fit^2 ~ 1.296^2 - 1/12 -> 1.264.
+	// Vertical step edge 0 | 1 between columns W/2-1 and W/2, blurred with optical sigma 1.3 px. Fit
+	// the edge spread function 0.5 (1 + erf((x - e) / (sigma sqrt 2))) over (e, sigma) by least squares.
+	// With pixel-integrated taps the aligned-edge ESF at pixel centres telescopes to exactly
+	// Phi((x + 0.5 - W/2) / sigma_o), so the fit returns sigma_o; the full quadrature sigma
+	// sqrt(sigma_o^2 + 1/12) (what a slanted-edge measurement would see) is 2.4% above it.
 	constexpr int32 W = 64, H = 8;
-	constexpr float Sigma = 1.3f;
+	constexpr float SigmaO = 1.3f;
+	const double SigmaFull = FMath::Sqrt(SigmaO * SigmaO + 1.0 / 12.0);
 	TArray<FVector3f> Img;
 	Img.SetNumUninitialized(W * H);
 	for (int32 Y = 0; Y < H; ++Y) for (int32 X = 0; X < W; ++X) Img[Y * W + X] = FVector3f(X < W / 2 ? 0.0f : 1.0f);
-	CamSimSensorRef::Blur(Img, W, H, Sigma);
+	CamSimSensorRef::Blur(Img, W, H, SigmaO);
 
 	const int32 Row = H / 2;
 	auto Sse = [&](double E, double S)
@@ -432,9 +434,10 @@ bool FSensorPhysicsPsfEdgeTest::RunTest(const FString& Parameters)
 			}
 		CentreE = BestE; CentreS = BestS; SpanE = StepE * 2; SpanS = StepS * 2; StepE /= 10; StepS /= 10;
 	}
-	AddInfo(FString::Printf(TEXT("ESF fit: sigma %.4f px (target %.2f, %.2f%%), edge at %.3f, rms resid %.2g"),
-		BestS, Sigma, 100.0 * (BestS - Sigma) / Sigma, BestE, FMath::Sqrt(Best / W)));
-	TestTrue(TEXT("fitted sigma within 5% of 1.3 px"), Within(BestS, Sigma, 0.05));
+	AddInfo(FString::Printf(TEXT("ESF fit: sigma %.4f px (optical %.2f: %+.2f%%; full quadrature %.4f: %+.2f%%), edge at %.3f, rms resid %.2g"),
+		BestS, SigmaO, 100.0 * (BestS - SigmaO) / SigmaO, SigmaFull, 100.0 * (BestS - SigmaFull) / SigmaFull, BestE, FMath::Sqrt(Best / W)));
+	TestTrue(TEXT("fitted sigma within 5% of the full quadrature sigma"), Within(BestS, SigmaFull, 0.05));
+	TestTrue(TEXT("fitted sigma equals the optical sigma (aligned edge, pixel-integrated taps) within 1%"), Within(BestS, SigmaO, 0.01));
 
 	// Every row is the same (vertical pass over a column-constant image changes nothing) and the
 	// far field keeps its value (clamp-to-edge, normalised taps).
@@ -442,15 +445,102 @@ bool FSensorPhysicsPsfEdgeTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("right edge stays 1"), FMath::Abs(Img[Row * W + W - 1].X - 1.0f) < 1e-6f);
 	TestTrue(TEXT("rows identical"), Img[0 * W + W / 2].X == Img[(H - 1) * W + W / 2].X);
 
-	// Taps: radius min(ceil(3 sigma), 8), centre first, normalised over the symmetric kernel.
+	// Taps: radius min(ceil(3 sigma) + 1, 8), centre first.
 	TArray<float> Taps;
-	CamSimOptics::PsfTaps(Sigma, Taps);
-	TestEqual(TEXT("sigma 1.3: radius 4 -> 5 taps"), Taps.Num(), 5);
-	double Total = Taps[0];
-	for (int32 K = 1; K < Taps.Num(); ++K) Total += 2.0 * Taps[K];
-	TestTrue(TEXT("taps normalised"), FMath::Abs(Total - 1.0) < 1e-6);
+	CamSimOptics::PsfTaps(SigmaO, Taps);
+	TestEqual(TEXT("sigma 1.3: radius 5 -> 6 taps"), Taps.Num(), 6);
 	CamSimOptics::PsfTaps(5.0f, Taps);
 	TestEqual(TEXT("sigma 5: radius capped at 8 -> 9 taps"), Taps.Num(), 9);
+	CamSimOptics::PsfTaps(0.0f, Taps);
+	TestTrue(TEXT("sigma 0: identity { 1 }"), Taps.Num() == 1 && Taps[0] == 1.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsPsfTapsTest, "CamSim.Sensor.Physics.PsfTapsPixelIntegrated",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsPsfTapsTest::RunTest(const FString& Parameters)
+{
+	// Taps are integer samples of Gaussian(sigma_o) conv 1-px box, whose continuous variance is
+	// sigma_o^2 + 1/12. Exact for every sigma: the cumulative taps telescope to Phi((n + 0.5) / sigma_o).
+	// The DISCRETE variance sum k^2 Tk reaches sigma_o^2 + 1/12 only once the kernel is resolved
+	// (Sheppard's correction needs sigma_o >~ 0.6): for sigma_o = 0.2 nearly all weight sits in T0
+	// and the discrete variance is ~0.012, not 0.123. Those cases are reported, and checked for the
+	// exact telescoping property instead of the variance.
+	for (const float SigmaO : { 0.2f, 0.45f, 0.6f, 1.0f, 1.3f })
+	{
+		TArray<float> T;
+		CamSimOptics::PsfTaps(SigmaO, T);
+		const int32 R = T.Num() - 1;
+		TestEqual(FString::Printf(TEXT("sigma %.2f: radius min(ceil(3 sigma) + 1, 8)"), SigmaO), R, FMath::Min(FMath::CeilToInt32(3.0f * SigmaO) + 1, 8));
+		double Total = T[0], Var = 0.0;
+		for (int32 K = 1; K <= R; ++K) { Total += 2.0 * T[K]; Var += 2.0 * K * K * T[K]; }
+		TestTrue(FString::Printf(TEXT("sigma %.2f: normalised"), SigmaO), FMath::Abs(Total - 1.0) < 1e-6);
+
+		// Telescoping: sum_{k <= n} T_k (over the symmetric kernel) = Phi((n + 0.5) / sigma_o), up to the
+		// normalisation of the truncated tails.
+		const double Norm = 2.0 * 0.5 * (1.0 + std::erf((R + 0.5) / (SigmaO * UE_DOUBLE_SQRT_2))) - 1.0;
+		double Cum = 0.0, WorstCdf = 0.0;
+		for (int32 N = -R; N <= R; ++N)
+		{
+			Cum += T[FMath::Abs(N)];
+			const double Want = (0.5 * (1.0 + std::erf((N + 0.5) / (SigmaO * UE_DOUBLE_SQRT_2))) - 0.5 * (1.0 - Norm)) / Norm;
+			WorstCdf = FMath::Max(WorstCdf, FMath::Abs(Cum - Want));
+		}
+		TestTrue(FString::Printf(TEXT("sigma %.2f: cumulative taps = Phi((n + 0.5) / sigma_o)"), SigmaO), WorstCdf < 1e-6);
+
+		const double Want = SigmaO * SigmaO + 1.0 / 12.0;
+		AddInfo(FString::Printf(TEXT("sigma_o %.2f: %d taps, discrete variance %.5f vs sigma_o^2 + 1/12 = %.5f (%+.2f%%), cdf err %.1g"),
+			SigmaO, R + 1, Var, Want, 100.0 * (Var - Want) / Want, WorstCdf));
+		if (SigmaO >= 0.6f)
+		{
+			TestTrue(FString::Printf(TEXT("sigma %.2f: discrete variance within 1%% of sigma_o^2 + 1/12"), SigmaO), Within(Var, Want, 0.01));
+		}
+		else
+		{
+			TestTrue(FString::Printf(TEXT("sigma %.2f: undersampled kernel has less discrete variance"), SigmaO), Var < Want);
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsResampleTest, "CamSim.Sensor.Physics.OpticsResampleGeometry",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsResampleTest::RunTest(const FString& Parameters)
+{
+	// Barrel distortion K1 = -0.2 pulls image points toward the centre: a bright ideal texel at
+	// radius ru appears at rd = ru (1 + K1 ru^2) < ru along the same direction. An inverted s (rd/ru
+	// instead of ru/rd) would push it ~4 px outward instead; a sign error would mirror it.
+	constexpr int32 W = 64, H = 64, Tx = 58, Ty = 12;
+	FSensorFrameParams P = OpticsParams(W, 60.0f);
+	P.K1 = -0.2f;
+	TArray<FLinearColor> Scene = SolidScene(W, H, FLinearColor(0, 0, 0));
+	Scene[Ty * W + Tx] = FLinearColor(1, 1, 1);
+	TArray<FVector3f> Rgb;
+	FSensorHistogram Hist;
+	CamSimSensorRef::Optics(Scene, W, H, W, H, P, Rgb, Hist);
+
+	// Predicted continuous output position (pixel-index coordinates) of the texel centre.
+	const double Ox = Tx + 0.5 - W / 2.0, Oy = Ty + 0.5 - H / 2.0;
+	const double Ru = FMath::Sqrt(Ox * Ox + Oy * Oy) / P.FocalPx;
+	const double Scale = 1.0 + P.K1 * Ru * Ru;   // rd / ru
+	const double PredX = W / 2.0 + Ox * Scale - 0.5, PredY = H / 2.0 + Oy * Scale - 0.5;
+	int32 Peak = 0;
+	for (int32 I = 1; I < W * H; ++I) if (Rgb[I].X > Rgb[Peak].X) Peak = I;
+	const int32 PeakX = Peak % W, PeakY = Peak / W;
+	AddInfo(FString::Printf(TEXT("texel (%d,%d), ru %.4f, rd %.4f: predicted (%.3f, %.3f), peak (%d, %d) value %.3f"),
+		Tx, Ty, Ru, Ru * Scale, PredX, PredY, PeakX, PeakY, Rgb[Peak].X));
+	TestTrue(TEXT("peak lit"), Rgb[Peak].X > 0.25f);
+	TestTrue(TEXT("peak within 0.5 px of rd = fwd(ru) in x"), FMath::Abs(PeakX - PredX) <= 0.5);
+	TestTrue(TEXT("peak within 0.5 px of rd = fwd(ru) in y"), FMath::Abs(PeakY - PredY) <= 0.5);
+	TestTrue(TEXT("peak moved inward (barrel)"), PeakX < Tx && PeakY > Ty);
+
+	// Corners sample outside the render (ru > rd) -> black, even on a white scene.
+	CamSimSensorRef::Optics(SolidScene(W, H, FLinearColor(1, 1, 1)), W, H, W, H, P, Rgb, Hist);
+	for (const int32 I : { 0, W - 1, (H - 1) * W, W * H - 1 })
+	{
+		TestEqual(FString::Printf(TEXT("corner %d black"), I), Rgb[I].X, 0.0f);
+	}
+	TestTrue(TEXT("centre stays white"), FMath::IsNearlyEqual(Rgb[(H / 2) * W + W / 2].X, 1.0f, 1e-5f));
 	return true;
 }
 
@@ -493,6 +583,12 @@ bool FSensorPhysicsPsfDatasheetTest::RunTest(const FString& Parameters)
 		const float Got = CamSimOptics::PsfSigmaPx(M.Optics);
 		AddInfo(FString::Printf(TEXT("%s: sigma %.5f px (expected %.5f)"), C.Preset, Got, Want));
 		TestTrue(FString::Printf(TEXT("%s: sigma within 0.001 px"), C.Preset), FMath::Abs(Got - Want) <= 0.001);
+		// What the blur applies: optical sigma, plus the pixel integration's 1/12 px^2.
+		const double Optical = CamSimOptics::PsfOpticalSigmaPx(M.Optics);
+		const double Applied = FMath::Sqrt(Optical * Optical + 1.0 / 12.0);
+		AddInfo(FString::Printf(TEXT("%s: optical sigma %.5f, optical (+) pixel aperture %.5f"), C.Preset, Optical, Applied));
+		TestTrue(FString::Printf(TEXT("%s: optical sigma = Airy term"), C.Preset), FMath::Abs(Optical - Airy) <= 1e-5);
+		TestTrue(FString::Printf(TEXT("%s: optical (+) 1/12 within 0.001 px of the datasheet sigma"), C.Preset), FMath::Abs(Applied - Want) <= 0.001);
 	}
 	FSensorOpticsConfig Extra;
 	Extra.WavelengthUm = 0.0f; Extra.ExtraBlurPx = 1.0f;

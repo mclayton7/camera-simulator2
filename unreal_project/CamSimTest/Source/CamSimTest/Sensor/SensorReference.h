@@ -12,14 +12,14 @@ namespace CamSimSensorRef
 	/** Order of operations of Run():
 	 *  1. c = sanitize(scene colour): NaN -> 0, clamp to [0, 65504]
 	 *  2. c *= InputScale (runtime: View.OneOverPreExposure)
-	 *  3. s = dot(c, SignalWeights); histogram[BinOf(s)]++   (noiseless signal)
-	 *  4. optics: Optics() (distortion resample + cos^n illumination; histogram of step 3 is taken on
- *     its output) then Blur() with PsfSigmaPx (FocalPx 0 / PsfSigmaPx 0 = off)
-	 *  5. detector + ADC (DetectPixel) on EO rgb (3 channels) or IR s (1 channel) -> DN
-	 *  6. display on n = DN / AdcMax:
+	 *  3. optics, Optics(): distortion resample + cos^n relative illumination (FocalPx 0 = off)
+	 *  4. s = dot(c, SignalWeights); histogram[BinOf(s)]++   (noiseless signal, after illumination)
+	 *  5. PSF blur, Blur() with the optical sigma PsfSigmaPx (0 = off)
+	 *  6. detector + ADC (DetectPixel) on EO rgb (3 channels) or IR s (1 channel) -> DN
+	 *  7. display on n = DN / AdcMax:
 	 *     EO: rgb = Oetf709(Knee(n, KneeStart))                                   (per channel)
 	 *     IR: v = saturate(n * DisplayGain + DisplayOffset); if (bBlackHot) v = 1 - v;  rgb = v, luma source = v
-	 *  7. NV12 (BT.709 limited range): per 4x2 block, Y per pixel, U/V from the 2x2 mean of R'G'B';
+	 *  8. NV12 (BT.709 limited range): per 4x2 block, Y per pixel, U/V from the 2x2 mean of R'G'B';
 	 *     IR: Y from v, U = V = 128. */
 	struct FResult
 	{
@@ -57,14 +57,14 @@ namespace CamSimSensorRef
 	float DisplayEo(float N, const FSensorFrameParams& P);
 	float DisplayIr(float N, const FSensorFrameParams& P);
 
-	/** Optics stage (steps 1-4a): distortion resample + cos^n relative illumination.
+	/** Optics stage (steps 1-4): distortion resample + cos^n relative illumination.
 	 *  Scene: SrcW x SrcH linear RGBA (alpha ignored), row-major. OutRgb: W x H linear RGB, row-major
 	 *  (interleaved, unlike the planar detector images). OutHist: histogram of the noiseless signal
 	 *  s = dot(rgb, SignalWeights) of every OutRgb pixel (after illumination, before blur).
 	 *
 	 *  Contract for the GPU port (Task 9) — mirror exactly:
-	 *  - Texel t(x, y) = sanitize(Scene(x, y).rgb) * InputScale for 0 <= x < SrcW, 0 <= y < SrcH;
-	 *    t = 0 for any other (x, y) (out-of-bounds taps read black, per tap).
+	 *  - OutHist is reset (all bins 0, Serial 0) at entry, then counts every output pixel once.
+	 *  - Texel t(x, y) = sanitize(Scene(x, y).rgb) * InputScale.
 	 *  - Pixel centres are at integer + 0.5. For output pixel (px, py):
 	 *      FocalPx <= 0 (optics off): s = 1, illum = 1,
 	 *        sx = (px + 0.5) * SrcW / W - 0.5,  sy = (py + 0.5) * SrcH / H - 0.5
@@ -76,14 +76,19 @@ namespace CamSimSensorRef
 	 *        sx = (xd * s * FocalPx + W/2) * SrcW / W - 0.5,  sy = (yd * s * FocalPx + H/2) * SrcH / H - 0.5
 	 *        (production SrcW == W: sx = xd * s * FocalPx + W/2 - 0.5)
 	 *        illum = pow(1 / sqrt(1 + (xd s)^2 + (yd s)^2), VignettingExponent)   (cos^n of the ray angle)
-	 *  - Bilinear: x0 = floor(sx), y0 = floor(sy), fx = sx - x0, fy = sy - y0,
-	 *      c = (1 - fy) * ((1 - fx) t(x0, y0) + fx t(x0 + 1, y0)) + fy * ((1 - fx) t(x0, y0 + 1) + fx t(x0 + 1, y0 + 1))
-	 *  - rgb = c * illum;  histogram[BinOf(dot(rgb, SignalWeights))]++. */
+	 *  - Footprint: a sample with sx outside [-0.5, SrcW - 0.5] or sy outside [-0.5, SrcH - 0.5]
+	 *    (inclusive bounds) is black, c = 0 — it looks outside the render.
+	 *  - Otherwise bilinear with taps clamped to the valid range:
+	 *      x0 = floor(sx), y0 = floor(sy), fx = sx - x0, fy = sy - y0,
+	 *      xa = clamp(x0, 0, SrcW-1), xb = clamp(x0 + 1, 0, SrcW-1), ya = clamp(y0, 0, SrcH-1), yb = clamp(y0 + 1, 0, SrcH-1)
+	 *      c = (1 - fy) * ((1 - fx) t(xa, ya) + fx t(xb, ya)) + fy * ((1 - fx) t(xa, yb) + fx t(xb, yb))
+	 *  - rgb = c * illum;  OutHist[BinOf(dot(rgb, SignalWeights))]++. */
 	void Optics(const TArray<FLinearColor>& Scene, int32 SrcW, int32 SrcH, int32 W, int32 H,
 		const FSensorFrameParams& P, TArray<FVector3f>& OutRgb, FSensorHistogram& OutHist);
 
-	/** Separable Gaussian PSF (step 4b) on a W x H interleaved image, in place. Taps from
-	 *  CamSimOptics::PsfTaps(SigmaPx) (radius R = min(ceil(3 sigma), 8), Taps[0] centre, normalised).
+	/** Separable Gaussian PSF (step 5) on a W x H interleaved image, in place. SigmaPx is the OPTICAL
+	 *  sigma (CamSimOptics::PsfOpticalSigmaPx); taps from CamSimOptics::PsfTaps(SigmaPx): pixel-integrated,
+	 *  radius R = min(ceil(3 sigma) + 1, 8), Taps[0] centre, normalised.
 	 *  Horizontal pass first, then vertical, each with clamp-to-edge addressing:
 	 *    out(x) = Taps[0] in(x) + sum_{k=1..R} Taps[k] (in(clamp(x - k, 0, W-1)) + in(clamp(x + k, 0, W-1)))
 	 *  accumulated in that order, float. SigmaPx <= 0 leaves the image untouched. */

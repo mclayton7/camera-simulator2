@@ -91,7 +91,7 @@ namespace CamSimSensorRef
 	static uint8 ToLimited(float V, float Scale) { return static_cast<uint8>(FMath::Clamp(FMath::FloorToInt32(16.0f + Scale * V + 0.5f), 0, 255)); }
 	static uint8 ToChroma(float C) { return static_cast<uint8>(FMath::Clamp(FMath::FloorToInt32(128.0f + 224.0f * C + 0.5f), 0, 255)); }
 
-	/** Steps 1-3: planar sanitised RGB (3*W*H) and signal s (W*H); fills the histogram. */
+	/** RunDisplayOnly steps 1, 2, 4 (no optics): planar sanitised RGB (3*W*H) and signal s (W*H); fills the histogram. */
 	static void PrepareScene(const TArray<FLinearColor>& Scene, int32 W, int32 H, const FSensorFrameParams& P,
 		TArray<float>& Rgb, TArray<float>& Signal, FSensorHistogram& Histogram)
 	{
@@ -108,7 +108,7 @@ namespace CamSimSensorRef
 		}
 	}
 
-	/** Step 7. Out: xyz = R'G'B' (EO) or v,v,v; w = luma source (IR). */
+	/** Step 8. Out: xyz = R'G'B' (EO) or v,v,v; w = luma source (IR). */
 	static void PackNv12(const TArray<FVector4f>& Out, int32 W, int32 H, bool bEo, TArray<uint8>& Nv12)
 	{
 		Nv12.SetNumZeroed(W * H * 3 / 2);
@@ -141,19 +141,23 @@ namespace CamSimSensorRef
 		const FSensorFrameParams& P, TArray<FVector3f>& OutRgb, FSensorHistogram& OutHist)
 	{
 		check(Scene.Num() == SrcW * SrcH && W > 0 && H > 0);
+		OutHist = FSensorHistogram();
 		auto Texel = [&](int32 X, int32 Y) -> FVector3f
 		{
-			if (X < 0 || Y < 0 || X >= SrcW || Y >= SrcH) return FVector3f(0.0f);
 			const FLinearColor& C = Scene[Y * SrcW + X];
 			return FVector3f(Sanitize(C.R) * P.InputScale, Sanitize(C.G) * P.InputScale, Sanitize(C.B) * P.InputScale);
 		};
 		auto Bilinear = [&](float Sx, float Sy) -> FVector3f
 		{
+			// Outside the render's footprint: black. Inside: taps clamped to the valid texels.
+			if (!(Sx >= -0.5f && Sx <= SrcW - 0.5f && Sy >= -0.5f && Sy <= SrcH - 0.5f)) return FVector3f(0.0f);
 			const float X0f = FMath::FloorToFloat(Sx), Y0f = FMath::FloorToFloat(Sy);
 			const float Fx = Sx - X0f, Fy = Sy - Y0f;
 			const int32 X0 = static_cast<int32>(X0f), Y0 = static_cast<int32>(Y0f);
-			return (1.0f - Fy) * ((1.0f - Fx) * Texel(X0, Y0) + Fx * Texel(X0 + 1, Y0))
-				+ Fy * ((1.0f - Fx) * Texel(X0, Y0 + 1) + Fx * Texel(X0 + 1, Y0 + 1));
+			const int32 Xa = FMath::Clamp(X0, 0, SrcW - 1), Xb = FMath::Clamp(X0 + 1, 0, SrcW - 1);
+			const int32 Ya = FMath::Clamp(Y0, 0, SrcH - 1), Yb = FMath::Clamp(Y0 + 1, 0, SrcH - 1);
+			return (1.0f - Fy) * ((1.0f - Fx) * Texel(Xa, Ya) + Fx * Texel(Xb, Ya))
+				+ Fy * ((1.0f - Fx) * Texel(Xa, Yb) + Fx * Texel(Xb, Yb));
 		};
 		const bool bSameSize = SrcW == W && SrcH == H;
 		const float ScaleX = static_cast<float>(SrcW) / W, ScaleY = static_cast<float>(SrcH) / H;
@@ -230,7 +234,7 @@ namespace CamSimSensorRef
 	{
 		check(Scene.Num() == W * H && W % 4 == 0 && H % 2 == 0);
 		FResult R;
-		// Steps 1-4: sanitise, InputScale, optics (with the noiseless-signal histogram), PSF blur.
+		// Steps 1-5: sanitise, InputScale, optics, noiseless-signal histogram, PSF blur (optical sigma).
 		TArray<FVector3f> Linear;
 		Optics(Scene, W, H, W, H, P, Linear, R.Histogram);
 		Blur(Linear, W, H, P.PsfSigmaPx);

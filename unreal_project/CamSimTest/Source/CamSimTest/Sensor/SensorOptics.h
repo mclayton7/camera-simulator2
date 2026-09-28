@@ -36,12 +36,22 @@ namespace CamSimOptics
 	/** Largest distorted radius in the frame, normalised by FocalPx: hypot(W/2, H/2) / FocalPx. */
 	float CornerRadius(int32 W, int32 H, float FocalPx);
 
-	/** PSF sigma in pixels: sqrt((0.42 * lambda * N / pitch)^2 + 0.29^2 + extra^2).
-	 *  0.42 lambda N is the Gaussian fit to the Airy core; 0.29 ~ 1/sqrt(12) is the pixel aperture. */
+	/** Full system PSF sigma in pixels (spec quadrature, for docs/tests):
+	 *  sqrt((0.42 * lambda * N / pitch)^2 + 0.29^2 + extra^2). 0.42 lambda N is the Gaussian fit to
+	 *  the Airy core; 0.29 ~ 1/sqrt(12) is the pixel aperture. */
 	float PsfSigmaPx(const FSensorOpticsConfig& O);
 
-	/** Normalised 1-D Gaussian taps, radius R = min(ceil(3 sigma), MaxPsfRadius); OutTaps has R + 1
-	 *  entries, Taps[0] the centre, Taps[k] = exp(-k^2 / (2 sigma^2)) / (T0 + 2 sum_{k>=1} Tk).
-	 *  sigma <= 0 gives the single tap { 1 }. */
-	void PsfTaps(float SigmaPx, TArray<float>& OutTaps);
+	/** Optical sigma the blur applies: sigma_o = sqrt((0.42 * lambda * N / pitch)^2 + extra^2).
+	 *  The pixel aperture is not in it: PsfTaps integrates the Gaussian over each pixel instead. */
+	float PsfOpticalSigmaPx(const FSensorOpticsConfig& O);
+
+	/** Pixel-integrated Gaussian taps for optical sigma SigmaO:
+	 *    Taps[k] = Phi((k + 0.5) / SigmaO) - Phi((k - 0.5) / SigmaO),  k = 0..R,
+	 *    R = min(ceil(3 SigmaO) + 1, MaxPsfRadius),  then normalised so T0 + 2 sum_{k>=1} Tk = 1.
+	 *  i.e. integer samples of (Gaussian(SigmaO) conv 1-px box), whose continuous variance is
+	 *  SigmaO^2 + 1/12. The discrete variance of the taps matches that to < 1% only for SigmaO >= ~0.6;
+	 *  narrower kernels are undersampled (see CamSim.Sensor.Physics.PsfTapsPixelIntegrated).
+	 *  SigmaO <= 0 gives the single tap { 1 } (Blur skips). Computed on the CPU in double (HLSL has
+	 *  no erf): the GPU consumes these taps as constants. */
+	void PsfTaps(float SigmaO, TArray<float>& OutTaps);
 }
