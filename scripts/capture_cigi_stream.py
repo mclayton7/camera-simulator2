@@ -46,7 +46,7 @@ def main():
                     break
                 try:
                     data, src = sock.recvfrom(65535)
-                except socket.timeout:
+                except TimeoutError:
                     continue
                 now = time.monotonic()
                 rec = {

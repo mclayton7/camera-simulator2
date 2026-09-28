@@ -8,9 +8,9 @@ Usage:
 Prints a YAML snippet suitable for camsim_config.yaml entity_types block.
 """
 
-import sys
-import os
 import argparse
+import os
+import sys
 
 
 def main():

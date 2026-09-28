@@ -211,8 +211,7 @@ def poll_health(
         try:
             data = json.loads(health_path.read_text())
             frame = int(data.get("frame", 0))
-            if frame > final_frame:
-                final_frame = frame
+            final_frame = max(final_frame, frame)
             if final_frame >= target_frames:
                 return ("frames_reached", final_frame, elapsed)
         except (json.JSONDecodeError, OSError, ValueError):
@@ -420,7 +419,7 @@ def main() -> None:
                     exit_code = 1
                     failed += 1
 
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- one failed run must not stop the batch
                 print(f"    [ERROR] {exc}")
                 reason = "error"
                 failed += 1

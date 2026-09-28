@@ -1,4 +1,5 @@
 """Launch helpers in run_bench.py: port and process checks."""
+
 import os
 
 import pytest
@@ -19,7 +20,9 @@ def test_port_busy_matches_the_local_address_only():
 
 
 def test_port_busy_reads_linux_style_addresses():
-    linux = "tcp        0      0 0.0.0.0:8080            0.0.0.0:*               LISTEN\n"
+    linux = (
+        "tcp        0      0 0.0.0.0:8080            0.0.0.0:*               LISTEN\n"
+    )
     assert run_bench.port_busy(linux, 8080)
 
 
@@ -42,7 +45,7 @@ def test_wait_ready_gives_up_when_no_pid_file_appears(tmp_path, monkeypatch):
 
 
 def test_sensor_path_is_read_from_metrics():
-    text = "# HELP x\ncamsim_uptime_seconds 3\ncamsim_sensor_path{path=\"gpu\"} 1\n"
+    text = '# HELP x\ncamsim_uptime_seconds 3\ncamsim_sensor_path{path="gpu"} 1\n'
     assert run_bench.sensor_path_from_metrics(text) == "gpu"
     assert run_bench.sensor_path_from_metrics("camsim_uptime_seconds 3\n") is None
 

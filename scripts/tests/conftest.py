@@ -1,4 +1,5 @@
 """Make sibling script modules importable without a package install."""
+
 import sys
 from pathlib import Path
 

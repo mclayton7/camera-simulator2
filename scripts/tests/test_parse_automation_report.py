@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import parse_automation_report as par
+import pytest
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 ALL_PASS = FIXTURES / "automation_all_pass.json"

@@ -90,7 +90,8 @@ jobs:
         run: uv run scripts/send_cigi_test.py --help
 
       - name: Unit tests (scripts/tests)
-        run: uv run --with pytest pytest scripts/tests/ -v
+        # The bench tests (test_bench_*) need numpy and pillow.
+        run: uv run --with pytest --with numpy --with pillow pytest scripts/tests/ -v
 
   # -------------------------------------------------------------------
   # Phase 28A: Docker image build (self-hosted runner with UE5)

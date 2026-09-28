@@ -57,15 +57,18 @@ def main() -> int:
     while time.monotonic() < deadline:
         try:
             data, _ = sock.recvfrom(65535)
-        except socket.timeout:
+        except TimeoutError:
             continue
         datagrams += 1
         pkt_ids = parse_packet_ids(data)
         sof_count += sum(1 for x in pkt_ids if x == 101)
         query_resp_count += sum(1 for x in pkt_ids if x in (102, 104))
-        if datagrams >= args.min_packets and sof_count > 0:
-            if not args.require_query_response or query_resp_count > 0:
-                break
+        if (
+            datagrams >= args.min_packets
+            and sof_count > 0
+            and (not args.require_query_response or query_resp_count > 0)
+        ):
+            break
 
     sock.close()
 

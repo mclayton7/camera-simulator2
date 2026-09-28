@@ -1,11 +1,12 @@
 """Turn frame-stats JSONL rows into per-phase metrics (ROADMAP 3A)."""
+
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
 
-HITCH_MS = 66.7        # two frames at 30 fps
+HITCH_MS = 66.7  # two frames at 30 fps
 BIG_HITCH_MS = 100.0
 
 
@@ -43,7 +44,9 @@ def summarize(rows: list[dict], phases: list[dict]) -> dict:
         span = (sel[-1]["t"] - sel[0]["t"]) if len(sel) > 1 else 0.0
         out[ph["name"]] = {
             "frames": len(sel),
-            "wall_ms_p50": _pct(wall, 50), "wall_ms_p95": _pct(wall, 95), "wall_ms_p99": _pct(wall, 99),
+            "wall_ms_p50": _pct(wall, 50),
+            "wall_ms_p95": _pct(wall, 95),
+            "wall_ms_p99": _pct(wall, 99),
             "game_ms_p50": _pct([r["game_ms"] for r in sel], 50),
             "render_ms_p50": _pct([r["render_ms"] for r in sel], 50),
             "rhi_ms_p50": _pct([r["rhi_ms"] for r in sel], 50),
@@ -51,13 +54,21 @@ def summarize(rows: list[dict], phases: list[dict]) -> dict:
             "gpu_ms_p95": _pct([r["gpu_ms"] for r in sel], 95),
             "hitches_66": sum(1 for w in wall if w > HITCH_MS),
             "hitches_100": sum(1 for w in wall if w > BIG_HITCH_MS),
-            "popin_fraction": (sum(1 for r in sel if r["load_pct"] < 100.0) / len(sel)) if sel else 0.0,
-            "families_mean": (sum(r["families"] for r in sel) / len(sel)) if sel else 0.0,
+            "popin_fraction": (sum(1 for r in sel if r["load_pct"] < 100.0) / len(sel))
+            if sel
+            else 0.0,
+            "families_mean": (sum(r["families"] for r in sel) / len(sel))
+            if sel
+            else 0.0,
             "dropped": (sel[-1]["dropped"] - sel[0]["dropped"]) if sel else 0,
             # Frames handed to the sensor model/encoder per second (the stream's real rate).
-            "emitted_fps": ((sel[-1]["emitted"] - sel[0]["emitted"]) / span) if span > 0 else 0.0,
+            "emitted_fps": ((sel[-1]["emitted"] - sel[0]["emitted"]) / span)
+            if span > 0
+            else 0.0,
         }
-        sensor = [r["sensor_gpu_ms"] for r in sel if r.get("sensor_gpu_ms", -1.0) >= 0.0]
+        sensor = [
+            r["sensor_gpu_ms"] for r in sel if r.get("sensor_gpu_ms", -1.0) >= 0.0
+        ]
         if sensor:
             out[ph["name"]]["sensor_gpu_ms_p50"] = _pct(sensor, 50)
             out[ph["name"]]["sensor_gpu_ms_p95"] = _pct(sensor, 95)

@@ -453,7 +453,7 @@ async def frame_send_task(state: IGState):
             if state.udp_sock:
                 state.udp_sock.sendto(dgram, (state.ig_host, state.ig_port))
 
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- keep the frame loop alive
             print(f"[frame_send] {exc}")
 
         state.frame_ctr += 1
@@ -489,10 +489,10 @@ async def status_broadcast_task(state: IGState):
             for ws in list(state.ws_clients):
                 try:
                     await ws.send(msg)
-                except Exception:
+                except Exception:  # noqa: BLE001 -- any send failure drops the client
                     dead.add(ws)
             state.ws_clients -= dead
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- keep the broadcast loop alive
             print(f"[status_broadcast] {exc}")
 
 
@@ -611,10 +611,10 @@ async def ws_handler(websocket, state: IGState):
                         )
                     )
 
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- one bad message must not drop the client
                 print(f"[ws] error: {exc}  msg={raw!r}")
 
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- a client disconnect ends the handler quietly
         pass
     finally:
         state.ws_clients.discard(websocket)

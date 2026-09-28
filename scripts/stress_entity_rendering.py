@@ -79,7 +79,7 @@ def camera_behind(
 
 
 def grid_offsets(count: int, radius_m: float) -> list[tuple[float, float]]:
-    side = max(1, int(math.ceil(math.sqrt(count))))
+    side = max(1, math.ceil(math.sqrt(count)))
     step = (2.0 * radius_m) / max(1, side - 1)
     offsets = []
     for i in range(count):

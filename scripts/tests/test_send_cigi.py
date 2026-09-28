@@ -1,4 +1,5 @@
 """Unit tests for pure packet builders in scripts/send_cigi_test.py."""
+
 import struct
 
 import send_cigi_test as sc

@@ -13,8 +13,9 @@ Usage:
 The output .glb will be written next to the input file.
 """
 
-import sys
 import pathlib
+import sys
+
 import pygltflib
 
 

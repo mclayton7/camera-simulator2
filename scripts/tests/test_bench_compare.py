@@ -1,21 +1,27 @@
 """compare.py renders a readable delta table and a sane SSIM."""
-import numpy as np
 
+import numpy as np
 from bench import compare
 
 
 def test_table_has_every_phase_and_metric_with_deltas():
-    base = {"phases": {"orbit": {"wall_ms_p99": 50.0, "gpu_ms_p50": 30.0, "hitches_66": 10}}}
-    cur = {"phases": {"orbit": {"wall_ms_p99": 40.0, "gpu_ms_p50": 15.0, "hitches_66": 2}}}
+    base = {
+        "phases": {"orbit": {"wall_ms_p99": 50.0, "gpu_ms_p50": 30.0, "hitches_66": 10}}
+    }
+    cur = {
+        "phases": {"orbit": {"wall_ms_p99": 40.0, "gpu_ms_p50": 15.0, "hitches_66": 2}}
+    }
     table = compare.render_table(base, cur)
     assert "| orbit |" in table
     assert "wall_ms_p99" in table and "50.0" in table and "40.0" in table
-    assert "-20%" in table                       # 50 -> 40
-    assert "-50%" in table                       # 30 -> 15
+    assert "-20%" in table  # 50 -> 40
+    assert "-50%" in table  # 30 -> 15
 
 
 def test_phase_missing_from_one_side_is_shown_not_dropped():
-    table = compare.render_table({"phases": {"orbit": {"wall_ms_p99": 1.0}}}, {"phases": {}})
+    table = compare.render_table(
+        {"phases": {"orbit": {"wall_ms_p99": 1.0}}}, {"phases": {}}
+    )
     assert "orbit" in table and "—" in table
 
 
