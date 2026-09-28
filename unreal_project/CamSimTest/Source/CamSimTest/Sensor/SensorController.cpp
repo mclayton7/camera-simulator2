@@ -29,6 +29,18 @@ float FSensorController::Smoothing(double DeltaSimSec, int32 LagFrames, bool bSn
 	return static_cast<float>(1.0 - FMath::Exp(-DeltaSimSec / Tau));
 }
 
+namespace
+{
+	int32 ModeIndex(ESensorGraphMode Mode) { return Mode == ESensorGraphMode::EO ? 0 : 1; }
+}
+
+float FSensorController::TotalGainCapEv(const FSensorModeConfig& Cfg)
+{
+	const bool bAnalogStage = Cfg.Detector.Type != ESensorDetectorType::Microbolometer;
+	const float AnalogEv = bAnalogStage ? FMath::Max(Cfg.Detector.MaxAnalogGainDb, 0.0f) / 20.0f * FMath::Log2(10.0f) : 0.0f;
+	return Cfg.Exposure.MaxPhotonGainEv + AnalogEv;
+}
+
 void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeConfig& Cfg,
 	const FSensorControllerInput& In, bool bSnap)
 {
@@ -49,7 +61,8 @@ void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeCon
 	{
 		return;  // empty histogram: keep the current gain
 	}
-	Target = FMath::Clamp(Target, E.MinGainEv, E.MaxPhotonGainEv);
+	Target = FMath::Clamp(Target, E.MinGainEv, TotalGainCapEv(Cfg));
+	float& GainEv = GainEvByMode[ModeIndex(In.Mode)];
 	GainEv += (Target - GainEv) * Smoothing(In.DeltaSimSec, E.LagFrames, bSnap);
 }
 
@@ -89,8 +102,8 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 			FSensorControllerInput Step = In;
 			Step.DeltaSimSec = PendingDeltaSimSec;
 			PendingDeltaSimSec = 0.0;
+			UpdateAe(*In.NewHistogram, Cfg, Step, bSnap);   // photon/analog gain, IR AGC included
 			if (bIrAgc) UpdateIrAgc(*In.NewHistogram, Cfg, Step, bSnap);
-			else        UpdateAe(*In.NewHistogram, Cfg, Step, bSnap);
 			if (bSnap) { bInitialized = true; bSnapPending = false; }
 		}
 	}
@@ -104,20 +117,47 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	P.bBlackHot     = In.bBlackHot ? 1u : 0u;
 	P.SignalWeights = Cfg.SignalWeights;
 	P.Serial        = In.Serial;
+	P.FrameIndex    = In.Serial;
+	P.Seed          = Cfg.Seed;
+
+	const FSensorDetectorConfig& D = Cfg.Detector;
+	P.DetectorType  = static_cast<uint32>(D.Type);
+	P.FullWellE     = D.FullWellE;
+	P.ReadNoiseE    = D.ReadNoiseE;
+	P.Prnu          = D.Prnu;
+	P.DsnuE         = D.DsnuE;
+	P.DarkE         = D.DarkCurrentEs / (In.FrameRateHz > 0.0f ? In.FrameRateHz : 30.0f);
+	P.TemporalNoise = D.TemporalNoise;
+	P.PixelFpn      = D.PixelFpn;
+	P.ColumnFpn     = D.ColumnFpn;
+	P.RowFpn        = D.RowFpn;
+	P.AdcMax        = static_cast<float>((1u << FMath::Clamp(D.AdcBits, 1, 24)) - 1u);
+	P.HotFraction   = D.HotPixelFraction;
+	P.DeadFraction  = D.DeadPixelFraction;
+
+	// Total AE gain, clamped against the CURRENT mode's config (the state may
+	// have converged under different limits), then split: the photon stage
+	// (integration time) first, analog gain only past its limit.
+	const FSensorExposureConfig& E = Cfg.Exposure;
+	const float TotalEv  = FMath::Clamp(GainEvByMode[ModeIndex(In.Mode)], E.MinGainEv, TotalGainCapEv(Cfg));
+	const float PhotonEv = FMath::Min(TotalEv, E.MaxPhotonGainEv);
+	const float AnalogEv = FMath::Max(TotalEv - PhotonEv, 0.0f);
+	P.PhotonGain = FMath::Exp2(PhotonEv);
+	P.AnalogGain = FMath::Exp2(AnalogEv);
+
 	if (bIrAgc)
 	{
-		const float Lo = FMath::Exp2(IrLoLog2), Hi = FMath::Exp2(IrHiLog2);
-		P.Gain   = 1.0f / FMath::Max(Hi - Lo, 1e-30f);
-		P.Offset = -Lo * P.Gain;
-		LastEmittedGainEv = FMath::Log2(P.Gain);
+		// Percentile band in signal units -> normalised DN, then stretched to [0, 1].
+		const float N    = P.PhotonGain * P.AnalogGain;
+		const float LoN  = FMath::Exp2(IrLoLog2) * N;
+		const float HiN  = FMath::Max(FMath::Exp2(IrHiLog2) * N, LoN + 1e-6f);
+		P.DisplayGain    = 1.0f / (HiN - LoN);
+		P.DisplayOffset  = -LoN * P.DisplayGain;
+		LastEmittedGainEv = FMath::Log2(N * P.DisplayGain);
 	}
 	else
 	{
-		// Clamp against the CURRENT mode's config: GainEv may have converged
-		// under a different mode's Min/MaxPhotonGainEv (see IR AGC excursion above).
-		const float ClampedEv = FMath::Clamp(GainEv, Cfg.Exposure.MinGainEv, Cfg.Exposure.MaxPhotonGainEv);
-		P.Gain = FMath::Exp2(ClampedEv);
-		LastEmittedGainEv = ClampedEv;
+		LastEmittedGainEv = TotalEv;
 	}
 	return P;
 }

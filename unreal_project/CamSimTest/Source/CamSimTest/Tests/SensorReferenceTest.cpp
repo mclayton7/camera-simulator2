@@ -26,6 +26,18 @@ bool FSensorRefEoGreyTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorRefEoAnalogGainTest, "CamSim.Sensor.Reference.EoGainIsPhotonTimesAnalog",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorRefEoAnalogGainTest::RunTest(const FString& Parameters)
+{
+	// Until the detector model lands, EO displays signal * PhotonGain * AnalogGain.
+	FSensorFrameParams A; A.PhotonGain = 0.25f;
+	FSensorFrameParams B; B.PhotonGain = 0.125f; B.AnalogGain = 2.0f;
+	const auto Scene = Solid(8, 4, FLinearColor(0.7f, 1.3f, 2.1f));
+	TestTrue(TEXT("same image"), CamSimSensorRef::Run(Scene, 8, 4, B).Nv12 == CamSimSensorRef::Run(Scene, 8, 4, A).Nv12);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorRefHistogramTest, "CamSim.Sensor.Reference.HistogramCountsEveryPixel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorRefHistogramTest::RunTest(const FString& Parameters)
@@ -50,9 +62,13 @@ bool FSensorRefIrTest::RunTest(const FString& Parameters)
 {
 	FSensorFrameParams P;
 	P.Mode = ESensorGraphMode::IR;
-	P.Gain = 0.5f; P.Offset = 0.25f;   // s = 1 -> 0.75
+	P.PhotonGain = 0.5f; P.DisplayOffset = 0.25f;   // s = 1 -> 0.75
 	const auto White = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(1, 1, 1)), 8, 4, P);
 	TestEqual(TEXT("white-hot"), (int32)White.Nv12[0], FMath::RoundToInt32(16 + 219 * 0.75f));
+	FSensorFrameParams Agc = P;
+	Agc.PhotonGain = 0.125f; Agc.DisplayGain = 4.0f;  // AGC on normalised DN: 4 * (1 * 0.125) + 0.25 = 0.75
+	const auto AgcWhite = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(1, 1, 1)), 8, 4, Agc);
+	TestEqual(TEXT("display gain on normalised signal"), (int32)AgcWhite.Nv12[0], FMath::RoundToInt32(16 + 219 * 0.75f));
 	TestEqual(TEXT("IR chroma neutral"), (int32)White.Nv12[8 * 4 + 1], 128);
 	P.bBlackHot = 1;
 	const auto Black = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(1, 1, 1)), 8, 4, P);

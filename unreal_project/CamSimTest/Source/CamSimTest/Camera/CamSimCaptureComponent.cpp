@@ -317,6 +317,10 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	In.DeltaSimSec  = Dt;
 	In.NewHistogram = bHasHist ? &Hist : nullptr;
 	In.Serial       = ++ParamsSerial;
+	// One detector integration per rendered frame. The controller copies the
+	// mode's seed and detector config into the params (DarkE = DarkCurrentEs /
+	// FrameRateHz); optics stay 0 until the optics stage lands (3B.2 Task 10).
+	In.FrameRateHz  = Cfg.Performance.RenderFrameRateHz > 0.0f ? Cfg.Performance.RenderFrameRateHz : 30.0f;
 	const FSensorModeConfig* ModeCfg = Cfg.SensorModeConfigs.Find(Mode);
 	const uint32 StaleBefore = SensorController.GetStaleEpisodes();
 	const FSensorFrameParams Params = SensorController.Update(In, ModeCfg ? *ModeCfg : FSensorModeConfig());

@@ -26,8 +26,10 @@ float  InputScale;      // tests; runtime multiplies View.OneOverPreExposure in 
 int2   OutputSize;
 uint   Mode;            // 0 EO, 1 IR
 uint   bBlackHot;
-float  Gain;
-float  Offset;
+float  PhotonGain;      // signal -> fraction of full scale
+float  AnalogGain;      // after detector noise (photon detectors); 1 otherwise
+float  DisplayGain;     // IR AGC on normalised DN; EO 1
+float  DisplayOffset;   // IR AGC, normalised units
 float3 SignalWeights;
 float  KneeStart;
 
@@ -81,6 +83,8 @@ void ApplyCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint GroupIndex : SV_
 		const float S = dot(C, SignalWeights);
 		InterlockedAdd(LocalHistogram[BinOf(S)], 1u);
 
+		// Until the detector model lands: normalised DN = signal * PhotonGain * AnalogGain.
+		const float Gain = PhotonGain * AnalogGain;
 		float4 Out;
 		if (Mode == 0)
 		{
@@ -89,7 +93,7 @@ void ApplyCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint GroupIndex : SV_
 		}
 		else
 		{
-			float V = saturate(S * Gain + Offset);
+			float V = saturate(DisplayGain * (S * Gain) + DisplayOffset);
 			if (bBlackHot != 0) V = 1.0 - V;
 			Out = float4(V, V, V, V);
 		}

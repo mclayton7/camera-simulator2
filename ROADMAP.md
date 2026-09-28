@@ -621,6 +621,16 @@ Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
   `[0, 0.01]`, and `|k1|`/`|k2| > 1`; an unknown preset keeps the mode's built-in preset
   defaults. `deploy/camsim_config.yaml` and `docs/configuration.md` document the
   preset table and override keys.
+- Task 6: `FSensorFrameParams` carries the physical model's inputs (exposure: `PhotonGain`,
+  `AnalogGain`, `DisplayGain`, `DisplayOffset`; detector fields, `Seed`, `FrameIndex`; optics
+  fields, 0 until Task 10); `Gain`/`Offset` are gone. `FSensorController` splits the AE's total
+  gain photon-first: the photon stage takes gain up to `max_photon_gain_ev`, analog gain the rest
+  up to `detector.max_analog_gain_db` (none for a microbolometer; the IR presets set 0 dB). The AE
+  state is per mode, and IR AGC now also runs the AE for its photon gain, stretching its band on
+  the normalised signal (`DisplayGain`/`DisplayOffset`). `DarkE = dark_current_e_s /
+  performance.render_frame_rate_hz`. The display path keeps 3B.1's output on
+  `signal × PhotonGain × AnalogGain` until the detector lands (Tasks 7/9); the only visible change
+  is EO at night, which analog gain now lifts past the old photon clamp.
 
 ---
 

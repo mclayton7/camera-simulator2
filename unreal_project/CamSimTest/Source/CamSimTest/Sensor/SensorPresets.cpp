@@ -46,10 +46,10 @@ bool CamSimSensorPresets::Apply(const FString& Name, FSensorModeConfig& InOut)
 		InOut.Detector.Prnu              = 0.001f;
 		InOut.Detector.DsnuE             = 2000.0f;
 		InOut.Detector.DarkCurrentEs     = 0.0f;  // residual after NUC; cooled
+		InOut.Detector.MaxAnalogGainDb   = 0.0f;  // no analog gain: AGC drives IR exposure
 		InOut.Detector.AdcBits           = 14;
 		InOut.Detector.HotPixelFraction  = 1e-4f;
 		InOut.Detector.DeadPixelFraction = 1e-4f;
-		// MaxAnalogGainDb: not applicable (AGC drives IR exposure) — struct default.
 		return true;
 	}
 
@@ -67,6 +67,7 @@ bool CamSimSensorPresets::Apply(const FString& Name, FSensorModeConfig& InOut)
 		InOut.Detector.PixelFpn          = 0.003f;
 		InOut.Detector.ColumnFpn         = 0.0015f;
 		InOut.Detector.RowFpn            = 0.001f;
+		InOut.Detector.MaxAnalogGainDb   = 0.0f;  // no analog stage (microbolometer)
 		InOut.Detector.AdcBits           = 14;
 		InOut.Detector.HotPixelFraction  = 1e-4f;
 		InOut.Detector.DeadPixelFraction = 1e-4f;

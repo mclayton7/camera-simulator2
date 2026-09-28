@@ -20,6 +20,7 @@ namespace
 		FSensorModeConfig C;
 		C.Exposure.MinGainEv = -20.0f;
 		C.Exposure.MaxPhotonGainEv = -6.0f;
+		C.Detector.MaxAnalogGainDb = 0.0f;   // photon-limited: AnalogGain stays 1
 		C.Exposure.TargetGrey = 0.18f;
 		C.Exposure.LagFrames = 0;
 		return C;
@@ -43,8 +44,10 @@ bool FSensorAeMedianTest::RunTest(const FString& Parameters)
 	const float SceneLog2 = FSensorHistogram::BinCentreLog2(FSensorHistogram::BinOf(FMath::Exp2(12.0f)));
 	const FSensorHistogram H = Flat(12.0f, 1);
 	const FSensorFrameParams P = C.Update(In(&H, 1), EoCfg());
-	TestEqual(TEXT("median exposed to 0.18"), FMath::Exp2(SceneLog2) * P.Gain, 0.18f, 0.18f * 0.01f);
-	TestEqual(TEXT("offset"), P.Offset, 0.0f);
+	TestEqual(TEXT("median exposed to 0.18"), FMath::Exp2(SceneLog2) * P.PhotonGain, 0.18f, 0.18f * 0.01f);
+	TestEqual(TEXT("display offset"), P.DisplayOffset, 0.0f);
+	TestEqual(TEXT("display gain"), P.DisplayGain, 1.0f);
+	TestEqual(TEXT("no analog gain"), P.AnalogGain, 1.0f);
 	TestEqual(TEXT("median reported"), C.GetLastMedianLog2(), SceneLog2, 1e-4f);
 	return true;
 }
@@ -57,7 +60,8 @@ bool FSensorAeNightTest::RunTest(const FString& Parameters)
 	const FSensorHistogram H = Flat(-8.0f, 1);  // ~0.004: night
 	const FSensorFrameParams P = C.Update(In(&H, 1), EoCfg());
 	TestEqual(TEXT("gain at the camera limit"), C.GetGainEv(), -6.0f, 1e-4f);
-	TestTrue(TEXT("scene stays dark (< 1% of full scale)"), FMath::Exp2(-8.0f) * P.Gain < 0.01f);
+	TestTrue(TEXT("scene stays dark (< 1% of full scale)"), FMath::Exp2(-8.0f) * P.PhotonGain < 0.01f);
+	TestEqual(TEXT("0 dB analog cap: no analog gain"), P.AnalogGain, 1.0f);
 	return true;
 }
 
@@ -94,7 +98,7 @@ bool FSensorAeHighlightTest::RunTest(const FString& Parameters)
 	Cfg.Exposure.HighlightPercentile = 0.95f;
 	const FSensorFrameParams P = C.Update(In(&H, 1), Cfg);
 	const float Hi = FMath::Exp2(FSensorHistogram::BinCentreLog2(FSensorHistogram::BinOf(FMath::Exp2(14.0f))));
-	TestTrue(TEXT("95th percentile not clipped"), Hi * P.Gain <= FSensorController::ClipLinear * 1.0001f);
+	TestTrue(TEXT("95th percentile not clipped"), Hi * P.PhotonGain <= FSensorController::ClipLinear * 1.0001f);
 	return true;
 }
 
@@ -177,8 +181,8 @@ bool FSensorIrAgcTest::RunTest(const FString& Parameters)
 	const FSensorFrameParams P = C.Update(I, Cfg);
 	const float Lo = FMath::Exp2(FSensorHistogram::BinCentreLog2(LoBin));
 	const float Hi = FMath::Exp2(FSensorHistogram::BinCentreLog2(HiBin));
-	TestEqual(TEXT("low percentile -> 0"), Lo * P.Gain + P.Offset, 0.0f, 1e-4f);
-	TestEqual(TEXT("high percentile -> 1"), Hi * P.Gain + P.Offset, 1.0f, 1e-4f);
+	TestEqual(TEXT("low percentile -> 0"), Lo * P.PhotonGain * P.DisplayGain + P.DisplayOffset, 0.0f, 1e-4f);
+	TestEqual(TEXT("high percentile -> 1"), Hi * P.PhotonGain * P.DisplayGain + P.DisplayOffset, 1.0f, 1e-4f);
 	return true;
 }
 
@@ -192,7 +196,7 @@ bool FSensorManualTest::RunTest(const FString& Parameters)
 	Cfg.Exposure.ManualGainEv = -9.0f;
 	const FSensorHistogram H = Flat(12.0f, 1);
 	const FSensorFrameParams P = C.Update(In(&H, 1), Cfg);
-	TestEqual(TEXT("manual gain"), P.Gain, FMath::Exp2(-9.0f), 1e-6f);
+	TestEqual(TEXT("manual gain"), P.PhotonGain, FMath::Exp2(-9.0f), 1e-6f);
 	return true;
 }
 
@@ -247,11 +251,11 @@ bool FSensorStaleTest::RunTest(const FString& Parameters)
 	const FSensorFrameParams First = C.Update(In(&A, 1), EoCfg());
 	FSensorFrameParams Last;
 	for (int32 I = 0; I < 25; ++I) Last = C.Update(In(nullptr, 2 + I), EoCfg());
-	TestEqual(TEXT("gain held"), Last.Gain, First.Gain);
+	TestEqual(TEXT("gain held"), Last.PhotonGain, First.PhotonGain);
 	TestEqual(TEXT("one stale episode"), C.GetStaleEpisodes(), 1u);
 	FSensorHistogram Empty; Empty.Serial = 30;
 	C.Update(In(&Empty, 30), EoCfg());
-	TestEqual(TEXT("empty histogram keeps gain"), C.GetGainEv(), FMath::Log2(First.Gain), 1e-5f);
+	TestEqual(TEXT("empty histogram keeps gain"), C.GetGainEv(), FMath::Log2(First.PhotonGain), 1e-5f);
 	return true;
 }
 
@@ -329,10 +333,87 @@ bool FSensorIrAgcZeroWidthTest::RunTest(const FString& Parameters)
 	FSensorControllerInput I = In(&H, 1);
 	I.Mode = ESensorGraphMode::IR;
 	const FSensorFrameParams P = C.Update(I, Cfg);
-	TestTrue(TEXT("gain finite and positive"), FMath::IsFinite(P.Gain) && P.Gain > 0.0f);
+	TestTrue(TEXT("gain finite and positive"), FMath::IsFinite(P.DisplayGain) && P.DisplayGain > 0.0f);
 	const float Lo = FSensorHistogram::BinCentreLog2(Bin);
-	TestEqual(TEXT("low percentile -> 0"), FMath::Exp2(Lo) * P.Gain + P.Offset, 0.0f, 1e-4f);
+	TestEqual(TEXT("low percentile -> 0"), FMath::Exp2(Lo) * P.PhotonGain * P.DisplayGain + P.DisplayOffset, 0.0f, 1e-4f);
 	TestEqual(TEXT("band is exactly one bin wide"),
-		FMath::Exp2(Lo + 1.0f / FSensorHistogram::BinsPerStop) * P.Gain + P.Offset, 1.0f, 1e-4f);
+		FMath::Exp2(Lo + 1.0f / FSensorHistogram::BinsPerStop) * P.PhotonGain * P.DisplayGain + P.DisplayOffset, 1.0f, 1e-4f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorExposureSplitTest, "CamSim.Sensor.Controller.PhotonGainBeforeAnalogGain",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorExposureSplitTest::RunTest(const FString& Parameters)
+{
+	FSensorModeConfig Cfg; Cfg.Exposure.MinGainEv = -20; Cfg.Exposure.MaxPhotonGainEv = -12; Cfg.Exposure.LagFrames = 0;
+	Cfg.Detector.MaxAnalogGainDb = 24.0f;                   // 24 dB = 3.99 EV
+	FSensorController C;
+	const FSensorHistogram Day = Flat(12.0f, 1);            // needs ~-14.5 EV: photon only
+	FSensorFrameParams P = C.Update(In(&Day, 1), Cfg);
+	TestEqual(TEXT("day: no analog gain"), P.AnalogGain, 1.0f);
+	const FSensorHistogram Dusk = Flat(8.0f, 2);            // needs ~-10.5: photon capped at -12, +1.5 EV analog
+	FSensorControllerInput I = In(&Dusk, 2); I.bCameraCut = true;
+	C.Update(I, Cfg); P = C.Update(In(&Dusk, 3), Cfg);
+	TestEqual(TEXT("dusk: photon gain capped"), FMath::Log2(P.PhotonGain), -12.0f, 1e-3f);
+	TestTrue(TEXT("dusk: analog gain used"), P.AnalogGain > 1.5f);
+	const FSensorHistogram Night = Flat(0.0f, 4);           // needs ~-2.5: capped at -12 + 3.99
+	I = In(&Night, 4); I.bCameraCut = true; C.Update(I, Cfg); P = C.Update(In(&Night, 5), Cfg);
+	TestEqual(TEXT("night: analog capped"), FMath::Log2(P.AnalogGain), 24.0f / 20.0f * FMath::Log2(10.0f), 1e-3f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorIrAgcScaledTest, "CamSim.Sensor.Controller.IrAgcBandNeverZeroAfterScaling",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorIrAgcScaledTest::RunTest(const FString& Parameters)
+{
+	FSensorModeConfig Cfg; Cfg.bAGCEnabled = true; Cfg.AGCLagFrames = 0; Cfg.Exposure.LagFrames = 0;
+	FSensorController C;
+	FSensorHistogram H; H.Bins[FSensorHistogram::BinOf(8.0f)] = 1000; H.Serial = 1;   // one bin
+	FSensorControllerInput I = In(&H, 1); I.Mode = ESensorGraphMode::IR;
+	const FSensorFrameParams P = C.Update(I, Cfg);
+	TestTrue(TEXT("finite display gain"), FMath::IsFinite(P.DisplayGain) && P.DisplayGain > 0.0f);
+	TestTrue(TEXT("finite offset"), FMath::IsFinite(P.DisplayOffset));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorDetectorParamsTest, "CamSim.Sensor.Controller.FillsDetectorParams",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorDetectorParamsTest::RunTest(const FString& Parameters)
+{
+	FSensorModeConfig Cfg = EoCfg();
+	Cfg.Seed = 42;
+	Cfg.Detector.FullWellE = 7000.0f; Cfg.Detector.ReadNoiseE = 3.0f; Cfg.Detector.DarkCurrentEs = 60.0f;
+	Cfg.Detector.AdcBits = 10; Cfg.Detector.HotPixelFraction = 2e-5f;
+	FSensorController C;
+	const FSensorHistogram H = Flat(12.0f, 1);
+	FSensorControllerInput I = In(&H, 7);
+	I.FrameRateHz = 60.0f;
+	const FSensorFrameParams P = C.Update(I, Cfg);
+	TestEqual(TEXT("seed"), P.Seed, 42u);
+	TestEqual(TEXT("frame index = serial"), P.FrameIndex, 7u);
+	TestEqual(TEXT("photon detector"), P.DetectorType, 0u);
+	TestEqual(TEXT("full well"), P.FullWellE, 7000.0f);
+	TestEqual(TEXT("read noise"), P.ReadNoiseE, 3.0f);
+	TestEqual(TEXT("dark electrons per frame"), P.DarkE, 1.0f, 1e-6f);
+	TestEqual(TEXT("adc max"), P.AdcMax, 1023.0f);
+	TestEqual(TEXT("hot fraction"), P.HotFraction, 2e-5f);
+	TestEqual(TEXT("optics off until Task 10"), P.FocalPx, 0.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorMicrobolometerNoAnalogTest, "CamSim.Sensor.Controller.MicrobolometerHasNoAnalogGain",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorMicrobolometerNoAnalogTest::RunTest(const FString& Parameters)
+{
+	// A microbolometer has no analog stage: a stray max_analog_gain_db must not raise the cap.
+	FSensorModeConfig Cfg = EoCfg();
+	Cfg.Detector.Type = ESensorDetectorType::Microbolometer;
+	Cfg.Detector.MaxAnalogGainDb = 24.0f;
+	FSensorController C;
+	const FSensorHistogram Night = Flat(-8.0f, 1);
+	const FSensorFrameParams P = C.Update(In(&Night, 1), Cfg);
+	TestEqual(TEXT("analog gain 1"), P.AnalogGain, 1.0f);
+	TestEqual(TEXT("photon cap is the total cap"), C.GetGainEv(), -6.0f, 1e-4f);
+	TestEqual(TEXT("microbolometer type"), P.DetectorType, 1u);
 	return true;
 }

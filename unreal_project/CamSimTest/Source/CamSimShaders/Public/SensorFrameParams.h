@@ -30,11 +30,30 @@ struct FSensorHistogram
 struct FSensorFrameParams
 {
 	ESensorGraphMode Mode = ESensorGraphMode::EO;
-	uint32    bBlackHot     = 0;          // IR polarity: 1 inverts after gain/offset
-	float     Gain          = 1.0f;       // linear multiplier on absolute scene-linear signal
-	float     Offset        = 0.0f;       // added after Gain (IR AGC), normalised units
+	uint32    bBlackHot     = 0;          // IR polarity: 1 inverts after the display mapping
 	FVector3f SignalWeights = FVector3f(0.2126f, 0.7152f, 0.0722f);
-	float     KneeStart     = 0.8f;       // EO soft highlight knee (linear)
 	float     InputScale    = 1.0f;       // multiplies scene colour; tests only (runtime uses View.OneOverPreExposure)
 	uint32    Serial        = 0;          // tags the histogram this frame produces
+
+	// Exposure (ROADMAP 3B.2). Until the detector model lands the display path is
+	// EO: rgb = Knee(c * PhotonGain * AnalogGain);
+	// IR: v = DisplayGain * (s * PhotonGain * AnalogGain) + DisplayOffset.
+	float PhotonGain    = 1.0f;           // signal -> fraction of full scale before noise
+	float AnalogGain    = 1.0f;           // applied after detector noise (photon detectors)
+	float DisplayGain   = 1.0f;           // IR AGC on normalised DN; EO 1
+	float DisplayOffset = 0.0f;           // added after DisplayGain (IR AGC), normalised units
+	float KneeStart     = 0.8f;           // EO soft highlight knee (linear)
+
+	// Detector (copied from FSensorDetectorConfig; DarkE = DarkCurrentEs / frame rate)
+	uint32 DetectorType = 0;              // ESensorDetectorType: 0 photon, 1 microbolometer
+	float FullWellE = 10000.0f, ReadNoiseE = 2.0f, Prnu = 0.01f, DsnuE = 1.0f, DarkE = 0.0f;
+	float TemporalNoise = 0.0f, PixelFpn = 0.0f, ColumnFpn = 0.0f, RowFpn = 0.0f;
+	float AdcMax = 4095.0f;               // 2^bits - 1
+	float HotFraction = 1e-5f, DeadFraction = 1e-5f;
+	uint32 Seed = 1, FrameIndex = 0;
+
+	// Optics (filled from Task 10; 0 = optics off)
+	float FocalPx = 0.0f;
+	float K1 = 0.0f, K2 = 0.0f, VignettingExponent = 0.0f;
+	float PsfSigmaPx = 0.0f;
 };

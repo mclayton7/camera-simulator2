@@ -14,6 +14,7 @@ struct FSensorControllerInput
 	double                  DeltaSimSec = 0.0;
 	const FSensorHistogram* NewHistogram = nullptr;  // newest delivered this tick, or null
 	uint32                  Serial      = 0;          // this tick's params serial (monotonic)
+	float                   FrameRateHz = 30.0f;      // integration rate: DarkE = DarkCurrentEs / FrameRateHz
 };
 
 class FSensorController
@@ -22,10 +23,14 @@ public:
 	static constexpr int32 StaleAfterTicks = 10;
 	static constexpr float ClipLinear      = 2.0f;  // the knee maps 2.0 to ~255/255
 	FSensorFrameParams Update(const FSensorControllerInput& In, const FSensorModeConfig& Cfg);
-	/** Log2 of the gain actually emitted last tick (AE gain in EO, IR AGC stretch in IR AGC). */
+	/** Log2 of the total gain actually emitted last tick: PhotonGain * AnalogGain
+	 *  (* DisplayGain in IR AGC, i.e. the AGC stretch on absolute signal). */
 	float  GetGainEv() const          { return LastEmittedGainEv; }
 	float  GetLastMedianLog2() const  { return LastMedianLog2; }
 	uint32 GetStaleEpisodes() const   { return StaleEpisodes; }
+	/** Highest total gain (EV): MaxPhotonGainEv + the analog stage's MaxAnalogGainDb in EV
+	 *  (none for a microbolometer). */
+	static float TotalGainCapEv(const FSensorModeConfig& Cfg);
 	/** Percentile P in [0,1] of H as log2 signal; false for an empty histogram. */
 	static bool PercentileLog2(const FSensorHistogram& H, float P, float& OutLog2);
 
@@ -38,7 +43,9 @@ private:
 	bool   bSnapPending    = false;
 	uint32 SnapAfterSerial = 0;
 	ESensorGraphMode LastMode = ESensorGraphMode::EO;
-	float  GainEv          = -12.0f;   // AE loop state only; never written by IR AGC
+	/** AE loop state (total gain EV), one per graph mode: an excursion into the
+	 *  other waveband never disturbs this one's converged exposure. */
+	float  GainEvByMode[2] = { -12.0f, -12.0f };
 	float  LastEmittedGainEv = -12.0f; // log2 of the gain actually emitted last tick
 	float  IrLoLog2        = 0.0f;
 	float  IrHiLog2        = 1.0f;

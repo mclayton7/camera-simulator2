@@ -34,8 +34,10 @@ public:
 		SHADER_PARAMETER(FIntPoint, OutputSize)
 		SHADER_PARAMETER(uint32, Mode)
 		SHADER_PARAMETER(uint32, bBlackHot)
-		SHADER_PARAMETER(float, Gain)
-		SHADER_PARAMETER(float, Offset)
+		SHADER_PARAMETER(float, PhotonGain)
+		SHADER_PARAMETER(float, AnalogGain)
+		SHADER_PARAMETER(float, DisplayGain)
+		SHADER_PARAMETER(float, DisplayOffset)
 		SHADER_PARAMETER(FVector3f, SignalWeights)
 		SHADER_PARAMETER(float, KneeStart)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutSensorRgb)
@@ -150,8 +152,10 @@ FSensorGraphOutputs AddSensorPasses(FRDGBuilder& GraphBuilder, const FSensorGrap
 		Pass->OutputSize    = Out;
 		Pass->Mode          = static_cast<uint32>(P.Mode);
 		Pass->bBlackHot     = P.bBlackHot;
-		Pass->Gain          = P.Gain;
-		Pass->Offset        = P.Offset;
+		Pass->PhotonGain    = P.PhotonGain;
+		Pass->AnalogGain    = P.AnalogGain;
+		Pass->DisplayGain   = P.DisplayGain;
+		Pass->DisplayOffset = P.DisplayOffset;
 		Pass->SignalWeights = P.SignalWeights;
 		Pass->KneeStart     = P.KneeStart;
 		Pass->OutSensorRgb  = GraphBuilder.CreateUAV(Result.SensorRgb);

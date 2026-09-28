@@ -33,6 +33,7 @@ namespace CamSimSensorRef
 		TArray<FVector4f> Out;   // xyz = R'G'B' (EO) or v,v,v; w = luma source (IR)
 		Out.SetNumUninitialized(W * H);
 		const bool bEo = P.Mode == ESensorGraphMode::EO;
+		const float Gain = P.PhotonGain * P.AnalogGain;   // normalised DN, until the detector model lands
 		for (int32 I = 0; I < W * H; ++I)
 		{
 			const FVector3f C(Sanitize(Scene[I].R) * P.InputScale, Sanitize(Scene[I].G) * P.InputScale, Sanitize(Scene[I].B) * P.InputScale);
@@ -40,12 +41,12 @@ namespace CamSimSensorRef
 			++R.Histogram.Bins[FSensorHistogram::BinOf(S)];
 			if (bEo)
 			{
-				Out[I] = FVector4f(Oetf709(Knee(C.X * P.Gain, P.KneeStart)), Oetf709(Knee(C.Y * P.Gain, P.KneeStart)),
-					Oetf709(Knee(C.Z * P.Gain, P.KneeStart)), 1.0f);
+				Out[I] = FVector4f(Oetf709(Knee(C.X * Gain, P.KneeStart)), Oetf709(Knee(C.Y * Gain, P.KneeStart)),
+					Oetf709(Knee(C.Z * Gain, P.KneeStart)), 1.0f);
 			}
 			else
 			{
-				float V = FMath::Clamp(S * P.Gain + P.Offset, 0.0f, 1.0f);
+				float V = FMath::Clamp(P.DisplayGain * (S * Gain) + P.DisplayOffset, 0.0f, 1.0f);
 				if (P.bBlackHot) V = 1.0f - V;
 				Out[I] = FVector4f(V, V, V, V);
 			}

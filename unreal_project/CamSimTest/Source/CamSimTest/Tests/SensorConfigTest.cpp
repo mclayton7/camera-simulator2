@@ -222,12 +222,14 @@ bool FSensorPresetDefaultsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("eo full well"), Eo.Detector.FullWellE, 10000.0f);
 	TestEqual(TEXT("eo pitch"), Eo.Optics.PixelPitchUm, 2.9f);
 	TestEqual(TEXT("eo adc"), Eo.Detector.AdcBits, 12);
+	TestEqual(TEXT("eo analog gain cap"), Eo.Detector.MaxAnalogGainDb, 30.0f);
 	TestEqual(TEXT("ir preset"), Ir.Preset, FString(TEXT("mwir_cooled")));
 	TestTrue(TEXT("ir photon"), Ir.Detector.Type == ESensorDetectorType::Photon);
 	TestEqual(TEXT("ir full well"), Ir.Detector.FullWellE, 7000000.0f);
 	TestEqual(TEXT("ir read noise"), Ir.Detector.ReadNoiseE, 400.0f);
 	TestEqual(TEXT("ir wavelength"), Ir.Optics.WavelengthUm, 4.0f);
 	TestEqual(TEXT("ir adc"), Ir.Detector.AdcBits, 14);
+	TestEqual(TEXT("ir: no analog gain (AGC)"), Ir.Detector.MaxAnalogGainDb, 0.0f);
 	return true;
 }
 
@@ -242,6 +244,7 @@ bool FSensorPresetOverrideTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("microbolometer"), Ir.Detector.Type == ESensorDetectorType::Microbolometer);
 	TestEqual(TEXT("preset value kept"), Ir.Detector.TemporalNoise, 0.004f);
 	TestEqual(TEXT("override wins"), Ir.Detector.ColumnFpn, 0.002f);
+	TestEqual(TEXT("lwir: no analog gain"), Ir.Detector.MaxAnalogGainDb, 0.0f);
 	TestEqual(TEXT("optics override"), Ir.Optics.K1, -0.05f);
 	TestEqual(TEXT("seed"), Ir.Seed, 7u);
 	TestEqual(TEXT("no unknown keys"), Cfg.UnknownYamlKeys.Num(), 0);

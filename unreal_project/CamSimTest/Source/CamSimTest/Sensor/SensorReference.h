@@ -11,8 +11,9 @@ namespace CamSimSensorRef
 	 *  1. c = sanitize(scene colour): NaN -> 0, clamp to [0, 65504]
 	 *  2. c *= InputScale (runtime: View.OneOverPreExposure)
 	 *  3. s = dot(c, SignalWeights); histogram[BinOf(s)]++
-	 *  4. EO: rgb = Oetf709(saturate(Knee(c * Gain, KneeStart)))           (per channel)
-	 *     IR: v = saturate(s * Gain + Offset); if (bBlackHot) v = 1 - v;   rgb = v, luma source = v
+	 *  4. g = PhotonGain * AnalogGain (normalised DN; the detector model lands in 3B.2 Tasks 7/9)
+	 *     EO: rgb = Oetf709(saturate(Knee(c * g, KneeStart)))                                  (per channel)
+	 *     IR: v = saturate(DisplayGain * (s * g) + DisplayOffset); if (bBlackHot) v = 1 - v;   rgb = v, luma source = v
 	 *  5. NV12 (BT.709 limited range): per 4x2 block, Y per pixel, U/V from the 2x2 mean of R'G'B';
 	 *     IR: Y from v, U = V = 128. */
 	struct FResult

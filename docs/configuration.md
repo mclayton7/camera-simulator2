@@ -325,19 +325,19 @@ were also removed in 3B.2; see "Removed in 3B.2" below.)
 | `agc_high_percentile` | float | `0.99` | `0.99` | White-point percentile `[0, 1]` when AGC is enabled. |
 | `agc_lag_frames` | int | `0` | `2` | Frames for AGC convergence (`0` = instant). IR env override: `CAMSIM_IR_AGC_LAG_FRAMES`. |
 
-**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the gain to `[min_gain_ev, max_photon_gain_ev]`. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_photon_gain_ev` (mean luma 26). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
+**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the total gain to `[min_gain_ev, max_photon_gain_ev + detector.max_analog_gain_db/20·log2(10)]` (ROADMAP 3B.2). The total is split photon-first: the photon stage (integration time) takes gain up to `max_photon_gain_ev`, and only the remainder is analog gain, applied after the detector noise (so it amplifies noise too). A microbolometer has no analog stage. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_photon_gain_ev` (mean luma 26 in 3B.1, photon gain only; 3B.2's analog gain now lifts it further, at the cost of noise). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
 
 | Field | Type | EO default | IR default | Description |
 |-------|------|------------|------------|-------------|
 | `exposure.auto` | bool | `true` | `true` | Auto-exposure on; `false` uses `manual_gain_ev`. |
 | `exposure.min_gain_ev` | float | `-20.0` | `-20.0` | Lowest gain the simulated camera can select, log2 of the multiplier applied to absolute scene-linear values (higher = brighter). |
-| `exposure.max_photon_gain_ev` | float | `-12.5` | `-6.0` | Highest photon-stage gain the simulated camera can select (renamed from `max_gain_ev` in 3B.2; the photon/analog gain split lands in Task 6). EO's value makes night scenes stay dark (dawn/dusk clamp slightly too). |
+| `exposure.max_photon_gain_ev` | float | `-12.5` | `-6.0` | Highest photon-stage gain (longest integration) the simulated camera can select (renamed from `max_gain_ev` in 3B.2). Past it, the AE adds analog gain up to `detector.max_analog_gain_db`. |
 | `exposure.target_grey` | float | `0.18` | `0.18` | Linear value the histogram median is exposed to. |
 | `exposure.highlight_percentile` | float | `0.99` | `0.99` | This percentile of the histogram is kept below clipping. |
 | `exposure.lag_frames` | int | `2` | `2` | Convergence time constant in frames at 30 Hz (sim time); `0` = instant. |
 | `exposure.manual_gain_ev` | float | `-12.0` | `-12.0` | Gain used when `exposure.auto` is `false`. |
 
-IR's `exposure` block is used only when `agc_enabled` is `false`; with AGC on, the IR AGC maps its `agc_low_percentile`…`agc_high_percentile` band to the output range instead.
+With `agc_enabled` the IR `exposure` block still sets the photon gain (integration time, hence the noise level); the IR AGC then maps its `agc_low_percentile`…`agc_high_percentile` band of the normalised signal to the output range.
 
 #### Sensor-class presets, optics and detector (ROADMAP 3B.2 Task 5)
 
@@ -361,7 +361,7 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 | `detector.prnu` / `dsnu_e` / `dark_current_e_s` | 0.01 / 1 / 5 | 0.001 / 2,000 / 0 (residual after NUC; cooled) | — |
 | `detector.temporal_noise` / `pixel_fpn` / `column_fpn` / `row_fpn` | — | — | 0.004 / 0.003 / 0.0015 / 0.001 |
 | `detector.adc_bits` | 12 | 14 | 14 |
-| `detector.max_analog_gain_db` | 30 | — (AGC) | — (AGC) |
+| `detector.max_analog_gain_db` | 30 | 0 (AGC) | 0 (no analog stage) |
 | `optics.f_number` / `pixel_pitch_um` / `wavelength_um` | 4 / 2.9 / 0.55 | 4 / 15 / 4.0 | 1.2 / 12 / 10 |
 | `detector.hot_pixel_fraction` / `dead_pixel_fraction` | 1e-5 / 1e-5 | 1e-4 / 1e-4 | 1e-4 / 1e-4 |
 | `optics.vignetting_exponent` / `extra_blur_px` / `k1` / `k2` | 4 / 0 / 0 / 0 | 4 / 0 / 0 / 0 | 4 / 0 / 0 / 0 |
@@ -382,7 +382,7 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 | `detector.prnu` | float | Photo-response non-uniformity, fractional (photon detectors). Must be `>= 0`. |
 | `detector.dsnu_e` | float | Dark-signal non-uniformity in electrons (photon detectors). Must be `>= 0`. |
 | `detector.dark_current_e_s` | float | Dark current in electrons/second (photon detectors). Must be `>= 0`. |
-| `detector.max_analog_gain_db` | float | Maximum analog gain in dB (photon detectors; Task 6 uses this). Must be `>= 0`. |
+| `detector.max_analog_gain_db` | float | Maximum analog gain in dB (photon detectors; ignored for a microbolometer). The AE uses it only once the photon gain is at `exposure.max_photon_gain_ev`. Must be `>= 0`. |
 | `detector.temporal_noise` | float | Temporal noise, fraction of full scale (microbolometer). Must be `>= 0`. |
 | `detector.pixel_fpn`, `detector.column_fpn`, `detector.row_fpn` | float | Fixed-pattern noise components, fraction of full scale (microbolometer). Must be `>= 0`. |
 | `detector.adc_bits` | int | ADC resolution in bits. Must be in `[8, 16]`. |
