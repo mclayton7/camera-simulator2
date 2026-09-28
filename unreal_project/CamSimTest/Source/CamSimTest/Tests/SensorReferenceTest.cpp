@@ -7,22 +7,39 @@
 namespace
 {
 	TArray<FLinearColor> Solid(int32 W, int32 H, FLinearColor C) { TArray<FLinearColor> A; A.Init(C, W * H); return A; }
+
+	/** Detector without noise or defects: shot noise on a 1e9 e- full well is < 0.02 DN of an 8-bit ADC,
+	 *  so DN = floor(n * 255 + 0.5) exactly (test levels sit away from half-DN boundaries). */
+	FSensorFrameParams Noiseless()
+	{
+		FSensorFrameParams P;
+		P.FullWellE = 1e9f; P.AdcMax = 255.0f;
+		P.Prnu = 0.0f; P.DsnuE = 0.0f; P.ReadNoiseE = 0.0f; P.DarkE = 0.0f;
+		P.HotFraction = 0.0f; P.DeadFraction = 0.0f;
+		return P;
+	}
+	/** Normalised DN of a noiseless photon detector. */
+	float Adc(float Signal, const FSensorFrameParams& P)
+	{
+		return FMath::Clamp(FMath::FloorToFloat(Signal * P.PhotonGain * P.AdcMax + 0.5f), 0.0f, P.AdcMax) / P.AdcMax;
+	}
+	int32 ToY(float V) { return FMath::FloorToInt32(16.0f + 219.0f * V + 0.5f); }
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorRefEoGreyTest, "CamSim.Sensor.Reference.EoGreyLimitedRange",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorRefEoGreyTest::RunTest(const FString& Parameters)
 {
-	FSensorFrameParams P;  // EO, gain 1
+	const FSensorFrameParams P = Noiseless();  // EO, gain 1
 	const auto R0 = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(0, 0, 0)), 8, 4, P);
 	TestEqual(TEXT("black -> Y 16"), (int32)R0.Nv12[0], 16);
 	TestEqual(TEXT("black chroma 128"), (int32)R0.Nv12[8 * 4], 128);
 	const auto R1 = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(100, 100, 100)), 8, 4, P);
-	TestEqual(TEXT("far over knee -> Y 235"), (int32)R1.Nv12[0], 235);
-	const float Grey = 0.18f;
+	TestEqual(TEXT("over full well clips to Knee(1)"), (int32)R1.Nv12[0],
+		ToY(CamSimSensorRef::Oetf709(CamSimSensorRef::Knee(1.0f, P.KneeStart))));
+	const float Grey = 0.18f;   // 45.9 DN -> 46
 	const auto R2 = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(Grey, Grey, Grey)), 8, 4, P);
-	const int32 Expected = FMath::RoundToInt32(16.0f + 219.0f * CamSimSensorRef::Oetf709(Grey));
-	TestEqual(TEXT("0.18 through BT.709 OETF"), (int32)R2.Nv12[0], Expected);
+	TestEqual(TEXT("0.18 through the ADC and BT.709 OETF"), (int32)R2.Nv12[0], ToY(CamSimSensorRef::Oetf709(Adc(Grey, P))));
 	return true;
 }
 
@@ -30,11 +47,14 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorRefEoAnalogGainTest, "CamSim.Sensor.Refe
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorRefEoAnalogGainTest::RunTest(const FString& Parameters)
 {
-	// Until the detector model lands, EO displays signal * PhotonGain * AnalogGain.
-	FSensorFrameParams A; A.PhotonGain = 0.25f;
-	FSensorFrameParams B; B.PhotonGain = 0.125f; B.AnalogGain = 2.0f;
+	// Below full well and without noise, analog gain after the detector equals photon gain before it.
+	FSensorFrameParams A = Noiseless(); A.PhotonGain = 0.25f;
+	FSensorFrameParams B = Noiseless(); B.PhotonGain = 0.125f; B.AnalogGain = 2.0f;
 	const auto Scene = Solid(8, 4, FLinearColor(0.7f, 1.3f, 2.1f));
-	TestTrue(TEXT("same image"), CamSimSensorRef::Run(Scene, 8, 4, B).Nv12 == CamSimSensorRef::Run(Scene, 8, 4, A).Nv12);
+	const auto Ra = CamSimSensorRef::Run(Scene, 8, 4, A), Rb = CamSimSensorRef::Run(Scene, 8, 4, B);
+	int32 MaxDiff = 0;
+	for (int32 I = 0; I < Ra.Nv12.Num(); ++I) MaxDiff = FMath::Max(MaxDiff, FMath::Abs((int32)Ra.Nv12[I] - (int32)Rb.Nv12[I]));
+	TestTrue(FString::Printf(TEXT("same image within 1 DN (max %d)"), MaxDiff), MaxDiff <= 1);
 	return true;
 }
 
@@ -60,19 +80,19 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorRefIrTest, "CamSim.Sensor.Reference.IrGa
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorRefIrTest::RunTest(const FString& Parameters)
 {
-	FSensorFrameParams P;
+	FSensorFrameParams P = Noiseless();
 	P.Mode = ESensorGraphMode::IR;
-	P.PhotonGain = 0.5f; P.DisplayOffset = 0.25f;   // s = 1 -> 0.75
+	P.PhotonGain = 0.4f; P.DisplayOffset = 0.35f;   // s = 1 -> n = 102 / 255 = 0.4 -> 0.75
 	const auto White = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(1, 1, 1)), 8, 4, P);
-	TestEqual(TEXT("white-hot"), (int32)White.Nv12[0], FMath::RoundToInt32(16 + 219 * 0.75f));
+	TestEqual(TEXT("white-hot"), (int32)White.Nv12[0], ToY(0.75f));
 	FSensorFrameParams Agc = P;
-	Agc.PhotonGain = 0.125f; Agc.DisplayGain = 4.0f;  // AGC on normalised DN: 4 * (1 * 0.125) + 0.25 = 0.75
+	Agc.PhotonGain = 0.2f; Agc.DisplayGain = 2.0f;  // AGC on normalised DN: 2 * (51 / 255) + 0.35 = 0.75
 	const auto AgcWhite = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(1, 1, 1)), 8, 4, Agc);
-	TestEqual(TEXT("display gain on normalised signal"), (int32)AgcWhite.Nv12[0], FMath::RoundToInt32(16 + 219 * 0.75f));
+	TestEqual(TEXT("display gain on normalised DN"), (int32)AgcWhite.Nv12[0], ToY(0.75f));
 	TestEqual(TEXT("IR chroma neutral"), (int32)White.Nv12[8 * 4 + 1], 128);
 	P.bBlackHot = 1;
 	const auto Black = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(1, 1, 1)), 8, 4, P);
-	TestEqual(TEXT("black-hot"), (int32)Black.Nv12[0], FMath::RoundToInt32(16 + 219 * 0.25f));
+	TestEqual(TEXT("black-hot"), (int32)Black.Nv12[0], ToY(0.25f));
 	return true;
 }
 
@@ -80,13 +100,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorRefChromaTest, "CamSim.Sensor.Reference.
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorRefChromaTest::RunTest(const FString& Parameters)
 {
-	FSensorFrameParams P;
+	FSensorFrameParams P = Noiseless();
 	P.KneeStart = 1.0f;  // no knee: exact OETF
-	const auto R = CamSimSensorRef::Run(Solid(4, 2, FLinearColor(0.5f, 0.0f, 0.0f)), 4, 2, P);
-	const float Rp = CamSimSensorRef::Oetf709(0.5f);
+	const auto R = CamSimSensorRef::Run(Solid(4, 2, FLinearColor(0.6f, 0.0f, 0.0f)), 4, 2, P);   // 153 DN
+	const float Rp = CamSimSensorRef::Oetf709(Adc(0.6f, P));
 	const float Y = 0.2126f * Rp;
-	TestEqual(TEXT("Y"), (int32)R.Nv12[0], FMath::RoundToInt32(16 + 219 * Y));
-	TestEqual(TEXT("Cb"), (int32)R.Nv12[8], FMath::RoundToInt32(128 + 224 * (0.0f - Y) / 1.8556f));
-	TestEqual(TEXT("Cr"), (int32)R.Nv12[9], FMath::RoundToInt32(128 + 224 * (Rp - Y) / 1.5748f));
+	TestEqual(TEXT("Y"), (int32)R.Nv12[0], ToY(Y));
+	TestEqual(TEXT("Cb"), (int32)R.Nv12[8], FMath::FloorToInt32(128 + 224 * (0.0f - Y) / 1.8556f + 0.5f));
+	TestEqual(TEXT("Cr"), (int32)R.Nv12[9], FMath::FloorToInt32(128 + 224 * (Rp - Y) / 1.5748f + 0.5f));
 	return true;
 }

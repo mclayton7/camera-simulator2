@@ -631,6 +631,15 @@ Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
   performance.render_frame_rate_hz`. The display path keeps 3B.1's output on
   `signal × PhotonGain × AnalogGain` until the detector lands (Tasks 7/9); the only visible change
   is EO at night, which analog gain now lifts past the old photon clamp.
+- Task 7: CPU reference detector — `CamSimShaders/Public/SensorHash.h` (integer-exact PCG hash of
+  (x, y, frame, seed, stream), 24-bit uniforms, Box-Muller Gaussian; to be mirrored in HLSL) and
+  `CamSimSensorRef::DetectPixel`/`DetectImage`/`DisplayEo`/`DisplayIr`: photon detector (PRNU,
+  shot, dark, DSNU, read noise, full-well clip, analog gain, ADC), microbolometer (temporal,
+  pixel/column/row FPN), hot/dead defects. `CamSimSensorRef::Run` is now the full model
+  (optics pass-through until Task 8); `RunDisplayOnly` keeps the 3B.1 path that the GPU graph
+  still computes, and `CamSim.GPU.Sensor.*` compare against it until Task 9 ports the detector.
+  Physics tests `CamSim.Sensor.Physics.*` (photon transfer, determinism, hash statistics,
+  microbolometer FPN, defect fractions, clipping, analog gain).
 
 ---
 

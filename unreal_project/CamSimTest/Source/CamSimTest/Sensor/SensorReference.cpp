@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Sensor/SensorReference.h"
+#include "SensorHash.h"
 
 namespace CamSimSensorRef
 {
@@ -22,36 +23,90 @@ namespace CamSimSensorRef
 		return L < 0.018f ? 4.5f * L : 1.099f * FMath::Pow(L, 0.45f) - 0.099f;
 	}
 
-	static uint8 ToLimited(float V, float Scale) { return static_cast<uint8>(FMath::Clamp(FMath::RoundToInt32(16.0f + Scale * V), 0, 255)); }
-	static uint8 ToChroma(float C) { return static_cast<uint8>(FMath::Clamp(FMath::RoundToInt32(128.0f + 224.0f * C), 0, 255)); }
-
-	FResult Run(const TArray<FLinearColor>& Scene, int32 W, int32 H, const FSensorFrameParams& P)
+	float DetectPixel(float Signal, int32 X, int32 Y, uint32 Channel, const FSensorFrameParams& P)
 	{
-		check(Scene.Num() == W * H && W % 4 == 0 && H % 2 == 0);
-		FResult R;
-		R.Nv12.SetNumZeroed(W * H * 3 / 2);
-		TArray<FVector4f> Out;   // xyz = R'G'B' (EO) or v,v,v; w = luma source (IR)
-		Out.SetNumUninitialized(W * H);
-		const bool bEo = P.Mode == ESensorGraphMode::EO;
-		const float Gain = P.PhotonGain * P.AnalogGain;   // normalised DN, until the detector model lands
-		for (int32 I = 0; I < W * H; ++I)
+		using namespace CamSimHash;
+		const uint32 Ux = static_cast<uint32>(X), Uy = static_cast<uint32>(Y);
+		const uint32 Fixed = FixedFrame, Frame = P.FrameIndex, Seed = P.Seed;
+		float Dn;
+		if (P.DetectorType == 0)
 		{
-			const FVector3f C(Sanitize(Scene[I].R) * P.InputScale, Sanitize(Scene[I].G) * P.InputScale, Sanitize(Scene[I].B) * P.InputScale);
-			const float S = C.X * P.SignalWeights.X + C.Y * P.SignalWeights.Y + C.Z * P.SignalWeights.Z;
-			++R.Histogram.Bins[FSensorHistogram::BinOf(S)];
-			if (bEo)
+			const uint32 Base = Channel * 16u;
+			const float E  = Signal * P.PhotonGain * P.FullWellE;
+			const float E1 = E * (1.0f + P.Prnu * Gaussian(Ux, Uy, Fixed, Seed, Base + 1u));
+			const float E2 = E1 + FMath::Sqrt(FMath::Max(E1, 0.0f)) * Gaussian(Ux, Uy, Frame, Seed, Base + 2u);
+			const float E3 = E2 + P.DarkE + P.DsnuE * Gaussian(Ux, Uy, Fixed, Seed, Base + 3u);
+			const float E4 = E3 + P.ReadNoiseE * Gaussian(Ux, Uy, Frame, Seed, Base + 4u);
+			const float E5 = FMath::Clamp(E4, 0.0f, P.FullWellE) * P.AnalogGain;
+			Dn = FMath::Clamp(FMath::FloorToFloat(E5 * P.AdcMax / P.FullWellE + 0.5f), 0.0f, P.AdcMax);
+		}
+		else
+		{
+			const float V = Signal * P.PhotonGain
+				+ P.TemporalNoise * Gaussian(Ux, Uy, Frame, Seed, 5u)
+				+ P.PixelFpn * Gaussian(Ux, Uy, Fixed, Seed, 6u)
+				+ P.ColumnFpn * Gaussian(Ux, 0u, Fixed, Seed, 7u)
+				+ P.RowFpn * Gaussian(0u, Uy, Fixed, Seed, 8u);
+			Dn = FMath::Clamp(FMath::FloorToFloat(V * P.AdcMax + 0.5f), 0.0f, P.AdcMax);
+		}
+		const float U = Uniform(Hash(Ux, Uy, Fixed, Seed, 9u));
+		if (U < P.HotFraction) return P.AdcMax;
+		if (U > 1.0f - P.DeadFraction) return 0.0f;
+		return Dn;
+	}
+
+	TArray<float> DetectImage(const TArray<float>& SignalRgbOrMono, int32 W, int32 H, int32 Channels, const FSensorFrameParams& P)
+	{
+		check(SignalRgbOrMono.Num() == W * H * Channels);
+		TArray<float> Dn;
+		Dn.SetNumUninitialized(W * H * Channels);
+		for (int32 C = 0; C < Channels; ++C)
+		{
+			const int32 Plane = C * W * H;
+			for (int32 Y = 0; Y < H; ++Y)
 			{
-				Out[I] = FVector4f(Oetf709(Knee(C.X * Gain, P.KneeStart)), Oetf709(Knee(C.Y * Gain, P.KneeStart)),
-					Oetf709(Knee(C.Z * Gain, P.KneeStart)), 1.0f);
-			}
-			else
-			{
-				float V = FMath::Clamp(P.DisplayGain * (S * Gain) + P.DisplayOffset, 0.0f, 1.0f);
-				if (P.bBlackHot) V = 1.0f - V;
-				Out[I] = FVector4f(V, V, V, V);
+				for (int32 X = 0; X < W; ++X)
+				{
+					Dn[Plane + Y * W + X] = DetectPixel(SignalRgbOrMono[Plane + Y * W + X], X, Y, static_cast<uint32>(C), P);
+				}
 			}
 		}
-		uint8* Y = R.Nv12.GetData();
+		return Dn;
+	}
+
+	float DisplayEo(float N, const FSensorFrameParams& P) { return Oetf709(Knee(N, P.KneeStart)); }
+
+	float DisplayIr(float N, const FSensorFrameParams& P)
+	{
+		const float V = FMath::Clamp(N * P.DisplayGain + P.DisplayOffset, 0.0f, 1.0f);
+		return P.bBlackHot ? 1.0f - V : V;
+	}
+
+	static uint8 ToLimited(float V, float Scale) { return static_cast<uint8>(FMath::Clamp(FMath::FloorToInt32(16.0f + Scale * V + 0.5f), 0, 255)); }
+	static uint8 ToChroma(float C) { return static_cast<uint8>(FMath::Clamp(FMath::FloorToInt32(128.0f + 224.0f * C + 0.5f), 0, 255)); }
+
+	/** Steps 1-3: planar sanitised RGB (3*W*H) and signal s (W*H); fills the histogram. */
+	static void PrepareScene(const TArray<FLinearColor>& Scene, int32 W, int32 H, const FSensorFrameParams& P,
+		TArray<float>& Rgb, TArray<float>& Signal, FSensorHistogram& Histogram)
+	{
+		check(Scene.Num() == W * H && W % 4 == 0 && H % 2 == 0);
+		const int32 N = W * H;
+		Rgb.SetNumUninitialized(3 * N);
+		Signal.SetNumUninitialized(N);
+		for (int32 I = 0; I < N; ++I)
+		{
+			const float R = Sanitize(Scene[I].R) * P.InputScale, G = Sanitize(Scene[I].G) * P.InputScale, B = Sanitize(Scene[I].B) * P.InputScale;
+			Rgb[I] = R; Rgb[N + I] = G; Rgb[2 * N + I] = B;
+			Signal[I] = R * P.SignalWeights.X + G * P.SignalWeights.Y + B * P.SignalWeights.Z;
+			++Histogram.Bins[FSensorHistogram::BinOf(Signal[I])];
+		}
+	}
+
+	/** Step 7. Out: xyz = R'G'B' (EO) or v,v,v; w = luma source (IR). */
+	static void PackNv12(const TArray<FVector4f>& Out, int32 W, int32 H, bool bEo, TArray<uint8>& Nv12)
+	{
+		Nv12.SetNumZeroed(W * H * 3 / 2);
+		uint8* Y = Nv12.GetData();
 		uint8* UV = Y + W * H;
 		for (int32 Row = 0; Row < H; Row += 2)
 		{
@@ -74,6 +129,59 @@ namespace CamSimSensorRef
 				UV[(Row / 2) * W + X + 1] = bEo ? ToChroma((M.X - Ym) / 1.5748f) : 128;
 			}
 		}
+	}
+
+	FResult Run(const TArray<FLinearColor>& Scene, int32 W, int32 H, const FSensorFrameParams& P)
+	{
+		FResult R;
+		TArray<float> Rgb, Signal;
+		PrepareScene(Scene, W, H, P, Rgb, Signal, R.Histogram);
+		// Step 4, optics: pass-through until Task 8 (FocalPx 0 and PsfSigmaPx 0 are "off").
+		const bool bEo = P.Mode == ESensorGraphMode::EO;
+		const int32 N = W * H;
+		const TArray<float> Dn = bEo ? DetectImage(Rgb, W, H, 3, P) : DetectImage(Signal, W, H, 1, P);
+		const float InvAdc = 1.0f / P.AdcMax;
+		TArray<FVector4f> Out;
+		Out.SetNumUninitialized(N);
+		for (int32 I = 0; I < N; ++I)
+		{
+			if (bEo)
+			{
+				Out[I] = FVector4f(DisplayEo(Dn[I] * InvAdc, P), DisplayEo(Dn[N + I] * InvAdc, P), DisplayEo(Dn[2 * N + I] * InvAdc, P), 1.0f);
+			}
+			else
+			{
+				const float V = DisplayIr(Dn[I] * InvAdc, P);
+				Out[I] = FVector4f(V, V, V, V);
+			}
+		}
+		PackNv12(Out, W, H, bEo, R.Nv12);
+		return R;
+	}
+
+	FResult RunDisplayOnly(const TArray<FLinearColor>& Scene, int32 W, int32 H, const FSensorFrameParams& P)
+	{
+		FResult R;
+		TArray<float> Rgb, Signal;
+		PrepareScene(Scene, W, H, P, Rgb, Signal, R.Histogram);
+		const bool bEo = P.Mode == ESensorGraphMode::EO;
+		const int32 N = W * H;
+		const float Gain = P.PhotonGain * P.AnalogGain;
+		TArray<FVector4f> Out;
+		Out.SetNumUninitialized(N);
+		for (int32 I = 0; I < N; ++I)
+		{
+			if (bEo)
+			{
+				Out[I] = FVector4f(DisplayEo(Rgb[I] * Gain, P), DisplayEo(Rgb[N + I] * Gain, P), DisplayEo(Rgb[2 * N + I] * Gain, P), 1.0f);
+			}
+			else
+			{
+				const float V = DisplayIr(Signal[I] * Gain, P);
+				Out[I] = FVector4f(V, V, V, V);
+			}
+		}
+		PackNv12(Out, W, H, bEo, R.Nv12);
 		return R;
 	}
 }

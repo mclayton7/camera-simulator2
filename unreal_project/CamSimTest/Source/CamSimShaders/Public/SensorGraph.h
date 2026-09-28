@@ -30,7 +30,8 @@ struct FSensorGraphOutputs
 /**
  * Adds the sensor passes (ApplyCS: sanitize, gain, histogram, EO/IR transfer;
  * PackNv12CS: BT.709 limited-range NV12) to GraphBuilder. Order of operations
- * follows CamSimSensorRef (Sensor/SensorReference.h) exactly.
+ * follows CamSimSensorRef::RunDisplayOnly (Sensor/SensorReference.h) exactly
+ * until 3B.2 Task 9 ports the detector (then CamSimSensorRef::Run).
  */
 /**
  * Whether this RHI can run the sensor graph: a real RHI (not NullRHI), SM5

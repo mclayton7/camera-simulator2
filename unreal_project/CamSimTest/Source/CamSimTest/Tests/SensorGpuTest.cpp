@@ -105,7 +105,7 @@ bool FSensorGpuEoTest::RunTest(const FString& Parameters)
 	constexpr int32 W = 64, H = 32;
 	const TArray<FLinearColor> Scene = LogGradient(W, H);
 	FSensorFrameParams P; P.PhotonGain = FMath::Exp2(-4.0f);
-	Compare(*this, RunOnGpu(Scene, W, H, FIntPoint(W, H), P), CamSimSensorRef::Run(Scene, W, H, P), W, H);
+	Compare(*this, RunOnGpu(Scene, W, H, FIntPoint(W, H), P), CamSimSensorRef::RunDisplayOnly(Scene, W, H, P), W, H);
 	return true;
 }
 
@@ -118,7 +118,7 @@ bool FSensorGpuIrTest::RunTest(const FString& Parameters)
 	TArray<FLinearColor> Scene; Scene.SetNumUninitialized(W * H);
 	for (int32 I = 0; I < W * H; ++I) { const float V = (I % W) < W / 2 ? 0.5f : 8.0f; Scene[I] = FLinearColor(V, V, V, 1); }
 	FSensorFrameParams P; P.Mode = ESensorGraphMode::IR; P.PhotonGain = 0.05f; P.DisplayGain = 2.0f; P.DisplayOffset = 0.05f; P.bBlackHot = 1;
-	Compare(*this, RunOnGpu(Scene, W, H, FIntPoint(W, H), P), CamSimSensorRef::Run(Scene, W, H, P), W, H);
+	Compare(*this, RunOnGpu(Scene, W, H, FIntPoint(W, H), P), CamSimSensorRef::RunDisplayOnly(Scene, W, H, P), W, H);
 	return true;
 }
 
@@ -133,7 +133,7 @@ bool FSensorGpuSanitizeTest::RunTest(const FString& Parameters)
 	for (int32 I = 3; I < W * H; I += 11) Scene[I] = FLinearColor(INFINITY, INFINITY, INFINITY, 1);
 	for (int32 I = 5; I < W * H; I += 13) Scene[I] = FLinearColor(-1, -1, -1, 1);
 	FSensorFrameParams P; P.PhotonGain = FMath::Exp2(-4.0f);
-	Compare(*this, RunOnGpu(Scene, W, H, FIntPoint(W, H), P), CamSimSensorRef::Run(Scene, W, H, P), W, H);
+	Compare(*this, RunOnGpu(Scene, W, H, FIntPoint(W, H), P), CamSimSensorRef::RunDisplayOnly(Scene, W, H, P), W, H);
 	return true;
 }
 
@@ -149,6 +149,6 @@ bool FSensorGpuScaledTest::RunTest(const FString& Parameters)
 	TArray<FLinearColor> Big; Big.SetNumUninitialized(4 * W * H);
 	for (int32 Y = 0; Y < 2 * H; ++Y) for (int32 X = 0; X < 2 * W; ++X) Big[Y * 2 * W + X] = Small[(Y / 2) * W + X / 2];
 	FSensorFrameParams P; P.PhotonGain = FMath::Exp2(-4.0f);
-	Compare(*this, RunOnGpu(Big, 2 * W, 2 * H, FIntPoint(W, H), P), CamSimSensorRef::Run(Small, W, H, P), W, H);
+	Compare(*this, RunOnGpu(Big, 2 * W, 2 * H, FIntPoint(W, H), P), CamSimSensorRef::RunDisplayOnly(Small, W, H, P), W, H);
 	return true;
 }
