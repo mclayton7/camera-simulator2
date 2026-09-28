@@ -5,6 +5,7 @@
 #include <cmath>
 #include "SensorHash.h"
 #include "Sensor/SensorReference.h"
+#include "Sensor/SensorController.h"
 #include "Sensor/SensorOptics.h"
 #include "Sensor/SensorPresets.h"
 #include "Sensor/SensorTypes.h"
@@ -198,6 +199,60 @@ bool FSensorPhysicsDefectTest::RunTest(const FString& Parameters)
 	AddInfo(FString::Printf(TEXT("hot %d, dead %d (expected %.0f +- %.0f)"), Hot, Dead, Expected, FourSigma));
 	TestTrue(TEXT("hot count within 4 sigma"), FMath::Abs(Hot - Expected) <= FourSigma);
 	TestTrue(TEXT("dead count within 4 sigma"), FMath::Abs(Dead - Expected) <= FourSigma);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsEoIrIndependentTest, "CamSim.Sensor.Physics.EoIrPatternsIndependent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsEoIrIndependentTest::RunTest(const FString& Parameters)
+{
+	// EO and IR are different focal planes: with the same config seed their fixed patterns (PRNU, DSNU,
+	// defects) must not coincide. The controller derives each mode's hash seed from the config seed.
+	constexpr int32 W = 256, H = 256;
+	FSensorModeConfig Eo, Ir;
+	CamSimSensorPresets::Apply(TEXT("eo_hd_cmos"), Eo);
+	CamSimSensorPresets::Apply(TEXT("mwir_cooled"), Ir);
+	Eo.Seed = Ir.Seed = 7;
+	auto SeedFor = [](ESensorGraphMode Mode, const FSensorModeConfig& Cfg)
+	{
+		FSensorController C;
+		FSensorControllerInput In;
+		In.Mode = Mode;
+		return C.Update(In, Cfg).Seed;
+	};
+	const uint32 SeedEo = SeedFor(ESensorGraphMode::EO, Eo), SeedIr = SeedFor(ESensorGraphMode::IR, Ir);
+	TestNotEqual(TEXT("EO and IR hash seeds differ"), SeedEo, SeedIr);
+	TestEqual(TEXT("same mode + config seed -> same hash seed"), SeedFor(ESensorGraphMode::EO, Eo), SeedEo);
+	FSensorModeConfig Eo8 = Eo; Eo8.Seed = 8;
+	TestNotEqual(TEXT("config seed still selects the pattern"), SeedFor(ESensorGraphMode::EO, Eo8), SeedEo);
+
+	// Channel 0 (EO red, IR mono) fixed-pattern fields: PRNU (stream 1), DSNU (stream 3).
+	using namespace CamSimHash;
+	for (const uint32 Stream : { 1u, 3u })
+	{
+		TArray<double> A, B;
+		A.Reserve(W * H); B.Reserve(W * H);
+		for (int32 Y = 0; Y < H; ++Y) for (int32 X = 0; X < W; ++X)
+		{
+			A.Add(Gaussian(X, Y, FixedFrame, SeedEo, Stream));
+			B.Add(Gaussian(X, Y, FixedFrame, SeedIr, Stream));
+		}
+		const double Rho = Corr(A, B);
+		AddInfo(FString::Printf(TEXT("stream %u: EO red vs IR rho %.4f"), Stream, Rho));
+		TestTrue(FString::Printf(TEXT("stream %u EO red vs IR fixed pattern uncorrelated"), Stream), FMath::Abs(Rho) < 0.05);
+	}
+
+	// Defects (raw draw of stream 9, sub-stream 18): at a 1e-3 fraction ~65 per mode; independent maps share ~0.
+	int32 EoDefects = 0, IrDefects = 0, Shared = 0;
+	for (int32 Y = 0; Y < H; ++Y) for (int32 X = 0; X < W; ++X)
+	{
+		const bool bEo = Uniform(Hash(X, Y, FixedFrame, SeedEo, 18u)) < 1e-3f;
+		const bool bIr = Uniform(Hash(X, Y, FixedFrame, SeedIr, 18u)) < 1e-3f;
+		EoDefects += bEo; IrDefects += bIr; Shared += bEo && bIr;
+	}
+	AddInfo(FString::Printf(TEXT("defects: EO %d, IR %d, shared %d"), EoDefects, IrDefects, Shared));
+	TestTrue(TEXT("both modes have defects"), EoDefects > 0 && IrDefects > 0);
+	TestTrue(TEXT("defect positions differ"), Shared <= 2);
 	return true;
 }
 

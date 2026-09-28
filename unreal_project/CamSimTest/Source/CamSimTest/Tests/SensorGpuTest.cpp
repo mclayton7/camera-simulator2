@@ -9,6 +9,7 @@
 #include "RenderGraphUtils.h"
 #include "RenderingThread.h"
 #include "SensorGraph.h"
+#include "Sensor/SensorController.h"
 #include "Sensor/SensorOptics.h"
 #include "Sensor/SensorPresets.h"
 #include "Sensor/SensorReference.h"
@@ -192,7 +193,7 @@ namespace
 		P.HotFraction   = D.HotPixelFraction;
 		P.DeadFraction  = D.DeadPixelFraction;
 		P.FrameIndex    = 7;
-		P.Seed          = 3;
+		P.Seed          = FSensorController::ModeSeed(Mode, 3);   // full 32-bit seeds, as live
 		return P;
 	}
 

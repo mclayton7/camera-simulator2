@@ -389,7 +389,7 @@ bool FSensorDetectorParamsTest::RunTest(const FString& Parameters)
 	FSensorControllerInput I = In(&H, 7);
 	I.FrameRateHz = 60.0f;
 	const FSensorFrameParams P = C.Update(I, Cfg);
-	TestEqual(TEXT("seed"), P.Seed, 42u);
+	TestEqual(TEXT("seed: config seed folded with the mode"), P.Seed, FSensorController::ModeSeed(ESensorGraphMode::EO, 42u));
 	TestEqual(TEXT("frame index = serial"), P.FrameIndex, 7u);
 	TestEqual(TEXT("photon detector"), P.DetectorType, 0u);
 	TestEqual(TEXT("full well"), P.FullWellE, 7000.0f);

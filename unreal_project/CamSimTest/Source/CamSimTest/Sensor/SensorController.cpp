@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Sensor/SensorController.h"
+#include "SensorHash.h"
 
 bool FSensorController::PercentileLog2(const FSensorHistogram& H, float P, float& OutLog2)
 {
@@ -32,6 +33,11 @@ float FSensorController::Smoothing(double DeltaSimSec, int32 LagFrames, bool bSn
 namespace
 {
 	int32 ModeIndex(ESensorGraphMode Mode) { return Mode == ESensorGraphMode::EO ? 0 : 1; }
+}
+
+uint32 FSensorController::ModeSeed(ESensorGraphMode Mode, uint32 ConfigSeed)
+{
+	return ConfigSeed ^ CamSimHash::Pcg(static_cast<uint32>(ModeIndex(Mode)) + 1u);
 }
 
 float FSensorController::TotalGainCapEv(const FSensorModeConfig& Cfg)
@@ -118,7 +124,7 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	P.SignalWeights = Cfg.SignalWeights;
 	P.Serial        = In.Serial;
 	P.FrameIndex    = In.Serial;
-	P.Seed          = Cfg.Seed;
+	P.Seed          = ModeSeed(In.Mode, Cfg.Seed);
 
 	const FSensorDetectorConfig& D = Cfg.Detector;
 	P.DetectorType  = static_cast<uint32>(D.Type);

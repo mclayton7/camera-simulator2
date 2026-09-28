@@ -33,6 +33,11 @@ public:
 	/** Highest total gain (EV): MaxPhotonGainEv + the analog stage's MaxAnalogGainDb in EV
 	 *  (none for a microbolometer). */
 	static float TotalGainCapEv(const FSensorModeConfig& Cfg);
+	/** Hash seed of a mode's focal plane: ConfigSeed ^ Pcg(mode index + 1). EO and IR are different
+	 *  detectors, so the same config seed must not give them the same PRNU/DSNU/defect pattern; the
+	 *  same (mode, seed) always gives the same pattern. Derived here, on the CPU, so the reference
+	 *  and the GPU graph both receive the final FSensorFrameParams::Seed. */
+	static uint32 ModeSeed(ESensorGraphMode Mode, uint32 ConfigSeed);
 	/** Percentile P in [0,1] of H as log2 signal; false for an empty histogram. */
 	static bool PercentileLog2(const FSensorHistogram& H, float P, float& OutLog2);
 
