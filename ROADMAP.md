@@ -581,7 +581,20 @@ Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
   full-range RGB luma (the stream's limited-range Y reads ~38.7 on `night_slant`).
 - Known, pre-existing: `FVideoEncoder` reads the subsystem's config while a hot reload
   move-assigns it (the capture size and sensor path are now pinned; other fields can still tear).
-- 3B.4 deletes the unused BGRA render-target ring and colour readback pool on the GPU path.
+- ~~3B.4 deletes the unused BGRA render-target ring and colour readback pool on the GPU path.~~
+  Done in 3B.2 (Task 2).
+
+3B.2 progress (physical sensor model, `docs/superpowers/plans/2026-09-27-physical-sensor-3b2.md`):
+- Task 1: NVG removed (EO and IR only).
+- Task 2: the legacy CPU sensor path is gone — `FSensorPostProcess`/`IPixelPipeline`, the path
+  selector and `render.sensor_path`, the 27A material path (`performance.gpu_sensor_*`), the HUD
+  overlay (`Overlay/`, `overlay.*`), the drawn laser spot (`laser_designator.*`; DIS Designator
+  PDUs are still tracked), the CPU precipitation overlay (`phase18.precipitation/rain_intensity/
+  snow_intensity`, `randomization.randomize_weather/weather_probability`) and
+  `render.exposure_compensation_ev` (UE auto-exposure, legacy only). The GPU sensor graph is the
+  only path: `UCamSimSubsystem::IsSensorGraphAvailable()` is decided at startup; without it no
+  frames are produced and `/ready` stays false. Streams are always tagged BT.709. The BGRA
+  render-target ring, colour readback pool and backbuffer grab are gone (NV12 readback only).
 
 ---
 

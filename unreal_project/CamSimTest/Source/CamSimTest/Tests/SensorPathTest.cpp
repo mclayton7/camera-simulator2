@@ -5,9 +5,10 @@
 #include "Modules/ModuleManager.h"
 #include "ShaderCore.h"
 #include "SensorFrameParams.h"
-#include "Sensor/SensorPath.h"
 #include "Sensor/SensorStatsMailbox.h"
 #include "Config/CamSimConfig.h"
+#include "Subsystem/CamSimSubsystem.h"
+#include "RHIGlobals.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorShaderModuleTest,
 	"CamSim.Sensor.ShaderModule.LoadedWithShaderDirectory",
@@ -39,154 +40,59 @@ bool FSensorHistogramBinTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-namespace
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorLegacyKeysGoneTest, "CamSim.Sensor.Config.LegacyPathKeysUnknown",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorLegacyKeysGoneTest::RunTest(const FString& Parameters)
 {
-	FCamSimConfig CleanGpuConfig()
+	AddExpectedMessage(TEXT("in <string> is ignored"), EAutomationExpectedErrorFlags::Contains, 3);
+	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT(
+		"render:\n  sensor_path: legacy\n"
+		"overlay:\n  enabled: true\n"
+		"performance:\n  gpu_sensor_effects: true\n"));
+	for (const TCHAR* Key : { TEXT("sensor_path"), TEXT("overlay"), TEXT("gpu_sensor_effects") })
 	{
-		FCamSimConfig Cfg;
-		for (ESensorMode M : { ESensorMode::EO, ESensorMode::IR })
-		{
-			Cfg.SensorModeConfigs.Add(M, FSensorModeConfig());
-			FSensorModeConfig& C = Cfg.SensorModeConfigs[M];
-			C.Vignetting = 0.0f;   // default is 0.15: unported in 3B.1
-		}
-		Cfg.OverlayConfig.bEnabled = false;
-		return Cfg;
+		TestTrue(FString::Printf(TEXT("%s reported unknown"), Key),
+			Cfg.UnknownYamlKeys.ContainsByPredicate([Key](const FString& K) { return K.Contains(Key); }));
 	}
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathAutoTest, "CamSim.Sensor.Path.AutoPicksGpuOnlyWhenAllPorted",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FSensorPathAutoTest::RunTest(const FString& Parameters)
-{
-	FCamSimConfig Cfg = CleanGpuConfig();
-	TestTrue(TEXT("clean config -> gpu"), FSensorPathSelector::Decide(Cfg).Path == ESensorPipelinePath::Gpu);
-
-	Cfg.SensorModeConfigs[ESensorMode::IR].NETD = 0.01f;
-	Cfg.LaserDesignator.bEnabled = true;
-	const FSensorPathDecision D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("unported -> legacy"), D.Path == ESensorPipelinePath::Legacy);
-	TestTrue(TEXT("names noise"), D.Unported.ContainsByPredicate([](const FString& S) { return S.Contains(TEXT("noise_netd")); }));
-	TestTrue(TEXT("names laser"), D.Unported.Contains(TEXT("laser_designator")));
-	TestTrue(TEXT("reason lists them"), D.Reason.Contains(TEXT("laser_designator")));
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathForcedTest, "CamSim.Sensor.Path.ForcedAndSceneCapture",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorGraphPreconditionsTest, "CamSim.Sensor.Graph.ConfigPreconditions",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FSensorPathForcedTest::RunTest(const FString& Parameters)
+bool FSensorGraphPreconditionsTest::RunTest(const FString& Parameters)
 {
-	using ESP = FCamSimConfig::FRenderConfig::ESensorPath;
-	FCamSimConfig Cfg = CleanGpuConfig();
-	Cfg.SensorModeConfigs[ESensorMode::EO].NETD = 0.02f;
-	Cfg.Render.SensorPathMode = ESP::Gpu;
-	const FSensorPathDecision D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("forced gpu"), D.Path == ESensorPipelinePath::Gpu);
-	TestTrue(TEXT("ignored effects still listed"), D.Unported.Num() == 1 && D.Reason.Contains(TEXT("ignored")));
-
-	Cfg = CleanGpuConfig();
-	Cfg.Render.SensorPathMode = ESP::Legacy;
-	TestTrue(TEXT("forced legacy"), FSensorPathSelector::Decide(Cfg).Path == ESensorPipelinePath::Legacy);
-
-	Cfg.Render.SensorPathMode = ESP::Gpu;
-	Cfg.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::SceneCapture;
-	TestTrue(TEXT("scene_capture is always legacy"), FSensorPathSelector::Decide(Cfg).Path == ESensorPipelinePath::Legacy);
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathColorTempTest, "CamSim.Sensor.Path.NeutralValuesAreNotEffects",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FSensorPathColorTempTest::RunTest(const FString& Parameters)
-{
-	FCamSimConfig Cfg = CleanGpuConfig();
-	Cfg.SensorModeConfigs[ESensorMode::EO].ColorTemperatureK = 6500.0f;  // neutral
-	Cfg.SensorModeConfigs[ESensorMode::EO].bAGCEnabled = true;           // ported in 3B.1
-	Cfg.SensorModeConfigs[ESensorMode::IR].AGCLagFrames = 2;             // ported in 3B.1
-	TestTrue(TEXT("still gpu"), FSensorPathSelector::Decide(Cfg).Path == ESensorPipelinePath::Gpu);
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathQualityPresetTest, "CamSim.Sensor.Path.QualityPresetEffectsAreUnported",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FSensorPathQualityPresetTest::RunTest(const FString& Parameters)
-{
-	FCamSimConfig Cfg = CleanGpuConfig();
-	TestTrue(TEXT("clean config -> gpu"), FSensorPathSelector::Decide(Cfg).Path == ESensorPipelinePath::Gpu);
-
-	Cfg.ActiveSensorQuality.BlurRadius = 1;
-	FSensorPathDecision D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("quality blur -> legacy"), D.Path == ESensorPipelinePath::Legacy);
-	TestTrue(TEXT("names quality.blur_radius"), D.Unported.Contains(TEXT("quality.blur_radius")));
-
-	Cfg = CleanGpuConfig();
-	Cfg.ActiveSensorQuality.Contrast = 1.05f;
-	D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("quality contrast -> legacy"), D.Path == ESensorPipelinePath::Legacy);
-	TestTrue(TEXT("names quality.contrast"), D.Unported.Contains(TEXT("quality.contrast")));
-
-	Cfg = CleanGpuConfig();
-	Cfg.ActiveSensorQuality.BrightnessBias = 0.1f;
-	D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("quality brightness_bias -> legacy"), D.Path == ESensorPipelinePath::Legacy);
-	TestTrue(TEXT("names quality.brightness_bias"), D.Unported.Contains(TEXT("quality.brightness_bias")));
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathNv12DimsTest, "CamSim.Sensor.Path.GpuNeedsNv12Dimensions",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FSensorPathNv12DimsTest::RunTest(const FString& Parameters)
-{
-	using ESP = FCamSimConfig::FRenderConfig::ESensorPath;
-	FCamSimConfig Cfg = CleanGpuConfig();
-	Cfg.Render.SensorPathMode = ESP::Gpu;
+	// The config checks run before the RHI check, so they are testable under NullRHI.
+	FCamSimConfig Cfg;
 	Cfg.CaptureWidth = 1366;   // even, not a multiple of 4
 	Cfg.CaptureHeight = 768;
-	FSensorPathDecision D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("forced gpu + 1366 wide -> legacy"), D.Path == ESensorPipelinePath::Legacy);
-	TestTrue(TEXT("width fallback is an error"), D.bError);
-	TestTrue(TEXT("reason names the width"), D.Reason.Contains(TEXT("1366")));
-	TestTrue(TEXT("still wanted gpu"), FSensorPathSelector::WantsGpu(Cfg));
+	FString Why;
+	TestFalse(TEXT("1366 wide -> unavailable"), UCamSimSubsystem::CanRunSensorGraph(Cfg, Why));
+	TestTrue(TEXT("reason names the width"), Why.Contains(TEXT("1366")));
 
 	Cfg.CaptureWidth = 1280;
 	Cfg.CaptureHeight = 721;
-	D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("forced gpu + odd height -> legacy"), D.Path == ESensorPipelinePath::Legacy);
-	TestTrue(TEXT("height fallback is an error"), D.bError);
-	TestTrue(TEXT("reason names the height"), D.Reason.Contains(TEXT("721")));
+	Why.Reset();
+	TestFalse(TEXT("odd height -> unavailable"), UCamSimSubsystem::CanRunSensorGraph(Cfg, Why));
+	TestTrue(TEXT("reason names the height"), Why.Contains(TEXT("721")));
 
-	Cfg = CleanGpuConfig();
-	Cfg.CaptureWidth = 1366;
-	Cfg.CaptureHeight = 768;
-	D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("auto + 1366 wide -> legacy"), D.Path == ESensorPipelinePath::Legacy);
-	TestTrue(TEXT("auto fallback reason names the width"), D.Reason.Contains(TEXT("1366")));
-
-	Cfg.CaptureWidth = 1280;
 	Cfg.CaptureHeight = 720;
-	D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("1280x720 -> gpu"), D.Path == ESensorPipelinePath::Gpu);
-	TestFalse(TEXT("no error"), D.bError);
+	Cfg.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::SceneCapture;
+	Why.Reset();
+	TestFalse(TEXT("scene_capture -> unavailable"), UCamSimSubsystem::CanRunSensorGraph(Cfg, Why));
+	TestTrue(TEXT("reason names view_source"), Why.Contains(TEXT("view_source")));
 
-	FSensorPathSelector::DowngradeToLegacy(D, TEXT("NullRHI"));
-	TestTrue(TEXT("runtime downgrade -> legacy"), D.Path == ESensorPipelinePath::Legacy);
-	TestTrue(TEXT("runtime downgrade is an error"), D.bError);
-	TestTrue(TEXT("runtime downgrade names why"), D.Reason.Contains(TEXT("NullRHI")));
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathChromaticAberrationTest, "CamSim.Sensor.Path.ChromaticAberrationIsUnported",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FSensorPathChromaticAberrationTest::RunTest(const FString& Parameters)
-{
-	FCamSimConfig Cfg = CleanGpuConfig();
-	Cfg.OpticalRealism.bEnabled = false;
-	Cfg.OpticalRealism.bChromaticAberration = true;
-	TestTrue(TEXT("optical realism off -> gpu"), FSensorPathSelector::Decide(Cfg).Path == ESensorPipelinePath::Gpu);
-	Cfg.OpticalRealism.bEnabled = true;
-	Cfg.OpticalRealism.bLensDistortion = false;
-	const FSensorPathDecision D = FSensorPathSelector::Decide(Cfg);
-	TestTrue(TEXT("chromatic aberration -> legacy"), D.Path == ESensorPipelinePath::Legacy);
-	TestTrue(TEXT("names chromatic_aberration"), D.Unported.Contains(TEXT("chromatic_aberration")));
+	Cfg.Render.ViewSourceMode = FCamSimConfig::FRenderConfig::EViewSource::Primary;
+	Why.Reset();
+	const bool bOk = UCamSimSubsystem::CanRunSensorGraph(Cfg, Why);
+	if (GUsingNullRHI)
+	{
+		TestFalse(TEXT("NullRHI -> unavailable"), bOk);
+		TestTrue(TEXT("reason names NullRHI"), Why.Contains(TEXT("NullRHI")));
+	}
+	else
+	{
+		TestTrue(FString::Printf(TEXT("real RHI, valid config -> available (%s)"), *Why), bOk);
+	}
 	return true;
 }
 

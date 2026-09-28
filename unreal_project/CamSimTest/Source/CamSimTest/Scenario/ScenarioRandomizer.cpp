@@ -53,12 +53,6 @@ void FScenarioRandomizer::RandomizeEnvironment(FCamSimConfig& Cfg, FRandomStream
 		const float Factor = 1.0f + Rng.FRandRange(-R.FogDensityJitterFrac, R.FogDensityJitterFrac);
 		Cfg.Phase18.FogDensity = FMath::Clamp(Cfg.Phase18.FogDensity * Factor, 0.0f, 1.0f);
 	}
-
-	// Random weather
-	if (R.bRandomizeWeather)
-	{
-		Cfg.Phase18.bPrecipitation = (Rng.GetFraction() < R.WeatherProbability);
-	}
 }
 
 void FScenarioRandomizer::RandomizeEntities(FCamSimConfig& Cfg, FRandomStream& Rng)

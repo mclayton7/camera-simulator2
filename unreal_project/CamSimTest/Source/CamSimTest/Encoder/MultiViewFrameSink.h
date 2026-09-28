@@ -19,7 +19,7 @@
 class FMultiViewFrameSink : public IFrameSink
 {
 public:
-	FMultiViewFrameSink(const FCamSimConfig& InConfig, ESensorPipelinePath InSensorPath);
+	explicit FMultiViewFrameSink(const FCamSimConfig& InConfig);
 	virtual ~FMultiViewFrameSink() override;
 
 	// IFrameSink interface
@@ -47,7 +47,6 @@ private:
 	};
 
 	const FCamSimConfig& Config;
-	const ESensorPipelinePath SensorPath;  // passed to every view's encoder
 	bool bIsOpen = false;
 	TAtomic<uint64> SuccessfulFrameCount { 0 };
 	TArray<FViewRuntime> Views;

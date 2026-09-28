@@ -72,7 +72,7 @@ bool FEncoderNv12RoundTripTest::RunTest(const FString& Parameters)
 	for (int32 R = 0; R < H; ++R) for (int32 X = 0; X < W; ++X) F.Nv12[R * W + X] = static_cast<uint8>(16 + ((X + R) * 219) / (W + H));
 	for (int32 I = W * H; I < F.Nv12.Num(); ++I) F.Nv12[I] = (I & 1) ? 150 : 110;
 	{
-		FVideoEncoder Encoder(Config, ESensorPipelinePath::Gpu);
+		FVideoEncoder Encoder(Config);
 		if (!TestTrue(TEXT("opened"), Encoder.Open())) return false;
 		FCamSimTelemetry T;
 		for (int32 I = 0; I < Frames; ++I) Encoder.EncodeFrame(F, T, I);
@@ -89,12 +89,12 @@ bool FEncoderNv12RoundTripTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// The transfer tag follows the sensor path the owner decided (UCamSimSubsystem),
-// never a re-derivation from the config: one source of truth.
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEncoderTransferFollowsSensorPathTest, "CamSim.Encoder.Nv12.TransferFollowsSensorPath",
+// The GPU sensor graph (the only sensor path) applies the BT.709 OETF itself,
+// so every stream is tagged BT.709 (3B.2).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEncoderTransferIsBt709Test, "CamSim.Encoder.Nv12.TransferIsBt709",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-bool FEncoderTransferFollowsSensorPathTest::RunTest(const FString& Parameters)
+bool FEncoderTransferIsBt709Test::RunTest(const FString& Parameters)
 {
 	constexpr int32 W = 320, H = 180;
 	FCamSimConfig Config;
@@ -103,7 +103,6 @@ bool FEncoderTransferFollowsSensorPathTest::RunTest(const FString& Parameters)
 	Config.Encoder = TEXT("libx264");
 	Config.EncoderPref = FCamSimConfig::EEncoderPreference::LibX264;
 	Config.MulticastAddr = TEXT("127.0.0.1"); Config.MulticastPort = 49997;
-	Config.Render.SensorPathMode = FCamSimConfig::FRenderConfig::ESensorPath::Legacy;  // ignored by the encoder
 	const FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Automation") / TEXT("transfer_tag.ts"));
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
 	Config.Recording.VideoRecordPath = Path;
@@ -111,28 +110,24 @@ bool FEncoderTransferFollowsSensorPathTest::RunTest(const FString& Parameters)
 	FSensorFrame F;
 	F.Format = ESensorPixelFormat::NV12;
 	F.Nv12.Init(128, CamSimNv12::NumBytes(W, H));
-	for (const ESensorPipelinePath SensorPath : { ESensorPipelinePath::Gpu, ESensorPipelinePath::Legacy })
+	IFileManager::Get().Delete(*Path);
 	{
-		IFileManager::Get().Delete(*Path);
-		{
-			FVideoEncoder Encoder(Config, SensorPath);
-			if (!TestTrue(TEXT("opened"), Encoder.Open())) return false;
-			FCamSimTelemetry T;
-			for (int32 I = 0; I < 5; ++I) Encoder.EncodeFrame(F, T, I);
-			Encoder.Close();
-		}
-		int Trc = -1;
-		AVFormatContext* Fmt = nullptr;
-		if (avformat_open_input(&Fmt, TCHAR_TO_UTF8(*Path), nullptr, nullptr) >= 0)
-		{
-			avformat_find_stream_info(Fmt, nullptr);
-			const int Stream = av_find_best_stream(Fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-			if (Stream >= 0) Trc = Fmt->streams[Stream]->codecpar->color_trc;
-			avformat_close_input(&Fmt);
-		}
-		const int Expected = SensorPath == ESensorPipelinePath::Gpu ? AVCOL_TRC_BT709 : AVCOL_TRC_IEC61966_2_1;
-		TestEqual(FString::Printf(TEXT("%s path transfer"), FSensorPathSelector::ToString(SensorPath)), Trc, Expected);
+		FVideoEncoder Encoder(Config);
+		if (!TestTrue(TEXT("opened"), Encoder.Open())) return false;
+		FCamSimTelemetry T;
+		for (int32 I = 0; I < 5; ++I) Encoder.EncodeFrame(F, T, I);
+		Encoder.Close();
 	}
+	int Trc = -1;
+	AVFormatContext* Fmt = nullptr;
+	if (avformat_open_input(&Fmt, TCHAR_TO_UTF8(*Path), nullptr, nullptr) >= 0)
+	{
+		avformat_find_stream_info(Fmt, nullptr);
+		const int Stream = av_find_best_stream(Fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+		if (Stream >= 0) Trc = Fmt->streams[Stream]->codecpar->color_trc;
+		avformat_close_input(&Fmt);
+	}
+	TestEqual(TEXT("transfer"), Trc, static_cast<int>(AVCOL_TRC_BT709));
 	IFileManager::Get().Delete(*Path);
 	return true;
 }

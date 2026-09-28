@@ -79,7 +79,6 @@ sensor_fov_presets:
 
 max_entities: 500
 use_instanced_rendering: true
-gpu_sensor_effects: false
 
 sensor_quality:
   preset: medium
@@ -233,7 +232,6 @@ entity_types:
 | `watchdog_max_reconnects` | int | `3` | -- | Maximum encoder reconnect attempts before `RequestExit`. `0` = unlimited retries. |
 | `max_entities` | int | `500` | `CAMSIM_MAX_ENTITIES` | Maximum simultaneous entities managed by the entity renderer. |
 | `use_instanced_rendering` | bool | `true` | -- | Use instanced rendering for entities with the same mesh type. |
-| `gpu_sensor_effects` | bool | `false` | -- | Use GPU post-process materials for sensor effects instead of CPU pipeline. Set `false` for Mesa llvmpipe compatibility. |
 
 ### Geospatial Providers (Phase F1 foundation)
 
@@ -364,7 +362,7 @@ ROADMAP 3B.2.)
 | `signal_weight_g` | float | `0.7152` | `0.7152` | See `signal_weight_r`. No env override. |
 | `signal_weight_b` | float | `0.0722` | `0.0722` | See `signal_weight_r`. No env override. |
 
-**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the gain to `[min_gain_ev, max_gain_ev]`. `render.exposure_compensation_ev` does not apply (it is UE's auto-exposure bias on the legacy path). Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_gain_ev` (mean luma 26). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
+**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the gain to `[min_gain_ev, max_gain_ev]`. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_gain_ev` (mean luma 26). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
 
 | Field | Type | EO default | IR default | Description |
 |-------|------|------------|------------|-------------|
@@ -632,8 +630,8 @@ operational:
 |---|---|---|---|
 | `operational.health_http_enabled` | `CAMSIM_HEALTH_HTTP_ENABLED` | `true` | Master toggle. Default on for `sim-environment` Docker Compose compatibility. Set to `0` (env) or `false` (YAML) to disable. |
 | `operational.health_http_port` | `CAMSIM_HEALTH_HTTP_PORT` | `8080` | Listen port. Binds on all interfaces (0.0.0.0) — `FHttpServerModule::GetHttpRouter` does not take a bind address. |
-| `operational.snapshot_endpoint_enabled` | `CAMSIM_SNAPSHOT_ENDPOINT_ENABLED` | `false` | ROADMAP 3A/3B. Binds `GET /snapshot`: returns the next grabbed frame as PNG (legacy path: before sensor effects and encoding; GPU sensor path: the sensor image, since the graph replaces the tonemapper), 503 if no frame arrives within 5 s. Also binds `GET /snapshot/sensor` (ROADMAP 3B): the encoded sensor image as PNG; legacy path: same as `/snapshot`. Both are for the bench harness (`scripts/bench/`). Unbound → 404. |
-| `operational.frame_stats_path` | `CAMSIM_FRAME_STATS_PATH` | `""` | ROADMAP 3A/3B. Per-frame JSONL render stats (wall-clock frame time, `stat unit` thread/GPU times, frames emitted/dropped, tileset load %, SSE, camera cut, scene renders per frame, and — ROADMAP 3B — `sensor_gpu_ms`/`sensor_gain_ev`/`scene_median_log2` from the GPU sensor graph; on the legacy path `sensor_gpu_ms` is −1 and the other two are `null`). Empty disables. A relative path is taken from the directory CamSim was launched from. |
+| `operational.snapshot_endpoint_enabled` | `CAMSIM_SNAPSHOT_ENDPOINT_ENABLED` | `false` | ROADMAP 3A/3B. Binds `GET /snapshot`: returns the next grabbed frame as PNG (the sensor image: the GPU sensor graph replaces the tonemapper), 503 if no frame arrives within 5 s. Also binds `GET /snapshot/sensor` (ROADMAP 3B): the same sensor image (kept for the bench). Both are for the bench harness (`scripts/bench/`). Unbound → 404. |
+| `operational.frame_stats_path` | `CAMSIM_FRAME_STATS_PATH` | `""` | ROADMAP 3A/3B. Per-frame JSONL render stats (wall-clock frame time, `stat unit` thread/GPU times, frames emitted/dropped, tileset load %, SSE, camera cut, scene renders per frame, and — ROADMAP 3B — `sensor_gpu_ms`/`sensor_gain_ev`/`scene_median_log2` from the GPU sensor graph; without the sensor graph `sensor_gpu_ms` is −1 and the other two are `null`). Empty disables. A relative path is taken from the directory CamSim was launched from. |
 
 **Routes:**
 
@@ -643,8 +641,8 @@ operational:
 | `GET /health` | `sim-environment` REST orchestrator convention. **Alias for `/live`** — same handler, same semantics. Added so the orchestrator's generic `/health` probe naming works without breaking existing K8s manifests. | `{"status":"ok"}` | Same as `/live` |
 | `GET /ready` | Readiness: encoder open AND at least one CIGI packet received AND first frame successfully encoded. 200 only when all three gates pass. | `{"status":"ready","encoder":true,"cigi":true,"first_frame":true}` | `{"status":"not_ready","encoder":false,"cigi":true,"first_frame":false}` |
 | `GET /metrics` | Prometheus exposition format (`text/plain; charset=utf-8`, version 0.0.4). | See metric list below. | N/A — always 200. |
-| `GET /snapshot` | ROADMAP 3A. Only bound when `operational.snapshot_endpoint_enabled`. Next grabbed frame as PNG: before sensor effects and encoding on the legacy path; the sensor image on the GPU sensor path (same as `/snapshot/sensor`). | `image/png` | `{"status":"no_frame"}` if no frame arrives within 5 s |
-| `GET /snapshot/sensor` | ROADMAP 3B. Only bound when `operational.snapshot_endpoint_enabled`. The encoded sensor image as PNG; legacy path: same as `/snapshot`. | `image/png` | Same as `/snapshot` |
+| `GET /snapshot` | ROADMAP 3A. Only bound when `operational.snapshot_endpoint_enabled`. Next grabbed frame as PNG: the sensor image (same as `/snapshot/sensor`). | `image/png` | `{"status":"no_frame"}` if no frame arrives within 5 s |
+| `GET /snapshot/sensor` | ROADMAP 3B. Only bound when `operational.snapshot_endpoint_enabled`. The encoded sensor image as PNG (same as `/snapshot`). | `image/png` | Same as `/snapshot` |
 
 **`/metrics` contract** (matches the `sim-environment` orchestrator spec §10.4):
 
@@ -662,18 +660,26 @@ render:
   camera_cut_distance_m: 500.0
   camera_cut_angle_deg: 30.0
   origin_shift_distance_m: 20000.0
-  exposure_compensation_ev: -1.0
-  sensor_path: auto
 ```
 
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `render.view_source` | `CAMSIM_RENDER_VIEW_SOURCE` | `primary` | `primary`: the sensor is the game viewport's view (TSR, one scene render per frame). `scene_capture`: legacy `SceneCapture2D` path, kept for A/B comparison until ROADMAP 3B. Unknown values warn and use `primary`. |
+| `render.view_source` | `CAMSIM_RENDER_VIEW_SOURCE` | `primary` | `primary`: the sensor is the game viewport's view (TSR, one scene render per frame). `scene_capture`: legacy `SceneCapture2D` path; since 3B.2 the GPU sensor graph (the only sensor path) runs only in the primary view, so `scene_capture` produces no frames (startup error "sensor graph unavailable", `/ready` false). Unknown values warn and use `primary`. |
 | `render.camera_cut_distance_m` | `CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M` | `500.0` | A camera move larger than this in one frame (teleport, origin rebase) resets TSR history. Must be > 0: a non-positive value is a validation error and that check is skipped. |
 | `render.camera_cut_angle_deg` | `CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG` | `30.0` | A view rotation larger than this in one frame resets TSR history. Must be > 0: a non-positive value is a validation error and that check is skipped. |
-| `render.exposure_compensation_ev` | `CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV` | `-1.0` | Auto-exposure compensation (EV), applied as the sensor view's `AutoExposureBias`. Auto-exposure stays on; this shifts where it settles. UE's default metering (0) over-brightens sunlit Cesium terrain by about 1 EV. Applied at startup. Legacy path only; the GPU path uses `sensor_modes.*.exposure.target_grey` (UE's exposure is manual there, driven by the sensor AE). |
 | `render.origin_shift_distance_m` | `CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M` | `20000.0` | Rebase the Cesium georeference (`CesiumOriginShiftComponent`, `ChangeCesiumGeoreference` mode) when the camera is this far from the origin. Keeps local "up" = +Z and coordinates small. `0` disables. |
-| `render.sensor_path` | `CAMSIM_RENDER_SENSOR_PATH` | `auto` | ROADMAP 3B. `auto`: GPU sensor model once every enabled effect is ported, else legacy. `gpu`: force the GPU sensor model (unported effects are logged and ignored). `legacy`: force the UE tonemapper + CPU sensor model (3B.1 default behaviour). Unknown values warn and use `auto`. The stream's transfer characteristic is tagged BT.709 on the GPU path (it applies the BT.709 OETF) and sRGB on the legacy path. The GPU path replaces UE's tonemapper, so UE's tonemapper-stage effects (vignette, film grain, colour grading, bloom dirt mask) don't apply on it; chromatic aberration (`optical_realism.chromatic_aberration`) counts as unported until 3B.3. It needs NV12-compatible dimensions (`capture_width` a multiple of 4, even `capture_height`), a real RHI with SM5 compute and the sensor shaders: otherwise CamSim logs an error and runs legacy (a bad width is also a config validation error whenever the GPU path is wanted). Chosen once at startup: a hot reload doesn't change it, or `capture_width`/`capture_height`. |
+
+**Sensor graph (ROADMAP 3B).** The GPU sensor graph replaces UE's tonemapper in the primary view and is the only sensor path: UE's tonemapper-stage effects (vignette, film grain, colour grading, bloom dirt mask) don't apply. The stream's transfer characteristic is tagged BT.709 (the graph applies the BT.709 OETF). It needs NV12-compatible dimensions (`capture_width` a multiple of 4 — also a config validation error — and an even `capture_height`), `view_source: primary`, and a real RHI with SM5 compute and the sensor shaders. Checked once at startup: without it CamSim logs `sensor graph unavailable: <reason>` as an error, produces no frames, and `/ready` stays false. When it runs, `/metrics` reports `camsim_sensor_path{path="gpu"} 1` and the legacy `camsim_health.json` has `"sensor_path":"gpu"`.
+
+**Removed in 3B.2** (the legacy CPU sensor path; the YAML keys now produce the standard unknown-key warning and the env vars are ignored):
+
+- `render.sensor_path` / `CAMSIM_RENDER_SENSOR_PATH` — the GPU sensor graph is the only path.
+- `render.exposure_compensation_ev` / `CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV` — UE's auto-exposure bias, legacy path only; the sensor AE uses `sensor_modes.*.exposure`.
+- `performance.gpu_sensor_effects`, `performance.gpu_sensor_material_path`, `performance.gpu_sensor_mpc_path` / `CAMSIM_PERF_GPU_SENSOR` — the 27A material path.
+- `overlay.*` / `CAMSIM_OVERLAY_*` — the HUD burn-in (no burned-in overlays).
+- `laser_designator.*` / `CAMSIM_LASER_*` — the drawn laser spot. DIS Designator PDUs are still received and tracked.
+- `phase18.precipitation`, `phase18.rain_intensity`, `phase18.snow_intensity` / `CAMSIM_PRECIPITATION`, `CAMSIM_RAIN_INTENSITY`, `CAMSIM_SNOW_INTENSITY` — the CPU precipitation overlay. CIGI weather and UE/Niagara effects are unaffected.
+- `randomization.randomize_weather`, `randomization.weather_probability` — they only toggled the precipitation overlay.
 
 **Render resolution (TSR).** With `view_source: primary`, `rendering_quality.tsr_screen_percentage`
 (`CAMSIM_TSR_SCREEN_PERCENTAGE`, default `100`) renders below the output size and lets TSR

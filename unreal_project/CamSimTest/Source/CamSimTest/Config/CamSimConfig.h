@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "Sensor/SensorTypes.h"         // ESensorMode, sensor config structs
-#include "Overlay/FHudOverlay.h"        // FHudOverlayConfig, ECrosshairStyle
 
 /**
  * Runtime configuration for CamSim.
@@ -525,11 +524,6 @@ struct FCamSimConfig
 		float AdaptiveSSEMin        = 8.0f;   // minimum SSE (sharpest allowed)
 		float AdaptiveSSEMax        = 24.0f;  // maximum SSE (most aggressive LOD reduction)
 
-		// 27A GPU Sensor Pipeline
-		bool    bGpuSensorEffects      = false;
-		FString GpuSensorMaterialPath = TEXT("/Game/CamSim/Materials/M_SensorPostProcess");
-		FString GpuSensorMpcPath      = TEXT("/Game/CamSim/Materials/MPC_SensorParams");
-
 		// 28G Per-Frame Latency Tracking
 		bool  bTrackPipelineLatency = false;
 	};
@@ -550,10 +544,6 @@ struct FCamSimConfig
 		bool  bSecondFog        = false;
 		float FogDensity        = 0.02f;  // [0,1]
 		float FogHeightFalloff  = 0.2f;   // UE ExponentialHeightFog param
-		// 18D Precipitation overlay (CPU pixel pass)
-		bool  bPrecipitation    = false;
-		float RainIntensity     = 0.0f;   // [0,1] — drop density
-		float SnowIntensity     = 0.0f;   // [0,1] — flake density
 		// 18E God rays / light shafts
 		bool  bGodRays          = false;
 		float GodRayIntensity   = 1.0f;
@@ -687,17 +677,6 @@ struct FCamSimConfig
 	};
 	FStreamingConfig Streaming;
 
-	struct FLaserDesignatorConfig
-	{
-		bool  bEnabled       = false;
-		float SpotX          = 0.5f;    // normalized [0,1]
-		float SpotY          = 0.5f;
-		float SpotRadius     = 6.0f;    // pixels, 1-sigma
-		float SpotIntensity  = 250.0f;  // [0,255]
-		int32 DesignatorCode = 1688;
-	};
-	FLaserDesignatorConfig LaserDesignator;
-
 	// Phase 21 — DIS (IEEE 1278.1) Protocol
 	//   CAMSIM_DIS_ENABLED              - master toggle                  (default 0)
 	//   CAMSIM_DIS_PORT                 - UDP port                       (default 3000)
@@ -751,9 +730,6 @@ struct FCamSimConfig
 	};
 	FTerrainGateConfig TerrainGate;
 
-	// HUD/OSD overlay burn-in (Phase 20)
-	FHudOverlayConfig OverlayConfig;
-
 	// Phase 23E: Scenario Randomization Engine
 	struct FEntityRandomizationEntry
 	{
@@ -776,8 +752,6 @@ struct FCamSimConfig
 		float   StartHourJitterHrs  = 0.0f;  // ± jitter on ScenarioStartHour
 		float   VisibilityJitterFrac = 0.0f; // fractional jitter on Phase18 VisibilityRangeM
 		float   FogDensityJitterFrac = 0.0f; // fractional jitter on Phase18 FogDensity
-		bool    bRandomizeWeather   = false; // randomly enable/disable precipitation
-		float   WeatherProbability  = 0.3f;  // P(precipitation enabled) when bRandomizeWeather
 
 		// Per-entity template overrides
 		TArray<FEntityRandomizationEntry> EntityEntries;
@@ -826,22 +800,6 @@ struct FCamSimConfig
 		// Rebase the Cesium georeference when the camera is this far from the
 		// origin, in metres. 0 = disabled. Env: CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M
 		double OriginShiftDistanceM = 20000.0;
-
-		// Auto-exposure compensation in EV (the view's AutoExposureBias). The camera
-		// still adapts to the scene; this shifts where it settles. -1 counters the
-		// over-bright metering of sunlit Cesium terrain. Applied at startup.
-		// Env: CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV
-		float ExposureCompensationEV = -1.0f;
-
-		enum class ESensorPath : uint8
-		{
-			Auto = 0,  // GPU when every enabled effect is ported, else legacy (ROADMAP 3B)
-			Gpu,       // force the GPU sensor model; unported effects are ignored (logged)
-			Legacy,    // force UE tonemapper + CPU sensor model
-		};
-		// auto | gpu | legacy. Env: CAMSIM_RENDER_SENSOR_PATH
-		FString     SensorPath     = TEXT("auto");
-		ESensorPath SensorPathMode = ESensorPath::Auto;
 
 		bool IsPrimary() const { return ViewSourceMode == EViewSource::Primary; }
 	};

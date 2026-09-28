@@ -9,7 +9,6 @@
 #include "Config/CamSimConfig.h"
 #include "Entity/EntityTypeTable.h"
 #include "Geospatial/CigiFrames.h"
-#include "Sensor/SensorPath.h"
 #include "CamSimSubsystem.generated.h"
 
 class FCigiReceiver;
@@ -93,11 +92,18 @@ public:
 	const FEntityTypeTable& GetEntityTypeTable() const { return EntityTypeTable; }
 
 	/**
-	 * ROADMAP 3B: the sensor pipeline for this session, decided once in
-	 * Initialize (config, NV12 dimensions, and whether this RHI can run the GPU
-	 * graph). The capture component and the encoder both follow it.
+	 * ROADMAP 3B: whether the GPU sensor graph (the only sensor path) runs this
+	 * session, decided once in Initialize by CanRunSensorGraph. When false no
+	 * frames are produced and /ready stays false; the reason is logged as an error.
 	 */
-	const FSensorPathDecision& GetSensorPathDecision() const { return SensorPathDecision; }
+	bool IsSensorGraphAvailable() const { return bSensorGraphAvailable; }
+
+	/**
+	 * The config preconditions (primary view, NV12 dimensions), then
+	 * IsSensorGraphSupported (a real RHI with SM5 compute and the shaders).
+	 * Game thread, after RHI init. On false, OutWhy says what's missing.
+	 */
+	static bool CanRunSensorGraph(const FCamSimConfig& Cfg, FString& OutWhy);
 
 	/**
 	 * Thread-safe snapshot of the current config. Takes the hot-reload
@@ -142,7 +148,7 @@ public:
 
 private:
 	FCamSimConfig    Config;
-	FSensorPathDecision SensorPathDecision;
+	bool             bSensorGraphAvailable = false;
 	FEntityTypeTable EntityTypeTable;
 	/** Serialises HotReloadConfig writes against cross-thread Config snapshot reads. */
 	mutable FRWLock  ConfigLock_;

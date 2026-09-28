@@ -6,12 +6,10 @@
 #include "CamSimTest.h"
 #include "CIGI/CigiReceiver.h"
 #include "Config/CamSimConfig.h"
-#include "DIS/DisEntityAdapter.h"
 #include "Diagnostics/PipelineLatencyTracker.h"
 #include "Environment/CamSimEnvironment.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Geospatial/CesiumTuning.h"
-#include "GroundTruth/FEntityProjection.h"
 #include "Subsystem/CamSimSubsystem.h"
 
 #include "Components/SceneCaptureComponent2D.h"
@@ -209,7 +207,6 @@ void ACamSimCamera::Tick(float DeltaTime)
 	Streaming.UpdateCameras(this, *SceneCapture, Cfg);
 	Telemetry.UpdateFrameCenter(GetWorld(), *SceneCapture, this, Subsystem->GetGeospatialProvider());
 
-	UpdateLaserDesignator();
 	UpdateAutoFocus();
 	ApplyPrimaryView();
 	UpdateCameraCut();
@@ -222,7 +219,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 
 	if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::CigiDequeue);
 
-	// ROADMAP 3B: sensor AE / AGC and graph parameters (no-op on the legacy path).
+	// ROADMAP 3B: sensor AE / AGC and graph parameters (no-op without the sensor graph).
 	CaptureComp->UpdateSensorParams(SensorComp->GetMode(), SensorComp->GetPolarity(), bCameraCutThisFrame, Cfg);
 	CaptureComp->Poll();
 
@@ -261,7 +258,7 @@ void ACamSimCamera::RecordFrameStats()
 	S.SensorGpuMs      = CaptureComp->GetSensorGpuMs();
 	S.SensorGainEv     = CaptureComp->GetSensorGainEv();
 	S.SceneMedianLog2  = CaptureComp->GetSceneMedianLog2();
-	S.bHasSensorStats  = CaptureComp->GetSensorPath() == ESensorPipelinePath::Gpu;
+	S.bHasSensorStats  = CaptureComp->HasSensorGraph();
 
 	float MinLoad = 100.0f;
 	double Sse = 0.0;
@@ -364,39 +361,6 @@ void ACamSimCamera::ApplyCigiViewState(float DeltaTime)
 	Telemetry.SetGimbal(GimbalComp->GetGimbalYaw(), GimbalComp->GetGimbalPitch(), GimbalComp->GetGimbalRoll());
 }
 
-void ACamSimCamera::UpdateLaserDesignator()
-{
-	FDisEntityAdapter* DisAdapter = Subsystem->GetDisAdapter();
-	IPixelPipeline* SensorFX = CaptureComp->GetSensorPipeline();
-	if (!DisAdapter || !SensorFX) return;
-
-	double DesigLat, DesigLon, DesigAlt;
-	int32 DesigCode;
-	if (!DisAdapter->GetDesignatorSpot(DesigLat, DesigLon, DesigAlt, DesigCode)) return;
-
-	const FCamSimConfig& Cfg = Subsystem->GetConfig();
-	FCamSimConfig::FLaserDesignatorConfig LaserCfg = Cfg.LaserDesignator;
-	LaserCfg.bEnabled = true;
-	LaserCfg.DesignatorCode = DesigCode;
-
-	// Project the geodetic spot through the gimballed sensor's view.
-	const FMatrix ViewProj = FEntityProjection::BuildViewProjectionMatrix(
-		SceneCapture->GetComponentLocation(), SceneCapture->GetComponentRotation(), SceneCapture->FOVAngle,
-		Cfg.CaptureWidth, Cfg.CaptureHeight);
-	const FCamSimGeospatialProvider* GeoProvider = Subsystem->GetGeospatialProvider();
-	FVector SpotUE;
-	if (GeoProvider && GeoProvider->GeoToWorld(GetWorld(), DesigLat, DesigLon, DesigAlt, SpotUE))
-	{
-		const FVector4 Clip = ViewProj.TransformFVector4(FVector4(SpotUE, 1.0f));
-		if (Clip.W > 0.0f)
-		{
-			LaserCfg.SpotX = FMath::Clamp((Clip.X / Clip.W + 1.0f) * 0.5f, 0.0f, 1.0f);
-			LaserCfg.SpotY = FMath::Clamp((1.0f - Clip.Y / Clip.W) * 0.5f, 0.0f, 1.0f);
-		}
-	}
-	SensorFX->SetLaserDesignatorConfig(LaserCfg);
-}
-
 void ACamSimCamera::UpdateAutoFocus()
 {
 	const FCamSimConfig::FOpticalRealismConfig& Opt = Subsystem->GetConfig().OpticalRealism;
@@ -483,29 +447,7 @@ void ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 		UE_LOG(LogCamSim, Warning, TEXT("HotReload: render.view_source / origin_shift_distance_m change ignored (requires restart)"));
 	if (NewCfg.CaptureWidth != OldCfg.CaptureWidth || NewCfg.CaptureHeight != OldCfg.CaptureHeight)
 		UE_LOG(LogCamSim, Warning, TEXT("HotReload: capture_width / capture_height change ignored (requires restart)"));
-	if (NewCfg.Render.SensorPathMode != OldCfg.Render.SensorPathMode)
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: render.sensor_path change ignored (requires restart)"));
-
-	// ROADMAP 3B: the GPU path doesn't run the CPU effects; enabling one live
-	// changes nothing until a restart (when auto would pick legacy).
-	const FSensorPathDecision& Session = Subsystem->GetSensorPathDecision();
-	if (Session.Path == ESensorPipelinePath::Gpu)
-	{
-		TArray<FString> Added = FSensorPathSelector::Decide(NewCfg).Unported;
-		Added.RemoveAll([&Session](const FString& E) { return Session.Unported.Contains(E); });
-		if (Added.Num() > 0)
-		{
-			UE_LOG(LogCamSim, Warning, TEXT("HotReload: %s enabled on the GPU sensor path — ignored until restart"),
-				*FString::Join(Added, TEXT(", ")));
-		}
-	}
 
 	Subsystem->HotReloadConfig(NewCfg);
-	if (IPixelPipeline* SensorFX = CaptureComp->GetSensorPipeline())
-	{
-		SensorFX->SetPhase18Config(NewCfg.Phase18);
-		SensorFX->SetOverlayConfig(NewCfg.OverlayConfig);
-		SensorFX->SetLaserDesignatorConfig(NewCfg.LaserDesignator);
-	}
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: HotReload applied from %s"), *FCamSimConfig::GetConfigFilePath());
 }

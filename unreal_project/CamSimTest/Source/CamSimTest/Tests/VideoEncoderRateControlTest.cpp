@@ -95,7 +95,7 @@ namespace
 		Config.MulticastPort = 49999;  // nothing listens; UDP send is fire-and-forget
 		Config.Recording.VideoRecordPath = RecordPath;
 		{
-			FVideoEncoder Encoder(Config, ESensorPipelinePath::Legacy);
+			FVideoEncoder Encoder(Config);
 			if (!Test.TestTrue(TEXT("Encoder opened"), Encoder.Open()))
 			{
 				return false;

@@ -61,9 +61,6 @@ public:
 	/** Frames captured (handed to readback → sensor → encoder) so far. */
 	uint64 GetFramesCaptured() const { return CaptureComp->GetFramesCaptured(); }
 
-	/** ROADMAP 3B: sensor pipeline this session runs. */
-	ESensorPipelinePath GetSensorPath() const { return CaptureComp->GetSensorPath(); }
-
 	/**
 	 * Apply this frame's host platform state (CIGI Entity Control for the
 	 * camera entity). FCamSimEntityManager calls this before resolving
@@ -153,8 +150,6 @@ private:
 
 	/** CIGI View Definition, Sensor Control, View Control / Art Part → sensor state. */
 	void ApplyCigiViewState(float DeltaTime);
-	/** Project the DIS laser designator spot into the image (Phase 21F.2). */
-	void UpdateLaserDesignator();
 	/** Focus depth of field at the slant range (Phase 15E). */
 	void UpdateAutoFocus();
 	void EmitHeartbeatIfDue();

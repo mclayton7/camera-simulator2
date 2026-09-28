@@ -28,17 +28,6 @@ namespace CamSimRender
 	}
 
 	/**
-	 * The view's AutoExposureBias for a compensation relative to the engine's
-	 * default bias (r.DefaultFeature.AutoExposure.Bias, +1 in UE 5.8): 0 keeps
-	 * UE's metering, -1 is one stop darker. Setting the bias directly would
-	 * replace that default, making -1 two stops darker.
-	 */
-	inline float AutoExposureBias(float EngineDefaultBias, float CompensationEV)
-	{
-		return EngineDefaultBias + CompensationEV;
-	}
-
-	/**
 	 * Re-run the player camera update with the sensor's final pose. The engine
 	 * updates player cameras before TG_PostUpdateWork, where CamSim applies
 	 * gimbal, FOV and post-process; without this the primary view renders the

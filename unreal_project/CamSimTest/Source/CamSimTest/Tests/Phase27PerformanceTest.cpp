@@ -42,15 +42,6 @@ bool FPhase27_ConfigDefaults::RunTest(const FString& Parameters)
 	// 27G
 	TestEqual(TEXT("TexturePoolBudgetMB default 0"), C.TexturePoolBudgetMB, 0);
 
-	// 27A
-	TestFalse(TEXT("bGpuSensorEffects default false"), C.bGpuSensorEffects);
-	TestEqual(TEXT("GpuSensorMaterialPath default"),
-		C.GpuSensorMaterialPath,
-		FString(TEXT("/Game/CamSim/Materials/M_SensorPostProcess")));
-	TestEqual(TEXT("GpuSensorMpcPath default"),
-		C.GpuSensorMpcPath,
-		FString(TEXT("/Game/CamSim/Materials/MPC_SensorParams")));
-
 	return true;
 }
 
@@ -69,7 +60,6 @@ bool FPhase27_EnvOverrides::RunTest(const FString& Parameters)
 	setenv("CAMSIM_PERF_RENDER_FPS",     "60.0", 1);
 	setenv("CAMSIM_PERF_OUTPUT_FPS",     "30.0", 1);
 	setenv("CAMSIM_PERF_TEXTURE_POOL_MB","1024",  1);
-	setenv("CAMSIM_PERF_GPU_SENSOR",     "1",    1);
 
 	FCamSimConfig Cfg = FCamSimConfig::Load();
 
@@ -79,7 +69,6 @@ bool FPhase27_EnvOverrides::RunTest(const FString& Parameters)
 	TestEqual(TEXT("RenderFrameRateHz env override"),          Cfg.Performance.RenderFrameRateHz,        60.0f);
 	TestEqual(TEXT("OutputFrameRateHz env override"),          Cfg.Performance.OutputFrameRateHz,        30.0f);
 	TestEqual(TEXT("TexturePoolBudgetMB env override"),        Cfg.Performance.TexturePoolBudgetMB,      1024);
-	TestTrue (TEXT("bGpuSensorEffects env override"),          Cfg.Performance.bGpuSensorEffects);
 
 	// Clean up env vars to avoid polluting subsequent tests
 	unsetenv("CAMSIM_PERF_TRACK_DROPS");
@@ -88,7 +77,6 @@ bool FPhase27_EnvOverrides::RunTest(const FString& Parameters)
 	unsetenv("CAMSIM_PERF_RENDER_FPS");
 	unsetenv("CAMSIM_PERF_OUTPUT_FPS");
 	unsetenv("CAMSIM_PERF_TEXTURE_POOL_MB");
-	unsetenv("CAMSIM_PERF_GPU_SENSOR");
 
 	return true;
 }

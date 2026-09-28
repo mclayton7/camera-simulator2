@@ -35,23 +35,21 @@ Four threads collaborate with explicit ownership boundaries:
 │                                        LosVectReqQueue          │
 │                               UE line traces → FCigiSender      │
 │  • FCigiSender::FlushFrame() — SOF + response datagram → host   │
-│  • Primary view (default): queues a grab request; the game      │
-│    viewport renders the sensor view (TSR) after the tick        │
-│  • scene_capture: SceneCaptureComponent2D::CaptureScene()       │
-│  • Enqueues render command for GPU readback                     │
+│  • Primary view: queues a grab request; the game viewport       │
+│    renders the sensor view (TSR) after the tick                 │
+│  • Sensor AE/AGC (FSensorController) → sensor graph params      │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ ENQUEUE_RENDER_COMMAND
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  Render Thread                                                  │
-│  • FCamSimFrameGrabExtension: viewport image → grab target     │
-│    (AddDrawTexturePass) → FRHIGPUTextureReadback (async)        │
-│  • Poll command: readback ready → TArray<FColor>                │
+│  • FCamSimFrameGrabExtension: GPU sensor graph replaces the     │
+│    tonemapper → NV12 buffer → FRHIGPUBufferReadback (async)     │
+│  • Poll command: readback ready → TArray<uint8> (NV12)          │
 │  • Dispatches async task for encoding                           │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ AsyncTask(AnyBackgroundThreadNormalTask)
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  Task Thread (pool)                                             │
-│  • Sensor post-process (EO/IR + quality profile)                │
 │  • Fan-out to one or more output views                          │
 │  • Per-view: sws_scale + libx264 + KLV + MPEG-TS UDP send       │
 │  • Optional JSONL ground-truth sidecar write                    │

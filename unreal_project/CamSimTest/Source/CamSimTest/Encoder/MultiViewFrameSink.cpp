@@ -11,9 +11,8 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
-FMultiViewFrameSink::FMultiViewFrameSink(const FCamSimConfig& InConfig, ESensorPipelinePath InSensorPath)
+FMultiViewFrameSink::FMultiViewFrameSink(const FCamSimConfig& InConfig)
 	: Config(InConfig)
-	, SensorPath(InSensorPath)
 {
 }
 
@@ -33,7 +32,7 @@ bool FMultiViewFrameSink::Open()
 	int32 OpenCount = 0;
 	for (FViewRuntime& View : Views)
 	{
-		View.Encoder = MakeUnique<FVideoEncoder>(View.ViewConfig, SensorPath);
+		View.Encoder = MakeUnique<FVideoEncoder>(View.ViewConfig);
 		if (View.Encoder->Open())
 		{
 			++OpenCount;

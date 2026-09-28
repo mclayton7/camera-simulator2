@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
-#include "Sensor/SensorPath.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
@@ -26,9 +25,7 @@ bool FSensorExposureYamlTest::RunTest(const FString& Parameters)
 		"      target_grey: 0.3\n"
 		"      highlight_percentile: 0.95\n"
 		"      lag_frames: 4\n"
-		"      manual_gain_ev: -2\n"
-		"render:\n"
-		"  sensor_path: gpu\n"));
+		"      manual_gain_ev: -2\n"));
 	const FSensorModeConfig& N = Cfg.SensorModeConfigs.FindChecked(ESensorMode::IR);
 	TestEqual(TEXT("weight r"), N.SignalWeights.X, 0.6f);
 	TestEqual(TEXT("weight b"), N.SignalWeights.Z, 0.1f);
@@ -39,7 +36,6 @@ bool FSensorExposureYamlTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("hi pct"), N.Exposure.HighlightPercentile, 0.95f);
 	TestEqual(TEXT("lag"), N.Exposure.LagFrames, 4);
 	TestEqual(TEXT("manual"), N.Exposure.ManualGainEv, -2.0f);
-	TestTrue(TEXT("sensor_path gpu"), Cfg.Render.SensorPathMode == FCamSimConfig::FRenderConfig::ESensorPath::Gpu);
 	TestEqual(TEXT("no unknown keys"), Cfg.UnknownYamlKeys.Num(), 0);
 	return true;
 }
@@ -67,8 +63,6 @@ bool FSensorExposureDefaultsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("auto by default"), Def.Exposure.bAuto);
 	TestEqual(TEXT("BT.709 luminance weights sum to 1"),
 		Def.SignalWeights.X + Def.SignalWeights.Y + Def.SignalWeights.Z, 1.0f, 1e-5f);
-	const FCamSimConfig Cfg;
-	TestTrue(TEXT("sensor_path auto"), Cfg.Render.SensorPathMode == FCamSimConfig::FRenderConfig::ESensorPath::Auto);
 	return true;
 }
 
@@ -78,27 +72,22 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorNv12DimsTest,
 
 bool FSensorNv12DimsTest::RunTest(const FString& Parameters)
 {
-	using ESP = FCamSimConfig::FRenderConfig::ESensorPath;
 	FCamSimConfig Cfg;
-	Cfg.Render.SensorPathMode = ESP::Gpu;
 	Cfg.CaptureWidth = 1282;   // even, but not a multiple of 4
 	Cfg.CaptureHeight = 720;
 	auto HasError = [](const TArray<FString>& Errors, const TCHAR* Needle)
 	{
 		return Errors.ContainsByPredicate([Needle](const FString& E) { return E.Contains(Needle); });
 	};
-	TestTrue(TEXT("forced gpu: width % 4 reported"), HasError(Cfg.Validate(), TEXT("multiple of 4")));
+	TestTrue(TEXT("width % 4 reported"), HasError(Cfg.Validate(), TEXT("multiple of 4")));
 	Cfg.CaptureWidth = 1280;
 	TestFalse(TEXT("1280 accepted"), HasError(Cfg.Validate(), TEXT("multiple of 4")));
 
-	// Legacy path: BGRA readback + sws_scale take any even width (no NV12 packing).
-	FCamSimConfig Legacy = FCamSimConfig::LoadFromYamlString(TEXT("render:\n  sensor_path: legacy\n"));
-	Legacy.CaptureWidth = 1366;
-	Legacy.CaptureHeight = 768;
-	TestEqual(TEXT("legacy 1366x768 validates clean"), Legacy.Validate().Num(), 0);
-	Legacy.Render.SensorPathMode = ESP::Gpu;
-	TestTrue(TEXT("forced gpu 1366 reports it"), HasError(Legacy.Validate(), TEXT("multiple of 4")));
-	TestTrue(TEXT("forced gpu 1366 falls back"), FSensorPathSelector::Decide(Legacy).Path == ESensorPipelinePath::Legacy);
+	// The GPU sensor graph is the only path: the check is unconditional (3B.2).
+	FCamSimConfig Wide;
+	Wide.CaptureWidth = 1366;
+	Wide.CaptureHeight = 768;
+	TestTrue(TEXT("1366 reported"), HasError(Wide.Validate(), TEXT("multiple of 4")));
 
 	FSensorModeConfig& Eo = Cfg.SensorModeConfigs.FindOrAdd(ESensorMode::EO);
 	Eo.Exposure.MinGainEv = 3.0f;
@@ -111,19 +100,6 @@ bool FSensorNv12DimsTest::RunTest(const FString& Parameters)
 	Eo.AGCLowPercentile = 0.9f;
 	Eo.AGCHighPercentile = 0.1f;
 	TestTrue(TEXT("agc low >= high reported"), HasError(Cfg.Validate(), TEXT("agc_low_percentile")));
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPathEnvTest,
-	"CamSim.Sensor.Config.SensorPathEnvOverride",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FSensorPathEnvTest::RunTest(const FString& Parameters)
-{
-	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_RENDER_SENSOR_PATH"), TEXT("legacy"));
-	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT("render:\n  sensor_path: gpu\n"));
-	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_RENDER_SENSOR_PATH"), TEXT(""));
-	TestTrue(TEXT("env wins"), Cfg.Render.SensorPathMode == FCamSimConfig::FRenderConfig::ESensorPath::Legacy);
 	return true;
 }
 

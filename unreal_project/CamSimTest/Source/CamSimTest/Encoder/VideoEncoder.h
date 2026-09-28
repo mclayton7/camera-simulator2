@@ -6,7 +6,6 @@
 #include "Config/CamSimConfig.h"
 #include "Metadata/KlvBuilder.h"
 #include "Encoder/IFrameSink.h"
-#include "Sensor/SensorPath.h"
 
 // FFmpeg headers — wrap in extern "C" to handle C linkage
 THIRD_PARTY_INCLUDES_START
@@ -39,8 +38,7 @@ THIRD_PARTY_INCLUDES_END
 class FVideoEncoder : public IFrameSink
 {
 public:
-	/** SensorPath: the session's sensor pipeline (UCamSimSubsystem decides it); sets the transfer tag. */
-	FVideoEncoder(const FCamSimConfig& InConfig, ESensorPipelinePath InSensorPath);
+	explicit FVideoEncoder(const FCamSimConfig& InConfig);
 	virtual ~FVideoEncoder() override;
 
 	// IFrameSink interface
@@ -57,7 +55,6 @@ public:
 
 private:
 	const FCamSimConfig& Config;
-	const ESensorPipelinePath SensorPath;
 	bool bIsOpen = false;
 	bool bUsingNvenc = false;
 	bool bUsingVideoToolbox = false;
@@ -73,7 +70,7 @@ private:
 	AVCodecContext*  VideoCodecCtx = nullptr;
 	AVFrame*         YuvFrame    = nullptr;
 	/** Stream transfer tag: sRGB (legacy) or BT.709 (GPU sensor path), set in OpenVideoStream. */
-	AVColorTransferCharacteristic ColorTrc = AVCOL_TRC_IEC61966_2_1;
+	AVColorTransferCharacteristic ColorTrc = AVCOL_TRC_BT709;
 	SwsContext*      SwsCtx      = nullptr;
 
 	/** True when sws_setColorspaceDetails successfully set srcRange=1.

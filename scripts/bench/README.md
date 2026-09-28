@@ -18,16 +18,12 @@ legacy path it's the same as `/snapshot`.
 ```bash
 uv run --with numpy --with pillow python scripts/bench/run_bench.py --label mytest
 uv run --with numpy --with pillow python scripts/bench/run_bench.py --label smoke --smoke
-uv run --with numpy --with pillow python scripts/bench/run_bench.py --label gpu --sensor-path gpu
 ```
 
-Flags: `--view-source primary|scene_capture`, `--sensor-path auto|gpu|legacy`
-(sets `CAMSIM_RENDER_SENSOR_PATH`; with `gpu`/`legacy` the run aborts early —
-after CamSim starts, still inside `stop.sh` cleanup — if `/metrics`'
-`camsim_sensor_path` doesn't match), `--skip-warmup` (only when the cache is
+Flags: `--view-source primary|scene_capture`, `--skip-warmup` (only when the cache is
 already warm), `--trace` (Unreal Insights `trace.utrace`), `--out DIR`.
 Output (default `.cache/bench/<time>-<label>/`): `results.json` (`meta.sensor_path`
-is what CamSim actually reported), `frames.jsonl`, `phases.json`,
+is what CamSim's `/metrics` reported: `gpu` — the GPU sensor graph is the only path since 3B.2), `frames.jsonl`, `phases.json`,
 `shots/*.png` + `shots/*_sensor.png`, `slew.ts`.
 
 ## Compare
@@ -48,8 +44,8 @@ Stored results: `baselines/<platform>-<gpu>-<label>.json` and
   the engine's fixed frame rate makes `DeltaTime` useless for this).
 - `popin_fraction`: share of frames drawn while a tileset was still loading.
 - `sensor_gpu_ms_p50`/`p95`: GPU sensor model cost per frame; only present
-  when the phase has measured rows (`sensor_gpu_ms >= 0`), i.e. the `gpu`
-  sensor path was active — absent entirely on the legacy path.
+  when the phase has measured rows (`sensor_gpu_ms >= 0`); absent when the
+  sensor graph never ran (e.g. runs from before 3B, or no GPU timing).
 - SSIM per shot is information only; TSR jitter and streaming order vary.
 
 Needs a Cesium ion token (config) and network. Compare warm-cache runs only.

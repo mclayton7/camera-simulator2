@@ -7,21 +7,17 @@
 #include "HAL/ThreadSafeBool.h"
 #include "Metadata/CamSimTelemetry.h"
 #include "Sensor/SensorTypes.h"      // ESensorMode
-#include "Sensor/IPixelPipeline.h"   // IPixelPipeline
 // FRHIGPUTextureReadback needs a complete type here because the UHT-generated
 // .gen.cpp instantiates TArray<TUniquePtr<FRHIGPUTextureReadback>>'s destructor.
 #include "RHIGPUReadback.h"
 #include "Camera/ReadbackRing.h"
 #include "Camera/SensorGpuTimer.h"
 #include "Sensor/SensorController.h"
-#include "Sensor/SensorPath.h"
 #include "Sensor/SensorStatsMailbox.h"
 #include "CamSimCaptureComponent.generated.h"
 
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
-class UMaterialInterface;
-class UMaterialParameterCollection;
 class UCamSimSubsystem;
 class FEncoderThread;
 class FCamSimFrameGrabExtension;
@@ -61,16 +57,17 @@ struct FFrameDropStats
  * UCamSimCaptureComponent
  *
  * The capture pipeline behind ACamSimCamera's sensor view:
- *   1. SceneCapture2D renders into a ring of three render targets
- *      (+ an optional depth capture for ML ground truth);
+ *   1. the GPU sensor graph replaces UE's tonemapper in the game viewport
+ *      (FCamSimFrameGrabExtension) and writes an NV12 frame per request into a
+ *      ring of three readback slots (+ an optional depth capture for ML ground
+ *      truth);
  *   2. an async GPU→CPU readback, polled from the render thread with no
  *      FlushRenderingCommands();
- *   3. the CPU sensor model (IPixelPipeline) and ground-truth writers on a
- *      background task;
+ *   3. ground-truth writers on a background task;
  *   4. an SPSC hand-off to the persistent encoder thread.
- * Also applies the scene capture's render settings (optical realism,
- * rendering quality, the GPU sensor material). Driven by ACamSimCamera on the
- * game thread; does not tick itself.
+ * Also applies the sensor view's render settings (optical realism, rendering
+ * quality, manual exposure). Driven by ACamSimCamera on the game thread; does
+ * not tick itself.
  */
 UCLASS()
 class CAMSIMTEST_API UCamSimCaptureComponent : public UActorComponent
@@ -81,15 +78,16 @@ public:
 	UCamSimCaptureComponent();
 
 	/**
-	 * Create render targets, readback pools, the sensor pipeline and the
-	 * encoder thread, and apply render settings to Sensor.
+	 * Create the NV12 (and depth) readback pools and the encoder thread, and
+	 * apply render settings to Sensor. Produces no frames when the subsystem
+	 * reports the sensor graph unavailable.
 	 */
 	void Initialize(USceneCaptureComponent2D* InSensor, UCamSimSubsystem* InSubsystem, const FCamSimConfig& Cfg);
 
 	/** Stop the encoder thread and release readback resources (flushes rendering commands). */
 	void Shutdown();
 
-	/** Consume a finished readback and hand frames to the sensor task. Call every tick. */
+	/** Consume a finished readback and hand frames to the background task. Call every tick. */
 	void Poll();
 
 	/** True when a readback slot is free, so Capture() may run (ROADMAP 3A.1: up to three in flight). */
@@ -98,7 +96,7 @@ public:
 	/** Count a frame skipped because every readback slot was busy (the sensor/encoder is behind). */
 	void NoteCaptureSkipped();
 
-	/** Capture the scene now, tagged with Telemetry, and start its async readback. */
+	/** Request the sensor graph's output for the next game-viewport frame, tagged with Telemetry. */
 	void Capture(const FCamSimTelemetry& Telemetry);
 
 	/** True if this render frame should be skipped to honour the output frame rate. */
@@ -106,21 +104,20 @@ public:
 
 	/**
 	 * ROADMAP 3B: run the sensor controller (AE / IR AGC) on the newest GPU
-	 * histogram and send this tick's parameters to the sensor graph. No-op on
-	 * the legacy path. Call every tick, before Poll().
+	 * histogram and send this tick's parameters to the sensor graph. No-op
+	 * without the sensor graph. Call every tick, before Poll().
 	 */
 	void UpdateSensorParams(ESensorMode Mode, uint8 Polarity, bool bCameraCut, const FCamSimConfig& Cfg);
 
-	/** Sensor pipeline this session runs (fixed at Initialize). */
-	ESensorPipelinePath GetSensorPath() const { return SensorPath.Path; }
-	/** GPU time of the sensor graph in ms; -1 when unknown or on the legacy path. */
+	/** Whether the GPU sensor graph runs this session (fixed at Initialize). */
+	bool HasSensorGraph() const { return bSensorGraph; }
+	/** GPU time of the sensor graph in ms; -1 when unknown or without the graph. */
 	float GetSensorGpuMs() const { return GpuTimer.GetLatestMs(); }
-	/** Log2 of the sensor gain emitted last tick (GPU path). */
+	/** Log2 of the sensor gain emitted last tick. */
 	float GetSensorGainEv() const { return SensorController.GetGainEv(); }
-	/** Median scene signal (log2) of the last histogram the controller used (GPU path). */
+	/** Median scene signal (log2) of the last histogram the controller used. */
 	float GetSceneMedianLog2() const { return SensorController.GetLastMedianLog2(); }
 
-	IPixelPipeline* GetSensorPipeline() const { return SensorFX.Get(); }
 	void SetLatencyTracker(FPipelineLatencyTracker* Tracker);
 
 	// Stats
@@ -145,18 +142,13 @@ private:
 	struct FSlot;
 	/** Offer a delivered frame to a snapshot service (NV12 converted to BGRA). */
 	void OfferSnapshot(FCamSimSnapshotService& Snap, const FSlot& S) const;
-	void SubmitFrameToEncoder(TArray<FColor> PixelData, TArray<uint8> Nv12, FCamSimTelemetry Telemetry,
-	                          uint64 FrameIdx, TArray<float> DepthMetres);
+	void SubmitFrameToEncoder(TArray<uint8> Nv12, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres);
 
 	UPROPERTY(Transient)
 	TObjectPtr<USceneCaptureComponent2D> Sensor;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCamSimSubsystem> Subsystem;
-
-	/** Ring of render targets: frame N+2 renders while N+1 reads back and N encodes. */
-	UPROPERTY(Transient)
-	TArray<TObjectPtr<UTextureRenderTarget2D>> RenderTargets;
 
 	/** Optional depth capture for ML training data (Phase 17A). */
 	UPROPERTY(Transient)
@@ -166,37 +158,28 @@ private:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextureRenderTarget2D>> DepthRenderTargets;
 
-	// Phase 27A — GPU sensor post-process
-	UPROPERTY(Transient)
-	TObjectPtr<UMaterialParameterCollection> GpuSensorMpc;
-	UPROPERTY(Transient)
-	TObjectPtr<UMaterialInterface> GpuSensorMat;
-
 	/**
-	 * One readback helper per slot, so the EnqueueCopy of a newer frame can't
-	 * race the Lock/Unlock still targeting an older one.
+	 * One depth readback helper per slot, so the EnqueueCopy of a newer frame
+	 * can't race the Lock/Unlock still targeting an older one.
 	 */
-	TArray<TUniquePtr<FRHIGPUTextureReadback>> ColorReadbackPool;
 	TArray<TUniquePtr<FRHIGPUTextureReadback>> DepthReadbackPool;
 
-	/** ROADMAP 3A: grabs the game viewport when the sensor is the primary view (null otherwise). */
+	/** ROADMAP 3A/3B: runs the sensor graph in the game viewport (null until the viewport exists). */
 	TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> GrabExtension;
-	bool bPrimaryView = false;
 
 	/** Create the grab extension once the game viewport exists. False while it doesn't. */
 	bool EnsureGrabExtension();
 
 	// ROADMAP 3B — GPU sensor model (game thread unless noted)
-	/** Which sensor pipeline this session runs (fixed at Initialize). */
-	FSensorPathDecision SensorPath;
-	bool bGpuSensor = false;
+	/** The GPU sensor graph runs this session (UCamSimSubsystem::IsSensorGraphAvailable, fixed at Initialize). */
+	bool bSensorGraph = false;
 	/** Size the sensor graph and NV12 readbacks were set up with (never the live, hot-reloadable config). */
 	FIntPoint GpuSensorSize = FIntPoint::ZeroValue;
-	/** GPU path: consecutive failed readbacks (usually never grabbed); logged once at GpuStallLogThreshold. */
+	/** Consecutive failed readbacks (usually never grabbed); logged once at GpuStallLogThreshold. */
 	int32 ConsecutiveGpuFailures = 0;
 	bool  bLoggedGpuStall = false;
 	static constexpr int32 GpuStallLogThreshold = 60;
-	/** One NV12 readback per ring slot (GPU path only). */
+	/** One NV12 readback per ring slot. */
 	TArray<TUniquePtr<FRHIGPUBufferReadback>> Nv12ReadbackPool;
 	FSensorController   SensorController;
 	/** Histograms, render thread → game thread. */
@@ -222,9 +205,6 @@ private:
 	 */
 	TAtomic<uint32> GrabbedGeneration[FReadbackRing::NumSlots];
 
-	/** CPU-side sensor post-processing pipeline (Phase 11). */
-	TUniquePtr<IPixelPipeline> SensorFX;
-
 	/** Persistent encoder thread — drains processed frames from an SPSC queue. */
 	TUniquePtr<FEncoderThread, FEncoderThreadDeleter> EncoderThread;
 
@@ -237,9 +217,9 @@ private:
 	// -----------------------------------------------------------------------
 
 	/**
-	 * True while the sensor task is processing a frame; cleared by the task
-	 * after depositing into the encoder queue.
-	 * writer: game + sensor task → readers: game (relaxed; no paired data).
+	 * True while the background task is processing a frame (ground truth);
+	 * cleared by the task after depositing into the encoder queue.
+	 * writer: game + background task → readers: game (relaxed; no paired data).
 	 */
 	FThreadSafeBool bSensorBusy;
 
@@ -247,7 +227,7 @@ private:
 	 * ROADMAP 3A.1 — readback ring. A capture takes the next free slot, so up
 	 * to NumSlots readbacks are in flight and a frame can be captured every
 	 * tick. Slot states and in-order delivery live in FReadbackRing; per-slot
-	 * data below. The render thread writes a slot's Pixels/Depth, then marks it
+	 * data below. The render thread writes a slot's Nv12/Depth, then marks it
 	 * Complete (SeqCst); the game thread's SeqCst load in PeekFinished makes the
 	 * arrays visible.
 	 */
@@ -258,8 +238,7 @@ private:
 		FCamSimTelemetry Telemetry;               // game thread
 		/** This capture's generation: stale poll commands for a reused slot no-op. writer: game → reader: render. */
 		TAtomic<uint32>  Generation       { 0 };
-		TArray<FColor>   Pixels;                  // render writes → game reads after Complete
-		TArray<uint8>    Nv12;                    // GPU sensor path, instead of Pixels
+		TArray<uint8>    Nv12;                    // render writes → game reads after Complete
 		TArray<float>    Depth;
 		// Reset by the game thread at capture, advanced by the render thread's polls.
 		TAtomic<uint8>   ReadyStreak      { 0 };  // "N consecutive Ready polls before consuming"

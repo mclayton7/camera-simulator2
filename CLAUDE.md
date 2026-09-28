@@ -67,9 +67,9 @@ camsim/
 
 ```
 CIGI UDP → FCigiReceiver (FRunnable thread) → TSpscQueue
-Game Thread → FCamSimEntityManager (entities + camera platform) → ACamSimCamera::Tick() → SceneCapture
-Render Thread → GPU readback (FRHIGPUTextureReadback)
-Task Thread → FSensorPostProcess → FVideoEncoder → MPEG-TS + KLV → UDP multicast
+Game Thread → FCamSimEntityManager (entities + camera platform) → ACamSimCamera::Tick() → game viewport (primary view)
+Render Thread → GPU sensor graph (replaces the tonemapper) → NV12 readback (FRHIGPUBufferReadback)
+Task Thread → ground truth → FVideoEncoder → MPEG-TS + KLV → UDP multicast
 ```
 
 Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lock-free SPSC queues.
@@ -134,8 +134,8 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **CCL API quirk**: `GetDestEntityIDValid()`/`GetDestEntityID()` only in `CigiLosSegReqV3_2`, not V3
 - **Fixed framerate**: Engine locked to 30fps via DefaultEngine.ini (`bUseFixedFrameRate=True`). `DeltaTime` is therefore constant: measure frame time with the wall clock (the bench does)
 - **The sensor is the primary view** (`render.view_source: primary`, ROADMAP 3A): the game viewport renders it with TSR and `FCamSimFrameGrabExtension` grabs the result. `SceneCapture` only holds pose/FOV/post-process until 3B; don't call `CaptureScene()` in primary mode. Screen messages are disabled in primary mode, since the viewport canvas would be burned into the video
-- **Readback ring** (`Camera/ReadbackRing.h`): up to three captures in flight, delivered strictly in capture order; a full ring skips the new frame (counted as `EncoderBusy`). On the GPU sensor path the ring carries NV12 (1.5 bytes/px) and the CPU only de-interleaves UV before encoding; on the legacy path the CPU sensor model still has ~33 ms per frame
-- **Sensor path** (`render.sensor_path`, ROADMAP 3B): `gpu` replaces UE's tonemapper via `ISceneViewExtension::EPostProcessingPass::ReplacingTonemapper`; UE exposure is manual and driven by the sensor AE (`AutoExposureBias` = sensor gain, so `View.PreExposure` tracks it and the shader divides it out); `auto` falls back to legacy while any unported effect is enabled (the default config does, so the default is legacy until 3B.2/3B.3). The path is fixed at startup. GPU-path streams are tagged BT.709 transfer, legacy sRGB
+- **Readback ring** (`Camera/ReadbackRing.h`): up to three captures in flight, delivered strictly in capture order; a full ring skips the new frame (counted as `EncoderBusy`). The ring carries the sensor graph's NV12 (1.5 bytes/px); the CPU only de-interleaves UV before encoding
+- **GPU sensor graph** (ROADMAP 3B; the only sensor path since 3B.2 — no CPU sensor model, no burned-in overlays): replaces UE's tonemapper via `ISceneViewExtension::EPostProcessingPass::ReplacingTonemapper`; UE exposure is manual and driven by the sensor AE (`AutoExposureBias` = sensor gain, so `View.PreExposure` tracks it and the shader divides it out). `UCamSimSubsystem::IsSensorGraphAvailable()` is decided once at startup (primary view, NV12 dims, `IsSensorGraphSupported`); without it (e.g. NullRHI) no frames are produced and `/ready` stays false. Streams are tagged BT.709 transfer
 - **Shaders** live in `unreal_project/CamSimTest/Shaders/` (virtual path `/CamSim`), compiled by the `CamSimShaders` module (`PostConfigInit`)
 - **GPU pass timing on Metal**: `RQT_AbsoluteTime` render queries resolve to the command buffer's end time truncated to whole seconds, so they can't time a pass. Use an `RDG_EVENT_SCOPE_STAT` with an `FGPUStat` subclass (`OnTimingResults`) as `Camera/SensorGpuTimer.h` does
 - **Health port restart**: restarting CamSim within ~30 s of the last run finds :8080 in TIME_WAIT. The health server logs "port 8080 is busy … NOT listening" and retries every 2 s until it binds (no reuse flag: UE's only option also sets SO_REUSEPORT, which would let two CamSims share the port). `run_bench.py` still waits the port out before launching

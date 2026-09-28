@@ -347,6 +347,23 @@ const TCHAR* WatchdogPolicyToString(FCamSimConfig::EEncoderWatchdogPolicy Policy
 }
 }
 
+bool UCamSimSubsystem::CanRunSensorGraph(const FCamSimConfig& Cfg, FString& OutWhy)
+{
+	if (!Cfg.Render.IsPrimary())
+	{
+		OutWhy = TEXT("render.view_source is scene_capture: the sensor graph runs only in the primary view");
+		return false;
+	}
+	// NV12 packing writes 4 luma bytes per uint and 2x2 chroma.
+	if (Cfg.CaptureWidth % 4 != 0 || Cfg.CaptureHeight % 2 != 0)
+	{
+		OutWhy = FString::Printf(TEXT("capture %dx%d: NV12 needs width %% 4 == 0 and an even height"),
+			Cfg.CaptureWidth, Cfg.CaptureHeight);
+		return false;
+	}
+	return IsSensorGraphSupported(OutWhy);
+}
+
 // -------------------------------------------------------------------------
 // Initialize
 // -------------------------------------------------------------------------
@@ -377,22 +394,20 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		}
 	}
 
-	// ROADMAP 3B: choose the sensor pipeline once, before the encoder opens (it
-	// tags the transfer function) and the camera sizes its readbacks. A wanted
-	// GPU path that can't run here falls back to legacy with an error.
-	SensorPathDecision = FSensorPathSelector::Decide(Config);
-	if (SensorPathDecision.Path == ESensorPipelinePath::Gpu)
+	// ROADMAP 3B: the GPU sensor graph is the only sensor path. Checked once,
+	// before the camera sizes its readbacks. Without it no frames are produced
+	// and /ready stays false.
 	{
 		FString Why;
-		if (!IsSensorGraphSupported(Why)) FSensorPathSelector::DowngradeToLegacy(SensorPathDecision, Why);
-	}
-	if (SensorPathDecision.bError)
-	{
-		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: %s"), *SensorPathDecision.Reason);
-	}
-	else
-	{
-		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: %s"), *SensorPathDecision.Reason);
+		bSensorGraphAvailable = CanRunSensorGraph(Config, Why);
+		if (bSensorGraphAvailable)
+		{
+			UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: sensor graph available"));
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: sensor graph unavailable: %s"), *Why);
+		}
 	}
 
 	EntityTypeTable.LoadFromConfig();
@@ -478,8 +493,8 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Impl->HealthServer->Start(Config.Operational.HealthHttpPort,
 			// IsAlive — always true if we got this far
 			[ImplPtr]() { return true; },
-			// IsEncoderReady
-			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->IsOpen(); },
+			// IsEncoderReady: never without the sensor graph (it produces every frame)
+			[ImplPtr, this]() { return bSensorGraphAvailable && ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->IsOpen(); },
 			// IsCigiReady
 			[ImplPtr]() { return ImplPtr->CigiReceiver && ImplPtr->CigiReceiver->GetReceivedPacketCount() > 0; },
 			// HasFirstFrame
@@ -548,12 +563,12 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 				Body += FString::Printf(TEXT("camsim_frames_encoded_total %llu\n"),
 					static_cast<unsigned long long>(EncodedFrames));
 
-				if (const ACamSimCamera* Cam = Camera_.Get())
+				if (bSensorGraphAvailable)
 				{
+					// The GPU sensor graph is the only path; kept for the bench (ROADMAP 3B).
 					Body += TEXT("# HELP camsim_sensor_path Sensor pipeline in use (ROADMAP 3B).\n");
 					Body += TEXT("# TYPE camsim_sensor_path gauge\n");
-					Body += FString::Printf(TEXT("camsim_sensor_path{path=\"%s\"} 1\n"),
-						FSensorPathSelector::ToString(Cam->GetSensorPath()));
+					Body += TEXT("camsim_sensor_path{path=\"gpu\"} 1\n");
 				}
 
 				// Optional histogram: only when latency tracking is enabled.
@@ -623,7 +638,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 
 	// Start FFmpeg encoder / MPEG-TS muxer(s)
-	Impl->VideoEncoder = MakeUnique<FMultiViewFrameSink>(Config, SensorPathDecision.Path);
+	Impl->VideoEncoder = MakeUnique<FMultiViewFrameSink>(Config);
 	if (!Impl->VideoEncoder->Open())
 	{
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: failed to open video encoder"));
@@ -948,9 +963,9 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			UptimeSec,
 			LastHost,
 			(Camera_.Get() && Camera_->IsTerrainReady()) ? TEXT("true") : TEXT("false"));
-		if (const ACamSimCamera* Cam = Camera_.Get())
+		if (bSensorGraphAvailable)
 		{
-			HealthJson += FString::Printf(TEXT(",\"sensor_path\":\"%s\""), FSensorPathSelector::ToString(Cam->GetSensorPath()));
+			HealthJson += TEXT(",\"sensor_path\":\"gpu\"");
 		}
 
 		// Phase 27B — append per-category frame drop stats when tracking is enabled

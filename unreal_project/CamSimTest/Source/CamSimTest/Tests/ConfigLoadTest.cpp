@@ -45,9 +45,6 @@ bool FConfigYamlSectionsTest::RunTest(const FString& Parameters)
 		"streaming:\n"
 		"  cot_enabled: %s\n"
 		"  cot_addr: \"10.4.5.6\"\n"
-		"laser_designator:\n"
-		"  enabled: %s\n"
-		"  spot_x: 0.25\n"
 		"performance:\n"
 		"  hot_reload_config: %s\n"
 		"damage_transition:\n"
@@ -69,7 +66,6 @@ bool FConfigYamlSectionsTest::RunTest(const FString& Parameters)
 		YamlBoolText(!D.MLTraining.bEnabled),
 		YamlBoolText(!D.OpticalRealism.bEnabled),
 		YamlBoolText(!D.Streaming.bCotEnabled),
-		YamlBoolText(!D.LaserDesignator.bEnabled),
 		YamlBoolText(!D.Performance.bHotReloadConfig),
 		YamlBoolText(!D.DamageTransition.bGradualDamage),
 		YamlBoolText(!D.Operational.bHealthHttpEnabled));
@@ -93,8 +89,6 @@ bool FConfigYamlSectionsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("optical_realism.enabled"), C.OpticalRealism.bEnabled, !D.OpticalRealism.bEnabled);
 	TestEqual(TEXT("streaming.cot_enabled"), C.Streaming.bCotEnabled, !D.Streaming.bCotEnabled);
 	TestEqual(TEXT("streaming.cot_addr"), C.Streaming.CotAddr, FString(TEXT("10.4.5.6")));
-	TestEqual(TEXT("laser_designator.enabled"), C.LaserDesignator.bEnabled, !D.LaserDesignator.bEnabled);
-	TestEqual(TEXT("laser_designator.spot_x"), C.LaserDesignator.SpotX, 0.25f);
 	TestEqual(TEXT("performance.hot_reload_config"), C.Performance.bHotReloadConfig, !D.Performance.bHotReloadConfig);
 	TestEqual(TEXT("damage_transition.gradual"), C.DamageTransition.bGradualDamage, !D.DamageTransition.bGradualDamage);
 	TestEqual(TEXT("terrain_gate.min_load_progress"), C.TerrainGate.MinLoadProgressPct, 87.5f);

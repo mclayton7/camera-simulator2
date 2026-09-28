@@ -2,7 +2,6 @@
 
 #include "Config/CamSimConfig.h"
 #include "CamSimTest.h"
-#include "Sensor/SensorPath.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
@@ -103,18 +102,6 @@ static FCamSimConfig::FRenderConfig::EViewSource ParseViewSource(const FString& 
 	if (Lower == TEXT("primary") || Lower.IsEmpty()) return EViewSource::Primary;
 	UE_LOG(LogCamSim, Warning, TEXT("Unknown render.view_source '%s' — using primary"), *Value);
 	return EViewSource::Primary;
-}
-
-static FCamSimConfig::FRenderConfig::ESensorPath ParseSensorPath(const FString& S)
-{
-	using E = FCamSimConfig::FRenderConfig::ESensorPath;
-	if (S.Equals(TEXT("gpu"), ESearchCase::IgnoreCase))    return E::Gpu;
-	if (S.Equals(TEXT("legacy"), ESearchCase::IgnoreCase)) return E::Legacy;
-	if (!S.Equals(TEXT("auto"), ESearchCase::IgnoreCase))
-	{
-		UE_LOG(LogCamSim, Warning, TEXT("Config: render.sensor_path '%s' is not auto|gpu|legacy; using auto"), *S);
-	}
-	return E::Auto;
 }
 
 static FString NormalizeQualityPreset(const FString& Value)
@@ -318,11 +305,9 @@ void FCamSimConfig::KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSi
 	Reloaded.Render.ViewSourceMode       = Running.Render.ViewSourceMode;
 	Reloaded.Render.OriginShiftDistanceM = Running.Render.OriginShiftDistanceM;
 	// ROADMAP 3B: render targets, readback buffers, the encoder and the sensor
-	// graph are sized, and the sensor path chosen, once per session.
+	// graph are sized once per session.
 	Reloaded.CaptureWidth           = Running.CaptureWidth;
 	Reloaded.CaptureHeight          = Running.CaptureHeight;
-	Reloaded.Render.SensorPath      = Running.Render.SensorPath;
-	Reloaded.Render.SensorPathMode  = Running.Render.SensorPathMode;
 }
 
 FCamSimConfig FCamSimConfig::LoadFromYamlString(const FString& YamlContent, const FString& SourceName)
@@ -1073,9 +1058,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlBool (P18, "second_fog",                Cfg.Phase18.bSecondFog);
 			YamlFloat(P18, "fog_density",               Cfg.Phase18.FogDensity);
 			YamlFloat(P18, "fog_height_falloff",        Cfg.Phase18.FogHeightFalloff);
-			YamlBool (P18, "precipitation",             Cfg.Phase18.bPrecipitation);
-			YamlFloat(P18, "rain_intensity",            Cfg.Phase18.RainIntensity);
-			YamlFloat(P18, "snow_intensity",            Cfg.Phase18.SnowIntensity);
 			YamlBool (P18, "god_rays",                  Cfg.Phase18.bGodRays);
 			YamlFloat(P18, "god_ray_intensity",         Cfg.Phase18.GodRayIntensity);
 			YamlBool (P18, "atmospheric_scattering",    Cfg.Phase18.bAtmosphericScattering);
@@ -1152,9 +1134,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlFloat(PerfNode, "render_frame_rate_hz",                 Perf.RenderFrameRateHz);
 			YamlFloat(PerfNode, "output_frame_rate_hz",                 Perf.OutputFrameRateHz);
 			YamlInt  (PerfNode, "texture_pool_budget_mb",               Perf.TexturePoolBudgetMB);
-			YamlBool (PerfNode, "gpu_sensor_effects",                   Perf.bGpuSensorEffects);
-			YamlString(PerfNode, "gpu_sensor_material_path",            Perf.GpuSensorMaterialPath);
-			YamlString(PerfNode, "gpu_sensor_mpc_path",                 Perf.GpuSensorMpcPath);
 			YamlBool (PerfNode, "adaptive_sse",                         Perf.bAdaptiveSSE);
 			YamlFloat(PerfNode, "adaptive_sse_min",                     Perf.AdaptiveSSEMin);
 			YamlFloat(PerfNode, "adaptive_sse_max",                     Perf.AdaptiveSSEMax);
@@ -1209,87 +1188,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				YamlInt   (Im, "maximum_texture_size",           Cfg.CesiumBackend.Imagery.MaximumTextureSize);
 				YamlInt   (Im, "maximum_simultaneous_tile_loads", Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads);
 			}
-		}
-
-		// Phase 20: overlay HUD/OSD
-		if (YamlHas(Root, "overlay"))
-		{
-			ryml::ConstNodeRef Ov = Root["overlay"];
-
-			// Preset seeds config defaults before individual keys override
-			{
-				FString PresetName;
-				if (YamlString(Ov, "preset", PresetName) && !PresetName.IsEmpty())
-					FHudOverlay::LoadPreset(PresetName, Cfg.OverlayConfig);
-			}
-
-			YamlBool  (Ov, "enabled",         Cfg.OverlayConfig.bEnabled);
-			YamlBool  (Ov, "crosshair",       Cfg.OverlayConfig.ElementCrosshair.bEnabled);
-			YamlBool  (Ov, "az_el_readout",   Cfg.OverlayConfig.ElementAzEl.bEnabled);
-			YamlBool  (Ov, "fov_indicator",   Cfg.OverlayConfig.ElementFov.bEnabled);
-			YamlBool  (Ov, "slant_range",     Cfg.OverlayConfig.ElementSlantRange.bEnabled);
-			YamlBool  (Ov, "timestamp",       Cfg.OverlayConfig.ElementTimestamp.bEnabled);
-			YamlBool  (Ov, "class_banner",    Cfg.OverlayConfig.ElementClassBanner.bEnabled);
-			YamlBool  (Ov, "compass_rose",    Cfg.OverlayConfig.ElementCompassRose.bEnabled);
-			{
-				FString LabelText;
-				if (YamlString(Ov, "platform_label", LabelText))
-				{
-					Cfg.OverlayConfig.PlatformLabelText = LabelText;
-					Cfg.OverlayConfig.ElementPlatformLabel.bEnabled = !LabelText.IsEmpty();
-				}
-			}
-			{
-				int32 V = Cfg.OverlayConfig.TextScale;
-				if (YamlInt(Ov, "text_scale", V))
-					Cfg.OverlayConfig.TextScale = FMath::Clamp(V, 1, 4);
-			}
-			{
-				int32 V = Cfg.OverlayConfig.EdgeMarginPx;
-				if (YamlInt(Ov, "edge_margin_px", V))
-					Cfg.OverlayConfig.EdgeMarginPx = FMath::Clamp(V, 0, 100);
-			}
-			{
-				FString StyleStr;
-				if (YamlString(Ov, "crosshair_style", StyleStr))
-				{
-					StyleStr = StyleStr.TrimStartAndEnd().ToLower();
-					if      (StyleStr == TEXT("mil_dot")) Cfg.OverlayConfig.CrosshairStyle = ECrosshairStyle::MilDot;
-					else if (StyleStr == TEXT("circle"))  Cfg.OverlayConfig.CrosshairStyle = ECrosshairStyle::CircleCross;
-					else                                  Cfg.OverlayConfig.CrosshairStyle = ECrosshairStyle::SimpleCross;
-				}
-			}
-			YamlString(Ov, "classification_text", Cfg.OverlayConfig.ClassificationText);
-
-			// Per-element color overrides (hex string "RRGGBB"; empty = sensor-mode default)
-			// Helper: parse "RRGGBB" or "#RRGGBB" -> FColor(R,G,B,255); no-op if empty/invalid
-			auto YamlHexColor = [&](c4::csubstr Key, FColor& OutColor)
-			{
-				FString Hex;
-				if (!YamlString(Ov, Key, Hex) || Hex.IsEmpty()) return;
-				if (Hex.StartsWith(TEXT("#"))) Hex = Hex.RightChop(1);
-				if (Hex.Len() == 6)
-				{
-					const uint32 V = FParse::HexNumber(*Hex);
-					OutColor = FColor((V >> 16) & 0xFF, (V >> 8) & 0xFF, V & 0xFF, 255);
-				}
-			};
-			YamlHexColor("compass_rose_color",   Cfg.OverlayConfig.ElementCompassRose.Color);
-			YamlHexColor("platform_label_color", Cfg.OverlayConfig.ElementPlatformLabel.Color);
-
-			// Per-element position overrides (-1 = use default anchor)
-			YamlInt(Ov, "az_el_x",          Cfg.OverlayConfig.ElementAzEl.X);
-			YamlInt(Ov, "az_el_y",          Cfg.OverlayConfig.ElementAzEl.Y);
-			YamlInt(Ov, "fov_x",            Cfg.OverlayConfig.ElementFov.X);
-			YamlInt(Ov, "fov_y",            Cfg.OverlayConfig.ElementFov.Y);
-			YamlInt(Ov, "slant_range_x",    Cfg.OverlayConfig.ElementSlantRange.X);
-			YamlInt(Ov, "slant_range_y",    Cfg.OverlayConfig.ElementSlantRange.Y);
-			YamlInt(Ov, "timestamp_x",      Cfg.OverlayConfig.ElementTimestamp.X);
-			YamlInt(Ov, "timestamp_y",      Cfg.OverlayConfig.ElementTimestamp.Y);
-			YamlInt(Ov, "compass_rose_x",   Cfg.OverlayConfig.ElementCompassRose.X);
-			YamlInt(Ov, "compass_rose_y",   Cfg.OverlayConfig.ElementCompassRose.Y);
-			YamlInt(Ov, "platform_label_x", Cfg.OverlayConfig.ElementPlatformLabel.X);
-			YamlInt(Ov, "platform_label_y", Cfg.OverlayConfig.ElementPlatformLabel.Y);
 		}
 
 		// Phase 21: DIS protocol config
@@ -1347,18 +1245,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlInt   (S, "rover_klv_pid",     Cfg.Streaming.RoverKlvPid);
 		}
 
-		// Phase 21 Sprint 2: laser designator config
-		if (YamlHas(Root, "laser_designator"))
-		{
-			ryml::ConstNodeRef L = Root["laser_designator"];
-			YamlBool  (L, "enabled",          Cfg.LaserDesignator.bEnabled);
-			YamlFloat (L, "spot_x",           Cfg.LaserDesignator.SpotX);
-			YamlFloat (L, "spot_y",           Cfg.LaserDesignator.SpotY);
-			YamlFloat (L, "spot_radius",      Cfg.LaserDesignator.SpotRadius);
-			YamlFloat (L, "spot_intensity",   Cfg.LaserDesignator.SpotIntensity);
-			YamlInt   (L, "designator_code",  Cfg.LaserDesignator.DesignatorCode);
-		}
-
 		// Phase 26: standards compliance config
 		if (YamlHas(Root, "phase26"))
 		{
@@ -1393,8 +1279,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlFloat(RandNode, "start_hour_jitter_hrs",   Cfg.Randomization.StartHourJitterHrs);
 			YamlFloat(RandNode, "visibility_jitter_frac",  Cfg.Randomization.VisibilityJitterFrac);
 			YamlFloat(RandNode, "fog_density_jitter_frac", Cfg.Randomization.FogDensityJitterFrac);
-			YamlBool (RandNode, "randomize_weather",       Cfg.Randomization.bRandomizeWeather);
-			YamlFloat(RandNode, "weather_probability",     Cfg.Randomization.WeatherProbability);
 
 			if (YamlHas(RandNode, "entity_entries") && RandNode["entity_entries"].is_seq())
 			{
@@ -1434,10 +1318,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlFloat (RNode, "camera_cut_distance_m",   Cfg.Render.CameraCutDistanceM);
 			YamlFloat (RNode, "camera_cut_angle_deg",    Cfg.Render.CameraCutAngleDeg);
 			YamlDouble(RNode, "origin_shift_distance_m", Cfg.Render.OriginShiftDistanceM);
-			YamlFloat (RNode, "exposure_compensation_ev", Cfg.Render.ExposureCompensationEV);
-			YamlString(RNode, "sensor_path",             Cfg.Render.SensorPath);
 			Cfg.Render.ViewSourceMode = ParseViewSource(Cfg.Render.ViewSource);
-			Cfg.Render.SensorPathMode = ParseSensorPath(Cfg.Render.SensorPath);
 		}
 
 		YamlReadElsewhere(Root, "entity_types");  // FEntityTypeTable
@@ -1618,9 +1499,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 
 	// Phase 18: weather, atmosphere & particle effects env overrides
 	Cfg.Phase18.bSecondFog       = GetEnvInt(TEXT("CAMSIM_SECOND_FOG"),       Cfg.Phase18.bSecondFog       ? 1 : 0) != 0;
-	Cfg.Phase18.bPrecipitation   = GetEnvInt(TEXT("CAMSIM_PRECIPITATION"),    Cfg.Phase18.bPrecipitation   ? 1 : 0) != 0;
-	Cfg.Phase18.RainIntensity    = GetEnvFloat(TEXT("CAMSIM_RAIN_INTENSITY"), Cfg.Phase18.RainIntensity);
-	Cfg.Phase18.SnowIntensity    = GetEnvFloat(TEXT("CAMSIM_SNOW_INTENSITY"), Cfg.Phase18.SnowIntensity);
 	Cfg.Phase18.bGodRays         = GetEnvInt(TEXT("CAMSIM_GOD_RAYS"),        Cfg.Phase18.bGodRays         ? 1 : 0) != 0;
 	Cfg.Phase18.bDynamicIRExtinction = GetEnvInt(TEXT("CAMSIM_DYNAMIC_IR_EXTINCTION"),
 		Cfg.Phase18.bDynamicIRExtinction ? 1 : 0) != 0;
@@ -1683,34 +1561,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.CesiumBackend.Imagery.MaximumTextureSize          = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE"), Cfg.CesiumBackend.Imagery.MaximumTextureSize);
 	Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS"),  Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads);
 
-	// Phase 20: overlay HUD/OSD env var overrides
-	// Apply preset first so individual env var overrides win
-	{
-		const FString PresetEnv = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_OVERLAY_PRESET"));
-		if (!PresetEnv.IsEmpty())
-			FHudOverlay::LoadPreset(PresetEnv, Cfg.OverlayConfig);
-	}
-	Cfg.OverlayConfig.bEnabled                        = GetEnvInt(TEXT("CAMSIM_OVERLAY_ENABLED"),     Cfg.OverlayConfig.bEnabled                       ? 1 : 0) != 0;
-	Cfg.OverlayConfig.ElementCrosshair.bEnabled       = GetEnvInt(TEXT("CAMSIM_OVERLAY_CROSSHAIR"),   Cfg.OverlayConfig.ElementCrosshair.bEnabled       ? 1 : 0) != 0;
-	Cfg.OverlayConfig.ElementAzEl.bEnabled            = GetEnvInt(TEXT("CAMSIM_OVERLAY_AZEL"),        Cfg.OverlayConfig.ElementAzEl.bEnabled            ? 1 : 0) != 0;
-	Cfg.OverlayConfig.ElementFov.bEnabled             = GetEnvInt(TEXT("CAMSIM_OVERLAY_FOV"),         Cfg.OverlayConfig.ElementFov.bEnabled             ? 1 : 0) != 0;
-	Cfg.OverlayConfig.ElementSlantRange.bEnabled      = GetEnvInt(TEXT("CAMSIM_OVERLAY_SLANT_RANGE"), Cfg.OverlayConfig.ElementSlantRange.bEnabled      ? 1 : 0) != 0;
-	Cfg.OverlayConfig.ElementTimestamp.bEnabled       = GetEnvInt(TEXT("CAMSIM_OVERLAY_TIMESTAMP"),   Cfg.OverlayConfig.ElementTimestamp.bEnabled       ? 1 : 0) != 0;
-	Cfg.OverlayConfig.ElementClassBanner.bEnabled     = GetEnvInt(TEXT("CAMSIM_OVERLAY_CLASS_BANNER"),Cfg.OverlayConfig.ElementClassBanner.bEnabled     ? 1 : 0) != 0;
-	Cfg.OverlayConfig.ElementCompassRose.bEnabled     = GetEnvInt(TEXT("CAMSIM_OVERLAY_COMPASS_ROSE"),Cfg.OverlayConfig.ElementCompassRose.bEnabled     ? 1 : 0) != 0;
-	{
-		const FString ClassTxt = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_OVERLAY_CLASS_TEXT"));
-		if (!ClassTxt.IsEmpty()) Cfg.OverlayConfig.ClassificationText = ClassTxt;
-	}
-	{
-		const FString LabelTxt = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_OVERLAY_PLATFORM_LABEL"));
-		if (!LabelTxt.IsEmpty())
-		{
-			Cfg.OverlayConfig.PlatformLabelText = LabelTxt;
-			Cfg.OverlayConfig.ElementPlatformLabel.bEnabled = true;
-		}
-	}
-
 	if (Cfg.OutputViews.Num() > 0 && (bHasMulticastAddrEnv || bHasMulticastPortEnv))
 	{
 		for (FOutputViewConfig& ViewCfg : Cfg.OutputViews)
@@ -1728,14 +1578,14 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 
 	UE_LOG(LogCamSim, Log,
 		TEXT("Config: CIGI=%s:%d Out=udp://%s:%d Bitrate=%d Preset=%s Encoder=%s ReadbackReadyPolls=%d WatchdogInterval=%d ")
-		TEXT("SSE=%.1f CacheMB=%d MaxEntities=%d GpuSensorFX=%d ")
+		TEXT("SSE=%.1f CacheMB=%d MaxEntities=%d ")
 		TEXT("SensorQuality=%s TerrainProvider=%s ImageryProvider=%s GroundTruth=%d ")
 		TEXT("EntityScale(draw=%.1fm tick=%.1fHz pose_cap=%.1fHz) Scenario=%d entities=%d time_scale=%.2f"),
 		*Cfg.CigiBindAddr, Cfg.CigiPort,
 		*Cfg.MulticastAddr, Cfg.MulticastPort,
 		Cfg.VideoBitrate, *Cfg.H264Preset, *Cfg.Encoder,
 		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks,
-		Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB, Cfg.MaxEntities, Cfg.Performance.bGpuSensorEffects ? 1 : 0,
+		Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB, Cfg.MaxEntities,
 		*Cfg.SensorQualityPreset, *Cfg.TerrainProvider, *Cfg.ImageryProvider,
 		Cfg.GroundTruth.bEnabled ? 1 : 0,
 		Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz, Cfg.EntityScale.DefaultMaxUpdateRateHz,
@@ -1753,7 +1603,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		Perf.RenderFrameRateHz                   = GetEnvFloat(TEXT("CAMSIM_PERF_RENDER_FPS"),          Perf.RenderFrameRateHz);
 		Perf.OutputFrameRateHz                   = GetEnvFloat(TEXT("CAMSIM_PERF_OUTPUT_FPS"),          Perf.OutputFrameRateHz);
 		Perf.TexturePoolBudgetMB                 = GetEnvInt  (TEXT("CAMSIM_PERF_TEXTURE_POOL_MB"),     Perf.TexturePoolBudgetMB);
-		Perf.bGpuSensorEffects                   = GetEnvBool (TEXT("CAMSIM_PERF_GPU_SENSOR"),          Perf.bGpuSensorEffects);
 		Perf.bAdaptiveSSE                        = GetEnvBool (TEXT("CAMSIM_PERF_ADAPTIVE_SSE"),         Perf.bAdaptiveSSE);
 		Perf.AdaptiveSSEMin                      = GetEnvFloat(TEXT("CAMSIM_PERF_ADAPTIVE_SSE_MIN"),     Perf.AdaptiveSSEMin);
 		Perf.AdaptiveSSEMax                      = GetEnvFloat(TEXT("CAMSIM_PERF_ADAPTIVE_SSE_MAX"),     Perf.AdaptiveSSEMax);
@@ -1790,17 +1639,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		S.bRoverCompat     = GetEnvInt  (TEXT("CAMSIM_ROVER_COMPAT"),      S.bRoverCompat     ? 1 : 0) != 0;
 		S.RoverVideoPid    = GetEnvInt  (TEXT("CAMSIM_ROVER_VIDEO_PID"),    S.RoverVideoPid);
 		S.RoverKlvPid      = GetEnvInt  (TEXT("CAMSIM_ROVER_KLV_PID"),     S.RoverKlvPid);
-	}
-
-	// Phase 21 Sprint 2: laser designator env var overrides
-	{
-		FLaserDesignatorConfig& L = Cfg.LaserDesignator;
-		L.bEnabled       = GetEnvInt  (TEXT("CAMSIM_LASER_ENABLED"),   L.bEnabled       ? 1 : 0) != 0;
-		L.SpotX          = GetEnvFloat(TEXT("CAMSIM_LASER_X"),         L.SpotX);
-		L.SpotY          = GetEnvFloat(TEXT("CAMSIM_LASER_Y"),         L.SpotY);
-		L.SpotRadius     = GetEnvFloat(TEXT("CAMSIM_LASER_RADIUS"),    L.SpotRadius);
-		L.SpotIntensity  = GetEnvFloat(TEXT("CAMSIM_LASER_INTENSITY"), L.SpotIntensity);
-		L.DesignatorCode = GetEnvInt  (TEXT("CAMSIM_LASER_CODE"),      L.DesignatorCode);
 	}
 
 	// Phase 26: standards compliance env var overrides
@@ -1846,17 +1684,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Render.CameraCutDistanceM   = GetEnvFloat (TEXT("CAMSIM_RENDER_CAMERA_CUT_DISTANCE_M"),   Cfg.Render.CameraCutDistanceM);
 	Cfg.Render.CameraCutAngleDeg    = GetEnvFloat (TEXT("CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG"),    Cfg.Render.CameraCutAngleDeg);
 	Cfg.Render.OriginShiftDistanceM = GetEnvDouble(TEXT("CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M"), Cfg.Render.OriginShiftDistanceM);
-	Cfg.Render.ExposureCompensationEV = GetEnvFloat(TEXT("CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV"), Cfg.Render.ExposureCompensationEV);
 
-	// ROADMAP 3B.1: sensor_path env override. Same "only re-parse when the env
-	// var is actually set" pattern as view_source above, so an empty env value
-	// (e.g. a test's cleanup) is treated as unset, not as an override to "".
-	const FString EnvSensorPath = FPlatformMisc::GetEnvironmentVariable(TEXT("CAMSIM_RENDER_SENSOR_PATH"));
-	if (!EnvSensorPath.IsEmpty())
-	{
-		Cfg.Render.SensorPath     = EnvSensorPath;
-		Cfg.Render.SensorPathMode = ParseSensorPath(EnvSensorPath);
-	}
 	Cfg.Performance.bTrackPipelineLatency = GetEnvBool(TEXT("CAMSIM_TRACK_PIPELINE_LATENCY"), Cfg.Performance.bTrackPipelineLatency);
 
 	// Log FOV presets so operators can confirm sensor gain→zoom mapping
@@ -1909,12 +1737,10 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(FString::Printf(TEXT("CaptureHeight=%d must be even (H.264 requirement)"), CaptureHeight));
 	}
 
-	// NV12 packing writes 4 bytes per uint (ROADMAP 3B). Only the GPU sensor path
-	// packs NV12; the legacy path takes any even width. When it's wanted, the
-	// selector falls back to legacy (FSensorPathSelector::Decide) and this says why.
-	if (CaptureWidth % 4 != 0 && FSensorPathSelector::WantsGpu(*this))
+	// NV12 packing writes 4 luma bytes per uint (ROADMAP 3B): the sensor graph needs width % 4 == 0.
+	if (CaptureWidth % 4 != 0)
 	{
-		Errors.Add(FString::Printf(TEXT("CaptureWidth=%d must be a multiple of 4 (NV12 packing, GPU sensor path)"), CaptureWidth));
+		Errors.Add(FString::Printf(TEXT("CaptureWidth=%d must be a multiple of 4 (NV12 packing, GPU sensor graph)"), CaptureWidth));
 	}
 	for (const TPair<ESensorMode, FSensorModeConfig>& Pair : SensorModeConfigs)
 	{

@@ -151,16 +151,19 @@ def wait_port_free(port: int, timeout_s: float = 90.0) -> None:
     print(f"[bench] warning: port {port} still busy after {timeout_s:.0f}s")
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
     ap.add_argument("--view-source", choices=["primary", "scene_capture"], default=None)
-    ap.add_argument("--sensor-path", choices=["auto", "gpu", "legacy"], default=None)
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--trace", action="store_true", help="also record an Unreal Insights trace")
     ap.add_argument("--skip-warmup", action="store_true")
     ap.add_argument("--out", type=Path, default=None)
-    args = ap.parse_args()
+    return ap
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     # Absolute: CamSim resolves relative paths against its own working directory.
     out = (args.out or REPO / ".cache" / "bench" / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.label}").resolve()
@@ -174,8 +177,6 @@ def main() -> int:
                CAMSIM_SNAPSHOT_ENDPOINT_ENABLED="1")
     if args.view_source:
         env["CAMSIM_RENDER_VIEW_SOURCE"] = args.view_source
-    if args.sensor_path:
-        env["CAMSIM_RENDER_SENSOR_PATH"] = args.sensor_path
     extra = ["-trace=cpu,gpu,frame", f"-tracefile={out / 'trace.utrace'}"] if args.trace else []
 
     wait_port_free(int(HEALTH.rsplit(":", 1)[1]))
@@ -190,8 +191,6 @@ def main() -> int:
         metrics = http_text("/metrics") or ""
         sensor_path = sensor_path_from_metrics(metrics)
         print(f"[bench] sensor path: {sensor_path}", flush=True)
-        if args.sensor_path in ("gpu", "legacy") and sensor_path != args.sensor_path:
-            sys.exit(f"[bench] expected sensor path {args.sensor_path}, CamSim reports {sensor_path}")
         for ph in scenario.build_phases(smoke=args.smoke):
             if ph.name == "warmup" and args.skip_warmup:
                 continue

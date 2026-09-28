@@ -45,3 +45,11 @@ def test_sensor_path_is_read_from_metrics():
     text = "# HELP x\ncamsim_uptime_seconds 3\ncamsim_sensor_path{path=\"gpu\"} 1\n"
     assert run_bench.sensor_path_from_metrics(text) == "gpu"
     assert run_bench.sensor_path_from_metrics("camsim_uptime_seconds 3\n") is None
+
+
+def test_sensor_path_flag_is_gone():
+    # 3B.2: the GPU sensor graph is the only path; meta.sensor_path is still recorded.
+    parser = run_bench.build_parser()
+    assert parser.parse_args(["--label", "x"]).label == "x"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--label", "x", "--sensor-path", "gpu"])

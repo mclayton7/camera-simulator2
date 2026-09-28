@@ -3,7 +3,6 @@
 #include "Encoder/VideoEncoder.h"
 #include "Encoder/Nv12.h"
 #include "CamSimTest.h"
-#include "Sensor/SensorPath.h"
 #include "Sensor/SensorTypes.h"
 
 // ---------------------------------------------------------------------------
@@ -25,9 +24,8 @@ static void ConfigureKlvStream(struct AVStream* S)
 // Constructor / Destructor
 // -------------------------------------------------------------------------
 
-FVideoEncoder::FVideoEncoder(const FCamSimConfig& InConfig, ESensorPipelinePath InSensorPath)
+FVideoEncoder::FVideoEncoder(const FCamSimConfig& InConfig)
 	: Config(InConfig)
-	, SensorPath(InSensorPath)
 {
 }
 
@@ -383,10 +381,8 @@ bool FVideoEncoder::TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265)
 	// Explicitly signal the color space so all decoders (VLC, ffplay, hardware) agree.
 	// sws_scale converts sRGB→YUV using BT.709 limited-range coefficients, so we stamp
 	// the matching values into the H.264 VUI / SPS here.
-	// Transfer: the legacy path encodes UE's sRGB output (SCS_FinalColorLDR); the
-	// GPU sensor path (ROADMAP 3B) applies the BT.709 OETF itself, so tag BT.709.
-	const bool bGpuSensorPath = SensorPath == ESensorPipelinePath::Gpu;
-	ColorTrc = bGpuSensorPath ? AVCOL_TRC_BT709 : AVCOL_TRC_IEC61966_2_1;
+	// Transfer: the GPU sensor graph (ROADMAP 3B) applies the BT.709 OETF itself.
+	ColorTrc = AVCOL_TRC_BT709;
 	VideoCodecCtx->color_range     = AVCOL_RANGE_MPEG;        // limited (16-235/16-240)
 	VideoCodecCtx->color_primaries = AVCOL_PRI_BT709;
 	VideoCodecCtx->color_trc       = ColorTrc;

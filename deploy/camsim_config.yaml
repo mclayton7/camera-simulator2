@@ -100,19 +100,6 @@ streaming:
   rover_video_pid: 0x1011      # CAMSIM_ROVER_VIDEO_PID (decimal: 4113)
   rover_klv_pid: 0x1012        # CAMSIM_ROVER_KLV_PID   (decimal: 4114)
 
-# --- Laser Designator (Phase 21 Sprint 2) ---
-# Renders a Gaussian laser spot on the sensor output.
-# When DIS Designator PDUs are received, spot position is updated dynamically.
-
-laser_designator:
-  # Env: CAMSIM_LASER_ENABLED
-  enabled: false
-  spot_x: 0.5                  # CAMSIM_LASER_X (normalized 0-1)
-  spot_y: 0.5                  # CAMSIM_LASER_Y (normalized 0-1)
-  spot_radius: 6.0             # CAMSIM_LASER_RADIUS (pixels, 1-sigma)
-  spot_intensity: 250.0        # CAMSIM_LASER_INTENSITY (0-255)
-  designator_code: 1688        # CAMSIM_LASER_CODE (NATO laser code)
-
 # --- Phase 26: Standards Compliance (MISB ST 0601.9) ---
 
 phase26:
@@ -557,9 +544,6 @@ randomization:
   visibility_jitter_frac: 0.0
   # Fog density jitter: fractional +/- around base fog density.
   fog_density_jitter_frac: 0.0
-  # Randomize weather type (rain/snow/clear).
-  randomize_weather: false
-  weather_probability: 0.3
   # Per-entity randomization entries.
   entity_entries: []
   #   - template_entity_id: 2001
@@ -602,8 +586,7 @@ sensor_modes:
     # ROADMAP 3B — auto-exposure (GPU sensor path), calibrated 2026-09-27 on the bench shots
     # (M1 Pro, SF). Scene median (log2 of absolute scene-linear luminance): daylight 10.9–12.4,
     # dawn 9.4, dusk 8.9, night_slant 6.6. target_grey 0.18 exposes the median to 18% grey
-    # (daylight gain -13.4…-14.9, mean luma 105–114, <0.1% clipped); render.exposure_compensation_ev
-    # does not apply here (legacy path only). max_gain_ev -12.5 makes night_slant clamp
+    # (daylight gain -13.4…-14.9, mean luma 105–114, <0.1% clipped). max_gain_ev -12.5 makes night_slant clamp
     # (mean luma 26); dawn/dusk clamp slightly too (luma 93/78).
     exposure:
       min_gain_ev: -20
@@ -738,10 +721,6 @@ phase18:
   second_fog: false
   fog_density: 0.02
   fog_height_falloff: 0.2
-  # 18D CPU precipitation overlay (rain/snow pixel pass on task thread)
-  precipitation: false
-  rain_intensity: 0.0        # [0,1] drop density
-  snow_intensity: 0.0        # [0,1] flake density
   # 18E God rays / light shafts (UE DirectionalLight bloom + occlusion)
   god_rays: false
   god_ray_intensity: 1.0
@@ -820,11 +799,6 @@ performance:
   # 27G Texture streaming pool (0 = engine default)
   texture_pool_budget_mb: 0                     # CAMSIM_PERF_TEXTURE_POOL_MB
 
-  # 27A GPU sensor pipeline (requires editor material M_SensorPostProcess + MPC_SensorParams)
-  gpu_sensor_effects: false                     # CAMSIM_PERF_GPU_SENSOR
-  gpu_sensor_material_path: "/Game/CamSim/Materials/M_SensorPostProcess"
-  gpu_sensor_mpc_path: "/Game/CamSim/Materials/MPC_SensorParams"
-
   # Adaptive SSE — dynamically adjust Cesium LOD based on frame budget
   adaptive_sse: false                        # CAMSIM_PERF_ADAPTIVE_SSE
   adaptive_sse_min: 8.0                      # CAMSIM_PERF_ADAPTIVE_SSE_MIN (sharpest allowed)
@@ -874,45 +848,6 @@ cesium:
     # Plugin default 20; keep low for real-time 30fps.
     # Env: CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS
     maximum_simultaneous_tile_loads: 20
-
-# --- HUD/OSD Overlay (Phase 20) ---
-# Burn-in overlay for ISR display: reticle, telemetry readouts, classification banner.
-# Master switch enabled=false keeps frames clean for ML training.
-# Env: CAMSIM_OVERLAY_ENABLED, CAMSIM_OVERLAY_CROSSHAIR, CAMSIM_OVERLAY_AZEL,
-#      CAMSIM_OVERLAY_FOV, CAMSIM_OVERLAY_SLANT_RANGE, CAMSIM_OVERLAY_TIMESTAMP,
-#      CAMSIM_OVERLAY_CLASS_BANNER, CAMSIM_OVERLAY_CLASS_TEXT,
-#      CAMSIM_OVERLAY_PRESET, CAMSIM_OVERLAY_COMPASS_ROSE, CAMSIM_OVERLAY_PLATFORM_LABEL
-overlay:
-  enabled: true             # master switch; set true for ISR output with HUD burn-in
-  preset: ""                # mq9 | mq1c | rq7b — seeds all defaults; individual keys override
-  crosshair: true           # 20A targeting reticle
-  crosshair_style: mil_dot  # simple_cross | mil_dot | circle
-  az_el_readout: true       # 20B gimbal azimuth/elevation (top-left)
-  fov_indicator: true       # 20C FOV readout (top-right)
-  slant_range: true         # 20D slant range to target (bottom-left)
-  timestamp: true           # 20E DTG timestamp (bottom-center)
-  class_banner: true        # 20E classification banner (top/bottom bar)
-  classification_text: "UNCLASSIFIED"
-  compass_rose: false       # 20F linear heading tape (bottom-center); enable for ISR
-  platform_label: ""        # 20G platform identifier text; e.g. "MQ-9"; empty = disabled
-  text_scale: 2             # 1=5x7 native, 2=10x14 (recommended for 1080p)
-  edge_margin_px: 10        # pixels between frame edge and HUD elements
-  # Per-element color overrides (hex RRGGBB; empty = sensor-mode default):
-  # compass_rose_color: ""
-  # platform_label_color: ""
-  # Per-element position overrides (-1 = use default anchor):
-  # az_el_x: -1
-  # az_el_y: -1
-  # fov_x: -1
-  # fov_y: -1
-  # slant_range_x: -1
-  # slant_range_y: -1
-  # timestamp_x: -1
-  # timestamp_y: -1
-  # compass_rose_x: -1
-  # compass_rose_y: -1
-  # platform_label_x: -1
-  # platform_label_y: -1
 
 # --- Security Metadata (MISB ST 0102) ---
 # Embedded in every KLV packet as ST 0601 Tag 48.
@@ -989,7 +924,8 @@ operational:
 # --- Render path (ROADMAP 3A) ---
 render:
   # primary: the sensor is the game viewport's view (TSR, one scene render per frame).
-  # scene_capture: legacy SceneCapture2D path, kept for A/B comparison until 3B.
+  # scene_capture: legacy SceneCapture2D path. Since 3B.2 the GPU sensor graph is the only
+  #   sensor path and runs only in the primary view, so scene_capture produces no frames.
   # Env: CAMSIM_RENDER_VIEW_SOURCE
   view_source: primary
 
@@ -1002,19 +938,6 @@ render:
   # origin, keeping "up" = +Z and coordinates small. 0 = disabled.
   # Env: CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M
   origin_shift_distance_m: 20000.0
-
-  # Auto-exposure compensation in EV. Auto-exposure stays on (the camera adapts
-  # to the scene); this shifts where it settles. -1 counters the over-bright
-  # metering of sunlit terrain; 0 = UE default (washed out). Applied at startup.
-  # Legacy sensor path only: the GPU path uses sensor_modes.*.exposure.target_grey.
-  # Env: CAMSIM_RENDER_EXPOSURE_COMPENSATION_EV
-  exposure_compensation_ev: -1.0
-
-  # auto: GPU sensor path once every enabled effect is ported, else legacy.
-  # gpu: force the GPU sensor model (unported effects are logged and skipped).
-  # legacy: force the UE tonemapper + CPU sensor model (ROADMAP 3B).
-  # Env: CAMSIM_RENDER_SENSOR_PATH
-  sensor_path: auto  # auto | gpu | legacy (ROADMAP 3B)
 
 # --- Entity Types ---
 # Maps CIGI EntityType uint16 to asset paths.
