@@ -584,7 +584,104 @@ Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
 - ~~3B.4 deletes the unused BGRA render-target ring and colour readback pool on the GPU path.~~
   Done in 3B.2 (Task 2).
 
-3B.2 progress (physical sensor model, `docs/superpowers/plans/2026-09-27-physical-sensor-3b2.md`):
+**3B.2 status (2026-09-28): physical sensor model implemented on macOS; awaiting visual review.**
+Spec: `docs/superpowers/specs/2026-09-27-physical-sensor-model-design.md`; plan:
+`docs/superpowers/plans/2026-09-27-physical-sensor-3b2.md`. The default config runs the whole
+model live in one fused GPU pass: optics (distortion resample, cos⁴ vignetting, pixel-integrated
+diffraction PSF) → electrons → detector noise → ADC → defects → display → NV12. EO uses the
+`eo_hd_cmos` preset, IR `mwir_cooled` (`lwir_uncooled` optional). The legacy CPU sensor path,
+NVG, the scene-capture render path, the HUD/laser/precipitation overlays and the quality-preset
+system are gone (full list under "Removed" below and in `docs/configuration.md`).
+
+Measured with `scripts/bench/` on an M1 Pro, warm cache, per phase (orbit / slew / low pass / far
+origin); baselines `scripts/bench/baselines/macos-m1pro-3b2-{720p,1080p}.json`, shots
+`scripts/bench/shots/macos/3b2/`. "Post-crossfade" is the last pre-3B.2 SF run with Cesium's LOD
+crossfade off (`.cache/bench/h2-nofade-full`, 720p, legacy CPU sensor path):
+
+| Metric | Post-crossfade 720p | 3B.1 GPU 720p | **3B.2 720p** | **3B.2 1080p** (3B.1 1080p) |
+| --- | --- | --- | --- | --- |
+| Frame time p95 (ms) | 33.8 / 34.5 / 34.2 / 35.0 | 34.0 / 34.7 / 35.1 / 36.3 | **33.7 / 34.4 / 34.2 / 34.9** | **33.8 / 34.5 / 34.3 / 35.0** (34.1 / 34.8 / 35.0 / 36.3) |
+| GPU frame p50 (ms) | 16.6 / 16.7 / 18.3 / 18.0 | 16.9 / 12.9 / 18.0 / 19.4 | 17.5 / 17.7 / 19.2 / 19.0 | 18.4 / 18.7 / 20.2 / 19.8 (17.1 / 18.0 / 18.4 / 19.2) |
+| Sensor graph GPU p50 / p95 (ms) | — (CPU model) | 0.14–0.17 / 0.16–0.18 | **0.77 / 0.77** | **1.70 / 1.71** (0.33–0.37 / 0.36–0.40) |
+| Emitted fps | 29.8–30.0 | 29.7–30.0 | 29.8–30.0 | 29.9–30.0 |
+| Dropped frames | 0 | 0 | **0** | **0** |
+| Render thread p50 (ms) | 5.3–5.6 | 2.7–3.1 | 2.7–3.0 | 2.8–3.1 |
+| Game thread p50 (ms) | 2.4–3.2 | 3.4–4.5 | 2.5–3.2 | 2.5–3.3 |
+| Frames > 66 ms | 3 / 1 / 1 / 5 | — | 0 / 0 / 0 / 5 | 0 / 1 / 0 / 1 |
+
+The full model costs ~0.6 ms (720p) / ~1.3 ms (1080p) of GPU over 3B.1's display-only graph and
+doesn't move the frame time. Sensor GPU p95 at 1080p by PSF radius (EO, Task 10): default R 2 +
+cos⁴ 1.71 ms, R 3 1.87, R 4 2.38, R 5 2.58, R 8 3.24 ms.
+
+Exposure and noise (720p `*_sensor.png`, BT.709 luma of the decoded frame, 0–255; "clipped" =
+any RGB channel ≥ 255, "luma-clipped" = luma ≥ 255; temporal noise = std of the difference of two
+consecutive `/snapshot/sensor` frames / √2, centre half, luma DN):
+
+| Shot | Mean luma | Clipped / luma-clipped | Temporal noise (DN) |
+| --- | --- | --- | --- |
+| nadir 3 km / slant 10 km / horizon / low oblique | 111 / 108 / 106 / 106 | 0.06 / 0.01 / 0 / 0 % — luma ≤ 0.01 % | 1.13 (day) |
+| far-origin slant / nadir | 118 / 111 | 1.24 / 1.78 % — luma 0.10 / 0 % | — |
+| dawn / dusk slant | 104 / 91 | 2.1 / 2.1 % | 1.52 (dusk) |
+| night slant (EO) | 34 | 1.1 % (city lights) | **1.83** |
+| IR nadir / dusk / night | 64 / 37 / 12 | ~1 % (AGC top percentile) | 0.42 / 0.28 / 0.23 |
+
+1080p agrees within ±2. IR residual fixed pattern (`mwir_cooled`: DSNU 2,000 e⁻ of a 7 Me⁻
+well, no column term), measured on the flat sky of an IR horizon view as the high-pass of a
+12-frame mean minus its temporal share: **≤ 0.21 DN** (an upper bound; scene texture included).
+Camera cuts (22 in the 720p bench, from `frames.jsonl`): the AE snaps on the first histogram
+rendered after the cut, 2 frames after a single-frame cut (every case) and 1–3 frames after the
+last frame of a two-frame cut (the shot teleports); afterwards the gain follows the scene as its
+tiles stream in, with the normal 2-frame lag.
+
+Calibration: none of the config defaults changed. One controller fix (`535972e`): the AE's
+highlight limit (`FSensorController::ClipLinear`) was still 2.0 from 3B.1, where the display knee
+reached white at 2.0. Since Task 7's normalised knee, full scale (full well / ADC max) is white,
+so the limit is now 1.0. Before the fix: dawn/dusk 3.4/4.7 % clipped, far-origin nadir 3.4 %, night
+EO mean 51 at 2.4 % clipped.
+
+3B.2 exit criteria (spec), macOS M1 Pro:
+
+| # | Criterion | 3B.2 |
+| --- | --- | --- |
+| 1 | Legacy removed; default config runs the GPU sensor model with every stage on | ✅ |
+| 2 | Physics tests pass; GPU matches the reference on Metal | ✅ 16 `CamSim.Sensor.Physics.*`; `CamSim.GPU.Sensor.*` 10/10 (Y ≤ 1 DN, UV ≤ 2 DN, histogram totals equal) |
+| 3 | 30 fps, 0 dropped in every phase at 720p and 1080p; frame p95 ≤ post-crossfade + 1 ms | ✅ 29.8–30.0 fps, 0 dropped; every phase at or below the post-crossfade p95 (worst +0.05 ms, 1080p low pass) |
+| 4 | Sensor graph GPU p95 ≤ 2 ms at 1080p | ✅ 1.71 ms (default presets; PSF radius ≥ 4 exceeds it — warned at startup) |
+| 5 | Daylight EO 90–170, < 1 % clipped; night darker with more temporal noise; IR striping < 2 DN; cuts converge in 1–3 frames | ✅ 106–118, luma-clipped ≤ 0.1 % (◐ any-channel 1.2–1.8 % on the two far-origin shots: red saturation of sunlit dry grass, which the luma-metered AE doesn't see); night 34 with 1.83 vs 1.13 DN; `mwir_cooled` residual FPN ≤ 0.21 DN (column striping is `lwir_uncooled`'s, tested in `CamSim.Sensor.Physics.MicrobolometerFpn`); AE snap 1–3 frames |
+| 6 | `ci_validate --native`; Yosemite snaps 0 % coarse | ✅ ci_validate (150/150 KLV packets conformant). ❌ Yosemite: south/north snaps load 50–55 % with a coarse far field for ~1.7 s (east/west/horizon 0 %). **Not a 3B.2 regression**: identical at `81ae684` (pre-3B.2), and 0 % again at HEAD with `CAMSIM_USE_LOD_TRANSITIONS=1` — the crossfade default-off (`b5a7990`, made after the 3B.1 snap check) is the cause. Needs a decision (see known issues) |
+| 7 | Visual review of the new EO/IR shot set | ⏳ awaiting the user |
+| 8 | Docs | ✅ this section, `docs/configuration.md`, CLAUDE.md |
+
+Known issues and open points for the visual review:
+- **Night IR is dark** (mean luma 12, 26 % black): IR is still the visible-light proxy, so the AGC
+  stretches a dark city with bright clouds at the top. Thermal radiance is Milestone 4; not
+  calibrated around.
+- **Vignetting**: `cos⁴` at 60° HFOV darkens the corners to ~0.48× the centre (visible in every
+  shot). Physically right for a simple lens, but real turret optics are often flatter; lower
+  `optics.vignetting_exponent` if the look is too strong.
+- **PSF radius ≥ 4** (σ_o > 2/3 px, e.g. `extra_blur_px` ≥ ~0.6) takes the large-tile shader path
+  and exceeds the 2 ms 1080p budget (2.38–3.24 ms); a startup warning, not an error. Every preset
+  is R ≤ 3.
+- **Yosemite snap coarseness** since the crossfade went off (above): restoring
+  `use_lod_transitions` costs the game thread 8–12 ms p50 (3B.1 terrain check), so it's a
+  trade-off for the user, not fixed here.
+- **Linux/Vulkan unverified.** The shader is plain compute (integer atomics, no float atomics or
+  wave intrinsics), but nothing has run on Vulkan. There is no CPU fallback any more: a host
+  without `IsSensorGraphSupported` (Mesa llvmpipe/lavapipe in the CPU Docker path) produces no
+  frames and `/ready` stays false. Verify on the first Linux run.
+
+Removed in 3B.2: NVG (SensorId 2); the legacy CPU sensor path (`FSensorPostProcess`,
+`IPixelPipeline`, the path selector, `render.sensor_path`); the 27A material path; the scene-capture
+render path (`render.view_source`) and the BGRA readback/encode; the HUD overlay (`Overlay/`),
+drawn laser spot and CPU precipitation overlay; the legacy per-mode sensor effect keys and the
+`sensor_quality` presets; `render.exposure_compensation_ev`. `exposure.max_gain_ev` is now
+`max_photon_gain_ev`.
+
+Tests: 259 automation tests (256 pass + 3 with expected warnings under NullRHI, where the 10
+`CamSim.GPU.*` are skipped); `scripts/run_gpu_tests.sh` 10/10 on Metal; bench/CIGI pytest 43/43;
+`scripts/ci_validate.sh --native` passes.
+
+3B.2 implementation log (per task):
 - Task 1: NVG removed (EO and IR only).
 - Task 2: the legacy CPU sensor path is gone — `FSensorPostProcess`/`IPixelPipeline`, the path
   selector and `render.sensor_path`, the 27A material path (`performance.gpu_sensor_*`), the HUD

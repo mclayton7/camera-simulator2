@@ -325,7 +325,7 @@ were also removed in 3B.2; see "Removed in 3B.2" below.)
 | `agc_high_percentile` | float | `0.99` | `0.99` | White-point percentile `[0, 1]` when AGC is enabled. |
 | `agc_lag_frames` | int | `0` | `2` | Frames for AGC convergence (`0` = instant). IR env override: `CAMSIM_IR_AGC_LAG_FRAMES`. |
 
-**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the total gain to `[min_gain_ev, max_photon_gain_ev + detector.max_analog_gain_db/20·log2(10)]` (ROADMAP 3B.2). The total is split photon-first: the photon stage (integration time) takes gain up to `max_photon_gain_ev`, and only the remainder is analog gain, applied after the detector noise (so it amplifies noise too). A microbolometer has no analog stage. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_photon_gain_ev` (mean luma 26 in 3B.1, photon gain only; 3B.2's analog gain now lifts it further, at the cost of noise). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
+**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point (full well, i.e. ADC full scale, which displays as white), then clamps the total gain to `[min_gain_ev, max_photon_gain_ev + detector.max_analog_gain_db/20·log2(10)]` (ROADMAP 3B.2). The total is split photon-first: the photon stage (integration time) takes gain up to `max_photon_gain_ev`, and only the remainder is analog gain, applied after the detector noise (so it amplifies noise too). A microbolometer has no analog stage. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_photon_gain_ev` (mean luma 26 in 3B.1, photon gain only). Re-measured with the full 3B.2 model and unchanged defaults (ROADMAP 3B.2, 720p): daylight EO mean luma 106–118 with ≤ 0.1% of pixels luma-clipped, dawn/dusk 104/91, `night_slant` 34 — analog gain lifts it past the photon clamp, so its temporal noise is 1.83 DN against 1.13 DN in daylight. The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
 
 | Field | Type | EO default | IR default | Description |
 |-------|------|------------|------------|-------------|
@@ -397,6 +397,12 @@ GPU alike), checked at 64 distorted radii from the centre to the corner of the
 At runtime the focal length follows the live FOV (CIGI zoom, gain presets); a wider FOV where the
 lens stops converging logs one warning and renders without distortion (vignetting and PSF kept)
 until the FOV narrows again.
+
+The defaults (`eo_hd_cmos`, `mwir_cooled`) are the final 3B.2 values; none changed during the
+3B.2 bench calibration. Two looks to know about: `cos⁴` vignetting (`vignetting_exponent: 4`)
+darkens the corners of a 60° HFOV frame to ~0.48× the centre (set a lower exponent for flatter
+optics), and IR still sees the visible-light scene (thermal radiance is ROADMAP Milestone 4), so
+night IR is dark.
 
 **Validation warnings** (logged at startup, never fatal): an optical PSF sigma
 `σ_o = sqrt((0.42 λ N / pitch)² + extra_blur_px²)` above 2/3 px (PSF radius > 3) exceeds the 1080p
