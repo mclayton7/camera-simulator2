@@ -89,9 +89,10 @@ float3 OpticsAt(int2 P, float Scale)
 	float S = 1.0;
 	if (Rd > 0.0)
 	{
-		// CamSimOptics::UndistortRadius: NewtonIterations (3) from r = Rd; the final iterate.
+		// CamSimOptics::UndistortRadius: NEWTON_ITERATIONS (= FSensorFrameParams::NewtonIterations, set by
+		// FCamSimSensorCS::ModifyCompilationEnvironment) from r = Rd; the final iterate.
 		float R = Rd;
-		[unroll] for (int It = 0; It < 3; ++It)
+		[unroll] for (int It = 0; It < NEWTON_ITERATIONS; ++It)
 		{
 			const float R2 = R * R;
 			R -= (R * (1.0 + K1 * R2 + K2 * R2 * R2) - Rd) / (1.0 + 3.0 * K1 * R2 + 5.0 * K2 * R2 * R2);

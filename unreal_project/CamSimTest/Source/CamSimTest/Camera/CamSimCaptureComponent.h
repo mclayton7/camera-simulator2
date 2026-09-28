@@ -105,9 +105,10 @@ public:
 	/**
 	 * ROADMAP 3B: run the sensor controller (AE / IR AGC) on the newest GPU
 	 * histogram and send this tick's parameters to the sensor graph. No-op
-	 * without the sensor graph. Call every tick, before Poll().
+	 * without the sensor graph. Call every tick, before Poll(). LiveHFovDeg is
+	 * this frame's horizontal FOV (focal length of the lens model, ROADMAP 3B.2).
 	 */
-	void UpdateSensorParams(ESensorMode Mode, uint8 Polarity, bool bCameraCut, const FCamSimConfig& Cfg);
+	void UpdateSensorParams(ESensorMode Mode, uint8 Polarity, bool bCameraCut, float LiveHFovDeg, const FCamSimConfig& Cfg);
 
 	/** Whether the GPU sensor graph runs this session (fixed at Initialize). */
 	bool HasSensorGraph() const { return bSensorGraph; }
@@ -188,6 +189,21 @@ private:
 	FSensorGpuTimer     GpuTimer;
 	uint32 ParamsSerial = 0;
 	double LastSensorUpdateSimSec = -1.0;
+	/**
+	 * Optics fields of FSensorFrameParams (CamSimOptics::SetOptics) for the key below: recomputed
+	 * only when the mode's lens or the live HFOV changes (the PSF taps need erf).
+	 */
+	struct FOpticsCache
+	{
+		bool   bValid = false;
+		ESensorMode Mode = ESensorMode::EO;
+		FSensorOpticsConfig Lens;
+		float  HFovDeg = 0.0f;
+		bool   bConverges = true;
+		FSensorFrameParams Params;   // only the optics fields are used
+	} OpticsCache;
+	/** A live FOV where the lens does not converge was logged; cleared once it converges again. */
+	bool bLoggedDistortionFallback = false;
 	/**
 	 * EV added to the sensor gain for UE's manual AutoExposureBias, so the
 	 * view's pre-exposure tracks the gain and scene colour stays in fp16 range.

@@ -208,7 +208,8 @@ void ACamSimCamera::Tick(float DeltaTime)
 	if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::CigiDequeue);
 
 	// ROADMAP 3B: sensor AE / AGC and graph parameters (no-op without the sensor graph).
-	CaptureComp->UpdateSensorParams(SensorComp->GetMode(), SensorComp->GetPolarity(), bCameraCutThisFrame, Cfg);
+	CaptureComp->UpdateSensorParams(SensorComp->GetMode(), SensorComp->GetPolarity(), bCameraCutThisFrame,
+		SceneCapture->FOVAngle, Cfg);
 	CaptureComp->Poll();
 
 	if (!SensorComp->IsOn()) return;

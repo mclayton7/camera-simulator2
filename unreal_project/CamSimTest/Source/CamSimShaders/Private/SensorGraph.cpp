@@ -71,14 +71,23 @@ public:
 	using FParameters = FCamSimSensorParameters;
 
 	class FUseViewPreExposure : SHADER_PERMUTATION_BOOL("USE_VIEW_PREEXPOSURE");
-	/** Largest blur radius the groupshared tile holds: 0 = no blur; 3 covers the presets (sigma_o <= ~0.66)
-	 *  with a small tile (better occupancy); 8 = CamSimOptics::MaxPsfRadius. */
+	/** Largest blur radius the groupshared tile holds: 0 = no blur; 3 covers the presets (sigma_o <= 2/3 px)
+	 *  with a small tile (better occupancy); 8 = CamSimOptics::MaxPsfRadius. A 5 class was measured
+	 *  (3B.2 Task 10: R4/R5 at 1080p 2.38/2.58 -> 2.15/2.37 ms p95) and left out: still over the 2 ms
+	 *  budget, so R > 3 stays a config warning (FCamSimConfig::ValidateWarnings). */
 	class FBlurMaxRadius : SHADER_PERMUTATION_SPARSE_INT("BLUR_MAX_R", 0, 3, 8);
 	using FPermutationDomain = TShaderPermutationDomain<FUseViewPreExposure, FBlurMaxRadius>;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
 		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		// The distortion inverse runs exactly CamSimOptics::NewtonIterations steps, like the CPU reference.
+		OutEnvironment.SetDefine(TEXT("NEWTON_ITERATIONS"), FSensorFrameParams::NewtonIterations);
 	}
 };
 IMPLEMENT_GLOBAL_SHADER(FCamSimSensorCS, "/CamSim/Private/CamSimSensor.usf", "SensorCS", SF_Compute);

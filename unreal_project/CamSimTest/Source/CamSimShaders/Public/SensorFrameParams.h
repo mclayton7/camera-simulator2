@@ -50,7 +50,10 @@ struct FSensorFrameParams
 	float HotFraction = 1e-5f, DeadFraction = 1e-5f;
 	uint32 Seed = 1, FrameIndex = 0;
 
-	// Optics (filled from Task 10; 0 = optics off)
+	// Optics (CamSimOptics::SetOptics from the mode's lens and the live HFOV; FocalPx 0 = optics off)
+	/** Newton iterations of the distortion inverse. The single source for CamSimOptics::NewtonIterations
+	 *  and the shader's NEWTON_ITERATIONS define, so CPU reference and GPU run the same recurrence. */
+	static constexpr int32 NewtonIterations = 3;
 	float FocalPx = 0.0f;
 	float K1 = 0.0f, K2 = 0.0f, VignettingExponent = 0.0f;
 	float PsfSigmaPx = 0.0f;              // OPTICAL sigma (CamSimOptics::PsfOpticalSigmaPx); pixel aperture comes from tap integration

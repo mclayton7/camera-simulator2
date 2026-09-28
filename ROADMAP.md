@@ -655,7 +655,22 @@ Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
   (detector presets, MWIR, bolometer FPN, optics, bloom, partial groups, NaN/Inf), noise on.
   Live, the detector now runs (noise, FPN and defects are visible); optics stay off until Task 10.
   Sensor GPU p95 at 1080p on an M1 Pro: 1.14 ms optics off, 1.87 ms with optics + a preset PSF
-  (R = 3), 3.2 ms at the largest PSF (R = 8, σ_o ≥ ~2.4 px).
+  (R = 3), 3.2 ms at the largest PSF (R = 8, σ_o > 2.0 px). The PSF radius is
+  R = min(ceil(3 σ_o) + 1, 8), so the large-tile path (`BLUR_MAX_R` 8) starts at R ≥ 4 (σ_o > 2/3 px).
+- Task 10: the live pipeline runs optics + detector + ADC end to end. `UpdateSensorParams` takes the
+  live HFOV (`SceneCapture->FOVAngle`) and fills the optics fields through `CamSimOptics::SetOptics`:
+  `FocalPx` from the capture width and live HFOV, `K1`/`K2`, `VignettingExponent`, and the PSF from
+  the OPTICAL sigma (`PsfOpticalSigmaPx`, taps via `SetPsf`), cached until the lens or FOV changes.
+  `Validate()` rejects a distortion whose Newton inverse "does not converge out to the frame corner"
+  (`CamSimOptics::DistortionConverges`: 64 rd samples over [0, corner] at `hfov_deg`); at runtime a
+  wider live FOV that breaks it logs one warning and drops K1/K2 (vignetting and PSF kept). The
+  shader's Newton count comes from `FSensorFrameParams::NewtonIterations` (`NEWTON_ITERATIONS`
+  define), the same constant as `CamSimOptics::NewtonIterations`. New
+  `FCamSimConfig::ValidateWarnings()` (logged at startup) warns when σ_o > 2/3 px (R > 3) exceeds
+  the 1080p GPU budget tier. `Validate()` also rejects `pixel_pitch_um`/`wavelength_um <= 0` and
+  `extra_blur_px < 0`. Sensor GPU p95 on an M1 Pro, EO, 1080p: default preset 1.71 ms (R 2 +
+  cos⁴), R 3 1.87, R 4 2.38, R 5 2.58, R 8 3.24 ms; 720p default 0.77 ms. A `BLUR_MAX_R` 5
+  permutation measured R 4 / R 5 at 2.15 / 2.37 ms — still over 2 ms, so it was not kept.
 
 ---
 

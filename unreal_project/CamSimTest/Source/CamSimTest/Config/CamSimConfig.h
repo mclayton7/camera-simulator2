@@ -792,6 +792,10 @@ struct FCamSimConfig
 	/** Pre-flight validation — returns empty array if config is valid. */
 	TArray<FString> Validate() const;
 
+	/** Settings that are valid but probably unintended (e.g. a PSF that exceeds the sensor
+	 *  graph's GPU budget). Logged as warnings at startup; never blocks the config. */
+	TArray<FString> ValidateWarnings() const;
+
 private:
 	static FCamSimConfig LoadFromYaml(const FString* YamlContent, const FString& YamlPath);
 	static void ApplyEnvOverrides(FCamSimConfig& Cfg);

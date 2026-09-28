@@ -17,6 +17,7 @@
 #include "GroundTruth/FGroundTruthCollector.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "Time/SimClock.h"
+#include "Sensor/SensorOptics.h"
 
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/Engine.h"
@@ -299,7 +300,7 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 		Cfg.Performance.bHotReloadConfig ? TEXT("1") : TEXT("0"));
 }
 
-void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarity, bool bCameraCut, const FCamSimConfig& Cfg)
+void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarity, bool bCameraCut, float LiveHFovDeg, const FCamSimConfig& Cfg)
 {
 	if (!bSensorGraph || !GrabExtension) return;
 
@@ -319,12 +320,45 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	In.Serial       = ++ParamsSerial;
 	// One detector integration per rendered frame. The controller copies the
 	// mode's seed and detector config into the params (DarkE = DarkCurrentEs /
-	// FrameRateHz); optics stay 0 until the optics stage lands (3B.2 Task 10).
+	// FrameRateHz, AdcMax = 2^bits - 1, FrameIndex = Serial).
 	In.FrameRateHz  = Cfg.Performance.RenderFrameRateHz > 0.0f ? Cfg.Performance.RenderFrameRateHz : 30.0f;
 	const FSensorModeConfig* ModeCfg = Cfg.SensorModeConfigs.Find(Mode);
+	static const FSensorModeConfig DefaultModeCfg;
+	const FSensorModeConfig& MC = ModeCfg ? *ModeCfg : DefaultModeCfg;
 	const uint32 StaleBefore = SensorController.GetStaleEpisodes();
-	const FSensorFrameParams Params = SensorController.Update(In, ModeCfg ? *ModeCfg : FSensorModeConfig());
+	FSensorFrameParams Params = SensorController.Update(In, MC);
 	if (SensorController.GetStaleEpisodes() != StaleBefore && bTrackFrameDrops) FrameDropStats.SensorStatsStale++;
+
+	// Lens model (ROADMAP 3B.2): focal length from this frame's FOV, so zoom changes the
+	// distortion/vignetting footprint. Recomputed only when the lens or the FOV changes.
+	if (!OpticsCache.bValid || OpticsCache.Mode != Mode || OpticsCache.HFovDeg != LiveHFovDeg || !(OpticsCache.Lens == MC.Optics))
+	{
+		OpticsCache.bValid     = true;
+		OpticsCache.Mode       = Mode;
+		OpticsCache.HFovDeg    = LiveHFovDeg;
+		OpticsCache.Lens       = MC.Optics;
+		OpticsCache.bConverges = CamSimOptics::SetOptics(OpticsCache.Params, MC.Optics, Cfg.CaptureWidth, Cfg.CaptureHeight, LiveHFovDeg);
+		if (!OpticsCache.bConverges && !bLoggedDistortionFallback)
+		{
+			UE_LOG(LogCamSim, Warning,
+				TEXT("Sensor optics: distortion k1=%.3f k2=%.3f does not converge at the live HFOV %.2f deg; "
+				     "rendering without distortion until the FOV narrows (logged once)"),
+				MC.Optics.K1, MC.Optics.K2, LiveHFovDeg);
+			bLoggedDistortionFallback = true;
+		}
+		else if (OpticsCache.bConverges)
+		{
+			bLoggedDistortionFallback = false;
+		}
+	}
+	const FSensorFrameParams& O = OpticsCache.Params;
+	Params.FocalPx            = O.FocalPx;
+	Params.K1                 = O.K1;
+	Params.K2                 = O.K2;
+	Params.VignettingExponent = O.VignettingExponent;
+	Params.PsfSigmaPx         = O.PsfSigmaPx;
+	FMemory::Memcpy(Params.PsfTaps, O.PsfTaps, sizeof(Params.PsfTaps));
+	Params.NumPsfTaps         = O.NumPsfTaps;
 
 	// Keep UE's pre-exposure near the sensor gain so scene colour stays in fp16 range.
 	Sensor->PostProcessSettings.AutoExposureBias = SensorController.GetGainEv() + UeExposureOffsetEv;

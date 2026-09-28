@@ -3,9 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "SensorFrameParams.h"
 
 struct FSensorOpticsConfig;
-struct FSensorFrameParams;
 
 /**
  * Lens-model helpers (ROADMAP 3B.2). Coordinates are normalised by the focal length in pixels:
@@ -17,8 +17,14 @@ struct FSensorFrameParams;
  */
 namespace CamSimOptics
 {
-	/** Newton iterations of UndistortRadius — fixed so the GPU runs the identical recurrence. */
-	constexpr int32 NewtonIterations = 3;
+	/** Newton iterations of UndistortRadius — fixed so the GPU runs the identical recurrence
+	 *  (SensorCS gets it as NEWTON_ITERATIONS from the same constant). */
+	constexpr int32 NewtonIterations = FSensorFrameParams::NewtonIterations;
+	/** rd samples DistortionConverges checks over [0, corner]. */
+	constexpr int32 ConvergenceSamples = 64;
+	/** Largest PSF radius the fast groupshared blur tile covers within the 1080p GPU budget
+	 *  (sigma_o <= 2/3 px); larger radii are allowed but warned by FCamSimConfig::ValidateWarnings. */
+	constexpr int32 BudgetPsfRadius = 3;
 	/** |ru (1 + K1 ru^2 + K2 ru^4) - rd| above this after NewtonIterations = not converged. */
 	constexpr float NewtonTolerance = 1e-5f;
 	/** Largest PSF tap radius (px); larger sigmas are truncated. */
@@ -36,6 +42,19 @@ namespace CamSimOptics
 
 	/** Largest distorted radius in the frame, normalised by FocalPx: hypot(W/2, H/2) / FocalPx. */
 	float CornerRadius(int32 W, int32 H, float FocalPx);
+
+	/** True when UndistortRadius converges for every distorted radius the W x H frame holds at HFovDeg:
+	 *  ConvergenceSamples values of rd evenly over [0, CornerRadius], both ends included. */
+	bool DistortionConverges(int32 W, int32 H, float HFovDeg, float K1, float K2);
+
+	/** PSF tap radius (NumPsfTaps - 1) PsfTaps gives for optical sigma SigmaO; 0 = no blur. */
+	int32 PsfRadius(float SigmaO);
+
+	/** Fills the optics fields of P for a W x H output at the live HFovDeg: FocalPx, K1, K2,
+	 *  VignettingExponent and the PSF (SetPsf from PsfOpticalSigmaPx). When the lens does not converge
+	 *  at this FOV (DistortionConverges false) K1 = K2 = 0 — no distortion, vignetting and PSF kept —
+	 *  and it returns false. */
+	bool SetOptics(FSensorFrameParams& P, const FSensorOpticsConfig& O, int32 W, int32 H, float HFovDeg);
 
 	/** Full system PSF sigma in pixels (spec quadrature, for docs/tests):
 	 *  sqrt((0.42 * lambda * N / pitch)^2 + 0.29^2 + extra^2). 0.42 lambda N is the Gaussian fit to

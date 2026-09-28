@@ -397,7 +397,7 @@ bool FSensorDetectorParamsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("dark electrons per frame"), P.DarkE, 1.0f, 1e-6f);
 	TestEqual(TEXT("adc max"), P.AdcMax, 1023.0f);
 	TestEqual(TEXT("hot fraction"), P.HotFraction, 2e-5f);
-	TestEqual(TEXT("optics off until Task 10"), P.FocalPx, 0.0f);
+	TestEqual(TEXT("controller leaves optics to CamSimOptics::SetOptics"), P.FocalPx, 0.0f);
 	return true;
 }
 

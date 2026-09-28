@@ -4,6 +4,7 @@
 #include "CamSimTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Sensor/SensorOptics.h"
 #include "Sensor/SensorPresets.h"
 
 #ifdef __clang__
@@ -1537,6 +1538,25 @@ TArray<FString> FCamSimConfig::Validate() const
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.k2=%.3f must be in [-1, 1]"), ModeId, M.Optics.K2));
 		}
+		if (!(M.Optics.PixelPitchUm > 0.0f) || !(M.Optics.WavelengthUm > 0.0f) || M.Optics.ExtraBlurPx < 0.0f)
+		{
+			Errors.Add(FString::Printf(
+				TEXT("sensor_modes[%d].optics: pixel_pitch_um (%.3f) and wavelength_um (%.3f) must be > 0, extra_blur_px (%.3f) >= 0"),
+				ModeId, M.Optics.PixelPitchUm, M.Optics.WavelengthUm, M.Optics.ExtraBlurPx));
+		}
+		// The GPU inverts the distortion with a fixed Newton recurrence: it must converge for every
+		// distorted radius in the frame (rd over [0, corner]) at the configured HFOV. A zoomed-out live
+		// FOV that breaks it falls back to no distortion at runtime (CamSimOptics::SetOptics).
+		if (HFovDeg > 0.0f && HFovDeg < 180.0f && CaptureWidth > 0 && CaptureHeight > 0
+			&& !CamSimOptics::DistortionConverges(CaptureWidth, CaptureHeight, HFovDeg, M.Optics.K1, M.Optics.K2))
+		{
+			Errors.Add(FString::Printf(
+				TEXT("sensor_modes[%d].optics: distortion k1=%.3f k2=%.3f does not converge out to the frame corner "
+				     "(Newton inverse fails for some rd <= %.3f at hfov_deg %.1f, %dx%d); reduce |k1|/|k2|"),
+				ModeId, M.Optics.K1, M.Optics.K2,
+				CamSimOptics::CornerRadius(CaptureWidth, CaptureHeight, CamSimOptics::FocalPx(CaptureWidth, HFovDeg)),
+				HFovDeg, CaptureWidth, CaptureHeight));
+		}
 		if (M.Detector.FullWellE <= 0.0f)
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.full_well_e=%.1f must be > 0"), ModeId, M.Detector.FullWellE));
@@ -1659,4 +1679,26 @@ TArray<FString> FCamSimConfig::Validate() const
 	}
 
 	return Errors;
+}
+
+TArray<FString> FCamSimConfig::ValidateWarnings() const
+{
+	TArray<FString> Warnings;
+	for (const TPair<ESensorMode, FSensorModeConfig>& Pair : SensorModeConfigs)
+	{
+		const FSensorOpticsConfig& O = Pair.Value.Optics;
+		if (!(O.PixelPitchUm > 0.0f)) continue;   // Validate() reports it
+		// Past BudgetPsfRadius the sensor graph switches to a larger groupshared tile (BLUR_MAX_R 5/8)
+		// that costs more than the 2 ms p95 GPU budget at 1080p (ROADMAP 3B.2 Task 10 measurements).
+		const float SigmaO = CamSimOptics::PsfOpticalSigmaPx(O);
+		const int32 Radius = CamSimOptics::PsfRadius(SigmaO);
+		if (Radius > CamSimOptics::BudgetPsfRadius)
+		{
+			Warnings.Add(FString::Printf(
+				TEXT("sensor_modes[%d].optics: optical PSF sigma %.3f px (PSF radius %d > %d) exceeds the 1080p GPU "
+				     "budget tier of the sensor graph; expect > 2 ms GPU per frame at 1080p (lower extra_blur_px or f_number)"),
+				static_cast<int32>(Pair.Key), SigmaO, Radius, CamSimOptics::BudgetPsfRadius));
+		}
+	}
+	return Warnings;
 }

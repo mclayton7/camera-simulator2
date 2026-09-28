@@ -375,7 +375,7 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 | `optics.wavelength_um` | float | Design wavelength in micrometres (diffraction blur). |
 | `optics.extra_blur_px` | float | Additional Gaussian blur sigma in pixels, on top of the diffraction/pixel-pitch PSF. |
 | `optics.vignetting_exponent` | float | Falloff exponent `n` in `cos^n θ`. |
-| `optics.k1`, `optics.k2` | float | Brown-Conrady radial distortion coefficients. Each must be in `[-1, 1]`. |
+| `optics.k1`, `optics.k2` | float | Brown-Conrady radial distortion coefficients (`rd = ru (1 + k1 ru² + k2 ru⁴)`, radii normalised by the focal length in pixels). Each must be in `[-1, 1]`, and the lens must be invertible across the frame at `hfov_deg` (see below). |
 | `detector.type` | string | `photon` or `microbolometer`. |
 | `detector.full_well_e` | float | Full-well capacity in electrons (photon detectors). Must be `> 0`. |
 | `detector.read_noise_e` | float | Read noise in electrons RMS (photon detectors). Must be `>= 0`. |
@@ -389,7 +389,19 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 | `detector.hot_pixel_fraction`, `detector.dead_pixel_fraction` | float | Defect pixel fractions. Must be in `[0, 0.01]`. |
 
 **Validation errors:** unknown `preset`; `full_well_e <= 0`; `adc_bits` outside `[8, 16]`; negative
-noise parameters or `f_number <= 0`; defect fractions outside `[0, 0.01]`; `|k1|` or `|k2| > 1`.
+noise parameters or `f_number <= 0`; `pixel_pitch_um` / `wavelength_um <= 0` or `extra_blur_px < 0`;
+defect fractions outside `[0, 0.01]`; `|k1|` or `|k2| > 1`; a distortion that "does not converge out
+to the frame corner": the sensor inverts `k1`/`k2` with a fixed 3-step Newton recurrence (CPU and
+GPU alike), checked at 64 distorted radii from the centre to the corner of the
+`capture_width × capture_height` frame at `hfov_deg` (e.g. `k1: -1.0` fails at 60°, `-0.3` passes).
+At runtime the focal length follows the live FOV (CIGI zoom, gain presets); a wider FOV where the
+lens stops converging logs one warning and renders without distortion (vignetting and PSF kept)
+until the FOV narrows again.
+
+**Validation warnings** (logged at startup, never fatal): an optical PSF sigma
+`σ_o = sqrt((0.42 λ N / pitch)² + extra_blur_px²)` above 2/3 px (PSF radius > 3) exceeds the 1080p
+GPU budget tier of the sensor graph (≤ 2 ms p95); every preset is below it (EO 0.32, MWIR 0.45,
+LWIR 0.42 px).
 
 ### Multi-stream Output Views (Phase D2)
 

@@ -3,6 +3,9 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
+#include "Sensor/SensorOptics.h"
+#include "Sensor/SensorTypes.h"
+#include "SensorFrameParams.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
@@ -264,5 +267,88 @@ bool FSensorPresetValidationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("defect fraction"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    detector:\n      hot_pixel_fraction: 0.5\n")), TEXT("hot_pixel_fraction")));
 	TestTrue(TEXT("k1 range"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      k1: 2\n")), TEXT("k1")));
 	TestTrue(TEXT("f-number"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      f_number: 0\n")), TEXT("f_number")));
+	return true;
+}
+
+// ROADMAP 3B.2 Task 10: the GPU runs a fixed Newton recurrence, so a lens whose inverse does not
+// converge somewhere in the frame (rd over [0, corner]) at the configured HFOV is a config error.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorDistortionMustConvergeTest, "CamSim.Sensor.Config.DistortionMustConverge",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorDistortionMustConvergeTest::RunTest(const FString& Parameters)
+{
+	auto Errors = [](const TCHAR* Yaml) { return FCamSimConfig::LoadFromYamlString(Yaml).Validate(); };
+	auto Converge = [](const TArray<FString>& E)
+	{
+		return !E.ContainsByPredicate([](const FString& X) { return X.Contains(TEXT("does not converge")); });
+	};
+	const TArray<FString> Bad = Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      k1: -1.0\n"));
+	TestFalse(TEXT("k1 -1.0 rejected"), Converge(Bad));
+	TestTrue(TEXT("error names k1"), Bad.ContainsByPredicate([](const FString& X)
+	{
+		return X.Contains(TEXT("does not converge")) && X.Contains(TEXT("k1")) && X.Contains(TEXT("sensor_modes[0]"));
+	}));
+	TestTrue(TEXT("k1 -0.3 accepted"), Converge(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      k1: -0.3\n"))));
+	TestTrue(TEXT("IR mode checked too"), !Converge(Errors(TEXT("sensor_modes:\n  ir:\n    optics:\n      k1: -1.0\n"))));
+	// The check is at the configured HFOV: a narrow field keeps -1.0 inside the invertible range.
+	TestTrue(TEXT("narrow HFOV accepts k1 -1.0"), Converge(Errors(TEXT("hfov_deg: 10.0\nsensor_modes:\n  eo:\n    optics:\n      k1: -1.0\n"))));
+	TestTrue(TEXT("defaults converge"), Converge(FCamSimConfig().Validate()));
+
+	// The helper scans rd over [0, corner] (64 samples), not only the corner.
+	TestTrue(TEXT("helper: -0.3 converges"), CamSimOptics::DistortionConverges(1280, 720, 60.0f, -0.3f, 0.0f));
+	TestFalse(TEXT("helper: -1.0 fails"), CamSimOptics::DistortionConverges(1280, 720, 60.0f, -1.0f, 0.0f));
+	TestTrue(TEXT("helper: no distortion"), CamSimOptics::DistortionConverges(1280, 720, 170.0f, 0.0f, 0.0f));
+	return true;
+}
+
+// A PSF radius past the fast (R <= 3) groupshared tile costs more than the 1080p GPU budget: warned, not rejected.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorBlurBudgetWarningTest, "CamSim.Sensor.Config.BlurBudgetWarning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorBlurBudgetWarningTest::RunTest(const FString& Parameters)
+{
+	const FCamSimConfig Defaults;
+	TestEqual(TEXT("defaults: no warnings"), Defaults.ValidateWarnings().Num(), 0);
+	const FCamSimConfig Canonical = FCamSimConfig::LoadFromYamlString(TEXT("sensor_modes:\n  eo:\n    preset: eo_hd_cmos\n  ir:\n    preset: lwir_uncooled\n"));
+	TestEqual(TEXT("presets: no warnings"), Canonical.ValidateWarnings().Num(), 0);
+
+	const FCamSimConfig Wide = FCamSimConfig::LoadFromYamlString(TEXT("sensor_modes:\n  eo:\n    optics:\n      extra_blur_px: 3.0\n"));
+	const TArray<FString> W = Wide.ValidateWarnings();
+	TestTrue(TEXT("large blur warned"), W.ContainsByPredicate([](const FString& X)
+	{
+		return X.Contains(TEXT("sensor_modes[0]")) && X.Contains(TEXT("budget"));
+	}));
+	TestFalse(TEXT("large blur is not an error"), Wide.Validate().ContainsByPredicate([](const FString& X) { return X.Contains(TEXT("budget")); }));
+	return true;
+}
+
+// UpdateSensorParams' optics fill: focal length from the live HFOV, optical sigma (not the full quadrature),
+// taps from it; a live FOV where the lens does not converge falls back to no distortion (vignetting kept).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorOpticsParamsTest, "CamSim.Sensor.Config.OpticsFrameParams",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorOpticsParamsTest::RunTest(const FString& Parameters)
+{
+	FSensorOpticsConfig O;
+	O.FNumber = 4.0f; O.PixelPitchUm = 2.9f; O.WavelengthUm = 0.55f; O.ExtraBlurPx = 1.0f;
+	O.VignettingExponent = 4.0f; O.K1 = -0.3f; O.K2 = 0.01f;
+	FSensorFrameParams P;
+	TestTrue(TEXT("converges at 60 deg"), CamSimOptics::SetOptics(P, O, 1920, 1080, 60.0f));
+	TestEqual(TEXT("focal"), P.FocalPx, CamSimOptics::FocalPx(1920, 60.0f));
+	TestEqual(TEXT("k1"), P.K1, -0.3f);
+	TestEqual(TEXT("k2"), P.K2, 0.01f);
+	TestEqual(TEXT("vignetting"), P.VignettingExponent, 4.0f);
+	TestEqual(TEXT("optical sigma"), P.PsfSigmaPx, CamSimOptics::PsfOpticalSigmaPx(O));
+	TestTrue(TEXT("not the quadrature sigma"), P.PsfSigmaPx < CamSimOptics::PsfSigmaPx(O));
+	TArray<float> Taps;
+	CamSimOptics::PsfTaps(CamSimOptics::PsfOpticalSigmaPx(O), Taps);
+	TestEqual(TEXT("taps count"), static_cast<int32>(P.NumPsfTaps), Taps.Num());
+	TestEqual(TEXT("centre tap"), P.PsfTaps[0], Taps[0]);
+
+	O.K1 = -1.0f; O.K2 = 0.0f;
+	TestFalse(TEXT("wide live FOV does not converge"), CamSimOptics::SetOptics(P, O, 1920, 1080, 90.0f));
+	TestEqual(TEXT("fallback k1 0"), P.K1, 0.0f);
+	TestEqual(TEXT("fallback k2 0"), P.K2, 0.0f);
+	TestEqual(TEXT("fallback keeps focal"), P.FocalPx, CamSimOptics::FocalPx(1920, 90.0f));
+	TestEqual(TEXT("fallback keeps vignetting"), P.VignettingExponent, 4.0f);
+	TestTrue(TEXT("zoomed in converges"), CamSimOptics::SetOptics(P, O, 1920, 1080, 5.0f));
+	TestEqual(TEXT("zoomed k1 kept"), P.K1, -1.0f);
 	return true;
 }

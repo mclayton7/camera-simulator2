@@ -32,6 +32,37 @@ namespace CamSimOptics
 		return FMath::Sqrt(0.25f * W * W + 0.25f * H * H) / FocalPx;
 	}
 
+	bool DistortionConverges(int32 W, int32 H, float HFovDeg, float K1, float K2)
+	{
+		if (K1 == 0.0f && K2 == 0.0f) return true;
+		const float Corner = CornerRadius(W, H, FocalPx(W, HFovDeg));
+		if (!FMath::IsFinite(Corner)) return false;
+		for (int32 I = 0; I < ConvergenceSamples; ++I)
+		{
+			float Ru;
+			if (!UndistortRadius(Corner * I / (ConvergenceSamples - 1), K1, K2, Ru)) return false;
+		}
+		return true;
+	}
+
+	int32 PsfRadius(float SigmaO)
+	{
+		TArray<float> Taps;
+		PsfTaps(SigmaO, Taps);
+		return Taps.Num() - 1;
+	}
+
+	bool SetOptics(FSensorFrameParams& P, const FSensorOpticsConfig& O, int32 W, int32 H, float HFovDeg)
+	{
+		const bool bConverges = DistortionConverges(W, H, HFovDeg, O.K1, O.K2);
+		P.FocalPx            = FocalPx(W, HFovDeg);
+		P.K1                 = bConverges ? O.K1 : 0.0f;
+		P.K2                 = bConverges ? O.K2 : 0.0f;
+		P.VignettingExponent = O.VignettingExponent;
+		SetPsf(P, PsfOpticalSigmaPx(O));
+		return bConverges;
+	}
+
 	float PsfSigmaPx(const FSensorOpticsConfig& O)
 	{
 		const float Airy = 0.42f * O.WavelengthUm * O.FNumber / O.PixelPitchUm;

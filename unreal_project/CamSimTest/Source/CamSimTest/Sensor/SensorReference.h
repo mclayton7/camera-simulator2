@@ -82,7 +82,7 @@ namespace CamSimSensorRef
 	 *      FocalPx > 0:
 	 *        xd = (px + 0.5 - W/2) / FocalPx,  yd = (py + 0.5 - H/2) / FocalPx,  rd = sqrt(xd^2 + yd^2)
 	 *        ru = CamSimOptics::UndistortRadius(rd, K1, K2) final iterate (convergence is a config
-	 *             check, Task 10; the sample uses the iterate either way);  s = rd > 0 ? ru / rd : 1
+	 *             check, CamSimOptics::DistortionConverges; the sample uses the iterate either way);  s = rd > 0 ? ru / rd : 1
 	 *        sx = (xd * s * FocalPx + W/2) * SrcW / W - 0.5,  sy = (yd * s * FocalPx + H/2) * SrcH / H - 0.5
 	 *        (production SrcW == W: sx = xd * s * FocalPx + W/2 - 0.5)
 	 *        illum = pow(1 / sqrt(1 + (xd s)^2 + (yd s)^2), VignettingExponent)   (cos^n of the ray angle)

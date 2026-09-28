@@ -363,6 +363,10 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	// Phase 28D: pre-flight config validation
 	{
+		for (const FString& Warn : Config.ValidateWarnings())
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("Config validation: %s"), *Warn);
+		}
 		const TArray<FString> ValidationErrors = Config.Validate();
 		for (const FString& Err : ValidationErrors)
 		{

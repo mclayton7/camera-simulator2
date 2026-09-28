@@ -34,6 +34,8 @@ struct FSensorOpticsConfig
 	float ExtraBlurPx        = 0.0f;
 	float VignettingExponent = 4.0f;
 	float K1 = 0.0f, K2 = 0.0f;
+
+	bool operator==(const FSensorOpticsConfig&) const = default;
 };
 
 // ---------------------------------------------------------------------------
