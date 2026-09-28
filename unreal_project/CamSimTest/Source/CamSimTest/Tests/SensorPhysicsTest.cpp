@@ -73,19 +73,23 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsPtcTest, "CamSim.Sensor.Physics.P
 bool FSensorPhysicsPtcTest::RunTest(const FString& Parameters)
 {
 	constexpr int32 W = 256, H = 256;
-	for (const float E : { 50.0f, 200.0f, 1000.0f, 3000.0f, 6000.0f, 9000.0f })
+	// { signal e, dark e }: the last case checks dark current carries shot noise.
+	for (const FVector2f Case : { FVector2f(50, 0), FVector2f(200, 0), FVector2f(1000, 0), FVector2f(3000, 0),
+		FVector2f(6000, 0), FVector2f(9000, 0), FVector2f(200, 300) })
 	{
-		const FSensorFrameParams P = PhotonParams(E);
+		const float E = Case.X;
+		FSensorFrameParams P = PhotonParams(E);
+		P.DarkE = Case.Y;
 		const double EPerDn = P.FullWellE / P.AdcMax;
 		const TArray<float> D1 = Detect(1.0f, W, H, P, 1), D2 = Detect(1.0f, W, H, P, 2);
 		const double Temporal = Var(Combine(D1, D2, [](double A, double B) { return A - B; })) / 2.0 * EPerDn * EPerDn;
 		const double Fixed = Var(Combine(D1, D2, [](double A, double B) { return 0.5 * (A + B); })) * EPerDn * EPerDn - Temporal / 2.0;
-		const double ExpTemporal = E + P.ReadNoiseE * P.ReadNoiseE;
+		const double ExpTemporal = E + P.DarkE + P.ReadNoiseE * P.ReadNoiseE;
 		const double ExpFixed = FMath::Square((double)P.Prnu * E) + (double)P.DsnuE * P.DsnuE;
-		AddInfo(FString::Printf(TEXT("e=%.0f: temporal %.2f e^2 (expected %.2f), fixed %.2f e^2 (expected %.2f)"),
-			E, Temporal, ExpTemporal, Fixed, ExpFixed));
-		TestTrue(FString::Printf(TEXT("e=%.0f temporal variance within 5%%"), E), Within(Temporal, ExpTemporal, 0.05));
-		TestTrue(FString::Printf(TEXT("e=%.0f fixed-pattern variance within 5%%"), E), Within(Fixed, ExpFixed, 0.05));
+		AddInfo(FString::Printf(TEXT("e=%.0f dark=%.0f: temporal %.2f e^2 (expected %.2f), fixed %.2f e^2 (expected %.2f)"),
+			E, P.DarkE, Temporal, ExpTemporal, Fixed, ExpFixed));
+		TestTrue(FString::Printf(TEXT("e=%.0f dark=%.0f temporal variance within 5%%"), E, P.DarkE), Within(Temporal, ExpTemporal, 0.05));
+		TestTrue(FString::Printf(TEXT("e=%.0f dark=%.0f fixed-pattern variance within 5%%"), E, P.DarkE), Within(Fixed, ExpFixed, 0.05));
 	}
 	return true;
 }
@@ -206,7 +210,7 @@ bool FSensorPhysicsClipTest::RunTest(const FString& Parameters)
 	{
 		for (int32 X = 0; X < W; ++X)
 		{
-			const bool bDead = CamSimHash::Uniform(CamSimHash::Hash(X, Y, CamSimHash::FixedFrame, P.Seed, 9)) > 1.0f - P.DeadFraction;
+			const bool bDead = CamSimHash::Uniform(CamSimHash::Hash(X, Y, CamSimHash::FixedFrame, P.Seed, 2 * 9)) > 1.0f - P.DeadFraction;
 			Dead += bDead;
 			Bad += bDead ? D[Y * W + X] != 0.0f : D[Y * W + X] != P.AdcMax;
 		}
@@ -245,5 +249,32 @@ bool FSensorPhysicsAnalogGainTest::RunTest(const FString& Parameters)
 	AddInfo(FString::Printf(TEXT("gain 1: mean %.2f DN, SNR %.3f; gain 8: mean %.2f DN, SNR %.3f"), M1, S1, M8, S8));
 	TestTrue(TEXT("temporal SNR unchanged by analog gain (10%)"), Within(S8, S1, 0.10));
 	TestTrue(TEXT("mean DN scales 8x (2%)"), Within(M8, 8.0 * M1, 0.02));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsNaNGuardTest, "CamSim.Sensor.Physics.NegativeElectronsStayFinite",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsNaNGuardTest::RunTest(const FString& Parameters)
+{
+	// PRNU 0.5 at 1000 e: ~2% of pixels have e1 < 0 (1 + 0.5 G < 0 for G < -2). The shot-noise sqrt
+	// and every clamp must still see finite values (FMath::Clamp(NaN) differs from HLSL clamp).
+	constexpr int32 W = 256, H = 256;
+	FSensorFrameParams P = PhotonParams(1000.0f);
+	P.Prnu = 0.5f;
+	const TArray<float> D = Detect(1.0f, W, H, P, 1);
+	int32 Bad = 0, Zero = 0;
+	for (float V : D) { Bad += !FMath::IsFinite(V) || V < 0.0f || V > P.AdcMax; Zero += V == 0.0f; }
+	AddInfo(FString::Printf(TEXT("Prnu 0.5: %d of %d pixels clipped to 0, %d non-finite or out of range"), Zero, W * H, Bad));
+	TestEqual(TEXT("every DN finite and within [0, AdcMax]"), Bad, 0);
+	TestTrue(TEXT("negative e1 pixels exist (~2%)"), Zero > W * H / 100);
+
+	// A NaN signal is treated as 0 for both detector types.
+	for (uint32 Type : { 0u, 1u })
+	{
+		FSensorFrameParams Q = P; Q.DetectorType = Type;
+		const float Dn = CamSimSensorRef::DetectPixel(NAN, 3, 5, 0, Q);
+		TestTrue(FString::Printf(TEXT("type %u: NaN signal -> finite DN (%f)"), Type, Dn), FMath::IsFinite(Dn) && Dn >= 0.0f && Dn <= Q.AdcMax);
+		TestEqual(FString::Printf(TEXT("type %u: NaN signal reads as 0"), Type), Dn, CamSimSensorRef::DetectPixel(0.0f, 3, 5, 0, Q));
+	}
 	return true;
 }

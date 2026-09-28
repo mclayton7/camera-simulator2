@@ -27,6 +27,8 @@ namespace CamSimSensorRef
 	};
 
 	float Sanitize(float V);
+	/** Soft highlight knee, identity below K; for X > K:
+	 *  K + (1 - K) * (1 - exp(-(X - K) / (1 - K))) / (1 - exp(-1)), so Knee(1) = 1. */
 	float Knee(float X, float K);
 	float Oetf709(float L);
 
@@ -34,8 +36,8 @@ namespace CamSimSensorRef
 	 *  Photon (DetectorType 0), streams offset by Channel * 16:
 	 *    e  = Signal * PhotonGain * FullWellE
 	 *    e1 = e * (1 + Prnu * G(x,y,Fixed,1))
-	 *    e2 = e1 + sqrt(max(e1, 0)) * G(x,y,Frame,2)
-	 *    e3 = e2 + DarkE + DsnuE * G(x,y,Fixed,3)
+	 *    e2 = e1 + DarkE;  e2 += sqrt(max(e2, 0)) * G(x,y,Frame,2)        (shot noise on signal + dark)
+	 *    e3 = e2 + DsnuE * G(x,y,Fixed,3)
 	 *    e4 = e3 + ReadNoiseE * G(x,y,Frame,4)
 	 *    e5 = clamp(e4, 0, FullWellE) * AnalogGain
 	 *    DN = clamp(floor(e5 * AdcMax / FullWellE + 0.5), 0, AdcMax)
@@ -43,7 +45,8 @@ namespace CamSimSensorRef
 	 *    v  = Signal * PhotonGain + TemporalNoise*G(x,y,Frame,5) + PixelFpn*G(x,y,Fixed,6)
 	 *         + ColumnFpn*G(x,0,Fixed,7) + RowFpn*G(0,y,Fixed,8)
 	 *    DN = clamp(floor(v * AdcMax + 0.5), 0, AdcMax)
-	 *  Defects (both): u = Uniform(Hash(x,y,Fixed,Seed,9)); u < HotFraction -> AdcMax; u > 1 - DeadFraction -> 0. */
+	 *  Defects (both): u = Uniform(Hash(x,y,Fixed,Seed,2*9)); u < HotFraction -> AdcMax; u > 1 - DeadFraction -> 0.
+	 *  A NaN signal is treated as 0 (no clamp ever sees NaN). */
 	float DetectPixel(float Signal, int32 X, int32 Y, uint32 Channel, const FSensorFrameParams& P);
 
 	/** DetectPixel over a planar image of Channels (1 or 3) channels; returns planar DN. */

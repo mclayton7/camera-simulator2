@@ -35,8 +35,8 @@ bool FSensorRefEoGreyTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("black -> Y 16"), (int32)R0.Nv12[0], 16);
 	TestEqual(TEXT("black chroma 128"), (int32)R0.Nv12[8 * 4], 128);
 	const auto R1 = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(100, 100, 100)), 8, 4, P);
-	TestEqual(TEXT("over full well clips to Knee(1)"), (int32)R1.Nv12[0],
-		ToY(CamSimSensorRef::Oetf709(CamSimSensorRef::Knee(1.0f, P.KneeStart))));
+	TestEqual(TEXT("over full well clips to full scale -> Y 235"), (int32)R1.Nv12[0], 235);
+	TestEqual(TEXT("normalised knee: Knee(1) = 1"), CamSimSensorRef::Knee(1.0f, P.KneeStart), 1.0f, 1e-6f);
 	const float Grey = 0.18f;   // 45.9 DN -> 46
 	const auto R2 = CamSimSensorRef::Run(Solid(8, 4, FLinearColor(Grey, Grey, Grey)), 8, 4, P);
 	TestEqual(TEXT("0.18 through the ADC and BT.709 OETF"), (int32)R2.Nv12[0], ToY(CamSimSensorRef::Oetf709(Adc(Grey, P))));
@@ -51,10 +51,7 @@ bool FSensorRefEoAnalogGainTest::RunTest(const FString& Parameters)
 	FSensorFrameParams A = Noiseless(); A.PhotonGain = 0.25f;
 	FSensorFrameParams B = Noiseless(); B.PhotonGain = 0.125f; B.AnalogGain = 2.0f;
 	const auto Scene = Solid(8, 4, FLinearColor(0.7f, 1.3f, 2.1f));
-	const auto Ra = CamSimSensorRef::Run(Scene, 8, 4, A), Rb = CamSimSensorRef::Run(Scene, 8, 4, B);
-	int32 MaxDiff = 0;
-	for (int32 I = 0; I < Ra.Nv12.Num(); ++I) MaxDiff = FMath::Max(MaxDiff, FMath::Abs((int32)Ra.Nv12[I] - (int32)Rb.Nv12[I]));
-	TestTrue(FString::Printf(TEXT("same image within 1 DN (max %d)"), MaxDiff), MaxDiff <= 1);
+	TestTrue(TEXT("same image"), CamSimSensorRef::Run(Scene, 8, 4, A).Nv12 == CamSimSensorRef::Run(Scene, 8, 4, B).Nv12);
 	return true;
 }
 

@@ -13,8 +13,9 @@ namespace CamSimSensorRef
 
 	float Knee(float X, float K)
 	{
+		// Normalised so [K, 1] maps onto [K, 1]: full scale (DN = AdcMax) reaches white.
 		if (X <= K || K >= 1.0f) return X;
-		return K + (1.0f - K) * (1.0f - FMath::Exp(-(X - K) / (1.0f - K)));
+		return K + (1.0f - K) * (1.0f - FMath::Exp(-(X - K) / (1.0f - K))) / (1.0f - FMath::Exp(-1.0f));
 	}
 
 	float Oetf709(float L)
@@ -26,6 +27,9 @@ namespace CamSimSensorRef
 	float DetectPixel(float Signal, int32 X, int32 Y, uint32 Channel, const FSensorFrameParams& P)
 	{
 		using namespace CamSimHash;
+		// NaN guard: FMath::Clamp(NaN) returns the upper bound on the CPU but HLSL clamp returns 0.
+		// Everything below is finite for a finite signal (Gaussians are bounded), so guard the input.
+		if (FMath::IsNaN(Signal)) Signal = 0.0f;
 		const uint32 Ux = static_cast<uint32>(X), Uy = static_cast<uint32>(Y);
 		const uint32 Fixed = FixedFrame, Frame = P.FrameIndex, Seed = P.Seed;
 		float Dn;
@@ -34,8 +38,9 @@ namespace CamSimSensorRef
 			const uint32 Base = Channel * 16u;
 			const float E  = Signal * P.PhotonGain * P.FullWellE;
 			const float E1 = E * (1.0f + P.Prnu * Gaussian(Ux, Uy, Fixed, Seed, Base + 1u));
-			const float E2 = E1 + FMath::Sqrt(FMath::Max(E1, 0.0f)) * Gaussian(Ux, Uy, Frame, Seed, Base + 2u);
-			const float E3 = E2 + P.DarkE + P.DsnuE * Gaussian(Ux, Uy, Fixed, Seed, Base + 3u);
+			float E2 = E1 + P.DarkE;
+			E2 += FMath::Sqrt(FMath::Max(E2, 0.0f)) * Gaussian(Ux, Uy, Frame, Seed, Base + 2u);   // shot: signal + dark
+			const float E3 = E2 + P.DsnuE * Gaussian(Ux, Uy, Fixed, Seed, Base + 3u);
 			const float E4 = E3 + P.ReadNoiseE * Gaussian(Ux, Uy, Frame, Seed, Base + 4u);
 			const float E5 = FMath::Clamp(E4, 0.0f, P.FullWellE) * P.AnalogGain;
 			Dn = FMath::Clamp(FMath::FloorToFloat(E5 * P.AdcMax / P.FullWellE + 0.5f), 0.0f, P.AdcMax);
@@ -49,7 +54,7 @@ namespace CamSimSensorRef
 				+ P.RowFpn * Gaussian(0u, Uy, Fixed, Seed, 8u);
 			Dn = FMath::Clamp(FMath::FloorToFloat(V * P.AdcMax + 0.5f), 0.0f, P.AdcMax);
 		}
-		const float U = Uniform(Hash(Ux, Uy, Fixed, Seed, 9u));
+		const float U = Uniform(Hash(Ux, Uy, Fixed, Seed, 2u * 9u));   // raw draw of stream 9: sub-stream 18
 		if (U < P.HotFraction) return P.AdcMax;
 		if (U > 1.0f - P.DeadFraction) return 0.0f;
 		return Dn;

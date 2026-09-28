@@ -104,11 +104,19 @@ noisy, as real cameras do. `FSensorFrameParams` carries both gains.
 
 ```
 e1 = e × (1 + prnu·n1)                      fixed
-e2 = e1 + sqrt(max(e1,0))·n2                temporal (shot)
-e3 = e2 + dark_current_e_s·t_int + dsnu_e·n3    n3 fixed
+e2 = e1 + dark_current_e_s·t_int            dark signal
+e2 = e2 + sqrt(max(e2,0))·n2                temporal (shot, on signal + dark)
+e3 = e2 + dsnu_e·n3                         n3 fixed
 e4 = e3 + read_noise_e·n4                   temporal
 e5 = clamp(e4, 0, full_well_e) × analog_gain
 ```
+
+Noise: `n_s` is the Box-Muller Gaussian of hash stream `s`, `u = (float(h >> 9) + 0.5) / 2^23`
+(exact in float32, strictly inside (0,1)). Stream `s` owns hash sub-streams `2s` and `2s+1`; a raw
+uniform draw of stream `s` uses sub-stream `2s` (defects: `Uniform(Hash(x,y,Fixed,Seed,2·9))`).
+A NaN signal is treated as 0, so no clamp ever receives NaN (CPU and HLSL clamp disagree on NaN).
+*Settled during implementation (3B.2 Task 7 review): dark current carries shot noise, the 23-bit
+uniform, the sub-stream rule, the NaN guard, and the normalised display knee below.*
 
 **Microbolometer (`lwir_uncooled` only; fractions of full scale until Milestone 4 supplies
 temperatures):**
@@ -132,7 +140,9 @@ reads full scale, dead reads 0.
 
 `DN = round(e5 × (2^adc_bits − 1) / full_well_e)` (CMOS) or `round(v × (2^adc_bits − 1))`
 (microbolometer), clamped to `[0, 2^adc_bits − 1]`, using `floor(x + 0.5)`. The display stage
-(3B.1) takes `DN / (2^adc_bits − 1)` as its linear input.
+(3B.1) takes `DN / (2^adc_bits − 1)` as its linear input. The EO knee is normalised on that bounded domain so
+`[K, 1]` maps onto `[K, 1]` and full scale reaches white: for `x > K`,
+`Knee(x) = K + (1−K)·(1 − exp(−(x−K)/(1−K))) / (1 − exp(−1))`; `x ≤ K` is unchanged.
 
 ## Presets and configuration
 

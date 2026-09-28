@@ -42,8 +42,9 @@ float Sanitize(float V) { return (V != V) ? 0.0 : clamp(V, 0.0, 65504.0); }
 
 float Knee(float X, float K)
 {
+	// Normalised so [K, 1] maps onto [K, 1] (CamSimSensorRef::Knee).
 	if (X <= K || K >= 1.0) return X;
-	return K + (1.0 - K) * (1.0 - exp(-(X - K) / (1.0 - K)));
+	return K + (1.0 - K) * (1.0 - exp(-(X - K) / (1.0 - K))) / (1.0 - exp(-1.0));
 }
 
 float Oetf709(float L)
