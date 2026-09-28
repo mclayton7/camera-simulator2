@@ -40,6 +40,58 @@ bool FSensorExposureYamlTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// 3B.2: the legacy CPU sensor effect fields (and the quality-preset system) are
+// gone. A yaml that still sets them must report each as an unknown key instead
+// of silently doing nothing.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorLegacyEffectKeysUnknownTest,
+	"CamSim.Sensor.Config.LegacyEffectKeysUnknown",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSensorLegacyEffectKeysUnknownTest::RunTest(const FString& Parameters)
+{
+	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT(
+		"sensor_quality:\n"
+		"  preset: high\n"
+		"optical_realism:\n"
+		"  lens_distortion: true\n"
+		"  chromatic_aberration: true\n"
+		"sensor_modes:\n"
+		"  eo:\n"
+		"    noise_netd: 0.02\n"
+		"    fixed_pattern_noise: 0.02\n"
+		"    vignetting: 0.3\n"
+		"    scan_lines: true\n"
+		"    gaussian_sigma: 0.5\n"
+		"    defect_pixel_count: 10\n"
+		"    quantization_bits: 6\n"
+		"    ac_banding_amplitude: 2.0\n"
+		"    thermal_drift_enabled: true\n"
+		"    sun_glint_intensity: 1.0\n"
+		"    contrast: 1.2\n"));
+
+	auto HasUnknown = [&Cfg](const TCHAR* Needle)
+	{
+		return Cfg.UnknownYamlKeys.ContainsByPredicate(
+			[Needle](const FString& K) { return K.Contains(Needle); });
+	};
+
+	TestTrue(TEXT("sensor_quality unknown"),        HasUnknown(TEXT("sensor_quality")));
+	TestTrue(TEXT("lens_distortion unknown"),        HasUnknown(TEXT("lens_distortion")));
+	TestTrue(TEXT("chromatic_aberration unknown"),   HasUnknown(TEXT("chromatic_aberration")));
+	TestTrue(TEXT("noise_netd unknown"),             HasUnknown(TEXT("noise_netd")));
+	TestTrue(TEXT("fixed_pattern_noise unknown"),    HasUnknown(TEXT("fixed_pattern_noise")));
+	TestTrue(TEXT("vignetting unknown"),             HasUnknown(TEXT("vignetting")));
+	TestTrue(TEXT("scan_lines unknown"),             HasUnknown(TEXT("scan_lines")));
+	TestTrue(TEXT("gaussian_sigma unknown"),         HasUnknown(TEXT("gaussian_sigma")));
+	TestTrue(TEXT("defect_pixel_count unknown"),     HasUnknown(TEXT("defect_pixel_count")));
+	TestTrue(TEXT("quantization_bits unknown"),      HasUnknown(TEXT("quantization_bits")));
+	TestTrue(TEXT("ac_banding_amplitude unknown"),   HasUnknown(TEXT("ac_banding_amplitude")));
+	TestTrue(TEXT("thermal_drift_enabled unknown"),  HasUnknown(TEXT("thermal_drift_enabled")));
+	TestTrue(TEXT("sun_glint_intensity unknown"),    HasUnknown(TEXT("sun_glint_intensity")));
+	TestTrue(TEXT("contrast unknown"),               HasUnknown(TEXT("contrast")));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorNoNvgTest,
 	"CamSim.Sensor.Config.NvgRemoved",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

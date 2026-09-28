@@ -47,16 +47,14 @@ bool FCamSimConfigSensorModeDefaultsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Has EO config"), Cfg.SensorModeConfigs.Contains(ESensorMode::EO));
 	TestTrue(TEXT("Has IR config"), Cfg.SensorModeConfigs.Contains(ESensorMode::IR));
 
-	// EO should have zero NETD
+	// IR should have AGC enabled (percentile-stretch), EO should not (GPU sensor path, 3B.2)
 	if (const FSensorModeConfig* Eo = Cfg.SensorModeConfigs.Find(ESensorMode::EO))
 	{
-		TestTrue(TEXT("EO NETD == 0"), FMath::IsNearlyZero(Eo->NETD));
+		TestFalse(TEXT("EO AGC disabled"), Eo->bAGCEnabled);
 	}
-
-	// IR should have nonzero NETD
 	if (const FSensorModeConfig* Ir = Cfg.SensorModeConfigs.Find(ESensorMode::IR))
 	{
-		TestTrue(TEXT("IR NETD > 0"), Ir->NETD > 0.0f);
+		TestTrue(TEXT("IR AGC enabled"), Ir->bAGCEnabled);
 	}
 
 	return true;
@@ -72,10 +70,6 @@ bool FCamSimConfigLoadSuccessTest::RunTest(const FString& Parameters)
 
 	// bLoadedSuccessfully should be true even with defaults (defaults are valid)
 	TestTrue(TEXT("Config loaded successfully"), Cfg.bLoadedSuccessfully);
-
-	// Quality profiles should be populated
-	TestTrue(TEXT("Has medium quality profile"),
-		Cfg.SensorQualityProfiles.Contains(TEXT("medium")));
 
 	return true;
 }

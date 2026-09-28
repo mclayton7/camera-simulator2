@@ -78,16 +78,6 @@ sensor_fov_presets:
 max_entities: 500
 use_instanced_rendering: true
 
-sensor_quality:
-  preset: medium
-  noise_scale: 1.0
-  vignetting_scale: 1.0
-  scan_line_scale: 1.0
-  atmosphere_scale: 1.0
-  blur_radius: 0
-  contrast: 1.0
-  brightness_bias: 0.0
-
 output_views:
   - view_id: 0
     enabled: true
@@ -134,31 +124,25 @@ scenario:
 
 sensor_modes:
   eo:
-    noise_netd: 0.0
-    fixed_pattern_noise: 0.0
-    vignetting: 0.10
-    scan_lines: false
-    scan_line_strength: 0.0
-    ir_extinction_coeff: 0.0
-    atmospheric_visibility_m: 0.0
-    atmosphere_strength: 1.0
-    color_temperature_k: 6500.0
-    contrast: 1.0
-    brightness_bias: 0.0
-    blur_radius: 0
+    exposure:
+      min_gain_ev: -20
+      max_gain_ev: -12.5
+      target_grey: 0.18
+      highlight_percentile: 0.99
+      lag_frames: 2
+      manual_gain_ev: -12
   ir:
-    noise_netd: 0.01
-    fixed_pattern_noise: 0.005
-    vignetting: 0.20
-    scan_lines: false
-    scan_line_strength: 0.0
-    ir_extinction_coeff: 0.00001
-    atmospheric_visibility_m: 12000.0
-    atmosphere_strength: 0.75
-    color_temperature_k: 0.0
-    contrast: 1.1
-    brightness_bias: -0.03
-    blur_radius: 0
+    agc_enabled: true
+    agc_low_percentile: 0.01
+    agc_high_percentile: 0.99
+    agc_lag_frames: 2
+    exposure:
+      min_gain_ev: -20
+      max_gain_ev: -6
+      target_grey: 0.18
+      highlight_percentile: 0.99
+      lag_frames: 2
+      manual_gain_ev: -12
 
 security_metadata:
   classification: "UNCLASSIFIED"
@@ -317,46 +301,25 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 | `gimbal_yaw_max` | float | `180.0` | Right yaw limit in degrees relative to platform heading. |
 | `sensor_fov_presets` | float[] | `[60.0, 20.0, 5.0]` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0-1.0) selects the preset by index. A preset is applied only when the gain selects a different one, so a host that resends the same gain keeps a View Definition FOV; a View Definition in the same frame as a preset change wins. |
 
-### Sensor Quality (Phase D1)
-
-`sensor_quality` is a global profile applied on top of per-waveband `sensor_modes`
-parameters. Use it to quickly shift output quality/fidelity without editing each
-mode.
-
-| Field | Type | Default | Env var | Description |
-|-------|------|---------|---------|-------------|
-| `sensor_quality.preset` | string | `"medium"` | `CAMSIM_SENSOR_QUALITY_PRESET` | One of `low`, `medium`, `high`, `ultra`, `custom`. |
-| `sensor_quality.noise_scale` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_NOISE_SCALE` | Multiplier for NETD + fixed-pattern noise amplitudes. |
-| `sensor_quality.vignetting_scale` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_VIGNETTING_SCALE` | Multiplier for vignette strength. |
-| `sensor_quality.scan_line_scale` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_SCANLINE_SCALE` | Multiplier for scan-line effect strength. |
-| `sensor_quality.atmosphere_scale` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_ATMOSPHERE_SCALE` | Multiplier for atmospheric attenuation/extinction terms. |
-| `sensor_quality.blur_radius` | int | `0` | `CAMSIM_SENSOR_QUALITY_BLUR_RADIUS` | Additional post-effect box-blur radius in pixels. |
-| `sensor_quality.contrast` | float | `1.0` | `CAMSIM_SENSOR_QUALITY_CONTRAST` | Global contrast multiplier. |
-| `sensor_quality.brightness_bias` | float | `0.0` | `CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS` | Global brightness offset in normalized range `[-1, 1]`. |
-
 ### Sensor Modes (per-waveband)
 
-Per-waveband CPU-side post-processing parameters. Configured under `sensor_modes.eo`
+Per-waveband GPU sensor path parameters. Configured under `sensor_modes.eo`
 and `sensor_modes.ir`. (NVG, formerly `sensor_modes.nvg`/SensorId 2, was removed —
-ROADMAP 3B.2.)
+ROADMAP 3B.2. The legacy CPU sensor effect fields — noise, vignetting, scan lines,
+IR extinction/atmosphere, quantization, defect pixels, MTF blur, AC banding, IR
+pointer overlay, thermal drift, rolling shutter, vibration, gain/offset jitter,
+sun glint, contrast/brightness bias — and `sensor_quality`/`sensor_quality_profiles`
+were also removed in 3B.2; see "Removed in 3B.2" below.)
 
 | Field | Type | EO default | IR default | Description |
 |-------|------|------------|------------|-------------|
-| `noise_netd` | float | `0.0` | `0.01` | NETD noise amplitude. |
-| `fixed_pattern_noise` | float | `0.0` | `0.005` | Fixed pattern noise amplitude. |
-| `vignetting` | float | `0.10` | `0.20` | Vignette edge darkening strength. |
-| `scan_lines` | bool | `false` | `false` | Enable scan line overlay. |
-| `scan_line_strength` | float | `0.0` | `0.0` | Scan line intensity. |
-| `ir_extinction_coeff` | float | `0.0` | `0.00001` | IR atmospheric extinction coefficient. |
-| `atmospheric_visibility_m` | float | `0.0` | `12000` | Visibility range in metres. |
-| `atmosphere_strength` | float | `1.0` | `0.75` | Atmosphere effect multiplier. |
-| `color_temperature_k` | float | `6500` | `0.0` | White balance in Kelvin. |
-| `contrast` | float | `1.0` | `1.1` | Contrast multiplier. |
-| `brightness_bias` | float | `0.0` | `-0.03` | Brightness offset `[-1, 1]`. |
-| `blur_radius` | int | `0` | `0` | Post-effect blur in pixels. |
 | `signal_weight_r` | float | `0.2126` | `0.2126` | Detector spectral response: signal = dot(scene RGB, signal_weight_*). Default is BT.709 luminance. No env override. |
 | `signal_weight_g` | float | `0.7152` | `0.7152` | See `signal_weight_r`. No env override. |
 | `signal_weight_b` | float | `0.0722` | `0.0722` | See `signal_weight_r`. No env override. |
+| `agc_enabled` | bool | `false` | `true` | Enable histogram-stretch AGC (percentile band mapped to output range); typically IR only. |
+| `agc_low_percentile` | float | `0.01` | `0.01` | Black-point percentile `[0, 1]` when AGC is enabled. |
+| `agc_high_percentile` | float | `0.99` | `0.99` | White-point percentile `[0, 1]` when AGC is enabled. |
+| `agc_lag_frames` | int | `0` | `2` | Frames for AGC convergence (`0` = instant). IR env override: `CAMSIM_IR_AGC_LAG_FRAMES`. |
 
 **`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the gain to `[min_gain_ev, max_gain_ev]`. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_gain_ev` (mean luma 26). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
 
@@ -536,14 +499,6 @@ CAMSIM_READBACK_FORMAT=auto
 CAMSIM_ENCODER_WATCHDOG_POLICY=reconnect
 CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS=150
 CAMSIM_MAX_ENTITIES=500
-CAMSIM_SENSOR_QUALITY_PRESET=medium
-CAMSIM_SENSOR_QUALITY_NOISE_SCALE=1.0
-CAMSIM_SENSOR_QUALITY_VIGNETTING_SCALE=1.0
-CAMSIM_SENSOR_QUALITY_SCANLINE_SCALE=1.0
-CAMSIM_SENSOR_QUALITY_ATMOSPHERE_SCALE=1.0
-CAMSIM_SENSOR_QUALITY_BLUR_RADIUS=0
-CAMSIM_SENSOR_QUALITY_CONTRAST=1.0
-CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS=0.0
 CAMSIM_GROUND_TRUTH_ENABLED=0
 CAMSIM_GROUND_TRUTH_PATH=camsim_groundtruth.jsonl
 CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES=1
@@ -676,6 +631,22 @@ render:
 - `laser_designator.*` / `CAMSIM_LASER_*` — the drawn laser spot. DIS Designator PDUs are still received and tracked.
 - `phase18.precipitation`, `phase18.rain_intensity`, `phase18.snow_intensity` / `CAMSIM_PRECIPITATION`, `CAMSIM_RAIN_INTENSITY`, `CAMSIM_SNOW_INTENSITY` — the CPU precipitation overlay. CIGI weather and UE/Niagara effects are unaffected.
 - `randomization.randomize_weather`, `randomization.weather_probability` — they only toggled the precipitation overlay.
+- `sensor_quality.*` / `CAMSIM_SENSOR_QUALITY_PRESET`, `CAMSIM_SENSOR_QUALITY_NOISE_SCALE`, `CAMSIM_SENSOR_QUALITY_VIGNETTING_SCALE`, `CAMSIM_SENSOR_QUALITY_SCANLINE_SCALE`, `CAMSIM_SENSOR_QUALITY_ATMOSPHERE_SCALE`, `CAMSIM_SENSOR_QUALITY_BLUR_RADIUS`, `CAMSIM_SENSOR_QUALITY_CONTRAST`, `CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS`, `CAMSIM_SENSOR_QUALITY_GAUSSIAN_SIGMA_SCALE` — the global quality-preset system (low/medium/high/ultra/custom) applied on top of the legacy CPU sensor effects, which are also gone.
+- `sensor_quality_profiles.*` — user-defined quality profiles for the same removed system.
+- `sensor_modes.<mode>.{noise_netd, fixed_pattern_noise, vignetting, scan_lines, scan_line_strength, ir_extinction_coeff, atmospheric_visibility_m, atmosphere_strength, color_temperature_k, contrast, brightness_bias, blur_radius}` — the legacy CPU sensor noise/vignette/scan-line/atmosphere/tone model. The GPU sensor path models noise, detector response and AE directly.
+- `sensor_modes.<mode>.{agc_manual_level, agc_manual_gain}` — manual AGC override; the GPU AGC is either on (percentile stretch) or off (uses `exposure`).
+- `sensor_modes.<mode>.{quantization_bits, quantization_dither}` / no env override — CPU quantization/dither simulation.
+- `sensor_modes.<mode>.{defect_pixel_count, defect_hot_ratio, defect_seed}` — CPU hot/dead pixel defect seeding.
+- `sensor_modes.<mode>.{gaussian_sigma, ac_banding_amplitude, ac_banding_frequency}` — CPU MTF blur and AC banding artifacts.
+- `sensor_modes.<mode>.{ir_pointer_enabled, ir_pointer_x, ir_pointer_y, ir_pointer_radius, ir_pointer_intensity}` — the IR laser-pointer dot overlay (already unreachable after NVG removal).
+- `sensor_modes.ir.{thermal_drift_enabled, thermal_drift_rate, nuc_interval_sec}` / `CAMSIM_IR_THERMAL_DRIFT_ENABLED`, `CAMSIM_IR_THERMAL_DRIFT_RATE`, `CAMSIM_IR_NUC_INTERVAL_SEC` — CPU thermal drift/NUC simulation.
+- `sensor_modes.ir.{gain_jitter, offset_jitter}` / `CAMSIM_IR_GAIN_JITTER`, `CAMSIM_IR_OFFSET_JITTER` — CPU per-frame gain/offset noise.
+- `sensor_modes.eo.rolling_shutter_strength` / `CAMSIM_EO_ROLLING_SHUTTER_STRENGTH` — CPU rolling-shutter blend.
+- `sensor_modes.eo.{sun_glint_intensity, sun_glint_threshold, sun_glint_spread}` / `CAMSIM_EO_SUN_GLINT_INTENSITY`, `CAMSIM_EO_SUN_GLINT_THRESHOLD`, `CAMSIM_EO_SUN_GLINT_SPREAD` — CPU sun-glint highlight boost.
+- `sensor_modes.<mode>.vibration_amplitude` / `CAMSIM_IR_VIBRATION_AMPLITUDE`, `CAMSIM_EO_VIBRATION_AMPLITUDE` — CPU subpixel platform-vibration jitter.
+- `optical_realism.{lens_distortion, distortion_k1, distortion_k2}` / `CAMSIM_DISTORTION_K1`, `CAMSIM_DISTORTION_K2` — CPU-side Brown-Conrady lens distortion; never applied to the rendered frame.
+- `optical_realism.{chromatic_aberration, chromatic_aberration_intensity}` — the GPU scene-fringe post-process; `optical_realism`'s other GPU effects (motion blur, bloom, DoF, lens flare) are unaffected.
+- `phase18.dynamic_ir_extinction` / `CAMSIM_DYNAMIC_IR_EXTINCTION` — toggled the (now-removed) CPU IR extinction coefficient from `visibility_range_m`; `phase18.visibility_range_m` / `CAMSIM_VISIBILITY_RANGE_M` itself is unaffected (still used for scenario randomization jitter).
 
 **Render resolution (TSR).** `rendering_quality.tsr_screen_percentage`
 (`CAMSIM_TSR_SCREEN_PERCENTAGE`, default `100`) renders below the output size and lets TSR

@@ -22,7 +22,6 @@ bool FPhase18ConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("SecondFog off by default"),            Cfg.Phase18.bSecondFog);
 	TestFalse(TEXT("GodRays off by default"),              Cfg.Phase18.bGodRays);
 	TestFalse(TEXT("AtmosphericScattering off by default"),Cfg.Phase18.bAtmosphericScattering);
-	TestFalse(TEXT("DynamicIRExtinction off by default"),  Cfg.Phase18.bDynamicIRExtinction);
 
 	TestEqual(TEXT("VisibilityRangeM default"),  Cfg.Phase18.VisibilityRangeM, 10000.0f);
 	TestEqual(TEXT("GodRayIntensity default"),   Cfg.Phase18.GodRayIntensity,  1.0f);

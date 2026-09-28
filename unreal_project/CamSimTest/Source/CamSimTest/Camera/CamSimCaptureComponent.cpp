@@ -199,11 +199,6 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 			PP.bOverride_BloomThreshold = true;
 			PP.BloomThreshold = O.BloomThreshold;
 		}
-		if (O.bChromaticAberration)  // 15D
-		{
-			PP.bOverride_SceneFringeIntensity = true;
-			PP.SceneFringeIntensity = O.ChromaticAberrationIntensity;
-		}
 		if (O.bDepthOfField)  // 15E
 		{
 			PP.bOverride_DepthOfFieldFstop = true;
@@ -227,8 +222,8 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 			PP.bOverride_LensFlareThreshold = true;
 			PP.LensFlareThreshold = O.LensFlareThreshold;
 		}
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: optical realism enabled (blur=%d bloom=%d CA=%d DoF=%d flare=%d distort=%d)"),
-			O.bMotionBlur, O.bBloom, O.bChromaticAberration, O.bDepthOfField, O.bLensFlare, O.bLensDistortion);
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: optical realism enabled (blur=%d bloom=%d DoF=%d flare=%d)"),
+			O.bMotionBlur, O.bBloom, O.bDepthOfField, O.bLensFlare);
 	}
 
 	// ROADMAP 3B: the sensor owns exposure. UE runs manual so its eye adaptation

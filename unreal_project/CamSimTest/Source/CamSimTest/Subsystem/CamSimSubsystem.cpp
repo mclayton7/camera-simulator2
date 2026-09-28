@@ -405,7 +405,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		TEXT("CamSim startup diagnostics: platform=%s rhi=%s ffmpeg(libavcodec=%d.%d.%d libswscale=%d.%d.%d) ")
 		TEXT("video=udp://%s:%d cigi_in=%s:%d cigi_resp=%s:%d capture=%dx%d@%.1ffps ")
 		TEXT("ready_polls=%d bitrate=%d preset=%s tune=%s watchdog_policy=%s watchdog_ticks=%d ")
-		TEXT("sensor_quality=%s views=%d ground_truth=%d"),
+		TEXT("views=%d ground_truth=%d"),
 		ANSI_TO_TCHAR(FPlatformProperties::IniPlatformName()), *RHIName,
 		LIBAVCODEC_VERSION_MAJOR, LIBAVCODEC_VERSION_MINOR, LIBAVCODEC_VERSION_MICRO,
 		LIBSWSCALE_VERSION_MAJOR, LIBSWSCALE_VERSION_MINOR, LIBSWSCALE_VERSION_MICRO,
@@ -416,7 +416,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Config.ReadbackReadyPolls,
 		Config.VideoBitrate, *Config.H264Preset, *Config.H264Tune,
 		WatchdogPolicyToString(Config.EncoderWatchdogPolicy), Config.EncoderWatchdogIntervalTicks,
-		*Config.SensorQualityPreset, Config.OutputViews.Num(), Config.MLTraining.bEnabled ? 1 : 0);
+		Config.OutputViews.Num(), Config.MLTraining.bEnabled ? 1 : 0);
 
 	// Initialise MISB ST 0102 security metadata for KLV output (Phase 12A)
 	FKlvBuilder::SetSecurityMetadata(

@@ -324,20 +324,6 @@ sensor_fov_presets:
   - 20.0
   - 5.0
 
-# --- Sensor Quality Profile ---
-# Global quality profile applied on top of per-waveband sensor_modes.
-# Preset: low|medium|high|ultra|custom. Numeric overrides refine preset.
-# Env: CAMSIM_SENSOR_QUALITY_PRESET (and per-field env vars)
-sensor_quality:
-  preset: medium
-  noise_scale: 1.0
-  vignetting_scale: 1.0
-  scan_line_scale: 1.0
-  atmosphere_scale: 1.0
-  blur_radius: 0
-  contrast: 1.0
-  brightness_bias: 0.0
-
 # --- Output Views (multi-stream) ---
 # Optional fan-out of the captured frame to multiple MPEG-TS outputs.
 # Empty/omitted = single stream using root multicast_*/video settings.
@@ -548,30 +534,6 @@ randomization:
 # See docs/configuration.md for the full field reference table.
 sensor_modes:
   eo:
-    noise_netd: 0.0
-    fixed_pattern_noise: 0.0
-    vignetting: 0.10
-    scan_lines: false
-    scan_line_strength: 0.0
-    ir_extinction_coeff: 0.0
-    atmospheric_visibility_m: 0.0
-    atmosphere_strength: 1.0
-    color_temperature_k: 6500.0
-    contrast: 1.0
-    brightness_bias: 0.0
-    blur_radius: 0
-    # Phase 16 (disabled for EO)
-    agc_enabled: false
-    defect_pixel_count: 0
-    gaussian_sigma: 0.0
-    # 16H — Rolling shutter (EO only)
-    rolling_shutter_strength: 0.0  # 0 = global shutter; 0.5 = moderate; 1.0 = full
-    # 16I — Platform vibration (all modes)
-    vibration_amplitude: 0.0       # pixels, 0 = disabled
-    # 16K — Sun glint (EO only)
-    sun_glint_intensity: 0.0       # 0 = disabled
-    sun_glint_threshold: 220.0
-    sun_glint_spread: 2.0
     # ROADMAP 3B — auto-exposure (GPU sensor path), calibrated 2026-09-27 on the bench shots
     # (M1 Pro, SF). Scene median (log2 of absolute scene-linear luminance): daylight 10.9–12.4,
     # dawn 9.4, dusk 8.9, night_slant 6.6. target_grey 0.18 exposes the median to 18% grey
@@ -585,47 +547,11 @@ sensor_modes:
       lag_frames: 2
       manual_gain_ev: -12
   ir:
-    noise_netd: 0.01
-    fixed_pattern_noise: 0.005
-    vignetting: 0.20
-    scan_lines: false
-    scan_line_strength: 0.0
-    ir_extinction_coeff: 0.00001
-    atmospheric_visibility_m: 12000.0
-    atmosphere_strength: 0.75
-    color_temperature_k: 0.0
-    contrast: 1.1
-    brightness_bias: -0.03
-    blur_radius: 0
-    # 16A — Radiance-based AGC
+    # Radiance-based AGC (percentile stretch)
     agc_enabled: true
     agc_low_percentile: 0.01
     agc_high_percentile: 0.99
-    agc_manual_level: -1.0      # -1 = AGC mode; >=0 disables AGC
-    agc_manual_gain: 1.0
-    # 16B — Quantization
-    quantization_bits: 8        # 8 = no effect; 4-7 = visible quantization
-    quantization_dither: false
-    # 16C — Hot/dead pixels
-    defect_pixel_count: 150
-    defect_hot_ratio: 0.6
-    defect_seed: 42
-    # 16D — MTF Gaussian blur
-    gaussian_sigma: 0.5         # 0 = disabled; 0.5 = mild; 1.5 = poor optics
-    # 16F — AC banding
-    ac_banding_amplitude: 4.0   # DN, subtle artifact
-    ac_banding_frequency: 3.0   # cycles per frame height
-    # 16E — Thermal drift (IR only)
-    thermal_drift_enabled: true
-    thermal_drift_rate: 0.5     # DN/sec
-    nuc_interval_sec: 30.0      # auto-NUC reset interval (0 = no auto-NUC)
-    # 16G — AGC lag (IR)
     agc_lag_frames: 2           # frames for AGC convergence (0 = instant)
-    # 16I — Platform vibration
-    vibration_amplitude: 0.0    # pixels, 0 = disabled
-    # 16J — Sensor gain/offset noise (IR only)
-    gain_jitter: 0.005          # fractional gain variation per frame
-    offset_jitter: 1.0          # DN offset variation per frame
     # ROADMAP 3B — auto-exposure (GPU sensor path). Unused while agc_enabled is true
     # (the IR AGC stretches its percentile band instead); kept at the uncompensated defaults.
     exposure:
@@ -646,17 +572,10 @@ optical_realism:
   motion_blur: true
   motion_blur_amount: 0.5
   motion_blur_max: 5
-  # 15B Lens Distortion (CPU, Brown-Conrady radial model)
-  lens_distortion: false
-  distortion_k1: 0.0
-  distortion_k2: 0.0
   # 15C Bloom (GPU)
   bloom: true
   bloom_intensity: 0.675
   bloom_threshold: -1.0
-  # 15D Chromatic Aberration (GPU)
-  chromatic_aberration: false
-  chromatic_aberration_intensity: 0.0
   # 15E Depth of Field (GPU). focal_distance 0 = auto-focus from LOS range.
   depth_of_field: false
   focal_distance: 0.0
@@ -717,8 +636,7 @@ phase18:
   atmospheric_scattering: false
   rayleigh_scattering: 1.0   # multiplier on Rayleigh coefficient
   mie_scattering: 1.0        # multiplier on Mie coefficient
-  # 18K Dynamic IR extinction driven by atmospheric visibility range
-  dynamic_ir_extinction: false
+  # 18K Visibility range (metres), also used for scenario randomization jitter
   visibility_range_m: 10000.0
 
   # 18A/18B Volumetric cloud shadow (cloud actor must exist in the level)

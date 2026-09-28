@@ -193,11 +193,6 @@ struct FCamSimConfig
 	// Populated from "sensor_modes" YAML block; defaults applied if block is absent.
 	TMap<ESensorMode, FSensorModeConfig> SensorModeConfigs;
 
-	// Global quality profile applied to the sensor post-process pipeline.
-	FString SensorQualityPreset = TEXT("medium");
-	TMap<FString, FSensorQualityConfig> SensorQualityProfiles;
-	FSensorQualityConfig ActiveSensorQuality;
-
 	struct FOutputViewConfig
 	{
 		int32   ViewId = 0;
@@ -425,17 +420,10 @@ struct FCamSimConfig
 		bool  bMotionBlur = true;
 		float MotionBlurAmount = 0.5f;      // [0,1]
 		int32 MotionBlurMax = 5;            // max blur pixels
-		// 15B Lens Distortion (CPU-side Brown-Conrady)
-		bool  bLensDistortion = false;
-		float DistortionK1 = 0.0f;         // + barrel, - pincushion
-		float DistortionK2 = 0.0f;
 		// 15C Bloom
 		bool  bBloom = true;
 		float BloomIntensity = 0.675f;
 		float BloomThreshold = -1.0f;       // -1 = auto
-		// 15D Chromatic Aberration
-		bool  bChromaticAberration = false;
-		float ChromaticAberrationIntensity = 0.0f; // 0-5
 		// 15E Depth of Field
 		bool  bDepthOfField = false;
 		float FocalDistance = 0.0f;         // cm, 0 = auto-focus from LOS
@@ -538,9 +526,8 @@ struct FCamSimConfig
 		bool  bAtmosphericScattering = false;
 		float RayleighScattering     = 1.0f; // multiplier on Rayleigh coefficient
 		float MieScattering          = 1.0f; // multiplier on Mie coefficient
-		// 18K Dynamic IR extinction driven by atmospheric visibility
-		bool  bDynamicIRExtinction   = false;
-		float VisibilityRangeM       = 10000.0f; // metres — overrides sensor_modes IR coeff
+		// 18K Visibility range (metres), also used for scenario randomization jitter
+		float VisibilityRangeM       = 10000.0f;
 
 		// 18A/18B Volumetric cloud shadow strength (cloud actor exists in scene)
 		bool  bVolumetricClouds   = false;
