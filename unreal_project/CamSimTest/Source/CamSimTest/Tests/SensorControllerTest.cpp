@@ -19,7 +19,7 @@ namespace
 	{
 		FSensorModeConfig C;
 		C.Exposure.MinGainEv = -20.0f;
-		C.Exposure.MaxGainEv = -6.0f;
+		C.Exposure.MaxPhotonGainEv = -6.0f;
 		C.Exposure.TargetGrey = 0.18f;
 		C.Exposure.LagFrames = 0;
 		return C;
@@ -262,7 +262,7 @@ bool FSensorIrAgcToEoTest::RunTest(const FString& Parameters)
 	// The IR-AGC stretch factor must never leak into the AE loop's GainEv
 	// state: after IR(AGC) -> EO with no new histogram, the emitted gain
 	// must be exactly the EO AE gain from before the IR excursion, and it
-	// must stay within the EO camera's [MinGainEv, MaxGainEv].
+	// must stay within the EO camera's [MinGainEv, MaxPhotonGainEv].
 	FSensorController C;
 	FSensorModeConfig Cfg = EoCfg();
 	Cfg.bAGCEnabled = true;
@@ -296,12 +296,12 @@ bool FSensorIrAgcToEoTest::RunTest(const FString& Parameters)
 	}
 	TestEqual(TEXT("EO AE state preserved across IR excursion"), C.GetGainEv(), EoGain, FMath::Abs(EoGain) * 1e-5f + 1e-6f);
 	TestTrue(TEXT("within EO camera limits"),
-		C.GetGainEv() >= Cfg.Exposure.MinGainEv && C.GetGainEv() <= Cfg.Exposure.MaxGainEv);
+		C.GetGainEv() >= Cfg.Exposure.MinGainEv && C.GetGainEv() <= Cfg.Exposure.MaxPhotonGainEv);
 
 	// A post-switch EO histogram still snaps to its own target.
 	const float MedianLog2 = FSensorHistogram::BinCentreLog2(FSensorHistogram::BinOf(FMath::Exp2(10.0f)));
 	const float ExpectedEv = FMath::Clamp(FMath::Log2(Cfg.Exposure.TargetGrey) - MedianLog2,
-		Cfg.Exposure.MinGainEv, Cfg.Exposure.MaxGainEv);
+		Cfg.Exposure.MinGainEv, Cfg.Exposure.MaxPhotonGainEv);
 	const FSensorHistogram Eo2 = Flat(10.0f, 6);
 	FSensorControllerInput Eo2In = In(&Eo2, 6);
 	Eo2In.Mode = ESensorGraphMode::EO;

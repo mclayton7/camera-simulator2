@@ -607,6 +607,20 @@ Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
   `readback_format` / `CAMSIM_SWAP_RB_READBACK` / `CAMSIM_READBACK_FORMAT` are deleted
   (`readback_ready_polls` stays — the NV12 poll still uses it). `FrameGrabRequestQueue::DecidePoll`
   dropped its now-always-true `bNeedsGrab` parameter.
+- Task 4: legacy sensor effect config keys and the quality-preset system removed —
+  `FSensorModeConfig` trimmed to `SignalWeights`/`Exposure`/AGC only.
+- Task 5: sensor-class presets — `CamSimSensorPresets::Apply` (`Sensor/SensorPresets.h/.cpp`)
+  supplies `eo_hd_cmos`/`mwir_cooled`/`lwir_uncooled` optics/detector defaults;
+  `FSensorModeConfig` gains `Preset`/`Seed`/`Optics`/`Detector` (`FSensorOpticsConfig`,
+  `FSensorDetectorConfig`, `ESensorDetectorType`). `sensor_modes.<mode>.preset` (default
+  `eo_hd_cmos`/`mwir_cooled`) selects a preset; `optics:`/`detector:` blocks override
+  individual fields; `seed` sets the per-mode PCG noise stream. `exposure.max_gain_ev`
+  renamed to `exposure.max_photon_gain_ev` (the photon/analog gain split lands in Task
+  6; behaviour unchanged). `Validate()` reports an unknown preset, `full_well_e <= 0`,
+  `adc_bits` outside `[8, 16]`, negative noise/`f_number`, defect fractions outside
+  `[0, 0.01]`, and `|k1|`/`|k2| > 1`; an unknown preset keeps the mode's built-in preset
+  defaults. `deploy/camsim_config.yaml` and `docs/configuration.md` document the
+  preset table and override keys.
 
 ---
 

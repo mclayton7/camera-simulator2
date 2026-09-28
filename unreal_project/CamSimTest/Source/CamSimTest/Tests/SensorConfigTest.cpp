@@ -21,7 +21,7 @@ bool FSensorExposureYamlTest::RunTest(const FString& Parameters)
 		"    exposure:\n"
 		"      auto: false\n"
 		"      min_gain_ev: -18\n"
-		"      max_gain_ev: 7\n"
+		"      max_photon_gain_ev: 7\n"
 		"      target_grey: 0.3\n"
 		"      highlight_percentile: 0.95\n"
 		"      lag_frames: 4\n"
@@ -31,7 +31,7 @@ bool FSensorExposureYamlTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("weight b"), N.SignalWeights.Z, 0.1f);
 	TestFalse(TEXT("auto"), N.Exposure.bAuto);
 	TestEqual(TEXT("min"), N.Exposure.MinGainEv, -18.0f);
-	TestEqual(TEXT("max"), N.Exposure.MaxGainEv, 7.0f);
+	TestEqual(TEXT("max"), N.Exposure.MaxPhotonGainEv, 7.0f);
 	TestEqual(TEXT("grey"), N.Exposure.TargetGrey, 0.3f);
 	TestEqual(TEXT("hi pct"), N.Exposure.HighlightPercentile, 0.95f);
 	TestEqual(TEXT("lag"), N.Exposure.LagFrames, 4);
@@ -143,7 +143,7 @@ bool FSensorNv12DimsTest::RunTest(const FString& Parameters)
 
 	FSensorModeConfig& Eo = Cfg.SensorModeConfigs.FindOrAdd(ESensorMode::EO);
 	Eo.Exposure.MinGainEv = 3.0f;
-	Eo.Exposure.MaxGainEv = 2.0f;
+	Eo.Exposure.MaxPhotonGainEv = 2.0f;
 	TestTrue(TEXT("min > max reported"), HasError(Cfg.Validate(), TEXT("min_gain_ev")));
 	Eo.Exposure.MinGainEv = -20.0f;
 	Eo.Exposure.HighlightPercentile = 1.5f;
@@ -172,7 +172,7 @@ namespace
 			const FSensorExposureConfig& X = M->Exposure;
 			T.TestTrue (FString::Printf(TEXT("%s: %s auto"), Source, E.Name), X.bAuto);
 			T.TestEqual(FString::Printf(TEXT("%s: %s min_gain_ev"), Source, E.Name), X.MinGainEv, E.Min);
-			T.TestEqual(FString::Printf(TEXT("%s: %s max_gain_ev"), Source, E.Name), X.MaxGainEv, E.Max);
+			T.TestEqual(FString::Printf(TEXT("%s: %s max_photon_gain_ev"), Source, E.Name), X.MaxPhotonGainEv, E.Max);
 			T.TestEqual(FString::Printf(TEXT("%s: %s target_grey"), Source, E.Name), X.TargetGrey, E.Grey);
 			T.TestEqual(FString::Printf(TEXT("%s: %s highlight_percentile"), Source, E.Name), X.HighlightPercentile, E.HiPct);
 			T.TestEqual(FString::Printf(TEXT("%s: %s lag_frames"), Source, E.Name), X.LagFrames, 2);
@@ -207,5 +207,59 @@ bool FSensorPerModeExposureCanonicalTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	TestCalibratedExposure(*this, FCamSimConfig::LoadFromYamlString(Yaml, Path), TEXT("deploy/camsim_config.yaml"));
+	return true;
+}
+
+// ROADMAP 3B.2 Task 5: sensor-class presets with optics/detector config.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPresetDefaultsTest, "CamSim.Sensor.Config.PresetDefaults",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPresetDefaultsTest::RunTest(const FString& Parameters)
+{
+	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT(""));
+	const FSensorModeConfig& Eo = Cfg.SensorModeConfigs.FindChecked(ESensorMode::EO);
+	const FSensorModeConfig& Ir = Cfg.SensorModeConfigs.FindChecked(ESensorMode::IR);
+	TestEqual(TEXT("eo preset"), Eo.Preset, FString(TEXT("eo_hd_cmos")));
+	TestEqual(TEXT("eo full well"), Eo.Detector.FullWellE, 10000.0f);
+	TestEqual(TEXT("eo pitch"), Eo.Optics.PixelPitchUm, 2.9f);
+	TestEqual(TEXT("eo adc"), Eo.Detector.AdcBits, 12);
+	TestEqual(TEXT("ir preset"), Ir.Preset, FString(TEXT("mwir_cooled")));
+	TestTrue(TEXT("ir photon"), Ir.Detector.Type == ESensorDetectorType::Photon);
+	TestEqual(TEXT("ir full well"), Ir.Detector.FullWellE, 7000000.0f);
+	TestEqual(TEXT("ir read noise"), Ir.Detector.ReadNoiseE, 400.0f);
+	TestEqual(TEXT("ir wavelength"), Ir.Optics.WavelengthUm, 4.0f);
+	TestEqual(TEXT("ir adc"), Ir.Detector.AdcBits, 14);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPresetOverrideTest, "CamSim.Sensor.Config.PresetOverride",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPresetOverrideTest::RunTest(const FString& Parameters)
+{
+	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT(
+		"sensor_modes:\n  ir:\n    preset: lwir_uncooled\n    seed: 7\n"
+		"    detector:\n      column_fpn: 0.002\n    optics:\n      k1: -0.05\n"));
+	const FSensorModeConfig& Ir = Cfg.SensorModeConfigs.FindChecked(ESensorMode::IR);
+	TestTrue(TEXT("microbolometer"), Ir.Detector.Type == ESensorDetectorType::Microbolometer);
+	TestEqual(TEXT("preset value kept"), Ir.Detector.TemporalNoise, 0.004f);
+	TestEqual(TEXT("override wins"), Ir.Detector.ColumnFpn, 0.002f);
+	TestEqual(TEXT("optics override"), Ir.Optics.K1, -0.05f);
+	TestEqual(TEXT("seed"), Ir.Seed, 7u);
+	TestEqual(TEXT("no unknown keys"), Cfg.UnknownYamlKeys.Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPresetValidationTest, "CamSim.Sensor.Config.PresetValidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPresetValidationTest::RunTest(const FString& Parameters)
+{
+	auto Errors = [](const TCHAR* Yaml) { return FCamSimConfig::LoadFromYamlString(Yaml).Validate(); };
+	auto Has = [](const TArray<FString>& E, const TCHAR* S) { return E.ContainsByPredicate([S](const FString& X) { return X.Contains(S); }); };
+	TestTrue(TEXT("unknown preset"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    preset: hd55\n")), TEXT("preset")));
+	TestTrue(TEXT("full well"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    detector:\n      full_well_e: 0\n")), TEXT("full_well_e")));
+	TestTrue(TEXT("adc bits"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    detector:\n      adc_bits: 20\n")), TEXT("adc_bits")));
+	TestTrue(TEXT("negative noise"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    detector:\n      read_noise_e: -1\n")), TEXT("read_noise_e")));
+	TestTrue(TEXT("defect fraction"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    detector:\n      hot_pixel_fraction: 0.5\n")), TEXT("hot_pixel_fraction")));
+	TestTrue(TEXT("k1 range"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      k1: 2\n")), TEXT("k1")));
+	TestTrue(TEXT("f-number"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      f_number: 0\n")), TEXT("f_number")));
 	return true;
 }

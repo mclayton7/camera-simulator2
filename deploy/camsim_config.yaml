@@ -530,23 +530,75 @@ randomization:
   #     id_offset: 100
 
 # --- Sensor Modes (per-waveband) ---
-# CPU-side post-processing parameters. SensorId 0=EO, 1=IR.
-# See docs/configuration.md for the full field reference table.
+# Physical sensor model (ROADMAP 3B.2): optics -> electrons -> detector noise -> ADC -> display.
+# SensorId 0=EO, 1=IR. See docs/configuration.md for the full field reference table.
 sensor_modes:
   eo:
+    # ROADMAP 3B.2: sensor-class preset supplies optics/detector defaults (see the
+    # commented blocks below for the values it sets); seed drives the per-mode PCG
+    # noise streams (detector noise, defects).
+    preset: eo_hd_cmos
+    seed: 1
+    # optics:                      # 1080p industrial CMOS (eo_hd_cmos preset values)
+    #   f_number: 4.0
+    #   pixel_pitch_um: 2.9
+    #   wavelength_um: 0.55
+    #   extra_blur_px: 0.0
+    #   vignetting_exponent: 4.0
+    #   k1: 0.0
+    #   k2: 0.0
+    # detector:
+    #   type: photon
+    #   full_well_e: 10000
+    #   read_noise_e: 2
+    #   prnu: 0.01
+    #   dsnu_e: 1
+    #   dark_current_e_s: 5
+    #   max_analog_gain_db: 30
+    #   adc_bits: 12
+    #   hot_pixel_fraction: 1e-5
+    #   dead_pixel_fraction: 1e-5
     # ROADMAP 3B — auto-exposure (GPU sensor path), calibrated 2026-09-27 on the bench shots
     # (M1 Pro, SF). Scene median (log2 of absolute scene-linear luminance): daylight 10.9–12.4,
     # dawn 9.4, dusk 8.9, night_slant 6.6. target_grey 0.18 exposes the median to 18% grey
-    # (daylight gain -13.4…-14.9, mean luma 105–114, <0.1% clipped). max_gain_ev -12.5 makes night_slant clamp
-    # (mean luma 26); dawn/dusk clamp slightly too (luma 93/78).
+    # (daylight gain -13.4…-14.9, mean luma 105–114, <0.1% clipped). max_photon_gain_ev -12.5
+    # makes night_slant clamp (mean luma 26); dawn/dusk clamp slightly too (luma 93/78).
     exposure:
       min_gain_ev: -20
-      max_gain_ev: -12.5
+      max_photon_gain_ev: -12.5
       target_grey: 0.18
       highlight_percentile: 0.99
       lag_frames: 2
       manual_gain_ev: -12
   ir:
+    # ROADMAP 3B.2: sensor-class preset (default: cooled MWIR InSb). Switch to
+    # `lwir_uncooled` for an uncooled VOx microbolometer.
+    preset: mwir_cooled
+    seed: 1
+    # optics:                      # 640x512 cooled MWIR InSb (mwir_cooled preset values)
+    #   f_number: 4.0
+    #   pixel_pitch_um: 15.0
+    #   wavelength_um: 4.0
+    #   extra_blur_px: 0.0
+    #   vignetting_exponent: 4.0
+    #   k1: 0.0
+    #   k2: 0.0
+    # detector:
+    #   type: photon
+    #   full_well_e: 7000000
+    #   read_noise_e: 400
+    #   prnu: 0.001
+    #   dsnu_e: 2000               # residual after NUC (cooled)
+    #   dark_current_e_s: 0
+    #   adc_bits: 14
+    #   hot_pixel_fraction: 1e-4
+    #   dead_pixel_fraction: 1e-4
+    # lwir_uncooled (640x512 VOx) would instead set:
+    #   optics: {f_number: 1.2, pixel_pitch_um: 12.0, wavelength_um: 10.0}
+    #   detector: {type: microbolometer, temporal_noise: 0.004, pixel_fpn: 0.003,
+    #              column_fpn: 0.0015, row_fpn: 0.001, adc_bits: 14,
+    #              hot_pixel_fraction: 1e-4, dead_pixel_fraction: 1e-4}
+    #
     # Radiance-based AGC (percentile stretch)
     agc_enabled: true
     agc_low_percentile: 0.01
@@ -556,7 +608,7 @@ sensor_modes:
     # (the IR AGC stretches its percentile band instead); kept at the uncompensated defaults.
     exposure:
       min_gain_ev: -20
-      max_gain_ev: -6
+      max_photon_gain_ev: -6
       target_grey: 0.18
       highlight_percentile: 0.99
       lag_frames: 2

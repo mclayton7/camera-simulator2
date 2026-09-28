@@ -124,21 +124,25 @@ scenario:
 
 sensor_modes:
   eo:
+    preset: eo_hd_cmos
+    seed: 1
     exposure:
       min_gain_ev: -20
-      max_gain_ev: -12.5
+      max_photon_gain_ev: -12.5
       target_grey: 0.18
       highlight_percentile: 0.99
       lag_frames: 2
       manual_gain_ev: -12
   ir:
+    preset: mwir_cooled
+    seed: 1
     agc_enabled: true
     agc_low_percentile: 0.01
     agc_high_percentile: 0.99
     agc_lag_frames: 2
     exposure:
       min_gain_ev: -20
-      max_gain_ev: -6
+      max_photon_gain_ev: -6
       target_grey: 0.18
       highlight_percentile: 0.99
       lag_frames: 2
@@ -321,19 +325,71 @@ were also removed in 3B.2; see "Removed in 3B.2" below.)
 | `agc_high_percentile` | float | `0.99` | `0.99` | White-point percentile `[0, 1]` when AGC is enabled. |
 | `agc_lag_frames` | int | `0` | `2` | Frames for AGC convergence (`0` = instant). IR env override: `CAMSIM_IR_AGC_LAG_FRAMES`. |
 
-**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the gain to `[min_gain_ev, max_gain_ev]`. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_gain_ev` (mean luma 26). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
+**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the gain to `[min_gain_ev, max_photon_gain_ev]`. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_photon_gain_ev` (mean luma 26). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
 
 | Field | Type | EO default | IR default | Description |
 |-------|------|------------|------------|-------------|
 | `exposure.auto` | bool | `true` | `true` | Auto-exposure on; `false` uses `manual_gain_ev`. |
 | `exposure.min_gain_ev` | float | `-20.0` | `-20.0` | Lowest gain the simulated camera can select, log2 of the multiplier applied to absolute scene-linear values (higher = brighter). |
-| `exposure.max_gain_ev` | float | `-12.5` | `-6.0` | Highest gain the simulated camera can select. EO's value makes night scenes stay dark (dawn/dusk clamp slightly too). |
+| `exposure.max_photon_gain_ev` | float | `-12.5` | `-6.0` | Highest photon-stage gain the simulated camera can select (renamed from `max_gain_ev` in 3B.2; the photon/analog gain split lands in Task 6). EO's value makes night scenes stay dark (dawn/dusk clamp slightly too). |
 | `exposure.target_grey` | float | `0.18` | `0.18` | Linear value the histogram median is exposed to. |
 | `exposure.highlight_percentile` | float | `0.99` | `0.99` | This percentile of the histogram is kept below clipping. |
 | `exposure.lag_frames` | int | `2` | `2` | Convergence time constant in frames at 30 Hz (sim time); `0` = instant. |
 | `exposure.manual_gain_ev` | float | `-12.0` | `-12.0` | Gain used when `exposure.auto` is `false`. |
 
 IR's `exposure` block is used only when `agc_enabled` is `false`; with AGC on, the IR AGC maps its `agc_low_percentile`…`agc_high_percentile` band to the output range instead.
+
+#### Sensor-class presets, optics and detector (ROADMAP 3B.2 Task 5)
+
+`sensor_modes.<mode>.preset` selects a sensor-class preset supplying default
+`optics:`/`detector:` values (a physical model: optics → electrons → detector
+noise → ADC → display). `optics:`/`detector:` blocks then override individual
+fields on top of the preset. `seed` sets the PCG noise stream seed for that
+mode's detector noise and defect patterns. No env overrides — yaml only.
+
+| Field | Type | EO default | IR default | Description |
+|-------|------|------|------|-------------|
+| `preset` | string | `eo_hd_cmos` | `mwir_cooled` | Sensor-class preset name (see table below). Unknown names are reported by `Validate()` and keep the built-in preset defaults. |
+| `seed` | uint32 | `1` | `1` | PCG noise stream seed for this mode's detector noise/defect patterns. |
+
+Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
+
+| Parameter | `eo_hd_cmos` (1080p industrial CMOS) | `mwir_cooled` (640×512 InSb) | `lwir_uncooled` (640×512 VOx) |
+|---|---|---|---|
+| `detector.type` | `photon` | `photon` | `microbolometer` |
+| `detector.full_well_e` / `read_noise_e` | 10,000 / 2 | 7,000,000 / 400 | — |
+| `detector.prnu` / `dsnu_e` / `dark_current_e_s` | 0.01 / 1 / 5 | 0.001 / 2,000 / 0 (residual after NUC; cooled) | — |
+| `detector.temporal_noise` / `pixel_fpn` / `column_fpn` / `row_fpn` | — | — | 0.004 / 0.003 / 0.0015 / 0.001 |
+| `detector.adc_bits` | 12 | 14 | 14 |
+| `detector.max_analog_gain_db` | 30 | — (AGC) | — (AGC) |
+| `optics.f_number` / `pixel_pitch_um` / `wavelength_um` | 4 / 2.9 / 0.55 | 4 / 15 / 4.0 | 1.2 / 12 / 10 |
+| `detector.hot_pixel_fraction` / `dead_pixel_fraction` | 1e-5 / 1e-5 | 1e-4 / 1e-4 | 1e-4 / 1e-4 |
+| `optics.vignetting_exponent` / `extra_blur_px` / `k1` / `k2` | 4 / 0 / 0 / 0 | 4 / 0 / 0 / 0 | 4 / 0 / 0 / 0 |
+
+`optics:`/`detector:` override keys:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `optics.f_number` | float | Lens f-number. Must be `> 0`. |
+| `optics.pixel_pitch_um` | float | Detector pixel pitch in micrometres. |
+| `optics.wavelength_um` | float | Design wavelength in micrometres (diffraction blur). |
+| `optics.extra_blur_px` | float | Additional Gaussian blur sigma in pixels, on top of the diffraction/pixel-pitch PSF. |
+| `optics.vignetting_exponent` | float | Falloff exponent `n` in `cos^n θ`. |
+| `optics.k1`, `optics.k2` | float | Brown-Conrady radial distortion coefficients. Each must be in `[-1, 1]`. |
+| `detector.type` | string | `photon` or `microbolometer`. |
+| `detector.full_well_e` | float | Full-well capacity in electrons (photon detectors). Must be `> 0`. |
+| `detector.read_noise_e` | float | Read noise in electrons RMS (photon detectors). Must be `>= 0`. |
+| `detector.prnu` | float | Photo-response non-uniformity, fractional (photon detectors). Must be `>= 0`. |
+| `detector.dsnu_e` | float | Dark-signal non-uniformity in electrons (photon detectors). Must be `>= 0`. |
+| `detector.dark_current_e_s` | float | Dark current in electrons/second (photon detectors). Must be `>= 0`. |
+| `detector.max_analog_gain_db` | float | Maximum analog gain in dB (photon detectors; Task 6 uses this). Must be `>= 0`. |
+| `detector.temporal_noise` | float | Temporal noise, fraction of full scale (microbolometer). Must be `>= 0`. |
+| `detector.pixel_fpn`, `detector.column_fpn`, `detector.row_fpn` | float | Fixed-pattern noise components, fraction of full scale (microbolometer). Must be `>= 0`. |
+| `detector.adc_bits` | int | ADC resolution in bits. Must be in `[8, 16]`. |
+| `detector.hot_pixel_fraction`, `detector.dead_pixel_fraction` | float | Defect pixel fractions. Must be in `[0, 0.01]`. |
+
+**Validation errors:** unknown `preset`; `full_well_e <= 0`; `adc_bits` outside `[8, 16]`; negative
+noise parameters or `f_number <= 0`; defect fractions outside `[0, 0.01]`; `|k1|` or `|k2| > 1`.
 
 ### Multi-stream Output Views (Phase D2)
 

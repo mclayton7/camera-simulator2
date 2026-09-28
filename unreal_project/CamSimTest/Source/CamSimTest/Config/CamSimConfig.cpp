@@ -4,6 +4,7 @@
 #include "CamSimTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Sensor/SensorPresets.h"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -282,11 +283,14 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		// ROADMAP 3B.1 calibrated exposure (must match deploy/camsim_config.yaml;
 		// CamSim.Sensor.Config.PerModeExposureDefaults checks both).
 		EoCfg.Exposure.MinGainEv           = -20.0f;
-		EoCfg.Exposure.MaxGainEv           = -12.5f;
+		EoCfg.Exposure.MaxPhotonGainEv     = -12.5f;
 		EoCfg.Exposure.TargetGrey          = 0.18f;
 		EoCfg.Exposure.HighlightPercentile = 0.99f;
 		EoCfg.Exposure.LagFrames           = 2;
 		EoCfg.Exposure.ManualGainEv        = -12.0f;
+		// ROADMAP 3B.2 Task 5: sensor-class preset (1080p industrial CMOS).
+		EoCfg.Preset = TEXT("eo_hd_cmos");
+		CamSimSensorPresets::Apply(EoCfg.Preset, EoCfg);
 		Cfg.SensorModeConfigs.Add(ESensorMode::EO, EoCfg);
 
 		FSensorModeConfig IrCfg;
@@ -296,11 +300,14 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		IrCfg.AGCHighPercentile  = 0.99f;
 		IrCfg.AGCLagFrames       = 2;
 		IrCfg.Exposure.MinGainEv           = -20.0f;
-		IrCfg.Exposure.MaxGainEv           = -6.0f;
+		IrCfg.Exposure.MaxPhotonGainEv     = -6.0f;
 		IrCfg.Exposure.TargetGrey          = 0.18f;
 		IrCfg.Exposure.HighlightPercentile = 0.99f;
 		IrCfg.Exposure.LagFrames           = 2;
 		IrCfg.Exposure.ManualGainEv        = -12.0f;
+		// ROADMAP 3B.2 Task 5: sensor-class preset (default: cooled MWIR).
+		IrCfg.Preset = TEXT("mwir_cooled");
+		CamSimSensorPresets::Apply(IrCfg.Preset, IrCfg);
 		Cfg.SensorModeConfigs.Add(ESensorMode::IR, IrCfg);
 	}
 
@@ -448,11 +455,61 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 					ryml::ConstNodeRef ENode = ModeNode["exposure"];
 					YamlBool (ENode, "auto",                 MC.Exposure.bAuto);
 					YamlFloat(ENode, "min_gain_ev",          MC.Exposure.MinGainEv);
-					YamlFloat(ENode, "max_gain_ev",          MC.Exposure.MaxGainEv);
+					YamlFloat(ENode, "max_photon_gain_ev",   MC.Exposure.MaxPhotonGainEv);
 					YamlFloat(ENode, "target_grey",          MC.Exposure.TargetGrey);
 					YamlFloat(ENode, "highlight_percentile", MC.Exposure.HighlightPercentile);
 					YamlInt  (ENode, "lag_frames",           MC.Exposure.LagFrames);
 					YamlFloat(ENode, "manual_gain_ev",       MC.Exposure.ManualGainEv);
+				}
+
+				// ---------------------------------------------------------------
+				// ROADMAP 3B.2 Task 5: sensor-class preset + optics/detector.
+				// Parse order: preset (applies its Optics/Detector defaults, or
+				// leaves the built-in preset defaults alone if the name is
+				// unknown — Validate() reports it), then per-field overrides.
+				// ---------------------------------------------------------------
+				YamlString(ModeNode, "preset", MC.Preset);
+				CamSimSensorPresets::Apply(MC.Preset, MC);
+				{
+					int32 SeedVal = static_cast<int32>(MC.Seed);
+					if (YamlInt(ModeNode, "seed", SeedVal))
+						MC.Seed = static_cast<uint32>(SeedVal);
+				}
+				if (YamlHas(ModeNode, "optics"))
+				{
+					ryml::ConstNodeRef ONode = ModeNode["optics"];
+					YamlFloat(ONode, "f_number",            MC.Optics.FNumber);
+					YamlFloat(ONode, "pixel_pitch_um",      MC.Optics.PixelPitchUm);
+					YamlFloat(ONode, "wavelength_um",       MC.Optics.WavelengthUm);
+					YamlFloat(ONode, "extra_blur_px",       MC.Optics.ExtraBlurPx);
+					YamlFloat(ONode, "vignetting_exponent", MC.Optics.VignettingExponent);
+					YamlFloat(ONode, "k1",                  MC.Optics.K1);
+					YamlFloat(ONode, "k2",                  MC.Optics.K2);
+				}
+				if (YamlHas(ModeNode, "detector"))
+				{
+					ryml::ConstNodeRef DNode = ModeNode["detector"];
+					FString TypeStr;
+					if (YamlString(DNode, "type", TypeStr))
+					{
+						if (TypeStr.Equals(TEXT("microbolometer"), ESearchCase::IgnoreCase))
+							MC.Detector.Type = ESensorDetectorType::Microbolometer;
+						else if (TypeStr.Equals(TEXT("photon"), ESearchCase::IgnoreCase))
+							MC.Detector.Type = ESensorDetectorType::Photon;
+					}
+					YamlFloat(DNode, "full_well_e",       MC.Detector.FullWellE);
+					YamlFloat(DNode, "read_noise_e",       MC.Detector.ReadNoiseE);
+					YamlFloat(DNode, "prnu",               MC.Detector.Prnu);
+					YamlFloat(DNode, "dsnu_e",              MC.Detector.DsnuE);
+					YamlFloat(DNode, "dark_current_e_s",    MC.Detector.DarkCurrentEs);
+					YamlFloat(DNode, "max_analog_gain_db",  MC.Detector.MaxAnalogGainDb);
+					YamlFloat(DNode, "temporal_noise",      MC.Detector.TemporalNoise);
+					YamlFloat(DNode, "pixel_fpn",           MC.Detector.PixelFpn);
+					YamlFloat(DNode, "column_fpn",          MC.Detector.ColumnFpn);
+					YamlFloat(DNode, "row_fpn",              MC.Detector.RowFpn);
+					YamlInt  (DNode, "adc_bits",             MC.Detector.AdcBits);
+					YamlFloat(DNode, "hot_pixel_fraction",   MC.Detector.HotPixelFraction);
+					YamlFloat(DNode, "dead_pixel_fraction",  MC.Detector.DeadPixelFraction);
 				}
 			};
 
@@ -1441,10 +1498,10 @@ TArray<FString> FCamSimConfig::Validate() const
 	{
 		const FSensorModeConfig& M = Pair.Value;
 		const int32 ModeId = static_cast<int32>(Pair.Key);
-		if (M.Exposure.MinGainEv > M.Exposure.MaxGainEv)
+		if (M.Exposure.MinGainEv > M.Exposure.MaxPhotonGainEv)
 		{
-			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].exposure: min_gain_ev (%.1f) > max_gain_ev (%.1f)"),
-				ModeId, M.Exposure.MinGainEv, M.Exposure.MaxGainEv));
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].exposure: min_gain_ev (%.1f) > max_photon_gain_ev (%.1f)"),
+				ModeId, M.Exposure.MinGainEv, M.Exposure.MaxPhotonGainEv));
 		}
 		if (M.Exposure.HighlightPercentile <= 0.0f || M.Exposure.HighlightPercentile > 1.0f)
 		{
@@ -1455,6 +1512,62 @@ TArray<FString> FCamSimConfig::Validate() const
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d]: agc_low_percentile (%.3f) / agc_high_percentile (%.3f) must satisfy 0 <= low < high <= 1"),
 				ModeId, M.AGCLowPercentile, M.AGCHighPercentile));
+		}
+
+		// ROADMAP 3B.2 Task 5: preset name + optics/detector ranges.
+		if (!M.Preset.IsEmpty())
+		{
+			FSensorModeConfig Scratch;
+			if (!CamSimSensorPresets::Apply(M.Preset, Scratch))
+			{
+				Errors.Add(FString::Printf(
+					TEXT("sensor_modes[%d].preset '%s' is not a known preset (eo_hd_cmos, mwir_cooled, lwir_uncooled)"),
+					ModeId, *M.Preset));
+			}
+		}
+		if (M.Optics.FNumber <= 0.0f)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.f_number=%.2f must be > 0"), ModeId, M.Optics.FNumber));
+		}
+		if (FMath::Abs(M.Optics.K1) > 1.0f)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.k1=%.3f must be in [-1, 1]"), ModeId, M.Optics.K1));
+		}
+		if (FMath::Abs(M.Optics.K2) > 1.0f)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.k2=%.3f must be in [-1, 1]"), ModeId, M.Optics.K2));
+		}
+		if (M.Detector.FullWellE <= 0.0f)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.full_well_e=%.1f must be > 0"), ModeId, M.Detector.FullWellE));
+		}
+		if (M.Detector.AdcBits < 8 || M.Detector.AdcBits > 16)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.adc_bits=%d out of range [8, 16]"), ModeId, M.Detector.AdcBits));
+		}
+		auto CheckNonNegative = [&](const TCHAR* FieldName, float Value)
+		{
+			if (Value < 0.0f)
+			{
+				Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.%s=%.3f must be >= 0"), ModeId, FieldName, Value));
+			}
+		};
+		CheckNonNegative(TEXT("read_noise_e"),      M.Detector.ReadNoiseE);
+		CheckNonNegative(TEXT("prnu"),              M.Detector.Prnu);
+		CheckNonNegative(TEXT("dsnu_e"),            M.Detector.DsnuE);
+		CheckNonNegative(TEXT("dark_current_e_s"),  M.Detector.DarkCurrentEs);
+		CheckNonNegative(TEXT("max_analog_gain_db"),M.Detector.MaxAnalogGainDb);
+		CheckNonNegative(TEXT("temporal_noise"),    M.Detector.TemporalNoise);
+		CheckNonNegative(TEXT("pixel_fpn"),         M.Detector.PixelFpn);
+		CheckNonNegative(TEXT("column_fpn"),        M.Detector.ColumnFpn);
+		CheckNonNegative(TEXT("row_fpn"),           M.Detector.RowFpn);
+		if (M.Detector.HotPixelFraction < 0.0f || M.Detector.HotPixelFraction > 0.01f)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.hot_pixel_fraction=%.5f out of range [0, 0.01]"), ModeId, M.Detector.HotPixelFraction));
+		}
+		if (M.Detector.DeadPixelFraction < 0.0f || M.Detector.DeadPixelFraction > 0.01f)
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.dead_pixel_fraction=%.5f out of range [0, 0.01]"), ModeId, M.Detector.DeadPixelFraction));
 		}
 	}
 

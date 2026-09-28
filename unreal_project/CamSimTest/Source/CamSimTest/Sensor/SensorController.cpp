@@ -49,7 +49,7 @@ void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeCon
 	{
 		return;  // empty histogram: keep the current gain
 	}
-	Target = FMath::Clamp(Target, E.MinGainEv, E.MaxGainEv);
+	Target = FMath::Clamp(Target, E.MinGainEv, E.MaxPhotonGainEv);
 	GainEv += (Target - GainEv) * Smoothing(In.DeltaSimSec, E.LagFrames, bSnap);
 }
 
@@ -114,8 +114,8 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	else
 	{
 		// Clamp against the CURRENT mode's config: GainEv may have converged
-		// under a different mode's Min/MaxGainEv (see IR AGC excursion above).
-		const float ClampedEv = FMath::Clamp(GainEv, Cfg.Exposure.MinGainEv, Cfg.Exposure.MaxGainEv);
+		// under a different mode's Min/MaxPhotonGainEv (see IR AGC excursion above).
+		const float ClampedEv = FMath::Clamp(GainEv, Cfg.Exposure.MinGainEv, Cfg.Exposure.MaxPhotonGainEv);
 		P.Gain = FMath::Exp2(ClampedEv);
 		LastEmittedGainEv = ClampedEv;
 	}
