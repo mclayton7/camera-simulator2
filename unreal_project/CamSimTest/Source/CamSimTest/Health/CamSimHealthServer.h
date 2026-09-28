@@ -17,7 +17,7 @@ class IHttpRouter;
  *
  * Routes:
  *   GET /live    -- 200 if game loop ticked within 5s
- *   GET /ready   -- 200 if encoder + CIGI + first frame + terrain all OK
+ *   GET /ready   -- 200 if encoder + sensor graph + CIGI + first frame + terrain all OK
  *   GET /metrics -- Prometheus exposition format
  *   GET /snapshot        -- next grabbed frame as PNG (only after BindSnapshotRoute)
  *   GET /snapshot/sensor -- next grabbed sensor frame as PNG (only after BindSnapshotRoute)
@@ -40,6 +40,7 @@ struct FCamSimHealthServer
 	bool Start(int32 Port,
 	           FStatusQueryFn InIsAlive,
 	           FStatusQueryFn InIsEncoderReady,
+	           FStatusQueryFn InIsSensorGraphReady,
 	           FStatusQueryFn InIsCigiReady,
 	           FStatusQueryFn InHasFirstFrame,
 	           FStatusQueryFn InIsTerrainReady,
@@ -88,6 +89,7 @@ private:
 
 	FStatusQueryFn IsAlive;
 	FStatusQueryFn IsEncoderReady;
+	FStatusQueryFn IsSensorGraphReady;   // GPU sensor graph available (ROADMAP 3B): /ready "sensor_graph"
 	FStatusQueryFn IsCigiReady;
 	FStatusQueryFn HasFirstFrame;
 	FStatusQueryFn IsTerrainReady;

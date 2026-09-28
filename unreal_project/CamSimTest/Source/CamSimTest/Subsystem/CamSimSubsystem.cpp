@@ -478,8 +478,10 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Impl->HealthServer->Start(Config.Operational.HealthHttpPort,
 			// IsAlive — always true if we got this far
 			[ImplPtr]() { return true; },
-			// IsEncoderReady: never without the sensor graph (it produces every frame)
-			[ImplPtr, this]() { return bSensorGraphAvailable && ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->IsOpen(); },
+			// IsEncoderReady
+			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->IsOpen(); },
+			// IsSensorGraphReady: the GPU sensor graph produces every frame; without it /ready stays 503
+			[this]() { return bSensorGraphAvailable; },
 			// IsCigiReady
 			[ImplPtr]() { return ImplPtr->CigiReceiver && ImplPtr->CigiReceiver->GetReceivedPacketCount() > 0; },
 			// HasFirstFrame

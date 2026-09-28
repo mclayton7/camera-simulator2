@@ -37,6 +37,7 @@ bool FHttpServerLifecycleHealthAliasTest::RunTest(const FString& Parameters)
     const bool bStarted = Server.Start(TestPort,
         /*IsAlive*/        [](){ return true; },
         /*IsEncoderReady*/ [](){ return true; },
+        /*IsSensorGraphReady*/ [](){ return true; },
         /*IsCigiReady*/    [](){ return true; },
         /*HasFirstFrame*/  [](){ return true; },
         /*IsTerrainReady*/ [](){ return true; },
@@ -129,7 +130,7 @@ bool FHttpServerLifecyclePortBusyTest::RunTest(const FString& Parameters)
     FCamSimHealthServer Server;
     Server.Start(TestPort,
         [](){ return true; }, [](){ return true; }, [](){ return true; },
-        [](){ return true; }, [](){ return true; },
+        [](){ return true; }, [](){ return true; }, [](){ return true; },
         []() -> FString { return TEXT(""); });
     TestFalse(TEXT("not listening while the port is taken"), Server.IsListening());
 
@@ -165,5 +166,81 @@ bool FHttpServerLifecyclePortBusyTest::RunTest(const FString& Parameters)
     Server.Stop();
 
     TestEqual(TEXT("/live answers 200 after the retry"), StatusCode, 200);
+    return true;
+}
+
+// -------------------------------------------------------------------------
+// /ready reports the GPU sensor graph as its own gate ("sensor_graph"),
+// separate from "encoder": without the graph no frames are produced, so
+// /ready is 503 even when every other gate passes.
+// -------------------------------------------------------------------------
+
+namespace
+{
+    /** GET http://127.0.0.1:<Port><Path>, pumping both tickers (see CLAUDE.md). */
+    bool HttpGet(int32 Port, const TCHAR* Path, int32& OutCode, FString& OutBody)
+    {
+        FHttpModule& HttpModule = FHttpModule::Get();
+        TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = HttpModule.CreateRequest();
+        Request->SetVerb(TEXT("GET"));
+        Request->SetURL(FString::Printf(TEXT("http://127.0.0.1:%d%s"), Port, Path));
+        Request->SetTimeout(5.0);
+        bool bCompleted = false;
+        Request->OnProcessRequestComplete().BindLambda(
+            [&bCompleted, &OutCode, &OutBody](FHttpRequestPtr, FHttpResponsePtr Resp, bool)
+            {
+                bCompleted = true;
+                if (Resp.IsValid()) { OutCode = Resp->GetResponseCode(); OutBody = Resp->GetContentAsString(); }
+            });
+        Request->ProcessRequest();
+        const double Deadline = FPlatformTime::Seconds() + 6.0;
+        while (!bCompleted && FPlatformTime::Seconds() < Deadline)
+        {
+            HttpModule.GetHttpManager().Tick(0.01f);
+            FTSTicker::GetCoreTicker().Tick(0.01f);
+            FPlatformProcess::Sleep(0.01f);
+        }
+        return bCompleted;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHttpServerReadySensorGraphTest,
+    "CamSim.HttpServer.Lifecycle.ReadyReportsSensorGraph",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FHttpServerReadySensorGraphTest::RunTest(const FString& Parameters)
+{
+    constexpr int32 TestPort = 48083;
+    bool bSensorGraph = false;
+
+    FCamSimHealthServer Server;
+    const bool bStarted = Server.Start(TestPort,
+        /*IsAlive*/            [](){ return true; },
+        /*IsEncoderReady*/     [](){ return true; },
+        /*IsSensorGraphReady*/ [&bSensorGraph](){ return bSensorGraph; },
+        /*IsCigiReady*/        [](){ return true; },
+        /*HasFirstFrame*/      [](){ return true; },
+        /*IsTerrainReady*/     [](){ return true; },
+        /*GetPrometheusMetrics*/ []() -> FString { return TEXT(""); });
+    if (!TestTrue(TEXT("server started"), bStarted))
+    {
+        return false;
+    }
+
+    int32 Code = 0;
+    FString Body;
+    TestTrue(TEXT("request without sensor graph completed"), HttpGet(TestPort, TEXT("/ready"), Code, Body));
+    TestEqual(TEXT("no sensor graph: 503"), Code, 503);
+    TestTrue(TEXT("no sensor graph: sensor_graph false"), Body.Contains(TEXT("\"sensor_graph\":false")));
+    TestTrue(TEXT("no sensor graph: encoder reported on its own"), Body.Contains(TEXT("\"encoder\":true")));
+
+    bSensorGraph = true;
+    Code = 0; Body.Reset();
+    TestTrue(TEXT("request with sensor graph completed"), HttpGet(TestPort, TEXT("/ready"), Code, Body));
+    TestEqual(TEXT("all gates: 200"), Code, 200);
+    TestTrue(TEXT("all gates: sensor_graph true"), Body.Contains(TEXT("\"sensor_graph\":true")));
+    TestTrue(TEXT("all gates: ready"), Body.Contains(TEXT("\"status\":\"ready\"")));
+
+    Server.Stop();
     return true;
 }

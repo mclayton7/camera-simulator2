@@ -11,6 +11,7 @@
 bool FCamSimHealthServer::Start(int32 Port,
                                 FStatusQueryFn InIsAlive,
                                 FStatusQueryFn InIsEncoderReady,
+                                FStatusQueryFn InIsSensorGraphReady,
                                 FStatusQueryFn InIsCigiReady,
                                 FStatusQueryFn InHasFirstFrame,
                                 FStatusQueryFn InIsTerrainReady,
@@ -18,6 +19,7 @@ bool FCamSimHealthServer::Start(int32 Port,
 {
 	IsAlive = MoveTemp(InIsAlive);
 	IsEncoderReady = MoveTemp(InIsEncoderReady);
+	IsSensorGraphReady = MoveTemp(InIsSensorGraphReady);
 	IsCigiReady = MoveTemp(InIsCigiReady);
 	HasFirstFrame = MoveTemp(InHasFirstFrame);
 	IsTerrainReady = MoveTemp(InIsTerrainReady);
@@ -123,15 +125,17 @@ void FCamSimHealthServer::BindRoutes()
 		FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest& Req, const FHttpResultCallback& OnComplete)
 		{
 			const bool bEncoder = IsEncoderReady ? IsEncoderReady() : false;
+			const bool bSensorGraph = IsSensorGraphReady ? IsSensorGraphReady() : false;
 			const bool bCigi = IsCigiReady ? IsCigiReady() : false;
 			const bool bFrame = HasFirstFrame ? HasFirstFrame() : false;
 			const bool bTerrain = IsTerrainReady ? IsTerrainReady() : false;
-			const bool bReady = bEncoder && bCigi && bFrame && bTerrain;
+			const bool bReady = bEncoder && bSensorGraph && bCigi && bFrame && bTerrain;
 
 			FString Body = FString::Printf(
-				TEXT("{\"status\":\"%s\",\"encoder\":%s,\"cigi\":%s,\"first_frame\":%s,\"terrain_ready\":%s}"),
+				TEXT("{\"status\":\"%s\",\"encoder\":%s,\"sensor_graph\":%s,\"cigi\":%s,\"first_frame\":%s,\"terrain_ready\":%s}"),
 				bReady ? TEXT("ready") : TEXT("not_ready"),
 				bEncoder ? TEXT("true") : TEXT("false"),
+				bSensorGraph ? TEXT("true") : TEXT("false"),
 				bCigi ? TEXT("true") : TEXT("false"),
 				bFrame ? TEXT("true") : TEXT("false"),
 				bTerrain ? TEXT("true") : TEXT("false"));
