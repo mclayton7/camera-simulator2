@@ -21,7 +21,9 @@ class FSensorController
 {
 public:
 	static constexpr int32 StaleAfterTicks = 10;
-	static constexpr float ClipLinear      = 2.0f;  // the knee maps 2.0 to ~255/255
+	// Normalised signal at the clip point: full well / ADC full scale, which the
+	// normalised knee maps to white (3B.1's knee reached white at 2.0).
+	static constexpr float ClipLinear      = 1.0f;
 	FSensorFrameParams Update(const FSensorControllerInput& In, const FSensorModeConfig& Cfg);
 	/** Log2 of the total gain actually emitted last tick: PhotonGain * AnalogGain
 	 *  (* DisplayGain in IR AGC, i.e. the AGC stretch on absolute signal). */
