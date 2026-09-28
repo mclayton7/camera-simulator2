@@ -9,8 +9,8 @@
 // ---------------------------------------------------------------------------
 enum class ESensorMode : uint8
 {
-	EO = 0,   // Electro-optical: color RGB passthrough (default)
-	IR = 1,   // LWIR thermal: grayscale + S-curve tone mapping + polarity
+	EO = 0,   // Electro-optical: colour photon detector (default)
+	IR = 1,   // Thermal: mono detector (cooled MWIR or uncooled LWIR preset) + AGC + polarity
 };
 
 // ---------------------------------------------------------------------------
@@ -72,8 +72,8 @@ struct FSensorExposureConfig
 	 *  Neutral values; the calibrated per-mode cameras are set in
 	 *  FCamSimConfig's built-in defaults and deploy/camsim_config.yaml. */
 	float MinGainEv           = -20.0f;
-	/** Highest photon-stage gain (ROADMAP 3B.2: the analog/photon split lands
-	 *  in Task 6; until then this is the sole gain limit). */
+	/** Highest photon-stage (integration) gain; past it AE adds analog gain up to
+	 *  the detector's max_analog_gain_db (FSensorController::TotalGainCapEv). */
 	float MaxPhotonGainEv     = -6.0f;
 	/** Linear value the histogram median is exposed to. */
 	float TargetGrey          = 0.18f;
@@ -109,7 +109,10 @@ struct FSensorModeConfig
 	// "lwir_uncooled". Supplies Optics/Detector defaults; yaml optics:/detector:
 	// blocks override individual fields. See Sensor/SensorPresets.h.
 	FString Preset;
-	/** PCG noise stream seed for this mode's detector/defect patterns. */
+	/** detector.type as written in yaml (empty = not given); Validate() rejects an unknown name. */
+	FString DetectorTypeName;
+	/** PCG noise stream seed for this mode's detector/defect patterns. Combined with the mode
+	 *  (FSensorController::ModeSeed), so EO and IR never share a fixed pattern. */
 	uint32 Seed = 1;
 	FSensorOpticsConfig   Optics;
 	FSensorDetectorConfig Detector;

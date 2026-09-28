@@ -412,9 +412,15 @@ void ACamSimCamera::PollHotReloadConfig(float DeltaTime)
 
 	const FCamSimConfig OldCfg = Cfg;
 	FCamSimConfig NewCfg = FCamSimConfig::Load();
-	if (!NewCfg.bLoadedSuccessfully)
+	// Same gate as startup: a config Validate() rejects (or one that failed to parse) never goes live.
+	const TArray<FString> ReloadErrors = FCamSimConfig::ValidateHotReload(OldCfg, NewCfg);
+	if (ReloadErrors.Num() > 0)
 	{
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: config parse failed — keeping current config"));
+		for (const FString& Err : ReloadErrors)
+		{
+			UE_LOG(LogCamSim, Error, TEXT("HotReload: %s"), *Err);
+		}
+		UE_LOG(LogCamSim, Warning, TEXT("HotReload: %d config error(s) — keeping current config"), ReloadErrors.Num());
 		return;
 	}
 

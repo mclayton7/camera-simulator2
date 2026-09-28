@@ -269,6 +269,17 @@ void FCamSimConfig::KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSi
 	Reloaded.CaptureHeight          = Running.CaptureHeight;
 }
 
+TArray<FString> FCamSimConfig::ValidateHotReload(const FCamSimConfig& Running, const FCamSimConfig& Reloaded)
+{
+	if (!Reloaded.bLoadedSuccessfully)
+	{
+		return { TEXT("config parse failed") };
+	}
+	FCamSimConfig AsRun = Reloaded;
+	KeepRestartOnlySettings(Running, AsRun);
+	return AsRun.Validate();
+}
+
 FCamSimConfig FCamSimConfig::LoadFromYamlString(const FString& YamlContent, const FString& SourceName)
 {
 	return LoadFromYaml(&YamlContent, SourceName);
@@ -493,6 +504,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 					FString TypeStr;
 					if (YamlString(DNode, "type", TypeStr))
 					{
+						MC.DetectorTypeName = TypeStr;   // Validate() rejects an unknown name
 						if (TypeStr.Equals(TEXT("microbolometer"), ESearchCase::IgnoreCase))
 							MC.Detector.Type = ESensorDetectorType::Microbolometer;
 						else if (TypeStr.Equals(TEXT("photon"), ESearchCase::IgnoreCase))
@@ -1499,6 +1511,12 @@ TArray<FString> FCamSimConfig::Validate() const
 	{
 		const FSensorModeConfig& M = Pair.Value;
 		const int32 ModeId = static_cast<int32>(Pair.Key);
+		// log2 floor: 2^-40 keeps the gain (and AutoExposureBias) finite; NaN fails too.
+		if (!(M.Exposure.MinGainEv >= -40.0f))
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].exposure: min_gain_ev (%.1f) must be >= -40"),
+				ModeId, M.Exposure.MinGainEv));
+		}
 		if (M.Exposure.MinGainEv > M.Exposure.MaxPhotonGainEv)
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].exposure: min_gain_ev (%.1f) > max_photon_gain_ev (%.1f)"),
@@ -1526,23 +1544,36 @@ TArray<FString> FCamSimConfig::Validate() const
 					ModeId, *M.Preset));
 			}
 		}
-		if (M.Optics.FNumber <= 0.0f)
+		// Range checks are written !(in range) so a NaN (e.g. ".nan" in yaml) is rejected, never passed.
+		if (!M.DetectorTypeName.IsEmpty()
+			&& !M.DetectorTypeName.Equals(TEXT("photon"), ESearchCase::IgnoreCase)
+			&& !M.DetectorTypeName.Equals(TEXT("microbolometer"), ESearchCase::IgnoreCase))
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.type '%s' is not a known detector type (photon, microbolometer)"),
+				ModeId, *M.DetectorTypeName));
+		}
+		if (!(M.Optics.FNumber > 0.0f))
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.f_number=%.2f must be > 0"), ModeId, M.Optics.FNumber));
 		}
-		if (FMath::Abs(M.Optics.K1) > 1.0f)
+		if (!(FMath::Abs(M.Optics.K1) <= 1.0f))
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.k1=%.3f must be in [-1, 1]"), ModeId, M.Optics.K1));
 		}
-		if (FMath::Abs(M.Optics.K2) > 1.0f)
+		if (!(FMath::Abs(M.Optics.K2) <= 1.0f))
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.k2=%.3f must be in [-1, 1]"), ModeId, M.Optics.K2));
 		}
-		if (!(M.Optics.PixelPitchUm > 0.0f) || !(M.Optics.WavelengthUm > 0.0f) || M.Optics.ExtraBlurPx < 0.0f)
+		if (!(M.Optics.PixelPitchUm > 0.0f) || !(M.Optics.WavelengthUm > 0.0f) || !(M.Optics.ExtraBlurPx >= 0.0f))
 		{
 			Errors.Add(FString::Printf(
 				TEXT("sensor_modes[%d].optics: pixel_pitch_um (%.3f) and wavelength_um (%.3f) must be > 0, extra_blur_px (%.3f) >= 0"),
 				ModeId, M.Optics.PixelPitchUm, M.Optics.WavelengthUm, M.Optics.ExtraBlurPx));
+		}
+		if (!(M.Optics.VignettingExponent >= 0.0f && M.Optics.VignettingExponent <= 8.0f))
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.vignetting_exponent=%.2f out of range [0, 8]"),
+				ModeId, M.Optics.VignettingExponent));
 		}
 		// The GPU inverts the distortion with a fixed Newton recurrence: it must converge for every
 		// distorted radius in the frame (rd over [0, corner]) at the configured HFOV. A zoomed-out live
@@ -1557,7 +1588,7 @@ TArray<FString> FCamSimConfig::Validate() const
 				CamSimOptics::CornerRadius(CaptureWidth, CaptureHeight, CamSimOptics::FocalPx(CaptureWidth, HFovDeg)),
 				HFovDeg, CaptureWidth, CaptureHeight));
 		}
-		if (M.Detector.FullWellE <= 0.0f)
+		if (!(M.Detector.FullWellE > 0.0f))
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.full_well_e=%.1f must be > 0"), ModeId, M.Detector.FullWellE));
 		}
@@ -1567,7 +1598,7 @@ TArray<FString> FCamSimConfig::Validate() const
 		}
 		auto CheckNonNegative = [&](const TCHAR* FieldName, float Value)
 		{
-			if (Value < 0.0f)
+			if (!(Value >= 0.0f))
 			{
 				Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.%s=%.3f must be >= 0"), ModeId, FieldName, Value));
 			}
@@ -1581,11 +1612,11 @@ TArray<FString> FCamSimConfig::Validate() const
 		CheckNonNegative(TEXT("pixel_fpn"),         M.Detector.PixelFpn);
 		CheckNonNegative(TEXT("column_fpn"),        M.Detector.ColumnFpn);
 		CheckNonNegative(TEXT("row_fpn"),           M.Detector.RowFpn);
-		if (M.Detector.HotPixelFraction < 0.0f || M.Detector.HotPixelFraction > 0.01f)
+		if (!(M.Detector.HotPixelFraction >= 0.0f && M.Detector.HotPixelFraction <= 0.01f))
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.hot_pixel_fraction=%.5f out of range [0, 0.01]"), ModeId, M.Detector.HotPixelFraction));
 		}
-		if (M.Detector.DeadPixelFraction < 0.0f || M.Detector.DeadPixelFraction > 0.01f)
+		if (!(M.Detector.DeadPixelFraction >= 0.0f && M.Detector.DeadPixelFraction <= 0.01f))
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.dead_pixel_fraction=%.5f out of range [0, 0.01]"), ModeId, M.Detector.DeadPixelFraction));
 		}

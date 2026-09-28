@@ -781,6 +781,12 @@ struct FCamSimConfig
 	 */
 	static void KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSimConfig& Reloaded);
 
+	/**
+	 * Hot reload gate: the errors that make Reloaded unusable — a parse failure, or Validate() of
+	 * Reloaded as it would run (restart-only settings carried over from Running). Empty = apply it.
+	 */
+	static TArray<FString> ValidateHotReload(const FCamSimConfig& Running, const FCamSimConfig& Reloaded);
+
 	static FCamSimConfig LoadFromYamlString(const FString& YamlContent, const FString& SourceName = TEXT("<string>"));
 
 	/** YAML keys no setting reads (typos, removed settings), as dotted paths. Warned at load. */

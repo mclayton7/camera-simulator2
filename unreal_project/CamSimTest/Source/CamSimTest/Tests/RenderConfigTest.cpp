@@ -116,6 +116,34 @@ bool FRenderConfigHotReloadTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// Final-review F3: a hot-reloaded config is validated (after the restart-only settings are carried
+// over) before it replaces the running one; a config startup would reject is never applied live.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigHotReloadValidatesTest,
+	"CamSim.Config.HotReloadRejectsInvalidConfig",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderConfigHotReloadValidatesTest::RunTest(const FString& Parameters)
+{
+	const FCamSimConfig Running;
+	TestEqual(TEXT("valid reload accepted"),
+		FCamSimConfig::ValidateHotReload(Running, FCamSimConfig::LoadFromYamlString(TEXT("hfov_deg: 30.0\n"))).Num(), 0);
+
+	const TArray<FString> Bad = FCamSimConfig::ValidateHotReload(Running,
+		FCamSimConfig::LoadFromYamlString(TEXT("sensor_modes:\n  eo:\n    optics:\n      f_number: 0\n")));
+	TestTrue(TEXT("invalid sensor optics rejected"),
+		Bad.ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("f_number")); }));
+
+	// Restart-only settings are validated as they will run: a bad capture width in the file is ignored, not fatal.
+	FCamSimConfig OddWidth = FCamSimConfig::LoadFromYamlString(TEXT("hfov_deg: 30.0\n"));
+	OddWidth.CaptureWidth = 1282;
+	TestEqual(TEXT("restart-only capture width not validated"), FCamSimConfig::ValidateHotReload(Running, OddWidth).Num(), 0);
+
+	FCamSimConfig Unparsed;
+	Unparsed.bLoadedSuccessfully = false;
+	TestTrue(TEXT("parse failure rejected"), FCamSimConfig::ValidateHotReload(Running, Unparsed).Num() > 0);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigRelativeFrameStatsPathTest,
 	"CamSim.Config.FrameStatsRelativePathUsesLaunchDir",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

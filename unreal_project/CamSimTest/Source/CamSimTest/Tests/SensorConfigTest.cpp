@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
+#include <limits>
 #include "Config/CamSimConfig.h"
 #include "Sensor/SensorOptics.h"
 #include "Sensor/SensorTypes.h"
@@ -267,6 +268,50 @@ bool FSensorPresetValidationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("defect fraction"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    detector:\n      hot_pixel_fraction: 0.5\n")), TEXT("hot_pixel_fraction")));
 	TestTrue(TEXT("k1 range"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      k1: 2\n")), TEXT("k1")));
 	TestTrue(TEXT("f-number"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      f_number: 0\n")), TEXT("f_number")));
+
+	// Final-review F2: unknown detector type, vignetting exponent range, AE floor.
+	const TArray<FString> BadType = Errors(TEXT("sensor_modes:\n  ir:\n    detector:\n      type: bolometer\n"));
+	TestTrue(TEXT("unknown detector.type rejected"), Has(BadType, TEXT("detector.type")) && Has(BadType, TEXT("bolometer")));
+	TestFalse(TEXT("detector.type microbolometer accepted"), Has(Errors(TEXT("sensor_modes:\n  ir:\n    detector:\n      type: microbolometer\n")), TEXT("detector.type")));
+	TestFalse(TEXT("detector.type photon accepted"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    detector:\n      type: Photon\n")), TEXT("detector.type")));
+	TestTrue(TEXT("vignetting exponent > 8"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      vignetting_exponent: 9\n")), TEXT("vignetting_exponent")));
+	TestTrue(TEXT("negative vignetting exponent"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      vignetting_exponent: -1\n")), TEXT("vignetting_exponent")));
+	TestFalse(TEXT("vignetting exponent 8 accepted"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      vignetting_exponent: 8\n")), TEXT("vignetting_exponent")));
+	TestTrue(TEXT("min_gain_ev below -40"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    exposure:\n      min_gain_ev: -200\n")), TEXT("min_gain_ev")));
+	TestFalse(TEXT("min_gain_ev -40 accepted"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    exposure:\n      min_gain_ev: -40\n")), TEXT("min_gain_ev")));
+	TestEqual(TEXT("defaults valid"), FCamSimConfig().Validate().Num(), 0);
+
+	// NaN never passes a range check (every rule is written !(x in range)).
+	const float NaN = std::numeric_limits<float>::quiet_NaN();
+	struct FNanCase { const TCHAR* Field; TFunction<void(FSensorModeConfig&)> Set; };
+	const FNanCase Cases[] = {
+		{ TEXT("f_number"),            [NaN](FSensorModeConfig& M) { M.Optics.FNumber = NaN; } },
+		{ TEXT("pixel_pitch_um"),      [NaN](FSensorModeConfig& M) { M.Optics.PixelPitchUm = NaN; } },
+		{ TEXT("wavelength_um"),       [NaN](FSensorModeConfig& M) { M.Optics.WavelengthUm = NaN; } },
+		{ TEXT("extra_blur_px"),       [NaN](FSensorModeConfig& M) { M.Optics.ExtraBlurPx = NaN; } },
+		{ TEXT("vignetting_exponent"), [NaN](FSensorModeConfig& M) { M.Optics.VignettingExponent = NaN; } },
+		{ TEXT("k1"),                  [NaN](FSensorModeConfig& M) { M.Optics.K1 = NaN; } },
+		{ TEXT("k2"),                  [NaN](FSensorModeConfig& M) { M.Optics.K2 = NaN; } },
+		{ TEXT("full_well_e"),         [NaN](FSensorModeConfig& M) { M.Detector.FullWellE = NaN; } },
+		{ TEXT("read_noise_e"),        [NaN](FSensorModeConfig& M) { M.Detector.ReadNoiseE = NaN; } },
+		{ TEXT("prnu"),                [NaN](FSensorModeConfig& M) { M.Detector.Prnu = NaN; } },
+		{ TEXT("dsnu_e"),              [NaN](FSensorModeConfig& M) { M.Detector.DsnuE = NaN; } },
+		{ TEXT("dark_current_e_s"),    [NaN](FSensorModeConfig& M) { M.Detector.DarkCurrentEs = NaN; } },
+		{ TEXT("max_analog_gain_db"),  [NaN](FSensorModeConfig& M) { M.Detector.MaxAnalogGainDb = NaN; } },
+		{ TEXT("temporal_noise"),      [NaN](FSensorModeConfig& M) { M.Detector.TemporalNoise = NaN; } },
+		{ TEXT("pixel_fpn"),           [NaN](FSensorModeConfig& M) { M.Detector.PixelFpn = NaN; } },
+		{ TEXT("column_fpn"),          [NaN](FSensorModeConfig& M) { M.Detector.ColumnFpn = NaN; } },
+		{ TEXT("row_fpn"),             [NaN](FSensorModeConfig& M) { M.Detector.RowFpn = NaN; } },
+		{ TEXT("hot_pixel_fraction"),  [NaN](FSensorModeConfig& M) { M.Detector.HotPixelFraction = NaN; } },
+		{ TEXT("dead_pixel_fraction"), [NaN](FSensorModeConfig& M) { M.Detector.DeadPixelFraction = NaN; } },
+		{ TEXT("min_gain_ev"),         [NaN](FSensorModeConfig& M) { M.Exposure.MinGainEv = NaN; } },
+	};
+	for (const FNanCase& Case : Cases)
+	{
+		FCamSimConfig C;
+		Case.Set(C.SensorModeConfigs.FindOrAdd(ESensorMode::EO));
+		TestTrue(FString::Printf(TEXT("NaN %s rejected"), Case.Field), Has(C.Validate(), Case.Field));
+	}
 	return true;
 }
 
