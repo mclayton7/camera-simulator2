@@ -2,6 +2,7 @@
 
 #include "Sensor/SensorOptics.h"
 #include "Sensor/SensorTypes.h"
+#include "SensorFrameParams.h"
 #include <cmath>
 
 namespace CamSimOptics
@@ -63,5 +64,16 @@ namespace CamSimOptics
 		}
 		OutTaps.SetNumUninitialized(Radius + 1);
 		for (int32 K = 0; K <= Radius; ++K) OutTaps[K] = static_cast<float>(T[K] / Total);
+	}
+
+	void SetPsf(FSensorFrameParams& P, float SigmaO)
+	{
+		static_assert(FSensorFrameParams::MaxPsfTaps == MaxPsfRadius + 1, "tap array holds radius MaxPsfRadius");
+		TArray<float> Taps;
+		PsfTaps(SigmaO, Taps);
+		check(Taps.Num() >= 1 && Taps.Num() <= FSensorFrameParams::MaxPsfTaps);
+		P.PsfSigmaPx = SigmaO;
+		for (int32 K = 0; K < FSensorFrameParams::MaxPsfTaps; ++K) P.PsfTaps[K] = K < Taps.Num() ? Taps[K] : 0.0f;
+		P.NumPsfTaps = static_cast<uint32>(Taps.Num());
 	}
 }

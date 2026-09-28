@@ -1,0 +1,76 @@
+// Copyright CamSim Contributors. All Rights Reserved.
+// HLSL twins of the CPU sensor reference helpers (ROADMAP 3B.2). Keep in step with:
+//   CamSimShaders/Public/SensorHash.h        (Pcg, Hash, Uniform, Gaussian — integer-exact)
+//   CamSimShaders/Public/SensorFrameParams.h (FSensorHistogram::BinOf)
+//   CamSimTest/Sensor/SensorReference.cpp    (Sanitize, Knee, Oetf709)
+// Rounding is floor(x + 0.5) everywhere, never round() (banker's/implementation-defined ties).
+
+#pragma once
+
+#define HIST_BINS 256
+#define HIST_MIN_LOG2 (-16.0)
+#define HIST_BINS_PER_STOP 8.0
+
+#define CAMSIM_FIXED_FRAME 0xFFFFFFFFu
+#define CAMSIM_TWO_PI 6.2831853071795864   // float(2 pi) == 2 * float(pi): same constant as the CPU's 2.0f * PI
+
+/** NaN -> 0, then clamp to [0, 65504] (+Inf -> 65504, -Inf -> 0). The NaN test is on the bits, so
+ *  fast-math (Metal) cannot fold it away the way it may fold V != V. */
+float Sanitize(float V)
+{
+	return ((asuint(V) & 0x7fffffffu) > 0x7f800000u) ? 0.0 : clamp(V, 0.0, 65504.0);
+}
+
+float3 Sanitize3(float3 V) { return float3(Sanitize(V.x), Sanitize(V.y), Sanitize(V.z)); }
+
+bool IsNaNBits(float V) { return (asuint(V) & 0x7fffffffu) > 0x7f800000u; }
+
+float RoundHalfUp(float X) { return floor(X + 0.5); }
+
+/** PCG-RXS-M-XS 32-bit output permutation (CamSimHash::Pcg). */
+uint Pcg(uint V)
+{
+	const uint S = V * 747796405u + 2891336453u;
+	const uint W = ((S >> ((S >> 28u) + 4u)) ^ S) * 277803737u;
+	return (W >> 22u) ^ W;
+}
+
+uint Hash(uint X, uint Y, uint Frame, uint Seed, uint Stream)
+{
+	return Pcg(X ^ Pcg(Y ^ Pcg(Frame ^ Pcg(Seed ^ Pcg(Stream)))));
+}
+
+/** Hash with its pixel-independent tail precomputed: Hash(X, Y, Frame, Seed, Stream) ==
+ *  HashK(X, Y, Pcg(Frame ^ Pcg(Seed ^ Pcg(Stream)))). The key is uniform across the frame, so the CPU
+ *  computes it once (CamSimHash::StreamKey) instead of every pixel re-deriving three of the five Pcgs. */
+uint HashK(uint X, uint Y, uint Key) { return Pcg(X ^ Pcg(Y ^ Key)); }
+
+/** Top 23 bits -> (k + 0.5) / 2^23, exact in float32, strictly inside (0, 1). */
+float Uniform(uint H) { return (float(H >> 9u) + 0.5) * (1.0 / 8388608.0); }
+
+/** Standard normal: Box-Muller of sub-streams 2*Stream and 2*Stream + 1 (CamSimHash::Gaussian). */
+float Gaussian(uint X, uint Y, uint Frame, uint Seed, uint Stream)
+{
+	const float U1 = Uniform(Hash(X, Y, Frame, Seed, Stream * 2u));
+	const float U2 = Uniform(Hash(X, Y, Frame, Seed, Stream * 2u + 1u));
+	return sqrt(-2.0 * log(U1)) * cos(CAMSIM_TWO_PI * U2);
+}
+
+float Knee(float X, float K)
+{
+	// Normalised so [K, 1] maps onto [K, 1] (CamSimSensorRef::Knee).
+	if (X <= K || K >= 1.0) return X;
+	return K + (1.0 - K) * (1.0 - exp(-(X - K) / (1.0 - K))) / (1.0 - exp(-1.0));
+}
+
+float Oetf709(float L)
+{
+	L = clamp(L, 0.0, 1.0);
+	return L < 0.018 ? 4.5 * L : 1.099 * pow(L, 0.45) - 0.099;
+}
+
+uint BinOf(float S)
+{
+	if (!(S > 0.0)) return 0;
+	return (uint)clamp((int)floor((log2(S) - HIST_MIN_LOG2) * HIST_BINS_PER_STOP), 0, HIST_BINS - 1);
+}

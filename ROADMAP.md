@@ -640,6 +640,22 @@ Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
   still computes, and `CamSim.GPU.Sensor.*` compare against it until Task 9 ports the detector.
   Physics tests `CamSim.Sensor.Physics.*` (photon transfer, determinism, hash statistics,
   microbolometer FPN, defect fractions, clipping, analog gain).
+- Task 9: the GPU graph runs the full physical model — one fused compute pass, `SensorCS`
+  (`Shaders/Private/CamSimSensor.usf`, helpers in `CamSimSensorCommon.ush`): sanitize, scale,
+  [+bloom], distortion resample, cos^n, histogram, PSF blur, detector, ADC, defects, display and
+  NV12, mirroring `CamSimSensorRef::Run` expression for expression (the linear image stays in
+  groupshared memory; separate optics/blur/detector/pack passes measured ~0.6 ms slower at 1080p).
+  The blur works on a (16 + 2R)² groupshared tile; `BLUR_MAX_R` permutations 0 / 3 / 8 size it
+  (the presets need R ≤ 3). PSF taps are computed on the CPU (`CamSimOptics::SetPsf` fills
+  `FSensorFrameParams::PsfTaps`) and both the reference `Blur` and the shader consume them. Hash
+  keys per stream (`CamSimHash::StreamKey`) are precomputed on the CPU and the row half of the
+  hash once per group. Bloom is sampled at the scene sample's normalised position, clamped to its
+  view rect, and the reference now does the same. `RunDisplayOnly` is gone:
+  `CamSim.GPU.Sensor.*` (`scripts/run_gpu_tests.sh`) compare the GPU with the full `Run()`
+  (detector presets, MWIR, bolometer FPN, optics, bloom, partial groups, NaN/Inf), noise on.
+  Live, the detector now runs (noise, FPN and defects are visible); optics stay off until Task 10.
+  Sensor GPU p95 at 1080p on an M1 Pro: 1.14 ms optics off, 1.87 ms with optics + a preset PSF
+  (R = 3), 3.2 ms at the largest PSF (R = 8, σ_o ≥ ~2.4 px).
 
 ---
 

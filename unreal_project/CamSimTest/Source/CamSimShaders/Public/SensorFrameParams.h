@@ -35,9 +35,7 @@ struct FSensorFrameParams
 	float     InputScale    = 1.0f;       // multiplies scene colour; tests only (runtime uses View.OneOverPreExposure)
 	uint32    Serial        = 0;          // tags the histogram this frame produces
 
-	// Exposure (ROADMAP 3B.2). Until the detector model lands the display path is
-	// EO: rgb = Knee(c * PhotonGain * AnalogGain);
-	// IR: v = DisplayGain * (s * PhotonGain * AnalogGain) + DisplayOffset.
+	// Exposure (ROADMAP 3B.2): see CamSimSensorRef::DetectPixel / DisplayEo / DisplayIr.
 	float PhotonGain    = 1.0f;           // signal -> fraction of full scale before noise
 	float AnalogGain    = 1.0f;           // applied after detector noise (photon detectors)
 	float DisplayGain   = 1.0f;           // IR AGC on normalised DN; EO 1
@@ -56,4 +54,10 @@ struct FSensorFrameParams
 	float FocalPx = 0.0f;
 	float K1 = 0.0f, K2 = 0.0f, VignettingExponent = 0.0f;
 	float PsfSigmaPx = 0.0f;              // OPTICAL sigma (CamSimOptics::PsfOpticalSigmaPx); pixel aperture comes from tap integration
+	// PSF taps built from PsfSigmaPx on the CPU (CamSimOptics::SetPsf; HLSL has no erf). The reference
+	// Blur and the GPU blur (SensorCS) both consume exactly these. PsfTaps[0] is the centre; NumPsfTaps <= 1
+	// means no blur (both skip it).
+	static constexpr int32 MaxPsfTaps = 9;   // radius <= CamSimOptics::MaxPsfRadius (8)
+	float  PsfTaps[MaxPsfTaps] = { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+	uint32 NumPsfTaps = 1;
 };

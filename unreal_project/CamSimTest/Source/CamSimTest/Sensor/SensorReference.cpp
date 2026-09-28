@@ -91,23 +91,6 @@ namespace CamSimSensorRef
 	static uint8 ToLimited(float V, float Scale) { return static_cast<uint8>(FMath::Clamp(FMath::FloorToInt32(16.0f + Scale * V + 0.5f), 0, 255)); }
 	static uint8 ToChroma(float C) { return static_cast<uint8>(FMath::Clamp(FMath::FloorToInt32(128.0f + 224.0f * C + 0.5f), 0, 255)); }
 
-	/** RunDisplayOnly steps 1, 2, 4 (no optics): planar sanitised RGB (3*W*H) and signal s (W*H); fills the histogram. */
-	static void PrepareScene(const TArray<FLinearColor>& Scene, int32 W, int32 H, const FSensorFrameParams& P,
-		TArray<float>& Rgb, TArray<float>& Signal, FSensorHistogram& Histogram)
-	{
-		check(Scene.Num() == W * H && W % 4 == 0 && H % 2 == 0);
-		const int32 N = W * H;
-		Rgb.SetNumUninitialized(3 * N);
-		Signal.SetNumUninitialized(N);
-		for (int32 I = 0; I < N; ++I)
-		{
-			const float R = Sanitize(Scene[I].R) * P.InputScale, G = Sanitize(Scene[I].G) * P.InputScale, B = Sanitize(Scene[I].B) * P.InputScale;
-			Rgb[I] = R; Rgb[N + I] = G; Rgb[2 * N + I] = B;
-			Signal[I] = R * P.SignalWeights.X + G * P.SignalWeights.Y + B * P.SignalWeights.Z;
-			++Histogram.Bins[FSensorHistogram::BinOf(Signal[I])];
-		}
-	}
-
 	/** Step 8. Out: xyz = R'G'B' (EO) or v,v,v; w = luma source (IR). */
 	static void PackNv12(const TArray<FVector4f>& Out, int32 W, int32 H, bool bEo, TArray<uint8>& Nv12)
 	{
@@ -138,26 +121,39 @@ namespace CamSimSensorRef
 	}
 
 	void Optics(const TArray<FLinearColor>& Scene, int32 SrcW, int32 SrcH, int32 W, int32 H,
-		const FSensorFrameParams& P, TArray<FVector3f>& OutRgb, FSensorHistogram& OutHist)
+		const FSensorFrameParams& P, TArray<FVector3f>& OutRgb, FSensorHistogram& OutHist, const FImage& Bloom)
 	{
 		check(Scene.Num() == SrcW * SrcH && W > 0 && H > 0);
+		const bool bBloom = Bloom.IsValid();
 		OutHist = FSensorHistogram();
-		auto Texel = [&](int32 X, int32 Y) -> FVector3f
+		auto Texel = [&P](const TArray<FLinearColor>& Img, int32 ImgW, int32 X, int32 Y) -> FVector3f
 		{
-			const FLinearColor& C = Scene[Y * SrcW + X];
+			const FLinearColor& C = Img[Y * ImgW + X];
 			return FVector3f(Sanitize(C.R) * P.InputScale, Sanitize(C.G) * P.InputScale, Sanitize(C.B) * P.InputScale);
 		};
-		auto Bilinear = [&](float Sx, float Sy) -> FVector3f
+		// Bilinear with taps clamped to the image's valid texels (no footprint test here).
+		auto BilinearClamped = [&](const TArray<FLinearColor>& Img, int32 ImgW, int32 ImgH, float Sx, float Sy) -> FVector3f
 		{
-			// Outside the render's footprint: black. Inside: taps clamped to the valid texels.
-			if (!(Sx >= -0.5f && Sx <= SrcW - 0.5f && Sy >= -0.5f && Sy <= SrcH - 0.5f)) return FVector3f(0.0f);
 			const float X0f = FMath::FloorToFloat(Sx), Y0f = FMath::FloorToFloat(Sy);
 			const float Fx = Sx - X0f, Fy = Sy - Y0f;
 			const int32 X0 = static_cast<int32>(X0f), Y0 = static_cast<int32>(Y0f);
-			const int32 Xa = FMath::Clamp(X0, 0, SrcW - 1), Xb = FMath::Clamp(X0 + 1, 0, SrcW - 1);
-			const int32 Ya = FMath::Clamp(Y0, 0, SrcH - 1), Yb = FMath::Clamp(Y0 + 1, 0, SrcH - 1);
-			return (1.0f - Fy) * ((1.0f - Fx) * Texel(Xa, Ya) + Fx * Texel(Xb, Ya))
-				+ Fy * ((1.0f - Fx) * Texel(Xa, Yb) + Fx * Texel(Xb, Yb));
+			const int32 Xa = FMath::Clamp(X0, 0, ImgW - 1), Xb = FMath::Clamp(X0 + 1, 0, ImgW - 1);
+			const int32 Ya = FMath::Clamp(Y0, 0, ImgH - 1), Yb = FMath::Clamp(Y0 + 1, 0, ImgH - 1);
+			return (1.0f - Fy) * ((1.0f - Fx) * Texel(Img, ImgW, Xa, Ya) + Fx * Texel(Img, ImgW, Xb, Ya))
+				+ Fy * ((1.0f - Fx) * Texel(Img, ImgW, Xa, Yb) + Fx * Texel(Img, ImgW, Xb, Yb));
+		};
+		const float BloomScaleX = bBloom ? static_cast<float>(Bloom.W) / SrcW : 0.0f;
+		const float BloomScaleY = bBloom ? static_cast<float>(Bloom.H) / SrcH : 0.0f;
+		auto AddBloom = [&](FVector3f C, float Sx, float Sy) -> FVector3f
+		{
+			if (!bBloom) return C;
+			return C + BilinearClamped(*Bloom.Texels, Bloom.W, Bloom.H, (Sx + 0.5f) * BloomScaleX - 0.5f, (Sy + 0.5f) * BloomScaleY - 0.5f);
+		};
+		auto Sample = [&](float Sx, float Sy) -> FVector3f
+		{
+			// Outside the render's footprint: black. Inside: taps clamped to the valid texels.
+			if (!(Sx >= -0.5f && Sx <= SrcW - 0.5f && Sy >= -0.5f && Sy <= SrcH - 0.5f)) return FVector3f(0.0f);
+			return AddBloom(BilinearClamped(Scene, SrcW, SrcH, Sx, Sy), Sx, Sy);
 		};
 		const bool bSameSize = SrcW == W && SrcH == H;
 		const float ScaleX = static_cast<float>(SrcW) / W, ScaleY = static_cast<float>(SrcH) / H;
@@ -170,7 +166,8 @@ namespace CamSimSensorRef
 				FVector3f Rgb;
 				if (!(P.FocalPx > 0.0f))
 				{
-					Rgb = bSameSize ? Texel(Px, Py) : Bilinear((Px + 0.5f) * ScaleX - 0.5f, (Py + 0.5f) * ScaleY - 0.5f);
+					Rgb = bSameSize ? AddBloom(Texel(Scene, SrcW, Px, Py), static_cast<float>(Px), static_cast<float>(Py))
+						: Sample((Px + 0.5f) * ScaleX - 0.5f, (Py + 0.5f) * ScaleY - 0.5f);
 				}
 				else
 				{
@@ -186,7 +183,7 @@ namespace CamSimSensorRef
 					const float Xu = Xd * S, Yu = Yd * S;
 					const float Sx = (Xu * P.FocalPx + HalfW) * ScaleX - 0.5f, Sy = (Yu * P.FocalPx + HalfH) * ScaleY - 0.5f;
 					const float Illum = FMath::Pow(1.0f / FMath::Sqrt(1.0f + Xu * Xu + Yu * Yu), P.VignettingExponent);
-					Rgb = Bilinear(Sx, Sy) * Illum;
+					Rgb = Sample(Sx, Sy) * Illum;
 				}
 				OutRgb[Py * W + Px] = Rgb;
 				++OutHist.Bins[FSensorHistogram::BinOf(Rgb.X * P.SignalWeights.X + Rgb.Y * P.SignalWeights.Y + Rgb.Z * P.SignalWeights.Z)];
@@ -194,13 +191,12 @@ namespace CamSimSensorRef
 		}
 	}
 
-	void Blur(TArray<FVector3f>& InOut, int32 W, int32 H, float SigmaPx)
+	void Blur(TArray<FVector3f>& InOut, int32 W, int32 H, const FSensorFrameParams& P)
 	{
-		check(InOut.Num() == W * H);
-		if (!(SigmaPx > 0.0f)) return;
-		TArray<float> Taps;
-		CamSimOptics::PsfTaps(SigmaPx, Taps);
-		const int32 R = Taps.Num() - 1;
+		check(InOut.Num() == W * H && P.NumPsfTaps <= static_cast<uint32>(FSensorFrameParams::MaxPsfTaps));
+		if (P.NumPsfTaps <= 1) return;
+		const float* Taps = P.PsfTaps;
+		const int32 R = static_cast<int32>(P.NumPsfTaps) - 1;
 		TArray<FVector3f> Tmp;
 		Tmp.SetNumUninitialized(W * H);
 		for (int32 Y = 0; Y < H; ++Y)   // horizontal: InOut -> Tmp
@@ -232,12 +228,19 @@ namespace CamSimSensorRef
 
 	FResult Run(const TArray<FLinearColor>& Scene, int32 W, int32 H, const FSensorFrameParams& P)
 	{
-		check(Scene.Num() == W * H && W % 4 == 0 && H % 2 == 0);
+		FImage S;
+		S.Texels = &Scene; S.W = W; S.H = H;
+		return Run(S, FImage(), W, H, P);
+	}
+
+	FResult Run(const FImage& Scene, const FImage& Bloom, int32 W, int32 H, const FSensorFrameParams& P)
+	{
+		check(Scene.IsValid() && W % 4 == 0 && H % 2 == 0);
 		FResult R;
-		// Steps 1-5: sanitise, InputScale, optics, noiseless-signal histogram, PSF blur (optical sigma).
+		// Steps 1-5: sanitise, InputScale, [+bloom], optics, noiseless-signal histogram, PSF blur.
 		TArray<FVector3f> Linear;
-		Optics(Scene, W, H, W, H, P, Linear, R.Histogram);
-		Blur(Linear, W, H, P.PsfSigmaPx);
+		Optics(*Scene.Texels, Scene.W, Scene.H, W, H, P, Linear, R.Histogram, Bloom);
+		Blur(Linear, W, H, P);
 		const bool bEo = P.Mode == ESensorGraphMode::EO;
 		const int32 N = W * H;
 		TArray<float> Rgb, Signal;
@@ -262,32 +265,6 @@ namespace CamSimSensorRef
 			else
 			{
 				const float V = DisplayIr(Dn[I] * InvAdc, P);
-				Out[I] = FVector4f(V, V, V, V);
-			}
-		}
-		PackNv12(Out, W, H, bEo, R.Nv12);
-		return R;
-	}
-
-	FResult RunDisplayOnly(const TArray<FLinearColor>& Scene, int32 W, int32 H, const FSensorFrameParams& P)
-	{
-		FResult R;
-		TArray<float> Rgb, Signal;
-		PrepareScene(Scene, W, H, P, Rgb, Signal, R.Histogram);
-		const bool bEo = P.Mode == ESensorGraphMode::EO;
-		const int32 N = W * H;
-		const float Gain = P.PhotonGain * P.AnalogGain;
-		TArray<FVector4f> Out;
-		Out.SetNumUninitialized(N);
-		for (int32 I = 0; I < N; ++I)
-		{
-			if (bEo)
-			{
-				Out[I] = FVector4f(DisplayEo(Rgb[I] * Gain, P), DisplayEo(Rgb[N + I] * Gain, P), DisplayEo(Rgb[2 * N + I] * Gain, P), 1.0f);
-			}
-			else
-			{
-				const float V = DisplayIr(Signal[I] * Gain, P);
 				Out[I] = FVector4f(V, V, V, V);
 			}
 		}

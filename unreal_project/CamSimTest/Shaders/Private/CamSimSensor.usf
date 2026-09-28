@@ -1,151 +1,374 @@
 // Copyright CamSim Contributors. All Rights Reserved.
-// GPU sensor model (ROADMAP 3B). Order of operations: see Sensor/SensorReference.h.
-// Plain compute: integer atomics only, no wave intrinsics (Metal + Vulkan).
+// GPU sensor model (ROADMAP 3B.2): SensorCS, one pass — optics, histogram, [PSF blur], detector, display, NV12.
+// Order of operations, sampling and footprint conventions: CamSimSensorRef (Sensor/SensorReference.h),
+// mirrored expression for expression. Plain compute: integer atomics only, no wave intrinsics (Metal + Vulkan).
 
 #include "/Engine/Public/Platform.ush"
 #if USE_VIEW_PREEXPOSURE
 #include "/Engine/Private/Common.ush"   // View.OneOverPreExposure
 #endif
+#include "CamSimSensorCommon.ush"
 
-#define HIST_BINS 256
-#define HIST_MIN_LOG2 (-16.0)
-#define HIST_BINS_PER_STOP 8.0
+int2   OutputSize;
+float3 SignalWeights;
+
+// ---------------------------------------------------------------------------------------------
+// Optics (steps 1-3): sanitize, scale, [+bloom], distortion resample, cos^n
+// ---------------------------------------------------------------------------------------------
 
 Texture2D<float4> SceneColor;
-SamplerState SceneColorSampler;
-float2 SceneUvMin;      // UV of the view rect's top-left
-float2 SceneUvSize;     // UV extent of the view rect
-int2   SceneViewMin;    // texel of the view rect's top-left (exact path)
-uint   bExactInput;     // view rect size == OutputSize: Load instead of sampling
+int2   SceneViewMin;    // texel of the view rect's top-left
+int2   SceneSize;       // view rect size (SrcW, SrcH)
+float2 SrcScale;        // float(SrcW) / W, float(SrcH) / H
+float2 HalfOut;         // 0.5 * W, 0.5 * H
+uint   bSameSize;       // view rect size == OutputSize: optics-off copies texels
 Texture2D<float4> Bloom;
-SamplerState BloomSampler;
-float2 BloomUvMin;
-float2 BloomUvSize;
-float  BloomWeight;     // 0 without bloom
+int2   BloomViewMin;
+int2   BloomSize;
+float2 BloomScale;      // float(BW) / SrcW, float(BH) / SrcH
+uint   bBloom;
 float  InputScale;      // tests; runtime multiplies View.OneOverPreExposure in as well
-int2   OutputSize;
-uint   Mode;            // 0 EO, 1 IR
-uint   bBlackHot;
-float  PhotonGain;      // signal -> fraction of full scale
-float  AnalogGain;      // after detector noise (photon detectors); 1 otherwise
-float  DisplayGain;     // IR AGC on normalised DN; EO 1
-float  DisplayOffset;   // IR AGC, normalised units
-float3 SignalWeights;
-float  KneeStart;
+float  FocalPx;         // <= 0: optics off
+float  K1;
+float  K2;
+float  VignettingExponent;
+
+float TexelScale()
+{
+	float Scale = InputScale;
+#if USE_VIEW_PREEXPOSURE
+	Scale *= View.OneOverPreExposure;
+#endif
+	return Scale;
+}
+
+float3 SceneTexel(int2 T, float Scale) { return Sanitize3(SceneColor.Load(int3(SceneViewMin + T, 0)).rgb) * Scale; }
+float3 BloomTexel(int2 T, float Scale) { return Sanitize3(Bloom.Load(int3(BloomViewMin + T, 0)).rgb) * Scale; }
+
+/** Bilinear with taps clamped to [0, Size - 1] (CamSimSensorRef::Optics BilinearClamped). */
+#define CAMSIM_BILINEAR(TexelFn, Size, Sx, Sy, Scale, Result) \
+{ \
+	const float X0f = floor(Sx), Y0f = floor(Sy); \
+	const float Fx = (Sx) - X0f, Fy = (Sy) - Y0f; \
+	const int X0 = (int)X0f, Y0 = (int)Y0f; \
+	const int Xa = clamp(X0, 0, (Size).x - 1), Xb = clamp(X0 + 1, 0, (Size).x - 1); \
+	const int Ya = clamp(Y0, 0, (Size).y - 1), Yb = clamp(Y0 + 1, 0, (Size).y - 1); \
+	Result = (1.0 - Fy) * ((1.0 - Fx) * TexelFn(int2(Xa, Ya), Scale) + Fx * TexelFn(int2(Xb, Ya), Scale)) \
+		+ Fy * ((1.0 - Fx) * TexelFn(int2(Xa, Yb), Scale) + Fx * TexelFn(int2(Xb, Yb), Scale)); \
+}
+
+float3 AddBloom(float3 C, float Sx, float Sy, float Scale)
+{
+	if (bBloom == 0) return C;
+	const float Bx = (Sx + 0.5) * BloomScale.x - 0.5, By = (Sy + 0.5) * BloomScale.y - 0.5;
+	float3 B;
+	CAMSIM_BILINEAR(BloomTexel, BloomSize, Bx, By, Scale, B)
+	return C + B;
+}
+
+float3 SampleScene(float Sx, float Sy, float Scale)
+{
+	// Outside the render's footprint: black.
+	if (!(Sx >= -0.5 && Sx <= float(SceneSize.x) - 0.5 && Sy >= -0.5 && Sy <= float(SceneSize.y) - 0.5)) return 0.0;
+	float3 C;
+	CAMSIM_BILINEAR(SceneTexel, SceneSize, Sx, Sy, Scale, C)
+	return AddBloom(C, Sx, Sy, Scale);
+}
+
+/** CamSimSensorRef::Optics for output pixel P: linear RGB after illumination. */
+float3 OpticsAt(int2 P, float Scale)
+{
+	if (!(FocalPx > 0.0))
+	{
+		return (bSameSize != 0)
+			? AddBloom(SceneTexel(P, Scale), float(P.x), float(P.y), Scale)
+			: SampleScene((float(P.x) + 0.5) * SrcScale.x - 0.5, (float(P.y) + 0.5) * SrcScale.y - 0.5, Scale);
+	}
+	const float Xd = (float(P.x) + 0.5 - HalfOut.x) / FocalPx, Yd = (float(P.y) + 0.5 - HalfOut.y) / FocalPx;
+	const float Rd = sqrt(Xd * Xd + Yd * Yd);
+	float S = 1.0;
+	if (Rd > 0.0)
+	{
+		// CamSimOptics::UndistortRadius: NewtonIterations (3) from r = Rd; the final iterate.
+		float R = Rd;
+		[unroll] for (int It = 0; It < 3; ++It)
+		{
+			const float R2 = R * R;
+			R -= (R * (1.0 + K1 * R2 + K2 * R2 * R2) - Rd) / (1.0 + 3.0 * K1 * R2 + 5.0 * K2 * R2 * R2);
+		}
+		S = R / Rd;
+	}
+	const float Xu = Xd * S, Yu = Yd * S;
+	const float Sx = (Xu * FocalPx + HalfOut.x) * SrcScale.x - 0.5, Sy = (Yu * FocalPx + HalfOut.y) * SrcScale.y - 0.5;
+	const float Illum = pow(1.0 / sqrt(1.0 + Xu * Xu + Yu * Yu), VignettingExponent);
+	return SampleScene(Sx, Sy, Scale) * Illum;
+}
+
+float SignalOf(float3 C) { return C.r * SignalWeights.x + C.g * SignalWeights.y + C.b * SignalWeights.z; }
+
+// ---------------------------------------------------------------------------------------------
+// Detector (steps 6-7): detector + ADC + defects (CamSimSensorRef::DetectPixel) + display
+// ---------------------------------------------------------------------------------------------
+
+#define DET_GROUP 16
+#ifndef BLUR_MAX_R
+#define BLUR_MAX_R 0                             // permutation: 0 (no blur), 3, 8 (CamSimOptics::MaxPsfRadius)
+#endif
+#define DET_MAX_SPAN (DET_GROUP + 2 * BLUR_MAX_R)   // groupshared tiles sized per class: small tiles keep occupancy up
+#define DET_KEYS 33                              // 16 key pairs + the defect key
 
 RWTexture2D<float4> OutSensorRgb;
 RWStructuredBuffer<uint> OutHistogram;
+float4 PsfTaps[3];      // taps 0..8 packed four per float4; PsfTaps[0].x is the centre
+uint   NumPsfTaps;      // radius = NumPsfTaps - 1 <= 8
+uint   Mode;            // 0 EO, 1 IR
+uint   bBlackHot;
+float  PhotonGain;
+float  AnalogGain;
+float  DisplayGain;
+float  DisplayOffset;
+float  KneeStart;
+uint   DetectorType;    // 0 photon, 1 microbolometer
+float  FullWellE;
+float  ReadNoiseE;
+float  Prnu;
+float  DsnuE;
+float  DarkE;
+float  TemporalNoise;
+float  PixelFpn;
+float  ColumnFpn;
+float  RowFpn;
+float  AdcMax;
+float  InvAdcMax;       // 1.0f / AdcMax, computed on the CPU as the reference does
+float  HotFraction;
+float  DeadFraction;
+
+// CamSimHash::StreamKey for every sub-stream DetectPixel draws, flat index k = DetectorKeys[k / 4][k % 4]
+// (filled by SensorGraph.cpp). Pair p = keys 2p (U1) and 2p + 1 (U2) of one Gaussian stream:
+//   photon channel c, stream k = 1..4 (Base + k, Base = 16 c): pair c * 4 + k - 1, Frame = FrameIndex for
+//   k = 2, 4 (shot, read), FixedFrame for k = 1, 3 (PRNU, DSNU)                                (pairs 0..11)
+//   microbolometer streams 5 (frame), 6, 7, 8 (fixed): pair 12 + (stream - 5)                     (pairs 12..15)
+//   defects (sub-stream 18, fixed): key 32
+uint4 DetectorKeys[9];
+
+// Hash(X, Y, ...) = Pcg(X ^ Pcg(Y ^ Key)): the inner Pcg depends only on the row, so each group computes
+// it once per (row, key) here instead of once per pixel.
+groupshared uint RowHash[DET_GROUP * DET_KEYS];
 
 groupshared uint LocalHistogram[HIST_BINS];
 
-float Sanitize(float V) { return (V != V) ? 0.0 : clamp(V, 0.0, 65504.0); }
-
-float Knee(float X, float K)
-{
-	// Normalised so [K, 1] maps onto [K, 1] (CamSimSensorRef::Knee).
-	if (X <= K || K >= 1.0) return X;
-	return K + (1.0 - K) * (1.0 - exp(-(X - K) / (1.0 - K))) / (1.0 - exp(-1.0));
-}
-
-float Oetf709(float L)
-{
-	L = saturate(L);
-	return L < 0.018 ? 4.5 * L : 1.099 * pow(L, 0.45) - 0.099;
-}
-
-uint BinOf(float S)
-{
-	if (!(S > 0.0)) return 0;
-	return (uint)clamp((int)floor((log2(S) - HIST_MIN_LOG2) * HIST_BINS_PER_STOP), 0, HIST_BINS - 1);
-}
-
-[numthreads(8, 8, 1)]
-void ApplyCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint GroupIndex : SV_GroupIndex)
-{
-	for (uint I = GroupIndex; I < HIST_BINS; I += 64) LocalHistogram[I] = 0;
-	GroupMemoryBarrierWithGroupSync();
-
-	const int2 P = int2(DispatchThreadId.xy);
-	if (all(P < OutputSize))
-	{
-		const float2 Frac = (float2(P) + 0.5) / float2(OutputSize);
-		float3 C = (bExactInput != 0)
-			? SceneColor.Load(int3(SceneViewMin + P, 0)).rgb
-			: SceneColor.SampleLevel(SceneColorSampler, SceneUvMin + Frac * SceneUvSize, 0).rgb;
-		if (BloomWeight > 0.0)
-		{
-			C += BloomWeight * Bloom.SampleLevel(BloomSampler, BloomUvMin + Frac * BloomUvSize, 0).rgb;
-		}
-		float Scale = InputScale;
-#if USE_VIEW_PREEXPOSURE
-		Scale *= View.OneOverPreExposure;
+#if BLUR_MAX_R > 0
+// Span x Span (Span = 16 + 2R) optics at clamp(Origin - R + (col, row)); then, in place, Span x 16:
+// its rows blurred horizontally (the 16 centre columns). One tile keeps groupshared use (and so the
+// detector's occupancy) down.
+groupshared float3 Tile[DET_MAX_SPAN * DET_MAX_SPAN];
 #endif
-		C = float3(Sanitize(C.r), Sanitize(C.g), Sanitize(C.b)) * Scale;
-		const float S = dot(C, SignalWeights);
-		InterlockedAdd(LocalHistogram[BinOf(S)], 1u);
 
-		// Until the detector model lands: normalised DN = signal * PhotonGain * AnalogGain.
-		const float Gain = PhotonGain * AnalogGain;
-		float4 Out;
-		if (Mode == 0)
-		{
-			const float3 G = C * Gain;
-			Out = float4(Oetf709(Knee(G.r, KneeStart)), Oetf709(Knee(G.g, KneeStart)), Oetf709(Knee(G.b, KneeStart)), 1.0);
-		}
-		else
-		{
-			float V = saturate(DisplayGain * (S * Gain) + DisplayOffset);
-			if (bBlackHot != 0) V = 1.0 - V;
-			Out = float4(V, V, V, V);
-		}
-		OutSensorRgb[P] = Out;
-	}
+uint  FlatKey(uint K) { return DetectorKeys[K >> 2u][K & 3u]; }
+float Tap(uint K) { return PsfTaps[K >> 2u][K & 3u]; }
 
-	GroupMemoryBarrierWithGroupSync();
-	for (uint J = GroupIndex; J < HIST_BINS; J += 64)
-	{
-		if (LocalHistogram[J] != 0) InterlockedAdd(OutHistogram[J], LocalHistogram[J]);
-	}
+/** Hash(X, Origin.y + Row, ...) of flat key K. */
+uint HashRow(uint X, uint Row, uint K) { return Pcg(X ^ RowHash[Row * DET_KEYS + K]); }
+
+float BoxMuller(uint H1, uint H2)
+{
+	return sqrt(-2.0 * log(Uniform(H1))) * cos(CAMSIM_TWO_PI * Uniform(H2));
 }
 
-Texture2D<float4> SensorRgb;
+float GaussianRow(uint X, uint Row, uint Pair) { return BoxMuller(HashRow(X, Row, 2u * Pair), HashRow(X, Row, 2u * Pair + 1u)); }
+
+float DetectPixel(float Signal, uint X, uint Row, uint Channel)
+{
+	if (IsNaNBits(Signal)) Signal = 0.0;
+	float Dn;
+	if (DetectorType == 0)
+	{
+		const uint Pair = Channel * 4u;
+		const float E  = Signal * PhotonGain * FullWellE;
+		const float E1 = E * (1.0 + Prnu * GaussianRow(X, Row, Pair + 0u));             // stream 1: PRNU
+		float E2 = E1 + DarkE;
+		E2 += sqrt(max(E2, 0.0)) * GaussianRow(X, Row, Pair + 1u);                      // stream 2: shot on signal + dark
+		const float E3 = E2 + DsnuE * GaussianRow(X, Row, Pair + 2u);                   // stream 3: DSNU
+		const float E4 = E3 + ReadNoiseE * GaussianRow(X, Row, Pair + 3u);              // stream 4: read
+		const float E5 = clamp(E4, 0.0, FullWellE) * AnalogGain;
+		Dn = clamp(RoundHalfUp(E5 * AdcMax / FullWellE), 0.0, AdcMax);
+	}
+	else
+	{
+		// Column FPN hashes (X, 0): HashK(X, 0, key); row FPN (0, Y): Pcg(0 ^ row hash).
+		const float Column = BoxMuller(HashK(X, 0u, FlatKey(28u)), HashK(X, 0u, FlatKey(29u)));
+		const float RowG   = BoxMuller(HashRow(0u, Row, 30u), HashRow(0u, Row, 31u));
+		const float V = Signal * PhotonGain
+			+ TemporalNoise * GaussianRow(X, Row, 12u)                                     // stream 5
+			+ PixelFpn * GaussianRow(X, Row, 13u)                                          // stream 6
+			+ ColumnFpn * Column                                                           // stream 7
+			+ RowFpn * RowG;                                                               // stream 8
+		Dn = clamp(RoundHalfUp(V * AdcMax), 0.0, AdcMax);
+	}
+	const float U = Uniform(HashRow(X, Row, 32u));   // raw draw of stream 9: sub-stream 18
+	if (U < HotFraction) return AdcMax;
+	if (U > 1.0 - DeadFraction) return 0.0;
+	return Dn;
+}
+
+float DisplayEo(float N) { return Oetf709(Knee(N, KneeStart)); }
+
+float DisplayIr(float N)
+{
+	const float V = clamp(N * DisplayGain + DisplayOffset, 0.0, 1.0);
+	return (bBlackHot != 0) ? 1.0 - V : V;
+}
+
+// ---------------------------------------------------------------------------------------------
+// SensorCS (16x16 groups): optics -> histogram -> [PSF blur, BLUR_MAX_R > 0] -> detector -> display -> NV12.
+// One pass: the linear image never leaves the group (an fp32 round trip through memory costs
+// ~0.35 ms at 1080p). With the blur, the group evaluates the optics on a (16 + 2R)^2 tile
+// (R = NumPsfTaps - 1 apron, clamp-to-edge: an apron texel outside the image is the optics of the
+// nearest edge pixel, exactly the reference's clamped taps), blurs the tile's rows, then the
+// columns: per output the reference's H-then-V sums in the same accumulation order. Only the 16x16
+// interior pixels inside the image count in the histogram, so each output pixel counts once.
+// ---------------------------------------------------------------------------------------------
+
+#define DET_THREADS (DET_GROUP * DET_GROUP)
+
+/** Steps 6-7; writes OutSensorRgb and returns the display R'G'B' (IR: v, v, v). */
+float3 DetectAndDisplay(float3 C, int2 P, uint Row)
+{
+	const uint X = (uint)P.x;
+	float4 Out;
+	if (Mode == 0)
+	{
+		Out = float4(DisplayEo(DetectPixel(C.r, X, Row, 0u) * InvAdcMax),
+			DisplayEo(DetectPixel(C.g, X, Row, 1u) * InvAdcMax),
+			DisplayEo(DetectPixel(C.b, X, Row, 2u) * InvAdcMax), 1.0);
+	}
+	else
+	{
+		const float V = DisplayIr(DetectPixel(SignalOf(C), X, Row, 0u) * InvAdcMax);
+		Out = float4(V, V, V, V);
+	}
+	OutSensorRgb[P] = Out;
+	return Out.rgb;
+}
+
+// Step 8, NV12 (BT.709 limited range): threads 0..31 each pack one 4x2 block of the group's 16x16
+// display values: two uints of Y, one uint of UV (U0 V0 U1 V1). Output W % 4 == 0 and H % 2 == 0,
+// so a block is either wholly inside the image or wholly outside.
 RWStructuredBuffer<uint> OutNv12;
 
-uint ToLimited(float V) { return (uint)clamp((int)round(16.0 + 219.0 * V), 0, 255); }
-uint ToChroma(float C)  { return (uint)clamp((int)round(128.0 + 224.0 * C), 0, 255); }
+uint ToLimited(float V) { return (uint)clamp((int)floor(16.0 + 219.0 * V + 0.5), 0, 255); }
+uint ToChroma(float C)  { return (uint)clamp((int)floor(128.0 + 224.0 * C + 0.5), 0, 255); }
+float LumaOf(float3 O) { return (Mode == 0) ? (0.2126 * O.r + 0.7152 * O.g + 0.0722 * O.b) : O.r; }
 
-float LumaOf(float4 O) { return (Mode == 0) ? dot(O.rgb, float3(0.2126, 0.7152, 0.0722)) : O.a; }
+#if BLUR_MAX_R > 0
+#define DispTile Tile   // the blur tile is free again once the vertical pass has read it
+#else
+groupshared float3 DispTile[DET_GROUP * DET_GROUP];
+#endif
 
-/** One thread per 4x2 block: two uints of Y, one uint of UV (U0 V0 U1 V1). */
-[numthreads(8, 8, 1)]
-void PackNv12CS(uint3 DispatchThreadId : SV_DispatchThreadID)
+void PackNv12(uint GroupIndex, int2 Origin)
 {
-	const int2 Block = int2(DispatchThreadId.xy);
-	const int2 P0 = Block * int2(4, 2);
+	if (GroupIndex >= (DET_GROUP / 4) * (DET_GROUP / 2)) return;
+	const uint Bx = GroupIndex % (DET_GROUP / 4), By = GroupIndex / (DET_GROUP / 4);
+	const int2 P0 = Origin + int2(Bx * 4, By * 2);
 	if (any(P0 >= OutputSize)) return;
-
 	uint Y0 = 0, Y1 = 0, UV = 0;
-	[unroll] for (int Pair = 0; Pair < 2; ++Pair)
+	[unroll] for (uint Pair = 0; Pair < 2; ++Pair)
 	{
 		float3 Sum = 0;
-		[unroll] for (int Dx = 0; Dx < 2; ++Dx)
+		[unroll] for (uint Dx = 0; Dx < 2; ++Dx)
 		{
-			const int X = P0.x + Pair * 2 + Dx;
-			const float4 A = SensorRgb.Load(int3(X, P0.y, 0));
-			const float4 B = SensorRgb.Load(int3(X, P0.y + 1, 0));
-			const uint Shift = (uint)(Pair * 2 + Dx) * 8;
+			const uint T = (By * 2) * DET_GROUP + Bx * 4 + Pair * 2 + Dx;
+			const float3 A = DispTile[T];
+			const float3 B = DispTile[T + DET_GROUP];
+			const uint Shift = (Pair * 2 + Dx) * 8;
 			Y0 |= ToLimited(LumaOf(A)) << Shift;
 			Y1 |= ToLimited(LumaOf(B)) << Shift;
-			Sum += A.rgb + B.rgb;
+			Sum += A + B;
 		}
 		const float3 M = Sum * 0.25;
-		const float Ym = dot(M, float3(0.2126, 0.7152, 0.0722));
+		const float Ym = 0.2126 * M.r + 0.7152 * M.g + 0.0722 * M.b;
 		const uint U = (Mode == 0) ? ToChroma((M.b - Ym) / 1.8556) : 128;
 		const uint V = (Mode == 0) ? ToChroma((M.r - Ym) / 1.5748) : 128;
 		UV |= (U << (Pair * 16)) | (V << (Pair * 16 + 8));
 	}
 	const uint W = (uint)OutputSize.x;
-	OutNv12[(P0.y * W + P0.x) / 4]           = Y0;
-	OutNv12[((P0.y + 1) * W + P0.x) / 4]     = Y1;
-	OutNv12[(W * (uint)OutputSize.y + (P0.y / 2) * W + P0.x) / 4] = UV;
+	OutNv12[((uint)P0.y * W + (uint)P0.x) / 4]           = Y0;
+	OutNv12[(((uint)P0.y + 1) * W + (uint)P0.x) / 4]     = Y1;
+	OutNv12[(W * (uint)OutputSize.y + ((uint)P0.y / 2) * W + (uint)P0.x) / 4] = UV;
+}
+
+[numthreads(DET_GROUP, DET_GROUP, 1)]
+void SensorCS(uint3 GroupId : SV_GroupID, uint3 ThreadId : SV_GroupThreadID, uint GroupIndex : SV_GroupIndex)
+{
+	const int2 Origin = int2(GroupId.xy) * DET_GROUP;
+	for (uint I = GroupIndex; I < HIST_BINS; I += DET_THREADS) LocalHistogram[I] = 0;
+	for (uint J = GroupIndex; J < DET_GROUP * DET_KEYS; J += DET_THREADS)
+	{
+		const uint Row = J / DET_KEYS;
+		RowHash[J] = Pcg((uint)(Origin.y + (int)Row) ^ FlatKey(J - Row * DET_KEYS));
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	const float Scale = TexelScale();
+	const int2 P = Origin + int2(ThreadId.xy);
+	const bool bInside = all(P < OutputSize);
+#if BLUR_MAX_R > 0
+	const uint R = NumPsfTaps - 1u;
+	const uint Span = DET_GROUP + 2u * R;
+	for (uint L = GroupIndex; L < Span * Span; L += DET_THREADS)
+	{
+		const uint Tx = L % Span, Ty = L / Span;
+		const int2 Q = Origin - (int)R + int2(Tx, Ty);
+		const float3 Rgb = OpticsAt(clamp(Q, int2(0, 0), OutputSize - 1), Scale);
+		Tile[L] = Rgb;
+		const bool bInterior = Tx >= R && Tx < R + DET_GROUP && Ty >= R && Ty < R + DET_GROUP;
+		if (bInterior && all(Q < OutputSize)) InterlockedAdd(LocalHistogram[BinOf(SignalOf(Rgb))], 1u);
+	}
+	GroupMemoryBarrierWithGroupSync();
+	// Horizontal: Span x 16 outputs, at most two per thread (Span <= 32), held in registers until
+	// every thread has read the tile, then written back over it as [row][16].
+	float3 HAcc[2];
+	[unroll] for (uint It = 0; It < 2; ++It)
+	{
+		const uint H = GroupIndex + It * DET_THREADS;
+		HAcc[It] = 0.0;
+		if (H < Span * DET_GROUP)
+		{
+			const uint Base = (H / DET_GROUP) * Span + (H % DET_GROUP) + R;
+			float3 Acc = Tap(0) * Tile[Base];
+			for (uint K = 1; K <= R; ++K) Acc += Tap(K) * (Tile[Base - K] + Tile[Base + K]);
+			HAcc[It] = Acc;
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+	[unroll] for (uint Iw = 0; Iw < 2; ++Iw)
+	{
+		const uint H = GroupIndex + Iw * DET_THREADS;
+		if (H < Span * DET_GROUP) Tile[H] = HAcc[Iw];
+	}
+	GroupMemoryBarrierWithGroupSync();
+	const uint VBase = (ThreadId.y + R) * DET_GROUP + ThreadId.x;
+	float3 C = Tap(0) * Tile[VBase];
+	for (uint K = 1; K <= R; ++K) C += Tap(K) * (Tile[VBase - K * DET_GROUP] + Tile[VBase + K * DET_GROUP]);
+	float3 Disp = 0.0;
+	if (bInside) Disp = DetectAndDisplay(C, P, ThreadId.y);
+	GroupMemoryBarrierWithGroupSync();   // every thread has read Tile: reuse it as DispTile
+#else
+	float3 Disp = 0.0;
+	if (bInside)
+	{
+		const float3 C = OpticsAt(P, Scale);
+		InterlockedAdd(LocalHistogram[BinOf(SignalOf(C))], 1u);
+		Disp = DetectAndDisplay(C, P, ThreadId.y);
+	}
+#endif
+	DispTile[ThreadId.y * DET_GROUP + ThreadId.x] = Disp;
+
+	GroupMemoryBarrierWithGroupSync();
+	PackNv12(GroupIndex, Origin);
+	for (uint B = GroupIndex; B < HIST_BINS; B += DET_THREADS)
+	{
+		if (LocalHistogram[B] != 0) InterlockedAdd(OutHistogram[B], LocalHistogram[B]);
+	}
 }

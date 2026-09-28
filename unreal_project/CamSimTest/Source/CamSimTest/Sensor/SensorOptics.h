@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 
 struct FSensorOpticsConfig;
+struct FSensorFrameParams;
 
 /**
  * Lens-model helpers (ROADMAP 3B.2). Coordinates are normalised by the focal length in pixels:
@@ -54,4 +55,8 @@ namespace CamSimOptics
 	 *  SigmaO <= 0 gives the single tap { 1 } (Blur skips). Computed on the CPU in double (HLSL has
 	 *  no erf): the GPU consumes these taps as constants. */
 	void PsfTaps(float SigmaO, TArray<float>& OutTaps);
+
+	/** Sets P.PsfSigmaPx = SigmaO and P.PsfTaps / P.NumPsfTaps from PsfTaps(SigmaO): what both the
+	 *  reference Blur and the GPU blur apply. */
+	void SetPsf(FSensorFrameParams& P, float SigmaO);
 }

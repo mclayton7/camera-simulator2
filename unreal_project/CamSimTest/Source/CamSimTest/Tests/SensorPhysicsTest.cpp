@@ -407,7 +407,9 @@ bool FSensorPhysicsPsfEdgeTest::RunTest(const FString& Parameters)
 	TArray<FVector3f> Img;
 	Img.SetNumUninitialized(W * H);
 	for (int32 Y = 0; Y < H; ++Y) for (int32 X = 0; X < W; ++X) Img[Y * W + X] = FVector3f(X < W / 2 ? 0.0f : 1.0f);
-	CamSimSensorRef::Blur(Img, W, H, SigmaO);
+	FSensorFrameParams Psf;
+	CamSimOptics::SetPsf(Psf, SigmaO);
+	CamSimSensorRef::Blur(Img, W, H, Psf);
 
 	const int32 Row = H / 2;
 	auto Sse = [&](double E, double S)

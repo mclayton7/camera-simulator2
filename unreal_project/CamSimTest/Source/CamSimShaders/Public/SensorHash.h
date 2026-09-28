@@ -28,6 +28,13 @@ namespace CamSimHash
 		return Pcg(X ^ Pcg(Y ^ Pcg(Frame ^ Pcg(Seed ^ Pcg(Stream)))));
 	}
 
+	/** The pixel-independent tail of Hash: Hash(X, Y, F, S, St) == Pcg(X ^ Pcg(Y ^ StreamKey(F, S, St))).
+	 *  The GPU graph precomputes these per frame, and the row half Pcg(Y ^ key) once per group (CamSimSensor.usf). */
+	inline uint32 StreamKey(uint32 Frame, uint32 Seed, uint32 Stream)
+	{
+		return Pcg(Frame ^ Pcg(Seed ^ Pcg(Stream)));
+	}
+
 	/** Top 23 bits -> open interval (0, 1): (k + 0.5) / 2^23 is exact in float32 (24-bit
 	 *  significand), so no rounding or fma contraction can reach 0 or 1. */
 	inline float Uniform(uint32 H) { return (float(H >> 9) + 0.5f) * (1.0f / 8388608.0f); }
