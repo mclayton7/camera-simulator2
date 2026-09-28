@@ -122,20 +122,6 @@ bool FSensorGpuIrTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorGpuNvgTest, "CamSim.GPU.Sensor.NvgNight",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FSensorGpuNvgTest::RunTest(const FString& Parameters)
-{
-	if (SkipWithoutGpu(*this)) return true;
-	constexpr int32 W = 64, H = 32;
-	TArray<FLinearColor> Scene = LogGradient(W, H);
-	for (FLinearColor& C : Scene) { C.R *= 1e-6f; C.G *= 0.5e-6f; C.B *= 0.2e-6f; }  // starlight, red-heavy
-	FSensorFrameParams P; P.Mode = ESensorGraphMode::NVG; P.SignalWeights = FVector3f(0.6f, 0.3f, 0.1f); P.Gain = FMath::Exp2(14.0f);
-	// Histogram: coloured input no longer sits on bin centres, so compare NV12 only here.
-	Compare(*this, RunOnGpu(Scene, W, H, FIntPoint(W, H), P), CamSimSensorRef::Run(Scene, W, H, P), W, H, /*bCheckHistogram=*/false);
-	return true;
-}
-
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorGpuSanitizeTest, "CamSim.GPU.Sensor.SanitizesNaNInfNegative",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorGpuSanitizeTest::RunTest(const FString& Parameters)

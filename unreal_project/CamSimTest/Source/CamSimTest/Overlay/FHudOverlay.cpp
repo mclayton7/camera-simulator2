@@ -12,7 +12,6 @@ FColor FHudOverlay::TextColor(uint8 SensorMode) const
     switch (SensorMode)
     {
     case 1:  return FColor(255, 255,   0, 255); // IR — yellow
-    case 2:  return FColor(  0, 255,  80, 255); // NVG — bright green
     default: return FColor(255, 255, 255, 255); // EO — white
     }
 }

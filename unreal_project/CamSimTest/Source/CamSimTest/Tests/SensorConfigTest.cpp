@@ -15,7 +15,7 @@ bool FSensorExposureYamlTest::RunTest(const FString& Parameters)
 {
 	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT(
 		"sensor_modes:\n"
-		"  nvg:\n"
+		"  ir:\n"
 		"    signal_weight_r: 0.6\n"
 		"    signal_weight_g: 0.3\n"
 		"    signal_weight_b: 0.1\n"
@@ -29,7 +29,7 @@ bool FSensorExposureYamlTest::RunTest(const FString& Parameters)
 		"      manual_gain_ev: -2\n"
 		"render:\n"
 		"  sensor_path: gpu\n"));
-	const FSensorModeConfig& N = Cfg.SensorModeConfigs.FindChecked(ESensorMode::NVG);
+	const FSensorModeConfig& N = Cfg.SensorModeConfigs.FindChecked(ESensorMode::IR);
 	TestEqual(TEXT("weight r"), N.SignalWeights.X, 0.6f);
 	TestEqual(TEXT("weight b"), N.SignalWeights.Z, 0.1f);
 	TestFalse(TEXT("auto"), N.Exposure.bAuto);
@@ -41,6 +41,19 @@ bool FSensorExposureYamlTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("manual"), N.Exposure.ManualGainEv, -2.0f);
 	TestTrue(TEXT("sensor_path gpu"), Cfg.Render.SensorPathMode == FCamSimConfig::FRenderConfig::ESensorPath::Gpu);
 	TestEqual(TEXT("no unknown keys"), Cfg.UnknownYamlKeys.Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorNoNvgTest,
+	"CamSim.Sensor.Config.NvgRemoved",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSensorNoNvgTest::RunTest(const FString& Parameters)
+{
+	const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT("sensor_modes:\n  nvg:\n    target_grey: 0.3\n"));
+	TestEqual(TEXT("only EO and IR modes"), Cfg.SensorModeConfigs.Num(), 2);
+	TestTrue(TEXT("nvg block reported as unknown"), Cfg.UnknownYamlKeys.ContainsByPredicate(
+		[](const FString& K) { return K.Contains(TEXT("nvg")); }));
 	return true;
 }
 
@@ -123,7 +136,6 @@ namespace
 		const FExpect Expected[] = {
 			{ ESensorMode::EO,  TEXT("eo"),  -20.0f, -12.5f, 0.18f, 0.99f },
 			{ ESensorMode::IR,  TEXT("ir"),  -20.0f,  -6.0f, 0.18f, 0.99f },
-			{ ESensorMode::NVG, TEXT("nvg"), -20.0f,   6.0f, 0.30f, 0.97f },
 		};
 		for (const FExpect& E : Expected)
 		{
@@ -137,13 +149,6 @@ namespace
 			T.TestEqual(FString::Printf(TEXT("%s: %s highlight_percentile"), Source, E.Name), X.HighlightPercentile, E.HiPct);
 			T.TestEqual(FString::Printf(TEXT("%s: %s lag_frames"), Source, E.Name), X.LagFrames, 2);
 			T.TestEqual(FString::Printf(TEXT("%s: %s manual_gain_ev"), Source, E.Name), X.ManualGainEv, -12.0f);
-		}
-		// NVG photocathode: red/NIR-heavy detector response (signal_weight_r/g/b).
-		if (const FSensorModeConfig* Nvg = Cfg.SensorModeConfigs.Find(ESensorMode::NVG))
-		{
-			T.TestEqual(FString::Printf(TEXT("%s: nvg signal_weight_r"), Source), Nvg->SignalWeights.X, 0.6f);
-			T.TestEqual(FString::Printf(TEXT("%s: nvg signal_weight_g"), Source), Nvg->SignalWeights.Y, 0.3f);
-			T.TestEqual(FString::Printf(TEXT("%s: nvg signal_weight_b"), Source), Nvg->SignalWeights.Z, 0.1f);
 		}
 	}
 }

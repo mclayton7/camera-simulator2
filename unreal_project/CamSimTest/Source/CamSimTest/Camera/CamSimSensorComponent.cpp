@@ -35,9 +35,27 @@ float UCamSimSensorComponent::ApplySensorControl(const FCigiSensorControl& Senso
 	bSensorOn      = Sensor.bSensorOn;
 	SensorPolarity = Sensor.Polarity;
 
-	// Map SensorId → waveband (0=EO, 1=IR, 2=NVG; clamp unknown IDs to EO)
-	const uint8 ClampedId = static_cast<uint8>(FMath::Clamp((int32)Sensor.SensorId, 0, 2));
-	CurrentSensorMode = static_cast<ESensorMode>(ClampedId);
+	// Map SensorId → waveband: 0 EO, 1 IR; anything else defaults to EO (NVG,
+	// formerly SensorId 2, was removed — ROADMAP 3B.2).
+	if (Sensor.SensorId == 1)
+	{
+		CurrentSensorMode = ESensorMode::IR;
+	}
+	else
+	{
+		CurrentSensorMode = ESensorMode::EO;
+		if (Sensor.SensorId != 0)
+		{
+			static bool bWarnedUnmappedSensorId = false;
+			if (!bWarnedUnmappedSensorId)
+			{
+				bWarnedUnmappedSensorId = true;
+				UE_LOG(LogCamSim, Warning,
+					TEXT("UCamSimSensorComponent: SensorId %u has no EO/IR mapping (NVG, formerly SensorId 2, was removed) — defaulting to EO"),
+					Sensor.SensorId);
+			}
+		}
+	}
 
 	float AppliedFov = SceneCapture ? SceneCapture->FOVAngle : 0.0f;
 
@@ -63,7 +81,7 @@ float UCamSimSensorComponent::ApplySensorControl(const FCigiSensorControl& Senso
 
 	UE_LOG(LogCamSim, Log,
 		TEXT("UCamSimSensorComponent: sensor=%u mode=%u on=%d polarity=%u gain=%.2f"),
-		Sensor.SensorId, ClampedId, bSensorOn ? 1 : 0, SensorPolarity, Sensor.Gain);
+		Sensor.SensorId, static_cast<uint8>(CurrentSensorMode), bSensorOn ? 1 : 0, SensorPolarity, Sensor.Gain);
 
 	return AppliedFov;
 }

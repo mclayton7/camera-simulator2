@@ -11,7 +11,7 @@
  * IPixelPipeline
  *
  * Pure-virtual interface for CPU-side per-frame pixel post-processing.
- * FSensorPostProcess implements this for EO / IR / NVG waveband simulation.
+ * FSensorPostProcess implements this for EO / IR waveband simulation.
  *
  * Enables test injection of a no-op or diagnostic pipeline without
  * linking against the full sensor implementation.

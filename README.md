@@ -179,7 +179,7 @@ camsim/
         ├── Environment/            ACamSimEnvironment — sky/fog/weather
         ├── GameMode/               ACamSimGameMode
         ├── Metadata/               FKlvBuilder — MISB ST 0601
-        ├── Sensor/                 FSensorPostProcess — EO/IR/NVG post-processing
+        ├── Sensor/                 FSensorPostProcess — EO/IR post-processing
         ├── Subsystem/              UCamSimSubsystem — lifecycle owner
         └── ThirdParty/
             ├── CCL/                CIGI Class Library headers + static lib

@@ -199,7 +199,7 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunSensor_RenderThread(FRDGBuilder
 		}
 	}
 
-	// The viewport shows exactly what is streamed (NVG tinted).
+	// The viewport shows exactly what is streamed.
 	FScreenPassRenderTarget Output = Inputs.OverrideOutput;
 	if (!Output.IsValid())
 	{

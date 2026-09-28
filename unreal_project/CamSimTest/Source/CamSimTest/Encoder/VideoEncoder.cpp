@@ -163,7 +163,7 @@ TArray<const AVCodec*> FVideoEncoder::SelectVideoCodecs(bool& bOutWantH265)
 
 	// Hardware encoders. An explicit request uses only that encoder and fails
 	// if it is missing. Auto tries NVENC but not VideoToolbox: VT can't hold
-	// rc_max_rate on noisy scenes (IR/NVG grain), so it is opt-in.
+	// rc_max_rate on noisy scenes (IR grain), so it is opt-in.
 	auto AddHardware = [&](EPref Pref, const char* Name) -> bool
 	{
 		if (EncoderPref != Pref && EncoderPref != EPref::Auto) return true;
@@ -593,11 +593,11 @@ void FVideoEncoder::EncodeFrame(
 
 	// Convert BGRA → YUV420P
 
-	// IR/NVG fast path: frame is already grayscale after sensor post-process.
-	// Y = R channel (all channels equal after ApplyIR/ApplyNVG), Cb=Cr=128.
+	// IR fast path: frame is already grayscale after sensor post-process.
+	// Y = R channel (all channels equal after ApplyIR), Cb=Cr=128.
 	// Skips sws_scale entirely, saving 2-3ms per frame.
 	const ESensorMode SM = static_cast<ESensorMode>(Telemetry.SensorMode);
-	const bool bGrayscaleMode = (SM == ESensorMode::IR || SM == ESensorMode::NVG);
+	const bool bGrayscaleMode = (SM == ESensorMode::IR);
 	if (bGrayscaleMode)
 	{
 		const int32 W = Config.CaptureWidth;

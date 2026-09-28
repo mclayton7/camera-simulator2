@@ -333,7 +333,7 @@ class IGState:
 
         # Sensor
         self.sensor_on: bool = True
-        self.sensor_id: int = 0  # 0=EO, 1=IR, 2=NVG
+        self.sensor_id: int = 0  # 0=EO, 1=IR (other values default to EO)
         self.sensor_polarity: int = 0  # 0=white hot, 1=black hot (IR only)
         self.sensor_zoom: float = 0.0
         self.sensor_view_id: int = 0

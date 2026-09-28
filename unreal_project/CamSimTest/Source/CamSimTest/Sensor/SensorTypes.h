@@ -9,9 +9,8 @@
 // ---------------------------------------------------------------------------
 enum class ESensorMode : uint8
 {
-	EO  = 0,   // Electro-optical: color RGB passthrough (default)
-	IR  = 1,   // LWIR thermal: grayscale + S-curve tone mapping + polarity
-	NVG = 2,   // Night-vision: green phosphor + gamma lift
+	EO = 0,   // Electro-optical: color RGB passthrough (default)
+	IR = 1,   // LWIR thermal: grayscale + S-curve tone mapping + polarity
 };
 
 // ---------------------------------------------------------------------------
@@ -86,7 +85,7 @@ struct FSensorModeConfig
 	// --- Phase 16: Sensor Fidelity ---
 
 	// 16A — Radiance-Based AGC
-	/** Enable histogram-stretch AGC for IR/NVG. Disabled when AGCManualLevel >= 0. */
+	/** Enable histogram-stretch AGC (typically IR). Disabled when AGCManualLevel >= 0. */
 	bool  bAGCEnabled        = false;
 	/** Percentile for black point [0, 1] (default 0.01 = 1st percentile). */
 	float AGCLowPercentile   = 0.01f;
@@ -121,8 +120,8 @@ struct FSensorModeConfig
 	/** Banding spatial frequency: cycles per frame height. */
 	float ACBandingFrequency = 4.0f;
 
-	// 16L — NVG IR Pointer (NVG only)
-	/** Enable IR laser pointer dot in NVG mode. */
+	// 16L — IR Pointer overlay (legacy CPU path; unreachable since NVG removal, ROADMAP 3B.2)
+	/** Enable IR laser pointer dot overlay. */
 	bool  bIRPointerEnabled  = false;
 	/** Pointer screen position X [0, 1] from left edge. */
 	float IRPointerX         = 0.5f;
@@ -141,7 +140,7 @@ struct FSensorModeConfig
 	/** Auto-NUC reset interval in seconds (0 = no auto-NUC). */
 	float NUCIntervalSec       = 30.0f;
 
-	// 16G — Auto-Exposure Lag (IR/NVG, modifies AGC)
+	// 16G — Auto-Exposure Lag (IR, modifies AGC)
 	/** Number of frames for AGC convergence (0 = instant, 1-3 typical). */
 	int32 AGCLagFrames         = 0;
 

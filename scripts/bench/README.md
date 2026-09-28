@@ -6,9 +6,9 @@ and records per-frame render stats plus lossless reference shots.
 Phases: `warmup` (unmeasured, fills Cesium's disk cache), `orbit` (3 km),
 `slew` (fast gimbal sweeps: pop-in and hitch stressor), `low_pass` (600 m at
 100 m/s), `far_origin` (jump ~300 km east: origin shift and lighting).
-Then 15 fixed shots via `GET /snapshot` (pre-sensor, lossless): the 8 base
-poses, an EO `night_slant`, and IR/NVG variants of `nadir_3km`, `dusk_slant`,
-`night_slant` (`Pose.sensor_id`: 0 EO, 1 IR, 2 NVG, sent every frame via CIGI
+Then 12 fixed shots via `GET /snapshot` (pre-sensor, lossless): the 8 base
+poses, an EO `night_slant`, and an IR variant of `nadir_3km`, `dusk_slant`,
+`night_slant` (`Pose.sensor_id`: 0 EO, 1 IR, sent every frame via CIGI
 Sensor Control). Each shot is also fetched via `GET /snapshot/sensor`
 (ROADMAP 3B) as `<shot>_sensor.png` — the post-sensor-model image; on the
 legacy path it's the same as `/snapshot`.

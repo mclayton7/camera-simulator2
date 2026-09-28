@@ -162,19 +162,6 @@ sensor_modes:
     contrast: 1.1
     brightness_bias: -0.03
     blur_radius: 0
-  nvg:
-    noise_netd: 0.03
-    fixed_pattern_noise: 0.0
-    vignetting: 0.35
-    scan_lines: false
-    scan_line_strength: 0.05
-    ir_extinction_coeff: 0.0
-    atmospheric_visibility_m: 8000.0
-    atmosphere_strength: 0.9
-    color_temperature_k: 5200.0
-    contrast: 1.2
-    brightness_bias: 0.02
-    blur_radius: 0
 
 security_metadata:
   classification: "UNCLASSIFIED"
@@ -240,7 +227,7 @@ entity_types:
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
 | `video_codec` | string | `"h264"` | `CAMSIM_VIDEO_CODEC` | Video codec: `h264` or `h265`/`hevc` (STANAG 4609 Ed4). |
-| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | Encoder implementation: `auto` (tries NVENC, then libx264/libx265; an encoder that fails to open falls through to the next), `nvenc`, `videotoolbox`, `libx264`, or `libx265`. `videotoolbox` is the macOS hardware encoder: much lower CPU cost, but it only approximates the bitrate cap and can run ~3.6× over it on very noisy scenes (IR/NVG grain), so `auto` never picks it. |
+| `encoder` | string | `"auto"` | `CAMSIM_ENCODER` | Encoder implementation: `auto` (tries NVENC, then libx264/libx265; an encoder that fails to open falls through to the next), `nvenc`, `videotoolbox`, `libx264`, or `libx265`. `videotoolbox` is the macOS hardware encoder: much lower CPU cost, but it only approximates the bitrate cap and can run ~3.6× over it on very noisy scenes (IR grain), so `auto` never picks it. |
 | `encoder_watchdog_policy` | string | `"reconnect"` | `CAMSIM_ENCODER_WATCHDOG_POLICY` | Encoder watchdog action when no frames are written for `encoder_watchdog_interval_ticks`: `reconnect`, `log_only`, or `fail_fast`. |
 | `encoder_watchdog_interval_ticks` | int | `150` | `CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS` | Tick interval used by the encoder watchdog and runtime health checks. |
 | `watchdog_max_reconnects` | int | `3` | -- | Maximum encoder reconnect attempts before `RequestExit`. `0` = unlimited retries. |
@@ -355,38 +342,39 @@ mode.
 
 ### Sensor Modes (per-waveband)
 
-Per-waveband CPU-side post-processing parameters. Configured under `sensor_modes.eo`,
-`sensor_modes.ir`, and `sensor_modes.nvg`.
+Per-waveband CPU-side post-processing parameters. Configured under `sensor_modes.eo`
+and `sensor_modes.ir`. (NVG, formerly `sensor_modes.nvg`/SensorId 2, was removed —
+ROADMAP 3B.2.)
 
-| Field | Type | EO default | IR default | NVG default | Description |
-|-------|------|------------|------------|-------------|-------------|
-| `noise_netd` | float | `0.0` | `0.01` | `0.03` | NETD noise amplitude. |
-| `fixed_pattern_noise` | float | `0.0` | `0.005` | `0.0` | Fixed pattern noise amplitude. |
-| `vignetting` | float | `0.10` | `0.20` | `0.35` | Vignette edge darkening strength. |
-| `scan_lines` | bool | `false` | `false` | `false` | Enable scan line overlay. |
-| `scan_line_strength` | float | `0.0` | `0.0` | `0.05` | Scan line intensity. |
-| `ir_extinction_coeff` | float | `0.0` | `0.00001` | `0.0` | IR atmospheric extinction coefficient. |
-| `atmospheric_visibility_m` | float | `0.0` | `12000` | `8000` | Visibility range in metres. |
-| `atmosphere_strength` | float | `1.0` | `0.75` | `0.9` | Atmosphere effect multiplier. |
-| `color_temperature_k` | float | `6500` | `0.0` | `5200` | White balance in Kelvin. |
-| `contrast` | float | `1.0` | `1.1` | `1.2` | Contrast multiplier. |
-| `brightness_bias` | float | `0.0` | `-0.03` | `0.02` | Brightness offset `[-1, 1]`. |
-| `blur_radius` | int | `0` | `0` | `0` | Post-effect blur in pixels. |
-| `signal_weight_r` | float | `0.2126` | `0.2126` | `0.6` | Detector spectral response: signal = dot(scene RGB, signal_weight_*). Default is BT.709 luminance; NVG weights red/NIR heavily (the photocathode is red/NIR-sensitive; the green is only the phosphor display). No env override. |
-| `signal_weight_g` | float | `0.7152` | `0.7152` | `0.3` | See `signal_weight_r`. No env override. |
-| `signal_weight_b` | float | `0.0722` | `0.0722` | `0.1` | See `signal_weight_r`. No env override. |
+| Field | Type | EO default | IR default | Description |
+|-------|------|------------|------------|-------------|
+| `noise_netd` | float | `0.0` | `0.01` | NETD noise amplitude. |
+| `fixed_pattern_noise` | float | `0.0` | `0.005` | Fixed pattern noise amplitude. |
+| `vignetting` | float | `0.10` | `0.20` | Vignette edge darkening strength. |
+| `scan_lines` | bool | `false` | `false` | Enable scan line overlay. |
+| `scan_line_strength` | float | `0.0` | `0.0` | Scan line intensity. |
+| `ir_extinction_coeff` | float | `0.0` | `0.00001` | IR atmospheric extinction coefficient. |
+| `atmospheric_visibility_m` | float | `0.0` | `12000` | Visibility range in metres. |
+| `atmosphere_strength` | float | `1.0` | `0.75` | Atmosphere effect multiplier. |
+| `color_temperature_k` | float | `6500` | `0.0` | White balance in Kelvin. |
+| `contrast` | float | `1.0` | `1.1` | Contrast multiplier. |
+| `brightness_bias` | float | `0.0` | `-0.03` | Brightness offset `[-1, 1]`. |
+| `blur_radius` | int | `0` | `0` | Post-effect blur in pixels. |
+| `signal_weight_r` | float | `0.2126` | `0.2126` | Detector spectral response: signal = dot(scene RGB, signal_weight_*). Default is BT.709 luminance. No env override. |
+| `signal_weight_g` | float | `0.7152` | `0.7152` | See `signal_weight_r`. No env override. |
+| `signal_weight_b` | float | `0.0722` | `0.0722` | See `signal_weight_r`. No env override. |
 
-**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the gain to `[min_gain_ev, max_gain_ev]`. `render.exposure_compensation_ev` does not apply (it is UE's auto-exposure bias on the legacy path). Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_gain_ev` (mean luma 26); NVG at night is not clamped (gain −8.8, mean luma 67). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
+**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point, then clamps the gain to `[min_gain_ev, max_gain_ev]`. `render.exposure_compensation_ev` does not apply (it is UE's auto-exposure bias on the legacy path). Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_gain_ev` (mean luma 26). The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
 
-| Field | Type | EO default | IR default | NVG default | Description |
-|-------|------|------------|------------|-------------|-------------|
-| `exposure.auto` | bool | `true` | `true` | `true` | Auto-exposure on; `false` uses `manual_gain_ev`. |
-| `exposure.min_gain_ev` | float | `-20.0` | `-20.0` | `-20.0` | Lowest gain the simulated camera can select, log2 of the multiplier applied to absolute scene-linear values (higher = brighter). |
-| `exposure.max_gain_ev` | float | `-12.5` | `-6.0` | `6.0` | Highest gain the simulated camera can select. EO's value makes night scenes stay dark (dawn/dusk clamp slightly too). |
-| `exposure.target_grey` | float | `0.18` | `0.18` | `0.3` | Linear value the histogram median is exposed to. |
-| `exposure.highlight_percentile` | float | `0.99` | `0.99` | `0.97` | This percentile of the histogram is kept below clipping. NVG lets its brightest 3% bloom. |
-| `exposure.lag_frames` | int | `2` | `2` | `2` | Convergence time constant in frames at 30 Hz (sim time); `0` = instant. |
-| `exposure.manual_gain_ev` | float | `-12.0` | `-12.0` | `-12.0` | Gain used when `exposure.auto` is `false`. |
+| Field | Type | EO default | IR default | Description |
+|-------|------|------------|------------|-------------|
+| `exposure.auto` | bool | `true` | `true` | Auto-exposure on; `false` uses `manual_gain_ev`. |
+| `exposure.min_gain_ev` | float | `-20.0` | `-20.0` | Lowest gain the simulated camera can select, log2 of the multiplier applied to absolute scene-linear values (higher = brighter). |
+| `exposure.max_gain_ev` | float | `-12.5` | `-6.0` | Highest gain the simulated camera can select. EO's value makes night scenes stay dark (dawn/dusk clamp slightly too). |
+| `exposure.target_grey` | float | `0.18` | `0.18` | Linear value the histogram median is exposed to. |
+| `exposure.highlight_percentile` | float | `0.99` | `0.99` | This percentile of the histogram is kept below clipping. |
+| `exposure.lag_frames` | int | `2` | `2` | Convergence time constant in frames at 30 Hz (sim time); `0` = instant. |
+| `exposure.manual_gain_ev` | float | `-12.0` | `-12.0` | Gain used when `exposure.auto` is `false`. |
 
 IR's `exposure` block is used only when `agc_enabled` is `false`; with AGC on, the IR AGC maps its `agc_low_percentile`…`agc_high_percentile` band to the output range instead.
 

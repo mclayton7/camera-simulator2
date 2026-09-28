@@ -46,7 +46,7 @@ struct FCamSimTelemetry
 	float  GroundSpeedMps  = 0.0f; // metres/sec — Tag 56 (0 = omit)
 
 	// Active sensor state snapshot (for optional sidecar ground-truth output).
-	uint8 SensorMode      = 0;    // 0=EO, 1=IR, 2=NVG
+	uint8 SensorMode      = 0;    // 0=EO, 1=IR
 	uint8 SensorPolarity  = 0;    // 0=white-hot, 1=black-hot (IR)
 
 	// Environment state for sensor effects (Phase 16K sun glint).

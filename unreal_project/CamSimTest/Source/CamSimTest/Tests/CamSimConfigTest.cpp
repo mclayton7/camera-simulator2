@@ -43,10 +43,9 @@ bool FCamSimConfigSensorModeDefaultsTest::RunTest(const FString& Parameters)
 	// Load config (will use defaults if no file found)
 	FCamSimConfig Cfg = FCamSimConfig::Load();
 
-	// Should have all three sensor mode configs
+	// Should have both sensor mode configs
 	TestTrue(TEXT("Has EO config"), Cfg.SensorModeConfigs.Contains(ESensorMode::EO));
 	TestTrue(TEXT("Has IR config"), Cfg.SensorModeConfigs.Contains(ESensorMode::IR));
-	TestTrue(TEXT("Has NVG config"), Cfg.SensorModeConfigs.Contains(ESensorMode::NVG));
 
 	// EO should have zero NETD
 	if (const FSensorModeConfig* Eo = Cfg.SensorModeConfigs.Find(ESensorMode::EO))

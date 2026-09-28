@@ -104,7 +104,6 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	P.bBlackHot     = In.bBlackHot ? 1u : 0u;
 	P.SignalWeights = Cfg.SignalWeights;
 	P.Serial        = In.Serial;
-	P.DisplayTint   = (In.Mode == ESensorGraphMode::NVG) ? FVector3f(0.3f, 1.0f, 0.3f) : FVector3f(1.0f, 1.0f, 1.0f);
 	if (bIrAgc)
 	{
 		const float Lo = FMath::Exp2(IrLoLog2), Hi = FMath::Exp2(IrHiLog2);

@@ -24,13 +24,12 @@ float2 BloomUvSize;
 float  BloomWeight;     // 0 without bloom
 float  InputScale;      // tests; runtime multiplies View.OneOverPreExposure in as well
 int2   OutputSize;
-uint   Mode;            // 0 EO, 1 IR, 2 NVG
+uint   Mode;            // 0 EO, 1 IR
 uint   bBlackHot;
 float  Gain;
 float  Offset;
 float3 SignalWeights;
 float  KneeStart;
-float3 DisplayTint;
 
 RWTexture2D<float4> OutSensorRgb;
 RWStructuredBuffer<uint> OutHistogram;
@@ -92,7 +91,7 @@ void ApplyCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint GroupIndex : SV_
 		{
 			float V = saturate(S * Gain + Offset);
 			if (bBlackHot != 0) V = 1.0 - V;
-			Out = float4(V * DisplayTint, V);
+			Out = float4(V, V, V, V);
 		}
 		OutSensorRgb[P] = Out;
 	}

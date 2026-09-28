@@ -30,7 +30,7 @@ class Pose:
     gimbal_yaw: float = 0.0
     gimbal_pitch: float = -30.0
     fov_h: float = 60.0  # = sensor_fov_presets[0]; Sensor Control gain 0 re-applies it every frame
-    sensor_id: int = 0   # 0 EO, 1 IR, 2 NVG
+    sensor_id: int = 0   # 0 EO, 1 IR
     utc_hour: int = 19   # 12:00 PDT
     utc_minute: int = 0
     month: int = 6
@@ -121,7 +121,6 @@ def build_shots(smoke: bool = False) -> list[Shot]:
     by_name = {s.name: s.pose for s in shots}
     for base in ("nadir_3km", "dusk_slant", "night_slant"):
         shots.append(Shot(f"{base}_ir", replace(by_name[base], sensor_id=1)))
-        shots.append(Shot(f"{base}_nvg", replace(by_name[base], sensor_id=2)))
     return shots
 
 

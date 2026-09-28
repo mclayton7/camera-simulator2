@@ -30,7 +30,7 @@ namespace CamSimSensorRef
 		check(Scene.Num() == W * H && W % 4 == 0 && H % 2 == 0);
 		FResult R;
 		R.Nv12.SetNumZeroed(W * H * 3 / 2);
-		TArray<FVector4f> Out;   // xyz = R'G'B' (EO) or v,v,v; w = luma source (IR/NVG)
+		TArray<FVector4f> Out;   // xyz = R'G'B' (EO) or v,v,v; w = luma source (IR)
 		Out.SetNumUninitialized(W * H);
 		const bool bEo = P.Mode == ESensorGraphMode::EO;
 		for (int32 I = 0; I < W * H; ++I)

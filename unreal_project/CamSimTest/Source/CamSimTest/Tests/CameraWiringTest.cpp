@@ -306,10 +306,33 @@ bool FCamSimSensorGainToFovTest::RunTest(const FString& /*Parameters*/)
 	TestEqual(TEXT("polarity=BlackHot"), (int)Sensor->GetPolarity(), 1);
 	TestEqual(TEXT("mode=IR (sensor id 1)"), (int)Sensor->GetMode(), 1);
 
-	// Unknown sensor IDs clamp to EO (0)
+	// Unknown sensor IDs default to EO (0)
 	Pkt.SensorId = 99;
 	Sensor->ApplySensorControl(Pkt, Cfg, Capture);
-	TestEqual(TEXT("unknown sensor ID clamps to mode<=2"), (int)Sensor->GetMode() <= 2, 1);
+	TestEqual(TEXT("unknown sensor ID defaults to EO"), (int)Sensor->GetMode(), 0);
+	return true;
+}
+
+// -----------------------------------------------------------------------------
+// NVG (formerly SensorId 2) was removed in ROADMAP 3B.2 — SensorId 2 now falls
+// back to EO, same as any other unmapped SensorId.
+// -----------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCamSimSensorIdTwoMapsToEoTest,
+	"CamSim.Cigi.SensorIdTwoMapsToEo",
+	kAutomationFlags)
+
+bool FCamSimSensorIdTwoMapsToEoTest::RunTest(const FString& /*Parameters*/)
+{
+	UCamSimSensorComponent*    Sensor  = NewSensor();
+	USceneCaptureComponent2D*  Capture = NewSceneCapture();
+	FCamSimConfig Cfg;
+
+	FCigiSensorControl Pkt;
+	Pkt.bSensorOn = true;
+	Pkt.SensorId  = 2;   // formerly NVG
+	Sensor->ApplySensorControl(Pkt, Cfg, Capture);
+	TestEqual(TEXT("SensorId 2 selects EO"), (int)Sensor->GetMode(), (int)ESensorMode::EO);
 	return true;
 }
 

@@ -59,15 +59,6 @@ void FSensorPostProcess::Initialize(int32 InWidth, int32 InHeight,
 	}
 
 	// -------------------------------------------------------------------------
-	// NVG gamma curve: gamma 0.45 lift (image intensifier low-light boost)
-	// -------------------------------------------------------------------------
-	for (int32 L = 0; L < 256; ++L)
-	{
-		const float t = L / 255.0f;
-		NVGGammaCurve[L] = static_cast<uint8>(FMath::RoundToInt(FMath::Pow(t, 0.45f) * 255.0f));
-	}
-
-	// -------------------------------------------------------------------------
 	// Vignetting weight table: radial cubic falloff, raw (Strength applied at runtime)
 	// VignetteWeights[i] = 1 - r²*sqrt(r²)  where r is normalised distance [-1,1]
 	// -------------------------------------------------------------------------
@@ -201,11 +192,10 @@ void FSensorPostProcess::Initialize(int32 InWidth, int32 InHeight,
 	}
 
 	UE_LOG(LogCamSim, Log,
-		TEXT("FSensorPostProcess: initialized %dx%d ring=%d EO/IR/NVG=%d/%d/%d defects=%d quality(noise=%.2f vignette=%.2f scan=%.2f atmos=%.2f blur=%d contrast=%.2f bias=%.2f)"),
+		TEXT("FSensorPostProcess: initialized %dx%d ring=%d EO/IR=%d/%d defects=%d quality(noise=%.2f vignette=%.2f scan=%.2f atmos=%.2f blur=%d contrast=%.2f bias=%.2f)"),
 		Width, Height, RingSize,
 		Configs.Contains(ESensorMode::EO) ? 1 : 0,
 		Configs.Contains(ESensorMode::IR) ? 1 : 0,
-		Configs.Contains(ESensorMode::NVG) ? 1 : 0,
 		DefectIndices.Num(),
 		Quality.NoiseScale, Quality.VignettingScale, Quality.ScanLineScale,
 		Quality.AtmosphereScale, Quality.BlurRadius, Quality.Contrast, Quality.BrightnessBias);
@@ -301,10 +291,6 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 	const bool bFused = ProcessFusedPerPixel(Pixels, Mode, Polarity, Cfg, Telemetry, FrameIndex);
 	if (bFused)
 	{
-		// NVG IR pointer (spatial — not fused)
-		if (Mode == ESensorMode::NVG && Cfg.bIRPointerEnabled)
-			ApplyIRPointer(Pixels, Cfg);
-
 		// Laser designator spot (spatial — not fused)
 		if (LaserDesignatorConfig.bEnabled)
 			ApplyLaserDesignator(Pixels, Mode, Polarity);
@@ -317,7 +303,7 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 	{
 		// ---- Unfused path (fallback — kept for validation) --------------------
 
-		// Step 1: Waveband remapping (must be first — converts to grayscale for IR/NVG)
+		// Step 1: Waveband remapping (must be first — converts to grayscale for IR)
 		switch (Mode)
 		{
 			case ESensorMode::EO:
@@ -325,9 +311,6 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 				break;
 			case ESensorMode::IR:
 				ApplyIR(Pixels, Polarity);
-				break;
-			case ESensorMode::NVG:
-				ApplyNVG(Pixels);
 				break;
 		}
 
@@ -338,8 +321,8 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 			ApplyGainOffsetJitter(Pixels, Cfg.GainJitter, Cfg.OffsetJitter, FrameIndex);
 		}
 
-		// Step 1A: 16A — Radiance AGC or manual gain (IR/NVG only, after grayscale)
-		if (Mode == ESensorMode::IR || Mode == ESensorMode::NVG)
+		// Step 1A: 16A — Radiance AGC or manual gain (IR only, after grayscale)
+		if (Mode == ESensorMode::IR)
 		{
 			const bool bManual = (Cfg.AGCManualLevel >= 0.0f);
 			if (Cfg.bAGCEnabled && !bManual)
@@ -364,13 +347,7 @@ void FSensorPostProcess::Process(TArray<FColor>& Pixels,
 			ApplyThermalDrift(Pixels, Cfg, FrameDeltaSec);
 		}
 
-		// Step 1C: 16L — NVG IR pointer (NVG only, after waveband remap)
-		if (Mode == ESensorMode::NVG && Cfg.bIRPointerEnabled)
-		{
-			ApplyIRPointer(Pixels, Cfg);
-		}
-
-		// Step 1D: 21F.1 — Laser designator spot (all modes, after IR pointer)
+		// Step 1D: 21F.1 — Laser designator spot (all modes)
 		if (LaserDesignatorConfig.bEnabled)
 		{
 			ApplyLaserDesignator(Pixels, Mode, Polarity);
@@ -540,30 +517,6 @@ void FSensorPostProcess::ApplyIR(TArray<FColor>& Pixels, uint8 Polarity)
 			uint8 I = Lut[L];
 			if (bBlackHot) I = static_cast<uint8>(255 - I);
 			P.R = I; P.G = I; P.B = I; P.A = 255;
-		}
-	});
-}
-
-// ---------------------------------------------------------------------------
-// ApplyNVG — BT.601 luma → gamma lift → P22 green phosphor tint
-// ---------------------------------------------------------------------------
-
-void FSensorPostProcess::ApplyNVG(TArray<FColor>& Pixels)
-{
-	const uint8* Lut = NVGGammaCurve;
-
-	ForEachPixelBand(Height, [&](int32 RowStart, int32 RowEnd)
-	{
-
-		for (int32 i = RowStart * Width; i < RowEnd * Width; ++i)
-		{
-			FColor& P = Pixels[i];
-			const uint8 L = static_cast<uint8>((77u * P.R + 150u * P.G + 29u * P.B) >> 8u);
-			const uint8 I = Lut[L];
-			P.R = 0;
-			P.G = I;
-			P.B = static_cast<uint8>(static_cast<uint32>(I) * 3u / 10u);
-			P.A = 255;
 		}
 	});
 }
@@ -1234,7 +1187,8 @@ void FSensorPostProcess::ApplyACBanding(TArray<FColor>& Pixels,
 }
 
 // ---------------------------------------------------------------------------
-// ApplyIRPointer — Gaussian bright spot for NVG IR pointer (Phase 16L)
+// ApplyIRPointer — Gaussian bright spot for the IR pointer overlay (Phase 16L).
+// No longer called (was NVG-only; NVG was removed — ROADMAP 3B.2).
 // ---------------------------------------------------------------------------
 
 void FSensorPostProcess::ApplyIRPointer(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg)
@@ -1335,15 +1289,6 @@ void FSensorPostProcess::ApplyLaserDesignator(TArray<FColor>& Pixels, ESensorMod
 						const uint8 V = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(static_cast<float>(P.R) - w), 0, 255));
 						P.R = V; P.G = V; P.B = V;
 					}
-				}
-				else // NVG
-				{
-					// Green + 30% blue bleed (P22 phosphor, same as IR pointer)
-					const float NewG = FMath::Clamp(static_cast<float>(P.G) + w, 0.0f, 255.0f);
-					const float GDelta = NewG - static_cast<float>(P.G);
-					P.G = static_cast<uint8>(FMath::RoundToInt(NewG));
-					P.B = static_cast<uint8>(FMath::Clamp(
-						FMath::RoundToInt(static_cast<float>(P.B) + GDelta * 3.0f / 10.0f), 0, 255));
 				}
 			}
 		}
@@ -1666,7 +1611,6 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 	// Precompute per-frame parameters
 	// -----------------------------------------------------------------------
 	const bool bIsIR  = (Mode == ESensorMode::IR);
-	const bool bIsNVG = (Mode == ESensorMode::NVG);
 	const bool bIsEO  = (Mode == ESensorMode::EO);
 
 	// Gain/offset jitter (IR only, before AGC)
@@ -1766,9 +1710,9 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 		: 0.0f;
 
 	// -----------------------------------------------------------------------
-	// Pass A: AGC histogram (IR/NVG only, when AGC is enabled)
+	// Pass A: AGC histogram (IR only, when AGC is enabled)
 	// -----------------------------------------------------------------------
-	const bool bAGC = (bIsIR || bIsNVG) && Cfg.bAGCEnabled && Cfg.AGCManualLevel < 0.0f;
+	const bool bAGC = bIsIR && Cfg.bAGCEnabled && Cfg.AGCManualLevel < 0.0f;
 	float AGCLo = 0.0f, AGCHi = 255.0f;
 
 	if (bAGC)
@@ -1801,9 +1745,8 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 				// post-waveband-remap intensity (matches unfused ApplyRadianceAGC).
 				// Using raw luma would compute percentiles on pre-remap pixels and
 				// the stretch in Pass B would land on the wrong range.
-				const uint8 PostRemap = bIsIR  ? IRToneCurve[Luma]
-				                      : bIsNVG ? NVGGammaCurve[Luma]
-				                      : Luma;   // unreachable (bAGC requires IR/NVG)
+				const uint8 PostRemap = bIsIR ? IRToneCurve[Luma]
+				                      : Luma;   // unreachable (bAGC requires IR)
 				Local[PostRemap]++;
 			}
 		}, EParallelForFlags::BackgroundPriority);
@@ -1852,7 +1795,7 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 	const float AGCScale = bAGC ? (255.0f / (AGCHi - AGCLo)) : 1.0f;
 
 	// Manual gain params
-	const bool bManual = (bIsIR || bIsNVG) && !Cfg.bAGCEnabled && Cfg.AGCManualLevel >= 0.0f;
+	const bool bManual = bIsIR && !Cfg.bAGCEnabled && Cfg.AGCManualLevel >= 0.0f;
 	const float ManualLevel = Cfg.AGCManualLevel;
 	const float ManualGain  = Cfg.AGCManualGain;
 
@@ -1895,18 +1838,6 @@ bool FSensorPostProcess::ProcessFusedPerPixel(
 					const float V = static_cast<float>(IRToneCurve[Luma]);
 					R = G = B = (Polarity == 0) ? V : (255.0f - V);
 				}
-				else if (bIsNVG)
-				{
-					const uint8 Luma = static_cast<uint8>((static_cast<int32>(P.R) * 77 +
-					                                        static_cast<int32>(P.G) * 150 +
-					                                        static_cast<int32>(P.B) * 29) >> 8);
-					const float V = static_cast<float>(NVGGammaCurve[Luma]);
-					// P22 green phosphor tint — matches ApplyNVG (R=0, G=I, B=I*3/10).
-					R = 0.0f;
-					G = V;
-					B = V * 0.3f;
-				}
-
 				// --- Gain/offset jitter (IR) ---
 				if (bIsIR && (JitterGain != 1.0f || JitterOffset != 0.0f))
 				{

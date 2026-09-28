@@ -38,7 +38,6 @@ public:
 		SHADER_PARAMETER(float, Offset)
 		SHADER_PARAMETER(FVector3f, SignalWeights)
 		SHADER_PARAMETER(float, KneeStart)
-		SHADER_PARAMETER(FVector3f, DisplayTint)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutSensorRgb)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, OutHistogram)
 	END_SHADER_PARAMETER_STRUCT()
@@ -155,7 +154,6 @@ FSensorGraphOutputs AddSensorPasses(FRDGBuilder& GraphBuilder, const FSensorGrap
 		Pass->Offset        = P.Offset;
 		Pass->SignalWeights = P.SignalWeights;
 		Pass->KneeStart     = P.KneeStart;
-		Pass->DisplayTint   = P.DisplayTint;
 		Pass->OutSensorRgb  = GraphBuilder.CreateUAV(Result.SensorRgb);
 		Pass->OutHistogram  = HistUav;
 

@@ -22,7 +22,7 @@ public:
 	static constexpr int32 StaleAfterTicks = 10;
 	static constexpr float ClipLinear      = 2.0f;  // the knee maps 2.0 to ~255/255
 	FSensorFrameParams Update(const FSensorControllerInput& In, const FSensorModeConfig& Cfg);
-	/** Log2 of the gain actually emitted last tick (AE gain in EO/NVG, IR AGC stretch in IR AGC). */
+	/** Log2 of the gain actually emitted last tick (AE gain in EO, IR AGC stretch in IR AGC). */
 	float  GetGainEv() const          { return LastEmittedGainEv; }
 	float  GetLastMedianLog2() const  { return LastMedianLog2; }
 	uint32 GetStaleEpisodes() const   { return StaleEpisodes; }

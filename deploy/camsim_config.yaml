@@ -571,7 +571,7 @@ randomization:
   #     id_offset: 100
 
 # --- Sensor Modes (per-waveband) ---
-# CPU-side post-processing parameters. SensorId 0=EO, 1=IR, 2=NVG.
+# CPU-side post-processing parameters. SensorId 0=EO, 1=IR.
 # See docs/configuration.md for the full field reference table.
 sensor_modes:
   eo:
@@ -647,7 +647,7 @@ sensor_modes:
     thermal_drift_enabled: true
     thermal_drift_rate: 0.5     # DN/sec
     nuc_interval_sec: 30.0      # auto-NUC reset interval (0 = no auto-NUC)
-    # 16G — AGC lag (IR/NVG)
+    # 16G — AGC lag (IR)
     agc_lag_frames: 2           # frames for AGC convergence (0 = instant)
     # 16I — Platform vibration
     vibration_amplitude: 0.0    # pixels, 0 = disabled
@@ -663,48 +663,7 @@ sensor_modes:
       highlight_percentile: 0.99
       lag_frames: 2
       manual_gain_ev: -12
-  nvg:
-    noise_netd: 0.03
-    fixed_pattern_noise: 0.0
-    vignetting: 0.35
-    scan_lines: false
-    scan_line_strength: 0.05
-    ir_extinction_coeff: 0.0
-    atmospheric_visibility_m: 8000.0
-    atmosphere_strength: 0.9
-    color_temperature_k: 5200.0
-    contrast: 1.2
-    brightness_bias: 0.02
-    blur_radius: 0
-    # 16A — AGC for NVG
-    agc_enabled: true
-    agc_low_percentile: 0.02
-    agc_high_percentile: 0.98
-    # 16G — AGC lag (NVG)
-    agc_lag_frames: 1
-    # 16L — NVG IR pointer
-    ir_pointer_enabled: false
-    ir_pointer_x: 0.5
-    ir_pointer_y: 0.5
-    ir_pointer_radius: 8.0
-    ir_pointer_intensity: 240.0
-    # Detector spectral response (dot product with scene RGB); default is
-    # BT.709 luminance elsewhere, but the NVG photocathode is red/NIR-sensitive
-    # (the green is only the phosphor display), so NVG weights red heavily.
-    signal_weight_r: 0.6
-    signal_weight_g: 0.3
-    signal_weight_b: 0.1
-    # ROADMAP 3B — auto-exposure (GPU sensor path), calibrated 2026-09-27.
-    # night_slant median 6.4 → gain -8.8 (highlight-limited, well
-    # under max_gain_ev: not clamped), mean luma 67; 0.97 lets the brightest 3% (lights,
-    # sky) bloom to white as a tube does; 0.99 held the scene ~2 EV darker (gain -10.7, luma 25).
-    exposure:
-      min_gain_ev: -20
-      max_gain_ev: 6
-      target_grey: 0.3
-      highlight_percentile: 0.97
-      lag_frames: 2
-      manual_gain_ev: -12
+# NVG (formerly sensor_modes.nvg, SensorId 2) was removed — ROADMAP 3B.2.
 
 # --- Optical Realism (Phase 15) ---
 # GPU-side + CPU-side optical effects for camera realism.

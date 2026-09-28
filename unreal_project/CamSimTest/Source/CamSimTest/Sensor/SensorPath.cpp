@@ -8,11 +8,11 @@ namespace
 	/** Enabled effects that 3B.1's GPU path doesn't implement. Shrinks in 3B.2/3B.3. */
 	void CollectUnported(const FCamSimConfig& Cfg, TArray<FString>& Out)
 	{
-		static const TCHAR* ModeNames[] = { TEXT("eo"), TEXT("ir"), TEXT("nvg") };
+		static const TCHAR* ModeNames[] = { TEXT("eo"), TEXT("ir") };
 		for (const TPair<ESensorMode, FSensorModeConfig>& Pair : Cfg.SensorModeConfigs)
 		{
 			const FSensorModeConfig& M = Pair.Value;
-			const TCHAR* Mode = ModeNames[FMath::Clamp(static_cast<int32>(Pair.Key), 0, 2)];
+			const TCHAR* Mode = ModeNames[FMath::Clamp(static_cast<int32>(Pair.Key), 0, 1)];
 			auto Add = [&](bool bOn, const TCHAR* Key) { if (bOn) Out.Add(FString::Printf(TEXT("%s.%s"), Mode, Key)); };
 			Add(M.NETD > 0.0f,                     TEXT("noise_netd"));
 			Add(M.FixedPatternNoise > 0.0f,        TEXT("fixed_pattern_noise"));

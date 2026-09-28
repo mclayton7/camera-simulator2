@@ -11,10 +11,10 @@ namespace CamSimSensorRef
 	 *  1. c = sanitize(scene colour): NaN -> 0, clamp to [0, 65504]
 	 *  2. c *= InputScale (runtime: View.OneOverPreExposure)
 	 *  3. s = dot(c, SignalWeights); histogram[BinOf(s)]++
-	 *  4. EO:     rgb = Oetf709(saturate(Knee(c * Gain, KneeStart)))           (per channel)
-	 *     IR/NVG: v = saturate(s * Gain + Offset); if (bBlackHot) v = 1 - v;   rgb = v, luma source = v
+	 *  4. EO: rgb = Oetf709(saturate(Knee(c * Gain, KneeStart)))           (per channel)
+	 *     IR: v = saturate(s * Gain + Offset); if (bBlackHot) v = 1 - v;   rgb = v, luma source = v
 	 *  5. NV12 (BT.709 limited range): per 4x2 block, Y per pixel, U/V from the 2x2 mean of R'G'B';
-	 *     IR/NVG: Y from v, U = V = 128. */
+	 *     IR: Y from v, U = V = 128. */
 	struct FResult
 	{
 		TArray<uint8>    Nv12;       // W*H*3/2

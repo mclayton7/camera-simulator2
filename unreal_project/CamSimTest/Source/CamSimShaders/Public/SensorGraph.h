@@ -21,14 +21,14 @@ struct FSensorGraphInputs
 
 struct FSensorGraphOutputs
 {
-	FRDGTextureRef SensorRgb = nullptr;   // OutputSize, PF_FloatRGBA: display RGB (tinted), .a = luma source
+	FRDGTextureRef SensorRgb = nullptr;   // OutputSize, PF_FloatRGBA: display RGB, .a = luma source
 	FRDGBufferRef  Nv12      = nullptr;   // OutputSize.X*Y*3/2 bytes as uint32 structured buffer
 	FRDGBufferRef  Histogram = nullptr;   // 256 x uint32 structured buffer
 	uint32 Nv12Bytes = 0;
 };
 
 /**
- * Adds the sensor passes (ApplyCS: sanitize, gain, histogram, EO/IR/NVG transfer;
+ * Adds the sensor passes (ApplyCS: sanitize, gain, histogram, EO/IR transfer;
  * PackNv12CS: BT.709 limited-range NV12) to GraphBuilder. Order of operations
  * follows CamSimSensorRef (Sensor/SensorReference.h) exactly.
  */

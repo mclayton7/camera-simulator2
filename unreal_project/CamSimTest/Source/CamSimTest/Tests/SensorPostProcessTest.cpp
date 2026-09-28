@@ -40,12 +40,6 @@ TMap<ESensorMode, FSensorModeConfig> MakeDefaultConfigs()
 	Ir.Vignetting = 0.0f;
 	Configs.Add(ESensorMode::IR, Ir);
 
-	FSensorModeConfig Nvg;
-	Nvg.NETD = 0.0f;
-	Nvg.FixedPatternNoise = 0.0f;
-	Nvg.Vignetting = 0.0f;
-	Configs.Add(ESensorMode::NVG, Nvg);
-
 	return Configs;
 }
 
@@ -148,37 +142,6 @@ bool FSensorIRPolarityTest::RunTest(const FString& Parameters)
 	const uint8 WH = WhiteHot[0].R;
 	const uint8 BH = BlackHot[0].R;
 	TestTrue(TEXT("WH + BH == 255"), static_cast<int32>(WH) + static_cast<int32>(BH) == 255);
-
-	return true;
-}
-
-// -------------------------------------------------------------------------
-// NVG mode produces green tint
-// -------------------------------------------------------------------------
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorNVGGreenTintTest,
-	"CamSim.Sensor.NVGGreenTint",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FSensorNVGGreenTintTest::RunTest(const FString& Parameters)
-{
-	constexpr int32 W = 16, H = 16;
-	auto Configs = MakeDefaultConfigs();
-	FSensorQualityConfig Quality;
-
-	FSensorPostProcess PP;
-	PP.Initialize(W, H, Configs, Quality);
-
-	// Gray input
-	TArray<FColor> Pixels = MakeFrame(W, H, FColor(128, 128, 128, 255));
-	FCamSimTelemetry T;
-	PP.Process(Pixels, ESensorMode::NVG, 0, T, 0);
-
-	const FColor& P = Pixels[0];
-	// NVG: R=0, G=I, B=I*3/10 — red should be zero
-	TestEqual(TEXT("NVG: R == 0"), P.R, static_cast<uint8>(0));
-	TestTrue(TEXT("NVG: G > B"), P.G > P.B);
-	TestTrue(TEXT("NVG: G > 0"), P.G > 0);
 
 	return true;
 }

@@ -395,33 +395,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		IrCfg.Exposure.LagFrames           = 2;
 		IrCfg.Exposure.ManualGainEv        = -12.0f;
 		Cfg.SensorModeConfigs.Add(ESensorMode::IR, IrCfg);
-
-		FSensorModeConfig NvgCfg;
-		NvgCfg.NETD              = 0.03f;
-		NvgCfg.FixedPatternNoise = 0.0f;
-		NvgCfg.Vignetting        = 0.35f;
-		NvgCfg.bScanLines        = false;
-		NvgCfg.ScanLineStrength  = 0.05f;
-		NvgCfg.AtmosphericVisibilityM = 8000.0f;
-		NvgCfg.AtmosphereStrength = 0.9f;
-		NvgCfg.Contrast          = 1.2f;
-		NvgCfg.BrightnessBias    = 0.02f;
-		NvgCfg.ColorTemperatureK = 5200.0f;
-		// Phase 16 defaults
-		NvgCfg.bAGCEnabled       = true;
-		NvgCfg.AGCLowPercentile  = 0.02f;
-		NvgCfg.AGCHighPercentile = 0.98f;
-		NvgCfg.AGCManualLevel    = -1.0f;
-		NvgCfg.AGCLagFrames      = 1;
-		NvgCfg.Exposure.MinGainEv           = -20.0f;
-		NvgCfg.Exposure.MaxGainEv           = 6.0f;
-		NvgCfg.Exposure.TargetGrey          = 0.3f;
-		NvgCfg.Exposure.HighlightPercentile = 0.97f;
-		NvgCfg.Exposure.LagFrames           = 2;
-		NvgCfg.Exposure.ManualGainEv        = -12.0f;
-		// Photocathode response is red/NIR-heavy (the green is only the phosphor).
-		NvgCfg.SignalWeights = FVector3f(0.6f, 0.3f, 0.1f);
-		Cfg.SensorModeConfigs.Add(ESensorMode::NVG, NvgCfg);
 	}
 
 	// Default FOV presets (wide → narrow); YAML values replace these if present
@@ -687,7 +660,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 
 			ParseMode("eo",  ESensorMode::EO);
 			ParseMode("ir",  ESensorMode::IR);
-			ParseMode("nvg", ESensorMode::NVG);
 		}
 
 		// Optional user-defined sensor quality profiles.
@@ -1581,11 +1553,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		EoM->SunGlintThreshold      = GetEnvFloat(TEXT("CAMSIM_EO_SUN_GLINT_THRESHOLD"), EoM->SunGlintThreshold);
 		EoM->SunGlintSpread         = GetEnvFloat(TEXT("CAMSIM_EO_SUN_GLINT_SPREAD"), EoM->SunGlintSpread);
 		EoM->VibrationAmplitude     = GetEnvFloat(TEXT("CAMSIM_EO_VIBRATION_AMPLITUDE"), EoM->VibrationAmplitude);
-	}
-	if (FSensorModeConfig* NvgM = Cfg.SensorModeConfigs.Find(ESensorMode::NVG))
-	{
-		NvgM->AGCLagFrames        = FMath::Clamp(GetEnvInt(TEXT("CAMSIM_NVG_AGC_LAG_FRAMES"), NvgM->AGCLagFrames), 0, 10);
-		NvgM->VibrationAmplitude  = GetEnvFloat(TEXT("CAMSIM_NVG_VIBRATION_AMPLITUDE"), NvgM->VibrationAmplitude);
 	}
 
 	Cfg.GroundTruth.bEnabled = GetEnvInt(TEXT("CAMSIM_GROUND_TRUTH_ENABLED"), Cfg.GroundTruth.bEnabled ? 1 : 0) != 0;

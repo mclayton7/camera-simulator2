@@ -9,7 +9,7 @@
 // Phase 16 Sensor Fidelity — Automation Tests
 //
 // Validates AGC, quantization, defect pixels, Gaussian blur,
-// AC banding, and NVG IR pointer effects.
+// and AC banding effects.
 // -------------------------------------------------------------------------
 
 namespace
@@ -33,10 +33,6 @@ TMap<ESensorMode, FSensorModeConfig> MakeCleanConfigs()
 	FSensorModeConfig Ir;
 	Ir.NETD = 0.0f; Ir.FixedPatternNoise = 0.0f; Ir.Vignetting = 0.0f;
 	Configs.Add(ESensorMode::IR, Ir);
-
-	FSensorModeConfig Nvg;
-	Nvg.NETD = 0.0f; Nvg.FixedPatternNoise = 0.0f; Nvg.Vignetting = 0.0f;
-	Configs.Add(ESensorMode::NVG, Nvg);
 
 	return Configs;
 }
@@ -427,42 +423,6 @@ bool FSensorACBandingTest::RunTest(const FString& Parameters)
 	const uint8 Row0 = Pixels[0].R;
 	const uint8 RowM = Pixels[(H / 16) * W].R;
 	TestTrue(TEXT("AC banding produces row variation"), Row0 != RowM);
-
-	return true;
-}
-
-// -------------------------------------------------------------------------
-// 16L: NVG pointer brightens center
-// -------------------------------------------------------------------------
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorNvgPointerTest,
-	"CamSim.SensorFidelity.NvgPointer_CenterBright",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FSensorNvgPointerTest::RunTest(const FString& Parameters)
-{
-	constexpr int32 W = 64, H = 64;
-	auto Configs = MakeCleanConfigs();
-	FSensorModeConfig& NvgCfg = Configs.FindOrAdd(ESensorMode::NVG);
-	NvgCfg.bIRPointerEnabled = true;
-	NvgCfg.IRPointerX        = 0.5f;
-	NvgCfg.IRPointerY        = 0.5f;
-	NvgCfg.IRPointerRadius   = 4.0f;
-	NvgCfg.IRPointerIntensity = 200.0f;
-
-	FSensorQualityConfig Quality;
-	FSensorPostProcess PP;
-	PP.Initialize(W, H, Configs, Quality);
-
-	// Dim green NVG frame
-	TArray<FColor> Pixels = MakeFrame(W, H, FColor(0, 50, 15, 255));
-	FCamSimTelemetry T;
-	PP.Process(Pixels, ESensorMode::NVG, 0, T, 0);
-
-	// Center pixel G should be brighter than corner
-	const FColor& Center = Pixels[(H / 2) * W + (W / 2)];
-	const FColor& Corner = Pixels[0];
-	TestTrue(TEXT("NVG pointer brightens center G"), Center.G > Corner.G);
 
 	return true;
 }

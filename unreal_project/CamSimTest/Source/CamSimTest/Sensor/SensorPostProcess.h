@@ -90,16 +90,10 @@ private:
 	/** IR detector response: mild S-curve, luminance → thermal intensity. */
 	uint8 IRToneCurve[256]   = {};
 
-	/** NVG image-intensifier response: gamma 0.45 lift, luminance → green intensity. */
-	uint8 NVGGammaCurve[256] = {};
-
 	// -- Effect implementations ----------------------------------------------
 
 	/** BT.601 luma → grayscale → tone curve → optional polarity inversion. */
 	void ApplyIR(TArray<FColor>& Pixels, uint8 Polarity);
-
-	/** BT.601 luma → gamma lift → P22 green phosphor tint. */
-	void ApplyNVG(TArray<FColor>& Pixels);
 
 	/** Koschmieder-style scene-wide IR haze using SlantRangeM as depth proxy. */
 	void ApplyIRExtinction(TArray<FColor>& Pixels, float Coeff, float SlantRangeM);
@@ -180,7 +174,7 @@ private:
 	/** 16F: Sinusoidal horizontal AC banding artifact (IR readout simulation). */
 	void ApplyACBanding(TArray<FColor>& Pixels, float Frequency, float Amplitude, uint64 FrameIndex);
 
-	/** 16L: Gaussian bright spot for NVG IR pointer overlay. */
+	/** 16L: Gaussian bright spot for the IR pointer overlay. */
 	void ApplyIRPointer(TArray<FColor>& Pixels, const FSensorModeConfig& Cfg);
 
 	// -- Phase 16 Sprint 2: Sensor Fidelity -----------------------------------
@@ -238,7 +232,7 @@ private:
 
 	FCamSimConfig::FLaserDesignatorConfig LaserDesignatorConfig;
 
-	/** Gaussian laser spot overlay — renders per-mode (EO/IR/NVG). */
+	/** Gaussian laser spot overlay — renders per-mode (EO/IR). */
 	void ApplyLaserDesignator(TArray<FColor>& Pixels, ESensorMode Mode, uint8 Polarity);
 
 	/**

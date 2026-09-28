@@ -107,9 +107,7 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 	// Tag 11 – Image Source Sensor, ISO 646 string
 	{ 11, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		const char* Name = (T.SensorMode == 1) ? "LWIR"
-		                 : (T.SensorMode == 2) ? "NVG"
-		                 :                       "EO Nose";
+		const char* Name = (T.SensorMode == 1) ? "IR" : "EO";
 		AppendStringTag(V, 11, Name);
 	}},
 

@@ -804,7 +804,7 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			// GateXoff/GateYoff: 0.0 = centered (no pixel-level tracking)
 			Impl->CigiSender->SetSensorResponse(
 				0,                           // ViewId
-				Telem.SensorMode,            // SensorId (0=EO, 1=IR, 2=NVG)
+				Telem.SensorMode,            // SensorId (0=EO, 1=IR)
 				SensorStat,
 				0.0f, 0.0f,                  // GateXoff, GateYoff (centered)
 				0, 0,                        // GateSzX, GateSzY (no gate dimensions)

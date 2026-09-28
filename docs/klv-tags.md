@@ -117,9 +117,10 @@ for a fixed-wing platform.
 
 | `SensorMode` | String written |
 |-------------|----------------|
-| 0 (EO)      | `EO Nose`      |
-| 1 (IR)      | `LWIR`         |
-| 2 (NVG)     | `NVG`          |
+| 1 (IR)      | `IR`           |
+| other (EO)  | `EO`           |
+
+NVG (formerly `SensorMode` 2) was removed — ROADMAP 3B.2.
 
 ---
 

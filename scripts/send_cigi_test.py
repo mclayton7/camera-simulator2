@@ -35,7 +35,8 @@ Options:
     --tour-speed SCALE  Speed multiplier for --tour (default: 1.0; 2.0 = twice
                         as fast, 0.5 = half speed)
     --entity-id ID      CIGI entity ID for the camera (default: 1)
-    --sensor-id ID      Sensor waveband: 0=EO (color), 1=IR (thermal), 2=NVG (default: 0)
+    --sensor-id ID      Sensor waveband: 0=EO (color), 1=IR (thermal) (default: 0;
+                        other values are unmapped and default to EO)
     --polarity POL      IR polarity: 0=WhiteHot, 1=BlackHot (default: 0; IR mode only)
     --fov-h DEGREES     Horizontal FOV for View Definition (default: 60)
     --time HHMM         Time of day (e.g. 0600 for sunrise, 2200 for night)
@@ -662,7 +663,8 @@ def main():
         type=int,
         default=0,
         choices=[0, 1, 2],
-        help="Sensor waveband: 0=EO (color), 1=IR (thermal), 2=NVG (default: 0)",
+        help="Sensor waveband: 0=EO (color), 1=IR (thermal) (default: 0; "
+        "other values are unmapped and default to EO)",
     )
     ap.add_argument(
         "--polarity",
@@ -747,7 +749,7 @@ def main():
             "visibility_rng": 5000.0 if args.weather else 50000.0,
         }
 
-    _SENSOR_NAMES = {0: "EO (color)", 1: "IR (thermal)", 2: "NVG"}
+    _SENSOR_NAMES = {0: "EO (color)", 1: "IR (thermal)"}
     _POLARITY_NAMES = {0: "WhiteHot", 1: "BlackHot"}
     print(f"==> Sending CIGI 3.3 to {args.host}:{args.port} @ {args.rate:.0f} fps")
     if args.circle:

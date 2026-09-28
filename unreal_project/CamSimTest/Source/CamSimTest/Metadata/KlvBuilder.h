@@ -21,7 +21,7 @@
  *   Tag  5  – Platform Heading Angle     (uint16, 0..360°)
  *   Tag  6  – Platform Pitch Angle       (int16,  ±20°)
  *   Tag  7  – Platform Roll Angle        (int16,  ±50°)
- *   Tag 11  – Image Source Sensor        (ISO 646 string: "EO Nose" / "LWIR" / "NVG")
+ *   Tag 11  – Image Source Sensor        (ISO 646 string: "EO" / "IR"; NVG removed, ROADMAP 3B.2)
  *   Tag 12  – Image Coordinate System    (ISO 646 string: "Geodetic WGS84")
  *   Tag 13  – Sensor Latitude            (int32,  ±90°)
  *   Tag 14  – Sensor Longitude           (int32,  ±180°)

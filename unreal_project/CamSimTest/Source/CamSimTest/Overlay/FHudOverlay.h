@@ -14,7 +14,7 @@ enum class ECrosshairStyle : uint8
 
 /**
  * Per-element HUD config: enable, color override, and optional fixed position.
- * Color=(0,0,0,0) means "use sensor-mode default" (EO=white, IR=yellow, NVG=green).
+ * Color=(0,0,0,0) means "use sensor-mode default" (EO=white, IR=yellow).
  * X=-1 / Y=-1 means "use computed default anchor".
  */
 struct FHudElementConfig

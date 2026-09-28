@@ -147,13 +147,13 @@ bool FSensorAeSnapTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("post-cut histogram snaps"), C.GetGainEv(), Day + 2.0f, 0.01f);
 
 	// Mode switch behaves like a cut.
-	FSensorControllerInput Nvg = In(nullptr, 8);
-	Nvg.Mode = ESensorGraphMode::NVG;
-	C.Update(Nvg, Cfg);
+	FSensorControllerInput Ir = In(nullptr, 8);
+	Ir.Mode = ESensorGraphMode::IR;
+	C.Update(Ir, Cfg);
 	const FSensorHistogram N = Flat(8.0f, 8);
-	FSensorControllerInput NvgH = In(&N, 9);
-	NvgH.Mode = ESensorGraphMode::NVG;
-	C.Update(NvgH, Cfg);
+	FSensorControllerInput IrH = In(&N, 9);
+	IrH.Mode = ESensorGraphMode::IR;
+	C.Update(IrH, Cfg);
 	TestEqual(TEXT("mode switch snaps"), C.GetGainEv(), Day + 4.0f, 0.01f);
 	return true;
 }

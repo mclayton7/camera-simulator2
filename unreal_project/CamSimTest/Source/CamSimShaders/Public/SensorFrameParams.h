@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "Containers/StaticArray.h"
 
-enum class ESensorGraphMode : uint32 { EO = 0, IR = 1, NVG = 2 };
+enum class ESensorGraphMode : uint32 { EO = 0, IR = 1 };
 
 struct FSensorHistogram
 {
@@ -30,12 +30,11 @@ struct FSensorHistogram
 struct FSensorFrameParams
 {
 	ESensorGraphMode Mode = ESensorGraphMode::EO;
-	uint32    bBlackHot     = 0;          // IR/NVG polarity: 1 inverts after gain/offset
+	uint32    bBlackHot     = 0;          // IR polarity: 1 inverts after gain/offset
 	float     Gain          = 1.0f;       // linear multiplier on absolute scene-linear signal
 	float     Offset        = 0.0f;       // added after Gain (IR AGC), normalised units
 	FVector3f SignalWeights = FVector3f(0.2126f, 0.7152f, 0.0722f);
 	float     KneeStart     = 0.8f;       // EO soft highlight knee (linear)
-	FVector3f DisplayTint   = FVector3f(1.0f, 1.0f, 1.0f);  // viewport only (NVG green)
 	float     InputScale    = 1.0f;       // multiplies scene colour; tests only (runtime uses View.OneOverPreExposure)
 	uint32    Serial        = 0;          // tags the histogram this frame produces
 };

@@ -150,7 +150,7 @@ function checkPackets(path) {
 		near(ctx, byKey, 5, ((t.yaw % 360) + 360) % 360, 1.5 * LSB.heading, { wrap: 360 })
 		near(ctx, byKey, 6, t.pitch, 1.5 * LSB.pitch)
 		near(ctx, byKey, 7, t.roll, 1.5 * LSB.roll)
-		equal(ctx, byKey, 11, ['EO Nose', 'LWIR', 'NVG'][t.sensorMode])
+		equal(ctx, byKey, 11, t.sensorMode === 1 ? 'IR' : 'EO')
 		equal(ctx, byKey, 12, 'Geodetic WGS84')
 		near(ctx, byKey, 13, t.lat, 1.5 * LSB.lat)
 		near(ctx, byKey, 14, t.lon, 1.5 * LSB.lon)

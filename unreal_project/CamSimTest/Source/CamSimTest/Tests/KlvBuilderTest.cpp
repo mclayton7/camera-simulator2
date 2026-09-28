@@ -282,6 +282,42 @@ bool FKlvBuilderBuildPacketZeroSlantRangeTest::RunTest(const FString& Parameters
 }
 
 // -------------------------------------------------------------------------
+// Tag 11 — Image Source Sensor: only "IR" or "EO" (NVG removed, ROADMAP 3B.2)
+// -------------------------------------------------------------------------
+
+static bool FindStringTag(const TArray<uint8>& Packet, uint8 Tag, const char* Expected)
+{
+	const uint8 Len = static_cast<uint8>(FCStringAnsi::Strlen(Expected));
+	for (int32 I = 0; I + 1 < Packet.Num(); ++I)
+	{
+		if (Packet[I] == Tag && Packet[I + 1] == Len && I + 2 + Len <= Packet.Num())
+		{
+			if (FMemory::Memcmp(&Packet[I + 2], Expected, Len) == 0) return true;
+		}
+	}
+	return false;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FKlvBuilderTag11SensorNameTest,
+	"CamSim.KlvBuilder.Tag11SensorName",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FKlvBuilderTag11SensorNameTest::RunTest(const FString& Parameters)
+{
+	FCamSimTelemetry T;
+	T.SensorMode = 1;
+	TestTrue(TEXT("SensorMode 1 -> IR"), FindStringTag(FKlvBuilder::BuildMisbST0601(T), 11, "IR"));
+
+	T.SensorMode = 2;   // formerly NVG; any non-IR value now reports EO
+	TestTrue(TEXT("SensorMode 2 -> EO"), FindStringTag(FKlvBuilder::BuildMisbST0601(T), 11, "EO"));
+
+	T.SensorMode = 0;
+	TestTrue(TEXT("SensorMode 0 -> EO"), FindStringTag(FKlvBuilder::BuildMisbST0601(T), 11, "EO"));
+
+	return true;
+}
+
+// -------------------------------------------------------------------------
 // NaN guard tests
 // -------------------------------------------------------------------------
 

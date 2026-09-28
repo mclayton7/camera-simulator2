@@ -51,7 +51,7 @@ Four threads collaborate with explicit ownership boundaries:
                            │ AsyncTask(AnyBackgroundThreadNormalTask)
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  Task Thread (pool)                                             │
-│  • Sensor post-process (EO/IR/NVG + quality profile)            │
+│  • Sensor post-process (EO/IR + quality profile)                │
 │  • Fan-out to one or more output views                          │
 │  • Per-view: sws_scale + libx264 + KLV + MPEG-TS UDP send       │
 │  • Optional JSONL ground-truth sidecar write                    │

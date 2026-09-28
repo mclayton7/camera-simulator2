@@ -10,7 +10,7 @@
 // Phase 20 HUD/OSD — Automation Tests
 //
 // Validates overlay toggle, crosshair, bitmap font, classification banner,
-// Az/El readout, FOV indicator, slant range, and NVG color text rendering.
+// Az/El readout, FOV indicator, slant range, and custom text color rendering.
 // All tests operate on raw pixel buffers — no UE subsystem required.
 // -------------------------------------------------------------------------
 
@@ -296,31 +296,31 @@ bool FOverlaySlantRangeFormatsKmTest::RunTest(const FString& Parameters)
 }
 
 // -------------------------------------------------------------------------
-// Test 8: NVG mode uses green-tinted text color
+// Test 8: DrawString honors an arbitrary custom text color (e.g. IR yellow)
 // -------------------------------------------------------------------------
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverlayNvgModeUsesGreenTextTest,
-    "CamSim.Overlay.NvgModeUsesGreenText",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverlayDrawStringCustomColorTest,
+    "CamSim.Overlay.DrawStringHonorsCustomColor",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-bool FOverlayNvgModeUsesGreenTextTest::RunTest(const FString& Parameters)
+bool FOverlayDrawStringCustomColorTest::RunTest(const FString& Parameters)
 {
     TArray<FColor> F = BlackFrame();
 
-    FBitmapFont::DrawString(F, TW, TH, 10, 10, "A", FColor(0, 255, 80, 255), 1);
+    FBitmapFont::DrawString(F, TW, TH, 10, 10, "A", FColor(255, 255, 0, 255), 1);  // IR yellow
 
     for (int32 Y = 10; Y <= 16 && Y < TH; ++Y)
         for (int32 X = 10; X <= 15 && X < TW; ++X)
         {
             const FColor& C = F[Y * TW + X];
-            if (C.G > 200 && C.R < 100)
+            if (C.R > 200 && C.G > 200 && C.B < 100)
             {
-                TestTrue(TEXT("Found NVG green pixel in drawn glyph"), true);
+                TestTrue(TEXT("Found yellow pixel in drawn glyph"), true);
                 return true;
             }
         }
 
-    AddError(TEXT("No NVG green pixel (G>200, R<100) found in glyph region (10,10)-(15,16)"));
+    AddError(TEXT("No yellow pixel (R>200, G>200, B<100) found in glyph region (10,10)-(15,16)"));
     return false;
 }
 

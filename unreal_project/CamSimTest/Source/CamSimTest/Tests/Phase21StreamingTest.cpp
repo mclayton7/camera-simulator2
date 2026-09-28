@@ -276,48 +276,6 @@ bool FLaserSpotIRBlackHotTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLaserSpotNVGTest,
-	"CamSim.Phase21.Streaming.LaserSpotNVG",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FLaserSpotNVGTest::RunTest(const FString& Parameters)
-{
-	const int32 W = 64, H = 64;
-	TArray<FColor> Pixels;
-	Pixels.SetNum(W * H);
-	for (FColor& C : Pixels) C = FColor(30, 60, 20, 255);
-
-	const FColor Before = Pixels[(H / 2) * W + (W / 2)];
-
-	// Apply NVG mode: green + 30% blue bleed
-	const float CX = 0.5f * W, CY = 0.5f * H;
-	const float Radius = 4.0f;
-	const float InvTwoR2 = 1.0f / (2.0f * Radius * Radius);
-	const float Peak = 200.0f;
-	for (int32 Y = 0; Y < H; ++Y)
-	{
-		const float dy = Y - CY;
-		for (int32 X = 0; X < W; ++X)
-		{
-			const float dx = X - CX;
-			const float w = Peak * FMath::Exp(-(dx * dx + dy * dy) * InvTwoR2);
-			if (w < 0.5f) continue;
-			FColor& P = Pixels[Y * W + X];
-			const float NewG = FMath::Clamp(static_cast<float>(P.G) + w, 0.0f, 255.0f);
-			const float GDelta = NewG - static_cast<float>(P.G);
-			P.G = static_cast<uint8>(FMath::RoundToInt(NewG));
-			P.B = static_cast<uint8>(FMath::Clamp(
-				FMath::RoundToInt(static_cast<float>(P.B) + GDelta * 3.0f / 10.0f), 0, 255));
-		}
-	}
-
-	const FColor After = Pixels[(H / 2) * W + (W / 2)];
-	TestTrue(TEXT("NVG: green channel increases"), After.G > Before.G);
-	TestTrue(TEXT("NVG: blue gets 30% bleed"), After.B > Before.B);
-
-	return true;
-}
-
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLaserSpotDisabledTest,
 	"CamSim.Phase21.Streaming.LaserSpotDisabled",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

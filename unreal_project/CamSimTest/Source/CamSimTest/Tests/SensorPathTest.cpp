@@ -44,7 +44,7 @@ namespace
 	FCamSimConfig CleanGpuConfig()
 	{
 		FCamSimConfig Cfg;
-		for (ESensorMode M : { ESensorMode::EO, ESensorMode::IR, ESensorMode::NVG })
+		for (ESensorMode M : { ESensorMode::EO, ESensorMode::IR })
 		{
 			Cfg.SensorModeConfigs.Add(M, FSensorModeConfig());
 			FSensorModeConfig& C = Cfg.SensorModeConfigs[M];

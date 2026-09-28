@@ -126,8 +126,9 @@ namespace CamSim::Cigi
 	{
 		FSensorCommand Out;
 		Out.bOn      = In.bSensorOn;
-		// Sensor ID selects the waveband: 0 EO, 1 IR, 2 NVG (others: EO).
-		Out.Waveband = In.SensorId == 1 ? ESensorMode::IR : In.SensorId == 2 ? ESensorMode::NVG : ESensorMode::EO;
+		// Sensor ID selects the waveband: 0 EO, 1 IR (others default to EO;
+		// NVG, formerly SensorId 2, was removed — ROADMAP 3B.2).
+		Out.Waveband = In.SensorId == 1 ? ESensorMode::IR : ESensorMode::EO;
 		Out.Polarity = In.Polarity;
 		// Gain selects the FOV preset: 0 widest … 1 narrowest.
 		Out.Zoom     = FMath::Clamp(In.Gain, 0.0f, 1.0f);
