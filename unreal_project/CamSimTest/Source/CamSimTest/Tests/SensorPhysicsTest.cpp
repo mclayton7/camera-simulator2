@@ -2,10 +2,14 @@
 
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
+#include <cmath>
 #include "SensorHash.h"
 #include "Sensor/SensorReference.h"
+#include "Sensor/SensorOptics.h"
+#include "Sensor/SensorPresets.h"
+#include "Sensor/SensorTypes.h"
 
-// Statistics of the CPU reference detector (ROADMAP 3B.2 Task 7). Flat fields are large enough
+// Statistics of the CPU reference detector (ROADMAP 3B.2 Task 7) and optics (Task 8). Flat fields are large enough
 // that each tolerance is several standard errors of its estimator; statistics are in double.
 namespace
 {
@@ -276,5 +280,222 @@ bool FSensorPhysicsNaNGuardTest::RunTest(const FString& Parameters)
 		TestTrue(FString::Printf(TEXT("type %u: NaN signal -> finite DN (%f)"), Type, Dn), FMath::IsFinite(Dn) && Dn >= 0.0f && Dn <= Q.AdcMax);
 		TestEqual(FString::Printf(TEXT("type %u: NaN signal reads as 0"), Type), Dn, CamSimSensorRef::DetectPixel(0.0f, 3, 5, 0, Q));
 	}
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Optics (ROADMAP 3B.2 Task 8)
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsDistortionTest, "CamSim.Sensor.Physics.DistortionMatchesForwardModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsDistortionTest::RunTest(const FString& Parameters)
+{
+	// Brown-Conrady forward model rd = ru (1 + K1 ru^2 + K2 ru^4); UndistortRadius must invert it
+	// over the whole 1280x720 / 60 deg frame (9x9 grid of ideal points, corners included).
+	constexpr int32 W = 1280, H = 720;
+	constexpr float K1 = -0.2f, K2 = 0.05f;
+	const float F = CamSimOptics::FocalPx(W, 60.0f);
+	double Worst = 0.0;
+	int32 Failed = 0;
+	for (int32 J = 0; J < 9; ++J)
+	{
+		for (int32 I = 0; I < 9; ++I)
+		{
+			const float X = (-0.5f * W + W * I / 8.0f) / F, Y = (-0.5f * H + H * J / 8.0f) / F;
+			const float Ru = FMath::Sqrt(X * X + Y * Y);
+			const float Rd = Ru * (1.0f + K1 * Ru * Ru + K2 * Ru * Ru * Ru * Ru);
+			float Out = -1.0f;
+			Failed += !CamSimOptics::UndistortRadius(Rd, K1, K2, Out);
+			Worst = FMath::Max(Worst, (double)FMath::Abs(Out - Ru));
+		}
+	}
+	AddInfo(FString::Printf(TEXT("FocalPx %.3f; worst |ru - recovered| = %.3g normalised = %.3g px"), F, Worst, Worst * F));
+	TestEqual(TEXT("every grid point converges"), Failed, 0);
+	TestTrue(TEXT("recovered within 1e-4 normalised"), Worst < 1e-4);
+	TestTrue(TEXT("recovered within 0.1 px"), Worst * F < 0.1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsNewtonTest, "CamSim.Sensor.Physics.NewtonConvergesOrConfigRejected",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsNewtonTest::RunTest(const FString& Parameters)
+{
+	constexpr int32 W = 1280, H = 720;
+	const float F = CamSimOptics::FocalPx(W, 60.0f);
+	const float Corner = CamSimOptics::CornerRadius(W, H, F);
+	TestTrue(TEXT("corner radius = hypot(W/2, H/2) / FocalPx"), FMath::IsNearlyEqual(Corner, FMath::Sqrt(640.0f * 640.0f + 360.0f * 360.0f) / F, 1e-5f));
+
+	// K1 = -0.3: rd(ru) peaks at 0.703 > corner 0.662, so a root exists and 3 iterations reach it.
+	float Ru = 0.0f;
+	TestTrue(TEXT("K1 -0.3 converges at the corner"), CamSimOptics::UndistortRadius(Corner, -0.3f, 0.0f, Ru));
+	AddInfo(FString::Printf(TEXT("K1 -0.3: corner rd %.5f -> ru %.5f, forward %.7f"), Corner, Ru, Ru * (1.0f - 0.3f * Ru * Ru)));
+	TestTrue(TEXT("K1 -0.3 root satisfies the forward model"), FMath::Abs(Ru * (1.0f - 0.3f * Ru * Ru) - Corner) <= 1e-5f);
+
+	// K1 = -1.0: rd(ru) peaks at 0.385 < corner: no ideal radius maps to the corner -> rejected.
+	TestFalse(TEXT("K1 -1.0 is rejected"), CamSimOptics::UndistortRadius(Corner, -1.0f, 0.0f, Ru));
+
+	// rd = 0 is the optical axis: ru = 0.
+	TestTrue(TEXT("rd 0 converges"), CamSimOptics::UndistortRadius(0.0f, -0.3f, 0.0f, Ru) && Ru == 0.0f);
+	return true;
+}
+
+namespace
+{
+	/** Optics params: FocalPx from HFOV, no distortion, no blur, noiseless-irrelevant. */
+	FSensorFrameParams OpticsParams(int32 W, float HFovDeg)
+	{
+		FSensorFrameParams P;
+		P.FocalPx = CamSimOptics::FocalPx(W, HFovDeg);
+		P.K1 = 0.0f; P.K2 = 0.0f; P.VignettingExponent = 0.0f; P.PsfSigmaPx = 0.0f;
+		return P;
+	}
+	TArray<FLinearColor> SolidScene(int32 W, int32 H, FLinearColor C) { TArray<FLinearColor> A; A.Init(C, W * H); return A; }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsVignettingTest, "CamSim.Sensor.Physics.VignettingIsCosN",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsVignettingTest::RunTest(const FString& Parameters)
+{
+	constexpr int32 W = 1280, H = 720;
+	FSensorFrameParams P = OpticsParams(W, 60.0f);
+	P.VignettingExponent = 4.0f;
+	TArray<FVector3f> Rgb;
+	FSensorHistogram Hist;
+	CamSimSensorRef::Optics(SolidScene(W, H, FLinearColor(1, 1, 1)), W, H, W, H, P, Rgb, Hist);
+	TestEqual(TEXT("output size"), Rgb.Num(), W * H);
+	TestEqual(TEXT("histogram counts every pixel"), Hist.Total(), (uint64)(W * H));
+
+	// Expected: cos^4 of the ray angle through the pixel centre.
+	auto Expected = [&](int32 X, int32 Y)
+	{
+		const double Xd = (X + 0.5 - W / 2.0) / P.FocalPx, Yd = (Y + 0.5 - H / 2.0) / P.FocalPx;
+		return FMath::Pow(1.0 / FMath::Sqrt(1.0 + Xd * Xd + Yd * Yd), 4.0);
+	};
+	const FIntPoint Probes[] = { {0, 0}, {W - 1, 0}, {0, H - 1}, {W - 1, H - 1},   // corners
+		{W / 2, 0}, {W / 2, H - 1}, {0, H / 2}, {W - 1, H / 2}, {W / 2, H / 2} };   // edge midpoints, centre
+	for (const FIntPoint& Q : Probes)
+	{
+		const double Got = Rgb[Q.Y * W + Q.X].X, Want = Expected(Q.X, Q.Y);
+		AddInfo(FString::Printf(TEXT("(%d,%d): %.5f vs cos^4 %.5f (%.3f%%)"), Q.X, Q.Y, Got, Want, 100.0 * (Got - Want) / Want));
+		TestTrue(FString::Printf(TEXT("(%d,%d) within 1%% of cos^4"), Q.X, Q.Y), Within(Got, Want, 0.01));
+		TestTrue(FString::Printf(TEXT("(%d,%d) grey"), Q.X, Q.Y), Rgb[Q.Y * W + Q.X].X == Rgb[Q.Y * W + Q.X].Y && Rgb[Q.Y * W + Q.X].Y == Rgb[Q.Y * W + Q.X].Z);
+	}
+	// Corner of a 60 deg HFOV 16:9 frame: cos^4 ~ 0.48 — clearly visible vignetting.
+	TestTrue(TEXT("corner darker than 0.6"), Rgb[0].X < 0.6f);
+
+	// FocalPx 0 = optics off: identity, no illumination falloff.
+	FSensorFrameParams Off = P; Off.FocalPx = 0.0f;
+	CamSimSensorRef::Optics(SolidScene(W, H, FLinearColor(1, 1, 1)), W, H, W, H, Off, Rgb, Hist);
+	TestEqual(TEXT("optics off: corner untouched"), Rgb[0].X, 1.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsPsfEdgeTest, "CamSim.Sensor.Physics.PsfEdgeSpread",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsPsfEdgeTest::RunTest(const FString& Parameters)
+{
+	// Vertical step edge 0 | 1 between columns W/2-1 and W/2, blurred with sigma 1.3 px. Fit the
+	// edge spread function 0.5 (1 + erf((x - e) / (sigma sqrt 2))) over (e, sigma) by least squares.
+	// Expected fit ~2.6% low: the taps are a point-sampled Gaussian (kernel std 1.296 after the 3.08
+	// sigma truncation), while a continuous erf sampled at pixel centres models a pixel-integrated
+	// LSF, which carries an extra 1/12 px^2 of variance: sigma_fit^2 ~ 1.296^2 - 1/12 -> 1.264.
+	constexpr int32 W = 64, H = 8;
+	constexpr float Sigma = 1.3f;
+	TArray<FVector3f> Img;
+	Img.SetNumUninitialized(W * H);
+	for (int32 Y = 0; Y < H; ++Y) for (int32 X = 0; X < W; ++X) Img[Y * W + X] = FVector3f(X < W / 2 ? 0.0f : 1.0f);
+	CamSimSensorRef::Blur(Img, W, H, Sigma);
+
+	const int32 Row = H / 2;
+	auto Sse = [&](double E, double S)
+	{
+		double Sum = 0.0;
+		for (int32 X = 0; X < W; ++X)
+		{
+			const double Model = 0.5 * (1.0 + std::erf((X - E) / (S * UE_DOUBLE_SQRT_2)));
+			const double D = Img[Row * W + X].X - Model;
+			Sum += D * D;
+		}
+		return Sum;
+	};
+	// Coarse grid, then two refinements around the best point.
+	double BestE = W / 2.0, BestS = 1.0, Best = Sse(BestE, BestS);
+	double StepE = 0.05, StepS = 0.02, SpanE = 2.0, SpanS = 1.5, CentreE = W / 2.0, CentreS = 1.75;
+	for (int32 Pass = 0; Pass < 3; ++Pass)
+	{
+		for (double E = CentreE - SpanE; E <= CentreE + SpanE; E += StepE)
+			for (double S = FMath::Max(0.05, CentreS - SpanS); S <= CentreS + SpanS; S += StepS)
+			{
+				const double V = Sse(E, S);
+				if (V < Best) { Best = V; BestE = E; BestS = S; }
+			}
+		CentreE = BestE; CentreS = BestS; SpanE = StepE * 2; SpanS = StepS * 2; StepE /= 10; StepS /= 10;
+	}
+	AddInfo(FString::Printf(TEXT("ESF fit: sigma %.4f px (target %.2f, %.2f%%), edge at %.3f, rms resid %.2g"),
+		BestS, Sigma, 100.0 * (BestS - Sigma) / Sigma, BestE, FMath::Sqrt(Best / W)));
+	TestTrue(TEXT("fitted sigma within 5% of 1.3 px"), Within(BestS, Sigma, 0.05));
+
+	// Every row is the same (vertical pass over a column-constant image changes nothing) and the
+	// far field keeps its value (clamp-to-edge, normalised taps).
+	TestTrue(TEXT("left edge stays 0"), FMath::Abs(Img[Row * W].X) < 1e-6f);
+	TestTrue(TEXT("right edge stays 1"), FMath::Abs(Img[Row * W + W - 1].X - 1.0f) < 1e-6f);
+	TestTrue(TEXT("rows identical"), Img[0 * W + W / 2].X == Img[(H - 1) * W + W / 2].X);
+
+	// Taps: radius min(ceil(3 sigma), 8), centre first, normalised over the symmetric kernel.
+	TArray<float> Taps;
+	CamSimOptics::PsfTaps(Sigma, Taps);
+	TestEqual(TEXT("sigma 1.3: radius 4 -> 5 taps"), Taps.Num(), 5);
+	double Total = Taps[0];
+	for (int32 K = 1; K < Taps.Num(); ++K) Total += 2.0 * Taps[K];
+	TestTrue(TEXT("taps normalised"), FMath::Abs(Total - 1.0) < 1e-6);
+	CamSimOptics::PsfTaps(5.0f, Taps);
+	TestEqual(TEXT("sigma 5: radius capped at 8 -> 9 taps"), Taps.Num(), 9);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsZoomTest, "CamSim.Sensor.Physics.OpticsAcrossZoomRange",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsZoomTest::RunTest(const FString& Parameters)
+{
+	constexpr int32 W = 1920, H = 1080;
+	FSensorOpticsConfig O;   // struct defaults
+	float Sigma[2];
+	int32 I = 0;
+	for (const float HFov : { 1.0f, 60.0f })
+	{
+		const float F = CamSimOptics::FocalPx(W, HFov);
+		const float R = CamSimOptics::CornerRadius(W, H, F);
+		const float Cos4 = FMath::Pow(1.0f / FMath::Sqrt(1.0f + R * R), 4.0f);
+		Sigma[I++] = CamSimOptics::PsfSigmaPx(O);
+		AddInfo(FString::Printf(TEXT("HFOV %.0f deg: FocalPx %.1f, corner r %.5f, cos^4 %.5f, PSF sigma %.4f px"), HFov, F, R, Cos4, Sigma[I - 1]));
+		TestTrue(FString::Printf(TEXT("HFOV %.0f: FocalPx finite and > 0"), HFov), FMath::IsFinite(F) && F > 0.0f);
+		TestTrue(FString::Printf(TEXT("HFOV %.0f: corner cos^4 in (0, 1]"), HFov), Cos4 > 0.0f && Cos4 <= 1.0f);
+	}
+	TestEqual(TEXT("PSF sigma independent of FOV"), Sigma[0], Sigma[1]);
+	TestTrue(TEXT("60 deg is wider than 1 deg (shorter focal length)"), CamSimOptics::FocalPx(W, 60.0f) < CamSimOptics::FocalPx(W, 1.0f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorPhysicsPsfDatasheetTest, "CamSim.Sensor.Physics.PsfSigmaFromDatasheet",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorPhysicsPsfDatasheetTest::RunTest(const FString& Parameters)
+{
+	// sigma = sqrt((0.42 lambda N / pitch)^2 + 0.29^2 + extra^2): Airy core as a Gaussian plus the
+	// pixel aperture (1/sqrt(12) px) — evaluated in double as the expected value.
+	struct FCase { const TCHAR* Preset; double Lambda, N, Pitch; };
+	for (const FCase& C : { FCase{ TEXT("eo_hd_cmos"), 0.55, 4.0, 2.9 }, FCase{ TEXT("mwir_cooled"), 4.0, 4.0, 15.0 } })
+	{
+		FSensorModeConfig M;
+		TestTrue(FString::Printf(TEXT("%s preset exists"), C.Preset), CamSimSensorPresets::Apply(C.Preset, M));
+		const double Airy = 0.42 * C.Lambda * C.N / C.Pitch;
+		const double Want = FMath::Sqrt(Airy * Airy + 0.29 * 0.29);
+		const float Got = CamSimOptics::PsfSigmaPx(M.Optics);
+		AddInfo(FString::Printf(TEXT("%s: sigma %.5f px (expected %.5f)"), C.Preset, Got, Want));
+		TestTrue(FString::Printf(TEXT("%s: sigma within 0.001 px"), C.Preset), FMath::Abs(Got - Want) <= 0.001);
+	}
+	FSensorOpticsConfig Extra;
+	Extra.WavelengthUm = 0.0f; Extra.ExtraBlurPx = 1.0f;
+	TestTrue(TEXT("extra blur adds in quadrature"), FMath::IsNearlyEqual(CamSimOptics::PsfSigmaPx(Extra), FMath::Sqrt(0.29f * 0.29f + 1.0f), 1e-5f));
 	return true;
 }

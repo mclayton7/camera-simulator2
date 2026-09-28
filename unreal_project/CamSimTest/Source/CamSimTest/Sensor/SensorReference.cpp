@@ -2,6 +2,7 @@
 
 #include "Sensor/SensorReference.h"
 #include "SensorHash.h"
+#include "Sensor/SensorOptics.h"
 
 namespace CamSimSensorRef
 {
@@ -136,14 +137,114 @@ namespace CamSimSensorRef
 		}
 	}
 
+	void Optics(const TArray<FLinearColor>& Scene, int32 SrcW, int32 SrcH, int32 W, int32 H,
+		const FSensorFrameParams& P, TArray<FVector3f>& OutRgb, FSensorHistogram& OutHist)
+	{
+		check(Scene.Num() == SrcW * SrcH && W > 0 && H > 0);
+		auto Texel = [&](int32 X, int32 Y) -> FVector3f
+		{
+			if (X < 0 || Y < 0 || X >= SrcW || Y >= SrcH) return FVector3f(0.0f);
+			const FLinearColor& C = Scene[Y * SrcW + X];
+			return FVector3f(Sanitize(C.R) * P.InputScale, Sanitize(C.G) * P.InputScale, Sanitize(C.B) * P.InputScale);
+		};
+		auto Bilinear = [&](float Sx, float Sy) -> FVector3f
+		{
+			const float X0f = FMath::FloorToFloat(Sx), Y0f = FMath::FloorToFloat(Sy);
+			const float Fx = Sx - X0f, Fy = Sy - Y0f;
+			const int32 X0 = static_cast<int32>(X0f), Y0 = static_cast<int32>(Y0f);
+			return (1.0f - Fy) * ((1.0f - Fx) * Texel(X0, Y0) + Fx * Texel(X0 + 1, Y0))
+				+ Fy * ((1.0f - Fx) * Texel(X0, Y0 + 1) + Fx * Texel(X0 + 1, Y0 + 1));
+		};
+		const bool bSameSize = SrcW == W && SrcH == H;
+		const float ScaleX = static_cast<float>(SrcW) / W, ScaleY = static_cast<float>(SrcH) / H;
+		const float HalfW = 0.5f * W, HalfH = 0.5f * H;
+		OutRgb.SetNumUninitialized(W * H);
+		for (int32 Py = 0; Py < H; ++Py)
+		{
+			for (int32 Px = 0; Px < W; ++Px)
+			{
+				FVector3f Rgb;
+				if (!(P.FocalPx > 0.0f))
+				{
+					Rgb = bSameSize ? Texel(Px, Py) : Bilinear((Px + 0.5f) * ScaleX - 0.5f, (Py + 0.5f) * ScaleY - 0.5f);
+				}
+				else
+				{
+					const float Xd = (Px + 0.5f - HalfW) / P.FocalPx, Yd = (Py + 0.5f - HalfH) / P.FocalPx;
+					const float Rd = FMath::Sqrt(Xd * Xd + Yd * Yd);
+					float S = 1.0f;
+					if (Rd > 0.0f)
+					{
+						float Ru;
+						CamSimOptics::UndistortRadius(Rd, P.K1, P.K2, Ru);   // convergence validated at config time
+						S = Ru / Rd;
+					}
+					const float Xu = Xd * S, Yu = Yd * S;
+					const float Sx = (Xu * P.FocalPx + HalfW) * ScaleX - 0.5f, Sy = (Yu * P.FocalPx + HalfH) * ScaleY - 0.5f;
+					const float Illum = FMath::Pow(1.0f / FMath::Sqrt(1.0f + Xu * Xu + Yu * Yu), P.VignettingExponent);
+					Rgb = Bilinear(Sx, Sy) * Illum;
+				}
+				OutRgb[Py * W + Px] = Rgb;
+				++OutHist.Bins[FSensorHistogram::BinOf(Rgb.X * P.SignalWeights.X + Rgb.Y * P.SignalWeights.Y + Rgb.Z * P.SignalWeights.Z)];
+			}
+		}
+	}
+
+	void Blur(TArray<FVector3f>& InOut, int32 W, int32 H, float SigmaPx)
+	{
+		check(InOut.Num() == W * H);
+		if (!(SigmaPx > 0.0f)) return;
+		TArray<float> Taps;
+		CamSimOptics::PsfTaps(SigmaPx, Taps);
+		const int32 R = Taps.Num() - 1;
+		TArray<FVector3f> Tmp;
+		Tmp.SetNumUninitialized(W * H);
+		for (int32 Y = 0; Y < H; ++Y)   // horizontal: InOut -> Tmp
+		{
+			const FVector3f* Row = InOut.GetData() + Y * W;
+			for (int32 X = 0; X < W; ++X)
+			{
+				FVector3f Acc = Taps[0] * Row[X];
+				for (int32 K = 1; K <= R; ++K)
+				{
+					Acc += Taps[K] * (Row[FMath::Max(X - K, 0)] + Row[FMath::Min(X + K, W - 1)]);
+				}
+				Tmp[Y * W + X] = Acc;
+			}
+		}
+		for (int32 Y = 0; Y < H; ++Y)   // vertical: Tmp -> InOut
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				FVector3f Acc = Taps[0] * Tmp[Y * W + X];
+				for (int32 K = 1; K <= R; ++K)
+				{
+					Acc += Taps[K] * (Tmp[FMath::Max(Y - K, 0) * W + X] + Tmp[FMath::Min(Y + K, H - 1) * W + X]);
+				}
+				InOut[Y * W + X] = Acc;
+			}
+		}
+	}
+
 	FResult Run(const TArray<FLinearColor>& Scene, int32 W, int32 H, const FSensorFrameParams& P)
 	{
+		check(Scene.Num() == W * H && W % 4 == 0 && H % 2 == 0);
 		FResult R;
-		TArray<float> Rgb, Signal;
-		PrepareScene(Scene, W, H, P, Rgb, Signal, R.Histogram);
-		// Step 4, optics: pass-through until Task 8 (FocalPx 0 and PsfSigmaPx 0 are "off").
+		// Steps 1-4: sanitise, InputScale, optics (with the noiseless-signal histogram), PSF blur.
+		TArray<FVector3f> Linear;
+		Optics(Scene, W, H, W, H, P, Linear, R.Histogram);
+		Blur(Linear, W, H, P.PsfSigmaPx);
 		const bool bEo = P.Mode == ESensorGraphMode::EO;
 		const int32 N = W * H;
+		TArray<float> Rgb, Signal;
+		Rgb.SetNumUninitialized(3 * N);
+		Signal.SetNumUninitialized(N);
+		for (int32 I = 0; I < N; ++I)
+		{
+			const FVector3f& C = Linear[I];
+			Rgb[I] = C.X; Rgb[N + I] = C.Y; Rgb[2 * N + I] = C.Z;
+			Signal[I] = C.X * P.SignalWeights.X + C.Y * P.SignalWeights.Y + C.Z * P.SignalWeights.Z;
+		}
 		const TArray<float> Dn = bEo ? DetectImage(Rgb, W, H, 3, P) : DetectImage(Signal, W, H, 1, P);
 		const float InvAdc = 1.0f / P.AdcMax;
 		TArray<FVector4f> Out;
