@@ -131,7 +131,8 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunSensor_RenderThread(FRDGBuilder
 		if (T && T->Nv12Readback && T->GrabbedGeneration)
 		{
 			// Inline on the render thread: the generation is published only once
-			// the copy is really queued (see AddReadbackTexturePass above).
+			// the copy is really queued (the AddReadbackBufferPass lambda below
+			// stores it right after EnqueueCopy).
 			FRHIGPUBufferReadback* Readback = T->Nv12Readback;
 			TAtomic<uint32>* Grabbed = T->GrabbedGeneration;
 			const uint32 Gen = Req.Generation;

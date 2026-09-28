@@ -180,7 +180,7 @@ Only the vars you need at the console every day are listed below:
 
 ```bash
 cd deploy && docker compose up        # GPU (NVIDIA)
-CAMSIM_ENCODER=libx264 docker compose up  # CPU fallback (Mesa llvmpipe)
+CAMSIM_ENCODER=libx264 docker compose up  # Mesa llvmpipe path: UNVERIFIED since 3B.2 (no CPU sensor fallback; needs the GPU sensor graph)
 ```
 
 - Non-root user (uid 1000)

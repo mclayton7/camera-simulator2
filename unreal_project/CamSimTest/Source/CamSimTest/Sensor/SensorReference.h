@@ -92,7 +92,8 @@ namespace CamSimSensorRef
 	 *      x0 = floor(sx), y0 = floor(sy), fx = sx - x0, fy = sy - y0,
 	 *      xa = clamp(x0, 0, SrcW-1), xb = clamp(x0 + 1, 0, SrcW-1), ya = clamp(y0, 0, SrcH-1), yb = clamp(y0 + 1, 0, SrcH-1)
 	 *      c = (1 - fy) * ((1 - fx) t(xa, ya) + fx t(xb, ya)) + fy * ((1 - fx) t(xa, yb) + fx t(xb, yb))
-	 *  - Bloom (optional, BW x BH; the GPU clamps its UV to the bloom view rect +- 0.5 texel): inside
+	 *  - Bloom (optional, BW x BH; the GPU reads it with integer Loads at the same clamped taps, offset
+	 *    by the bloom view rect's origin): inside
 	 *    the footprint, c += bilinear of the bloom texels b = sanitize(Bloom) * InputScale at
 	 *      bx = (sx + 0.5) * (BW / SrcW) - 0.5,  by = (sy + 0.5) * (BH / SrcH) - 0.5
 	 *    (the same normalised position; BW / SrcW is one float division), taps clamped to [0, BW-1] x

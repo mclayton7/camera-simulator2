@@ -132,6 +132,9 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	P.ReadNoiseE    = D.ReadNoiseE;
 	P.Prnu          = D.Prnu;
 	P.DsnuE         = D.DsnuE;
+	// Dark signal integrates over the frame time (1 / frame rate), not the AE's integration time: the
+	// photon gain is not yet radiometric (ROADMAP 3B.3). At preset values it is negligible either way
+	// (EO: 5 e/s / 30 Hz = 0.17 e against 2 e read noise; cooled MWIR 0).
 	P.DarkE         = D.DarkCurrentEs / (In.FrameRateHz > 0.0f ? In.FrameRateHz : 30.0f);
 	P.TemporalNoise = D.TemporalNoise;
 	P.PixelFpn      = D.PixelFpn;

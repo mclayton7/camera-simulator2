@@ -312,7 +312,7 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	const bool bHasHist = StatsMailbox.TakeLatest(Hist);
 
 	FSensorControllerInput In;
-	In.Mode         = static_cast<ESensorGraphMode>(FMath::Clamp(static_cast<int32>(Mode), 0, 2));
+	In.Mode         = static_cast<ESensorGraphMode>(FMath::Clamp(static_cast<int32>(Mode), 0, 1));
 	In.bBlackHot    = Polarity != 0;
 	In.bCameraCut   = bCameraCut;
 	In.DeltaSimSec  = Dt;

@@ -148,9 +148,9 @@ receives `Tick()` calls without being an `AActor`.
 | `Camera/CamSimCamera.h/.cpp` | Sensor actor: tick orchestration, CIGI view state, hot reload |
 | `Camera/CamSimPlatformRig.h/.cpp` | Platform pose from CIGI, attachment, first-person view |
 | `Camera/CamSimCaptureComponent.h/.cpp` | Capture (grab request), async GPU readback, sensor model dispatch, encoder thread |
-| `Camera/CamSimFrameGrabExtension.h/.cpp` | Scene view extension: copies the game viewport's final image into the readback ring (primary view) |
+| `Camera/CamSimFrameGrabExtension.h/.cpp` | Scene view extension: runs the GPU sensor graph in place of the tonemapper (primary view) and reads its NV12 output back into the readback ring |
 | `Camera/CamSimFrameStats.h/.cpp` | Per-frame render stats JSONL and scene-render counter (bench harness) |
-| `Health/CamSimSnapshotService.h/.cpp` | `GET /snapshot`: next pre-sensor frame as PNG; `GET /snapshot/sensor` (ROADMAP 3B): the encoded sensor image as PNG, legacy path same as `/snapshot` |
+| `Health/CamSimSnapshotService.h/.cpp` | `GET /snapshot` and `GET /snapshot/sensor` (ROADMAP 3B): the next sensor-graph output frame (the NV12 that is encoded) as PNG; since 3B.2 both serve the same image (there is no pre-sensor frame) |
 | `Camera/CamSimTelemetryAssembler.h/.cpp` | Telemetry behind the KLV tags, boresight frame centre |
 | `Camera/CamSimStreamingController.h/.cpp` | Cesium streaming cameras, slew prefetch, adaptive SSE, terrain gate |
 | `Entity/CamSimEntityManager.h/.cpp` | Entity lifecycle management |

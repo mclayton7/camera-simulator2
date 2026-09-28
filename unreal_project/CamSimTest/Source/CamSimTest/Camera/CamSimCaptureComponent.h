@@ -214,7 +214,7 @@ private:
 	static constexpr float UeExposureOffsetEv = 0.0f;
 
 	/**
-	 * Per render-target slot: the capture generation whose copy the grab
+	 * Per readback-ring slot: the capture generation whose copy the grab
 	 * extension really issued. The poll trusts a slot's fence only when this
 	 * matches the capture's generation.
 	 * writer: render (grab pass) → reader: render (poll) (SeqCst).

@@ -644,7 +644,7 @@ EO mean 51 at 2.4 % clipped.
 | # | Criterion | 3B.2 |
 | --- | --- | --- |
 | 1 | Legacy removed; default config runs the GPU sensor model with every stage on | ✅ |
-| 2 | Physics tests pass; GPU matches the reference on Metal | ✅ 16 `CamSim.Sensor.Physics.*`; `CamSim.GPU.Sensor.*` 10/10 (Y ≤ 1 DN, UV ≤ 2 DN, histogram totals equal) |
+| 2 | Physics tests pass; GPU matches the reference on Metal | ✅ 17 `CamSim.Sensor.Physics.*`; `CamSim.GPU.Sensor.*` 10/10 (Y ≤ 1 DN, UV ≤ 2 DN, histogram totals equal) |
 | 3 | 30 fps, 0 dropped in every phase at 720p and 1080p; frame p95 ≤ post-crossfade + 1 ms | ✅ 29.8–30.0 fps, 0 dropped; every phase at or below the post-crossfade p95 (worst +0.05 ms, 1080p low pass) |
 | 4 | Sensor graph GPU p95 ≤ 2 ms at 1080p | ✅ 1.71 ms (default presets; PSF radius ≥ 4 exceeds it — warned at startup) |
 | 5 | Daylight EO 90–170, < 1 % clipped; night darker with more temporal noise; IR striping < 2 DN; cuts converge in 1–3 frames | ✅ 106–118, luma-clipped ≤ 0.1 % (◐ any-channel 1.2–1.8 % on the two far-origin shots: red saturation of sunlit dry grass, which the luma-metered AE doesn't see); night 34 with 1.83 vs 1.13 DN; `mwir_cooled` residual FPN ≤ 0.21 DN (column striping is `lwir_uncooled`'s, tested in `CamSim.Sensor.Physics.MicrobolometerFpn`); AE snap 1–3 frames |
@@ -669,15 +669,40 @@ Known issues and open points for the visual review:
   wave intrinsics), but nothing has run on Vulkan. There is no CPU fallback any more: a host
   without `IsSensorGraphSupported` (Mesa llvmpipe/lavapipe in the CPU Docker path) produces no
   frames and `/ready` stays false. Verify on the first Linux run.
+- **Cut convergence**: a camera cut or mode switch snaps the AE on the first histogram whose
+  serial is at or after the cut, but histograms already in flight from before the cut still
+  arrive first and nudge the gain for one frame (within the 1–3-frame convergence above).
+
+Carried to 3B.3 (found in the 3B.2 final review):
+- **Radiometric photon gain**: `exposure.max_photon_gain_ev` is currently each mode's sensitivity
+  calibration; `optics.f_number`, `pixel_pitch_um`, QE and integration time don't set exposure
+  (dark current also integrates over the frame time, not the AE's integration time).
+- **Distortion-aware ground truth**: bounding boxes, depth and the KLV frame corners are pinhole;
+  with `optics.k1`/`k2` ≠ 0 the labels misalign with the distorted image toward the edges.
+- **AGC max gain cap**: the IR AGC has no ceiling on its display stretch, so a flat or black scene
+  gets a huge display gain (amplified noise).
+- **Mode-switch AE transients**: skip histograms with `Serial < SnapAfterSerial` while a snap is
+  pending (instead of letting them nudge the gain), and seed a mode's first entry rather than
+  starting from the neutral gain.
+- **Dead designator state**: `DisEntityAdapter::GetDesignatorSpot` has no consumer since the drawn
+  laser spot was removed; wire it to ground truth/KLV or delete it.
+- **Before Linux CI**: NullRHI tests read the machine-local `unreal_project/CamSimTest/camsim_config.yaml`
+  (gitignored; `run.sh` refreshes it, a direct test run doesn't) — make the tests self-contained;
+  add GPU tests for a NaN bloom texel and for non-same-size + bloom + blur partial thread groups;
+  lavapipe (Mesa Vulkan) may lack what the sensor graph needs.
 
 Removed in 3B.2: NVG (SensorId 2); the legacy CPU sensor path (`FSensorPostProcess`,
 `IPixelPipeline`, the path selector, `render.sensor_path`); the 27A material path; the scene-capture
 render path (`render.view_source`) and the BGRA readback/encode; the HUD overlay (`Overlay/`),
 drawn laser spot and CPU precipitation overlay; the legacy per-mode sensor effect keys and the
 `sensor_quality` presets; `render.exposure_compensation_ev`. `exposure.max_gain_ev` is now
-`max_photon_gain_ev`.
+`max_photon_gain_ev`. Removing `randomization.randomize_weather` also removed its draw from
+`FScenarioRandomizer`'s RNG stream, so a seeded `randomization` config produces a different
+sequence of randomized values than before 3B.2 (same seed, different scenario). EO and IR now get
+independent fixed patterns for the same `seed` (the mode is folded into the hash seed), so a
+seeded sensor's PRNU/DSNU/defect maps differ from earlier 3B.2 builds.
 
-Tests: 259 automation tests (256 pass + 3 with expected warnings under NullRHI, where the 10
+Tests: 262 automation tests (259 pass + 3 with expected warnings under NullRHI, where the 10
 `CamSim.GPU.*` are skipped); `scripts/run_gpu_tests.sh` 10/10 on Metal; bench/CIGI pytest 43/43;
 `scripts/ci_validate.sh --native` passes.
 

@@ -330,8 +330,8 @@ were also removed in 3B.2; see "Removed in 3B.2" below.)
 | Field | Type | EO default | IR default | Description |
 |-------|------|------------|------------|-------------|
 | `exposure.auto` | bool | `true` | `true` | Auto-exposure on; `false` uses `manual_gain_ev`. |
-| `exposure.min_gain_ev` | float | `-20.0` | `-20.0` | Lowest gain the simulated camera can select, log2 of the multiplier applied to absolute scene-linear values (higher = brighter). |
-| `exposure.max_photon_gain_ev` | float | `-12.5` | `-6.0` | Highest photon-stage gain (longest integration) the simulated camera can select (renamed from `max_gain_ev` in 3B.2). Past it, the AE adds analog gain up to `detector.max_analog_gain_db`. |
+| `exposure.min_gain_ev` | float | `-20.0` | `-20.0` | Lowest gain the simulated camera can select, log2 of the multiplier applied to absolute scene-linear values (higher = brighter). Must be `>= -40`. |
+| `exposure.max_photon_gain_ev` | float | `-12.5` | `-6.0` | Highest photon-stage gain (longest integration) the simulated camera can select (renamed from `max_gain_ev` in 3B.2). Past it, the AE adds analog gain up to `detector.max_analog_gain_db`. This is the mode's sensitivity calibration: it is not yet derived from `optics.f_number`, `pixel_pitch_um`, QE or integration time (radiometric photon gain is ROADMAP 3B.3). |
 | `exposure.target_grey` | float | `0.18` | `0.18` | Linear value the histogram median is exposed to. |
 | `exposure.highlight_percentile` | float | `0.99` | `0.99` | This percentile of the histogram is kept below clipping. |
 | `exposure.lag_frames` | int | `2` | `2` | Convergence time constant in frames at 30 Hz (sim time); `0` = instant. |
@@ -347,10 +347,14 @@ noise → ADC → display). `optics:`/`detector:` blocks then override individua
 fields on top of the preset. `seed` sets the PCG noise stream seed for that
 mode's detector noise and defect patterns. No env overrides — yaml only.
 
+The optics here are the sensor model's lens only. `optical_realism.aperture_fstop` and
+`optical_realism.sensor_width` (UE's depth of field) are independent of `optics.f_number` and
+`optics.pixel_pitch_um`: changing one set does not change the other.
+
 | Field | Type | EO default | IR default | Description |
 |-------|------|------|------|-------------|
 | `preset` | string | `eo_hd_cmos` | `mwir_cooled` | Sensor-class preset name (see table below). Unknown names are reported by `Validate()` and keep the built-in preset defaults. |
-| `seed` | uint32 | `1` | `1` | PCG noise stream seed for this mode's detector noise/defect patterns. |
+| `seed` | uint32 | `1` | `1` | PCG noise stream seed for this mode's detector noise/defect patterns. The mode is folded in (`FSensorController::ModeSeed`), so EO and IR with the same seed still get independent fixed patterns (PRNU, DSNU, defects); the same seed always gives a mode the same pattern. |
 
 Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 
@@ -374,9 +378,9 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 | `optics.pixel_pitch_um` | float | Detector pixel pitch in micrometres. |
 | `optics.wavelength_um` | float | Design wavelength in micrometres (diffraction blur). |
 | `optics.extra_blur_px` | float | Additional Gaussian blur sigma in pixels, on top of the diffraction/pixel-pitch PSF. |
-| `optics.vignetting_exponent` | float | Falloff exponent `n` in `cos^n θ`. |
-| `optics.k1`, `optics.k2` | float | Brown-Conrady radial distortion coefficients (`rd = ru (1 + k1 ru² + k2 ru⁴)`, radii normalised by the focal length in pixels). Each must be in `[-1, 1]`, and the lens must be invertible across the frame at `hfov_deg` (see below). |
-| `detector.type` | string | `photon` or `microbolometer`. |
+| `optics.vignetting_exponent` | float | Falloff exponent `n` in `cos^n θ`. Must be in `[0, 8]`. |
+| `optics.k1`, `optics.k2` | float | Brown-Conrady radial distortion coefficients (`rd = ru (1 + k1 ru² + k2 ru⁴)`, radii normalised by the focal length in pixels). Each must be in `[-1, 1]`, and the lens must be invertible across the frame at `hfov_deg` (see below). Ground truth (bounding boxes, depth, KLV frame corners) is pinhole and does not include this distortion: with `k1`/`k2` ≠ 0 the labels misalign with the image toward the edges (ROADMAP 3B.3). |
+| `detector.type` | string | `photon` or `microbolometer` (case-insensitive); anything else is a validation error. |
 | `detector.full_well_e` | float | Full-well capacity in electrons (photon detectors). Must be `> 0`. |
 | `detector.read_noise_e` | float | Read noise in electrons RMS (photon detectors). Must be `>= 0`. |
 | `detector.prnu` | float | Photo-response non-uniformity, fractional (photon detectors). Must be `>= 0`. |
@@ -388,9 +392,10 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 | `detector.adc_bits` | int | ADC resolution in bits. Must be in `[8, 16]`. |
 | `detector.hot_pixel_fraction`, `detector.dead_pixel_fraction` | float | Defect pixel fractions. Must be in `[0, 0.01]`. |
 
-**Validation errors:** unknown `preset`; `full_well_e <= 0`; `adc_bits` outside `[8, 16]`; negative
+**Validation errors:** unknown `preset` or `detector.type`; `full_well_e <= 0`; `adc_bits` outside `[8, 16]`; negative
 noise parameters or `f_number <= 0`; `pixel_pitch_um` / `wavelength_um <= 0` or `extra_blur_px < 0`;
-defect fractions outside `[0, 0.01]`; `|k1|` or `|k2| > 1`; a distortion that "does not converge out
+`vignetting_exponent` outside `[0, 8]`; `exposure.min_gain_ev < -40`;
+defect fractions outside `[0, 0.01]`; `|k1|` or `|k2| > 1` (a NaN fails every range check); a distortion that "does not converge out
 to the frame corner": the sensor inverts `k1`/`k2` with a fixed 3-step Newton recurrence (CPU and
 GPU alike), checked at 64 distorted radii from the centre to the corner of the
 `capture_width × capture_height` frame at `hfov_deg` (e.g. `k1: -1.0` fails at 60°, `-0.3` passes).
@@ -664,7 +669,7 @@ operational:
 |---|---|---|---|
 | `GET /live` | Kubernetes liveness convention. Watchdog: returns 200 when the game-thread `Tick()` has fired within the last 5 seconds, 503 otherwise. | `{"status":"ok"}` | `{"status":"stalled","last_tick_ago_s":12.3}` |
 | `GET /health` | `sim-environment` REST orchestrator convention. **Alias for `/live`** — same handler, same semantics. Added so the orchestrator's generic `/health` probe naming works without breaking existing K8s manifests. | `{"status":"ok"}` | Same as `/live` |
-| `GET /ready` | Readiness: encoder open AND at least one CIGI packet received AND first frame successfully encoded. 200 only when all three gates pass. | `{"status":"ready","encoder":true,"cigi":true,"first_frame":true}` | `{"status":"not_ready","encoder":false,"cigi":true,"first_frame":false}` |
+| `GET /ready` | Readiness: encoder open AND GPU sensor graph available (`sensor_graph`, decided once at startup) AND at least one CIGI packet received AND first frame successfully encoded AND terrain ready. 200 only when every gate passes. | `{"status":"ready","encoder":true,"sensor_graph":true,"cigi":true,"first_frame":true,"terrain_ready":true}` | `{"status":"not_ready","encoder":true,"sensor_graph":false,"cigi":true,"first_frame":false,"terrain_ready":true}` |
 | `GET /metrics` | Prometheus exposition format (`text/plain; charset=utf-8`, version 0.0.4). | See metric list below. | N/A — always 200. |
 | `GET /snapshot` | ROADMAP 3A. Only bound when `operational.snapshot_endpoint_enabled`. Next grabbed frame as PNG: the sensor image (same as `/snapshot/sensor`). | `image/png` | `{"status":"no_frame"}` if no frame arrives within 5 s |
 | `GET /snapshot/sensor` | ROADMAP 3B. Only bound when `operational.snapshot_endpoint_enabled`. The encoded sensor image as PNG (same as `/snapshot`). | `image/png` | Same as `/snapshot` |
