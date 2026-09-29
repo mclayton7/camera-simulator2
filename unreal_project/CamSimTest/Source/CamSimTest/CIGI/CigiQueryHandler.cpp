@@ -7,6 +7,7 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "Entity/CamSimEntity.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
+#include "Ocean/OceanQueries.h"
 #include "CamSimTest.h"
 
 #include "Engine/World.h"
@@ -106,31 +107,41 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospa
 		const bool bHit = World->LineTraceSingleByChannel(
 			HitResult, TopPt, BotPt, ECC_Visibility, QueryParams);
 
-		double HAT = 0.0;
-		double HOT = 0.0;
-		bool bValid = false;
-
+		TOptional<double> TerrainHot;
 		if (bHit)
 		{
 			// HOT = terrain altitude above WGS-84 ellipsoid at the hit point
 			double HitLat = 0.0;
 			double HitLon = 0.0;
-			if (!WorldToGeo(World, GeoProvider, HitResult.Location, HitLat, HitLon, HOT))
+			double HitAlt = 0.0;
+			if (!WorldToGeo(World, GeoProvider, HitResult.Location, HitLat, HitLon, HitAlt))
 			{
 				UE_LOG(LogCamSim, Warning, TEXT("FCigiQueryHandler: failed world->geo transform for HAT/HOT id=%u"),
 					static_cast<uint32>(Req.HatHotId));
 				RespondInvalid();
 				continue;
 			}
-			HAT    = Req.Alt - HOT;  // height above terrain
-			bValid = true;
+			TerrainHot = HitAlt;
 		}
+
+		const CamSimOcean::FHotResult R = CamSimOcean::CombineHot(
+			TerrainHot, Subsystem ? Subsystem->GetOceanSurface() : nullptr, Req.Lat, Req.Lon);
+		const bool   bValid = R.bValid;
+		const double HOT    = R.HotM;
+		const double HAT    = bValid ? (Req.Alt - HOT) : 0.0;  // height above terrain/water
 
 		if (bExtended)
 		{
 			// CamSim has no terrain material data yet: material code 0.
 			float NormalAz = 0.0f, NormalEl = 90.0f;
-			if (bValid)
+			if (R.bWater)
+			{
+				double Az = 0.0, El = 90.0;
+				CamSimFrames::NeuToAzEl(R.NormalNeu, Az, El);
+				NormalAz = static_cast<float>(Az);
+				NormalEl = static_cast<float>(El);
+			}
+			else if (bValid)
 			{
 				SurfaceNormalAzEl(World, GeoProvider, HitResult, NormalAz, NormalEl);
 			}
