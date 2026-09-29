@@ -21,6 +21,7 @@ namespace CamSimSurface
 	constexpr double EaseTimeConstantSec = 0.2;    // hides tile refinement shifts
 	constexpr double SnapThresholdM      = 5.0;    // first hit, teleports
 	constexpr double ResetJumpM          = 100.0;  // horizontal jump that restarts placement
+	constexpr double LakeMarginM         = 2.0;    // a tile surface this far above sea level is inland water; below it the boat is at sea
 
 	struct FClampState
 	{

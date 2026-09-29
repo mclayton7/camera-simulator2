@@ -362,3 +362,97 @@ bool FSurfaceClampOceanMotionTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("motion off: level"), Off.Neu.Rotator().Pitch, 0.0, 1e-6);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampLakeMarginTest, "CamSim.Entity.SurfaceClamp.LakeMargin",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampLakeMarginTest::RunTest(const FString& Parameters)
+{
+	// Decimetre noise between the tile surface and the geoid shouldn't strip waves from an
+	// open-sea boat: a hit just above sea level (within LakeMarginM) still rides the waves.
+	FOceanSurface S = Sea(-32.0);
+	S.SetHostWave(0, OneWave(2.0, 40.0, 180.0));
+	FWaterInput W; W.Ocean = &S;
+	{
+		FStubProbe NearSea; NearSea.Height = -32.0 + 0.3;   // within LakeMarginM (2.0)
+		FClampState St;
+		double MaxPitch = 0.0, MinAlt = 1e9, MaxAlt = -1e9;
+		for (int32 i = 0; i < 40; ++i)
+		{
+			S.SetTime(i * 0.1);
+			const CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, NearSea, St, W);
+			MaxPitch = FMath::Max(MaxPitch, FMath::Abs(P.Neu.Rotator().Pitch));
+			MinAlt = FMath::Min(MinAlt, P.Alt); MaxAlt = FMath::Max(MaxAlt, P.Alt);
+		}
+		TestTrue(*FString::Printf(TEXT("near-sea hit (0.3 m): rides waves, pitch %.2f deg"), MaxPitch), MaxPitch > 0.5);
+		TestTrue(TEXT("near-sea hit (0.3 m): heaves around sea level"), MinAlt < -32.0 && MaxAlt > -32.0);
+	}
+	// A hit beyond the margin is a lake: level, parked at the hit, no wave motion.
+	{
+		FStubProbe Lake; Lake.Height = -32.0 + 3.0;
+		FClampState St;
+		S.SetTime(0.0);
+		const CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, Lake, St, W);
+		TestEqual(TEXT("lake hit (3 m): at the hit"), P.Alt, -29.0, 1e-6);
+		TestEqual(TEXT("lake hit (3 m): level"), P.Neu.Rotator().Pitch, 0.0, 1e-6);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampTileEvictionHoldTest, "CamSim.Entity.SurfaceClamp.TileEvictionHoldsLake",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampTileEvictionHoldTest::RunTest(const FString& Parameters)
+{
+	const FOceanSurface S = Sea(-32.0);   // calm (no waves)
+	FWaterInput W; W.Ocean = &S;
+
+	// Lake hit at 300 m, then the tile is evicted (a miss): held at 300, not snapped to sea.
+	FStubProbe Lake; Lake.Height = 300.0;
+	FClampState St;
+	CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Water, Sender(), 3.0, 1.2, 0.0, Lake, St, W);
+	TestEqual(TEXT("lake hit: at 300 m"), P.Alt, 300.0, 1e-6);
+
+	FStubProbe Miss;
+	P = PlaceOnSurface(ESurfaceMode::Water, Sender(), 3.0, 1.2, 0.0, Miss, St, W);
+	TestEqual(TEXT("tile evicted: held at 300 m, not snapped to sea"), P.Alt, 300.0, 1e-6);
+
+	// A miss with no prior surface still gives sea level.
+	FClampState St2;
+	P = PlaceOnSurface(ESurfaceMode::Water, Sender(), 3.0, 1.2, 0.0, Miss, St2, W);
+	TestEqual(TEXT("miss-first: sea level"), P.Alt, -32.0, 1e-6);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampMotionScaleTest, "CamSim.Entity.SurfaceClamp.MotionScaleHalvesMotion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampMotionScaleTest::RunTest(const FString& Parameters)
+{
+	FOceanSurface S = Sea(-32.0);
+	S.SetHostWave(0, OneWave(2.0, 40.0, 180.0));
+	FStubProbe Miss;
+
+	auto Measure = [&S, &Miss](double Scale, double& OutMaxPitch, double& OutHeaveRange)
+	{
+		FWaterInput W; W.Ocean = &S; W.MotionScale = Scale;
+		FClampState St;
+		double MinAlt = 1e9, MaxAlt = -1e9, MaxPitch = 0.0;
+		for (int32 i = 0; i < 80; ++i)
+		{
+			S.SetTime(i * 0.1);
+			const CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, Miss, St, W);
+			MaxPitch = FMath::Max(MaxPitch, FMath::Abs(P.Neu.Rotator().Pitch));
+			MinAlt = FMath::Min(MinAlt, P.Alt); MaxAlt = FMath::Max(MaxAlt, P.Alt);
+		}
+		OutMaxPitch = MaxPitch;
+		OutHeaveRange = MaxAlt - MinAlt;
+	};
+
+	double FullPitch, FullHeave, HalfPitch, HalfHeave;
+	Measure(1.0, FullPitch, FullHeave);
+	Measure(0.5, HalfPitch, HalfHeave);
+
+	TestTrue(*FString::Printf(TEXT("scale 0.5 halves pitch (%.3f vs %.3f deg)"), HalfPitch, FullPitch),
+		FMath::IsNearlyEqual(HalfPitch, FullPitch * 0.5, 1e-4));
+	TestTrue(*FString::Printf(TEXT("scale 0.5 halves heave range (%.4f vs %.4f m)"), HalfHeave, FullHeave),
+		FMath::IsNearlyEqual(HalfHeave, FullHeave * 0.5, 1e-9));
+	return true;
+}

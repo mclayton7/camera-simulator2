@@ -450,7 +450,7 @@ void ACamSimEntity::CommitPose(const CamSimFrames::FGeoPose& SenderPose)
 		GetFootprintHalfSizesM(HalfLength, HalfBeam);
 
 		CamSimSurface::FWaterInput Water;
-		if (UCamSimSubsystem* Sub = GetCamSimSubsystem())   // use the entity's existing subsystem accessor
+		if (UCamSimSubsystem* Sub = GetCamSimSubsystem())
 		{
 			Water.Ocean       = Sub->GetOceanSurface();
 			Water.bMotion     = Sub->GetConfig().Ocean.bVesselMotion;

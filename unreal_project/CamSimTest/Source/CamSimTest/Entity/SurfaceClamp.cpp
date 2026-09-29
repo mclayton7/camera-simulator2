@@ -123,13 +123,32 @@ namespace CamSimSurface
 		{
 			return ClampWater(Sender, CentreHit, SeaLevelM, DtSec, State);   // no ocean / no geoid: as 2.5
 		}
-		// Base: the higher of the drawn tile surface and the sea (seabed loses, a lake above sea level wins).
+		// Base: the higher of the drawn tile surface and the sea (seabed loses, a lake above sea
+		// level wins), with LakeMarginM of slack so decimetre noise between Cesium's surface and
+		// the geoid doesn't misclassify an open-sea boat as inland. A miss holds the last base
+		// height (tile eviction) instead of snapping to sea level — a lake boat shouldn't drop
+		// to sea level just because its tile went away.
 		const TOptional<double> Hit = Finite(CentreHit);
-		const bool   bLake  = Hit.IsSet() && *Hit > *Sea;
-		const double Target = bLake ? *Hit : *Sea;
+		bool bLake;
+		double Target;
+		if (Hit.IsSet())
+		{
+			bLake  = *Hit > *Sea + LakeMarginM;
+			Target = bLake ? *Hit : *Sea;
+		}
+		else if (State.bHasSurface)
+		{
+			Target = FMath::Max(State.Height, *Sea);
+			bLake  = Target > *Sea + LakeMarginM;
+		}
+		else
+		{
+			Target = *Sea;
+			bLake  = false;
+		}
 		State.Height = State.bHasSurface ? Ease(State.Height, Target, DtSec, /*bSnap=*/true) : Target;
 		State.bHasSurface = true;
-		State.PitchDeg = State.RollDeg = 0.0;
+		State.PitchDeg = State.RollDeg = 0.0;   // unused on the wave path below (the sampled attitude is never eased through these)
 
 		CamSimFrames::FGeoPose Out = Sender;
 		Out.Alt = State.Height;
