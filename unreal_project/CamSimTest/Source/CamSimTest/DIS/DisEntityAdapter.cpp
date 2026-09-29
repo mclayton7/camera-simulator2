@@ -47,7 +47,7 @@ void FDisEntityAdapter::ProcessPdu(const FDisEntityStatePdu& Pdu, ISimCommandSin
 	Ts.DisId = Pdu.EntityId;
 	Ts.LastUpdateSec = FPlatformTime::Seconds();
 
-	Sink.Submit(CamSim::Dis::ToEntityCommand(Pdu, MapEntityType(Pdu.EntityType)));
+	Sink.Submit(CamSim::Dis::ToEntityCommand(Pdu, MapEntityType(Pdu.EntityType), Config.DIS.bClampToSurface));
 }
 
 // -------------------------------------------------------------------------

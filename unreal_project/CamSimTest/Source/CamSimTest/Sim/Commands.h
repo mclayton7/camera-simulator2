@@ -102,6 +102,14 @@ struct FMotionModel
 	}
 };
 
+/** Where an entity sits: as sent, on the terrain, or on the water surface. */
+enum class ESurfaceMode : uint8
+{
+	None,    // pose as sent (aircraft, entities with true heights)
+	Ground,  // height, pitch and roll from the terrain under the footprint
+	Water,   // height from the rendered water surface (EGM96 sea level if none)
+};
+
 /** Create, update, hide or remove an entity. */
 struct FEntityCommand
 {
@@ -113,8 +121,8 @@ struct FEntityCommand
 	/** Geodetic pose; ignored while Attachment is set. */
 	CamSimFrames::FGeoPose Pose;
 	TOptional<FEntityAttachment> Attachment;
-	/** Follow the terrain: altitude, and pitch/roll, come from the ground (CIGI conformal clamp). */
-	bool bClampToTerrain = false;
+	/** Surface placement, applied to every pose the entity commits (DIS domain, CIGI conformal clamp). */
+	ESurfaceMode SurfaceMode = ESurfaceMode::None;
 
 	/** Motion carried with the update (DIS dead reckoning). CIGI sends it separately (FEntityMotionCommand). */
 	TOptional<FMotionModel> Motion;

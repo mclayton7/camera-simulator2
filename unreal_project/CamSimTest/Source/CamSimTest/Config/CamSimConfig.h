@@ -678,6 +678,11 @@ struct FCamSimConfig
 		float   HeartbeatTimeoutSec   = 12.0f;
 		int32   DefaultEntityTypeId   = 1001;            // fallback CamSim entity type
 
+		// Place land entities on the terrain and surface entities on the water
+		// (senders without terrain). false = use the sender's altitude/attitude.
+		// Env: CAMSIM_DIS_CLAMP_TO_SURFACE
+		bool    bClampToSurface       = true;
+
 		// DIS entity type → CamSim type ID mappings from YAML
 		// Key: "kind:domain:country:category:subcategory:specific:extra"
 		// Value: CamSim uint16 entity type ID

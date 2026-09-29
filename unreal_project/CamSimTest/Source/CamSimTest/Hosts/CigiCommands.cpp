@@ -40,7 +40,7 @@ namespace CamSim::Cigi
 	{
 		FEntityCommand Out;
 		Out.Key = Key(In.EntityId);
-		Out.bClampToTerrain = true;
+		Out.SurfaceMode = ESurfaceMode::Ground;
 		Out.Pose.Lat = In.Latitude;
 		Out.Pose.Lon = In.Longitude;
 		Out.Pose.Alt = 0.0;

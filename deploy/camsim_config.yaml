@@ -64,6 +64,12 @@ dis:
   # Env: CAMSIM_DIS_DEFAULT_ENTITY_TYPE
   default_entity_type_id: 1001
 
+  # Place land platforms (domain 1) on the terrain and surface platforms (domain 3)
+  # on the water; heights and attitudes are otherwise used as sent. Set false for a
+  # sender that supplies true terrain heights.
+  # Env: CAMSIM_DIS_CLAMP_TO_SURFACE
+  clamp_to_surface: true
+
   # DIS entity type → CamSim entity type mapping table.
   # Keys are "kind:domain:country:category:subcategory:specific:extra" strings.
   # Values are CamSim entity type IDs (matching entity_types keys below).

@@ -44,13 +44,25 @@ namespace CamSim::Dis
 		return Model;
 	}
 
-	FEntityCommand ToEntityCommand(const FDisEntityStatePdu& Pdu, uint16 TypeId)
+	ESurfaceMode SurfaceModeForDomain(uint8 Domain, bool bClampToSurface)
+	{
+		if (!bClampToSurface) return ESurfaceMode::None;
+		switch (Domain)
+		{
+		case 1:  return ESurfaceMode::Ground;
+		case 3:  return ESurfaceMode::Water;
+		default: return ESurfaceMode::None;
+		}
+	}
+
+	FEntityCommand ToEntityCommand(const FDisEntityStatePdu& Pdu, uint16 TypeId, bool bClampToSurface)
 	{
 		FEntityCommand Out;
 		Out.Key       = Key(Pdu.EntityId);
 		Out.Lifecycle = EEntityLifecycle::Active;
 		Out.TypeId    = TypeId;
 		Out.Classification = { Pdu.EntityType.EntityKind, Pdu.EntityType.Domain, Pdu.EntityType.Category };
+		Out.SurfaceMode = SurfaceModeForDomain(Pdu.EntityType.Domain, bClampToSurface);
 
 		CamSimFrames::EcefToGeodetic(FVector(Pdu.LocationX, Pdu.LocationY, Pdu.LocationZ),
 			Out.Pose.Lat, Out.Pose.Lon, Out.Pose.Alt);

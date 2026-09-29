@@ -185,6 +185,12 @@ entity_types:
 | `cigi_response_port` | int | `8889` | `CAMSIM_CIGI_RESPONSE_PORT` | Destination UDP port for IG -> Host packets. |
 | `camera_entity_id` | int | `0` | -- | CIGI Entity ID that controls the camera. All other entity IDs are managed by the entity renderer. Must match the `--entity-id` value passed to `send_cigi_test.py`. |
 
+### DIS Input (IEEE 1278.1)
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `dis.clamp_to_surface` | bool | `true` | `CAMSIM_DIS_CLAMP_TO_SURFACE` | Place land platforms on the terrain (height, pitch, roll) and surface platforms on the water. `false` = the sender's altitude and attitude. |
+
 ### Video Output
 
 | Field | Type | Default | Env var | Description |

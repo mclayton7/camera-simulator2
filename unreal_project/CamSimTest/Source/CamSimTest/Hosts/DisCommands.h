@@ -17,11 +17,14 @@ namespace CamSim::Dis
 	/** site:application:entity packed into the key's 48 low bits. */
 	FEntityKey Key(const FDisEntityId& Id);
 
+	/** DIS domain → surface placement: land on the ground, surface platforms on the water. */
+	ESurfaceMode SurfaceModeForDomain(uint8 Domain, bool bClampToSurface);
+
 	/**
 	 * Entity State PDU → entity update with its dead-reckoning motion model.
 	 * TypeId is the CamSim entity type the adapter mapped the DIS type to.
 	 */
-	FEntityCommand ToEntityCommand(const FDisEntityStatePdu& Pdu, uint16 TypeId);
+	FEntityCommand ToEntityCommand(const FDisEntityStatePdu& Pdu, uint16 TypeId, bool bClampToSurface = true);
 
 	/** The motion model for a dead-reckoning algorithm (unset for 0/1 = none/static). */
 	TOptional<FMotionModel> ToMotionModel(const FDisEntityStatePdu& Pdu, double LatDeg, double LonDeg);

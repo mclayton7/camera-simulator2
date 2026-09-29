@@ -512,3 +512,20 @@ bool FDisAdapterFramesTest::RunTest(const FString& Parameters)
 		&& Rvb.Motion->Velocity.Equals(FVector(100.0, 0.0, 0.0), 0.01));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisClampConfigTest,
+	"CamSim.Dis.ClampToSurfaceConfig",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDisClampConfigTest::RunTest(const FString& Parameters)
+{
+	TestTrue(TEXT("on by default"), FCamSimConfig().DIS.bClampToSurface);
+	const FCamSimConfig Yaml = FCamSimConfig::LoadFromYamlString(TEXT("dis:\n  clamp_to_surface: false\n"));
+	TestFalse(TEXT("yaml value used"), Yaml.DIS.bClampToSurface);
+	TestEqual(TEXT("no unknown keys"), Yaml.UnknownYamlKeys.Num(), 0);
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_DIS_CLAMP_TO_SURFACE"), TEXT("1"));
+	const FCamSimConfig Env = FCamSimConfig::LoadFromYamlString(TEXT("dis:\n  clamp_to_surface: false\n"));
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_DIS_CLAMP_TO_SURFACE"), TEXT(""));
+	TestTrue(TEXT("env overrides yaml"), Env.DIS.bClampToSurface);
+	return true;
+}

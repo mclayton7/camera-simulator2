@@ -80,7 +80,7 @@ bool FHostCigiEntityCommandsTest::RunTest(const FString& Parameters)
 	FCigiConfClampEntityState Clamp;
 	Clamp.EntityId = 9; Clamp.Latitude = 1.0; Clamp.Longitude = 2.0; Clamp.Yaw = 45.0f;
 	const FEntityCommand Clamped = ToEntityCommand(Clamp);
-	TestTrue(TEXT("conformal clamp follows terrain"), Clamped.bClampToTerrain && Clamped.Key == Key(9));
+	TestTrue(TEXT("conformal clamp follows the ground"), Clamped.SurfaceMode == ESurfaceMode::Ground);
 
 	FCigiRateControl Rate;
 	Rate.EntityId = 7; Rate.bLocalFrame = false; Rate.bAngularLocalFrame = false;
@@ -204,5 +204,26 @@ bool FHostDisCommandsTest::RunTest(const FString& Parameters)
 
 	Pdu.DeadReckoning.Algorithm = 1;  // static
 	TestFalse(TEXT("static: no motion"), ToMotionModel(Pdu, Lat, Lon).IsSet());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisSurfaceModeTest,
+	"CamSim.Dis.SurfaceMode",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDisSurfaceModeTest::RunTest(const FString& Parameters)
+{
+	using CamSim::Dis::SurfaceModeForDomain;
+	TestTrue(TEXT("land → ground"),   SurfaceModeForDomain(1, true) == ESurfaceMode::Ground);
+	TestTrue(TEXT("air → none"),      SurfaceModeForDomain(2, true) == ESurfaceMode::None);
+	TestTrue(TEXT("surface → water"), SurfaceModeForDomain(3, true) == ESurfaceMode::Water);
+	TestTrue(TEXT("subsurface → none"), SurfaceModeForDomain(4, true) == ESurfaceMode::None);
+	TestTrue(TEXT("clamp off → none"), SurfaceModeForDomain(1, false) == ESurfaceMode::None);
+
+	FDisEntityStatePdu Pdu;
+	Pdu.EntityType.EntityKind = 1; Pdu.EntityType.Domain = 1;
+	Pdu.LocationX = 6378137.0;
+	TestTrue(TEXT("command carries ground"), CamSim::Dis::ToEntityCommand(Pdu, 2001).SurfaceMode == ESurfaceMode::Ground);
+	TestTrue(TEXT("command honours clamp off"), CamSim::Dis::ToEntityCommand(Pdu, 2001, false).SurfaceMode == ESurfaceMode::None);
 	return true;
 }

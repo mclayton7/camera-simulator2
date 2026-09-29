@@ -1022,6 +1022,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlInt   (D, "application_id",         Cfg.DIS.ApplicationId);
 			YamlFloat (D, "heartbeat_timeout_sec",  Cfg.DIS.HeartbeatTimeoutSec);
 			YamlInt   (D, "default_entity_type_id", Cfg.DIS.DefaultEntityTypeId);
+			YamlBool  (D, "clamp_to_surface",       Cfg.DIS.bClampToSurface);
 
 			// Entity type mappings: dis.entity_type_map
 			if (YamlHas(D, "entity_type_map"))
@@ -1394,6 +1395,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		D.ApplicationId       = GetEnvInt  (TEXT("CAMSIM_DIS_APP_ID"),          D.ApplicationId);
 		D.HeartbeatTimeoutSec = GetEnvFloat(TEXT("CAMSIM_DIS_HEARTBEAT_TIMEOUT"), D.HeartbeatTimeoutSec);
 		D.DefaultEntityTypeId = GetEnvInt  (TEXT("CAMSIM_DIS_DEFAULT_ENTITY_TYPE"), D.DefaultEntityTypeId);
+		D.bClampToSurface     = GetEnvInt  (TEXT("CAMSIM_DIS_CLAMP_TO_SURFACE"),  D.bClampToSurface ? 1 : 0) != 0;
 	}
 
 	// Phase 21 Sprint 2: streaming env var overrides
