@@ -186,13 +186,13 @@ entity_types:
     mesh: boat/mako_655.glb
     skeletal: false
     class_name: boat
-    scale: 1.28
+    scale: 1.19
     rotation:
       pitch: 0.0
       yaw: 180.0
       roll: 0.0
-    half_length_m: 3.52
-    half_beam_m: 1.41
+    half_length_m: 3.27
+    half_beam_m: 1.31
 ```
 
 ## Field Reference
@@ -574,7 +574,7 @@ CC BY 4.0 attribution):
 |----|-------|--------------|-----------------------------|-------------|
 | `1001` | F-16C (`f16/f16-c_falcon.glb`) | -- | -- | `1:2:225:2:0:0:0` |
 | `2001` | Ural-4320 6x6 cargo truck (`truck/ural_4320.glb`) | `truck` | 7.57 x 3.06 m | `1:1:225:7:0:0:0` (and any land platform via the `kind:domain` fallback) |
-| `3001` | Mako 655 rigid-hull inflatable (`boat/mako_655.glb`) | `boat` | 7.04 x 2.82 m | `1:3:225:7:0:0:0` (and any surface platform via the `kind:domain` fallback) |
+| `3001` | Mako 655 rigid-hull inflatable (`boat/mako_655.glb`) | `boat` | 6.54 x 2.63 m | `1:3:225:7:0:0:0` (and any surface platform via the `kind:domain` fallback) |
 
 `CamSim.GPU.Entity.ModelFacing` checks that `2001` and `3001`, after their
 `rotation` and `scale`, are longest along UE +X and match `half_length_m` /

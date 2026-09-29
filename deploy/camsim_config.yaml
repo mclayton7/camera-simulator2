@@ -947,18 +947,18 @@ entity_types:
     half_length_m: 3.78
     half_beam_m: 1.53
   # DIS surface platforms. Mako 655 rigid-hull inflatable (fast rescue
-  # craft), CC BY 4.0 (entities/boat/LICENSE.md). Scaled to 7.0 m.
+  # craft), CC BY 4.0 (entities/boat/LICENSE.md). Scale 1.19: real 6.55 m.
   "3001":
     mesh: boat/mako_655.glb
     skeletal: false
     class_name: boat
-    scale: 1.28
+    scale: 1.19
     rotation:
       pitch: 0.0
       yaw: 180.0
       roll: 0.0
-    half_length_m: 3.52
-    half_beam_m: 1.41
+    half_length_m: 3.27
+    half_beam_m: 1.31
   # Example animated character entity (Phase 22D).
   # Requires skeletal mesh + Animation Blueprint assets in UE editor (see TODO.md).
   # "1010":
