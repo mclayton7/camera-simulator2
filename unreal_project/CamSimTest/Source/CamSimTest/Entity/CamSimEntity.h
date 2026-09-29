@@ -22,6 +22,7 @@ class USkeletalMesh;
 class FEntityTypeTable;
 struct FEntityTypeEntry;
 class ISurfaceProbe;
+class UCamSimSubsystem;
 // FStreamableHandle is provided by the Engine/StreamableManager.h include above.
 
 /**
@@ -205,6 +206,10 @@ private:
 	/** Write a pose to the globe anchor, placed on the surface for SurfaceMode. */
 	void CommitPose(const CamSimFrames::FGeoPose& SenderPose);
 	void GetFootprintHalfSizesM(double& OutHalfLengthM, double& OutHalfBeamM) const;
+
+	/** Cached at BeginPlay (mirrors ACamSimCamera/ACamSimEnvironment). Null if not found. */
+	UCamSimSubsystem* GetCamSimSubsystem() const { return Subsystem.Get(); }
+	TWeakObjectPtr<UCamSimSubsystem> Subsystem;
 
 	// Surface placement: the DR base stays the sender's pose; the clamp is
 	// applied on top at every commit (host command and dead reckoning alike).

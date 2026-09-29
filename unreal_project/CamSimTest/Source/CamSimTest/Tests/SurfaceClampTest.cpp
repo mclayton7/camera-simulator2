@@ -5,6 +5,7 @@
 #include "Entity/SurfaceClamp.h"
 #include "Entity/SurfaceProbe.h"
 #include "Geospatial/CigiFrames.h"
+#include "Ocean/OceanSurface.h"
 
 #include <limits>
 
@@ -239,5 +240,125 @@ bool FSurfaceClampResetTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("113 m: reset"), IsHorizontalJump(A, Far));
 	CamSimFrames::FGeoPose Up = A; Up.Alt += 1000.0;
 	TestFalse(TEXT("vertical only: no reset"), IsHorizontalJump(A, Up));
+	return true;
+}
+
+namespace
+{
+	FOceanSurface Sea(double Geoid = -32.0)
+	{
+		FOceanSurface S([Geoid](double, double) { return TOptional<double>(Geoid); });
+		S.SetAnchor(37.795, -122.46);
+		return S;
+	}
+	FOceanWave OneWave(double H, double L, double From)
+	{
+		FOceanWave W; W.HeightM = H; W.LengthM = L; W.FromDeg = From; return W;
+	}
+	struct FStubProbe final : ISurfaceProbe
+	{
+		TOptional<double> Height;
+		TOptional<double> TraceHeight(double, double, double, double) const override { return Height; }
+	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampOceanSeabedTest, "CamSim.Entity.SurfaceClamp.OceanBeatsSeabed",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampOceanSeabedTest::RunTest(const FString& Parameters)
+{
+	const FOceanSurface S = Sea(-32.0);   // calm (no waves)
+	FWaterInput W; W.Ocean = &S;
+	FClampState St;
+	FStubProbe Seabed; Seabed.Height = -55.0;   // bathymetry, 23 m below sea level
+	CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Water, Sender(), 3.0, 1.2, 0.0, Seabed, St, W);
+	TestEqual(TEXT("seabed loses to sea level"), P.Alt, -32.0, 1e-6);
+
+	FClampState St2;
+	FStubProbe Lake; Lake.Height = 300.0;
+	P = PlaceOnSurface(ESurfaceMode::Water, Sender(), 3.0, 1.2, 0.0, Lake, St2, W);
+	TestEqual(TEXT("lake above sea level wins"), P.Alt, 300.0, 1e-6);
+
+	FClampState St3;
+	FStubProbe Miss;
+	P = PlaceOnSurface(ESurfaceMode::Water, Sender(), 3.0, 1.2, 0.0, Miss, St3, W);
+	TestEqual(TEXT("no hit: sea level"), P.Alt, -32.0, 1e-6);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampOceanOffTest, "CamSim.Entity.SurfaceClamp.OceanOffUnchanged",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampOceanOffTest::RunTest(const FString& Parameters)
+{
+	FStubProbe Seabed; Seabed.Height = -55.0;
+	FClampState A, B;
+	const CamSimFrames::FGeoPose Old = PlaceOnSurface(ESurfaceMode::Water, Sender(), 3.0, 1.2, 0.0, Seabed, A);
+	const CamSimFrames::FGeoPose New = PlaceOnSurface(ESurfaceMode::Water, Sender(), 3.0, 1.2, 0.0, Seabed, B, FWaterInput());
+	TestEqual(TEXT("no ocean: seabed as today"), New.Alt, Old.Alt, 0.0);
+	TestTrue (TEXT("no ocean: attitude as today"), New.Neu.Equals(Old.Neu, 0.0));
+	// Ground vehicles ignore the ocean.
+	const FOceanSurface S = Sea();
+	FWaterInput W; W.Ocean = &S;
+	FStubProbe Ground; Ground.Height = -40.0;   // polder below sea level: a truck stays on the ground
+	FClampState G;
+	TestEqual(TEXT("ground ignores ocean"), PlaceOnSurface(ESurfaceMode::Ground, Sender(), 3.0, 1.2, 0.0, Ground, G, W).Alt, -40.0, 1e-9);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampOceanMotionTest, "CamSim.Entity.SurfaceClamp.WavePitchRollHeave",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampOceanMotionTest::RunTest(const FString& Parameters)
+{
+	// One 40 m wave travelling north (from 180); hull 6 m long, 2.4 m beam, sampled over time.
+	FOceanSurface S = Sea(-32.0);
+	S.SetHostWave(0, OneWave(2.0, 40.0, 180.0));
+	FWaterInput W; W.Ocean = &S;
+	FStubProbe Miss;
+	double MaxPitchHeadingNorth = 0.0, MaxRollHeadingNorth = 0.0, MaxPitchHeadingEast = 0.0, MaxRollHeadingEast = 0.0;
+	double MinAlt = 1e9, MaxAlt = -1e9;
+	for (int32 i = 0; i < 80; ++i)
+	{
+		S.SetTime(i * 0.1);
+		FClampState A, B;
+		const CamSimFrames::FGeoPose N = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0),  3.0, 1.2, 0.0, Miss, A, W);
+		const CamSimFrames::FGeoPose E = PlaceOnSurface(ESurfaceMode::Water, Sender(90.0), 3.0, 1.2, 0.0, Miss, B, W);
+		MaxPitchHeadingNorth = FMath::Max(MaxPitchHeadingNorth, FMath::Abs(N.Neu.Rotator().Pitch));
+		MaxRollHeadingNorth  = FMath::Max(MaxRollHeadingNorth,  FMath::Abs(N.Neu.Rotator().Roll));
+		MaxPitchHeadingEast  = FMath::Max(MaxPitchHeadingEast,  FMath::Abs(E.Neu.Rotator().Pitch));
+		MaxRollHeadingEast   = FMath::Max(MaxRollHeadingEast,   FMath::Abs(E.Neu.Rotator().Roll));
+		MinAlt = FMath::Min(MinAlt, N.Alt); MaxAlt = FMath::Max(MaxAlt, N.Alt);
+		TestEqual(TEXT("heading kept"), N.Neu.Rotator().Yaw, 0.0, 1e-6);
+	}
+	// Max slope a k = 1 * 2pi/40 ≈ 0.157 rad; a 6 m hull on a 40 m wave sees ~ atan(2a sin(k L/2)/L)... ≈ 8.5°.
+	TestTrue(*FString::Printf(TEXT("head seas pitch (%.2f deg) in 5..10"), MaxPitchHeadingNorth), MaxPitchHeadingNorth > 5.0 && MaxPitchHeadingNorth < 10.0);
+	TestTrue(*FString::Printf(TEXT("head seas roll (%.3f deg) ~0"), MaxRollHeadingNorth), MaxRollHeadingNorth < 0.1);
+	TestTrue(*FString::Printf(TEXT("beam seas roll (%.2f deg) > 2"), MaxRollHeadingEast), MaxRollHeadingEast > 2.0);
+	TestTrue(*FString::Printf(TEXT("beam seas pitch (%.3f deg) ~0"), MaxPitchHeadingEast), MaxPitchHeadingEast < 0.1);
+	TestTrue(*FString::Printf(TEXT("heave range %.2f m ≈ 2 m"), MaxAlt - MinAlt), FMath::IsNearlyEqual(MaxAlt - MinAlt, 2.0, 0.3));
+
+	// Sign: bow higher than stern → nose up; port higher → right side down (+roll).
+	S.SetHostWave(0, OneWave(2.0, 40.0, 180.0));
+	for (int32 i = 0; i < 80; ++i)
+	{
+		S.SetTime(i * 0.1);
+		double Lat, Lon, Alt;
+		FClampState A;
+		const CamSimFrames::FGeoPose N = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, Miss, A, W);
+		CamSimFrames::OffsetGeodetic(N.Lat, N.Lon, 0.0, FVector(3.0, 0.0, 0.0), Lat, Lon, Alt);
+		const double Bow = S.SurfaceHeightM(Lat, Lon).GetValue();
+		CamSimFrames::OffsetGeodetic(N.Lat, N.Lon, 0.0, FVector(-3.0, 0.0, 0.0), Lat, Lon, Alt);
+		const double Stern = S.SurfaceHeightM(Lat, Lon).GetValue();
+		if (FMath::Abs(Bow - Stern) > 0.2)
+		{
+			TestEqual(TEXT("pitch sign follows bow - stern"), FMath::Sign(N.Neu.Rotator().Pitch), FMath::Sign(Bow - Stern));
+		}
+	}
+
+	// Motion off: sea level, level hull.
+	W.bMotion = false;
+	S.SetTime(1.3);
+	FClampState C;
+	const CamSimFrames::FGeoPose Off = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, Miss, C, W);
+	TestEqual(TEXT("motion off: sea level"), Off.Alt, -32.0, 1e-6);
+	TestEqual(TEXT("motion off: level"), Off.Neu.Rotator().Pitch, 0.0, 1e-6);
 	return true;
 }

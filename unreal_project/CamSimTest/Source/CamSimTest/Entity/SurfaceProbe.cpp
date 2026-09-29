@@ -41,7 +41,8 @@ TOptional<double> FCesiumSurfaceProbe::TraceHeight(double LatDeg, double LonDeg,
 namespace CamSimSurface
 {
 	CamSimFrames::FGeoPose PlaceOnSurface(ESurfaceMode Mode, const CamSimFrames::FGeoPose& Sender,
-		double HalfLengthM, double HalfBeamM, double DtSec, const ISurfaceProbe& Probe, FClampState& State)
+		double HalfLengthM, double HalfBeamM, double DtSec, const ISurfaceProbe& Probe, FClampState& State,
+		const FWaterInput& Water)
 	{
 		if (Mode == ESurfaceMode::None) return Sender;
 
@@ -60,7 +61,7 @@ namespace CamSimSurface
 			}
 			const TOptional<double> Sea = Hit.IsSet() || State.bHasSurface
 				? TOptional<double>() : CamSim::Geospatial::GetGeoidUndulation(Sender.Lat, Sender.Lon);
-			return ClampWater(Sender, Hit, Sea, DtSec, State);
+			return ClampWater(Sender, Hit, Sea, DtSec, State, Water, HalfLengthM, HalfBeamM);
 		}
 
 		const FFootprint F = GetFootprint(Sender.Lat, Sender.Lon, Sender.Neu.Rotator().Yaw, HalfLengthM, HalfBeamM);

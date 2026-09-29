@@ -36,5 +36,6 @@ namespace CamSimSurface
 {
 	/** Trace the surface for Mode and clamp the sender's pose (None returns it unchanged). */
 	CamSimFrames::FGeoPose PlaceOnSurface(ESurfaceMode Mode, const CamSimFrames::FGeoPose& Sender,
-		double HalfLengthM, double HalfBeamM, double DtSec, const ISurfaceProbe& Probe, FClampState& State);
+		double HalfLengthM, double HalfBeamM, double DtSec, const ISurfaceProbe& Probe, FClampState& State,
+		const FWaterInput& Water = FWaterInput());
 }

@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Entity/SurfaceClamp.h"
+#include "Ocean/OceanSurface.h"
 
 namespace CamSimSurface
 {
@@ -110,6 +111,45 @@ namespace CamSimSurface
 		{
 			Out.Alt = *Sea;           // no water hit yet: EGM96 sea level
 		}
+		return Out;
+	}
+
+	CamSimFrames::FGeoPose ClampWater(const CamSimFrames::FGeoPose& Sender, TOptional<double> CentreHit,
+		TOptional<double> SeaLevelM, double DtSec, FClampState& State, const FWaterInput& Water,
+		double HalfLengthM, double HalfBeamM)
+	{
+		const TOptional<double> Sea = Water.Ocean ? Water.Ocean->SeaLevelM(Sender.Lat, Sender.Lon) : TOptional<double>();
+		if (!Sea.IsSet())
+		{
+			return ClampWater(Sender, CentreHit, SeaLevelM, DtSec, State);   // no ocean / no geoid: as 2.5
+		}
+		// Base: the higher of the drawn tile surface and the sea (seabed loses, a lake above sea level wins).
+		const TOptional<double> Hit = Finite(CentreHit);
+		const bool   bLake  = Hit.IsSet() && *Hit > *Sea;
+		const double Target = bLake ? *Hit : *Sea;
+		State.Height = State.bHasSurface ? Ease(State.Height, Target, DtSec, /*bSnap=*/true) : Target;
+		State.bHasSurface = true;
+		State.PitchDeg = State.RollDeg = 0.0;
+
+		CamSimFrames::FGeoPose Out = Sender;
+		Out.Alt = State.Height;
+		if (bLake || !Water.bMotion || Water.Ocean->GetWaves().GetWaves().Num() == 0 || HalfLengthM <= 0.0 || HalfBeamM <= 0.0)
+		{
+			Out.Neu = CamSimFrames::CigiToNeu(Sender.Neu.Rotator().Yaw, 0.0, 0.0);
+			return Out;
+		}
+		// Waves: four hull points (never eased — the motion is the signal).
+		const FFootprint F = GetFootprint(Sender.Lat, Sender.Lon, Sender.Neu.Rotator().Yaw, HalfLengthM, HalfBeamM);
+		double H[4];
+		for (int32 i = 0; i < 4; ++i)
+		{
+			H[i] = Water.Ocean->SurfaceHeightM(F.Lat[i], F.Lon[i]).Get(*Sea) - *Sea;
+		}
+		const double S = Water.MotionScale;
+		const double Pitch = FMath::RadiansToDegrees(FMath::Atan((H[0] - H[1]) / (2.0 * HalfLengthM))) * S;
+		const double Roll  = FMath::RadiansToDegrees(FMath::Atan((H[2] - H[3]) / (2.0 * HalfBeamM))) * S;
+		Out.Alt += 0.25 * (H[0] + H[1] + H[2] + H[3]) * S;
+		Out.Neu = CamSimFrames::CigiToNeu(Sender.Neu.Rotator().Yaw, Pitch, Roll);
 		return Out;
 	}
 }

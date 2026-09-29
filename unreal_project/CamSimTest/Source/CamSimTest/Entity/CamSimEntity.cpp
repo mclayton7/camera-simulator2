@@ -4,6 +4,7 @@
 #include "Entity/EntityTypeTable.h"
 #include "Entity/EntityMeshLoader.h"
 #include "Entity/SurfaceProbe.h"
+#include "Subsystem/CamSimSubsystem.h"
 #include "CamSimTest.h"
 
 #include "Components/StaticMeshComponent.h"
@@ -17,6 +18,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
+#include "Engine/GameInstance.h"
 
 // -------------------------------------------------------------------------
 // Constructor
@@ -92,6 +94,11 @@ ACamSimEntity::ACamSimEntity()
 void ACamSimEntity::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		Subsystem = GI->GetSubsystem<UCamSimSubsystem>();
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -441,7 +448,15 @@ void ACamSimEntity::CommitPose(const CamSimFrames::FGeoPose& SenderPose)
 		LastCommitSender  = SenderPose;
 		double HalfLength, HalfBeam;
 		GetFootprintHalfSizesM(HalfLength, HalfBeam);
-		Pose = CamSimSurface::PlaceOnSurface(SurfaceMode, SenderPose, HalfLength, HalfBeam, Dt, *SurfaceProbe, SurfaceState);
+
+		CamSimSurface::FWaterInput Water;
+		if (UCamSimSubsystem* Sub = GetCamSimSubsystem())   // use the entity's existing subsystem accessor
+		{
+			Water.Ocean       = Sub->GetOceanSurface();
+			Water.bMotion     = Sub->GetConfig().Ocean.bVesselMotion;
+			Water.MotionScale = Sub->GetConfig().Ocean.VesselMotionScale;
+		}
+		Pose = CamSimSurface::PlaceOnSurface(SurfaceMode, SenderPose, HalfLength, HalfBeam, Dt, *SurfaceProbe, SurfaceState, Water);
 	}
 	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(Pose.Lon, Pose.Lat, Pose.Alt));
 	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::NeuToEastSouthUp(Pose.Neu));
@@ -612,6 +627,15 @@ void ACamSimEntity::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	UpdateDeadReckoning(DeltaTime);
+
+	// A water entity with no motion model still rides the waves (ROADMAP 2.6).
+	if (SurfaceMode == ESurfaceMode::Water && !DR.bHasMotion && !bAttached && LastCommitTimeSec >= 0.0)
+	{
+		if (UCamSimSubsystem* Sub = GetCamSimSubsystem(); Sub && Sub->GetOceanSurface())
+		{
+			CommitPose(LastCommitSender);
+		}
+	}
 
 	// Phase 22C: Gradual damage blend
 	if (bDamageInterpolating && DamageState != TargetDamageState && DamageInterpolationRate > 0.0f)

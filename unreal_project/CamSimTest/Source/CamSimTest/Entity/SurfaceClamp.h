@@ -5,6 +5,8 @@
 #include "CoreMinimal.h"
 #include "Geospatial/CigiFrames.h"
 
+class FOceanSurface;
+
 /**
  * Surface placement math (pure; the traces are done by ISurfaceProbe).
  * Heights are WGS-84 ellipsoid metres. Angles follow CIGI: pitch nose-up
@@ -26,6 +28,14 @@ namespace CamSimSurface
 		double Height      = 0.0;
 		double PitchDeg    = 0.0;
 		double RollDeg     = 0.0;
+	};
+
+	/** The sea for surface vessels (ROADMAP 2.6). Ocean == nullptr: 2.5 behaviour exactly. */
+	struct FWaterInput
+	{
+		const FOceanSurface* Ocean = nullptr;
+		bool   bMotion     = true;
+		double MotionScale = 1.0;
 	};
 
 	/** True when Next is more than ResetJumpM horizontally from Last (a teleport). */
@@ -50,4 +60,13 @@ namespace CamSimSurface
 	 */
 	CamSimFrames::FGeoPose ClampWater(const CamSimFrames::FGeoPose& Sender, TOptional<double> CentreHit,
 		TOptional<double> SeaLevelM, double DtSec, FClampState& State);
+
+	/**
+	 * Surface vessels with an FOceanSurface: sea level (or the higher bathymetry hit) plus
+	 * wave pitch/roll/heave from the hull footprint (ROADMAP 2.6). Water.Ocean == nullptr,
+	 * or the ocean has no geoid at this point, falls back to the 2.5 overload above.
+	 */
+	CamSimFrames::FGeoPose ClampWater(const CamSimFrames::FGeoPose& Sender, TOptional<double> CentreHit,
+		TOptional<double> SeaLevelM, double DtSec, FClampState& State, const FWaterInput& Water,
+		double HalfLengthM, double HalfBeamM);
 }
