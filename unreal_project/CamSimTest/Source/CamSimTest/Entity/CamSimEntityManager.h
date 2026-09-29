@@ -16,6 +16,7 @@ class UWorld;
 class FEntityTypeTable;
 class FScenarioEngine;
 class FCigiHostAdapter;
+class FCesiumSurfaceProbe;
 
 /**
  * FCamSimEntityManager
@@ -89,6 +90,9 @@ private:
 	TMap<FEntityKey, ACamSimEntity*> EntityMap;
 
 	TUniquePtr<FCigiHostAdapter> CigiAdapter;
+
+	/** Terrain / water traces for surface-clamped entities; created with the first entity. */
+	TUniquePtr<FCesiumSurfaceProbe> SurfaceProbe;
 
 	/** Ground-truth annotation IDs, handed out at spawn (never repeated within a session). */
 	FAnnotationIdAllocator AnnotationIds;

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Entity/SurfaceClamp.h"
+#include "Entity/SurfaceProbe.h"
 #include "Geospatial/CigiFrames.h"
 
 #include <limits>
@@ -124,5 +125,56 @@ bool FSurfaceClampEdgeTest::RunTest(const FString& Parameters)
 	const FFootprint F = GetFootprint(37.795, -122.46, 0.0, 5.0, 1.0);
 	TestTrue(TEXT("bow north"), F.Lat[0] > F.Lat[1]);
 	TestTrue(TEXT("stbd east"), F.Lon[3] > F.Lon[2]);
+	return true;
+}
+
+namespace
+{
+	/** Flat ground at a fixed height inside the trace span; records the spans it saw. */
+	class FFakeProbe final : public ISurfaceProbe
+	{
+	public:
+		double Ground = 100.0;
+		mutable TArray<TPair<double, double>> Spans;
+		virtual TOptional<double> TraceHeight(double, double, double Top, double Bottom) const override
+		{
+			Spans.Add({ Top, Bottom });
+			return (Ground <= Top && Ground >= Bottom) ? TOptional<double>(Ground) : TOptional<double>();
+		}
+	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfacePlaceTest, "CamSim.Entity.SurfaceClamp.PlaceOnSurface",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfacePlaceTest::RunTest(const FString& Parameters)
+{
+	FFakeProbe Probe;
+	FClampState S;
+	CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.0, Probe, S);
+	TestEqual(TEXT("ground height"), P.Alt, 100.0, 1e-9);
+	TestEqual(TEXT("four traces"), Probe.Spans.Num(), 4);
+	TestEqual(TEXT("first span top"), Probe.Spans[0].Key, FirstTraceTopM);
+
+	// An overpass 60 m up doesn't capture the truck: the next span tops out at +50 m.
+	Probe.Spans.Reset();
+	Probe.Ground = 160.0;
+	P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, S);
+	TestEqual(TEXT("overpass ignored → held"), P.Alt, 100.0, 1e-9);
+	TestEqual(TEXT("later span top"), Probe.Spans[0].Key, 150.0, 1e-9);
+
+	// None: untouched, no traces.
+	Probe.Spans.Reset();
+	FClampState N;
+	P = PlaceOnSurface(ESurfaceMode::None, Sender(30.0, 42.0), 5.0, 1.0, 0.0, Probe, N);
+	TestEqual(TEXT("none keeps alt"), P.Alt, 42.0, 1e-9);
+	TestEqual(TEXT("none: no traces"), Probe.Spans.Num(), 0);
+
+	// Water: one trace.
+	Probe.Spans.Reset();
+	Probe.Ground = -30.0;
+	FClampState W;
+	P = PlaceOnSurface(ESurfaceMode::Water, Sender(30.0, 0.0), 5.0, 1.0, 0.0, Probe, W);
+	TestEqual(TEXT("water height"), P.Alt, -30.0, 1e-9);
+	TestEqual(TEXT("one water trace"), Probe.Spans.Num(), 1);
 	return true;
 }

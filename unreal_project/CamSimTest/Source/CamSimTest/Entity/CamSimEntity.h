@@ -7,6 +7,7 @@
 #include "Sim/Commands.h"
 #include "Geospatial/CigiFrames.h"
 #include "Ocean/IOceanSurface.h"
+#include "Entity/SurfaceClamp.h"
 // StreamableManager gives us the complete FStreamableHandle type — needed so
 // the UHT-generated CamSimEntity.gen.cpp can destruct TSharedPtr<FStreamableHandle>.
 #include "Engine/StreamableManager.h"
@@ -21,6 +22,7 @@ class UStaticMesh;
 class USkeletalMesh;
 class FEntityTypeTable;
 struct FEntityTypeEntry;
+class ISurfaceProbe;
 // FStreamableHandle is provided by the Engine/StreamableManager.h include above.
 
 /**
@@ -52,6 +54,9 @@ public:
 	uint16 EntityId   = 0;
 	uint16 EntityType = 0;
 	uint32 AnnotationId = 0;  // session-unique ground-truth ID, set at spawn
+
+	/** Inject the surface probe (owned by the entity manager); null disables surface placement. */
+	void SetSurfaceProbe(const ISurfaceProbe* InProbe) { SurfaceProbe = InProbe; }
 
 	/** Inject the type table — must be called before SetEntityType(). */
 	void SetEntityTypeTable(const FEntityTypeTable* Table);
@@ -206,4 +211,15 @@ private:
 	const FEntityTypeTable* TypeTable = nullptr;
 
 	void UpdateDeadReckoning(float Dt);
+
+	/** Write a pose to the globe anchor, placed on the surface for SurfaceMode. */
+	void CommitPose(const CamSimFrames::FGeoPose& SenderPose);
+	void GetFootprintHalfSizesM(double& OutHalfLengthM, double& OutHalfBeamM) const;
+
+	// Surface placement: the DR base stays the sender's pose; the clamp is
+	// applied on top at every commit (host command and dead reckoning alike).
+	const ISurfaceProbe*        SurfaceProbe = nullptr;
+	ESurfaceMode                SurfaceMode  = ESurfaceMode::None;
+	CamSimSurface::FClampState  SurfaceState;
+	double                      LastCommitTimeSec = -1.0;
 };

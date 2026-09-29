@@ -4,6 +4,7 @@
 #include "Entity/CamSimEntity.h"
 #include "Camera/CamSimCamera.h"
 #include "Entity/EntityTypeTable.h"
+#include "Entity/SurfaceProbe.h"
 #include "GroundTruth/FEntityProjection.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "Environment/CamSimParticleManager.h"
@@ -320,6 +321,15 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FEntityCommand& C)
 	Entity->EntityId = static_cast<uint16>(C.Key.Id & 0xFFFF);
 	Entity->AnnotationId = AnnotationIds.Allocate();
 	Entity->SetEntityTypeTable(TypeTable);
+	if (!SurfaceProbe && Subsystem)
+	{
+		SurfaceProbe = MakeUnique<FCesiumSurfaceProbe>(World, Subsystem->GetGeospatialProvider());
+		if (!Subsystem->GetConfig().bCreatePhysicsMeshes)
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("EntityManager: create_physics_meshes is off — surface traces can't hit the terrain; ground entities use the sender's height, surface entities EGM96 sea level"));
+		}
+	}
+	Entity->SetSurfaceProbe(SurfaceProbe.Get());
 	Entity->SetEntityType(C.TypeId);
 	if (Subsystem)
 	{

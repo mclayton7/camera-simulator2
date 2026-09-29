@@ -2,6 +2,7 @@
 
 #include "Entity/CamSimEntity.h"
 #include "Entity/EntityTypeTable.h"
+#include "Entity/SurfaceProbe.h"
 #include "Ocean/IOceanSurface.h"
 #include "CamSimTest.h"
 
@@ -406,6 +407,8 @@ void ACamSimEntity::ApplyCommand(const FEntityCommand& Command)
 		SetMotion(*Command.Motion);
 	}
 
+	SurfaceMode = Command.SurfaceMode;
+
 	bAttached = Command.Attachment.IsSet();
 	if (bAttached)
 	{
@@ -440,6 +443,38 @@ void ACamSimEntity::ApplyGeoPose(const CamSimFrames::FGeoPose& Pose)
 	DR.Alt = static_cast<float>(Pose.Alt);
 	DR.Orientation = Pose.Neu;
 
+	CommitPose(Pose);
+}
+
+void ACamSimEntity::GetFootprintHalfSizesM(double& OutHalfLengthM, double& OutHalfBeamM) const
+{
+	OutHalfLengthM = OutHalfBeamM = 0.0;
+	if (const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr)
+	{
+		OutHalfLengthM = Entry->HalfLengthCm / 100.0;
+		OutHalfBeamM   = Entry->HalfBeamCm / 100.0;
+	}
+	if ((OutHalfLengthM <= 0.0 || OutHalfBeamM <= 0.0) && StaticMeshComp && StaticMeshComp->GetStaticMesh())
+	{
+		// Mesh bounds in model space, times the entry's scale (same fallback as ApplyVesselMotion).
+		const FVector Ext = StaticMeshComp->GetStaticMesh()->GetBounds().BoxExtent * StaticMeshComp->GetRelativeScale3D();
+		if (OutHalfLengthM <= 0.0) OutHalfLengthM = Ext.X / 100.0;
+		if (OutHalfBeamM   <= 0.0) OutHalfBeamM   = Ext.Y / 100.0;
+	}
+}
+
+void ACamSimEntity::CommitPose(const CamSimFrames::FGeoPose& SenderPose)
+{
+	CamSimFrames::FGeoPose Pose = SenderPose;
+	if (SurfaceMode != ESurfaceMode::None && SurfaceProbe && !bAttached)
+	{
+		const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+		const double Dt  = LastCommitTimeSec < 0.0 ? 0.0 : FMath::Max(0.0, Now - LastCommitTimeSec);
+		LastCommitTimeSec = Now;
+		double HalfLength, HalfBeam;
+		GetFootprintHalfSizesM(HalfLength, HalfBeam);
+		Pose = CamSimSurface::PlaceOnSurface(SurfaceMode, SenderPose, HalfLength, HalfBeam, Dt, *SurfaceProbe, SurfaceState);
+	}
 	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(Pose.Lon, Pose.Lat, Pose.Alt));
 	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::NeuToEastSouthUp(Pose.Neu));
 }
@@ -740,6 +775,5 @@ void ACamSimEntity::UpdateDeadReckoning(float Dt)
 	DR.Alt = static_cast<float>(Pose.Alt);
 	DR.Orientation = Pose.Neu;
 
-	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(DR.Lon, DR.Lat, DR.Alt));
-	GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::NeuToEastSouthUp(DR.Orientation));
+	CommitPose(Pose);
 }
