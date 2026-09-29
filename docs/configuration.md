@@ -576,6 +576,7 @@ to asset paths and flags:
 | `class_name` | string | No (default `type_NNNN`) | ML ground-truth label (COCO `category.name`, VOC `name`). |
 | `scale` | float | No (default `1.0`) | Uniform model scale, e.g. to bring a glTF model to its real size. |
 | `rotation` | map | No | `pitch` / `yaw` / `roll` offset in degrees so the model's nose points along UE +X (the entity's heading). |
+| `z_offset_m` | float | No (default `0.0`) | Vertical offset of the model from the entity origin, in metres (+ = up). Surface-clamped entities have their origin on the terrain / water, so a boat uses a negative value to sit at its draft (the shipped `3001` uses `-0.49`). |
 | `half_length_m` / `half_beam_m` | float | No | Half length / half width of the footprint after `scale`, in metres. Used by the DIS surface clamp's four ground traces (see [`dis.md`](dis.md#surface-placement)) and vessel wave motion; the loaded mesh's bounds are used when absent. |
 
 Entity type IDs are defined by the host simulation. CamSim does not reserve any

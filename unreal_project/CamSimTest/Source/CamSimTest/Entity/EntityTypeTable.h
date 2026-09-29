@@ -27,6 +27,10 @@ struct FEntityTypeEntry
 	// Use these to fix glTF assets that are scaled or oriented incorrectly.
 	float   ModelScale    = 1.0f;   // uniform scale factor (default 1.0)
 	FRotator ModelRotation = FRotator::ZeroRotator; // pitch/yaw/roll offset (degrees)
+	// Vertical offset of the mesh from the entity origin (YAML z_offset_m, metres, + = up),
+	// stored in cm. Sinks a hull to its draft on the water, or lifts a model whose origin
+	// is not at its base. Applied with the rotation/scale as the mesh's relative location.
+	float   ModelZOffsetCm = 0.0f;
 
 	// Phase 19C — Vessel motion geometry.
 	// Set in EntityTypeTable YAML as half_length_m / half_beam_m for sea-domain entities.
@@ -59,6 +63,7 @@ struct FEntityTypeEntry
  *         pitch: 0.0
  *         yaw: 0.0
  *         roll: 0.0
+ *       z_offset_m: 0.0
  */
 class UStaticMesh;
 class USkeletalMesh;
@@ -82,6 +87,9 @@ public:
 	 * glTF entries resident.
 	 */
 	int32 PreloadGltfMeshes();
+
+	/** The preloaded glTF static meshes (see PreloadGltfMeshes). */
+	TArray<UStaticMesh*> GetPreloadedStaticMeshes() const;
 
 	/** Returns the entry for the given type ID, or nullptr if not found. */
 	const FEntityTypeEntry* FindEntry(uint16 TypeId) const;

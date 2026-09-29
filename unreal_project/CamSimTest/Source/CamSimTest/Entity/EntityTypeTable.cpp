@@ -233,6 +233,9 @@ void FEntityTypeTable::LoadFromYamlString(const FString& YamlContent)
 			YamlDouble(RotNode, "roll",  R);
 			Entry.ModelRotation = FRotator(P, Y, R);
 		}
+		float ZOffsetM = 0.0f;
+		YamlFloat(EntryNode, "z_offset_m", ZOffsetM);
+		Entry.ModelZOffsetCm = ZOffsetM * 100.0f;
 
 		// Phase 19C — Vessel motion geometry
 		float HalfLengthM = 0.0f;
@@ -372,4 +375,14 @@ int32 FEntityTypeTable::PreloadGltfMeshes()
 	}
 	PreloadedMeshes = MoveTemp(Kept);
 	return PreloadedMeshes.Num();
+}
+
+TArray<UStaticMesh*> FEntityTypeTable::GetPreloadedStaticMeshes() const
+{
+	TArray<UStaticMesh*> Out;
+	for (const TPair<uint16, TStrongObjectPtr<UObject>>& Pair : PreloadedMeshes)
+	{
+		if (UStaticMesh* Mesh = Cast<UStaticMesh>(Pair.Value.Get())) Out.Add(Mesh);
+	}
+	return Out;
 }

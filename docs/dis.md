@@ -96,13 +96,16 @@ The values are keys of `entity_types`, which binds each CamSim type to a model:
 | `class_name` | ML ground-truth label (COCO `category.name`); `type_NNNN` if absent |
 | `scale` | Uniform model scale (to bring a model to its real size) |
 | `rotation` | `pitch` / `yaw` / `roll` offset (degrees) so the model's nose points along UE +X |
+| `z_offset_m` | Vertical offset of the model from the entity origin (metres, + = up; default 0). The surface clamp puts the origin on the surface, so a hull needs a negative value to sit at its draft |
 | `half_length_m` / `half_beam_m` | Half length / half width of the footprint after `scale`: the surface clamp's trace points (and vessel wave motion). Without them the loaded mesh's bounds are used. |
 
 The shipped types are `2001` (Ural-4320 cargo truck, 7.57 × 3.06 m) and `3001` (Mako 655
 rigid-hull inflatable, 6.54 × 2.63 m), both CC BY 4.0 (`entities/*/LICENSE.md`). glTF models
 are loaded once at startup and kept resident, so the first PDU of a new vehicle does not
-wait for a model load (`/Game/` assets still load asynchronously). One ~100 ms frame remains
-when a vehicle first appears (ROADMAP 2.5).
+wait for a model load (`/Game/` assets still load asynchronously). Each preloaded model is
+also drawn once, 50 km below the world, for the first 30 s after startup: the editor binary
+CamSim runs compiles material shaders on first use (~130 ms on the game thread, with the
+render thread waiting), which otherwise hitched the stream when the first vehicle appeared.
 
 ## Surface placement
 
@@ -151,9 +154,9 @@ VOC XML carries the same `entity_id`, `source` and `source_id` per object.
 ## Limitations
 
 - No visible ocean surface, waves or wakes: boats ride on Cesium's water-masked terrain (needs
-  editor assets; see ROADMAP), which can be the seabed (above). The hull has no draft: the
-  Mako 655's keel is about 0.14 m above the model origin, so close up (tens of metres) the boat
-  reads as sitting on the water rather than in it. Inland water that Cesium terrain does not
+  editor assets; see ROADMAP), which can be the seabed (above). The boat's draft is fixed
+  (`z_offset_m: -0.49`: the keel is ~0.14 m above the model origin, so the hull sits ~0.35 m
+  deep) and does not change with speed or load. Inland water that Cesium terrain does not
   render flat is not handled.
 - Fast-moving vehicles can leave a faint TSR ghost trail behind them in close-ups.
 - Boxes are loose, world-aligned projections of the model bounds, with no occlusion test

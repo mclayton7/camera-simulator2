@@ -18,6 +18,9 @@
 #include "CamSimTest.h"
 
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/Actor.h"
 
 #include "Geospatial/CigiFrames.h"
 
@@ -68,6 +71,10 @@ void FCamSimEntityManager::Tick(float DeltaTime)
 	// attachments parent-first, then the camera if it is itself attached.
 	// ACamSimCamera ticks later (TG_PostUpdateWork) and captures the result.
 	ACamSimCamera* Camera = Subsystem ? Subsystem->GetCamera() : nullptr;
+	if (Subsystem && Subsystem->GetGameInstance())
+	{
+		WarmUpModels(Subsystem->GetGameInstance()->GetWorld(), FPlatformTime::Seconds());
+	}
 	PurgeStaleEntities();
 
 	// Host adapters submit this frame's commands (each source has its own entity IDs).
@@ -583,4 +590,49 @@ void FCamSimEntityManager::ProcessScenarioEntities()
 		Remove.Lifecycle = EEntityLifecycle::Remove;
 		ApplyEntityCommand(Remove, NowSeconds, true);
 	}
+}
+
+// -------------------------------------------------------------------------
+// Model warm-up
+// -------------------------------------------------------------------------
+
+void FCamSimEntityManager::WarmUpModels(UWorld* World, double NowSeconds)
+{
+	constexpr double WarmUpHoldSeconds = 30.0;
+	if (bModelsWarmed)
+	{
+		if (WarmUpActors.Num() > 0 && NowSeconds >= WarmUpEndSeconds)
+		{
+			for (const TWeakObjectPtr<AActor>& A : WarmUpActors)
+			{
+				if (A.IsValid()) A->Destroy();
+			}
+			WarmUpActors.Empty();
+		}
+		return;
+	}
+	if (!World || !World->GetCurrentLevel() || !World->HasBegunPlay() || !TypeTable) return;
+	bModelsWarmed = true;
+	WarmUpEndSeconds = NowSeconds + WarmUpHoldSeconds;
+
+	// 50 km below the world origin: outside every view, but the component registers,
+	// creates its scene proxy and precaches its PSOs, which compiles the shaders.
+	const FVector Hidden(0.0, 0.0, -5.0e6);
+	for (UStaticMesh* Mesh : TypeTable->GetPreloadedStaticMeshes())
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AActor* Actor = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform(Hidden), Params);
+		if (!Actor) continue;
+		UStaticMeshComponent* Comp = NewObject<UStaticMeshComponent>(Actor);
+		Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Comp->SetCastShadow(false);
+		Comp->SetStaticMesh(Mesh);
+		Actor->SetRootComponent(Comp);
+		Comp->RegisterComponent();
+		Comp->SetWorldLocation(Hidden);
+		WarmUpActors.Add(Actor);
+	}
+	UE_LOG(LogCamSim, Log, TEXT("EntityManager: warming up %d entity model(s) for %.0f s"),
+		WarmUpActors.Num(), WarmUpHoldSeconds);
 }

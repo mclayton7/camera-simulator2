@@ -45,3 +45,27 @@ bool FEntityTypeTableCacheTest::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEntityTypeTableZOffsetTest,
+	"CamSim.EntityTypeTable.ZOffset",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEntityTypeTableZOffsetTest::RunTest(const FString& Parameters)
+{
+	// glTF paths only need the file to exist (no RHI), so this runs under NullRHI.
+	FEntityTypeTable Table;
+	Table.LoadFromYamlString(TEXT(
+		"entity_types:\n"
+		"  \"2001\":\n"
+		"    mesh: truck/ural_4320.glb\n"
+		"  \"3001\":\n"
+		"    mesh: boat/mako_655.glb\n"
+		"    z_offset_m: -0.49\n"));
+
+	const FEntityTypeEntry* Truck = Table.FindEntry(2001);
+	const FEntityTypeEntry* Boat = Table.FindEntry(3001);
+	if (!TestNotNull(TEXT("truck entry"), Truck) || !TestNotNull(TEXT("boat entry"), Boat)) return false;
+	TestEqual(TEXT("absent z_offset_m defaults to 0"), Truck->ModelZOffsetCm, 0.0f);
+	TestEqual(TEXT("z_offset_m stored in cm"), Boat->ModelZOffsetCm, -49.0f, 1e-3f);
+	return true;
+}

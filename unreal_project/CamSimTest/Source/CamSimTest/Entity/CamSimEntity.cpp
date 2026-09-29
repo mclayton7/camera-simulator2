@@ -222,6 +222,7 @@ void ACamSimEntity::ApplyLoadedSkeletalMesh(USkeletalMesh* Mesh,
 	SkelMeshComp->SetSkinnedAsset(Mesh);
 	SkelMeshComp->SetRelativeRotation(Entry.ModelRotation);
 	SkelMeshComp->SetRelativeScale3D(FVector(Entry.ModelScale));
+	SkelMeshComp->SetRelativeLocation(FVector(0.0, 0.0, Entry.ModelZOffsetCm));
 	SkelMeshComp->SetVisibility(true);
 	StaticMeshComp->SetVisibility(false);
 	UE_LOG(LogCamSim, Log,
@@ -237,6 +238,7 @@ void ACamSimEntity::ApplyLoadedStaticMesh(UStaticMesh* Mesh,
 	StaticMeshComp->SetStaticMesh(Mesh);
 	StaticMeshComp->SetRelativeRotation(Entry.ModelRotation);
 	StaticMeshComp->SetRelativeScale3D(FVector(Entry.ModelScale));
+	StaticMeshComp->SetRelativeLocation(FVector(0.0, 0.0, Entry.ModelZOffsetCm));
 	StaticMeshComp->SetVisibility(true);
 	SkelMeshComp->SetVisibility(false);
 	UE_LOG(LogCamSim, Log,
@@ -318,6 +320,7 @@ void ACamSimEntity::InitAnimatedCharacter(const FEntityTypeEntry& Entry)
 	AnimMeshComp->SetSkeletalMesh(Mesh);
 	AnimMeshComp->SetRelativeRotation(Entry.ModelRotation);
 	AnimMeshComp->SetRelativeScale3D(FVector(Entry.ModelScale));
+	AnimMeshComp->SetRelativeLocation(FVector(0.0, 0.0, Entry.ModelZOffsetCm));
 
 	// Load AnimBlueprint class
 	if (!Entry.AnimBlueprintPath.IsEmpty())

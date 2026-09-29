@@ -957,6 +957,9 @@ entity_types:
       pitch: 0.0
       yaw: 180.0
       roll: 0.0
+    # Draft: keel ~0.14 m above the origin; sink it to ~0.35 m below
+    # the water (the entity origin sits on the surface).
+    z_offset_m: -0.49
     half_length_m: 3.27
     half_beam_m: 1.31
   # Example animated character entity (Phase 22D).

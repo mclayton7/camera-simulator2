@@ -94,6 +94,16 @@ private:
 	/** Terrain / water traces for surface-clamped entities; created with the first entity. */
 	TUniquePtr<FCesiumSurfaceProbe> SurfaceProbe;
 
+	/**
+	 * Draw each preloaded glTF model once, far below the world, at startup: the editor
+	 * binary compiles material shaders on first use (~100 ms on the game and render
+	 * threads), which would otherwise hitch the stream when the first vehicle appears.
+	 */
+	void WarmUpModels(UWorld* World, double NowSeconds);
+	bool   bModelsWarmed = false;
+	double WarmUpEndSeconds = 0.0;
+	TArray<TWeakObjectPtr<AActor>> WarmUpActors;
+
 	/** Ground-truth annotation IDs, handed out at spawn (never repeated within a session). */
 	FAnnotationIdAllocator AnnotationIds;
 

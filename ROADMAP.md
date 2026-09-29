@@ -347,16 +347,16 @@ lifetime. Spec: `docs/superpowers/specs/2026-09-28-dis-vehicles-design.md`; plan
 
 Acceptance (`scripts/dis_vehicle_check.py`, macOS M-series, Metal, 2026-09-28):
 
-- `PASS (labels)`: 454 COCO frames, one ID each (`truck` 1, `boat` 2) across every frame.
+- `PASS (labels)`: 463 COCO frames, one ID each (`truck` 1, `boat` 2) across every frame.
 - Stream when the vehicles appear (settled wide view, tiles 100%): 147 frames in the first
-  5 s, median 33 ms, one frame over 66 ms: 105 ms, 0.15 s after the first annotated frame.
-  An earlier run had the same single ~110 ms frame at first appearance (likely first-use
-  PSO / texture upload); the 10 s before had 8 frames over 66 ms (max 133 ms).
+  5 s, median 33 ms, none over 66 ms (max 56 ms; the 10 s before: 4 over 66 ms, max
+  116 ms). Before the model warm-up (below) every run had one ~105–110 ms frame there.
 - Shots: both models face their travel direction (nadir at every leg of the loop and side
   views from the vehicle's left); the truck's wheels and shadow meet the ground and it pitches
-  with the slope (nose down on the east-bound descent); the boat sits on the rendered water.
+  with the slope (nose down on the east-bound descent); the boat sits in the rendered water at
+  a ~0.35 m draft (`entity_types` gains `z_offset_m`; the Mako 655 uses -0.49 m).
 
-| Truck, nadir | Truck on a descent | Boat, nadir | Boat, 6 m above the water |
+| Truck, nadir | Truck on a descent | Boat, nadir | Boat at its draft, 6 m above the water |
 |---|---|---|---|
 | ![](docs/images/dis-vehicles/truck-nadir.jpg) | ![](docs/images/dis-vehicles/truck-slope-side.jpg) | ![](docs/images/dis-vehicles/boat-nadir.jpg) | ![](docs/images/dis-vehicles/boat-waterline.jpg) |
 
@@ -364,12 +364,22 @@ Findings from the live run:
 
 - The bay's rendered surface at the boat circle is Cesium's bathymetric seabed, ~23 m below
   sea level (KLV Tag 25): the boat sits on what is drawn, but its altitude is below sea level.
-- The boat has no draft (keel ~0.14 m above the model origin): visible only in close-ups.
+- The boat first rode on the water with no draft (keel ~0.14 m above the model origin);
+  fixed with the per-type `z_offset_m`.
+- First-appearance hitch: a trace (`-trace=cpu,frame`) showed `FShaderCompilingManager::
+  ProcessAsyncResults` taking ~130 ms on the game thread (material shader maps for the glTF
+  materials, fetched from the DDC and finalised on first use by the editor binary) with the
+  render thread waiting on the shader jobs. Fixed: `FCamSimEntityManager::WarmUpModels` draws
+  each preloaded model once, 50 km below the world, for 30 s after startup. A respawn of an
+  already-seen type never hitched.
+- Unrelated to DIS: the periodic garbage collection (~60 s after startup, then every ~61 s)
+  stalls the game thread 0.6–1.0 s, of which ~340 ms is the Python plugin's
+  `PyUtil::CollectGarbage` (CamSim runs the editor binary with Python loaded) and ~180 ms
+  reachability analysis. Candidates: `-DisablePython` for runtime launches, a longer
+  `gc.TimeBetweenPurgingPendingKillObjects`, incremental GC.
 - Narrow-FOV / close-range views stream fine tiles slowly (independent of DIS: 5° FOV at
   700 m renders at ~1 fps for tens of seconds; 10° at 350 m ~10 fps) — worth a look under 3A.
 - Moving vehicles leave a faint TSR ghost trail in close-ups.
-- One ~100 ms frame when a vehicle first appears (reproducible, above): investigate with
-  `run_bench.py --trace` if it matters.
 
 Carry-overs:
 
