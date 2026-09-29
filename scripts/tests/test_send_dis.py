@@ -7,8 +7,19 @@ import send_dis_test as sd
 
 
 def _pdu(**kw):
-    args = {"entity_id": 3, "entity_type": sd.TRUCK_TYPE, "lat": 37.795, "lon": -122.46, "alt": 0.0,
-            "heading_deg": 90.0, "speed_mps": 15.0, "yaw_rate_dps": 2.0, "exercise": 1, "marking": "TRUCK1", "t": 12.5}
+    args = {
+        "entity_id": 3,
+        "entity_type": sd.TRUCK_TYPE,
+        "lat": 37.795,
+        "lon": -122.46,
+        "alt": 0.0,
+        "heading_deg": 90.0,
+        "speed_mps": 15.0,
+        "yaw_rate_dps": 2.0,
+        "exercise": 1,
+        "marking": "TRUCK1",
+        "t": 12.5,
+    }
     args.update(kw)
     return sd.pack_entity_state(**args)
 
@@ -16,7 +27,9 @@ def _pdu(**kw):
 def test_header_and_length():
     p = _pdu()
     assert len(p) == 144
-    assert p[0] == 7 and p[1] == 1 and p[2] == 1 and p[3] == 1  # version, exercise, ESPDU, family
+    assert (
+        p[0] == 7 and p[1] == 1 and p[2] == 1 and p[3] == 1
+    )  # version, exercise, ESPDU, family
     assert struct.unpack(">H", p[8:10])[0] == 144
 
 
@@ -39,8 +52,16 @@ def test_location_is_ecef_of_lat_lon():
 
 
 def test_velocity_is_ecef_heading_east_at_equator():
-    p = sd.pack_entity_state(entity_id=1, entity_type=sd.BOAT_TYPE, lat=0.0, lon=0.0, alt=0.0,
-                             heading_deg=90.0, speed_mps=10.0, yaw_rate_dps=0.0)
+    p = sd.pack_entity_state(
+        entity_id=1,
+        entity_type=sd.BOAT_TYPE,
+        lat=0.0,
+        lon=0.0,
+        alt=0.0,
+        heading_deg=90.0,
+        speed_mps=10.0,
+        yaw_rate_dps=0.0,
+    )
     vx, vy, vz = struct.unpack(">fff", p[36:48])
     # At (0, 0) East is ECEF +Y.
     assert abs(vx) < 1e-5 and abs(vy - 10.0) < 1e-5 and abs(vz) < 1e-5
@@ -49,7 +70,11 @@ def test_velocity_is_ecef_heading_east_at_equator():
 def test_euler_heading_east_at_equator():
     # BodyToEcef = NedToEcef(0,0) * Rz(90 deg) -> psi = +90 deg, theta = 0, phi = -90 deg.
     psi, theta, phi = sd.heading_to_dis_euler(90.0, 0.0, 0.0)
-    assert abs(psi - math.pi / 2) < 1e-9 and abs(theta) < 1e-9 and abs(phi + math.pi / 2) < 1e-9
+    assert (
+        abs(psi - math.pi / 2) < 1e-9
+        and abs(theta) < 1e-9
+        and abs(phi + math.pi / 2) < 1e-9
+    )
 
 
 def test_angular_velocity_is_yaw_rate_in_body_z():

@@ -58,13 +58,17 @@ class Tracker:
             time.sleep(1.0 / 60.0)
 
 
-def vehicle(preset: sd.Preset, follower: sd.PathFollower, t: float) -> tuple[float, float, float]:
+def vehicle(
+    preset: sd.Preset, follower: sd.PathFollower, t: float
+) -> tuple[float, float, float]:
     n, e, heading, _ = follower.state(t)
     lat, lon = sd.ne_to_latlon(preset.center, n, e)
     return lat, lon, heading
 
 
-def nadir_on(preset: sd.Preset, alt: float, fov: float) -> Callable[[float], scenario.Pose]:
+def nadir_on(
+    preset: sd.Preset, alt: float, fov: float
+) -> Callable[[float], scenario.Pose]:
     f = sd.PathFollower(preset.waypoints_ne, preset.speed_mps)
 
     def pose(t: float) -> scenario.Pose:
@@ -82,9 +86,17 @@ def side_on(preset: sd.Preset, surface_hae: float) -> Callable[[float], scenario
     def pose(t: float) -> scenario.Pose:
         lat, lon, h = vehicle(preset, f, t)
         left = math.radians(h - 90.0)
-        clat, clon = sd.ne_to_latlon((lat, lon), out_m * math.cos(left), out_m * math.sin(left))
-        return scenario.Pose(clat, clon, surface_hae + up_m, yaw=(h + 90.0) % 360.0,
-                             gimbal_pitch=-math.degrees(math.atan2(up_m, out_m)), fov_h=12.0)
+        clat, clon = sd.ne_to_latlon(
+            (lat, lon), out_m * math.cos(left), out_m * math.sin(left)
+        )
+        return scenario.Pose(
+            clat,
+            clon,
+            surface_hae + up_m,
+            yaw=(h + 90.0) % 360.0,
+            gimbal_pitch=-math.degrees(math.atan2(up_m, out_m)),
+            fov_h=12.0,
+        )
 
     return pose
 
@@ -95,7 +107,11 @@ def wait_tiles(stats: Path, timeout_s: float = 90.0) -> None:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         lines = stats.read_text().splitlines()[-1:] if stats.exists() else []
-        if lines and lines[0].startswith("{") and json.loads(lines[0])["load_pct"] >= 99.9:
+        if (
+            lines
+            and lines[0].startswith("{")
+            and json.loads(lines[0])["load_pct"] >= 99.9
+        ):
             return
         time.sleep(1.0)
     print(f"[check] tiles not fully loaded after {timeout_s:.0f}s; carrying on")
@@ -103,7 +119,9 @@ def wait_tiles(stats: Path, timeout_s: float = 90.0) -> None:
 
 def shoot(out: Path, name: str, n: int = 1, every_s: float = 4.0) -> None:
     for i in range(n):
-        rb.fetch_snapshot(out / "shots" / (f"{name}_{i}.png" if n > 1 else f"{name}.png"))
+        rb.fetch_snapshot(
+            out / "shots" / (f"{name}_{i}.png" if n > 1 else f"{name}.png")
+        )
         if i + 1 < n:
             time.sleep(every_s)
 
@@ -130,7 +148,9 @@ def main() -> int:
     rb.wait_port_free(int(rb.HEALTH.rsplit(":", 1)[1]))
     host = rb.Host()
     # Nadir over the truck loop, 30 deg FOV: ~430 m of ground across at ~850 m above it.
-    host.pose = scenario.Pose(TRUCK.center[0], TRUCK.center[1], 900.0, gimbal_pitch=-90.0, fov_h=30.0)
+    host.pose = scenario.Pose(
+        TRUCK.center[0], TRUCK.center[1], 900.0, gimbal_pitch=-90.0, fov_h=30.0
+    )
     host.thread.start()  # /ready needs CIGI traffic
     subprocess.run(
         [str(REPO / "scripts" / "run.sh"), "--headless", "--local", "--detach"],
@@ -153,14 +173,18 @@ def main() -> int:
         tracker = Tracker(host, time.monotonic())
         time.sleep(10.0)
         shoot(out, "truck_wide")
-        tracker.pose_at = nadir_on(TRUCK, TRUCK_GROUND_HAE + 330.0, 10.0)  # ~58 m across
+        tracker.pose_at = nadir_on(
+            TRUCK, TRUCK_GROUND_HAE + 330.0, 10.0
+        )  # ~58 m across
         time.sleep(6.0)
         shoot(out, "truck_nadir", 3)
         tracker.pose_at = side_on(TRUCK, TRUCK_GROUND_HAE)
         time.sleep(6.0)
         shoot(out, "truck_side", 4)
         tracker.pose_at = None
-        host.pose = scenario.Pose(BOAT.center[0], BOAT.center[1], 800.0, gimbal_pitch=-90.0, fov_h=30.0)
+        host.pose = scenario.Pose(
+            BOAT.center[0], BOAT.center[1], 800.0, gimbal_pitch=-90.0, fov_h=30.0
+        )
         time.sleep(8.0)
         shoot(out, "boat_wide")
         tracker.pose_at = nadir_on(BOAT, BOAT_SURFACE_HAE + 330.0, 10.0)
@@ -203,18 +227,32 @@ def summarize(out: Path, sender_wall: float = 0.0) -> int:
     hitches = sum(1 for r in rows if r["wall_ms"] > HITCH_MS)
     p95 = walls[int(0.95 * (len(walls) - 1))]
     print(f"COCO frames {frames}; ids per class {ids}")
-    print(f"frames {len(rows)}; wall p95 {p95:.1f} ms; frames > {HITCH_MS:.0f} ms: {hitches} "
-          "(camera cuts and tile streaming included)")
+    print(
+        f"frames {len(rows)}; wall p95 {p95:.1f} ms; frames > {HITCH_MS:.0f} ms: {hitches} "
+        "(camera cuts and tile streaming included)"
+    )
     if sender_wall:
         # The vehicles spawn within the first second of the sender; the camera holds still.
-        spawn = [r["wall_ms"] for r in rows if sender_wall <= r["t"] < sender_wall + 5.0]
+        spawn = [
+            r["wall_ms"] for r in rows if sender_wall <= r["t"] < sender_wall + 5.0
+        ]
         if spawn:
-            print(f"first 5 s of DIS: {len(spawn)} frames, max {max(spawn):.1f} ms, "
-                  f"> {HITCH_MS:.0f} ms: {sum(1 for w in spawn if w > HITCH_MS)}")
-    ok = bool(ids.get("truck") and ids.get("boat")) and all(len(v) == 1 for v in ids.values())
-    print("PASS (labels): one stable id each for truck and boat" if ok else "FAIL (labels)")
-    print(f"Review the shots in {out / 'shots'}: on the ground / water, facing the travel "
-          "direction (side views: nose to the left).")
+            print(
+                f"first 5 s of DIS: {len(spawn)} frames, max {max(spawn):.1f} ms, "
+                f"> {HITCH_MS:.0f} ms: {sum(1 for w in spawn if w > HITCH_MS)}"
+            )
+    ok = bool(ids.get("truck") and ids.get("boat")) and all(
+        len(v) == 1 for v in ids.values()
+    )
+    print(
+        "PASS (labels): one stable id each for truck and boat"
+        if ok
+        else "FAIL (labels)"
+    )
+    print(
+        f"Review the shots in {out / 'shots'}: on the ground / water, facing the travel "
+        "direction (side views: nose to the left)."
+    )
     return 0 if ok else 1
 
 

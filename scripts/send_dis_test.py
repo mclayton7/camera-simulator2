@@ -8,6 +8,7 @@ Usage:
 CamSim needs `dis.enabled: true` (or CAMSIM_DIS_ENABLED=1). Altitude is sent as 0 m: CamSim
 places the vehicles on the terrain / water (dis.clamp_to_surface).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,9 +23,9 @@ WGS84_A = 6378137.0
 WGS84_E2 = 6.69437999014e-3
 
 TRUCK_TYPE = (1, 1, 225, 7, 0, 0, 0)  # land, USA, large wheeled utility vehicle
-BOAT_TYPE = (1, 3, 225, 7, 0, 0, 0)   # surface, USA, light/patrol craft
+BOAT_TYPE = (1, 3, 225, 7, 0, 0, 0)  # surface, USA, light/patrol craft
 
-HEARTBEAT_S = 0.2        # 5 Hz
+HEARTBEAT_S = 0.2  # 5 Hz
 HEADING_THRESHOLD = 3.0  # degrees
 TICK_HZ = 30.0
 
@@ -32,26 +33,34 @@ TICK_HZ = 30.0
 def geodetic_to_ecef(lat: float, lon: float, alt: float) -> tuple[float, float, float]:
     la, lo = math.radians(lat), math.radians(lon)
     n = WGS84_A / math.sqrt(1.0 - WGS84_E2 * math.sin(la) ** 2)
-    return ((n + alt) * math.cos(la) * math.cos(lo),
-            (n + alt) * math.cos(la) * math.sin(lo),
-            (n * (1.0 - WGS84_E2) + alt) * math.sin(la))
+    return (
+        (n + alt) * math.cos(la) * math.cos(lo),
+        (n + alt) * math.cos(la) * math.sin(lo),
+        (n * (1.0 - WGS84_E2) + alt) * math.sin(la),
+    )
 
 
 def _ned_to_ecef(lat: float, lon: float) -> list[list[float]]:
     """Columns North, East, Down in ECEF (matches CamSimFrames::NedToEcef)."""
     sl, cl = math.sin(math.radians(lat)), math.cos(math.radians(lat))
     so, co = math.sin(math.radians(lon)), math.cos(math.radians(lon))
-    return [[-sl * co, -so, -cl * co],
-            [-sl * so, co, -cl * so],
-            [cl, 0.0, -sl]]
+    return [[-sl * co, -so, -cl * co], [-sl * so, co, -cl * so], [cl, 0.0, -sl]]
 
 
-def heading_to_dis_euler(heading_deg: float, lat: float, lon: float) -> tuple[float, float, float]:
+def heading_to_dis_euler(
+    heading_deg: float, lat: float, lon: float
+) -> tuple[float, float, float]:
     """Level body at a heading -> DIS psi/theta/phi (radians), as CamSimFrames::CigiToDisEuler."""
     h = math.radians(heading_deg)
-    rz = [[math.cos(h), -math.sin(h), 0.0], [math.sin(h), math.cos(h), 0.0], [0.0, 0.0, 1.0]]
+    rz = [
+        [math.cos(h), -math.sin(h), 0.0],
+        [math.sin(h), math.cos(h), 0.0],
+        [0.0, 0.0, 1.0],
+    ]
     m = _ned_to_ecef(lat, lon)
-    r = [[sum(m[i][k] * rz[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+    r = [
+        [sum(m[i][k] * rz[k][j] for k in range(3)) for j in range(3)] for i in range(3)
+    ]
     psi = math.atan2(r[1][0], r[0][0])
     theta = -math.asin(max(-1.0, min(1.0, r[2][0])))
     phi = math.atan2(r[2][1], r[2][2])
@@ -63,29 +72,46 @@ def _dis_timestamp(t: float) -> int:
     return (int((t % 3600.0) / 3600.0 * (1 << 31)) & 0x7FFFFFFF) << 1
 
 
-def pack_entity_state(entity_id: int, entity_type: tuple, lat: float, lon: float, alt: float,
-                      heading_deg: float, speed_mps: float, yaw_rate_dps: float,
-                      exercise: int = 1, marking: str = "", t: float = 0.0) -> bytes:
+def pack_entity_state(
+    entity_id: int,
+    entity_type: tuple,
+    lat: float,
+    lon: float,
+    alt: float,
+    heading_deg: float,
+    speed_mps: float,
+    yaw_rate_dps: float,
+    exercise: int = 1,
+    marking: str = "",
+    t: float = 0.0,
+) -> bytes:
     """One 144-byte IEEE 1278.1 Entity State PDU (layout: DIS/DisPduTypes.cpp)."""
     m = _ned_to_ecef(lat, lon)
-    vn, ve = speed_mps * math.cos(math.radians(heading_deg)), speed_mps * math.sin(math.radians(heading_deg))
+    vn, ve = (
+        speed_mps * math.cos(math.radians(heading_deg)),
+        speed_mps * math.sin(math.radians(heading_deg)),
+    )
     vel = [m[i][0] * vn + m[i][1] * ve for i in range(3)]
     psi, theta, phi = heading_to_dis_euler(heading_deg, lat, lon)
     x, y, z = geodetic_to_ecef(lat, lon, alt)
     mark = marking.encode("ascii", "replace")[:11].ljust(11, b"\0")
     pdu = struct.pack(">BBBBIHH", 7, exercise, 1, 1, _dis_timestamp(t), 144, 0)
-    pdu += struct.pack(">HHHBB", 1, 1, entity_id, 1, 0)       # site, app, entity, force, #art
+    pdu += struct.pack(
+        ">HHHBB", 1, 1, entity_id, 1, 0
+    )  # site, app, entity, force, #art
     pdu += struct.pack(">BBHBBBB", *entity_type)
-    pdu += bytes(8)                                            # alternative entity type
+    pdu += bytes(8)  # alternative entity type
     pdu += struct.pack(">fff", *vel)
     pdu += struct.pack(">ddd", x, y, z)
     pdu += struct.pack(">fff", psi, theta, phi)
-    pdu += struct.pack(">I", 0)                                # appearance
-    pdu += struct.pack(">B", 4) + bytes(15)                    # DR algorithm 4 + other params
-    pdu += struct.pack(">fff", 0.0, 0.0, 0.0)                  # linear acceleration
-    pdu += struct.pack(">fff", 0.0, 0.0, math.radians(yaw_rate_dps))  # body angular velocity
-    pdu += struct.pack(">B", 1) + mark                         # marking (ASCII)
-    pdu += struct.pack(">I", 0)                                # capabilities
+    pdu += struct.pack(">I", 0)  # appearance
+    pdu += struct.pack(">B", 4) + bytes(15)  # DR algorithm 4 + other params
+    pdu += struct.pack(">fff", 0.0, 0.0, 0.0)  # linear acceleration
+    pdu += struct.pack(
+        ">fff", 0.0, 0.0, math.radians(yaw_rate_dps)
+    )  # body angular velocity
+    pdu += struct.pack(">B", 1) + mark  # marking (ASCII)
+    pdu += struct.pack(">I", 0)  # capabilities
     assert len(pdu) == 144
     return pdu
 
@@ -138,17 +164,36 @@ class Preset:
 
 
 def _circle(radius: float, n: int = 36) -> list[tuple[float, float]]:
-    return [(radius * math.cos(2 * math.pi * i / n), radius * math.sin(2 * math.pi * i / n)) for i in range(n)]
+    return [
+        (radius * math.cos(2 * math.pi * i / n), radius * math.sin(2 * math.pi * i / n))
+        for i in range(n)
+    ]
 
 
 PRESETS: dict[str, Preset] = {
-    "truck-loop": Preset("truck-loop", TRUCK_TYPE, (37.795, -122.460), 15.0,
-                         [(-100.0, -150.0), (100.0, -150.0), (100.0, 150.0), (-100.0, 150.0)], marking="TRUCK1"),
-    "boat-circle": Preset("boat-circle", BOAT_TYPE, (37.815, -122.440), 8.0, _circle(150.0, 180), 150.0, "BOAT1"),
+    "truck-loop": Preset(
+        "truck-loop",
+        TRUCK_TYPE,
+        (37.795, -122.460),
+        15.0,
+        [(-100.0, -150.0), (100.0, -150.0), (100.0, 150.0), (-100.0, 150.0)],
+        marking="TRUCK1",
+    ),
+    "boat-circle": Preset(
+        "boat-circle",
+        BOAT_TYPE,
+        (37.815, -122.440),
+        8.0,
+        _circle(150.0, 180),
+        150.0,
+        "BOAT1",
+    ),
 }
 
 
-def ne_to_latlon(center: tuple[float, float], n: float, e: float) -> tuple[float, float]:
+def ne_to_latlon(
+    center: tuple[float, float], n: float, e: float
+) -> tuple[float, float]:
     lat0 = math.radians(center[0])
     m_per_deg_lat = 111_132.954 - 559.822 * math.cos(2 * lat0)
     m_per_deg_lon = 111_412.84 * math.cos(lat0)
@@ -169,14 +214,20 @@ class _Track:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("preset", nargs="?", default="both", choices=["both", *PRESETS])
     ap.add_argument("--addr", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=3000)
     ap.add_argument("--exercise", type=int, default=1)
     ap.add_argument("--location", help="LAT,LON: re-centre the selected preset(s)")
-    ap.add_argument("--duration", type=float, default=0.0, help="seconds (0 = until Ctrl-C)")
-    ap.add_argument("--rate", type=float, default=1.0 / HEARTBEAT_S, help="heartbeat Hz")
+    ap.add_argument(
+        "--duration", type=float, default=0.0, help="seconds (0 = until Ctrl-C)"
+    )
+    ap.add_argument(
+        "--rate", type=float, default=1.0 / HEARTBEAT_S, help="heartbeat Hz"
+    )
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args(argv)
 
@@ -187,29 +238,52 @@ def main(argv: list[str] | None = None) -> int:
         c = p.center
         if a.location:
             lat, lon = (float(v) for v in a.location.split(","))
-            c = (lat + (0.002 * (i - 1)), lon)  # keep two re-centred presets apart (~220 m)
+            c = (
+                lat + (0.002 * (i - 1)),
+                lon,
+            )  # keep two re-centred presets apart (~220 m)
         tracks.append(_Track(i, p, c))
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
     heartbeat = 1.0 / max(a.rate, 0.1)
     t0 = time.monotonic()
-    print(f"sending {', '.join(names)} to {a.addr}:{a.port} (exercise {a.exercise}); Ctrl-C to stop")
+    print(
+        f"sending {', '.join(names)} to {a.addr}:{a.port} (exercise {a.exercise}); Ctrl-C to stop"
+    )
     try:
         while a.duration <= 0 or time.monotonic() - t0 < a.duration:
             t = time.monotonic() - t0
             for tr in tracks:
                 n, e, h, rate = tr.follower.state(t)
-                turned = abs((h - tr.last_heading + 180.0) % 360.0 - 180.0) > HEADING_THRESHOLD
+                turned = (
+                    abs((h - tr.last_heading + 180.0) % 360.0 - 180.0)
+                    > HEADING_THRESHOLD
+                )
                 if t - tr.last_sent < heartbeat and not turned:
                     continue
                 lat, lon = ne_to_latlon(tr.center, n, e)
-                sock.sendto(pack_entity_state(tr.entity_id, tr.preset.entity_type, lat, lon, 0.0, h,
-                                              tr.preset.speed_mps, rate, a.exercise, tr.preset.marking,
-                                              time.time()), (a.addr, a.port))
+                sock.sendto(
+                    pack_entity_state(
+                        tr.entity_id,
+                        tr.preset.entity_type,
+                        lat,
+                        lon,
+                        0.0,
+                        h,
+                        tr.preset.speed_mps,
+                        rate,
+                        a.exercise,
+                        tr.preset.marking,
+                        time.time(),
+                    ),
+                    (a.addr, a.port),
+                )
                 tr.last_sent, tr.last_heading = t, h
                 if a.verbose:
-                    print(f"{t:7.2f} {tr.preset.name:12s} {lat:.6f} {lon:.6f} hdg {h:6.1f} rate {rate:6.2f}")
+                    print(
+                        f"{t:7.2f} {tr.preset.name:12s} {lat:.6f} {lon:.6f} hdg {h:6.1f} rate {rate:6.2f}"
+                    )
             time.sleep(1.0 / TICK_HZ)
     except KeyboardInterrupt:
         pass
