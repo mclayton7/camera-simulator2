@@ -190,6 +190,7 @@ entity_types:
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
 | `dis.clamp_to_surface` | bool | `true` | `CAMSIM_DIS_CLAMP_TO_SURFACE` | Place land platforms on the terrain (height, pitch, roll) and surface platforms on the water. `false` = the sender's altitude and attitude. |
+| `dis.entity_type_map` | map | `{}` | -- | DIS entity type → CamSim entity type ID. Keys are `"kind:domain:country:category:subcategory:specific:extra"` strings (see `deploy/camsim_config.yaml`); values are CamSim entity type IDs from `entity_types`. Lookup order for an incoming DIS entity type is: exact match (all seven fields) → `kind:domain:category` fuzzy match → `kind:domain` fallback → `dis.default_entity_type_id`. The `kind:domain` fallback lets any unmapped land (domain 1) or surface (domain 3) platform pick up a generic truck/boat mapping instead of falling all the way through to the default. When more than one entry maps to the same fallback key at a given level, the entry with a generic (`0`) subcategory/country wins; among equally generic entries the lower CamSim entity type ID wins, so the result is deterministic regardless of map iteration order. |
 
 ### Video Output
 

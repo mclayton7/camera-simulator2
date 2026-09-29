@@ -271,6 +271,35 @@ bool FDisEntityTypeMappingTest::RunTest(const FString& Parameters)
 }
 
 // =========================================================================
+// Test: DIS type map kind:domain fallback (unmapped land/surface → truck/boat)
+// =========================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisTypeMapFallbackTest,
+	"CamSim.Dis.TypeMapFallback",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDisTypeMapFallbackTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Config;
+	Config.DIS.DefaultEntityTypeId = 1001;
+	Config.DIS.EntityTypeMappings.Add(TEXT("1:1:225:7:0:0:0"), 2001);   // truck
+	Config.DIS.EntityTypeMappings.Add(TEXT("1:3:225:7:0:0:0"), 3001);   // boat
+	Config.DIS.EntityTypeMappings.Add(TEXT("1:1:225:1:1:0:0"), 2500);   // a specific tank
+	FDisEntityAdapter Adapter(Config, nullptr);
+
+	auto Type = [](uint8 Kind, uint8 Domain, uint16 Country, uint8 Cat, uint8 Sub)
+	{
+		FDisEntityType T; T.EntityKind = Kind; T.Domain = Domain; T.Country = Country; T.Category = Cat; T.Subcategory = Sub; return T;
+	};
+	TestEqual(TEXT("exact"), (int32)Adapter.MapEntityType(Type(1, 1, 225, 7, 0)), 2001);
+	TestEqual(TEXT("category fuzzy beats domain"), (int32)Adapter.MapEntityType(Type(1, 1, 222, 1, 9)), 2500);
+	TestEqual(TEXT("any other land platform → truck"), (int32)Adapter.MapEntityType(Type(1, 1, 222, 3, 0)), 2001);
+	TestEqual(TEXT("any other surface platform → boat"), (int32)Adapter.MapEntityType(Type(1, 3, 13, 61, 2)), 3001);
+	TestEqual(TEXT("air platform unmapped → default"), (int32)Adapter.MapEntityType(Type(1, 2, 225, 1, 0)), 1001);
+	return true;
+}
+
+// =========================================================================
 // Test: DIS orientation conversion (radians → degrees)
 // =========================================================================
 

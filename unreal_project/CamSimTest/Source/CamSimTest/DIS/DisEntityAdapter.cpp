@@ -99,7 +99,14 @@ uint16 FDisEntityAdapter::MapEntityType(const FDisEntityType& DisType) const
 		return *Found;
 	}
 
-	// 3. Default
+	// 3. Domain fallback (kind:domain)
+	const FString DomainKey = FString::Printf(TEXT("%u:%u"), DisType.EntityKind, DisType.Domain);
+	if (const uint16* Found = DomainTypeMap.Find(DomainKey))
+	{
+		return *Found;
+	}
+
+	// 4. Default
 	return DefaultEntityTypeId;
 }
 
@@ -133,11 +140,33 @@ void FDisEntityAdapter::BuildTypeMaps()
 				FuzzyTypeMap.Add(FuzzyKey, Mapping.Value);
 			}
 		}
+
+		if (Parts.Num() >= 2)
+		{
+			// Domain fallback (kind:domain): any other platform of the domain. Prefer
+			// a subcategory-0 mapping, then the lower type ID, so the pick is deterministic.
+			const FString DomainKey = FString::Printf(TEXT("%s:%s"), *Parts[0], *Parts[1]);
+			const bool bGenericSub = Parts.Num() < 5 || Parts[4] == TEXT("0");
+			if (const uint16* Existing = DomainTypeMap.Find(DomainKey))
+			{
+				const bool bExistingGeneric = DomainGeneric.Contains(DomainKey);
+				if ((bGenericSub && !bExistingGeneric) || (bGenericSub == bExistingGeneric && Mapping.Value < *Existing))
+				{
+					DomainTypeMap.Add(DomainKey, Mapping.Value);
+					if (bGenericSub) DomainGeneric.Add(DomainKey);
+				}
+			}
+			else
+			{
+				DomainTypeMap.Add(DomainKey, Mapping.Value);
+				if (bGenericSub) DomainGeneric.Add(DomainKey);
+			}
+		}
 	}
 
 	UE_LOG(LogCamSim, Log,
-		TEXT("FDisEntityAdapter: type maps loaded (%d exact, %d fuzzy, default=%u)"),
-		ExactTypeMap.Num(), FuzzyTypeMap.Num(), DefaultEntityTypeId);
+		TEXT("FDisEntityAdapter: type maps loaded (%d exact, %d fuzzy, %d domain, default=%u)"),
+		ExactTypeMap.Num(), FuzzyTypeMap.Num(), DomainTypeMap.Num(), DefaultEntityTypeId);
 }
 
 // -------------------------------------------------------------------------

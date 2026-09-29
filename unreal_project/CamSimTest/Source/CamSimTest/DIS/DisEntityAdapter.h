@@ -40,8 +40,11 @@ public:
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Look up CamSim entity type ID for a DIS entity type.
-	 * Falls back through: exact match → fuzzy match → default.
+	 * Look up CamSim entity type ID for a DIS entity type. Falls back through:
+	 * 1. Exact match (kind:domain:country:category:subcategory:specific:extra)
+	 * 2. Category fuzzy match (kind:domain:category)
+	 * 3. Domain fallback (kind:domain)
+	 * 4. Default (DefaultEntityTypeId)
 	 */
 	uint16 MapEntityType(const FDisEntityType& DisType) const;
 
@@ -68,6 +71,10 @@ private:
 	TMap<FString, uint16> ExactTypeMap;
 	// Fuzzy key: "kind:domain:category"
 	TMap<FString, uint16> FuzzyTypeMap;
+	// Domain fallback key: "kind:domain"
+	TMap<FString, uint16> DomainTypeMap;
+	// DomainTypeMap keys whose current winner has subcategory 0 (generic).
+	TSet<FString>          DomainGeneric;
 	uint16                DefaultEntityTypeId = 1001;
 
 	// Designator spot state (Phase 21F.2)
