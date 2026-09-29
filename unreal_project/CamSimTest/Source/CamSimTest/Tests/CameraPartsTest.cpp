@@ -27,12 +27,12 @@ bool FCameraStreamingLodTest::RunTest(const FString& Parameters)
 	Cfg.Performance.bAdaptiveSSE = false;
 
 	FCamSimStreamingController Slew;
-	Slew.UpdateLevelOfDetail(Dt, 0.0f, -90.0f, Cfg, NoTilesets);
+	Slew.UpdateLevelOfDetail(Dt, 0.0f, -90.0f, 60.0f, Cfg, NoTilesets);
 	TestEqual(TEXT("still gimbal: no boost"), Slew.GetPrefetchBoostFramesRemaining(), 0);
-	Slew.UpdateLevelOfDetail(Dt, 3.0f, -90.0f, Cfg, NoTilesets);  // 90 deg/s
+	Slew.UpdateLevelOfDetail(Dt, 3.0f, -90.0f, 60.0f, Cfg, NoTilesets);  // 90 deg/s
 	TestEqual(TEXT("fast slew starts the boost window"), Slew.GetPrefetchBoostFramesRemaining(), 3);
-	Slew.UpdateLevelOfDetail(Dt, 3.0f, -90.0f, Cfg, NoTilesets);
-	Slew.UpdateLevelOfDetail(Dt, 3.0f, -90.0f, Cfg, NoTilesets);
+	Slew.UpdateLevelOfDetail(Dt, 3.0f, -90.0f, 60.0f, Cfg, NoTilesets);
+	Slew.UpdateLevelOfDetail(Dt, 3.0f, -90.0f, 60.0f, Cfg, NoTilesets);
 	TestEqual(TEXT("boost counts down once the slew stops"), Slew.GetPrefetchBoostFramesRemaining(), 1);
 
 	Cfg.Performance.TilePrefetchSlewThresholdDegPerSec = 0.0f;
@@ -44,15 +44,15 @@ bool FCameraStreamingLodTest::RunTest(const FString& Parameters)
 	FCamSimStreamingController Adaptive;
 	for (int32 i = 0; i < 5; ++i)
 	{
-		Adaptive.UpdateLevelOfDetail(0.1f, 0.0f, 0.0f, Cfg, NoTilesets);  // 3x over budget
+		Adaptive.UpdateLevelOfDetail(0.1f, 0.0f, 0.0f, 60.0f, Cfg, NoTilesets);  // 3x over budget
 	}
 	TestEqual(TEXT("over budget: SSE rises by 1 per frame up to the max"), Adaptive.GetAdaptiveSse(), 18.0f);
 	for (int32 i = 0; i < 29; ++i)
 	{
-		Adaptive.UpdateLevelOfDetail(0.01f, 0.0f, 0.0f, Cfg, NoTilesets);  // well under budget
+		Adaptive.UpdateLevelOfDetail(0.01f, 0.0f, 0.0f, 60.0f, Cfg, NoTilesets);  // well under budget
 	}
 	TestEqual(TEXT("29 frames under budget: unchanged"), Adaptive.GetAdaptiveSse(), 18.0f);
-	Adaptive.UpdateLevelOfDetail(0.01f, 0.0f, 0.0f, Cfg, NoTilesets);
+	Adaptive.UpdateLevelOfDetail(0.01f, 0.0f, 0.0f, 60.0f, Cfg, NoTilesets);
 	TestEqual(TEXT("30th frame under budget: sharper by 0.5"), Adaptive.GetAdaptiveSse(), 17.5f);
 	return true;
 }

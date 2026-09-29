@@ -30,4 +30,17 @@ namespace CamSim::Geospatial
 	 * at full detail instead of coarse placeholders.
 	 */
 	double ResolveCulledScreenSpaceError(const FCamSimConfig& Cfg);
+
+	/** Field of view whose detail off-screen tiles keep (see ScaleCulledScreenSpaceErrorForFov). */
+	constexpr double CulledReferenceHFovDeg = 60.0;
+
+	/**
+	 * Culled SSE for the current horizontal FOV. Cesium measures tile detail in
+	 * screen pixels, so a narrow FOV asks for far finer tiles; applied to every
+	 * off-screen tile (frustum culling off) that loads zoomed-in detail all the
+	 * way round the camera. Scale the culled SSE by tan(30 deg) / tan(HFOV / 2) so
+	 * off-screen tiles keep the detail a 60-degree view needs; never finer than
+	 * CulledSse, so wide views keep full off-screen detail.
+	 */
+	double ScaleCulledScreenSpaceErrorForFov(double CulledSse, double HFovDeg);
 }

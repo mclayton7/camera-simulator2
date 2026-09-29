@@ -3,6 +3,7 @@
 #include "Camera/CamSimStreamingController.h"
 #include "CamSimTest.h"
 #include "Config/CamSimConfig.h"
+#include "Geospatial/CesiumTuning.h"
 #include "Geospatial/GroundSpeedEstimator.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "GameFramework/Actor.h"
@@ -88,8 +89,19 @@ void FCamSimStreamingController::UpdateCameras(AActor* Owner, const USceneCaptur
 }
 
 void FCamSimStreamingController::UpdateLevelOfDetail(float DeltaTime, float GimbalYawDeg, float GimbalPitchDeg,
-	const FCamSimConfig& Cfg, const FTilesets& Tilesets)
+	float HFovDeg, const FCamSimConfig& Cfg, const FTilesets& Tilesets)
 {
+	// Off-screen detail follows the zoom: a narrow FOV must not load zoomed-in
+	// tiles all the way round the camera (UObject count, GC stalls, game-thread
+	// tile work). Written only when it changes by more than 1%.
+	const double CulledSse = CamSim::Geospatial::ScaleCulledScreenSpaceErrorForFov(
+		CamSim::Geospatial::ResolveCulledScreenSpaceError(Cfg), HFovDeg);
+	if (AppliedCulledSse < 0.0 || FMath::Abs(CulledSse - AppliedCulledSse) > 0.01 * AppliedCulledSse)
+	{
+		SetCulledScreenSpaceError(Tilesets, CulledSse);
+		AppliedCulledSse = CulledSse;
+	}
+
 	const FCamSimConfig::FPerformanceConfig& Perf = Cfg.Performance;
 
 	// 27E — sharper tiles while the gimbal slews fast, held for a few frames.
@@ -205,6 +217,17 @@ void FCamSimStreamingController::LogTilesetStats(const FTilesets& Tilesets)
 			T->MaximumScreenSpaceError,
 			TilesLoaded, DataBytes / (1024.0 * 1024.0),
 			T->MaximumSimultaneousTileLoads);
+	}
+}
+
+void FCamSimStreamingController::SetCulledScreenSpaceError(const FTilesets& Tilesets, double Sse)
+{
+	for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Tilesets)
+	{
+		if (ACesium3DTileset* T = Weak.Get())
+		{
+			T->CulledScreenSpaceError = Sse;
+		}
 	}
 }
 

@@ -374,13 +374,18 @@ Findings from the live run:
   render thread waiting on the shader jobs. Fixed: `FCamSimEntityManager::WarmUpModels` draws
   each preloaded model once, 50 km below the world, for 30 s after startup. A respawn of an
   already-seen type never hitched.
-- Unrelated to DIS: the periodic garbage collection (~60 s after startup, then every ~61 s)
-  stalls the game thread 0.6–1.0 s, of which ~340 ms is the Python plugin's
-  `PyUtil::CollectGarbage` (CamSim runs the editor binary with Python loaded) and ~180 ms
-  reachability analysis. Candidates: `-DisablePython` for runtime launches, a longer
-  `gc.TimeBetweenPurgingPendingKillObjects`, incremental GC.
-- Narrow-FOV / close-range views stream fine tiles slowly (independent of DIS: 5° FOV at
-  700 m renders at ~1 fps for tens of seconds; 10° at 350 m ~10 fps) — worth a look under 3A.
+- ~~Periodic GC stalls (0.6–1.0 s every ~61 s) and slow narrow-FOV views.~~ **Fixed
+  2026-09-29.** One cause: with frustum culling off, off-screen tiles were kept at the
+  *on-screen* SSE, and Cesium measures SSE in screen pixels, so a narrow FOV loaded
+  zoomed-in detail all the way round the camera. At 10° FOV that was 226k UObjects (61k with
+  culling on): each GC pass spent 160–820 ms in reachability analysis (plus the Python
+  plugin's `PyUtil::CollectGarbage`, which is not the cause: with `-DisablePython` a pass
+  still took 819 ms), and the tile work kept frames at 150–700 ms. Fix: the culled SSE follows
+  the zoom, `SSE × tan(30°) / tan(HFOV / 2)` (never below the on-screen SSE), updated every
+  frame in `FCamSimStreamingController::UpdateLevelOfDetail`. 10° FOV now: 101k objects,
+  13–26 ms GC, no frame over 66 ms in 150 s; Yosemite 90° snaps at 60° unchanged (settle
+  0.6–0.9 s, 0% coarse at +1 s). Trade-off: a snap while zoomed in lands on 60°-view detail
+  and refines for about a second.
 - Moving vehicles leave a faint TSR ghost trail in close-ups.
 
 Carry-overs:

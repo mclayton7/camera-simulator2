@@ -187,7 +187,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 	ApplyCigiViewState(DeltaTime);
 
 	Streaming.UpdateLevelOfDetail(DeltaTime, GimbalComp->GetGimbalYaw(), GimbalComp->GetGimbalPitch(),
-		Cfg, Subsystem->GetCachedTilesets());
+		SceneCapture->FOVAngle, Cfg, Subsystem->GetCachedTilesets());
 
 	// Telemetry that depends on the final pose, gimbal and FOV of this frame.
 	Telemetry.SetFieldOfView(SceneCapture->FOVAngle,

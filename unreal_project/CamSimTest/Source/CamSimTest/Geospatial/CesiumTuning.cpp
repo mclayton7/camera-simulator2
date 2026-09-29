@@ -16,6 +16,14 @@ namespace CamSim::Geospatial
 			: static_cast<double>(Cfg.MaximumScreenSpaceError);
 	}
 
+	double ScaleCulledScreenSpaceErrorForFov(double CulledSse, double HFovDeg)
+	{
+		if (!FMath::IsFinite(HFovDeg)) return CulledSse;
+		const double HalfFov = FMath::DegreesToRadians(FMath::Clamp(HFovDeg, 1.0, 170.0) * 0.5);
+		const double Scale   = FMath::Tan(FMath::DegreesToRadians(CulledReferenceHFovDeg * 0.5)) / FMath::Tan(HalfFov);
+		return CulledSse * FMath::Max(Scale, 1.0);
+	}
+
 	bool UseLodTransitions(const FCamSimConfig& Cfg)
 	{
 		return Cfg.bUseLodTransitions;

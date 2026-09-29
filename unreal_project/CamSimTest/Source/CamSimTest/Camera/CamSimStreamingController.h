@@ -45,7 +45,7 @@ public:
 	 * Gimbal-slew prefetch boost and adaptive SSE. Sets
 	 * MaximumScreenSpaceError on the tilesets when either is active.
 	 */
-	void UpdateLevelOfDetail(float DeltaTime, float GimbalYawDeg, float GimbalPitchDeg,
+	void UpdateLevelOfDetail(float DeltaTime, float GimbalYawDeg, float GimbalPitchDeg, float HFovDeg,
 		const FCamSimConfig& Cfg, const FTilesets& Tilesets);
 
 	/**
@@ -64,6 +64,9 @@ public:
 
 private:
 	static void SetScreenSpaceError(const FTilesets& Tilesets, double Sse);
+	static void SetCulledScreenSpaceError(const FTilesets& Tilesets, double Sse);
+
+	double AppliedCulledSse = -1.0;  // last culled SSE written (< 0 = none yet)
 
 	// Slots in ACesiumCameraManager::AdditionalCameras (-1 = not registered).
 	// The array has no stable IDs, so these are only valid while nothing else

@@ -226,3 +226,25 @@ bool FRenderConfigFrustumCullingTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("env overrides yaml"), Env.bFrustumCulling);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigCulledSseFovTest,
+	"CamSim.Config.CulledScreenSpaceErrorFollowsFov",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderConfigCulledSseFovTest::RunTest(const FString& Parameters)
+{
+	using CamSim::Geospatial::ScaleCulledScreenSpaceErrorForFov;
+	// Off-screen tiles keep the detail a 60-degree view needs: zooming in must not
+	// load zoomed-in detail all the way round (226k UObjects and 0.2-0.8 s GC
+	// passes at 10 degrees, 2026-09-29), and wide views keep full detail.
+	TestEqual(TEXT("60 deg unchanged"), ScaleCulledScreenSpaceErrorForFov(16.0, 60.0), 16.0, 1e-9);
+	TestEqual(TEXT("wider never finer"), ScaleCulledScreenSpaceErrorForFov(16.0, 90.0), 16.0, 1e-9);
+	const double Tan30 = FMath::Tan(FMath::DegreesToRadians(30.0));
+	TestEqual(TEXT("30 deg"), ScaleCulledScreenSpaceErrorForFov(16.0, 30.0),
+		16.0 * Tan30 / FMath::Tan(FMath::DegreesToRadians(15.0)), 1e-9);
+	TestEqual(TEXT("10 deg"), ScaleCulledScreenSpaceErrorForFov(16.0, 10.0),
+		16.0 * Tan30 / FMath::Tan(FMath::DegreesToRadians(5.0)), 1e-9);
+	TestTrue(TEXT("degenerate FOV stays finite"), FMath::IsFinite(ScaleCulledScreenSpaceErrorForFov(16.0, 0.0)));
+	TestTrue(TEXT("NaN FOV keeps the base"), ScaleCulledScreenSpaceErrorForFov(16.0, NAN) == 16.0);
+	return true;
+}
