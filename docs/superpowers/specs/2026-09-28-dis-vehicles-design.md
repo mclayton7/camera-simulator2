@@ -54,10 +54,10 @@ Capture: per-slot entity snapshot* ─▶ readback ring ─▶ COCO / VOC (stabl
   parameters), exercise 1, site:application 1:1, entity numbers from 1. Unicast or multicast
   (`--addr`, default `127.0.0.1`; `--port`, default 3000; `--exercise`, default 1).
 - Presets, each a list of waypoints (lat, lon), a speed, and a DIS entity type:
-  - `truck-loop`: truck, 15 m/s, a closed loop over the Presidio hills (slopes to exercise the
-    tilt), centre ≈ 37.795 N, −122.460 E.
-  - `boat-circle`: boat, 8 m/s, circle of ≈ 400 m radius in the bay, centre ≈ 37.815 N,
-    −122.440 E.
+  - `truck-loop`: truck, 15 m/s, a closed ≈ 300 × 200 m loop over the Presidio hills (slopes to
+    exercise the tilt), centre ≈ 37.795 N, −122.460 E.
+  - `boat-circle`: boat, 8 m/s, circle of ≈ 150 m radius in the bay, centre ≈ 37.815 N,
+    −122.440 E. (Both paths fit a 30° nadir view from ≈ 800 m above them.)
   - `both` (default): the two together.
   - `--location LAT,LON` re-centres the selected preset(s), keeping their shape.
 - Motion follows the waypoints (great-circle legs on a sphere is fine at these scales). Heading is
@@ -104,8 +104,9 @@ Dt; output: pose + new state) so it can be unit-tested without a world.
 - Traces hit Cesium tiles only (hits on non-tileset actors are ignored; entities never clamp onto
   each other).
 - Height = mean of the hits' heights (ellipsoid heights via the georeference). Pitch =
-  `atan((bow − stern) / (2·half_length))`, roll = `atan((stbd − port) / (2·half_beam))`. The
-  sender's heading is kept.
+  `atan((bow − stern) / (2·half_length))` (nose up positive), roll =
+  `atan((port − stbd) / (2·half_beam))` (CIGI: right side down positive). The sender's heading is
+  kept. With no footprint (both half sizes unknown), height comes from the hits and tilt is held.
 - Trace span: the first clamp traces from 9 000 m to −500 m ellipsoid height. Afterwards from
   last ground height + 50 m down to last ground height − 500 m, so a truck under an overpass does
   not jump onto the bridge.
@@ -179,7 +180,7 @@ missing file is still skipped with a warning at config load.
 - `FEntityAnnotationData::EntityId` becomes `uint32`, assigned by `FCamSimEntityManager` at spawn
   from a session counter starting at 1 that is never reused. It stays constant for the entity's
   lifetime.
-- New fields `Source` (`dis` / `cigi` / `scenario`) and `SourceId` (`site:app:entity` for DIS, the
+- New fields `Source` (`dis` / `cigi` / `scenario`) and `SourceId` (`site.app.entity` for DIS, as `FEntityKey::ToString()` prints it, the
   entity ID for CIGI and scenario entities), written to COCO and VOC.
 - `entity_id` in COCO widens to 32 bits; the new fields are additive. Update the readers found in
   `scripts/` and `docs/` (`entity-rendering.md`, `configuration.md`, and any COCO consumer).
