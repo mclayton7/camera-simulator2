@@ -2,6 +2,7 @@
 
 #include "Entity/CamSimEntity.h"
 #include "Entity/EntityTypeTable.h"
+#include "Entity/EntityMeshLoader.h"
 #include "Entity/SurfaceProbe.h"
 #include "Ocean/IOceanSurface.h"
 #include "CamSimTest.h"
@@ -17,57 +18,6 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
-#include "glTFRuntimeFunctionLibrary.h"
-#include "glTFRuntimeAsset.h"
-
-// -------------------------------------------------------------------------
-// Mesh loading helpers (glTF or UE content asset)
-// -------------------------------------------------------------------------
-
-namespace
-{
-	// Returns true for .gltf / .glb file paths (relative or absolute)
-	bool IsGltfPath(const FString& Path)
-	{
-		return Path.EndsWith(TEXT(".gltf"), ESearchCase::IgnoreCase) ||
-		       Path.EndsWith(TEXT(".glb"),  ESearchCase::IgnoreCase);
-	}
-
-	// Resolve a config-relative glTF path to an absolute filesystem path.
-	// Config paths are relative to {repo_root}/entities/.
-	// FPaths::ProjectDir() is {repo_root}/unreal_project/CamSimTest/.
-	FString ResolveGltfPath(const FString& RelPath)
-	{
-		FString Base = FPaths::Combine(FPaths::ProjectDir(), TEXT("../../entities/"));
-		return FPaths::ConvertRelativePathToFull(Base + RelPath);
-	}
-
-	UStaticMesh* LoadStaticMeshFromPath(const FString& Path)
-	{
-		if (IsGltfPath(Path))
-		{
-			FString AbsPath = ResolveGltfPath(Path);
-			UglTFRuntimeAsset* Asset = UglTFRuntimeFunctionLibrary::glTFLoadAssetFromFilename(
-				AbsPath, false, FglTFRuntimeConfig());
-			if (!Asset) return nullptr;
-			return Asset->LoadStaticMeshRecursive(TEXT(""), {}, FglTFRuntimeStaticMeshConfig());
-		}
-		return Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
-	}
-
-	USkeletalMesh* LoadSkeletalMeshFromPath(const FString& Path)
-	{
-		if (IsGltfPath(Path))
-		{
-			FString AbsPath = ResolveGltfPath(Path);
-			UglTFRuntimeAsset* Asset = UglTFRuntimeFunctionLibrary::glTFLoadAssetFromFilename(
-				AbsPath, false, FglTFRuntimeConfig());
-			if (!Asset) return nullptr;
-			return Asset->LoadSkeletalMeshRecursive(TEXT(""), {}, FglTFRuntimeSkeletalMeshConfig());
-		}
-		return Cast<USkeletalMesh>(FSoftObjectPath(Path).TryLoad());
-	}
-} // namespace
 
 // -------------------------------------------------------------------------
 // Constructor
@@ -224,9 +174,9 @@ void ACamSimEntity::SetEntityType(uint16 Type)
 			return;
 		}
 		// glTF path: must go through the runtime plugin — stays synchronous.
-		if (IsGltfPath(Entry->AssetPath))
+		if (CamSimMeshLoader::IsGltfPath(Entry->AssetPath))
 		{
-			Mesh = LoadSkeletalMeshFromPath(Entry->AssetPath);
+			Mesh = CamSimMeshLoader::LoadSkeletalMesh(Entry->AssetPath);
 			if (Mesh && TypeTable) TypeTable->SetCachedSkeletalMesh(Type, Mesh);
 			if (Mesh) ApplyLoadedSkeletalMesh(Mesh, *Entry, Type);
 			else UE_LOG(LogCamSim, Warning,
@@ -245,9 +195,9 @@ void ACamSimEntity::SetEntityType(uint16 Type)
 			ApplyLoadedStaticMesh(Mesh, *Entry, Type);
 			return;
 		}
-		if (IsGltfPath(Entry->AssetPath))
+		if (CamSimMeshLoader::IsGltfPath(Entry->AssetPath))
 		{
-			Mesh = LoadStaticMeshFromPath(Entry->AssetPath);
+			Mesh = CamSimMeshLoader::LoadStaticMesh(Entry->AssetPath);
 			if (Mesh && TypeTable) TypeTable->SetCachedStaticMesh(Type, Mesh);
 			if (Mesh) ApplyLoadedStaticMesh(Mesh, *Entry, Type);
 			else UE_LOG(LogCamSim, Warning,
@@ -357,7 +307,7 @@ void ACamSimEntity::InitAnimatedCharacter(const FEntityTypeEntry& Entry)
 	if (!AnimMeshComp) return;
 
 	// Load skeletal mesh (same path resolution as SetEntityType)
-	USkeletalMesh* Mesh = LoadSkeletalMeshFromPath(Entry.AssetPath);
+	USkeletalMesh* Mesh = CamSimMeshLoader::LoadSkeletalMesh(Entry.AssetPath);
 	if (!Mesh)
 	{
 		UE_LOG(LogCamSim, Warning, TEXT("ACamSimEntity[%u]: failed to load animated skeletal mesh '%s'"),
@@ -605,12 +555,12 @@ void ACamSimEntity::ApplyComponent(const FComponentCommand& C)
 
 				if (Entry->bSkeletal)
 				{
-					USkeletalMesh* Mesh = LoadSkeletalMeshFromPath(AssetPath);
+					USkeletalMesh* Mesh = CamSimMeshLoader::LoadSkeletalMesh(AssetPath);
 					if (Mesh) SkelMeshComp->SetSkinnedAsset(Mesh);
 				}
 				else
 				{
-					UStaticMesh* Mesh = LoadStaticMeshFromPath(AssetPath);
+					UStaticMesh* Mesh = CamSimMeshLoader::LoadStaticMesh(AssetPath);
 					if (Mesh) StaticMeshComp->SetStaticMesh(Mesh);
 				}
 			}
@@ -668,12 +618,12 @@ void ACamSimEntity::Tick(float DeltaTime)
 
 				if (Entry->bSkeletal)
 				{
-					USkeletalMesh* Mesh = LoadSkeletalMeshFromPath(AssetPath);
+					USkeletalMesh* Mesh = CamSimMeshLoader::LoadSkeletalMesh(AssetPath);
 					if (Mesh) SkelMeshComp->SetSkinnedAsset(Mesh);
 				}
 				else
 				{
-					UStaticMesh* Mesh = LoadStaticMeshFromPath(AssetPath);
+					UStaticMesh* Mesh = CamSimMeshLoader::LoadStaticMesh(AssetPath);
 					if (Mesh) StaticMeshComp->SetStaticMesh(Mesh);
 				}
 			}

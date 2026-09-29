@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/StrongObjectPtr.h"
 
 /**
  * FEntityTypeEntry
@@ -68,8 +69,19 @@ public:
 	/** Re-parse the config YAML and populate the type map from "entity_types". */
 	void LoadFromConfig();
 
+	/** Parse an entity_types YAML document (LoadFromConfig reads the config file into this). */
+	void LoadFromYamlString(const FString& YamlContent);
+
 	/** Re-parse config; preserve cached meshes for unchanged asset paths. */
 	void HotReload();
+
+	/**
+	 * Load every glTF entry now (game thread, at startup / hot reload) and keep it
+	 * resident for the session, so the first spawn of a type doesn't hitch and the
+	 * mesh isn't garbage-collected when its last entity goes. Returns the number of
+	 * glTF entries resident.
+	 */
+	int32 PreloadGltfMeshes();
 
 	/** Returns the entry for the given type ID, or nullptr if not found. */
 	const FEntityTypeEntry* FindEntry(uint16 TypeId) const;
@@ -90,4 +102,7 @@ private:
 	// Mesh cache: avoids re-parsing glTF for the same type (Phase 4)
 	mutable TMap<uint16, TWeakObjectPtr<UStaticMesh>> StaticMeshCache;
 	mutable TMap<uint16, TWeakObjectPtr<USkeletalMesh>> SkeletalMeshCache;
+
+	// Strong references keeping preloaded glTF meshes resident (Task 7).
+	TMap<uint16, TStrongObjectPtr<UObject>> PreloadedMeshes;
 };

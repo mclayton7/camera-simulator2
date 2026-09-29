@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Entity/EntityTypeTable.h"
+#include "Entity/EntityMeshLoader.h"
 #include "Config/CamSimConfig.h"
 #include "CamSimTest.h"
 #include "Engine/SkeletalMesh.h"
@@ -163,6 +164,11 @@ void FEntityTypeTable::LoadFromConfig()
 		return;
 	}
 
+	LoadFromYamlString(YamlContent);
+}
+
+void FEntityTypeTable::LoadFromYamlString(const FString& YamlContent)
+{
 	FTCHARToUTF8 Utf8(*YamlContent);
 	c4::csubstr Src(Utf8.Get(), Utf8.Length());
 
@@ -173,7 +179,7 @@ void FEntityTypeTable::LoadFromConfig()
 	}
 	catch (const std::exception& Ex)
 	{
-		UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: failed to parse %s: %hs"), *YamlPath, Ex.what());
+		UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: failed to parse entity_types YAML: %hs"), Ex.what());
 		return;
 	}
 
@@ -332,4 +338,38 @@ void FEntityTypeTable::HotReload()
 	}
 
 	UE_LOG(LogCamSim, Log, TEXT("EntityTypeTable: hot-reload complete (%d entries)"), TypeMap.Num());
+}
+
+int32 FEntityTypeTable::PreloadGltfMeshes()
+{
+	TMap<uint16, TStrongObjectPtr<UObject>> Kept;
+	for (const TPair<uint16, FEntityTypeEntry>& Pair : TypeMap)
+	{
+		const FEntityTypeEntry& E = Pair.Value;
+		if (E.bAnimated || !CamSimMeshLoader::IsGltfPath(E.AssetPath)) continue;
+
+		UObject* Mesh = E.bSkeletal ? static_cast<UObject*>(GetCachedSkeletalMesh(Pair.Key))
+		                            : static_cast<UObject*>(GetCachedStaticMesh(Pair.Key));
+		if (!Mesh)
+		{
+			const double T0 = FPlatformTime::Seconds();
+			if (E.bSkeletal)
+			{
+				USkeletalMesh* S = CamSimMeshLoader::LoadSkeletalMesh(E.AssetPath);
+				if (S) SetCachedSkeletalMesh(Pair.Key, S);
+				Mesh = S;
+			}
+			else
+			{
+				UStaticMesh* S = CamSimMeshLoader::LoadStaticMesh(E.AssetPath);
+				if (S) SetCachedStaticMesh(Pair.Key, S);
+				Mesh = S;
+			}
+			UE_LOG(LogCamSim, Log, TEXT("EntityTypeTable: preloaded type %u '%s' in %.0f ms%s"),
+				Pair.Key, *E.AssetPath, (FPlatformTime::Seconds() - T0) * 1000.0, Mesh ? TEXT("") : TEXT(" — FAILED"));
+		}
+		if (Mesh) Kept.Add(Pair.Key, TStrongObjectPtr<UObject>(Mesh));
+	}
+	PreloadedMeshes = MoveTemp(Kept);
+	return PreloadedMeshes.Num();
 }

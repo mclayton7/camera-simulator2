@@ -266,6 +266,7 @@ void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)
 
 	// Phase 22A: Re-parse entity types on hot-reload (no config lock — own data)
 	EntityTypeTable.HotReload();
+	EntityTypeTable.PreloadGltfMeshes();
 
 	// Refresh the cached tileset list in case the hot-reload spawned or
 	// destroyed any tilesets, then reapply Cesium tuning so runtime edits to
@@ -397,6 +398,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 
 	EntityTypeTable.LoadFromConfig();
+	EntityTypeTable.PreloadGltfMeshes();
 
 	// Sim clock (ROADMAP 2.1): configured start and rate, until CIGI sets it.
 	FSimClock::Get().Start(Config.StartDatetime, Config.StartHour, Config.SimTimeRate);
