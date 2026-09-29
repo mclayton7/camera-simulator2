@@ -171,6 +171,28 @@ entity_types:
       pitch: 0.0
       yaw: 0.0
       roll: 0.0
+  "2001":
+    mesh: truck/ural_4320.glb
+    skeletal: false
+    class_name: truck
+    scale: 1.0
+    rotation:
+      pitch: 0.0
+      yaw: 180.0
+      roll: 0.0
+    half_length_m: 3.78
+    half_beam_m: 1.53
+  "3001":
+    mesh: boat/mako_655.glb
+    skeletal: false
+    class_name: boat
+    scale: 1.28
+    rotation:
+      pitch: 0.0
+      yaw: 180.0
+      roll: 0.0
+    half_length_m: 3.52
+    half_beam_m: 1.41
 ```
 
 ## Field Reference
@@ -543,6 +565,20 @@ to asset paths and flags:
 
 Entity type IDs are defined by the host simulation. CamSim does not reserve any
 specific IDs -- the mapping is entirely user-configured.
+
+The shipped config defines three glTF types (models under `entities/`; the
+truck and boat directories each carry a `LICENSE.md` with the source and the
+CC BY 4.0 attribution):
+
+| ID | Model | `class_name` | Size (L x W, after `scale`) | DIS mapping |
+|----|-------|--------------|-----------------------------|-------------|
+| `1001` | F-16C (`f16/f16-c_falcon.glb`) | -- | -- | `1:2:225:2:0:0:0` |
+| `2001` | Ural-4320 6x6 cargo truck (`truck/ural_4320.glb`) | `truck` | 7.57 x 3.06 m | `1:1:225:7:0:0:0` (and any land platform via the `kind:domain` fallback) |
+| `3001` | Mako 655 rigid-hull inflatable (`boat/mako_655.glb`) | `boat` | 7.04 x 2.82 m | `1:3:225:7:0:0:0` (and any surface platform via the `kind:domain` fallback) |
+
+`CamSim.GPU.Entity.ModelFacing` checks that `2001` and `3001`, after their
+`rotation` and `scale`, are longest along UE +X and match `half_length_m` /
+`half_beam_m` within 10%.
 
 At startup, CamSim now performs preflight validation for each entry:
 

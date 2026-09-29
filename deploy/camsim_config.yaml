@@ -77,6 +77,10 @@ dis:
   # then to default_entity_type_id.
   entity_type_map:
     "1:2:225:2:0:0:0": 1001   # Fixed-wing USA (ownship from mavlink-dis-bridge)
+    # scripts/send_dis_test.py; kind:domain fallback covers other land and
+    # surface platforms.
+    "1:1:225:7:0:0:0": 2001   # Truck (land)
+    "1:3:225:7:0:0:0": 3001   # Boat (surface)
 
 # --- Streaming & ATAK Interop (Phase 21 Sprint 2) ---
 # CoT (Cursor on Target) position reporting and ATAK FMV streaming.
@@ -928,6 +932,33 @@ entity_types:
       pitch: 0.0
       yaw: 0.0
       roll: 0.0
+  # DIS land platforms (dis.entity_type_map). Footprint feeds the terrain
+  # clamp. Ural-4320 6x6 cargo truck, CC BY 4.0 (entities/truck/LICENSE.md).
+  # glTF bow is +Z, which glTFRuntime maps to UE -X: yaw 180 turns it to +X.
+  "2001":
+    mesh: truck/ural_4320.glb
+    skeletal: false
+    class_name: truck
+    scale: 1.0
+    rotation:
+      pitch: 0.0
+      yaw: 180.0
+      roll: 0.0
+    half_length_m: 3.78
+    half_beam_m: 1.53
+  # DIS surface platforms. Mako 655 rigid-hull inflatable (fast rescue
+  # craft), CC BY 4.0 (entities/boat/LICENSE.md). Scaled to 7.0 m.
+  "3001":
+    mesh: boat/mako_655.glb
+    skeletal: false
+    class_name: boat
+    scale: 1.28
+    rotation:
+      pitch: 0.0
+      yaw: 180.0
+      roll: 0.0
+    half_length_m: 3.52
+    half_beam_m: 1.41
   # Example animated character entity (Phase 22D).
   # Requires skeletal mesh + Animation Blueprint assets in UE editor (see TODO.md).
   # "1010":
