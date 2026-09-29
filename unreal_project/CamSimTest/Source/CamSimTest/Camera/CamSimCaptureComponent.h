@@ -14,6 +14,7 @@
 #include "Camera/SensorGpuTimer.h"
 #include "Sensor/SensorController.h"
 #include "Sensor/SensorStatsMailbox.h"
+#include "GroundTruth/AnnotationTypes.h"
 #include "CamSimCaptureComponent.generated.h"
 
 class USceneCaptureComponent2D;
@@ -136,14 +137,16 @@ public:
 private:
 	void ApplyRenderSettings(const FCamSimConfig& Cfg);
 	void CreateDepthCapture(const FCamSimConfig& Cfg);
-	void SnapshotGroundTruthEntities();
+	/** Build this frame's entity annotation snapshot (empty when the collector is off). */
+	TArray<FEntityAnnotationData> BuildGroundTruthSnapshot() const;
 	/** One render-thread poll per in-flight slot. */
 	void EnqueuePolls();
 	void EnqueuePoll(int32 Slot);
 	struct FSlot;
 	/** Offer a delivered frame to a snapshot service (NV12 converted to BGRA). */
 	void OfferSnapshot(FCamSimSnapshotService& Snap, const FSlot& S) const;
-	void SubmitFrameToEncoder(TArray<uint8> Nv12, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres);
+	void SubmitFrameToEncoder(TArray<uint8> Nv12, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres,
+	                          TArray<FEntityAnnotationData> Entities);
 
 	UPROPERTY(Transient)
 	TObjectPtr<USceneCaptureComponent2D> Sensor;
@@ -256,6 +259,7 @@ private:
 		TAtomic<uint32>  Generation       { 0 };
 		TArray<uint8>    Nv12;                    // render writes → game reads after Complete
 		TArray<float>    Depth;
+		TArray<FEntityAnnotationData> Entities;   // game thread fills at capture; moved to the background task
 		// Reset by the game thread at capture, advanced by the render thread's polls.
 		TAtomic<uint8>   ReadyStreak      { 0 };  // "N consecutive Ready polls before consuming"
 		TAtomic<uint8>   DepthReadyStreak { 0 };

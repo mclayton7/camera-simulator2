@@ -70,14 +70,16 @@ void FCocoAnnotationWriter::WriteFrame(
 		if (!bFirst) Line += TEXT(",");
 		bFirst = false;
 
-		// Escape class name for JSON safety (replace " with \")
+		// Escape class name / source fields for JSON safety (replace " with \")
 		FString SafeName = E.ClassName.Replace(TEXT("\""), TEXT("\\\""));
+		FString SafeSource = E.Source.Replace(TEXT("\""), TEXT("\\\""));
+		FString SafeSourceId = E.SourceId.Replace(TEXT("\""), TEXT("\\\""));
 
 		Line += FString::Printf(
-			TEXT("{\"entity_id\":%u,\"category\":{\"id\":%u,\"name\":\"%s\"},")
+			TEXT("{\"entity_id\":%u,\"source\":\"%s\",\"source_id\":\"%s\",\"category\":{\"id\":%u,\"name\":\"%s\"},")
 			TEXT("\"bbox\":[%.1f,%.1f,%.1f,%.1f],\"area\":%.1f,")
 			TEXT("\"iscrowd\":0,\"truncated\":%d}"),
-			E.EntityId,
+			E.EntityId, *SafeSource, *SafeSourceId,
 			E.EntityType,
 			*SafeName,
 			X, Y, W, H,

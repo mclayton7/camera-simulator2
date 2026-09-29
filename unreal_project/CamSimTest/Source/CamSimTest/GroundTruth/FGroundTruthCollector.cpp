@@ -93,15 +93,8 @@ void FGroundTruthCollector::Close()
 	bEnabled = false;
 }
 
-void FGroundTruthCollector::SetPendingEntitySnapshot(
-    TArray<FEntityAnnotationData> Entities, int32 ImageWidth, int32 ImageHeight)
-{
-	PendingEntities    = MoveTemp(Entities);
-	PendingImageWidth  = ImageWidth;
-	PendingImageHeight = ImageHeight;
-}
-
 void FGroundTruthCollector::WriteAnnotationFrame(
+    const TArray<FEntityAnnotationData>& Entities,
     const FCamSimTelemetry& Telemetry, uint64 FrameIdx)
 {
 	if (!bIsOpen || !bEnabled || Writers.IsEmpty()) return;
@@ -111,8 +104,8 @@ void FGroundTruthCollector::WriteAnnotationFrame(
 	// Writers may still skip zero-area boxes, but invisible entities must never
 	// appear in annotation output (they were occluded or outside the frustum).
 	TArray<FEntityAnnotationData> VisibleEntities;
-	VisibleEntities.Reserve(PendingEntities.Num());
-	for (const FEntityAnnotationData& E : PendingEntities)
+	VisibleEntities.Reserve(Entities.Num());
+	for (const FEntityAnnotationData& E : Entities)
 	{
 		if (E.bVisible) VisibleEntities.Add(E);
 	}

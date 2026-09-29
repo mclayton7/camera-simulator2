@@ -13,9 +13,11 @@
  */
 struct FEntityAnnotationData
 {
-	uint16  EntityId   = 0;
+	uint32  EntityId   = 0;      // session-unique annotation ID (FAnnotationIdAllocator), stable for the entity's life
 	uint16  EntityType = 0;
 	FString ClassName;       // from FEntityTypeEntry::ClassName; falls back to "type_NNNN"
+	FString Source;           // host source: "dis", "cigi", "scenario", ...
+	FString SourceId;         // the source's own ID: "1.1.3" (DIS site.app.entity), "7" (CIGI)
 
 	// Screen-space 2D bounding box in pixel coordinates (top-left origin).
 	// Clamped to [0, ImageWidth) x [0, ImageHeight).
@@ -24,6 +26,27 @@ struct FEntityAnnotationData
 	bool    bVisible   = false;  // false → entity fully outside frustum; omit from annotations
 	bool    bTruncated = false;  // true → bbox was clamped to image boundary
 };
+
+/** Hands out annotation IDs: from 1, never repeated within a session (game thread). */
+struct FAnnotationIdAllocator
+{
+	uint32 Allocate() { return Next++; }
+private:
+	uint32 Next = 1;
+};
+
+namespace CamSimGroundTruth
+{
+	/** "dis:1.1.3" (FEntityKey::ToString) → "dis", "1.1.3". */
+	inline void SplitSourceKey(const FString& KeyString, FString& OutSource, FString& OutSourceId)
+	{
+		if (!KeyString.Split(TEXT(":"), &OutSource, &OutSourceId))
+		{
+			OutSource = KeyString;
+			OutSourceId.Reset();
+		}
+	}
+}
 
 /**
  * FViewProjectionData

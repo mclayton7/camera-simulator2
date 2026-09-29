@@ -318,6 +318,7 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FEntityCommand& C)
 
 	Entity->Key      = C.Key;
 	Entity->EntityId = static_cast<uint16>(C.Key.Id & 0xFFFF);
+	Entity->AnnotationId = AnnotationIds.Allocate();
 	Entity->SetEntityTypeTable(TypeTable);
 	Entity->SetEntityType(C.TypeId);
 	if (Subsystem)
@@ -384,8 +385,9 @@ void FCamSimEntityManager::GetEntitySnapshot(
 		}
 
 		FEntityAnnotationData Data;
-		Data.EntityId   = Entity->EntityId;
+		Data.EntityId   = Entity->AnnotationId;
 		Data.EntityType = Entity->EntityType;
+		CamSimGroundTruth::SplitSourceKey(Entity->Key.ToString(), Data.Source, Data.SourceId);
 
 		// Look up class label from entity type table
 		if (TypeTable)

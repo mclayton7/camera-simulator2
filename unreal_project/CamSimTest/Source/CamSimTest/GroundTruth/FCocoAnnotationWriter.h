@@ -15,8 +15,13 @@
  * Output: <OutputDir>/camsim_coco.jsonl
  * Format per line:
  *   {"frame_id":N,"timestamp_us":T,"image":{"width":W,"height":H,"file_name":"..."},
- *    "annotations":[{"entity_id":E,"category":{"id":C,"name":"..."},
+ *    "annotations":[{"entity_id":E,"source":"dis","source_id":"1.1.3","category":{"id":C,"name":"..."},
  *                    "bbox":[x,y,w,h],"area":A,"iscrowd":0},...]}
+ *
+ * entity_id is a 32-bit session-unique annotation ID (FAnnotationIdAllocator),
+ * stable for the entity's life but not meaningful across sessions or hosts.
+ * source/source_id carry the host's own identity ("dis"/"1.1.3" site.app.entity,
+ * "cigi"/"7", ...) — see CamSimGroundTruth::SplitSourceKey.
  */
 class FCocoAnnotationWriter : public IAnnotationWriter
 {

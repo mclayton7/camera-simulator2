@@ -398,11 +398,11 @@ void UCamSimCaptureComponent::NoteCaptureSkipped()
 	if (bTrackFrameDrops) FrameDropStats.EncoderBusy++;
 }
 
-void UCamSimCaptureComponent::SnapshotGroundTruthEntities()
+TArray<FEntityAnnotationData> UCamSimCaptureComponent::BuildGroundTruthSnapshot() const
 {
 	FGroundTruthCollector* Collector = Subsystem->GetGroundTruthCollector();
 	FCamSimEntityManager*  EntityMgr = Subsystem->GetEntityManager();
-	if (!Collector || !Collector->IsEnabled() || !EntityMgr) return;
+	if (!Collector || !Collector->IsEnabled() || !EntityMgr) return TArray<FEntityAnnotationData>();
 
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 	FViewProjectionData ViewProj;
@@ -418,7 +418,7 @@ void UCamSimCaptureComponent::SnapshotGroundTruthEntities()
 	ViewProj.CameraForward  = Sensor->GetForwardVector();
 	ViewProj.CullConeHalfAngleCos = FMath::Cos(FMath::DegreesToRadians(FMath::Min(90.0f, Sensor->FOVAngle * 0.65f)));
 
-	Collector->SetPendingEntitySnapshot(EntityMgr->GetEntitySnapshot(ViewProj), Cfg.CaptureWidth, Cfg.CaptureHeight);
+	return EntityMgr->GetEntitySnapshot(ViewProj);
 }
 
 void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
@@ -436,10 +436,12 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	}
 	++FrameIndex;
 
-	// Entity annotation snapshot for this exact view (Phase 17D).
-	if (Subsystem) SnapshotGroundTruthEntities();
-
 	FSlot& S = Slots[Slot];
+	// Entity annotation snapshot for this exact view (Phase 17D), rides in the
+	// slot like Telemetry — up to three frames are in flight in the readback
+	// ring, so this must not be shared collector state (ROADMAP: ground truth
+	// per-frame snapshots).
+	S.Entities = Subsystem ? BuildGroundTruthSnapshot() : TArray<FEntityAnnotationData>();
 	const uint32 Gen = ++NextGeneration;
 	S.Telemetry = Telemetry;
 	S.ReadyStreak     .Store(0, EMemoryOrder::Relaxed);
@@ -520,6 +522,7 @@ void UCamSimCaptureComponent::Poll()
 			}
 			S.Nv12.Reset();
 			S.Depth.Reset();
+			S.Entities.Reset();
 			Ring.Release(Slot);
 			continue;
 		}
@@ -539,9 +542,10 @@ void UCamSimCaptureComponent::Poll()
 		}
 
 		bSensorBusy = true;
-		SubmitFrameToEncoder(MoveTemp(S.Nv12), S.Telemetry, FrameIdx, MoveTemp(S.Depth));
+		SubmitFrameToEncoder(MoveTemp(S.Nv12), S.Telemetry, FrameIdx, MoveTemp(S.Depth), MoveTemp(S.Entities));
 		S.Nv12.Reset();
 		S.Depth.Reset();
+		S.Entities.Reset();
 		Ring.Release(Slot);
 	}
 
@@ -675,7 +679,8 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 // -------------------------------------------------------------------------
 
 void UCamSimCaptureComponent::SubmitFrameToEncoder(
-	TArray<uint8> Nv12Data, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres)
+	TArray<uint8> Nv12Data, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres,
+	TArray<FEntityAnnotationData> Entities)
 {
 	if (!EncoderThread)
 	{
@@ -694,7 +699,8 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	// not after encode.
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
 		[this, EncThread, Collector, CaptureW, CaptureH, LT,
-		 Nv12 = MoveTemp(Nv12Data), Telemetry, FrameIdx, Depth = MoveTemp(DepthMetres)]() mutable
+		 Nv12 = MoveTemp(Nv12Data), Telemetry, FrameIdx, Depth = MoveTemp(DepthMetres),
+		 Entities = MoveTemp(Entities)]() mutable
 	{
 		SCOPE_CYCLE_COUNTER(STAT_CamSimEncode);
 		// SensorStart/End bracket this background stage (latency tracking, 28G).
@@ -703,7 +709,7 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 		// ML ground truth annotation and depth (Phase 17)
 		if (Collector)
 		{
-			Collector->WriteAnnotationFrame(Telemetry, FrameIdx);
+			Collector->WriteAnnotationFrame(Entities, Telemetry, FrameIdx);
 			if (Depth.Num() > 0)
 			{
 				Collector->WriteDepthFrame(Depth, CaptureW, CaptureH, FrameIdx);

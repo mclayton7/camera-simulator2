@@ -51,6 +51,7 @@ public:
 	FEntityKey Key;
 	uint16 EntityId   = 0;
 	uint16 EntityType = 0;
+	uint32 AnnotationId = 0;  // session-unique ground-truth ID, set at spawn
 
 	/** Inject the type table — must be called before SetEntityType(). */
 	void SetEntityTypeTable(const FEntityTypeTable* Table);

@@ -4,7 +4,13 @@
 #include "Misc/AutomationTest.h"
 #include "GroundTruth/FEntityProjection.h"
 #include "GroundTruth/AnnotationTypes.h"
+#include "GroundTruth/FGroundTruthCollector.h"
 #include "Config/CamSimConfig.h"
+#include "Metadata/CamSimTelemetry.h"
+#include "Sim/Commands.h"  // FEntityKey, EHostSource
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 // -------------------------------------------------------------------------
 // Ground Truth / ML Training Data Automation Tests (Phase 17)
@@ -168,11 +174,94 @@ bool FGroundTruthAnnotationDataDefaultTest::RunTest(const FString& Parameters)
 {
 	FEntityAnnotationData Data;
 
-	TestEqual(TEXT("EntityId default 0"),   Data.EntityId,   static_cast<uint16>(0));
+	TestEqual(TEXT("EntityId default 0"),   Data.EntityId,   static_cast<uint32>(0));
 	TestEqual(TEXT("EntityType default 0"), Data.EntityType, static_cast<uint16>(0));
 	TestFalse(TEXT("bVisible default false"),    Data.bVisible);
 	TestFalse(TEXT("bTruncated default false"),  Data.bTruncated);
 	TestTrue(TEXT("ClassName default empty"),    Data.ClassName.IsEmpty());
 
+	return true;
+}
+
+// 8. FAnnotationIdAllocator — IDs never repeat; SplitSourceKey disambiguates sources
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthAnnotationIdsTest,
+	"CamSim.GroundTruth.AnnotationIdsNeverRepeat",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGroundTruthAnnotationIdsTest::RunTest(const FString& Parameters)
+{
+	FAnnotationIdAllocator Ids;
+	TSet<uint32> Seen;
+	for (int32 i = 0; i < 1000; ++i)
+	{
+		const uint32 Id = Ids.Allocate();
+		TestTrue(TEXT("non-zero"), Id != 0);
+		TestFalse(TEXT("never repeats"), Seen.Contains(Id));
+		Seen.Add(Id);
+	}
+
+	// A DIS key and a CIGI key with the same low 16 bits stay distinguishable.
+	FString Src, SrcId;
+	CamSimGroundTruth::SplitSourceKey(FEntityKey(EHostSource::Dis, (1ull << 32) | (1ull << 16) | 7).ToString(), Src, SrcId);
+	TestEqual(TEXT("dis source"), Src, FString(TEXT("dis")));
+	TestEqual(TEXT("dis source id"), SrcId, FString(TEXT("1.1.7")));
+	CamSimGroundTruth::SplitSourceKey(FEntityKey(EHostSource::Cigi, 7).ToString(), Src, SrcId);
+	TestEqual(TEXT("cigi source"), Src, FString(TEXT("cigi")));
+	TestEqual(TEXT("cigi source id"), SrcId, FString(TEXT("7")));
+	return true;
+}
+
+// 9. Per-frame ground-truth snapshots ride in the readback-ring slot: two
+// frames in flight, delivered out of order, each writes its own entities
+// (the bug this task fixes: FGroundTruthCollector used to overwrite a single
+// PendingEntities member shared across up to three in-flight frames).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthPerFrameSnapshotTest,
+	"CamSim.GroundTruth.PerFrameSnapshot",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGroundTruthPerFrameSnapshotTest::RunTest(const FString& Parameters)
+{
+	const FString Dir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("gt_per_frame_test"));
+	IFileManager::Get().DeleteDirectory(*Dir, false, true);
+
+	FCamSimConfig Cfg;
+	Cfg.MLTraining.bEnabled = true;
+	Cfg.MLTraining.OutputDir = Dir;
+	Cfg.MLTraining.bBoundingBoxes = true;
+	Cfg.MLTraining.bCocoExport = true;
+	Cfg.MLTraining.bVocExport = false;
+	Cfg.MLTraining.bDepthMap = false;
+	Cfg.MLTraining.AnnotationIntervalFrames = 1;
+
+	auto Make = [](uint32 Id, const TCHAR* Cls, const TCHAR* SrcId)
+	{
+		FEntityAnnotationData E;
+		E.EntityId = Id; E.EntityType = 2001; E.ClassName = Cls;
+		E.Source = TEXT("dis"); E.SourceId = SrcId;
+		E.ScreenBBox = FBox2D(FVector2D(10, 20), FVector2D(50, 60));
+		E.bVisible = true;
+		return E;
+	};
+	{
+		FGroundTruthCollector Collector(Cfg);
+		TestTrue(TEXT("opened"), Collector.Open());
+		FCamSimTelemetry Tel;
+		// Two frames in flight, delivered out of order: each writes its own entities.
+		const TArray<FEntityAnnotationData> Frame1 = { Make(70000, TEXT("truck"), TEXT("1.1.1")) };
+		const TArray<FEntityAnnotationData> Frame2 = { Make(70001, TEXT("boat"), TEXT("1.1.2")) };
+		Collector.WriteAnnotationFrame(Frame2, Tel, 2);
+		Collector.WriteAnnotationFrame(Frame1, Tel, 1);
+		Collector.Close();
+	}
+
+	TArray<FString> Files;
+	IFileManager::Get().FindFilesRecursive(Files, *Dir, TEXT("*.jsonl"), true, false);
+	if (!TestEqual(TEXT("one COCO file"), Files.Num(), 1)) return false;
+	TArray<FString> Lines;
+	FFileHelper::LoadFileToStringArray(Lines, *Files[0]);
+	if (!TestEqual(TEXT("two lines"), Lines.Num(), 2)) return false;
+	TestTrue(TEXT("frame 2 has the boat"), Lines[0].Contains(TEXT("\"frame_id\":2")) && Lines[0].Contains(TEXT("\"entity_id\":70001")) && Lines[0].Contains(TEXT("\"name\":\"boat\"")));
+	TestTrue(TEXT("frame 1 has the truck"), Lines[1].Contains(TEXT("\"frame_id\":1")) && Lines[1].Contains(TEXT("\"entity_id\":70000")) && Lines[1].Contains(TEXT("\"name\":\"truck\"")));
+	TestTrue(TEXT("source fields"), Lines[1].Contains(TEXT("\"source\":\"dis\",\"source_id\":\"1.1.1\"")));
 	return true;
 }

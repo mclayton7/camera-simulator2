@@ -54,14 +54,25 @@ void FVocAnnotationWriter::WriteFrame(
 
 		if (XMax <= XMin || YMax <= YMin) continue;
 
-		// Escape entity class name for XML safety
+		// Escape entity class name / source fields for XML safety
 		FString SafeName = E.ClassName
+			.Replace(TEXT("&"), TEXT("&amp;"))
+			.Replace(TEXT("<"), TEXT("&lt;"))
+			.Replace(TEXT(">"), TEXT("&gt;"));
+		FString SafeSource = E.Source
+			.Replace(TEXT("&"), TEXT("&amp;"))
+			.Replace(TEXT("<"), TEXT("&lt;"))
+			.Replace(TEXT(">"), TEXT("&gt;"));
+		FString SafeSourceId = E.SourceId
 			.Replace(TEXT("&"), TEXT("&amp;"))
 			.Replace(TEXT("<"), TEXT("&lt;"))
 			.Replace(TEXT(">"), TEXT("&gt;"));
 
 		Xml += TEXT("\t<object>\n");
 		Xml += FString::Printf(TEXT("\t\t<name>%s</name>\n"), *SafeName);
+		Xml += FString::Printf(TEXT("\t\t<entity_id>%u</entity_id>\n"), E.EntityId);
+		Xml += FString::Printf(TEXT("\t\t<source>%s</source>\n"), *SafeSource);
+		Xml += FString::Printf(TEXT("\t\t<source_id>%s</source_id>\n"), *SafeSourceId);
 		Xml += TEXT("\t\t<pose>Unspecified</pose>\n");
 		Xml += FString::Printf(TEXT("\t\t<truncated>%d</truncated>\n"), E.bTruncated ? 1 : 0);
 		Xml += TEXT("\t\t<difficult>0</difficult>\n");

@@ -90,6 +90,9 @@ private:
 
 	TUniquePtr<FCigiHostAdapter> CigiAdapter;
 
+	/** Ground-truth annotation IDs, handed out at spawn (never repeated within a session). */
+	FAnnotationIdAllocator AnnotationIds;
+
 	/** Place attached (child) entities relative to their parents' current poses. */
 	void ResolveAttachedEntities();
 	static constexpr int32 MaxAttachDepth = 8;
