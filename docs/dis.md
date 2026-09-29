@@ -10,20 +10,12 @@ Design: [`docs/superpowers/specs/2026-09-28-dis-vehicles-design.md`](superpowers
 
 ## Enabling DIS
 
-| Key | Env var | Default (code) | Notes |
-|-----|---------|----------------|-------|
-| `dis.enabled` | `CAMSIM_DIS_ENABLED` | `false` | The shipped `deploy/camsim_config.yaml` turns it on. |
-| `dis.bind_addr` | `CAMSIM_DIS_BIND_ADDR` | `0.0.0.0` | UDP bind address. |
-| `dis.port` | `CAMSIM_DIS_PORT` | `3000` | The IEEE 1278.1 default port. |
-| `dis.multicast_group` | `CAMSIM_DIS_MULTICAST_GROUP` | empty | Group to join; empty = unicast only. The shipped config uses `239.1.2.3`. Unicast to the port is received either way. |
-| `dis.exercise_id` | `CAMSIM_DIS_EXERCISE_ID` | `1` | PDUs from other exercises are dropped; `0` accepts all. |
-| `dis.site_id` / `dis.application_id` | `CAMSIM_DIS_SITE_ID` / `CAMSIM_DIS_APP_ID` | `1` / `1` | This IG's own DIS identifiers. |
-| `dis.heartbeat_timeout_sec` | `CAMSIM_DIS_HEARTBEAT_TIMEOUT` | `12.0` | DIS has no "remove entity": an entity silent this long is removed. |
-| `dis.default_entity_type_id` | `CAMSIM_DIS_DEFAULT_ENTITY_TYPE` | `1001` | Model for DIS types nothing else matches (the F-16). |
-| `dis.clamp_to_surface` | `CAMSIM_DIS_CLAMP_TO_SURFACE` | `true` | See [Surface placement](#surface-placement). |
-| `dis.entity_type_map` | -- | `{}` | See [Mapping DIS types to models](#mapping-dis-types-to-models). |
-
-The full reference is in [`configuration.md`](configuration.md#dis-input-ieee-12781).
+The shipped `deploy/camsim_config.yaml` turns DIS on (`dis.enabled: true`, env
+`CAMSIM_DIS_ENABLED`) and listens on UDP port 3000 (`dis.port`) for unicast and the
+`239.1.2.3` multicast group (`dis.multicast_group`), exercise 1 (`dis.exercise_id`; `0`
+accepts every exercise). Every `dis.*` key, its env var and default — heartbeat timeout,
+default entity type, `clamp_to_surface`, the type map — is documented in one place:
+[`configuration.md`](configuration.md#dis-input-ieee-12781).
 
 Supported PDUs: Entity State (type 1) and Designator (type 24). Position is ECEF, orientation
 the ECEF-referenced psi/theta/phi Euler angles, both converted to WGS-84 geodetic pose.
@@ -110,26 +102,35 @@ render thread waiting), which otherwise hitched the stream when the first vehicl
 ## Surface placement
 
 With `dis.clamp_to_surface: true` (the default) the sender's altitude is ignored for land and
-surface platforms: CamSim places them on the rendered surface at every pose commit (each PDU
-and each dead-reckoned frame), using line traces against the Cesium tiles
-(`Entity/SurfaceClamp.h`, `Entity/SurfaceProbe.h`). Other domains (air, subsurface, space)
-use the sender's pose.
+surface platforms (kind 1, domains 1 and 3): CamSim places them on the rendered surface at
+every pose commit (each PDU and each dead-reckoned frame), using line traces against the
+Cesium tiles (`Entity/SurfaceClamp.h`, `Entity/SurfaceProbe.h`). Other domains (air,
+subsurface, space) and every other kind use the sender's pose — including munitions, whose
+domain is the domain of their target, and life forms.
 
-- **Ground (domain 1)**: four traces straight down at bow, stern, port and starboard of the
-  footprint (`half_length_m`, `half_beam_m`). Height is the mean of the hits; pitch and roll
-  follow the slope. With 1–3 hits the height still follows and the tilt is held; with none the
-  last clamp is held. The sender's heading is always kept.
-- **Surface (domain 3)**: one trace at the centre: the boat sits on the rendered water surface.
-  No hit: EGM96 sea level at the position (`Geospatial/Geoid.h`). Pitch and roll are the
+- **Ground (kind 1, domain 1)**: four traces straight down at bow, stern, port and starboard
+  of the footprint (`half_length_m`, `half_beam_m`). Height is the mean of the hits; pitch and
+  roll follow the slope. With 1–3 hits the height still follows and the tilt is held; with
+  none (after the full-span retry below) the last clamp is held. The sender's heading is
+  always kept.
+- **Surface (kind 1, domain 3)**: one trace at the centre: the boat sits on the rendered water
+  surface. Before the first hit: EGM96 sea level at the position (`Geospatial/Geoid.h`);
+  after it, a miss (e.g. tiles evicted) holds the last water height. Pitch and roll are the
   sender's. Where Cesium World Terrain carries bathymetry the rendered "water" is the
   water-masked seabed: in San Francisco Bay at the `boat-circle` preset it is about 23 m below
   sea level (KLV Tag 25), and the boat sits there, which looks right but puts its altitude
   below sea level.
 - The first trace spans 9 000 m to −500 m ellipsoid height; later ones start 50 m above the
-  last ground height, so a vehicle under a bridge does not jump onto it. Height changes under
-  5 m ease in with a 0.2 s time constant (tile refinement); larger ones snap.
+  last ground height, so a vehicle under a bridge does not jump onto it. If every one of those
+  traces misses (the ground rose more than 50 m, or the tiles are gone) they are retried once
+  over the full 9 000 m to −500 m span, so a vehicle can't stay buried. The clamp starts over
+  (full span, snap) when the entity's surface mode changes, it is attached or detached, or its
+  sender position jumps more than 100 m. Height changes under 5 m ease in with a 0.2 s time
+  constant (tile refinement); larger ones snap. A second commit in the same frame (a PDU after
+  the dead-reckoned tick) does not bypass the ease.
 - The traces need `create_physics_meshes: true` (the default). With it off, CamSim logs one
-  warning, ground vehicles use the sender's altitude and boats EGM96 sea level.
+  warning at the first surface trace, ground vehicles use the sender's altitude and boats
+  EGM96 sea level.
 
 Set `dis.clamp_to_surface: false` for senders that supply true terrain heights (and
 attitudes); every entity then uses its PDU pose.

@@ -334,9 +334,11 @@ lifetime. Spec: `docs/superpowers/specs/2026-09-28-dis-vehicles-design.md`; plan
 
 - `scripts/send_dis_test.py`: IEEE 1278.1 Entity State sender (presets `truck-loop`,
   `boat-circle`, `both`; DR algorithm 4; altitude 0, CamSim places the vehicles).
-- Surface placement (`Entity/SurfaceClamp.h`, `SurfaceProbe.h`): land platforms get four
-  footprint traces against the Cesium tiles (height, pitch, roll), surface platforms one
-  (EGM96 sea level without a hit), at every pose commit; `dis.clamp_to_surface` (default on).
+- Surface placement (`Entity/SurfaceClamp.h`, `SurfaceProbe.h`): land platforms (kind 1) get
+  four footprint traces against the Cesium tiles (height, pitch, roll), surface platforms one
+  (EGM96 sea level before the first hit, then the last water height on a miss), at every pose
+  commit; an all-miss frame retries the full 9 km span so a rise can't bury a vehicle;
+  munitions and other kinds are posed as sent; `dis.clamp_to_surface` (default on).
 - DIS type map gains a `kind:domain` level (exact → `kind:domain:category` → `kind:domain` →
   default), so any land / surface platform gets the truck / boat.
 - Models (CC BY 4.0, `entities/*/LICENSE.md`): type 2001 Ural-4320 truck, type 3001 Mako 655
@@ -389,6 +391,9 @@ Carry-overs:
 - DIS articulation parameters (turrets, guns).
 - Inland water where Cesium terrain has no flat surface (the EGM96 fallback covers only the
   sea); boats over bathymetry sit on the seabed surface (above).
+- The model shader warm-up runs once per session (the first 30 s): a model added later by a
+  config hot reload still hitches on its first appearance, and hot reload loads its glTF
+  synchronously on the game thread.
 
 ---
 

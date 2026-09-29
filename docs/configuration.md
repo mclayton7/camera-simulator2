@@ -191,6 +191,7 @@ entity_types:
       pitch: 0.0
       yaw: 180.0
       roll: 0.0
+    z_offset_m: -0.49
     half_length_m: 3.27
     half_beam_m: 1.31
 ```
@@ -222,7 +223,7 @@ Guide: [`dis.md`](dis.md) (test sender, type mapping, surface placement, ground 
 | `dis.application_id` | int | `1` | `CAMSIM_DIS_APP_ID` | This IG's DIS application ID. |
 | `dis.heartbeat_timeout_sec` | float | `12.0` | `CAMSIM_DIS_HEARTBEAT_TIMEOUT` | An entity with no Entity State PDU for this long is removed (DIS has no explicit remove). |
 | `dis.default_entity_type_id` | int | `1001` | `CAMSIM_DIS_DEFAULT_ENTITY_TYPE` | CamSim entity type for DIS types that no `dis.entity_type_map` level matches. |
-| `dis.clamp_to_surface` | bool | `true` | `CAMSIM_DIS_CLAMP_TO_SURFACE` | Place land platforms on the terrain (height, pitch, roll) and surface platforms on the water. `false` = the sender's altitude and attitude. |
+| `dis.clamp_to_surface` | bool | `true` | `CAMSIM_DIS_CLAMP_TO_SURFACE` | Place land platforms (kind 1, domain 1) on the terrain (height, pitch, roll) and surface platforms (kind 1, domain 3) on the water. Other kinds (munitions, whose domain is the target's; life forms; …) and other domains use the sender's pose. `false` = the sender's altitude and attitude for every entity. |
 | `dis.entity_type_map` | map | `{}` | -- | DIS entity type → CamSim entity type ID. Keys are `"kind:domain:country:category:subcategory:specific:extra"` strings (see `deploy/camsim_config.yaml`); values are CamSim entity type IDs from `entity_types`. Lookup order for an incoming DIS entity type is: exact match (all seven fields) → `kind:domain:category` fuzzy match → `kind:domain` fallback → `dis.default_entity_type_id`. The `kind:domain` fallback lets any unmapped land (domain 1) or surface (domain 3) platform pick up a generic truck/boat mapping instead of falling all the way through to the default. When more than one entry maps to the same fallback key at a given level, the entry with a generic (`0`) subcategory/country wins; among equally generic entries the lower CamSim entity type ID wins, so the result is deterministic regardless of map iteration order. |
 
 ### Video Output

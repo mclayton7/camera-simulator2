@@ -81,11 +81,16 @@ Capture: per-slot entity snapshot* ─▶ readback ring ─▶ COCO / VOC (stabl
 `FEntityCommand` gets `ESurfaceMode SurfaceMode { None, Ground, Water }`, replacing the unused
 `bClampToTerrain`.
 
-- DIS: domain 1 (land) → `Ground`, domain 3 (surface) → `Water`, anything else → `None`.
+- DIS: platforms only (kind 1): domain 1 (land) → `Ground`, domain 3 (surface) → `Water`,
+  anything else → `None`. Every other kind → `None` (a munition's domain is its target's
+  domain; life forms, cultural features etc. are posed as sent). (Final-review ruling.)
   Config `dis.clamp_to_surface` (bool, default `true`, env `CAMSIM_DIS_CLAMP_TO_SURFACE`); `false`
   forces `None` for DIS senders that supply true terrain heights.
 - CIGI: the conformal clamp that set `bClampToTerrain` now sets `Ground`.
-- The entity keeps its current mode; each command updates it.
+- The entity keeps its current mode; each command updates it. A mode change, an attach/detach,
+  or a sender position more than 100 m from the last commit resets the clamp state (next
+  commit: first-trace span, snap).
+- A command with `TypeId` 0 (CIGI conformal clamp carries none) keeps an existing entity's type.
 
 ### Where
 
@@ -110,27 +115,36 @@ Dt; output: pose + new state) so it can be unit-tested without a world.
 - Trace span: the first clamp traces from 9 000 m to −500 m ellipsoid height. Afterwards from
   last ground height + 50 m down to last ground height − 500 m, so a truck under an overpass does
   not jump onto the bridge.
-- 1–3 hits: height from the mean of the hits, pitch/roll held at their last values. 0 hits: hold
-  the last clamped height and tilt. Before the first hit ever: the sender's pose.
+- 1–3 hits: height from the mean of the hits, pitch/roll held at their last values. 0 hits in the
+  narrow span after a hit: retry once over the first-trace span (9 000 m → −500 m), so a rise of
+  more than 50 m or evicted tiles can't bury the entity; 0 hits there too: hold the last clamped
+  height and tilt. Before the first hit ever: the sender's pose. (Final-review ruling; was "0
+  hits: hold".)
 
 ### Water (boats)
 
 - One trace at the centre with the same span rules; Cesium terrain renders sea and lakes as a
   surface, so the boat sits on the rendered water at its height.
-- No hit: EGM96 sea level at the position (`Geospatial/Geoid.h`, ellipsoid height = undulation).
+- No hit before the first hit: EGM96 sea level at the position (`Geospatial/Geoid.h`, ellipsoid
+  height = undulation; the sender's height without the geoid grid). No hit after one (with the
+  same full-span retry as Ground): hold the last water height — EGM96 would flip the boat ~23 m
+  over bathymetry during tile eviction. (Final-review ruling; was "no hit → EGM96".)
 - Pitch/roll: the sender's (no waves). Vessel wave motion (parked ocean) is unchanged and remains
   off by default.
 
 ### Smoothing
 
 A height change under 5 m eases with a 0.2 s time constant (tile refinement shifts the surface);
-5 m or more snaps (first hit, teleport). Pitch/roll ease with the same constant.
+5 m or more snaps (first hit, teleport). Pitch/roll ease with the same constant. A second commit
+in the same frame (Dt = 0: the entity's DR tick, then a host command) keeps the eased state
+unless the height jumps 5 m or more.
 
 ### Guards and cost
 
-- `create_physics_meshes: false` → traces cannot hit; log one warning, then Ground falls back to
-  the sender's pose and Water to EGM96 sea level.
-- Cost: 4 traces per Ground entity, 1 per Water entity, per frame.
+- `create_physics_meshes: false` → traces cannot hit; log one warning (at the first Ground/Water
+  trace), then Ground falls back to the sender's pose and Water to EGM96 sea level.
+- Cost: 4 traces per Ground entity, 1 per Water entity, per frame (twice that on a frame whose
+  narrow-span traces all miss).
 
 ## 3. Models, mapping, preload
 
@@ -193,10 +207,11 @@ World-aligned boxes, no occlusion, pinhole projection (sub-project 2 and ROADMAP
 
 ### Automation (NullRHI, `CamSim.*`)
 
-- `Dis.SurfaceMode`: land → Ground, surface → Water, air → None; `clamp_to_surface: false` →
-  None; CIGI conformal clamp → Ground.
+- `Dis.SurfaceMode`: land platform → Ground, surface platform → Water, air → None; munitions and
+  other kinds → None; `clamp_to_surface: false` → None; CIGI conformal clamp → Ground.
 - `Entity.SurfaceClamp` (pure function): four hits → height, pitch, roll; partial hits keep tilt;
-  no hits hold; before first hit → sender pose; < 5 m eases, ≥ 5 m snaps; Water no hit → EGM96.
+  no hits retry the full span, then hold; before first hit → sender pose; < 5 m eases, ≥ 5 m
+  snaps; Dt = 0 keeps the state; Water no hit → EGM96 before the first hit, held after.
 - `Dis.TypeMapFallback`: an unmapped land / surface type → truck / boat via `kind:domain`; exact
   and `kind:domain:category` still take precedence.
 - `EntityTypes.Preload`: glTF entries are loaded at startup and survive a garbage collection; a
