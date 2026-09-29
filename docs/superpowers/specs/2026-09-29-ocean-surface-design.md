@@ -60,7 +60,7 @@ Config ocean: / CIGI Wave Control + Maritime Surface (via Hosts/ adapters → Si
         ▼
 FOceanManager (Environment-owned; game thread)
   ├─ FOceanWaves (pure C++): wave set, anchor, sim time → height / displacement at (lat, lon)
-  ├─ FOceanMesh: UProceduralMeshComponent rings on ellipsoid + geoid, anchored under the camera
+  ├─ FOceanMesh: UProceduralMeshComponent warped grid on ellipsoid + geoid, centred on the frame centre
   └─ MPC writes: per-wave k, amplitude, Q, direction, phase (ωt mod 2π), anchor, E/N/U axes
         │
         ├─► M_Ocean (Single Layer Water; WPO + analytic normals from the same Gerstner sum)
@@ -100,10 +100,10 @@ struct FOceanWave
   the old plane (`CamSimFrames::GeodeticDeltaToNeu`), so the surface is continuous.
 - `SetTime(double SimSeconds)`: stores t; `GetPhase(i)` = (φᵢ − ωᵢ t) wrapped to [0, 2π) — the
   position-independent part of θ, computed in double so large t never reaches the GPU.
-- `Displacement(E, N)` → (dE, dN, dZ) in metres (Gerstner: horizontal Qᵢ aᵢ dᵢ cos θ, vertical
-  aᵢ sin θ, θ = kᵢ (dᵢ·x) − ωᵢ t + φᵢ).
+- `Displacement(N, E)` → (dN, dE, dZ) in metres (Gerstner: horizontal −Σ Qᵢ aᵢ dᵢ sin θᵢ,
+  vertical Σ aᵢ cos θᵢ, θᵢ = kᵢ (dᵢ·x) + φᵢ − ωᵢ t, dᵢ the unit travel direction in (N, E)).
 - `HeightAt(Lat, Lon)`: the surface height (m, relative to sea level) at the point where the
-  displaced surface lands, found by 3 fixed-point iterations x₀ ← x − D_h(x₀).
+  displaced surface lands, found by fixed-point iteration x₀ ← x − D_h(x₀) (up to 8 steps, stop below 1 mm).
 - `SignificantHeight()` for tests/logging.
 
 ### Sea level
@@ -116,18 +116,26 @@ with a warning (no silent zero).
 
 - `UProceduralMeshComponent` (enable the `ProceduralMeshComponent` plugin and module) owned by
   the environment actor.
-- Geometry: concentric rings around the camera's nadir. Ring 0 is a square grid, 2 m cells,
-  ±128 cells; each further ring doubles the cell size, until the radius
-  R = min(3.57 km · √(max(alt_above_sea_m, 2)) + 10%, `max_radius_km`). Ring seams are stitched
-  (skirt/T-junction fill) so no cracks show.
-- Vertex placement: each grid (E, N) offset → `CamSimFrames::OffsetGeodetic(nadir, E, N)` →
-  height `SeaLevelM(lat, lon)` → UE position through the georeference, stored relative to the
-  component origin at the nadir point (float precision ~1.5 cm at 200 km). Per-vertex normals are
-  the ellipsoid up; the material supplies wave normals.
-- Rebuild (on the game thread; target < 10 ms, measured) when the camera nadir moves more than
-  10% of R from the build centre, R changes by > 25%, or on a teleport (`IsHorizontalJump`
-  threshold). Between rebuilds only the component moves, snapped to the ring-0 cell size. The wave
-  anchor re-anchors to the new build centre on each rebuild.
+- Geometry: one regular (N+1)×(N+1) vertex grid, N = 256, whose lattice coordinate u ∈ [−1, 1]
+  maps to distance through a monotonic warp d(u) = sign(u)·R·(e^{α|u|} − 1)/(e^α − 1), with α
+  solved (bisection) so the centre cell is 2 m (α → 0 degenerates to a uniform grid of R/128).
+  One grid, so there are no rings, seams or T-junctions. Each vertex carries its local cell size
+  (UV1) so the material fades each wave where the cell is coarser than λ/4 (no aliasing).
+- Centre: the camera's **frame centre** (KLV Tags 23/24 from `GetCurrentTelemetry()`), falling
+  back to the nadir, so zoomed oblique views of a boat get the fine cells.
+  R = min(dist(centre, nadir) + 3.57 km·√(max(alt_above_sea_m, 2))·1.1, `max_radius_km`).
+- Vertex placement: grid (E, N) offset → `CamSimFrames::OffsetGeodetic(centre, N, E)` → height
+  `SeaLevelM(lat, lon)` → ECEF (`CamSimFrames::GeodeticToEcef`) → UE through the georeference's
+  `ComputeEarthCenteredEarthFixedToUnrealTransformation()` (cached per rebuild), stored relative
+  to the component origin at the centre (float precision ~1.5 cm at 200 km). Normals are the
+  ellipsoid up; the material supplies wave normals.
+- Rebuild (game thread; target < 10 ms, measured and logged) when the centre moves more than
+  0.5% of R from the build centre, R changes by > 25%, or on a teleport. Between rebuilds the
+  component is translated by the centre's move, snapped to the centre cell size, so fine-region
+  vertices keep their geographic positions (no wave shimmer). The wave anchor re-anchors to the
+  build centre on each rebuild.
+- Known limit: water far outside the fine region is drawn flat (waves faded) while CPU placement
+  still applies waves; only visible for boats well away from the frame centre.
 - Collision off; cast shadows off; receives shadows.
 
 ### M_Ocean (`Content/Ocean/M_Ocean.uasset`, scripted)
@@ -169,8 +177,8 @@ flag/scale, half length/beam). With the ocean on:
 - Base height = max(Cesium centre hit, sea level) — seabed loses to the sea, a lake above sea
   level wins. The existing easing still applies to the base height only.
 - Waves (if the base is the sea and `vessel_motion`): sample `HeightAt` at the four footprint
-  points (`GetFootprint`); pitch = atan2(bow − stern, 2·HalfLength), roll = atan2(stbd − port,
-  2·HalfBeam), heave = mean; each × `vessel_motion_scale`; never eased. Heading from the sender;
+  points (`GetFootprint`); pitch = atan((bow − stern) / 2·HalfLength), roll = atan((port − stbd) /
+  2·HalfBeam) (right side down positive, as `ClampGround`), heave = mean; each × `vessel_motion_scale`; never eased. Heading from the sender;
   sender pitch/roll replaced.
 - Ocean off: behaviour byte-identical to today.
 
@@ -216,9 +224,9 @@ Unit (NullRHI, CI):
 - `CamSim.Ocean.Waves.*`: Beaufort significant height within 1%; Σ Qᵢkᵢaᵢ ≤ 1 at choppiness 1;
   dispersion vs host period; direction (from 270° → crests move east); re-anchor 50 km leaves the
   height at a fixed point unchanged (< 1 mm); `HeightAt` vs brute-force search ≤ 1 cm at
-  choppiness 1; frozen clock freezes the surface, `time_scale` 2 doubles the rate.
-- `CamSim.Ocean.Mesh.*`: vertices on ellipsoid + geoid ≤ 1 cm (centre, mid ring, edge); radius
-  formula and cap; rebuild only past the thresholds or on a teleport. (Geometry is generated by a
+  choppiness 0.8 and ≤ 5 cm at 1 (near-cusp); frozen clock freezes the surface, `time_scale` 2 doubles the rate.
+- `CamSim.Ocean.Mesh.*`: vertices on ellipsoid + geoid ≤ 1 cm (centre, mid, edge); centre cell
+  2 m ± 5%; warp monotonic; radius formula and cap; rebuild only past the thresholds or on a teleport. (Geometry is generated by a
   pure function; the component is a thin wrapper.)
 - `CamSim.Surface.*` (extends `SurfaceClampTest`): seabed −23 m → sea level; lake +300 m → lake;
   wave pitch/roll/heave sign and size along/across a single wave; ocean off identical to today.
