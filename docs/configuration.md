@@ -209,8 +209,19 @@ entity_types:
 
 ### DIS Input (IEEE 1278.1)
 
+Guide: [`dis.md`](dis.md) (test sender, type mapping, surface placement, ground truth).
+
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
+| `dis.enabled` | bool | `false` | `CAMSIM_DIS_ENABLED` | Listen for DIS PDUs (Entity State, Designator). The shipped `deploy/camsim_config.yaml` sets `true`. |
+| `dis.bind_addr` | string | `"0.0.0.0"` | `CAMSIM_DIS_BIND_ADDR` | UDP bind address. |
+| `dis.port` | int | `3000` | `CAMSIM_DIS_PORT` | UDP port (the IEEE 1278.1 default). |
+| `dis.multicast_group` | string | `""` | `CAMSIM_DIS_MULTICAST_GROUP` | Multicast group to join; empty = unicast only. The shipped config uses `"239.1.2.3"`. |
+| `dis.exercise_id` | int | `1` | `CAMSIM_DIS_EXERCISE_ID` | Only PDUs with this exercise ID are accepted; `0` = all exercises. |
+| `dis.site_id` | int | `1` | `CAMSIM_DIS_SITE_ID` | This IG's DIS site ID. |
+| `dis.application_id` | int | `1` | `CAMSIM_DIS_APP_ID` | This IG's DIS application ID. |
+| `dis.heartbeat_timeout_sec` | float | `12.0` | `CAMSIM_DIS_HEARTBEAT_TIMEOUT` | An entity with no Entity State PDU for this long is removed (DIS has no explicit remove). |
+| `dis.default_entity_type_id` | int | `1001` | `CAMSIM_DIS_DEFAULT_ENTITY_TYPE` | CamSim entity type for DIS types that no `dis.entity_type_map` level matches. |
 | `dis.clamp_to_surface` | bool | `true` | `CAMSIM_DIS_CLAMP_TO_SURFACE` | Place land platforms on the terrain (height, pitch, roll) and surface platforms on the water. `false` = the sender's altitude and attitude. |
 | `dis.entity_type_map` | map | `{}` | -- | DIS entity type → CamSim entity type ID. Keys are `"kind:domain:country:category:subcategory:specific:extra"` strings (see `deploy/camsim_config.yaml`); values are CamSim entity type IDs from `entity_types`. Lookup order for an incoming DIS entity type is: exact match (all seven fields) → `kind:domain:category` fuzzy match → `kind:domain` fallback → `dis.default_entity_type_id`. The `kind:domain` fallback lets any unmapped land (domain 1) or surface (domain 3) platform pick up a generic truck/boat mapping instead of falling all the way through to the default. When more than one entry maps to the same fallback key at a given level, the entry with a generic (`0`) subcategory/country wins; among equally generic entries the lower CamSim entity type ID wins, so the result is deterministic regardless of map iteration order. |
 
@@ -558,10 +569,14 @@ to asset paths and flags:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `mesh` | string | Yes | UE content browser path for the primary mesh asset. Format: `"/Game/Path/To/Asset.Asset"`. |
+| `mesh` | string | Yes | UE content browser path for the primary mesh asset (`"/Game/Path/To/Asset.Asset"`), or a glTF/GLB file relative to `entities/` (loaded with glTFRuntime at startup, e.g. `truck/ural_4320.glb`). |
 | `skeletal` | bool | No (default `false`) | `true` for `USkeletalMesh` (enables articulated part control). `false` for `UStaticMesh`. |
 | `mesh_damaged` | string | No | Alternative mesh for damage state 1 (Component Control CompId=10, state=1). Falls back to `mesh` if omitted. |
 | `mesh_destroyed` | string | No | Alternative mesh for damage state 2 (Component Control CompId=10, state=2). Falls back to `mesh` if omitted. |
+| `class_name` | string | No (default `type_NNNN`) | ML ground-truth label (COCO `category.name`, VOC `name`). |
+| `scale` | float | No (default `1.0`) | Uniform model scale, e.g. to bring a glTF model to its real size. |
+| `rotation` | map | No | `pitch` / `yaw` / `roll` offset in degrees so the model's nose points along UE +X (the entity's heading). |
+| `half_length_m` / `half_beam_m` | float | No | Half length / half width of the footprint after `scale`, in metres. Used by the DIS surface clamp's four ground traces (see [`dis.md`](dis.md#surface-placement)) and vessel wave motion; the loaded mesh's bounds are used when absent. |
 
 Entity type IDs are defined by the host simulation. CamSim does not reserve any
 specific IDs -- the mapping is entirely user-configured.

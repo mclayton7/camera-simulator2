@@ -143,6 +143,7 @@ UE5 will compile shaders the first time a new machine or build runs. To avoid re
 | [docs/architecture.md](docs/architecture.md)         | System architecture, threading model, data flow             |
 | [docs/configuration.md](docs/configuration.md)       | `camsim_config.yaml` field reference, environment variables |
 | [docs/entity-rendering.md](docs/entity-rendering.md) | Entity lifecycle, dead-reckoning, articulated parts, lights |
+| [docs/dis.md](docs/dis.md)                           | DIS input: test sender, type → model mapping, surface placement |
 | [docs/terrain-feedback.md](docs/terrain-feedback.md) | HAT/HOT and LOS queries, SOF heartbeat                      |
 | [ROADMAP.md](ROADMAP.md)                             | Roadmap                                                     |
 

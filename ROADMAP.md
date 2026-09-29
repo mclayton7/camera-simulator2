@@ -301,8 +301,9 @@ Scenario file ┘
   Internals must not be tied to 3.3 packet layouts, so CIGI 4.0 can follow.
 - **DIS** stays a passive "stealth viewer" (renders entities it hears on the network).
   - Define precedence and separate ID ranges when CIGI and DIS both describe the world.
-  - Implement the full DIS dead-reckoning set (algorithms 1–9, including acceleration);
-    today only algorithms 2 and 5 extrapolate.
+  - ~~Implement the full DIS dead-reckoning set.~~ Algorithms 2–9 extrapolate (world/body
+    velocity, body angular rate; 2.2). Still open: acceleration (parsed, not integrated) and
+    PDU timestamps (2.5 carry-overs).
 - **HLA:** support it through an external HLA↔DIS gateway, not natively.
 
 Design: `docs/superpowers/specs/2026-09-26-host-adapter-layer-design.md` (approved).
@@ -322,6 +323,62 @@ Progress:
 Set up a scene, spawn entities, randomize, step the clock, and capture frames plus ground
 truth. This becomes the main interface for ML dataset generation and batch runs, and
 replaces ad-hoc batch-runner paths.
+
+### 2.5 DIS-driven trucks and boats (done 2026-09-28)
+
+Sub-project 1 of "boats and trucks for ATR": a scripted truck and boat, driven by DIS Entity
+State PDUs, appear in the video on the terrain / water, facing their travel direction, and the
+COCO ground truth labels them `truck` / `boat` with IDs that are stable for each vehicle's
+lifetime. Spec: `docs/superpowers/specs/2026-09-28-dis-vehicles-design.md`; plan:
+`docs/superpowers/plans/2026-09-28-dis-vehicles.md`; guide: [`docs/dis.md`](docs/dis.md).
+
+- `scripts/send_dis_test.py`: IEEE 1278.1 Entity State sender (presets `truck-loop`,
+  `boat-circle`, `both`; DR algorithm 4; altitude 0, CamSim places the vehicles).
+- Surface placement (`Entity/SurfaceClamp.h`, `SurfaceProbe.h`): land platforms get four
+  footprint traces against the Cesium tiles (height, pitch, roll), surface platforms one
+  (EGM96 sea level without a hit), at every pose commit; `dis.clamp_to_surface` (default on).
+- DIS type map gains a `kind:domain` level (exact → `kind:domain:category` → `kind:domain` →
+  default), so any land / surface platform gets the truck / boat.
+- Models (CC BY 4.0, `entities/*/LICENSE.md`): type 2001 Ural-4320 truck, type 3001 Mako 655
+  rigid-hull inflatable; glTF models are preloaded at startup and kept resident.
+- Ground truth: the entity snapshot rides in the readback-ring slot with its frame (no more
+  race with three frames in flight); `entity_id` is a session-unique uint32; COCO / VOC add
+  `source` and `source_id`.
+
+Acceptance (`scripts/dis_vehicle_check.py`, macOS M-series, Metal, 2026-09-28):
+
+- `PASS (labels)`: 454 COCO frames, one ID each (`truck` 1, `boat` 2) across every frame.
+- Stream when the vehicles appear (settled wide view, tiles 100%): 147 frames in the first
+  5 s, median 33 ms, one frame over 66 ms: 105 ms, 0.15 s after the first annotated frame.
+  An earlier run had the same single ~110 ms frame at first appearance (likely first-use
+  PSO / texture upload); the 10 s before had 8 frames over 66 ms (max 133 ms).
+- Shots: both models face their travel direction (nadir at every leg of the loop and side
+  views from the vehicle's left); the truck's wheels and shadow meet the ground and it pitches
+  with the slope (nose down on the east-bound descent); the boat sits on the rendered water.
+
+| Truck, nadir | Truck on a descent | Boat, nadir | Boat, 6 m above the water |
+|---|---|---|---|
+| ![](docs/images/dis-vehicles/truck-nadir.jpg) | ![](docs/images/dis-vehicles/truck-slope-side.jpg) | ![](docs/images/dis-vehicles/boat-nadir.jpg) | ![](docs/images/dis-vehicles/boat-waterline.jpg) |
+
+Findings from the live run:
+
+- The bay's rendered surface at the boat circle is Cesium's bathymetric seabed, ~23 m below
+  sea level (KLV Tag 25): the boat sits on what is drawn, but its altitude is below sea level.
+- The boat has no draft (keel ~0.14 m above the model origin): visible only in close-ups.
+- Narrow-FOV / close-range views stream fine tiles slowly (independent of DIS: 5° FOV at
+  700 m renders at ~1 fps for tens of seconds; 10° at 350 m ~10 fps) — worth a look under 3A.
+- Moving vehicles leave a faint TSR ghost trail in close-ups.
+- One ~100 ms frame when a vehicle first appears (reproducible, above): investigate with
+  `run_bench.py --trace` if it matters.
+
+Carry-overs:
+
+- Tight oriented boxes and occlusion in the ground truth (sub-project 2).
+- Ocean surface and wakes: needs editor assets `M_Ocean` and `NS_VesselWake` (human task).
+- DR acceleration and PDU timestamps (extrapolation runs from arrival time).
+- DIS articulation parameters (turrets, guns).
+- Inland water where Cesium terrain has no flat surface (the EGM96 fallback covers only the
+  sea); boats over bathymetry sit on the seabed surface (above).
 
 ---
 
