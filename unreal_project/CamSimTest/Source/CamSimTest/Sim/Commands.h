@@ -131,6 +131,12 @@ struct FEntityCommand
 	double SourceTimeSec = 0.0;
 };
 
+/** The type an entity has after a command: TypeId 0 (e.g. CIGI Conformal Clamp, which carries none) keeps it. */
+inline uint16 ResolveEntityTypeId(uint16 CurrentTypeId, const FEntityCommand& Command)
+{
+	return Command.TypeId != 0 ? Command.TypeId : CurrentTypeId;
+}
+
 /** Set how an entity moves between pose updates (CIGI Rate Control). */
 struct FEntityMotionCommand
 {

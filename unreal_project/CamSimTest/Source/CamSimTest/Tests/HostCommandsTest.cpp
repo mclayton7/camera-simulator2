@@ -80,7 +80,12 @@ bool FHostCigiEntityCommandsTest::RunTest(const FString& Parameters)
 	FCigiConfClampEntityState Clamp;
 	Clamp.EntityId = 9; Clamp.Latitude = 1.0; Clamp.Longitude = 2.0; Clamp.Yaw = 45.0f;
 	const FEntityCommand Clamped = ToEntityCommand(Clamp);
+	TestEqual(TEXT("conformal clamp key"), Clamped.Key, Key(9));
 	TestTrue(TEXT("conformal clamp follows the ground"), Clamped.SurfaceMode == ESurfaceMode::Ground);
+	TestEqual(TEXT("conformal clamp carries no type"), Clamped.TypeId, static_cast<uint16>(0));
+	// An existing entity keeps its type when a command carries none (TypeId 0).
+	TestEqual(TEXT("type 0 keeps the current type"), ResolveEntityTypeId(2001, Clamped), static_cast<uint16>(2001));
+	TestEqual(TEXT("a real type replaces it"), ResolveEntityTypeId(2001, C), static_cast<uint16>(1001));
 
 	FCigiRateControl Rate;
 	Rate.EntityId = 7; Rate.bLocalFrame = false; Rate.bAngularLocalFrame = false;
@@ -213,17 +218,23 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisSurfaceModeTest,
 
 bool FDisSurfaceModeTest::RunTest(const FString& Parameters)
 {
-	using CamSim::Dis::SurfaceModeForDomain;
-	TestTrue(TEXT("land → ground"),   SurfaceModeForDomain(1, true) == ESurfaceMode::Ground);
-	TestTrue(TEXT("air → none"),      SurfaceModeForDomain(2, true) == ESurfaceMode::None);
-	TestTrue(TEXT("surface → water"), SurfaceModeForDomain(3, true) == ESurfaceMode::Water);
-	TestTrue(TEXT("subsurface → none"), SurfaceModeForDomain(4, true) == ESurfaceMode::None);
-	TestTrue(TEXT("clamp off → none"), SurfaceModeForDomain(1, false) == ESurfaceMode::None);
+	using CamSim::Dis::SurfaceModeFor;
+	TestTrue(TEXT("land platform → ground"),    SurfaceModeFor(1, 1, true) == ESurfaceMode::Ground);
+	TestTrue(TEXT("air platform → none"),       SurfaceModeFor(1, 2, true) == ESurfaceMode::None);
+	TestTrue(TEXT("surface platform → water"),  SurfaceModeFor(1, 3, true) == ESurfaceMode::Water);
+	TestTrue(TEXT("subsurface platform → none"), SurfaceModeFor(1, 4, true) == ESurfaceMode::None);
+	TestTrue(TEXT("clamp off → none"),          SurfaceModeFor(1, 1, false) == ESurfaceMode::None);
+	// Only platforms are placed: a munition's domain is its target's domain.
+	TestTrue(TEXT("anti-land munition → none"),    SurfaceModeFor(2, 1, true) == ESurfaceMode::None);
+	TestTrue(TEXT("anti-surface munition → none"), SurfaceModeFor(2, 3, true) == ESurfaceMode::None);
+	TestTrue(TEXT("life form on land → none"),     SurfaceModeFor(3, 1, true) == ESurfaceMode::None);
 
 	FDisEntityStatePdu Pdu;
 	Pdu.EntityType.EntityKind = 1; Pdu.EntityType.Domain = 1;
 	Pdu.LocationX = 6378137.0;
 	TestTrue(TEXT("command carries ground"), CamSim::Dis::ToEntityCommand(Pdu, 2001).SurfaceMode == ESurfaceMode::Ground);
 	TestTrue(TEXT("command honours clamp off"), CamSim::Dis::ToEntityCommand(Pdu, 2001, false).SurfaceMode == ESurfaceMode::None);
+	Pdu.EntityType.EntityKind = 2;
+	TestTrue(TEXT("munition command: none"), CamSim::Dis::ToEntityCommand(Pdu, 2001).SurfaceMode == ESurfaceMode::None);
 	return true;
 }

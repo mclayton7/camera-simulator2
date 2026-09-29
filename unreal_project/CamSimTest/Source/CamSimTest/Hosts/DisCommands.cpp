@@ -44,9 +44,9 @@ namespace CamSim::Dis
 		return Model;
 	}
 
-	ESurfaceMode SurfaceModeForDomain(uint8 Domain, bool bClampToSurface)
+	ESurfaceMode SurfaceModeFor(uint8 Kind, uint8 Domain, bool bClampToSurface)
 	{
-		if (!bClampToSurface) return ESurfaceMode::None;
+		if (!bClampToSurface || Kind != 1) return ESurfaceMode::None;   // platforms only
 		switch (Domain)
 		{
 		case 1:  return ESurfaceMode::Ground;
@@ -62,7 +62,7 @@ namespace CamSim::Dis
 		Out.Lifecycle = EEntityLifecycle::Active;
 		Out.TypeId    = TypeId;
 		Out.Classification = { Pdu.EntityType.EntityKind, Pdu.EntityType.Domain, Pdu.EntityType.Category };
-		Out.SurfaceMode = SurfaceModeForDomain(Pdu.EntityType.Domain, bClampToSurface);
+		Out.SurfaceMode = SurfaceModeFor(Pdu.EntityType.EntityKind, Pdu.EntityType.Domain, bClampToSurface);
 
 		CamSimFrames::EcefToGeodetic(FVector(Pdu.LocationX, Pdu.LocationY, Pdu.LocationZ),
 			Out.Pose.Lat, Out.Pose.Lon, Out.Pose.Alt);

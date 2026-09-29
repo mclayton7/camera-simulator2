@@ -237,12 +237,12 @@ void FCamSimEntityManager::ApplyEntityCommand(const FEntityCommand& C, double No
 		EntityMap.Add(C.Key, Entity);
 		UE_LOG(LogCamSim, Log, TEXT("EntityManager: spawned entity %s (type %u)"), *C.Key.ToString(), C.TypeId);
 	}
-	else if (Entity->EntityType != C.TypeId)
+	else if (const uint16 NewType = ResolveEntityTypeId(Entity->EntityType, C); NewType != Entity->EntityType)
 	{
 		bTypeChanged = true;
 		UE_LOG(LogCamSim, Log, TEXT("EntityManager: entity %s type change %u -> %u"),
-			*C.Key.ToString(), Entity->EntityType, C.TypeId);
-		Entity->SetEntityType(C.TypeId);
+			*C.Key.ToString(), Entity->EntityType, NewType);
+		Entity->SetEntityType(NewType);
 	}
 
 	bool bApplyPose = true;

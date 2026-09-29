@@ -17,8 +17,12 @@ namespace CamSim::Dis
 	/** site:application:entity packed into the key's 48 low bits. */
 	FEntityKey Key(const FDisEntityId& Id);
 
-	/** DIS domain → surface placement: land on the ground, surface platforms on the water. */
-	ESurfaceMode SurfaceModeForDomain(uint8 Domain, bool bClampToSurface);
+	/**
+	 * DIS kind/domain → surface placement: land platforms (kind 1, domain 1) on the
+	 * ground, surface platforms (kind 1, domain 3) on the water; every other kind
+	 * (munitions — whose domain is the target's —, life forms, …) as sent.
+	 */
+	ESurfaceMode SurfaceModeFor(uint8 Kind, uint8 Domain, bool bClampToSurface);
 
 	/**
 	 * Entity State PDU → entity update with its dead-reckoning motion model.
