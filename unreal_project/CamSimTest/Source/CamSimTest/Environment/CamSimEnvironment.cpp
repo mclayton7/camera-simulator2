@@ -6,6 +6,7 @@
 #include "CIGI/CigiReceiver.h"
 #include "Camera/CamSimCamera.h"
 #include "Time/SimClock.h"
+#include "Hosts/CigiCommands.h"
 
 #include "CesiumSunSky.h"
 #include "Engine/DirectionalLight.h"
@@ -122,8 +123,8 @@ void ACamSimEnvironment::BeginPlay()
 		TEXT("ACamSimEnvironment: CesiumSunSky=%s Sun=%s SkyLight=%s SkyAtmos=%s Fog=%s Cloud=%s  sim time %s"),
 		*CesiumName, *SunName, *SkyName, *AtmosName, *FogName, *CloudName, *FSimClock::Get().NowUtc().ToIso8601());
 
-	// Phase 19 — Ocean
-	OceanManager.Init(GetWorld(), this, Subsystem, Subsystem->GetConfig().Phase19);
+	// Ocean (ROADMAP 2.6)
+	OceanManager.Init(GetWorld(), this, Subsystem);
 }
 
 // -------------------------------------------------------------------------
@@ -221,12 +222,12 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 	// 18L: Blend zone weather toward camera
 	BlendWeatherZones();
 
-	// Phase 19 — drain CIGI Wave Control queue
+	// Ocean (ROADMAP 2.6) — drain CIGI Wave Control queue
 	{
 		FCigiWaveState WaveState;
 		while (Receiver->DequeueWaveState(WaveState))
 		{
-			OceanManager.ApplyWaveState(WaveState);
+			OceanManager.ApplyWave(CamSim::Cigi::ToOceanWaveCommand(WaveState));
 		}
 	}
 
@@ -235,23 +236,12 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 		FCigiMaritimeSurfaceState MaritimeState;
 		while (Receiver->DequeueMaritimeSurface(MaritimeState))
 		{
-			OceanManager.SetMaritimeSurfaceState(MaritimeState);
+			OceanManager.ApplyMaritimeSurface(CamSim::Cigi::ToMaritimeSurfaceCommand(MaritimeState));
 		}
 	}
 
-	// Phase 19 — notify ocean of sky changes once per tick (coalesced from Apply* calls above)
-	if (bGotCelestial || bGotAtmos || bGotWeather)
-	{
-		OnAtmosphereChanged();
-	}
-
-	// Phase 19 — tick ocean surface (wave time + plane reposition)
-	{
-		const FVector CamLoc = CamSimCameraActor
-			? CamSimCameraActor->GetActorLocation()
-			: FVector::ZeroVector;
-		OceanManager.Tick(DeltaTime, CamLoc);
-	}
+	// Ocean (ROADMAP 2.6) — tick (rendering arrives in Task 9)
+	OceanManager.Tick();
 }
 
 // -------------------------------------------------------------------------
@@ -715,13 +705,4 @@ void ACamSimEnvironment::ApplySkyAtmosphericScattering()
 	AtmosComp->MieScatteringScale = FMath::Clamp(Phase18Cfg.MieScattering * MieBase, 0.0f, 1.0f);
 
 	AtmosComp->MarkRenderStateDirty();
-}
-
-// -------------------------------------------------------------------------
-// Phase 19 — Ocean atmosphere bridge
-// -------------------------------------------------------------------------
-
-void ACamSimEnvironment::OnAtmosphereChanged()
-{
-	OceanManager.OnAtmosphereChanged();
 }

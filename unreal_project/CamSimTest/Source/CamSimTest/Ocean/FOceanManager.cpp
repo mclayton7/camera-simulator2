@@ -1,125 +1,23 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Ocean/FOceanManager.h"
-#include "CamSimTest.h"
-#include "Ocean/FBeaufortTable.h"
-#include "Subsystem/CamSimSubsystem.h"
-#include "Entity/CamSimEntityManager.h"
-#include "Engine/World.h"
-#include "Engine/PostProcessVolume.h"
-#include "Components/StaticMeshComponent.h"
-#include "Components/SkyLightComponent.h"
-#include "Engine/StaticMesh.h"
-#include "EngineUtils.h"
+#include "Sim/Commands.h"
 
-void FOceanManager::Init(UWorld* World, AActor* OuterActor,
-                          UCamSimSubsystem* Subsystem,
-                          const FCamSimConfig::FPhase19Config& Cfg)
+void FOceanManager::Init(UWorld* World, AActor* Owner, UCamSimSubsystem* InSubsystem)
 {
-	Config       = Cfg;
-	OceanEnabled = Cfg.bOceanEnabled;
-
-	if (!OceanEnabled) return;
-
-	// --- Create ocean plane mesh component (registered to OuterActor, GC-safe) ---
-	UStaticMeshComponent* MeshComp = NewObject<UStaticMeshComponent>(
-		OuterActor, TEXT("OceanPlaneMesh"));
-	MeshComp->RegisterComponent();
-
-	// Use the engine built-in plane (200km scaled via component transform)
-	UStaticMesh* PlaneMesh = LoadObject<UStaticMesh>(
-		nullptr, TEXT("/Engine/BasicShapes/Plane"));
-	if (PlaneMesh)
-	{
-		MeshComp->SetStaticMesh(PlaneMesh);
-		// Scale to 200km x 200km (plane asset is 100x100 UE units = 1m x 1m)
-		MeshComp->SetWorldScale3D(FVector(200000.0f, 200000.0f, 1.0f));
-	}
-	MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	MeshComp->SetCastShadow(false);
-
-	// --- Create sky light component for reflection capture ---
-	USkyLightComponent* SkyComp = NewObject<USkyLightComponent>(
-		OuterActor, TEXT("OceanSkyLight"));
-	SkyComp->SourceType              = SLS_CapturedScene;
-	SkyComp->bRealTimeCapture = false;
-	SkyComp->RegisterComponent();
-
-	// --- Initialise ocean surface ---
-	GerstnerSurface.Init(Cfg.OceanMaterialPath, MeshComp, SkyComp, World);
-	GerstnerSurface.SetEnabled(true);
-
-	// --- Apply startup Beaufort state ---
-	const FBeaufortEntry Entry = FBeaufortTable::Sample(Cfg.BeaufortState);
-	GerstnerSurface.SetWaveParams(Entry.WaveHtM, Entry.WaveLenM,
-	                               Cfg.WaveAmplitudeScale, Cfg.WaveFrequencyScale,
-	                               Entry.Choppiness);
-
-	// --- SSR reflections ---
-	if (Cfg.bOceanReflectionsEnabled)
-	{
-		EnableSSR(World, Cfg.SSRIntensity);
-	}
-
-	// --- Inject IOceanSurface* into entity manager ---
-	// NOTE: FCamSimEntityManager::SetOceanSurface() is added in Task 13.
-	// The call below will link correctly once that task is complete.
-	if (Subsystem)
-	{
-		if (FCamSimEntityManager* EM = Subsystem->GetEntityManager())
-		{
-			EM->SetOceanSurface(GetOceanSurface());
-		}
-	}
+	Subsystem = InSubsystem;
 }
 
-void FOceanManager::Tick(float DeltaTime, const FVector& CameraWorldLocation)
+void FOceanManager::Tick()
 {
-	if (!OceanEnabled) return;
-	GerstnerSurface.RepositionToCamera(CameraWorldLocation);
-	GerstnerSurface.Tick(DeltaTime);
 }
 
-void FOceanManager::ApplyWaveState(const FCigiWaveState& State)
+void FOceanManager::ApplyWave(const FOceanWaveCommand& Cmd)
 {
-	if (!OceanEnabled || !State.bEnabled) return;
-	// CIGI overrides Beaufort table directly with physical parameters
-	GerstnerSurface.SetWaveParams(State.WaveHtM, State.WaveLenM,
-	                               Config.WaveAmplitudeScale, Config.WaveFrequencyScale,
-	                               Config.WaveChoppiness);
+	// Task 4 fills this in.
 }
 
-void FOceanManager::SetMaritimeSurfaceState(const FCigiMaritimeSurfaceState& State)
+void FOceanManager::ApplyMaritimeSurface(const FMaritimeSurfaceCommand& Cmd)
 {
-	if (!OceanEnabled)
-	{
-		UE_LOG(LogCamSim, Verbose,
-			TEXT("FOceanManager: maritime surface state received but ocean is disabled (region=%u)"),
-			State.EntityRgnId);
-		return;
-	}
-	if (!State.bSurfaceCondEn) return;
-
-	// Apply surface height offset to the Gerstner ocean surface
-	GerstnerSurface.SetSurfaceHeightOffset(State.SurfaceHeight);
-
-	UE_LOG(LogCamSim, Verbose,
-		TEXT("FOceanManager: maritime surface applied (region=%u height=%.1fm temp=%.1fC clarity=%.2f)"),
-		State.EntityRgnId, State.SurfaceHeight, State.WaterTemp, State.Clarity);
-}
-
-void FOceanManager::OnAtmosphereChanged()
-{
-	if (!OceanEnabled) return;
-	GerstnerSurface.RecaptureSky();
-}
-
-void FOceanManager::EnableSSR(UWorld* World, float Intensity)
-{
-	if (TActorIterator<APostProcessVolume> It(World); It) // Use first (global) PPV
-	{
-		PostProcessVolume = *It;
-		PostProcessVolume->Settings.bOverride_ScreenSpaceReflectionIntensity = true;
-		PostProcessVolume->Settings.ScreenSpaceReflectionIntensity = Intensity;
-	}
+	// Task 4 fills this in.
 }

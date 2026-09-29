@@ -6,7 +6,6 @@
 #include "GameFramework/Actor.h"
 #include "Sim/Commands.h"
 #include "Geospatial/CigiFrames.h"
-#include "Ocean/IOceanSurface.h"
 #include "Entity/SurfaceClamp.h"
 // StreamableManager gives us the complete FStreamableHandle type — needed so
 // the UHT-generated CamSimEntity.gen.cpp can destruct TSharedPtr<FStreamableHandle>.
@@ -107,15 +106,6 @@ public:
 
 	/** Configure gradual damage interpolation (Phase 22C). */
 	void SetDamageInterpolation(bool bEnabled, float RateSec);
-
-	/**
-	 * Apply pitch/roll/heave from ocean surface to this vessel entity.
-	 * Called from FCamSimEntityManager::Tick() for sea-domain entities only.
-	 * Ocean must be non-null. TypeEntry provides HalfLength/HalfBeam geometry.
-	 */
-	void ApplyVesselMotion(IOceanSurface* Ocean,
-	                       float HalfLengthCm, float HalfBeamCm,
-	                       float MotionScale);
 
 	// AActor interface
 	virtual void Tick(float DeltaTime) override;

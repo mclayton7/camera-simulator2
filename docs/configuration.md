@@ -682,6 +682,15 @@ CAMSIM_CIGI_RECORD_PATH=
 CAMSIM_VIDEO_RECORD_PATH=
 CAMSIM_CIGI_PLAYBACK_PATH=
 
+# Ocean (ROADMAP 2.6)
+CAMSIM_OCEAN_ENABLED=1
+CAMSIM_OCEAN_BEAUFORT=3.0
+CAMSIM_OCEAN_WAVE_DIR=270.0
+CAMSIM_OCEAN_CHOPPINESS=0.5
+CAMSIM_OCEAN_MOTION_ENABLED=1
+CAMSIM_OCEAN_MOTION_SCALE=1.0
+CAMSIM_OCEAN_MAX_RADIUS_KM=400.0
+
 # Operational hardening (Phase 28)
 CAMSIM_STRUCTURED_LOG_PATH=
 CAMSIM_STRUCTURED_LOG_MAX_MB=100
@@ -806,3 +815,45 @@ performance:
 | Key | Env | Default | Description |
 |---|---|---|---|
 | `performance.track_pipeline_latency` | `CAMSIM_TRACK_PIPELINE_LATENCY` | `false` | Enable ring-buffer tracking of per-frame latency. Adds a small overhead per frame; recommended for dev/staging, off for production unless needed. |
+
+## Ocean (`ocean:`)
+
+The sea for boats (ROADMAP 2.6): sea level is the EGM96 geoid undulation
+(`CamSim::Geospatial::GetGeoidUndulation`) plus a CIGI tide offset, and waves
+come from `beaufort`/`wave_direction_deg` below until a CIGI Wave Control
+packet enables a host wave (IDs 0-3), which then wins. Owned by
+`UCamSimSubsystem` as an `FOceanSurface`; nullptr when `enabled` is off or the
+EGM96 grid (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS) is missing.
+
+```yaml
+ocean:
+  enabled: true
+  beaufort: 3.0
+  wave_direction_deg: 270.0
+  choppiness: 0.5
+  vessel_motion: true
+  vessel_motion_scale: 1.0
+  max_radius_km: 400.0
+  material: "/Game/Ocean/M_Ocean"
+```
+
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `ocean.enabled` | `CAMSIM_OCEAN_ENABLED` | `true` | Master switch. **Startup only** — the `FOceanSurface` is created once in `Initialize`; a hot reload cannot toggle it. |
+| `ocean.beaufort` | `CAMSIM_OCEAN_BEAUFORT` | `3.0` | Sea state, 0–12, fractional. Used while no CIGI Wave Control wave is enabled. Hot-reloadable. |
+| `ocean.wave_direction_deg` | `CAMSIM_OCEAN_WAVE_DIR` | `270.0` | Direction the waves come FROM, true north. Hot-reloadable. |
+| `ocean.choppiness` | `CAMSIM_OCEAN_CHOPPINESS` | `0.5` | 0 = sine waves, 1 = steepest waveform without looping. Hot-reloadable. |
+| `ocean.vessel_motion` | `CAMSIM_OCEAN_MOTION_ENABLED` | `true` | Boats pitch/roll/heave with the waves. |
+| `ocean.vessel_motion_scale` | `CAMSIM_OCEAN_MOTION_SCALE` | `1.0` | Amplitude multiplier on vessel motion. |
+| `ocean.max_radius_km` | `CAMSIM_OCEAN_MAX_RADIUS_KM` | `400.0` | Horizon cap for the ocean mesh. |
+| `ocean.material` | *(none — set via YAML only)* | `/Game/Ocean/M_Ocean` | Ocean material asset path. **Startup only.** |
+
+Removed: the old `phase19:` block (`ocean_enabled`, `beaufort_state`,
+`wave_amplitude_scale`, `wave_frequency_scale`, `wave_choppiness`,
+`ocean_material_path`, `vessel_wakes_enabled`, `niagara_vessel_wake`,
+`wake_fade_time`, `vessel_motion_enabled`, `vessel_motion_scale`,
+`ocean_reflections_enabled`, `ssr_intensity`, `reflection_capture_radius`) and
+its flat-plane `FGerstnerOceanSurface` renderer are gone, replaced by the
+`ocean:` block above and the analytic `FOceanSurface`/`FOceanWaves`. The
+Niagara vessel-wake-trail and SSR-reflection sub-features (19B, 19D) have no
+successor yet.

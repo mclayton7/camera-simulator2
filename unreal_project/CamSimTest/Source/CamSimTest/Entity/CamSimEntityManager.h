@@ -8,7 +8,6 @@
 #include "Config/CamSimConfig.h"
 #include "Sim/CommandSink.h"
 #include "GroundTruth/AnnotationTypes.h"
-#include "Ocean/IOceanSurface.h"
 
 class UCamSimSubsystem;
 class ACamSimEntity;
@@ -67,9 +66,6 @@ public:
 		return Out;
 	}
 
-	/** Called from FOceanManager::Init() after ocean surface is created. */
-	void SetOceanSurface(IOceanSurface* Ocean);
-
 	/** A live entity actor by key, or nullptr. */
 	ACamSimEntity* FindEntity(const FEntityKey& Key) const;
 
@@ -120,8 +116,6 @@ private:
 	// Remove a stale (pending-kill) entry from EntityMap
 	void PurgeStaleEntities();
 	void ForgetEntity(const FEntityKey& Key);
-
-	IOceanSurface* OceanSurface = nullptr;
 
 	// Runtime update throttling to reduce transform churn under large-entity loads.
 	TMap<FEntityKey, double> LastPoseApplySeconds;

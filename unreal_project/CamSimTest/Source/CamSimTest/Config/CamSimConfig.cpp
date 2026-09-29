@@ -267,6 +267,9 @@ void FCamSimConfig::KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSi
 	// graph are sized once per session.
 	Reloaded.CaptureWidth           = Running.CaptureWidth;
 	Reloaded.CaptureHeight          = Running.CaptureHeight;
+	// Ocean surface (ROADMAP 2.6): created once in Initialize when enabled.
+	Reloaded.Ocean.bEnabled      = Running.Ocean.bEnabled;
+	Reloaded.Ocean.MaterialPath  = Running.Ocean.MaterialPath;
 }
 
 TArray<FString> FCamSimConfig::ValidateHotReload(const FCamSimConfig& Running, const FCamSimConfig& Reloaded)
@@ -959,23 +962,17 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlBool (PerfNode, "track_pipeline_latency",              Perf.bTrackPipelineLatency);
 		}
 
-		if (YamlHas(Root, "phase19"))
+		if (YamlHas(Root, "ocean"))
 		{
-			ryml::ConstNodeRef P19 = Root["phase19"];
-			YamlBool  (P19, "ocean_enabled",            Cfg.Phase19.bOceanEnabled);
-			YamlInt   (P19, "beaufort_state",            Cfg.Phase19.BeaufortState);
-			YamlFloat (P19, "wave_amplitude_scale",      Cfg.Phase19.WaveAmplitudeScale);
-			YamlFloat (P19, "wave_frequency_scale",      Cfg.Phase19.WaveFrequencyScale);
-			YamlFloat (P19, "wave_choppiness",           Cfg.Phase19.WaveChoppiness);
-			YamlString(P19, "ocean_material_path",       Cfg.Phase19.OceanMaterialPath);
-			YamlBool  (P19, "vessel_wakes_enabled",      Cfg.Phase19.bVesselWakesEnabled);
-			YamlString(P19, "niagara_vessel_wake",       Cfg.Phase19.NiagaraVesselWake);
-			YamlFloat (P19, "wake_fade_time",            Cfg.Phase19.WakeFadeTime);
-			YamlBool  (P19, "vessel_motion_enabled",     Cfg.Phase19.bVesselMotionEnabled);
-			YamlFloat (P19, "vessel_motion_scale",       Cfg.Phase19.VesselMotionScale);
-			YamlBool  (P19, "ocean_reflections_enabled", Cfg.Phase19.bOceanReflectionsEnabled);
-			YamlFloat (P19, "ssr_intensity",             Cfg.Phase19.SSRIntensity);
-			YamlFloat (P19, "reflection_capture_radius", Cfg.Phase19.ReflectionCaptureRadius);
+			ryml::ConstNodeRef O = Root["ocean"];
+			YamlBool  (O, "enabled",             Cfg.Ocean.bEnabled);
+			YamlFloat (O, "beaufort",            Cfg.Ocean.Beaufort);
+			YamlFloat (O, "wave_direction_deg",  Cfg.Ocean.WaveDirectionDeg);
+			YamlFloat (O, "choppiness",          Cfg.Ocean.Choppiness);
+			YamlBool  (O, "vessel_motion",       Cfg.Ocean.bVesselMotion);
+			YamlFloat (O, "vessel_motion_scale", Cfg.Ocean.VesselMotionScale);
+			YamlFloat (O, "max_radius_km",       Cfg.Ocean.MaxRadiusKm);
+			YamlString(O, "material",            Cfg.Ocean.MaterialPath);
 		}
 
 		// Cesium backend: ion server, terrain source, imagery overlay
@@ -1289,19 +1286,14 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Phase18.CraterImpactComponentID = GetEnvInt(TEXT("CAMSIM_CRATER_IMPACT_COMPONENT_ID"),Cfg.Phase18.CraterImpactComponentID);
 	Cfg.Phase18.CraterDefaultRadiusM  = GetEnvFloat(TEXT("CAMSIM_CRATER_DEFAULT_RADIUS_M"),   Cfg.Phase18.CraterDefaultRadiusM);
 
-	// Phase 19 — Ocean
-	Cfg.Phase19.bOceanEnabled           = GetEnvInt  (TEXT("CAMSIM_OCEAN_ENABLED"),            Cfg.Phase19.bOceanEnabled            ? 1 : 0) != 0;
-	Cfg.Phase19.BeaufortState           = GetEnvInt  (TEXT("CAMSIM_OCEAN_BEAUFORT"),            Cfg.Phase19.BeaufortState);
-	Cfg.Phase19.WaveAmplitudeScale      = GetEnvFloat(TEXT("CAMSIM_OCEAN_AMP_SCALE"),           Cfg.Phase19.WaveAmplitudeScale);
-	Cfg.Phase19.WaveFrequencyScale      = GetEnvFloat(TEXT("CAMSIM_OCEAN_FREQ_SCALE"),          Cfg.Phase19.WaveFrequencyScale);
-	Cfg.Phase19.WaveChoppiness          = GetEnvFloat(TEXT("CAMSIM_OCEAN_CHOPPINESS"),          Cfg.Phase19.WaveChoppiness);
-	Cfg.Phase19.bVesselWakesEnabled     = GetEnvInt  (TEXT("CAMSIM_OCEAN_WAKES_ENABLED"),       Cfg.Phase19.bVesselWakesEnabled      ? 1 : 0) != 0;
-	Cfg.Phase19.WakeFadeTime            = GetEnvFloat(TEXT("CAMSIM_OCEAN_WAKE_FADE"),           Cfg.Phase19.WakeFadeTime);
-	Cfg.Phase19.bVesselMotionEnabled    = GetEnvInt  (TEXT("CAMSIM_OCEAN_MOTION_ENABLED"),      Cfg.Phase19.bVesselMotionEnabled     ? 1 : 0) != 0;
-	Cfg.Phase19.VesselMotionScale       = GetEnvFloat(TEXT("CAMSIM_OCEAN_MOTION_SCALE"),        Cfg.Phase19.VesselMotionScale);
-	Cfg.Phase19.bOceanReflectionsEnabled = GetEnvInt (TEXT("CAMSIM_OCEAN_REFLECTIONS_ENABLED"), Cfg.Phase19.bOceanReflectionsEnabled ? 1 : 0) != 0;
-	Cfg.Phase19.SSRIntensity            = GetEnvFloat(TEXT("CAMSIM_OCEAN_SSR_INTENSITY"),       Cfg.Phase19.SSRIntensity);
-	Cfg.Phase19.ReflectionCaptureRadius = GetEnvFloat(TEXT("CAMSIM_OCEAN_REFLECTION_RADIUS"),   Cfg.Phase19.ReflectionCaptureRadius);
+	// Ocean (ROADMAP 2.6)
+	Cfg.Ocean.bEnabled          = GetEnvBool (TEXT("CAMSIM_OCEAN_ENABLED"),        Cfg.Ocean.bEnabled);
+	Cfg.Ocean.Beaufort          = GetEnvFloat(TEXT("CAMSIM_OCEAN_BEAUFORT"),       Cfg.Ocean.Beaufort);
+	Cfg.Ocean.WaveDirectionDeg  = GetEnvFloat(TEXT("CAMSIM_OCEAN_WAVE_DIR"),       Cfg.Ocean.WaveDirectionDeg);
+	Cfg.Ocean.Choppiness        = GetEnvFloat(TEXT("CAMSIM_OCEAN_CHOPPINESS"),     Cfg.Ocean.Choppiness);
+	Cfg.Ocean.bVesselMotion     = GetEnvBool (TEXT("CAMSIM_OCEAN_MOTION_ENABLED"), Cfg.Ocean.bVesselMotion);
+	Cfg.Ocean.VesselMotionScale = GetEnvFloat(TEXT("CAMSIM_OCEAN_MOTION_SCALE"),   Cfg.Ocean.VesselMotionScale);
+	Cfg.Ocean.MaxRadiusKm       = GetEnvFloat(TEXT("CAMSIM_OCEAN_MAX_RADIUS_KM"),  Cfg.Ocean.MaxRadiusKm);
 
 	// Phase 24: rendering quality env var overrides
 	{

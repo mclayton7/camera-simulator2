@@ -24,6 +24,8 @@
 #include "Health/CamSimSnapshotService.h"
 #include "Subsystem/EncoderWatchdog.h"
 #include "Time/SimClock.h"
+#include "Ocean/OceanSurface.h"         // FOceanSurface (ROADMAP 2.6)
+#include "Geospatial/Geoid.h"           // CamSim::Geospatial::GetGeoidUndulation
 #include "SensorGraph.h"                // IsSensorGraphSupported (ROADMAP 3B)
 #include "CamSimTest.h"
 #include "Engine/World.h"
@@ -68,6 +70,10 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCamSimHealthServer>     HealthServer;
 	TUniquePtr<FCamSimSnapshotService>  SnapshotService;  // ROADMAP 3A, null unless enabled
 	TUniquePtr<FCamSimSnapshotService>  SensorSnapshotService;  // ROADMAP 3B, null unless enabled
+
+	// Ocean surface (ROADMAP 2.6); null when ocean.enabled is off or the EGM96 grid is missing.
+	TUniquePtr<FOceanSurface> Ocean;
+	FDelegateHandle OceanPreTickHandle;
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -228,6 +234,24 @@ FPipelineLatencyTracker* UCamSimSubsystem::GetLatencyTracker() const
 	return ImplGet(Impl, &FSubsystemImpl::LatencyTracker);
 }
 
+FOceanSurface* UCamSimSubsystem::GetOceanSurface()
+{
+	return ImplGet(Impl, &FSubsystemImpl::Ocean);
+}
+
+const FOceanSurface* UCamSimSubsystem::GetOceanSurface() const
+{
+	return ImplGet(Impl, &FSubsystemImpl::Ocean);
+}
+
+void UCamSimSubsystem::ApplyOceanConfig(const FCamSimConfig::FOceanConfig& Cfg)
+{
+	if (FOceanSurface* O = GetOceanSurface())
+	{
+		O->SetBeaufort(Cfg.Beaufort, Cfg.WaveDirectionDeg, Cfg.Choppiness);
+	}
+}
+
 void UCamSimSubsystem::RegisterCamera(ACamSimCamera* Camera)
 {
 	Camera_ = Camera;
@@ -274,6 +298,9 @@ void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)
 	// the level.
 	RefreshCachedTilesets();
 	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Config);
+
+	// Ocean (ROADMAP 2.6): re-apply the hot-reloadable wave fields.
+	ApplyOceanConfig(Config.Ocean);
 }
 
 void UCamSimSubsystem::RefreshCachedTilesets()
@@ -671,6 +698,30 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	Impl->ParticleManager->Initialize(Config);
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: particle manager created"));
 
+	// Ocean surface (ROADMAP 2.6): sea level (EGM96 + tide) and the active wave set.
+	if (Config.Ocean.bEnabled)
+	{
+		if (CamSim::Geospatial::GetGeoidUndulation(0.0, 0.0).IsSet())
+		{
+			Impl->Ocean = MakeUnique<FOceanSurface>();
+			ApplyOceanConfig(Config.Ocean);
+			// Sim time before any actor ticks, so boat placement and the material share one t.
+			Impl->OceanPreTickHandle = FWorldDelegates::OnWorldPreActorTick.AddLambda(
+				[this](UWorld* World, ELevelTick, float)
+				{
+					if (World == GetWorld() && Impl && Impl->Ocean)
+					{
+						Impl->Ocean->SetTime(static_cast<double>(FSimClock::Get().NowMicros()) * 1e-6);
+					}
+				});
+			UE_LOG(LogCamSim, Log, TEXT("Ocean: on (Beaufort %.1f from %.0f deg)"), Config.Ocean.Beaufort, Config.Ocean.WaveDirectionDeg);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("Ocean: disabled — EGM96 grid missing (Content/NonUFS/Geoid/WW15MGH.DAC; run git lfs pull)"));
+		}
+	}
+
 	// Register for graceful shutdown on SIGTERM (Phase 2)
 	// Phase 13C: Use weak lambda to guard against dangling this pointer
 	FCoreDelegates::GetApplicationWillTerminateDelegate().AddLambda([this]()
@@ -704,6 +755,14 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void UCamSimSubsystem::Deinitialize()
 {
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: shutting down"));
+
+	// Ocean surface (ROADMAP 2.6): unregister the pre-actor-tick delegate before
+	// the Pimpl (and the FOceanSurface it owns) goes away.
+	if (Impl)
+	{
+		FWorldDelegates::OnWorldPreActorTick.Remove(Impl->OceanPreTickHandle);
+		Impl->Ocean.Reset();
+	}
 
 	// Phase 13B: Pimpl destructor handles reverse-order teardown
 	Impl.Reset();

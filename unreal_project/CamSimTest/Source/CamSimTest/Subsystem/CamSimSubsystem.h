@@ -23,6 +23,7 @@ class FCamSimParticleManager;
 class FDisReceiver;
 class FDisEntityAdapter;
 class FCotSender;
+class FOceanSurface;
 class ACamSimCamera;
 class ACesium3DTileset;
 class UCesiumIonServer;
@@ -76,6 +77,12 @@ public:
 	FDisEntityAdapter*     GetDisAdapter()      const;
 	FCotSender*            GetCotSender()       const;
 	FPipelineLatencyTracker* GetLatencyTracker() const;
+
+	/** The sea (ROADMAP 2.6); nullptr when ocean.enabled is off or the EGM96 grid is missing. */
+	FOceanSurface*       GetOceanSurface();
+	const FOceanSurface* GetOceanSurface() const;
+	/** Apply the hot-reloadable ocean fields (Beaufort, direction, choppiness). */
+	void ApplyOceanConfig(const FCamSimConfig::FOceanConfig& Cfg);
 
 	/** Store the transient UCesiumIonServer created by ApplyCesiumBackendConfig.
 	 *  Passing nullptr clears the stored reference (no-op if already null).

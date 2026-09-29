@@ -39,9 +39,10 @@ void FCamSimParticleManager::Initialize(const FCamSimConfig& Config)
     SmokeAsset     = LoadNiagara(Config.Phase18.NiagaraSmoke);
     FireAsset      = LoadNiagara(Config.Phase18.NiagaraFire);
     ContrailAsset  = LoadNiagara(Config.Phase18.NiagaraContrail);
-    WakeAsset           = LoadNiagara(Config.Phase19.NiagaraVesselWake);
-    WakeFadeTime        = Config.Phase19.WakeFadeTime;
-    bVesselWakesEnabled = Config.Phase19.bVesselWakesEnabled;
+    // Vessel wake trails (Phase 19B) had no field in the new ocean: config (Task 3
+    // brief) — left at their struct defaults (disabled), same effective behaviour
+    // as before (bVesselWakesEnabled defaulted to false and no shipped config
+    // turned it on).
 
     CraterMaterial = LoadObject<UMaterialInterface>(nullptr, *Config.Phase18.CraterDecalMaterial);
     if (!CraterMaterial)

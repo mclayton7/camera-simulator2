@@ -4,7 +4,6 @@
 #include "Entity/EntityTypeTable.h"
 #include "Entity/EntityMeshLoader.h"
 #include "Entity/SurfaceProbe.h"
-#include "Ocean/IOceanSurface.h"
 #include "CamSimTest.h"
 
 #include "Components/StaticMeshComponent.h"
@@ -414,7 +413,7 @@ void ACamSimEntity::GetFootprintHalfSizesM(double& OutHalfLengthM, double& OutHa
 	}
 	if ((OutHalfLengthM <= 0.0 || OutHalfBeamM <= 0.0) && StaticMeshComp && StaticMeshComp->GetStaticMesh())
 	{
-		// Mesh bounds in model space, times the entry's scale (same fallback as ApplyVesselMotion).
+		// Mesh bounds in model space, times the entry's scale.
 		const FVector Ext = StaticMeshComp->GetStaticMesh()->GetBounds().BoxExtent * StaticMeshComp->GetRelativeScale3D();
 		if (OutHalfLengthM <= 0.0) OutHalfLengthM = Ext.X / 100.0;
 		if (OutHalfBeamM   <= 0.0) OutHalfBeamM   = Ext.Y / 100.0;
@@ -666,61 +665,6 @@ void ACamSimEntity::Tick(float DeltaTime)
 		if (StrobeAccum >= 1.0f) StrobeAccum -= 1.0f;
 		StrobeLight->SetVisibility(StrobeAccum < 0.5f);
 	}
-}
-
-// -------------------------------------------------------------------------
-// ApplyVesselMotion — pitch/roll/heave from ocean surface
-// -------------------------------------------------------------------------
-
-void ACamSimEntity::ApplyVesselMotion(IOceanSurface* Ocean,
-                                       float HalfLengthCm, float HalfBeamCm,
-                                       float MotionScale)
-{
-	if (!Ocean) return;
-
-	// Resolve half-dimensions: fall back to mesh bounding box if not configured
-	if (HalfLengthCm <= 0.0f || HalfBeamCm <= 0.0f)
-	{
-		UStaticMeshComponent* MC = FindComponentByClass<UStaticMeshComponent>();
-		if (!MC || !MC->GetStaticMesh()) return; // mesh not loaded yet — skip this tick
-
-		const FBoxSphereBounds Bounds = MC->GetStaticMesh()->GetBounds();
-		if (HalfLengthCm <= 0.0f) HalfLengthCm = Bounds.BoxExtent.X;
-		if (HalfBeamCm   <= 0.0f) HalfBeamCm   = Bounds.BoxExtent.Y;
-	}
-
-	if (HalfLengthCm <= 0.0f || HalfBeamCm <= 0.0f) return;
-
-	const FVector  Loc     = GetActorLocation();     // UE units, cm
-	const FRotator Rot     = GetActorRotation();
-	const FVector  Forward = Rot.Vector();
-	const FVector  Right   = FRotationMatrix(Rot).GetScaledAxis(EAxis::Y);
-
-	const FVector BowPos   = Loc + Forward * HalfLengthCm;
-	const FVector SternPos = Loc - Forward * HalfLengthCm;
-	const FVector PortPos  = Loc - Right   * HalfBeamCm;
-	const FVector StbdPos  = Loc + Right   * HalfBeamCm;
-
-	// Sample ocean height at each point (UE units, cm)
-	const float hBow   = Ocean->GetSurfaceHeightAt(FVector2D(BowPos.X,   BowPos.Y));
-	const float hStern = Ocean->GetSurfaceHeightAt(FVector2D(SternPos.X, SternPos.Y));
-	const float hPort  = Ocean->GetSurfaceHeightAt(FVector2D(PortPos.X,  PortPos.Y));
-	const float hStbd  = Ocean->GetSurfaceHeightAt(FVector2D(StbdPos.X,  StbdPos.Y));
-
-	// All units consistent (cm/cm) — atan2 result in radians
-	const float PitchRad = FMath::Atan2(hBow - hStern, HalfLengthCm * 2.0f) * MotionScale;
-	const float RollRad  = FMath::Atan2(hStbd - hPort, HalfBeamCm   * 2.0f) * MotionScale;
-	const float HeaveZ   = (hBow + hStern + hPort + hStbd) * 0.25f * MotionScale;
-
-	// Pitch/roll the hull about its own axes, on top of the commanded pose.
-	// (Adding them to the world FRotator would tilt about UE world axes, which
-	// are not the local horizon away from the georeference origin.)
-	const FQuat WaveTilt = FRotator(FMath::RadiansToDegrees(PitchRad), 0.0, FMath::RadiansToDegrees(RollRad)).Quaternion();
-	SetActorRotation(GetActorQuat() * WaveTilt);
-
-	FVector NewLoc = Loc;
-	NewLoc.Z += HeaveZ;
-	SetActorLocation(NewLoc);
 }
 
 // -------------------------------------------------------------------------

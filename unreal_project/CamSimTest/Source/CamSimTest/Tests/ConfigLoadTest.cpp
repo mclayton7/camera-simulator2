@@ -29,9 +29,9 @@ bool FConfigYamlSectionsTest::RunTest(const FString& Parameters)
 		"capture_width: 1920\n"
 		"phase18:\n"
 		"  second_fog: %s\n"
-		"phase19:\n"
-		"  ocean_enabled: %s\n"
-		"  beaufort_state: 7\n"
+		"ocean:\n"
+		"  enabled: %s\n"
+		"  beaufort: 7.5\n"
 		"cesium:\n"
 		"  ion_api_url: \"https://example.test/api\"\n"
 		"dis:\n"
@@ -61,7 +61,7 @@ bool FConfigYamlSectionsTest::RunTest(const FString& Parameters)
 		"  health_http_enabled: %s\n"
 		"  health_http_port: 18080\n"),
 		YamlBoolText(!D.Phase18.bSecondFog),
-		YamlBoolText(!D.Phase19.bOceanEnabled),
+		YamlBoolText(!D.Ocean.bEnabled),
 		YamlBoolText(!D.DIS.bEnabled),
 		YamlBoolText(!D.MLTraining.bEnabled),
 		YamlBoolText(!D.OpticalRealism.bEnabled),
@@ -79,8 +79,8 @@ bool FConfigYamlSectionsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("multicast_addr"), C.MulticastAddr, FString(TEXT("239.9.9.9")));
 	TestEqual(TEXT("capture_width"), C.CaptureWidth, 1920);
 	TestEqual(TEXT("phase18.second_fog"), C.Phase18.bSecondFog, !D.Phase18.bSecondFog);
-	TestEqual(TEXT("phase19.ocean_enabled"), C.Phase19.bOceanEnabled, !D.Phase19.bOceanEnabled);
-	TestEqual(TEXT("phase19.beaufort_state"), C.Phase19.BeaufortState, 7);
+	TestEqual(TEXT("ocean.enabled"), C.Ocean.bEnabled, !D.Ocean.bEnabled);
+	TestEqual(TEXT("ocean.beaufort"), C.Ocean.Beaufort, 7.5f);
 	TestEqual(TEXT("cesium.ion_api_url"), C.CesiumBackend.IonApiUrl, FString(TEXT("https://example.test/api")));
 	TestEqual(TEXT("dis.enabled"), C.DIS.bEnabled, !D.DIS.bEnabled);
 	TestEqual(TEXT("dis.bind_addr"), C.DIS.BindAddr, FString(TEXT("10.1.2.3")));
