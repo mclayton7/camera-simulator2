@@ -18,6 +18,7 @@ namespace CamSimSurface
 	constexpr double TraceBelowM         = 500.0;
 	constexpr double EaseTimeConstantSec = 0.2;    // hides tile refinement shifts
 	constexpr double SnapThresholdM      = 5.0;    // first hit, teleports
+	constexpr double ResetJumpM          = 100.0;  // horizontal jump that restarts placement
 
 	struct FClampState
 	{
@@ -26,6 +27,9 @@ namespace CamSimSurface
 		double PitchDeg    = 0.0;
 		double RollDeg     = 0.0;
 	};
+
+	/** True when Next is more than ResetJumpM horizontally from Last (a teleport). */
+	bool IsHorizontalJump(const CamSimFrames::FGeoPose& Last, const CamSimFrames::FGeoPose& Next);
 
 	struct FTraceSpan { double TopM = 0.0; double BottomM = 0.0; };
 	FTraceSpan GetTraceSpan(const FClampState& State);
@@ -40,7 +44,10 @@ namespace CamSimSurface
 	CamSimFrames::FGeoPose ClampGround(const CamSimFrames::FGeoPose& Sender, const FGroundHits& Hits,
 		double HalfLengthM, double HalfBeamM, double DtSec, FClampState& State);
 
-	/** Surface vessels: height from the water hit, else EGM96 sea level, else the sender; attitude from the sender. */
+	/**
+	 * Surface vessels: height from the water hit; on a miss the last water height once
+	 * there is one, else EGM96 sea level, else the sender. Attitude from the sender.
+	 */
 	CamSimFrames::FGeoPose ClampWater(const CamSimFrames::FGeoPose& Sender, TOptional<double> CentreHit,
 		TOptional<double> SeaLevelM, double DtSec, FClampState& State);
 }

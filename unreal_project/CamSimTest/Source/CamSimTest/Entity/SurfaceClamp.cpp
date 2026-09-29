@@ -11,15 +11,16 @@ namespace CamSimSurface
 			return (V.IsSet() && FMath::IsFinite(*V)) ? V : TOptional<double>();
 		}
 
-		double Ease(double Prev, double Target, double DtSec)
+		/**
+		 * Exponential ease toward Target. bSnap: a change of SnapThresholdM or more jumps
+		 * straight there (heights; teleports). DtSec <= 0 (a second commit in the same
+		 * frame) keeps Prev, so two commits per frame don't bypass the ease.
+		 */
+		double Ease(double Prev, double Target, double DtSec, bool bSnap)
 		{
-			if (FMath::Abs(Target - Prev) >= SnapThresholdM || DtSec <= 0.0) return Target;
+			if (bSnap && FMath::Abs(Target - Prev) >= SnapThresholdM) return Target;
+			if (DtSec <= 0.0) return Prev;
 			return Prev + (Target - Prev) * (1.0 - FMath::Exp(-DtSec / EaseTimeConstantSec));
-		}
-
-		double EaseAngle(double Prev, double Target, double DtSec)
-		{
-			return DtSec <= 0.0 ? Target : Prev + (Target - Prev) * (1.0 - FMath::Exp(-DtSec / EaseTimeConstantSec));
 		}
 
 		CamSimFrames::FGeoPose WithSurface(const CamSimFrames::FGeoPose& Sender, double Height, double PitchDeg, double RollDeg)
@@ -29,6 +30,12 @@ namespace CamSimSurface
 			Out.Neu = CamSimFrames::CigiToNeu(Sender.Neu.Rotator().Yaw, PitchDeg, RollDeg);
 			return Out;
 		}
+	}
+
+	bool IsHorizontalJump(const CamSimFrames::FGeoPose& Last, const CamSimFrames::FGeoPose& Next)
+	{
+		const FVector D = CamSimFrames::GeodeticDeltaToNeu(Last.Lat, Last.Lon, 0.0, Next.Lat, Next.Lon, 0.0);
+		return FMath::Square(D.X) + FMath::Square(D.Y) > FMath::Square(ResetJumpM);
 	}
 
 	FTraceSpan GetTraceSpan(const FClampState& State)
@@ -71,14 +78,14 @@ namespace CamSimSurface
 
 		const double Target = Sum / Count;
 		const bool bFirst = !State.bHasSurface;
-		State.Height = bFirst ? Target : Ease(State.Height, Target, DtSec);
+		State.Height = bFirst ? Target : Ease(State.Height, Target, DtSec, /*bSnap=*/true);
 
 		if (Count == 4 && HalfLengthM > 0.0 && HalfBeamM > 0.0)
 		{
 			const double Pitch = FMath::RadiansToDegrees(FMath::Atan((*Bow - *Stern) / (2.0 * HalfLengthM)));
 			const double Roll  = FMath::RadiansToDegrees(FMath::Atan((*Port - *Stbd) / (2.0 * HalfBeamM)));
-			State.PitchDeg = bFirst ? Pitch : EaseAngle(State.PitchDeg, Pitch, DtSec);
-			State.RollDeg  = bFirst ? Roll  : EaseAngle(State.RollDeg,  Roll,  DtSec);
+			State.PitchDeg = bFirst ? Pitch : Ease(State.PitchDeg, Pitch, DtSec, /*bSnap=*/false);
+			State.RollDeg  = bFirst ? Roll  : Ease(State.RollDeg,  Roll,  DtSec, /*bSnap=*/false);
 		}
 		State.bHasSurface = true;
 		return WithSurface(Sender, State.Height, State.PitchDeg, State.RollDeg);
@@ -88,13 +95,21 @@ namespace CamSimSurface
 		TOptional<double> SeaLevelM, double DtSec, FClampState& State)
 	{
 		const TOptional<double> Hit = Finite(CentreHit), Sea = Finite(SeaLevelM);
-		if (!Hit.IsSet() && !Sea.IsSet()) return Sender;
-
-		const double Target = Hit.IsSet() ? *Hit : *Sea;
-		State.Height = State.bHasSurface ? Ease(State.Height, Target, DtSec) : Target;
-		State.bHasSurface = true;
 		CamSimFrames::FGeoPose Out = Sender;
-		Out.Alt = State.Height;
+		if (Hit.IsSet())
+		{
+			State.Height = State.bHasSurface ? Ease(State.Height, *Hit, DtSec, /*bSnap=*/true) : *Hit;
+			State.bHasSurface = true;
+			Out.Alt = State.Height;
+		}
+		else if (State.bHasSurface)
+		{
+			Out.Alt = State.Height;   // hold the last water height (tile eviction)
+		}
+		else if (Sea.IsSet())
+		{
+			Out.Alt = *Sea;           // no water hit yet: EGM96 sea level
+		}
 		return Out;
 	}
 }

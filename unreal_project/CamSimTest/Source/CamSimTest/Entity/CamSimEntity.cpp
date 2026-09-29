@@ -360,9 +360,14 @@ void ACamSimEntity::ApplyCommand(const FEntityCommand& Command)
 		SetMotion(*Command.Motion);
 	}
 
+	const bool bNowAttached = Command.Attachment.IsSet();
+	if (Command.SurfaceMode != SurfaceMode || bNowAttached != bAttached)
+	{
+		ResetSurfacePlacement();
+	}
 	SurfaceMode = Command.SurfaceMode;
 
-	bAttached = Command.Attachment.IsSet();
+	bAttached = bNowAttached;
 	if (bAttached)
 	{
 		// The manager resolves the pose from the parent each tick.
@@ -416,14 +421,25 @@ void ACamSimEntity::GetFootprintHalfSizesM(double& OutHalfLengthM, double& OutHa
 	}
 }
 
+void ACamSimEntity::ResetSurfacePlacement()
+{
+	SurfaceState      = CamSimSurface::FClampState();
+	LastCommitTimeSec = -1.0;
+}
+
 void ACamSimEntity::CommitPose(const CamSimFrames::FGeoPose& SenderPose)
 {
 	CamSimFrames::FGeoPose Pose = SenderPose;
 	if (SurfaceMode != ESurfaceMode::None && SurfaceProbe && !bAttached)
 	{
+		if (LastCommitTimeSec >= 0.0 && CamSimSurface::IsHorizontalJump(LastCommitSender, SenderPose))
+		{
+			ResetSurfacePlacement();   // teleport: the old height/span says nothing about here
+		}
 		const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 		const double Dt  = LastCommitTimeSec < 0.0 ? 0.0 : FMath::Max(0.0, Now - LastCommitTimeSec);
 		LastCommitTimeSec = Now;
+		LastCommitSender  = SenderPose;
 		double HalfLength, HalfBeam;
 		GetFootprintHalfSizesM(HalfLength, HalfBeam);
 		Pose = CamSimSurface::PlaceOnSurface(SurfaceMode, SenderPose, HalfLength, HalfBeam, Dt, *SurfaceProbe, SurfaceState);

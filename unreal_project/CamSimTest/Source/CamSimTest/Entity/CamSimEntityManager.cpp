@@ -330,11 +330,8 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FEntityCommand& C)
 	Entity->SetEntityTypeTable(TypeTable);
 	if (!SurfaceProbe && Subsystem)
 	{
-		SurfaceProbe = MakeUnique<FCesiumSurfaceProbe>(World, Subsystem->GetGeospatialProvider());
-		if (!Subsystem->GetConfig().bCreatePhysicsMeshes)
-		{
-			UE_LOG(LogCamSim, Warning, TEXT("EntityManager: create_physics_meshes is off — surface traces can't hit the terrain; ground entities use the sender's height, surface entities EGM96 sea level"));
-		}
+		SurfaceProbe = MakeUnique<FCesiumSurfaceProbe>(World, Subsystem->GetGeospatialProvider(),
+			Subsystem->GetConfig().bCreatePhysicsMeshes);
 	}
 	Entity->SetSurfaceProbe(SurfaceProbe.Get());
 	Entity->SetEntityType(C.TypeId);

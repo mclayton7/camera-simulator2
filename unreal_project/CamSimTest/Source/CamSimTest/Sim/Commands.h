@@ -107,7 +107,7 @@ enum class ESurfaceMode : uint8
 {
 	None,    // pose as sent (aircraft, entities with true heights)
 	Ground,  // height, pitch and roll from the terrain under the footprint
-	Water,   // height from the rendered water surface (EGM96 sea level if none)
+	Water,   // height from the rendered water surface (EGM96 sea level before the first hit)
 };
 
 /** Create, update, hide or remove an entity. */

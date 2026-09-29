@@ -21,12 +21,15 @@ public:
 class FCesiumSurfaceProbe final : public ISurfaceProbe
 {
 public:
-	FCesiumSurfaceProbe(UWorld* InWorld, const FCamSimGeospatialProvider* InGeo);
+	/** bPhysicsMeshes: create_physics_meshes; when off, the first trace (a Ground/Water clamp) logs a warning. */
+	FCesiumSurfaceProbe(UWorld* InWorld, const FCamSimGeospatialProvider* InGeo, bool bPhysicsMeshes);
 	virtual TOptional<double> TraceHeight(double LatDeg, double LonDeg, double TopAltM, double BottomAltM) const override;
 
 private:
 	TWeakObjectPtr<UWorld>           World;
 	const FCamSimGeospatialProvider* Geo = nullptr;
+	bool                             bPhysicsMeshes = true;
+	mutable bool                     bWarnedNoPhysicsMeshes = false;
 };
 
 namespace CamSimSurface

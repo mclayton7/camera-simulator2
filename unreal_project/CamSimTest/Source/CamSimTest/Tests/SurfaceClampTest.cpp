@@ -81,6 +81,19 @@ bool FSurfaceClampEaseTest::RunTest(const FString& Parameters)
 	// 50 m step snaps.
 	P = ClampGround(Sender(), Hits(150, 150, 150, 150), 5.0, 1.0, Dt, S);
 	TestEqual(TEXT("big step snaps"), P.Alt, 150.0, 1e-9);
+
+	// Second commit in the same frame (Dt = 0): a 2 m / steeper change keeps the eased state…
+	FClampState D;
+	ClampGround(Sender(), Hits(101.0, 99.0, 100.5, 99.5), 5.0, 1.0, 0.0, D);
+	const FClampState Before = D;
+	P = ClampGround(Sender(), Hits(104.0, 100.0, 103.0, 101.0), 5.0, 1.0, 0.0, D);
+	TestEqual(TEXT("dt 0: height kept"), D.Height, Before.Height, 1e-12);
+	TestEqual(TEXT("dt 0: pitch kept"), D.PitchDeg, Before.PitchDeg, 1e-12);
+	TestEqual(TEXT("dt 0: roll kept"), D.RollDeg, Before.RollDeg, 1e-12);
+	TestEqual(TEXT("dt 0: pose at kept height"), P.Alt, Before.Height, 1e-12);
+	// …and a jump of >= SnapThresholdM still snaps.
+	P = ClampGround(Sender(), Hits(110.0, 110.0, 110.0, 110.0), 5.0, 1.0, 0.0, D);
+	TestEqual(TEXT("dt 0: 10 m jump snaps"), P.Alt, 110.0, 1e-9);
 	return true;
 }
 
@@ -103,12 +116,15 @@ bool FSurfaceClampEdgeTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("non-finite → miss"), P.Alt, 7.0, 1e-9);
 	TestFalse(TEXT("non-finite → no surface"), S2.bHasSurface);
 
-	// Water: hit, then no hit → EGM96 sea level, then neither → sender.
+	// Water: miss before any hit → EGM96 sea level (no surface yet); hit; miss after a hit → held.
 	FClampState W;
-	P = ClampWater(Sender(10.0, 0.0), -31.5, -32.0, 0.0, W);
+	P = ClampWater(Sender(10.0, 0.0), {}, -32.0, 0.0, W);
+	TestEqual(TEXT("water miss before any hit → sea level"), P.Alt, -32.0, 1e-9);
+	TestFalse(TEXT("sea level is not a surface hit"), W.bHasSurface);
+	P = ClampWater(Sender(10.0, 0.0), -31.5, -32.0, 0.1, W);
 	TestEqual(TEXT("water hit"), P.Alt, -31.5, 1e-9);
 	P = ClampWater(Sender(10.0, 0.0), {}, -32.0, 10.0, W);
-	TestEqual(TEXT("water miss → sea level"), P.Alt, -32.0, 1e-3);
+	TestEqual(TEXT("water miss after a hit → held"), P.Alt, -31.5, 1e-9);
 	TestEqual(TEXT("water keeps heading"), P.Neu.Rotator().Yaw, 10.0, 1e-6);
 	FClampState W2;
 	P = ClampWater(Sender(10.0, 3.0), {}, {}, 0.0, W2);
@@ -130,16 +146,21 @@ bool FSurfaceClampEdgeTest::RunTest(const FString& Parameters)
 
 namespace
 {
-	/** Flat ground at a fixed height inside the trace span; records the spans it saw. */
+	/** Flat surfaces at fixed heights: a downward trace returns the highest one inside its span; records the spans. */
 	class FFakeProbe final : public ISurfaceProbe
 	{
 	public:
-		double Ground = 100.0;
+		TArray<double> Surfaces = { 100.0 };
 		mutable TArray<TPair<double, double>> Spans;
 		virtual TOptional<double> TraceHeight(double, double, double Top, double Bottom) const override
 		{
 			Spans.Add({ Top, Bottom });
-			return (Ground <= Top && Ground >= Bottom) ? TOptional<double>(Ground) : TOptional<double>();
+			TOptional<double> Best;
+			for (double H : Surfaces)
+			{
+				if (H <= Top && H >= Bottom && (!Best.IsSet() || H > *Best)) Best = H;
+			}
+			return Best;
 		}
 	};
 }
@@ -155,12 +176,31 @@ bool FSurfacePlaceTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("four traces"), Probe.Spans.Num(), 4);
 	TestEqual(TEXT("first span top"), Probe.Spans[0].Key, FirstTraceTopM);
 
-	// An overpass 60 m up doesn't capture the truck: the next span tops out at +50 m.
+	// An overpass 60 m up doesn't capture the truck: the next span tops out at +50 m, so it hits the road below.
 	Probe.Spans.Reset();
-	Probe.Ground = 160.0;
+	Probe.Surfaces = { 100.0, 160.0 };
 	P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, S);
-	TestEqual(TEXT("overpass ignored → held"), P.Alt, 100.0, 1e-9);
+	TestEqual(TEXT("overpass ignored → stays on the road"), P.Alt, 100.0, 1e-9);
 	TestEqual(TEXT("later span top"), Probe.Spans[0].Key, 150.0, 1e-9);
+	TestEqual(TEXT("overpass: no retry"), Probe.Spans.Num(), 4);
+
+	// Buried: the ground rose to 200 m (above the narrow span) → every trace misses → one full-span retry.
+	Probe.Spans.Reset();
+	Probe.Surfaces = { 200.0 };
+	P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, S);
+	TestEqual(TEXT("buried: retried → snapped to 200 m"), P.Alt, 200.0, 1e-9);
+	if (TestEqual(TEXT("buried: 4 narrow + 4 full-span traces"), Probe.Spans.Num(), 8))
+	{
+		TestEqual(TEXT("narrow first"), Probe.Spans[0].Key, 150.0, 1e-9);
+		TestEqual(TEXT("retry top"), Probe.Spans[4].Key, FirstTraceTopM);
+		TestEqual(TEXT("retry bottom"), Probe.Spans[4].Value, FirstTraceBottomM);
+	}
+
+	// Nothing anywhere: retry misses too → held.
+	Probe.Spans.Reset();
+	Probe.Surfaces.Reset();
+	P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, S);
+	TestEqual(TEXT("all miss → held"), P.Alt, 200.0, 1e-9);
 
 	// None: untouched, no traces.
 	Probe.Spans.Reset();
@@ -171,10 +211,33 @@ bool FSurfacePlaceTest::RunTest(const FString& Parameters)
 
 	// Water: one trace.
 	Probe.Spans.Reset();
-	Probe.Ground = -30.0;
+	Probe.Surfaces = { -30.0 };
 	FClampState W;
 	P = PlaceOnSurface(ESurfaceMode::Water, Sender(30.0, 0.0), 5.0, 1.0, 0.0, Probe, W);
 	TestEqual(TEXT("water height"), P.Alt, -30.0, 1e-9);
 	TestEqual(TEXT("one water trace"), Probe.Spans.Num(), 1);
+
+	// Water above the narrow span: one full-span retry.
+	Probe.Spans.Reset();
+	Probe.Surfaces = { 40.0 };
+	P = PlaceOnSurface(ESurfaceMode::Water, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, W);
+	TestEqual(TEXT("water retry → 40 m"), P.Alt, 40.0, 1e-9);
+	TestEqual(TEXT("water: narrow + retry"), Probe.Spans.Num(), 2);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampResetTest, "CamSim.Entity.SurfaceClamp.JumpResets",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampResetTest::RunTest(const FString& Parameters)
+{
+	const CamSimFrames::FGeoPose A = Sender();
+	CamSimFrames::FGeoPose Near, Far;
+	double Alt;
+	CamSimFrames::OffsetGeodetic(A.Lat, A.Lon, 0.0, FVector(60.0, 60.0, 0.0), Near.Lat, Near.Lon, Alt);  // ~85 m
+	CamSimFrames::OffsetGeodetic(A.Lat, A.Lon, 0.0, FVector(80.0, 80.0, 0.0), Far.Lat, Far.Lon, Alt);    // ~113 m
+	TestFalse(TEXT("85 m: no reset"), IsHorizontalJump(A, Near));
+	TestTrue(TEXT("113 m: reset"), IsHorizontalJump(A, Far));
+	CamSimFrames::FGeoPose Up = A; Up.Alt += 1000.0;
+	TestFalse(TEXT("vertical only: no reset"), IsHorizontalJump(A, Up));
 	return true;
 }

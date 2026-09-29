@@ -222,4 +222,8 @@ private:
 	ESurfaceMode                SurfaceMode  = ESurfaceMode::None;
 	CamSimSurface::FClampState  SurfaceState;
 	double                      LastCommitTimeSec = -1.0;
+	CamSimFrames::FGeoPose      LastCommitSender;   // valid while LastCommitTimeSec >= 0
+
+	/** Forget the surface: the next commit traces the full span and snaps (mode change, attach/detach, teleport). */
+	void ResetSurfacePlacement();
 };
