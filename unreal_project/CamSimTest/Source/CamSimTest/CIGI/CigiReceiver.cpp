@@ -565,11 +565,16 @@ public:
 		if (!Receiver || !Pkt) return;
 
 		FCigiWaveState State;
-		State.WaveID   = static_cast<uint8>(Pkt->GetWaveID());
-		State.bEnabled = Pkt->GetWaveEn();
-		State.WaveHtM  = static_cast<float>(Pkt->GetWaveHt());
-		State.WaveLenM = static_cast<float>(Pkt->GetWaveLen());
-		State.PeriodS  = static_cast<float>(Pkt->GetPeriod());
+		State.EntityRgnId    = static_cast<uint16>(Pkt->GetEntityRgnID());
+		State.WaveID         = static_cast<uint8>(Pkt->GetWaveID());
+		State.bEnabled       = Pkt->GetWaveEn();
+		State.Scope          = static_cast<uint8>(Pkt->GetScope());
+		State.Breaker        = static_cast<uint8>(Pkt->GetBreaker());
+		State.WaveHtM        = static_cast<float>(Pkt->GetWaveHt());
+		State.WaveLenM       = static_cast<float>(Pkt->GetWaveLen());
+		State.PeriodS        = static_cast<float>(Pkt->GetPeriod());
+		State.DirectionDeg   = static_cast<float>(Pkt->GetDirection());
+		State.PhaseOffsetDeg = static_cast<float>(Pkt->GetPhaseOff());
 
 		Receiver->WaveStateQueue.Enqueue(State);
 	}

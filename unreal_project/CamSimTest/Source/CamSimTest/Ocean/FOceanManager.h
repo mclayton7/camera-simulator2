@@ -23,4 +23,5 @@ public:
 
 private:
 	UCamSimSubsystem* Subsystem = nullptr;
+	bool bWarnedScopedWave = false, bWarnedWaveId = false, bWarnedScopedMaritime = false;
 };

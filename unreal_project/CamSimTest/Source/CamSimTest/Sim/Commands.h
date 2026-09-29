@@ -232,11 +232,16 @@ struct FWeatherCommand
 
 struct FOceanWaveCommand
 {
-	uint8 WaveId   = 0;
-	bool  bEnabled = false;
-	float HeightM  = 0.0f;
-	float LengthM  = 0.0f;
-	float PeriodS  = 0.0f;
+	FWeatherCommand::EScope Scope = FWeatherCommand::EScope::Global;
+	uint16 RegionId       = 0;
+	uint8  WaveId         = 0;
+	bool   bEnabled       = false;
+	float  HeightM        = 0.0f;
+	float  LengthM        = 0.0f;
+	float  PeriodS        = 0.0f;
+	float  DirectionDeg   = 0.0f;  // propagates toward, true north
+	float  PhaseOffsetDeg = 0.0f;
+	uint8  Breaker        = 0;
 };
 
 struct FMaritimeSurfaceCommand

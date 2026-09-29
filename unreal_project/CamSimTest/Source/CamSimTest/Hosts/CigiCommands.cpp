@@ -192,11 +192,16 @@ namespace CamSim::Cigi
 	FOceanWaveCommand ToOceanWaveCommand(const FCigiWaveState& In)
 	{
 		FOceanWaveCommand Out;
-		Out.WaveId   = In.WaveID;
-		Out.bEnabled = In.bEnabled;
-		Out.HeightM  = In.WaveHtM;
-		Out.LengthM  = In.WaveLenM;
-		Out.PeriodS  = In.PeriodS;
+		Out.Scope          = ToScope(In.Scope);
+		Out.RegionId       = In.EntityRgnId;
+		Out.WaveId         = In.WaveID;
+		Out.bEnabled       = In.bEnabled;
+		Out.HeightM        = In.WaveHtM;
+		Out.LengthM        = In.WaveLenM;
+		Out.PeriodS        = In.PeriodS;
+		Out.DirectionDeg   = In.DirectionDeg;
+		Out.PhaseOffsetDeg = In.PhaseOffsetDeg;
+		Out.Breaker        = In.Breaker;
 		return Out;
 	}
 

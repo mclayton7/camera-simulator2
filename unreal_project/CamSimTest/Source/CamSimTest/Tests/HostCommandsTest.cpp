@@ -157,6 +157,27 @@ bool FHostCigiViewCommandsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHostCommandsOceanWaveTest, "CamSim.Hosts.Cigi.OceanWaveCarriesEveryField",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FHostCommandsOceanWaveTest::RunTest(const FString& Parameters)
+{
+	FCigiWaveState In;
+	In.WaveID = 2; In.bEnabled = true; In.WaveHtM = 1.5f; In.WaveLenM = 40.0f; In.PeriodS = 6.0f;
+	In.DirectionDeg = 45.0f; In.PhaseOffsetDeg = 90.0f; In.Scope = 0; In.EntityRgnId = 7; In.Breaker = 1;
+	const FOceanWaveCommand C = CamSim::Cigi::ToOceanWaveCommand(In);
+	TestEqual(TEXT("id"), C.WaveId, (uint8)2);
+	TestTrue (TEXT("enabled"), C.bEnabled);
+	TestEqual(TEXT("height"), C.HeightM, 1.5f);
+	TestEqual(TEXT("length"), C.LengthM, 40.0f);
+	TestEqual(TEXT("period"), C.PeriodS, 6.0f);
+	TestEqual(TEXT("direction"), C.DirectionDeg, 45.0f);
+	TestEqual(TEXT("phase"), C.PhaseOffsetDeg, 90.0f);
+	TestTrue (TEXT("global scope"), C.Scope == FWeatherCommand::EScope::Global);
+	TestEqual(TEXT("region"), C.RegionId, (uint16)7);
+	TestEqual(TEXT("breaker"), C.Breaker, (uint8)1);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHostDisCommandsTest,
 	"CamSim.Hosts.DisEntityCommands",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

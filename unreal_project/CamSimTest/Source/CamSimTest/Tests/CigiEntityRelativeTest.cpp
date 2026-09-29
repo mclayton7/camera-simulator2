@@ -22,6 +22,7 @@ THIRD_PARTY_INCLUDES_START
 #include "cigicl/CigiCelestialCtrl.h"
 #include "cigicl/CigiAtmosCtrl.h"
 #include "cigicl/CigiWeatherCtrlV3.h"
+#include "cigicl/CigiWaveCtrlV3.h"
 THIRD_PARTY_INCLUDES_END
 
 // -------------------------------------------------------------------------
@@ -324,6 +325,93 @@ bool FCigiEnvironmentPacketsTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("region id"), WxState.RegionId, static_cast<uint16>(3));
 		TestEqual(TEXT("visibility range"), WxState.VisibilityRng, 800.0f);
 		TestEqual(TEXT("coverage"), WxState.Coverage, 75.0f);
+	}
+	return true;
+}
+
+// -------------------------------------------------------------------------
+// Wave Control (opcode 14) round-trips through CCL's standard host-session
+// pack/unpack path (registered event processor, unlike the raw-parsed
+// Celestial/Atmosphere/Weather packets above).
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCigiWaveCtrlRoundTripTest,
+	"CamSim.CigiEntityRelative.WaveCtrlRoundTrip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCigiWaveCtrlRoundTripTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Config;
+	Config.CigiBindAddr   = TEXT("127.0.0.1");
+	Config.CigiPort       = 48873;
+	Config.CameraEntityId = 0;
+
+	FCigiReceiver Receiver(Config);
+	if (!TestTrue(TEXT("Receiver started"), Receiver.Start()))
+	{
+		return false;
+	}
+
+	CigiHostSession Session(1, 4096, 2, 4096);
+	Session.SetCigiVersion(3, 3);
+	CigiOutgoingMsg& Out = Session.GetOutgoingMsgMgr();
+
+	CigiIGCtrlV3_3 IgCtrl;
+	IgCtrl.SetFrameCntr(1);
+
+	CigiWaveCtrlV3 Wave;
+	Wave.SetEntityRgnID(7);
+	Wave.SetWaveID(3);
+	Wave.SetWaveEn(true);
+	Wave.SetScope(CigiBaseWaveCtrl::Global);
+	Wave.SetBreaker(CigiBaseWaveCtrl::Spilling);
+	Wave.SetWaveHt(1.2f);
+	Wave.SetWaveLen(30.0f);
+	Wave.SetPeriod(5.0f);
+	Wave.SetDirection(135.0f);
+	Wave.SetPhaseOff(30.0f);
+
+	Out.BeginMsg();
+	Out << IgCtrl;
+	Out << Wave;
+	Cigi_uint8* Buf = nullptr;
+	int Len = 0;
+	const bool bPackaged = (Out.PackageMsg(&Buf, Len) == CIGI_SUCCESS) && Buf && Len > 0;
+	TestTrue(TEXT("Host message packaged"), bPackaged);
+
+	ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	FSocket* Tx = FUdpSocketBuilder(TEXT("CigiWaveCtrlTestHost")).Build();
+	TSharedRef<FInternetAddr> Dest = SS->CreateInternetAddr();
+	bool bValidIp = false;
+	Dest->SetIp(TEXT("127.0.0.1"), bValidIp);
+	Dest->SetPort(Config.CigiPort);
+	int32 Sent = 0;
+	if (bPackaged && Tx)
+	{
+		Tx->SendTo(Buf, Len, Sent, *Dest);
+		Out.FreeMsg();
+	}
+
+	FCigiWaveState State;
+	bool bGot = false;
+	const double Deadline = FPlatformTime::Seconds() + 2.0;
+	while (FPlatformTime::Seconds() < Deadline && !bGot)
+	{
+		bGot = Receiver.DequeueWaveState(State);
+		FPlatformProcess::Sleep(0.005f);
+	}
+	Receiver.Stop();
+	if (Tx) SS->DestroySocket(Tx);
+
+	if (TestTrue(TEXT("Wave Control received"), bGot))
+	{
+		TestEqual(TEXT("entity/region id"), State.EntityRgnId, static_cast<uint16>(7));
+		TestEqual(TEXT("wave id"), State.WaveID, static_cast<uint8>(3));
+		TestTrue (TEXT("enabled"), State.bEnabled);
+		TestEqual(TEXT("scope"), State.Scope, static_cast<uint8>(0));
+		TestEqual(TEXT("breaker"), State.Breaker, static_cast<uint8>(1));
+		TestEqual(TEXT("direction"), State.DirectionDeg, 135.0f);
+		TestEqual(TEXT("phase offset"), State.PhaseOffsetDeg, 30.0f);
 	}
 	return true;
 }

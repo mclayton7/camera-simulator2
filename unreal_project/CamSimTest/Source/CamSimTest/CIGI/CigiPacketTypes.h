@@ -382,12 +382,17 @@ struct FCigiMaritimeSurfaceState
 	float  Clarity        = 1.0f;     // [0,1]
 };
 
-/** CIGI Wave Control (opcode 14) — ocean wave parameters from CIGI host. */
+/** CIGI Wave Control (opcode 14) — ocean wave parameters from the host. */
 struct FCigiWaveState
 {
-	uint8 WaveID   = 0;
-	bool  bEnabled = false;
-	float WaveHtM  = 0.0f;  // wave height, metres  (CigiBaseWaveCtrl::GetWaveHt())
-	float WaveLenM = 0.0f;  // wave length, metres  (CigiBaseWaveCtrl::GetWaveLen())
-	float PeriodS  = 0.0f;  // wave period, seconds (CigiBaseWaveCtrl::GetPeriod()) — informational
+	uint16 EntityRgnId    = 0;
+	uint8  WaveID         = 0;
+	bool   bEnabled       = false;
+	uint8  Scope          = 0;     // 0 Global, 1 Regional, 2 Entity
+	uint8  Breaker        = 0;     // 0 plunging, 1 spilling, 2 surging (ignored)
+	float  WaveHtM        = 0.0f;  // crest-to-trough, metres
+	float  WaveLenM       = 0.0f;  // metres
+	float  PeriodS        = 0.0f;  // seconds
+	float  DirectionDeg   = 0.0f;  // direction the wave propagates, true north (CIGI 3.3)
+	float  PhaseOffsetDeg = 0.0f;
 };
