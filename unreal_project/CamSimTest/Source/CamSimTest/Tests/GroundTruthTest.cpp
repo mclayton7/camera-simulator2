@@ -248,7 +248,8 @@ bool FGroundTruthPerFrameSnapshotTest::RunTest(const FString& Parameters)
 		FCamSimTelemetry Tel;
 		// Two frames in flight, delivered out of order: each writes its own entities.
 		const TArray<FEntityAnnotationData> Frame1 = { Make(70000, TEXT("truck"), TEXT("1.1.1")) };
-		const TArray<FEntityAnnotationData> Frame2 = { Make(70001, TEXT("boat"), TEXT("1.1.2")) };
+		TArray<FEntityAnnotationData> Frame2 = { Make(70001, TEXT("boat"), TEXT("1.1.2")) };
+		Frame2[0].bHasGeo = true; Frame2[0].Lat = 37.815; Frame2[0].Lon = -122.44; Frame2[0].AltM = -32.125;
 		Collector.WriteAnnotationFrame(Frame2, Tel, 2);
 		Collector.WriteAnnotationFrame(Frame1, Tel, 1);
 		Collector.Close();
@@ -263,5 +264,7 @@ bool FGroundTruthPerFrameSnapshotTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("frame 2 has the boat"), Lines[0].Contains(TEXT("\"frame_id\":2")) && Lines[0].Contains(TEXT("\"entity_id\":70001")) && Lines[0].Contains(TEXT("\"name\":\"boat\"")));
 	TestTrue(TEXT("frame 1 has the truck"), Lines[1].Contains(TEXT("\"frame_id\":1")) && Lines[1].Contains(TEXT("\"entity_id\":70000")) && Lines[1].Contains(TEXT("\"name\":\"truck\"")));
 	TestTrue(TEXT("source fields"), Lines[1].Contains(TEXT("\"source\":\"dis\",\"source_id\":\"1.1.1\"")));
+	TestTrue(TEXT("geo pose written when known"), Lines[0].Contains(TEXT("\"truncated\":0,\"geo\":{\"lat\":37.81500000,\"lon\":-122.44000000,\"alt_m\":-32.125}}")));
+	TestFalse(TEXT("no geo when unknown"), Lines[1].Contains(TEXT("\"geo\"")));
 	return true;
 }

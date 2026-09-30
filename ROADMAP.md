@@ -236,8 +236,9 @@ a frozen clock freezes drift). Test: `Phase23.ScenarioEngine.WaypointPauseUsesSi
 
 Still open for 2.1:
 - Lockstep needs a driver (the 2.4 control API) and must also gate the engine tick; other
-  per-tick integrations (dead reckoning, gimbal slew, ocean waves) still use UE's
-  `DeltaTime` rather than sim time.
+  per-tick integrations (dead reckoning, gimbal slew) still use UE's `DeltaTime` rather than
+  sim time. (Ocean waves now run on sim time, 2.6; only the ocean's visual ripple normal
+  still uses engine time.)
 - DIS PDU timestamps are parsed but unused (2.3).
 - Night renders as daylight: the scene capture's auto exposure brightens a sun-below-horizon
   scene. Needs a sensor exposure model (Milestone 3).
@@ -270,8 +271,9 @@ NED ↔ ECEF rotation, ECEF vectors → NED, and DIS Euler angles ↔ CIGI headi
   formation offsets, randomizer jitter) now goes through `OffsetGeodetic`; `GeoConstants.h`
   (111,320 m/°) is gone. The DIS adapter's private ECEF conversion moved into the module.
 - Vessel wave motion tilted the hull about UE world axes (wrong away from the georeference
-  origin); it now tilts about the hull's own axes. The ocean surface itself is still a flat
-  UE-world plane (parked).
+  origin); it now tilts about the hull's own axes. The ocean surface was then still a flat
+  UE-world plane; ~~parked~~ resolved by 2.6 (a globe-conforming sea at EGM96 sea level, and
+  the hull tilt now comes from the wave surface itself).
 - Tests: `CigiFrames.DisEcef`, `CigiFrames.BodyRateSigns`, `Phase21.AdapterConvertsEcefFrames`.
 - Not verified against a live DIS federate (none available here).
 
@@ -391,14 +393,186 @@ Findings from the live run:
 Carry-overs:
 
 - Tight oriented boxes and occlusion in the ground truth (sub-project 2).
-- Ocean surface and wakes: needs editor assets `M_Ocean` and `NS_VesselWake` (human task).
+- ~~Ocean surface~~ (done in 2.6, with a scripted `M_Ocean`) and wakes (still open: no
+  `NS_VesselWake`).
 - DR acceleration and PDU timestamps (extrapolation runs from arrival time).
 - DIS articulation parameters (turrets, guns).
 - Inland water where Cesium terrain has no flat surface (the EGM96 fallback covers only the
-  sea); boats over bathymetry sit on the seabed surface (above).
+  sea). ~~Boats over bathymetry sit on the seabed surface~~: fixed in 2.6 (the sea wins over
+  the seabed).
 - The model shader warm-up runs once per session (the first 30 s): a model added later by a
   config hot reload still hitches on its first appearance, and hot reload loads its glTF
   synchronously on the game thread.
+
+### 2.6 Ocean surface for boats (done 2026-09-30)
+
+Sub-project "ocean for boats": a sea-level water surface that follows the globe, sea state
+(Beaufort or CIGI Wave Control), boats that pitch, roll and heave on it, and HAT/HOT that sees
+the water. It fixes the main 2.5 finding (boats sat on the bathymetric seabed ~23 m below sea
+level). Spec: `docs/superpowers/specs/2026-09-29-ocean-surface-design.md`; plan:
+`docs/superpowers/plans/2026-09-29-ocean-surface.md`; guides: [`docs/dis.md`](docs/dis.md)
+(placement, HOT), [`docs/configuration.md`](docs/configuration.md) (`ocean:`).
+
+**Rule 5 exception.** Rule 5 ("no new feature phases until Milestones 0–4 land") is waived for
+this, as it was for 2.5: the ocean was the main 2.5 carry-over, and the boats were wrong
+without it. The old Phase 19 ocean (a flat 200 km UE plane at the georeference height, with no
+material) is removed rather than extended.
+
+What was built:
+
+- `Ocean/OceanWaves.h/.cpp` (`FOceanWaves`, pure C++): up to 4 Gerstner waves on the tangent
+  plane of a fixed anchor, driven by sim time (`FSimClock`, closing the 2.1 "ocean waves use
+  DeltaTime" item). `FromBeaufort` spreads the `FBeaufortTable` sea over 4 waves (λ × 0.6–1.4,
+  ±10/30°), scaled so 4·√(Σa²/2) = Hs, with Σ Qᵢkᵢaᵢ ≤ 1. `HeightAt` inverts the horizontal
+  displacement (fixed point, ≤ 8 steps).
+- `Ocean/OceanSurface.h/.cpp` (`FOceanSurface`): sea level = EGM96 geoid + CIGI tide offset,
+  the Beaufort set or the host's Wave Control set, clarity, water temperature. It is owned by
+  `UCamSimSubsystem` (`GetOceanSurface()`) and is the one source for placement, HAT/HOT and
+  the drawn sea.
+- `Ocean/OceanMeshBuilder.h/.cpp` + `OceanMesh.h/.cpp`: one 257 × 257 warped grid (centre cell
+  2 m, radius = horizon distance up to `max_radius_km`), vertices on ellipsoid + geoid, centred
+  on the camera's frame centre (nadir fallback), rebuilt on the game thread when the centre or
+  radius moves past a threshold (rate-limited to 4 Hz), on a teleport, or on a Cesium origin
+  shift; a `UProceduralMeshComponent`.
+- `M_Ocean` / `MPC_Ocean` (`Content/Ocean/`), generated headless by
+  `scripts/ocean/make_ocean_material.sh` from `make_ocean_material.py` and
+  `Shaders/Private/CamSimOcean.ush`: Single Layer Water; WPO is the same Gerstner sum as the
+  CPU (faded where the mesh cell is coarser than λ/8–λ/4), normals per pixel (faded by pixel
+  footprint) plus a small procedural ripple, and roughness raised by the slope variance the
+  pixels can't resolve. VS 276 / PS 716 instructions.
+- `Ocean/FOceanManager` (rewritten): anchor and mesh policy from the camera alone (so boats
+  get waves even when the sea isn't drawn), MPC writes (time-folded phases, UE-world N/E/U
+  axes), CIGI Wave Control / Maritime Surface Conditions (Global scope; Wave IDs 0–3; CIGI
+  Direction is "toward", stored as "from").
+- Boat placement (`Entity/SurfaceClamp`): base height = max(Cesium centre hit, sea level)
+  (a lake more than 2 m above sea level wins); on the sea, heave/pitch/roll from `HeightAt` at
+  bow/stern/port/starboard (`vessel_motion`, `vessel_motion_scale`). Ocean off: byte-identical
+  to 2.5. `ACamSimEntity::ApplyVesselMotion` is gone.
+- HAT/HOT (`CIGI/CigiQueryHandler`, `Ocean/OceanQueries`): terrain height = max(Cesium hit,
+  sea surface with waves); extended responses report the water normal when the water wins.
+- Config `ocean:` replaces `phase19:` (`enabled`, `beaufort`, `wave_direction_deg`,
+  `choppiness`, `vessel_motion`, `vessel_motion_scale`, `max_radius_km`, `material`).
+- Ground truth: COCO annotations gain `geo` `{lat, lon, alt_m}` (the entity origin at capture;
+  for a boat, its waterline), added in the acceptance task because no output carried the boat's
+  altitude.
+- Tests: `CamSim.Ocean.{Waves,Mesh,Config,Commands,Queries,Surface}.*`, `CamSim.Surface.*`
+  (ocean cases), `CamSim.Hosts.*` (Wave Control / Maritime), and
+  `CamSim.GPU.Ocean.MatchesCpu` (rendered depth of `M_Ocean` vs `FOceanWaves`, max 3.8 mm
+  against a 2 cm limit, on a wave travelling north-east).
+
+Deviations from the spec:
+
+- Material parameter names follow the plan: `Dir{i}` (not `WaveDir{i}`) and one `Water`
+  vector (absorption scale, scattering scale, ripple strength) instead of `Absorption` /
+  `Scattering`.
+- The component is not translated between rebuilds: a rebuild takes ~7–9 ms and the mesh is
+  geographic, so a rebuild is the exact answer (rate-limited to one per 0.25 s; teleports,
+  origin shifts and the first build bypass the limit). Cost: the fine region lags the frame
+  centre by up to 0.25 s.
+- A Cesium origin shift forces a rebuild (not in the spec; the sea would otherwise be up to
+  20 km off after a shift).
+- Wave normals are faded by the per-pixel footprint (screen-space derivatives), not the vertex
+  cell size, so waves texture the whole sea; WPO keeps the cell-size fade. Roughness grows with
+  the unresolved slope variance (not in the spec).
+- A frame centre further than `max_radius_km` − horizon from the nadir falls back to the nadir.
+- Lakes: the Cesium hit wins only when it is more than 2 m above sea level (Cesium's water
+  surface and the geoid differ by decimetres); a trace miss holds max(last height, sea level).
+- Single Layer Water held on Metal (SM5); no Default Lit fallback was needed.
+- The Phase 19B/19D vessel wake trail and SSR options are gone with `phase19:` (they never
+  worked: no `NS_VesselWake` asset).
+
+Acceptance (`scripts/ocean_check.py`, macOS M-series, Metal, 2026-09-30). One CamSim launch
+per sea state; DIS `boat-circle` in San Francisco Bay; eight camera views per run (nadir
+1000 m; 12° close-up at ~250 m slant; **500 ft above the water, 500 ft out, 45° down**, at 30°
+and 60° FOV; waterline 6 m up and 40 m out; shallows; Golden Gate coastline; 10 km horizon).
+a_max = 1.5 · Hs/2 (Beaufort) or Σ amplitudes (CIGI); tolerance 0.5 m + a_max. The CIGI run
+sends two Wave Control packets (1.5 m / 45 m toward 60°, 0.8 m / 20 m toward 100°) and every
+run sends one extended HAT/HOT request at the boat.
+
+| Run | COCO boat IDs (frames) | Boat alt − sea level: mean, range | HOT − sea level | Frame time median / max, > 66 ms | Rebuilds: n, median / max |
+|---|---|---|---|---|---|
+| Beaufort 0 | 1 (1197) | 0.00 m, 0.00 … 0.00 m | +0.00 m | 33.3 / 179.4 ms, **1** | 6, 6.9 / 9.7 ms |
+| Beaufort 3 | 1 (1194) | −0.03 m, −0.27 … +0.28 m (lim ±0.95) | +0.27 m | 33.3 / 47.0 ms, 0 | 6, 6.8 / 11.2 ms |
+| Beaufort 6 (re-run) | 1 (1231) | −0.18 m, −1.63 … +1.42 m (lim ±2.38) | −0.90 m | 33.3 / 47.5 ms, 0 | 6, 7.0 / 10.6 ms |
+| CIGI waves | 1 (1193) | −0.15 m, −1.12 … +1.01 m (lim ±1.65) | −0.50 m | 33.3 / 49.5 ms, 0 | 6, 6.8 / 7.7 ms |
+
+- The first Beaufort 6 run had no terrain (Cesium ion connection errors: 0% tiles, so the sea
+  covered an empty world); its placement, HOT and frame checks passed but mean nothing. The
+  table shows the re-run (`.cache/ocean_check_b6`), which loaded every tile.
+- Every check passes except **one frame of 179 ms in the Beaufort 0 waterline view**. It is not
+  the ocean: in that frame game, render and GPU time were 27, 34 and 33 ms, no mesh rebuild
+  happened within 5 s, and the tiles were still streaming (the tracked 6 m-high view keeps
+  moving, `load_pct` 95–100%). A targeted re-run of that one view for 60 s, twice with the
+  ocean on and twice with it off, gave 8 and 4 frames over 66 ms with the ocean on (max 213 ms)
+  and 5 and 6 with it off (max 207 ms), all game- or render-thread stalls while tiles stream.
+  It is the pre-existing close-up tile-streaming hitch, recorded as a FAIL, not waived.
+- The median bar is one 30 fps frame (33.3 ms; the engine is locked to 30 fps, so "33 ms"
+  cannot be read as 33.0).
+- HOT at the boat returns the sea surface (−32.2 m ± waves), not the seabed (≈ −55 m).
+- Mesh rebuilds: 6.8–7.0 ms median, max 11.2 ms (two over the 10 ms target, none near 30 ms).
+- Ocean GPU cost (`gpu_ms`, same views, ocean on vs `CAMSIM_OCEAN_ENABLED=0`): +3.6 ms median
+  in the bench's 3 km orbit (`run_bench.py --smoke`: 16.2 → 19.8 ms; p95 24.4 → 25.6 ms;
+  frame pacing unchanged, 0 hitches) and +3 ms at the waterline (22.0 → 25.1 ms).
+- KLV unaffected: `check.js stream` on the Beaufort 6 re-run's live stream (300 packets) and
+  its capture (180 packets) all conform to misb.js 0.1.30, with `--max-age-sec` raised (the
+  harness sets the sim date to 2026-06-21 over CIGI, which the default 1 h age check rejects).
+
+**Default: `ocean.enabled: true`.** The ocean holds the frame budget; the one failing frame is
+the tile-streaming hitch that the ocean-off run shows too.
+
+| Boat from 500 ft, 45° down (30° FOV) | At the waterline, Beaufort 3 | At the waterline, Beaufort 6 |
+|---|---|---|
+| ![](docs/images/ocean/boat-500ft-45deg.jpg) | ![](docs/images/ocean/boat-waterline-b3.jpg) | ![](docs/images/ocean/boat-waterline-b6.jpg) |
+
+| CIGI waves at the shore (Aquatic Park) | Golden Gate coastline | 10 km up, looking west |
+|---|---|---|
+| ![](docs/images/ocean/shallows-cigi-waves.jpg) | ![](docs/images/ocean/coastline-golden-gate.jpg) | ![](docs/images/ocean/horizon-10km.jpg) |
+
+Findings from the live runs:
+
+- Boats sit at their draft on the drawn water at every sea state; at Beaufort 6 the hull heaves
+  ±1.5 m with the swell and no crest cuts through it in the waterline views. The COCO
+  altitude spread (sd 0.11 m at Beaufort 3, 0.65 m at Beaufort 6, 0.52 m for the CIGI sea)
+  is the heave.
+- The sea follows the globe to the 10 km horizon with no mesh edge; coastlines occlude it
+  cleanly (Marin headlands, Presidio).
+- **Piers flood**: Cesium World Terrain drapes piers and breakwaters on terrain below sea level,
+  so the sea covers them (Fisherman's Wharf). Same fix as inland below-sea-level land
+  (water-mask clip).
+- **The Golden Gate Bridge draws as a flat slab at the waterline**: CWT has no bridge, only the
+  deck imagery draped down to the water; with the ocean it reads as a low causeway.
+- Beaches show a saw-toothed waterline where the sea plane cuts the coarse terrain triangles
+  (shallows shots); no shimmer was seen.
+- The seabed shows through near the shore as lighter water (Single Layer Water absorption).
+- Near noon a nadir view is dominated by the sun glint (Beaufort 0 shows the sun's disc), and
+  the sensor AE exposes for it, so the rest of the sea goes dark.
+- Cesium ion availability decides a run: one run lost its terrain to connection errors and a
+  re-run to HTTP 429 (rate limit after many back-to-back launches). The script now fails a run
+  whose tiles never load (`terrain tiles loaded`).
+- The host going to sleep freezes CamSim mid-run (12–15 min gaps, then 100+ ms frames); the
+  acceptance runs are launched under `caffeinate -ims`.
+- Unrelated: `CamSim.VideoEncoder.VideoToolboxRespectsMaxRate` failed once in the full suite
+  (worst 1 s window 565.9 KB vs 550 KB) and passed twice when re-run alone: a flaky hardware
+  encoder rate check.
+
+Carry-overs:
+
+- Wakes, whitecaps, spray, breaking waves (Breaker Type is carried but unused).
+- LOS against the water surface; Environmental Conditions Request/Response.
+- Inland below-sea-level land and draped piers flood: clip with Cesium's water mask.
+- Regional/Entity-scoped Wave Control and Maritime Surface Conditions (logged once, ignored).
+- Physical IR of water (Milestone 4); until then IR sees the visible-light proxy.
+- Ripples run on engine time (the material Time node), not sim time; the three fixed ripple
+  directions hatch visibly at close zoom; ripple precision degrades > 200 km from the anchor.
+- The close-up tile-streaming hitch above (not ocean work).
+- Linux/Vulkan and SM6 are unverified for `M_Ocean` (compiled and tested on Metal SM5).
+- Deferred minors from review: tests for zero-wave accessors, NaN/negative `SetWaves` input,
+  the four untested ocean env vars, hot reload / restart-only logging for `ocean.enabled`,
+  `Validate()` ranges for `beaufort`/`choppiness`/`max_radius_km`, `FOceanManager` scope and
+  Wave ID gates, a handler-level water-normal test; roughness treats UE roughness as alpha;
+  `ddx` is 0 in ray-tracing hit shaders; a failed `BuildOceanMesh` retries every tick; the
+  resting-boat re-commit also runs with motion off; regenerating `M_Ocean` churns GUIDs and
+  a failed regeneration leaves the assets deleted (restore with `git checkout`).
 
 ---
 
@@ -914,6 +1088,6 @@ follow visible albedo, night IR goes dark, and ATR models learn EO cues.
 
 ## Parked
 
-Existing features (ocean, weather FX, HUD, DIS, CoT, scenario engine, formation flying,
+Existing features (weather FX, HUD, DIS, CoT, scenario engine, formation flying,
 optical realism, etc.) stay in the tree and keep working. They are not being extended until
 Milestones 0–4 land. Designs for those features remain in `docs/superpowers/specs/`.

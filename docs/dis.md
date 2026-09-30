@@ -113,13 +113,21 @@ domain is the domain of their target, and life forms.
   roll follow the slope. With 1–3 hits the height still follows and the tilt is held; with
   none (after the full-span retry below) the last clamp is held. The sender's heading is
   always kept.
-- **Surface (kind 1, domain 3)**: one trace at the centre: the boat sits on the rendered water
-  surface. Before the first hit: EGM96 sea level at the position (`Geospatial/Geoid.h`);
-  after it, a miss (e.g. tiles evicted) holds the last water height. Pitch and roll are the
-  sender's. Where Cesium World Terrain carries bathymetry the rendered "water" is the
-  water-masked seabed: in San Francisco Bay at the `boat-circle` preset it is about 23 m below
-  sea level (KLV Tag 25), and the boat sits there, which looks right but puts its altitude
-  below sea level.
+- **Surface (kind 1, domain 3)**, with the ocean on (`ocean.enabled`, the default; ROADMAP
+  2.6): the boat floats on the sea. One trace at the centre finds the Cesium surface; the base
+  height is max(that hit, sea level), where sea level is the EGM96 geoid (`Geospatial/Geoid.h`)
+  plus the CIGI Maritime Surface Height tide offset. Bathymetry (the water-masked seabed, ~23 m
+  below sea level in San Francisco Bay) therefore loses to the sea, and a lake more than 2 m
+  above sea level wins (the boat sits on the lake, without waves). On the sea, with
+  `ocean.vessel_motion`, the wave surface (`FOceanWaves::HeightAt`) is sampled at bow, stern,
+  port and starboard of the footprint: heave is their mean, pitch and roll their slopes (times
+  `ocean.vessel_motion_scale`); the sender's pitch and roll are replaced, its heading kept.
+  Before the first hit the base is sea level; a later miss holds max(last height, sea level).
+  The COCO `geo.alt_m` of a boat is its waterline: sea level + wave height at the hull.
+- **Surface, ocean off** (`CAMSIM_OCEAN_ENABLED=0`): as before 2.6 — the boat sits on the
+  rendered Cesium surface (EGM96 sea level before the first hit, then the last water height on
+  a miss), with the sender's pitch and roll. Over bathymetry that is the seabed, ~23 m below
+  sea level at the `boat-circle` preset.
 - The first trace spans 9 000 m to −500 m ellipsoid height; later ones start 50 m above the
   last ground height, so a vehicle under a bridge does not jump onto it. If every one of those
   traces misses (the ground rose more than 50 m, or the tiles are gone) they are retried once
@@ -135,6 +143,11 @@ domain is the domain of their target, and life forms.
 Set `dis.clamp_to_surface: false` for senders that supply true terrain heights (and
 attitudes); every entity then uses its PDU pose.
 
+CIGI HAT/HOT requests see the same sea: with the ocean on, the terrain height a HAT/HOT
+answers is max(Cesium hit, sea surface including the waves at that point), so HOT at a boat
+returns the water surface, not the seabed. An extended response reports the water's normal
+when the water wins (material code 0). LOS still ignores the water.
+
 ## Ground truth
 
 With `ml_training.enabled: true` each COCO record (`camsim_coco.jsonl`, one line per
@@ -149,16 +162,17 @@ frames in flight.
 | `source_id` | DIS: `site.application.entity` (e.g. `1.1.2`); CIGI / scenario: the entity ID |
 | `category` | `{id: CamSim type ID, name: class_name}` — `truck` / `boat` for the shipped models |
 | `bbox`, `area`, `truncated` | Screen-space box `[x, y, w, h]` in pixels, its area, and whether it is clipped by the frame edge |
+| `geo` | `{lat, lon, alt_m}`: the entity origin's geodetic position at capture (WGS-84 degrees, ellipsoid metres); for a clamped vehicle that is its ground contact / waterline point |
 
 VOC XML carries the same `entity_id`, `source` and `source_id` per object.
 
 ## Limitations
 
-- No visible ocean surface, waves or wakes: boats ride on Cesium's water-masked terrain (needs
-  editor assets; see ROADMAP), which can be the seabed (above). The boat's draft is fixed
+- No wakes, whitecaps or spray (ROADMAP 2.6 carry-overs). The boat's draft is fixed
   (`z_offset_m: -0.49`: the keel is ~0.14 m above the model origin, so the hull sits ~0.35 m
   deep) and does not change with speed or load. Inland water that Cesium terrain does not
-  render flat is not handled.
+  render flat is not handled, and harbour piers that Cesium World Terrain drapes below sea
+  level are drawn under the sea (Fisherman's Wharf).
 - Fast-moving vehicles can leave a faint TSR ghost trail behind them in close-ups.
 - Boxes are loose, world-aligned projections of the model bounds, with no occlusion test
   (a vehicle behind a hill is still labelled).

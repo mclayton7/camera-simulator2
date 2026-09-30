@@ -78,13 +78,18 @@ void FCocoAnnotationWriter::WriteFrame(
 		Line += FString::Printf(
 			TEXT("{\"entity_id\":%u,\"source\":\"%s\",\"source_id\":\"%s\",\"category\":{\"id\":%u,\"name\":\"%s\"},")
 			TEXT("\"bbox\":[%.1f,%.1f,%.1f,%.1f],\"area\":%.1f,")
-			TEXT("\"iscrowd\":0,\"truncated\":%d}"),
+			TEXT("\"iscrowd\":0,\"truncated\":%d"),
 			E.EntityId, *SafeSource, *SafeSourceId,
 			E.EntityType,
 			*SafeName,
 			X, Y, W, H,
 			W * H,
 			E.bTruncated ? 1 : 0);
+		if (E.bHasGeo)
+		{
+			Line += FString::Printf(TEXT(",\"geo\":{\"lat\":%.8f,\"lon\":%.8f,\"alt_m\":%.3f}"), E.Lat, E.Lon, E.AltM);
+		}
+		Line += TEXT("}");
 	}
 	Line += TEXT("]}\n");
 

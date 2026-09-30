@@ -26,6 +26,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/send_cigi_test.py`    | Send CIGI 3.3 test packets (--sweep, --circle)                |
 | `scripts/send_dis_test.py` | Send DIS Entity State PDUs: scripted truck + boat (`both`, `truck-loop`, `boat-circle`) |
 | `scripts/dis_vehicle_check.py` | End-to-end DIS vehicle check (shots + COCO labels) |
+| `scripts/ocean_check.py` | Ocean acceptance: DIS boat at Beaufort 0/3/6 (+ `--cigi` Wave Control): COCO, boat altitude vs sea level, HOT, frame times, shots |
 | `scripts/klv_conformance/check.js` | Check KLV against misb.js (packets.jsonl, .ts, or udp://) |
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
 | `scripts/ci_validate.sh`       | Integration test (health wait + video/KLV validation)         |
@@ -54,7 +55,7 @@ camsim/
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (259 tests across 48 files)
+      Tests/                       # UE5 Automation tests (300 tests across 56 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -96,7 +97,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (259 tests across 48 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (300 tests across 56 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -132,6 +133,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **macOS editor log**: `~/Library/Logs/CamSimTest/CamSimTest.log`, not `Saved/Logs/`. A cold `run.sh` start spends a few minutes compiling shaders before `LogCamSim` appears
 - **Headless tests on macOS**: add `-DisablePython` — Python's startup type generation deadlocks under `-nullrhi` on macOS. Xcode 27 needs `MaxVersion` raised in the engine's `Engine/Config/Apple/Apple_SDK.json`, and a real (non-nullrhi) run needs `xcodebuild -downloadComponent MetalToolchain`
 - **DIS vehicles sit on the rendered surface**: land (domain 1) and surface (domain 3) entities are clamped at every pose commit by traces against Cesium tiles (`Entity/SurfaceClamp.h`, `SurfaceProbe.h`); needs `create_physics_meshes`. The sender's altitude is ignored unless `dis.clamp_to_surface: false`. Guide: `docs/dis.md`
+- **Ocean** (ROADMAP 2.6, `ocean:`, on by default): sea level = EGM96 geoid + CIGI tide; `FOceanWaves` (Gerstner, sim time) is the single source for boat placement (`ClampWater`), HAT/HOT (max(Cesium hit, sea)) and the drawn sea (`UProceduralMeshComponent` warped grid + `M_Ocean` WPO via `MPC_Ocean`; the CPU/GPU mirror is `Shaders/Private/CamSimOcean.ush`, held to 2 cm by `CamSim.GPU.Ocean.MatchesCpu`). `M_Ocean`/`MPC_Ocean` are generated — edit `scripts/ocean/make_ocean_material.py` (or the .ush) and rerun `scripts/ocean/make_ocean_material.sh`, never hand-edit the assets. Piers Cesium drapes below sea level flood (known)
 - **Altitudes are WGS-84 ellipsoid heights everywhere** (CIGI 3.3 defines its "MSL" as the ellipsoid, and Cesium uses HAE). Only KLV Tags 15/25 are true MSL, via the EGM96 grid in `Geospatial/Geoid.h` (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS — run `git lfs pull` if it's a pointer file)
 - **UE unit scale**: 1 UE unit = 1 cm — divide `FVector::Dist()` by 100 for metres
 - **macOS multicast**: UDP multicast to 239.x.x.x on loopback requires `sudo route add -net 239.0.0.0/8 -interface lo0`, or use unicast: `CAMSIM_MULTICAST_ADDR=127.0.0.1`

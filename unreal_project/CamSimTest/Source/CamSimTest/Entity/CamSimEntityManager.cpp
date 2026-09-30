@@ -416,6 +416,12 @@ void FCamSimEntityManager::GetEntitySnapshot(
 		Data.bVisible   = bVisible;
 		Data.bTruncated = bTruncated;
 		Data.ScreenBBox = ScreenBBox;
+		CamSimFrames::FGeoPose Geo;
+		if (Entity->GetGeoPose(Geo))
+		{
+			Data.bHasGeo = true;
+			Data.Lat = Geo.Lat; Data.Lon = Geo.Lon; Data.AltM = Geo.Alt;
+		}
 		OutSnapshot.Add(MoveTemp(Data));
 	}
 }

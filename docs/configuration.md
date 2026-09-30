@@ -839,7 +839,7 @@ ocean:
 
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `ocean.enabled` | `CAMSIM_OCEAN_ENABLED` | `true` | Master switch. **Startup only** — the `FOceanSurface` is created once in `Initialize`; a hot reload cannot toggle it. |
+| `ocean.enabled` | `CAMSIM_OCEAN_ENABLED` | `true` | Master switch. **Startup only** — the `FOceanSurface` is created once in `Initialize`; a hot reload cannot toggle it. On by default: the ROADMAP 2.6 acceptance (`scripts/ocean_check.py`) measured ~3–4 ms of GPU time for the drawn sea with the 30 fps budget held. Off, boat placement and HAT/HOT are exactly the pre-2.6 behaviour (the Cesium surface, i.e. the seabed over bathymetry). |
 | `ocean.beaufort` | `CAMSIM_OCEAN_BEAUFORT` | `3.0` | Sea state, 0–12, fractional. Used while no CIGI Wave Control wave is enabled. Hot-reloadable. |
 | `ocean.wave_direction_deg` | `CAMSIM_OCEAN_WAVE_DIR` | `270.0` | Direction the waves come FROM, true north. Hot-reloadable. |
 | `ocean.choppiness` | `CAMSIM_OCEAN_CHOPPINESS` | `0.5` | 0 = sine waves, 1 = steepest waveform without looping. Hot-reloadable. |

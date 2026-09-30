@@ -23,6 +23,13 @@ struct FEntityAnnotationData
 	// Clamped to [0, ImageWidth) x [0, ImageHeight).
 	FBox2D  ScreenBBox = FBox2D(ForceInit);
 
+	// Geodetic pose of the entity's origin at capture (WGS-84 degrees, ellipsoid metres).
+	// For a clamped surface vehicle this is the waterline / ground contact point.
+	bool    bHasGeo    = false;
+	double  Lat        = 0.0;
+	double  Lon        = 0.0;
+	double  AltM       = 0.0;
+
 	bool    bVisible   = false;  // false → entity fully outside frustum; omit from annotations
 	bool    bTruncated = false;  // true → bbox was clamped to image boundary
 };
