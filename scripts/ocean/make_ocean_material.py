@@ -11,7 +11,9 @@ Run it with scripts/ocean/make_ocean_material.sh, which uses the pythonscript co
 actually compiled and get_statistics() below can prove it; under the default NullRHI they are not.)
 
 M_Ocean's Gerstner displacement and normal come from Shaders/Private/CamSimOcean.ush (virtual
-path /CamSim/Private/CamSimOcean.ush), which mirrors FOceanWaves (Ocean/OceanWaves.cpp).
+path /CamSim/Private/CamSimOcean.ush), which mirrors FOceanWaves (Ocean/OceanWaves.cpp). The WPO
+is faded by the vertex cell size (UV1.x); the normal and roughness are per pixel, faded by the pixel
+footprint, with a small procedural ripple (visual only, scaled by MPC Water.z).
 MPC parameter names are read by FOceanManager; don't rename them.
 """
 
@@ -40,12 +42,18 @@ WPO_CODE = COMMON_PRELUDE + (
     "float3 Disp = CamSimOceanDisplacement(P, CellM, W, D);\n"
     "return (AxisN * Disp.x + AxisE * Disp.y + AxisU * Disp.z) * 100.0;\n"
 )
+# Per pixel: the normal and roughness fade each wave (and the ripples) by the pixel footprint,
+# not by the vertex cell size, so waves the grid can't displace still shade the surface.
 NORMAL_CODE = COMMON_PRELUDE + (
-    "float3 Nn = CamSimOceanNormal(P, CellM, W, D);\n"
+    "float3 Nn = CamSimOceanPixelNormal(P, TimeS, Water.z, W, D);\n"
     "return normalize(AxisN * Nn.x + AxisE * Nn.y + AxisU * Nn.z);\n"
+)
+ROUGHNESS_CODE = COMMON_PRELUDE + (
+    "return CamSimOceanRoughness(P, TimeS, Water.z, W, D);\n"
 )
 CUSTOM_INPUTS = ["LocalPos", "CellM", "ToAnchor", "AxisN", "AxisE", "AxisU",
                  "W0", "W1", "W2", "W3", "D0", "D1", "D2", "D3"]
+PIXEL_INPUTS = [n for n in CUSTOM_INPUTS if n != "CellM"] + ["TimeS", "Water"]
 
 MEL = unreal.MaterialEditingLibrary
 EAL = unreal.EditorAssetLibrary
@@ -148,30 +156,34 @@ def make_material(mpc):
     for i in range(4):
         sources["W%d" % i] = mpc_nodes["Wave%d" % i]
         sources["D%d" % i] = mpc_nodes["Dir%d" % i]
+    # Ripple clock (visual only): engine time, not the sim clock the waves use.
+    sources["TimeS"] = g.node(unreal.MaterialExpressionTime)
+    sources["Water"] = mpc_nodes["Water"]
 
-    def custom(desc, code):
+    def custom(desc, code, pin_names=CUSTOM_INPUTS, out=unreal.CustomMaterialOutputType.CMOT_FLOAT3):
         inputs = []
-        for name in CUSTOM_INPUTS:
+        for name in pin_names:
             ci = unreal.CustomInput()
             ci.set_editor_property("input_name", name)
             inputs.append(ci)
         c = g.node(unreal.MaterialExpressionCustom, x=-600, description=desc, code=code,
-                   output_type=unreal.CustomMaterialOutputType.CMOT_FLOAT3,
+                   output_type=out,
                    include_file_paths=[INCLUDE])
         c.set_editor_property("inputs", inputs)
         pins = [str(n) for n in MEL.get_material_expression_input_names(c)]
-        if pins != CUSTOM_INPUTS:
-            raise RuntimeError("%s pins %s != %s" % (desc, pins, CUSTOM_INPUTS))
-        for name in CUSTOM_INPUTS:
+        if pins != pin_names:
+            raise RuntimeError("%s pins %s != %s" % (desc, pins, pin_names))
+        for name in pin_names:
             g.connect(sources[name], c, name)
         return c
 
     g.to_property(custom("OceanWPO", WPO_CODE), unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
-    g.to_property(custom("OceanNormal", NORMAL_CODE), unreal.MaterialProperty.MP_NORMAL)
+    g.to_property(custom("OceanNormal", NORMAL_CODE, PIXEL_INPUTS), unreal.MaterialProperty.MP_NORMAL)
+    g.to_property(custom("OceanRoughness", ROUGHNESS_CODE, PIXEL_INPUTS, unreal.CustomMaterialOutputType.CMOT_FLOAT1),
+                  unreal.MaterialProperty.MP_ROUGHNESS)
 
     g.to_property(g.node(unreal.MaterialExpressionConstant3Vector, x=-300,
                          constant=unreal.LinearColor(0.02, 0.05, 0.07, 1.0)), unreal.MaterialProperty.MP_BASE_COLOR)
-    g.to_property(g.node(unreal.MaterialExpressionConstant, x=-300, r=0.08), unreal.MaterialProperty.MP_ROUGHNESS)
     g.to_property(g.node(unreal.MaterialExpressionConstant, x=-300, r=0.5), unreal.MaterialProperty.MP_SPECULAR)
 
     # Single Layer Water volume: scattering x Water.y, absorption x Water.x, phase G 0.1.

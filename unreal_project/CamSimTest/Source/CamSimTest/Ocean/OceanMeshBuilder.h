@@ -43,6 +43,9 @@ namespace CamSimOcean
 	 */
 	double HorizonRadiusM(double CentreToNadirM, double AltAboveSeaM, double MaxRadiusKm);
 
+	/** HorizonRadiusM's horizon term: 3.57 km * sqrt(max(alt, 2 m)) * 1.1, in metres. */
+	double HorizonDistanceM(double AltAboveSeaM);
+
 	/** The built sea mesh, in a form ready for UProceduralMeshComponent::CreateMeshSection. */
 	struct FOceanMeshData
 	{
@@ -80,8 +83,49 @@ namespace CamSimOcean
 	 */
 	bool NeedsRebuild(const FRebuildPolicy& Last, double Lat, double Lon, double RadiusM);
 
+	/** Shortest time between two rebuilds (a slewing gimbal would otherwise rebuild every frame). */
+	constexpr double MinRebuildIntervalS = 0.25;
+
+	/**
+	 * NeedsRebuild, rate limited: always true with no mesh or when bForce (teleport, origin
+	 * shift); otherwise false until MinRebuildIntervalS has passed since the last build.
+	 */
+	CAMSIMTEST_API bool NeedsRebuild(const FRebuildPolicy& Last, double Lat, double Lon, double RadiusM,
+		double SecondsSinceBuild, bool bForce);
+
 	/** Mesh centre: the frame centre when valid (finite, set), else the nadir. */
 	CAMSIMTEST_API void ChooseCentre(double NadirLat, double NadirLon, double FcLat, double FcLon, bool bFrameCentreValid, double& OutLat, double& OutLon);
 	/** Wave anchor moves only when unset, on a teleport, or > 200 km from the centre (a one-off re-phase). */
 	CAMSIMTEST_API bool NeedsReanchor(bool bHasAnchor, double AnchorLat, double AnchorLon, double Lat, double Lon, bool bTeleport);
+
+	/**
+	 * Fall back to the nadir when the centre is so far away (a stale or near-horizon frame
+	 * centre) that the mesh, capped at MaxRadiusKm, could no longer reach the horizon around
+	 * the nadir: dist(centre, nadir) > MaxRadiusKm * 1000 - HorizonDistanceM(alt).
+	 */
+	CAMSIMTEST_API void LimitCentreToMesh(double NadirLat, double NadirLon, double AltAboveSeaM, double MaxRadiusKm,
+		double& InOutLat, double& InOutLon);
+
+	/** Camera history for the teleport test (the nadir jumping > 5 km in one tick). */
+	struct FCentreTracker
+	{
+		double LastNadirLat = 0.0, LastNadirLon = 0.0;
+		bool bHasNadir = false;
+	};
+
+	struct FCentreDecision
+	{
+		double Lat = 0.0, Lon = 0.0;   // mesh centre
+		bool bTeleport = false;
+		bool bReanchored = false;      // the wave anchor moved this tick
+	};
+
+	/**
+	 * Per tick, from the camera alone (no rendering state): detect a teleport, choose the mesh
+	 * centre (ChooseCentre + LimitCentreToMesh) and move the wave anchor when NeedsReanchor.
+	 * Boat placement needs the anchor even when nothing is drawn.
+	 */
+	CAMSIMTEST_API FCentreDecision UpdateCentreAndAnchor(FCentreTracker& Track, FOceanSurface& Ocean,
+		double NadirLat, double NadirLon, double AltAboveSeaM, double FcLat, double FcLon, bool bFrameCentreValid,
+		double MaxRadiusKm);
 }

@@ -37,8 +37,12 @@ namespace CamSimOcean
 
 	double HorizonRadiusM(double CentreToNadirM, double AltAboveSeaM, double MaxRadiusKm)
 	{
-		const double Horizon = 3570.0 * FMath::Sqrt(FMath::Max(AltAboveSeaM, 2.0)) * 1.1;
-		return FMath::Min(CentreToNadirM + Horizon, MaxRadiusKm * 1000.0);
+		return FMath::Min(CentreToNadirM + HorizonDistanceM(AltAboveSeaM), MaxRadiusKm * 1000.0);
+	}
+
+	double HorizonDistanceM(double AltAboveSeaM)
+	{
+		return 3570.0 * FMath::Sqrt(FMath::Max(AltAboveSeaM, 2.0)) * 1.1;
 	}
 
 	bool BuildOceanMesh(double CentreLat, double CentreLon, double RadiusM, const FOceanSurface& Ocean,
@@ -109,5 +113,45 @@ namespace CamSimOcean
 		if (!bHasAnchor || bTeleport) return true;
 		const FVector D = CamSimFrames::GeodeticDeltaToNeu(AnchorLat, AnchorLon, 0.0, Lat, Lon, 0.0);
 		return D.X * D.X + D.Y * D.Y > FMath::Square(200000.0);
+	}
+
+	bool NeedsRebuild(const FRebuildPolicy& Last, double Lat, double Lon, double RadiusM, double SecondsSinceBuild, bool bForce)
+	{
+		if (!Last.bHasMesh || bForce) return true;
+		if (SecondsSinceBuild < MinRebuildIntervalS) return false;
+		return NeedsRebuild(Last, Lat, Lon, RadiusM);
+	}
+
+	void LimitCentreToMesh(double NadirLat, double NadirLon, double AltAboveSeaM, double MaxRadiusKm,
+		double& InOutLat, double& InOutLon)
+	{
+		const FVector D = CamSimFrames::GeodeticDeltaToNeu(NadirLat, NadirLon, 0.0, InOutLat, InOutLon, 0.0);
+		const double Limit = MaxRadiusKm * 1000.0 - HorizonDistanceM(AltAboveSeaM);
+		if (D.X * D.X + D.Y * D.Y > FMath::Square(FMath::Max(Limit, 0.0)))
+		{
+			InOutLat = NadirLat;
+			InOutLon = NadirLon;
+		}
+	}
+
+	FCentreDecision UpdateCentreAndAnchor(FCentreTracker& Track, FOceanSurface& Ocean,
+		double NadirLat, double NadirLon, double AltAboveSeaM, double FcLat, double FcLon, bool bFrameCentreValid,
+		double MaxRadiusKm)
+	{
+		FCentreDecision Out;
+		// Teleport: the nadir moved > 5 km since the last tick (no camera flies 150 km/s).
+		const FVector Hop = CamSimFrames::GeodeticDeltaToNeu(Track.LastNadirLat, Track.LastNadirLon, 0.0, NadirLat, NadirLon, 0.0);
+		Out.bTeleport = Track.bHasNadir && Hop.X * Hop.X + Hop.Y * Hop.Y > FMath::Square(5000.0);
+		Track.LastNadirLat = NadirLat; Track.LastNadirLon = NadirLon; Track.bHasNadir = true;
+
+		ChooseCentre(NadirLat, NadirLon, FcLat, FcLon, bFrameCentreValid, Out.Lat, Out.Lon);
+		LimitCentreToMesh(NadirLat, NadirLon, AltAboveSeaM, MaxRadiusKm, Out.Lat, Out.Lon);
+		const FOceanWaves& W = Ocean.GetWaves();
+		if (NeedsReanchor(W.HasAnchor(), W.GetAnchorLat(), W.GetAnchorLon(), Out.Lat, Out.Lon, Out.bTeleport))
+		{
+			Ocean.SetAnchor(Out.Lat, Out.Lon);
+			Out.bReanchored = true;
+		}
+		return Out;
 	}
 }

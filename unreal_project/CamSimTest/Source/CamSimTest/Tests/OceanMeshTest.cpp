@@ -142,6 +142,34 @@ bool FOceanMeshRebuildTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanMeshWindingTest, "CamSim.Ocean.Mesh.FrontFaceUp",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanMeshWindingTest::RunTest(const FString& Parameters)
+{
+	// UE world as Cesium lays it out at the georeference origin: X = East, Y = South, Z = Up (cm).
+	auto UeLike = [](double Lat, double Lon, double AltM)
+	{
+		const FVector Neu = CamSimFrames::GeodeticDeltaToNeu(37.8, -122.45, 0.0, Lat, Lon, AltM);
+		return FVector(Neu.Y, -Neu.X, Neu.Z) * 100.0;
+	};
+	FOceanSurface S([](double, double) { return TOptional<double>(0.0); });
+	FOceanMeshData M;
+	TestTrue(TEXT("built"), BuildOceanMesh(37.8, -122.45, 1000.0, S, UeLike, M));
+	const int32 Mid = GridN / 2;
+	for (const int32 Tri : { 0, 1 })
+	{
+		const int32 Base = (Mid * GridN + Mid) * 6 + Tri * 3;
+		const FVector& A = M.Positions[M.Triangles[Base]];
+		const FVector& B = M.Positions[M.Triangles[Base + 1]];
+		const FVector& C = M.Positions[M.Triangles[Base + 2]];
+		// The winding seen from above in the running app (Task 9): with UE's cross product
+		// in its left-handed frame, (B-A)^(C-A) of a front face points AWAY from the viewer.
+		const double Dot = ((B - A) ^ (C - A)) | M.Normals[M.Triangles[Base]];
+		TestTrue(*FString::Printf(TEXT("triangle %d front face up (dot %.3g < 0)"), Tri, Dot), Dot < 0.0);
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanMeshCentreTest, "CamSim.Ocean.Mesh.CentreAndAnchorPolicy",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FOceanMeshCentreTest::RunTest(const FString& Parameters)
@@ -158,5 +186,57 @@ bool FOceanMeshCentreTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("near anchor"), NeedsReanchor(true, 37.8, -122.45, 37.9, -122.45, false));
 	TestTrue (TEXT("> 200 km"), NeedsReanchor(true, 37.8, -122.45, 39.8, -122.45, false));
 	TestTrue (TEXT("teleport"), NeedsReanchor(true, 37.8, -122.45, 37.8, -122.45, true));
+
+	// A far frame centre falls back to the nadir: at 10 km the horizon is ~393 km, so a
+	// 400 km mesh can't be centred 450 km away and still reach the horizon round the camera.
+	double FarLat, FarLon, Alt;
+	CamSimFrames::OffsetGeodetic(37.80, -122.45, 0.0, FVector(450000.0, 0.0, 0.0), FarLat, FarLon, Alt);
+	Lat = FarLat; Lon = FarLon;
+	LimitCentreToMesh(37.80, -122.45, 10000.0, 400.0, Lat, Lon);
+	TestEqual(TEXT("10 km alt, centre 450 km away -> nadir lat"), Lat, 37.80, 1e-12);
+	TestEqual(TEXT("10 km alt, centre 450 km away -> nadir lon"), Lon, -122.45, 1e-12);
+	double NearLat, NearLon;
+	CamSimFrames::OffsetGeodetic(37.80, -122.45, 0.0, FVector(5000.0, 0.0, 0.0), NearLat, NearLon, Alt);
+	Lat = NearLat; Lon = NearLon;
+	LimitCentreToMesh(37.80, -122.45, 300.0, 400.0, Lat, Lon);
+	TestEqual(TEXT("300 m alt, centre 5 km away kept"), Lat, NearLat, 1e-12);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanMeshAnchorTest, "CamSim.Ocean.Mesh.AnchorFromCameraOnly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanMeshAnchorTest::RunTest(const FString& Parameters)
+{
+	// No world, mesh or material: the anchor must still follow the camera (boats need it).
+	FOceanSurface S([](double Lat, double Lon) { return TOptional<double>(GeoidAt(Lat, Lon)); });
+	FCentreTracker T;
+	FCentreDecision D = UpdateCentreAndAnchor(T, S, 37.81, -122.42, 1000.0, 37.815, -122.42, true, 400.0);
+	TestTrue(TEXT("anchored on the first tick"), S.GetWaves().HasAnchor());
+	TestEqual(TEXT("anchor at the frame centre"), S.GetWaves().GetAnchorLat(), 37.815, 1e-12);
+	TestFalse(TEXT("first tick is not a teleport"), D.bTeleport);
+	TestTrue(TEXT("plane coords non-zero away from the anchor"),
+		FMath::Abs(S.GetWaves().PlaneCoords(37.825, -122.42, 0.0).X) > 1000.0);
+
+	D = UpdateCentreAndAnchor(T, S, 37.82, -122.42, 1000.0, 37.825, -122.42, true, 400.0);   // ~1 km move
+	TestFalse(TEXT("1 km move: no teleport"), D.bTeleport);
+	TestEqual(TEXT("1 km move: anchor held"), S.GetWaves().GetAnchorLat(), 37.815, 1e-12);
+
+	D = UpdateCentreAndAnchor(T, S, 37.92, -122.42, 1000.0, 37.925, -122.42, true, 400.0);   // ~11 km hop
+	TestTrue(TEXT("11 km hop: teleport"), D.bTeleport);
+	TestEqual(TEXT("teleport re-anchors"), S.GetWaves().GetAnchorLat(), 37.925, 1e-12);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanMeshRateLimitTest, "CamSim.Ocean.Mesh.RebuildRateLimit",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanMeshRateLimitTest::RunTest(const FString& Parameters)
+{
+	const FRebuildPolicy L{ 37.8, -122.45, 100000.0, true };
+	const double Moved = 37.8 + 0.01;   // ~1.1 km: past 0.5% of R
+	TestFalse(TEXT("moved, 0.1 s after the last build: wait"), NeedsRebuild(L, Moved, -122.45, 100000.0, 0.1, false));
+	TestTrue (TEXT("moved, 0.3 s after: rebuild"), NeedsRebuild(L, Moved, -122.45, 100000.0, 0.3, false));
+	TestFalse(TEXT("not moved, 1 s after: no rebuild"), NeedsRebuild(L, 37.8, -122.45, 100000.0, 1.0, false));
+	TestTrue (TEXT("forced (teleport / origin shift) at 0 s"), NeedsRebuild(L, 37.8, -122.45, 100000.0, 0.0, true));
+	TestTrue (TEXT("first build at 0 s"), NeedsRebuild(FRebuildPolicy(), 37.8, -122.45, 100000.0, 0.0, false));
 	return true;
 }
