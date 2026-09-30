@@ -79,4 +79,9 @@ namespace CamSimOcean
 	 * than 25%.
 	 */
 	bool NeedsRebuild(const FRebuildPolicy& Last, double Lat, double Lon, double RadiusM);
+
+	/** Mesh centre: the frame centre when valid (finite, set), else the nadir. */
+	CAMSIMTEST_API void ChooseCentre(double NadirLat, double NadirLon, double FcLat, double FcLon, bool bFrameCentreValid, double& OutLat, double& OutLon);
+	/** Wave anchor moves only when unset, on a teleport, or > 200 km from the centre (a one-off re-phase). */
+	CAMSIMTEST_API bool NeedsReanchor(bool bHasAnchor, double AnchorLat, double AnchorLon, double Lat, double Lon, bool bTeleport);
 }

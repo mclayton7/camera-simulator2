@@ -56,6 +56,10 @@ bool FOceanMeshGeoidTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("built"), BuildOceanMesh(37.8, -122.45, 200000.0, S, &EcefCm, M));
 	TestEqual(TEXT("vertex count"), M.Positions.Num(), (GridN + 1) * (GridN + 1));
 	TestEqual(TEXT("triangle indices"), M.Triangles.Num(), GridN * GridN * 6);
+	// Winding UE draws from above (seen in the running app, Task 9): A -> east -> north.
+	const int32 V1 = GridN + 1;
+	TestTrue(TEXT("first quad winding"), M.Triangles.Num() >= 6 && M.Triangles[0] == 0 && M.Triangles[1] == 1 && M.Triangles[2] == V1
+		&& M.Triangles[3] == 1 && M.Triangles[4] == V1 + 1 && M.Triangles[5] == V1);
 	TestEqual(TEXT("cell sizes"), M.CellSize.Num(), M.Positions.Num());
 	const int32 Mid = GridN / 2;
 	for (const int32 Idx : { Mid * (GridN + 1) + Mid, (Mid + 64) * (GridN + 1) + Mid + 30, GridN * (GridN + 1) + GridN })
@@ -135,5 +139,24 @@ bool FOceanMeshRebuildTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("R +20%"), NeedsRebuild(L, 37.8, -122.45, 120000.0));
 	TestTrue(TEXT("R +30%"), NeedsRebuild(L, 37.8, -122.45, 130000.0));
 	TestTrue(TEXT("R -30%"), NeedsRebuild(L, 37.8, -122.45, 70000.0));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanMeshCentreTest, "CamSim.Ocean.Mesh.CentreAndAnchorPolicy",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanMeshCentreTest::RunTest(const FString& Parameters)
+{
+	double Lat, Lon;
+	ChooseCentre(37.80, -122.45, 37.82, -122.40, /*bFrameCentreValid=*/true, Lat, Lon);
+	TestEqual(TEXT("frame centre used"), Lat, 37.82, 1e-12);
+	ChooseCentre(37.80, -122.45, 0.0, 0.0, /*bFrameCentreValid=*/false, Lat, Lon);
+	TestEqual(TEXT("nadir fallback"), Lon, -122.45, 1e-12);
+	ChooseCentre(37.80, -122.45, NAN, 0.0, true, Lat, Lon);
+	TestEqual(TEXT("NaN frame centre → nadir"), Lat, 37.80, 1e-12);
+
+	TestTrue (TEXT("no anchor yet"), NeedsReanchor(false, 0, 0, 37.8, -122.45, false));
+	TestFalse(TEXT("near anchor"), NeedsReanchor(true, 37.8, -122.45, 37.9, -122.45, false));
+	TestTrue (TEXT("> 200 km"), NeedsReanchor(true, 37.8, -122.45, 39.8, -122.45, false));
+	TestTrue (TEXT("teleport"), NeedsReanchor(true, 37.8, -122.45, 37.8, -122.45, true));
 	return true;
 }

@@ -82,8 +82,9 @@ namespace CamSimOcean
 		for (int32 c = 0; c < GridN; ++c)
 		{
 			const int32 A = r * V + c, B = A + 1, C = A + V, Dd = C + 1;
-			// Counter-clockwise seen from above in UE's left-handed frame: check winding once in Task 9 and flip here if the sea is back-face culled.
-			Out.Triangles.Append({ A, C, B, B, C, Dd });
+			// Front faces up: A -> B (east) -> C (north). Verified in the running app (Task 9):
+			// the reverse order (A, C, B) is back-face culled, i.e. the sea vanishes from above.
+			Out.Triangles.Append({ A, B, C, B, Dd, C });
 		}
 		return true;
 	}
@@ -94,5 +95,19 @@ namespace CamSimOcean
 		const FVector Move = CamSimFrames::GeodeticDeltaToNeu(Last.LastLat, Last.LastLon, 0.0, Lat, Lon, 0.0);
 		if (FMath::Sqrt(Move.X * Move.X + Move.Y * Move.Y) > 0.005 * Last.LastRadiusM) return true;
 		return FMath::Abs(RadiusM - Last.LastRadiusM) > 0.25 * Last.LastRadiusM;
+	}
+
+	void ChooseCentre(double NadirLat, double NadirLon, double FcLat, double FcLon, bool bValid, double& OutLat, double& OutLon)
+	{
+		const bool bUse = bValid && FMath::IsFinite(FcLat) && FMath::IsFinite(FcLon) && FMath::Abs(FcLat) <= 90.0;
+		OutLat = bUse ? FcLat : NadirLat;
+		OutLon = bUse ? FcLon : NadirLon;
+	}
+
+	bool NeedsReanchor(bool bHasAnchor, double AnchorLat, double AnchorLon, double Lat, double Lon, bool bTeleport)
+	{
+		if (!bHasAnchor || bTeleport) return true;
+		const FVector D = CamSimFrames::GeodeticDeltaToNeu(AnchorLat, AnchorLon, 0.0, Lat, Lon, 0.0);
+		return D.X * D.X + D.Y * D.Y > FMath::Square(200000.0);
 	}
 }

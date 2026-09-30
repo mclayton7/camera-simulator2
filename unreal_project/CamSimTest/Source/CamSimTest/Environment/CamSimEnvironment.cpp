@@ -240,8 +240,9 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 		}
 	}
 
-	// Ocean (ROADMAP 2.6) — tick (rendering arrives in Task 9)
-	OceanManager.Tick();
+	// Ocean (ROADMAP 2.6) — anchor, mesh rebuilds and MPC around the sensor
+	const FCamSimTelemetry Tel = CamSimCameraActor ? CamSimCameraActor->GetCurrentTelemetry() : FCamSimTelemetry();
+	OceanManager.Tick(CamSimCameraActor ? &Tel : nullptr);
 }
 
 // -------------------------------------------------------------------------

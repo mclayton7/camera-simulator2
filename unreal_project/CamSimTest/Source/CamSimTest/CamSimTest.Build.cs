@@ -25,6 +25,7 @@ public class CamSimTest : ModuleRules
 			"Engine",
 			"InputCore",
 			"EnhancedInput",
+			"ProceduralMeshComponent",   // ocean mesh (ROADMAP 2.6)
 			// Rendering
 			"RenderCore",
 			"RHI",
