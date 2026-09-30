@@ -34,12 +34,14 @@ TRUCK = sd.PRESETS["truck-loop"]
 BOAT = sd.PRESETS["boat-circle"]
 HITCH_MS = 66.0  # two frames at 30 fps
 # Rough surface heights (WGS-84 ellipsoid) for aiming the oblique close-ups: the
-# Presidio loop spans about -5..47 m (0..15 m on the east and south legs), the
-# bay's rendered surface about -55 m (bathymetry, see docs/dis.md). The
-# 12 deg FOV at ~250 m tolerates about +-20 m of error. Close-ups are slow to
-# render (fine tiles stream in: frames of 100+ ms), wide views run at 30 fps.
+# Presidio loop spans about -5..47 m (0..15 m on the east and south legs); boats
+# float at EGM96 sea level, about -32 m at the boat circle, with the ocean on (the
+# default, ROADMAP 2.6; with CAMSIM_OCEAN_ENABLED=0 they sit on the bathymetric
+# seabed, about -55 m). The 12 deg FOV at ~250 m tolerates about +-20 m of error.
+# Close-ups are slow to render (fine tiles stream in: frames of 100+ ms), wide
+# views run at 30 fps.
 TRUCK_GROUND_HAE = 12.0
-BOAT_SURFACE_HAE = -50.0
+BOAT_SURFACE_HAE = -32.0
 
 
 class Tracker:
@@ -78,10 +80,16 @@ def nadir_on(
     return pose
 
 
-def side_on(preset: sd.Preset, surface_hae: float) -> Callable[[float], scenario.Pose]:
-    """From the vehicle's left, 160 m out and 190 m up (50 deg down): nose to the left."""
+def side_on(
+    preset: sd.Preset,
+    surface_hae: float,
+    out_m: float = 160.0,
+    up_m: float = 190.0,
+    fov: float = 12.0,
+) -> Callable[[float], scenario.Pose]:
+    """From the vehicle's left, out_m horizontally and up_m above the surface, the
+    boresight on the vehicle (default 160 m out, 190 m up: 50 deg down): nose to the left."""
     f = sd.PathFollower(preset.waypoints_ne, preset.speed_mps)
-    out_m, up_m = 160.0, 190.0
 
     def pose(t: float) -> scenario.Pose:
         lat, lon, h = vehicle(preset, f, t)
@@ -95,7 +103,7 @@ def side_on(preset: sd.Preset, surface_hae: float) -> Callable[[float], scenario
             surface_hae + up_m,
             yaw=(h + 90.0) % 360.0,
             gimbal_pitch=-math.degrees(math.atan2(up_m, out_m)),
-            fov_h=12.0,
+            fov_h=fov,
         )
 
     return pose

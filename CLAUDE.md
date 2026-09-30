@@ -51,6 +51,8 @@ camsim/
       Entity/                      # Actor lifecycle, dead-reckoning, articulated parts
       Environment/                 # Sky, fog, weather, day/night
       Geospatial/                  # Cesium terrain queries, WGS84 conversions
+      GroundTruth/                 # COCO/VOC annotations (entity_id, bbox, geo), depth maps
+      Ocean/                       # Sea level + Gerstner waves (FOceanWaves), ocean mesh, MPC writes
       Metadata/                    # MISB ST 0601/ST 0102 KLV builder
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
@@ -133,7 +135,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **macOS editor log**: `~/Library/Logs/CamSimTest/CamSimTest.log`, not `Saved/Logs/`. A cold `run.sh` start spends a few minutes compiling shaders before `LogCamSim` appears
 - **Headless tests on macOS**: add `-DisablePython` — Python's startup type generation deadlocks under `-nullrhi` on macOS. Xcode 27 needs `MaxVersion` raised in the engine's `Engine/Config/Apple/Apple_SDK.json`, and a real (non-nullrhi) run needs `xcodebuild -downloadComponent MetalToolchain`
 - **DIS vehicles sit on the rendered surface**: land (domain 1) and surface (domain 3) entities are clamped at every pose commit by traces against Cesium tiles (`Entity/SurfaceClamp.h`, `SurfaceProbe.h`); needs `create_physics_meshes`. The sender's altitude is ignored unless `dis.clamp_to_surface: false`. Guide: `docs/dis.md`
-- **Ocean** (ROADMAP 2.6, `ocean:`, on by default): sea level = EGM96 geoid + CIGI tide; `FOceanWaves` (Gerstner, sim time) is the single source for boat placement (`ClampWater`), HAT/HOT (max(Cesium hit, sea)) and the drawn sea (`UProceduralMeshComponent` warped grid + `M_Ocean` WPO via `MPC_Ocean`; the CPU/GPU mirror is `Shaders/Private/CamSimOcean.ush`, held to 2 cm by `CamSim.GPU.Ocean.MatchesCpu`). `M_Ocean`/`MPC_Ocean` are generated — edit `scripts/ocean/make_ocean_material.py` (or the .ush) and rerun `scripts/ocean/make_ocean_material.sh`, never hand-edit the assets. Piers Cesium drapes below sea level flood (known)
+- **Ocean** (ROADMAP 2.6, `ocean:`, on by default): sea level = EGM96 geoid + CIGI tide; `FOceanWaves` (Gerstner, sim time) is the single source for boat placement (`ClampWater`), HAT/HOT (max(Cesium hit, sea surface incl. waves)) and the drawn sea (`UProceduralMeshComponent` warped grid + `M_Ocean` WPO via `MPC_Ocean`; the CPU/GPU mirror is `Shaders/Private/CamSimOcean.ush`, held to 2 cm by `CamSim.GPU.Ocean.MatchesCpu`). `M_Ocean`/`MPC_Ocean` are generated — edit `scripts/ocean/make_ocean_material.py` (or the .ush) and rerun `scripts/ocean/make_ocean_material.sh`, never hand-edit the assets. Piers Cesium drapes below sea level flood (known)
 - **Altitudes are WGS-84 ellipsoid heights everywhere** (CIGI 3.3 defines its "MSL" as the ellipsoid, and Cesium uses HAE). Only KLV Tags 15/25 are true MSL, via the EGM96 grid in `Geospatial/Geoid.h` (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS — run `git lfs pull` if it's a pointer file)
 - **UE unit scale**: 1 UE unit = 1 cm — divide `FVector::Dist()` by 100 for metres
 - **macOS multicast**: UDP multicast to 239.x.x.x on loopback requires `sudo route add -net 239.0.0.0/8 -interface lo0`, or use unicast: `CAMSIM_MULTICAST_ADDR=127.0.0.1`

@@ -237,31 +237,6 @@ class View:
     boat: bool = True  # the boat is in frame
 
 
-def tracked(
-    out_m: float, up_m: float, fov: float, sea: float
-) -> Callable[[float], scenario.Pose]:
-    """From the boat's left, out_m horizontally and up_m above sea level, the
-    boresight on the boat (nose to the left of the frame)."""
-    f = sd.PathFollower(BOAT.waypoints_ne, BOAT.speed_mps)
-
-    def pose(t: float) -> scenario.Pose:
-        lat, lon, h = dvc.vehicle(BOAT, f, t)
-        left = math.radians(h - 90.0)
-        clat, clon = sd.ne_to_latlon(
-            (lat, lon), out_m * math.cos(left), out_m * math.sin(left)
-        )
-        return scenario.Pose(
-            clat,
-            clon,
-            sea + up_m,
-            yaw=(h + 90.0) % 360.0,
-            gimbal_pitch=-math.degrees(math.atan2(up_m, out_m)),
-            fov_h=fov,
-        )
-
-    return pose
-
-
 def bearing_deg(a: tuple[float, float], b: tuple[float, float]) -> float:
     dn = (b[0] - a[0]) * 111_132.0
     de = (b[1] - a[1]) * 111_412.0 * math.cos(math.radians(a[0]))
@@ -285,10 +260,15 @@ def build_views(sea: float) -> list[View]:
         # 12 deg close-up following the boat, 160 m out and 190 m up (~250 m slant).
         View("oblique_close", dvc.side_on(BOAT, sea)),
         # 500 ft above the water, 500 ft out: 45 deg down, boresight on the boat.
-        View("boat_500ft_45deg", tracked(152.4, 152.4, 30.0, sea)),
-        View("boat_500ft_45deg_fov60", tracked(152.4, 152.4, 60.0, sea), 2.0, 3.0),
+        View("boat_500ft_45deg", dvc.side_on(BOAT, sea, 152.4, 152.4, 30.0)),
+        View(
+            "boat_500ft_45deg_fov60",
+            dvc.side_on(BOAT, sea, 152.4, 152.4, 60.0),
+            2.0,
+            3.0,
+        ),
         # Waterline: 6 m above sea level, 40 m from the boat.
-        View("waterline", tracked(40.0, 6.0, 20.0, sea)),
+        View("waterline", dvc.side_on(BOAT, sea, 40.0, 6.0, 20.0)),
         # Shallow cove (seabed through the water), nadir from 300 m.
         View(
             "shallows",
@@ -494,6 +474,33 @@ def check_run(run: Run, out: Path, result: dict) -> list[tuple[bool | None, str]
     peak = max((r["load_pct"] for r in rows), default=0.0)
     lines.append(
         (peak >= 99.0, f"terrain tiles loaded: peak {peak:.1f}% (want >= 99%)")
+    )
+
+    # Boat in frame in every boat view. COCO timestamps are sim time (the harness
+    # sets the date over CIGI), so records are matched to views by the camera
+    # altitude they carry (views that share an altitude are checked together).
+    by_alt: dict[float, list[str]] = {}
+    for v in build_views(result["sea_at_centre"]):
+        if v.boat:
+            pose = v.pose_at(0.0) if callable(v.pose_at) else v.pose_at
+            by_alt.setdefault(round(pose.alt, 1), []).append(v.name)
+    seen = dict.fromkeys(by_alt, 0)
+    for f in (rdir / "ml").rglob("*.jsonl"):
+        for line in f.read_text().splitlines():
+            if not line.startswith("{"):
+                continue
+            rec = json.loads(line)
+            if not any(a["category"]["name"] == "boat" for a in rec["annotations"]):
+                continue
+            for alt in seen:
+                if abs(rec["platform"]["alt_m"] - alt) < 2.0:
+                    seen[alt] += 1
+    lines.append(
+        (
+            all(seen.values()),
+            "boat labelled in every boat view: "
+            + "; ".join(f"{'+'.join(by_alt[a])} {n}" for a, n in seen.items()),
+        )
     )
 
     # COCO: one stable boat id; altitude vs EGM96 sea level.

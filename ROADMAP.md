@@ -508,11 +508,13 @@ run sends one extended HAT/HOT request at the boat.
   It is the pre-existing close-up tile-streaming hitch, recorded as a FAIL, not waived.
 - The median bar is one 30 fps frame (33.3 ms; the engine is locked to 30 fps, so "33 ms"
   cannot be read as 33.0).
+- The boat is labelled in every boat view of every run (COCO records matched to views by camera
+  altitude; 121–344 labelled frames per view; 0 at the no-boat shallows altitude).
 - HOT at the boat returns the sea surface (−32.2 m ± waves), not the seabed (≈ −55 m).
 - Mesh rebuilds: 6.8–7.0 ms median, max 11.2 ms (two over the 10 ms target, none near 30 ms).
 - Ocean GPU cost (`gpu_ms`, same views, ocean on vs `CAMSIM_OCEAN_ENABLED=0`): +3.6 ms median
   in the bench's 3 km orbit (`run_bench.py --smoke`: 16.2 → 19.8 ms; p95 24.4 → 25.6 ms;
-  frame pacing unchanged, 0 hitches) and +3 ms at the waterline (22.0 → 25.1 ms).
+  frame pacing unchanged; 0 hitches over 66 ms with the ocean on, 1 off) and +3 ms at the waterline (22.0 → 25.1 ms).
 - KLV unaffected: `check.js stream` on the Beaufort 6 re-run's live stream (300 packets) and
   its capture (180 packets) all conform to misb.js 0.1.30, with `--max-age-sec` raised (the
   harness sets the sim date to 2026-06-21 over CIGI, which the default 1 h age check rejects).
@@ -572,7 +574,14 @@ Carry-overs:
   Wave ID gates, a handler-level water-normal test; roughness treats UE roughness as alpha;
   `ddx` is 0 in ray-tracing hit shaders; a failed `BuildOceanMesh` retries every tick; the
   resting-boat re-commit also runs with motion off; regenerating `M_Ocean` churns GUIDs and
-  a failed regeneration leaves the assets deleted (restore with `git checkout`).
+  a failed regeneration leaves the assets deleted (restore with `git checkout`);
+  `FOceanWaves` `Waves[i]` accessors have no bounds assert; `SetHostWave` rebuilds when
+  removing an absent ID; `SetBeaufort` / `SetWaterTempC` have no `IsFinite` guards; the
+  `IsFinite` guard in `CombineHot` is unreachable; a vertex with no geoid value silently
+  takes the centre's sea level; `FOceanManager::Init` collides on the component name if run
+  twice; `CamSim.GPU.Ocean.MatchesCpu` does not assert the mean bias.
+- Bridges absent from Cesium World Terrain (the Golden Gate) draw as a flat slab at the
+  water; fixing that needs 3D tiles (photogrammetry / OSM buildings).
 
 ---
 
