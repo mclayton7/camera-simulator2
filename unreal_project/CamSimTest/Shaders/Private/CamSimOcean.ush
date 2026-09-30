@@ -1,0 +1,41 @@
+// Copyright CamSim Contributors. All Rights Reserved.
+// Gerstner sum mirroring FOceanWaves (Ocean/OceanWaves.cpp) expression for expression.
+// P: plane coordinates (N, E) in metres. W[i] = (k, a, Q, phase), D[i] = (dN, dE).
+// Fade: waves with lambda/4 < CellM are faded out (the grid can't carry them).
+#pragma once
+
+float CamSimOceanFade(float k, float CellM)
+{
+	const float Lambda = 6.28318530718 / max(k, 1e-6);
+	return saturate(2.0 - 8.0 * CellM / Lambda);   // 1 below lambda/8, 0 at lambda/4
+}
+
+float3 CamSimOceanDisplacement(float2 P, float CellM, float4 W[4], float4 D[4])
+{
+	float3 Disp = 0;
+	[unroll] for (int i = 0; i < 4; ++i)
+	{
+		const float Fade = CamSimOceanFade(W[i].x, CellM);
+		const float Th = W[i].x * dot(D[i].xy, P) + W[i].w;
+		const float S = sin(Th), C = cos(Th), Qa = W[i].z * W[i].y * Fade;
+		Disp.x -= Qa * D[i].x * S;
+		Disp.y -= Qa * D[i].y * S;
+		Disp.z += W[i].y * Fade * C;
+	}
+	return Disp;   // (dN, dE, dZ) metres
+}
+
+float3 CamSimOceanNormal(float2 P, float CellM, float4 W[4], float4 D[4])
+{
+	float3 N = float3(0, 0, 1);
+	[unroll] for (int i = 0; i < 4; ++i)
+	{
+		const float Fade = CamSimOceanFade(W[i].x, CellM);
+		const float Th = W[i].x * dot(D[i].xy, P) + W[i].w;
+		const float KA = W[i].x * W[i].y * Fade;
+		N.x += D[i].x * KA * sin(Th);
+		N.y += D[i].y * KA * sin(Th);
+		N.z -= W[i].z * KA * cos(Th);
+	}
+	return normalize(N);   // (N, E, Up)
+}
