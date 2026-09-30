@@ -65,4 +65,5 @@ private:
 	double LastBuildS = 0.0;                    // FPlatformTime::Seconds() of the last rebuild
 	bool bUnitsChecked = false;
 	bool bWarnedNotDrawn = false;
+	bool bWarnedMaxRadius = false;
 };

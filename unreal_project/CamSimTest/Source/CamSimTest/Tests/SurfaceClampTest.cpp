@@ -444,6 +444,73 @@ bool FSurfaceClampLowTideTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampHighTideTest, "CamSim.Entity.SurfaceClamp.HighTideIsNotALake",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampHighTideTest::RunTest(const FString& Parameters)
+{
+	// Tide +3 m: sea level = geoid + 3 = -29. The lake threshold is max(Sea, geoid + 2) = Sea, so
+	// neither a hit near the geoid, a miss, nor a hit in (geoid + 2, Sea] makes a lake.
+	FOceanSurface S = Sea(-32.0);
+	S.SetTideOffsetM(3.0);
+	S.SetHostWave(0, OneWave(2.0, 40.0, 180.0));
+	FWaterInput W; W.Ocean = &S;
+	auto Ride = [&](const FStubProbe& Probe, FClampState& St, double T0, double& MinBase, double& MaxBase)
+	{
+		double MaxPitch = 0.0;
+		for (int32 i = 0; i < 40; ++i)
+		{
+			S.SetTime(T0 + i * 0.1);
+			const CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, Probe, St, W);
+			MaxPitch = FMath::Max(MaxPitch, FMath::Abs(P.Neu.Rotator().Pitch));
+			MinBase = FMath::Min(MinBase, St.Height); MaxBase = FMath::Max(MaxBase, St.Height);
+		}
+		return MaxPitch;
+	};
+
+	FStubProbe NearGeoid; NearGeoid.Height = -32.0 + 0.3;
+	FStubProbe Miss;
+	FClampState St;
+	double MinBase = 1e9, MaxBase = -1e9;
+	const double HitPitch  = Ride(NearGeoid, St, 0.0, MinBase, MaxBase);
+	const double MissPitch = Ride(Miss, St, 10.0, MinBase, MaxBase);
+	TestTrue(*FString::Printf(TEXT("hit at geoid + 0.3: rides waves (pitch %.2f deg)"), HitPitch), HitPitch > 0.5);
+	TestTrue(*FString::Printf(TEXT("then misses: still rides waves (pitch %.2f deg)"), MissPitch), MissPitch > 0.5);
+	TestEqual(TEXT("hit + misses: base stays at Sea (min)"), MinBase, -29.0, 1e-6);
+	TestEqual(TEXT("hit + misses: base stays at Sea (max)"), MaxBase, -29.0, 1e-6);
+
+	FStubProbe Band; Band.Height = -32.0 + 2.5;   // above geoid + 2, below Sea
+	FClampState St2;
+	MinBase = 1e9; MaxBase = -1e9;
+	const double BandPitch = Ride(Band, St2, 0.0, MinBase, MaxBase);
+	TestTrue(*FString::Printf(TEXT("hit at geoid + 2.5: rides waves (pitch %.2f deg)"), BandPitch), BandPitch > 0.5);
+	TestEqual(TEXT("hit at geoid + 2.5: floats at Sea"), MaxBase, -29.0, 1e-6);
+
+	FStubProbe Lake; Lake.Height = -32.0 + 4.0;   // above Sea: a lake
+	FClampState St3;
+	S.SetTime(0.0);
+	const CamSimFrames::FGeoPose L = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, Lake, St3, W);
+	TestEqual(TEXT("hit at geoid + 4: lake, at the hit"), L.Alt, -28.0, 1e-6);
+	TestEqual(TEXT("hit at geoid + 4: level"), L.Neu.Rotator().Pitch, 0.0, 1e-6);
+
+	// A falling tide during misses: the boat follows Sea instead of holding the old height
+	// (tide +1.5 → +1: the held -30.5 is not above max(Sea -31, geoid + 2 = -30), so not a lake).
+	// A fall from above geoid + 2 m is held (it can't be told from a lake on a miss): see ROADMAP 2.6.
+	FClampState St4;
+	S.SetTideOffsetM(1.5);
+	MinBase = 1e9; MaxBase = -1e9;
+	Ride(NearGeoid, St4, 0.0, MinBase, MaxBase);
+	TestEqual(TEXT("tide +1.5: base at Sea"), St4.Height, -30.5, 1e-6);
+	S.SetTideOffsetM(1.0);
+	MinBase = 1e9; MaxBase = -1e9;
+	for (int32 i = 0; i < 60; ++i)
+	{
+		S.SetTime(20.0 + i * 0.1);
+		PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 1.0 / 30.0, Miss, St4, W);
+	}
+	TestEqual(TEXT("falling tide during misses: base eases to the new Sea (-31)"), St4.Height, -31.0, 0.01);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampTileEvictionHoldTest, "CamSim.Entity.SurfaceClamp.TileEvictionHoldsLake",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSurfaceClampTileEvictionHoldTest::RunTest(const FString& Parameters)

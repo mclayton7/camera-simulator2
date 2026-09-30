@@ -448,7 +448,7 @@ What was built:
   axes), CIGI Wave Control / Maritime Surface Conditions (Global scope; Wave IDs 0–3; CIGI
   Direction is "toward", stored as "from").
 - Boat placement (`Entity/SurfaceClamp`): base height = max(Cesium centre hit, sea level)
-  (a lake more than 2 m above sea level wins); on the sea, heave/pitch/roll from `HeightAt` at
+  (a lake wins above max(sea level, geoid + 2 m)); on the sea, heave/pitch/roll from `HeightAt` at
   bow/stern/port/starboard (`vessel_motion`, `vessel_motion_scale`). Ocean off: byte-identical
   to 2.5. `ACamSimEntity::ApplyVesselMotion` is gone.
 - HAT/HOT (`CIGI/CigiQueryHandler`, `Ocean/OceanQueries`): terrain height = max(Cesium hit,
@@ -480,9 +480,11 @@ Deviations from the spec:
   cell size, so waves texture the whole sea; WPO keeps the cell-size fade. Roughness grows with
   the unresolved slope variance (not in the spec).
 - A frame centre further than `max_radius_km` − horizon from the nadir falls back to the nadir.
-- Lakes: the Cesium hit wins only when it is more than 2 m above the tide-free geoid (Cesium's
-  water surface and the geoid differ by decimetres, and Cesium's surface doesn't move with the
-  CIGI tide); a trace miss holds max(last height, sea level). The boat floats at geoid + tide.
+- Lakes: the Cesium hit wins only above max(sea level, geoid + 2 m) (Cesium's water surface
+  and the geoid differ by decimetres, and Cesium's surface doesn't move with the CIGI tide, so
+  neither a low nor a high tide turns the open sea into a lake). On a trace miss a lake holds
+  max(last height, sea level); a boat at sea follows sea level (e.g. a falling tide). The boat
+  floats at geoid + tide.
 - CIGI Maritime Surface Conditions Clarity is a percent (0–100, CIGI 3.3; CCL bounds-checks
   it): CamSim divides by 100. A Wave Control packet with a period and no length gets
   λ = g·T²/(2π) (deep water).
@@ -603,7 +605,9 @@ Carry-overs:
   `CamSim.GPU.Ocean.MatchesCpu` does not assert the mean bias; before the camera first
   ticks there is no wave anchor, so boats heave uniformly (no pitch/roll) until it does —
   seeding the anchor (e.g. from the georeference origin) is a carry-over; at a re-anchor,
-  placement and the drawn sea disagree in phase for one frame; the displacement padding (3·Σa + 10 m) over-inflates the bounds of small meshes.
+  placement and the drawn sea disagree in phase for one frame; the displacement padding (3·Σa + 10 m) over-inflates the bounds of small meshes; a tide
+  that falls from above +2 m while the boat's trace misses is held at the old level, level (the
+  held height can't be told from a lake without a hit; the next hit corrects it).
 - Bridges absent from Cesium World Terrain (the Golden Gate) draw as a flat slab at the
   water; fixing that needs 3D tiles (photogrammetry / OSM buildings).
 

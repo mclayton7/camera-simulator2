@@ -117,13 +117,14 @@ domain is the domain of their target, and life forms.
   2.6): the boat floats on the sea. One trace at the centre finds the Cesium surface; the base
   height is max(that hit, sea level), where sea level is the EGM96 geoid (`Geospatial/Geoid.h`)
   plus the CIGI Maritime Surface Height tide offset. Bathymetry (the water-masked seabed, ~23 m
-  below sea level in San Francisco Bay) therefore loses to the sea, and a lake more than 2 m
-  above the tide-free geoid wins (the boat sits on the lake, without waves; the tide is left
-  out of this test because Cesium's surface doesn't move with it). On the sea, with
+  below sea level in San Francisco Bay) therefore loses to the sea, and a lake wins when
+  the hit is above max(sea level, geoid + 2 m) (the boat sits on the lake, without waves;
+  Cesium's surface doesn't move with the tide, so the test is anchored to the geoid). On the sea, with
   `ocean.vessel_motion`, the wave surface (`FOceanWaves::HeightAt`) is sampled at bow, stern,
   port and starboard of the footprint: heave is their mean, pitch and roll their slopes (times
   `ocean.vessel_motion_scale`); the sender's pitch and roll are replaced, its heading kept.
-  Before the first hit the base is sea level; a later miss holds max(last height, sea level).
+  Before the first hit the base is sea level; on a later miss a lake boat holds max(last
+  height, sea level) and a boat at sea follows sea level.
   The COCO `geo.alt_m` of a boat is its waterline: sea level + wave height at the hull.
 - **Surface, ocean off** (`CAMSIM_OCEAN_ENABLED=0`): as before 2.6 — the boat sits on the
   rendered Cesium surface (EGM96 sea level before the first hit, then the last water height on

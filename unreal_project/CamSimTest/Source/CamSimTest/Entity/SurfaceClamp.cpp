@@ -128,11 +128,12 @@ namespace CamSimSurface
 		// the geoid doesn't misclassify an open-sea boat as inland. A miss holds the last base
 		// height (tile eviction) instead of snapping to sea level — a lake boat shouldn't drop
 		// to sea level just because its tile went away.
-		// The lake test is against the tide-free geoid: Cesium's surface doesn't move with the
-		// CIGI tide, so a low tide (-3 m) must not turn the open sea (~ geoid) into a "lake".
-		// The boat itself still floats at Sea (with tide).
+		// Lake only above max(Sea, geoid + LakeMarginM): Cesium's surface sits near the geoid and
+		// doesn't move with the CIGI tide, so a low tide (-3 m) must not turn the open sea into a
+		// "lake", and a high tide (+3 m) must not either (the sea then covers the geoid + 2 m band).
+		// The boat itself floats at Sea (with tide).
 		const TOptional<double> Hit = Finite(CentreHit);
-		const double LakeAbove = *Sea - Water.Ocean->GetTideOffsetM() + LakeMarginM;
+		const double LakeAbove = FMath::Max(*Sea, *Sea - Water.Ocean->GetTideOffsetM() + LakeMarginM);
 		bool bLake;
 		double Target;
 		if (Hit.IsSet())
@@ -142,8 +143,10 @@ namespace CamSimSurface
 		}
 		else if (State.bHasSurface)
 		{
-			Target = FMath::Max(State.Height, *Sea);
-			bLake  = Target > LakeAbove;
+			// A lake holds its height through a miss; at sea the boat follows Sea (e.g. a falling tide).
+			const double Held = FMath::Max(State.Height, *Sea);
+			bLake  = Held > LakeAbove;
+			Target = bLake ? Held : *Sea;
 		}
 		else
 		{

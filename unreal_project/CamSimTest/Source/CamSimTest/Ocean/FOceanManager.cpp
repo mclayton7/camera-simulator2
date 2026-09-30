@@ -125,8 +125,19 @@ void FOceanManager::Tick(const FCamSimTelemetry* Cam)
 
 	// Centre and wave anchor come from the camera alone: boat placement needs the anchor even
 	// when nothing is drawn (M_Ocean/MPC missing, no georeference).
-	// Read live: ocean.max_radius_km is hot-reloadable (Validate() keeps it > 0).
-	const double MaxRadiusKm = Subsystem->GetConfig().Ocean.MaxRadiusKm;
+	// Read live: ocean.max_radius_km is hot-reloadable. Validate() rejects a bad value, but guard
+	// here too (a config that bypassed Validate): not finite or <= 0 → the default, warned once.
+	double MaxRadiusKm = Subsystem->GetConfig().Ocean.MaxRadiusKm;
+	if (!FMath::IsFinite(MaxRadiusKm) || MaxRadiusKm <= 0.0)
+	{
+		const double Default = FCamSimConfig::FOceanConfig().MaxRadiusKm;
+		if (!bWarnedMaxRadius)
+		{
+			bWarnedMaxRadius = true;
+			UE_LOG(LogCamSim, Warning, TEXT("Ocean: max_radius_km %f invalid — using %.0f km"), MaxRadiusKm, Default);
+		}
+		MaxRadiusKm = Default;
+	}
 	const double SeaAtNadir = Ocean->SeaLevelM(Cam->Latitude, Cam->Longitude).Get(0.0);
 	const double AltAboveSea = Cam->Altitude - SeaAtNadir;
 	const CamSimOcean::FCentreDecision C = CamSimOcean::UpdateCentreAndAnchor(Track, *Ocean,
