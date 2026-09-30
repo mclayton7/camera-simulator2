@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "RHI.h"
+#include "UObject/StrongObjectPtr.h"
 #include "RenderingThread.h"
 #include "ShaderCompiler.h"
 #include "Engine/Engine.h"
@@ -81,15 +82,17 @@ bool FOceanGpuMatchesCpuTest::RunTest(const FString& Parameters)
 		return true;
 	}
 
-	UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Ocean/M_Ocean.M_Ocean"));
-	UMaterialParameterCollection* Mpc = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Ocean/MPC_Ocean.MPC_Ocean"));
-	if (!TestNotNull(TEXT("M_Ocean loaded (scripts/ocean/make_ocean_material.sh)"), Material)) return false;
-	if (!TestNotNull(TEXT("MPC_Ocean loaded"), Mpc)) return false;
+	// Strong refs: FinishAllCompilation and the captures may run GC while these are only on the stack.
+	const TStrongObjectPtr<UMaterialInterface> Material(LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Ocean/M_Ocean.M_Ocean")));
+	const TStrongObjectPtr<UMaterialParameterCollection> Mpc(LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Ocean/MPC_Ocean.MPC_Ocean")));
+	if (!TestNotNull(TEXT("M_Ocean loaded (scripts/ocean/make_ocean_material.sh)"), Material.Get())) return false;
+	if (!TestNotNull(TEXT("MPC_Ocean loaded"), Mpc.Get())) return false;
 
-	// The sea: constant geoid 0, anchor (0, 0), one host wave H 2 m, L 40 m, from 180 deg, t = 3 s.
+	// The sea: constant geoid 0, anchor (0, 0), one host wave H 2 m, L 40 m, from 225 deg
+	// (travelling north-east, so the surface varies along both N and E and an error in either axis shows), t = 3 s.
 	FOceanSurface Ocean([](double, double) { return TOptional<double>(0.0); });
 	FOceanWave Wave;
-	Wave.HeightM = 2.0; Wave.LengthM = 40.0; Wave.FromDeg = 180.0;
+	Wave.HeightM = 2.0; Wave.LengthM = 40.0; Wave.FromDeg = 225.0;
 	Ocean.SetHostWave(0, Wave);
 	Ocean.SetAnchor(0.0, 0.0);
 	Ocean.SetTime(3.0);
@@ -112,13 +115,13 @@ bool FOceanGpuMatchesCpuTest::RunTest(const FString& Parameters)
 	AActor* Owner = World->SpawnActor<AActor>();
 	if (!TestNotNull(TEXT("owner actor"), Owner)) return false;
 	FOceanMesh Mesh;
-	Mesh.Init(Owner, Material);
+	Mesh.Init(Owner, Material.Get());
 	Mesh.Upload(Data);
 	Mesh.SetDisplacementPadding(3.0 * W.Amplitude(0) + 10.0);
-	CamSimOcean::WriteMpc(World, Mpc, Ocean, Mesh.GetWorldLocation(), EcefToUe);
+	CamSimOcean::WriteMpc(World, Mpc.Get(), Ocean, Mesh.GetWorldLocation(), EcefToUe);
 
 	// Depth target and an orthographic capture straight down from 100 m, 100 m wide.
-	UTextureRenderTarget2D* Target = NewObject<UTextureRenderTarget2D>(GetTransientPackage());
+	const TStrongObjectPtr<UTextureRenderTarget2D> Target(NewObject<UTextureRenderTarget2D>(GetTransientPackage()));
 	Target->RenderTargetFormat = RTF_R32f;
 	Target->ClearColor = FLinearColor(1e9f, 0.f, 0.f, 1.f);
 	Target->InitAutoFormat(CapturePx, CapturePx);
@@ -134,7 +137,7 @@ bool FOceanGpuMatchesCpuTest::RunTest(const FString& Parameters)
 	Cap->CaptureSource = ESceneCaptureSource::SCS_SceneDepth;
 	Cap->bCaptureEveryFrame = false;
 	Cap->bCaptureOnMovement = false;
-	Cap->TextureTarget = Target;
+	Cap->TextureTarget = Target.Get();
 	// No sub-pixel jitter: a 0.78 m pixel shifted by half a pixel is several cm of wave height.
 	Cap->ShowFlags.SetTemporalAA(false);
 	Cap->ShowFlags.SetAntiAliasing(false);
@@ -181,6 +184,8 @@ bool FOceanGpuMatchesCpuTest::RunTest(const FString& Parameters)
 	}
 	AddInfo(FString::Printf(TEXT("max |diff| %.4f m (mean diff %.4f m, rendered range %.3f..%.3f m); worst %s"),
 		MaxDiff, SumDiff / Count, MinH, MaxH, *Worst));
+	// A flat or missing surface (default material, no WPO) must not pass on a near-zero diff.
+	TestTrue(*FString::Printf(TEXT("rendered height range %.3f m >= 1 m (WPO applied)"), MaxH - MinH), MaxH - MinH >= 1.0);
 	TestTrue(*FString::Printf(TEXT("GPU surface within 2 cm of FOceanWaves (max |diff| %.4f m)"), MaxDiff), MaxDiff <= 0.02);
 	return true;
 }
