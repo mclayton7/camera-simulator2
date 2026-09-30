@@ -67,6 +67,16 @@ bool FOceanMeshGeoidTest::RunTest(const FString& Parameters)
 	}
 	TestTrue(TEXT("centre vertex at the origin"), M.Positions[Mid * (GridN + 1) + Mid].Size() < 1.0);
 
+	// Corner vertex has only one neighbour cell in each direction: its reported
+	// size should equal that outermost cell's actual width, not half of it.
+	{
+		const double AlphaWarp = SolveWarpAlpha(200000.0);
+		const double OuterCellWidth = WarpDistance(1.0, 200000.0, AlphaWarp)
+			- WarpDistance(2.0 * (GridN - 1) / GridN - 1.0, 200000.0, AlphaWarp);
+		const int32 CornerIdx = GridN * (GridN + 1) + GridN;
+		TestEqual(TEXT("corner cell size equals the outermost cell width"), M.CellSize[CornerIdx].X, OuterCellWidth, 1e-6);
+	}
+
 	FOceanSurface NoGrid([](double, double) { return TOptional<double>(); });
 	TestFalse(TEXT("no geoid -> no mesh"), BuildOceanMesh(37.8, -122.45, 200000.0, NoGrid, &EcefCm, M));
 
@@ -77,6 +87,35 @@ bool FOceanMeshGeoidTest::RunTest(const FString& Parameters)
 	const double ElapsedMs = (FPlatformTime::Seconds() - StartSeconds) * 1000.0;
 	TestTrue(TEXT("timed build succeeded"), bTimedBuilt);
 	AddInfo(FString::Printf(TEXT("BuildOceanMesh at R=400km: %.3f ms (target < 10 ms)"), ElapsedMs));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanMeshUniformGridTest, "CamSim.Ocean.Mesh.UniformGridBelowThreshold",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanMeshUniformGridTest::RunTest(const FString& Parameters)
+{
+	// R / (GridN/2) = 200 / 128 = 1.5625 m <= CentreCellM (2 m): the uniform-grid
+	// branch of SolveWarpAlpha (Alpha == 0) is untested elsewhere in this file.
+	const double R = 200.0;
+	const double Alpha = SolveWarpAlpha(R);
+	TestEqual(TEXT("alpha is exactly 0 (uniform)"), Alpha, 0.0, 0.0);
+
+	for (double U : { -0.7, -0.2, 0.0, 0.35, 1.0 })
+	{
+		TestEqual(*FString::Printf(TEXT("linear at u=%.2f"), U), WarpDistance(U, R, Alpha), U * R, 1e-9);
+	}
+
+	FOceanSurface S([](double Lat, double Lon) { return TOptional<double>(GeoidAt(Lat, Lon)); });
+	FOceanMeshData M;
+	TestTrue(TEXT("built"), BuildOceanMesh(37.8, -122.45, R, S, &EcefCm, M));
+
+	const double ExpectedCell = R / (GridN / 2);   // 1.5625 m, uniform everywhere
+	const int32 V = GridN + 1;
+	const int32 Mid = GridN / 2;
+	TestEqual(TEXT("centre vertex cell size"), M.CellSize[Mid * V + Mid].X, ExpectedCell, 1e-6);
+	TestEqual(TEXT("edge vertex cell size (r=0, c=mid)"), M.CellSize[0 * V + Mid].X, ExpectedCell, 1e-6);
+	TestEqual(TEXT("corner vertex cell size"), M.CellSize[0].X, ExpectedCell, 1e-6);
 
 	return true;
 }

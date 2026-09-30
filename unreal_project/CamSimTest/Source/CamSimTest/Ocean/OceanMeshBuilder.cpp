@@ -68,9 +68,14 @@ namespace CamSimOcean
 			const double Sea = Ocean.SeaLevelM(Lat, Lon).Get(*CentreSea);
 			const int32 Idx = r * V + c;
 			Out.Positions[Idx] = GeoToWorld(Lat, Lon, Sea) - Out.OriginWorld;
-			const double CellN = D[FMath::Min(r + 1, GridN)] - D[FMath::Max(r - 1, 0)];
-			const double CellE = D[FMath::Min(c + 1, GridN)] - D[FMath::Max(c - 1, 0)];
-			Out.CellSize[Idx] = FVector2D(0.5 * FMath::Max(CellN, CellE), 0.0);   // metres; UV1.x in the material
+			// Average cell width over the neighbour cells actually spanned: 2 in the
+			// interior (D[r+1]-D[r-1]) but only 1 at an edge (r=0 or r=GridN), where
+			// only one neighbour cell exists, so dividing by 2 there would halve it.
+			const int32 RLo = FMath::Max(r - 1, 0), RHi = FMath::Min(r + 1, GridN);
+			const int32 CLo = FMath::Max(c - 1, 0), CHi = FMath::Min(c + 1, GridN);
+			const double CellN = (D[RHi] - D[RLo]) / (RHi - RLo);
+			const double CellE = (D[CHi] - D[CLo]) / (CHi - CLo);
+			Out.CellSize[Idx] = FVector2D(FMath::Max(CellN, CellE), 0.0);   // metres; UV1.x in the material
 		}
 		Out.Triangles.Reserve(GridN * GridN * 6);
 		for (int32 r = 0; r < GridN; ++r)
