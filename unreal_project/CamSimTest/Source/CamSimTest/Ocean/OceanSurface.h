@@ -19,6 +19,7 @@ public:
 	/** Empty InGeoid → CamSim::Geospatial::GetGeoidUndulation. */
 	explicit FOceanSurface(FGeoidFn InGeoid = FGeoidFn());
 
+	/** Non-finite arguments are ignored (that field keeps its current value). */
 	void SetBeaufort(double Beaufort, double FromDeg, double Choppiness);
 	void SetHostWave(int32 WaveId, const TOptional<FOceanWave>& Wave);
 	bool HasHostWaves() const { return HostWaves.Num() > 0; }
@@ -27,7 +28,7 @@ public:
 	double GetTideOffsetM() const { return TideOffsetM; }
 	void   SetClarity(double C) { Clarity = FMath::IsFinite(C) ? FMath::Clamp(C, 0.0, 1.0) : 1.0; }
 	double GetClarity() const { return Clarity; }
-	void   SetWaterTempC(double C) { WaterTempC = C; }
+	void   SetWaterTempC(double C) { if (FMath::IsFinite(C)) WaterTempC = C; }   // non-finite: ignored
 	double GetWaterTempC() const { return WaterTempC; }
 
 	void SetTime(double SimSeconds) { Waves.SetTime(SimSeconds); }

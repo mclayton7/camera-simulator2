@@ -1697,6 +1697,20 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(FString::Printf(TEXT("render.camera_cut_angle_deg=%.2f must be > 0 (check skipped)"), Render.CameraCutAngleDeg));
 	}
 
+	// Ocean (ROADMAP 2.6). Written !(x in range) so NaN is reported too.
+	if (!(Ocean.MaxRadiusKm > 0.0f) || !FMath::IsFinite(Ocean.MaxRadiusKm))
+	{
+		Errors.Add(FString::Printf(TEXT("ocean.max_radius_km=%.2f must be finite and > 0"), Ocean.MaxRadiusKm));
+	}
+	if (!(Ocean.Beaufort >= 0.0f && Ocean.Beaufort <= 12.0f))
+	{
+		Errors.Add(FString::Printf(TEXT("ocean.beaufort=%.2f out of range [0, 12]"), Ocean.Beaufort));
+	}
+	if (!(Ocean.Choppiness >= 0.0f && Ocean.Choppiness <= 1.0f))
+	{
+		Errors.Add(FString::Printf(TEXT("ocean.choppiness=%.2f out of range [0, 1]"), Ocean.Choppiness));
+	}
+
 	RangeCheckFloat(TEXT("Performance.RenderFrameRateHz"), Performance.RenderFrameRateHz, 1.0f, 120.0f);
 	if (Performance.OutputFrameRateHz < 1.0f || Performance.OutputFrameRateHz > Performance.RenderFrameRateHz)
 	{

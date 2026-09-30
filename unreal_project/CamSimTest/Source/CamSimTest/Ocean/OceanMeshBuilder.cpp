@@ -115,6 +115,11 @@ namespace CamSimOcean
 		return D.X * D.X + D.Y * D.Y > FMath::Square(200000.0);
 	}
 
+	bool TideMoved(const FRebuildPolicy& Last, double TideM)
+	{
+		return Last.bHasMesh && FMath::Abs(TideM - Last.LastTideM) > TideRebuildM;
+	}
+
 	bool NeedsRebuild(const FRebuildPolicy& Last, double Lat, double Lon, double RadiusM, double SecondsSinceBuild, bool bForce)
 	{
 		if (!Last.bHasMesh || bForce) return true;

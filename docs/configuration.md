@@ -825,6 +825,12 @@ packet enables a host wave (IDs 0-3), which then wins. Owned by
 `UCamSimSubsystem` as an `FOceanSurface`; nullptr when `enabled` is off or the
 EGM96 grid (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS) is missing.
 
+The waves (and so boat heave/pitch/roll and HAT/HOT over water) run on the sim
+clock. A frozen clock — CIGI Celestial Sphere Control with Ephemeris Model
+Enable off, or `sim_time_rate: 0` — freezes the sea, while dead-reckoned boats
+keep moving and the material's small ripple normal keeps animating on engine
+time (ROADMAP 2.6 findings, 2.1 open items).
+
 ```yaml
 ocean:
   enabled: true
@@ -840,12 +846,12 @@ ocean:
 | Key | Env | Default | Description |
 |---|---|---|---|
 | `ocean.enabled` | `CAMSIM_OCEAN_ENABLED` | `true` | Master switch. **Startup only** — the `FOceanSurface` is created once in `Initialize`; a hot reload cannot toggle it. On by default: the ROADMAP 2.6 acceptance (`scripts/ocean_check.py`) measured ~3–4 ms of GPU time for the drawn sea with the 30 fps budget held. Off, boat placement and HAT/HOT are exactly the pre-2.6 behaviour (the Cesium surface, i.e. the seabed over bathymetry). |
-| `ocean.beaufort` | `CAMSIM_OCEAN_BEAUFORT` | `3.0` | Sea state, 0–12, fractional. Used while no CIGI Wave Control wave is enabled. Hot-reloadable. |
+| `ocean.beaufort` | `CAMSIM_OCEAN_BEAUFORT` | `3.0` | Sea state, 0–12, fractional (outside that, or NaN, fails validation). Used while no CIGI Wave Control wave is enabled. Hot-reloadable. |
 | `ocean.wave_direction_deg` | `CAMSIM_OCEAN_WAVE_DIR` | `270.0` | Direction the waves come FROM, true north. Hot-reloadable. |
-| `ocean.choppiness` | `CAMSIM_OCEAN_CHOPPINESS` | `0.5` | 0 = sine waves, 1 = steepest waveform without looping. Hot-reloadable. |
+| `ocean.choppiness` | `CAMSIM_OCEAN_CHOPPINESS` | `0.5` | 0 = sine waves, 1 = steepest waveform without looping; must be in [0, 1]. Hot-reloadable. |
 | `ocean.vessel_motion` | `CAMSIM_OCEAN_MOTION_ENABLED` | `true` | Boats pitch/roll/heave with the waves. |
 | `ocean.vessel_motion_scale` | `CAMSIM_OCEAN_MOTION_SCALE` | `1.0` | Amplitude multiplier on vessel motion. |
-| `ocean.max_radius_km` | `CAMSIM_OCEAN_MAX_RADIUS_KM` | `400.0` | Horizon cap for the ocean mesh. |
+| `ocean.max_radius_km` | `CAMSIM_OCEAN_MAX_RADIUS_KM` | `400.0` | Horizon cap for the ocean mesh; must be finite and > 0. Hot-reloadable (read every tick). |
 | `ocean.material` | *(none — set via YAML only)* | `/Game/Ocean/M_Ocean` | Ocean material asset path. **Startup only.** |
 
 Removed: the old `phase19:` block (`ocean_enabled`, `beaufort_state`,

@@ -59,11 +59,10 @@ private:
 	TObjectPtr<UMaterialParameterCollection> Mpc;
 	TWeakObjectPtr<UWorld> World;
 	TWeakObjectPtr<ACesiumGeoreference> Georeference;
-	CamSimOcean::FRebuildPolicy Last{ 0.0, 0.0, 0.0, false };
+	CamSimOcean::FRebuildPolicy Last;
 	CamSimOcean::FCentreTracker Track;
 	FMatrix LastEcefToUe = FMatrix::Identity;   // georeference the mesh was built in (origin shifts rebuild)
 	double LastBuildS = 0.0;                    // FPlatformTime::Seconds() of the last rebuild
 	bool bUnitsChecked = false;
 	bool bWarnedNotDrawn = false;
-	FCamSimConfig::FOceanConfig Cfg;
 };

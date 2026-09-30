@@ -252,5 +252,5 @@ struct FMaritimeSurfaceCommand
 	bool   bWhitecaps      = false;
 	float  SurfaceHeightM  = 0.0f;
 	float  WaterTempC      = 15.0f;
-	float  Clarity         = 1.0f;
+	float  Clarity         = 1.0f;    // [0, 1] (CIGI's percent / 100)
 };

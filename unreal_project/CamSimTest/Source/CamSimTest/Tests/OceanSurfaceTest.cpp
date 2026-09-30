@@ -4,6 +4,8 @@
 #include "Misc/AutomationTest.h"
 #include "Ocean/OceanSurface.h"
 
+#include <limits>
+
 namespace
 {
 	FOceanSurface MakeSurface(double Geoid = -32.0)
@@ -88,5 +90,31 @@ bool FOceanSurfaceWavesTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("trough ≈ sea level - a"), Min, -33.0, 0.05);
 	const FVector N = S.SurfaceNormalNeu(37.8, -122.4).GetValue();
 	TestTrue(TEXT("normal points up"), N.Z > 0.9 && FMath::IsNearlyEqual(N.Size(), 1.0, 1e-9));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanSurfaceNonFiniteTest, "CamSim.Ocean.Surface.NonFiniteInputsIgnored",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanSurfaceNonFiniteTest::RunTest(const FString& Parameters)
+{
+	const double NaN = std::numeric_limits<double>::quiet_NaN();
+	FOceanSurface S = MakeSurface();
+	S.SetAnchor(37.8, -122.4);
+	S.SetBeaufort(3.0, 270.0, 0.5);
+	const double Hs3 = S.GetWaves().SignificantHeight();
+	const double From3 = S.GetWaves().GetWaves()[0].FromDeg;
+
+	S.SetBeaufort(NaN, 270.0, 0.5);   // would clamp to Beaufort 12 (hurricane) if taken
+	TestEqual(TEXT("NaN Beaufort ignored: same sea"), S.GetWaves().SignificantHeight(), Hs3, 1e-12);
+	S.SetBeaufort(std::numeric_limits<double>::infinity(), NaN, NaN);
+	TestEqual(TEXT("inf Beaufort / NaN direction / NaN choppiness ignored"), S.GetWaves().SignificantHeight(), Hs3, 1e-12);
+	TestEqual(TEXT("direction kept"), S.GetWaves().GetWaves()[0].FromDeg, From3, 1e-12);
+	S.SetBeaufort(NaN, 90.0, 0.5);    // finite fields still apply
+	TestTrue(TEXT("finite direction applied"), !FMath::IsNearlyEqual(S.GetWaves().GetWaves()[0].FromDeg, From3, 1e-6));
+	TestEqual(TEXT("... with the Beaufort kept"), S.GetWaves().SignificantHeight(), Hs3, 1e-12);
+
+	S.SetWaterTempC(22.0);
+	S.SetWaterTempC(NaN);
+	TestEqual(TEXT("NaN water temperature ignored"), S.GetWaterTempC(), 22.0, 1e-12);
 	return true;
 }

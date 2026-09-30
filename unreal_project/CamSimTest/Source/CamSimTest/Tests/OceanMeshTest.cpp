@@ -240,3 +240,21 @@ bool FOceanMeshRateLimitTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("first build at 0 s"), NeedsRebuild(FRebuildPolicy(), 37.8, -122.45, 100000.0, 0.0, false));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanMeshTideRebuildTest, "CamSim.Ocean.Mesh.TideForcesRebuild",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanMeshTideRebuildTest::RunTest(const FString& Parameters)
+{
+	// The tide is baked into the vertex heights: a change > 1 cm forces a rebuild, bypassing the rate limit.
+	FRebuildPolicy L{ 37.8, -122.45, 100000.0, true, 0.0 };
+	TestFalse(TEXT("same tide: no rebuild"), TideMoved(L, 0.0));
+	TestFalse(TEXT("5 mm: below the threshold"), TideMoved(L, 0.005));
+	TestTrue (TEXT("+2 cm: rebuild"), TideMoved(L, 0.02));
+	TestTrue (TEXT("-3 m: rebuild"), TideMoved(L, -3.0));
+	L.LastTideM = -3.0;
+	TestFalse(TEXT("built at -3 m, still -3 m: no rebuild"), TideMoved(L, -3.0));
+	TestFalse(TEXT("no mesh yet: nothing to redraw (NeedsRebuild builds anyway)"), TideMoved(FRebuildPolicy(), 1.0));
+	TestTrue (TEXT("tide change bypasses the 0.25 s limit"),
+		NeedsRebuild(L, 37.8, -122.45, 100000.0, 0.05, TideMoved(L, -2.0)));
+	return true;
+}

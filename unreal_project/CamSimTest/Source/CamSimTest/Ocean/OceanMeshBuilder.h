@@ -74,6 +74,7 @@ namespace CamSimOcean
 	{
 		double LastLat = 0.0, LastLon = 0.0, LastRadiusM = 0.0;
 		bool bHasMesh = false;
+		double LastTideM = 0.0;   // FOceanSurface::GetTideOffsetM() the mesh was built with
 	};
 
 	/**
@@ -83,12 +84,18 @@ namespace CamSimOcean
 	 */
 	bool NeedsRebuild(const FRebuildPolicy& Last, double Lat, double Lon, double RadiusM);
 
+	/** A tide change larger than this (m) rebuilds the mesh at once: the tide is baked into the vertices. */
+	constexpr double TideRebuildM = 0.01;
+
+	/** True when a mesh exists and TideM differs from the tide it was built with by more than TideRebuildM. */
+	CAMSIMTEST_API bool TideMoved(const FRebuildPolicy& Last, double TideM);
+
 	/** Shortest time between two rebuilds (a slewing gimbal would otherwise rebuild every frame). */
 	constexpr double MinRebuildIntervalS = 0.25;
 
 	/**
 	 * NeedsRebuild, rate limited: always true with no mesh or when bForce (teleport, origin
-	 * shift); otherwise false until MinRebuildIntervalS has passed since the last build.
+	 * shift, tide change); otherwise false until MinRebuildIntervalS has passed since the last build.
 	 */
 	CAMSIMTEST_API bool NeedsRebuild(const FRebuildPolicy& Last, double Lat, double Lon, double RadiusM,
 		double SecondsSinceBuild, bool bForce);

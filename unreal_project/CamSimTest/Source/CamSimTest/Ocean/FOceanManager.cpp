@@ -76,7 +76,7 @@ void FOceanManager::Init(UWorld* InWorld, AActor* Owner, UCamSimSubsystem* InSub
 	Subsystem = InSubsystem;
 	World = InWorld;
 	if (!Subsystem || !Subsystem->GetOceanSurface() || !InWorld) return;   // ocean off: nothing drawn
-	Cfg = Subsystem->GetConfig().Ocean;
+	const FCamSimConfig::FOceanConfig& Cfg = Subsystem->GetConfig().Ocean;
 
 	UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *ToObjectPath(Cfg.MaterialPath));
 	UMaterialParameterCollection* Collection = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Ocean/MPC_Ocean.MPC_Ocean"));
@@ -125,11 +125,13 @@ void FOceanManager::Tick(const FCamSimTelemetry* Cam)
 
 	// Centre and wave anchor come from the camera alone: boat placement needs the anchor even
 	// when nothing is drawn (M_Ocean/MPC missing, no georeference).
+	// Read live: ocean.max_radius_km is hot-reloadable (Validate() keeps it > 0).
+	const double MaxRadiusKm = Subsystem->GetConfig().Ocean.MaxRadiusKm;
 	const double SeaAtNadir = Ocean->SeaLevelM(Cam->Latitude, Cam->Longitude).Get(0.0);
 	const double AltAboveSea = Cam->Altitude - SeaAtNadir;
 	const CamSimOcean::FCentreDecision C = CamSimOcean::UpdateCentreAndAnchor(Track, *Ocean,
 		Cam->Latitude, Cam->Longitude, AltAboveSea, Cam->FrameCenterLat, Cam->FrameCenterLon,
-		Cam->FrameCenterLat != 0.0 || Cam->FrameCenterLon != 0.0, Cfg.MaxRadiusKm);
+		Cam->FrameCenterLat != 0.0 || Cam->FrameCenterLon != 0.0, MaxRadiusKm);
 	if (C.bReanchored)
 	{
 		UE_LOG(LogCamSim, Log, TEXT("Ocean: wave anchor set to %.5f %.5f"), C.Lat, C.Lon);
@@ -150,11 +152,14 @@ void FOceanManager::Tick(const FCamSimTelemetry* Cam)
 	CheckEcefUnitsOnce(EcefToUe);
 
 	const FVector CN = CamSimFrames::GeodeticDeltaToNeu(Cam->Latitude, Cam->Longitude, 0.0, C.Lat, C.Lon, 0.0);
-	const double R = CamSimOcean::HorizonRadiusM(FMath::Sqrt(CN.X * CN.X + CN.Y * CN.Y), AltAboveSea, Cfg.MaxRadiusKm);
+	const double R = CamSimOcean::HorizonRadiusM(FMath::Sqrt(CN.X * CN.X + CN.Y * CN.Y), AltAboveSea, MaxRadiusKm);
 	// A Cesium origin shift moves the UE frame under the (geographic) mesh: rebuild in the new frame.
 	const bool bFrameMoved = Last.bHasMesh && !EcefToUe.Equals(LastEcefToUe, 1e-3);
+	// The tide is baked into the vertex heights (sea level = geoid + tide): a CIGI tide change redraws now.
+	const double Tide = Ocean->GetTideOffsetM();
+	const bool bTideMoved = CamSimOcean::TideMoved(Last, Tide);
 	const double Now = FPlatformTime::Seconds();
-	if (CamSimOcean::NeedsRebuild(Last, C.Lat, C.Lon, R, Now - LastBuildS, C.bTeleport || bFrameMoved))
+	if (CamSimOcean::NeedsRebuild(Last, C.Lat, C.Lon, R, Now - LastBuildS, C.bTeleport || bFrameMoved || bTideMoved))
 	{
 		auto GeoToWorld = [&EcefToUe](double Lat, double Lon, double Alt)
 			{ return EcefToUe.TransformPosition(CamSimFrames::GeodeticToEcef(Lat, Lon, Alt)); };
@@ -162,7 +167,7 @@ void FOceanManager::Tick(const FCamSimTelemetry* Cam)
 		if (CamSimOcean::BuildOceanMesh(C.Lat, C.Lon, R, *Ocean, GeoToWorld, Data))
 		{
 			Mesh.Upload(Data);
-			Last = { C.Lat, C.Lon, R, true };
+			Last = { C.Lat, C.Lon, R, true, Tide };
 			LastEcefToUe = EcefToUe;
 			LastBuildS = Now;
 			const double Ms = (FPlatformTime::Seconds() - Now) * 1000.0;

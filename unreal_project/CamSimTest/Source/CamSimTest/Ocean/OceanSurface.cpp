@@ -10,7 +10,10 @@ FOceanSurface::FOceanSurface(FGeoidFn InGeoid)
 
 void FOceanSurface::SetBeaufort(double InBeaufort, double InFromDeg, double InChoppiness)
 {
-	Beaufort = InBeaufort; FromDeg = InFromDeg; Choppiness = InChoppiness;
+	// Non-finite inputs keep the current value (a NaN Beaufort would otherwise clamp to hurricane).
+	if (FMath::IsFinite(InBeaufort))   Beaufort   = InBeaufort;
+	if (FMath::IsFinite(InFromDeg))    FromDeg    = InFromDeg;
+	if (FMath::IsFinite(InChoppiness)) Choppiness = InChoppiness;
 	RebuildWaves();
 }
 

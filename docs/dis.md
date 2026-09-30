@@ -118,7 +118,8 @@ domain is the domain of their target, and life forms.
   height is max(that hit, sea level), where sea level is the EGM96 geoid (`Geospatial/Geoid.h`)
   plus the CIGI Maritime Surface Height tide offset. Bathymetry (the water-masked seabed, ~23 m
   below sea level in San Francisco Bay) therefore loses to the sea, and a lake more than 2 m
-  above sea level wins (the boat sits on the lake, without waves). On the sea, with
+  above the tide-free geoid wins (the boat sits on the lake, without waves; the tide is left
+  out of this test because Cesium's surface doesn't move with it). On the sea, with
   `ocean.vessel_motion`, the wave surface (`FOceanWaves::HeightAt`) is sampled at bow, stern,
   port and starboard of the footprint: heave is their mean, pitch and roll their slopes (times
   `ocean.vessel_motion_scale`); the sender's pitch and roll are replaced, its heading kept.
@@ -145,8 +146,10 @@ attitudes); every entity then uses its PDU pose.
 
 CIGI HAT/HOT requests see the same sea: with the ocean on, the terrain height a HAT/HOT
 answers is max(Cesium hit, sea surface including the waves at that point), so HOT at a boat
-returns the water surface, not the seabed. An extended response reports the water's normal
-when the water wins (material code 0). LOS still ignores the water.
+returns the water surface, not the seabed. A trace miss (tiles not loaded yet) is still
+answered invalid: the water only raises a valid hit. Over land below sea level (Death Valley,
+polders) HOT returns sea level (ROADMAP 2.6 carry-over). An extended response reports the
+water's normal when the water wins (material code 0). LOS still ignores the water.
 
 ## Ground truth
 
@@ -173,6 +176,14 @@ VOC XML carries the same `entity_id`, `source` and `source_id` per object.
   deep) and does not change with speed or load. Inland water that Cesium terrain does not
   render flat is not handled, and harbour piers that Cesium World Terrain drapes below sea
   level are drawn under the sea (Fisherman's Wharf).
+- Boat motion is exact only near the frame centre. The drawn sea fades the shorter waves
+  where its mesh cells are coarse (away from the frame centre), but placement and HOT use
+  the full wave sum, so a boat a few hundred metres off-centre can heave on waves the picture
+  no longer shows (from 500 ft at Beaufort 6 the two shorter waves are gone 240 m out). The
+  2.6 acceptance covers only a centred boat; fixes are in ROADMAP 2.6 carry-overs (share the
+  mesh's centre/radius/warp with placement behind a flag, or a denser grid).
+- Waves, boat motion and HOT run on the sim clock: freezing it (CIGI Celestial Sphere
+  Control, Ephemeris Model Enable off) freezes the sea while dead-reckoned boats keep moving.
 - Fast-moving vehicles can leave a faint TSR ghost trail behind them in close-ups.
 - Boxes are loose, world-aligned projections of the model bounds, with no occlusion test
   (a vehicle behind a hill is still labelled).

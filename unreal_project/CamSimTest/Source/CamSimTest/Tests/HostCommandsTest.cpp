@@ -178,6 +178,25 @@ bool FHostCommandsOceanWaveTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHostCommandsMaritimeClarityTest, "CamSim.Hosts.Cigi.MaritimeClarityIsPercent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FHostCommandsMaritimeClarityTest::RunTest(const FString& Parameters)
+{
+	// CIGI 3.3 Maritime Surface Conditions Control: Clarity is a percent, 0-100 (CCL bounds-checks it).
+	FCigiMaritimeSurfaceState In;
+	In.bSurfaceCondEn = true; In.SurfaceHeight = -1.5f; In.WaterTemp = 22.0f; In.Clarity = 20.0f;
+	FMaritimeSurfaceCommand C = CamSim::Cigi::ToMaritimeSurfaceCommand(In);
+	TestEqual(TEXT("clarity 20 % -> 0.2"), static_cast<double>(C.Clarity), 0.2, 1e-6);
+	TestEqual(TEXT("surface height"), static_cast<double>(C.SurfaceHeightM), -1.5, 1e-9);
+	TestEqual(TEXT("water temperature"), static_cast<double>(C.WaterTempC), 22.0, 1e-9);
+	In.Clarity = 100.0f;
+	C = CamSim::Cigi::ToMaritimeSurfaceCommand(In);
+	TestEqual(TEXT("clarity 100 % -> 1"), static_cast<double>(C.Clarity), 1.0, 1e-6);
+	TestEqual(TEXT("default packet state is fully clear"),
+		static_cast<double>(CamSim::Cigi::ToMaritimeSurfaceCommand(FCigiMaritimeSurfaceState()).Clarity), 1.0, 1e-6);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHostDisCommandsTest,
 	"CamSim.Hosts.DisEntityCommands",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

@@ -5,6 +5,8 @@
 #include "Ocean/OceanQueries.h"
 #include "Ocean/OceanSurface.h"
 
+#include <limits>
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanQueriesHotTest, "CamSim.Ocean.Queries.HotSeesWater",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FOceanQueriesHotTest::RunTest(const FString& Parameters)
@@ -23,7 +25,10 @@ bool FOceanQueriesHotTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("hill: HOT = terrain"), R.HotM, 120.0, 1e-9);
 
 	R = CombineHot(TOptional<double>(), &S, 37.8, -122.45);
-	TestTrue (TEXT("miss over sea: valid water"), R.bValid && R.bWater);
+	TestFalse(TEXT("miss over sea: invalid (water only raises a valid hit)"), R.bValid);
+	TestFalse(TEXT("miss over sea: not water"), R.bWater);
+	R = CombineHot(TOptional<double>(std::numeric_limits<double>::quiet_NaN()), &S, 37.8, -122.45);
+	TestFalse(TEXT("non-finite hit over sea: invalid"), R.bValid);
 
 	R = CombineHot(-55.0, nullptr, 37.8, -122.45);
 	TestTrue (TEXT("no ocean: terrain as before"), R.bValid && !R.bWater && R.HotM == -55.0);

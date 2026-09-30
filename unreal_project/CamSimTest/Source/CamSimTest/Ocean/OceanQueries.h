@@ -15,6 +15,9 @@ namespace CamSimOcean
 		FVector NormalNeu = FVector(0.0, 0.0, 1.0);   // only meaningful when bWater
 	};
 
-	/** HOT = max(terrain hit, sea surface incl. waves). Ocean == nullptr: the terrain hit alone. */
+	/**
+	 * HOT = max(terrain hit, sea surface incl. waves) when the terrain hit is valid; a terrain
+	 * miss stays invalid even with the ocean on. Ocean == nullptr: the terrain hit alone.
+	 */
 	CAMSIMTEST_API FHotResult CombineHot(TOptional<double> TerrainHotM, const FOceanSurface* Ocean, double Lat, double Lon);
 }

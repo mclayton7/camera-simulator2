@@ -379,7 +379,7 @@ struct FCigiMaritimeSurfaceState
 	uint8  Scope          = 0;        // 0=Global, 1=Regional, 2=Entity
 	float  SurfaceHeight  = 0.0f;     // metres
 	float  WaterTemp      = 15.0f;    // degrees Celsius
-	float  Clarity        = 1.0f;     // [0,1]
+	float  Clarity        = 100.0f;   // percent, 0-100 (CIGI 3.3; CCL bounds-checks it)
 };
 
 /** CIGI Wave Control (opcode 14) — ocean wave parameters from the host. */

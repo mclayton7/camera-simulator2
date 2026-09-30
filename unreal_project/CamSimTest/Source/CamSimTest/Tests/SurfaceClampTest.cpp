@@ -398,6 +398,52 @@ bool FSurfaceClampLakeMarginTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampLowTideTest, "CamSim.Entity.SurfaceClamp.LowTideIsNotALake",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampLowTideTest::RunTest(const FString& Parameters)
+{
+	// Cesium's sea surface sits at the geoid and doesn't move with the CIGI tide. At tide -3 m
+	// a hit at geoid + 0.3 m is the open sea (the lake test uses the tide-free geoid): the boat
+	// floats at geoid - 3 m and rides the waves.
+	FOceanSurface S = Sea(-32.0);
+	S.SetTideOffsetM(-3.0);
+	S.SetHostWave(0, OneWave(2.0, 40.0, 180.0));
+	FWaterInput W; W.Ocean = &S;
+	FStubProbe NearGeoid; NearGeoid.Height = -32.0 + 0.3;
+	FClampState St;
+	double MaxPitch = 0.0, MinAlt = 1e9, MaxAlt = -1e9;
+	for (int32 i = 0; i < 40; ++i)
+	{
+		S.SetTime(i * 0.1);
+		const CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, NearGeoid, St, W);
+		MaxPitch = FMath::Max(MaxPitch, FMath::Abs(P.Neu.Rotator().Pitch));
+		MinAlt = FMath::Min(MinAlt, P.Alt); MaxAlt = FMath::Max(MaxAlt, P.Alt);
+	}
+	TestTrue(*FString::Printf(TEXT("low tide: rides waves, pitch %.2f deg"), MaxPitch), MaxPitch > 0.5);
+	TestTrue(*FString::Printf(TEXT("low tide: heaves around geoid - 3 m (%.2f..%.2f)"), MinAlt, MaxAlt), MinAlt < -35.0 && MaxAlt > -35.0 && MaxAlt < -33.0);
+
+	// The held-miss branch classifies the same way: a tile eviction keeps the boat at sea, with waves.
+	FStubProbe Miss;
+	double MissPitch = 0.0;
+	for (int32 i = 0; i < 40; ++i)
+	{
+		S.SetTime(10.0 + i * 0.1);
+		const CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, Miss, St, W);
+		MissPitch = FMath::Max(MissPitch, FMath::Abs(P.Neu.Rotator().Pitch));
+		TestTrue(TEXT("low tide, miss: near geoid - 3 m"), FMath::Abs(P.Alt - (-35.0)) < 1.5);
+	}
+	TestTrue(*FString::Printf(TEXT("low tide, miss: still rides waves (pitch %.2f deg)"), MissPitch), MissPitch > 0.5);
+
+	// A real lake (beyond the margin above the geoid) is still a lake at low tide.
+	FStubProbe Lake; Lake.Height = -32.0 + 3.0;
+	FClampState St2;
+	S.SetTime(0.0);
+	const CamSimFrames::FGeoPose L = PlaceOnSurface(ESurfaceMode::Water, Sender(0.0), 3.0, 1.2, 0.0, Lake, St2, W);
+	TestEqual(TEXT("low tide, lake (geoid + 3 m): at the hit"), L.Alt, -29.0, 1e-6);
+	TestEqual(TEXT("low tide, lake: level"), L.Neu.Rotator().Pitch, 0.0, 1e-6);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampTileEvictionHoldTest, "CamSim.Entity.SurfaceClamp.TileEvictionHoldsLake",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSurfaceClampTileEvictionHoldTest::RunTest(const FString& Parameters)

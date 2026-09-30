@@ -214,7 +214,7 @@ namespace CamSim::Cigi
 		Out.bWhitecaps     = In.bWhitecapEn;
 		Out.SurfaceHeightM = In.SurfaceHeight;
 		Out.WaterTempC     = In.WaterTemp;
-		Out.Clarity        = In.Clarity;
+		Out.Clarity        = In.Clarity / 100.0f;   // CIGI 3.3: percent 0-100 → [0, 1]
 		return Out;
 	}
 }
