@@ -11,8 +11,11 @@ rm -f "$REPO/unreal_project/CamSimTest/Content/Ocean/M_Ocean.uasset" "$REPO/unre
 "$UE_CMD" "$REPO/unreal_project/CamSimTest/CamSimTest.uproject" -run=pythonscript \
   -script="$REPO/scripts/ocean/make_ocean_material.py" -AllowCommandletRendering -unattended -nosplash -nosound -stdout -FullStdOutLogOutput \
   > "$REPO/.cache/make_ocean_material.log" 2>&1 || true
-grep -q OCEAN_MATERIAL_OK "$REPO/.cache/make_ocean_material.log" || { echo "failed — see .cache/make_ocean_material.log" >&2; exit 1; }
-if grep -A3 "M_Ocean.*Failed to compile" "$REPO/.cache/make_ocean_material.log" >&2; then
-  echo "M_Ocean failed to compile — see .cache/make_ocean_material.log" >&2; exit 1
+RESTORE="The old assets were deleted; restore them with: git checkout -- unreal_project/CamSimTest/Content/Ocean"
+# Two forms: "LogShaderCompilers: ... Failed to compile Material /Game/Ocean/M_Ocean.M_Ocean ..." (shader errors)
+# and "LogMaterial: ... /Game/Ocean/M_Ocean.M_Ocean: Failed to compile Material ..." (graph errors).
+if grep -E -A3 "Failed to compile Material /Game/Ocean/M_Ocean|/Game/Ocean/M_Ocean\.M_Ocean: Failed to compile" "$REPO/.cache/make_ocean_material.log" >&2; then
+  echo "M_Ocean failed to compile — see .cache/make_ocean_material.log. $RESTORE" >&2; exit 1
 fi
+grep -q OCEAN_MATERIAL_OK "$REPO/.cache/make_ocean_material.log" || { echo "failed — see .cache/make_ocean_material.log. $RESTORE" >&2; exit 1; }
 echo "M_Ocean + MPC_Ocean written"
