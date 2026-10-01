@@ -145,6 +145,7 @@ void UCamSimCaptureComponent::Shutdown()
 	}
 
 	if (GrabExtension) { GrabExtension->Detach_GameThread(); }
+	ThermalTsrAlpha.Restore(FThermalTsrAlpha::FindCVar());
 
 	// No in-flight poll command may touch the pools after we drop them. The
 	// tick path never flushes; teardown is the one place we must.
@@ -421,6 +422,8 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	// radiance, not on scene colour, so UE's exposure is fixed (ThermalCS only reads colour for the solar term and
 	// divides PreExposure back out).
 	Sensor->PostProcessSettings.AutoExposureBias = bThermal ? ThermalUeExposureEv : SensorController.GetGainEv() + UeExposureOffsetEv;
+	// Thermal radiance through TSR needs RGBA16F output/history (R11G11B10 quantizes it far above the detector NETD).
+	ThermalTsrAlpha.Update(bThermal, FThermalTsrAlpha::FindCVar());
 
 	// One command: a frame never pairs IR thermal parameters with EO sensor parameters (or the reverse).
 	TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> Ext = GrabExtension;

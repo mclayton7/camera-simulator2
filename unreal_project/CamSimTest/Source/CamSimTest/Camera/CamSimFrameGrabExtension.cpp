@@ -111,6 +111,8 @@ void FCamSimFrameGrabExtension::SubscribeToPostProcessingPass(EPostProcessingPas
 	if (Pass == EPostProcessingPass::ReplacingTonemapper && bIsPassEnabled)
 	{
 		InOutPassCallbacks.Add(FPostProcessingPassDelegate::CreateRaw(this, &FCamSimFrameGrabExtension::RunSensor_RenderThread));
+		SensorSubscribedFrame = InView.Family ? InView.Family->FrameNumber : 0;
+		bSensorSubscribed = true;
 	}
 	// ROADMAP 4A Task 17: the engine asks every frame, per view, on the render thread (AddPostProcessingPasses), so the
 	// BeforeDOF subscription follows this frame's thermal parameters (set by a render command before the frame).
@@ -129,6 +131,14 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilde
 	const FScreenPassTexture SceneColor = FScreenPassTexture::CopyFromSlice(GraphBuilder,
 		Inputs.GetInput(EPostProcessMaterialInput::SceneColor));
 	bThermalSceneColor = false;
+	// The BeforeDOF subscription (pass 0) is made before the ReplacingTonemapper one (pass 4), but every delegate runs only
+	// after all subscriptions: if the sensor graph isn't subscribed this frame (tonemapper pass disabled), radiance would
+	// reach UE's own tonemapper, so leave scene colour alone.
+	const uint32 Frame = View.Family ? View.Family->FrameNumber : 0;
+	if (!bSensorSubscribed || SensorSubscribedFrame != Frame)
+	{
+		return SceneColor;
+	}
 	const FSceneTextureUniformParameters* St = Inputs.SceneTextures.SceneTextures
 		? Inputs.SceneTextures.SceneTextures->GetParameters().GetContents() : nullptr;
 	if (!ThermalParams.IsValid() || !SceneColor.IsValid() || !St || !St->SceneDepthTexture || !St->CustomDepthTexture
@@ -143,6 +153,8 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilde
 	TP.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
 
 	// A new texture with scene colour's desc (ThermalCS reads the scene's luminance from the old one for the fast term).
+	// Only its view rect is written: texels outside it are undefined, as in the engine's own scene colour, and TSR reads
+	// only InputRect (= View.ViewRect) of its input.
 	FRDGTextureDesc Desc = SceneColor.Texture->Desc;
 	Desc.Flags |= TexCreate_ShaderResource | TexCreate_UAV;
 	const FRDGTextureRef Out = GraphBuilder.CreateTexture(Desc, TEXT("CamSimThermalSceneColor"));
@@ -163,7 +175,7 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilde
 	// ~7.3 ms at any resolution while the frame's GPU time didn't change; with a compute pass opened just before the scope,
 	// it read 0 (no encoder began inside it). A never-culled 1-texel blit before the scope and one inside it, after the
 	// dispatch, give ThermalCS its own compute encoder (1080p: 0.134 ms median, the closing blit included). Two 1-texel
-	// copies per IR frame; harmless on RHIs with per-scope timestamps.
+	// copies per IR frame, on Metal only (other RHIs time scopes with per-scope timestamps).
 	auto AddTexelCopy = [&GraphBuilder](FRDGTextureRef Src, FIntPoint At, const TCHAR* Name)
 	{
 		const FRDGTextureRef Dst = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1, 1), Src->Desc.Format,
@@ -178,11 +190,12 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilde
 		GraphBuilder.AddPass(RDG_EVENT_NAME("%s", Name), Pp, ERDGPassFlags::Copy | ERDGPassFlags::NeverCull,
 			[Src, Dst, Ci](FRDGAsyncTask, FRHICommandList& RHICmdList) { RHICmdList.CopyTexture(Src->GetRHI(), Dst->GetRHI(), Ci); });
 	};
-	AddTexelCopy(SceneColor.Texture, SceneColor.ViewRect.Min, TEXT("CamSimThermalTimingBegin"));
+	const bool bMetalTiming = IsMetalPlatform(GMaxRHIShaderPlatform);
+	if (bMetalTiming) AddTexelCopy(SceneColor.Texture, SceneColor.ViewRect.Min, TEXT("CamSimThermalTimingBegin"));
 	{
 		RDG_EVENT_SCOPE_STAT(GraphBuilder, CamSimThermal, "CamSimThermal");
 		AddThermalPass(GraphBuilder, Ti, TP);
-		AddTexelCopy(Out, SceneColor.ViewRect.Min, TEXT("CamSimThermalTimingEnd"));
+		if (bMetalTiming) AddTexelCopy(Out, SceneColor.ViewRect.Min, TEXT("CamSimThermalTimingEnd"));
 	}
 	bThermalSceneColor = true;
 	ThermalSceneColorFrame = View.Family ? View.Family->FrameNumber : 0;

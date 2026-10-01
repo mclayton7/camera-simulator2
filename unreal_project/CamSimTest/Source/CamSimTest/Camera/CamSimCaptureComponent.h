@@ -16,6 +16,7 @@
 #include "Sensor/SensorStatsMailbox.h"
 #include "GroundTruth/AnnotationTypes.h"
 #include "Thermal/ThermalFrameBuilder.h"
+#include "Camera/ThermalTsrAlpha.h"
 #include "CamSimCaptureComponent.generated.h"
 
 class USceneCaptureComponent2D;
@@ -223,6 +224,8 @@ private:
 	 * reloads of the band, materials and the other thermal.* keys apply on the next frame.
 	 */
 	FThermalFrameBuilder ThermalBuilder;
+	/** r.TSR.AlphaChannel = 1 while thermal runs (RGBA16F TSR output/history for the radiance), restored otherwise. */
+	FThermalTsrAlpha ThermalTsrAlpha;
 	double ThermalLat = 0.0, ThermalLon = 0.0, ThermalAlt = 0.0;
 	FVector ThermalUp = FVector::UpVector;
 	double LastSensorUpdateSimSec = -1.0;

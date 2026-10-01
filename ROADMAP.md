@@ -1318,10 +1318,25 @@ Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
   - `thermal_gpu_ms` on Metal: MetalRHI times a stat scope by the encoders that begin inside it, and RDG kept ThermalCS
     in one compute encoder with the DOF / TSR passes after it (the scope read ~7.3 ms at any resolution while the frame's
     GPU time was unchanged). Never-culled 1-texel blits before and inside the scope give it its own encoder.
-  - Known limits: post-DOF translucency (particles) is composited by TSR in visible colour on top of the radiance
-    (particles are not thermally modelled in 4A). MWIR night interior temporal std rose from 0.31 to 0.79 DN (noon
-    0.92 → 0.48; LWIR unchanged at ~3 DN, dominated by detector noise). Likely cause, not yet confirmed: TSR outputs
-    PF_FloatR11G11B10 (6-bit mantissa, dithered), about 0.5 % relative quantization noise on the radiance.
+  - Known limit: post-DOF translucency (particles) is composited by TSR in visible colour on top of the radiance
+    (particles are not thermally modelled in 4A).
+  - TSR precision (fix round 1): with BeforeDOF alone, MWIR night interior temporal std rose from 0.31 to 0.79 DN.
+    Confirmed cause: `bSupportsAlpha` is false (`TemporalSuperResolution.cpp:1927`), so TSR's output and history are
+    PF_FloatR11G11B10 (`:1965`/`:1966`), dithered by `QuantizeForFloatRenderTarget` (`TSRUpdateHistory.usf:1339`):
+    ~0.2–0.4 K radiance steps in MWIR, 0.5–1 K in LWIR, far above the detector NETD. Fix: `FThermalTsrAlpha`
+    (`Camera/ThermalTsrAlpha.h`) sets `r.TSR.AlphaChannel=1` (SetByCode) while thermal IR runs and restores the saved
+    value otherwise (a console override wins), so TSR's output and history are RGBA16F and the format change drops the
+    history at each switch; EO keeps −1. Measured (M1 Pro, MWIR night coast, two launches each): interior std 0.79 →
+    0.32 DN, edge std 0.95 → 0.56 DN (shimmer ratio 1.21 → 1.75, still ≤ 2). **Cost: IR GPU frame time +1.6 ms**
+    (median `gpu_ms` 26.83/26.88 → 28.42/28.43 ms at 720p, 27.58 → 29.18 ms with a 1920x1080 capture; EO unchanged), above
+    the ~1 ms budget — the alpha path also turns off TSR's 16-bit VALU and doubles its colour bandwidth. Open decision
+    (keep it, or encode the radiance for R11G11B10). First EO→IR switch: up to 84 ms GPU / 31 ms render on one frame
+    (alpha off: ≤ 38 / 4 ms), no dropped frames, wall time ≤ 35 ms.
+    Acceptance with the fix (`thermal_check.py --band both`): (a)–(g) pass; (h) MWIR night 1.19, LWIR 1.00 / 1.01 pass,
+    **MWIR noon 2.14 fails**. Its edge std is 0.41 DN, the lowest yet (6.40 originally, 0.75 with BeforeDOF alone), but
+    interior land fell to 0.19 DN, below 8-bit rounding (0.29 DN), so the ratio now measures TSR's residual edge
+    convergence (~0.03 px rms at 15 DN/px edges) against a noise floor the 8-bit snapshot can't resolve. Gate (h)'s
+    definition is an open decision (not loosened here).
   No editor or asset changes are needed for 4A.
 
 ---

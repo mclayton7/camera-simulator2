@@ -109,6 +109,9 @@ private:
 	 *  number, so a flag left by a frame whose tonemapper never ran can't leak into a later frame. */
 	bool                 bThermalSceneColor = false;           // render thread
 	uint32               ThermalSceneColorFrame = 0;           // render thread
+	/** RunSensor_RenderThread was subscribed at ReplacingTonemapper for this frame number (BeforeDOF needs it). */
+	bool                 bSensorSubscribed = false;            // render thread
+	uint32               SensorSubscribedFrame = 0;            // render thread
 	struct FStatsSlot { TUniquePtr<FRHIGPUBufferReadback> Readback; uint32 Serial = 0; bool bPending = false; };
 	static constexpr int32 NumStatsSlots = 4;
 	FStatsSlot           StatsRing[NumStatsSlots];             // render thread
