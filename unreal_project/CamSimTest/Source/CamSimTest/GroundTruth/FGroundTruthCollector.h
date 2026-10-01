@@ -37,6 +37,8 @@ public:
 	void Close();
 	bool IsOpen() const { return bIsOpen; }
 	bool IsEnabled() const { return bEnabled; }
+	/** Every N-th frame is annotated (fixed at Open()). */
+	int32 GetAnnotationIntervalFrames() const { return AnnotationIntervalFrames; }
 
 	/**
 	 * Write annotation records for the current frame.
@@ -68,7 +70,11 @@ private:
 	const FCamSimConfig& Config;
 	bool  bEnabled    = false;
 	bool  bIsOpen     = false;
+	// Cached in Open(): the task thread must not read Config, which hot reload can move-assign.
 	int32 AnnotationIntervalFrames = 1;
+	int32 MinVisiblePixels = 1;
+	bool  bSegmentation = false;
+	FIntPoint CaptureSize = FIntPoint::ZeroValue;
 
 	TArray<TUniquePtr<IAnnotationWriter>> Writers;
 	TUniquePtr<FDepthMapWriter>           DepthWriter;

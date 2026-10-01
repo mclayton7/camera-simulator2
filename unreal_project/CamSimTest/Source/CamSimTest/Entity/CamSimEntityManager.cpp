@@ -321,7 +321,9 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FEntityCommand& C)
 	Entity->Key      = C.Key;
 	Entity->EntityId = static_cast<uint16>(C.Key.Id & 0xFFFF);
 	Entity->AnnotationId = AnnotationIds.Allocate();
-	if (Subsystem && Subsystem->GetConfig().MLTraining.bEnabled && Subsystem->GetConfig().MLTraining.bBoundingBoxes)
+	// Tagged only when the instance-ID pass runs (decided once at startup): an untagged entity costs no
+	// custom-depth draw and gets the projected box.
+	if (Subsystem && Subsystem->IsGroundTruthMaskAvailable())
 	{
 		// A stale entry for this key (actor died before PurgeStaleEntities ran) must not leak its value.
 		uint8 Old = 0;
@@ -457,7 +459,7 @@ void FCamSimEntityManager::GetEntitySnapshot(
 			Data.bHasGeo = true;
 			Data.Lat = Geo.Lat; Data.Lon = Geo.Lon; Data.AltM = Geo.Alt;
 			const FRotator R = Geo.Neu.Rotator();
-			Data.YawDeg = R.Yaw; Data.PitchDeg = R.Pitch; Data.RollDeg = R.Roll;
+			Data.YawDeg = FRotator::ClampAxis(R.Yaw); Data.PitchDeg = R.Pitch; Data.RollDeg = R.Roll;
 		}
 		OutSnapshot.Add(MoveTemp(Data));
 	}

@@ -27,6 +27,7 @@
 #include "Ocean/OceanSurface.h"         // FOceanSurface (ROADMAP 2.6)
 #include "Geospatial/Geoid.h"           // CamSim::Geospatial::GetGeoidUndulation
 #include "SensorGraph.h"                // IsSensorGraphSupported (ROADMAP 3B)
+#include "InstanceIdPass.h"             // IsInstanceIdPassSupported (ROADMAP 2.7)
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -421,6 +422,20 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		else
 		{
 			UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: sensor graph unavailable: %s"), *Why);
+		}
+	}
+
+	// Ground truth (ROADMAP 2.7): stencil tagging and the instance-ID readback, decided once. InstanceIdCS is
+	// checked apart from the sensor graph: a missing ID shader only costs the measured boxes.
+	bGroundTruthMaskAvailable = false;
+	if (bSensorGraphAvailable && Config.MLTraining.bEnabled && Config.MLTraining.bBoundingBoxes)
+	{
+		FString Why;
+		bGroundTruthMaskAvailable = IsInstanceIdPassSupported(Why);
+		if (!bGroundTruthMaskAvailable)
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: ground truth is on but the instance-ID pass is unavailable (%s); ")
+				TEXT("entities are not tagged and annotations use projected boxes (mask_source \"projection\")"), *Why);
 		}
 	}
 

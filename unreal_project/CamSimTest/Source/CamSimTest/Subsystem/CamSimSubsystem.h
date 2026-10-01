@@ -106,6 +106,13 @@ public:
 	bool IsSensorGraphAvailable() const { return bSensorGraphAvailable; }
 
 	/**
+	 * Ground truth (ROADMAP 2.7): whether entities are stencil-tagged and the instance-ID pass runs this
+	 * session — the sensor graph runs, ml_training.enabled && bounding_boxes, and InstanceIdCS is available.
+	 * Decided once in Initialize (live config changes don't flip it); false: projected boxes only.
+	 */
+	bool IsGroundTruthMaskAvailable() const { return bGroundTruthMaskAvailable; }
+
+	/**
 	 * The config preconditions (primary view, NV12 dimensions), then
 	 * IsSensorGraphSupported (a real RHI with SM5 compute and the shaders).
 	 * Game thread, after RHI init. On false, OutWhy says what's missing.
@@ -156,6 +163,7 @@ public:
 private:
 	FCamSimConfig    Config;
 	bool             bSensorGraphAvailable = false;
+	bool             bGroundTruthMaskAvailable = false;
 	FEntityTypeTable EntityTypeTable;
 	/** Serialises HotReloadConfig writes against cross-thread Config snapshot reads. */
 	mutable FRWLock  ConfigLock_;

@@ -21,7 +21,6 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "Time/SimClock.h"
 #include "Sensor/SensorOptics.h"
-#include "InstanceIdPass.h"
 
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/Engine.h"
@@ -87,22 +86,13 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 	// from the sensor graph: a missing ID shader only costs the measured boxes.
 	IdReadbackPool.Reset();
 	IdIntervalFrames = FMath::Max(1, Cfg.MLTraining.AnnotationIntervalFrames);
-	if (bSensorGraph && Cfg.MLTraining.bEnabled && Cfg.MLTraining.bBoundingBoxes)
+	if (bSensorGraph && Subsystem->IsGroundTruthMaskAvailable())   // decided once by the subsystem (logs why not)
 	{
-		FString Why;
-		if (IsInstanceIdPassSupported(Why))
+		for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
 		{
-			for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
-			{
-				IdReadbackPool.Add(MakeUnique<FRHIGPUBufferReadback>(*FString::Printf(TEXT("CamSimInstanceIdReadback_%d"), Idx)));
-			}
-			UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ground truth — instance-ID readback enabled (every %d frame(s))"), IdIntervalFrames);
+			IdReadbackPool.Add(MakeUnique<FRHIGPUBufferReadback>(*FString::Printf(TEXT("CamSimInstanceIdReadback_%d"), Idx)));
 		}
-		else
-		{
-			UE_LOG(LogCamSim, Warning, TEXT("ACamSimCamera: ground truth is on but the instance-ID pass is unavailable (%s); ")
-				TEXT("annotations use projected boxes (mask_source \"projection\")"), *Why);
-		}
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ground truth — instance-ID readback enabled (every %d frame(s))"), IdIntervalFrames);
 	}
 
 	for (TAtomic<uint32>& Gen : GrabbedGeneration) { Gen.Store(0); }

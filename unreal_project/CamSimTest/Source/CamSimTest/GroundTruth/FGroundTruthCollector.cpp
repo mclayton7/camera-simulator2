@@ -30,6 +30,9 @@ bool FGroundTruthCollector::Open()
 	if (!bEnabled) return true;
 
 	AnnotationIntervalFrames = FMath::Max(1, Config.MLTraining.AnnotationIntervalFrames);
+	MinVisiblePixels = Config.MLTraining.MinVisiblePixels;
+	bSegmentation = Config.MLTraining.bSegmentation;
+	CaptureSize = FIntPoint(Config.CaptureWidth, Config.CaptureHeight);
 
 	// Resolve output directory
 	FString OutputDir = Config.MLTraining.OutputDir;
@@ -102,26 +105,19 @@ void FGroundTruthCollector::WriteAnnotationFrame(
 	if (!bIsOpen || !bEnabled || Writers.IsEmpty()) return;
 	if ((FrameIdx % static_cast<uint64>(AnnotationIntervalFrames)) != 0) return;
 
-	// Measure from the rendered ID image; the size check guards a hot-reloaded capture size.
-	if (Ids && Ids->IsValid() && Ids->Width == Config.CaptureWidth && Ids->Height == Config.CaptureHeight)
+	// Measure from the rendered ID image; the size check guards an ID image of another size.
+	if (Ids && Ids->IsValid() && Ids->Width == CaptureSize.X && Ids->Height == CaptureSize.Y)
 	{
-		FInstanceMaskAnalyzer::Analyze(*Ids, Entities, Config.MLTraining.MinVisiblePixels, Config.MLTraining.bSegmentation);
+		FInstanceMaskAnalyzer::Analyze(*Ids, Entities, MinVisiblePixels, bSegmentation);
 	}
 
-	// Filter to only visible entities before handing off to writers.
-	// Writers may still skip zero-area boxes, but invisible entities must never
-	// appear in annotation output (they were occluded or outside the frustum).
-	TArray<FEntityAnnotationData> VisibleEntities;
-	VisibleEntities.Reserve(Entities.Num());
-	for (const FEntityAnnotationData& E : Entities)
-	{
-		if (E.bVisible) VisibleEntities.Add(E);
-	}
+	// Only visible entities reach the writers (occluded or outside the frustum: never annotated).
+	Entities.RemoveAll([](const FEntityAnnotationData& E) { return !E.bVisible; });
 
 	for (auto& W : Writers)
 	{
 		if (W && W->IsOpen())
-			W->WriteFrame(VisibleEntities, Telemetry, FrameIdx);
+			W->WriteFrame(Entities, Telemetry, FrameIdx);
 	}
 }
 

@@ -689,3 +689,40 @@ bool FGroundTruthBox3DYawCornerOrderTest::RunTest(const FString&)
 	}
 	return true;
 }
+
+// M1 (final review): the collector reads only what Open() cached — a hot reload that changes the config while
+// frames are in flight (capture size, min_visible_pixels, segmentation) must not change how they are measured.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGtCollectorCachedConfigTest, "CamSim.GroundTruth.Collector.CachedAtOpen",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGtCollectorCachedConfigTest::RunTest(const FString&)
+{
+	const FString Dir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("gt_cached_test"));
+	IFileManager::Get().DeleteDirectory(*Dir, false, true);
+	FCamSimConfig Cfg;
+	Cfg.MLTraining.bEnabled = true; Cfg.MLTraining.OutputDir = Dir;
+	Cfg.MLTraining.bBoundingBoxes = true; Cfg.MLTraining.bCocoExport = true;
+	Cfg.MLTraining.bVocExport = false; Cfg.MLTraining.bDepthMap = false;
+	Cfg.MLTraining.MinVisiblePixels = 1; Cfg.MLTraining.bSegmentation = true;
+	Cfg.CaptureWidth = 6; Cfg.CaptureHeight = 4;
+	FInstanceIdImage I = GtMakeImage(6, 4);
+	for (int32 Y = 1; Y <= 2; ++Y) for (int32 X = 1; X <= 3; ++X) GtSet(I, X, Y, 7, 7);
+	{
+		FGroundTruthCollector Collector(Cfg);
+		if (!TestTrue(TEXT("opened"), Collector.Open())) return false;
+		// "Hot reload" after Open: every field the task thread used to read live.
+		Cfg.CaptureWidth = 1920; Cfg.CaptureHeight = 1080;
+		Cfg.MLTraining.MinVisiblePixels = 1000; Cfg.MLTraining.bSegmentation = false;
+		FCamSimTelemetry Tel;
+		Collector.WriteAnnotationFrame({ GtEntity(7) }, &I, Tel, 0);
+		Collector.Close();
+	}
+	TArray<FString> Files;
+	IFileManager::Get().FindFilesRecursive(Files, *Dir, TEXT("*.jsonl"), true, false);
+	if (!TestEqual(TEXT("one COCO file"), Files.Num(), 1)) return false;
+	FString Text;
+	FFileHelper::LoadFileToString(Text, *Files[0]);
+	TestTrue(TEXT("still measured from the IDs (cached size)"), Text.Contains(TEXT("\"mask_source\":\"render\"")));
+	TestTrue(TEXT("not dropped (cached min_visible_pixels)"), Text.Contains(TEXT("\"entity_id\":70000")));
+	TestTrue(TEXT("segmentation still written (cached)"), Text.Contains(TEXT("\"segmentation\"")));
+	return true;
+}
