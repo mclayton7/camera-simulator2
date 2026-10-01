@@ -1,7 +1,8 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 // Thermal core (ROADMAP 4A): ThermalCS — for every pixel of the scene-colour view rect, classify sky / entity / water /
 // terrain from scene depth, custom depth + stencil and GBuffer base colour (render resolution, nearest texel), add the
-// solar fast term from scene colour, and write in-band radiance (R32F). Maths: CamSimThermalCommon.ush.
+// solar fast term from scene colour, and write in-band radiance: R32F, or with WRITE_SCENE_COLOR float4(L, L, L, 1) into
+// scene colour at OutputMin (Task 17: at BeforeDOF, so TSR resolves the radiance). Maths: CamSimThermalCommon.ush.
 
 #include "/Engine/Public/Platform.ush"
 #if USE_VIEW
@@ -18,8 +19,13 @@ Texture2D<float4>  SceneColor;
 Texture2D<float>   SceneDepth;
 Texture2D<float>   CustomDepth;
 Texture2D<uint2>   CustomStencil;   // FSceneTextureUniformParameters::CustomStencilTexture's type
-Texture2D<float4>  BaseColor;       // GBufferC (black dummy when UseBaseColor == 0)
+Texture2D<float4>  BaseColor;       // GBufferC (1x1 black dummy when UseBaseColor == 0: never loaded then)
+#if WRITE_SCENE_COLOR
+int2  OutputMin;                    // OutSceneColor texel of output pixel (0, 0)
+RWTexture2D<float4> OutSceneColor;
+#else
 RWTexture2D<float> OutRadiance;
+#endif
 
 void DepthRect(out int2 Min, out int2 Size)
 {
@@ -56,6 +62,16 @@ void ThermalCS(uint3 Id : SV_DispatchThreadID)
 	S.CustomZ = CustomDepth.Load(int3(T, 0));
 	S.Stencil = CustomStencil.Load(int3(T, 0)) STENCIL_COMPONENT_SWIZZLE & 0xFFu;
 	S.Color = SceneColor.Load(int3(ColorViewMin + P, 0)).rgb * ColorScale();
-	S.Base = BaseColor.Load(int3(T, 0)).rgb;
-	OutRadiance[P] = EvaluatePixel(S);
+	// Guarded: T indexes the depth rect, outside the 1x1 dummy (an out-of-bounds Load is undefined without robustness).
+	S.Base = float3(0.0, 0.0, 0.0);
+	if (UseBaseColor != 0u)
+	{
+		S.Base = BaseColor.Load(int3(T, 0)).rgb;
+	}
+	const float L = EvaluatePixel(S);
+#if WRITE_SCENE_COLOR
+	OutSceneColor[OutputMin + P] = float4(L, L, L, 1.0);
+#else
+	OutRadiance[P] = L;
+#endif
 }

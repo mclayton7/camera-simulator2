@@ -16,6 +16,12 @@
 #include "SceneView.h"
 #include "UnrealClient.h"
 
+/** RDG resources of the thermal timing brackets' 1-texel copies (RunThermal_RenderThread). */
+BEGIN_SHADER_PARAMETER_STRUCT(FCamSimTexelCopyParameters, )
+	RDG_TEXTURE_ACCESS(Input, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(Output, ERHIAccess::CopyDest)
+END_SHADER_PARAMETER_STRUCT()
+
 FCamSimFrameGrabExtension::FCamSimFrameGrabExtension(const FAutoRegister& AutoRegister, FViewport* InGameViewport,
 	FIntPoint InCaptureSize, FSensorStatsMailbox* InMailbox)
 	: FSceneViewExtensionBase(AutoRegister)
@@ -106,6 +112,81 @@ void FCamSimFrameGrabExtension::SubscribeToPostProcessingPass(EPostProcessingPas
 	{
 		InOutPassCallbacks.Add(FPostProcessingPassDelegate::CreateRaw(this, &FCamSimFrameGrabExtension::RunSensor_RenderThread));
 	}
+	// ROADMAP 4A Task 17: the engine asks every frame, per view, on the render thread (AddPostProcessingPasses), so the
+	// BeforeDOF subscription follows this frame's thermal parameters (set by a render command before the frame).
+	// bIsPassEnabled is always true for BeforeDOF.
+	else if (Pass == EPostProcessingPass::BeforeDOF && ThermalParams.IsValid())
+	{
+		InOutPassCallbacks.Add(FPostProcessingPassDelegate::CreateRaw(this, &FCamSimFrameGrabExtension::RunThermal_RenderThread));
+	}
+}
+
+FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
+	const FPostProcessMaterialInputs& Inputs)
+{
+	// The chain (AddSceneViewExtensionPassChain) carries the returned texture on as scene colour; it must keep the input's
+	// view rect, which here is the render-resolution View.ViewRect, the same rect as the depth / stencil / GBuffer.
+	const FScreenPassTexture SceneColor = FScreenPassTexture::CopyFromSlice(GraphBuilder,
+		Inputs.GetInput(EPostProcessMaterialInput::SceneColor));
+	bThermalSceneColor = false;
+	const FSceneTextureUniformParameters* St = Inputs.SceneTextures.SceneTextures
+		? Inputs.SceneTextures.SceneTextures->GetParameters().GetContents() : nullptr;
+	if (!ThermalParams.IsValid() || !SceneColor.IsValid() || !St || !St->SceneDepthTexture || !St->CustomDepthTexture
+		|| !St->CustomStencilTexture)
+	{
+		return SceneColor;   // RunSensor_RenderThread warns (visible-light proxy)
+	}
+
+	// ClipToTranslatedWorld is the view's (jittered, camera at the translated-world origin), as InstanceIdCS uses it:
+	// before TSR, scene colour, depth and stencil share one render-resolution, jittered view.
+	FThermalFrameParams TP = *ThermalParams;
+	TP.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
+
+	// A new texture with scene colour's desc (ThermalCS reads the scene's luminance from the old one for the fast term).
+	FRDGTextureDesc Desc = SceneColor.Texture->Desc;
+	Desc.Flags |= TexCreate_ShaderResource | TexCreate_UAV;
+	const FRDGTextureRef Out = GraphBuilder.CreateTexture(Desc, TEXT("CamSimThermalSceneColor"));
+
+	FThermalPassInputs Ti;
+	Ti.SceneColor        = SceneColor.Texture;
+	Ti.SceneColorRect    = SceneColor.ViewRect;
+	Ti.SceneDepth        = St->SceneDepthTexture;
+	Ti.CustomDepth       = St->CustomDepthTexture;
+	Ti.CustomStencil     = St->CustomStencilTexture;
+	Ti.BaseColor         = CamSimThermalPass::bBaseColorAtTonemapper ? St->GBufferCTexture : nullptr;
+	Ti.ViewUniformBuffer = View.ViewUniformBuffer.GetReference();
+	Ti.OutputSceneColor  = Out;
+	Ti.OutputRect        = SceneColor.ViewRect;
+	// Metal timing brackets (thermal_gpu_ms): MetalRHI times a GPU stat scope by the stage counters of the encoders that
+	// BEGIN inside it (start of the first, end of the last), and RDG keeps consecutive compute passes in one encoder.
+	// Unbracketed, ThermalCS shared its compute encoder with the post-processing passes after it (DOF, TSR): the scope read
+	// ~7.3 ms at any resolution while the frame's GPU time didn't change; with a compute pass opened just before the scope,
+	// it read 0 (no encoder began inside it). A never-culled 1-texel blit before the scope and one inside it, after the
+	// dispatch, give ThermalCS its own compute encoder (1080p: 0.134 ms median, the closing blit included). Two 1-texel
+	// copies per IR frame; harmless on RHIs with per-scope timestamps.
+	auto AddTexelCopy = [&GraphBuilder](FRDGTextureRef Src, FIntPoint At, const TCHAR* Name)
+	{
+		const FRDGTextureRef Dst = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1, 1), Src->Desc.Format,
+			FClearValueBinding::None, TexCreate_ShaderResource), Name);
+		FRHICopyTextureInfo Ci;
+		Ci.Size = FIntVector(1, 1, 1);
+		Ci.SourcePosition = FIntVector(At.X, At.Y, 0);
+		FCamSimTexelCopyParameters* Pp = GraphBuilder.AllocParameters<FCamSimTexelCopyParameters>();
+		Pp->Input = Src;
+		Pp->Output = Dst;
+		// NeverCull: nothing reads Dst, and RDG culls a pass whose outputs are unused (AddCopyTexturePass would vanish).
+		GraphBuilder.AddPass(RDG_EVENT_NAME("%s", Name), Pp, ERDGPassFlags::Copy | ERDGPassFlags::NeverCull,
+			[Src, Dst, Ci](FRDGAsyncTask, FRHICommandList& RHICmdList) { RHICmdList.CopyTexture(Src->GetRHI(), Dst->GetRHI(), Ci); });
+	};
+	AddTexelCopy(SceneColor.Texture, SceneColor.ViewRect.Min, TEXT("CamSimThermalTimingBegin"));
+	{
+		RDG_EVENT_SCOPE_STAT(GraphBuilder, CamSimThermal, "CamSimThermal");
+		AddThermalPass(GraphBuilder, Ti, TP);
+		AddTexelCopy(Out, SceneColor.ViewRect.Min, TEXT("CamSimThermalTimingEnd"));
+	}
+	bThermalSceneColor = true;
+	ThermalSceneColorFrame = View.Family ? View.Family->FrameNumber : 0;
+	return FScreenPassTexture(Out, SceneColor.ViewRect);
 }
 
 void FCamSimFrameGrabExtension::ReadStats_RenderThread(FRDGBuilder& GraphBuilder, FRDGBufferRef Histogram, uint32 Serial)
@@ -173,43 +254,22 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunSensor_RenderThread(FRDGBuilder
 			SceneColor.ViewRect.Width(), SceneColor.ViewRect.Height(), CaptureSize.X, CaptureSize.Y);
 	}
 
-	// ROADMAP 4A: thermal IR — ThermalCS turns this view into in-band radiance, which replaces scene colour as the
-	// sensor graph's input (no pre-exposure, no bloom; Params.InputScale = 1 / B(300 K) set by the game thread).
-	if (ThermalParams.IsValid())
+	// ROADMAP 4A Task 17: thermal IR — ThermalCS ran at BeforeDOF this frame, so scene colour is the TSR-resolved in-band
+	// radiance (raw W m^-2 sr^-1: no pre-exposure, no bloom; Params.InputScale = 1 / B(300 K) set by the game thread).
+	const bool bRadiance = bThermalSceneColor && ThermalParams.IsValid()
+		&& ThermalSceneColorFrame == (View.Family ? View.Family->FrameNumber : 0);
+	bThermalSceneColor = false;
+	if (bRadiance)
 	{
-		const FSceneTextureUniformParameters* St = Inputs.SceneTextures.SceneTextures
-			? Inputs.SceneTextures.SceneTextures->GetParameters().GetContents() : nullptr;
-		if (St && St->SceneDepthTexture && St->CustomDepthTexture && St->CustomStencilTexture)
-		{
-			// ClipToTranslatedWorld is the view's (camera at the translated-world origin), as InstanceIdCS uses it:
-			// the depth textures' render-resolution view (TSR upscales after them).
-			FThermalFrameParams TP = *ThermalParams;
-			TP.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
-			FThermalPassInputs Ti;
-			Ti.SceneColor        = SceneColor.Texture;
-			Ti.SceneColorRect    = SceneColor.ViewRect;
-			Ti.SceneDepth        = St->SceneDepthTexture;
-			Ti.CustomDepth       = St->CustomDepthTexture;
-			Ti.CustomStencil     = St->CustomStencilTexture;
-			Ti.BaseColor         = CamSimThermalPass::bBaseColorAtTonemapper ? St->GBufferCTexture : nullptr;
-			Ti.ViewUniformBuffer = View.ViewUniformBuffer.GetReference();
-			FRDGTextureRef Radiance;
-			{
-				RDG_EVENT_SCOPE_STAT(GraphBuilder, CamSimThermal, "CamSimThermal");
-				Radiance = AddThermalPass(GraphBuilder, Ti, TP);
-			}
-			In.SceneColor     = Radiance;
-			In.SceneViewRect  = FIntRect(FIntPoint::ZeroValue, SceneColor.ViewRect.Size());
-			In.Bloom          = nullptr;
-			In.BloomViewRect  = FIntRect();
-			In.bRadianceInput = true;
-		}
-		else if (!bWarnedThermalInputs)
-		{
-			bWarnedThermalInputs = true;
-			UE_LOG(LogCamSim, Warning, TEXT("Thermal: the post-process inputs carry no depth / custom depth / stencil; ")
-				TEXT("IR falls back to the visible-light proxy this session (logged once)"));
-		}
+		In.Bloom          = nullptr;
+		In.BloomViewRect  = FIntRect();
+		In.bRadianceInput = true;
+	}
+	else if (ThermalParams.IsValid() && !bWarnedThermalInputs)
+	{
+		bWarnedThermalInputs = true;
+		UE_LOG(LogCamSim, Warning, TEXT("Thermal: the post-process inputs carry no depth / custom depth / stencil at BeforeDOF; ")
+			TEXT("IR falls back to the visible-light proxy this session (logged once)"));
 	}
 
 	FSensorGraphOutputs Out;

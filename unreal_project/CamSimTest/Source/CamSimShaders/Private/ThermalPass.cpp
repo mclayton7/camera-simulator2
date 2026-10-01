@@ -52,6 +52,8 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCamSimThermalParameters, )
 	SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<uint2>, CustomStencil)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, BaseColor)
 	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, OutRadiance)
+	SHADER_PARAMETER(FIntPoint, OutputMin)
+	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutSceneColor)
 END_SHADER_PARAMETER_STRUCT()
 
 /** Per-pixel temperature -> in-band radiance (ROADMAP 4A). */
@@ -63,7 +65,8 @@ public:
 	using FParameters = FCamSimThermalParameters;
 
 	class FUseView : SHADER_PERMUTATION_BOOL("USE_VIEW");
-	using FPermutationDomain = TShaderPermutationDomain<FUseView>;
+	class FWriteSceneColor : SHADER_PERMUTATION_BOOL("WRITE_SCENE_COLOR");   // Task 17: radiance into scene colour (BeforeDOF)
+	using FPermutationDomain = TShaderPermutationDomain<FUseView, FWriteSceneColor>;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
@@ -102,7 +105,15 @@ FRDGTextureRef AddThermalPass(FRDGBuilder& GraphBuilder, const FThermalPassInput
 	check(In.SceneColorRect.Area() > 0);
 	check(In.ViewUniformBuffer || In.DepthViewRect.Area() > 0);   // an empty rect leaves the shader's clamp undefined
 	const FIntPoint Out = In.SceneColorRect.Size();
-	const FRDGTextureRef Radiance = GraphBuilder.CreateTexture(
+	const bool bWriteSceneColor = In.OutputSceneColor != nullptr;
+	if (bWriteSceneColor)
+	{
+		check(In.OutputSceneColor != In.SceneColor);
+		check(In.OutputRect.Size() == Out);
+		check(In.OutputRect.Min.X >= 0 && In.OutputRect.Min.Y >= 0
+			&& In.OutputRect.Max.X <= In.OutputSceneColor->Desc.Extent.X && In.OutputRect.Max.Y <= In.OutputSceneColor->Desc.Extent.Y);
+	}
+	const FRDGTextureRef Radiance = bWriteSceneColor ? In.OutputSceneColor : GraphBuilder.CreateTexture(
 		FRDGTextureDesc::Create2D(Out, PF_R32_FLOAT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV),
 		TEXT("CamSimThermalRadiance"));
 
@@ -155,10 +166,19 @@ FRDGTextureRef AddThermalPass(FRDGBuilder& GraphBuilder, const FThermalPassInput
 	Pass->CustomDepth      = In.CustomDepth;
 	Pass->CustomStencil    = In.CustomStencil;
 	Pass->BaseColor        = In.BaseColor ? In.BaseColor : GSystemTextures.GetBlackDummy(GraphBuilder);
-	Pass->OutRadiance      = GraphBuilder.CreateUAV(Radiance);
+	if (bWriteSceneColor)
+	{
+		Pass->OutputMin     = In.OutputRect.Min;
+		Pass->OutSceneColor = GraphBuilder.CreateUAV(Radiance);
+	}
+	else
+	{
+		Pass->OutRadiance   = GraphBuilder.CreateUAV(Radiance);
+	}
 
 	FCamSimThermalCS::FPermutationDomain Perm;
 	Perm.Set<FCamSimThermalCS::FUseView>(bUseView);
+	Perm.Set<FCamSimThermalCS::FWriteSceneColor>(bWriteSceneColor);
 	TShaderMapRef<FCamSimThermalCS> Shader(GetGlobalShaderMap(GMaxRHIFeatureLevel), Perm);
 	FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("CamSimThermal %dx%d", Out.X, Out.Y), Shader, Pass,
 		FComputeShaderUtils::GetGroupCount(Out, FIntPoint(8, 8)));

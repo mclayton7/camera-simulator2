@@ -32,10 +32,20 @@ struct FThermalPassInputs
 	FRDGTextureRef    BaseColor     = nullptr;   // GBufferC; null: fast term off
 	FIntRect          DepthViewRect;             // region of the depth/stencil/base textures (ignored when ViewUniformBuffer is set)
 	FRHIUniformBuffer* ViewUniformBuffer = nullptr;   // runtime: rect = View.ViewRectMin/ViewSizeAndInvSize, colour * View.OneOverPreExposure
+	/**
+	 * Task 17 (BeforeDOF): when set, ThermalCS writes float4(L, L, L, 1) into this texture (scene-colour format, typically
+	 * PF_FloatRGBA; needs TexCreate_UAV) at OutputRect (size = SceneColorRect.Size()) instead of allocating its R32F
+	 * output. Texels outside OutputRect are untouched. Must not be SceneColor itself (no read/write aliasing).
+	 */
+	FRDGTextureRef    OutputSceneColor = nullptr;
+	FIntRect          OutputRect;
 };
 
-/** Whether ThermalCS (both permutations) is in the global shader map. Game thread, after RHI init. */
+/** Whether ThermalCS (every permutation) is in the global shader map. Game thread, after RHI init. */
 CAMSIMSHADERS_API bool IsThermalPassSupported(FString& OutWhy);
 
-/** ThermalCS: R32F in-band radiance (W m^-2 sr^-1), extent SceneColorRect.Size(), its view rect at (0, 0). See CamSimThermalRef. */
+/**
+ * ThermalCS: in-band radiance (W m^-2 sr^-1, raw — no pre-exposure). Without OutputSceneColor: a new R32F texture, extent
+ * SceneColorRect.Size(), its view rect at (0, 0). With it: returns OutputSceneColor, written at OutputRect. See CamSimThermalRef.
+ */
 CAMSIMSHADERS_API FRDGTextureRef AddThermalPass(FRDGBuilder& GraphBuilder, const FThermalPassInputs& In, const FThermalFrameParams& Params);

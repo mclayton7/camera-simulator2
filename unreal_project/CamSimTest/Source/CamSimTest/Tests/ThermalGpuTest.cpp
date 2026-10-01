@@ -212,6 +212,116 @@ bool FThermalGpuMatchesCpuTest::RunTest(const FString& Parameters)
 
 namespace
 {
+	/** Sentinel the scene-colour target is pre-filled with; texels outside OutputRect must keep it. */
+	const FFloat16Color SceneColorSentinel(FLinearColor(-7.0f, 3.5f, -0.25f, 0.5f));
+
+	/** ThermalCS's WRITE_SCENE_COLOR permutation: radiance into a pre-filled PF_FloatRGBA target at OutRect (same-size depth
+	 *  and colour). Returns the whole target (Ext.X * Ext.Y texels); empty on a readback failure. */
+	TArray<FFloat16Color> RunThermalToSceneColorOnGpu(const CamSimThermalTest::FThermalTestScene& S, FIntPoint TargetExt, FIntRect OutRect)
+	{
+		const FIntPoint Ext(S.W, S.H);
+		TArray<FFloat16Color> Result;
+		ENQUEUE_RENDER_COMMAND(CamSimThermalSceneColorGpuTest)([&](FRHICommandListImmediate& RHICmdList)
+		{
+			FTextureRHIRef ColorTex   = UploadRgba(RHICmdList, S.Color, Ext, TEXT("CamSimTestThermalColor"));
+			FTextureRHIRef DepthTex   = UploadFloat(RHICmdList, S.Depth, Ext, TEXT("CamSimTestThermalDepth"));
+			FTextureRHIRef CustomTex  = UploadFloat(RHICmdList, S.Custom, Ext, TEXT("CamSimTestThermalCustom"));
+			FTextureRHIRef StencilTex = UploadStencil(RHICmdList, S.Stencil, Ext);
+			FTextureRHIRef BaseTex    = UploadRgba(RHICmdList, S.Base, Ext, TEXT("CamSimTestThermalBase"));
+
+			const FRHITextureCreateDesc Desc = FRHITextureCreateDesc::Create2D(TEXT("CamSimTestThermalSceneColor"), TargetExt.X, TargetExt.Y, PF_FloatRGBA)
+				.SetFlags(ETextureCreateFlags::ShaderResource | ETextureCreateFlags::UAV).SetInitialState(ERHIAccess::SRVMask);
+			FTextureRHIRef Target = RHICmdList.CreateTexture(Desc);
+			TArray<FFloat16Color> Fill;
+			Fill.Init(SceneColorSentinel, TargetExt.X * TargetExt.Y);
+			RHICmdList.UpdateTexture2D(Target, 0, FUpdateTextureRegion2D(0, 0, 0, 0, TargetExt.X, TargetExt.Y), TargetExt.X * sizeof(FFloat16Color),
+				reinterpret_cast<const uint8*>(Fill.GetData()));
+
+			FRHIGPUTextureReadback Rb(TEXT("CamSimTestThermalSceneColorReadback"));
+			bool bSameTexture = false;
+			{
+				FRDGBuilder GraphBuilder(RHICmdList);
+				FThermalPassInputs Ti;
+				Ti.SceneColor     = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(ColorTex, TEXT("CamSimTestThermalColor")));
+				Ti.SceneColorRect = FIntRect(FIntPoint::ZeroValue, Ext);
+				Ti.SceneDepth     = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(DepthTex, TEXT("CamSimTestThermalDepth")));
+				Ti.CustomDepth    = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(CustomTex, TEXT("CamSimTestThermalCustom")));
+				const FRDGTextureRef StencilRdg = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(StencilTex, TEXT("CamSimTestThermalStencil")));
+				Ti.CustomStencil  = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(StencilRdg));
+				Ti.BaseColor      = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(BaseTex, TEXT("CamSimTestThermalBase")));
+				Ti.DepthViewRect  = FIntRect(FIntPoint::ZeroValue, Ext);
+				const FRDGTextureRef Out = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Target, TEXT("CamSimTestThermalSceneColor")));
+				Ti.OutputSceneColor = Out;
+				Ti.OutputRect       = OutRect;
+				const FRDGTextureRef Written = AddThermalPass(GraphBuilder, Ti, S.P);
+				bSameTexture = Written == Out;
+				AddEnqueueCopyPass(GraphBuilder, &Rb, Written);
+				GraphBuilder.Execute();
+			}
+			RHICmdList.SubmitAndBlockUntilGPUIdle();
+			if (!bSameTexture || !Rb.IsReady()) return;
+			int32 Pitch = 0;
+			const FFloat16Color* Data = static_cast<const FFloat16Color*>(Rb.Lock(Pitch));
+			Result.SetNumUninitialized(TargetExt.X * TargetExt.Y);
+			for (int32 Y = 0; Y < TargetExt.Y; ++Y)
+				FMemory::Memcpy(&Result[Y * TargetExt.X], Data + static_cast<int64>(Y) * Pitch, TargetExt.X * sizeof(FFloat16Color));
+			Rb.Unlock();
+		});
+		FlushRenderingCommands();
+		return Result;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalGpuSceneColorOutputTest, "CamSim.GPU.Thermal.SceneColorOutputMatchesCpu",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalGpuSceneColorOutputTest::RunTest(const FString& Parameters)
+{
+	if (GUsingNullRHI) { AddInfo(TEXT("skipped: NullRHI (run scripts/run_gpu_tests.sh)")); return true; }
+	// Task 17 (BeforeDOF): ThermalCS writes float4(L, L, L, 1) into scene colour (fp16) at OutputRect, for TSR to resolve.
+	// fp16 storage: M1 Pro/Metal converts the UAV store by truncation, not rounding (seen: 2.076061 stored as 2.074219),
+	// so the bound is one fp16 ulp, 2^-10 = 9.8e-4 relative; the mirror itself is ~3e-6 here (MatchesCpu).
+	constexpr float Fp16Tol = 1e-3f;
+	constexpr int32 W = 64, H = 36;
+	const CamSimThermalTest::FThermalTestScene S = CamSimThermalTest::MakeScene(W, H, W, H);
+	const TArray<CamSimThermalRef::FPixelResult> Ref = CamSimThermalRef::Run(S.Images(true), S.P);
+	const FIntPoint TargetExt(W + 11, H + 7);
+	const FIntRect OutRect(FIntPoint(5, 3), FIntPoint(5 + W, 3 + H));
+	const TArray<FFloat16Color> Gpu = RunThermalToSceneColorOnGpu(S, TargetExt, OutRect);
+	if (!TestEqual(TEXT("readback of the returned (= OutputSceneColor) texture"), Gpu.Num(), TargetExt.X * TargetExt.Y)) return true;
+
+	int32 Bad = 0, Untouched = 0, Clobbered = 0, WorstI = 0;
+	float WorstRel = 0.0f, WorstGpu = 0.0f;
+	for (int32 Y = 0; Y < TargetExt.Y; ++Y)
+	{
+		for (int32 X = 0; X < TargetExt.X; ++X)
+		{
+			const FFloat16Color& T = Gpu[Y * TargetExt.X + X];
+			const bool bSentinel = T.R.Encoded == SceneColorSentinel.R.Encoded && T.G.Encoded == SceneColorSentinel.G.Encoded
+				&& T.B.Encoded == SceneColorSentinel.B.Encoded && T.A.Encoded == SceneColorSentinel.A.Encoded;
+			if (!OutRect.Contains(FIntPoint(X, Y)))
+			{
+				if (!bSentinel) ++Clobbered;
+				continue;
+			}
+			if (bSentinel) { ++Untouched; continue; }
+			const int32 I = (Y - OutRect.Min.Y) * W + (X - OutRect.Min.X);
+			const float R = Ref[I].Radiance;
+			const float Den = FMath::Max(FMath::Abs(R), 1e-6f);
+			const float Rel = FMath::Max3(FMath::Abs(T.R.GetFloat() - R), FMath::Abs(T.G.GetFloat() - R), FMath::Abs(T.B.GetFloat() - R)) / Den;
+			if (!(Rel <= Fp16Tol) || T.A.GetFloat() != 1.0f) ++Bad;
+			if (!(Rel <= WorstRel)) { WorstRel = Rel; WorstI = I; WorstGpu = T.R.GetFloat(); }
+		}
+	}
+	AddInfo(FString::Printf(TEXT("max relative error %.3g at (%d, %d), class %d (gpu %.7g, ref %.7g, ref as fp16 %.7g)"), WorstRel,
+		WorstI % W, WorstI / W, static_cast<int32>(Ref[WorstI].Class), WorstGpu, Ref[WorstI].Radiance, FFloat16(Ref[WorstI].Radiance).GetFloat()));
+	TestEqual(TEXT("texels outside OutputRect changed (must keep the sentinel)"), Clobbered, 0);
+	TestEqual(TEXT("texels inside OutputRect never written"), Untouched, 0);
+	TestEqual(*FString::Printf(TEXT("texels beyond %.0e relative (R = G = B = L) or A != 1 (worst %.3g)"), Fp16Tol, WorstRel), Bad, 0);
+	return true;
+}
+
+namespace
+{
 	struct FEndToEndResult { TArray<float> Radiance; TArray<uint8> Nv12; bool bOk = false; };
 
 	/** One graph, as the live capture: ThermalCS radiance -> SensorCS with bRadianceInput (same-size depth and colour). */

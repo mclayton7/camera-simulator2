@@ -126,11 +126,13 @@ def _rows(bands=("mwir", "lwir"), runs=ALL_RUNS) -> list[dict]:
 
 def test_expected_rows_cover_every_band_time_and_selected_run():
     rows = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
-    assert len(rows) == 2 * 6 + 2
+    assert len(rows) == 2 * 8 + 2
     assert ("e", "lwir", "noon") in rows and ("e", "lwir", "night") in rows
+    for b in ("mwir", "lwir"):  # (h) static coast shimmer, both times
+        assert ("h", b, "night") in rows and ("h", b, "noon") in rows
     assert ("f", "mwir", "noon") in rows and ("g", "eo", "noon") in rows
     only_bands = tc.expected_rows(["mwir"], {"bands"})
-    assert {r[0] for r in only_bands} == set("abcde")  # f, g not expected
+    assert {r[0] for r in only_bands} == set("abcdeh")  # f, g not expected
     assert tc.expected_rows(["mwir"], {"eo"}) == [("g", "eo", "noon")]
 
 
@@ -150,7 +152,7 @@ def test_a_missing_row_fails():
         assert tc.missing_rows(checks, exp) == [exp[drop]]
     # A whole band's run absent: its rows are missing even though every letter is present.
     checks = _rows(bands=("mwir",))
-    assert {c["check"] for c in checks} == set("abcdefg")
+    assert {c["check"] for c in checks} == set("abcdefgh")
     assert tc.gate_passed(checks, exp) is False
     assert tc.gate_passed([], []) is False  # nothing expected -> not a pass
 
@@ -160,26 +162,47 @@ def test_report_json_shape_and_gate():
     checks = _rows()
     info = [
         {"check": "boat", "value": 2.0},
-        {"check": "shimmer(coast)", "band": "mwir", "time": "noon", "value": 7.0},
-        {"check": "shimmer(coast)", "band": "lwir", "time": "noon", "value": 1.5},
+        {"check": "shimmer(coast) EO baseline", "band": "eo", "time": "noon", "value": 1.0},
     ]
     rep = tc.build_report({"git": "abc"}, checks, info, ["/x.png"], exp)
     assert set(rep) == {
         "meta",
         "checks",
         "missing",
-        "warnings",
         "info",
         "shots",
         "passed",
     }
     assert rep["passed"] is True and rep["missing"] == []
-    assert rep["warnings"] == ["WARN: shimmer > 2x: shimmer(coast) mwir noon = 7.00"]
     json.dumps(rep)  # serialisable
     md = tc.render_markdown(rep)
-    assert "| a | mwir | night |" in md and "WARN: shimmer > 2x" in md
+    assert "| a | mwir | night |" in md and "| h | lwir | noon |" in md
     checks[3]["pass"] = False
     assert tc.build_report({}, checks, [], [], exp)["passed"] is False
     rep = tc.build_report({}, _rows()[:-1], [], [], exp)  # g missing
     assert rep["passed"] is False and rep["missing"] == [["g", "eo", "noon"]]
     assert "| g | eo | noon | - | - | FAIL | missing" in tc.render_markdown(rep)
+
+
+def test_shimmer_gate_row():
+    sh = {"value": 2.5, "detail": "d"}
+    row = tc.shimmer_row("mwir", "noon", sh)
+    assert row["check"] == "h" and row["band"] == "mwir" and row["time"] == "noon"
+    assert row["pass"] is False and row["threshold"] == "<= 2"
+    assert tc.shimmer_row("lwir", "night", {"value": 2.0, "detail": ""})["pass"] is True
+    assert tc.shimmer_row("lwir", "night", {"value": float("nan"), "detail": ""})["pass"] is False
+
+
+def test_coast_shimmer_ratio_on_synthetic_frames():
+    rng = np.random.default_rng(1)
+    h, w = 120, 160
+    base = np.full((h, w), 100.0, np.float32)
+    base[int(0.6 * h) :, :] = 140.0  # a horizontal "coastline" in the edge ROI
+    frames = base + rng.normal(0, 1.0, (30, h, w)).astype(np.float32)
+    vd = tc.ViewData("r", "noon", "coast", frames, [None] * 30, {})
+    calm = tc.coast_shimmer(vd)["value"]
+    assert 0.5 < calm < 1.5  # noise only: edge std ~ interior std
+    flick = frames.copy()
+    edge_row = int(0.6 * h)
+    flick[::2, edge_row - 1 : edge_row + 1, :] = 140.0  # the edge jumps a row every other frame
+    assert tc.coast_shimmer(tc.ViewData("r", "noon", "coast", flick, [None] * 30, {}))["value"] > 2.0

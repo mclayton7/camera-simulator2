@@ -48,7 +48,9 @@ public:
 	/**
 	 * Render thread (ROADMAP 4A): thermal parameters for the next frames; null = thermal off (luminance input). Set in
 	 * the same render command as SetParams_RenderThread, so sensor and thermal parameters always belong to one tick.
-	 * With parameters, ThermalCS turns the scene into in-band radiance ahead of the sensor graph.
+	 * With parameters, ThermalCS turns the scene into in-band radiance at BeforeDOF (Task 17): it replaces scene colour
+	 * ahead of the temporal upscaler, so TSR resolves the radiance with its depth/stencil-consistent jitter, and the
+	 * sensor graph at ReplacingTonemapper reads the resolved radiance.
 	 */
 	void SetThermalParams_RenderThread(TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> P) { ThermalParams = MoveTemp(P); }
 
@@ -72,6 +74,9 @@ protected:
 
 private:
 	FScreenPassTexture RunSensor_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
+		const FPostProcessMaterialInputs& Inputs);
+	/** BeforeDOF (ROADMAP 4A Task 17): ThermalCS writes radiance into a copy of scene colour (same desc and view rect). */
+	FScreenPassTexture RunThermal_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
 		const FPostProcessMaterialInputs& Inputs);
 	void ReadStats_RenderThread(FRDGBuilder& GraphBuilder, FRDGBufferRef Histogram, uint32 Serial);
 	/** Run InstanceIdCS on this view's scene textures and queue its copy into IdReadback (stores Gen in IdGrabbed). */
@@ -99,6 +104,11 @@ private:
 	FSensorFrameParams   Params;                               // render thread
 	TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> ThermalParams;   // render thread; null = thermal off
 	bool                 bWarnedThermalInputs = false;         // render thread
+	/** Set by RunThermal_RenderThread (BeforeDOF), consumed by RunSensor_RenderThread later in the same view's post
+	 *  processing: scene colour at the tonemapper is then TSR-resolved radiance. Tagged with the view family's frame
+	 *  number, so a flag left by a frame whose tonemapper never ran can't leak into a later frame. */
+	bool                 bThermalSceneColor = false;           // render thread
+	uint32               ThermalSceneColorFrame = 0;           // render thread
 	struct FStatsSlot { TUniquePtr<FRHIGPUBufferReadback> Readback; uint32 Serial = 0; bool bPending = false; };
 	static constexpr int32 NumStatsSlots = 4;
 	FStatsSlot           StatsRing[NumStatsSlots];             // render thread

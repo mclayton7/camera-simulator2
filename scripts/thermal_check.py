@@ -36,7 +36,7 @@ OUT/shots/, a region overlay to OUT/overlays/ (red / cyan = the two compared reg
 the COCO box), all frames to OUT/<run>/frames/<time>_<view>.npz.
 
 Checks (spec "Testing"). Exit 0 only when every expected (check, band, time) row exists and
-passes: a, b, c, d, e per selected band when `bands` is in --runs, f when `hd` is, g when
+passes: a, b, c, d, e, h per selected band when `bands` is in --runs, f when `hd` is, g when
 `eo` is (so `--runs bands` alone can exit 0; f and g are then not expected). A missing
 row (a view with no frames, an absent run) fails:
   (a) night nadir_truck: mean Y in [60, 180] and < 5 % of pixels at Y <= 16
@@ -49,10 +49,11 @@ row (a view with no frames, an absent run) fails:
   (e) sky: top 30 % mean Y < bottom 30 % mean Y (both bands, night and noon)
   (f) hd: thermal_gpu_ms p95 <= 0.5 ms at 1080p (frame stats)
   (g) eo: |mean Y(thermal on) - mean Y(thermal off)| <= 1 DN
-  edge shimmer (report-only, "WARN: shimmer > 2x" in the report): temporal std of Y on edge
-  pixels of the static coast view <= 2 x the std of interior land pixels (EO baseline beside
-  it). The truck box-boundary ratio is printed too, labelled motion-contaminated: the truck
-  moves against its box, so it is not a shimmer measure
+  (h) coast, night and noon: edge shimmer = temporal std of Y on edge pixels of the static
+      coast view <= 2 x the std of interior land pixels (Task 17: ThermalCS runs before TSR;
+      the EO baseline is printed beside it, info). The truck box-boundary ratio is printed
+      too, labelled motion-contaminated: the truck moves against its box, so it is not a
+      shimmer measure
 """
 
 from __future__ import annotations
@@ -330,7 +331,7 @@ Row = tuple[str, str, str]  # (check, band, time)
 
 
 def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
-    """Every gate row the selected bands and runs must produce. a, b, c, d, e come from the
+    """Every gate row the selected bands and runs must produce. a, b, c, d, e, h come from the
     band runs (only when `bands` is selected); f from `hd` and g from `eo`, each expected
     only when that run group is selected (so `--runs bands` can pass on its own)."""
     rows: list[Row] = []
@@ -343,6 +344,8 @@ def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
                 ("d", b, "noon"),
                 ("e", b, "night"),
                 ("e", b, "noon"),
+                ("h", b, "night"),
+                ("h", b, "noon"),
             ]
     if "hd" in runs:
         rows.append(("f", "mwir", "noon"))
@@ -367,15 +370,18 @@ def gate_passed(checks: list[dict], expected: list[Row]) -> bool:
     )
 
 
-def shimmer_warnings(info: list[dict], limit: float = SHIMMER_RATIO) -> list[str]:
-    """Static-view shimmer ratios above `limit` (report-only until it becomes a gate)."""
-    return [
-        f"WARN: shimmer > {limit:g}x: {c['check']} {c.get('band', '-')} {c.get('time', '-')} = {c['value']:.2f}"
-        for c in info
-        if c["check"].startswith("shimmer(coast")
-        and isinstance(c.get("value"), float)
-        and c["value"] > limit
-    ]
+def shimmer_row(band: str, tod: str, sh: dict, limit: float = SHIMMER_RATIO) -> dict:
+    """Gate (h): the static coast view's edge / interior temporal-std ratio <= limit."""
+    v = float(sh["value"])
+    return {
+        "check": "h",
+        "band": band,
+        "time": tod,
+        "value": v,
+        "threshold": f"<= {limit:g}",
+        "pass": bool(v <= limit),  # NaN fails
+        "detail": sh["detail"],
+    }
 
 
 def build_report(
@@ -389,7 +395,6 @@ def build_report(
         "meta": meta,
         "checks": checks,
         "missing": [list(r) for r in missing_rows(checks, expected)],
-        "warnings": shimmer_warnings(info),
         "info": info,
         "shots": shots,
         "passed": gate_passed(checks, expected),
@@ -418,8 +423,6 @@ def render_markdown(report: dict) -> str:
         lines.append(
             f"| {check} | {band} | {tod} | - | - | FAIL | missing: no data for this row |"
         )
-    if report.get("warnings"):
-        lines += [""] + [f"**{w}**  " for w in report["warnings"]]
     lines += [
         "",
         "## Info (not gated)",
@@ -961,7 +964,7 @@ def check_band(
             shots.append(overlay(out, vd, water, land, None, len(vd.y) // 2))
             sh = coast_shimmer(vd)
             if sh is not None:
-                add(info, "shimmer(coast)", sh["value"], time_=tod, detail=sh["detail"])
+                checks.append(shimmer_row(band, tod, sh))
 
         # (e) sky vs terrain.
         vd = views.get((tod, "sky"))
@@ -1074,7 +1077,7 @@ def coast_shimmer(vd: ViewData) -> dict | None:
     e, i = region_mean(std, edge), region_mean(std, interior)
     return {
         "value": e / max(i, 1e-6),
-        "detail": f"edge temporal std {e:.2f} / interior land {i:.2f} DN over {len(vd.y)} frames, static pose (report-only, <= {SHIMMER_RATIO:g})",
+        "detail": f"edge temporal std {e:.2f} / interior land {i:.2f} DN over {len(vd.y)} frames, static pose",
     }
 
 
@@ -1287,8 +1290,6 @@ def main() -> int:
         )
     for check, band, tod in report["missing"]:
         print(f"[{check}] FAIL {band} {tod}: missing (no data for this row)")
-    for w in report["warnings"]:
-        print(w)
     print(f"Report: {out / 'report.md'}; {'PASS' if report['passed'] else 'FAIL'}")
     return 0 if report["passed"] else 1
 

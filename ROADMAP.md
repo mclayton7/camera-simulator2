@@ -1297,14 +1297,31 @@ Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
   (58.7° vertical), so the top 30 % rows are all sky and the bottom 30 % all terrain.
   Known 4A limitations seen in the shots: one terrain class, so night terrain is nearly flat and the AGC stretches the
   IR optics' cos⁴ vignetting; the truck clips white at night (MWIR); the thermal cloud term follows CIGI weather only.
-  - **Follow-up — edge shimmer (visible, report-only metric fails):** on the static coast pose, temporal std of Y on
-    edge pixels / interior land is 6.7 (night) and 7.0 (noon) in MWIR, 1.1 / 2.1 in LWIR, against 0.99 for EO of the
-    same pose (limit 2; the report prints `WARN: shimmer > 2x`). At noon the flicker sits on every albedo / shadow edge, not only class edges (MWIR std p99
-    10 DN, p99.9 25 DN). Likely cause (hypothesis, not yet confirmed): ThermalCS loads depth, custom stencil and GBuffer base colour at render resolution (jittered
-    by TSR every frame) but scene colour after TSR, so the fast term and the class map move against each other by a
-    sub-pixel jitter each frame. LWIR's noise and PSF hide most of it. A 3×3 class vote (the spec fallback) covers
-    the class edges only; the texture edges need the GBuffer inputs de-jittered (e.g. sample them at the unjittered
-    position, or temporally resolve the thermal output).
+  - Edge shimmer (found here, fixed by Task 17): on the static coast pose, temporal std of Y on edge pixels / interior
+    land was 6.7 (night) and 7.0 (noon) in MWIR, 1.1 / 2.1 in LWIR, against 0.99 for EO of the same pose (limit 2). At
+    noon the flicker sat on every albedo / shadow edge, not only class edges (MWIR std p99 10 DN, p99.9 25 DN).
+- TSR-resolved thermal (plan Task 17, 2026-10-01): cause of the shimmer — at `ReplacingTonemapper` ThermalCS mixed
+  jittered render-resolution inputs (depth, custom depth / stencil, GBuffer base colour) with TSR-resolved scene colour,
+  so the class map and the fast term moved against each other by the sub-pixel jitter every frame. Fix: ThermalCS runs
+  at `EPostProcessingPass::BeforeDOF` (before DOF and the temporal upscaler; subscribed per frame on the render thread
+  only while thermal parameters are set; the engine always passes `bIsPassEnabled` for it). Its `WRITE_SCENE_COLOR`
+  permutation writes `float4(L, L, L, 1)` (raw W m⁻² sr⁻¹) into a new texture with scene colour's desc at the same view
+  rect, which the chain carries on as scene colour, so TSR resolves the radiance with the same jitter as its inputs.
+  SensorCS at `ReplacingTonemapper` reads the resolved scene colour as radiance (`bRadianceInput`, no bloom,
+  `InputScale = 1/B(300 K)` unchanged). Per-pixel maths unchanged (`CamSim.GPU.Thermal.SceneColorOutputMatchesCpu`:
+  fp16 output within 1e-3 of the reference — Metal stores fp16 UAVs by truncation, one ulp = 9.8e-4 — texels outside
+  the output rect untouched). Also fixed: GBufferC is no longer `Load`ed when no base colour is bound.
+  Acceptance (`thermal_check.py --band both`, all gates pass): new gate (h) coast shimmer ≤ 2 — MWIR 1.21 night /
+  1.57 noon, LWIR 1.01 / 1.03 (EO baseline 1.00); (a)–(g) unchanged in substance ((f) ThermalCS p95 0.142 ms at 1080p,
+  (g) EO −0.003 → +0.003 DN). An EO↔IR switch shows no TSR ghosting: the first switched snapshot (~130 ms) already
+  carries none of the previous mode's structure; an IR pan at 5°/s keeps clean edges.
+  - `thermal_gpu_ms` on Metal: MetalRHI times a stat scope by the encoders that begin inside it, and RDG kept ThermalCS
+    in one compute encoder with the DOF / TSR passes after it (the scope read ~7.3 ms at any resolution while the frame's
+    GPU time was unchanged). Never-culled 1-texel blits before and inside the scope give it its own encoder.
+  - Known limits: post-DOF translucency (particles) is composited by TSR in visible colour on top of the radiance
+    (particles are not thermally modelled in 4A). MWIR night interior temporal std rose from 0.31 to 0.79 DN (noon
+    0.92 → 0.48; LWIR unchanged at ~3 DN, dominated by detector noise). Likely cause, not yet confirmed: TSR outputs
+    PF_FloatR11G11B10 (6-bit mantissa, dithered), about 0.5 % relative quantization noise on the radiance.
   No editor or asset changes are needed for 4A.
 
 ---
