@@ -23,7 +23,7 @@ rm -rf "$OUT"
 mkdir -p "$REPO/.cache"
 "$UE_BIN" "$REPO/unreal_project/CamSimTest/CamSimTest.uproject" \
   -ExecCmds="Automation RunTests ${FILTER}+Quit" -TestExit="Automation Test Queue Empty" \
-  -ReportExportPath="$OUT" -unattended -nosound -nosplash -DisablePython -RenderOffscreen "${RHI_ARGS[@]}" \
+  -ReportExportPath="$OUT" -unattended -nosound -nosplash -DisablePython -RenderOffscreen ${RHI_ARGS[@]+"${RHI_ARGS[@]}"} \
   -log -stdout -FullStdOutLogOutput > "$REPO/.cache/automation-gpu.log" 2>&1 || true
 if [[ ! -f "$OUT/index.json" ]]; then
   echo "no report — see .cache/automation-gpu.log" >&2
