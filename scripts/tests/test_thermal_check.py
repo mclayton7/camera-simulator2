@@ -106,26 +106,80 @@ def test_coast_masks_are_radius_matched_and_disjoint():
         assert r[m].min() >= 0.26 * 720 - 1e-6 and r[m].max() <= 0.40 * 720 + 1e-6
 
 
-def test_report_json_shape_and_gate():
-    checks = [
+ALL_RUNS = {"bands", "hd", "eo"}
+
+
+def _rows(bands=("mwir", "lwir"), runs=ALL_RUNS) -> list[dict]:
+    return [
         {
-            "check": g,
-            "band": "mwir",
-            "time": "night",
+            "check": c,
+            "band": b,
+            "time": t,
             "value": 1.0,
             "threshold": "t",
             "pass": True,
             "detail": "",
         }
-        for g in "abcdefg"
+        for c, b, t in tc.expected_rows(list(bands), set(runs))
     ]
-    rep = tc.build_report(
-        {"git": "abc"}, checks, [{"check": "boat", "value": 2.0}], ["/x.png"]
-    )
-    assert set(rep) == {"meta", "checks", "info", "shots", "passed"}
-    assert rep["passed"] is True
+
+
+def test_expected_rows_cover_every_band_time_and_selected_run():
+    rows = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
+    assert len(rows) == 2 * 6 + 2
+    assert ("e", "lwir", "noon") in rows and ("e", "lwir", "night") in rows
+    assert ("f", "mwir", "noon") in rows and ("g", "eo", "noon") in rows
+    only_bands = tc.expected_rows(["mwir"], {"bands"})
+    assert {r[0] for r in only_bands} == set("abcde")  # f, g not expected
+    assert tc.expected_rows(["mwir"], {"eo"}) == [("g", "eo", "noon")]
+
+
+def test_complete_rows_pass():
+    checks = _rows()
+    exp = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
+    assert tc.gate_passed(checks, exp) is True
+    assert tc.missing_rows(checks, exp) == []
+
+
+def test_a_missing_row_fails():
+    exp = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
+    for drop in range(len(exp)):
+        checks = _rows()
+        del checks[drop]
+        assert tc.gate_passed(checks, exp) is False, exp[drop]
+        assert tc.missing_rows(checks, exp) == [exp[drop]]
+    # A whole band's run absent: its rows are missing even though every letter is present.
+    checks = _rows(bands=("mwir",))
+    assert {c["check"] for c in checks} == set("abcdefg")
+    assert tc.gate_passed(checks, exp) is False
+    assert tc.gate_passed([], []) is False  # nothing expected -> not a pass
+
+
+def test_report_json_shape_and_gate():
+    exp = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
+    checks = _rows()
+    info = [
+        {"check": "boat", "value": 2.0},
+        {"check": "shimmer(coast)", "band": "mwir", "time": "noon", "value": 7.0},
+        {"check": "shimmer(coast)", "band": "lwir", "time": "noon", "value": 1.5},
+    ]
+    rep = tc.build_report({"git": "abc"}, checks, info, ["/x.png"], exp)
+    assert set(rep) == {
+        "meta",
+        "checks",
+        "missing",
+        "warnings",
+        "info",
+        "shots",
+        "passed",
+    }
+    assert rep["passed"] is True and rep["missing"] == []
+    assert rep["warnings"] == ["WARN: shimmer > 2x: shimmer(coast) mwir noon = 7.00"]
     json.dumps(rep)  # serialisable
-    assert "| a | mwir | night |" in tc.render_markdown(rep)
+    md = tc.render_markdown(rep)
+    assert "| a | mwir | night |" in md and "WARN: shimmer > 2x" in md
     checks[3]["pass"] = False
-    assert tc.build_report({}, checks, [], [])["passed"] is False
-    assert tc.build_report({}, checks[:6], [], [])["passed"] is False  # gate g missing
+    assert tc.build_report({}, checks, [], [], exp)["passed"] is False
+    rep = tc.build_report({}, _rows()[:-1], [], [], exp)  # g missing
+    assert rep["passed"] is False and rep["missing"] == [["g", "eo", "noon"]]
+    assert "| g | eo | noon | - | - | FAIL | missing" in tc.render_markdown(rep)

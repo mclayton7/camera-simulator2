@@ -35,7 +35,10 @@ IR (grey: U = V = 128) and as BT.709 luma for EO. The middle frame of each view 
 OUT/shots/, a region overlay to OUT/overlays/ (red / cyan = the two compared regions, green =
 the COCO box), all frames to OUT/<run>/frames/<time>_<view>.npz.
 
-Checks (spec "Testing"; exit 0 only when every gate passes):
+Checks (spec "Testing"). Exit 0 only when every expected (check, band, time) row exists and
+passes: a, b, c, d, e per selected band when `bands` is in --runs, f when `hd` is, g when
+`eo` is (so `--runs bands` alone can exit 0; f and g are then not expected). A missing
+row (a view with no frames, an absent run) fails:
   (a) night nadir_truck: mean Y in [60, 180] and < 5 % of pixels at Y <= 16
   (b) night nadir_truck: truck box mean Y >= ring (box dilated 2x minus the box) mean + 3 DN
   (c) coast: water - land mean Y (radius-matched regions: same distance from the image
@@ -46,8 +49,10 @@ Checks (spec "Testing"; exit 0 only when every gate passes):
   (e) sky: top 30 % mean Y < bottom 30 % mean Y (both bands, night and noon)
   (f) hd: thermal_gpu_ms p95 <= 0.5 ms at 1080p (frame stats)
   (g) eo: |mean Y(thermal on) - mean Y(thermal off)| <= 1 DN
-  edge shimmer (report only): temporal std of Y on class-edge pixels (the static coastline;
-  the truck box boundary in box-aligned crops) <= 2 x the std of interior terrain pixels
+  edge shimmer (report-only, "WARN: shimmer > 2x" in the report): temporal std of Y on edge
+  pixels of the static coast view <= 2 x the std of interior land pixels (EO baseline beside
+  it). The truck box-boundary ratio is printed too, labelled motion-contaminated: the truck
+  moves against its box, so it is not a shimmer measure
 """
 
 from __future__ import annotations
@@ -321,23 +326,73 @@ def aligned_crops(
     return np.stack(out), [cw / 2.0 - bw / 2.0, ch / 2.0 - bh / 2.0, bw, bh]
 
 
-def gate_passed(checks: list[dict], gates: str = "abcdefg") -> bool:
-    """True when every gate letter has at least one check and none failed."""
-    seen = {c["check"] for c in checks if c.get("pass") is not None}
-    return set(gates) <= seen and all(
-        c["pass"] for c in checks if c.get("pass") is not None and c["check"] in gates
+Row = tuple[str, str, str]  # (check, band, time)
+
+
+def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
+    """Every gate row the selected bands and runs must produce. a, b, c, d, e come from the
+    band runs (only when `bands` is selected); f from `hd` and g from `eo`, each expected
+    only when that run group is selected (so `--runs bands` can pass on its own)."""
+    rows: list[Row] = []
+    if "bands" in runs:
+        for b in bands:
+            rows += [
+                ("a", b, "night"),
+                ("b", b, "night"),
+                ("c", b, "both"),
+                ("d", b, "noon"),
+                ("e", b, "night"),
+                ("e", b, "noon"),
+            ]
+    if "hd" in runs:
+        rows.append(("f", "mwir", "noon"))
+    if "eo" in runs:
+        rows.append(("g", "eo", "noon"))
+    return rows
+
+
+def missing_rows(checks: list[dict], expected: list[Row]) -> list[Row]:
+    have = {(c["check"], c.get("band"), c.get("time")) for c in checks}
+    return [r for r in expected if r not in have]
+
+
+def gate_passed(checks: list[dict], expected: list[Row]) -> bool:
+    """True when every expected (check, band, time) row is present and no check failed.
+    A view that captured no frames, or a run that never produced its data, leaves its rows
+    missing, and a missing row fails."""
+    return (
+        bool(expected)
+        and not missing_rows(checks, expected)
+        and all(c["pass"] for c in checks)
     )
 
 
+def shimmer_warnings(info: list[dict], limit: float = SHIMMER_RATIO) -> list[str]:
+    """Static-view shimmer ratios above `limit` (report-only until it becomes a gate)."""
+    return [
+        f"WARN: shimmer > {limit:g}x: {c['check']} {c.get('band', '-')} {c.get('time', '-')} = {c['value']:.2f}"
+        for c in info
+        if c["check"].startswith("shimmer(coast")
+        and isinstance(c.get("value"), float)
+        and c["value"] > limit
+    ]
+
+
 def build_report(
-    meta: dict, checks: list[dict], info: list[dict], shots: list[str]
+    meta: dict,
+    checks: list[dict],
+    info: list[dict],
+    shots: list[str],
+    expected: list[Row],
 ) -> dict:
     return {
         "meta": meta,
         "checks": checks,
+        "missing": [list(r) for r in missing_rows(checks, expected)],
+        "warnings": shimmer_warnings(info),
         "info": info,
         "shots": shots,
-        "passed": gate_passed(checks),
+        "passed": gate_passed(checks, expected),
     }
 
 
@@ -359,6 +414,12 @@ def render_markdown(report: dict) -> str:
             f"| {c['check']} | {c.get('band', '-')} | {c.get('time', '-')} | {fmt(c['value'])} | "
             f"{c['threshold']} | {'PASS' if c['pass'] else 'FAIL'} | {c.get('detail', '')} |"
         )
+    for check, band, tod in report.get("missing", []):
+        lines.append(
+            f"| {check} | {band} | {tod} | - | - | FAIL | missing: no data for this row |"
+        )
+    if report.get("warnings"):
+        lines += [""] + [f"**{w}**  " for w in report["warnings"]]
     lines += [
         "",
         "## Info (not gated)",
@@ -621,15 +682,22 @@ def run_once(spec: RunSpec, out: Path) -> dict:
     host.thread.start()  # /ready needs CIGI traffic
     print(f"[thermal] {spec.label}: launching ({spec.env or 'defaults'})", flush=True)
     extra = [f"-ExecCmds={','.join(spec.exec_cmds)}"] if spec.exec_cmds else []
-    subprocess.run(
-        [str(REPO / "scripts" / "run.sh"), "--headless", "--local", "--detach", *extra],
-        env=env,
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
     views: list[dict] = []
     sender = tracker = None
     try:
+        # Inside the try: a failed launch still stops the host thread and runs stop.sh.
+        subprocess.run(
+            [
+                str(REPO / "scripts" / "run.sh"),
+                "--headless",
+                "--local",
+                "--detach",
+                *extra,
+            ],
+            env=env,
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
         rb.wait_ready(pid_file)
         rb.wait_terrain(120)
         dvc.wait_tiles(stats)
@@ -866,10 +934,10 @@ def check_band(
                 )
                 add(
                     info,
-                    "shimmer(truck)",
+                    "truck boundary std ratio (motion-contaminated, not a shimmer metric)",
                     ratio,
                     time_=tod,
-                    detail=f"box-boundary temporal std {region_mean(std, boundary):.2f} / terrain {region_mean(std, terrain):.2f} DN over {len(stack)} aligned frames (report-only, <= {SHIMMER_RATIO:g}; includes truck motion vs. the box)",
+                    detail=f"box-boundary temporal std {region_mean(std, boundary):.2f} / terrain {region_mean(std, terrain):.2f} DN over {len(stack)} aligned frames (info only: truck motion against its box dominates, not held to the shimmer limit)",
                 )
 
         # (c) coast + shimmer on the static coastline.
@@ -1204,7 +1272,8 @@ def main() -> int:
         "date": "2026-12-21 (sim)",
         "sun_noon": "elev {:.1f} az {:.1f}".format(*sun_for(NOON)),
     }
-    report = build_report(meta, checks, info, shots)
+    expected = expected_rows(bands, wanted)
+    report = build_report(meta, checks, info, shots, expected)
     (out / "report.json").write_text(json.dumps(report, indent=2))
     (out / "report.md").write_text(render_markdown(report))
     for c in checks:
@@ -1216,6 +1285,10 @@ def main() -> int:
         print(
             f"[info {c['check']}] {c['band']} {c['time']}: {v if isinstance(v, str) else f'{v:.3f}'} {c['detail']}"
         )
+    for check, band, tod in report["missing"]:
+        print(f"[{check}] FAIL {band} {tod}: missing (no data for this row)")
+    for w in report["warnings"]:
+        print(w)
     print(f"Report: {out / 'report.md'}; {'PASS' if report['passed'] else 'FAIL'}")
     return 0 if report["passed"] else 1
 

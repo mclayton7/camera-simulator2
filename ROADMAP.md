@@ -1299,8 +1299,8 @@ Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
   IR optics' cos⁴ vignetting; the truck clips white at night (MWIR); the thermal cloud term follows CIGI weather only.
   - **Follow-up — edge shimmer (visible, report-only metric fails):** on the static coast pose, temporal std of Y on
     edge pixels / interior land is 6.7 (night) and 7.0 (noon) in MWIR, 1.1 / 2.1 in LWIR, against 0.99 for EO of the
-    same pose (limit 2). At noon the flicker sits on every albedo / shadow edge, not only class edges (MWIR std p99
-    10 DN, p99.9 25 DN): ThermalCS loads depth, custom stencil and GBuffer base colour at render resolution (jittered
+    same pose (limit 2; the report prints `WARN: shimmer > 2x`). At noon the flicker sits on every albedo / shadow edge, not only class edges (MWIR std p99
+    10 DN, p99.9 25 DN). Likely cause (hypothesis, not yet confirmed): ThermalCS loads depth, custom stencil and GBuffer base colour at render resolution (jittered
     by TSR every frame) but scene colour after TSR, so the fast term and the class map move against each other by a
     sub-pixel jitter each frame. LWIR's noise and PSF hide most of it. A 3×3 class vote (the spec fallback) covers
     the class edges only; the texture edges need the GBuffer inputs de-jittered (e.g. sample them at the unjittered
