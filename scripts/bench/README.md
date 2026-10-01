@@ -84,3 +84,13 @@ Runs the Docker image at ~0, 100, 250 and 500 CIGI entities
 with ML ground truth on, with and without the depth map. Each point is a fresh
 container, 75 s recorded, frames 25–75 s summarised: thread times, fps, drops,
 frame latency and annotated entities per frame. Results: ROADMAP 3B exit check.
+
+## Gimbal-snap test
+
+```bash
+uv run --with pillow python scripts/bench/snap_test.py FRAMES_JSONL OUT
+```
+
+Against a running CamSim with frame stats and `/snapshot` on: settles over SF, snaps the gimbal
+90° (both ways) and saves snapshots at +0.3/1/3 s with their sharpness. Used to choose
+`frustum_culling` / `maximum_screen_space_error` (`docs/configuration.md`, Cesium Tile Streaming).

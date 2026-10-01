@@ -1128,7 +1128,15 @@ the P-cores (`--cpuset-cpus=0-7`), 3 runs repeat at 6.51–6.56 / 14.4–14.6 ms
 `scripts/run.sh` now pin to the P-cores automatically (`CAMSIM_PIN_PCORES`). Earlier Linux bench numbers were
 unpinned, so some of their spread is this. Also seen in the traces: each static entity also ticks its hidden
 skeletal/anim mesh components (~1,000 `USkinnedMeshComponent` ticks per frame at 500 entities, ~0.5–0.9 ms of
-game thread); disabling tick on the unused components is a cheap follow-up. Found on
+game thread); disabling tick on the unused components is a cheap follow-up.
+
+*Deployment terrain settings* (decided 2026-10-01, `scripts/bench/snap_test.py`, 1080p, pinned): after a
+90° snap the defaults are sharp within 0.3 s (80–86% of the settled sharpness); `frustum_culling: true`
+shows holes (missing shoreline) and coarse tiles at 0.3 s (30%) and settles by ~3 s, for game p50 1.3 vs
+2.9 ms; SSE 24 has no holes but stays ~63% as sharp for good (coarser tiles carry coarser imagery), game
+p50 1.9 ms. **Defaults kept**; frustum culling is the opt-in for snap-free, budget-limited setups; guidance
+table in `docs/configuration.md` (Cesium Tile Streaming). Untested: `ForbidHoles` (hard-coded off in
+`CesiumTuning.cpp` because it grows the render set during motion) would remove the holes under frustum culling. Found on
 the way: `stress_entity_rendering.py` and `test_entity_rendering.py` defaulted `--camera-id` to 0 while
 the canonical config's `camera_entity_id` is 1, so the camera never moved (fixed: camera 1, entities
 100+, gimbal level).

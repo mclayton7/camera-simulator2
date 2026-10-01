@@ -298,6 +298,23 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 | `use_lod_transitions` | bool | `false` | `CAMSIM_USE_LOD_TRANSITIONS` | Cesium's dithered LOD crossfade, which hides tile LOD pops. Off by default: Cesium updates every tile in the render set each frame while it's on, off-screen tiles included, which cost ~6 ms of game thread per frame and doubled hitches in moving-camera phases (SF bench, M1 Pro, culled SSE 16). Needs temporal AA (TSR, the primary view's anti-aliasing) to resolve the dither. |
 | `lod_transition_length` | float | `0.5` | `CAMSIM_LOD_TRANSITION_LENGTH` | Crossfade duration in seconds. |
 
+**Choosing the terrain settings for a deployment** (Linux, RTX 5080, Docker, 1080p, one terrain
+tileset, P-core pinned; 2026-10-01; `scripts/bench/snap_test.py`, 90° gimbal snaps at 3 km over SF;
+sharpness = edge variance of the frame, final view ≈ 100%):
+
+| Setting | Game thread p50 (settled) | Frame +0.3 s after a snap | +1 s | +3 s |
+| --- | --- | --- | --- | --- |
+| Defaults (`frustum_culling: false`, SSE 16) | 2.9 ms | sharp (80–86%) | 96% | 100% |
+| `frustum_culling: true` | 1.3 ms | holes (missing shore) and coarse city (30%) | 77% | 100% |
+| `maximum_screen_space_error: 24` | 1.9 ms | no holes, but soft (55–64%) | 61% | **63%: permanently softer** |
+
+Keep the defaults for training/ISR imagery: they are the only setting without visible artifacts,
+and the budget allows them (1080p game thread p99 ~10 ms; 500 entities ~14.5 ms, under 50%). Turn
+`frustum_culling` on only where the gimbal never snaps (steady flight, fixed sensor) and the game
+thread is short of budget (many entities, several output streams). Raising
+`maximum_screen_space_error` trades sharpness everywhere, always (coarser terrain tiles also carry
+coarser imagery); not recommended at 1080p.
+
 ### Terrain Readiness Gate
 
 Holds frame output until Cesium has loaded tiles for the view, at startup and after a
