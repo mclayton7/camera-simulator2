@@ -1268,6 +1268,11 @@ Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
   Atmosphere sun light for `K_lum`: `DirectionalLight` on
   `CesiumSunSky_0`, 111000 lux (colour white), ground transmittance (0.925825, 0.844161, 0.719899). Consequence: Task 8 sets
   `CamSimThermalPass::bBaseColorAtTonemapper = true`, `bBaseColorSrgbEncoded = false`.
+  - The 0.194 median is the raw stored byte value before sRGB decode (about 0.03 linear when sampled through the sRGB SRV).
+    The probe fired about 10 s after launch, so tiles may not have been at full LOD (this affects only the median's plausibility).
+  - Condition for LINEAR: GBufferC is PF_B8G8R8A8 with `TexCreate_SRGB`, so Task 8 must sample it through the engine's
+    scene-texture SRV (`SceneTextures.GBufferCTexture` from the uniform buffer, hardware sRGB decode), never raw byte loads
+    or a copy that drops the sRGB flag. Task 8's GPU test should confirm a known albedo comes back linear.
 
 ---
 
