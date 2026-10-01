@@ -43,6 +43,6 @@ namespace CamSimLandCover
 	using FTileCodes = TFunctionRef<const uint8*(int32 LatIndex, int32 LonIndex)>;
 	/** Nearest-cell resample into Texels^2 codes (row 0 = north, column 0 = west); missing tiles give 0. Returns the
 	 *  number of nonzero texels. Latitude depends only on the row and longitude only on the column, so each is computed
-	 *  once per row / column. */
+	 *  once per row / column. Texels <= 0 gives no codes; a window IsWindowAllowed refuses gives all zeros (no tile lookups). */
 	CAMSIMTEST_API int64 Resample(const FWindowSpec& W, FTileCodes Tiles, TArray<uint8>& OutCodes);
 }

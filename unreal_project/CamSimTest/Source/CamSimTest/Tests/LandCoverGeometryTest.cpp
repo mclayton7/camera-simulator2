@@ -202,3 +202,24 @@ bool FLandCoverRecentreTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("... but re-centres at 5 %"), NeedsRecentre(D, 0.0, -179.99, 0.05f));
 	return true;
 }
+
+// Carry-over (b): no tile lookups (and no int64 overflow) for a window the geometry refuses.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandCoverResampleGuardTest, "CamSim.Thermal.LandCover.ResampleGuards",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FLandCoverResampleGuardTest::RunTest(const FString& Parameters)
+{
+	const TArray<uint8> Full = TileOf([](int32, int32) { return static_cast<uint8>(40); });
+	int32 Calls = 0;
+	auto Any = [&Full, &Calls](int32, int32) -> const uint8* { ++Calls; return Full.GetData(); };
+	TArray<uint8> Out;
+	TestEqual(TEXT("pole window: nothing nonzero"), Resample(Spec(89.5, 0.0, 64), Any, Out), static_cast<int64>(0));
+	TestEqual(TEXT("pole window: Texels^2 zeros"), Out.Num(), 64 * 64);
+	TestFalse(TEXT("pole window: all zero"), Out.ContainsByPredicate([](uint8 C) { return C != 0; }));
+	TestEqual(TEXT("south pole window: nothing nonzero"), Resample(Spec(-89.9, 0.0, 64), Any, Out), static_cast<int64>(0));
+	TestEqual(TEXT("zero texels"), Resample(Spec(37.7, -122.4, 0), Any, Out), static_cast<int64>(0));
+	TestEqual(TEXT("zero texels: empty"), Out.Num(), 0);
+	TestEqual(TEXT("negative texels"), Resample(Spec(37.7, -122.4, -8), Any, Out), static_cast<int64>(0));
+	TestEqual(TEXT("negative texels: empty"), Out.Num(), 0);
+	TestEqual(TEXT("no tile ever asked for"), Calls, 0);
+	return true;
+}

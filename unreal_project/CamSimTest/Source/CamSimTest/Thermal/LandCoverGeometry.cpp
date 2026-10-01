@@ -64,7 +64,13 @@ namespace CamSimLandCover
 	int64 Resample(const FWindowSpec& W, FTileCodes Tiles, TArray<uint8>& OutCodes)
 	{
 		const int32 N = W.Texels;
+		if (N <= 0)
+		{
+			OutCodes.Reset();
+			return 0;
+		}
 		OutCodes.SetNumZeroed(N * N);
+		if (!IsWindowAllowed(W.CentreLatDeg)) return 0;   // near a pole the row/column math overflows: no data
 		TArray<int32> ColCell, RowCell;
 		ColCell.SetNumUninitialized(N);
 		RowCell.SetNumUninitialized(N);
