@@ -220,3 +220,80 @@ bool FInstanceIdDistortionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("some output pixel samples T"), Expected > 0);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInstanceIdScaledDistortedTest, "CamSim.GPU.GroundTruth.InstanceId.ScaledDistortedMapping",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FInstanceIdScaledDistortedTest::RunTest(const FString& Parameters)
+{
+	if (SkipWithoutGpu(*this)) return true;
+	// A 32x24 depth view rect offset inside a 40x30 texture, resampled to a 64x48 distorted output:
+	// stencil encodes the rect-relative column (pass 0) then row (pass 1), so every output pixel's full
+	// source texel (scale, offset, distortion, x/y) is pinned against the CPU mapping.
+	constexpr int32 W = 64, H = 48;
+	const FIntRect Rect(5, 3, 37, 27);
+	const int32 SrcW = Rect.Width(), SrcH = Rect.Height();
+	FSensorFrameParams P;
+	P.FocalPx = CamSimOptics::FocalPx(W, 60.0f);
+	P.K1 = -0.2f;
+	P.K2 = 0.05f;
+	// CamSimSensorRef::Optics's expressions (SrcScale = float(SrcW) / W, as AddSensorPasses).
+	const float F = P.FocalPx, HalfW = 0.5f * W, HalfH = 0.5f * H;
+	const float ScaleX = static_cast<float>(SrcW) / W, ScaleY = static_cast<float>(SrcH) / H;
+	auto CpuTexel = [&](int32 Px, int32 Py, FIntPoint& OutT) -> bool
+	{
+		const float Xd = (Px + 0.5f - HalfW) / F, Yd = (Py + 0.5f - HalfH) / F;
+		const float Rd = FMath::Sqrt(Xd * Xd + Yd * Yd);
+		float S = 1.0f;
+		if (Rd > 0.0f)
+		{
+			float Ru;
+			CamSimOptics::UndistortRadius(Rd, P.K1, P.K2, Ru);
+			S = Ru / Rd;
+		}
+		const float Xu = Xd * S, Yu = Yd * S;
+		const float Sx = (Xu * F + HalfW) * ScaleX - 0.5f, Sy = (Yu * F + HalfH) * ScaleY - 0.5f;
+		if (!(Sx >= -0.5f && Sx <= SrcW - 0.5f && Sy >= -0.5f && Sy <= SrcH - 0.5f)) return false;
+		OutT = FIntPoint(FMath::Clamp(FMath::FloorToInt32(Sx + 0.5f), 0, SrcW - 1), FMath::Clamp(FMath::FloorToInt32(Sy + 0.5f), 0, SrcH - 1));
+		return true;
+	};
+
+	for (int32 Axis = 0; Axis < 2; ++Axis)
+	{
+		FIdTextures Tex(40, 30, 0.1f);
+		for (int32 Y = Rect.Min.Y; Y < Rect.Max.Y; ++Y)
+		{
+			for (int32 X = Rect.Min.X; X < Rect.Max.X; ++X)
+			{
+				const int32 V = (Axis == 0 ? X - Rect.Min.X : Y - Rect.Min.Y) + 1;
+				Tex.Tag(X, Y, static_cast<uint8>(V), 0.5f, 0.5f);   // custom = scene: visible everywhere
+			}
+		}
+		const TArray<uint32> Words = RunInstanceIdOnGpu(Tex, Rect, FIntPoint(W, H), P);
+		if (!TestEqual(TEXT("buffer size"), Words.Num(), W * H / 2)) return true;
+		int32 Mismatches = 0, InRange = 0;
+		for (int32 Py = 0; Py < H; ++Py)
+		{
+			for (int32 Px = 0; Px < W; ++Px)
+			{
+				FIntPoint T;
+				uint32 Expect = 0;
+				if (CpuTexel(Px, Py, T))
+				{
+					const uint32 V = static_cast<uint32>((Axis == 0 ? T.X : T.Y) + 1);
+					Expect = V | (V << 8);
+					++InRange;
+				}
+				const uint32 Got = PixelOf(Words, W, Px, Py);
+				if (Got != Expect && ++Mismatches <= 20)
+				{
+					AddError(FString::Printf(TEXT("%s pass, output (%d, %d): GPU 0x%04x, CPU 0x%04x"),
+						Axis == 0 ? TEXT("column") : TEXT("row"), Px, Py, Got, Expect));
+				}
+			}
+		}
+		AddInfo(FString::Printf(TEXT("%s pass: %d in-range pixels, %d mismatches"), Axis == 0 ? TEXT("column") : TEXT("row"), InRange, Mismatches));
+		TestEqual(*FString::Printf(TEXT("%s pass mismatches"), Axis == 0 ? TEXT("column") : TEXT("row")), Mismatches, 0);
+		TestTrue(TEXT("most output pixels map inside the rect"), InRange > W * H / 2);
+	}
+	return true;
+}

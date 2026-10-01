@@ -1,6 +1,8 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 // Ground truth (ROADMAP 2.7): InstanceIdCS — per output pixel, which tagged entity is visible and which entity's
 // silhouette covers it, sampled at the same distorted source position as SensorCS. Integer ops only (Metal + Vulkan).
+// Known limitation: under TSR the depth/stencil are jittered at render resolution while the output colour is not,
+// so labels can be misregistered by up to ~0.5 render texel.
 
 #include "/Engine/Public/Platform.ush"
 #if USE_VIEW_RECT

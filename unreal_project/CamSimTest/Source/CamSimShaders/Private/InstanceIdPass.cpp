@@ -78,6 +78,7 @@ FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInpu
 	const FIntPoint Out = In.OutputSize;
 	check(In.SceneDepth && In.CustomDepth && In.CustomStencil);
 	check(Out.X > 0 && Out.Y > 0 && Out.X % 2 == 0);
+	check(In.ViewUniformBuffer || In.DepthViewRect.Area() > 0);   // an empty rect leaves the shader's clamp undefined
 	const FRDGBufferRef Ids = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), Out.X * Out.Y / 2),
 		TEXT("CamSimInstanceIds"));
 
