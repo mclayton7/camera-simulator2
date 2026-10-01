@@ -18,7 +18,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCamSimInstanceIdParameters, )
 	SHADER_PARAMETER(float, K1)
 	SHADER_PARAMETER(float, K2)
 	SHADER_PARAMETER(uint32, WaterCut)
-	SHADER_PARAMETER(FVector4f, WaterPlane)
+	SHADER_PARAMETER_ARRAY(FVector4f, WaterPlanes, [256])
 	SHADER_PARAMETER(FMatrix44f, ClipToTranslatedWorld)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepth)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, CustomDepth)
@@ -99,7 +99,7 @@ FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInpu
 	Pass->K1            = P.K1;
 	Pass->K2            = P.K2;
 	Pass->WaterCut      = In.bWaterCut ? 1u : 0u;
-	Pass->WaterPlane    = In.WaterPlane;
+	for (int32 S = 0; S < 256; ++S) Pass->WaterPlanes[S] = In.WaterPlanes[S];
 	Pass->ClipToTranslatedWorld = In.ClipToTranslatedWorld;
 	Pass->SceneDepth    = In.SceneDepth;
 	Pass->CustomDepth   = In.CustomDepth;

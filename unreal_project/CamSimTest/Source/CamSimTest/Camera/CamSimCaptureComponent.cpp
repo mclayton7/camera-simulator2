@@ -15,7 +15,7 @@
 #include "Entity/CamSimEntityManager.h"
 #include "GroundTruth/FEntityProjection.h"
 #include "GroundTruth/FGroundTruthCollector.h"
-#include "GroundTruth/StillWaterPlane.h"
+#include "GroundTruth/SeaSurfacePlane.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Ocean/OceanSurface.h"
 #include "Subsystem/CamSimSubsystem.h"
@@ -447,18 +447,21 @@ TArray<FEntityAnnotationData> UCamSimCaptureComponent::BuildGroundTruthSnapshot(
 	return EntityMgr->GetEntitySnapshot(ViewProj);
 }
 
-FStillWaterPlane UCamSimCaptureComponent::ComputeWaterPlane(const FCamSimTelemetry& T) const
+TArray<FEntityWaterPlane> UCamSimCaptureComponent::ComputeWaterPlanes(const TArray<FEntityAnnotationData>& Entities) const
 {
+	TArray<FEntityWaterPlane> Out;
 	const FOceanSurface* Ocean = Subsystem ? Subsystem->GetOceanSurface() : nullptr;   // null: ocean off
 	const FCamSimGeospatialProvider* Geo = Subsystem ? Subsystem->GetGeospatialProvider() : nullptr;
 	UWorld* World = GetWorld();
-	if (!Ocean || !Geo || !World) return FStillWaterPlane();
-	// As FOceanManager::Tick (live: ocean.max_radius_km is hot-reloadable; a bad value means the default).
-	double MaxRadiusKm = Subsystem->GetConfig().Ocean.MaxRadiusKm;
-	if (!FMath::IsFinite(MaxRadiusKm) || MaxRadiusKm <= 0.0) MaxRadiusKm = FCamSimConfig::FOceanConfig().MaxRadiusKm;
-	return CamSimGroundTruth::ComputeStillWaterPlane(*Ocean, T.Latitude, T.Longitude, T.Altitude,
-		T.FrameCenterLat, T.FrameCenterLon, T.FrameCenterLat != 0.0 || T.FrameCenterLon != 0.0, MaxRadiusKm,
-		[Geo, World](double Lat, double Lon, double AltM, FVector& Out) { return Geo->GeoToWorld(World, Lat, Lon, AltM, Out); });
+	if (!Ocean || !Geo || !World) return Out;
+	auto GeoToWorld = [Geo, World](double Lat, double Lon, double AltM, FVector& W) { return Geo->GeoToWorld(World, Lat, Lon, AltM, W); };
+	for (const FEntityAnnotationData& E : Entities)
+	{
+		if (E.StencilValue == 0 || !E.bHasGeo) continue;
+		const FSeaSurfacePlane P = CamSimGroundTruth::ComputeSeaSurfacePlane(*Ocean, E.Lat, E.Lon, GeoToWorld);
+		if (P.bValid) Out.Add({ E.StencilValue, P.Point, P.Normal });
+	}
+	return Out;
 }
 
 void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
@@ -532,8 +535,8 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	Req.Generation   = Gen;
 	Req.TargetIndex  = Slot;
 	Req.bInstanceIds = S.bWantIds;
-	// Still-water plane for the submerged-hull cut, at this frame's camera (game thread, doubles).
-	if (S.bWantIds) Req.WaterPlane = ComputeWaterPlane(Telemetry);
+	// Per-entity water planes for the submerged-hull cut, at this frame's sea state (game thread, doubles).
+	if (S.bWantIds) Req.WaterPlanes = ComputeWaterPlanes(S.Entities);
 	ENQUEUE_RENDER_COMMAND(CamSimRequestGrab)(
 		[Ext, Nv12Readback, IdReadback, Req, Grabbed, IdGrabbed, DepthRT, DepthReadback, EnqueueDepthCopy]
 		(FRHICommandListImmediate& RHICmdList)

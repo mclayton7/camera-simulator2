@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "RenderGraphDefinitions.h"
 #include "SensorFrameParams.h"
+#include "Containers/StaticArray.h"
 
 class FRHIUniformBuffer;
 
@@ -18,13 +19,15 @@ struct FInstanceIdInputs
 	FRHIUniformBuffer* ViewUniformBuffer = nullptr;  // runtime: the rect comes from View.ViewRectMin / ViewSizeAndInvSize
 	FIntPoint OutputSize = FIntPoint::ZeroValue;     // = sensor output, X even
 	/**
-	 * Still-water cut (final review I2): when set, an amodal pixel whose custom-depth point is below WaterPlane
-	 * and not visible is dropped. WaterPlane is in translated world (cm): height = dot(xyz, P) + w.
-	 * ClipToTranslatedWorld maps (NDC x, NDC y, device Z, 1) of the depth rect to translated world (row vector,
-	 * reversed Z): at runtime View.ViewMatrices.GetInvTranslatedViewProjectionMatrix().
+	 * Submerged-hull cut (final review I2): when set, an amodal pixel of stencil s whose custom-depth point is
+	 * below WaterPlanes[s] and not visible is dropped. Planes are in translated world (cm): height =
+	 * dot(xyz, P) + w; NoWaterPlane() (height always 1) = no cut for that stencil. ClipToTranslatedWorld maps
+	 * (NDC x, NDC y, device Z, 1) of the depth rect to translated world (row vector, reversed Z): at runtime
+	 * View.ViewMatrices.GetInvTranslatedViewProjectionMatrix().
 	 */
+	static FVector4f NoWaterPlane() { return FVector4f(0.0f, 0.0f, 0.0f, 1.0f); }
 	bool       bWaterCut = false;
-	FVector4f  WaterPlane = FVector4f(0.0f, 0.0f, 1.0f, 0.0f);
+	TStaticArray<FVector4f, 256> WaterPlanes = TStaticArray<FVector4f, 256>(InPlace, NoWaterPlane());
 	FMatrix44f ClipToTranslatedWorld = FMatrix44f::Identity;
 };
 

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GroundTruth/StillWaterPlane.h"
+#include "GroundTruth/SeaSurfacePlane.h"
 
 /** One frame the game thread wants copied out of the game viewport (ROADMAP 3A). */
 struct FFrameGrabRequest
@@ -12,8 +12,9 @@ struct FFrameGrabRequest
 	uint32 Generation  = 0;           // the slot's capture generation at request time
 	int32  TargetIndex = INDEX_NONE;  // grab render target / readback slot
 	bool   bInstanceIds = false;      // also run InstanceIdCS and read its buffer back (ground truth, ROADMAP 2.7)
-	/** With bInstanceIds: the still-water plane (UE world, doubles) below which hidden hull is cut; invalid = no cut. */
-	FStillWaterPlane WaterPlane;
+	/** With bInstanceIds: per tagged entity, the water plane (UE world, doubles) below which its hidden silhouette
+	 *  is cut (submerged hull); empty = no cut. */
+	TArray<FEntityWaterPlane> WaterPlanes;
 };
 
 /**

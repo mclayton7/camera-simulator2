@@ -69,14 +69,18 @@ void FCamSimFrameGrabExtension::AddInstanceIdReadback_RenderThread(FRDGBuilder& 
 	// rect in scene-texture texels (TSR upscales only after the depth passes).
 	Ii.ViewUniformBuffer = View.ViewUniformBuffer.GetReference();
 	Ii.OutputSize        = CaptureSize;
-	// Still-water cut (final review I2): world (doubles) -> translated world with this view's pre-view
-	// translation, so only camera-relative values reach floats (LWC).
-	if (Req.WaterPlane.bValid)
+	// Submerged-hull cut (final review I2): each entity's water plane, world (doubles) -> translated world with
+	// this view's pre-view translation, so only camera-relative values reach floats (LWC).
+	if (Req.WaterPlanes.Num() > 0)
 	{
-		const FVector N = Req.WaterPlane.Normal;
-		const FVector P = Req.WaterPlane.Point + View.ViewMatrices.GetPreViewTranslation();
-		Ii.bWaterCut  = true;
-		Ii.WaterPlane = FVector4f(FVector3f(N), static_cast<float>(-FVector::DotProduct(N, P)));
+		Ii.bWaterCut = true;
+		for (FVector4f& Pl : Ii.WaterPlanes) Pl = FInstanceIdInputs::NoWaterPlane();
+		for (const FEntityWaterPlane& E : Req.WaterPlanes)
+		{
+			if (E.Stencil == 0) continue;
+			const FVector P = E.Point + View.ViewMatrices.GetPreViewTranslation();
+			Ii.WaterPlanes[E.Stencil] = FVector4f(FVector3f(E.Normal), static_cast<float>(-FVector::DotProduct(E.Normal, P)));
+		}
 		Ii.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetInvTranslatedViewProjectionMatrix());
 	}
 	const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, Ii, Params);
