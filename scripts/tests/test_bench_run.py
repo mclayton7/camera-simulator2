@@ -89,3 +89,18 @@ def test_no_gpu_and_env_flags_parse():
         ["--label", "x", "--docker", "img", "--no-gpu", "--env", "A=1", "--env", "B=2"]
     )
     assert args.docker == "img" and args.no_gpu and args.env == ["A=1", "B=2"]
+
+
+def test_config_is_mounted_over_the_image_config(tmp_path):
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("capture_width: 1920\n")
+    cmd = run_bench.docker_run_cmd("img", tmp_path, True, {}, [], cfg)
+    assert f"{cfg}:/opt/camsim/CamSimTest/camsim_config.yaml:ro" in cmd
+
+
+def test_with_sensor_sets_the_waveband():
+    from bench import scenario
+
+    pose = scenario.build_phases(smoke=True)[0].pose_at(0.0)
+    assert run_bench.with_sensor(pose, "ir").sensor_id == 1
+    assert run_bench.with_sensor(pose, "eo").sensor_id == 0

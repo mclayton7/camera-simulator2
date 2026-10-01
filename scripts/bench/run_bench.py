@@ -24,6 +24,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -114,7 +115,12 @@ def docker_alive(name: str = DOCKER_NAME) -> bool | None:
 
 
 def docker_run_cmd(
-    image: str, out: Path, gpu: bool, env: dict[str, str], ue_args: list[str]
+    image: str,
+    out: Path,
+    gpu: bool,
+    env: dict[str, str],
+    ue_args: list[str],
+    config: Path | None = None,
 ) -> list[str]:
     """`docker run` for a bench container: host network (CIGI + unicast stream on
     loopback), the output dir at /bench, cache volumes, the GPU unless --no-gpu."""
@@ -122,6 +128,11 @@ def docker_run_cmd(
     cmd += ["--network", "host", "--shm-size", "1g", "-v", f"{out}:/bench"]
     for vol, mount in DOCKER_VOLUMES.items():
         cmd += ["-v", f"{vol}:{mount}"]
+    if config:
+        cmd += [
+            "-v",
+            f"{config.resolve()}:/opt/camsim/CamSimTest/camsim_config.yaml:ro",
+        ]
     if gpu:
         cmd += ["--gpus", "all"]
     for key, value in env.items():
@@ -256,7 +267,25 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="KEY=VALUE",
         help="extra CamSim environment, e.g. CAMSIM_ENCODER=libx264 (repeatable)",
     )
+    ap.add_argument(
+        "--sensor",
+        choices=["eo", "ir"],
+        default="eo",
+        help="waveband for the measured phases (shots keep their own)",
+    )
+    ap.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="--docker: mount this camsim_config.yaml over the image's (e.g. 1080p)",
+    )
     return ap
+
+
+def with_sensor(pose: scenario.Pose, sensor: str) -> scenario.Pose:
+    """The phase pose in the requested waveband (0 EO, 1 IR)."""
+    return replace(pose, sensor_id=1 if sensor == "ir" else 0)
 
 
 def main() -> int:
@@ -271,8 +300,8 @@ def main() -> int:
     pid_file = REPO / ".cache" / "camsim.pid"
     if camsim_alive(pid_file):
         sys.exit("A CamSim instance is already running (scripts/stop.sh to stop it)")
-    if args.no_gpu and not args.docker:
-        sys.exit("--no-gpu needs --docker")
+    if (args.no_gpu or args.config) and not args.docker:
+        sys.exit("--no-gpu and --config need --docker")
     extra_env = dict(kv.split("=", 1) for kv in args.env)
 
     # Paths as CamSim sees them: the container mounts `out` at /bench.
@@ -303,7 +332,9 @@ def main() -> int:
                 "CAMSIM_CESIUM_ION_TOKEN"
             ]
         subprocess.run(
-            docker_run_cmd(args.docker, out, not args.no_gpu, camsim_env, extra),
+            docker_run_cmd(
+                args.docker, out, not args.no_gpu, camsim_env, extra, args.config
+            ),
             check=True,
             stdout=subprocess.DEVNULL,
         )
@@ -341,7 +372,7 @@ def main() -> int:
             if ph.name == "warmup" and args.skip_warmup:
                 continue
             print(f"[bench] phase {ph.name} ({ph.duration_s:.0f}s)", flush=True)
-            host.pose = ph.pose_at(0.0)
+            host.pose = with_sensor(ph.pose_at(0.0), args.sensor)
             if ph.measured:
                 wait_terrain()  # start measuring from a loaded view
             ts = None
@@ -363,7 +394,7 @@ def main() -> int:
                 )
             start = time.time()
             while (t := time.time() - start) < ph.duration_s:
-                host.pose = ph.pose_at(t)
+                host.pose = with_sensor(ph.pose_at(t), args.sensor)
                 time.sleep(1.0 / 60.0)
             phases_log.append(
                 {
@@ -444,6 +475,8 @@ def main() -> int:
             "latency": latency,
             "warmup_ran": not args.skip_warmup,
             "smoke": args.smoke,
+            "sensor": args.sensor,
+            "config": str(args.config) if args.config else None,
         },
         "phases": analyze.summarize(rows, phases_log),
     }

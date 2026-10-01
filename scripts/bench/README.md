@@ -38,7 +38,10 @@ Runs the image (`docs/docker.md`) with `--gpus all`, host networking and the
 output directory mounted at `/bench`; named volumes `camsim-bench-data` and
 `camsim-bench-cache` keep the Cesium tile cache and driver shader cache warm
 between runs. Adds `container.log` to the output and `meta.runtime`, `meta.gpu`,
-`meta.encoder`, `meta.ready_s` to `results.json`. `--no-gpu` runs it without
+`meta.encoder`, `meta.ready_s` to `results.json`. `--config FILE` mounts a
+`camsim_config.yaml` over the image's (capture size has no env override, so a 1080p run
+uses a copy with `capture_width: 1920`, `capture_height: 1080`). `--sensor ir` flies the
+measured phases in IR (default `eo`; the shots keep their own waveband). `--no-gpu` runs it without
 the GPU, which currently fails (ROADMAP 1.15: lavapipe can't run UE 5.8).
 Output (default `.cache/bench/<time>-<label>/`): `results.json` (`meta.sensor_path`
 is what CamSim's `/metrics` reported: `gpu` — the GPU sensor graph is the only path since 3B.2), `frames.jsonl`, `phases.json`,
