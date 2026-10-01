@@ -7,6 +7,7 @@
 #include "Sensor/SensorStatsMailbox.h"
 #include "SensorGraph.h"
 #include "InstanceIdPass.h"
+#include "ThermalPass.h"
 #include "SceneTexturesConfig.h"   // FSceneTextureUniformParameters
 #include "RHIGPUReadback.h"
 #include "RenderGraphBuilder.h"
@@ -170,6 +171,45 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunSensor_RenderThread(FRDGBuilder
 		bWarnedViewSize = true;
 		UE_LOG(LogCamSim, Warning, TEXT("SensorGraph: view is %dx%d but the capture is %dx%d; the image is stretched and its vertical FOV won't match the KLV"),
 			SceneColor.ViewRect.Width(), SceneColor.ViewRect.Height(), CaptureSize.X, CaptureSize.Y);
+	}
+
+	// ROADMAP 4A: thermal IR — ThermalCS turns this view into in-band radiance, which replaces scene colour as the
+	// sensor graph's input (no pre-exposure, no bloom; Params.InputScale = 1 / B(300 K) set by the game thread).
+	if (ThermalParams.IsValid())
+	{
+		const FSceneTextureUniformParameters* St = Inputs.SceneTextures.SceneTextures
+			? Inputs.SceneTextures.SceneTextures->GetParameters().GetContents() : nullptr;
+		if (St && St->SceneDepthTexture && St->CustomDepthTexture && St->CustomStencilTexture)
+		{
+			// ClipToTranslatedWorld is the view's (camera at the translated-world origin), as InstanceIdCS uses it:
+			// the depth textures' render-resolution view (TSR upscales after them).
+			FThermalFrameParams TP = *ThermalParams;
+			TP.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
+			FThermalPassInputs Ti;
+			Ti.SceneColor        = SceneColor.Texture;
+			Ti.SceneColorRect    = SceneColor.ViewRect;
+			Ti.SceneDepth        = St->SceneDepthTexture;
+			Ti.CustomDepth       = St->CustomDepthTexture;
+			Ti.CustomStencil     = St->CustomStencilTexture;
+			Ti.BaseColor         = CamSimThermalPass::bBaseColorAtTonemapper ? St->GBufferCTexture : nullptr;
+			Ti.ViewUniformBuffer = View.ViewUniformBuffer.GetReference();
+			FRDGTextureRef Radiance;
+			{
+				RDG_EVENT_SCOPE_STAT(GraphBuilder, CamSimThermal, "CamSimThermal");
+				Radiance = AddThermalPass(GraphBuilder, Ti, TP);
+			}
+			In.SceneColor     = Radiance;
+			In.SceneViewRect  = FIntRect(FIntPoint::ZeroValue, SceneColor.ViewRect.Size());
+			In.Bloom          = nullptr;
+			In.BloomViewRect  = FIntRect();
+			In.bRadianceInput = true;
+		}
+		else if (!bWarnedThermalInputs)
+		{
+			bWarnedThermalInputs = true;
+			UE_LOG(LogCamSim, Warning, TEXT("Thermal: the post-process inputs carry no depth / custom depth / stencil; ")
+				TEXT("IR falls back to the visible-light proxy this session (logged once)"));
+		}
 	}
 
 	FSensorGraphOutputs Out;

@@ -1276,6 +1276,17 @@ Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
   - Confirmed (Task 8): `CamSim.GPU.Thermal.MatchesCpu` "sRGB-format base texture" binds a PF_B8G8R8A8 + `TexCreate_SRGB`
     base colour and ThermalCS matches the reference fed the linear values (3.0e-4 relative radiance on Metal: the hardware
     decode isn't bit-exact), against > 1e-2 for the raw bytes read as linear.
+- Live wiring (plan Task 14, 2026-10-01): in IR with thermal available and `thermal.enabled` (live), the game thread
+  builds `FThermalFrameParams` per tick (camera pose from the KLV position, geodetic up from the georeference's ESU
+  frame) and hands them to the render thread in the same command as the sensor parameters; ThermalCS runs inside
+  `RDG_EVENT_SCOPE_STAT(CamSimThermal)` ahead of SensorCS (`bRadianceInput`, `SignalWeights` (1,0,0),
+  `InputScale = 1/B(300 K)`), with the thermal AE slot and UE exposure fixed at −12 EV. EO and `thermal.enabled: false`
+  are unchanged. `camsim.Thermal.Log 1` logs the builder's class temperatures, sky, `K_lum` and AE gain once a second.
+  Live smoke (M1 Pro, 720p, Presidio, 21 Dec, ground truth off): ThermalCS 0.083 ms median / 0.095 ms p95
+  (`thermal_gpu_ms`); night (02:00 local) terrain 284.8 K, water 287.7 K, truck white-hot on mid-grey ground; noon
+  terrain 303.0 K, water 288.5 K, sky darkest, sunlit land textured by the solar term and the truck's shadow cooler;
+  the IR land/water/sky edges sit exactly on the EO coastline of the same pose (no offset or stretch).
+  No editor or asset changes are needed for 4A.
 
 ---
 

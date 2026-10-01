@@ -15,6 +15,7 @@
 #include "Sensor/SensorController.h"
 #include "Sensor/SensorStatsMailbox.h"
 #include "GroundTruth/AnnotationTypes.h"
+#include "Thermal/ThermalFrameBuilder.h"
 #include "CamSimCaptureComponent.generated.h"
 
 class USceneCaptureComponent2D;
@@ -112,6 +113,16 @@ public:
 	 */
 	void UpdateSensorParams(ESensorMode Mode, uint8 Polarity, bool bCameraCut, float LiveHFovDeg, const FCamSimConfig& Cfg);
 
+	/** ROADMAP 4A: fixed UE AutoExposureBias while the thermal pass runs (ThermalCS divides View.PreExposure out). */
+	static constexpr float ThermalUeExposureEv = -12.0f;
+	/**
+	 * ROADMAP 4A: whether this tick's IR frame is thermal radiance. bThermalAvailable = the subsystem's startup decision
+	 * AND the live thermal.enabled (a hot reload to false restores the luminance proxy).
+	 */
+	static bool ShouldRunThermal(ESensorMode Mode, bool bThermalAvailable) { return Mode == ESensorMode::IR && bThermalAvailable; }
+	/** ROADMAP 4A: the camera's geodetic pose (WGS-84, HAE m) and geodetic up in UE world space. Call every tick before UpdateSensorParams. */
+	void SetThermalPose(double LatDeg, double LonDeg, double AltHaeM, const FVector& UpWorld);
+
 	/** Whether the GPU sensor graph runs this session (fixed at Initialize). */
 	bool HasSensorGraph() const { return bSensorGraph; }
 	/** GPU time of the sensor graph in ms; -1 when unknown or without the graph. */
@@ -206,6 +217,14 @@ private:
 	uint32 ParamsSerial = 0;
 	/** The thermal pass was requested last tick (IR, thermal available and enabled, inputs gathered). */
 	bool bThermalActiveLastTick = false;
+	/**
+	 * ROADMAP 4A: per-frame thermal parameters (game thread). Configure runs every thermal tick with the live config:
+	 * it rebuilds the LUT only on a band change and the material table only when thermal.materials changes, so hot
+	 * reloads of the band, materials and the other thermal.* keys apply on the next frame.
+	 */
+	FThermalFrameBuilder ThermalBuilder;
+	double ThermalLat = 0.0, ThermalLon = 0.0, ThermalAlt = 0.0;
+	FVector ThermalUp = FVector::UpVector;
 	double LastSensorUpdateSimSec = -1.0;
 	/**
 	 * Optics fields of FSensorFrameParams (CamSimOptics::SetOptics) for the key below: recomputed

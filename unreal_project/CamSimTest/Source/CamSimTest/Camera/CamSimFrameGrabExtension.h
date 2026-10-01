@@ -6,6 +6,7 @@
 #include "SceneViewExtension.h"
 #include "Camera/FrameGrabRequestQueue.h"
 #include "SensorFrameParams.h"
+#include "ThermalFrameParams.h"
 
 class FRHIGPUBufferReadback;
 class FViewport;
@@ -43,6 +44,13 @@ public:
 
 	/** Render thread: parameters for the next frames the graph runs. */
 	void SetParams_RenderThread(const FSensorFrameParams& P) { Params = P; }
+
+	/**
+	 * Render thread (ROADMAP 4A): thermal parameters for the next frames; null = thermal off (luminance input). Set in
+	 * the same render command as SetParams_RenderThread, so sensor and thermal parameters always belong to one tick.
+	 * With parameters, ThermalCS turns the scene into in-band radiance ahead of the sensor graph.
+	 */
+	void SetThermalParams_RenderThread(TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> P) { ThermalParams = MoveTemp(P); }
 
 	/**
 	 * Render thread: copy the sensor graph's NV12 output for the next
@@ -89,6 +97,8 @@ private:
 	const FIntPoint      CaptureSize;                          // fixed at construction
 	FSensorStatsMailbox* const Mailbox;                        // fixed at construction
 	FSensorFrameParams   Params;                               // render thread
+	TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> ThermalParams;   // render thread; null = thermal off
+	bool                 bWarnedThermalInputs = false;         // render thread
 	struct FStatsSlot { TUniquePtr<FRHIGPUBufferReadback> Readback; uint32 Serial = 0; bool bPending = false; };
 	static constexpr int32 NumStatsSlots = 4;
 	FStatsSlot           StatsRing[NumStatsSlots];             // render thread

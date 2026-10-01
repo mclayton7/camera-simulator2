@@ -25,6 +25,7 @@
 #include "Cesium3DTileset.h"
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
+#include "CesiumGeoreference.h"
 #include "CesiumGlobeAnchorComponent.h"
 #include "CesiumOriginShiftComponent.h"
 
@@ -206,6 +207,20 @@ void ACamSimCamera::Tick(float DeltaTime)
 	CamSimRender::RefreshPlayerView(GetWorld()->GetFirstPlayerController(), DeltaTime);
 
 	if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::CigiDequeue);
+
+	// ROADMAP 4A: the thermal model's camera pose — the KLV's sensor position (Tags 13/14/75) and the geodetic up
+	// (the georeference's East-South-Up Z axis at the sensor, in UE world space).
+	{
+		FVector Up = FVector::UpVector;
+		if (ACesiumGeoreference* Geo = GlobeAnchor ? GlobeAnchor->ResolveGeoreference() : nullptr)
+		{
+			// A degenerate result stays as is: GatherFrameInputs sanitises the up vector (+Z fallback).
+			Up = Geo->ComputeEastSouthUpToUnrealTransformation(SceneCapture->GetComponentLocation())
+				.TransformVector(FVector::UpVector).GetSafeNormal();
+		}
+		const FCamSimTelemetry& T = Telemetry.Get();
+		CaptureComp->SetThermalPose(T.Latitude, T.Longitude, T.Altitude, Up);
+	}
 
 	// ROADMAP 3B: sensor AE / AGC and graph parameters (no-op without the sensor graph).
 	CaptureComp->UpdateSensorParams(SensorComp->GetMode(), SensorComp->GetPolarity(), bCameraCutThisFrame,

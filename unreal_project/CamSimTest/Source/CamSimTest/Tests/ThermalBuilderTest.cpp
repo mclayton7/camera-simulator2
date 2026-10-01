@@ -4,6 +4,7 @@
 #include <limits>
 #include "Misc/AutomationTest.h"
 #include "HAL/PlatformTime.h"
+#include "Camera/CamSimCaptureComponent.h"
 #include "Thermal/ThermalFrameBuilder.h"
 #include "Thermal/ThermalMaterials.h"
 #include "Thermal/ThermalReference.h"
@@ -277,5 +278,15 @@ bool FThermalBuilderSanitiseTest::RunTest(const FString& Parameters)
 		&& FMath::IsFinite(P.TairK) && FMath::IsFinite(P.BetaPerCm) && FMath::IsFinite(P.Cloud);
 	for (uint32 K = 0; K < P.NumClasses; ++K) bFinite &= FMath::IsFinite(P.ClassTempK[K]);
 	TestTrue(TEXT("NaN inputs give finite params"), bFinite);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalModeGateTest, "CamSim.Thermal.Builder.ModeGate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalModeGateTest::RunTest(const FString& Parameters)
+{
+	TestTrue(TEXT("IR + available"), UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::IR, true));
+	TestFalse(TEXT("EO never"), UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::EO, true));
+	TestFalse(TEXT("IR unavailable (thermal.enabled false / no shader)"), UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::IR, false));
 	return true;
 }

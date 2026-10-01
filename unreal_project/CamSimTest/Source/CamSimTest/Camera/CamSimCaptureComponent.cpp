@@ -21,6 +21,7 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "Time/SimClock.h"
 #include "Sensor/SensorOptics.h"
+#include "Thermal/ThermalFrameSources.h"
 
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/Engine.h"
@@ -35,6 +36,10 @@
 
 DECLARE_STATS_GROUP(TEXT("CamSim"), STATGROUP_CamSim, STATCAT_Advanced)
 DECLARE_CYCLE_STAT(TEXT("Encode Latency"), STAT_CamSimEncode, STATGROUP_CamSim)
+
+// Diagnostics (ROADMAP 4A): log the thermal builder's class temperatures, sky, K_lum, signal scale and AE gain once a second.
+static TAutoConsoleVariable<int32> CVarCamSimThermalLog(TEXT("camsim.Thermal.Log"), 0,
+	TEXT("1: log the thermal frame parameters once a second while IR runs thermal"), ECVF_Default);
 
 // Out-of-line so the header can forward-declare FEncoderThread: every TU that
 // destroys the TUniquePtr (including UHT's .gen.cpp) only emits a call here.
@@ -330,6 +335,35 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	FSensorHistogram Hist;
 	const bool bHasHist = StatsMailbox.TakeLatest(Hist);
 
+	const FSensorModeConfig* ModeCfg = Cfg.SensorModeConfigs.Find(Mode);
+	static const FSensorModeConfig DefaultModeCfg;
+	const FSensorModeConfig& MC = ModeCfg ? *ModeCfg : DefaultModeCfg;
+
+	// ROADMAP 4A: IR renders thermal radiance when ThermalCS is available (startup) and thermal.enabled (live).
+	const bool bThermal = ShouldRunThermal(Mode, Subsystem && Subsystem->IsThermalAvailable() && Cfg.Thermal.bEnabled);
+	TSharedPtr<FThermalFrameParams, ESPMode::ThreadSafe> ThermalParams;
+	if (bThermal)
+	{
+		ThermalBuilder.Configure(Cfg.Thermal, MC.Detector.BandLoUm, MC.Detector.BandHiUm);
+		FThermalFrameInputs TIn;
+		CamSimThermal::GatherFrameInputs(GetWorld(), *Subsystem, ThermalLat, ThermalLon, ThermalAlt, ThermalUp, TIn);
+		ThermalParams = MakeShared<FThermalFrameParams, ESPMode::ThreadSafe>();
+		TArray<FString> Warnings;
+		ThermalBuilder.Build(TIn, *ThermalParams, &Warnings);
+		for (const FString& W : Warnings) { UE_LOG(LogCamSim, Warning, TEXT("Thermal: %s"), *W); }
+		if (CVarCamSimThermalLog.GetValueOnGameThread() > 0 && (ParamsSerial % 30u) == 0u)
+		{
+			const FThermalFrameParams& T = *ThermalParams;
+			FString Classes;
+			for (uint32 C = 0; C < FMath::Min<uint32>(T.NumClasses, 8u); ++C) { Classes += FString::Printf(TEXT(" %.1f"), T.ClassTempK[C]); }
+			UE_LOG(LogCamSim, Log, TEXT("Thermal: classes[K]%s terrain=%u water=%u Tair=%.1f K cloud=%.2f epsZ=%.3f KLum=%.1f "
+				"KFast=%.2f EClamp=%.0f signalScale=%.4g gainEv=%.2f sunLux=%.0f entities=%d"),
+				*Classes, T.TerrainClass, T.WaterClass, T.TairK, T.Cloud, T.SkyEpsZ, T.KLum, T.KFastScale, T.EClampWm2,
+				ThermalBuilder.GetSignalScale(), SensorController.GetGainEv(), TIn.SunIlluminanceLux, TIn.Entities.Num());
+		}
+	}
+	bThermalActiveLastTick = bThermal;
+
 	FSensorControllerInput In;
 	In.Mode         = static_cast<ESensorGraphMode>(FMath::Clamp(static_cast<int32>(Mode), 0, 1));
 	In.bBlackHot    = Polarity != 0;
@@ -341,12 +375,16 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	// mode's seed and detector config into the params (DarkE = DarkCurrentEs /
 	// FrameRateHz, AdcMax = 2^bits - 1, FrameIndex = Serial).
 	In.FrameRateHz  = Cfg.Performance.RenderFrameRateHz > 0.0f ? Cfg.Performance.RenderFrameRateHz : 30.0f;
-	const FSensorModeConfig* ModeCfg = Cfg.SensorModeConfigs.Find(Mode);
-	static const FSensorModeConfig DefaultModeCfg;
-	const FSensorModeConfig& MC = ModeCfg ? *ModeCfg : DefaultModeCfg;
+	In.bRadianceInput = bThermal;   // thermal AE slot + capped AGC (ROADMAP 4A)
 	const uint32 StaleBefore = SensorController.GetStaleEpisodes();
 	FSensorFrameParams Params = SensorController.Update(In, MC);
 	if (SensorController.GetStaleEpisodes() != StaleBefore && bTrackFrameDrops) FrameDropStats.SensorStatsStale++;
+	if (bThermal)
+	{
+		// The graph's input is R32F radiance (loads as (L, 0, 0)); the detector signal is L / B(300 K).
+		Params.SignalWeights = FVector3f(1.0f, 0.0f, 0.0f);
+		Params.InputScale    = ThermalBuilder.GetSignalScale();
+	}
 
 	// Lens model (ROADMAP 3B.2): focal length from this frame's FOV, so zoom changes the
 	// distortion/vignetting footprint. Recomputed only when the lens or the FOV changes.
@@ -379,14 +417,27 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	FMemory::Memcpy(Params.PsfTaps, O.PsfTaps, sizeof(Params.PsfTaps));
 	Params.NumPsfTaps         = O.NumPsfTaps;
 
-	// Keep UE's pre-exposure near the sensor gain so scene colour stays in fp16 range.
-	Sensor->PostProcessSettings.AutoExposureBias = SensorController.GetGainEv() + UeExposureOffsetEv;
+	// Keep UE's pre-exposure near the sensor gain so scene colour stays in fp16 range. Thermal: the sensor gain acts on
+	// radiance, not on scene colour, so UE's exposure is fixed (ThermalCS only reads colour for the solar term and
+	// divides PreExposure back out).
+	Sensor->PostProcessSettings.AutoExposureBias = bThermal ? ThermalUeExposureEv : SensorController.GetGainEv() + UeExposureOffsetEv;
 
+	// One command: a frame never pairs IR thermal parameters with EO sensor parameters (or the reverse).
 	TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> Ext = GrabExtension;
-	ENQUEUE_RENDER_COMMAND(CamSimSensorParams)([Ext, Params](FRHICommandListImmediate&)
+	TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> ConstThermal = ThermalParams;
+	ENQUEUE_RENDER_COMMAND(CamSimSensorParams)([Ext, Params, ConstThermal](FRHICommandListImmediate&)
 	{
 		Ext->SetParams_RenderThread(Params);
+		Ext->SetThermalParams_RenderThread(ConstThermal);
 	});
+}
+
+void UCamSimCaptureComponent::SetThermalPose(double LatDeg, double LonDeg, double AltHaeM, const FVector& UpWorld)
+{
+	ThermalLat = LatDeg;
+	ThermalLon = LonDeg;
+	ThermalAlt = AltHaeM;
+	ThermalUp  = UpWorld;
 }
 
 bool UCamSimCaptureComponent::ShouldSkipFrameForDecimation(const FCamSimConfig& Cfg)

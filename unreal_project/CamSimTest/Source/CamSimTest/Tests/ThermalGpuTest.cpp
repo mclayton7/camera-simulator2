@@ -8,6 +8,7 @@
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "RenderingThread.h"
+#include "SensorGraph.h"
 #include "ThermalPass.h"
 #include "Tests/ThermalTestScene.h"
 
@@ -206,5 +207,110 @@ bool FThermalGpuMatchesCpuTest::RunTest(const FString& Parameters)
 			C.Name, Tol, WorstRel, WorstI % C.W, WorstI / C.W, static_cast<int32>(Ref[WorstI].Class), Gpu[WorstI], Ref[WorstI].Radiance), Bad, 0);
 		TestEqual(*FString::Printf(TEXT("%s: every class present"), C.Name), Classes.Num(), 5);
 	}
+	return true;
+}
+
+namespace
+{
+	struct FEndToEndResult { TArray<float> Radiance; TArray<uint8> Nv12; bool bOk = false; };
+
+	/** One graph, as the live capture: ThermalCS radiance -> SensorCS with bRadianceInput (same-size depth and colour). */
+	FEndToEndResult RunThermalThroughSensorOnGpu(const CamSimThermalTest::FThermalTestScene& S, const FSensorFrameParams& SP)
+	{
+		FEndToEndResult Result;
+		const FIntPoint Ext(S.W, S.H);
+		ENQUEUE_RENDER_COMMAND(CamSimThermalEndToEndGpuTest)([&](FRHICommandListImmediate& RHICmdList)
+		{
+			FTextureRHIRef ColorTex   = UploadRgba(RHICmdList, S.Color, Ext, TEXT("CamSimTestThermalColor"));
+			FTextureRHIRef DepthTex   = UploadFloat(RHICmdList, S.Depth, Ext, TEXT("CamSimTestThermalDepth"));
+			FTextureRHIRef CustomTex  = UploadFloat(RHICmdList, S.Custom, Ext, TEXT("CamSimTestThermalCustom"));
+			FTextureRHIRef StencilTex = UploadStencil(RHICmdList, S.Stencil, Ext);
+			FTextureRHIRef BaseTex    = UploadRgba(RHICmdList, S.Base, Ext, TEXT("CamSimTestThermalBase"));
+			FRHIGPUTextureReadback RadRb(TEXT("CamSimTestThermalRadiance"));
+			FRHIGPUBufferReadback Nv12Rb(TEXT("CamSimTestThermalNv12"));
+			uint32 Nv12Bytes = 0;
+			{
+				FRDGBuilder GraphBuilder(RHICmdList);
+				FThermalPassInputs Ti;
+				Ti.SceneColor     = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(ColorTex, TEXT("CamSimTestThermalColor")));
+				Ti.SceneColorRect = FIntRect(FIntPoint::ZeroValue, Ext);
+				Ti.SceneDepth     = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(DepthTex, TEXT("CamSimTestThermalDepth")));
+				Ti.CustomDepth    = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(CustomTex, TEXT("CamSimTestThermalCustom")));
+				const FRDGTextureRef StencilRdg = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(StencilTex, TEXT("CamSimTestThermalStencil")));
+				Ti.CustomStencil  = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(StencilRdg));
+				Ti.BaseColor      = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(BaseTex, TEXT("CamSimTestThermalBase")));
+				Ti.DepthViewRect  = FIntRect(FIntPoint::ZeroValue, Ext);
+				const FRDGTextureRef Radiance = AddThermalPass(GraphBuilder, Ti, S.P);
+
+				FSensorGraphInputs In;
+				In.SceneColor     = Radiance;
+				In.SceneViewRect  = FIntRect(FIntPoint::ZeroValue, Ext);
+				In.bRadianceInput = true;
+				In.OutputSize     = Ext;
+				const FSensorGraphOutputs Out = AddSensorPasses(GraphBuilder, In, SP);
+				Nv12Bytes = Out.Nv12Bytes;
+				AddEnqueueCopyPass(GraphBuilder, &RadRb, Radiance);
+				AddEnqueueCopyPass(GraphBuilder, &Nv12Rb, Out.Nv12, Nv12Bytes);
+				GraphBuilder.Execute();
+			}
+			RHICmdList.SubmitAndBlockUntilGPUIdle();
+			if (!RadRb.IsReady() || !Nv12Rb.IsReady()) return;
+			int32 Pitch = 0;
+			const float* Data = static_cast<const float*>(RadRb.Lock(Pitch));
+			Result.Radiance.SetNumUninitialized(S.W * S.H);
+			for (int32 Y = 0; Y < S.H; ++Y) FMemory::Memcpy(&Result.Radiance[Y * S.W], Data + static_cast<int64>(Y) * Pitch, S.W * sizeof(float));
+			RadRb.Unlock();
+			Result.Nv12.SetNumUninitialized(Nv12Bytes);
+			FMemory::Memcpy(Result.Nv12.GetData(), Nv12Rb.Lock(Nv12Bytes), Nv12Bytes);
+			Nv12Rb.Unlock();
+			Result.bOk = true;
+		});
+		FlushRenderingCommands();
+		return Result;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalGpuEndToEndTest, "CamSim.GPU.Thermal.EndToEndRadianceToNv12",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalGpuEndToEndTest::RunTest(const FString& Parameters)
+{
+	if (GUsingNullRHI) { AddInfo(TEXT("skipped: NullRHI (run scripts/run_gpu_tests.sh)")); return true; }
+	constexpr int32 W = 64, H = 36;
+	CamSimThermalTest::FThermalTestScene S = CamSimThermalTest::MakeScene(W, H, W, H);
+	S.P.KFastScale = 0.0f;   // night: no solar term (terrain 300 K, vehicle 295 + 8 K, sky ~ 0.77 emissivity at 288 K)
+	// The scene's classes (CPU reference) define the regions; the NaN/Inf texels are classed Invalid and left out.
+	const TArray<CamSimThermalRef::FPixelResult> Ref = CamSimThermalRef::Run(S.Images(true), S.P);
+
+	FSensorFrameParams SP;   // default photon detector, no optics
+	SP.Mode          = ESensorGraphMode::IR;
+	SP.SignalWeights = FVector3f(1.0f, 0.0f, 0.0f);
+	SP.InputScale    = 1.0f / CamSimThermalTest::MwirBand().Radiance(300.0f);   // as UCamSimCaptureComponent (GetSignalScale)
+	SP.PhotonGain    = 0.5f;    // a 300 K scene at half full scale
+	SP.DisplayGain   = 3.0f;    // AGC-like stretch: N 0.5 -> 0.5 display
+	SP.DisplayOffset = -1.0f;
+	const FEndToEndResult G = RunThermalThroughSensorOnGpu(S, SP);
+	if (!TestTrue(TEXT("GPU readback"), G.bOk && G.Radiance.Num() == W * H && G.Nv12.Num() == W * H * 3 / 2)) return true;
+
+	int32 NonFinite = 0;
+	for (float L : G.Radiance) { if (!FMath::IsFinite(L)) ++NonFinite; }
+	TestEqual(TEXT("non-finite radiance texels (NaN/Inf inputs are sanitized)"), NonFinite, 0);
+
+	double Sum[5] = {}; int32 Count[5] = {};
+	for (int32 I = 0; I < W * H; ++I)
+	{
+		const int32 C = static_cast<int32>(Ref[I].Class);
+		Sum[C] += G.Nv12[I];
+		++Count[C];
+	}
+	auto Mean = [&](CamSimThermalRef::EPixelClass C) { const int32 K = static_cast<int32>(C); return Count[K] > 0 ? Sum[K] / Count[K] : -1.0; };
+	const double SkyY = Mean(CamSimThermalRef::EPixelClass::Sky);
+	const double TerrainY = Mean(CamSimThermalRef::EPixelClass::Terrain);
+	const double EntityY = Mean(CamSimThermalRef::EPixelClass::Entity);
+	AddInfo(FString::Printf(TEXT("mean Y: sky %.1f (%d px), terrain %.1f (%d px), entity %.1f (%d px)"),
+		SkyY, Count[0], TerrainY, Count[3], EntityY, Count[1]));
+	if (!TestTrue(TEXT("every region present"), Count[0] > 0 && Count[1] > 0 && Count[3] > 0)) return true;
+	TestTrue(*FString::Printf(TEXT("white-hot: sky (%.1f) darker than terrain (%.1f)"), SkyY, TerrainY), SkyY < TerrainY);
+	TestTrue(*FString::Printf(TEXT("night: entity (%.1f) brighter than terrain (%.1f)"), EntityY, TerrainY), EntityY > TerrainY);
+	TestTrue(*FString::Printf(TEXT("terrain mid-grey (16..235 limited range): %.1f"), TerrainY), TerrainY > 40.0 && TerrainY < 220.0);
 	return true;
 }
