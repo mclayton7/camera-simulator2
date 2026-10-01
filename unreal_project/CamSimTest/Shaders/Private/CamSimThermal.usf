@@ -1,0 +1,61 @@
+// Copyright CamSim Contributors. All Rights Reserved.
+// Thermal core (ROADMAP 4A): ThermalCS — for every pixel of the scene-colour view rect, classify sky / entity / water /
+// terrain from scene depth, custom depth + stencil and GBuffer base colour (render resolution, nearest texel), add the
+// solar fast term from scene colour, and write in-band radiance (R32F). Maths: CamSimThermalCommon.ush.
+
+#include "/Engine/Public/Platform.ush"
+#if USE_VIEW
+#include "/Engine/Private/Common.ush"   // View.ViewRectMin, View.ViewSizeAndInvSize, View.OneOverPreExposure
+#endif
+#include "CamSimThermalCommon.ush"
+
+int2  OutSize;          // = scene colour view rect size
+int2  ColorViewMin;
+int2  DepthViewMin;     // tests (runtime: View.ViewRectMin)
+int2  DepthViewSize;    // tests (runtime: View.ViewSizeAndInvSize.xy)
+float InputScale;       // tests; runtime multiplies View.OneOverPreExposure in as well
+Texture2D<float4>  SceneColor;
+Texture2D<float>   SceneDepth;
+Texture2D<float>   CustomDepth;
+Texture2D<uint2>   CustomStencil;   // FSceneTextureUniformParameters::CustomStencilTexture's type
+Texture2D<float4>  BaseColor;       // GBufferC (black dummy when UseBaseColor == 0)
+RWTexture2D<float> OutRadiance;
+
+void DepthRect(out int2 Min, out int2 Size)
+{
+#if USE_VIEW
+	Min = int2(View.ViewRectMin.xy);
+	Size = int2(View.ViewSizeAndInvSize.xy);
+#else
+	Min = DepthViewMin;
+	Size = DepthViewSize;
+#endif
+}
+
+float ColorScale()
+{
+	float Scale = InputScale;
+#if USE_VIEW
+	Scale *= View.OneOverPreExposure;
+#endif
+	return Scale;
+}
+
+[numthreads(8, 8, 1)]
+void ThermalCS(uint3 Id : SV_DispatchThreadID)
+{
+	const int2 P = int2(Id.xy);
+	if (any(P >= OutSize)) return;
+	int2 DMin, DSize;
+	DepthRect(DMin, DSize);
+	FThermalSample S;
+	S.U = (float(P.x) + 0.5) / float(OutSize.x);
+	S.V = (float(P.y) + 0.5) / float(OutSize.y);
+	const int2 T = DMin + clamp(int2(floor(float2(S.U, S.V) * float2(DSize))), int2(0, 0), DSize - 1);
+	S.DeviceZ = SceneDepth.Load(int3(T, 0));
+	S.CustomZ = CustomDepth.Load(int3(T, 0));
+	S.Stencil = CustomStencil.Load(int3(T, 0)) STENCIL_COMPONENT_SWIZZLE & 0xFFu;
+	S.Color = SceneColor.Load(int3(ColorViewMin + P, 0)).rgb * ColorScale();
+	S.Base = BaseColor.Load(int3(T, 0)).rgb;
+	OutRadiance[P] = EvaluatePixel(S);
+}

@@ -1,0 +1,131 @@
+// Copyright CamSim Contributors. All Rights Reserved.
+// Thermal core (ROADMAP 4A): ThermalCS's per-pixel maths and parameters. CPU twin: CamSimThermalRef::EvaluatePixel
+// (CamSimTest/Thermal/ThermalReference.cpp), mirrored expression for expression (same order, same constants);
+// CamSim.GPU.Thermal.MatchesCpu holds them to 1e-4 relative radiance. Plain float maths: no atomics, no wave intrinsics.
+
+#pragma once
+
+#define THERMAL_LUT_SIZE 1024
+#define THERMAL_PI 3.14159265
+
+float4   LogLut[THERMAL_LUT_SIZE / 4];   // ln B(T_i), T_i = LutMinK + i / LutScale, four per float4
+float    LutMinK;
+float    LutMaxK;
+float    LutScale;
+float4   ClassData[32];                  // x T_class (K), y emissivity, z k_fast, w S_abs,ref (W m^-2)
+float4   StencilData[128];               // stencil 2k: (x class, y offset K); 2k + 1: (z class, w offset K)
+uint     NumClasses;
+uint     TerrainClass;
+uint     WaterClass;
+float    EntityDepthRatio;
+float4x4 ClipToTranslatedWorld;          // (NDC x, NDC y, device Z, 1) -> translated world (row vector, reversed Z)
+float3   Up;
+uint     bWater;
+float    CamHeightCm;
+float    SeaRadiusCm;
+float    WaterBandCm;
+float    TairK;
+float    SkyEpsZ;
+float    Cloud;
+float    SkyHemiRadiance;
+float    BetaPerCm;
+float    KLum;
+float    EClampWm2;
+float    KFastScale;
+uint     bBaseColorSrgb;
+uint     UseBaseColor;                   // 0: no base colour bound (fast term off)
+
+/** Non-finite on the bits: Metal fast-math may fold isnan/isinf or V != V away. */
+bool IsNonFinite(float V) { return (asuint(V) & 0x7fffffffu) >= 0x7f800000u; }
+
+float LutAt(uint I) { return LogLut[I >> 2u][I & 3u]; }
+
+/** ThermalLutRadiance (ThermalFrameParams.h). */
+float LutRadiance(float TK)
+{
+	float T = TK;
+	if (!(T >= LutMinK)) T = LutMinK;
+	if (T > LutMaxK) T = LutMaxK;
+	const float X = (T - LutMinK) * LutScale;
+	const uint I = min((uint)floor(X), (uint)(THERMAL_LUT_SIZE - 2));
+	const float F = X - float(I);
+	const float A = LutAt(I);
+	return exp(A + (LutAt(I + 1u) - A) * F);
+}
+
+float SkyTemperatureK(float SinEl)
+{
+	const float S = max(SinEl, 0.05);
+	const float Eps = 1.0 - pow(1.0 - SkyEpsZ, 1.0 / S);
+	const float Ratio = (1.0 - Cloud) * Eps + Cloud;
+	return TairK * sqrt(sqrt(Ratio));
+}
+
+float SrgbToLinear(float C) { return C <= 0.04045 ? C / 12.92 : pow((C + 0.055) / 1.055, 2.4); }
+
+float Lum709(float3 C) { return 0.2126 * C.x + 0.7152 * C.y + 0.0722 * C.z; }
+
+float3 ClipToWorld(float Nx, float Ny, float Z)
+{
+	const float4 H = mul(float4(Nx, Ny, Z, 1.0), ClipToTranslatedWorld);
+	return float3(H.x / H.w, H.y / H.w, H.z / H.w);
+}
+
+struct FThermalSample
+{
+	float  U;
+	float  V;
+	float  DeviceZ;
+	float  CustomZ;
+	uint   Stencil;
+	float3 Color;   // scene colour * scale (absolute luminance units)
+	float3 Base;    // GBuffer base colour
+};
+
+/** CamSimThermalRef::EvaluatePixel: in-band radiance of one output pixel. */
+float EvaluatePixel(FThermalSample S)
+{
+	const float BAir = LutRadiance(TairK);
+	if (IsNonFinite(S.DeviceZ) || IsNonFinite(S.Color.x) || IsNonFinite(S.Color.y) || IsNonFinite(S.Color.z)) return BAir;
+	const float Nx = S.U * 2.0 - 1.0, Ny = 1.0 - S.V * 2.0;
+	if (S.DeviceZ <= 0.0)
+	{
+		const float3 Pn = ClipToWorld(Nx, Ny, 1.0);
+		const float Len = sqrt(dot(Pn, Pn));
+		const float SinEl = (Len > 0.0) ? dot(Pn, Up) / Len : 1.0;
+		return LutRadiance(SkyTemperatureK(SinEl));
+	}
+	const float3 Pw = ClipToWorld(Nx, Ny, S.DeviceZ);
+	const float Range = sqrt(dot(Pw, Pw));
+	uint Class = TerrainClass;
+	float Offset = 0.0;
+	const uint Stencil = S.Stencil & 0xFFu;
+	if (Stencil > 0u && S.CustomZ >= S.DeviceZ * EntityDepthRatio)
+	{
+		const float4 E = StencilData[Stencil >> 1u];
+		const bool bOdd = (Stencil & 1u) != 0u;
+		Class = (uint)(bOdd ? E.z : E.x);
+		Offset = bOdd ? E.w : E.y;
+	}
+	else if (bWater != 0u)
+	{
+		const float Vert = dot(Pw, Up);
+		const float D2 = max(Range * Range - Vert * Vert, 0.0);
+		const float Height = CamHeightCm + Vert + D2 / (2.0 * SeaRadiusCm);
+		if (Height < WaterBandCm) Class = WaterClass;
+	}
+	Class = min(Class, max(NumClasses, 1u) - 1u);
+	const float4 Cd = ClassData[Class];
+	float T = Cd.x + Offset;
+	if (UseBaseColor != 0u && KFastScale > 0.0)
+	{
+		const float3 Base = (bBaseColorSrgb != 0u) ? float3(SrgbToLinear(S.Base.x), SrgbToLinear(S.Base.y), SrgbToLinear(S.Base.z)) : S.Base;
+		const float BaseLum = Lum709(Base);
+		const float E = clamp(THERMAL_PI * Lum709(S.Color) / (max(BaseLum, 0.03) * max(KLum, 1e-6)), 0.0, EClampWm2);
+		const float SAbs = (1.0 - clamp(BaseLum, 0.0, 1.0)) * E;
+		T += KFastScale * Cd.z * (SAbs - Cd.w);
+	}
+	const float LSurf = Cd.y * LutRadiance(T) + (1.0 - Cd.y) * SkyHemiRadiance;
+	const float Tau = exp(-BetaPerCm * Range);
+	return Tau * LSurf + (1.0 - Tau) * BAir;
+}

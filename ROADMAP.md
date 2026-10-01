@@ -1273,6 +1273,9 @@ Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
   - Condition for LINEAR: GBufferC is PF_B8G8R8A8 with `TexCreate_SRGB`, so Task 8 must sample it through the engine's
     scene-texture SRV (`SceneTextures.GBufferCTexture` from the uniform buffer, hardware sRGB decode), never raw byte loads
     or a copy that drops the sRGB flag. Task 8's GPU test should confirm a known albedo comes back linear.
+  - Confirmed (Task 8): `CamSim.GPU.Thermal.MatchesCpu` "sRGB-format base texture" binds a PF_B8G8R8A8 + `TexCreate_SRGB`
+    base colour and ThermalCS matches the reference fed the linear values (3.0e-4 relative radiance on Metal: the hardware
+    decode isn't bit-exact), against > 1e-2 for the raw bytes read as linear.
 
 ---
 
