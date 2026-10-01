@@ -129,6 +129,13 @@ function extractKlvFromTs(buf) {
 	return Buffer.concat(out)
 }
 
+// CamSim sends each keyframe as one burst of datagrams (NVENC: ~180 KB at
+// 4 Mbit/s), which overflows Linux's default 208 KB receive buffer. The kernel
+// caps the request at net.core.rmem_max, so raise that too:
+//   sudo sysctl -w net.core.rmem_max=26214400
+const RECV_BUFFER_BYTES = 16 * 1024 * 1024
+const MIN_RECV_BUFFER_BYTES = 4 * 1024 * 1024
+
 // Raw datagrams from udp://addr:port for durationSec seconds, concatenated.
 // A multicast address is joined; anything else is bound as given.
 function captureUdp(url, durationSec) {
@@ -144,6 +151,16 @@ function captureUdp(url, durationSec) {
 		sock.on('error', reject)
 		sock.bind(Number(port), multicast ? undefined : addr, () => {
 			if (multicast) sock.addMembership(addr)
+			try {
+				sock.setRecvBufferSize(RECV_BUFFER_BYTES)
+			} catch {
+				// Over the OS limit (macOS errors rather than capping); keep the default.
+			}
+			const granted = sock.getRecvBufferSize()
+			if (granted < MIN_RECV_BUFFER_BYTES) {
+				console.error(`warning: UDP receive buffer is ${granted} bytes; keyframe bursts may be dropped`
+					+ ' (Linux: sudo sysctl -w net.core.rmem_max=26214400)')
+			}
 			setTimeout(() => {
 				sock.close()
 				resolve(Buffer.concat(chunks))
