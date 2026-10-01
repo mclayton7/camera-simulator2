@@ -59,7 +59,8 @@ struct FThermalFrameInputs
 /**
  * Fills FThermalFrameParams each frame (ROADMAP 4A): LUT for the preset's band, class temperatures from FThermalModel
  * at the local solar time, sky and path terms, K_lum, sea geometry, and the 256-entry stencil table rebuilt from the
- * live entities; land-cover tables and the window mapping (ROADMAP 4B). ClipToTranslatedWorld is left for the render thread. Game thread.
+ * live entities; land-cover tables, the window mapping and the geo-anchored warp (ROADMAP 4B). ClipToTranslatedWorld is left for the
+ * render thread. Game thread.
  */
 class CAMSIMTEST_API FThermalFrameBuilder
 {
@@ -71,8 +72,9 @@ public:
 	static constexpr double AirQuantumK     = 0.05;
 	static constexpr double MwirMaxCentreUm = 6.5;     // band centre below this: MWIR extinction
 	static constexpr float  AsphaltRampLuma = 0.04f;   // built-up asphalt -> concrete ramp width (base luminance)
+	static constexpr double MaxWarpAnchorM  = 200000.0;   // a window farther than this from the warp anchor re-latches it
+	static constexpr float  MaxWarpAmpM = 20.0f, MinWarpCellM = 5.0f, MaxWarpCellM = 200.0f, DefaultWarpCellM = 20.0f;
 	const FLandCoverClassTable& GetLandCoverTable() const { return LandCoverTable; }
-
 
 	/** Rebuild the LUT when the band changes and the material table when thermal.materials changes. */
 	void Configure(const FCamSimConfig::FThermalConfig& Cfg, float BandLoUm, float BandHiUm);
@@ -99,4 +101,8 @@ private:
 	FLandCoverClassTable  LandCoverTable;
 	TArray<FString>       PendingWarnings;   // material table errors, reported by the next Build
 	TSet<FString>         WarnedMaterials;
+	// Land-cover warp anchor (Task 13): the session's first valid window centre; reset when thermal.land_cover.dir changes.
+	bool                  bWarpAnchor = false;
+	double                WarpAnchorLatDeg = 0.0;
+	double                WarpAnchorLonDeg = 0.0;
 };

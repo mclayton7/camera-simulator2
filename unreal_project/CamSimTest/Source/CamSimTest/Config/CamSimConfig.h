@@ -606,6 +606,8 @@ struct FCamSimConfig
 			float   VegIndexLo       = 0.05f;   // base-colour excess green where the vegetation weight starts
 			float   VegIndexHi       = 0.20f;   // ... and reaches 1
 			float   AsphaltMaxLuma   = 0.12f;   // built-up: linear base luminance below which ground is asphalt (soft ramp)
+			float   WarpAmplitudeM   = 6.0f;    // geo-anchored domain warp of the lookup (breaks the 10 m grid); 0 = off
+			float   WarpCellM        = 20.0f;   // warp noise lattice spacing on the ground
 			TArray<FLandCoverClassSpec> Classes;   // WorldCover code -> material overrides (yaml only)
 
 			bool operator==(const FLandCoverConfig&) const = default;

@@ -74,6 +74,15 @@ struct FThermalFrameParams
 	FVector2f LandCoverCamOffsetM = FVector2f::ZeroVector;          // camera (East, North) from the window centre, m (CPU doubles)
 	float     LandCoverTexelM     = 10.0f;
 	uint32    LandCoverTexels     = 2048;
+	// Geo-anchored domain warp of the lookup (Task 13: breaks the visible 10 m grid). Ground coordinates of window point (E, N):
+	// G = LandCoverAnchorM + LandCoverAnchorScale * (E, N), i.e. CamSimLandCover::GeodeticToWindowEN(session anchor, point)
+	// exactly (both mappings are linear in lat/lon), so G is fixed to the ground across re-centres. The lookup position is
+	// (E, N) + LandCoverWarpAmpM * (n1(G), n2(G)), n1, n2 in [-1, 1]: smoothstep value noise of the PCG hash on a lattice
+	// of LandCoverWarpCellM (CamSimHash::LandCoverWarpStream). LandCoverWarpAmpM <= 0: no warp (the struct default).
+	FVector2f LandCoverAnchorM     = FVector2f::ZeroVector;   // window centre from the session anchor, m (CPU doubles)
+	FVector2f LandCoverAnchorScale = FVector2f(1.0f, 1.0f);   // (N cos phi)_anchor / (N cos phi)_centre, M_anchor / M_centre
+	float     LandCoverWarpAmpM    = 0.0f;
+	float     LandCoverWarpCellM   = 20.0f;
 	uint32    bLandCoverRefine    = 0;                   // base-colour refinement (needs the base colour, not sunlight)
 	float     VegIndexLo          = 0.05f;               // v = saturate((ExG - lo) / max(hi - lo, 1e-4))
 	float     VegIndexHi          = 0.20f;

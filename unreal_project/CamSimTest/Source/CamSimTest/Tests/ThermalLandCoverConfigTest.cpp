@@ -39,6 +39,8 @@ bool FThermalLandCoverConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("veg lo"), L.VegIndexLo, 0.05f);
 	TestEqual(TEXT("veg hi"), L.VegIndexHi, 0.20f);
 	TestEqual(TEXT("asphalt luma"), L.AsphaltMaxLuma, 0.12f);
+	TestEqual(TEXT("warp amplitude (Task 13)"), L.WarpAmplitudeM, 6.0f);
+	TestEqual(TEXT("warp cell"), L.WarpCellM, 20.0f);
 	TestEqual(TEXT("no class overrides"), L.Classes.Num(), 0);
 	TestFalse(TEXT("defaults valid"), HasError(FCamSimConfig().Validate(), TEXT("land_cover")));
 	return true;
@@ -58,6 +60,8 @@ bool FThermalLandCoverConfigYamlTest::RunTest(const FString& Parameters)
 		"    veg_index_lo: 0.02\n"
 		"    veg_index_hi: 0.3\n"
 		"    asphalt_max_luma: 0.2\n"
+		"    warp_amplitude_m: 3.5\n"
+		"    warp_cell_m: 40\n"
 		"    classes:\n"
 		"      10: vegetation\n"
 		"      50: concrete\n");
@@ -72,6 +76,8 @@ bool FThermalLandCoverConfigYamlTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("veg lo"), L.VegIndexLo, 0.02f);
 	TestEqual(TEXT("veg hi"), L.VegIndexHi, 0.3f);
 	TestEqual(TEXT("luma"), L.AsphaltMaxLuma, 0.2f);
+	TestEqual(TEXT("warp amplitude"), L.WarpAmplitudeM, 3.5f);
+	TestEqual(TEXT("warp cell"), L.WarpCellM, 40.0f);
 	if (TestEqual(TEXT("two class specs"), L.Classes.Num(), 2))
 	{
 		TestEqual(TEXT("code"), L.Classes[0].Code, 10);
@@ -92,8 +98,10 @@ bool FThermalLandCoverConfigYamlTest::RunTest(const FString& Parameters)
 	const TCHAR* Keys[] = { TEXT("CAMSIM_THERMAL_LAND_COVER_ENABLED"), TEXT("CAMSIM_THERMAL_LAND_COVER_DIR"),
 		TEXT("CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS"), TEXT("CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION"),
 		TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_LO"), TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_HI"),
-		TEXT("CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA") };
-	const TCHAR* Values[] = { TEXT("1"), TEXT("Content/Other"), TEXT("512"), TEXT("0.02"), TEXT("0.01"), TEXT("0.4"), TEXT("0.15") };
+		TEXT("CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA"), TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_AMPLITUDE_M"),
+		TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M") };
+	const TCHAR* Values[] = { TEXT("1"), TEXT("Content/Other"), TEXT("512"), TEXT("0.02"), TEXT("0.01"), TEXT("0.4"), TEXT("0.15"),
+		TEXT("0"), TEXT("100") };
 	for (int32 K = 0; K < UE_ARRAY_COUNT(Keys); ++K) FPlatformMisc::SetEnvironmentVar(Keys[K], Values[K]);
 	Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	for (const TCHAR* K : Keys) FPlatformMisc::SetEnvironmentVar(K, TEXT(""));
@@ -104,6 +112,8 @@ bool FThermalLandCoverConfigYamlTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("env veg lo"), Cfg.Thermal.LandCover.VegIndexLo, 0.01f);
 	TestEqual(TEXT("env veg hi"), Cfg.Thermal.LandCover.VegIndexHi, 0.4f);
 	TestEqual(TEXT("env luma"), Cfg.Thermal.LandCover.AsphaltMaxLuma, 0.15f);
+	TestEqual(TEXT("env warp amplitude (0 = off)"), Cfg.Thermal.LandCover.WarpAmplitudeM, 0.0f);
+	TestEqual(TEXT("env warp cell"), Cfg.Thermal.LandCover.WarpCellM, 100.0f);
 	return true;
 }
 
@@ -127,6 +137,16 @@ bool FThermalLandCoverConfigValidateTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("lo >= hi"),       HasError(With([](FLc& L) { L.VegIndexLo = 0.3f; L.VegIndexHi = 0.3f; }), TEXT("thermal.land_cover.veg_index")));
 	TestTrue (TEXT("hi NaN"),         HasError(With([NaN](FLc& L) { L.VegIndexHi = NaN; }), TEXT("thermal.land_cover.veg_index")));
 	TestTrue (TEXT("luma 1.5"),       HasError(With([](FLc& L) { L.AsphaltMaxLuma = 1.5f; }), TEXT("thermal.land_cover.asphalt_max_luma")));
+	TestTrue (TEXT("warp amp -1"),    HasError(With([](FLc& L) { L.WarpAmplitudeM = -1.0f; }), TEXT("thermal.land_cover.warp_amplitude_m")));
+	TestTrue (TEXT("warp amp 21"),    HasError(With([](FLc& L) { L.WarpAmplitudeM = 21.0f; }), TEXT("thermal.land_cover.warp_amplitude_m")));
+	TestTrue (TEXT("warp amp NaN"),   HasError(With([NaN](FLc& L) { L.WarpAmplitudeM = NaN; }), TEXT("thermal.land_cover.warp_amplitude_m")));
+	TestFalse(TEXT("warp amp 0 ok"),  HasError(With([](FLc& L) { L.WarpAmplitudeM = 0.0f; }), TEXT("land_cover")));
+	TestFalse(TEXT("warp amp 20 ok"), HasError(With([](FLc& L) { L.WarpAmplitudeM = 20.0f; }), TEXT("land_cover")));
+	TestTrue (TEXT("warp cell 4"),    HasError(With([](FLc& L) { L.WarpCellM = 4.0f; }), TEXT("thermal.land_cover.warp_cell_m")));
+	TestTrue (TEXT("warp cell 201"),  HasError(With([](FLc& L) { L.WarpCellM = 201.0f; }), TEXT("thermal.land_cover.warp_cell_m")));
+	TestTrue (TEXT("warp cell NaN"),  HasError(With([NaN](FLc& L) { L.WarpCellM = NaN; }), TEXT("thermal.land_cover.warp_cell_m")));
+	TestFalse(TEXT("warp cell 5 ok"), HasError(With([](FLc& L) { L.WarpCellM = 5.0f; }), TEXT("land_cover")));
+	TestFalse(TEXT("warp cell 200 ok"), HasError(With([](FLc& L) { L.WarpCellM = 200.0f; }), TEXT("land_cover")));
 	TestTrue (TEXT("empty dir"),      HasError(With([](FLc& L) { L.Dir = TEXT("  "); }), TEXT("thermal.land_cover.dir")));
 	TestFalse(TEXT("empty dir is fine when disabled"), HasError(With([](FLc& L) { L.bEnabled = false; L.Dir = TEXT(""); }), TEXT("land_cover")));
 	TestTrue (TEXT("key 'trees'"),    HasError(With([](FLc& L) { FLandCoverClassSpec S; S.Key = TEXT("trees"); S.Material = TEXT("vegetation"); L.Classes.Add(S); }),

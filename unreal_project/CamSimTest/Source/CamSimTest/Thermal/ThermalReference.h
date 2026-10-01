@@ -14,8 +14,9 @@
  *  2. entity: stencil s > 0 and custom Z >= scene Z * EntityDepthRatio -> class/offset from the stencil table
  *  3. water: height above the sea h = H_cam + v + d^2 / 2R < WaterBandCm (v = P.up, d^2 = |P|^2 - v^2)
  *  4. terrain: TerrainClass
- *  4b. terrain inside the land-cover window (ROADMAP 4B): class data = bilinear blend of the four nearest texels' refined
- *      class data (SampleLandCover, RefinedClassData, BlendLandCover); outside it TerrainClass
+ *  4b. terrain inside the land-cover window (ROADMAP 4B): class data = blend of the four nearest texels' refined class data
+ *      at the geo-anchored warped position, smoothstep-bilinear weights (SampleLandCover, WarpLandCoverEN, RefinedClassData,
+ *      BlendLandCover); outside it (warped position off the texel-centre grid) TerrainClass
  *  T = T_class + offset [+ KFastScale k_fast ((1 - a_pix) E_pix - S_abs,ref)], a_pix = BaseLum,
  *  E_pix = clamp(pi Lum(colour) / (max(BaseLum, 0.03) max(K_lum, 1e-6)), 0, EClamp)
  *  L = tau (eps B(T) + (1 - eps) L_sky,hemi) + (1 - tau) B(T_air), tau = exp(-beta range)
@@ -57,7 +58,7 @@ namespace CamSimThermalRef
 		const TArray<uint8>*        LandCover   = nullptr;   // P.LandCoverTexels^2 window codes; null: not bound
 	};
 
-	/** The four window texels around a world position and their bilinear weights (ROADMAP 4B). */
+	/** The four window texels around a (warped) world position and their smoothstep-bilinear weights (ROADMAP 4B). */
 	struct FLandCoverSample
 	{
 		bool  bInside = false;       // false: no window, land cover off, or outside the texel-centre grid -> TerrainClass
@@ -69,7 +70,15 @@ namespace CamSimThermalRef
 	FVector3f ClipToWorld(const FThermalFrameParams& P, float Nx, float Ny, float Z);
 	/** (T_class, emissivity, k_fast, S_abs,ref) of a class; the index is clamped to NumClasses. */
 	FVector4f ClassData(const FThermalFrameParams& P, uint32 Class);
-	/** Pw: camera-relative world position (cm). (E, N) = (Pw . East, Pw . North) / 100 + CamOffset; texel centres on integers. */
+	/** The two warp fields (n1, n2), each in [-1, 1], at ground coordinates G (m): smoothstep-bilinear value noise of
+	 *  CamSimHash::Pcg on a lattice of P.LandCoverWarpCellM (stream CamSimHash::LandCoverWarpStream; n1 = high 16 bits,
+	 *  n2 = low 16 bits of each corner's hash). C1, deterministic, no floating-point hash. */
+	FVector2f LandCoverWarpNoise(const FThermalFrameParams& P, float Gx, float Gy);
+	/** Warped window position (Task 13): (E, N) + LandCoverWarpAmpM (n1, n2)(G), G = LandCoverAnchorM + LandCoverAnchorScale (E, N)
+	 *  (ground-fixed across re-centres). Identity when LandCoverWarpAmpM <= 0; non-finite G is returned as is (the lookup rejects it). */
+	FVector2f WarpLandCoverEN(const FThermalFrameParams& P, float E, float N);
+	/** Pw: camera-relative world position (cm). (E, N) = (Pw . East, Pw . North) / 100 + CamOffset, then WarpLandCoverEN; texel
+	 *  centres on integers. Weights: bilinear of the smoothstep fractions S(f) = f f (3 - 2 f) (C1 across texel centres). */
 	FLandCoverSample SampleLandCover(const FThermalFrameParams& P, const uint8* Codes, const FVector3f& Pw);
 	/** (vegetation v, concrete c) of a linear base colour. */
 	FVector2f RefinementWeights(const FThermalFrameParams& P, const FVector3f& Base);

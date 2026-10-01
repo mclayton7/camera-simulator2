@@ -6,8 +6,8 @@
 
 #include <limits>
 
-// CamSim.Thermal.Reference.LandCover* / Refinement*: land-cover lookup, bilinear material blend, base-colour refinement and the
-// unchanged 4A path in the per-pixel CPU reference (ROADMAP 4B).
+// CamSim.Thermal.Reference.LandCover* / Refinement*: land-cover lookup, smoothstep-bilinear material blend, geo-anchored
+// domain warp (Task 13), base-colour refinement and the unchanged 4A path in the per-pixel CPU reference (ROADMAP 4B).
 
 using namespace CamSimThermalTest;
 using CamSimThermalRef::EPixelClass;
@@ -124,8 +124,9 @@ bool FThermalRefLandCoverBlendTest::RunTest(const FString& Parameters)
 	TestNearlyEqual(TEXT("emissivity blended, not the code"), Half.Y, 0.5f * 0.98f + 0.5f * 0.93f, 1e-5f);
 	TestNearlyEqual(TEXT("k_fast blended"), Half.Z, 0.5f * 0.008f + 0.5f * 0.018f, 1e-6f);
 	TestNearlyEqual(TEXT("S_abs,ref blended"), Half.W, 380.0f, 1e-3f);
+	// Smoothstep blend fractions (Task 13): a quarter texel from the vegetation centre, S(0.25) = 0.15625 toward built-up.
 	const FVector4f Quarter = CamSimThermalRef::BlendLandCover(P, At(-2.5f, 0.0f), FVector3f(0.2f), false);
-	TestNearlyEqual(TEXT("a quarter texel toward vegetation"), Quarter.X, 0.75f * 296.0f + 0.25f * 307.0f, 1e-3f);
+	TestNearlyEqual(TEXT("a quarter texel toward vegetation (smoothstep)"), Quarter.X, 0.84375f * 296.0f + 0.15625f * 307.0f, 1e-3f);
 	const FLandCoverSample Centre = At(-5.0f, 5.0f);   // exactly texel (3, 3)'s centre
 	TestNearlyEqual(TEXT("texel centre: weight 1 on it"), Centre.Weights[0], 1.0f, 1e-6f);
 	TestEqual(TEXT("texel centre: its class"), CamSimThermalRef::BlendLandCover(P, Centre, FVector3f(0.2f), false).X, 296.0f);
@@ -229,6 +230,9 @@ bool FThermalRefLandCoverOffTest::RunTest(const FString& Parameters)
 	const TArray<uint8> Codes = MakeLandCoverCodes(32);
 	FThermalFrameParams On = MakeLandCoverParams(S.ViewRot, 64, 36, 32, 10.0f, 30.0f);   // classes 0-2 = MakeParams'
 	On.bWater = S.P.bWater;
+	On.LandCoverWarpAmpM = 6.0f;   // the warp (Task 13) must not leak into the off path either
+	On.LandCoverWarpCellM = 20.0f;
+	On.LandCoverAnchorM = FVector2f(1234.5f, -876.25f);
 	FThermalFrameParams Off = On;
 	Off.bLandCover = 0;
 	int32 Bad4A = 0, BadOff = 0, BadNonTerrain = 0, NonTerrain = 0, BadOutside = 0, Outside = 0;
@@ -369,5 +373,209 @@ bool FThermalRefLandCoverRunTest::RunTest(const FString& Parameters)
 		TestEqual(*FString::Printf(TEXT("yaw %.0f: entities never use land cover"), Yaw), EntityWithLc, 0);
 		TestTrue(*FString::Printf(TEXT("yaw %.0f: varied land temperatures (%d)"), Yaw, Temps.Num()), Temps.Num() >= 8);
 	}
+	return true;
+}
+
+// ---- Task 13: break the 10 m grid (smoothstep fractions + geo-anchored domain warp) ----
+
+namespace
+{
+	/** Blended temperature along East at North = N (no refinement), window coordinates in metres. */
+	float TempAt(const FThermalFrameParams& P, const TArray<uint8>& Codes, float E, float N)
+	{
+		const FLandCoverSample L = CamSimThermalRef::SampleLandCover(P, Codes.GetData(), GroundPoint(P, E, N, -700.0f));
+		return L.bInside ? CamSimThermalRef::BlendLandCover(P, L, FVector3f(0.2f), false).X : -1.0f;
+	}
+
+	/** max |second difference| at the texel centre E = Ec (samples within one step) / max elsewhere (more than 2 steps away). */
+	float CreaseRatio(TFunctionRef<float(float)> T, float Ec, float Lo, float Hi, float Step)
+	{
+		float AtCentre = 0.0f, Elsewhere = 0.0f;
+		for (float E = Lo; E <= Hi; E += Step)
+		{
+			const float D2 = FMath::Abs(T(E - Step) - 2.0f * T(E) + T(E + Step));
+			if (FMath::Abs(E - Ec) <= Step * 1.01f) AtCentre = FMath::Max(AtCentre, D2);
+			else if (FMath::Abs(E - Ec) > 2.0f * Step) Elsewhere = FMath::Max(Elsewhere, D2);
+		}
+		return AtCentre / FMath::Max(Elsewhere, 1e-9f);
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalRefLandCoverC1Test, "CamSim.Thermal.Reference.LandCoverBlendIsC1",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalRefLandCoverC1Test::RunTest(const FString& Parameters)
+{
+	FThermalFrameParams P = MakeLandCoverParams(Down, 64, 36, 8, 10.0f, 0.0f);
+	P.LandCoverCamOffsetM = FVector2f::ZeroVector;
+	P.LandCoverWarpAmpM = 0.0f;
+	TArray<uint8> Codes = Uniform(8, 30);                      // vegetation (296 K) ...
+	for (int32 Y = 0; Y < 8; ++Y) Codes[Y * 8 + 3] = 50;        // ... with one built-up (307 K) column: x = 3, centre E = -5 m
+	// Fine steps across the column's centre (texel centres at E = -15, -5, +5 m), off the row centres (N = 2 m).
+	const float Step = 0.1f;
+	const float Smooth = CreaseRatio([&](float E) { return TempAt(P, Codes, E, 2.0f); }, -5.0f, -14.0f, 4.0f, Step);
+	// The 4A..Task 10 bilinear weights on the same line, rebuilt here from the raw fraction: a tent with a crease at the centre.
+	auto Bilinear = [&](float E)
+	{
+		const float X = E / P.LandCoverTexelM + 4.0f - 0.5f;
+		const float X0 = FMath::FloorToFloat(X), Fx = X - X0;
+		auto Col = [&](float I) { return (static_cast<int32>(I) == 3) ? 307.0f : 296.0f; };
+		return Col(X0) * (1.0f - Fx) + Col(X0 + 1.0f) * Fx;
+	};
+	const float Tent = CreaseRatio(Bilinear, -5.0f, -14.0f, 4.0f, Step);
+	AddInfo(FString::Printf(TEXT("crease ratio: smoothstep %.2f, bilinear %.1f"), Smooth, Tent));
+	TestTrue(TEXT("bilinear (Task 10) creases at the texel centre (the test can see a crease)"), Tent > 10.0f);
+	TestTrue(TEXT("smoothstep: no crease at the texel centre (max |d2| there <= 2x elsewhere)"), Smooth <= 2.0f);
+	TestNearlyEqual(TEXT("still exact at the texel centre"), TempAt(P, Codes, -5.0f, 5.0f), 307.0f, 1e-3f);
+	TestNearlyEqual(TEXT("still exact at a neighbour centre"), TempAt(P, Codes, 5.0f, 5.0f), 296.0f, 1e-3f);
+	int32 Bad = 0;
+	for (float E = -34.0f; E <= 34.0f; E += 0.37f)
+	{
+		for (float N = -34.0f; N <= 34.0f; N += 0.53f)
+		{
+			const FLandCoverSample L = CamSimThermalRef::SampleLandCover(P, Codes.GetData(), GroundPoint(P, E, N, -700.0f));
+			const float Sum = L.Weights[0] + L.Weights[1] + L.Weights[2] + L.Weights[3];
+			bool bOk = L.bInside && FMath::Abs(Sum - 1.0f) <= 1e-5f;
+			for (const float W : L.Weights) bOk &= (W >= 0.0f && W <= 1.0f);
+			Bad += bOk ? 0 : 1;
+		}
+	}
+	TestEqual(TEXT("weights sum to 1 and stay in [0, 1]"), Bad, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalRefLandCoverWarpAnchorTest, "CamSim.Thermal.Reference.LandCoverWarpGroundAnchored",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalRefLandCoverWarpAnchorTest::RunTest(const FString& Parameters)
+{
+	FThermalFrameParams A = MakeLandCoverParams(Down, 64, 36, 2048, 10.0f, 30.0f);
+	A.LandCoverWarpAmpM = 6.0f;
+	A.LandCoverWarpCellM = 20.0f;
+	A.LandCoverAnchorM = FVector2f(1234.5f, -876.25f);   // this window's centre from the session anchor
+	FThermalFrameParams B = A;                           // the next window, re-centred 4.1 km east and 2.3 km south
+	const FVector2f Shift(4100.0f, -2300.0f);
+	B.LandCoverAnchorM = A.LandCoverAnchorM + Shift;
+	B.LandCoverCamOffsetM = A.LandCoverCamOffsetM - Shift;
+	int32 Moved = 0, BadAnchor = 0, BadAmp = 0, BadDet = 0, BadSmooth = 0;
+	float WorstAnchor = 0.0f;
+	for (float E = -3000.0f; E <= 3000.0f; E += 137.3f)
+	{
+		for (float N = -3000.0f; N <= 3000.0f; N += 211.7f)
+		{
+			const FVector2f Wa = CamSimThermalRef::WarpLandCoverEN(A, E, N);
+			const FVector2f Wb = CamSimThermalRef::WarpLandCoverEN(B, E - Shift.X, N - Shift.Y);   // the same ground point
+			const float D = FVector2f::Distance(Wa + A.LandCoverAnchorM, Wb + B.LandCoverAnchorM);
+			WorstAnchor = FMath::Max(WorstAnchor, D);
+			BadAnchor += (D <= 1e-3f) ? 0 : 1;
+			const FVector2f Off = Wa - FVector2f(E, N);
+			BadAmp += (FMath::Abs(Off.X) <= 6.0f + 1e-3f && FMath::Abs(Off.Y) <= 6.0f + 1e-3f) ? 0 : 1;
+			Moved += (Off.Size() > 1.0f) ? 1 : 0;
+			const FVector2f Again = CamSimThermalRef::WarpLandCoverEN(A, E, N);
+			BadDet += (Again.X == Wa.X && Again.Y == Wa.Y) ? 0 : 1;
+			// Smooth: |d offset / dG| <= amplitude * 2 * 1.5 / cell = 0.9 per axis (corner span 2, smoothstep slope <= 1.5), so
+			// 10 cm on the ground moves each warp component by <= 9 cm.
+			const FVector2f Near = CamSimThermalRef::WarpLandCoverEN(A, E + 0.1f, N) - FVector2f(E + 0.1f, N);
+			BadSmooth += (FMath::Abs(Near.X - Off.X) <= 0.0901f && FMath::Abs(Near.Y - Off.Y) <= 0.0901f) ? 0 : 1;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("worst ground mismatch across the re-centre %.2e m"), WorstAnchor));
+	TestEqual(TEXT("ground-anchored: one ground point, two window centres -> the same warped point (1e-3 m)"), BadAnchor, 0);
+	TestEqual(TEXT("|offset| <= warp_amplitude_m per axis"), BadAmp, 0);
+	TestEqual(TEXT("deterministic"), BadDet, 0);
+	TestEqual(TEXT("smooth"), BadSmooth, 0);
+	TestTrue(TEXT("the warp moves most points by more than 1 m"), Moved > 1000);
+	// Two fields: East and North offsets are not the same noise.
+	int32 Same = 0;
+	for (float E = 0.0f; E < 400.0f; E += 7.0f) { const FVector2f O = CamSimThermalRef::WarpLandCoverEN(A, E, 3.0f) - FVector2f(E, 3.0f); Same += FMath::Abs(O.X - O.Y) < 1e-3f ? 1 : 0; }
+	TestTrue(TEXT("independent East / North fields"), Same < 5);
+	FThermalFrameParams Z = A;
+	Z.LandCoverWarpAmpM = 0.0f;
+	const FVector2f Id = CamSimThermalRef::WarpLandCoverEN(Z, 123.25f, -45.5f);
+	TestTrue(TEXT("warp_amplitude_m 0: identity, exactly"), Id.X == 123.25f && Id.Y == -45.5f);
+	Z = A;
+	Z.LandCoverAnchorM.X = std::numeric_limits<float>::quiet_NaN();
+	const FVector2f Nan = CamSimThermalRef::WarpLandCoverEN(Z, 1.0f, 2.0f);
+	TestFalse(TEXT("NaN anchor: never a finite position (the lookup rejects it)"), FMath::IsFinite(Nan.X) && FMath::IsFinite(Nan.Y));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalRefLandCoverWarpOffTest, "CamSim.Thermal.Reference.LandCoverWarpOffIsSmoothstep",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalRefLandCoverWarpOffTest::RunTest(const FString& Parameters)
+{
+	FThermalFrameParams P = MakeLandCoverParams(Down, 64, 36, 8, 10.0f, 30.0f);
+	P.LandCoverWarpAmpM = 0.0f;
+	P.LandCoverAnchorM = FVector2f(500.0f, 700.0f);   // irrelevant with the warp off
+	const TArray<uint8> Codes = MakeLandCoverCodes(8);
+	int32 Bad = 0, Inside = 0;
+	for (float E = -36.0f; E <= 36.0f; E += 1.37f)
+	{
+		for (float N = -36.0f; N <= 36.0f; N += 1.91f)
+		{
+			const FVector3f Pw = GroundPoint(P, E, N, -700.0f);
+			const FLandCoverSample L = CamSimThermalRef::SampleLandCover(P, Codes.GetData(), Pw);
+			// The Task 7 lookup with smoothstep fractions, written out.
+			const float Ex = FVector3f::DotProduct(Pw, P.LandCoverEast) / 100.0f + P.LandCoverCamOffsetM.X;
+			const float Nx = FVector3f::DotProduct(Pw, P.LandCoverNorth) / 100.0f + P.LandCoverCamOffsetM.Y;
+			const float X = Ex / P.LandCoverTexelM + 4.0f - 0.5f, Y = 4.0f - Nx / P.LandCoverTexelM - 0.5f;
+			const bool bIn = X >= 0.0f && X <= 7.0f && Y >= 0.0f && Y <= 7.0f;
+			if (L.bInside != bIn) { ++Bad; continue; }
+			if (!bIn) continue;
+			++Inside;
+			const float X0 = FMath::Min(FMath::FloorToFloat(X), 6.0f), Y0 = FMath::Min(FMath::FloorToFloat(Y), 6.0f);
+			const float Fx = X - X0, Fy = Y - Y0;
+			const float Sx = Fx * Fx * (3.0f - 2.0f * Fx), Sy = Fy * Fy * (3.0f - 2.0f * Fy);
+			const float W[4] = { (1.0f - Sx) * (1.0f - Sy), Sx * (1.0f - Sy), (1.0f - Sx) * Sy, Sx * Sy };
+			for (int32 K = 0; K < 4; ++K) Bad += (L.Weights[K] == W[K]) ? 0 : 1;
+		}
+	}
+	TestTrue(TEXT("samples inside the window"), Inside > 500);
+	TestEqual(TEXT("warp_amplitude_m 0: exactly the smoothstep-bilinear lookup"), Bad, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalRefLandCoverWarpEdgeTest, "CamSim.Thermal.Reference.LandCoverWarpOutsideGrid",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalRefLandCoverWarpEdgeTest::RunTest(const FString& Parameters)
+{
+	FThermalFrameParams P = MakeLandCoverParams(Down, 64, 36, 8, 10.0f, 0.0f);   // texel-centre grid E, N in [-35, 35] m
+	P.LandCoverCamOffsetM = FVector2f::ZeroVector;
+	P.LandCoverWarpAmpM = 6.0f;
+	P.LandCoverWarpCellM = 20.0f;
+	P.LandCoverAnchorM = FVector2f(-321.0f, 77.0f);
+	const TArray<uint8> Codes = MakeLandCoverCodes(8);
+	int32 PushedOut = 0, PulledIn = 0, Bad = 0;
+	FVector2f OutPoint(0.0f), InPoint(0.0f);
+	for (float E = -45.0f; E <= 45.0f; E += 0.25f)
+	{
+		for (float N = -45.0f; N <= 45.0f; N += 0.25f)
+		{
+			const bool bRawIn = FMath::Abs(E) <= 35.0f && FMath::Abs(N) <= 35.0f;
+			const FVector2f W = CamSimThermalRef::WarpLandCoverEN(P, E, N);
+			const bool bWarpIn = FMath::Abs(W.X) <= 34.999f && FMath::Abs(W.Y) <= 34.999f;
+			const bool bWarpOut = FMath::Abs(W.X) >= 35.001f || FMath::Abs(W.Y) >= 35.001f;
+			const FLandCoverSample L = CamSimThermalRef::SampleLandCover(P, Codes.GetData(), GroundPoint(P, E, N, -700.0f));
+			if (bWarpOut && L.bInside) ++Bad;
+			if (bWarpIn && !L.bInside) ++Bad;
+			if (bRawIn && bWarpOut && PushedOut++ == 0) OutPoint = FVector2f(E, N);
+			if (!bRawIn && bWarpIn && PulledIn++ == 0) InPoint = FVector2f(E, N);
+		}
+	}
+	TestTrue(TEXT("some grid points are warped off the texel-centre grid"), PushedOut > 0);
+	TestTrue(TEXT("some outside points are warped onto it"), PulledIn > 0);
+	TestEqual(TEXT("inside / outside follows the warped position"), Bad, 0);
+	// A terrain pixel whose warped position left the grid: terrain_default, exactly as an unwarped outside point.
+	P.KFastScale = 0.0f;
+	FPixelSample S;
+	S.U = 0.5f; S.V = 0.6f;
+	S.DeviceZ = DeviceZForPlane(P, Down, S.U, S.V, -700.0f);
+	S.LandCover = Codes.GetData();
+	const FVector3f Pw = CamSimThermalRef::ClipToWorld(P, S.U * 2.0f - 1.0f, 1.0f - S.V * 2.0f, S.DeviceZ);
+	const float Ec = FVector3f::DotProduct(Pw, P.LandCoverEast) / 100.0f, Nc = FVector3f::DotProduct(Pw, P.LandCoverNorth) / 100.0f;
+	P.LandCoverCamOffsetM = OutPoint - FVector2f(Ec, Nc);   // put the pixel on the pushed-out ground point
+	const FPixelResult R = CamSimThermalRef::EvaluatePixel(P, S);
+	TestFalse(TEXT("warped off the grid: no land cover"), R.bLandCover);
+	TestEqual(TEXT("warped off the grid: terrain_default"), R.TempK, P.ClassTempK[P.TerrainClass]);
+	P.LandCoverCamOffsetM = InPoint - FVector2f(Ec, Nc);
+	TestTrue(TEXT("warped onto the grid: land cover"), CamSimThermalRef::EvaluatePixel(P, S).bLandCover);
 	return true;
 }

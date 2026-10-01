@@ -62,6 +62,10 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCamSimThermalParameters, )
 	SHADER_PARAMETER(FVector2f, LandCoverCamOffsetM)
 	SHADER_PARAMETER(float, LandCoverTexelM)
 	SHADER_PARAMETER(uint32, LandCoverTexels)
+	SHADER_PARAMETER(FVector2f, LandCoverAnchorM)
+	SHADER_PARAMETER(FVector2f, LandCoverAnchorScale)
+	SHADER_PARAMETER(float, LandCoverWarpAmpM)
+	SHADER_PARAMETER(float, LandCoverWarpCellM)
 	SHADER_PARAMETER(uint32, bLandCoverRefine)
 	SHADER_PARAMETER(float, VegIndexLo)
 	SHADER_PARAMETER(float, VegIndexHi)
@@ -200,6 +204,10 @@ FRDGTextureRef AddThermalPass(FRDGBuilder& GraphBuilder, const FThermalPassInput
 	Pass->LandCoverCamOffsetM = P.LandCoverCamOffsetM;
 	Pass->LandCoverTexelM     = P.LandCoverTexelM;
 	Pass->LandCoverTexels     = P.LandCoverTexels;
+	Pass->LandCoverAnchorM     = P.LandCoverAnchorM;
+	Pass->LandCoverAnchorScale = P.LandCoverAnchorScale;
+	Pass->LandCoverWarpAmpM    = P.LandCoverWarpAmpM;
+	Pass->LandCoverWarpCellM   = P.LandCoverWarpCellM;
 	Pass->bLandCoverRefine    = P.bLandCoverRefine;
 	Pass->VegIndexLo          = P.VegIndexLo;
 	Pass->VegIndexHi          = P.VegIndexHi;

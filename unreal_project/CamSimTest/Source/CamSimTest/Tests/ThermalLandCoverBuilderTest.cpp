@@ -8,6 +8,8 @@
 #include "Time/SimClock.h"
 #include "Tests/ThermalTestScene.h"
 
+#include <limits>
+
 // CamSim.Thermal.Builder.LandCover*: land-cover fields of FThermalFrameParams (ROADMAP 4B).
 
 namespace
@@ -189,5 +191,107 @@ bool FThermalBuilderLandCoverClassesTest::RunTest(const FString& Parameters)
 	B.Build(In, P);
 	TestEqual(TEXT("hot reload: code 50 -> gravel"), static_cast<int32>(P.LandCoverClass[50]), B.GetMaterials().Find(TEXT("gravel")));
 	TestEqual(TEXT("hot reload: code 10 back to tree_canopy"), static_cast<int32>(P.LandCoverClass[10]), FThermalMaterialTable::TreeCanopy);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalBuilderLandCoverWarpTest, "CamSim.Thermal.Builder.LandCoverWarpAnchor",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalBuilderLandCoverWarpTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig::FThermalConfig Cfg;
+	Cfg.LandCover.WarpAmplitudeM = 4.5f;
+	Cfg.LandCover.WarpCellM = 30.0f;
+	FThermalFrameBuilder B = MakeBuilder(Cfg);
+	FThermalFrameInputs In = SanFrancisco();
+	FThermalFrameParams P;
+	B.Build(In, P);
+	TestEqual(TEXT("no window: anchor 0"), P.LandCoverAnchorM, FVector2f::ZeroVector);
+	TestEqual(TEXT("no window: warp off"), P.LandCoverWarpAmpM, 0.0f);
+
+	In.LandCover = Window(37.79, -122.475);   // the session's first window: it is the anchor
+	B.Build(In, P);
+	TestEqual(TEXT("warp amplitude from config"), P.LandCoverWarpAmpM, 4.5f);
+	TestEqual(TEXT("warp cell from config"), P.LandCoverWarpCellM, 30.0f);
+	TestEqual(TEXT("first window: anchor offset 0"), P.LandCoverAnchorM, FVector2f::ZeroVector);
+	In.CamLatDeg += 0.002;                     // the camera moves inside the same window: the anchor does not
+	B.Build(In, P);
+	TestEqual(TEXT("same window, camera moved: anchor 0"), P.LandCoverAnchorM, FVector2f::ZeroVector);
+
+	In.LandCover = Window(37.83, -122.43);     // re-centred ~4.4 km north, ~4 km east
+	In.LandCover.WindowId = 6;
+	B.Build(In, P);
+	CamSimLandCover::FWindowSpec First;
+	First.CentreLatDeg = 37.79; First.CentreLonDeg = -122.475; First.Texels = 2048; First.TexelM = 10.0f;
+	const FVector2D Expect = CamSimLandCover::GeodeticToWindowEN(First, 37.83, -122.43);   // doubles
+	TestNearlyEqual(TEXT("re-centred: anchor = new centre from the first (E)"), P.LandCoverAnchorM.X, static_cast<float>(Expect.X), 1e-3f);
+	TestNearlyEqual(TEXT("re-centred: anchor N"), P.LandCoverAnchorM.Y, static_cast<float>(Expect.Y), 1e-3f);
+	TestTrue(TEXT("re-centred: ~4 km E, ~4.4 km N"), Expect.X > 3800.0 && Expect.X < 4100.0 && Expect.Y > 4300.0 && Expect.Y < 4600.0);
+	// Ground-fixed: a ground point's warp coordinates G = anchor + (sE * E, sN * N) are the same in either window (the
+	// window mapping is linear in lat/lon, so the anchor scale makes this exact up to float rounding).
+	CamSimLandCover::FWindowSpec Second = First;
+	Second.CentreLatDeg = 37.83; Second.CentreLonDeg = -122.43;
+	const double CosA = FMath::Cos(FMath::DegreesToRadians(37.79)), CosC = FMath::Cos(FMath::DegreesToRadians(37.83));
+	TestNearlyEqual(TEXT("anchor scale E = N(lat_a) cos(lat_a) / (N(lat_c) cos(lat_c))"), static_cast<double>(P.LandCoverAnchorScale.X),
+		CamSimLandCover::PrimeVerticalRadiusM(37.79) * CosA / (CamSimLandCover::PrimeVerticalRadiusM(37.83) * CosC), 1e-6);
+	TestNearlyEqual(TEXT("anchor scale N = M(lat_a) / M(lat_c)"), static_cast<double>(P.LandCoverAnchorScale.Y),
+		CamSimLandCover::MeridionalRadiusM(37.79) / CamSimLandCover::MeridionalRadiusM(37.83), 1e-6);
+	double Worst = 0.0;
+	for (const FVector2D Off : { FVector2D(-2000.0, -2200.0), FVector2D(4900.0, 4800.0), FVector2D(-5000.0, 5000.0), FVector2D(0.0, 0.0) })
+	{
+		double PtLat = 0.0, PtLon = 0.0;
+		CamSimLandCover::WindowENToGeodetic(Second, Off.X, Off.Y, PtLat, PtLon);
+		const FVector2D G1 = CamSimLandCover::GeodeticToWindowEN(First, PtLat, PtLon);   // first window: anchor 0, scale 1
+		const FVector2D En = CamSimLandCover::GeodeticToWindowEN(Second, PtLat, PtLon);
+		const FVector2D G2(P.LandCoverAnchorM.X + P.LandCoverAnchorScale.X * static_cast<float>(En.X),
+			P.LandCoverAnchorM.Y + P.LandCoverAnchorScale.Y * static_cast<float>(En.Y));
+		Worst = FMath::Max(Worst, FVector2D::Distance(G1, G2));
+	}
+	AddInfo(FString::Printf(TEXT("warp ground coordinates across the re-centre differ by %.4f m at most"), Worst));
+	TestTrue(TEXT("ground points up to 7 km from the centre: warp coordinates agree across the re-centre (< 0.01 m)"), Worst < 0.01);
+
+	In.LandCover = Window(37.79, -122.475);    // back: anchor offset 0 again
+	In.LandCover.WindowId = 7;
+	B.Build(In, P);
+	TestTrue(TEXT("back at the first centre: anchor ~0, scale 1"), P.LandCoverAnchorM.Size() < 1e-3f && P.LandCoverAnchorScale.Equals(FVector2f(1.0f), 1e-6f));
+
+	In.LandCover.bValid = false;               // window lost: warp fields reset, anchor kept for the session
+	B.Build(In, P);
+	TestTrue(TEXT("window lost: defaults"), P.LandCoverAnchorM == FVector2f::ZeroVector && P.LandCoverWarpAmpM == 0.0f);
+	In.LandCover = Window(37.83, -122.43);
+	B.Build(In, P);
+	TestNearlyEqual(TEXT("window back: same session anchor"), P.LandCoverAnchorM.X, static_cast<float>(Expect.X), 1e-3f);
+
+	{
+		FThermalFrameBuilder Far = MakeBuilder(Cfg);
+		FThermalFrameParams Q;
+		Far.Build(In, Q);
+		In.LandCover = Window(40.0, -120.0);       // ~330 km away: past MaxWarpAnchorM, a new session anchor
+		Far.Build(In, Q);
+		TestEqual(TEXT("far window: re-latched"), Q.LandCoverAnchorM, FVector2f::ZeroVector);
+		In.LandCover = Window(37.83, -122.43);
+	}
+	B.Configure(Cfg, 3.0f, 5.0f);              // hot reload, same dir: anchor kept
+	B.Build(In, P);
+	TestNearlyEqual(TEXT("reload, same dir: anchor kept"), P.LandCoverAnchorM.X, static_cast<float>(Expect.X), 1e-3f);
+	Cfg.LandCover.Dir = TEXT("Content/NonUFS/OtherLandCover");
+	B.Configure(Cfg, 3.0f, 5.0f);              // new land-cover data: a new session anchor at the next window
+	B.Build(In, P);
+	TestEqual(TEXT("new dir: re-latched at this window"), P.LandCoverAnchorM, FVector2f::ZeroVector);
+
+	Cfg.LandCover.WarpAmplitudeM = 0.0f;
+	B.Configure(Cfg, 3.0f, 5.0f);
+	B.Build(In, P);
+	TestEqual(TEXT("warp_amplitude_m 0: off"), P.LandCoverWarpAmpM, 0.0f);
+	// Validate() rejects these; the builder still never hands the shader a non-finite or out-of-range value.
+	Cfg.LandCover.WarpAmplitudeM = std::numeric_limits<float>::quiet_NaN();
+	Cfg.LandCover.WarpCellM = std::numeric_limits<float>::quiet_NaN();
+	B.Configure(Cfg, 3.0f, 5.0f);
+	B.Build(In, P);
+	TestTrue(TEXT("NaN amplitude -> 0, NaN cell -> default"), P.LandCoverWarpAmpM == 0.0f && P.LandCoverWarpCellM == 20.0f);
+	Cfg.LandCover.WarpAmplitudeM = 1e9f;
+	Cfg.LandCover.WarpCellM = 0.0f;
+	B.Configure(Cfg, 3.0f, 5.0f);
+	B.Build(In, P);
+	TestTrue(TEXT("out of range: clamped to [0, 20] m and [5, 200] m"), P.LandCoverWarpAmpM == 20.0f && P.LandCoverWarpCellM == 5.0f);
 	return true;
 }

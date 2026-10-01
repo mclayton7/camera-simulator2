@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "pillow"]
 # ///
-"""Thermal IR acceptance check (ROADMAP 4A): MWIR / LWIR at noon and 02:00 with the DIS truck + boat.
+"""Thermal IR acceptance check (ROADMAP 4A, 4B gate m): MWIR / LWIR at noon and 02:00 with the DIS truck + boat.
 
 Usage: uv run scripts/thermal_check.py [--band mwir|lwir|both] [--out DIR]
                                        [--runs bands,hd,eo] [--check-only]
@@ -25,6 +25,8 @@ Launches (--runs):
            nadir_boat    nadir over the boat, 330 m up, 30 deg FOV (10, info)
            oblique_truck (noon only) 45 deg down from 233 m east of the truck, 25 deg FOV:
                          its shadow (cast north at noon) is beside it, not behind it (10)
+           nadir_mixed   (night only, ROADMAP 4B) nadir over the Presidio land-cover mix
+                         (37.7935, -122.4600), 800 m up, 40 deg FOV (10)
   hd     mwir_cooled at 1920x1080 (CAMSIM_CAPTURE_WIDTH/HEIGHT), noon, nadir_truck for 20 s
   eo     two EO launches (sensor 0), noon, static nadir over the truck loop: thermal default
          (enabled) and CAMSIM_THERMAL_ENABLED=0; the first also takes the coast view as the
@@ -36,7 +38,7 @@ OUT/shots/, a region overlay to OUT/overlays/ (red / cyan = the two compared reg
 the COCO box), all frames to OUT/<run>/frames/<time>_<view>.npz.
 
 Checks (spec "Testing"). Exit 0 only when every expected (check, band, time) row exists and
-passes: a, b, c, d, e, h per selected band when `bands` is in --runs, f when `hd` is, g when
+passes: a, b, c, d, e, h, m per selected band when `bands` is in --runs, f when `hd` is, g when
 `eo` is (so `--runs bands` alone can exit 0; f and g are then not expected). A missing
 row (a view with no frames, an absent run) fails:
   (a) night nadir_truck: mean Y in [60, 180] and < 5 % of pixels at Y <= 16
@@ -55,6 +57,11 @@ row (a view with no frames, an absent run) fails:
       the EO baseline is printed beside it, info). The truck box-boundary ratio is printed
       too, labelled motion-contaminated: the truck moves against its box, so it is not a
       shimmer measure
+  (m) night nadir_mixed (ROADMAP 4B Task 13): no visible land-cover window grid. On the
+      temporal-mean frame (central 60 %, entity boxes masked), the 2D power spectrum's mean in a
+      band around the grid fundamental (period 10 m / GSD px, GSD from 800 m and 40 deg; along
+      each image axis, |f - f0| <= 0.15 f0) over the mean of the two neighbouring bands of equal
+      width must be <= 2 for both axes
 """
 
 from __future__ import annotations
@@ -106,6 +113,15 @@ SHIMMER_RATIO = 2.0
 # below it, so a quieter detector (MWIR at noon: 0.19 DN) must not inflate the edge ratio.
 SNAPSHOT_QUANT_STD_DN = 1.0 / math.sqrt(12.0)
 MIN_PIXELS = 50
+
+# ROADMAP 4B Task 13, gate (m): no visible land-cover window grid at night.
+MIXED_CENTER = (37.7935, -122.4600)  # Presidio interior: forest, lawns, roads, buildings, no open water
+MIXED_UP_M = 800.0  # above the truck ground (dvc.TRUCK_GROUND_HAE)
+MIXED_FOV = 40.0
+CENTRAL = 0.6  # central 60 % of the frame (IR optics: distortion and vignetting grow outwards)
+GRID_TEXEL_M = 10.0  # land-cover window texel
+GRID_BAND = 0.15  # band half-width as a fraction of the grid fundamental (the terrain height is not known exactly)
+GRID_PEAK_RATIO = 2.0  # (m) fundamental band / neighbouring bands
 
 # Fixed-pose regions as fractions of the image height (coast) / rows (sky).
 COAST_R = (0.26, 0.40)  # radius band from the image centre
@@ -332,11 +348,61 @@ def aligned_crops(
     return np.stack(out), [cw / 2.0 - bw / 2.0, ch / 2.0 - bh / 2.0, bw, bh]
 
 
+def central_mask(shape: tuple[int, int], frac: float = CENTRAL) -> np.ndarray:
+    h, w = shape
+    y0, x0 = round(h * (1.0 - frac) / 2.0), round(w * (1.0 - frac) / 2.0)
+    m = np.zeros(shape, bool)
+    m[y0 : h - y0, x0 : w - x0] = True
+    return m
+
+
+def grid_period_px(
+    up_m: float, fov_deg: float, width_px: int, texel_m: float = GRID_TEXEL_M
+) -> float:
+    """Image period of the land-cover window grid in a nadir view: texel / GSD."""
+    gsd = 2.0 * up_m * math.tan(math.radians(fov_deg / 2.0)) / width_px
+    return texel_m / gsd
+
+
+def grid_peak_ratio(
+    y: np.ndarray, mask: np.ndarray, period_px: float, band: float = GRID_BAND
+) -> tuple[float, float]:
+    """Gate (m): (x, y) ratios of the mean power in a band around the grid fundamental f0 = 1 / period_px along each
+    image axis (|f_axis| in f0 (1 +- band), |f_other| <= band f0) to the mean power of the two neighbouring bands of equal
+    width (f0 (1 - 3 band) .. f0 (1 - band) and f0 (1 + band) .. f0 (1 + 3 band)). Pixels outside mask (entities, the
+    border) are set to the masked mean; the mask's bounding box is Hann-windowed. ~1: no grid; nan: empty mask."""
+    if mask.sum() < MIN_PIXELS:
+        return float("nan"), float("nan")
+    rows, cols = np.nonzero(mask)
+    r0, r1, c0, c1 = rows.min(), rows.max() + 1, cols.min(), cols.max() + 1
+    crop = y[r0:r1, c0:c1].astype(np.float64)
+    m = mask[r0:r1, c0:c1]
+    mean = crop[m].mean()
+    crop = np.where(m, crop, mean) - mean
+    h, w = crop.shape
+    power = np.abs(np.fft.fft2(crop * np.outer(np.hanning(h), np.hanning(w)))) ** 2
+    fy = np.abs(np.fft.fftfreq(h))[:, None] * np.ones((1, w))
+    fx = np.abs(np.fft.fftfreq(w))[None, :] * np.ones((h, 1))
+    f0 = 1.0 / period_px
+    hw = band * f0
+
+    def ratio(along: np.ndarray, across: np.ndarray) -> float:
+        def mean_in(lo: float, hi: float) -> float:
+            sel = (along >= lo) & (along < hi) & (across <= hw)
+            return float(power[sel].mean()) if sel.any() else float("nan")
+
+        centre = mean_in(f0 - hw, f0 + hw)
+        sides = 0.5 * (mean_in(f0 - 3 * hw, f0 - hw) + mean_in(f0 + hw, f0 + 3 * hw))
+        return centre / sides if sides > 0 else float("nan")
+
+    return ratio(fx, fy), ratio(fy, fx)
+
+
 Row = tuple[str, str, str]  # (check, band, time)
 
 
 def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
-    """Every gate row the selected bands and runs must produce. a, b, c, d, e, h come from the
+    """Every gate row the selected bands and runs must produce. a, b, c, d, e, h, m come from the
     band runs (only when `bands` is selected); f from `hd` and g from `eo`, each expected
     only when that run group is selected (so `--runs bands` can pass on its own)."""
     rows: list[Row] = []
@@ -351,6 +417,7 @@ def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
                 ("e", b, "noon"),
                 ("h", b, "night"),
                 ("h", b, "noon"),
+                ("m", b, "night"),
             ]
     if "hd" in runs:
         rows.append(("f", "mwir", "noon"))
@@ -530,6 +597,15 @@ def _poses():
         "oblique_truck": oblique_on(
             233.0, 233.0, 25.0, 90.0
         ),  # margin for ground-height error
+        "nadir_mixed": static(  # ROADMAP 4B: land-cover mix (gate m)
+            scenario.Pose(
+                MIXED_CENTER[0],
+                MIXED_CENTER[1],
+                ground + MIXED_UP_M,
+                gimbal_pitch=-90.0,
+                fov_h=MIXED_FOV,
+            )
+        ),
         "nadir_static": static(
             scenario.Pose(
                 c[0], c[1], ground + NADIR_UP_M, gimbal_pitch=-90.0, fov_h=NADIR_FOV
@@ -551,6 +627,8 @@ def build_runs(bands: list[str], wanted: set[str]) -> list[RunSpec]:
         ]
         if tod == "noon":
             v.append(View("oblique_truck", p["oblique_truck"], 10, "truck"))
+        else:
+            v.append(View("nadir_mixed", p["nadir_mixed"], 10, "truck"))  # (m)
         return v
 
     if "bands" in wanted:
@@ -1029,6 +1107,27 @@ def check_band(
                     )
                 )
 
+    # (m) night nadir over the land-cover mix: no distinct peak at the window-grid fundamental.
+    vd = views.get(("night", "nadir_mixed"))
+    if vd is not None:
+        period = grid_period_px(MIXED_UP_M, MIXED_FOV, vd.y.shape[2])
+        ent = entity_mask(vd)
+        mask = central_mask(vd.y.shape[1:]) & ~ent
+        mean_img = vd.y.astype(np.float32).mean(axis=0)
+        rx, ry = grid_peak_ratio(mean_img, mask, period)
+        r = max(rx, ry)
+        add(
+            checks,
+            "m",
+            r,
+            f"<= {GRID_PEAK_RATIO:g} (grid band / neighbours, max of x and y)",
+            (not math.isnan(r)) and r <= GRID_PEAK_RATIO,
+            "night",
+            f"x {rx:.2f}, y {ry:.2f} at period {period:.1f} px (10 m at {MIXED_UP_M:g} m, {MIXED_FOV:g} deg); "
+            f"{int(mask.sum())} px, entities masked ({int(ent.sum())} px)",
+        )
+        shots.append(overlay(out, vd, ~mask, None, None, len(vd.y) // 2))
+
     # (c) gate: sign flip.
     if "night" in coast_d and "noon" in coast_d:
         n, d = coast_d["night"], coast_d["noon"]
@@ -1071,6 +1170,15 @@ def check_band(
             ann = vd.anns[idx]
             sh, lit, _ = shadow_masks(vd.y.shape[1:], ann, elev, az)
             shots.append(overlay(out, vd, sh, lit, ann, idx))
+
+
+def entity_mask(vd: ViewData) -> np.ndarray:
+    """Union of the view's COCO boxes (1.5x) over its frames: entities are not terrain."""
+    m = np.zeros(vd.y.shape[1:], bool)
+    for a in vd.anns:
+        if a is not None:
+            m |= box_mask(m.shape, scale_box(a["bbox"], 1.5))
+    return m
 
 
 def coast_shimmer(vd: ViewData) -> dict | None:

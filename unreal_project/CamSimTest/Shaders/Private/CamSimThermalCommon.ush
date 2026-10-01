@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "CamSimSensorCommon.ush"   // Pcg (CamSimHash::Pcg) for the land-cover warp lattice
+
 #define THERMAL_LUT_SIZE 1024
 #define THERMAL_PI 3.14159265
 
@@ -47,6 +49,10 @@ float3   LandCoverNorth;
 float2   LandCoverCamOffsetM;            // camera (E, N) from the window centre, m
 float    LandCoverTexelM;
 uint     LandCoverTexels;
+float2   LandCoverAnchorM;               // Task 13 warp: window centre from the session anchor, m
+float2   LandCoverAnchorScale;           // G = LandCoverAnchorM + LandCoverAnchorScale * (E, N): ground-fixed coordinates
+float    LandCoverWarpAmpM;              // <= 0: no warp
+float    LandCoverWarpCellM;
 uint     bLandCoverRefine;
 float    VegIndexLo;
 float    VegIndexHi;
@@ -101,16 +107,64 @@ uint LandCoverFamilyOf(uint Code) { return PackedByte(LandCoverFamilyPacked[Code
 /** CamSimThermalRef::ClassData: (T, eps, k_fast, S_abs,ref), class clamped. */
 float4 ClassDataOf(uint Class) { return ClassData[min(Class, max(NumClasses, 1u) - 1u)]; }
 
-/** CamSimThermalRef::SampleLandCover: false outside the texel-centre grid; else the north-west texel I0 and the fractions F. */
+#define LANDCOVER_WARP_STREAM 64u                 // CamSimHash::LandCoverWarpStream
+#define LANDCOVER_WARP_LATTICE_LIMIT 4194304.0    // 2^22 cells (CamSimThermalRef WarpLatticeLimit)
+
+/** A corner hash's 16-bit half -> [-1, 1] (CamSimThermalRef WarpCorner). */
+float WarpCorner(uint Bits16) { return float(Bits16) / 32767.5 - 1.0; }
+
+/** CamSimThermalRef::LandCoverWarpNoise: (n1, n2) in [-1, 1], smoothstep value noise of the PCG hash on the ground lattice. */
+float2 LandCoverWarpNoise(float Gx, float Gy)
+{
+	const float Cell = max(LandCoverWarpCellM, 1.0);
+	const float Cx = clamp(Gx / Cell, -LANDCOVER_WARP_LATTICE_LIMIT, LANDCOVER_WARP_LATTICE_LIMIT);
+	const float Cy = clamp(Gy / Cell, -LANDCOVER_WARP_LATTICE_LIMIT, LANDCOVER_WARP_LATTICE_LIMIT);
+	const float Ix = floor(Cx);
+	const float Iy = floor(Cy);
+	const float Fx = Cx - Ix;
+	const float Fy = Cy - Iy;
+	const float Sx = Fx * Fx * (3.0 - 2.0 * Fx);
+	const float Sy = Fy * Fy * (3.0 - 2.0 * Fy);
+	const uint I = uint(int(Ix));
+	const uint J = uint(int(Iy));
+	const uint Key = Pcg(CAMSIM_FIXED_FRAME ^ Pcg(0u ^ Pcg(2u * LANDCOVER_WARP_STREAM)));   // CamSimHash::StreamKey (constant)
+	const uint KJ0 = Pcg(J ^ Key);
+	const uint KJ1 = Pcg((J + 1u) ^ Key);
+	const uint H00 = Pcg(I ^ KJ0);
+	const uint H10 = Pcg((I + 1u) ^ KJ0);
+	const uint H01 = Pcg(I ^ KJ1);
+	const uint H11 = Pcg((I + 1u) ^ KJ1);
+	const float N1 = (WarpCorner(H00 >> 16u) * (1.0 - Sx) + WarpCorner(H10 >> 16u) * Sx) * (1.0 - Sy)
+		+ (WarpCorner(H01 >> 16u) * (1.0 - Sx) + WarpCorner(H11 >> 16u) * Sx) * Sy;
+	const float N2 = (WarpCorner(H00 & 0xFFFFu) * (1.0 - Sx) + WarpCorner(H10 & 0xFFFFu) * Sx) * (1.0 - Sy)
+		+ (WarpCorner(H01 & 0xFFFFu) * (1.0 - Sx) + WarpCorner(H11 & 0xFFFFu) * Sx) * Sy;
+	return float2(N1, N2);
+}
+
+/** CamSimThermalRef::WarpLandCoverEN: the geo-anchored warped window position (identity when LandCoverWarpAmpM <= 0). */
+float2 WarpLandCoverEN(float E, float N)
+{
+	const float Amp = LandCoverWarpAmpM;
+	if (IsNonFinite(Amp) || !(Amp > 0.0)) return float2(E, N);
+	const float Gx = LandCoverAnchorM.x + LandCoverAnchorScale.x * E;
+	const float Gy = LandCoverAnchorM.y + LandCoverAnchorScale.y * N;
+	if (IsNonFinite(Gx) || IsNonFinite(Gy)) return float2(Gx, Gy);
+	const float2 Nz = LandCoverWarpNoise(Gx, Gy);
+	return float2(E + Amp * Nz.x, N + Amp * Nz.y);
+}
+
+/** CamSimThermalRef::SampleLandCover: false outside the texel-centre grid; else the north-west texel I0 and the smoothstep
+ *  blend fractions F (S(f) = f f (3 - 2 f) of the bilinear fractions: C1 across texel centres). */
 bool LandCoverCoords(float3 Pw, out int2 I0, out float2 F)
 {
 	I0 = int2(0, 0);
 	F = float2(0.0, 0.0);
 	const float E = dot(Pw, LandCoverEast) / 100.0 + LandCoverCamOffsetM.x;
 	const float N = dot(Pw, LandCoverNorth) / 100.0 + LandCoverCamOffsetM.y;
+	const float2 Wp = WarpLandCoverEN(E, N);
 	const float Half = float(LandCoverTexels) * 0.5;
-	const float X = E / LandCoverTexelM + Half - 0.5;
-	const float Y = Half - N / LandCoverTexelM - 0.5;
+	const float X = Wp.x / LandCoverTexelM + Half - 0.5;
+	const float Y = Half - Wp.y / LandCoverTexelM - 0.5;
 	const float MaxI = float(LandCoverTexels) - 1.0;
 	// Bit tests first: Metal fast-math may fold the NaN behaviour of the comparisons (CPU: !(X >= 0 && ...)).
 	if (IsNonFinite(X) || IsNonFinite(Y)) return false;
@@ -118,7 +172,9 @@ bool LandCoverCoords(float3 Pw, out int2 I0, out float2 F)
 	const float X0 = min(floor(X), MaxI - 1.0);
 	const float Y0 = min(floor(Y), MaxI - 1.0);
 	I0 = int2(int(X0), int(Y0));
-	F = float2(X - X0, Y - Y0);
+	const float Fx = X - X0;
+	const float Fy = Y - Y0;
+	F = float2(Fx * Fx * (3.0 - 2.0 * Fx), Fy * Fy * (3.0 - 2.0 * Fy));
 	return true;
 }
 
@@ -174,7 +230,8 @@ float4 RefinedClassData(uint Code, float2 Wt, bool bRefine, FLandCoverTargets Tg
 	return Own;
 }
 
-/** CamSimThermalRef::BlendLandCover: bilinear blend of the four texels' refined class data. R8_UINT codes: Load, never sampled. */
+/** CamSimThermalRef::BlendLandCover: blend of the four texels' refined class data with the smoothstep fractions F. R8_UINT
+ *  codes: Load, never sampled. */
 float4 BlendLandCover(int2 I0, float2 F, float3 Base, bool bRefine)
 {
 	const float2 Wt = bRefine ? RefinementWeights(Base) : float2(0.0, 0.0);

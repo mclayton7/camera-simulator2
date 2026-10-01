@@ -3,6 +3,7 @@
 #include "Thermal/ThermalReference.h"
 
 #include "Thermal/LandCoverClasses.h"
+#include "SensorHash.h"
 
 static_assert(static_cast<uint8>(ELandCoverFamily::Vegetation) == FThermalFrameParams::LandCoverFamilyVegetation
 	&& static_cast<uint8>(ELandCoverFamily::BuiltUp) == FThermalFrameParams::LandCoverFamilyBuiltUp
@@ -15,6 +16,10 @@ namespace CamSimThermalRef
 	namespace
 	{
 		constexpr float PiF = 3.14159265f;   // THERMAL_PI in CamSimThermalCommon.ush
+		constexpr float WarpLatticeLimit = 4194304.0f;   // 2^22 cells: the int casts below stay defined (LANDCOVER_WARP_LATTICE_LIMIT)
+
+		/** A corner hash's 16-bit half -> [-1, 1] (k / 32767.5 - 1; exact inputs). */
+		float WarpCorner(uint32 Bits16) { return static_cast<float>(Bits16) / 32767.5f - 1.0f; }
 	}
 
 	float Lum709(const FVector3f& C) { return 0.2126f * C.X + 0.7152f * C.Y + 0.0722f * C.Z; }
@@ -31,15 +36,47 @@ namespace CamSimThermalRef
 		return FVector4f(P.ClassTempK[C], P.ClassEmissivity[C], P.ClassKFast[C], P.ClassSAbsRef[C]);
 	}
 
+	FVector2f LandCoverWarpNoise(const FThermalFrameParams& P, float Gx, float Gy)
+	{
+		const float Cell = FMath::Max(P.LandCoverWarpCellM, 1.0f);
+		const float Cx = FMath::Clamp(Gx / Cell, -WarpLatticeLimit, WarpLatticeLimit);
+		const float Cy = FMath::Clamp(Gy / Cell, -WarpLatticeLimit, WarpLatticeLimit);
+		const float Ix = FMath::FloorToFloat(Cx), Iy = FMath::FloorToFloat(Cy);
+		const float Fx = Cx - Ix, Fy = Cy - Iy;
+		const float Sx = Fx * Fx * (3.0f - 2.0f * Fx), Sy = Fy * Fy * (3.0f - 2.0f * Fy);
+		const uint32 I = static_cast<uint32>(static_cast<int32>(Ix)), J = static_cast<uint32>(static_cast<int32>(Iy));
+		const uint32 Key = CamSimHash::StreamKey(CamSimHash::FixedFrame, 0u, 2u * CamSimHash::LandCoverWarpStream);
+		const uint32 KJ0 = CamSimHash::Pcg(J ^ Key), KJ1 = CamSimHash::Pcg((J + 1u) ^ Key);   // Hash(i, j, ...) row halves
+		const uint32 H00 = CamSimHash::Pcg(I ^ KJ0), H10 = CamSimHash::Pcg((I + 1u) ^ KJ0);
+		const uint32 H01 = CamSimHash::Pcg(I ^ KJ1), H11 = CamSimHash::Pcg((I + 1u) ^ KJ1);
+		const float N1 = (WarpCorner(H00 >> 16u) * (1.0f - Sx) + WarpCorner(H10 >> 16u) * Sx) * (1.0f - Sy)
+			+ (WarpCorner(H01 >> 16u) * (1.0f - Sx) + WarpCorner(H11 >> 16u) * Sx) * Sy;
+		const float N2 = (WarpCorner(H00 & 0xFFFFu) * (1.0f - Sx) + WarpCorner(H10 & 0xFFFFu) * Sx) * (1.0f - Sy)
+			+ (WarpCorner(H01 & 0xFFFFu) * (1.0f - Sx) + WarpCorner(H11 & 0xFFFFu) * Sx) * Sy;
+		return FVector2f(N1, N2);
+	}
+
+	FVector2f WarpLandCoverEN(const FThermalFrameParams& P, float E, float N)
+	{
+		const float Amp = P.LandCoverWarpAmpM;
+		if (!(FMath::IsFinite(Amp) && Amp > 0.0f)) return FVector2f(E, N);
+		const float Gx = P.LandCoverAnchorM.X + P.LandCoverAnchorScale.X * E;
+		const float Gy = P.LandCoverAnchorM.Y + P.LandCoverAnchorScale.Y * N;
+		if (!FMath::IsFinite(Gx) || !FMath::IsFinite(Gy)) return FVector2f(Gx, Gy);
+		const FVector2f Nz = LandCoverWarpNoise(P, Gx, Gy);
+		return FVector2f(E + Amp * Nz.X, N + Amp * Nz.Y);
+	}
+
 	FLandCoverSample SampleLandCover(const FThermalFrameParams& P, const uint8* Codes, const FVector3f& Pw)
 	{
 		FLandCoverSample S;
 		if (!Codes || P.bLandCover == 0u || P.LandCoverTexels < 2u) return S;
 		const float E = FVector3f::DotProduct(Pw, P.LandCoverEast) / 100.0f + P.LandCoverCamOffsetM.X;
 		const float N = FVector3f::DotProduct(Pw, P.LandCoverNorth) / 100.0f + P.LandCoverCamOffsetM.Y;
+		const FVector2f Wp = WarpLandCoverEN(P, E, N);
 		const float Half = static_cast<float>(P.LandCoverTexels) * 0.5f;
-		const float X = E / P.LandCoverTexelM + Half - 0.5f;
-		const float Y = Half - N / P.LandCoverTexelM - 0.5f;
+		const float X = Wp.X / P.LandCoverTexelM + Half - 0.5f;
+		const float Y = Half - Wp.Y / P.LandCoverTexelM - 0.5f;
 		const float MaxI = static_cast<float>(P.LandCoverTexels) - 1.0f;
 		// Explicit non-finite test first (HLSL: asuint bit test, since Metal fast-math may fold NaN comparisons); then the
 		// texel-centre grid (the comparisons also reject NaN on the CPU).
@@ -48,16 +85,17 @@ namespace CamSimThermalRef
 		const float X0 = FMath::Min(FMath::FloorToFloat(X), MaxI - 1.0f);
 		const float Y0 = FMath::Min(FMath::FloorToFloat(Y), MaxI - 1.0f);
 		const float Fx = X - X0, Fy = Y - Y0;
+		const float Sx = Fx * Fx * (3.0f - 2.0f * Fx), Sy = Fy * Fy * (3.0f - 2.0f * Fy);   // smoothstep: C1 at texel centres
 		const int32 I = static_cast<int32>(X0), J = static_cast<int32>(Y0), W = static_cast<int32>(P.LandCoverTexels);
 		S.bInside = true;
 		S.Codes[0] = Codes[J * W + I];
 		S.Codes[1] = Codes[J * W + I + 1];
 		S.Codes[2] = Codes[(J + 1) * W + I];
 		S.Codes[3] = Codes[(J + 1) * W + I + 1];
-		S.Weights[0] = (1.0f - Fx) * (1.0f - Fy);
-		S.Weights[1] = Fx * (1.0f - Fy);
-		S.Weights[2] = (1.0f - Fx) * Fy;
-		S.Weights[3] = Fx * Fy;
+		S.Weights[0] = (1.0f - Sx) * (1.0f - Sy);
+		S.Weights[1] = Sx * (1.0f - Sy);
+		S.Weights[2] = (1.0f - Sx) * Sy;
+		S.Weights[3] = Sx * Sy;
 		return S;
 	}
 

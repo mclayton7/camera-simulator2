@@ -1038,6 +1038,8 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				YamlFloat (L, "veg_index_lo",      LC.VegIndexLo);
 				YamlFloat (L, "veg_index_hi",      LC.VegIndexHi);
 				YamlFloat (L, "asphalt_max_luma",  LC.AsphaltMaxLuma);
+				YamlFloat (L, "warp_amplitude_m",  LC.WarpAmplitudeM);
+				YamlFloat (L, "warp_cell_m",       LC.WarpCellM);
 				if (YamlHas(L, "classes"))
 				{
 					ryml::ConstNodeRef Cs = L["classes"];
@@ -1401,6 +1403,8 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	LC.VegIndexLo       = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_LO"),      LC.VegIndexLo);
 	LC.VegIndexHi       = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_HI"),      LC.VegIndexHi);
 	LC.AsphaltMaxLuma   = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA"),  LC.AsphaltMaxLuma);
+	LC.WarpAmplitudeM   = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_AMPLITUDE_M"),  LC.WarpAmplitudeM);
+	LC.WarpCellM        = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M"),       LC.WarpCellM);
 
 	// ROADMAP 4A acceptance: MWIR/LWIR and 1080p runs without editing the yaml.
 	Cfg.CaptureWidth  = GetEnvInt(TEXT("CAMSIM_CAPTURE_WIDTH"),  Cfg.CaptureWidth);
@@ -1871,6 +1875,10 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(FString::Printf(TEXT("thermal.land_cover.veg_index_lo/hi=%.3f/%.3f must satisfy -1 <= lo < hi <= 2"), LC.VegIndexLo, LC.VegIndexHi));
 	if (!(LC.AsphaltMaxLuma >= 0.0f && LC.AsphaltMaxLuma <= 1.0f))
 		Errors.Add(FString::Printf(TEXT("thermal.land_cover.asphalt_max_luma=%.3f out of range [0, 1]"), LC.AsphaltMaxLuma));
+	if (!(LC.WarpAmplitudeM >= 0.0f && LC.WarpAmplitudeM <= 20.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.warp_amplitude_m=%.3f out of range [0, 20]"), LC.WarpAmplitudeM));
+	if (!(LC.WarpCellM >= 5.0f && LC.WarpCellM <= 200.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.warp_cell_m=%.3f out of range [5, 200]"), LC.WarpCellM));
 	if (LC.bEnabled && LC.Dir.TrimStartAndEnd().IsEmpty())
 		Errors.Add(TEXT("thermal.land_cover.dir is empty (set it, or thermal.land_cover.enabled: false)"));
 	Errors.Append(CamSimLandCover::ValidateClassSpecs(LC.Classes));

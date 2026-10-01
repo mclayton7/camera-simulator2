@@ -127,13 +127,15 @@ def _rows(bands=("mwir", "lwir"), runs=ALL_RUNS) -> list[dict]:
 
 def test_expected_rows_cover_every_band_time_and_selected_run():
     rows = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
-    assert len(rows) == 2 * 8 + 2
+    assert len(rows) == 2 * 9 + 2
     assert ("e", "lwir", "noon") in rows and ("e", "lwir", "night") in rows
+    for b in ("mwir", "lwir"):  # (m) land-cover grid visibility, night (4B Task 13)
+        assert ("m", b, "night") in rows
     for b in ("mwir", "lwir"):  # (h) static coast shimmer, both times
         assert ("h", b, "night") in rows and ("h", b, "noon") in rows
     assert ("f", "mwir", "noon") in rows and ("g", "eo", "noon") in rows
     only_bands = tc.expected_rows(["mwir"], {"bands"})
-    assert {r[0] for r in only_bands} == set("abcdeh")  # f, g not expected
+    assert {r[0] for r in only_bands} == set("abcdehm")  # f, g not expected
     assert tc.expected_rows(["mwir"], {"eo"}) == [("g", "eo", "noon")]
 
 
@@ -153,7 +155,7 @@ def test_a_missing_row_fails():
         assert tc.missing_rows(checks, exp) == [exp[drop]]
     # A whole band's run absent: its rows are missing even though every letter is present.
     checks = _rows(bands=("mwir",))
-    assert {c["check"] for c in checks} == set("abcdefgh")
+    assert {c["check"] for c in checks} == set("abcdefghm")
     assert tc.gate_passed(checks, exp) is False
     assert tc.gate_passed([], []) is False  # nothing expected -> not a pass
 
@@ -241,3 +243,61 @@ def test_coast_shimmer_reports_raw_and_floored():
     sh = tc.coast_shimmer(tc.ViewData("r", "noon", "coast", frames, [None] * 30, {}))
     assert sh["value"] <= sh["raw"] + 1e-9
     assert "floored" in sh["detail"] and "raw" in sh["detail"]
+
+
+# ---- Gate (m): land-cover grid visibility (ROADMAP 4B Task 13) ----
+
+
+def test_grid_period_px_is_texel_over_gsd():
+    gsd = 2.0 * 800.0 * math.tan(math.radians(20.0)) / 1280.0
+    assert tc.grid_period_px(800.0, 40.0, 1280) == pytest.approx(10.0 / gsd)
+    assert tc.grid_period_px(800.0, 40.0, 1280) == pytest.approx(21.98, abs=0.01)
+
+
+def test_central_mask_keeps_the_middle_60_percent():
+    m = tc.central_mask((100, 200))
+    assert m.sum() == 60 * 120
+    assert m[50, 100] and not m[10, 100] and not m[50, 30]
+
+
+def _grid(h: int, w: int, period: int, amp: float = 10.0) -> np.ndarray:
+    """A 10-px checker grid: square waves along both image axes (every row and column has an edge every period / 2 px)."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    def sq(v):
+        return np.where((v // (period // 2)) % 2 == 0, 1.0, -1.0)
+
+    return 100.0 + amp * 0.5 * (sq(xx) + sq(yy))
+
+
+def test_grid_peak_ratio_trips_on_a_grid_at_the_window_period():
+    rng = np.random.default_rng(1)
+    y = _grid(400, 600, 10) + rng.normal(0.0, 3.0, (400, 600))
+    mask = tc.central_mask(y.shape)
+    rx, ry = tc.grid_peak_ratio(y, mask, 10.0)
+    assert rx > 2.0 * tc.GRID_PEAK_RATIO and ry > 2.0 * tc.GRID_PEAK_RATIO
+    # a weak grid buried in noise still shows (AGC-stretched night frames are low contrast)
+    weak = _grid(400, 600, 10, amp=1.0) + rng.normal(0.0, 3.0, (400, 600))
+    assert max(tc.grid_peak_ratio(weak, mask, 10.0)) > tc.GRID_PEAK_RATIO
+
+
+def test_grid_peak_ratio_passes_noise_ramps_and_other_periods():
+    rng = np.random.default_rng(2)
+    mask = tc.central_mask((400, 600))
+    noise = 100.0 + rng.normal(0.0, 5.0, (400, 600))
+    assert max(tc.grid_peak_ratio(noise, mask, 10.0)) <= tc.GRID_PEAK_RATIO
+    xx = np.mgrid[0:400, 0:600][1]
+    ramp = noise + 0.2 * xx  # vignetting-like gradient
+    assert max(tc.grid_peak_ratio(ramp, mask, 22.0)) <= tc.GRID_PEAK_RATIO
+    # a 10-px grid is not a 22-px window grid (the band sits between its harmonics)
+    assert max(tc.grid_peak_ratio(_grid(400, 600, 10) + rng.normal(0, 3.0, (400, 600)), mask, 26.0)) <= tc.GRID_PEAK_RATIO
+
+
+def test_grid_peak_ratio_ignores_masked_pixels():
+    rng = np.random.default_rng(3)
+    y = 100.0 + rng.normal(0.0, 5.0, (400, 600))
+    y[150:250, 200:400] = _grid(100, 200, 10, amp=60.0)  # an entity-like patch with a strong grid
+    mask = tc.central_mask(y.shape)
+    assert max(tc.grid_peak_ratio(y, mask, 10.0)) > tc.GRID_PEAK_RATIO
+    mask[140:260, 190:410] = False  # masked out (entity boxes): filled with the masked mean
+    assert max(tc.grid_peak_ratio(y, mask, 10.0)) <= tc.GRID_PEAK_RATIO
+    assert all(math.isnan(r) for r in tc.grid_peak_ratio(y, np.zeros_like(mask), 10.0))

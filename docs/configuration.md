@@ -962,6 +962,8 @@ thermal:
 | `thermal.land_cover.recentre_fraction` | `CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION` | `0.25` | A new window is built (task thread) when the camera is this fraction of the window size from its centre, East or North. `[0.01, 0.45]`. Live. |
 | `thermal.land_cover.veg_index_lo` / `veg_index_hi` | `CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_LO` / `_HI` | `0.05` / `0.20` | Vegetation weight v = saturate((ExG − lo) / (hi − lo)), ExG = (2G − R − B) / (R + G + B) of the linear GBuffer base colour. `-1 <= lo < hi <= 2`. Live. |
 | `thermal.land_cover.asphalt_max_luma` | `CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA` | `0.12` | Built-up ground below this linear base luminance is asphalt, above it concrete (0.04-wide soft ramp). `[0, 1]`. Live. |
+| `thermal.land_cover.warp_amplitude_m` | `CAMSIM_THERMAL_LAND_COVER_WARP_AMPLITUDE_M` | `6` | Breaks the visible 10 m texel grid: the class lookup position is moved by up to this many metres East and North by two smooth noise fields fixed to the ground (they do not move when the camera pans or the window re-centres). `0` turns the warp off (class blending stays smooth). Keep it below `warp_cell_m / 3` (the default 6 m / 20 m does) or the warped lookup folds back on itself. `[0, 20]`. Live. |
+| `thermal.land_cover.warp_cell_m` | `CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M` | `20` | Cell size of the warp noise on the ground, in metres: larger cells give broader, gentler wiggles of the class boundaries. `[5, 200]`. Live. |
 | `thermal.land_cover.classes.<code>` | *(yaml only)* | see `docs/thermal.md` | WorldCover code (0–255) → thermal material name; an unknown material keeps the default with one warning. |
 
 Built-in classes:

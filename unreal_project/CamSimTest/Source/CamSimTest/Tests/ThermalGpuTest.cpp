@@ -447,18 +447,31 @@ bool FThermalGpuLandCoverTest::RunTest(const FString& Parameters)
 {
 	if (GUsingNullRHI) { AddInfo(TEXT("skipped: NullRHI (run scripts/run_gpu_tests.sh)")); return true; }
 	constexpr float MirrorTol = 1e-4f;   // ThermalCS vs CamSimThermalRef (never loosen it)
-	struct FCase { const TCHAR* Name; float Yaw; int32 DW, DH; FIntPoint ColorPad, DepthPad; bool bBase; bool bLandCover; };
+	struct FCase { const TCHAR* Name; float Yaw; int32 DW, DH; FIntPoint ColorPad, DepthPad; bool bBase; bool bLandCover; bool bWarp = false; };
 	const FCase Cases[] = {
 		{ TEXT("yaw 0, refined"),               0.0f,    64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true  },
 		{ TEXT("yaw 30, refined"),              30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true  },
 		{ TEXT("yaw 30, no base colour"),       30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), false, true  },
 		{ TEXT("half-res depth, offset rects"), -117.0f, 32, 18, FIntPoint(3, 2), FIntPoint(4, 3), true,  true  },
 		{ TEXT("land cover off, window bound"), 30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  false },
+		// Task 13: geo-anchored domain warp on (non-zero anchor, rotated axes), scaled to the scene's 0.4 m texels.
+		{ TEXT("yaw 30, refined, warp"),        30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true,  true },
+		{ TEXT("yaw -117, half-res, warp"),     -117.0f, 32, 18, FIntPoint(3, 2), FIntPoint(4, 3), true,  true,  true },
+		{ TEXT("land cover off, warp set"),     30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  false, true },
 	};
 	for (const FCase& C : Cases)
 	{
 		CamSimThermalTest::FThermalTestScene S = CamSimThermalTest::MakeLandCoverScene(64, 36, C.DW, C.DH, C.Yaw);
 		if (!C.bLandCover) S.P.bLandCover = 0;
+		if (C.bWarp)
+		{
+			// The defaults (6 m amplitude, 20 m cells over 10 m texels) at the scene's 0.4 m texels, and a ~1.2 km / 0.9 km
+			// anchor scaled the same way (the anchor's float ulp, not the shader, would otherwise set the mismatch).
+			S.P.LandCoverWarpAmpM = 0.24f;
+			S.P.LandCoverWarpCellM = 0.8f;
+			S.P.LandCoverAnchorM = FVector2f(49.5f, -35.25f);
+			S.P.LandCoverAnchorScale = FVector2f(0.9993f, 1.0004f);   // a window ~50 km north of the session anchor
+		}
 		const TArray<CamSimThermalRef::FPixelResult> Ref = CamSimThermalRef::Run(S.Images(C.bBase), S.P);
 		FLayout L;
 		L.ColorMin = C.ColorPad;
