@@ -98,18 +98,10 @@ namespace
 		return Result;
 	}
 
-	/** GPU and reference on the same inputs; the reference sees only the view rects' texels. */
-	void RunAndCompare(FAutomationTestBase& T, const FGpuImage& Scene, const FGpuImage* Bloom, FIntPoint OutSize,
-		const FSensorFrameParams& P, const TCHAR* Label = TEXT(""))
+	/** NV12 within Y <= 1 / UV <= 2 DN and histograms within tolerance (the binding GPU-vs-reference criteria). */
+	void CompareResults(FAutomationTestBase& T, const FGpuResult& G, const CamSimSensorRef::FResult& R, FIntPoint OutSize,
+		const TCHAR* Label)
 	{
-		const TArray<FLinearColor> SceneRect = Scene.RectTexels();
-		const TArray<FLinearColor> BloomRect = Bloom ? Bloom->RectTexels() : TArray<FLinearColor>();
-		CamSimSensorRef::FImage RefScene, RefBloom;
-		RefScene.Texels = &SceneRect; RefScene.W = Scene.Rect.Width(); RefScene.H = Scene.Rect.Height();
-		if (Bloom) { RefBloom.Texels = &BloomRect; RefBloom.W = Bloom->Rect.Width(); RefBloom.H = Bloom->Rect.Height(); }
-		const CamSimSensorRef::FResult R = CamSimSensorRef::Run(RefScene, RefBloom, OutSize.X, OutSize.Y, P);
-		const FGpuResult G = RunOnGpu(Scene, Bloom, OutSize, P);
-
 		const int32 N = OutSize.X * OutSize.Y;
 		if (!T.TestTrue(FString::Printf(TEXT("%sGPU readback"), Label), G.bOk && G.Nv12.Num() == R.Nv12.Num())) return;
 		int32 MaxY = 0, MaxC = 0, FirstY = -1;
@@ -141,6 +133,21 @@ namespace
 		T.TestTrue(FString::Printf(TEXT("%shistogram counts every pixel (GPU %llu, reference %llu)"), Label, GTotal, RTotal),
 			GTotal == RTotal && RTotal == static_cast<uint64>(N));
 		T.TestTrue(FString::Printf(TEXT("%shistogram bins within %lld (max %lld at bin %d)"), Label, BinTol, MaxBin, WorstBin), MaxBin <= BinTol);
+	}
+
+	/** GPU and reference on the same inputs; the reference sees only the view rects' texels. */
+	void RunAndCompare(FAutomationTestBase& T, const FGpuImage& Scene, const FGpuImage* Bloom, FIntPoint OutSize,
+		const FSensorFrameParams& P, const TCHAR* Label = TEXT(""))
+	{
+		const TArray<FLinearColor> SceneRect = Scene.RectTexels();
+		const TArray<FLinearColor> BloomRect = Bloom ? Bloom->RectTexels() : TArray<FLinearColor>();
+		CamSimSensorRef::FImage RefScene, RefBloom;
+		RefScene.Texels = &SceneRect; RefScene.W = Scene.Rect.Width(); RefScene.H = Scene.Rect.Height();
+		if (Bloom) { RefBloom.Texels = &BloomRect; RefBloom.W = Bloom->Rect.Width(); RefBloom.H = Bloom->Rect.Height(); }
+		const CamSimSensorRef::FResult R = CamSimSensorRef::Run(RefScene, RefBloom, OutSize.X, OutSize.Y, P);
+		const FGpuResult G = RunOnGpu(Scene, Bloom, OutSize, P);
+
+		CompareResults(T, G, R, OutSize, Label);
 	}
 
 	/** Grey pixels at histogram bin centres covering all 256 bins (a 32-stop log gradient). */
@@ -401,5 +408,89 @@ bool FSensorGpuBloomTest::RunTest(const FString& Parameters)
 	RunAndCompare(*this, Scene, &Bloom, FIntPoint(W, H), P, TEXT("optics off: "));
 	SetTestOptics(P, W);
 	RunAndCompare(*this, Scene, &Bloom, FIntPoint(W, H), P, TEXT("optics on: "));
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// ROADMAP 4A: radiance input (ThermalCS output, R32F): no pre-exposure, no bloom, weights (1, 0, 0)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+	FTextureRHIRef UploadR32(FRHICommandListImmediate& RHICmdList, const TArray<float>& Texels, FIntPoint Ext)
+	{
+		const FRHITextureCreateDesc Desc = FRHITextureCreateDesc::Create2D(TEXT("CamSimTestRadiance"), Ext.X, Ext.Y, PF_R32_FLOAT)
+			.SetFlags(ETextureCreateFlags::ShaderResource).SetInitialState(ERHIAccess::SRVMask);
+		FTextureRHIRef Tex = RHICmdList.CreateTexture(Desc);
+		RHICmdList.UpdateTexture2D(Tex, 0, FUpdateTextureRegion2D(0, 0, 0, 0, Ext.X, Ext.Y), Ext.X * sizeof(float),
+			reinterpret_cast<const uint8*>(Texels.GetData()));
+		return Tex;
+	}
+
+	FGpuResult RunRadianceOnGpu(const TArray<float>& Radiance, FIntPoint Size, const FGpuImage& Bloom, const FSensorFrameParams& P)
+	{
+		FGpuResult Result;
+		ENQUEUE_RENDER_COMMAND(CamSimSensorRadianceGpuTest)([&](FRHICommandListImmediate& RHICmdList)
+		{
+			FTextureRHIRef SceneTex = UploadR32(RHICmdList, Radiance, Size);
+			FTextureRHIRef BloomTex = Upload(RHICmdList, Bloom, TEXT("CamSimTestBloom"));
+			FRHIGPUBufferReadback Nv12Rb(TEXT("CamSimTestNv12"));
+			FRHIGPUBufferReadback HistRb(TEXT("CamSimTestHist"));
+			uint32 Nv12Bytes = 0;
+			{
+				FRDGBuilder GraphBuilder(RHICmdList);
+				FSensorGraphInputs In;
+				In.SceneColor = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(SceneTex, TEXT("CamSimTestRadiance")));
+				In.SceneViewRect = FIntRect(FIntPoint::ZeroValue, Size);
+				In.Bloom = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(BloomTex, TEXT("CamSimTestBloom")));
+				In.BloomViewRect = Bloom.Rect;
+				In.bRadianceInput = true;
+				In.OutputSize = Size;
+				const FSensorGraphOutputs Out = AddSensorPasses(GraphBuilder, In, P);
+				Nv12Bytes = Out.Nv12Bytes;
+				AddEnqueueCopyPass(GraphBuilder, &Nv12Rb, Out.Nv12, Nv12Bytes);
+				AddEnqueueCopyPass(GraphBuilder, &HistRb, Out.Histogram, FSensorHistogram::NumBins * sizeof(uint32));
+				GraphBuilder.Execute();
+			}
+			RHICmdList.SubmitAndBlockUntilGPUIdle();
+			if (!Nv12Rb.IsReady() || !HistRb.IsReady()) return;
+			Result.Nv12.SetNumUninitialized(Nv12Bytes);
+			FMemory::Memcpy(Result.Nv12.GetData(), Nv12Rb.Lock(Nv12Bytes), Nv12Bytes);
+			Nv12Rb.Unlock();
+			FMemory::Memcpy(Result.Histogram.Bins.GetData(), HistRb.Lock(FSensorHistogram::NumBins * sizeof(uint32)),
+				FSensorHistogram::NumBins * sizeof(uint32));
+			HistRb.Unlock();
+			Result.bOk = true;
+		});
+		FlushRenderingCommands();
+		return Result;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorGpuRadianceInputTest, "CamSim.GPU.Sensor.RadianceInputIgnoresBloom",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorGpuRadianceInputTest::RunTest(const FString& Parameters)
+{
+	if (SkipWithoutGpu(*this)) return true;
+	constexpr int32 W = 64, H = 32;
+	TArray<float> Radiance;
+	TArray<FLinearColor> AsRgb;
+	for (int32 I = 0; I < W * H; ++I)
+	{
+		const float L = 1.5f + 0.5f * FMath::Sin(0.3f * (I % W)) * FMath::Cos(0.2f * (I / W));   // MWIR-like, W m^-2 sr^-1
+		Radiance.Add(L);
+		AsRgb.Add(FLinearColor(L, 0.0f, 0.0f, 1.0f));   // an R32F texel loads as (L, 0, 0)
+	}
+	TArray<FLinearColor> BloomTexels;
+	BloomTexels.Init(FLinearColor(1e4f, 1e4f, 1e4f, 1.0f), W * H);   // would saturate everything if it were added
+	FSensorFrameParams P = PresetParams(TEXT("mwir_cooled"), ESensorGraphMode::IR);
+	P.SignalWeights = FVector3f(1.0f, 0.0f, 0.0f);
+	P.InputScale = 0.5f;   // 1 / B(300 K) at runtime
+	P.PhotonGain = 0.5f;
+	P.DisplayGain = 6.0f;
+	P.DisplayOffset = -2.0f;
+	const CamSimSensorRef::FResult R = CamSimSensorRef::Run(AsRgb, W, H, P);   // reference: no bloom
+	const FGpuResult G = RunRadianceOnGpu(Radiance, FIntPoint(W, H), FGpuImage::Whole(BloomTexels, W, H), P);
+	CompareResults(*this, G, R, FIntPoint(W, H), TEXT("radiance input: "));
 	return true;
 }

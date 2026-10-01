@@ -170,7 +170,7 @@ FSensorGraphOutputs AddSensorPasses(FRDGBuilder& GraphBuilder, const FSensorGrap
 
 	const FIntPoint SrcSize = In.SceneViewRect.Size();
 	{
-		const bool bUseView = In.ViewUniformBuffer != nullptr;
+		const bool bUseView = In.ViewUniformBuffer != nullptr && !In.bRadianceInput;   // radiance has no pre-exposure
 		auto* Pass = GraphBuilder.AllocParameters<FCamSimSensorParameters>();
 		if (bUseView)
 		{
@@ -186,7 +186,7 @@ FSensorGraphOutputs AddSensorPasses(FRDGBuilder& GraphBuilder, const FSensorGrap
 		Pass->SrcScale     = FVector2f(static_cast<float>(SrcSize.X) / Out.X, static_cast<float>(SrcSize.Y) / Out.Y);
 		Pass->HalfOut      = FVector2f(0.5f * Out.X, 0.5f * Out.Y);
 		Pass->bSameSize    = (SrcSize == Out) ? 1u : 0u;
-		const bool bBloom = In.Bloom != nullptr && In.BloomViewRect.Width() > 0 && In.BloomViewRect.Height() > 0;
+		const bool bBloom = !In.bRadianceInput && In.Bloom != nullptr && In.BloomViewRect.Width() > 0 && In.BloomViewRect.Height() > 0;
 		Pass->Bloom        = bBloom ? In.Bloom : GSystemTextures.GetBlackDummy(GraphBuilder);
 		Pass->bBloom       = bBloom ? 1u : 0u;
 		if (bBloom)
