@@ -28,6 +28,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/dis_vehicle_check.py` | End-to-end DIS vehicle check (shots + COCO labels) |
 | `scripts/ocean_check.py` | Ocean acceptance: DIS boat at Beaufort 0/3/6 (+ `--cigi` Wave Control): COCO, boat altitude vs sea level, HOT, frame times, shots |
 | `scripts/gt_occlusion_check.py` | Ground-truth acceptance (ROADMAP 2.7): nadir / edge / Beaufort 6 crest / terrain views, COCO checks, mask/box overlays, frame time ML on vs off |
+| `scripts/thermal_check.py` | Thermal IR acceptance (ROADMAP 4A): MWIR/LWIR at noon and 02:00 with the DIS truck + boat — night IR level, white-hot vehicle, water/land crossover, cool shadows, cold sky, ThermalCS time, EO untouched |
 | `scripts/klv_conformance/check.js` | Check KLV against misb.js (packets.jsonl, .ts, or udp://) |
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
 | `scripts/ci_validate.sh`       | Integration test (health wait + video/KLV validation)         |

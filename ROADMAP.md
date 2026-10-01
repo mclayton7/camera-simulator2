@@ -1286,6 +1286,25 @@ Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
   (`thermal_gpu_ms`); night (02:00 local) terrain 284.8 K, water 287.7 K, truck white-hot on mid-grey ground; noon
   terrain 303.0 K, water 288.5 K, sky darkest, sunlit land textured by the solar term and the truck's shadow cooler;
   the IR land/water/sky edges sit exactly on the EO coastline of the same pose (no offset or stretch).
+- Live acceptance (plan Task 15, 2026-10-01): `scripts/thermal_check.py` (MWIR + LWIR, 21 Dec noon and 02:00, DIS
+  truck + boat, 5 launches) passes every gate on the M1 Pro (spec thresholds unchanged):
+  (a) night mean Y 116.0 MWIR / 137.7 LWIR, black 0.01 % / 0.13 %; (b) night truck box − ring +67.6 / +30.1 DN;
+  (c) water − land (radius-matched, so vignetting cancels) +36.9 → −114.6 MWIR, +21.2 → −87.8 LWIR (night → noon);
+  (d) noon shadow − sunlit −41.3 / −32.3 DN; (e) sky − terrain −14.7 / −45.1 MWIR, −6.9 / −23.3 LWIR (night / noon);
+  (f) ThermalCS p95 0.097 ms at 1920x1080 (0.096 ms at 720p: barely resolution-dependent);
+  (g) EO mean Y thermal on − off −0.001 DN, frame time and sensor_gpu_ms identical, ThermalCS never runs in EO.
+  Deviation from the plan's pose list: the sky view is pitched +8° (not +20°) with the 90° horizontal FOV
+  (58.7° vertical), so the top 30 % rows are all sky and the bottom 30 % all terrain.
+  Known 4A limitations seen in the shots: one terrain class, so night terrain is nearly flat and the AGC stretches the
+  IR optics' cos⁴ vignetting; the truck clips white at night (MWIR); the thermal cloud term follows CIGI weather only.
+  - **Follow-up — edge shimmer (visible, report-only metric fails):** on the static coast pose, temporal std of Y on
+    edge pixels / interior land is 6.7 (night) and 7.0 (noon) in MWIR, 1.1 / 2.1 in LWIR, against 0.99 for EO of the
+    same pose (limit 2). At noon the flicker sits on every albedo / shadow edge, not only class edges (MWIR std p99
+    10 DN, p99.9 25 DN): ThermalCS loads depth, custom stencil and GBuffer base colour at render resolution (jittered
+    by TSR every frame) but scene colour after TSR, so the fast term and the class map move against each other by a
+    sub-pixel jitter each frame. LWIR's noise and PSF hide most of it. A 3×3 class vote (the spec fallback) covers
+    the class edges only; the texture edges need the GBuffer inputs de-jittered (e.g. sample them at the unjittered
+    position, or temporally resolve the thermal output).
   No editor or asset changes are needed for 4A.
 
 ---
