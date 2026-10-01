@@ -2,6 +2,7 @@
 
 #include "Entity/EntityTypeTable.h"
 #include "Entity/EntityMeshLoader.h"
+#include "Entity/EntityPaths.h"
 #include "Config/CamSimConfig.h"
 #include "CamSimTest.h"
 #include "Engine/SkeletalMesh.h"
@@ -35,12 +36,6 @@ bool IsGltfPath(const FString& Path)
 	       Path.EndsWith(TEXT(".glb"), ESearchCase::IgnoreCase);
 }
 
-FString ResolveEntityAssetPath(const FString& RelPath)
-{
-	const FString Base = FPaths::Combine(FPaths::ProjectDir(), TEXT("../../entities/"));
-	return FPaths::ConvertRelativePathToFull(Base + RelPath);
-}
-
 bool ValidateMeshAssetPath(const FString& Path, bool bSkeletal, uint16 TypeId, const TCHAR* VariantLabel)
 {
 	if (Path.IsEmpty())
@@ -52,7 +47,7 @@ bool ValidateMeshAssetPath(const FString& Path, bool bSkeletal, uint16 TypeId, c
 
 	if (IsGltfPath(Path))
 	{
-		const FString AbsPath = ResolveEntityAssetPath(Path);
+		const FString AbsPath = CamSimEntityPaths::Resolve(Path);
 		if (!FPaths::FileExists(AbsPath))
 		{
 			UE_LOG(LogCamSim, Warning,

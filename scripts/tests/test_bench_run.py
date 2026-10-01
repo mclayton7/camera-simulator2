@@ -56,3 +56,51 @@ def test_sensor_path_flag_is_gone():
     assert parser.parse_args(["--label", "x"]).label == "x"
     with pytest.raises(SystemExit):
         parser.parse_args(["--label", "x", "--sensor-path", "gpu"])
+
+
+def test_docker_run_cmd_mounts_out_and_passes_gpu_and_env(tmp_path):
+    cmd = run_bench.docker_run_cmd(
+        "camsim:x", tmp_path, True, {"CAMSIM_ENCODER": "libx264"}, ["-trace=cpu"]
+    )
+    assert cmd[:2] == ["docker", "run"]
+    assert f"{tmp_path}:/bench" in cmd
+    assert "--gpus" in cmd and "CAMSIM_ENCODER=libx264" in cmd
+    assert cmd[-2:] == ["camsim:x", "-trace=cpu"]
+    assert "--gpus" not in run_bench.docker_run_cmd("camsim:x", tmp_path, False, {}, [])
+
+
+def test_encoder_and_latency_are_parsed():
+    log = "LogCamSim: FVideoEncoder: using encoder h264_nvenc\n"
+    assert run_bench.encoder_from_log(log) == "h264_nvenc"
+    assert run_bench.encoder_from_log("nothing") is None
+    metrics = (
+        'camsim_frame_latency_ms{quantile="0.5"} 13.875\n'
+        'camsim_frame_latency_ms{quantile="0.99"} 38.4\n'
+        "camsim_uptime_seconds 3\n"
+    )
+    assert run_bench.latency_from_metrics(metrics) == {
+        "frame_latency_ms_p50": 13.875,
+        "frame_latency_ms_p99": 38.4,
+    }
+
+
+def test_no_gpu_and_env_flags_parse():
+    args = run_bench.build_parser().parse_args(
+        ["--label", "x", "--docker", "img", "--no-gpu", "--env", "A=1", "--env", "B=2"]
+    )
+    assert args.docker == "img" and args.no_gpu and args.env == ["A=1", "B=2"]
+
+
+def test_config_is_mounted_over_the_image_config(tmp_path):
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("capture_width: 1920\n")
+    cmd = run_bench.docker_run_cmd("img", tmp_path, True, {}, [], cfg)
+    assert f"{cfg}:/opt/camsim/CamSimTest/camsim_config.yaml:ro" in cmd
+
+
+def test_with_sensor_sets_the_waveband():
+    from bench import scenario
+
+    pose = scenario.build_phases(smoke=True)[0].pose_at(0.0)
+    assert run_bench.with_sensor(pose, "ir").sensor_id == 1
+    assert run_bench.with_sensor(pose, "eo").sensor_id == 0

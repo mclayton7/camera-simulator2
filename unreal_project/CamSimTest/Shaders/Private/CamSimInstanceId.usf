@@ -5,6 +5,8 @@
 // entity's water plane (the sea surface, waves included, under the entity) is dropped unless it is visible
 // (visible => amodal always holds): the submerged hull is not part of the silhouette, while crests between the
 // camera and a boat (above the water at the boat) still occlude it.
+// Depth (WRITE_DEPTH): the same source texel's scene depth as linear view-space depth in metres, i.e. what
+// ml_training.depth_map writes, lens-distorted and FOV-matched with the image and the masks (no second render).
 // Known limitation: under TSR the depth/stencil are jittered at render resolution while the output colour is not,
 // so labels can be misregistered by up to ~0.5 render texel.
 
@@ -28,6 +30,10 @@ Texture2D<float> SceneDepth;      // device Z, reversed (1 near, 0 far)
 Texture2D<float> CustomDepth;     // device Z of the tagged entities only
 Texture2D<uint2> CustomStencil;   // FSceneTextureUniformParameters::CustomStencilTexture's type; read as the engine does
 RWStructuredBuffer<uint> OutIds;  // pixel 2k in the low 16 bits of word k
+#if WRITE_DEPTH
+float4 InvDeviceZToWorldZ;        // FSceneView::InvDeviceZToWorldZTransform (as ConvertFromDeviceZ)
+RWStructuredBuffer<float> OutDepth;  // one float per output pixel, row-major: view depth in metres, 0 = no source sample
+#endif
 
 void DepthRect(out int2 Min, out int2 Size)
 {
@@ -40,12 +46,13 @@ void DepthRect(out int2 Min, out int2 Size)
 #endif
 }
 
-/** visible | amodal << 8 for output pixel P. The source position is CamSimSensorRef::Optics's (Sx, Sy);
- *  the nearest texel is floor(S + 0.5), as SampleScene rounds. */
-uint IdAt(int2 P)
+/** The depth-texture texel output pixel P samples. The source position is CamSimSensorRef::Optics's (Sx, Sy);
+ *  the nearest texel is floor(S + 0.5), as SampleScene rounds. False when it falls outside the view rect. */
+bool SourceTexel(int2 P, out int2 T)
 {
 	int2 Min, Size;
 	DepthRect(Min, Size);
+	T = int2(0, 0);
 	const float2 SrcScale = float2(Size) / float2(OutputSize);
 	float2 S;
 	if (!(FocalPx > 0.0))
@@ -58,8 +65,16 @@ uint IdAt(int2 P)
 		const float Sc = UndistortScale(sqrt(Xd * Xd + Yd * Yd), K1, K2);
 		S = float2((Xd * Sc * FocalPx + HalfOut.x) * SrcScale.x - 0.5, (Yd * Sc * FocalPx + HalfOut.y) * SrcScale.y - 0.5);
 	}
-	if (!(S.x >= -0.5 && S.x <= float(Size.x) - 0.5 && S.y >= -0.5 && S.y <= float(Size.y) - 0.5)) return 0;
-	const int2 T = Min + clamp(int2(floor(S + 0.5)), int2(0, 0), Size - 1);
+	if (!(S.x >= -0.5 && S.x <= float(Size.x) - 0.5 && S.y >= -0.5 && S.y <= float(Size.y) - 0.5)) return false;
+	T = Min + clamp(int2(floor(S + 0.5)), int2(0, 0), Size - 1);
+	return true;
+}
+
+/** visible | amodal << 8 for the output pixel whose source texel is T. */
+uint IdAt(int2 T)
+{
+	int2 Min, Size;
+	DepthRect(Min, Size);
 	const uint Amodal = CustomStencil.Load(int3(T, 0)) STENCIL_COMPONENT_SWIZZLE & 0xFF;
 	if (Amodal == 0) return 0;
 	const float SceneZ = SceneDepth.Load(int3(T, 0));
@@ -78,11 +93,35 @@ uint IdAt(int2 P)
 	return Visible | (Amodal << 8);
 }
 
+#if WRITE_DEPTH
+/** Linear view depth (metres) of device Z, as Common.ush ConvertFromDeviceZ; the far plane (reversed Z: 0, sky)
+ *  maps to FarDepthM so the writer's clamp puts it at depth_far_plane_m. */
+static const float FarDepthM = 1.0e7;
+float ViewDepthMetres(float DeviceZ)
+{
+	if (!(DeviceZ > 0.0)) return FarDepthM;
+	const float4 Z = InvDeviceZToWorldZ;
+	const float Cm = DeviceZ * Z.x + Z.y + 1.0 / (DeviceZ * Z.z - Z.w);
+	return Cm > 0.0 ? Cm * 0.01 : FarDepthM;
+}
+#endif
+
+/** Ids (and depth) for output pixel P. */
+uint PixelId(int2 P)
+{
+	int2 T;
+	const bool bIn = SourceTexel(P, T);
+#if WRITE_DEPTH
+	OutDepth[P.y * OutputSize.x + P.x] = bIn ? ViewDepthMetres(SceneDepth.Load(int3(T, 0))) : 0.0;
+#endif
+	return bIn ? IdAt(T) : 0;
+}
+
 [numthreads(8, 8, 1)]
 void InstanceIdCS(uint3 Id : SV_DispatchThreadID)
 {
 	const int2 Pair = int2(Id.xy);   // one thread per two horizontal pixels
 	if (Pair.x * 2 >= OutputSize.x || Pair.y >= OutputSize.y) return;
 	const int2 P0 = int2(Pair.x * 2, Pair.y);
-	OutIds[Pair.y * (OutputSize.x / 2) + Pair.x] = IdAt(P0) | (IdAt(P0 + int2(1, 0)) << 16);
+	OutIds[Pair.y * (OutputSize.x / 2) + Pair.x] = PixelId(P0) | (PixelId(P0 + int2(1, 0)) << 16);
 }

@@ -25,6 +25,8 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCamSimInstanceIdParameters, )
 	// FSceneTextureUniformParameters::CustomStencilTexture's declared type, so Task 7 binds it unchanged.
 	SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<uint2>, CustomStencil)
 	SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, OutIds)
+	SHADER_PARAMETER(FVector4f, InvDeviceZToWorldZ)                       // WRITE_DEPTH only
+	SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<float>, OutDepth)  // WRITE_DEPTH only
 END_SHADER_PARAMETER_STRUCT()
 
 /** Output-space visible/amodal stencil ids, resampled through the sensor's lens distortion. */
@@ -36,7 +38,8 @@ public:
 	using FParameters = FCamSimInstanceIdParameters;
 
 	class FUseViewRect : SHADER_PERMUTATION_BOOL("USE_VIEW_RECT");
-	using FPermutationDomain = TShaderPermutationDomain<FUseViewRect>;
+	class FWriteDepth : SHADER_PERMUTATION_BOOL("WRITE_DEPTH");
+	using FPermutationDomain = TShaderPermutationDomain<FUseViewRect, FWriteDepth>;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
@@ -76,7 +79,8 @@ bool IsInstanceIdPassSupported(FString& OutWhy)
 	return true;
 }
 
-FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInputs& In, const FSensorFrameParams& P)
+FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInputs& In, const FSensorFrameParams& P,
+	FRDGBufferRef* OutDepth)
 {
 	const FIntPoint Out = In.OutputSize;
 	check(In.SceneDepth && In.CustomDepth && In.CustomStencil);
@@ -105,11 +109,19 @@ FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInpu
 	Pass->CustomDepth   = In.CustomDepth;
 	Pass->CustomStencil = In.CustomStencil;
 	Pass->OutIds        = GraphBuilder.CreateUAV(Ids);
+	if (OutDepth)
+	{
+		*OutDepth = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(float), Out.X * Out.Y),
+			TEXT("CamSimDepthMetres"));
+		Pass->InvDeviceZToWorldZ = In.InvDeviceZToWorldZ;
+		Pass->OutDepth           = GraphBuilder.CreateUAV(*OutDepth);
+	}
 
 	FCamSimInstanceIdCS::FPermutationDomain Perm;
 	Perm.Set<FCamSimInstanceIdCS::FUseViewRect>(bUseView);
+	Perm.Set<FCamSimInstanceIdCS::FWriteDepth>(OutDepth != nullptr);
 	TShaderMapRef<FCamSimInstanceIdCS> Shader(GetGlobalShaderMap(GMaxRHIFeatureLevel), Perm);
-	FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("CamSimInstanceIds %dx%d", Out.X, Out.Y), Shader, Pass,
+	FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("CamSimInstanceIds%s %dx%d", OutDepth ? TEXT("+Depth") : TEXT(""), Out.X, Out.Y), Shader, Pass,
 		FComputeShaderUtils::GetGroupCount(FIntPoint(Out.X / 2, Out.Y), FIntPoint(8, 8)));
 	return Ids;
 }

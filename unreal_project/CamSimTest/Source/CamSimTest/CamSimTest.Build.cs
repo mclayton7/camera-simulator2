@@ -18,6 +18,10 @@ public class CamSimTest : ModuleRules
 		// Suppress warnings from FFmpeg C headers included via extern "C"
 		CppCompileWarningSettings.UndefinedIdentifierWarningLevel = WarningLevel.Off;
 
+		// rapidyaml parse errors and Cesium Native's headers use try/throw. Editor
+		// targets force exceptions on, Game targets (the packaged build) don't.
+		bEnableExceptions = true;
+
 		PublicDependencyModuleNames.AddRange(new string[]
 		{
 			"Core",

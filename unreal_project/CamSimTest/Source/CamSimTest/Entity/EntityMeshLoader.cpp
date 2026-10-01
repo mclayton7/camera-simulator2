@@ -1,24 +1,13 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Entity/EntityMeshLoader.h"
+#include "Entity/EntityPaths.h"
 
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
 #include "UObject/SoftObjectPath.h"
 #include "glTFRuntimeFunctionLibrary.h"
 #include "glTFRuntimeAsset.h"
-
-namespace
-{
-	// Resolve a config-relative glTF path to an absolute filesystem path.
-	// Config paths are relative to {repo_root}/entities/.
-	// FPaths::ProjectDir() is {repo_root}/unreal_project/CamSimTest/.
-	FString ResolveGltfPath(const FString& RelPath)
-	{
-		FString Base = FPaths::Combine(FPaths::ProjectDir(), TEXT("../../entities/"));
-		return FPaths::ConvertRelativePathToFull(Base + RelPath);
-	}
-} // namespace
 
 namespace CamSimMeshLoader
 {
@@ -32,7 +21,7 @@ namespace CamSimMeshLoader
 	{
 		if (IsGltfPath(Path))
 		{
-			FString AbsPath = ResolveGltfPath(Path);
+			FString AbsPath = CamSimEntityPaths::Resolve(Path);
 			UglTFRuntimeAsset* Asset = UglTFRuntimeFunctionLibrary::glTFLoadAssetFromFilename(
 				AbsPath, false, FglTFRuntimeConfig());
 			if (!Asset) return nullptr;
@@ -45,7 +34,7 @@ namespace CamSimMeshLoader
 	{
 		if (IsGltfPath(Path))
 		{
-			FString AbsPath = ResolveGltfPath(Path);
+			FString AbsPath = CamSimEntityPaths::Resolve(Path);
 			UglTFRuntimeAsset* Asset = UglTFRuntimeFunctionLibrary::glTFLoadAssetFromFilename(
 				AbsPath, false, FglTFRuntimeConfig());
 			if (!Asset) return nullptr;

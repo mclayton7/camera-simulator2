@@ -7,7 +7,7 @@ articulated parts, and component control (lights, strobe, damage).
 
 Every frame includes:
   • IG Control        (required header)
-  • Entity Control    (camera entity, id=0 by default, keeps camera stationary)
+  • Entity Control    (camera entity, id=1 by default = camera_entity_id, keeps camera stationary)
   • <test packets>    (entity state + rate/artpart/comp ctrl as required by mode)
 
 CIGI 3.3 packet IDs used here:
@@ -31,8 +31,8 @@ Modes:
 Options:
     --host HOST         CamSim address (default: 127.0.0.1)
     --port PORT         CamSim CIGI port (default: 8888)
-    --camera-id ID      CIGI entity ID for the camera (default: 0)
-    --entity-id ID      CIGI entity ID for the scene entity (default: 1)
+    --camera-id ID      CIGI entity ID for the camera (default: 1, camera_entity_id)
+    --entity-id ID      CIGI entity ID for the scene entity (default: 100)
     --entity-type TYPE  CIGI entity type (maps to mesh in config) (default: 1001)
     --lat DEGREES       Entity latitude  (default: 37.7749)
     --lon DEGREES       Entity longitude (default: -122.4194)
@@ -55,7 +55,7 @@ Examples:
     uv run scripts/test_entity_rendering.py damage --duration 30
 
     # Remove entity from a previous session:
-    uv run scripts/test_entity_rendering.py remove --entity-id 1
+    uv run scripts/test_entity_rendering.py remove --entity-id 100
 """
 
 import argparse
@@ -663,14 +663,14 @@ def main():
     ap.add_argument(
         "--camera-id",
         type=int,
-        default=0,
+        default=1,
         dest="camera_id",
         help="CIGI entity ID for the camera (must match camera_entity_id in config)",
     )
     ap.add_argument(
         "--entity-id",
         type=int,
-        default=1,
+        default=100,
         dest="entity_id",
         help="CIGI entity ID for the scene entity",
     )

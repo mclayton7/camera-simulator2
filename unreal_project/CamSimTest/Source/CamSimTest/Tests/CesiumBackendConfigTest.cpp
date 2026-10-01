@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
+#include "Geospatial/CamSimGeospatialProvider.h"
 
 // -------------------------------------------------------------------------
 // Cesium Backend Configuration — Automation Tests
@@ -34,3 +35,20 @@ bool FCesiumBackendConfigDefaultsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// The level's terrain tileset: Cesium World Terrain wherever it sits, else the
+// first tileset. Main.umap's second tileset (OSM Buildings, 96188) used to be
+// overwritten into a duplicate terrain.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCesiumBackendSelectTerrainTilesetTest,
+	"CamSim.CesiumBackend.SelectTerrainTileset",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCesiumBackendSelectTerrainTilesetTest::RunTest(const FString& Parameters)
+{
+	using CamSim::Geospatial::SelectTerrainTileset;
+	TestEqual(TEXT("Main.umap order: terrain first"), SelectTerrainTileset({1, 96188}), 0);
+	TestEqual(TEXT("terrain after buildings"), SelectTerrainTileset({96188, 1}), 1);
+	TestEqual(TEXT("no World Terrain: first"), SelectTerrainTileset({-1, 96188}), 0);
+	TestEqual(TEXT("single URL tileset"), SelectTerrainTileset({-1}), 0);
+	TestEqual(TEXT("none"), SelectTerrainTileset({}), INDEX_NONE);
+	return true;
+}

@@ -101,17 +101,23 @@ uv run scripts/send_cigi_test.py
 ./scripts/test_video_output.sh
 ```
 
-### Linux container
+### Linux container (NVIDIA GPU)
+
+Needs an NVIDIA driver and the NVIDIA Container Toolkit; see [docs/docker.md](docs/docker.md).
 
 ```bash
-# Build and start the container
+# Package the game, then build and start the container
+./scripts/package_for_docker.sh
 docker compose -f deploy/docker-compose.yml up --build
 
-# Send CIGI from the host machine
-uv run scripts/send_cigi_test.py --host <container-ip>
+# Send CIGI from the host machine (host networking)
+uv run scripts/send_cigi_test.py
 
 # Watch the stream
 ffplay udp://239.1.1.1:5004
+
+# End-to-end check of the image (GPU, CIGI, /ready, video, KLV)
+./scripts/ci_validate.sh --docker camsim:latest
 ```
 
 ### Cross-platform smoke matrix

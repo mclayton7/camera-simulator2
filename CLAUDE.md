@@ -30,10 +30,11 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/gt_occlusion_check.py` | Ground-truth acceptance (ROADMAP 2.7): nadir / edge / Beaufort 6 crest / terrain views, COCO checks, mask/box overlays, frame time ML on vs off |
 | `scripts/klv_conformance/check.js` | Check KLV against misb.js (packets.jsonl, .ts, or udp://) |
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
-| `scripts/ci_validate.sh`       | Integration test (health wait + video/KLV validation)         |
+| `scripts/package_for_docker.sh` | BuildCookRun → `deploy/staged/Linux/` (+ `entities/`) for the Docker image |
+| `scripts/ci_validate.sh`       | Integration test: runs the image with `--gpus all` + CIGI host, `/ready`, video/KLV |
 | `scripts/ci_validate.sh --native` | Same, without Docker (macOS): launch headless + CIGI host + checks |
 | `scripts/bench/run_bench.py` | Render benchmark + reference shots (`--smoke`, `--trace`); `compare.py` diffs two runs |
-| `scripts/run_gpu_tests.sh`     | `CamSim.GPU.*` automation tests on the real RHI (Metal)       |
+| `scripts/run_gpu_tests.sh`     | `CamSim.GPU.*` automation tests on the real RHI (Metal / Vulkan) |
 
 ## Documentation
 
@@ -58,7 +59,7 @@ camsim/
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (347 tests across 59 files)
+      Tests/                       # UE5 Automation tests (348 tests across 59 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -100,7 +101,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (347 tests across 59 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (348 tests across 59 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -112,7 +113,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
     ```
     `NullRHI` keeps it under 10 s end-to-end (no shader compile, no display). JSON results land at `.cache/automation-report/index.json` (UTF-8 BOM — read with `encoding="utf-8-sig"`).
   - Filter narrower: replace `CamSim` in `RunTests` with e.g. `CamSim.Sensor` or a single test path.
-- **GPU tests** (`CamSim.GPU.*`, real RHI; skipped under NullRHI): `scripts/run_gpu_tests.sh [filter]` (Metal on macOS; first run compiles shaders)
+- **GPU tests** (`CamSim.GPU.*`, real RHI; skipped under NullRHI): `scripts/run_gpu_tests.sh [filter]` (Metal on macOS, Vulkan + Xvfb on Linux; first run compiles shaders). On Vulkan, `CamSim.GPU.Ocean.MatchesCpu` crashes the run (`ReadLinearColorPixels` on an R32F target): run the other groups by filter
 - **KLV conformance**: `node scripts/klv_conformance/check.js` (misb.js; run `npm ci` in that directory first)
 - **Python validation**: `scripts/test_video_output.sh`
 - **Integration**: `scripts/ci_validate.sh` (Docker headless + health wait + ffprobe + KLV check)
@@ -130,6 +131,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Targets must stay on `BuildSettingsVersion.V7`**: UE 5.8 refuses an editor target whose build settings differ from the installed engine's ("modifies the values of properties … not allowed").
 - **Cesium lives in the engine, not the project**: `repo_setup.sh` installs it into `$UE_ROOT/Engine/Plugins/Marketplace/CesiumForUnreal` (auto-detected, or set `UE_ROOT`), where UBT uses the release zip's prebuilt binaries. Never put it back in `unreal_project/CamSimTest/Plugins/`: a project plugin overrides the engine one and gets rebuilt from source with the project's settings (~20 min), and Cesium 2.29.1 doesn't compile that way under Apple clang 21 (`IonQuickAddPanel.cpp` self-capture). Bump `CESIUM_VERSION` in `repo_setup.sh` to upgrade.
 - **ThirdParty must be built first**: Run `scripts/build_thirdparty.sh` before UE build — CCL + FFmpeg are static libs not checked in
+- **One terrain tileset**: `ApplyCesiumBackendConfig` configures the level's terrain tileset (first Cesium World Terrain, ion 1) and destroys every other `ACesium3DTileset` (it used to turn `Main.umap`'s OSM Buildings into a duplicate terrain). Cesium's game-thread cost tracks the rendered tile count (per-tile collision/visibility every frame, ROADMAP 3B exit check), so extra tilesets and `frustum_culling: false` are not free
 - **Cesium coord order**: `TransformLongitudeLatitudeHeightPositionToUnreal(FVector(Lon, Lat, Alt))` — Longitude first, not Latitude
 - **Never pass CIGI angles to `SetActorRotation`**: UE world axes are Cesium East-South-Up only at the georeference origin (+X = East, so heading 0 would face east). Use `GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::CigiToEastSouthUp(...))` from `Geospatial/CigiFrames.h`
 - **CIGI entity-relative fields**: when Attach State = Attach or a request's coordinate system = Entity, the Lat/Lon/Alt fields are X/Y/Z metre offsets in the reference entity's body frame (X fwd, Y right, Z down). Resolve via `UCamSimSubsystem::GetEntityGeoPose()`
@@ -137,7 +139,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Headless tests on macOS**: add `-DisablePython` — Python's startup type generation deadlocks under `-nullrhi` on macOS. Xcode 27 needs `MaxVersion` raised in the engine's `Engine/Config/Apple/Apple_SDK.json`, and a real (non-nullrhi) run needs `xcodebuild -downloadComponent MetalToolchain`
 - **DIS vehicles sit on the rendered surface**: land (domain 1) and surface (domain 3) entities are clamped at every pose commit by traces against Cesium tiles (`Entity/SurfaceClamp.h`, `SurfaceProbe.h`); needs `create_physics_meshes`. The sender's altitude is ignored unless `dis.clamp_to_surface: false`. Guide: `docs/dis.md`
 - **Ocean** (ROADMAP 2.6, `ocean:`, on by default): sea level = EGM96 geoid + CIGI tide; `FOceanWaves` (Gerstner, sim time) is the single source for boat placement (`ClampWater`), HAT/HOT (max(Cesium hit, sea surface incl. waves)) and the drawn sea (`UProceduralMeshComponent` warped grid + `M_Ocean` WPO via `MPC_Ocean`; the CPU/GPU mirror is `Shaders/Private/CamSimOcean.ush`, held to 2 cm by `CamSim.GPU.Ocean.MatchesCpu`). `M_Ocean`/`MPC_Ocean` are generated — edit `scripts/ocean/make_ocean_material.py` (or the .ush) and rerun `scripts/ocean/make_ocean_material.sh`, never hand-edit the assets. Piers Cesium drapes below sea level flood (known)
-- **Ground-truth masks** (ROADMAP 2.7, guide `docs/ground-truth.md`): entities render custom depth with a stencil value 1..255 (`FStencilSlotAllocator`, reuse delayed 4 frames); `r.CustomDepth=3`; `InstanceIdCS` runs in the sensor graph only on annotated frames and shares `UndistortScale` with `SensorCS` — change both together; `FInstanceMaskAnalyzer` turns the readback into boxes/OBBs/visibility/RLE on the task thread; only meshes are tagged (never particles) and box3d is their union; the hidden silhouette below each entity's sea-surface plane (waves included, one plane per stencil) is cut as submerged hull; OBBs follow the projected box3d axis
+- **Ground-truth masks** (ROADMAP 2.7, guide `docs/ground-truth.md`): entities render custom depth with a stencil value 1..255 (`FStencilSlotAllocator`, reuse delayed 4 frames); `r.CustomDepth=3`; `InstanceIdCS` runs in the sensor graph only on annotated frames and shares `UndistortScale` with `SensorCS` — change both together; `FInstanceMaskAnalyzer` turns the readback into boxes/OBBs/visibility/RLE on the task thread; only meshes are tagged (never particles) and box3d is their union; the hidden silhouette below each entity's sea-surface plane (waves included, one plane per stencil) is cut as submerged hull; OBBs follow the projected box3d axis. `ml_training.depth_map` comes out of the same pass (`WRITE_DEPTH` permutation: linear view depth of the same source texel, read back per slot like the IDs); its PNGs are written by separate tasks (≤ 4 in flight) so they never hold `bSensorBusy`
 - **Altitudes are WGS-84 ellipsoid heights everywhere** (CIGI 3.3 defines its "MSL" as the ellipsoid, and Cesium uses HAE). Only KLV Tags 15/25 are true MSL, via the EGM96 grid in `Geospatial/Geoid.h` (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS — run `git lfs pull` if it's a pointer file)
 - **UE unit scale**: 1 UE unit = 1 cm — divide `FVector::Dist()` by 100 for metres
 - **macOS multicast**: UDP multicast to 239.x.x.x on loopback requires `sudo route add -net 239.0.0.0/8 -interface lo0`, or use unicast: `CAMSIM_MULTICAST_ADDR=127.0.0.1`
@@ -145,7 +147,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Fixed framerate**: Engine locked to 30fps via DefaultEngine.ini (`bUseFixedFrameRate=True`). `DeltaTime` is therefore constant: measure frame time with the wall clock (the bench does)
 - **The sensor is the primary view** (the only render path since 3B.2, ROADMAP 3A): the game viewport renders it with TSR and `FCamSimFrameGrabExtension` grabs the result. `SceneCapture` only holds pose/FOV/post-process — it is never captured; don't call `CaptureScene()` on it. Screen messages are disabled, since the viewport canvas would be burned into the video
 - **Readback ring** (`Camera/ReadbackRing.h`): up to three captures in flight, delivered strictly in capture order; a full ring skips the new frame (counted as `EncoderBusy`). The ring carries the sensor graph's NV12 (1.5 bytes/px); the CPU only de-interleaves UV before encoding
-- **GPU sensor graph** (ROADMAP 3B; the only sensor path since 3B.2 — no CPU sensor model, no burned-in overlays): replaces UE's tonemapper via `ISceneViewExtension::EPostProcessingPass::ReplacingTonemapper`; UE exposure is manual and driven by the sensor AE (`AutoExposureBias` = sensor gain, so `View.PreExposure` tracks it and the shader divides it out). `UCamSimSubsystem::IsSensorGraphAvailable()` is decided once at startup (primary view, NV12 dims, `IsSensorGraphSupported`); without it (e.g. NullRHI) no frames are produced and `/ready` stays false. There is no CPU fallback. Linux/Vulkan is verified on NVIDIA (2026-09-30); Mesa (llvmpipe/lavapipe, the CPU Docker path) is unverified since 3B.2. Streams are tagged BT.709 transfer
+- **GPU sensor graph** (ROADMAP 3B; the only sensor path since 3B.2 — no CPU sensor model, no burned-in overlays): replaces UE's tonemapper via `ISceneViewExtension::EPostProcessingPass::ReplacingTonemapper`; UE exposure is manual and driven by the sensor AE (`AutoExposureBias` = sensor gain, so `View.PreExposure` tracks it and the shader divides it out). `UCamSimSubsystem::IsSensorGraphAvailable()` is decided once at startup (primary view, NV12 dims, `IsSensorGraphSupported`); without it (e.g. NullRHI) no frames are produced and `/ready` stays false. There is no CPU fallback. Linux/Vulkan is verified on NVIDIA (2026-09-30); Mesa lavapipe (the CPU Docker path) does not work: it segfaults compiling UE 5.8 SM6 pipelines (ROADMAP 1.15). Streams are tagged BT.709 transfer
 - **Physical sensor model** (ROADMAP 3B.2): one fused compute pass, `SensorCS` — optics (distortion resample, cos⁴ vignetting, PSF blur) → electrons → detector noise (photon: PRNU/shot/dark/DSNU/read, full-well clip, analog gain; microbolometer: temporal + pixel/column/row FPN) → ADC → defects → display → NV12. `CamSimSensorRef::Run` (`Sensor/SensorReference.cpp`) is the CPU reference: the shader mirrors it expression for expression, and `CamSim.GPU.Sensor.*` hold them to Y ≤ 1 DN, UV ≤ 2 DN. Change both together. Noise is a PCG hash of (x, y, frame, seed, stream) (`CamSimShaders/Public/SensorHash.h`), never a GPU RNG; round with `floor(x + 0.5)`, never HLSL `round`; no float atomics or wave intrinsics (portable to Vulkan)
 - **Sensor presets** (`Sensor/SensorPresets.cpp`): `sensor_modes.<mode>.preset` (`eo_hd_cmos`, `mwir_cooled` default IR, `lwir_uncooled`) fills optics/detector; `optics:`/`detector:` blocks override single fields. Physics tests `CamSim.Sensor.Physics.*` (16) check the reference against closed-form photon-transfer, FPN and PSF results — keep them passing when retuning presets
 - **Sensor AE clips at full well**: `FSensorController::ClipLinear` = 1.0 (normalised full scale = white after the knee). The PSF radius R = min(ceil(3σ_o)+1, 8); R ≥ 4 (σ_o > 2/3 px) switches to the large-tile shader and is over the 2 ms 1080p budget (a startup warning, not an error)
@@ -155,6 +157,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Health port restart**: restarting CamSim within ~30 s of the last run finds :8080 in TIME_WAIT. The health server logs "port 8080 is busy … NOT listening" and retries every 2 s until it binds (no reuse flag: UE's only option also sets SO_REUSEPORT, which would let two CamSims share the port). `run_bench.py` still waits the port out before launching
 - **IDE false positives**: clang diagnostics for UE types are wrong — UBT handles includes at build time
 - **Docker networking**: `network_mode: host` required for UDP multicast routing
+- **Hybrid CPUs (P/E cores)**: `deploy/entrypoint.sh` and `scripts/run.sh` (Linux) pin UE to the P-cores (`taskset`, `/sys/devices/cpu_core/cpus`; `CAMSIM_PIN_PCORES=0` to disable). Unpinned, the game thread can sit on an E-core for a whole run (~45% slower), which looked like run-to-run benchmark noise
 - **Linux UDP receive buffers**: each IDR goes out as one burst (~180 KB with NVENC at 4 Mbit/s), larger than Linux's default 208 KB socket buffer, so receivers drop it and the keyframe decodes corrupt. Raise `net.core.rmem_max` (`sudo sysctl -w net.core.rmem_max=26214400`; persist in `/etc/sysctl.d/`); `check.js` requests 16 MB and warns when capped. Proper fix tracked as ROADMAP 1.14
 - **NVENC on Linux** needs only nv-codec-headers at build time (`build_thirdparty.sh` pins and installs them), not CUDA; FFmpeg dlopens `libnvidia-encode` at runtime and `CAMSIM_ENCODER=auto` falls back to libx264 without it
 - **rapidyaml bundled**: Source in `Config/ryml/` — excluded from pre-commit linting
@@ -189,12 +192,17 @@ Only the vars you need at the console every day are listed below:
 
 ## Docker
 
+Guide: [`docs/docker.md`](docs/docker.md). Verified on RTX 5080 / driver 595 / toolkit 1.20 (2026-10-01).
+
 ```bash
-cd deploy && docker compose up        # GPU (NVIDIA)
-CAMSIM_ENCODER=libx264 docker compose up  # Mesa llvmpipe path: UNVERIFIED since 3B.2 (no CPU sensor fallback; needs the GPU sensor graph)
+scripts/package_for_docker.sh && docker compose -f deploy/docker-compose.yml up --build
+scripts/ci_validate.sh --docker camsim:latest   # end-to-end check on the GPU
 ```
 
-- Non-root user (uid 1000)
-- Entrypoint auto-detects NVIDIA vs Mesa
-- CPU path disables ray tracing via `-ini` flag
+- Packaged Development build on Ubuntu 24.04; the NVIDIA driver comes from the host via the Container Toolkit (`NVIDIA_DRIVER_CAPABILITIES=all`: `graphics` = Vulkan, `video` = NVENC). Never install `libnvidia-*` in the image
+- The image needs `libegl1`: the NVIDIA Vulkan ICD dlopens `libEGL.so.1`, which the toolkit doesn't inject (else `ERROR_INCOMPATIBLE_DRIVER`)
+- The entrypoint detects the GPU by `/dev/nvidia*`: under CDI injection `NVIDIA_VISIBLE_DEVICES` reads `void` even with `--gpus all`. No GPU → it refuses to start: lavapipe crashes compiling UE 5.8 SM6 pipelines (`CAMSIM_ALLOW_SOFTWARE_RENDERING=1` tries anyway)
+- Non-root user (uid 1000); `-userdir=/var/lib/camsim` puts `Saved/` and Cesium's tile cache on a volume
+- Never let BuildCookRun stage into `Saved/StagedBuilds/` (its default): once that directory exists, `run.sh` silently switches to packaged Shipping mode, so `--build-only` packages instead of building the editor and the bench/check scripts launch a stale package. `package_for_docker.sh` stages under `.cache/staging`
+- Assets loaded by path at runtime aren't found by the cook: list their directories in `DirectoriesToAlwaysCook` (`DefaultGame.ini`). The Game target needs `bEnableExceptions` (Editor targets force it on), so a packaging break can hide behind a clean editor build
 - Health: HTTP server on port `8080` exposes `GET /live`, `GET /health` (alias for `/live`), `GET /ready`, and `GET /metrics` (Prometheus format). Legacy `camsim_health.json` file also still written every 90 ticks for backward compatibility.

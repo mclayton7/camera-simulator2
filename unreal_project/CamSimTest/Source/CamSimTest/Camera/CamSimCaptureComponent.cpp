@@ -94,20 +94,28 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 		}
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ground truth — instance-ID readback enabled (every %d frame(s))"), IdIntervalFrames);
 	}
+	// ML depth map (Phase 17A): InstanceIdCS's depth output from the primary view's
+	// scene depth (lens-distorted and FOV-matched with the image), not a second render.
+	DepthReadbackPool.Reset();
+	if (bSensorGraph && Subsystem->IsGroundTruthDepthAvailable())
+	{
+		for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
+		{
+			DepthReadbackPool.Add(MakeUnique<FRHIGPUBufferReadback>(*FString::Printf(TEXT("CamSimDepthReadback_%d"), Idx)));
+		}
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ground truth — depth map from the primary view (%dx%d, every %d frame(s))"),
+			GpuSensorSize.X, GpuSensorSize.Y, IdIntervalFrames);
+	}
 
 	for (TAtomic<uint32>& Gen : GrabbedGeneration) { Gen.Store(0); }
 	for (TAtomic<uint32>& Gen : IdGrabbedGeneration) { Gen.Store(0); }
+	for (TAtomic<uint32>& Gen : DepthGrabbedGeneration) { Gen.Store(0); }
 	if (bSensorGraph && !EnsureGrabExtension())
 	{
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — game viewport not created yet; grabbing starts when it is"));
 	}
 
 	ApplyRenderSettings(Cfg);
-
-	if (Cfg.MLTraining.bEnabled && Cfg.MLTraining.bDepthMap)
-	{
-		CreateDepthCapture(Cfg);
-	}
 
 	// Persistent encoder thread (decouples the sensor model from encoding).
 	if (IFrameSink* Enc = Subsystem->GetVideoEncoder())
@@ -132,6 +140,15 @@ bool UCamSimCaptureComponent::EnsureGrabExtension()
 
 void UCamSimCaptureComponent::Shutdown()
 {
+	// Let the frame's background task (it enqueues into the encoder thread) and
+	// any depth-map writes (they use the collector) finish before both go away.
+	const double WaitUntil = FPlatformTime::Seconds() + 5.0;
+	while ((bSensorBusy || DepthWritesInFlight.Load(EMemoryOrder::SequentiallyConsistent) > 0)
+		&& FPlatformTime::Seconds() < WaitUntil)
+	{
+		FPlatformProcess::Sleep(0.005f);
+	}
+
 	// Stop the encoder thread before the subsystem closes the encoder.
 	if (EncoderThread)
 	{
@@ -159,35 +176,6 @@ void UCamSimCaptureComponent::SetLatencyTracker(FPipelineLatencyTracker* Tracker
 uint64 UCamSimCaptureComponent::GetDroppedFrameCount() const
 {
 	return EncoderThread ? EncoderThread->GetDroppedFrameCount() : 0;
-}
-
-void UCamSimCaptureComponent::CreateDepthCapture(const FCamSimConfig& Cfg)
-{
-	DepthCapture = NewObject<USceneCaptureComponent2D>(GetOwner(), TEXT("DepthCapture"));
-	DepthCapture->SetupAttachment(GetOwner()->GetRootComponent());
-	DepthCapture->bCaptureEveryFrame   = false;
-	DepthCapture->bCaptureOnMovement   = false;
-	DepthCapture->CaptureSource        = SCS_SceneDepth;
-	DepthCapture->bAlwaysPersistRenderingState = false;
-	DepthCapture->RegisterComponent();
-
-	DepthRenderTargets.Reset();
-	for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
-	{
-		UTextureRenderTarget2D* DRT = NewObject<UTextureRenderTarget2D>(this, *FString::Printf(TEXT("CamSimDepthRT_%d"), Idx));
-		DRT->InitCustomFormat(Cfg.CaptureWidth, Cfg.CaptureHeight, PF_R32_FLOAT, /*bInForceLinearGamma=*/true);
-		DRT->UpdateResource();
-		DepthRenderTargets.Add(DRT);
-	}
-	DepthCapture->TextureTarget = DepthRenderTargets[0];
-
-	DepthReadbackPool.Reset();
-	for (int32 Idx = 0; Idx < DepthRenderTargets.Num(); ++Idx)
-	{
-		DepthReadbackPool.Add(MakeUnique<FRHIGPUTextureReadback>(*FString::Printf(TEXT("CamSimDepthReadback_%d"), Idx)));
-	}
-	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: depth capture enabled (%dx%d PF_R32_FLOAT, pool=%d)"),
-		Cfg.CaptureWidth, Cfg.CaptureHeight, DepthReadbackPool.Num());
 }
 
 void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
@@ -483,36 +471,12 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	const uint32 Gen = ++NextGeneration;
 	S.Telemetry = Telemetry;
 	S.bWantIds = bAnnotated && IdReadbackPool.IsValidIndex(Slot) && IdReadbackPool[Slot];
+	S.bWantDepth = bAnnotated && DepthReadbackPool.IsValidIndex(Slot) && DepthReadbackPool[Slot];
 	S.InstanceIds.Reset();
 	S.ReadyStreak     .Store(0, EMemoryOrder::Relaxed);
-	S.DepthReadyStreak.Store(0, EMemoryOrder::Relaxed);
 	S.PollAttempts    .Store(0, EMemoryOrder::Relaxed);
 	// SeqCst: the resets above are visible to any poll that sees the new generation.
 	S.Generation.Store(Gen, EMemoryOrder::SequentiallyConsistent);
-
-	// Depth alongside the sensor frame (Phase 17A), in the same slot.
-	UTextureRenderTarget2D* DepthRT = nullptr;
-	FRHIGPUTextureReadback* DepthReadback = nullptr;
-	if (DepthCapture && DepthRenderTargets.IsValidIndex(Slot))
-	{
-		DepthRT = DepthRenderTargets[Slot].Get();
-		DepthCapture->TextureTarget = DepthRT;
-		DepthCapture->SetRelativeRotation(Sensor->GetRelativeRotation());  // align with color
-		DepthCapture->CaptureScene();
-		DepthReadback = DepthReadbackPool.IsValidIndex(Slot) ? DepthReadbackPool[Slot].Get() : nullptr;
-	}
-
-	auto EnqueueDepthCopy = [](FRHICommandListImmediate& RHICmdList, UTextureRenderTarget2D* DRT, FRHIGPUTextureReadback* DRB)
-	{
-		if (!DRT || !DRB) return;
-		FTextureRenderTargetResource* DepthRes = DRT->GetRenderTargetResource();
-		if (FRHITexture* DepthTex = DepthRes ? DepthRes->GetRenderTargetTexture() : nullptr)
-		{
-			RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::RTV, ERHIAccess::CopySrc));
-			DRB->EnqueueCopy(RHICmdList, DepthTex);
-			RHICmdList.Transition(FRHITransitionInfo(DepthTex, ERHIAccess::CopySrc, ERHIAccess::RTV));
-		}
-	};
 
 	// The game viewport renders after this tick; the sensor graph runs in place
 	// of its tonemapper and the extension copies its NV12 output into this
@@ -523,21 +487,22 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	TAtomic<uint32>* IdGrabbed = &IdGrabbedGeneration[Slot];
 	FRHIGPUBufferReadback* Nv12Readback = Nv12ReadbackPool[Slot].Get();
 	FRHIGPUBufferReadback* IdReadback = S.bWantIds ? IdReadbackPool[Slot].Get() : nullptr;
+	FRHIGPUBufferReadback* DepthReadback = S.bWantDepth ? DepthReadbackPool[Slot].Get() : nullptr;
+	TAtomic<uint32>* DepthGrabbed = &DepthGrabbedGeneration[Slot];
 	FFrameGrabRequest Req;
 	Req.FrameIndex   = FrameIdx;
 	Req.Generation   = Gen;
 	Req.TargetIndex  = Slot;
 	Req.bInstanceIds = S.bWantIds;
+	Req.bDepth       = S.bWantDepth;
 	// Per-entity water planes for the submerged-hull cut, at this frame's sea state (game thread, doubles).
 	if (S.bWantIds) Req.WaterPlanes = ComputeWaterPlanes(S.Entities);
 	ENQUEUE_RENDER_COMMAND(CamSimRequestGrab)(
-		[Ext, Nv12Readback, IdReadback, Req, Grabbed, IdGrabbed, DepthRT, DepthReadback, EnqueueDepthCopy]
-		(FRHICommandListImmediate& RHICmdList)
+		[Ext, Nv12Readback, IdReadback, Req, Grabbed, IdGrabbed, DepthReadback, DepthGrabbed]
+		(FRHICommandListImmediate&)
 	{
 		if (!Ext) return;
-		Ext->PushRequest_RenderThread(Req, Nv12Readback, IdReadback, Grabbed, IdGrabbed);
-		// Depth (ML) comes from its own SceneCapture, copied directly.
-		EnqueueDepthCopy(RHICmdList, DepthRT, DepthReadback);
+		Ext->PushRequest_RenderThread(Req, Nv12Readback, IdReadback, Grabbed, IdGrabbed, DepthReadback, DepthGrabbed);
 	});
 }
 
@@ -636,11 +601,8 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 	// Everything the lambda needs is captured by value.
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 	const int32 ReadyPollsRequired = FMath::Max(1, Cfg.ReadbackReadyPolls);
-	FRHIGPUTextureReadback* DepthReadback = DepthReadbackPool.IsValidIndex(Slot) ? DepthReadbackPool[Slot].Get() : nullptr;
 	FRHIGPUBufferReadback*  Nv12Readback = Nv12ReadbackPool.IsValidIndex(Slot) ? Nv12ReadbackPool[Slot].Get() : nullptr;
 
-	const int32  CaptureW       = Cfg.CaptureWidth;
-	const int32  CaptureH       = Cfg.CaptureHeight;
 	// The buffer's size, not the live config's (the graph was enabled at GpuSensorSize).
 	const uint32 Nv12Bytes      = static_cast<uint32>(CamSimNv12::NumBytes(GpuSensorSize.X, GpuSensorSize.Y));
 	FSlot&       S              = Slots[Slot];
@@ -653,10 +615,14 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 	FRHIGPUBufferReadback* IdReadback = (bWantIds && IdReadbackPool.IsValidIndex(Slot)) ? IdReadbackPool[Slot].Get() : nullptr;
 	TAtomic<uint32>* IdGrabbed  = &IdGrabbedGeneration[Slot];
 	const uint32 IdBytes        = static_cast<uint32>(GpuSensorSize.X * GpuSensorSize.Y * 2);
+	// Depth map: one float (metres) per output pixel.
+	FRHIGPUBufferReadback* DepthReadback = (S.bWantDepth && DepthReadbackPool.IsValidIndex(Slot)) ? DepthReadbackPool[Slot].Get() : nullptr;
+	TAtomic<uint32>* DepthGrabbed = &DepthGrabbedGeneration[Slot];
+	const int32  DepthPixels    = GpuSensorSize.X * GpuSensorSize.Y;
 
 	ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
-		[RingPtr, &S, Slot, DepthReadback, Nv12Readback, Nv12Bytes, ReadyPollsRequired,
-		 CaptureW, CaptureH, CaptureGen, Grabbed, IdReadback, IdGrabbed, IdBytes]
+		[RingPtr, &S, Slot, Nv12Readback, Nv12Bytes, ReadyPollsRequired,
+		 CaptureGen, Grabbed, IdReadback, IdGrabbed, IdBytes, DepthReadback, DepthGrabbed, DepthPixels]
 		(FRHICommandListImmediate&)
 	{
 		// Stale poll: the slot was delivered (and maybe reused) since it was enqueued.
@@ -670,12 +636,14 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 			Grabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen,
 			// The ID copy (issued before the NV12 one) is waited for only if it was
 			// really issued for this capture; a pass that couldn't run never blocks.
-			[Nv12Readback, IdReadback, IdGrabbed, CaptureGen]()
+			[Nv12Readback, IdReadback, IdGrabbed, DepthReadback, DepthGrabbed, CaptureGen]()
 			{
 				if (!Nv12Readback || !Nv12Readback->IsReady()) return false;
 				const bool bWaitIds = CamSimReadback::ShouldWaitForIds(IdReadback != nullptr,
 					IdGrabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen);
-				return !bWaitIds || IdReadback->IsReady();
+				const bool bWaitDepth = CamSimReadback::ShouldWaitForIds(DepthReadback != nullptr,
+					DepthGrabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen);
+				return (!bWaitIds || IdReadback->IsReady()) && (!bWaitDepth || DepthReadback->IsReady());
 			},
 			Attempt, MaxReadbackPolls);
 		if (Decision == CamSimReadback::EPollDecision::TimedOut)
@@ -718,34 +686,17 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 			}
 		}
 
-		// Opportunistic depth: it may lag the sensor frame; skip this frame's if so.
+		// Depth map: like the IDs, present only when its copy was issued for this capture.
 		S.Depth.Reset();
-		if (DepthReadback && DepthReadback->IsReady())
+		if (CamSimReadback::ShouldWaitForIds(DepthReadback != nullptr, DepthGrabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen))
 		{
+			const uint32 DepthBytes = static_cast<uint32>(DepthPixels * sizeof(float));
+			if (const void* Raw = DepthReadback->Lock(DepthBytes))  // null: do NOT Unlock
 			{
-				const uint8 Cur = S.DepthReadyStreak.Load(EMemoryOrder::Relaxed);
-				if (Cur < 255) S.DepthReadyStreak.Store(Cur + 1, EMemoryOrder::Relaxed);
+				S.Depth.SetNumUninitialized(DepthPixels);
+				FMemory::Memcpy(S.Depth.GetData(), Raw, DepthBytes);
+				DepthReadback->Unlock();
 			}
-			if (S.DepthReadyStreak.Load(EMemoryOrder::Relaxed) >= ReadyPollsRequired)
-			{
-				int32 DepthRowPitch = 0;
-				if (void* DepthRaw = DepthReadback->Lock(DepthRowPitch))  // null: do NOT Unlock (UB)
-				{
-					S.Depth.SetNumUninitialized(CaptureW * CaptureH);
-					const uint8* Src = static_cast<const uint8*>(DepthRaw);
-					float*       Dst = S.Depth.GetData();
-					for (int32 Row = 0; Row < CaptureH; ++Row)
-					{
-						FMemory::Memcpy(Dst + Row * CaptureW, Src + Row * DepthRowPitch, CaptureW * sizeof(float));
-					}
-					for (float& V : S.Depth) { V /= 100.0f; }  // cm -> m
-					DepthReadback->Unlock();
-				}
-			}
-		}
-		else
-		{
-			S.DepthReadyStreak.Store(0, EMemoryOrder::Relaxed);
 		}
 
 		// SeqCst: the slot's arrays are visible once the game thread sees Complete.
@@ -768,8 +719,6 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	}
 
 	FGroundTruthCollector*   Collector = Subsystem ? Subsystem->GetGroundTruthCollector() : nullptr;
-	const int32              CaptureW  = Subsystem ? Subsystem->GetConfig().CaptureWidth  : 0;
-	const int32              CaptureH  = Subsystem ? Subsystem->GetConfig().CaptureHeight : 0;
 	FEncoderThread*          EncThread = EncoderThread.Get();  // outlives the task
 	FPipelineLatencyTracker* LT        = LatencyTracker;       // outlives the task
 	const FIntPoint          IdSize    = GpuSensorSize;        // the ID buffer's size (fixed at Initialize)
@@ -778,7 +727,7 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	// (file I/O) stay off the game thread; bSensorBusy is cleared after them,
 	// not after encode.
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-		[this, EncThread, Collector, CaptureW, CaptureH, LT,
+		[this, EncThread, Collector, LT,
 		 Nv12 = MoveTemp(Nv12Data), Telemetry, FrameIdx, Depth = MoveTemp(DepthMetres),
 		 Entities = MoveTemp(Entities), IdSize, InstanceIds = MoveTemp(InstanceIds)]() mutable
 	{
@@ -795,7 +744,26 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 			Collector->WriteAnnotationFrame(MoveTemp(Entities), Ids.Words.Num() ? &Ids : nullptr, Telemetry, FrameIdx);
 			if (Depth.Num() > 0)
 			{
-				Collector->WriteDepthFrame(Depth, CaptureW, CaptureH, FrameIdx);
+				// Its own task: PNG-compressing a real depth map must not hold up the next capture.
+				if (++DepthWritesInFlight <= MaxDepthWritesInFlight)
+				{
+					AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
+						[this, Collector, IdSize, FrameIdx, Depth = MoveTemp(Depth)]()
+					{
+						Collector->WriteDepthFrame(Depth, IdSize.X, IdSize.Y, FrameIdx);
+						--DepthWritesInFlight;
+					});
+				}
+				else
+				{
+					--DepthWritesInFlight;
+					const uint64 Skipped = ++DepthWritesSkipped;
+					if (Skipped == 1 || Skipped % 300 == 0)
+					{
+						UE_LOG(LogCamSim, Warning, TEXT("GroundTruth: depth-map writes can't keep up (%d in flight); ")
+							TEXT("skipped %llu depth frame(s) so far"), MaxDepthWritesInFlight, Skipped);
+					}
+				}
 			}
 		}
 		if (LT) LT->Mark(EPipelineStage::SensorEnd);

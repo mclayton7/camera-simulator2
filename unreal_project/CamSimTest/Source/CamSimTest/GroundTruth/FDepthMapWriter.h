@@ -11,7 +11,7 @@ class IImageWrapperModule;
  * FDepthMapWriter
  *
  * Writes one 16-bit grayscale PNG depth map per frame.
- * Input: float buffer (metres, from SCS_SceneDepth / 100cm conversion).
+ * Input: float buffer (metres): InstanceIdCS's linear view depth of the primary view (WRITE_DEPTH).
  * Output: <OutputDir>/depth/depth_NNNNNNNN.png
  *
  * Depth is linearly quantized: 0 m → 0,  DepthFarPlaneM → 65535.

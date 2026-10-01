@@ -13,6 +13,8 @@ import socket
 import struct
 import time
 
+from send_cigi_test import pack_art_part_control
+
 
 def pack_ig_control(frame_ctr: int) -> bytes:
     ts = int((time.time() % 86400) * 10_000) & 0xFFFF_FFFF
@@ -60,6 +62,9 @@ def pack_entity_control(
     )
     assert len(pkt) == 48
     return pkt
+
+
+GIMBAL_ART_PART_ID = 0  # camera gimbal; held level so the platform pitch aims the view
 
 
 def camera_behind(
@@ -133,7 +138,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8888)
-    ap.add_argument("--camera-id", type=int, default=0)
+    # deploy/camsim_config.yaml camera_entity_id; any other id is just another entity
+    ap.add_argument("--camera-id", type=int, default=1)
     ap.add_argument("--start-entity-id", type=int, default=100)
     ap.add_argument("--count", type=int, default=100)
     ap.add_argument("--entity-type", type=int, default=1001)
@@ -189,7 +195,7 @@ def main():
                 0.0,
                 entity_state=1,
                 entity_type=0,
-            )
+            ) + pack_art_part_control(args.camera_id, GIMBAL_ART_PART_ID)
 
             entity_pkts: list[bytes] = []
             omega = math.radians(args.angular_rate_deg_s)

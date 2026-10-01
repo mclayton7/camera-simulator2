@@ -22,7 +22,27 @@ uv run --with numpy --with pillow python scripts/bench/run_bench.py --label smok
 ```
 
 Flags: `--skip-warmup` (only when the cache is
-already warm), `--trace` (Unreal Insights `trace.utrace`), `--out DIR`.
+already warm), `--trace` (Unreal Insights `trace.utrace`), `--out DIR`,
+`--env KEY=VALUE` (extra CamSim environment, repeatable; e.g.
+`CAMSIM_TRACK_PIPELINE_LATENCY=1` records the pipeline latency quantiles
+into `meta.latency`, `CAMSIM_ENCODER=libx264`).
+
+### Against the Docker image
+
+```bash
+uv run --with numpy --with pillow python scripts/bench/run_bench.py --label docker \
+  --docker camsim:latest [--env CAMSIM_ENCODER=libx264]
+```
+
+Runs the image (`docs/docker.md`) with `--gpus all`, host networking and the
+output directory mounted at `/bench`; named volumes `camsim-bench-data` and
+`camsim-bench-cache` keep the Cesium tile cache and driver shader cache warm
+between runs. Adds `container.log` to the output and `meta.runtime`, `meta.gpu`,
+`meta.encoder`, `meta.ready_s` to `results.json`. `--config FILE` mounts a
+`camsim_config.yaml` over the image's (capture size has no env override, so a 1080p run
+uses a copy with `capture_width: 1920`, `capture_height: 1080`). `--sensor ir` flies the
+measured phases in IR (default `eo`; the shots keep their own waveband). `--no-gpu` runs it without
+the GPU, which currently fails (ROADMAP 1.15: lavapipe can't run UE 5.8).
 Output (default `.cache/bench/<time>-<label>/`): `results.json` (`meta.sensor_path`
 is what CamSim's `/metrics` reported: `gpu` — the GPU sensor graph is the only path since 3B.2), `frames.jsonl`, `phases.json`,
 `shots/*.png` + `shots/*_sensor.png`, `slew.ts`.
@@ -51,3 +71,26 @@ Stored results: `baselines/<platform>-<gpu>-<label>.json` and
 
 Needs a Cesium ion token (config) and network. Compare warm-cache runs only.
 Run-to-run noise on the M1 Pro is recorded in ROADMAP 3A.
+
+## Entity load scaling
+
+```bash
+CONFIG=my_1080p.yaml scripts/bench/load_scale.sh [OUT]   # ~15 min
+python3 scripts/bench/load_report.py [OUT]
+```
+
+Runs the Docker image at ~0, 100, 250 and 500 CIGI entities
+(`scripts/stress_entity_rendering.py`, which also flies the camera), then 500
+with ML ground truth on, with and without the depth map. Each point is a fresh
+container, 75 s recorded, frames 25–75 s summarised: thread times, fps, drops,
+frame latency and annotated entities per frame. Results: ROADMAP 3B exit check.
+
+## Gimbal-snap test
+
+```bash
+uv run --with pillow python scripts/bench/snap_test.py FRAMES_JSONL OUT
+```
+
+Against a running CamSim with frame stats and `/snapshot` on: settles over SF, snaps the gimbal
+90° (both ways) and saves snapshots at +0.3/1/3 s with their sharpness. Used to choose
+`frustum_culling` / `maximum_screen_space_error` (`docs/configuration.md`, Cesium Tile Streaming).

@@ -438,6 +438,17 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 				TEXT("entities are not tagged and annotations use projected boxes (mask_source \"projection\")"), *Why);
 		}
 	}
+	bGroundTruthDepthAvailable = false;
+	if (bSensorGraphAvailable && Config.MLTraining.bEnabled && Config.MLTraining.bDepthMap)
+	{
+		FString Why;
+		bGroundTruthDepthAvailable = IsInstanceIdPassSupported(Why);
+		if (!bGroundTruthDepthAvailable)
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: ml_training.depth_map is on but the instance-ID pass is unavailable (%s); ")
+				TEXT("no depth maps are written"), *Why);
+		}
+	}
 
 	EntityTypeTable.LoadFromConfig();
 	EntityTypeTable.PreloadGltfMeshes();
