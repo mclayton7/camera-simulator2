@@ -38,9 +38,23 @@ private:
 	FCamSimGeospatialCapabilities Capabilities;
 };
 
+namespace CamSim::Geospatial
+{
+	/** Cesium ion asset ID of Cesium World Terrain. */
+	inline constexpr int64 CesiumWorldTerrainAssetId = 1;
+
+	/**
+	 * Which of the level's tilesets is the terrain: the first Cesium World Terrain
+	 * one (ion asset 1), else the first. IonAssetIds holds each tileset's ion asset
+	 * ID, -1 for non-ion sources. INDEX_NONE when there are none.
+	 */
+	int32 SelectTerrainTileset(TConstArrayView<int64> IonAssetIds);
+}
+
 /**
  * Apply Cesium backend configuration (ion server, terrain source, imagery overlay)
- * to all ACesium3DTileset actors in the world.
+ * to the level's terrain tileset (CamSim::Geospatial::SelectTerrainTileset) and
+ * destroy any other ACesium3DTileset actors, so exactly one terrain streams.
  *
  * Must be called on the game thread.
  * Returns the created UCesiumIonServer* (nullptr if ion server step was skipped —
