@@ -50,7 +50,8 @@ row (a view with no frames, an absent run) fails:
   (f) hd: thermal_gpu_ms p95 <= 0.5 ms at 1080p (frame stats)
   (g) eo: |mean Y(thermal on) - mean Y(thermal off)| <= 1 DN
   (h) coast, night and noon: edge shimmer = temporal std of Y on edge pixels of the static
-      coast view <= 2 x the std of interior land pixels (Task 17: ThermalCS runs before TSR;
+      coast view <= 2 x max(std of interior land pixels, 1/sqrt(12) DN = 8-bit rounding noise;
+      the raw ratio is reported beside it) (Task 17: ThermalCS runs before TSR;
       the EO baseline is printed beside it, info). The truck box-boundary ratio is printed
       too, labelled motion-contaminated: the truck moves against its box, so it is not a
       shimmer measure
@@ -100,6 +101,10 @@ WHITE_HOT_DN = 3.0
 THERMAL_P95_MS = 0.5
 EO_DY_DN = 1.0
 SHIMMER_RATIO = 2.0
+# Gate (h) denominator floor (ruling R13): the temporal std that rounding to 8-bit Y adds on its
+# own, 1/sqrt(12) DN (uniform quantization error). The snapshot can't resolve interior noise
+# below it, so a quieter detector (MWIR at noon: 0.19 DN) must not inflate the edge ratio.
+SNAPSHOT_QUANT_STD_DN = 1.0 / math.sqrt(12.0)
 MIN_PIXELS = 50
 
 # Fixed-pose regions as fractions of the image height (coast) / rows (sky).
@@ -370,14 +375,22 @@ def gate_passed(checks: list[dict], expected: list[Row]) -> bool:
     )
 
 
+def shimmer_ratio(edge_std: float, interior_std: float) -> tuple[float, float]:
+    """(raw, floored) edge / interior temporal-std ratios; the floored one divides by
+    max(interior, SNAPSHOT_QUANT_STD_DN) and is the gated value."""
+    raw = edge_std / max(interior_std, 1e-6)
+    return raw, edge_std / max(interior_std, SNAPSHOT_QUANT_STD_DN)
+
+
 def shimmer_row(band: str, tod: str, sh: dict, limit: float = SHIMMER_RATIO) -> dict:
-    """Gate (h): the static coast view's edge / interior temporal-std ratio <= limit."""
+    """Gate (h): the static coast view's floored edge / interior temporal-std ratio <= limit."""
     v = float(sh["value"])
     return {
         "check": "h",
         "band": band,
         "time": tod,
         "value": v,
+        "raw": float(sh.get("raw", v)),
         "threshold": f"<= {limit:g}",
         "pass": bool(v <= limit),  # NaN fails
         "detail": sh["detail"],
@@ -1075,9 +1088,11 @@ def coast_shimmer(vd: ViewData) -> dict | None:
     _, land = coast_masks(vd.y.shape[1:])
     interior &= land | (np.arange(h)[:, None] >= COAST_LAND_ROW0 * h)
     e, i = region_mean(std, edge), region_mean(std, interior)
+    raw, floored = shimmer_ratio(e, i)
     return {
-        "value": e / max(i, 1e-6),
-        "detail": f"edge temporal std {e:.2f} / interior land {i:.2f} DN over {len(vd.y)} frames, static pose",
+        "value": floored,
+        "raw": raw,
+        "detail": f"floored: edge temporal std {e:.2f} / max(interior land {i:.2f}, {SNAPSHOT_QUANT_STD_DN:.3f}) DN; raw ratio {raw:.2f}; over {len(vd.y)} frames, static pose",
     }
 
 

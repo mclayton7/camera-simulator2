@@ -4,6 +4,7 @@ import json
 import math
 
 import numpy as np
+import pytest
 import thermal_check as tc
 
 
@@ -206,3 +207,37 @@ def test_coast_shimmer_ratio_on_synthetic_frames():
     edge_row = int(0.6 * h)
     flick[::2, edge_row - 1 : edge_row + 1, :] = 140.0  # the edge jumps a row every other frame
     assert tc.coast_shimmer(tc.ViewData("r", "noon", "coast", flick, [None] * 30, {}))["value"] > 2.0
+
+
+def test_shimmer_floor_is_8bit_quantization_noise():
+    assert tc.SNAPSHOT_QUANT_STD_DN == pytest.approx(1.0 / math.sqrt(12.0))
+    assert tc.SNAPSHOT_QUANT_STD_DN == pytest.approx(0.2887, abs=1e-4)
+
+
+def test_shimmer_ratio_floors_an_interior_below_quantization():
+    # Task 17 t17c MWIR noon: edge 0.41 over interior 0.19 DN (below 8-bit rounding).
+    raw, floored = tc.shimmer_ratio(0.41, 0.19)
+    assert raw == pytest.approx(0.41 / 0.19)
+    assert floored == pytest.approx(0.41 / tc.SNAPSHOT_QUANT_STD_DN)  # ~1.42
+    assert floored <= tc.SHIMMER_RATIO < raw
+    row = tc.shimmer_row("mwir", "noon", {"value": floored, "raw": raw, "detail": ""})
+    assert row["pass"] is True and row["raw"] == pytest.approx(raw)
+
+
+def test_shimmer_ratio_still_fails_real_flicker_above_the_floor():
+    raw, floored = tc.shimmer_ratio(2.2 * 0.5, 0.5)  # interior above the floor: no change
+    assert raw == floored == pytest.approx(2.2)
+    assert tc.shimmer_row("mwir", "noon", {"value": floored, "raw": raw, "detail": ""})["pass"] is False
+    raw, floored = tc.shimmer_ratio(0.7, 0.1)  # 2.4x the floor: still fails
+    assert floored == pytest.approx(0.7 / tc.SNAPSHOT_QUANT_STD_DN) and floored > tc.SHIMMER_RATIO
+
+
+def test_coast_shimmer_reports_raw_and_floored():
+    rng = np.random.default_rng(2)
+    h, w = 120, 160
+    base = np.full((h, w), 100.0, np.float32)
+    base[int(0.6 * h) :, :] = 140.0
+    frames = np.round(base + rng.normal(0, 0.1, (30, h, w))).astype(np.float32)  # sub-quantization noise
+    sh = tc.coast_shimmer(tc.ViewData("r", "noon", "coast", frames, [None] * 30, {}))
+    assert sh["value"] <= sh["raw"] + 1e-9
+    assert "floored" in sh["detail"] and "raw" in sh["detail"]

@@ -1327,16 +1327,19 @@ Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
     (`Camera/ThermalTsrAlpha.h`) sets `r.TSR.AlphaChannel=1` (SetByCode) while thermal IR runs and restores the saved
     value otherwise (a console override wins), so TSR's output and history are RGBA16F and the format change drops the
     history at each switch; EO keeps −1. Measured (M1 Pro, MWIR night coast, two launches each): interior std 0.79 →
-    0.32 DN, edge std 0.95 → 0.56 DN (shimmer ratio 1.21 → 1.75, still ≤ 2). **Cost: IR GPU frame time +1.6 ms**
-    (median `gpu_ms` 26.83/26.88 → 28.42/28.43 ms at 720p, 27.58 → 29.18 ms with a 1920x1080 capture; EO unchanged), above
-    the ~1 ms budget — the alpha path also turns off TSR's 16-bit VALU and doubles its colour bandwidth. Open decision
-    (keep it, or encode the radiance for R11G11B10). First EO→IR switch: up to 84 ms GPU / 31 ms render on one frame
-    (alpha off: ≤ 38 / 4 ms), no dropped frames, wall time ≤ 35 ms.
-    Acceptance with the fix (`thermal_check.py --band both`): (a)–(g) pass; (h) MWIR night 1.19, LWIR 1.00 / 1.01 pass,
-    **MWIR noon 2.14 fails**. Its edge std is 0.41 DN, the lowest yet (6.40 originally, 0.75 with BeforeDOF alone), but
-    interior land fell to 0.19 DN, below 8-bit rounding (0.29 DN), so the ratio now measures TSR's residual edge
-    convergence (~0.03 px rms at 15 DN/px edges) against a noise floor the 8-bit snapshot can't resolve. Gate (h)'s
-    definition is an open decision (not loosened here).
+    0.32 DN, edge std 0.95 → 0.56 DN (shimmer ratio 1.21 → 1.75, still ≤ 2). Cost, accepted (ruling R12; the frame
+    stays under 33 ms): IR GPU frame time +1.6 ms on the M1 Pro (median `gpu_ms` 26.83/26.88 → 28.42/28.43 ms at 720p,
+    27.58 → 29.18 ms with a 1920x1080 capture; EO unchanged) — the alpha path also turns off TSR's 16-bit VALU and
+    doubles its colour bandwidth. First EO→IR switch hitch: up to one frame of 84 ms GPU / 31 ms render (alpha off:
+    ≤ 38 / 4 ms), no dropped frames, wall time ≤ 35 ms. Alternative if a weaker GPU needs it: keep R11G11B10 and
+    write the radiance as a signed two-channel encoding (e.g. a coarse part plus a residual about a per-frame pedestal),
+    decoded by SensorCS.
+    Gate (h) denominator floor (ruling R13): ratio = edge std / max(interior std, 1/sqrt(12) DN), the 8-bit snapshot's
+    own rounding noise (`SNAPSHOT_QUANT_STD_DN`); report.md/json carry both ratios. With RGBA16F, MWIR noon interior
+    land fell to 0.19 DN — below what the 8-bit snapshot resolves — and the raw ratio read 2.14 although its edge std,
+    0.41 DN, is the lowest yet (6.40 originally, 0.75 with BeforeDOF alone; ~0.03 px rms of TSR edge convergence at
+    15 DN/px edges). Acceptance with the fix (`.cache/thermal_check/t17c`, re-checked with the floor): all gates pass;
+    (h) floored / raw: MWIR 1.19 / 1.19 night, 1.43 / 2.14 noon; LWIR 1.00 / 1.00, 1.01 / 1.01.
   No editor or asset changes are needed for 4A.
 
 ---
