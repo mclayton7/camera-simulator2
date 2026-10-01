@@ -1,0 +1,70 @@
+// Copyright CamSim Contributors. All Rights Reserved.
+// Ground truth (ROADMAP 2.7): InstanceIdCS — per output pixel, which tagged entity is visible and which entity's
+// silhouette covers it, sampled at the same distorted source position as SensorCS. Integer ops only (Metal + Vulkan).
+
+#include "/Engine/Public/Platform.ush"
+#if USE_VIEW_RECT
+#include "/Engine/Private/Common.ush"   // View.ViewRectMin, View.ViewSizeAndInvSize
+#endif
+#include "CamSimSensorCommon.ush"
+
+int2   OutputSize;
+int2   DepthViewMin;    // tests: texel of the view rect's top-left (runtime: View.ViewRectMin)
+int2   DepthViewSize;   // tests: view rect size (runtime: View.ViewSizeAndInvSize.xy)
+float2 HalfOut;         // 0.5 * W, 0.5 * H
+float  FocalPx;
+float  K1;
+float  K2;
+Texture2D<float> SceneDepth;      // device Z, reversed (1 near, 0 far)
+Texture2D<float> CustomDepth;     // device Z of the tagged entities only
+Texture2D<uint2> CustomStencil;   // FSceneTextureUniformParameters::CustomStencilTexture's type; read as the engine does
+RWStructuredBuffer<uint> OutIds;  // pixel 2k in the low 16 bits of word k
+
+void DepthRect(out int2 Min, out int2 Size)
+{
+#if USE_VIEW_RECT
+	Min = int2(View.ViewRectMin.xy);
+	Size = int2(View.ViewSizeAndInvSize.xy);
+#else
+	Min = DepthViewMin;
+	Size = DepthViewSize;
+#endif
+}
+
+/** visible | amodal << 8 for output pixel P. The source position is CamSimSensorRef::Optics's (Sx, Sy);
+ *  the nearest texel is floor(S + 0.5), as SampleScene rounds. */
+uint IdAt(int2 P)
+{
+	int2 Min, Size;
+	DepthRect(Min, Size);
+	const float2 SrcScale = float2(Size) / float2(OutputSize);
+	float2 S;
+	if (!(FocalPx > 0.0))
+	{
+		S = (float2(P) + 0.5) * SrcScale - 0.5;
+	}
+	else
+	{
+		const float Xd = (float(P.x) + 0.5 - HalfOut.x) / FocalPx, Yd = (float(P.y) + 0.5 - HalfOut.y) / FocalPx;
+		const float Sc = UndistortScale(sqrt(Xd * Xd + Yd * Yd), K1, K2);
+		S = float2((Xd * Sc * FocalPx + HalfOut.x) * SrcScale.x - 0.5, (Yd * Sc * FocalPx + HalfOut.y) * SrcScale.y - 0.5);
+	}
+	if (!(S.x >= -0.5 && S.x <= float(Size.x) - 0.5 && S.y >= -0.5 && S.y <= float(Size.y) - 0.5)) return 0;
+	const int2 T = Min + clamp(int2(floor(S + 0.5)), int2(0, 0), Size - 1);
+	const uint Amodal = CustomStencil.Load(int3(T, 0)) STENCIL_COMPONENT_SWIZZLE & 0xFF;
+	if (Amodal == 0) return 0;
+	const float SceneZ = SceneDepth.Load(int3(T, 0));
+	const float CustomZ = CustomDepth.Load(int3(T, 0));
+	// Reversed Z: larger is nearer. The entity is visible when nothing is nearer than its own surface.
+	const uint Visible = (CustomZ >= SceneZ * (1.0 - 1e-4)) ? Amodal : 0;
+	return Visible | (Amodal << 8);
+}
+
+[numthreads(8, 8, 1)]
+void InstanceIdCS(uint3 Id : SV_DispatchThreadID)
+{
+	const int2 Pair = int2(Id.xy);   // one thread per two horizontal pixels
+	if (Pair.x * 2 >= OutputSize.x || Pair.y >= OutputSize.y) return;
+	const int2 P0 = int2(Pair.x * 2, Pair.y);
+	OutIds[Pair.y * (OutputSize.x / 2) + Pair.x] = IdAt(P0) | (IdAt(P0 + int2(1, 0)) << 16);
+}

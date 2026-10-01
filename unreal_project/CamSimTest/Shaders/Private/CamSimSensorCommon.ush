@@ -74,3 +74,20 @@ uint BinOf(float S)
 	if (!(S > 0.0)) return 0;
 	return (uint)clamp((int)floor((log2(S) - HIST_MIN_LOG2) * HIST_BINS_PER_STOP), 0, HIST_BINS - 1);
 }
+
+#ifdef NEWTON_ITERATIONS
+/** CamSimOptics::UndistortRadius: ideal / distorted radius for distorted radius Rd (Newton from r = Rd,
+ *  NEWTON_ITERATIONS steps, final iterate). 1 at the centre. Shared by SensorCS and InstanceIdCS.
+ *  NEWTON_ITERATIONS (= FSensorFrameParams::NewtonIterations) comes from each shader's ModifyCompilationEnvironment. */
+float UndistortScale(float Rd, float K1, float K2)
+{
+	if (!(Rd > 0.0)) return 1.0;
+	float R = Rd;
+	[unroll] for (int It = 0; It < NEWTON_ITERATIONS; ++It)
+	{
+		const float R2 = R * R;
+		R -= (R * (1.0 + K1 * R2 + K2 * R2 * R2) - Rd) / (1.0 + 3.0 * K1 * R2 + 5.0 * K2 * R2 * R2);
+	}
+	return R / Rd;
+}
+#endif

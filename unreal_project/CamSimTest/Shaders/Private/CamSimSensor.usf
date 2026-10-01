@@ -86,19 +86,7 @@ float3 OpticsAt(int2 P, float Scale)
 	}
 	const float Xd = (float(P.x) + 0.5 - HalfOut.x) / FocalPx, Yd = (float(P.y) + 0.5 - HalfOut.y) / FocalPx;
 	const float Rd = sqrt(Xd * Xd + Yd * Yd);
-	float S = 1.0;
-	if (Rd > 0.0)
-	{
-		// CamSimOptics::UndistortRadius: NEWTON_ITERATIONS (= FSensorFrameParams::NewtonIterations, set by
-		// FCamSimSensorCS::ModifyCompilationEnvironment) from r = Rd; the final iterate.
-		float R = Rd;
-		[unroll] for (int It = 0; It < NEWTON_ITERATIONS; ++It)
-		{
-			const float R2 = R * R;
-			R -= (R * (1.0 + K1 * R2 + K2 * R2 * R2) - Rd) / (1.0 + 3.0 * K1 * R2 + 5.0 * K2 * R2 * R2);
-		}
-		S = R / Rd;
-	}
+	const float S = UndistortScale(Rd, K1, K2);
 	const float Xu = Xd * S, Yu = Yd * S;
 	const float Sx = (Xu * FocalPx + HalfOut.x) * SrcScale.x - 0.5, Sy = (Yu * FocalPx + HalfOut.y) * SrcScale.y - 0.5;
 	const float Illum = pow(1.0 / sqrt(1.0 + Xu * Xu + Yu * Yu), VignettingExponent);
