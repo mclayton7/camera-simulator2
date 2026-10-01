@@ -19,6 +19,13 @@ namespace CamSimMask
 	/** Minimum-area enclosing rectangle of a convex hull (rotating calipers over hull edges). Ties prefer the smaller |angle|. */
 	FOrientedBox MinAreaRect(const TArray<FVector2D>& Hull);
 
+	/**
+	 * The rectangle enclosing a convex hull with one side along Axis (any non-zero length): extents are the hull
+	 * projected on Axis and its normal, then normalised as MinAreaRect (w >= h, else swapped and +90°; angle folded).
+	 * A zero or non-finite Axis falls back to MinAreaRect.
+	 */
+	FOrientedBox RectAlongAxis(const TArray<FVector2D>& Hull, const FVector2D& Axis);
+
 	/** Absolute shoelace area. */
 	double PolygonArea(const TArray<FVector2D>& Poly);
 

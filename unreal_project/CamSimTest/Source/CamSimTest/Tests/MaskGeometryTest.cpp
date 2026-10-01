@@ -103,3 +103,41 @@ bool FMaskRleTest::RunTest(const FString&)
 	TestEqual(TEXT("backslash"), CamSimMask::EncodeCocoRle({ 17, 3, 1580 }), FString(TEXT("a03\\a1")));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaskRectAlongAxisTest, "CamSim.GroundTruth.Mask.RectAlongAxis",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FMaskRectAlongAxisTest::RunTest(const FString&)
+{
+	// A 60 x 20 rectangle rotated 30°: along its own axis (any length, either direction) = the rectangle.
+	const TArray<FVector2D> Hull = CamSimMask::ConvexHull(Rotated(100, 80, 60, 20, 30.0));
+	const double T = FMath::DegreesToRadians(30.0);
+	for (const double Scale : { 1.0, 25.0, -3.0 })
+	{
+		const CamSimMask::FOrientedBox B = CamSimMask::RectAlongAxis(Hull, Scale * FVector2D(FMath::Cos(T), FMath::Sin(T)));
+		TestNearlyEqual(*FString::Printf(TEXT("own axis x%g: w"), Scale), B.W, 60.0, 1e-6);
+		TestNearlyEqual(*FString::Printf(TEXT("own axis x%g: h"), Scale), B.H, 20.0, 1e-6);
+		TestNearlyEqual(*FString::Printf(TEXT("own axis x%g: angle"), Scale), B.AngleDeg, 30.0, 1e-6);
+		TestNearlyEqual(*FString::Printf(TEXT("own axis x%g: cx"), Scale), B.Cx, 100.0, 1e-6);
+		TestNearlyEqual(*FString::Printf(TEXT("own axis x%g: cy"), Scale), B.Cy, 80.0, 1e-6);
+	}
+	// Axis-aligned 40 x 10 box measured along +x: extents are the projections, angle 0.
+	const TArray<FVector2D> R = CamSimMask::ConvexHull(RectCorners(10, 20, 50, 30));
+	const CamSimMask::FOrientedBox X = CamSimMask::RectAlongAxis(R, FVector2D(5, 0));
+	TestNearlyEqual(TEXT("+x: w"), X.W, 40.0, 1e-6);
+	TestNearlyEqual(TEXT("+x: h"), X.H, 10.0, 1e-6);
+	TestNearlyEqual(TEXT("+x: angle"), X.AngleDeg, 0.0, 1e-6);
+	// Along +y (the short side): w < h, so the sides swap and the angle turns +90 (90 -> 180, folded to 0).
+	const CamSimMask::FOrientedBox Y = CamSimMask::RectAlongAxis(R, FVector2D(0, 1));
+	TestNearlyEqual(TEXT("+y: w"), Y.W, 40.0, 1e-6);
+	TestNearlyEqual(TEXT("+y: h"), Y.H, 10.0, 1e-6);
+	TestNearlyEqual(TEXT("+y: angle"), Y.AngleDeg, 0.0, 1e-6);
+	// Along 45° the enclosing box is larger than the min-area one: (40 + 10) / sqrt 2 on both sides, a square.
+	const CamSimMask::FOrientedBox D = CamSimMask::RectAlongAxis(R, FVector2D(1, 1));
+	TestNearlyEqual(TEXT("45°: w"), D.W, 50.0 / FMath::Sqrt(2.0), 1e-6);
+	TestNearlyEqual(TEXT("45°: h"), D.H, 50.0 / FMath::Sqrt(2.0), 1e-6);
+	TestTrue(TEXT("45°: square angle folded into [-45, 45)"), D.AngleDeg >= -45.0 && D.AngleDeg < 45.0);
+	// Zero axis: MinAreaRect.
+	const CamSimMask::FOrientedBox Z = CamSimMask::RectAlongAxis(Hull, FVector2D::ZeroVector);
+	TestNearlyEqual(TEXT("zero axis: min-area angle"), Z.AngleDeg, 30.0, 1e-6);
+	return true;
+}

@@ -199,3 +199,76 @@ bool FAnalyzerPerf1080pTest::RunTest(const FString&)
 	TestTrue(TEXT("median < 15 ms"), Ms[2] < 15.0);
 	return true;
 }
+
+namespace
+{
+	/** Two visible blobs on a shallow diagonal (a hull split by a crest) plus a hidden band joining them (amodal only):
+	 *  min-area on the visible pixels is a ~12.9° sliver along the blobs, not the vehicle's axis. */
+	FInstanceIdImage FragmentedHull()
+	{
+		FInstanceIdImage I = MakeImage(64, 32);
+		for (int32 Y = 12; Y <= 19; ++Y) for (int32 X = 15; X <= 39; ++X) Set(I, X, Y, 0, 4);
+		for (int32 Y = 10; Y <= 13; ++Y) for (int32 X = 5; X <= 14; ++X) Set(I, X, Y, 4, 4);
+		for (int32 Y = 18; Y <= 21; ++Y) for (int32 X = 40; X <= 49; ++X) Set(I, X, Y, 4, 4);
+		return I;
+	}
+	/** Projected box3d corners with the rear face centred on Rear and the front face on Front. */
+	void SetAxis(FEntityAnnotationData& E, const FVector2D& Rear, const FVector2D& Front, bool bValid = true)
+	{
+		E.bHasBox3D = true; E.bCornersValid = bValid;
+		for (const int32 K : { 0, 1, 4, 5 }) E.CornersPx[K] = Rear;
+		for (const int32 K : { 2, 3, 6, 7 }) E.CornersPx[K] = Front;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnalyzerObbAxisTest, "CamSim.GroundTruth.Analyzer.ObbFollowsVehicleAxis",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FAnalyzerObbAxisTest::RunTest(const FString&)
+{
+	const FInstanceIdImage I = FragmentedHull();
+	TArray<FEntityAnnotationData> MinArea = { Tagged(4, 1) };
+	FInstanceMaskAnalyzer::Analyze(I, MinArea, 1, false);
+	TestTrue(*FString::Printf(TEXT("without an axis: the min-area sliver (%.2f°)"), MinArea[0].Obb.AngleDeg), FMath::Abs(MinArea[0].Obb.AngleDeg) > 10.0);
+
+	// Axis along +x (the vehicle drawn left to right): the OBB follows it, not the sliver.
+	TArray<FEntityAnnotationData> E = { Tagged(4, 1) };
+	SetAxis(E[0], FVector2D(5, 16), FVector2D(50, 16));
+	FInstanceMaskAnalyzer::Analyze(I, E, 1, false);
+	TestNearlyEqual(TEXT("angle follows the axis"), E[0].Obb.AngleDeg, 0.0, 1e-6);
+	TestNearlyEqual(TEXT("w = visible extent along the axis"), E[0].Obb.W, 45.0, 1e-6);   // cols 5..49 (pixel edges 5..50)
+	TestNearlyEqual(TEXT("h = visible extent across it"), E[0].Obb.H, 12.0, 1e-6);       // rows 10..21
+	TestNearlyEqual(TEXT("amodal coaxial"), E[0].ObbAmodal.AngleDeg, 0.0, 1e-6);
+	TestNearlyEqual(TEXT("amodal w"), E[0].ObbAmodal.W, 45.0, 1e-6);
+	// Reversed axis (driving right to left) gives the same box.
+	TArray<FEntityAnnotationData> R = { Tagged(4, 1) };
+	SetAxis(R[0], FVector2D(50, 16), FVector2D(5, 16));
+	FInstanceMaskAnalyzer::Analyze(I, R, 1, false);
+	TestNearlyEqual(TEXT("reversed: angle"), R[0].Obb.AngleDeg, 0.0, 1e-6);
+	TestNearlyEqual(TEXT("reversed: w"), R[0].Obb.W, 45.0, 1e-6);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnalyzerObbAxisFallbackTest, "CamSim.GroundTruth.Analyzer.ObbAxisFallsBackToMinArea",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FAnalyzerObbAxisFallbackTest::RunTest(const FString&)
+{
+	const FInstanceIdImage I = FragmentedHull();
+	TArray<FEntityAnnotationData> Ref = { Tagged(4, 1) };
+	FInstanceMaskAnalyzer::Analyze(I, Ref, 1, false);
+
+	// (b) Short axis: 5 px < 0.25 x the silhouette's longer side (45 px) — head-on / foreshortened: min-area.
+	TArray<FEntityAnnotationData> Short = { Tagged(4, 1) };
+	SetAxis(Short[0], FVector2D(20, 16), FVector2D(25, 16));
+	FInstanceMaskAnalyzer::Analyze(I, Short, 1, false);
+	TestNearlyEqual(TEXT("short axis: min-area angle"), Short[0].Obb.AngleDeg, Ref[0].Obb.AngleDeg, 1e-9);
+	TestNearlyEqual(TEXT("short axis: min-area w"), Short[0].Obb.W, Ref[0].Obb.W, 1e-9);
+	TestNearlyEqual(TEXT("short axis: amodal min-area"), Short[0].ObbAmodal.AngleDeg, Ref[0].ObbAmodal.AngleDeg, 1e-9);
+
+	// (c) Corners not valid (a corner behind the near plane): min-area, whatever the corners hold.
+	TArray<FEntityAnnotationData> NoCorners = { Tagged(4, 1) };
+	SetAxis(NoCorners[0], FVector2D(5, 16), FVector2D(50, 16), /*bValid=*/false);
+	FInstanceMaskAnalyzer::Analyze(I, NoCorners, 1, false);
+	TestNearlyEqual(TEXT("no corners: min-area angle"), NoCorners[0].Obb.AngleDeg, Ref[0].Obb.AngleDeg, 1e-9);
+	TestNearlyEqual(TEXT("no corners: min-area h"), NoCorners[0].Obb.H, Ref[0].Obb.H, 1e-9);
+	return true;
+}

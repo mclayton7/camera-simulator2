@@ -42,18 +42,12 @@ namespace CamSimMask
 		return H;
 	}
 
-	FOrientedBox MinAreaRect(const TArray<FVector2D>& Hull)
+	namespace
 	{
-		FOrientedBox Best;
-		if (Hull.Num() == 0) return Best;
-		if (Hull.Num() == 1) { Best.Cx = Hull[0].X; Best.Cy = Hull[0].Y; return Best; }
-		double BestArea = TNumericLimits<double>::Max();
-		for (int32 I = 0; I < Hull.Num(); ++I)
+		/** The rectangle enclosing Hull whose first axis is the unit vector U, normalised (w >= h, angle folded). */
+		FOrientedBox RectForUnitAxis(const TArray<FVector2D>& Hull, const FVector2D& U, double& OutArea)
 		{
-			const FVector2D E = Hull[(I + 1) % Hull.Num()] - Hull[I];
-			const double Len = E.Size();
-			if (Len <= 0.0) continue;
-			const FVector2D U = E / Len, V(-U.Y, U.X);
+			const FVector2D V(-U.Y, U.X);
 			double MinU = TNumericLimits<double>::Max(), MaxU = -MinU, MinV = MinU, MaxV = -MinU;
 			for (const FVector2D& P : Hull)
 			{
@@ -70,7 +64,24 @@ namespace CamSimMask
 			if (Wu < Hv) { Swap(Wu, Hv); Angle += 90.0; }
 			B.W = Wu; B.H = Hv;
 			B.AngleDeg = FoldAngle(Angle, FMath::IsNearlyEqual(Wu, Hv, 1e-9));
-			const double Area = Wu * Hv;
+			OutArea = Wu * Hv;
+			return B;
+		}
+	}
+
+	FOrientedBox MinAreaRect(const TArray<FVector2D>& Hull)
+	{
+		FOrientedBox Best;
+		if (Hull.Num() == 0) return Best;
+		if (Hull.Num() == 1) { Best.Cx = Hull[0].X; Best.Cy = Hull[0].Y; return Best; }
+		double BestArea = TNumericLimits<double>::Max();
+		for (int32 I = 0; I < Hull.Num(); ++I)
+		{
+			const FVector2D E = Hull[(I + 1) % Hull.Num()] - Hull[I];
+			const double Len = E.Size();
+			if (Len <= 0.0) continue;
+			double Area = 0.0;
+			const FOrientedBox B = RectForUnitAxis(Hull, E / Len, Area);
 			if (Area < BestArea - 1e-9 || (FMath::Abs(Area - BestArea) <= 1e-9 && FMath::Abs(B.AngleDeg) < FMath::Abs(Best.AngleDeg)))
 			{
 				BestArea = Area;
@@ -78,6 +89,15 @@ namespace CamSimMask
 			}
 		}
 		return Best;
+	}
+
+	FOrientedBox RectAlongAxis(const TArray<FVector2D>& Hull, const FVector2D& Axis)
+	{
+		const double Len = Axis.Size();
+		if (Hull.Num() == 0 || !(Len > 0.0) || !FMath::IsFinite(Len)) return MinAreaRect(Hull);
+		if (Hull.Num() == 1) { FOrientedBox B; B.Cx = Hull[0].X; B.Cy = Hull[0].Y; return B; }
+		double Area = 0.0;
+		return RectForUnitAxis(Hull, Axis / Len, Area);
 	}
 
 	double PolygonArea(const TArray<FVector2D>& P)
