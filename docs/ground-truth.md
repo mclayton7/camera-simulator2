@@ -1,7 +1,7 @@
 # Ground truth for ATR
 
-CamSim writes per-frame labels for every tagged entity (DIS / CIGI / scenario vehicles) next to
-the video: COCO JSON lines, optionally Pascal VOC XML and depth PNGs. Since ROADMAP 2.7 the 2D
+CamSim writes per-frame labels for every tagged entity (DIS / CIGI vehicles) next to
+the video: COCO JSON lines and, optionally, depth PNGs. Since ROADMAP 2.7 the 2D
 labels are **measured from the rendered frame**, not projected from the model's bounds: the
 box fits the vehicle's visible pixels in the encoded image (after the sensor's lens
 distortion), and each annotation says how much of the vehicle is hidden (occlusion) and how
@@ -48,7 +48,6 @@ Under `ml_training.output_dir`:
 | File | When | Content |
 |---|---|---|
 | `camsim_coco.jsonl` | `coco_export` (default on) | One JSON object per annotated frame (below). |
-| `annotations/frame_NNNNNNNN.xml` | `voc_export` (default off) | Pascal VOC, one file per annotated frame. |
 | `depth/depth_NNNNNNNN.png` | `depth_map` (default on) | 16-bit linear view depth (along the optical axis), 0 m → 0, `depth_far_plane_m` → 65535 (sky and anything farther clamp there). Taken from the primary view's scene depth by `InstanceIdCS` (same source texel as the masks: lens-distorted, FOV-matched, no second render); 0 = no source sample (outside a barrel-distorted frame). Written by its own task, at most 4 in flight (skips logged). |
 
 `NNNNNNNN` is the frame index (the COCO `frame_id`).
@@ -91,7 +90,7 @@ segmentation's `size` = `[H, W]`.
 | Field | Units / format | Meaning |
 |---|---|---|
 | `entity_id` | uint32 | Session-unique, stable for the entity's lifetime, never reused. |
-| `source`, `source_id` | string | `dis` / `cigi` / `scenario`; DIS `site.application.entity`, else the entity ID. |
+| `source`, `source_id` | string | `dis` / `cigi`; DIS `site.application.entity`, else the entity ID. |
 | `category` | `{id, name}` | CamSim type ID and `class_name` (`truck`, `boat`, …). |
 | `bbox` | `[x, y, w, h]` px | **Modal** box: the visible pixels. `x, y` = the top-left covered pixel, `w, h` = covered columns / rows, so a one-pixel mask is `[x, y, 1, 1]` and the box spans `[x, x+w) × [y, y+h)`. |
 | `area` | px | Modal pixel count (the mask area, COCO convention), not `w·h`. |
@@ -129,14 +128,6 @@ for a in rec["annotations"]:
     x, y, w, h = a["bbox"]  # m[y:y+h, x:x+w] holds every visible pixel
     print(a["category"]["name"], a["visibility"], a.get("truncation"), a["obb"])
 ```
-
-## Pascal VOC
-
-One `annotations/frame_NNNNNNNN.xml` per annotated frame; per object `name`, `entity_id`,
-`source`, `source_id`, `truncated` (as COCO), `occluded` (`visibility < 0.95`; only for
-render-measured objects), `difficult` 0 and the **modal** box. Coordinates are 0-based pixel
-edges, as CamSim always wrote them: `xmin`/`ymin` = the first covered pixel, `xmax`/`ymax` =
-one past the last covered pixel (`xmax = x + w` of the COCO `bbox`).
 
 ## Configuration
 

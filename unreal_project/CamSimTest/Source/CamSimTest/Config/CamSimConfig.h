@@ -28,18 +28,11 @@
  *   CAMSIM_SENSOR_QUALITY_PRESET  - low|medium|high|ultra|custom                 (default medium)
  *   CAMSIM_TERRAIN_PROVIDER       - geospatial terrain provider                    (default cesium)
  *   CAMSIM_IMAGERY_PROVIDER       - imagery provider                               (default cesium)
- *   CAMSIM_GROUND_TRUTH_ENABLED   - write JSONL sidecar telemetry                  (default 0)
- *   CAMSIM_GROUND_TRUTH_PATH      - sidecar output path                            (default empty)
- *   CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES - sidecar cadence                          (default 1)
  *   CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M - entity culling distance                    (default 0=disabled)
  *   CAMSIM_ENTITY_TICK_RATE_HZ    - entity actor tick rate                          (default 0=unlimited)
  *   CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ - default pose apply cap               (default 0=unlimited)
- *   CAMSIM_SCENARIO_ENABLED       - enable scenario_entities                        (default 0)
- *   CAMSIM_SCENARIO_TIME_SCALE    - scenario time multiplier                        (default 1.0)
  *   CAMSIM_FPS_ENTITY_ID          - FPS entity (0=disabled)                          (default 0)
  *   CAMSIM_FPS_EYE_HEIGHT_M       - eye height above entity origin                   (default 1.7)
- *   CAMSIM_RAND_ENABLED           - enable scenario randomization                    (default 0)
- *   CAMSIM_RAND_SEED              - randomization seed (0=wall-clock)                (default 0)
  *   CAMSIM_MAX_SSE                - Cesium MaximumScreenSpaceError                  (default 2.0)
  *   CAMSIM_MAX_CACHED_MB          - Cesium tile cache budget in MB                  (default 2048)
  *   CAMSIM_ENCODER                - H.264 encoder: auto|nvenc|libx264               (default auto)
@@ -171,7 +164,6 @@ struct FCamSimConfig
 
 	// Entity scalability
 	int32   MaxEntities = 500;
-	bool    bUseInstancedRendering = true;
 
 	// CIGI entity ID that drives the camera (all others -> entity manager)
 	int32   CameraEntityId  = 0;
@@ -216,17 +208,6 @@ struct FCamSimConfig
 	// using the root multicast/video settings above.
 	TArray<FOutputViewConfig> OutputViews;
 
-	// Telemetry JSONL sidecar (pre-Phase 17 ground truth stream).
-	// Distinct from FMLTrainingConfig: writes per-frame KLV telemetry to a JSONL
-	// file alongside the video stream (used by MultiViewFrameSink).
-	struct FGroundTruthConfig
-	{
-		bool    bEnabled = false;
-		FString OutputPath;
-		int32   IntervalFrames = 1;
-	};
-	FGroundTruthConfig GroundTruth;
-
 	struct FEntityScaleConfig
 	{
 		// 0 disables distance culling.
@@ -239,136 +220,6 @@ struct FCamSimConfig
 		TMap<int32, float> MaxUpdateRateHzOverrides;
 	};
 	FEntityScaleConfig EntityScale;
-
-	// ---- 23A: Waypoint Trajectories ----
-	struct FWaypointConfig
-	{
-		double Latitude   = 0.0;
-		double Longitude  = 0.0;
-		float  Altitude   = 0.0f;
-		float  SpeedMps   = 0.0f;    // 0 = inherit from entity BaseSpeedMps
-		float  HeadingDeg = -1.0f;   // -1 = auto from great-circle bearing
-		float  PauseSec   = 0.0f;    // dwell at waypoint before continuing
-	};
-
-	// ---- 23C: Pattern-of-Life ----
-	struct FActivityScheduleEntry
-	{
-		float StartHour         = 0.0f;   // 0-24 scenario time-of-day
-		float EndHour           = 24.0f;
-		int32 WaypointPathIndex = 0;      // index into entity Waypoints sub-arrays
-		float SpawnJitterSec    = 0.0f;
-		float PathDeviationM    = 0.0f;
-	};
-
-	struct FScenarioEntityConfig
-	{
-		int32 EntityId = 1;
-		int32 EntityType = 1001;
-		double StartLatitude = 38.8977;
-		double StartLongitude = -77.0365;
-		double StartAltitude = 500.0;
-		float StartYaw = 0.0f;
-		float StartPitch = 0.0f;
-		float StartRoll = 0.0f;
-
-		float SpawnTimeSec = 0.0f;
-		float DespawnTimeSec = 0.0f; // <= SpawnTimeSec means persistent
-		float UpdateRateHz = 10.0f;  // 0 = every manager tick
-
-		// Scripted trajectory rates (linear fallback when no waypoints).
-		float NorthRateMps = 0.0f;
-		float EastRateMps = 0.0f;
-		float UpRateMps = 0.0f;
-		float YawRateDegPerSec = 0.0f;
-		float PitchRateDegPerSec = 0.0f;
-		float RollRateDegPerSec = 0.0f;
-
-		// Phase 23A: Waypoint trajectories
-		TArray<FWaypointConfig> Waypoints;
-		bool  bLoopWaypoints = false;
-		float BaseSpeedMps   = 10.0f;
-
-		// Phase 23C: Pattern-of-life activity schedule
-		TArray<FActivityScheduleEntry> ActivitySchedule;
-		FString ActivityProfile;   // "civilian" | "military" | "" (custom)
-
-		// Phase 23D: Formation flying
-		// 0 = no formation (entity is its own leader).
-		int32   LeaderEntityId   = 0;
-		// Body-frame offset from leader in metres: X=forward, Y=right, Z=down.
-		FVector FormationOffsetM = FVector::ZeroVector;
-		// true = follower copies leader Yaw; false = follower keeps its own heading.
-		bool    bInheritHeading  = true;
-	};
-
-	// ---- 23B: Event Triggers ----
-	enum class EScenarioConditionType : uint8
-	{
-		TimeSec = 0,         // scenario_elapsed >= threshold
-		EntityInArea,        // entity within lat/lon/radius
-		EntityProximity,     // two entities within distance
-		FrameCount,          // scenario frame >= threshold
-	};
-
-	enum class EScenarioActionType : uint8
-	{
-		SpawnEntity = 0,
-		DespawnEntity,
-		SetDamageState,
-		ChangeSpeed,
-		LogMessage,
-	};
-
-	struct FScenarioCondition
-	{
-		EScenarioConditionType Type = EScenarioConditionType::TimeSec;
-		float  TimeSec        = 0.0f;
-		int32  EntityIdA      = 0;
-		int32  EntityIdB      = 0;
-		double AreaLatitude   = 0.0;
-		double AreaLongitude  = 0.0;
-		float  RadiusM        = 100.0f;
-		int32  FrameThreshold = 0;
-	};
-
-	struct FScenarioAction
-	{
-		EScenarioActionType Type = EScenarioActionType::LogMessage;
-		int32   TargetEntityId   = 0;
-		int32   TargetEntityType = 1001;
-		double  SpawnLatitude    = 0.0;
-		double  SpawnLongitude   = 0.0;
-		float   SpawnAltitude    = 0.0f;
-		uint8   DamageState      = 0;
-		float   NewSpeedMps      = 0.0f;
-		FString Message;
-	};
-
-	struct FScenarioTrigger
-	{
-		FString            Name;
-		FScenarioCondition Condition;
-		FScenarioAction    Action;
-		bool  bRepeat     = false;
-		float CooldownSec = 0.0f;
-	};
-
-	// ---- 22C: Damage Transition FX ----
-	struct FDamageTransitionConfig
-	{
-		bool  bDamageTransitionFX    = true;
-		bool  bGradualDamage         = false;
-		float DamageInterpolationSec = 1.0f;
-		float DamageScorchDarkening  = 0.3f;
-	};
-
-	bool bScenarioEnabled = false;
-	float ScenarioTimeScale = 1.0f;
-	float ScenarioStartHour = -1.0f;  // local solar hour applied to the sim clock at scenario start; <0 = don't
-	TArray<FScenarioEntityConfig> ScenarioEntities;
-	TArray<FScenarioTrigger> ScenarioTriggers;
-	FDamageTransitionConfig DamageTransition;
 
 	// Security metadata for MISB ST 0102 (Phase 12A)
 	struct FSecurityMetadataConfig
@@ -383,10 +234,6 @@ struct FCamSimConfig
 
 	// Video codec: "h264" or "h265" (Phase 12B)
 	FString VideoCodec = TEXT("h264");
-
-	// Prometheus metrics file path (empty = disabled). Phase 12D.
-	// A Prometheus node_exporter textfile-collector compatible .prom file.
-	FString PrometheusMetricsPath;
 
 	// Recording & Playback (Phase 12E)
 	struct FRecordingConfig
@@ -403,7 +250,6 @@ struct FCamSimConfig
 	//   CAMSIM_ML_DEPTH_ENABLED       - write 16-bit PNG depth maps    (default 1)
 	//   CAMSIM_ML_BBOX_ENABLED        - project entity AABB to screen  (default 1)
 	//   CAMSIM_ML_COCO_ENABLED        - write COCO JSONL sidecar       (default 1)
-	//   CAMSIM_ML_VOC_ENABLED         - write Pascal VOC XML per frame (default 0)
 	//   CAMSIM_ML_INTERVAL_FRAMES     - annotation cadence             (default 1)
 	//   CAMSIM_ML_DEPTH_FAR_PLANE_M   - depth quantization ceiling (m) (default 5000)
 	//   CAMSIM_ML_MIN_VISIBLE_PIXELS  - drop annotations with fewer visible px (default 1, min 1)
@@ -416,37 +262,11 @@ struct FCamSimConfig
 		bool    bDepthMap                = true;   // 17A: 16-bit PNG depth
 		bool    bBoundingBoxes           = true;   // 17D: project entity AABB to screen
 		bool    bCocoExport              = true;   // 17G: streaming COCO JSONL
-		bool    bVocExport               = false;  // 17H: Pascal VOC XML per frame
 		float   DepthFarPlaneM           = 5000.0f;
 		int32   MinVisiblePixels         = 1;      // ml_training.min_visible_pixels (>= 1)
 		bool    bSegmentation            = true;   // ml_training.segmentation: COCO RLE modal mask
 	};
 	FMLTrainingConfig MLTraining;
-
-	// Optical realism effects (Phase 15)
-	struct FOpticalRealismConfig
-	{
-		bool bEnabled = false;              // master toggle (false = clean ML frames)
-		// 15A Motion Blur
-		bool  bMotionBlur = true;
-		float MotionBlurAmount = 0.5f;      // [0,1]
-		int32 MotionBlurMax = 5;            // max blur pixels
-		// 15C Bloom
-		bool  bBloom = true;
-		float BloomIntensity = 0.675f;
-		float BloomThreshold = -1.0f;       // -1 = auto
-		// 15E Depth of Field
-		bool  bDepthOfField = false;
-		float FocalDistance = 0.0f;         // cm, 0 = auto-focus from LOS
-		float ApertureFStop = 4.0f;
-		float SensorWidth = 24.576f;        // mm
-		// 15F Lens Flare
-		bool  bLensFlare = false;
-		float LensFlareIntensity = 1.0f;
-		float LensFlareBokehSize = 3.0f;
-		float LensFlareThreshold = 8.0f;
-	};
-	FOpticalRealismConfig OpticalRealism;
 
 	// Phase 24 — Rendering Quality
 	struct FRenderingQualityConfig
@@ -467,10 +287,6 @@ struct FCamSimConfig
 		// Env: CAMSIM_RT_ENABLED
 		bool bRayTracingEnabled = false;
 
-		// 24D: Ray-traced reflections on SceneCapture (requires bRayTracingEnabled=true)
-		// Env: CAMSIM_RT_REFLECTIONS
-		bool bRayTracedReflections = false;
-
 		// 24E: Shadow distance and VSM quality
 		// Env: CAMSIM_SHADOW_DISTANCE_SCALE / CAMSIM_VSM_RESOLUTION_BIAS / CAMSIM_VSM_MAX_PAGES
 		float ShadowDistanceScale = 1.0f;   // multiplies engine max shadow distance
@@ -486,85 +302,27 @@ struct FCamSimConfig
 	// Phase 27 — Performance & Optimization
 	struct FPerformanceConfig
 	{
-		// 27B Frame Drop Categorization
-		bool  bTrackFrameDropsByCategory    = false;
-
-		// 27D Hot-Reload Config
-		bool  bHotReloadConfig              = false;
-		float HotReloadPollIntervalSec      = 5.0f;
-
-		// 27E Tile Prefetch
-		float TilePrefetchSlewThresholdDegPerSec = 10.0f;
-		float TilePrefetchFovBoost               = 1.0f;
-		int32 TilePrefetchBoostFrames            = 30;
-
-		// 27F 60 Hz Rendering
-		float RenderFrameRateHz  = 30.0f;
-		float OutputFrameRateHz  = 30.0f;
-
 		// 27G Texture Paging Budget
 		int32 TexturePoolBudgetMB = 0;
-
-		// Adaptive SSE: auto-adjust Cesium LOD quality based on frame budget
-		bool  bAdaptiveSSE          = false;
-		float AdaptiveSSEMin        = 8.0f;   // minimum SSE (sharpest allowed)
-		float AdaptiveSSEMax        = 24.0f;  // maximum SSE (most aggressive LOD reduction)
 
 		// 28G Per-Frame Latency Tracking
 		bool  bTrackPipelineLatency = false;
 	};
 	FPerformanceConfig Performance;
 
-	// Weather, Atmosphere & Particle Effects (Phase 18)
+	// Weather & Atmosphere (Phase 18)
 	struct FPhase18Config
 	{
-		/** YAML-configured position for a regional weather zone (18L). */
-		struct FWeatherZoneConfig
-		{
-			int32  ZoneID  = 0;
-			double LatDeg  = 0.0;
-			double LonDeg  = 0.0;
-			float  RadiusM = 10000.0f;
-		};
 		// 18C Second fog layer (low-lying mist)
 		bool  bSecondFog        = false;
 		float FogDensity        = 0.02f;  // [0,1]
 		float FogHeightFalloff  = 0.2f;   // UE ExponentialHeightFog param
-		// 18E God rays / light shafts
-		bool  bGodRays          = false;
-		float GodRayIntensity   = 1.0f;
-		// 18J Sky atmospheric scattering overrides
-		bool  bAtmosphericScattering = false;
-		float RayleighScattering     = 1.0f; // multiplier on Rayleigh coefficient
-		float MieScattering          = 1.0f; // multiplier on Mie coefficient
-		// 18K Visibility range (metres), also used for scenario randomization jitter
+		// 18K Visibility range (metres)
 		float VisibilityRangeM       = 10000.0f;
 
 		// 18A/18B Volumetric cloud shadow strength (cloud actor exists in scene)
 		bool  bVolumetricClouds   = false;
 		float CloudShadowStrength = 0.6f;   // [0,1] shadow intensity on terrain
-
-		// 18L Regional weather zones — positions from YAML, parameters from CIGI RegionId
-		bool                       bWeatherZones = false;
-		TArray<FWeatherZoneConfig> WeatherZoneConfigs;  // up to 16, populated from YAML array
-
-		// 18F/18G/18H Niagara particle FX — soft asset paths, authored in UE editor
-		FString NiagaraRotorWash  = TEXT("/Game/Effects/NS_RotorWash");
-		FString NiagaraSmoke      = TEXT("/Game/Effects/NS_Smoke");
-		FString NiagaraFire       = TEXT("/Game/Effects/NS_Fire");
-		FString NiagaraContrail   = TEXT("/Game/Effects/NS_Contrail");
-		float   ContrailAltM      = 8000.0f;
-		// NOTE: speed threshold not enforced — FCigiEntityState has no velocity field.
-		float   ContrailSpeedMs   = 100.0f;
-		int32   SmokeComponentID  = 1;
-		int32   FireComponentID   = 2;
-
-		// 18I Decal cratering
-		// NOTE: FCigiComponentControl has no CompData field — radius uses config default only.
-		FString CraterDecalMaterial     = TEXT("/Game/Effects/M_Crater");
-		int32   CraterImpactComponentID = 10;
-		int32   MaxCraters              = 32;
-		float   CraterDefaultRadiusM    = 5.0f;
 	};
 	FPhase18Config Phase18;
 
@@ -586,8 +344,8 @@ struct FCamSimConfig
 		/** Thermal radiance for IR (ROADMAP 4A, docs/thermal.md). */
 	struct FThermalConfig
 	{
-		// Startup decides whether thermal is available (and entities get stencils for it); a live
-		// false (hot reload) runs IR as the 3B.2 luminance proxy for A/B comparison.
+		// Startup decides whether thermal is available (and entities get stencils for it); false
+		// runs IR as the 3B.2 luminance proxy (restart to A/B compare).
 		bool  bEnabled            = true;
 		float AirTemperatureC     = 15.0f;   // daily mean, until CIGI Atmosphere Control sets it
 		float AirDiurnalSwingK    = 8.0f;    // peak-to-peak; T_air = mean + swing/2 cos(w (t - 15 h local solar))
@@ -639,31 +397,6 @@ struct FCamSimConfig
 			int32   MaximumSimultaneousTileLoads = 20;
 		} Imagery;
 	} CesiumBackend;
-
-	// Phase 21 Sprint 2 — Streaming, ROVER & Laser Designator
-	struct FStreamingConfig
-	{
-		// CoT (21D.1)
-		bool    bCotEnabled      = false;
-		FString CotAddr          = TEXT("239.2.3.1");
-		int32   CotPort          = 6969;
-		float   CotIntervalSec   = 2.0f;
-		FString CotUid           = TEXT("CamSim-ISR-1");
-		FString CotType          = TEXT("a-f-G-E-S");
-		FString CotCallsign      = TEXT("CAMSIM");
-
-		// ATAK view (21D.2)
-		bool    bAtakViewEnabled = false;
-		FString AtakAddr         = TEXT("239.1.1.2");
-		int32   AtakPort         = 5005;
-		int32   AtakBitrate      = 2000000;
-
-		// ROVER (21E.1)
-		bool    bRoverCompat     = false;
-		int32   RoverVideoPid    = 0x1011;
-		int32   RoverKlvPid      = 0x1012;
-	};
-	FStreamingConfig Streaming;
 
 	// Phase 21 — DIS (IEEE 1278.1) Protocol
 	//   CAMSIM_DIS_ENABLED              - master toggle                  (default 0)
@@ -723,34 +456,6 @@ struct FCamSimConfig
 	};
 	FTerrainGateConfig TerrainGate;
 
-	// Phase 23E: Scenario Randomization Engine
-	struct FEntityRandomizationEntry
-	{
-		int32  TemplateEntityId = 0;    // matches a ScenarioEntities[*].EntityId
-		int32  MinCount         = 1;
-		int32  MaxCount         = 1;
-		float  SpawnRadiusM     = 0.0f; // jitter radius for extra cloned entities
-		float  PositionJitterM  = 0.0f; // jitter on the template entity itself
-		float  SpeedJitterFrac  = 0.0f; // fractional jitter on BaseSpeedMps [0,1]
-		int32  IdOffset         = 100;  // extra entities: BaseId + IdOffset, +IdOffset*2, …
-	};
-
-	struct FRandomizationConfig
-	{
-		bool    bEnabled            = false;
-		int32   Seed                = 0;      // 0 = wall-clock
-		int32   ResolvedSeed        = 0;      // written back after resolution (not parsed)
-
-		// Environment jitter
-		float   StartHourJitterHrs  = 0.0f;  // ± jitter on ScenarioStartHour
-		float   VisibilityJitterFrac = 0.0f; // fractional jitter on Phase18 VisibilityRangeM
-		float   FogDensityJitterFrac = 0.0f; // fractional jitter on Phase18 FogDensity
-
-		// Per-entity template overrides
-		TArray<FEntityRandomizationEntry> EntityEntries;
-	};
-	FRandomizationConfig Randomization;
-
 	// Phase 28 — Operational Hardening
 	struct FOperationalConfig
 	{
@@ -794,18 +499,6 @@ struct FCamSimConfig
 	static FCamSimConfig Load();
 
 	/** Parse YAML text (defaults for anything absent), then apply env var overrides. */
-	/**
-	 * Hot reload: copy the settings that only take effect at startup from the
-	 * running config into a freshly loaded one (network ports, codec, render path).
-	 */
-	static void KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSimConfig& Reloaded);
-
-	/**
-	 * Hot reload gate: the errors that make Reloaded unusable — a parse failure, or Validate() of
-	 * Reloaded as it would run (restart-only settings carried over from Running). Empty = apply it.
-	 */
-	static TArray<FString> ValidateHotReload(const FCamSimConfig& Running, const FCamSimConfig& Reloaded);
-
 	static FCamSimConfig LoadFromYamlString(const FString& YamlContent, const FString& SourceName = TEXT("<string>"));
 
 	/** YAML keys no setting reads (typos, removed settings), as dotted paths. Warned at load. */

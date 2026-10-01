@@ -41,12 +41,8 @@ public:
 	/** Move the streaming cameras to the sensor's current pose and FOV. */
 	void UpdateCameras(AActor* Owner, const USceneCaptureComponent2D& Sensor, const FCamSimConfig& Cfg);
 
-	/**
-	 * Gimbal-slew prefetch boost and adaptive SSE. Sets
-	 * MaximumScreenSpaceError on the tilesets when either is active.
-	 */
-	void UpdateLevelOfDetail(float DeltaTime, float GimbalYawDeg, float GimbalPitchDeg, float HFovDeg,
-		const FCamSimConfig& Cfg, const FTilesets& Tilesets);
+	/** Scale the tilesets' culled (off-screen) screen-space error with the live FOV. */
+	void UpdateLevelOfDetail(float HFovDeg, const FCamSimConfig& Cfg, const FTilesets& Tilesets);
 
 	/**
 	 * Update the terrain gate from tileset load progress and the platform's
@@ -59,11 +55,7 @@ public:
 	/** Log per-tileset load progress and memory (heartbeat). */
 	static void LogTilesetStats(const FTilesets& Tilesets);
 
-	int32 GetPrefetchBoostFramesRemaining() const { return PrefetchBoostFramesRemaining; }
-	float GetAdaptiveSse() const { return AdaptiveSse; }
-
 private:
-	static void SetScreenSpaceError(const FTilesets& Tilesets, double Sse);
 	static void SetCulledScreenSpaceError(const FTilesets& Tilesets, double Sse);
 
 	double AppliedCulledSse = -1.0;  // last culled SSE written (< 0 = none yet)
@@ -73,16 +65,6 @@ private:
 	// inserts/removes entries ahead of ours — true for CamSim's single camera.
 	int32 PrimaryCameraSlot  = -1;
 	int32 PrefetchCameraSlot = -1;
-
-	// Gimbal-slew prefetch
-	float PrevGimbalYawDeg   = 0.0f;
-	float PrevGimbalPitchDeg = 0.0f;
-	bool  bHasPrevGimbal     = false;  // no slew is measured from the first sample
-	int32 PrefetchBoostFramesRemaining = 0;
-
-	// Adaptive SSE (0 = not initialised)
-	float AdaptiveSse             = 0.0f;
-	int32 UnderBudgetStreakFrames = 0;
 
 	// Terrain readiness gate
 	FTerrainReadinessGate TerrainGate;

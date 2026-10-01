@@ -91,8 +91,5 @@ bool FOceanConfigValidateTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("choppiness NaN"),  Has(With([NaN](auto& O) { O.Choppiness = NaN; }), TEXT("ocean.choppiness")));
 	TestFalse(TEXT("choppiness 1"),    Has(With([](auto& O) { O.Choppiness = 1.0f; }), TEXT("ocean.choppiness")));
 
-	// Hot reload rejects it too (ValidateHotReload = Validate of the config as it would run).
-	FCamSimConfig Reloaded = FCamSimConfig::LoadFromYamlString(TEXT("ocean:\n  max_radius_km: 0\n"));
-	TestTrue(TEXT("hot reload rejects max_radius_km 0"), Has(FCamSimConfig::ValidateHotReload(FCamSimConfig(), Reloaded), TEXT("ocean.max_radius_km")));
 	return true;
 }

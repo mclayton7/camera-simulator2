@@ -9,7 +9,7 @@
  *
  * Per-frame telemetry snapshot used throughout CamSim:
  *   - FKlvBuilder consumes it to produce MISB ST 0601 KLV (Metadata/KlvBuilder.h).
- *   - FCotSender / FMultiViewFrameSink reference it for telemetry passthrough.
+ *   - FMultiViewFrameSink references it for telemetry passthrough.
  *
  * Phase 5: lifted out of KlvBuilder.h so consumers that need the telemetry struct
  * don't have to transitively include the entire KLV builder API. KlvBuilder.h

@@ -162,14 +162,12 @@ frames in flight.
 | Field | Meaning |
 |-------|---------|
 | `entity_id` | uint32, assigned at spawn from a session counter; stable for the entity's lifetime and never reused |
-| `source` | `dis`, `cigi` or `scenario` |
-| `source_id` | DIS: `site.application.entity` (e.g. `1.1.2`); CIGI / scenario: the entity ID |
+| `source` | `dis` or `cigi` |
+| `source_id` | DIS: `site.application.entity` (e.g. `1.1.2`); CIGI: the entity ID |
 | `category` | `{id: CamSim type ID, name: class_name}` — `truck` / `boat` for the shipped models |
 | `bbox`, `area`, `truncated` | Box `[x, y, w, h]` of the vehicle's visible pixels in the encoded frame, the visible pixel count, and whether it is cut by the frame edge (ROADMAP 2.7; see [`ground-truth.md`](ground-truth.md)) |
 | `visibility`, `truncation`, `bbox_amodal`, `obb`, `obb_amodal`, `segmentation`, `box3d`, `mask_source` | Occlusion, frame-edge cut, whole-silhouette box, oriented boxes, RLE mask and projected 3D box: [`ground-truth.md`](ground-truth.md) |
 | `geo` | `{lat, lon, alt_m}`: the entity origin's geodetic position at capture (WGS-84 degrees, ellipsoid metres); for a clamped vehicle that is its ground contact / waterline point |
-
-VOC XML carries the same `entity_id`, `source` and `source_id` per object.
 
 ## Limitations
 

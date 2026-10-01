@@ -13,8 +13,6 @@
  * Wraps one or more FVideoEncoder instances and fans out each captured frame
  * to multiple output routes. Per-view HFOV can be narrowed using a center crop
  * (digital zoom) so each stream can carry independent FOV metadata.
- *
- * Also supports optional JSONL ground-truth sidecar output.
  */
 class FMultiViewFrameSink : public IFrameSink
 {
@@ -51,18 +49,7 @@ private:
 	TAtomic<uint64> SuccessfulFrameCount { 0 };
 	TArray<FViewRuntime> Views;
 
-	bool bGroundTruthEnabled = false;
-	FString GroundTruthPath;
-	int32 GroundTruthIntervalFrames = 1;
-
-	// Phase 2: persistent JSONL sidecar handle. Opened once in Open() and
-	// closed in Close(); WriteGroundTruthLine appends through this handle
-	// instead of FFileHelper::SaveStringToFile which would open/seek/write/
-	// close the OS file descriptor on every record (30 syscalls/sec at 30 fps).
-	class IFileHandle* GroundTruthHandle_ = nullptr;
-
 	void BuildViewRuntimes();
-	void WriteGroundTruthLine(const FCamSimTelemetry& Telemetry, uint64 FrameIdx, int32 EncodedViewCount) const;
 	/** Crop/nearest-neighbour digital zoom on an NV12 frame: applied to the Y
 	 *  plane at full resolution and the UV plane at half resolution. */
 	static void ApplyDigitalZoomNv12(const TArray<uint8>& SourceNv12,

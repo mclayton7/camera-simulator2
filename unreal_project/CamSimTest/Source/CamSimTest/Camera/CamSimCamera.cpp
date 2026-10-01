@@ -23,8 +23,6 @@
 #include "DynamicRHI.h"
 #include "RenderTimer.h"      // GGameThreadTime, GRenderThreadTime, GRHIThreadTime
 #include "Cesium3DTileset.h"
-#include "Async/Async.h"
-#include "HAL/FileManager.h"
 #include "CesiumGeoreference.h"
 #include "CesiumGlobeAnchorComponent.h"
 #include "CesiumOriginShiftComponent.h"
@@ -119,7 +117,7 @@ void ACamSimCamera::BeginPlay()
 	}
 
 	// Tileset streaming parameters and the Cesium backend (ion server, terrain,
-	// imagery). The tuning helper is shared with UCamSimSubsystem::HotReloadConfig.
+	// imagery).
 	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Cfg);
 	Subsystem->StoreCesiumIonServer(ApplyCesiumBackendConfig(GetWorld(), Cfg.CesiumBackend));
 
@@ -174,7 +172,6 @@ void ACamSimCamera::Tick(float DeltaTime)
 
 	++TickCount;
 	EmitHeartbeatIfDue();
-	PollHotReloadConfig(DeltaTime);
 
 	if (LatencyTracker) LatencyTracker->Mark(EPipelineStage::GameTickStart);
 
@@ -187,8 +184,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 
 	ApplyCigiViewState(DeltaTime);
 
-	Streaming.UpdateLevelOfDetail(DeltaTime, GimbalComp->GetGimbalYaw(), GimbalComp->GetGimbalPitch(),
-		SceneCapture->FOVAngle, Cfg, Subsystem->GetCachedTilesets());
+	Streaming.UpdateLevelOfDetail(SceneCapture->FOVAngle, Cfg, Subsystem->GetCachedTilesets());
 
 	// Telemetry that depends on the final pose, gimbal and FOV of this frame.
 	Telemetry.SetFieldOfView(SceneCapture->FOVAngle,
@@ -199,7 +195,6 @@ void ACamSimCamera::Tick(float DeltaTime)
 	Streaming.UpdateCameras(this, *SceneCapture, Cfg);
 	Telemetry.UpdateFrameCenter(GetWorld(), *SceneCapture, this, Subsystem->GetGeospatialProvider());
 
-	UpdateAutoFocus();
 	ApplyPrimaryView();
 	UpdateCameraCut();
 	// The engine updated the player camera before this tick group; render
@@ -229,7 +224,6 @@ void ACamSimCamera::Tick(float DeltaTime)
 
 	if (!SensorComp->IsOn()) return;
 	if (!Streaming.UpdateTerrainGate(Telemetry.Get().Latitude, Telemetry.Get().Longitude, Subsystem->GetCachedTilesets())) return;
-	if (CaptureComp->ShouldSkipFrameForDecimation(Cfg)) return;
 
 	if (CaptureComp->IsReadyForCapture())
 	{
@@ -361,19 +355,8 @@ void ACamSimCamera::ApplyCigiViewState(float DeltaTime)
 	Telemetry.SetGimbal(GimbalComp->GetGimbalYaw(), GimbalComp->GetGimbalPitch(), GimbalComp->GetGimbalRoll());
 }
 
-void ACamSimCamera::UpdateAutoFocus()
-{
-	const FCamSimConfig::FOpticalRealismConfig& Opt = Subsystem->GetConfig().OpticalRealism;
-	const double SlantRangeM = Telemetry.Get().SlantRangeM;
-	if (Opt.bEnabled && Opt.bDepthOfField && Opt.FocalDistance <= 0.0f && SlantRangeM > 0.0)
-	{
-		SceneCapture->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
-		SceneCapture->PostProcessSettings.DepthOfFieldFocalDistance = static_cast<float>(SlantRangeM * 100.0);  // m → cm
-	}
-}
-
 // -------------------------------------------------------------------------
-// Heartbeat and config hot reload
+// Heartbeat
 // -------------------------------------------------------------------------
 
 void ACamSimCamera::EmitHeartbeatIfDue()
@@ -394,65 +377,4 @@ void ACamSimCamera::EmitHeartbeatIfDue()
 		FMath::Max(1, Subsystem->GetConfig().ReadbackReadyPolls), WallDeltaSec, EffectiveFps);
 
 	FCamSimStreamingController::LogTilesetStats(Subsystem->GetCachedTilesets());
-}
-
-void ACamSimCamera::PollHotReloadConfig(float DeltaTime)
-{
-	const FCamSimConfig& Cfg = Subsystem->GetConfig();
-	if (!Cfg.Performance.bHotReloadConfig) return;
-
-	HotReloadAccumSec += DeltaTime;
-	if (HotReloadAccumSec >= Cfg.Performance.HotReloadPollIntervalSec
-	    && !bHotReloadStatInFlight.Load(EMemoryOrder::Relaxed))
-	{
-		HotReloadAccumSec = 0.0f;
-		bHotReloadStatInFlight.Store(true, EMemoryOrder::Relaxed);
-		const FString CfgPath = FCamSimConfig::GetConfigFilePath();
-		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, CfgPath]()
-		{
-			const FDateTime CurrMTime = IFileManager::Get().GetTimeStamp(*CfgPath);
-			if (CurrMTime != FDateTime::MinValue() && CurrMTime != LastConfigMTime)
-			{
-				LastConfigMTime = CurrMTime;
-				bHotReloadFileChanged.Store(true, EMemoryOrder::SequentiallyConsistent);
-			}
-			bHotReloadStatInFlight.Store(false, EMemoryOrder::Relaxed);
-		});
-	}
-
-	// TAtomic<T>::Exchange is single-arg (seq_cst), matching the Store above.
-	if (!bHotReloadFileChanged.Exchange(false))
-	{
-		return;
-	}
-
-	const FCamSimConfig OldCfg = Cfg;
-	FCamSimConfig NewCfg = FCamSimConfig::Load();
-	// Same gate as startup: a config Validate() rejects (or one that failed to parse) never goes live.
-	const TArray<FString> ReloadErrors = FCamSimConfig::ValidateHotReload(OldCfg, NewCfg);
-	if (ReloadErrors.Num() > 0)
-	{
-		for (const FString& Err : ReloadErrors)
-		{
-			UE_LOG(LogCamSim, Error, TEXT("HotReload: %s"), *Err);
-		}
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: %d config error(s) — keeping current config"), ReloadErrors.Num());
-		return;
-	}
-
-	if (NewCfg.CigiPort != OldCfg.CigiPort)
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: CIGI port change ignored (requires restart)"));
-	if (NewCfg.MulticastAddr != OldCfg.MulticastAddr)
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: multicast addr change ignored (requires restart)"));
-	if (NewCfg.VideoCodec != OldCfg.VideoCodec)
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: video codec change ignored (requires restart)"));
-	if (NewCfg.MulticastPort != OldCfg.MulticastPort)
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: multicast port change ignored (requires restart)"));
-	if (NewCfg.Render.OriginShiftDistanceM != OldCfg.Render.OriginShiftDistanceM)
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: origin_shift_distance_m change ignored (requires restart)"));
-	if (NewCfg.CaptureWidth != OldCfg.CaptureWidth || NewCfg.CaptureHeight != OldCfg.CaptureHeight)
-		UE_LOG(LogCamSim, Warning, TEXT("HotReload: capture_width / capture_height change ignored (requires restart)"));
-
-	Subsystem->HotReloadConfig(NewCfg);
-	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: HotReload applied from %s"), *FCamSimConfig::GetConfigFilePath());
 }

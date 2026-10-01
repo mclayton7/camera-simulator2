@@ -83,34 +83,6 @@ dis:
     "1:1:225:7:0:0:0": 2001   # Truck (land)
     "1:3:225:7:0:0:0": 3001   # Boat (surface)
 
-# --- Streaming & ATAK Interop (Phase 21 Sprint 2) ---
-# CoT (Cursor on Target) position reporting and ATAK FMV streaming.
-# ROVER compatibility changes MPEG-TS PID assignments for ROVER terminals.
-
-streaming:
-  # CoT position sender (XML-over-UDP multicast)
-  # Env: CAMSIM_COT_ENABLED
-  cot_enabled: false
-  cot_addr: "239.2.3.1"       # CAMSIM_COT_ADDR
-  cot_port: 6969               # CAMSIM_COT_PORT
-  cot_interval_sec: 2.0        # CAMSIM_COT_INTERVAL
-  cot_uid: "CamSim-ISR-1"     # CAMSIM_COT_UID
-  cot_type: "a-f-G-E-S"       # CAMSIM_COT_TYPE
-  cot_callsign: "CAMSIM"       # CAMSIM_COT_CALLSIGN
-
-  # ATAK FMV second output view (UDP MPEG-TS, Baseline profile)
-  # Env: CAMSIM_ATAK_VIEW_ENABLED
-  atak_view_enabled: false
-  atak_addr: "239.1.1.2"      # CAMSIM_ATAK_ADDR
-  atak_port: 5005              # CAMSIM_ATAK_PORT
-  atak_bitrate: 2000000        # CAMSIM_ATAK_BITRATE
-
-  # ROVER terminal compatibility (changes MPEG-TS PIDs)
-  # Env: CAMSIM_ROVER_COMPAT
-  rover_compat: false
-  rover_video_pid: 0x1011      # CAMSIM_ROVER_VIDEO_PID (decimal: 4113)
-  rover_klv_pid: 0x1012        # CAMSIM_ROVER_KLV_PID   (decimal: 4114)
-
 # --- Phase 26: Standards Compliance (MISB ST 0601.9) ---
 
 phase26:
@@ -162,7 +134,8 @@ h264_tune: zerolatency
 capture_width: 1280
 capture_height: 720
 
-# Fixed tick rate. Must match DefaultEngine.ini FixedFrameRate setting.
+# Render, sensor integration and output rate (fps). Values other than 30 also
+# override DefaultEngine.ini's FixedFrameRate at startup.
 frame_rate: 30.0
 
 # Consecutive FRHIGPUTextureReadback::IsReady() polls required before
@@ -301,7 +274,7 @@ start_pitch: 0.0
 start_roll: 0.0
 
 # --- Sim clock (UTC) ---
-# One clock drives the sun, KLV Tag 2, CoT, the HUD time and ground truth.
+# One clock drives the sun, KLV Tag 2 and ground truth.
 # It starts at the wall-clock time unless one of these is set, and a CIGI
 # Celestial Sphere Control (Date/Time Valid) sets it at runtime.
 # Start date and time, ISO 8601. Env: CAMSIM_START_DATETIME
@@ -362,17 +335,8 @@ output_views:
     h264_tune: zerolatency
     hfov_deg: 0.0
 
-# --- Ground Truth Sidecar ---
-# Per-frame JSONL output (pose, gimbal, LOS, sensor state) for analytics.
-# Env: CAMSIM_GROUND_TRUTH_ENABLED, CAMSIM_GROUND_TRUTH_PATH,
-#      CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES
-ground_truth:
-  enabled: false
-  output_path: camsim_groundtruth.jsonl
-  interval_frames: 1
-
 # --- ML Training Data (Phase 17) ---
-# Enable structured training data output: COCO/VOC bounding boxes + 16-bit depth PNGs.
+# Enable structured training data output: COCO bounding boxes + 16-bit depth PNGs.
 # Env: CAMSIM_ML_ENABLED, CAMSIM_ML_OUTPUT_DIR
 ml_training:
   # Master enable; all other settings are ignored when false.
@@ -380,7 +344,7 @@ ml_training:
   enabled: false
 
   # Output root directory. Relative paths are anchored to the process base dir.
-  # Subdirectories created automatically: depth/, annotations/ (VOC only).
+  # Subdirectories created automatically: depth/.
   # Env: CAMSIM_ML_OUTPUT_DIR
   output_dir: ml_output
 
@@ -395,10 +359,6 @@ ml_training:
   # COCO JSONL format (one JSON object per frame, streamable).
   # Env: CAMSIM_ML_COCO_ENABLED
   coco_export: true
-
-  # Pascal VOC XML format (one XML file per frame in annotations/).
-  # Env: CAMSIM_ML_VOC_ENABLED
-  voc_export: false
 
   # Drop annotations with fewer visible (unoccluded, in-frame) pixels than this.
   # Fully hidden vehicles are never labelled. Env: CAMSIM_ML_MIN_VISIBLE_PIXELS
@@ -424,9 +384,6 @@ ml_training:
 # Maximum simultaneous entities. Env: CAMSIM_MAX_ENTITIES
 max_entities: 500
 
-# Use instanced rendering for entities with the same mesh type.
-use_instanced_rendering: true
-
 
 entity_scale:
   # Draw/cull distance in metres. 0 = no distance culling.
@@ -438,126 +395,6 @@ entity_scale:
   # Per-entity overrides keyed by EntityId string.
   max_update_rate_hz_overrides:
     "1": 30.0
-
-# --- Scenario Orchestration ---
-# Deterministic entity spawn/update/despawn without an external CIGI host.
-# Useful for repeatable scenario authoring and CI smoke tests.
-# Env: CAMSIM_SCENARIO_ENABLED, CAMSIM_SCENARIO_TIME_SCALE
-scenario:
-  enabled: false
-  # Scenario time is the sim clock. time_scale multiplies the clock's rate
-  # when the scenario starts (2.0 = double speed; sim_time_rate is preferred).
-  time_scale: 1.0
-  entities:
-    - entity_id: 2001
-      entity_type: 1001
-      start_latitude: 38.8977
-      start_longitude: -77.0365
-      start_altitude: 900.0
-      start_yaw: 90.0
-      start_pitch: 0.0
-      start_roll: 0.0
-      # Spawn/despawn times in scenario seconds. despawn <= spawn = persist.
-      spawn_time_sec: 0.0
-      despawn_time_sec: 0.0
-      # Scripted pose update rate. 0 = every manager tick.
-      update_rate_hz: 10.0
-      # Scripted trajectory rates (north/east/up m/s, yaw/pitch/roll deg/s).
-      # Used when no waypoints are defined (linear rate fallback).
-      north_rate_mps: 50.0
-      east_rate_mps: 0.0
-      up_rate_mps: 0.0
-      yaw_rate_dps: 0.0
-      pitch_rate_dps: 0.0
-      roll_rate_dps: 0.0
-      # Phase 23A — Waypoint trajectory (overrides linear rates when present).
-      # base_speed_mps: default speed between waypoints (m/s).
-      # loop_waypoints: true = loop back to first waypoint after last.
-      base_speed_mps: 50.0
-      loop_waypoints: false
-      waypoints: []
-      #   - lat: 38.8977
-      #     lon: -77.0365
-      #     alt: 900.0
-      #     speed_mps: 0.0        # 0 = use base_speed_mps
-      #     heading_deg: -1.0     # -1 = auto from great-circle bearing
-      #     pause_sec: 0.0        # dwell at waypoint before continuing
-      #   - lat: 38.9100
-      #     lon: -77.0200
-      #     alt: 900.0
-      #     speed_mps: 60.0
-      #     heading_deg: -1.0
-      #     pause_sec: 5.0
-      # Phase 23C — Pattern-of-life schedule (keyed by time-of-day).
-      activity_profile: ""       # "civilian" | "military" | "" (custom)
-      activity_schedule: []
-      #   - start_hour: 6.0
-      #     end_hour: 12.0
-      #     waypoint_path: 0
-      #     spawn_jitter_sec: 0.0
-      #     path_deviation_m: 0.0
-      # Phase 23D — Formation flying.
-      # leader_entity_id: 0 = no formation. Non-zero = follow that entity.
-      # formation_offset_m: [forward, right, down] body-frame offset in metres.
-      # inherit_heading: true = copy leader Yaw; false = keep own heading.
-      leader_entity_id: 0
-      # formation_offset_m: [0, 0, 0]
-      inherit_heading: true
-  # Phase 23C — local solar hour (0-24) the sim clock is set to when the
-  # scenario starts (sun and pattern-of-life schedules follow it). Remove to
-  # keep the sim clock's own time. Env: CAMSIM_SCENARIO_START_HOUR
-  start_hour: 6.0
-  # Phase 23B — Event triggers (condition → action).
-  # Env: none (YAML only).
-  triggers: []
-  #   - name: "spawn_target_at_30s"
-  #     condition:
-  #       type: time_sec
-  #       time_sec: 30.0
-  #     action:
-  #       type: spawn_entity
-  #       target_entity_id: 2002
-  #       target_entity_type: 1001
-  #       spawn_latitude: 38.9050
-  #       spawn_longitude: -77.0300
-  #       spawn_altitude: 0.0
-  #     repeat: false
-  #     cooldown_sec: 0.0
-  #   - name: "despawn_on_proximity"
-  #     condition:
-  #       type: entity_proximity
-  #       entity_id_a: 2001
-  #       entity_id_b: 2002
-  #       radius_m: 50.0
-  #     action:
-  #       type: despawn_entity
-  #       target_entity_id: 2002
-  #     repeat: false
-  #     cooldown_sec: 0.0
-
-# --- Randomization Engine (Phase 23E) ---
-# Stochastic variation of entity positions/counts and environment parameters.
-# Applied at scenario initialization time; never mutates live config.
-# Env: CAMSIM_RAND_ENABLED, CAMSIM_RAND_SEED
-randomization:
-  enabled: false
-  # Seed for deterministic RNG. 0 = wall-clock (non-repeatable).
-  seed: 0
-  # Time-of-day jitter: +/- hours around scenario start_hour.
-  start_hour_jitter_hrs: 0.0
-  # Visibility jitter: fractional +/- around base visibility.
-  visibility_jitter_frac: 0.0
-  # Fog density jitter: fractional +/- around base fog density.
-  fog_density_jitter_frac: 0.0
-  # Per-entity randomization entries.
-  entity_entries: []
-  #   - template_entity_id: 2001
-  #     min_count: 1
-  #     max_count: 3
-  #     spawn_radius_m: 500.0
-  #     position_jitter_m: 50.0
-  #     speed_jitter_frac: 0.1
-  #     id_offset: 100
 
 # --- Sensor Modes (per-waveband) ---
 # Physical sensor model (ROADMAP 3B.2): optics -> electrons -> detector noise -> ADC -> display.
@@ -663,30 +500,6 @@ sensor_modes:
       manual_gain_ev: -1
 # NVG (formerly sensor_modes.nvg, SensorId 2) was removed — ROADMAP 3B.2.
 
-# --- Optical Realism (Phase 15) ---
-# GPU-side + CPU-side optical effects for camera realism.
-# Master toggle: enabled=false gives clean ML training frames.
-optical_realism:
-  enabled: false   # false = clean frames: UE motion blur is forced off (UE's own default is on)
-  # 15A Motion Blur (GPU) — only when enabled is true
-  motion_blur: true
-  motion_blur_amount: 0.5
-  motion_blur_max: 5
-  # 15C Bloom (GPU)
-  bloom: true
-  bloom_intensity: 0.675
-  bloom_threshold: -1.0
-  # 15E Depth of Field (GPU). focal_distance 0 = auto-focus from LOS range.
-  depth_of_field: false
-  focal_distance: 0.0
-  aperture_fstop: 4.0
-  sensor_width: 24.576
-  # 15F Lens Flare (GPU)
-  lens_flare: false
-  lens_flare_intensity: 1.0
-  lens_flare_bokeh_size: 3.0
-  lens_flare_threshold: 8.0
-
 # --- Rendering Quality (Phase 24) ---
 
 rendering_quality:
@@ -706,10 +519,6 @@ rendering_quality:
   # Env: CAMSIM_RT_ENABLED
   rt_enabled: false
 
-  # 24D: Enable ray-traced reflections on SceneCapture (requires rt_enabled + NVIDIA GPU + DX12)
-  # Env: CAMSIM_RT_REFLECTIONS
-  rt_reflections: false
-
   # 24E: Shadow distance and Virtual Shadow Map quality
   # Env: CAMSIM_SHADOW_DISTANCE_SCALE / CAMSIM_VSM_RESOLUTION_BIAS / CAMSIM_VSM_MAX_PAGES
   shadow_distance_scale: 1.0
@@ -722,48 +531,19 @@ rendering_quality:
   # Env: CAMSIM_TSR_SCREEN_PERCENTAGE
   tsr_screen_percentage: 100
 
-# --- Weather, Atmosphere & Particle Effects (Phase 18) ---
-# All effects default to false (opt-in). Safe to leave disabled for clean ML frames.
+# --- Weather & Atmosphere (Phase 18) ---
+# All effects default to false (opt-in).
 phase18:
   # 18C Second fog layer (low-lying ground mist via UE ExponentialHeightFog SecondFogData)
   second_fog: false
   fog_density: 0.02
   fog_height_falloff: 0.2
-  # 18E God rays / light shafts (UE DirectionalLight bloom + occlusion)
-  god_rays: false
-  god_ray_intensity: 1.0
-  # 18J Atmospheric scattering overrides (USkyAtmosphereComponent multipliers)
-  atmospheric_scattering: false
-  rayleigh_scattering: 1.0   # multiplier on Rayleigh coefficient
-  mie_scattering: 1.0        # multiplier on Mie coefficient
-  # 18K Visibility range (metres), also used for scenario randomization jitter
+  # 18K Visibility range (metres)
   visibility_range_m: 10000.0
 
   # 18A/18B Volumetric cloud shadow (cloud actor must exist in the level)
   volumetric_clouds: false
   cloud_shadow_strength: 0.6   # [0,1] intensity of cloud shadow projected onto terrain
-
-  # 18L Regional weather zones — CIGI RegionId > 0 updates zone parameters
-  weather_zones: false
-  zone_positions:              # static lat/lon positions; parameters updated by CIGI
-    - { id: 1, lat: 37.0, lon: -122.0, radius_m: 10000.0 }
-    # add more zones here (max 16)
-
-  # 18F/18G/18H Niagara particle FX — asset paths authored in UE editor
-  niagara_rotor_wash: "/Game/Effects/NS_RotorWash"
-  niagara_smoke:      "/Game/Effects/NS_Smoke"
-  niagara_fire:       "/Game/Effects/NS_Fire"
-  niagara_contrail:   "/Game/Effects/NS_Contrail"
-  contrail_alt_m: 8000.0    # metres — altitude above which contrails form
-  contrail_speed_ms: 100.0  # reserved for future use (speed data not in CIGI entity state)
-  smoke_component_id: 1     # CIGI Component Control CompId -> smoke
-  fire_component_id: 2      # CIGI Component Control CompId -> fire
-
-  # 18I Decal cratering
-  crater_decal_material: "/Game/Effects/M_Crater"
-  crater_impact_component_id: 10
-  max_craters: 32
-  crater_default_radius_m: 5.0
 
 # Ocean surface for boats (ROADMAP 2.6). Sea level = EGM96 geoid undulation +
 # CIGI tide offset; waves come from `beaufort`/`wave_direction_deg` below until
@@ -781,8 +561,7 @@ ocean:
 
 # --- Thermal radiance for IR (ROADMAP 4A, docs/thermal.md) ---
 # IR mode renders in-band (MWIR/LWIR) radiance from per-pixel surface temperature and emissivity.
-# enabled: false restores the 3B.2 luminance proxy (startup decides availability; a hot reload to
-# false switches IR back to the proxy for A/B comparison).
+# enabled: false restores the 3B.2 luminance proxy (startup only; restart to A/B compare).
 thermal:
   enabled: true                 # CAMSIM_THERMAL_ENABLED
   air_temperature_c: 15.0       # CAMSIM_THERMAL_AIR_TEMPERATURE_C — daily mean until CIGI Atmosphere Control sets it
@@ -802,31 +581,10 @@ thermal:
 
 # Phase 27 — Performance & Optimization
 performance:
-  # 27B Frame drop categorization (log drops by cause: encoder_busy, readback_timeout, socket_error)
-  track_frame_drops_by_category: false         # CAMSIM_PERF_TRACK_DROPS
-
-  # 27D Hot-reload config (apply YAML changes at runtime without restart)
-  hot_reload_config: false                      # CAMSIM_PERF_HOT_RELOAD
-  hot_reload_poll_interval_sec: 5.0             # CAMSIM_PERF_POLL_INTERVAL
-
-  # 27E Tile prefetch (boost Cesium LOD during fast gimbal slews)
-  tile_prefetch_slew_threshold_deg_per_sec: 10.0  # CAMSIM_PERF_TILE_SLEW_THRESHOLD
-  tile_prefetch_fov_boost: 1.0                    # CAMSIM_PERF_TILE_FOV_BOOST
-  tile_prefetch_boost_frames: 30                  # CAMSIM_PERF_TILE_BOOST_FRAMES
-
-  # 27F Configurable frame rate
-  render_frame_rate_hz: 30.0                    # CAMSIM_PERF_RENDER_FPS
-  output_frame_rate_hz: 30.0                    # CAMSIM_PERF_OUTPUT_FPS
-
   # 27G Texture streaming pool (0 = engine default)
   texture_pool_budget_mb: 0                     # CAMSIM_PERF_TEXTURE_POOL_MB
 
-  # Adaptive SSE — dynamically adjust Cesium LOD based on frame budget
-  adaptive_sse: false                        # CAMSIM_PERF_ADAPTIVE_SSE
-  adaptive_sse_min: 8.0                      # CAMSIM_PERF_ADAPTIVE_SSE_MIN (sharpest allowed)
-  adaptive_sse_max: 24.0                     # CAMSIM_PERF_ADAPTIVE_SSE_MAX (coarsest allowed)
-
-  # Phase 28G: Per-frame pipeline latency tracking (P50/P95/P99 to health + Prometheus).
+  # Phase 28G: Per-frame pipeline latency tracking (P50/P95/P99 to /metrics).
   # Env: CAMSIM_TRACK_PIPELINE_LATENCY
   track_pipeline_latency: false
 
@@ -883,12 +641,6 @@ security_metadata:
   caveats: ""
   releasing_instructions: ""
 
-# --- Prometheus Metrics ---
-# Path to write Prometheus node_exporter textfile-collector compatible metrics.
-# Empty = disabled.
-# Env: CAMSIM_PROMETHEUS_METRICS_PATH
-prometheus_metrics_path: ""
-
 # --- Recording & Playback ---
 # Record CIGI input and/or video output for offline analysis and replay.
 # Env: CAMSIM_CIGI_RECORD_PATH, CAMSIM_VIDEO_RECORD_PATH, CAMSIM_CIGI_PLAYBACK_PATH
@@ -899,20 +651,6 @@ recording:
   video_record_path: ""
   # When set, CigiReceiver reads from this file instead of UDP socket (playback mode).
   cigi_playback_path: ""
-
-# --- Damage Transition FX (Phase 22C) ---
-# Controls visual damage transition effects when entity state changes.
-# Env: CAMSIM_DAMAGE_TRANSITION_FX, CAMSIM_DAMAGE_GRADUAL,
-#      CAMSIM_DAMAGE_INTERPOLATION_SEC
-damage_transition:
-  # Master toggle for damage transition particle FX (smoke on damaged, fire on destroyed).
-  enabled: true
-  # Gradual damage: interpolate mesh swap over time instead of instant.
-  gradual: false
-  # Interpolation duration in seconds (only when gradual: true).
-  interpolation_sec: 1.0
-  # Scorch darkening factor applied during gradual blend (0.0 = none, 1.0 = full black).
-  scorch_darkening: 0.3
 
 # --- Phase 28: Operational Hardening ---
 

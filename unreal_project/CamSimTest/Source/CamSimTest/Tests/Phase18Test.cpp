@@ -7,7 +7,7 @@
 #include "Metadata/KlvBuilder.h"
 
 // -------------------------------------------------------------------------
-// Phase 18 — Weather, Atmosphere & Particle Effects Automation Tests
+// Phase 18 — Weather & Atmosphere Automation Tests
 // -------------------------------------------------------------------------
 
 // 1. FPhase18Config defaults — all effects off, sane numeric defaults
@@ -20,13 +20,8 @@ bool FPhase18ConfigDefaultsTest::RunTest(const FString& Parameters)
 	FCamSimConfig Cfg;
 
 	TestFalse(TEXT("SecondFog off by default"),            Cfg.Phase18.bSecondFog);
-	TestFalse(TEXT("GodRays off by default"),              Cfg.Phase18.bGodRays);
-	TestFalse(TEXT("AtmosphericScattering off by default"),Cfg.Phase18.bAtmosphericScattering);
 
 	TestEqual(TEXT("VisibilityRangeM default"),  Cfg.Phase18.VisibilityRangeM, 10000.0f);
-	TestEqual(TEXT("GodRayIntensity default"),   Cfg.Phase18.GodRayIntensity,  1.0f);
-	TestEqual(TEXT("RayleighScattering default"),Cfg.Phase18.RayleighScattering, 1.0f);
-	TestEqual(TEXT("MieScattering default"),     Cfg.Phase18.MieScattering,    1.0f);
 
 	return true;
 }

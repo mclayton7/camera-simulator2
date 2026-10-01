@@ -255,35 +255,6 @@ FCamSimConfig FCamSimConfig::Load()
 	return LoadFromYaml(&YamlContent, YamlPath);
 }
 
-void FCamSimConfig::KeepRestartOnlySettings(const FCamSimConfig& Running, FCamSimConfig& Reloaded)
-{
-	Reloaded.CigiPort      = Running.CigiPort;
-	Reloaded.MulticastAddr = Running.MulticastAddr;
-	Reloaded.MulticastPort = Running.MulticastPort;
-	Reloaded.VideoCodec    = Running.VideoCodec;
-	// ROADMAP 3A: the render path is wired at BeginPlay (grab extension, AA,
-	// viewport rendering, Cesium cameras, origin shift component).
-	Reloaded.Render.OriginShiftDistanceM = Running.Render.OriginShiftDistanceM;
-	// ROADMAP 3B: render targets, readback buffers, the encoder and the sensor
-	// graph are sized once per session.
-	Reloaded.CaptureWidth           = Running.CaptureWidth;
-	Reloaded.CaptureHeight          = Running.CaptureHeight;
-	// Ocean surface (ROADMAP 2.6): created once in Initialize when enabled.
-	Reloaded.Ocean.bEnabled      = Running.Ocean.bEnabled;
-	Reloaded.Ocean.MaterialPath  = Running.Ocean.MaterialPath;
-}
-
-TArray<FString> FCamSimConfig::ValidateHotReload(const FCamSimConfig& Running, const FCamSimConfig& Reloaded)
-{
-	if (!Reloaded.bLoadedSuccessfully)
-	{
-		return { TEXT("config parse failed") };
-	}
-	FCamSimConfig AsRun = Reloaded;
-	KeepRestartOnlySettings(Running, AsRun);
-	return AsRun.Validate();
-}
-
 FCamSimConfig FCamSimConfig::LoadFromYamlString(const FString& YamlContent, const FString& SourceName)
 {
 	return LoadFromYaml(&YamlContent, SourceName);
@@ -379,7 +350,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		YamlString(Root, "encoder", Cfg.Encoder);
 		Cfg.EncoderPref = ParseEncoderPreference(Cfg.Encoder);
 		YamlInt   (Root, "max_entities", Cfg.MaxEntities);
-		YamlBool  (Root, "use_instanced_rendering", Cfg.bUseInstancedRendering);
 		YamlFloat (Root, "hfov_deg",         Cfg.HFovDeg);
 		YamlString(Root, "terrain_provider", Cfg.TerrainProvider);
 		YamlString(Root, "imagery_provider", Cfg.ImageryProvider);
@@ -575,28 +545,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			}
 		}
 
-		// Optional ground-truth sidecar output.
-		if (YamlHas(Root, "ground_truth"))
-		{
-			ryml::ConstNodeRef GTNode = Root["ground_truth"];
-			YamlBool  (GTNode, "enabled",         Cfg.GroundTruth.bEnabled);
-			YamlString(GTNode, "output_path",     Cfg.GroundTruth.OutputPath);
-			{
-				int32 IntervalVal = Cfg.GroundTruth.IntervalFrames;
-				if (YamlInt(GTNode, "interval_frames", IntervalVal))
-					Cfg.GroundTruth.IntervalFrames = FMath::Max(1, IntervalVal);
-			}
-		}
-		YamlBool  (Root, "ground_truth_enabled", Cfg.GroundTruth.bEnabled);
-		YamlString(Root, "ground_truth_path",    Cfg.GroundTruth.OutputPath);
-		{
-			int32 GTInterval = Cfg.GroundTruth.IntervalFrames;
-			if (YamlInt(Root, "ground_truth_interval_frames", GTInterval))
-			{
-				Cfg.GroundTruth.IntervalFrames = FMath::Max(1, GTInterval);
-			}
-		}
-
 		// ML Training Data Generation (Phase 17).
 		if (YamlHas(Root, "ml_training"))
 		{
@@ -606,7 +554,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlBool  (MLNode, "depth_map",                Cfg.MLTraining.bDepthMap);
 			YamlBool  (MLNode, "bounding_boxes",           Cfg.MLTraining.bBoundingBoxes);
 			YamlBool  (MLNode, "coco_export",              Cfg.MLTraining.bCocoExport);
-			YamlBool  (MLNode, "voc_export",               Cfg.MLTraining.bVocExport);
 			YamlFloat (MLNode, "depth_far_plane_m",        Cfg.MLTraining.DepthFarPlaneM);
 			{
 				int32 Interval = Cfg.MLTraining.AnnotationIntervalFrames;
@@ -654,191 +601,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		YamlFloat(Root, "entity_tick_rate_hz",                Cfg.EntityScale.TickRateHz);
 		YamlFloat(Root, "entity_default_max_update_rate_hz",  Cfg.EntityScale.DefaultMaxUpdateRateHz);
 
-		// Optional scenario entity orchestration block.
-		if (YamlHas(Root, "scenario"))
-		{
-			ryml::ConstNodeRef ScenarioNode = Root["scenario"];
-			YamlBool (ScenarioNode, "enabled",    Cfg.bScenarioEnabled);
-			YamlFloat(ScenarioNode, "time_scale", Cfg.ScenarioTimeScale);
-			YamlFloat(ScenarioNode, "start_hour", Cfg.ScenarioStartHour);
-
-			if (YamlHas(ScenarioNode, "entities"))
-			{
-				ryml::ConstNodeRef EntitiesNode = ScenarioNode["entities"];
-				if (EntitiesNode.is_seq())
-				{
-					Cfg.ScenarioEntities.Reset();
-					for (ryml::ConstNodeRef EntityNode : EntitiesNode)
-					{
-						if (!EntityNode.is_map()) continue;
-
-						FCamSimConfig::FScenarioEntityConfig Spec;
-						YamlInt   (EntityNode, "entity_id",       Spec.EntityId);
-						YamlInt   (EntityNode, "entity_type",     Spec.EntityType);
-						YamlDouble(EntityNode, "start_latitude",  Spec.StartLatitude);
-						YamlDouble(EntityNode, "start_longitude", Spec.StartLongitude);
-						YamlDouble(EntityNode, "start_altitude",  Spec.StartAltitude);
-						YamlFloat (EntityNode, "start_yaw",       Spec.StartYaw);
-						YamlFloat (EntityNode, "start_pitch",     Spec.StartPitch);
-						YamlFloat (EntityNode, "start_roll",      Spec.StartRoll);
-						YamlFloat (EntityNode, "spawn_time_sec",  Spec.SpawnTimeSec);
-						YamlFloat (EntityNode, "despawn_time_sec", Spec.DespawnTimeSec);
-						YamlFloat (EntityNode, "update_rate_hz",  Spec.UpdateRateHz);
-						YamlFloat (EntityNode, "north_rate_mps",  Spec.NorthRateMps);
-						YamlFloat (EntityNode, "east_rate_mps",   Spec.EastRateMps);
-						YamlFloat (EntityNode, "up_rate_mps",     Spec.UpRateMps);
-						YamlFloat (EntityNode, "yaw_rate_dps",    Spec.YawRateDegPerSec);
-						YamlFloat (EntityNode, "pitch_rate_dps",  Spec.PitchRateDegPerSec);
-						YamlFloat (EntityNode, "roll_rate_dps",   Spec.RollRateDegPerSec);
-
-						// Phase 23A: Waypoint trajectories
-						YamlBool (EntityNode, "loop_waypoints", Spec.bLoopWaypoints);
-						YamlFloat(EntityNode, "base_speed_mps", Spec.BaseSpeedMps);
-						if (YamlHas(EntityNode, "waypoints"))
-						{
-							ryml::ConstNodeRef WpNode = EntityNode["waypoints"];
-							if (WpNode.is_seq())
-							{
-								for (ryml::ConstNodeRef Wp : WpNode)
-								{
-									if (!Wp.is_map()) continue;
-									FCamSimConfig::FWaypointConfig WpCfg;
-									YamlDouble(Wp, "lat",         WpCfg.Latitude);
-									YamlDouble(Wp, "lon",         WpCfg.Longitude);
-									YamlFloat (Wp, "alt",         WpCfg.Altitude);
-									YamlFloat (Wp, "speed_mps",   WpCfg.SpeedMps);
-									YamlFloat (Wp, "heading_deg", WpCfg.HeadingDeg);
-									YamlFloat (Wp, "pause_sec",   WpCfg.PauseSec);
-									Spec.Waypoints.Add(WpCfg);
-								}
-							}
-						}
-
-						// Phase 23D: Formation flying
-						YamlInt (EntityNode, "leader_entity_id", Spec.LeaderEntityId);
-						YamlBool(EntityNode, "inherit_heading",  Spec.bInheritHeading);
-						if (YamlHas(EntityNode, "formation_offset_m"))
-						{
-							ryml::ConstNodeRef OffNode = EntityNode["formation_offset_m"];
-							if (OffNode.is_seq() && OffNode.num_children() >= 3)
-							{
-								auto ReadVal = [](ryml::ConstNodeRef N) -> float {
-									if (!N.has_val()) return 0.0f;
-									FString S = RymlToFString(N.val());
-									return FCString::Atof(*S);
-								};
-								Spec.FormationOffsetM = FVector(
-									ReadVal(OffNode[0]),
-									ReadVal(OffNode[1]),
-									ReadVal(OffNode[2]));
-							}
-						}
-
-						// Phase 23C: Activity schedule
-						YamlString(EntityNode, "activity_profile", Spec.ActivityProfile);
-						if (YamlHas(EntityNode, "activity_schedule"))
-						{
-							ryml::ConstNodeRef ActNode = EntityNode["activity_schedule"];
-							if (ActNode.is_seq())
-							{
-								for (ryml::ConstNodeRef Act : ActNode)
-								{
-									if (!Act.is_map()) continue;
-									FCamSimConfig::FActivityScheduleEntry Entry;
-									YamlFloat(Act, "start_hour",      Entry.StartHour);
-									YamlFloat(Act, "end_hour",        Entry.EndHour);
-									YamlInt  (Act, "waypoint_path",   Entry.WaypointPathIndex);
-									YamlFloat(Act, "spawn_jitter_sec", Entry.SpawnJitterSec);
-									YamlFloat(Act, "path_deviation_m", Entry.PathDeviationM);
-									Spec.ActivitySchedule.Add(Entry);
-								}
-							}
-						}
-
-						Cfg.ScenarioEntities.Add(Spec);
-					}
-				}
-			}
-
-			// Phase 23B: Scenario triggers
-			if (YamlHas(ScenarioNode, "triggers"))
-			{
-				ryml::ConstNodeRef TriggersNode = ScenarioNode["triggers"];
-				if (TriggersNode.is_seq())
-				{
-					Cfg.ScenarioTriggers.Reset();
-					for (ryml::ConstNodeRef TrigNode : TriggersNode)
-					{
-						if (!TrigNode.is_map()) continue;
-						FCamSimConfig::FScenarioTrigger Trig;
-						YamlString(TrigNode, "name", Trig.Name);
-						YamlBool  (TrigNode, "repeat", Trig.bRepeat);
-						YamlFloat (TrigNode, "cooldown_sec", Trig.CooldownSec);
-
-						if (YamlHas(TrigNode, "condition"))
-						{
-							ryml::ConstNodeRef CondNode = TrigNode["condition"];
-							FString CondType;
-							YamlString(CondNode, "type", CondType);
-							if (CondType == TEXT("time_sec"))       Trig.Condition.Type = FCamSimConfig::EScenarioConditionType::TimeSec;
-							else if (CondType == TEXT("entity_in_area"))  Trig.Condition.Type = FCamSimConfig::EScenarioConditionType::EntityInArea;
-							else if (CondType == TEXT("entity_proximity")) Trig.Condition.Type = FCamSimConfig::EScenarioConditionType::EntityProximity;
-							else if (CondType == TEXT("frame_count"))     Trig.Condition.Type = FCamSimConfig::EScenarioConditionType::FrameCount;
-
-							YamlFloat (CondNode, "time_sec",        Trig.Condition.TimeSec);
-							YamlInt   (CondNode, "entity_id_a",     Trig.Condition.EntityIdA);
-							YamlInt   (CondNode, "entity_id_b",     Trig.Condition.EntityIdB);
-							YamlDouble(CondNode, "area_latitude",   Trig.Condition.AreaLatitude);
-							YamlDouble(CondNode, "area_longitude",  Trig.Condition.AreaLongitude);
-							YamlFloat (CondNode, "radius_m",        Trig.Condition.RadiusM);
-							YamlInt   (CondNode, "frame_threshold", Trig.Condition.FrameThreshold);
-						}
-
-						if (YamlHas(TrigNode, "action"))
-						{
-							ryml::ConstNodeRef ActNode = TrigNode["action"];
-							FString ActType;
-							YamlString(ActNode, "type", ActType);
-							if (ActType == TEXT("spawn_entity"))       Trig.Action.Type = FCamSimConfig::EScenarioActionType::SpawnEntity;
-							else if (ActType == TEXT("despawn_entity")) Trig.Action.Type = FCamSimConfig::EScenarioActionType::DespawnEntity;
-							else if (ActType == TEXT("set_damage_state")) Trig.Action.Type = FCamSimConfig::EScenarioActionType::SetDamageState;
-							else if (ActType == TEXT("change_speed"))   Trig.Action.Type = FCamSimConfig::EScenarioActionType::ChangeSpeed;
-							else if (ActType == TEXT("log_message"))    Trig.Action.Type = FCamSimConfig::EScenarioActionType::LogMessage;
-
-							YamlInt   (ActNode, "target_entity_id",   Trig.Action.TargetEntityId);
-							YamlInt   (ActNode, "target_entity_type", Trig.Action.TargetEntityType);
-							YamlDouble(ActNode, "spawn_latitude",     Trig.Action.SpawnLatitude);
-							YamlDouble(ActNode, "spawn_longitude",    Trig.Action.SpawnLongitude);
-							YamlFloat (ActNode, "spawn_altitude",     Trig.Action.SpawnAltitude);
-							{
-								int32 DmgState = 0;
-								if (YamlInt(ActNode, "damage_state", DmgState))
-									Trig.Action.DamageState = static_cast<uint8>(FMath::Clamp(DmgState, 0, 2));
-							}
-							YamlFloat (ActNode, "new_speed_mps",     Trig.Action.NewSpeedMps);
-							YamlString(ActNode, "message",           Trig.Action.Message);
-						}
-
-						Cfg.ScenarioTriggers.Add(Trig);
-					}
-				}
-			}
-		}
-
-		// Legacy flat keys.
-		YamlBool (Root, "scenario_enabled",    Cfg.bScenarioEnabled);
-		YamlFloat(Root, "scenario_time_scale", Cfg.ScenarioTimeScale);
-
-		// Phase 22C: Damage transition FX
-		if (YamlHas(Root, "damage_transition"))
-		{
-			ryml::ConstNodeRef DmgNode = Root["damage_transition"];
-			YamlBool (DmgNode, "enabled",           Cfg.DamageTransition.bDamageTransitionFX);
-			YamlBool (DmgNode, "gradual",            Cfg.DamageTransition.bGradualDamage);
-			YamlFloat(DmgNode, "interpolation_sec",  Cfg.DamageTransition.DamageInterpolationSec);
-			YamlFloat(DmgNode, "scorch_darkening",   Cfg.DamageTransition.DamageScorchDarkening);
-		}
-
 		// Security metadata (MISB ST 0102, Phase 12A)
 		if (YamlHas(Root, "security_metadata"))
 		{
@@ -853,9 +615,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		// Video codec (Phase 12B)
 		YamlString(Root, "video_codec", Cfg.VideoCodec);
 
-		// Prometheus metrics (Phase 12D)
-		YamlString(Root, "prometheus_metrics_path", Cfg.PrometheusMetricsPath);
-
 		// Recording & playback (Phase 12E)
 		if (YamlHas(Root, "recording"))
 		{
@@ -865,76 +624,17 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlString(RecNode, "cigi_playback_path", Cfg.Recording.CigiPlaybackPath);
 		}
 
-		// Optical realism (Phase 15)
-		if (YamlHas(Root, "optical_realism"))
-		{
-			ryml::ConstNodeRef OptNode = Root["optical_realism"];
-			YamlBool (OptNode, "enabled",                        Cfg.OpticalRealism.bEnabled);
-			YamlBool (OptNode, "motion_blur",                    Cfg.OpticalRealism.bMotionBlur);
-			YamlFloat(OptNode, "motion_blur_amount",             Cfg.OpticalRealism.MotionBlurAmount);
-			YamlInt  (OptNode, "motion_blur_max",                Cfg.OpticalRealism.MotionBlurMax);
-			YamlBool (OptNode, "bloom",                          Cfg.OpticalRealism.bBloom);
-			YamlFloat(OptNode, "bloom_intensity",                Cfg.OpticalRealism.BloomIntensity);
-			YamlFloat(OptNode, "bloom_threshold",                Cfg.OpticalRealism.BloomThreshold);
-			YamlBool (OptNode, "depth_of_field",                 Cfg.OpticalRealism.bDepthOfField);
-			YamlFloat(OptNode, "focal_distance",                 Cfg.OpticalRealism.FocalDistance);
-			YamlFloat(OptNode, "aperture_fstop",                 Cfg.OpticalRealism.ApertureFStop);
-			YamlFloat(OptNode, "sensor_width",                   Cfg.OpticalRealism.SensorWidth);
-			YamlBool (OptNode, "lens_flare",                     Cfg.OpticalRealism.bLensFlare);
-			YamlFloat(OptNode, "lens_flare_intensity",           Cfg.OpticalRealism.LensFlareIntensity);
-			YamlFloat(OptNode, "lens_flare_bokeh_size",          Cfg.OpticalRealism.LensFlareBokehSize);
-			YamlFloat(OptNode, "lens_flare_threshold",           Cfg.OpticalRealism.LensFlareThreshold);
-		}
-
-		// Phase 18: weather, atmosphere & particle effects
+		// Phase 18: weather & atmosphere
 		if (YamlHas(Root, "phase18"))
 		{
 			ryml::ConstNodeRef P18 = Root["phase18"];
 			YamlBool (P18, "second_fog",                Cfg.Phase18.bSecondFog);
 			YamlFloat(P18, "fog_density",               Cfg.Phase18.FogDensity);
 			YamlFloat(P18, "fog_height_falloff",        Cfg.Phase18.FogHeightFalloff);
-			YamlBool (P18, "god_rays",                  Cfg.Phase18.bGodRays);
-			YamlFloat(P18, "god_ray_intensity",         Cfg.Phase18.GodRayIntensity);
-			YamlBool (P18, "atmospheric_scattering",    Cfg.Phase18.bAtmosphericScattering);
-			YamlFloat(P18, "rayleigh_scattering",       Cfg.Phase18.RayleighScattering);
-			YamlFloat(P18, "mie_scattering",            Cfg.Phase18.MieScattering);
 			YamlFloat(P18, "visibility_range_m",        Cfg.Phase18.VisibilityRangeM);
 			// 18A/18B
 			YamlBool (P18, "volumetric_clouds",          Cfg.Phase18.bVolumetricClouds);
 			YamlFloat(P18, "cloud_shadow_strength",       Cfg.Phase18.CloudShadowStrength);
-			// 18L Weather zones -- array of {id, lat, lon, radius_m}
-			YamlBool (P18, "weather_zones",               Cfg.Phase18.bWeatherZones);
-			if (YamlHas(P18, "zone_positions") && P18["zone_positions"].is_seq())
-			{
-				for (const ryml::ConstNodeRef& ZNode : P18["zone_positions"])
-				{
-					if (Cfg.Phase18.WeatherZoneConfigs.Num() >= 16)
-					{
-						UE_LOG(LogCamSim, Warning, TEXT("zone_positions: exceeded 16-zone CIGI limit; extra entries ignored"));
-						break;
-					}
-					FCamSimConfig::FPhase18Config::FWeatherZoneConfig ZCfg;
-					YamlInt   (ZNode, "id",       ZCfg.ZoneID);
-					YamlDouble(ZNode, "lat",      ZCfg.LatDeg);
-					YamlDouble(ZNode, "lon",      ZCfg.LonDeg);
-					YamlFloat (ZNode, "radius_m", ZCfg.RadiusM);
-					Cfg.Phase18.WeatherZoneConfigs.Add(ZCfg);
-				}
-			}
-			// 18F/G/H Niagara
-			YamlString(P18, "niagara_rotor_wash",         Cfg.Phase18.NiagaraRotorWash);
-			YamlString(P18, "niagara_smoke",               Cfg.Phase18.NiagaraSmoke);
-			YamlString(P18, "niagara_fire",                Cfg.Phase18.NiagaraFire);
-			YamlString(P18, "niagara_contrail",            Cfg.Phase18.NiagaraContrail);
-			YamlFloat (P18, "contrail_alt_m",              Cfg.Phase18.ContrailAltM);
-			YamlFloat (P18, "contrail_speed_ms",           Cfg.Phase18.ContrailSpeedMs);
-			YamlInt   (P18, "smoke_component_id",          Cfg.Phase18.SmokeComponentID);
-			YamlInt   (P18, "fire_component_id",           Cfg.Phase18.FireComponentID);
-			// 18I
-			YamlString(P18, "crater_decal_material",       Cfg.Phase18.CraterDecalMaterial);
-			YamlInt   (P18, "crater_impact_component_id",  Cfg.Phase18.CraterImpactComponentID);
-			YamlInt   (P18, "max_craters",                 Cfg.Phase18.MaxCraters);
-			YamlFloat (P18, "crater_default_radius_m",     Cfg.Phase18.CraterDefaultRadiusM);
 		}
 
 		if (YamlHas(Root, "rendering_quality"))
@@ -947,7 +647,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlFloat(RQNode, "ao_intensity",           RQ.AOIntensity);
 			YamlFloat(RQNode, "ao_radius",              RQ.AORadius);
 			YamlBool (RQNode, "rt_enabled",             RQ.bRayTracingEnabled);
-			YamlBool (RQNode, "rt_reflections",         RQ.bRayTracedReflections);
 			YamlFloat(RQNode, "shadow_distance_scale",  RQ.ShadowDistanceScale);
 			YamlInt  (RQNode, "vsm_resolution_bias",    RQ.VSMResolutionBias);
 			YamlInt  (RQNode, "vsm_max_physical_pages", RQ.VSMMaxPhysicalPages);
@@ -959,18 +658,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		{
 			ryml::ConstNodeRef PerfNode = Root["performance"];
 			FPerformanceConfig& Perf = Cfg.Performance;
-			YamlBool (PerfNode, "track_frame_drops_by_category",        Perf.bTrackFrameDropsByCategory);
-			YamlBool (PerfNode, "hot_reload_config",                    Perf.bHotReloadConfig);
-			YamlFloat(PerfNode, "hot_reload_poll_interval_sec",         Perf.HotReloadPollIntervalSec);
-			YamlFloat(PerfNode, "tile_prefetch_slew_threshold_deg_per_sec", Perf.TilePrefetchSlewThresholdDegPerSec);
-			YamlFloat(PerfNode, "tile_prefetch_fov_boost",              Perf.TilePrefetchFovBoost);
-			YamlInt  (PerfNode, "tile_prefetch_boost_frames",           Perf.TilePrefetchBoostFrames);
-			YamlFloat(PerfNode, "render_frame_rate_hz",                 Perf.RenderFrameRateHz);
-			YamlFloat(PerfNode, "output_frame_rate_hz",                 Perf.OutputFrameRateHz);
 			YamlInt  (PerfNode, "texture_pool_budget_mb",               Perf.TexturePoolBudgetMB);
-			YamlBool (PerfNode, "adaptive_sse",                         Perf.bAdaptiveSSE);
-			YamlFloat(PerfNode, "adaptive_sse_min",                     Perf.AdaptiveSSEMin);
-			YamlFloat(PerfNode, "adaptive_sse_max",                     Perf.AdaptiveSSEMax);
 			YamlBool (PerfNode, "track_pipeline_latency",              Perf.bTrackPipelineLatency);
 		}
 
@@ -1095,26 +783,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			}
 		}
 
-		// Phase 21 Sprint 2: streaming config
-		if (YamlHas(Root, "streaming"))
-		{
-			ryml::ConstNodeRef S = Root["streaming"];
-			YamlBool  (S, "cot_enabled",       Cfg.Streaming.bCotEnabled);
-			YamlString(S, "cot_addr",          Cfg.Streaming.CotAddr);
-			YamlInt   (S, "cot_port",          Cfg.Streaming.CotPort);
-			YamlFloat (S, "cot_interval_sec",  Cfg.Streaming.CotIntervalSec);
-			YamlString(S, "cot_uid",           Cfg.Streaming.CotUid);
-			YamlString(S, "cot_type",          Cfg.Streaming.CotType);
-			YamlString(S, "cot_callsign",      Cfg.Streaming.CotCallsign);
-			YamlBool  (S, "atak_view_enabled", Cfg.Streaming.bAtakViewEnabled);
-			YamlString(S, "atak_addr",         Cfg.Streaming.AtakAddr);
-			YamlInt   (S, "atak_port",         Cfg.Streaming.AtakPort);
-			YamlInt   (S, "atak_bitrate",      Cfg.Streaming.AtakBitrate);
-			YamlBool  (S, "rover_compat",      Cfg.Streaming.bRoverCompat);
-			YamlInt   (S, "rover_video_pid",   Cfg.Streaming.RoverVideoPid);
-			YamlInt   (S, "rover_klv_pid",     Cfg.Streaming.RoverKlvPid);
-		}
-
 		// Phase 26: standards compliance config
 		if (YamlHas(Root, "phase26"))
 		{
@@ -1139,34 +807,6 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		// Phase 22G: First-person view
 		YamlInt  (Root, "fps_entity_id",    Cfg.FpsEntityId);
 		YamlFloat(Root, "fps_eye_height_m", Cfg.FpsEyeHeightM);
-
-		// Phase 23E: Randomization engine
-		if (YamlHas(Root, "randomization"))
-		{
-			ryml::ConstNodeRef RandNode = Root["randomization"];
-			YamlBool (RandNode, "enabled",                 Cfg.Randomization.bEnabled);
-			YamlInt  (RandNode, "seed",                    Cfg.Randomization.Seed);
-			YamlFloat(RandNode, "start_hour_jitter_hrs",   Cfg.Randomization.StartHourJitterHrs);
-			YamlFloat(RandNode, "visibility_jitter_frac",  Cfg.Randomization.VisibilityJitterFrac);
-			YamlFloat(RandNode, "fog_density_jitter_frac", Cfg.Randomization.FogDensityJitterFrac);
-
-			if (YamlHas(RandNode, "entity_entries") && RandNode["entity_entries"].is_seq())
-			{
-				for (ryml::ConstNodeRef EE : RandNode["entity_entries"])
-				{
-					if (!EE.is_map()) continue;
-					FCamSimConfig::FEntityRandomizationEntry Entry;
-					YamlInt  (EE, "template_entity_id", Entry.TemplateEntityId);
-					YamlInt  (EE, "min_count",          Entry.MinCount);
-					YamlInt  (EE, "max_count",          Entry.MaxCount);
-					YamlFloat(EE, "spawn_radius_m",     Entry.SpawnRadiusM);
-					YamlFloat(EE, "position_jitter_m",  Entry.PositionJitterM);
-					YamlFloat(EE, "speed_jitter_frac",  Entry.SpeedJitterFrac);
-					YamlInt  (EE, "id_offset",          Entry.IdOffset);
-					Cfg.Randomization.EntityEntries.Add(Entry);
-				}
-			}
-		}
 
 		// Phase 28: operational config
 		if (YamlHas(Root, "operational"))
@@ -1265,16 +905,11 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		IrM->AGCLagFrames = FMath::Clamp(GetEnvInt(TEXT("CAMSIM_IR_AGC_LAG_FRAMES"), IrM->AGCLagFrames), 0, 10);
 	}
 
-	Cfg.GroundTruth.bEnabled = GetEnvInt(TEXT("CAMSIM_GROUND_TRUTH_ENABLED"), Cfg.GroundTruth.bEnabled ? 1 : 0) != 0;
-	Cfg.GroundTruth.OutputPath = GetEnv(TEXT("CAMSIM_GROUND_TRUTH_PATH"), Cfg.GroundTruth.OutputPath);
-	Cfg.GroundTruth.IntervalFrames = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES"), Cfg.GroundTruth.IntervalFrames));
-
 	Cfg.MLTraining.bEnabled = GetEnvInt(TEXT("CAMSIM_ML_ENABLED"), Cfg.MLTraining.bEnabled ? 1 : 0) != 0;
 	Cfg.MLTraining.OutputDir = GetEnv(TEXT("CAMSIM_ML_OUTPUT_DIR"), Cfg.MLTraining.OutputDir);
 	Cfg.MLTraining.bDepthMap = GetEnvInt(TEXT("CAMSIM_ML_DEPTH_ENABLED"), Cfg.MLTraining.bDepthMap ? 1 : 0) != 0;
 	Cfg.MLTraining.bBoundingBoxes = GetEnvInt(TEXT("CAMSIM_ML_BBOX_ENABLED"), Cfg.MLTraining.bBoundingBoxes ? 1 : 0) != 0;
 	Cfg.MLTraining.bCocoExport = GetEnvInt(TEXT("CAMSIM_ML_COCO_ENABLED"), Cfg.MLTraining.bCocoExport ? 1 : 0) != 0;
-	Cfg.MLTraining.bVocExport = GetEnvInt(TEXT("CAMSIM_ML_VOC_ENABLED"), Cfg.MLTraining.bVocExport ? 1 : 0) != 0;
 	Cfg.MLTraining.AnnotationIntervalFrames = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_ML_INTERVAL_FRAMES"), Cfg.MLTraining.AnnotationIntervalFrames));
 	Cfg.MLTraining.DepthFarPlaneM = GetEnvFloat(TEXT("CAMSIM_ML_DEPTH_FAR_PLANE_M"), Cfg.MLTraining.DepthFarPlaneM);
 	Cfg.MLTraining.MinVisiblePixels = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_ML_MIN_VISIBLE_PIXELS"), Cfg.MLTraining.MinVisiblePixels));
@@ -1283,25 +918,10 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.EntityScale.TickRateHz = GetEnvFloat(TEXT("CAMSIM_ENTITY_TICK_RATE_HZ"), Cfg.EntityScale.TickRateHz);
 	Cfg.EntityScale.DefaultMaxUpdateRateHz = GetEnvFloat(
 		TEXT("CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ"), Cfg.EntityScale.DefaultMaxUpdateRateHz);
-	Cfg.bScenarioEnabled = GetEnvInt(TEXT("CAMSIM_SCENARIO_ENABLED"), Cfg.bScenarioEnabled ? 1 : 0) != 0;
-	Cfg.ScenarioTimeScale = GetEnvFloat(TEXT("CAMSIM_SCENARIO_TIME_SCALE"), Cfg.ScenarioTimeScale);
-	Cfg.ScenarioStartHour = GetEnvFloat(TEXT("CAMSIM_SCENARIO_START_HOUR"), Cfg.ScenarioStartHour);
 
 	// Phase 22G: FPS view
 	Cfg.FpsEntityId   = GetEnvInt  (TEXT("CAMSIM_FPS_ENTITY_ID"),    Cfg.FpsEntityId);
 	Cfg.FpsEyeHeightM = GetEnvFloat(TEXT("CAMSIM_FPS_EYE_HEIGHT_M"), Cfg.FpsEyeHeightM);
-
-	// Phase 23E: Randomization
-	Cfg.Randomization.bEnabled = GetEnvInt(TEXT("CAMSIM_RAND_ENABLED"), Cfg.Randomization.bEnabled ? 1 : 0) != 0;
-	Cfg.Randomization.Seed     = GetEnvInt(TEXT("CAMSIM_RAND_SEED"),    Cfg.Randomization.Seed);
-
-	// Phase 22C: Damage transition env overrides
-	Cfg.DamageTransition.bDamageTransitionFX = GetEnvInt(TEXT("CAMSIM_DAMAGE_TRANSITION_FX"),
-		Cfg.DamageTransition.bDamageTransitionFX ? 1 : 0) != 0;
-	Cfg.DamageTransition.bGradualDamage = GetEnvInt(TEXT("CAMSIM_DAMAGE_GRADUAL"),
-		Cfg.DamageTransition.bGradualDamage ? 1 : 0) != 0;
-	Cfg.DamageTransition.DamageInterpolationSec = GetEnvFloat(TEXT("CAMSIM_DAMAGE_INTERPOLATION_SEC"),
-		Cfg.DamageTransition.DamageInterpolationSec);
 
 	// Phase 12A: security metadata env overrides
 	Cfg.SecurityMetadata.Classification = GetEnv(TEXT("CAMSIM_SECURITY_CLASSIFICATION"), Cfg.SecurityMetadata.Classification);
@@ -1311,35 +931,16 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	// Phase 12B: video codec
 	Cfg.VideoCodec = GetEnv(TEXT("CAMSIM_VIDEO_CODEC"), Cfg.VideoCodec);
 
-	// Phase 12D: Prometheus
-	Cfg.PrometheusMetricsPath = GetEnv(TEXT("CAMSIM_PROMETHEUS_METRICS_PATH"), Cfg.PrometheusMetricsPath);
-
 	// Phase 12E: recording/playback
 	Cfg.Recording.CigiRecordPath = GetEnv(TEXT("CAMSIM_CIGI_RECORD_PATH"), Cfg.Recording.CigiRecordPath);
 	Cfg.Recording.VideoRecordPath = GetEnv(TEXT("CAMSIM_VIDEO_RECORD_PATH"), Cfg.Recording.VideoRecordPath);
 	Cfg.Recording.CigiPlaybackPath = GetEnv(TEXT("CAMSIM_CIGI_PLAYBACK_PATH"), Cfg.Recording.CigiPlaybackPath);
 
-	// Phase 15: optical realism env overrides
-	Cfg.OpticalRealism.bEnabled = GetEnvInt(TEXT("CAMSIM_OPTICAL_REALISM_ENABLED"),
-		Cfg.OpticalRealism.bEnabled ? 1 : 0) != 0;
-	Cfg.OpticalRealism.MotionBlurAmount = GetEnvFloat(TEXT("CAMSIM_MOTION_BLUR_AMOUNT"), Cfg.OpticalRealism.MotionBlurAmount);
-	Cfg.OpticalRealism.FocalDistance = GetEnvFloat(TEXT("CAMSIM_FOCAL_DISTANCE"), Cfg.OpticalRealism.FocalDistance);
-	Cfg.OpticalRealism.ApertureFStop = GetEnvFloat(TEXT("CAMSIM_APERTURE_FSTOP"), Cfg.OpticalRealism.ApertureFStop);
-
-	// Phase 18: weather, atmosphere & particle effects env overrides
+	// Phase 18: weather & atmosphere env overrides
 	Cfg.Phase18.bSecondFog       = GetEnvInt(TEXT("CAMSIM_SECOND_FOG"),       Cfg.Phase18.bSecondFog       ? 1 : 0) != 0;
-	Cfg.Phase18.bGodRays         = GetEnvInt(TEXT("CAMSIM_GOD_RAYS"),        Cfg.Phase18.bGodRays         ? 1 : 0) != 0;
 	Cfg.Phase18.VisibilityRangeM = GetEnvFloat(TEXT("CAMSIM_VISIBILITY_RANGE_M"), Cfg.Phase18.VisibilityRangeM);
 	Cfg.Phase18.bVolumetricClouds   = GetEnvInt(TEXT("CAMSIM_VOLUMETRIC_CLOUDS"),      Cfg.Phase18.bVolumetricClouds   ? 1 : 0) != 0;
 	Cfg.Phase18.CloudShadowStrength = GetEnvFloat(TEXT("CAMSIM_CLOUD_SHADOW_STRENGTH"),Cfg.Phase18.CloudShadowStrength);
-	Cfg.Phase18.bWeatherZones       = GetEnvInt(TEXT("CAMSIM_WEATHER_ZONES"),          Cfg.Phase18.bWeatherZones       ? 1 : 0) != 0;
-	Cfg.Phase18.ContrailAltM        = GetEnvFloat(TEXT("CAMSIM_CONTRAIL_ALT_M"),       Cfg.Phase18.ContrailAltM);
-	Cfg.Phase18.MaxCraters          = GetEnvInt(TEXT("CAMSIM_MAX_CRATERS"),            Cfg.Phase18.MaxCraters);
-	Cfg.Phase18.ContrailSpeedMs       = GetEnvFloat(TEXT("CAMSIM_CONTRAIL_SPEED_MS"),        Cfg.Phase18.ContrailSpeedMs);
-	Cfg.Phase18.SmokeComponentID      = GetEnvInt  (TEXT("CAMSIM_SMOKE_COMPONENT_ID"),        Cfg.Phase18.SmokeComponentID);
-	Cfg.Phase18.FireComponentID       = GetEnvInt  (TEXT("CAMSIM_FIRE_COMPONENT_ID"),         Cfg.Phase18.FireComponentID);
-	Cfg.Phase18.CraterImpactComponentID = GetEnvInt(TEXT("CAMSIM_CRATER_IMPACT_COMPONENT_ID"),Cfg.Phase18.CraterImpactComponentID);
-	Cfg.Phase18.CraterDefaultRadiusM  = GetEnvFloat(TEXT("CAMSIM_CRATER_DEFAULT_RADIUS_M"),   Cfg.Phase18.CraterDefaultRadiusM);
 
 	// Ocean (ROADMAP 2.6)
 	Cfg.Ocean.bEnabled          = GetEnvBool (TEXT("CAMSIM_OCEAN_ENABLED"),        Cfg.Ocean.bEnabled);
@@ -1383,7 +984,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		RQ.AOIntensity           = GetEnvFloat(TEXT("CAMSIM_AO_INTENSITY"),            RQ.AOIntensity);
 		RQ.AORadius              = GetEnvFloat(TEXT("CAMSIM_AO_RADIUS"),               RQ.AORadius);
 		RQ.bRayTracingEnabled    = GetEnvInt  (TEXT("CAMSIM_RT_ENABLED"),              RQ.bRayTracingEnabled    ? 1 : 0) != 0;
-		RQ.bRayTracedReflections = GetEnvInt  (TEXT("CAMSIM_RT_REFLECTIONS"),          RQ.bRayTracedReflections ? 1 : 0) != 0;
 		RQ.ShadowDistanceScale   = GetEnvFloat(TEXT("CAMSIM_SHADOW_DISTANCE_SCALE"),   RQ.ShadowDistanceScale);
 		RQ.VSMResolutionBias     = GetEnvInt  (TEXT("CAMSIM_VSM_RESOLUTION_BIAS"),     RQ.VSMResolutionBias);
 		RQ.VSMMaxPhysicalPages   = GetEnvInt  (TEXT("CAMSIM_VSM_MAX_PAGES"),           RQ.VSMMaxPhysicalPages);
@@ -1425,33 +1025,20 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	UE_LOG(LogCamSim, Log,
 		TEXT("Config: CIGI=%s:%d Out=udp://%s:%d Bitrate=%d Preset=%s Encoder=%s ReadbackReadyPolls=%d WatchdogInterval=%d ")
 		TEXT("SSE=%.1f CacheMB=%d MaxEntities=%d ")
-		TEXT("TerrainProvider=%s ImageryProvider=%s GroundTruth=%d ")
-		TEXT("EntityScale(draw=%.1fm tick=%.1fHz pose_cap=%.1fHz) Scenario=%d entities=%d time_scale=%.2f"),
+		TEXT("TerrainProvider=%s ImageryProvider=%s ")
+		TEXT("EntityScale(draw=%.1fm tick=%.1fHz pose_cap=%.1fHz)"),
 		*Cfg.CigiBindAddr, Cfg.CigiPort,
 		*Cfg.MulticastAddr, Cfg.MulticastPort,
 		Cfg.VideoBitrate, *Cfg.H264Preset, *Cfg.Encoder,
 		Cfg.ReadbackReadyPolls, Cfg.EncoderWatchdogIntervalTicks,
 		Cfg.MaximumScreenSpaceError, Cfg.MaximumCachedBytesMB, Cfg.MaxEntities,
 		*Cfg.TerrainProvider, *Cfg.ImageryProvider,
-		Cfg.GroundTruth.bEnabled ? 1 : 0,
-		Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz, Cfg.EntityScale.DefaultMaxUpdateRateHz,
-		Cfg.bScenarioEnabled ? 1 : 0, Cfg.ScenarioEntities.Num(), Cfg.ScenarioTimeScale);
+		Cfg.EntityScale.MaxDrawDistanceM, Cfg.EntityScale.TickRateHz, Cfg.EntityScale.DefaultMaxUpdateRateHz);
 
 	// Phase 27: Performance env overrides
 	{
 		FPerformanceConfig& Perf = Cfg.Performance;
-		Perf.bTrackFrameDropsByCategory          = GetEnvBool (TEXT("CAMSIM_PERF_TRACK_DROPS"),         Perf.bTrackFrameDropsByCategory);
-		Perf.bHotReloadConfig                    = GetEnvBool (TEXT("CAMSIM_PERF_HOT_RELOAD"),          Perf.bHotReloadConfig);
-		Perf.HotReloadPollIntervalSec            = GetEnvFloat(TEXT("CAMSIM_PERF_POLL_INTERVAL"),       Perf.HotReloadPollIntervalSec);
-		Perf.TilePrefetchSlewThresholdDegPerSec  = GetEnvFloat(TEXT("CAMSIM_PERF_TILE_SLEW_THRESHOLD"), Perf.TilePrefetchSlewThresholdDegPerSec);
-		Perf.TilePrefetchFovBoost                = GetEnvFloat(TEXT("CAMSIM_PERF_TILE_FOV_BOOST"),      Perf.TilePrefetchFovBoost);
-		Perf.TilePrefetchBoostFrames             = GetEnvInt  (TEXT("CAMSIM_PERF_TILE_BOOST_FRAMES"),   Perf.TilePrefetchBoostFrames);
-		Perf.RenderFrameRateHz                   = GetEnvFloat(TEXT("CAMSIM_PERF_RENDER_FPS"),          Perf.RenderFrameRateHz);
-		Perf.OutputFrameRateHz                   = GetEnvFloat(TEXT("CAMSIM_PERF_OUTPUT_FPS"),          Perf.OutputFrameRateHz);
 		Perf.TexturePoolBudgetMB                 = GetEnvInt  (TEXT("CAMSIM_PERF_TEXTURE_POOL_MB"),     Perf.TexturePoolBudgetMB);
-		Perf.bAdaptiveSSE                        = GetEnvBool (TEXT("CAMSIM_PERF_ADAPTIVE_SSE"),         Perf.bAdaptiveSSE);
-		Perf.AdaptiveSSEMin                      = GetEnvFloat(TEXT("CAMSIM_PERF_ADAPTIVE_SSE_MIN"),     Perf.AdaptiveSSEMin);
-		Perf.AdaptiveSSEMax                      = GetEnvFloat(TEXT("CAMSIM_PERF_ADAPTIVE_SSE_MAX"),     Perf.AdaptiveSSEMax);
 	}
 
 	// Phase 21: DIS protocol env var overrides
@@ -1467,25 +1054,6 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		D.HeartbeatTimeoutSec = GetEnvFloat(TEXT("CAMSIM_DIS_HEARTBEAT_TIMEOUT"), D.HeartbeatTimeoutSec);
 		D.DefaultEntityTypeId = GetEnvInt  (TEXT("CAMSIM_DIS_DEFAULT_ENTITY_TYPE"), D.DefaultEntityTypeId);
 		D.bClampToSurface     = GetEnvInt  (TEXT("CAMSIM_DIS_CLAMP_TO_SURFACE"),  D.bClampToSurface ? 1 : 0) != 0;
-	}
-
-	// Phase 21 Sprint 2: streaming env var overrides
-	{
-		FStreamingConfig& S = Cfg.Streaming;
-		S.bCotEnabled      = GetEnvInt  (TEXT("CAMSIM_COT_ENABLED"),       S.bCotEnabled      ? 1 : 0) != 0;
-		S.CotAddr          = GetEnv     (TEXT("CAMSIM_COT_ADDR"),          S.CotAddr);
-		S.CotPort          = GetEnvInt  (TEXT("CAMSIM_COT_PORT"),          S.CotPort);
-		S.CotIntervalSec   = GetEnvFloat(TEXT("CAMSIM_COT_INTERVAL"),      S.CotIntervalSec);
-		S.CotUid           = GetEnv     (TEXT("CAMSIM_COT_UID"),           S.CotUid);
-		S.CotType          = GetEnv     (TEXT("CAMSIM_COT_TYPE"),          S.CotType);
-		S.CotCallsign      = GetEnv     (TEXT("CAMSIM_COT_CALLSIGN"),      S.CotCallsign);
-		S.bAtakViewEnabled = GetEnvInt  (TEXT("CAMSIM_ATAK_VIEW_ENABLED"), S.bAtakViewEnabled ? 1 : 0) != 0;
-		S.AtakAddr         = GetEnv     (TEXT("CAMSIM_ATAK_ADDR"),         S.AtakAddr);
-		S.AtakPort         = GetEnvInt  (TEXT("CAMSIM_ATAK_PORT"),         S.AtakPort);
-		S.AtakBitrate      = GetEnvInt  (TEXT("CAMSIM_ATAK_BITRATE"),      S.AtakBitrate);
-		S.bRoverCompat     = GetEnvInt  (TEXT("CAMSIM_ROVER_COMPAT"),      S.bRoverCompat     ? 1 : 0) != 0;
-		S.RoverVideoPid    = GetEnvInt  (TEXT("CAMSIM_ROVER_VIDEO_PID"),    S.RoverVideoPid);
-		S.RoverKlvPid      = GetEnvInt  (TEXT("CAMSIM_ROVER_KLV_PID"),     S.RoverKlvPid);
 	}
 
 	// Phase 26: standards compliance env var overrides
@@ -1817,14 +1385,6 @@ TArray<FString> FCamSimConfig::Validate() const
 	if (!(Thermal.FogIrFactor >= 0.0f && Thermal.FogIrFactor <= 2.0f))
 		Errors.Add(FString::Printf(TEXT("thermal.fog_ir_factor=%.2f out of range [0, 2]"), Thermal.FogIrFactor));
 	Errors.Append(FThermalMaterialTable::Validate(Thermal.Materials));
-
-	RangeCheckFloat(TEXT("Performance.RenderFrameRateHz"), Performance.RenderFrameRateHz, 1.0f, 120.0f);
-	if (Performance.OutputFrameRateHz < 1.0f || Performance.OutputFrameRateHz > Performance.RenderFrameRateHz)
-	{
-		Errors.Add(FString::Printf(
-			TEXT("Performance.OutputFrameRateHz=%.1f out of range [1.0, RenderFrameRateHz=%.1f]"),
-			Performance.OutputFrameRateHz, Performance.RenderFrameRateHz));
-	}
 
 	return Errors;
 }

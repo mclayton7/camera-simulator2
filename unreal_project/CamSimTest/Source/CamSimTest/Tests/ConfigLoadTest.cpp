@@ -40,23 +40,12 @@ bool FConfigYamlSectionsTest::RunTest(const FString& Parameters)
 		"ml_training:\n"
 		"  enabled: %s\n"
 		"  output_dir: \"/tmp/camsim-ml\"\n"
-		"optical_realism:\n"
-		"  enabled: %s\n"
-		"streaming:\n"
-		"  cot_enabled: %s\n"
-		"  cot_addr: \"10.4.5.6\"\n"
 		"performance:\n"
-		"  hot_reload_config: %s\n"
-		"damage_transition:\n"
-		"  gradual: %s\n"
+		"  texture_pool_budget_mb: 1024\n"
 		"terrain_gate:\n"
 		"  min_load_progress: 87.5\n"
 		"recording:\n"
 		"  cigi_record_path: \"/tmp/cigi.rec\"\n"
-		"scenario:\n"
-		"  time_scale: 3.5\n"
-		"ground_truth:\n"
-		"  output_path: \"/tmp/gt\"\n"
 		"operational:\n"
 		"  health_http_enabled: %s\n"
 		"  health_http_port: 18080\n"),
@@ -64,10 +53,6 @@ bool FConfigYamlSectionsTest::RunTest(const FString& Parameters)
 		YamlBoolText(!D.Ocean.bEnabled),
 		YamlBoolText(!D.DIS.bEnabled),
 		YamlBoolText(!D.MLTraining.bEnabled),
-		YamlBoolText(!D.OpticalRealism.bEnabled),
-		YamlBoolText(!D.Streaming.bCotEnabled),
-		YamlBoolText(!D.Performance.bHotReloadConfig),
-		YamlBoolText(!D.DamageTransition.bGradualDamage),
 		YamlBoolText(!D.Operational.bHealthHttpEnabled));
 
 	const FCamSimConfig C = FCamSimConfig::LoadFromYamlString(Yaml);
@@ -86,17 +71,49 @@ bool FConfigYamlSectionsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("dis.bind_addr"), C.DIS.BindAddr, FString(TEXT("10.1.2.3")));
 	TestEqual(TEXT("ml_training.enabled"), C.MLTraining.bEnabled, !D.MLTraining.bEnabled);
 	TestEqual(TEXT("ml_training.output_dir"), C.MLTraining.OutputDir, FString(TEXT("/tmp/camsim-ml")));
-	TestEqual(TEXT("optical_realism.enabled"), C.OpticalRealism.bEnabled, !D.OpticalRealism.bEnabled);
-	TestEqual(TEXT("streaming.cot_enabled"), C.Streaming.bCotEnabled, !D.Streaming.bCotEnabled);
-	TestEqual(TEXT("streaming.cot_addr"), C.Streaming.CotAddr, FString(TEXT("10.4.5.6")));
-	TestEqual(TEXT("performance.hot_reload_config"), C.Performance.bHotReloadConfig, !D.Performance.bHotReloadConfig);
-	TestEqual(TEXT("damage_transition.gradual"), C.DamageTransition.bGradualDamage, !D.DamageTransition.bGradualDamage);
+	TestEqual(TEXT("performance.texture_pool_budget_mb"), C.Performance.TexturePoolBudgetMB, 1024);
 	TestEqual(TEXT("terrain_gate.min_load_progress"), C.TerrainGate.MinLoadProgressPct, 87.5f);
 	TestEqual(TEXT("recording.cigi_record_path"), C.Recording.CigiRecordPath, FString(TEXT("/tmp/cigi.rec")));
-	TestEqual(TEXT("scenario.time_scale"), C.ScenarioTimeScale, 3.5f);
-	TestEqual(TEXT("ground_truth.output_path"), C.GroundTruth.OutputPath, FString(TEXT("/tmp/gt")));
 	TestEqual(TEXT("operational.health_http_enabled"), C.Operational.bHealthHttpEnabled, !D.Operational.bHealthHttpEnabled);
 	TestEqual(TEXT("operational.health_http_port"), C.Operational.HealthHttpPort, 18080);
+	return true;
+}
+
+// -------------------------------------------------------------------------
+// Settings that were removed (2026-10) are reported as unknown keys, so an
+// old config warns instead of silently doing nothing.
+// -------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConfigRemovedSettingsWarnTest,
+	"CamSim.Config.RemovedSettingsAreUnknown",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FConfigRemovedSettingsWarnTest::RunTest(const FString& Parameters)
+{
+	const FCamSimConfig C = FCamSimConfig::LoadFromYamlString(TEXT(
+		"streaming:\n  cot_enabled: true\n"
+		"scenario:\n  enabled: true\n"
+		"randomization:\n  enabled: true\n"
+		"optical_realism:\n  enabled: true\n"
+		"damage_transition:\n  enabled: true\n"
+		"ground_truth:\n  enabled: true\n"
+		"prometheus_metrics_path: \"/tmp/x.prom\"\n"
+		"use_instanced_rendering: true\n"
+		"ml_training:\n  voc_export: true\n"
+		"rendering_quality:\n  rt_reflections: true\n"
+		"performance:\n  hot_reload_config: true\n  adaptive_sse: true\n  render_frame_rate_hz: 60\n"
+		"phase18:\n  god_rays: true\n  weather_zones: true\n  niagara_smoke: \"/Game/X\"\n"));
+
+	TestTrue(TEXT("loaded"), C.bLoadedSuccessfully);
+	for (const TCHAR* Key : { TEXT("streaming"), TEXT("scenario"), TEXT("randomization"), TEXT("optical_realism"),
+	                          TEXT("damage_transition"), TEXT("ground_truth"), TEXT("prometheus_metrics_path"),
+	                          TEXT("use_instanced_rendering"), TEXT("ml_training.voc_export"),
+	                          TEXT("rendering_quality.rt_reflections"), TEXT("performance.hot_reload_config"),
+	                          TEXT("performance.adaptive_sse"), TEXT("performance.render_frame_rate_hz"),
+	                          TEXT("phase18.god_rays"), TEXT("phase18.weather_zones"), TEXT("phase18.niagara_smoke") })
+	{
+		TestTrue(FString::Printf(TEXT("%s reported unknown"), Key), C.UnknownYamlKeys.Contains(Key));
+	}
 	return true;
 }
 

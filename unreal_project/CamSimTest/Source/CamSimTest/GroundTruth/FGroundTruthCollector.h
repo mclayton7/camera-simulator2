@@ -14,7 +14,7 @@ struct FCamSimTelemetry;
  * FGroundTruthCollector
  *
  * Orchestrator for ML training data output.
- * Owns the annotation writers (COCO, VOC) and depth map writer.
+ * Owns the annotation writer (COCO) and depth map writer.
  * Lifetime: owned by UCamSimSubsystem::FSubsystemImpl via TUniquePtr.
  *
  * Thread model:
@@ -70,7 +70,7 @@ private:
 	const FCamSimConfig& Config;
 	bool  bEnabled    = false;
 	bool  bIsOpen     = false;
-	// Cached in Open(): the task thread must not read Config, which hot reload can move-assign.
+	// Cached in Open(): the task thread never reads Config.
 	int32 AnnotationIntervalFrames = 1;
 	int32 MinVisiblePixels = 1;
 	bool  bSegmentation = false;

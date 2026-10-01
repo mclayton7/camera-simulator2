@@ -88,8 +88,7 @@ void FCamSimStreamingController::UpdateCameras(AActor* Owner, const USceneCaptur
 	}
 }
 
-void FCamSimStreamingController::UpdateLevelOfDetail(float DeltaTime, float GimbalYawDeg, float GimbalPitchDeg,
-	float HFovDeg, const FCamSimConfig& Cfg, const FTilesets& Tilesets)
+void FCamSimStreamingController::UpdateLevelOfDetail(float HFovDeg, const FCamSimConfig& Cfg, const FTilesets& Tilesets)
 {
 	// Off-screen detail follows the zoom: a narrow FOV must not load zoomed-in
 	// tiles all the way round the camera (UObject count, GC stalls, game-thread
@@ -100,65 +99,6 @@ void FCamSimStreamingController::UpdateLevelOfDetail(float DeltaTime, float Gimb
 	{
 		SetCulledScreenSpaceError(Tilesets, CulledSse);
 		AppliedCulledSse = CulledSse;
-	}
-
-	const FCamSimConfig::FPerformanceConfig& Perf = Cfg.Performance;
-
-	// 27E — sharper tiles while the gimbal slews fast, held for a few frames.
-	if (Perf.TilePrefetchSlewThresholdDegPerSec > 0.0f)
-	{
-		if (DeltaTime > KINDA_SMALL_NUMBER && bHasPrevGimbal)
-		{
-			const float PanVel  = FMath::Abs(GimbalYawDeg   - PrevGimbalYawDeg)   / DeltaTime;
-			const float TiltVel = FMath::Abs(GimbalPitchDeg - PrevGimbalPitchDeg) / DeltaTime;
-			if (FMath::Max(PanVel, TiltVel) >= Perf.TilePrefetchSlewThresholdDegPerSec)
-			{
-				// Reset (or extend) the boost window on every above-threshold frame
-				PrefetchBoostFramesRemaining = Perf.TilePrefetchBoostFrames;
-			}
-			else if (PrefetchBoostFramesRemaining > 0)
-			{
-				PrefetchBoostFramesRemaining--;
-			}
-
-			SetScreenSpaceError(Tilesets, (PrefetchBoostFramesRemaining > 0)
-				? Cfg.MaximumScreenSpaceError / FMath::Max(Perf.TilePrefetchFovBoost, 1.0f)
-				: Cfg.MaximumScreenSpaceError);
-		}
-		PrevGimbalYawDeg   = GimbalYawDeg;
-		PrevGimbalPitchDeg = GimbalPitchDeg;
-		bHasPrevGimbal     = true;
-	}
-
-	// Adaptive SSE — coarser when over the frame budget, sharper after 30
-	// frames under 75% of it. Doesn't fight the prefetch boost.
-	if (Perf.bAdaptiveSSE && DeltaTime > KINDA_SMALL_NUMBER && PrefetchBoostFramesRemaining <= 0)
-	{
-		const float BudgetSec = 1.0f / FMath::Max(Perf.OutputFrameRateHz, 1.0f);
-		if (AdaptiveSse <= 0.0f)
-		{
-			AdaptiveSse = Cfg.MaximumScreenSpaceError;
-		}
-
-		if (DeltaTime > BudgetSec)
-		{
-			AdaptiveSse = FMath::Min(AdaptiveSse + 1.0f, Perf.AdaptiveSSEMax);
-			UnderBudgetStreakFrames = 0;
-		}
-		else if (DeltaTime < BudgetSec * 0.75f)
-		{
-			if (++UnderBudgetStreakFrames >= 30)
-			{
-				AdaptiveSse = FMath::Max(AdaptiveSse - 0.5f, Perf.AdaptiveSSEMin);
-				UnderBudgetStreakFrames = 0;
-			}
-		}
-		else
-		{
-			UnderBudgetStreakFrames = 0;
-		}
-
-		SetScreenSpaceError(Tilesets, AdaptiveSse);
 	}
 }
 
@@ -231,13 +171,3 @@ void FCamSimStreamingController::SetCulledScreenSpaceError(const FTilesets& Tile
 	}
 }
 
-void FCamSimStreamingController::SetScreenSpaceError(const FTilesets& Tilesets, double Sse)
-{
-	for (const TWeakObjectPtr<ACesium3DTileset>& Weak : Tilesets)
-	{
-		if (ACesium3DTileset* T = Weak.Get())
-		{
-			T->MaximumScreenSpaceError = Sse;
-		}
-	}
-}

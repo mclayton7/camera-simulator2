@@ -69,7 +69,7 @@ struct FFrameDropStats
  *      FlushRenderingCommands();
  *   3. ground-truth writers on a background task;
  *   4. an SPSC hand-off to the persistent encoder thread.
- * Also applies the sensor view's render settings (optical realism, rendering
+ * Also applies the sensor view's render settings (motion blur off, rendering
  * quality, manual exposure). Driven by ACamSimCamera on the game thread; does
  * not tick itself.
  */
@@ -103,9 +103,6 @@ public:
 	/** Request the sensor graph's output for the next game-viewport frame, tagged with Telemetry. */
 	void Capture(const FCamSimTelemetry& Telemetry);
 
-	/** True if this render frame should be skipped to honour the output frame rate. */
-	bool ShouldSkipFrameForDecimation(const FCamSimConfig& Cfg);
-
 	/**
 	 * ROADMAP 3B: run the sensor controller (AE / IR AGC) on the newest GPU
 	 * histogram and send this tick's parameters to the sensor graph. No-op
@@ -118,8 +115,8 @@ public:
 	static constexpr float ThermalUeExposureEv = -12.0f;
 	/**
 	 * ROADMAP 4A: whether this tick's IR frame is thermal radiance. bThermalAvailable = CamSimThermalAvailability::
-	 * IsAvailableThisTick: the subsystem's startup decision AND the live thermal.enabled (a hot reload to false restores the
-	 * luminance proxy) AND NOT the render thread's "thermal inputs missing" flag (FCamSimFrameGrabExtension).
+	 * IsAvailableThisTick: the subsystem's startup decision AND thermal.enabled
+	 * AND NOT the render thread's "thermal inputs missing" flag (FCamSimFrameGrabExtension).
 	 */
 	static bool ShouldRunThermal(ESensorMode Mode, bool bThermalAvailable) { return Mode == ESensorMode::IR && bThermalAvailable; }
 	/** ROADMAP 4A: the camera's geodetic pose (WGS-84, HAE m) and geodetic up in UE world space. Call every tick before UpdateSensorParams. */
@@ -140,7 +137,6 @@ public:
 
 	// Stats
 	const FFrameDropStats& GetFrameDropStats() const { return FrameDropStats; }
-	bool   IsTrackingFrameDrops() const { return bTrackFrameDrops; }
 	/** Frames dropped because the encoder thread's queue was full. */
 	uint64 GetDroppedFrameCount() const;
 	uint64 GetFramesCaptured() const { return FrameIndex; }
@@ -181,7 +177,7 @@ private:
 	// ROADMAP 3B — GPU sensor model (game thread unless noted)
 	/** The GPU sensor graph runs this session (UCamSimSubsystem::IsSensorGraphAvailable, fixed at Initialize). */
 	bool bSensorGraph = false;
-	/** Size the sensor graph and NV12 readbacks were set up with (never the live, hot-reloadable config). */
+	/** Size the sensor graph and NV12 readbacks were set up with. */
 	FIntPoint GpuSensorSize = FIntPoint::ZeroValue;
 	/** Consecutive failed readbacks (usually never grabbed); logged once at GpuStallLogThreshold. */
 	int32 ConsecutiveGpuFailures = 0;
@@ -325,8 +321,4 @@ private:
 
 	/** Phase 27B — per-category frame drop counters. */
 	FFrameDropStats FrameDropStats;
-	bool            bTrackFrameDrops = false;
-
-	// Output decimation — render at RenderFrameRateHz, encode at OutputFrameRateHz
-	uint64 RenderFrameCounter = 0;
 };

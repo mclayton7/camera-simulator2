@@ -44,7 +44,7 @@ Tag 2 is first and Tag 1 last, as ST 0601 requires; the rest are in ascending or
 
 **Source:** the sim clock (`FSimClock::Get().NowMicros()`, `Time/SimClock.h`), sampled in
 `FCamSimTelemetryAssembler::Snapshot()` immediately before the scene capture. It is the same
-time the sun, CoT, the HUD date-time group and ground-truth annotations use. It starts at the
+time the sun and ground-truth annotations use. It starts at the
 wall-clock UTC time (or `start_datetime` / `start_hour`) and a CIGI Celestial Sphere Control
 with Date/Time Valid sets it, so after a host sets a scenario date the timestamps carry that
 date, not today's. It advances from a monotonic timer, so it never jumps if the system clock

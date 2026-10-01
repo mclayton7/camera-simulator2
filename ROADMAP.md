@@ -187,7 +187,7 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
 | 1.11 | ~~KLV Tags 15/25 carry ellipsoid height but are defined as MSL.~~ **Done 2026-09-26.** `Geospatial/Geoid.h` samples NGA's 15′ EGM96 grid (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS, staged as a loose file; regenerate with `scripts/make_egm96_dac.py`). Tags 15/25 are now MSL; ellipsoid heights go in new Tags 75/78. Without the grid, 15/25 are omitted rather than mislabelled. Cesium Native's `EarthGravitationalModel1996Grid` was not used: it clamps instead of wrapping at 360°→0°, so it is off within 0.25° west of the prime meridian (0.17 m at NGA's test point). `check.js` verifies 15/25/75/78 with its own geoid sampler. Tests: `Geoid.MatchesNgaReference` (NGA's reference points, ±0.1 m), KLV conformance packets. CIGI altitudes needed no change: CIGI 3.3 defines its "MSL" as the ellipsoid surface. |
 | 1.12 | ~~`camsim_health.json` field `dropped` reports watchdog reconnects.~~ **Done 2026-09-26.** `dropped` is now the encoder queue's real drop count (`ACamSimCamera::GetDroppedFrameCount`; the old `DroppedFrameCount` member was never incremented), and reconnects have their own `watchdog_reconnects` field. Editor runs now write the file to `Saved/` instead of the shared engine `Binaries/` directory. Still open: in the opt-in per-category `frame_drops` block, `encoder_busy` and `socket_error` are never incremented (only `readback_timeout` is). |
 | 1.13 | ~~An attached camera platform can lag its parent by one frame.~~ **Done 2026-09-26.** It was wider than attachment: the camera captured in `TG_PrePhysics`, before `FCamSimEntityManager` (a tickable object, run after `TG_PostPhysics`) applied that frame's CIGI entity states, so every entity in the image was a frame stale, and environment changes landed a frame late too. Now one ordered pass: the entity manager applies entity states, then the camera platform state (`ApplyHostPlatformState`), resolves attachments parent-first, then the camera's own attachment (`FollowAttachParent`); the camera ticks in `TG_PostUpdateWork` after `ACamSimEnvironment` and captures. Remaining lag: an entity attached to a camera platform that is itself attached. Not yet measured live: needs a moving parent entity in `send_cigi_test.py`. |
-| 1.14 | **Keyframe bursts overflow UDP receivers.** Found 2026-09-30 when NVENC was enabled on Linux (`build_thirdparty.sh` now builds it against pinned nv-codec-headers; it used to require a CUDA toolkit and never did). NVENC at 4 Mbit/s sends a ~180 KB IDR every second (30-frame GOP) as ~140 back-to-back datagrams, which overflows Linux's default 208 KB socket buffer: the receiver drops packets and the IDR decodes corrupt. Workaround in place: `check.js` requests a 16 MB buffer and warns when it is capped, and the host needs `sysctl net.core.rmem_max=26214400`. **Deferred 2026-10-01**: an FFmpeg receiver held to stock Linux limits (`buffer_size=212992`, which the kernel doubles to ~416 KB) decoded 3 × 10 s at 4 and at 10 Mbit/s with 0 drops and 0 decode errors; NVENC's IDR stayed ~180 KB at both rates. Only receivers that never enlarge their socket buffer are affected. If one turns up (or a radio link, or bigger IDRs at 1080p), the agreed fix is intra refresh (latency over fast join) behind a `streaming.intra_refresh` switch (default on, off for ROVER until verified), libx264 and NVENC `intra-refresh=1` with the refresh period = GOP; first verify SPS/PPS repetition and recovery points for mid-stream join. |
+| 1.14 | **Keyframe bursts overflow UDP receivers.** Found 2026-09-30 when NVENC was enabled on Linux (`build_thirdparty.sh` now builds it against pinned nv-codec-headers; it used to require a CUDA toolkit and never did). NVENC at 4 Mbit/s sends a ~180 KB IDR every second (30-frame GOP) as ~140 back-to-back datagrams, which overflows Linux's default 208 KB socket buffer: the receiver drops packets and the IDR decodes corrupt. Workaround in place: `check.js` requests a 16 MB buffer and warns when it is capped, and the host needs `sysctl net.core.rmem_max=26214400`. **Deferred 2026-10-01**: an FFmpeg receiver held to stock Linux limits (`buffer_size=212992`, which the kernel doubles to ~416 KB) decoded 3 × 10 s at 4 and at 10 Mbit/s with 0 drops and 0 decode errors; NVENC's IDR stayed ~180 KB at both rates. Only receivers that never enlarge their socket buffer are affected. If one turns up (or a radio link, or bigger IDRs at 1080p), the agreed fix is intra refresh (latency over fast join) behind a `streaming.intra_refresh` switch (default on, off for radio links until verified), libx264 and NVENC `intra-refresh=1` with the refresh period = GOP; first verify SPS/PPS repetition and recovery points for mid-stream join. |
 | 1.15 | ~~Package CamSim as a Docker image that keeps the NVIDIA GPU.~~ **Done 2026-10-01** (guide: `docs/docker.md`). The `deploy/` scaffold had never run: the packaged (Game) target didn't compile (`bEnableExceptions` is forced on only for Editor targets, and rapidyaml and Cesium Native's headers use `try`/`throw`), `package_for_docker.sh` expected UE4's `LinuxNoEditor/`, and the entrypoint expected a Shipping binary. In the container, the NVIDIA Vulkan ICD failed with `ERROR_INCOMPATIBLE_DRIVER`: `libGLX_nvidia` dlopens `libEGL.so.1`, a distro package (`libegl1`) the Container Toolkit doesn't inject. The entrypoint keyed GPU detection on `NVIDIA_VISIBLE_DEVICES`, which reads `void` under CDI injection even with `--gpus all`, so it always took the Mesa path; it also hardcoded the wrong ICD path, and the image pinned `libnvidia-encode-535` against the host's 595 driver. Now: Ubuntu 24.04 runtime, driver from the host (`NVIDIA_DRIVER_CAPABILITIES=all`: `graphics` = Vulkan, `video` = NVENC), GPU detected by `/dev/nvidia*`, `-userdir=/var/lib/camsim` puts `Saved/` and Cesium's tile cache on a volume, health check on `GET /live`. The cook missed path-loaded assets (`/Game/Ocean`, `/glTFRuntime` base materials), now in `DirectoriesToAlwaysCook`, and `entities/` glTFs are staged into the package (`Entity/EntityPaths.h`). `ci_validate.sh --docker` runs the image with `--gpus all`, a scripted CIGI host, `/ready`, and the KLV position check. Verified on RTX 5080 / driver 595.91 / toolkit 1.20.1: ready in 26 s cold, 18 s warm, `h264_nvenc`, 149/149 KLV packets conform to misb.js, image 565 MB compressed. **No-GPU (Mesa lavapipe) path: does not work** (found 2026-10-01 by the GPU-vs-CPU comparison). Three layers: UE's device selection skips CPU devices without `-AllowSoftwareRendering`; lavapipe caps allocations at 128 MB, below Nanite's 512 MB streaming pool (fatal); with both worked around, lavapipe segfaults inside its pipeline compiler on UE 5.8's SM6 SPIR-V, even `ClearUAVShader` (Mesa 25.2.8 and kisak 26.2.3; with PSO precaching off it moves to the first compute pipeline). Lavapipe passes `VP_UE_Vulkan_SM6` by UE's own profile header (fails only the RT profile: 8 < 9 descriptor sets); bindless can't be turned off for SM6 and `VK_EXT_descriptor_heap` (the alternative) is newer still. The entrypoint now refuses to start without a GPU; `CAMSIM_ALLOW_SOFTWARE_RENDERING=1` keeps the worked-around path for testing future Mesa. Reopen when Mesa changes, or with SwiftShader. **GPU comparison** (2026-10-01, full bench, 720p, warm cache; `scripts/bench/baselines/linux-rtx5080-{native-nvenc,docker-nvenc,docker-x264}-720p.json`): all three hold 30 fps with 0 drops in every phase. Docker costs nothing on the GPU (GPU frame p50 2.68–2.92 ms vs native 2.66–2.89, sensor graph 0.078 ms both) and is lighter on the host than the native *editor* build (game thread p50 3.6–4.6 vs 4.2–6.7 ms, wall p99 35–40 vs 38–43 ms, RSS 2.8 vs 4.9 GB, CPU 71% vs 89% of a core): a cooked package vs uncooked editor assets, not containerisation. Ready in 14 s warm (native 20 s). libx264 instead of NVENC adds ~9% of a core and the same frame latency (p50 11.8 vs 11.7 ms), but GPU frame times rise to p50 3.8–10.1 / p95 ~11–12 ms: without NVENC holding clocks the GPU (9% busy at 720p) drops to P3–P8 (median 1.06 GHz core, 810 MHz memory, 26 W vs 2.61 GHz / 14.8 GHz / 54 W in P1). Power management, not cost; it would matter only near the frame budget. The run found `camsim_frame_latency_ms` p99 ≈ 10.7 h: `FPipelineLatencyTracker` counted unstamped stages (0) as start times, so a frame with no CIGI dequeue reported the machine's uptime; fixed, test `CamSim.Phase28.Latency.UnstampedStage_IsSkipped`. `run_bench.py --docker IMAGE [--no-gpu] [--env K=V]` runs the bench against the image. Also found: `package_for_docker.sh` had been shipping a **stale package**: with a custom staging directory UAT's `-archive` copies nothing, so the script re-copied the previous archive (the image missed the latency fix and `ci_validate.sh` still passed). It now copies from the staging directory and fails unless the staged binary is byte-identical to the build output. And: BuildCookRun's default staging dir (`Saved/StagedBuilds/Linux`) flipped `run.sh` into packaged Shipping mode (`package_for_docker.sh` now stages under `.cache/staging`), and that Linux Shipping package, launched by `run.sh`, sat at `first_frame: false, terrain_ready: false` for 12 min with CIGI flowing (Shipping writes no log; undiagnosed, the Development package in Docker works). Still open: the `docker-build`/`docker-release` CI jobs haven't run on a runner yet (the runner needs nvidia-container-toolkit, `docs/ci-runner-setup.md`). **Human follow-up:** when the `/Game/Effects` Niagara systems and `M_Crater` are authored, add `/Game/Effects` to `DirectoriesToAlwaysCook` in `DefaultGame.ini`, or the package won't carry them. |
 
 ---
@@ -201,7 +201,8 @@ position, HUD time, annotations, and dead reckoning. It can be set from:
 
 - CIGI IG Control timestamps and Celestial Sphere Control date
 - DIS timestamps
-- scenario files
+- ~~scenario files~~ (the built-in scenario engine was removed 2026-10-01; scenes come from
+  CIGI/DIS hosts and, later, the control API 2.4)
 - a lockstep API (2.4)
 
 It supports real-time, faster/slower than real time, and **deterministic lockstep**
@@ -326,7 +327,8 @@ Progress:
   scenario (its own namespace). `ACamSimEntity` and the particle manager consume commands.
   CIGI entity 1000 and DIS entity 1000 are now different entities (verified live); previously
   DIS silently overwrote CIGI and the scenario overwrote both. Rate limiting is per key. CIGI
-  query responses report only CIGI entities.
+  query responses report only CIGI entities. (2026-10-01: the scenario source and the particle
+  manager were removed; CIGI and DIS are the two sources.)
 
 ### 2.4 Control API (Python/gRPC)
 
@@ -1491,8 +1493,38 @@ remaining step before this is closed.
   components.
 - SAR/radar, VR/dome output, scenario editor GUI.
 
-## Parked
+## Removed (2026-10-01 feature trim)
 
-Existing features (weather FX, HUD, DIS, CoT, scenario engine, formation flying,
-optical realism, etc.) stay in the tree and keep working. They are not being extended until
-Milestones 0–4 land. Designs for those features remain in `docs/superpowers/specs/`.
+The features parked here ("stay in the tree, not extended") were reviewed and the unused,
+dead or duplicated ones were removed rather than carried. Removed config keys now produce the
+standard unknown-key warning; the full list of keys and env vars is in
+`docs/configuration.md` ("Removed in the 2026-10 feature trim").
+
+- **TAK / ROVER**: the CoT position sender (`Streaming/CotSender`), the second ATAK FMV
+  encode, and the ROVER PID / Constrained-Baseline remap. A TAK feed is the host's job;
+  receivers find the streams through the PMT.
+- **Scenario engine**: scripted entities, waypoints, triggers, pattern-of-life, formation
+  flying and the randomizer (`Scenario/`), the `Scenario` host source, and
+  `scripts/batch_run.py`. Driving entities is the CIGI/DIS host's job; dataset generation
+  moves to the control API (2.4).
+- **Effects with no assets**: Niagara rotor wash / smoke / fire / contrails, crater decals and
+  damage-transition FX (`Environment/CamSimParticleManager`); the `/Game/Effects` assets were
+  never in the repository. The "gradual" damage mode (a delayed mesh swap) went with them:
+  Component Control 10 swaps meshes immediately.
+- **Non-physical optics**: `optical_realism` (UE motion blur, bloom, depth of field, lens
+  flare) on top of the physical sensor model (3B.2). Motion blur is always off.
+- **Weather extras**: god rays, sky-scattering multipliers and regional weather zones. CIGI
+  Weather Control with Region ID > 0 is ignored.
+- **Duplicated outputs**: the telemetry JSONL sidecar (`ground_truth:`; KLV carries it),
+  Pascal VOC export (COCO is a superset), the `camsim_health.json` file and the Prometheus
+  textfile (`/ready` and `/metrics` cover both). Frame drops are always counted, by reason, on
+  `/metrics` (`camsim_frame_drops_by_reason_total`).
+- **Runtime knobs**: config hot reload (and `UCamSimSubsystem::GetConfigSnapshot`, which only
+  existed for it), gimbal-slew tile prefetch, adaptive SSE, and the separate render/output
+  frame rates (`frame_rate` is the one rate).
+- **Dead config**: `rendering_quality.rt_reflections`, `use_instanced_rendering`,
+  `scenario.entities[].activity_profile` (parsed, never read).
+
+Kept: CIGI, DIS, KLV (ST 0601/0102), the sensor model, ocean, ground-truth masks + COCO + depth,
+the HTTP health server, terrain gate, Cesium backend config, CIGI record/playback,
+and `output_views` (multi-stream fan-out).

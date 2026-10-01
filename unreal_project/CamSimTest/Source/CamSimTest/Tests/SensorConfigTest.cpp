@@ -80,8 +80,8 @@ bool FSensorLegacyEffectKeysUnknownTest::RunTest(const FString& Parameters)
 	};
 
 	TestTrue(TEXT("sensor_quality unknown"),        HasUnknown(TEXT("sensor_quality")));
-	TestTrue(TEXT("lens_distortion unknown"),        HasUnknown(TEXT("lens_distortion")));
-	TestTrue(TEXT("chromatic_aberration unknown"),   HasUnknown(TEXT("chromatic_aberration")));
+	// The whole optical_realism section is gone, so it is reported once (not per key).
+	TestTrue(TEXT("optical_realism unknown"),        HasUnknown(TEXT("optical_realism")));
 	TestTrue(TEXT("noise_netd unknown"),             HasUnknown(TEXT("noise_netd")));
 	TestTrue(TEXT("fixed_pattern_noise unknown"),    HasUnknown(TEXT("fixed_pattern_noise")));
 	TestTrue(TEXT("vignetting unknown"),             HasUnknown(TEXT("vignetting")));

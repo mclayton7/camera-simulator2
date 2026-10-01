@@ -167,7 +167,6 @@ bool FGroundTruthConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Depth map enabled by default"),      Cfg.MLTraining.bDepthMap);
 	TestTrue(TEXT("Bounding boxes enabled by default"), Cfg.MLTraining.bBoundingBoxes);
 	TestTrue(TEXT("COCO export enabled by default"),    Cfg.MLTraining.bCocoExport);
-	TestFalse(TEXT("VOC export disabled by default"),   Cfg.MLTraining.bVocExport);
 	TestEqual(TEXT("AnnotationIntervalFrames default"),
 		Cfg.MLTraining.AnnotationIntervalFrames, 1);
 	TestEqual(TEXT("DepthFarPlaneM default"),
@@ -242,7 +241,6 @@ bool FGroundTruthPerFrameSnapshotTest::RunTest(const FString& Parameters)
 	Cfg.MLTraining.OutputDir = Dir;
 	Cfg.MLTraining.bBoundingBoxes = true;
 	Cfg.MLTraining.bCocoExport = true;
-	Cfg.MLTraining.bVocExport = false;
 	Cfg.MLTraining.bDepthMap = false;
 	Cfg.MLTraining.AnnotationIntervalFrames = 1;
 
@@ -396,7 +394,7 @@ namespace
 		FCamSimConfig Cfg;
 		Cfg.MLTraining.bEnabled = true; Cfg.MLTraining.OutputDir = Dir;
 		Cfg.MLTraining.bBoundingBoxes = true; Cfg.MLTraining.bCocoExport = true;
-		Cfg.MLTraining.bVocExport = false; Cfg.MLTraining.bDepthMap = false;
+		Cfg.MLTraining.bDepthMap = false;
 		Cfg.CaptureWidth = W; Cfg.CaptureHeight = H;
 		{
 			FGroundTruthCollector Collector(Cfg);
@@ -684,7 +682,7 @@ bool FGtCollectorCachedConfigTest::RunTest(const FString&)
 	FCamSimConfig Cfg;
 	Cfg.MLTraining.bEnabled = true; Cfg.MLTraining.OutputDir = Dir;
 	Cfg.MLTraining.bBoundingBoxes = true; Cfg.MLTraining.bCocoExport = true;
-	Cfg.MLTraining.bVocExport = false; Cfg.MLTraining.bDepthMap = false;
+	Cfg.MLTraining.bDepthMap = false;
 	Cfg.MLTraining.MinVisiblePixels = 1; Cfg.MLTraining.bSegmentation = true;
 	Cfg.CaptureWidth = 6; Cfg.CaptureHeight = 4;
 	FInstanceIdImage I = GtMakeImage(6, 4);

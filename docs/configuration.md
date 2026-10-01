@@ -76,7 +76,6 @@ sensor_fov_presets:
   - 5.0
 
 max_entities: 500
-use_instanced_rendering: true
 
 output_views:
   - view_id: 0
@@ -88,39 +87,12 @@ output_views:
     h264_tune: zerolatency
     hfov_deg: 0.0
 
-ground_truth:
-  enabled: false
-  output_path: camsim_groundtruth.jsonl
-  interval_frames: 1
-
 entity_scale:
   max_draw_distance_m: 0.0
   tick_rate_hz: 0.0
   default_max_update_rate_hz: 0.0
   max_update_rate_hz_overrides:
     "1": 30.0
-
-scenario:
-  enabled: false
-  time_scale: 1.0
-  entities:
-    - entity_id: 2001
-      entity_type: 1001
-      start_latitude: 38.8977
-      start_longitude: -77.0365
-      start_altitude: 900.0
-      start_yaw: 90.0
-      start_pitch: 0.0
-      start_roll: 0.0
-      spawn_time_sec: 0.0
-      despawn_time_sec: 0.0
-      update_rate_hz: 10.0
-      north_rate_mps: 50.0
-      east_rate_mps: 0.0
-      up_rate_mps: 0.0
-      yaw_rate_dps: 0.0
-      pitch_rate_dps: 0.0
-      roll_rate_dps: 0.0
 
 sensor_modes:
   eo:
@@ -154,8 +126,6 @@ security_metadata:
   object_country_codes: "US"
   caveats: ""
   releasing_instructions: ""
-
-prometheus_metrics_path: ""
 
 recording:
   cigi_record_path: ""
@@ -242,7 +212,7 @@ Guide: [`dis.md`](dis.md) (test sender, type mapping, surface placement, ground 
 |-------|------|---------|-------------|
 | `capture_width` | int | `1920` | Render target width in pixels. Env `CAMSIM_CAPTURE_WIDTH` (restart only). |
 | `capture_height` | int | `1080` | Render target height in pixels. Env `CAMSIM_CAPTURE_HEIGHT` (restart only). |
-| `frame_rate` | float | `30.0` | Fixed tick rate (must match `DefaultEngine.ini` `FixedFrameRate`). |
+| `frame_rate` | float | `30.0` | Render, sensor-integration and output rate (fps, 1–120). One encoded frame per rendered frame; a value other than 30 overrides `DefaultEngine.ini`'s `FixedFrameRate` at startup. |
 | `readback_ready_polls` | int | `2` | `CAMSIM_READBACK_READY_POLLS` | Number of consecutive `FRHIGPUTextureReadback::IsReady()` polls required before `Lock()`. Increase on Linux/Vulkan if occasional partial-row tearing appears. |
 | `hfov_deg` | float | `60.0` | Horizontal field of view in degrees. Used for KLV metadata and Cesium tile preloading. Overridden per-frame by CIGI View Definition packets. |
 
@@ -256,7 +226,6 @@ Guide: [`dis.md`](dis.md) (test sender, type mapping, surface placement, ground 
 | `encoder_watchdog_interval_ticks` | int | `150` | `CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS` | Tick interval used by the encoder watchdog and runtime health checks. |
 | `watchdog_max_reconnects` | int | `3` | -- | Maximum encoder reconnect attempts before `RequestExit`. `0` = unlimited retries. |
 | `max_entities` | int | `500` | `CAMSIM_MAX_ENTITIES` | Maximum simultaneous entities managed by the entity renderer. |
-| `use_instanced_rendering` | bool | `true` | -- | Use instanced rendering for entities with the same mesh type. |
 
 ### Geospatial Providers (Phase F1 foundation)
 
@@ -319,7 +288,7 @@ coarser imagery); not recommended at 1080p.
 
 Holds frame output until Cesium has loaded tiles for the view, at startup and after a
 teleport, so coarse placeholder terrain is never streamed as real imagery. Once open, the
-gate stays open during normal flight. `/ready` and `camsim_health.json` report
+gate stays open during normal flight. `/ready` reports
 `terrain_ready`.
 
 ```yaml
@@ -349,7 +318,7 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 | `start_yaw` | float | `200.0` | `CAMSIM_START_YAW` | Initial heading in degrees [0, 360). |
 | `start_pitch` | float | `0.0` | `CAMSIM_START_PITCH` | Initial pitch in degrees. Negative = looking down. |
 | `start_roll` | float | `0.0` | `CAMSIM_START_ROLL` | Initial roll in degrees. |
-| `start_datetime` | string | *(unset)* | `CAMSIM_START_DATETIME` | Sim clock start, ISO 8601 UTC (e.g. `2025-03-01T06:30:00Z`). Unset: the clock starts at the wall-clock time. One clock drives the sun, KLV Tag 2, CoT, the HUD time and ground truth; a CIGI Celestial Sphere Control with Date/Time Valid sets it at runtime. |
+| `start_datetime` | string | *(unset)* | `CAMSIM_START_DATETIME` | Sim clock start, ISO 8601 UTC (e.g. `2025-03-01T06:30:00Z`). Unset: the clock starts at the wall-clock time. One clock drives the sun, KLV Tag 2 and ground truth; a CIGI Celestial Sphere Control with Date/Time Valid sets it at runtime. |
 | `start_hour` | float | *(unset)* | `CAMSIM_START_HOUR` | Start at this UTC hour (0-24) on today's date. Ignored when `start_datetime` is set. |
 | `sim_time_rate` | float | `1.0` | `CAMSIM_SIM_TIME_RATE` | Sim clock rate: 1 = real time, 0 = frozen, >1 faster. A Celestial Sphere Control with Ephemeris Model Enable = 0 freezes it (static time of day). |
 
@@ -421,10 +390,6 @@ With `agc_enabled` the IR `exposure` block still sets the photon gain (integrati
 noise → ADC → display). `optics:`/`detector:` blocks then override individual
 fields on top of the preset. `seed` sets the PCG noise stream seed for that
 mode's detector noise and defect patterns. No env overrides — yaml only.
-
-The optics here are the sensor model's lens only. `optical_realism.aperture_fstop` and
-`optical_realism.sensor_width` (UE's depth of field) are independent of `optics.f_number` and
-`optics.pixel_pitch_um`: changing one set does not change the other.
 
 | Field | Type | EO default | IR default | Description |
 |-------|------|------|------|-------------|
@@ -515,20 +480,9 @@ does not silently keep per-view multicast routes from the config.
 | `output_views[].h264_tune` | string | root `h264_tune` | x264 tune for this view. |
 | `output_views[].hfov_deg` | float | `0.0` | `0` = use live HFOV; otherwise narrow HFOV (digital zoom) for this stream. |
 
-### Ground-truth Sidecar (Phase D3)
-
-Ground-truth sidecar writes per-frame JSONL records (pose, gimbal, LOS, sensor
-state, and active view routes) for analytics and dataset generation workflows.
-
-| Field | Type | Default | Env var | Description |
-|-------|------|---------|---------|-------------|
-| `ground_truth.enabled` | bool | `false` | `CAMSIM_GROUND_TRUTH_ENABLED` | Enable JSONL sidecar writes. |
-| `ground_truth.output_path` | string | `camsim_groundtruth.jsonl` | `CAMSIM_GROUND_TRUTH_PATH` | Output path (relative paths resolve from binary directory). |
-| `ground_truth.interval_frames` | int | `1` | `CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES` | Emit every N frames. |
-
 ### ML Training Data (`ml_training:`)
 
-Per-frame ground truth for ML/ATR training (COCO JSONL, Pascal VOC XML, 16-bit depth).
+Per-frame ground truth for ML/ATR training (COCO JSONL, 16-bit depth).
 
 | Field | Type | Default | Env var | Description |
 |-------|------|---------|---------|-------------|
@@ -537,7 +491,6 @@ Per-frame ground truth for ML/ATR training (COCO JSONL, Pascal VOC XML, 16-bit d
 | `ml_training.depth_map` | bool | `true` | `CAMSIM_ML_DEPTH_ENABLED` | 16-bit grayscale depth PNG per annotated frame: linear view depth from the primary view's scene depth, aligned with the image and masks (no second render; `docs/ground-truth.md`). |
 | `ml_training.bounding_boxes` | bool | `true` | `CAMSIM_ML_BBOX_ENABLED` | Per-frame entity annotations. |
 | `ml_training.coco_export` | bool | `true` | `CAMSIM_ML_COCO_ENABLED` | COCO JSONL (one object per frame). |
-| `ml_training.voc_export` | bool | `false` | `CAMSIM_ML_VOC_ENABLED` | Pascal VOC XML per frame. |
 | `ml_training.min_visible_pixels` | int | `1` | `CAMSIM_ML_MIN_VISIBLE_PIXELS` | Drop annotations with fewer visible (unoccluded, in-frame) pixels than this. Fully hidden vehicles are never labelled. Clamped to >= 1. |
 | `ml_training.segmentation` | bool | `true` | `CAMSIM_ML_SEGMENTATION_ENABLED` | COCO RLE `segmentation` (modal mask) per annotation; the bulk of each line. |
 | `ml_training.annotation_interval_frames` | int | `1` | `CAMSIM_ML_INTERVAL_FRAMES` | Write every N frames. |
@@ -555,32 +508,6 @@ Per-frame ground truth for ML/ATR training (COCO JSONL, Pascal VOC XML, 16-bit d
 | `entity_scale.max_update_rate_hz_overrides` | object | `{}` | -- | Per-entity overrides keyed by `EntityId` string. |
 
 Legacy flat keys (`entity_max_draw_distance_m`, `entity_tick_rate_hz`, `entity_default_max_update_rate_hz`) are still accepted.
-
-### Scenario Orchestration (Phase C1)
-
-`scenario` enables deterministic entity spawn/update/despawn behavior directly in
-CamSim (without an external CIGI controller). This is useful for repeatable
-scenario authoring and CI smoke scenes.
-
-| Field | Type | Default | Env var | Description |
-|-------|------|---------|---------|-------------|
-| `scenario.enabled` | bool | `false` | `CAMSIM_SCENARIO_ENABLED` | Enable built-in scenario entity orchestration. |
-| `scenario.time_scale` | float | `1.0` | `CAMSIM_SCENARIO_TIME_SCALE` | Scenario time is the sim clock; this multiplies the clock's rate when the scenario starts (prefer `sim_time_rate`). |
-| `scenario.start_hour` | float | *(unset)* | `CAMSIM_SCENARIO_START_HOUR` | Local solar hour (0–24, at the start position) the sim clock is set to when the scenario starts; the sun and pattern-of-life schedules follow it. Unset: keep the sim clock's time. |
-| `scenario.entities` | array | `[]` | -- | Scripted entity definitions. |
-
-Per-entry fields in `scenario.entities[]`:
-
-- `entity_id`, `entity_type`
-- `start_latitude`, `start_longitude`, `start_altitude`
-- `start_yaw`, `start_pitch`, `start_roll`
-- `spawn_time_sec`, `despawn_time_sec`
-- `update_rate_hz`
-- `north_rate_mps`, `east_rate_mps`, `up_rate_mps`
-- `yaw_rate_dps`, `pitch_rate_dps`, `roll_rate_dps`
-
-`despawn_time_sec <= spawn_time_sec` means the entity persists for the full run.
-`update_rate_hz = 0` applies updates every manager tick.
 
 ### Encoder (Phase 12B)
 
@@ -601,12 +528,6 @@ Embedded in every KLV packet as ST 0601 Tag 48. Required for STANAG 4609 complia
 | `security_metadata.caveats` | string | `""` | -- | Security caveats (optional). |
 | `security_metadata.releasing_instructions` | string | `""` | -- | Releasing instructions (optional). |
 
-### Prometheus Metrics (Phase 12D)
-
-| Field | Type | Default | Env var | Description |
-|-------|------|---------|---------|-------------|
-| `prometheus_metrics_path` | string | `""` | `CAMSIM_PROMETHEUS_METRICS_PATH` | Path for Prometheus node_exporter textfile-collector compatible `.prom` file. Empty = disabled. |
-
 ### Recording & Playback (Phase 12E)
 
 | Field | Type | Default | Env var | Description |
@@ -626,7 +547,7 @@ to asset paths and flags:
 | `skeletal` | bool | No (default `false`) | `true` for `USkeletalMesh` (enables articulated part control). `false` for `UStaticMesh`. |
 | `mesh_damaged` | string | No | Alternative mesh for damage state 1 (Component Control CompId=10, state=1). Falls back to `mesh` if omitted. |
 | `mesh_destroyed` | string | No | Alternative mesh for damage state 2 (Component Control CompId=10, state=2). Falls back to `mesh` if omitted. |
-| `class_name` | string | No (default `type_NNNN`) | ML ground-truth label (COCO `category.name`, VOC `name`). |
+| `class_name` | string | No (default `type_NNNN`) | ML ground-truth label (COCO `category.name`). |
 | `scale` | float | No (default `1.0`) | Uniform model scale, e.g. to bring a glTF model to its real size. |
 | `rotation` | map | No | `pitch` / `yaw` / `roll` offset in degrees so the model's nose points along UE +X (the entity's heading). |
 | `z_offset_m` | float | No (default `0.0`) | Vertical offset of the model from the entity origin, in metres (+ = up). Surface-clamped entities have their origin on the terrain / water, so a boat uses a negative value to sit at its draft (the shipped `3001` uses `-0.49`). |
@@ -693,16 +614,11 @@ CAMSIM_READBACK_FORMAT=auto
 CAMSIM_ENCODER_WATCHDOG_POLICY=reconnect
 CAMSIM_ENCODER_WATCHDOG_INTERVAL_TICKS=150
 CAMSIM_MAX_ENTITIES=500
-CAMSIM_GROUND_TRUTH_ENABLED=0
-CAMSIM_GROUND_TRUTH_PATH=camsim_groundtruth.jsonl
-CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES=1
 CAMSIM_TERRAIN_PROVIDER=cesium
 CAMSIM_IMAGERY_PROVIDER=cesium
 CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M=0
 CAMSIM_ENTITY_TICK_RATE_HZ=0
 CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ=0
-CAMSIM_SCENARIO_ENABLED=0
-CAMSIM_SCENARIO_TIME_SCALE=1.0
 
 # Start position
 CAMSIM_START_LAT=32.9768
@@ -727,9 +643,6 @@ CAMSIM_VIDEO_CODEC=h264
 CAMSIM_SECURITY_CLASSIFICATION=UNCLASSIFIED
 CAMSIM_SECURITY_CLASSIFYING_COUNTRY=//US
 CAMSIM_SECURITY_OBJECT_COUNTRY=US
-
-# Prometheus metrics (Phase 12D)
-CAMSIM_PROMETHEUS_METRICS_PATH=
 
 # Recording & playback (Phase 12E)
 CAMSIM_CIGI_RECORD_PATH=
@@ -806,7 +719,7 @@ operational:
 **`/metrics` contract** (matches the `sim-environment` orchestrator spec §10.4):
 
 - **Gauges:** `camsim_render_fps`, `camsim_output_fps`, `camsim_entity_count`, `camsim_uptime_seconds`
-- **Counters:** `camsim_frame_drops_total`, `camsim_cigi_packets_total`, `camsim_dis_packets_total`, `camsim_frames_encoded_total`
+- **Counters:** `camsim_frame_drops_total`, `camsim_frame_drops_by_reason_total{reason="encoder_busy"|"readback_timeout"|"socket_error"}`, `camsim_sensor_stats_stale_total` (AE held on a stale histogram; not a drop), `camsim_cigi_packets_total`, `camsim_dis_packets_total`, `camsim_frames_encoded_total`
 - **Histograms (optional):** `camsim_frame_latency_ms` — P50/P95/P99 from `FPipelineLatencyTracker`. Only emitted when `performance.track_pipeline_latency = true`.
 
 The render/output FPS gauges are 1Hz rolling measurements updated from the subsystem's `Tick()` (not target values from config). FPS is `(frame_count_delta) / (wall_clock_delta)` over approximately one second.
@@ -826,7 +739,7 @@ render:
 | `render.camera_cut_angle_deg` | `CAMSIM_RENDER_CAMERA_CUT_ANGLE_DEG` | `30.0` | A view rotation larger than this in one frame resets TSR history. Must be > 0: a non-positive value is a validation error and that check is skipped. |
 | `render.origin_shift_distance_m` | `CAMSIM_RENDER_ORIGIN_SHIFT_DISTANCE_M` | `20000.0` | Rebase the Cesium georeference (`CesiumOriginShiftComponent`, `ChangeCesiumGeoreference` mode) when the camera is this far from the origin. Keeps local "up" = +Z and coordinates small. `0` disables. |
 
-**Sensor graph (ROADMAP 3B).** The GPU sensor graph replaces UE's tonemapper in the primary view (the sensor is the game viewport's view — TSR, one scene render per frame; this is the only render path since 3B.2) and is the only sensor path: UE's tonemapper-stage effects (vignette, film grain, colour grading, bloom dirt mask) don't apply. The stream's transfer characteristic is tagged BT.709 (the graph applies the BT.709 OETF). It needs NV12-compatible dimensions (`capture_width` a multiple of 4 — also a config validation error — and an even `capture_height`) and a real RHI with SM5 compute and the sensor shaders. Checked once at startup: without it CamSim logs `sensor graph unavailable: <reason>` as an error, produces no frames, and `/ready` stays false. When it runs, `/metrics` reports `camsim_sensor_path{path="gpu"} 1` and the legacy `camsim_health.json` has `"sensor_path":"gpu"`.
+**Sensor graph (ROADMAP 3B).** The GPU sensor graph replaces UE's tonemapper in the primary view (the sensor is the game viewport's view — TSR, one scene render per frame; this is the only render path since 3B.2) and is the only sensor path: UE's tonemapper-stage effects (vignette, film grain, colour grading, bloom dirt mask) don't apply. The stream's transfer characteristic is tagged BT.709 (the graph applies the BT.709 OETF). It needs NV12-compatible dimensions (`capture_width` a multiple of 4 — also a config validation error — and an even `capture_height`) and a real RHI with SM5 compute and the sensor shaders. Checked once at startup: without it CamSim logs `sensor graph unavailable: <reason>` as an error, produces no frames, and `/ready` stays false. When it runs, `/metrics` reports `camsim_sensor_path{path="gpu"} 1`.
 
 **Removed in 3B.2** (the legacy CPU sensor path and scene-capture render path; the YAML keys now produce the standard unknown-key warning and the env vars are ignored):
 
@@ -837,7 +750,7 @@ render:
 - `performance.gpu_sensor_effects`, `performance.gpu_sensor_material_path`, `performance.gpu_sensor_mpc_path` / `CAMSIM_PERF_GPU_SENSOR` — the 27A material path.
 - `overlay.*` / `CAMSIM_OVERLAY_*` — the HUD burn-in (no burned-in overlays).
 - `laser_designator.*` / `CAMSIM_LASER_*` — the drawn laser spot. DIS Designator PDUs are still received and tracked.
-- `phase18.precipitation`, `phase18.rain_intensity`, `phase18.snow_intensity` / `CAMSIM_PRECIPITATION`, `CAMSIM_RAIN_INTENSITY`, `CAMSIM_SNOW_INTENSITY` — the CPU precipitation overlay. CIGI weather and UE/Niagara effects are unaffected.
+- `phase18.precipitation`, `phase18.rain_intensity`, `phase18.snow_intensity` / `CAMSIM_PRECIPITATION`, `CAMSIM_RAIN_INTENSITY`, `CAMSIM_SNOW_INTENSITY` — the CPU precipitation overlay. CIGI weather is unaffected.
 - `randomization.randomize_weather`, `randomization.weather_probability` — they only toggled the precipitation overlay.
 - `sensor_quality.*` / `CAMSIM_SENSOR_QUALITY_PRESET`, `CAMSIM_SENSOR_QUALITY_NOISE_SCALE`, `CAMSIM_SENSOR_QUALITY_VIGNETTING_SCALE`, `CAMSIM_SENSOR_QUALITY_SCANLINE_SCALE`, `CAMSIM_SENSOR_QUALITY_ATMOSPHERE_SCALE`, `CAMSIM_SENSOR_QUALITY_BLUR_RADIUS`, `CAMSIM_SENSOR_QUALITY_CONTRAST`, `CAMSIM_SENSOR_QUALITY_BRIGHTNESS_BIAS`, `CAMSIM_SENSOR_QUALITY_GAUSSIAN_SIGMA_SCALE` — the global quality-preset system (low/medium/high/ultra/custom) applied on top of the legacy CPU sensor effects, which are also gone.
 - `sensor_quality_profiles.*` — user-defined quality profiles for the same removed system.
@@ -853,8 +766,27 @@ render:
 - `sensor_modes.eo.{sun_glint_intensity, sun_glint_threshold, sun_glint_spread}` / `CAMSIM_EO_SUN_GLINT_INTENSITY`, `CAMSIM_EO_SUN_GLINT_THRESHOLD`, `CAMSIM_EO_SUN_GLINT_SPREAD` — CPU sun-glint highlight boost.
 - `sensor_modes.<mode>.vibration_amplitude` / `CAMSIM_IR_VIBRATION_AMPLITUDE`, `CAMSIM_EO_VIBRATION_AMPLITUDE` — CPU subpixel platform-vibration jitter.
 - `optical_realism.{lens_distortion, distortion_k1, distortion_k2}` / `CAMSIM_DISTORTION_K1`, `CAMSIM_DISTORTION_K2` — CPU-side Brown-Conrady lens distortion; never applied to the rendered frame.
-- `optical_realism.{chromatic_aberration, chromatic_aberration_intensity}` — the GPU scene-fringe post-process; `optical_realism`'s other GPU effects (motion blur, bloom, DoF, lens flare) are unaffected.
-- `phase18.dynamic_ir_extinction` / `CAMSIM_DYNAMIC_IR_EXTINCTION` — toggled the (now-removed) CPU IR extinction coefficient from `visibility_range_m`; `phase18.visibility_range_m` / `CAMSIM_VISIBILITY_RANGE_M` itself is unaffected (still used for scenario randomization jitter).
+- `optical_realism.{chromatic_aberration, chromatic_aberration_intensity}` — the GPU scene-fringe post-process. (The rest of `optical_realism` went in the 2026-10 trim, below.)
+- `phase18.dynamic_ir_extinction` / `CAMSIM_DYNAMIC_IR_EXTINCTION` — toggled the (now-removed) CPU IR extinction coefficient from `visibility_range_m`; `phase18.visibility_range_m` / `CAMSIM_VISIBILITY_RANGE_M` itself is unaffected.
+
+**Removed in the 2026-10 feature trim** (unused, dead or duplicated features; the YAML keys produce the standard unknown-key warning and the env vars are ignored):
+
+- `streaming.*` / `CAMSIM_COT_*`, `CAMSIM_ATAK_*`, `CAMSIM_ROVER_*` — the Cursor-on-Target position sender, the second ATAK FMV encode and the ROVER PID/Baseline-profile remap. Receivers find the video and KLV through the PMT.
+- `scenario.*` / `CAMSIM_SCENARIO_ENABLED`, `CAMSIM_SCENARIO_TIME_SCALE`, `CAMSIM_SCENARIO_START_HOUR`, the flat `scenario_enabled` / `scenario_time_scale` keys, and `randomization.*` / `CAMSIM_RAND_ENABLED`, `CAMSIM_RAND_SEED` — the built-in scenario engine (scripted entities, waypoints, triggers, pattern-of-life, formation flying) and its randomizer, and `scripts/batch_run.py`. Drive entities from a CIGI or DIS host (`scripts/send_dis_test.py`); set the clock with `start_datetime` / `start_hour` / `sim_time_rate`.
+- `optical_realism.*` / `CAMSIM_OPTICAL_REALISM_ENABLED`, `CAMSIM_MOTION_BLUR_AMOUNT`, `CAMSIM_FOCAL_DISTANCE`, `CAMSIM_APERTURE_FSTOP` — UE motion blur, bloom, depth of field and lens flare on top of the physical sensor model. Motion blur is now always off.
+- `phase18.{god_rays, god_ray_intensity, atmospheric_scattering, rayleigh_scattering, mie_scattering}` / `CAMSIM_GOD_RAYS` — light shafts and sky-scattering multipliers.
+- `phase18.{weather_zones, zone_positions}` / `CAMSIM_WEATHER_ZONES` — regional weather blending. CIGI Weather Control with Region ID > 0 is now ignored; global weather (Region ID 0) is unchanged.
+- `phase18.{niagara_rotor_wash, niagara_smoke, niagara_fire, niagara_contrail, contrail_alt_m, contrail_speed_ms, smoke_component_id, fire_component_id, crater_decal_material, crater_impact_component_id, max_craters, crater_default_radius_m}` and their `CAMSIM_*` env vars — particle effects and crater decals whose assets were never in the repository.
+- `damage_transition.*` / `CAMSIM_DAMAGE_TRANSITION_FX`, `CAMSIM_DAMAGE_GRADUAL`, `CAMSIM_DAMAGE_INTERPOLATION_SEC` — damage smoke/fire and the delayed ("gradual") mesh swap. CIGI Component Control 10 still swaps to the damaged/destroyed mesh, immediately.
+- `ground_truth.*` (and the flat `ground_truth_*` keys) / `CAMSIM_GROUND_TRUTH_*` — the per-frame telemetry JSONL sidecar. The KLV stream carries the same telemetry; `ml_training` is the ground truth.
+- `ml_training.voc_export` / `CAMSIM_ML_VOC_ENABLED` — Pascal VOC XML. COCO carries everything VOC did, plus masks and oriented boxes.
+- `prometheus_metrics_path` / `CAMSIM_PROMETHEUS_METRICS_PATH` and the `camsim_health.json` file — both duplicated `/metrics` and `/ready`.
+- `performance.{track_frame_drops_by_category}` / `CAMSIM_PERF_TRACK_DROPS` — drops are always counted, by reason, on `/metrics`.
+- `performance.{hot_reload_config, hot_reload_poll_interval_sec}` / `CAMSIM_PERF_HOT_RELOAD`, `CAMSIM_PERF_POLL_INTERVAL` — config hot reload. Restart to apply config changes.
+- `performance.{tile_prefetch_slew_threshold_deg_per_sec, tile_prefetch_fov_boost, tile_prefetch_boost_frames, adaptive_sse, adaptive_sse_min, adaptive_sse_max}` / `CAMSIM_PERF_TILE_*`, `CAMSIM_PERF_ADAPTIVE_SSE*` — runtime Cesium SSE changes. Tune with `maximum_screen_space_error` / `culled_screen_space_error` and the bench.
+- `performance.{render_frame_rate_hz, output_frame_rate_hz}` / `CAMSIM_PERF_RENDER_FPS`, `CAMSIM_PERF_OUTPUT_FPS` — use `frame_rate` (render = sensor = output rate).
+- `rendering_quality.rt_reflections` / `CAMSIM_RT_REFLECTIONS` — never read.
+- `use_instanced_rendering` — never read.
 
 **Render resolution (TSR).** `rendering_quality.tsr_screen_percentage`
 (`CAMSIM_TSR_SCREEN_PERCENTAGE`, default `100`) renders below the output size and lets TSR
@@ -905,13 +837,13 @@ ocean:
 
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `ocean.enabled` | `CAMSIM_OCEAN_ENABLED` | `true` | Master switch. **Startup only** — the `FOceanSurface` is created once in `Initialize`; a hot reload cannot toggle it. On by default: the ROADMAP 2.6 acceptance (`scripts/ocean_check.py`) measured ~3–4 ms of GPU time for the drawn sea with the 30 fps budget held. Off, boat placement and HAT/HOT are exactly the pre-2.6 behaviour (the Cesium surface, i.e. the seabed over bathymetry). |
-| `ocean.beaufort` | `CAMSIM_OCEAN_BEAUFORT` | `3.0` | Sea state, 0–12, fractional (outside that, or NaN, fails validation). Used while no CIGI Wave Control wave is enabled. Hot-reloadable. |
-| `ocean.wave_direction_deg` | `CAMSIM_OCEAN_WAVE_DIR` | `270.0` | Direction the waves come FROM, true north. Hot-reloadable. |
-| `ocean.choppiness` | `CAMSIM_OCEAN_CHOPPINESS` | `0.5` | 0 = sine waves, 1 = steepest waveform without looping; must be in [0, 1]. Hot-reloadable. |
+| `ocean.enabled` | `CAMSIM_OCEAN_ENABLED` | `true` | Master switch. **Startup only** — the `FOceanSurface` is created once in `Initialize`. On by default: the ROADMAP 2.6 acceptance (`scripts/ocean_check.py`) measured ~3–4 ms of GPU time for the drawn sea with the 30 fps budget held. Off, boat placement and HAT/HOT are exactly the pre-2.6 behaviour (the Cesium surface, i.e. the seabed over bathymetry). |
+| `ocean.beaufort` | `CAMSIM_OCEAN_BEAUFORT` | `3.0` | Sea state, 0–12, fractional (outside that, or NaN, fails validation). Used while no CIGI Wave Control wave is enabled. |
+| `ocean.wave_direction_deg` | `CAMSIM_OCEAN_WAVE_DIR` | `270.0` | Direction the waves come FROM, true north. |
+| `ocean.choppiness` | `CAMSIM_OCEAN_CHOPPINESS` | `0.5` | 0 = sine waves, 1 = steepest waveform without looping; must be in [0, 1]. |
 | `ocean.vessel_motion` | `CAMSIM_OCEAN_MOTION_ENABLED` | `true` | Boats pitch/roll/heave with the waves. |
 | `ocean.vessel_motion_scale` | `CAMSIM_OCEAN_MOTION_SCALE` | `1.0` | Amplitude multiplier on vessel motion. |
-| `ocean.max_radius_km` | `CAMSIM_OCEAN_MAX_RADIUS_KM` | `400.0` | Horizon cap for the ocean mesh; must be finite and > 0. Hot-reloadable (read every tick). |
+| `ocean.max_radius_km` | `CAMSIM_OCEAN_MAX_RADIUS_KM` | `400.0` | Horizon cap for the ocean mesh; must be finite and > 0. |
 | `ocean.water_temperature_c` | `CAMSIM_OCEAN_WATER_TEMPERATURE_C` | `15.0` | Initial water temperature for the thermal water class (ROADMAP 4A); CIGI Maritime Surface Conditions overrides it. Startup only. `[-2, 40]`. |
 | `ocean.material` | *(none — set via YAML only)* | `/Game/Ocean/M_Ocean` | Ocean material asset path. **Startup only.** |
 
@@ -946,7 +878,7 @@ thermal:
 
 | Key | Env | Default | Description |
 |---|---|---|---|
-| `thermal.enabled` | `CAMSIM_THERMAL_ENABLED` | `true` | **Startup** decides whether the thermal pass is available (and entities get custom-depth stencils for it). A hot reload to `false` runs IR as the 3B.2 luminance proxy (A/B); back to `true` restores thermal if it was available at startup. |
+| `thermal.enabled` | `CAMSIM_THERMAL_ENABLED` | `true` | **Startup** decides whether the thermal pass is available (and entities get custom-depth stencils for it). `false` runs IR as the 3B.2 luminance proxy (restart to A/B compare). |
 | `thermal.air_temperature_c` | `CAMSIM_THERMAL_AIR_TEMPERATURE_C` | `15.0` | Daily mean air temperature until a CIGI Atmosphere Control packet sets one; `[-80, 60]`. |
 | `thermal.air_diurnal_swing_k` | `CAMSIM_THERMAL_AIR_DIURNAL_SWING_K` | `8.0` | Peak-to-peak diurnal air swing, peak at 15:00 local solar; `[0, 30]`. |
 | `thermal.extinction_per_km.mwir` / `.lwir` | `CAMSIM_THERMAL_EXTINCTION_MWIR` / `_LWIR` | `0.15` / `0.10` | Band extinction β per km; the band is MWIR when the IR preset's band centre is below 6.5 µm. `[0, 10]`. |
