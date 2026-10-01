@@ -41,6 +41,7 @@ bool FThermalLandCoverConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("asphalt luma"), L.AsphaltMaxLuma, 0.12f);
 	TestEqual(TEXT("warp amplitude (Task 13)"), L.WarpAmplitudeM, 6.0f);
 	TestEqual(TEXT("warp cell"), L.WarpCellM, 20.0f);
+	TestEqual(TEXT("veg blur (fix round 1)"), L.VegBlurM, 2.0f);
 	TestEqual(TEXT("no class overrides"), L.Classes.Num(), 0);
 	TestFalse(TEXT("defaults valid"), HasError(FCamSimConfig().Validate(), TEXT("land_cover")));
 	return true;
@@ -62,6 +63,7 @@ bool FThermalLandCoverConfigYamlTest::RunTest(const FString& Parameters)
 		"    asphalt_max_luma: 0.2\n"
 		"    warp_amplitude_m: 3.5\n"
 		"    warp_cell_m: 40\n"
+		"    veg_blur_m: 12\n"
 		"    classes:\n"
 		"      10: vegetation\n"
 		"      50: concrete\n");
@@ -78,6 +80,7 @@ bool FThermalLandCoverConfigYamlTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("luma"), L.AsphaltMaxLuma, 0.2f);
 	TestEqual(TEXT("warp amplitude"), L.WarpAmplitudeM, 3.5f);
 	TestEqual(TEXT("warp cell"), L.WarpCellM, 40.0f);
+	TestEqual(TEXT("veg blur"), L.VegBlurM, 12.0f);
 	if (TestEqual(TEXT("two class specs"), L.Classes.Num(), 2))
 	{
 		TestEqual(TEXT("code"), L.Classes[0].Code, 10);
@@ -99,9 +102,9 @@ bool FThermalLandCoverConfigYamlTest::RunTest(const FString& Parameters)
 		TEXT("CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS"), TEXT("CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION"),
 		TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_LO"), TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_HI"),
 		TEXT("CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA"), TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_AMPLITUDE_M"),
-		TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M") };
+		TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M"), TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_BLUR_M") };
 	const TCHAR* Values[] = { TEXT("1"), TEXT("Content/Other"), TEXT("512"), TEXT("0.02"), TEXT("0.01"), TEXT("0.4"), TEXT("0.15"),
-		TEXT("0"), TEXT("100") };
+		TEXT("0"), TEXT("100"), TEXT("0") };
 	for (int32 K = 0; K < UE_ARRAY_COUNT(Keys); ++K) FPlatformMisc::SetEnvironmentVar(Keys[K], Values[K]);
 	Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	for (const TCHAR* K : Keys) FPlatformMisc::SetEnvironmentVar(K, TEXT(""));
@@ -114,6 +117,7 @@ bool FThermalLandCoverConfigYamlTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("env luma"), Cfg.Thermal.LandCover.AsphaltMaxLuma, 0.15f);
 	TestEqual(TEXT("env warp amplitude (0 = off)"), Cfg.Thermal.LandCover.WarpAmplitudeM, 0.0f);
 	TestEqual(TEXT("env warp cell"), Cfg.Thermal.LandCover.WarpCellM, 100.0f);
+	TestEqual(TEXT("env veg blur (0 = off)"), Cfg.Thermal.LandCover.VegBlurM, 0.0f);
 	return true;
 }
 
@@ -147,6 +151,11 @@ bool FThermalLandCoverConfigValidateTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("warp cell NaN"),  HasError(With([NaN](FLc& L) { L.WarpCellM = NaN; }), TEXT("thermal.land_cover.warp_cell_m")));
 	TestFalse(TEXT("warp cell 5 ok"), HasError(With([](FLc& L) { L.WarpCellM = 5.0f; }), TEXT("land_cover")));
 	TestFalse(TEXT("warp cell 200 ok"), HasError(With([](FLc& L) { L.WarpCellM = 200.0f; }), TEXT("land_cover")));
+	TestTrue (TEXT("veg blur -1"),    HasError(With([](FLc& L) { L.VegBlurM = -1.0f; }), TEXT("thermal.land_cover.veg_blur_m")));
+	TestTrue (TEXT("veg blur 33"),    HasError(With([](FLc& L) { L.VegBlurM = 33.0f; }), TEXT("thermal.land_cover.veg_blur_m")));
+	TestTrue (TEXT("veg blur NaN"),   HasError(With([NaN](FLc& L) { L.VegBlurM = NaN; }), TEXT("thermal.land_cover.veg_blur_m")));
+	TestFalse(TEXT("veg blur 0 ok"),  HasError(With([](FLc& L) { L.VegBlurM = 0.0f; }), TEXT("land_cover")));
+	TestFalse(TEXT("veg blur 32 ok"), HasError(With([](FLc& L) { L.VegBlurM = 32.0f; }), TEXT("land_cover")));
 	TestTrue (TEXT("empty dir"),      HasError(With([](FLc& L) { L.Dir = TEXT("  "); }), TEXT("thermal.land_cover.dir")));
 	TestFalse(TEXT("empty dir is fine when disabled"), HasError(With([](FLc& L) { L.bEnabled = false; L.Dir = TEXT(""); }), TEXT("land_cover")));
 	TestTrue (TEXT("key 'trees'"),    HasError(With([](FLc& L) { FLandCoverClassSpec S; S.Key = TEXT("trees"); S.Material = TEXT("vegetation"); L.Classes.Add(S); }),

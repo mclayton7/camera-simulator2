@@ -71,6 +71,8 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCamSimThermalParameters, )
 	SHADER_PARAMETER(float, VegIndexHi)
 	SHADER_PARAMETER(float, AsphaltMaxLuma)
 	SHADER_PARAMETER(float, AsphaltRampLuma)
+	SHADER_PARAMETER(float, VegBlurM)
+	SHADER_PARAMETER(float, BaseTexelAngle)
 	SHADER_PARAMETER(uint32, VegetationClass)
 	SHADER_PARAMETER(uint32, BareSoilClass)
 	SHADER_PARAMETER(uint32, AsphaltClass)
@@ -213,6 +215,8 @@ FRDGTextureRef AddThermalPass(FRDGBuilder& GraphBuilder, const FThermalPassInput
 	Pass->VegIndexHi          = P.VegIndexHi;
 	Pass->AsphaltMaxLuma      = P.AsphaltMaxLuma;
 	Pass->AsphaltRampLuma     = P.AsphaltRampLuma;
+	Pass->VegBlurM         = P.VegBlurM;
+	Pass->BaseTexelAngle   = P.BaseTexelAngle;
 	Pass->VegetationClass     = P.VegetationClass;
 	Pass->BareSoilClass       = P.BareSoilClass;
 	Pass->AsphaltClass        = P.AsphaltClass;

@@ -127,15 +127,14 @@ def _rows(bands=("mwir", "lwir"), runs=ALL_RUNS) -> list[dict]:
 
 def test_expected_rows_cover_every_band_time_and_selected_run():
     rows = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
-    assert len(rows) == 2 * 9 + 2
+    assert len(rows) == 2 * 8 + 2
     assert ("e", "lwir", "noon") in rows and ("e", "lwir", "night") in rows
-    for b in ("mwir", "lwir"):  # (m) land-cover grid visibility, night (4B Task 13)
-        assert ("m", b, "night") in rows
+    assert not any(r[0] == "m" for r in rows)  # (m) is info only (Task 13 fix round 1)
     for b in ("mwir", "lwir"):  # (h) static coast shimmer, both times
         assert ("h", b, "night") in rows and ("h", b, "noon") in rows
     assert ("f", "mwir", "noon") in rows and ("g", "eo", "noon") in rows
     only_bands = tc.expected_rows(["mwir"], {"bands"})
-    assert {r[0] for r in only_bands} == set("abcdehm")  # f, g not expected
+    assert {r[0] for r in only_bands} == set("abcdeh")  # f, g not expected
     assert tc.expected_rows(["mwir"], {"eo"}) == [("g", "eo", "noon")]
 
 
@@ -155,7 +154,7 @@ def test_a_missing_row_fails():
         assert tc.missing_rows(checks, exp) == [exp[drop]]
     # A whole band's run absent: its rows are missing even though every letter is present.
     checks = _rows(bands=("mwir",))
-    assert {c["check"] for c in checks} == set("abcdefghm")
+    assert {c["check"] for c in checks} == set("abcdefgh")
     assert tc.gate_passed(checks, exp) is False
     assert tc.gate_passed([], []) is False  # nothing expected -> not a pass
 

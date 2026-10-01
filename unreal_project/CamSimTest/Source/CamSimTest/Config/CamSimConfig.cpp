@@ -1040,6 +1040,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				YamlFloat (L, "asphalt_max_luma",  LC.AsphaltMaxLuma);
 				YamlFloat (L, "warp_amplitude_m",  LC.WarpAmplitudeM);
 				YamlFloat (L, "warp_cell_m",       LC.WarpCellM);
+				YamlFloat (L, "veg_blur_m",        LC.VegBlurM);
 				if (YamlHas(L, "classes"))
 				{
 					ryml::ConstNodeRef Cs = L["classes"];
@@ -1405,6 +1406,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	LC.AsphaltMaxLuma   = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA"),  LC.AsphaltMaxLuma);
 	LC.WarpAmplitudeM   = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_AMPLITUDE_M"),  LC.WarpAmplitudeM);
 	LC.WarpCellM        = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M"),       LC.WarpCellM);
+	LC.VegBlurM         = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_BLUR_M"),        LC.VegBlurM);
 
 	// ROADMAP 4A acceptance: MWIR/LWIR and 1080p runs without editing the yaml.
 	Cfg.CaptureWidth  = GetEnvInt(TEXT("CAMSIM_CAPTURE_WIDTH"),  Cfg.CaptureWidth);
@@ -1879,6 +1881,8 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(FString::Printf(TEXT("thermal.land_cover.warp_amplitude_m=%.3f out of range [0, 20]"), LC.WarpAmplitudeM));
 	if (!(LC.WarpCellM >= 5.0f && LC.WarpCellM <= 200.0f))
 		Errors.Add(FString::Printf(TEXT("thermal.land_cover.warp_cell_m=%.3f out of range [5, 200]"), LC.WarpCellM));
+	if (!(LC.VegBlurM >= 0.0f && LC.VegBlurM <= 32.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.veg_blur_m=%.3f out of range [0, 32]"), LC.VegBlurM));
 	if (LC.bEnabled && LC.Dir.TrimStartAndEnd().IsEmpty())
 		Errors.Add(TEXT("thermal.land_cover.dir is empty (set it, or thermal.land_cover.enabled: false)"));
 	Errors.Append(CamSimLandCover::ValidateClassSpecs(LC.Classes));

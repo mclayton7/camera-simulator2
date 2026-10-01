@@ -38,7 +38,7 @@ OUT/shots/, a region overlay to OUT/overlays/ (red / cyan = the two compared reg
 the COCO box), all frames to OUT/<run>/frames/<time>_<view>.npz.
 
 Checks (spec "Testing"). Exit 0 only when every expected (check, band, time) row exists and
-passes: a, b, c, d, e, h, m per selected band when `bands` is in --runs, f when `hd` is, g when
+passes: a, b, c, d, e, h per selected band when `bands` is in --runs, f when `hd` is, g when
 `eo` is (so `--runs bands` alone can exit 0; f and g are then not expected). A missing
 row (a view with no frames, an absent run) fails:
   (a) night nadir_truck: mean Y in [60, 180] and < 5 % of pixels at Y <= 16
@@ -57,11 +57,12 @@ row (a view with no frames, an absent run) fails:
       the EO baseline is printed beside it, info). The truck box-boundary ratio is printed
       too, labelled motion-contaminated: the truck moves against its box, so it is not a
       shimmer measure
-  (m) night nadir_mixed (ROADMAP 4B Task 13): no visible land-cover window grid. On the
+  (m) INFO ONLY (not gated): night nadir_mixed (ROADMAP 4B Task 13) land-cover window grid. On the
       temporal-mean frame (central 60 %, entity boxes masked), the 2D power spectrum's mean in a
       band around the grid fundamental (period 10 m / GSD px, GSD from 800 m and 40 deg; along
       each image axis, |f - f0| <= 0.15 f0) over the mean of the two neighbouring bands of equal
-      width must be <= 2 for both axes
+      width (~1 = no peak). It was gated <= 2, but cannot tell a visibly blocky frame from a fixed
+      one (random block fields have sinc zeros at the fundamental), so it is reported only
 """
 
 from __future__ import annotations
@@ -121,7 +122,7 @@ MIXED_FOV = 40.0
 CENTRAL = 0.6  # central 60 % of the frame (IR optics: distortion and vignetting grow outwards)
 GRID_TEXEL_M = 10.0  # land-cover window texel
 GRID_BAND = 0.15  # band half-width as a fraction of the grid fundamental (the terrain height is not known exactly)
-GRID_PEAK_RATIO = 2.0  # (m) fundamental band / neighbouring bands
+GRID_PEAK_RATIO = 2.0  # (m, info only) fundamental band / neighbouring bands; the former gate
 
 # Fixed-pose regions as fractions of the image height (coast) / rows (sky).
 COAST_R = (0.26, 0.40)  # radius band from the image centre
@@ -402,7 +403,7 @@ Row = tuple[str, str, str]  # (check, band, time)
 
 
 def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
-    """Every gate row the selected bands and runs must produce. a, b, c, d, e, h, m come from the
+    """Every gate row the selected bands and runs must produce. a, b, c, d, e, h come from the
     band runs (only when `bands` is selected); f from `hd` and g from `eo`, each expected
     only when that run group is selected (so `--runs bands` can pass on its own)."""
     rows: list[Row] = []
@@ -417,7 +418,6 @@ def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
                 ("e", b, "noon"),
                 ("h", b, "night"),
                 ("h", b, "noon"),
-                ("m", b, "night"),
             ]
     if "hd" in runs:
         rows.append(("f", "mwir", "noon"))
@@ -1116,14 +1116,14 @@ def check_band(
         mean_img = vd.y.astype(np.float32).mean(axis=0)
         rx, ry = grid_peak_ratio(mean_img, mask, period)
         r = max(rx, ry)
+        # Info only (fix round 1): the metric cannot tell the visibly blocky Task 10 build (0.68) from the fixed one; a
+        # random-valued block field has sinc zeros, not a peak, at the grid fundamental.
         add(
-            checks,
-            "m",
+            info,
+            "m (grid peak ratio, info)",
             r,
-            f"<= {GRID_PEAK_RATIO:g} (grid band / neighbours, max of x and y)",
-            (not math.isnan(r)) and r <= GRID_PEAK_RATIO,
-            "night",
-            f"x {rx:.2f}, y {ry:.2f} at period {period:.1f} px (10 m at {MIXED_UP_M:g} m, {MIXED_FOV:g} deg); "
+            time_="night",
+            detail=f"x {rx:.2f}, y {ry:.2f} (~1 = no peak; was gated <= {GRID_PEAK_RATIO:g}) at period {period:.1f} px (10 m at {MIXED_UP_M:g} m, {MIXED_FOV:g} deg); "
             f"{int(mask.sum())} px, entities masked ({int(ent.sum())} px)",
         )
         shots.append(overlay(out, vd, ~mask, None, None, len(vd.y) // 2))

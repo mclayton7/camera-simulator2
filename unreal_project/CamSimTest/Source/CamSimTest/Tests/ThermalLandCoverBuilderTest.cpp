@@ -84,6 +84,8 @@ bool FThermalBuilderLandCoverMappingTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("concrete target"), P.ConcreteClass, static_cast<uint32>(FThermalMaterialTable::Concrete));
 	TestEqual(TEXT("thresholds from config"), P.VegIndexLo, FCamSimConfig::FThermalConfig::FLandCoverConfig().VegIndexLo);
 	TestEqual(TEXT("ramp"), P.AsphaltRampLuma, FThermalFrameBuilder::AsphaltRampLuma);
+	TestEqual(TEXT("veg blur from config (fix round 1)"), P.VegBlurM, 2.0f);
+	TestEqual(TEXT("base texel angle left for the render thread"), P.BaseTexelAngle, 0.0f);
 	In.bBaseColorAvailable = false;
 	B.Build(In, P);
 	TestEqual(TEXT("no base colour: refinement off"), P.bLandCoverRefine, 0u);
@@ -293,5 +295,13 @@ bool FThermalBuilderLandCoverWarpTest::RunTest(const FString& Parameters)
 	B.Configure(Cfg, 3.0f, 5.0f);
 	B.Build(In, P);
 	TestTrue(TEXT("out of range: clamped to [0, 20] m and [5, 200] m"), P.LandCoverWarpAmpM == 20.0f && P.LandCoverWarpCellM == 5.0f);
+	Cfg.LandCover.VegBlurM = std::numeric_limits<float>::quiet_NaN();
+	B.Configure(Cfg, 3.0f, 5.0f);
+	B.Build(In, P);
+	TestEqual(TEXT("NaN veg blur -> 0 (off)"), P.VegBlurM, 0.0f);
+	Cfg.LandCover.VegBlurM = 100.0f;
+	B.Configure(Cfg, 3.0f, 5.0f);
+	B.Build(In, P);
+	TestEqual(TEXT("veg blur clamped to 32 m"), P.VegBlurM, 32.0f);
 	return true;
 }

@@ -101,8 +101,24 @@ namespace CamSimThermalRef
 
 	FVector2f RefinementWeights(const FThermalFrameParams& P, const FVector3f& Base)
 	{
-		const float Sum = Base.X + Base.Y + Base.Z;
-		const float ExG = (2.0f * Base.Y - Base.X - Base.Z) / (Sum + 1e-4f);
+		return RefinementWeights(P, Base, Base);
+	}
+
+	bool IsVegBlurOn(const FThermalFrameParams& P)
+	{
+		return FMath::IsFinite(P.VegBlurM) && P.VegBlurM > 0.0f && FMath::IsFinite(P.BaseTexelAngle) && P.BaseTexelAngle > 0.0f;
+	}
+
+	int32 VegBlurRadiusPx(const FThermalFrameParams& P, float RangeCm)
+	{
+		const float Rf = FMath::Clamp(P.VegBlurM * 100.0f / FMath::Max(RangeCm * P.BaseTexelAngle, 1e-6f), 1.0f, 32.0f);
+		return static_cast<int32>(FMath::FloorToFloat(Rf + 0.5f));
+	}
+
+	FVector2f RefinementWeights(const FThermalFrameParams& P, const FVector3f& Base, const FVector3f& VegBase)
+	{
+		const float Sum = VegBase.X + VegBase.Y + VegBase.Z;
+		const float ExG = (2.0f * VegBase.Y - VegBase.X - VegBase.Z) / (Sum + 1e-4f);
 		const float Veg = FMath::Clamp((ExG - P.VegIndexLo) / FMath::Max(P.VegIndexHi - P.VegIndexLo, 1e-4f), 0.0f, 1.0f);
 		const float Concrete = FMath::Clamp((Lum709(Base) - P.AsphaltMaxLuma) / FMath::Max(P.AsphaltRampLuma, 1e-4f) + 0.5f, 0.0f, 1.0f);
 		return FVector2f(Veg, Concrete);
@@ -132,7 +148,12 @@ namespace CamSimThermalRef
 
 	FVector4f BlendLandCover(const FThermalFrameParams& P, const FLandCoverSample& S, const FVector3f& Base, bool bRefine)
 	{
-		const FVector2f Wt = bRefine ? RefinementWeights(P, Base) : FVector2f::ZeroVector;
+		return BlendLandCover(P, S, Base, Base, bRefine);
+	}
+
+	FVector4f BlendLandCover(const FThermalFrameParams& P, const FLandCoverSample& S, const FVector3f& Base, const FVector3f& VegBase, bool bRefine)
+	{
+		const FVector2f Wt = bRefine ? RefinementWeights(P, Base, VegBase) : FVector2f::ZeroVector;
 		return RefinedClassData(P, S.Codes[0], Wt, bRefine) * S.Weights[0] + RefinedClassData(P, S.Codes[1], Wt, bRefine) * S.Weights[1]
 			+ RefinedClassData(P, S.Codes[2], Wt, bRefine) * S.Weights[2] + RefinedClassData(P, S.Codes[3], Wt, bRefine) * S.Weights[3];
 	}
@@ -206,7 +227,19 @@ namespace CamSimThermalRef
 			const FLandCoverSample L = SampleLandCover(P, S.LandCover, Pw);
 			if (L.bInside)
 			{
-				Cd = BlendLandCover(P, L, Base, S.bHasBase && P.bLandCoverRefine != 0u);
+				const bool bRefine = S.bHasBase && P.bLandCoverRefine != 0u;
+				FVector3f VegBase = Base;
+				if (bRefine && S.bBaseTaps && IsVegBlurOn(P))
+				{
+					FVector3f T[4];
+					for (int32 K = 0; K < 4; ++K)
+					{
+						const FVector3f& B = S.BaseTaps[K];
+						T[K] = (P.bBaseColorSrgb != 0u) ? FVector3f(SrgbToLinear(B.X), SrgbToLinear(B.Y), SrgbToLinear(B.Z)) : B;
+					}
+					VegBase = ((((Base + T[0]) + T[1]) + T[2]) + T[3]) * 0.2f;
+				}
+				Cd = BlendLandCover(P, L, Base, VegBase, bRefine);
 				R.bLandCover = true;
 			}
 		}
@@ -255,6 +288,20 @@ namespace CamSimThermalRef
 					const FLinearColor& B = (*In.BaseColor)[Ti];
 					S.Base = FVector3f(B.R, B.G, B.B);
 					S.bHasBase = true;
+					// Vegetation taps: the radius from the same range EvaluatePixel computes (ThermalCS: LoadVegBase).
+					if (IsVegBlurOn(P) && FMath::IsFinite(S.DeviceZ) && S.DeviceZ > 0.0f)
+					{
+						const FVector3f Pw = ClipToWorld(P, S.U * 2.0f - 1.0f, 1.0f - S.V * 2.0f, S.DeviceZ);
+						const int32 Rp = VegBlurRadiusPx(P, FMath::Sqrt(FVector3f::DotProduct(Pw, Pw)));
+						const FIntPoint Off[4] = { FIntPoint(Rp, Rp), FIntPoint(-Rp, Rp), FIntPoint(Rp, -Rp), FIntPoint(-Rp, -Rp) };
+						for (int32 K = 0; K < 4; ++K)
+						{
+							const int32 Qx = FMath::Clamp(Tx + Off[K].X, 0, In.DepthW - 1), Qy = FMath::Clamp(Ty + Off[K].Y, 0, In.DepthH - 1);
+							const FLinearColor& Q = (*In.BaseColor)[Qy * In.DepthW + Qx];
+							S.BaseTaps[K] = FVector3f(Q.R, Q.G, Q.B);
+						}
+						S.bBaseTaps = true;
+					}
 				}
 				S.LandCover = In.LandCover ? In.LandCover->GetData() : nullptr;
 				Out[Y * In.W + X] = EvaluatePixel(P, S);

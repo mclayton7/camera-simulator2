@@ -35,6 +35,11 @@ namespace CamSimThermalRef
 		FVector3f Color = FVector3f::ZeroVector;        // scene colour * InputScale (absolute luminance units)
 		FVector3f Base = FVector3f::ZeroVector;         // GBuffer base colour
 		bool bHasBase = false;                          // the base colour texture is bound
+		// Vegetation-index taps (fix round 1): raw base colour at the diagonals (+R, +R), (-R, +R), (+R, -R), (-R, -R) texels,
+		// R = VegBlurRadiusPx; Run fills them
+		// when the base colour is bound and IsVegBlurOn. Without them EvaluatePixel uses the single centre texel.
+		FVector3f BaseTaps[4] = { FVector3f::ZeroVector, FVector3f::ZeroVector, FVector3f::ZeroVector, FVector3f::ZeroVector };
+		bool bBaseTaps = false;
 		const uint8* LandCover = nullptr;               // window codes (P.LandCoverTexels^2, row 0 = north); null: none bound
 	};
 
@@ -82,10 +87,18 @@ namespace CamSimThermalRef
 	FLandCoverSample SampleLandCover(const FThermalFrameParams& P, const uint8* Codes, const FVector3f& Pw);
 	/** (vegetation v, concrete c) of a linear base colour. */
 	FVector2f RefinementWeights(const FThermalFrameParams& P, const FVector3f& Base);
+	/** v from VegBase (the blurred base colour), c from Base (the full-resolution centre texel). */
+	FVector2f RefinementWeights(const FThermalFrameParams& P, const FVector3f& Base, const FVector3f& VegBase);
+	/** The vegetation blur is on: VegBlurM > 0 and BaseTexelAngle > 0 (both finite). */
+	bool  IsVegBlurOn(const FThermalFrameParams& P);
+	/** Tap offset in base-colour texels: clamp(floor(VegBlurM * 100 / max(RangeCm * BaseTexelAngle, 1e-6) + 0.5), 1, 32). */
+	int32 VegBlurRadiusPx(const FThermalFrameParams& P, float RangeCm);
 	/** One code's class data; with bRefine the family's blend toward vegetation / bare soil / asphalt / concrete. */
 	FVector4f RefinedClassData(const FThermalFrameParams& P, uint8 Code, const FVector2f& Weights, bool bRefine);
 	/** Bilinear blend of the four texels' refined class data. */
 	FVector4f BlendLandCover(const FThermalFrameParams& P, const FLandCoverSample& S, const FVector3f& Base, bool bRefine);
+	/** As above, v from VegBase. */
+	FVector4f BlendLandCover(const FThermalFrameParams& P, const FLandCoverSample& S, const FVector3f& Base, const FVector3f& VegBase, bool bRefine);
 
 	float LutRadiance(const FThermalFrameParams& P, float TK);
 	float SkyTemperatureK(const FThermalFrameParams& P, float SinEl);

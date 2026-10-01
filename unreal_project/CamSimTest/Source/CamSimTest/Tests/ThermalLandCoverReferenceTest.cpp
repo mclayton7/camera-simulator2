@@ -579,3 +579,89 @@ bool FThermalRefLandCoverWarpEdgeTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("warped onto the grid: land cover"), CamSimThermalRef::EvaluatePixel(P, S).bLandCover);
 	return true;
 }
+
+// ---- Fix round 1: vegetation index from a world-space blurred base colour (JPEG chroma blocks in the imagery) ----
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalRefVegBlurTest, "CamSim.Thermal.Reference.LandCoverVegBlurChromaChecker",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalRefVegBlurTest::RunTest(const FString& Parameters)
+{
+	// 128 x 72 depth/base texels, every code tree (vegetation family: T = T_tree v + T_bare (1 - v)), fast term off (night).
+	FThermalTestScene S = MakeLandCoverScene(128, 72, 128, 72, 0.0f);
+	S.LandCover = Uniform(32, 10);
+	S.P.KFastScale = 0.0f;
+	S.P.LandCoverWarpAmpM = 0.0f;
+	ApplyChromaChecker(S, 16);
+	for (int32 I = 0; I < S.Stencil.Num(); ++I) S.Stencil[I] = 0;
+	// 8 texels of blur at the frame centre: veg_blur_m = 8 x the centre texel's ground footprint.
+	const float Zc = S.Depth[36 * 128 + 64];
+	const FVector3f Pc = CamSimThermalRef::ClipToWorld(S.P, (64.5f / 128.0f) * 2.0f - 1.0f, 1.0f - (36.5f / 72.0f) * 2.0f, Zc);
+	const float FootM = FMath::Sqrt(FVector3f::DotProduct(Pc, Pc)) * S.P.BaseTexelAngle / 100.0f;
+	TestEqual(TEXT("footprint radius: 8 texels at the centre"), CamSimThermalRef::VegBlurRadiusPx(
+		[&] { FThermalFrameParams Q = S.P; Q.VegBlurM = 8.0f * FootM; return Q; }(), FMath::Sqrt(FVector3f::DotProduct(Pc, Pc))), 8);
+
+	const float Full = S.P.ClassTempK[LcBare] - S.P.ClassTempK[LcTree];
+	auto MaxStep = [&](float BlurM, int32& OutLand, int32& OutBig)
+	{
+		FThermalFrameParams Q = S.P;
+		Q.VegBlurM = BlurM;
+		FThermalTestScene T = S;
+		T.P = Q;
+		const TArray<CamSimThermalRef::FPixelResult> R = CamSimThermalRef::Run(T.Images(true), Q);
+		float Step = 0.0f;
+		OutLand = 0;
+		OutBig = 0;
+		for (int32 Y = 20; Y < 60; ++Y)        // rows inside the window, away from the far edge
+		{
+			for (int32 X = 8; X < 119; ++X)
+			{
+				const CamSimThermalRef::FPixelResult& A = R[Y * 128 + X];
+				const CamSimThermalRef::FPixelResult& B = R[Y * 128 + X + 1];
+				if (!A.bLandCover || !B.bLandCover) continue;
+				if (BlurM > 0.0f)
+				{
+					// The pitched view's radius varies by row; a 5-tap box aliases where R is a multiple of the 16 px block
+					// (all taps on the same parity), so compare where R is 5..11 texels (the centre's 8 +- 3).
+					const int32 Ti = Y * 128 + X;
+					const FVector3f Pw = CamSimThermalRef::ClipToWorld(Q, ((X + 0.5f) / 128.0f) * 2.0f - 1.0f, 1.0f - ((Y + 0.5f) / 72.0f) * 2.0f, S.Depth[Ti]);
+					const int32 Rp = CamSimThermalRef::VegBlurRadiusPx(Q, FMath::Sqrt(FVector3f::DotProduct(Pw, Pw)));
+					if (Rp < 5 || Rp > 11) continue;
+				}
+				++OutLand;
+				Step = FMath::Max(Step, FMath::Abs(B.TempK - A.TempK));
+				OutBig += FMath::Abs(B.TempK - A.TempK) > 0.3f * Full ? 1 : 0;
+			}
+		}
+		return Step;
+	};
+	int32 Land0 = 0, Land1 = 0, Big0 = 0, Big1 = 0;
+	const float Blocky = MaxStep(0.0f, Land0, Big0);
+	const float Smooth = MaxStep(8.0f * FootM, Land1, Big1);
+	AddInfo(FString::Printf(TEXT("max step between neighbours: blur off %.2f K, blur on %.2f K (tree/bare span %.1f K); steps > 0.3 span: %d vs %d of %d / %d pairs"),
+		Blocky, Smooth, Full, Big0, Big1, Land0, Land1));
+	TestTrue(TEXT("land-cover pixels compared"), Land0 > 2000 && Land1 > 500);
+	TestTrue(TEXT("veg_blur_m 0: blocky v (a full tree <-> bare step at the 16 px chroma edges)"), Blocky > 0.9f * Full);
+	// Each tap crossing a chroma edge moves the 5-tap mean by 1/5 of the chroma difference (the diagonal taps never share the
+	// centre's row or column); an integer radius change between neighbours can move all taps at once, so the bound is half.
+	TestTrue(TEXT("blur on: no full step (<= half the blur-off step)"), Smooth <= 0.5f * Full);
+	TestTrue(TEXT("blur on: large steps (> 0.3 span) at least 5x rarer"), Big1 * 5 <= Big0);
+
+	// Pure EvaluatePixel: without taps (a hand-built sample) the single centre tap is used, even with the blur on.
+	FThermalFrameParams Q = S.P;
+	Q.VegBlurM = 8.0f * FootM;
+	FPixelSample One = SampleAt(S, 64, 36, true, S.LandCover.GetData());
+	FThermalFrameParams Off = S.P;
+	Off.VegBlurM = 0.0f;
+	TestEqual(TEXT("no taps in the sample: single tap"), CamSimThermalRef::EvaluatePixel(Q, One).TempK, CamSimThermalRef::EvaluatePixel(Off, One).TempK);
+	// The asphalt/concrete split stays on the full-resolution centre luminance.
+	const FVector3f Dark(0.05f), Bright(0.40f);
+	TestEqual(TEXT("concrete weight from the centre base, not the blurred one"), CamSimThermalRef::RefinementWeights(Q, Dark, Bright).Y,
+		CamSimThermalRef::RefinementWeights(Q, Dark).Y);
+	TestEqual(TEXT("vegetation weight from the blurred base"), CamSimThermalRef::RefinementWeights(Q, Dark, FVector3f(0.05f, 0.20f, 0.04f)).X, 1.0f);
+	// Radius: clamped to [1, 32] texels; NaN-free for zero or huge footprints.
+	Q.VegBlurM = 1e-3f;
+	TestEqual(TEXT("tiny blur: 1 texel"), CamSimThermalRef::VegBlurRadiusPx(Q, 1000.0f), 1);
+	Q.VegBlurM = 32.0f;
+	TestEqual(TEXT("close range: 32 texels"), CamSimThermalRef::VegBlurRadiusPx(Q, 1.0f), 32);
+	return true;
+}

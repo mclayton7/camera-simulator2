@@ -242,6 +242,26 @@ namespace CamSimThermalTest
 		}
 		const float Lit = SunlitLuminance(S.P, 0.2f);
 		S.Color.Init(FLinearColor(Lit, Lit, Lit, 1.0f), W * H);
+		S.P.BaseTexelAngle = 2.0f * FMath::Tan(FMath::DegreesToRadians(0.5f * HFovDeg)) / static_cast<float>(DW);
 		return S;
+	}
+
+	/**
+	 * Fix round 1 (JPEG chroma blocks): replace the scene's ground base colour by a chroma checker of BlockPx-texel squares,
+	 * a muted green (ExG 0.22: v = 1, just past veg_index_hi, like real imagery chroma) against a grey of the same luminance
+	 * (v = 0); the luminance (asphalt/concrete split) is uniform.
+	 */
+	inline void ApplyChromaChecker(FThermalTestScene& S, int32 BlockPx)
+	{
+		const FLinearColor Green(0.15f, 0.20f, 0.14f, 1.0f);
+		const float L = 0.2126f * Green.R + 0.7152f * Green.G + 0.0722f * Green.B;
+		const FLinearColor Grey(L, L, L, 1.0f);
+		for (int32 Ty = 0; Ty < S.DH; ++Ty)
+		{
+			for (int32 Tx = 0; Tx < S.DW; ++Tx)
+			{
+				S.Base[Ty * S.DW + Tx] = (((Tx / BlockPx) + (Ty / BlockPx)) % 2 == 0) ? Green : Grey;
+			}
+		}
 	}
 }

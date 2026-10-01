@@ -170,6 +170,7 @@ void FThermalFrameBuilder::Build(const FThermalFrameInputs& In, FThermalFramePar
 	Out.VegIndexHi       = Config.LandCover.VegIndexHi;
 	Out.AsphaltMaxLuma   = Config.LandCover.AsphaltMaxLuma;
 	Out.AsphaltRampLuma  = AsphaltRampLuma;
+	Out.VegBlurM         = FMath::IsFinite(Config.LandCover.VegBlurM) ? FMath::Clamp(Config.LandCover.VegBlurM, 0.0f, MaxVegBlurM) : 0.0f;
 	Out.bLandCoverRefine = In.bBaseColorAvailable ? 1u : 0u;   // not the fast term: base colour is valid at night too
 	const FThermalLandCoverInput& L = In.LandCover;
 	if (Config.LandCover.bEnabled && L.bValid && L.WindowId != 0u && L.Texels >= 2 && L.TexelM > 0.0f

@@ -180,6 +180,10 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilde
 	// before TSR, scene colour, depth and stencil share one render-resolution, jittered view.
 	FThermalFrameParams TP = *ThermalParams;
 	TP.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
+	// Angle of one base-colour (render-resolution) texel at the view centre: 2 tan(hfov / 2) / view width (veg_blur_m footprint).
+	const double ProjX = View.ViewMatrices.GetProjectionMatrix().M[0][0];
+	const int32 RenderW = SceneColor.ViewRect.Width();   // before TSR: the render-resolution rect depth and GBuffer share
+	TP.BaseTexelAngle = (ProjX > 0.0 && RenderW > 0) ? static_cast<float>(2.0 / (ProjX * RenderW)) : 0.0f;
 
 	// A new texture with scene colour's desc (ThermalCS reads the scene's luminance from the old one for the fast term).
 	// Only its view rect is written: texels outside it are undefined, as in the engine's own scene colour, and TSR reads

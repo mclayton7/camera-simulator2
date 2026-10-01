@@ -447,7 +447,7 @@ bool FThermalGpuLandCoverTest::RunTest(const FString& Parameters)
 {
 	if (GUsingNullRHI) { AddInfo(TEXT("skipped: NullRHI (run scripts/run_gpu_tests.sh)")); return true; }
 	constexpr float MirrorTol = 1e-4f;   // ThermalCS vs CamSimThermalRef (never loosen it)
-	struct FCase { const TCHAR* Name; float Yaw; int32 DW, DH; FIntPoint ColorPad, DepthPad; bool bBase; bool bLandCover; bool bWarp = false; };
+	struct FCase { const TCHAR* Name; float Yaw; int32 DW, DH; FIntPoint ColorPad, DepthPad; bool bBase; bool bLandCover; bool bWarp = false; bool bBlur = false; };
 	const FCase Cases[] = {
 		{ TEXT("yaw 0, refined"),               0.0f,    64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true  },
 		{ TEXT("yaw 30, refined"),              30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true  },
@@ -458,11 +458,24 @@ bool FThermalGpuLandCoverTest::RunTest(const FString& Parameters)
 		{ TEXT("yaw 30, refined, warp"),        30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true,  true },
 		{ TEXT("yaw -117, half-res, warp"),     -117.0f, 32, 18, FIntPoint(3, 2), FIntPoint(4, 3), true,  true,  true },
 		{ TEXT("land cover off, warp set"),     30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  false, true },
+		// Fix round 1: vegetation index from the 5-tap world-space blurred base colour, over a 4 px chroma checker; the
+		// offset-rect case clamps taps to the depth view rect.
+		{ TEXT("yaw 30, chroma checker, blur"), 30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true,  true, true },
+		{ TEXT("half-res, offset rects, blur"), -117.0f, 32, 18, FIntPoint(3, 2), FIntPoint(4, 3), true,  true,  false, true },
+		{ TEXT("chroma checker, blur 0"),       30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true,  false, false },
 	};
 	for (const FCase& C : Cases)
 	{
 		CamSimThermalTest::FThermalTestScene S = CamSimThermalTest::MakeLandCoverScene(64, 36, C.DW, C.DH, C.Yaw);
 		if (!C.bLandCover) S.P.bLandCover = 0;
+		if (C.bBlur || FCString::Strstr(C.Name, TEXT("chroma")))
+		{
+			CamSimThermalTest::ApplyChromaChecker(S, C.DW >= 64 ? 4 : 2);
+		}
+		if (C.bBlur)
+		{
+			S.P.VegBlurM = 0.6f;   // ~2-4 texels at the scene's ~10 m ranges
+		}
 		if (C.bWarp)
 		{
 			// The defaults (6 m amplitude, 20 m cells over 10 m texels) at the scene's 0.4 m texels, and a ~1.2 km / 0.9 km

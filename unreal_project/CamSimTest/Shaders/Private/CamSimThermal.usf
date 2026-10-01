@@ -19,7 +19,6 @@ Texture2D<float4>  SceneColor;
 Texture2D<float>   SceneDepth;
 Texture2D<float>   CustomDepth;
 Texture2D<uint2>   CustomStencil;   // FSceneTextureUniformParameters::CustomStencilTexture's type
-Texture2D<float4>  BaseColor;       // GBufferC (1x1 black dummy when UseBaseColor == 0: never loaded then)
 #if WRITE_SCENE_COLOR
 int2  OutputMin;                    // OutSceneColor texel of output pixel (0, 0)
 RWTexture2D<float4> OutSceneColor;
@@ -64,6 +63,9 @@ void ThermalCS(uint3 Id : SV_DispatchThreadID)
 	S.Color = SceneColor.Load(int3(ColorViewMin + P, 0)).rgb * ColorScale();
 	// Guarded: T indexes the depth rect, outside the 1x1 dummy (an out-of-bounds Load is undefined without robustness).
 	S.Base = float3(0.0, 0.0, 0.0);
+	S.BaseTexel = T;
+	S.BaseMin = DMin;
+	S.BaseMax = DMin + DSize - 1;
 	if (UseBaseColor != 0u)
 	{
 		S.Base = BaseColor.Load(int3(T, 0)).rgb;

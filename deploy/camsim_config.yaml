@@ -809,6 +809,7 @@ thermal:
     asphalt_max_luma: 0.12      # CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA — built-up: base luminance below which ground is asphalt
     warp_amplitude_m: 6         # CAMSIM_THERMAL_LAND_COVER_WARP_AMPLITUDE_M — ground-fixed warp of the class lookup, breaks the 10 m grid (0..20; 0 = off)
     warp_cell_m: 20             # CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M — warp noise cell size on the ground (5..200)
+    veg_blur_m: 2               # CAMSIM_THERMAL_LAND_COVER_VEG_BLUR_M — vegetation index from base colour averaged over this ground radius (hides imagery JPEG chroma blocks; 0..32, 0 = off)
     # classes:                  # WorldCover code -> thermal material (yaml only; defaults in docs/thermal.md)
     #   10: tree_canopy
 

@@ -73,6 +73,7 @@ public:
 	static constexpr double MwirMaxCentreUm = 6.5;     // band centre below this: MWIR extinction
 	static constexpr float  AsphaltRampLuma = 0.04f;   // built-up asphalt -> concrete ramp width (base luminance)
 	static constexpr double MaxWarpAnchorM  = 200000.0;   // a window farther than this from the warp anchor re-latches it
+	static constexpr float  MaxVegBlurM = 32.0f;
 	static constexpr float  MaxWarpAmpM = 20.0f, MinWarpCellM = 5.0f, MaxWarpCellM = 200.0f, DefaultWarpCellM = 20.0f;
 	const FLandCoverClassTable& GetLandCoverTable() const { return LandCoverTable; }
 

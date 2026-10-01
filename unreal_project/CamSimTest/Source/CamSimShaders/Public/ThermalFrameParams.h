@@ -88,6 +88,12 @@ struct FThermalFrameParams
 	float     VegIndexHi          = 0.20f;
 	float     AsphaltMaxLuma      = 0.12f;               // built-up concrete weight = saturate((BaseLum - max) / ramp + 0.5)
 	float     AsphaltRampLuma     = 0.04f;
+	// Vegetation index from a world-space blurred base colour (fix round 1: JPEG chroma blocks in the imagery): the centre texel
+	// and 4 diagonal taps (+R, +R), (-R, +R), (+R, -R), (-R, -R) (never on the centre's row or column, so an axis-aligned JPEG block
+	// edge flips one tap at a time), R = clamp(floor(VegBlurM * 100 / (Range_cm * BaseTexelAngle)
+	// + 0.5), 1, 32). The asphalt/concrete split stays on the centre texel. VegBlurM <= 0 or BaseTexelAngle <= 0: single tap.
+	float     VegBlurM            = 0.0f;                // thermal.land_cover.veg_blur_m
+	float     BaseTexelAngle      = 0.0f;                // radians per base-colour (render-resolution) texel; set on the render thread
 	uint32    VegetationClass     = 4;                   // refinement targets (FThermalMaterialTable indices)
 	uint32    BareSoilClass       = 11;
 	uint32    AsphaltClass        = 3;

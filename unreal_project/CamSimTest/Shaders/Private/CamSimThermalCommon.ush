@@ -58,11 +58,14 @@ float    VegIndexLo;
 float    VegIndexHi;
 float    AsphaltMaxLuma;
 float    AsphaltRampLuma;
+float    VegBlurM;                       // fix round 1: vegetation index from the 5-tap blurred base colour; <= 0: single tap
+float    BaseTexelAngle;                 // radians per base-colour texel
 uint     VegetationClass;
 uint     BareSoilClass;
 uint     AsphaltClass;
 uint     ConcreteClass;
 Texture2D<uint> LandCover;               // window codes, row 0 = north (zero-uint dummy when UseLandCover == 0: never loaded then)
+Texture2D<float4> BaseColor;             // GBufferC (1x1 black dummy when UseBaseColor == 0: never loaded then)
 
 /** Non-finite on the bits: Metal fast-math may fold isnan/isinf or V != V away. */
 bool IsNonFinite(float V) { return (asuint(V) & 0x7fffffffu) >= 0x7f800000u; }
@@ -178,11 +181,11 @@ bool LandCoverCoords(float3 Pw, out int2 I0, out float2 F)
 	return true;
 }
 
-/** CamSimThermalRef::RefinementWeights: (vegetation v, concrete c) of a linear base colour. */
-float2 RefinementWeights(float3 Base)
+/** CamSimThermalRef::RefinementWeights: v from VegBase (blurred base colour), c from Base (the centre texel). */
+float2 RefinementWeights(float3 Base, float3 VegBase)
 {
-	const float Sum = Base.x + Base.y + Base.z;
-	const float ExG = (2.0 * Base.y - Base.x - Base.z) / (Sum + 1e-4);
+	const float Sum = VegBase.x + VegBase.y + VegBase.z;
+	const float ExG = (2.0 * VegBase.y - VegBase.x - VegBase.z) / (Sum + 1e-4);
 	const float Veg = clamp((ExG - VegIndexLo) / max(VegIndexHi - VegIndexLo, 1e-4), 0.0, 1.0);
 	const float Concrete = clamp((Lum709(Base) - AsphaltMaxLuma) / max(AsphaltRampLuma, 1e-4) + 0.5, 0.0, 1.0);
 	return float2(Veg, Concrete);
@@ -232,9 +235,9 @@ float4 RefinedClassData(uint Code, float2 Wt, bool bRefine, FLandCoverTargets Tg
 
 /** CamSimThermalRef::BlendLandCover: blend of the four texels' refined class data with the smoothstep fractions F. R8_UINT
  *  codes: Load, never sampled. */
-float4 BlendLandCover(int2 I0, float2 F, float3 Base, bool bRefine)
+float4 BlendLandCover(int2 I0, float2 F, float3 Base, float3 VegBase, bool bRefine)
 {
-	const float2 Wt = bRefine ? RefinementWeights(Base) : float2(0.0, 0.0);
+	const float2 Wt = bRefine ? RefinementWeights(Base, VegBase) : float2(0.0, 0.0);
 	const FLandCoverTargets Tg = LoadLandCoverTargets();
 	const uint C00 = LandCover.Load(int3(I0, 0)) & 0xFFu;
 	const uint C10 = LandCover.Load(int3(I0 + int2(1, 0), 0)) & 0xFFu;
@@ -253,7 +256,37 @@ struct FThermalSample
 	uint   Stencil;
 	float3 Color;   // scene colour * scale (absolute luminance units)
 	float3 Base;    // GBuffer base colour
+	int2   BaseTexel;   // the base-colour texel Base was loaded from, and the depth view rect it may tap (inclusive)
+	int2   BaseMin;
+	int2   BaseMax;
 };
+
+/** CamSimThermalRef::IsVegBlurOn (bit tests for non-finite). */
+bool IsVegBlurOn()
+{
+	return !IsNonFinite(VegBlurM) && VegBlurM > 0.0 && !IsNonFinite(BaseTexelAngle) && BaseTexelAngle > 0.0;
+}
+
+/** CamSimThermalRef::VegBlurRadiusPx. */
+int VegBlurRadiusPx(float RangeCm)
+{
+	const float Rf = clamp(VegBlurM * 100.0 / max(RangeCm * BaseTexelAngle, 1e-6), 1.0, 32.0);
+	return int(floor(Rf + 0.5));
+}
+
+float3 DecodeBase(float3 B) { return bBaseColorSrgb != 0u ? float3(SrgbToLinear(B.x), SrgbToLinear(B.y), SrgbToLinear(B.z)) : B; }
+
+/** The 5-tap blurred base colour (centre + the diagonals (+R, +R), (-R, +R), (+R, -R), (-R, -R), clamped to the view rect): CamSimThermalRef::Run's
+ *  taps and EvaluatePixel's average. Only called with a base colour bound. */
+float3 LoadVegBase(FThermalSample S, float3 Base, float RangeCm)
+{
+	const int R = VegBlurRadiusPx(RangeCm);
+	const float3 T0 = DecodeBase(BaseColor.Load(int3(clamp(S.BaseTexel + int2(R, R), S.BaseMin, S.BaseMax), 0)).rgb);
+	const float3 T1 = DecodeBase(BaseColor.Load(int3(clamp(S.BaseTexel + int2(-R, R), S.BaseMin, S.BaseMax), 0)).rgb);
+	const float3 T2 = DecodeBase(BaseColor.Load(int3(clamp(S.BaseTexel + int2(R, -R), S.BaseMin, S.BaseMax), 0)).rgb);
+	const float3 T3 = DecodeBase(BaseColor.Load(int3(clamp(S.BaseTexel + int2(-R, -R), S.BaseMin, S.BaseMax), 0)).rgb);
+	return ((((Base + T0) + T1) + T2) + T3) * 0.2;
+}
 
 /** CamSimThermalRef::EvaluatePixel: in-band radiance of one output pixel. */
 float EvaluatePixel(FThermalSample S)
@@ -301,7 +334,13 @@ float EvaluatePixel(FThermalSample S)
 	{
 		int2 I0;
 		float2 F;
-		if (LandCoverCoords(Pw, I0, F)) Cd = BlendLandCover(I0, F, Base, UseBaseColor != 0u && bLandCoverRefine != 0u);
+		if (LandCoverCoords(Pw, I0, F))
+		{
+			const bool bRefine = UseBaseColor != 0u && bLandCoverRefine != 0u;
+			float3 VegBase = Base;
+			if (bRefine && IsVegBlurOn()) VegBase = LoadVegBase(S, Base, Range);
+			Cd = BlendLandCover(I0, F, Base, VegBase, bRefine);
+		}
 	}
 	float T = Cd.x + Offset;
 	if (UseBaseColor != 0u && KFastScale > 0.0)
