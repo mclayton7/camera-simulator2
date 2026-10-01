@@ -165,7 +165,8 @@ frames in flight.
 | `source` | `dis`, `cigi` or `scenario` |
 | `source_id` | DIS: `site.application.entity` (e.g. `1.1.2`); CIGI / scenario: the entity ID |
 | `category` | `{id: CamSim type ID, name: class_name}` — `truck` / `boat` for the shipped models |
-| `bbox`, `area`, `truncated` | Screen-space box `[x, y, w, h]` in pixels, its area, and whether it is clipped by the frame edge |
+| `bbox`, `area`, `truncated` | Box `[x, y, w, h]` of the vehicle's visible pixels in the encoded frame, the visible pixel count, and whether it is cut by the frame edge (ROADMAP 2.7; see [`ground-truth.md`](ground-truth.md)) |
+| `visibility`, `truncation`, `bbox_amodal`, `obb`, `obb_amodal`, `segmentation`, `box3d`, `mask_source` | Occlusion, frame-edge cut, whole-silhouette box, oriented boxes, RLE mask and projected 3D box: [`ground-truth.md`](ground-truth.md) |
 | `geo` | `{lat, lon, alt_m}`: the entity origin's geodetic position at capture (WGS-84 degrees, ellipsoid metres); for a clamped vehicle that is its ground contact / waterline point |
 
 VOC XML carries the same `entity_id`, `source` and `source_id` per object.
@@ -186,8 +187,9 @@ VOC XML carries the same `entity_id`, `source` and `source_id` per object.
 - Waves, boat motion and HOT run on the sim clock: freezing it (CIGI Celestial Sphere
   Control, Ephemeris Model Enable off) freezes the sea while dead-reckoned boats keep moving.
 - Fast-moving vehicles can leave a faint TSR ghost trail behind them in close-ups.
-- Boxes are loose, world-aligned projections of the model bounds, with no occlusion test
-  (a vehicle behind a hill is still labelled).
+- Labels are measured from the rendered frame (ROADMAP 2.7): a vehicle wholly behind a hill
+  is not labelled, a partly hidden one gets `visibility` < 1. Vehicle-on-vehicle occlusion
+  is not reflected in the amodal fields ([`ground-truth.md`](ground-truth.md#limitations)).
 - Dead reckoning uses velocity and angular rate (algorithms 2–9) but ignores acceleration, and
   PDU timestamps are unused (extrapolation runs from the time of arrival).
 - DIS articulation parameters (turrets, guns) are not applied.

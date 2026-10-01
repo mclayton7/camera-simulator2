@@ -91,7 +91,7 @@ jobs:
 
       - name: Unit tests (scripts/tests)
         # The bench tests (test_bench_*) need numpy and pillow.
-        run: uv run --with pytest --with numpy --with pillow pytest scripts/tests/ -v
+        run: uv run --with pytest --with numpy --with pillow --with pycocotools pytest scripts/tests/ -v
 
   # -------------------------------------------------------------------
   # Phase 28A: Docker image build (self-hosted runner with UE5)

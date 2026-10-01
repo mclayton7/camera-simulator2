@@ -394,7 +394,7 @@ Findings from the live run:
 
 Carry-overs:
 
-- Tight oriented boxes and occlusion in the ground truth (sub-project 2).
+- ~~Tight oriented boxes and occlusion in the ground truth (sub-project 2)~~: done in 2.7.
 - ~~Ocean surface~~ (done in 2.6, with a scripted `M_Ocean`) and wakes (still open: no
   `NS_VesselWake`).
 - DR acceleration and PDU timestamps (extrapolation runs from arrival time).
@@ -612,6 +612,124 @@ Carry-overs:
   water; fixing that needs 3D tiles (photogrammetry / OSM buildings).
 
 ---
+
+### 2.7 Ground truth for ATR: tight boxes, OBBs, occlusion (done 2026-09-30)
+
+Sub-project 2 of "boats and trucks for ATR": every COCO annotation's box now fits the vehicle's
+**rendered** pixels in the **encoded** frame (after the lens distortion), and says how much of
+the vehicle is hidden and how much the frame edge cuts off; oriented boxes, the projected 3D box
+and an RLE mask come with it. Spec: `docs/superpowers/specs/2026-09-30-atr-ground-truth-design.md`;
+plan: `docs/superpowers/plans/2026-09-30-atr-ground-truth.md`; guide:
+[`docs/ground-truth.md`](docs/ground-truth.md) (every field, conventions, limitations).
+
+What was built:
+
+- Tagging: `FStencilSlotAllocator` (`Entity/`) gives each live entity a custom-depth stencil
+  value 1..255 (lowest free first, reuse delayed 4 frames so a frame in the readback ring never
+  maps a value to the wrong entity); every primitive of the actor renders custom depth with it,
+  only when `ml_training.enabled` and `bounding_boxes`. `r.CustomDepth=3`.
+- `InstanceIdCS` (`CamSimShaders`, `Shaders/Private/CamSimInstanceId.usf`): per output pixel,
+  the source position of `SensorCS`'s distortion resample (shared `UndistortScale`), then
+  `amodal` = custom stencil and `visible` = amodal where custom depth is not behind scene
+  depth; `visible | amodal << 8`, two pixels per `uint32`. It runs in the sensor graph only on
+  annotated frames, and its readback rides in the frame's ring slot (the slot completes when
+  both copies land). `IsInstanceIdPassSupported` gates it separately from the sensor graph.
+- `FInstanceMaskAnalyzer` (`GroundTruth/`, task thread): one scan of the ID image → modal /
+  amodal counts and boxes, row-extreme convex hulls → minimum-area rectangles (`MinAreaRect`,
+  rotating calipers), modal COCO RLE (`EncodeCocoRle`, pycocotools-compatible).
+- `ProjectOrientedBox` (`GroundTruth/FEntityProjection`): the entity's local bounds rotated
+  with its pose, 8 corners through the pinhole + forward distortion, truncation by
+  Sutherland–Hodgman clipping of their hull against the image.
+- COCO gains `mask_source`, `visibility`, `bbox_amodal`, `obb`, `obb_amodal`, `segmentation`,
+  `truncation`, `box3d`; `bbox`/`area` are the modal box and mask area. VOC gets the modal box
+  and `<occluded>` (`visibility < 0.95`). Config: `ml_training.min_visible_pixels` (1),
+  `ml_training.segmentation` (true).
+- Tests: `CamSim.GroundTruth.*` (mask geometry, RLE against pycocotools fixtures, analyzer,
+  projection, allocator, writers), `CamSim.Render.FrameGrab.IdWaitDecision`,
+  `CamSim.GPU.GroundTruth.InstanceId.*` (synthetic, scaled depth, distortion matches
+  `SensorCS`); `scripts/tests/test_gt_check_lib.py`.
+
+Acceptance (`scripts/gt_occlusion_check.py .cache/gt_check`, macOS M-series, Metal,
+2026-09-30; exit 0). DIS truck + boat (`send_dis_test.py both`), ground truth on every frame
+(`annotation_interval_frames` 1), depth map off, 1280 × 720. Four launches: `main` (Beaufort 3),
+`crest` (Beaufort 6), `calm` (Beaufort 0), `mloff` (`CAMSIM_ML_ENABLED=0`). Every annotation in
+every run was `mask_source: render` (main 3262 truck + 652 boat, crest 3096, calm 3022; one
+stable ID per vehicle).
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Nadir truck (10° FOV, ~330 m up): visibility median ≥ 0.95, truncation ≤ 0.01, OBB heading error median ≤ 10° | **PASS**: 450 annotations, visibility 1.000 (min 1.000), truncation 0, heading error median 0.00° (max 3.81°) |
+| 1 | Nadir boat, same bars | **PASS**: 450, visibility 1.000 (min 0.812), truncation 0, heading error median 0.57° (max 2.01°) |
+| 2 | Edge framing (look-at point offset half a footprint): some frame with 0.3 ≤ truncation ≤ 0.7 and the modal box reaching x = W | **PASS**: 287 of 536 (truncation 0.47–1.00 over the view) |
+| 3 | Beaufort 6, ~300 m at ~3° depression: ≥ 10 % with visibility < 0.9 | **PASS**: 747 of 1109 (67.4 %), median 0.727, min 0.121 |
+| 3 | …same view at Beaufort 0 (baseline, info) | 1091 annotations, visibility 0.829–0.833 (the hull below the waterline) |
+| 3 | …Beaufort 6 below the calm median − 0.1 (0.730): ≥ 10 % (added, see deviations) | **PASS**: 561 (50.6 %); 430 above the calm max (hull lifted on a crest) |
+| 4 | Fixed camera 20 m above the ground (CIGI HOT), 250 m outside the loop, across the Presidio (info) | 1278 annotations, 27.8 % with visibility < 0.9, median 0.947; the truck disappears from the labels behind the ridge |
+| 5 | Every `segmentation` decodes (pycocotools) and its area equals `area` | **PASS**: 10032 masks, 0 problems |
+| 6 | Frame time, nadir views, ground truth on vs off: \|Δ median\| < 2 ms | **PASS**: wall 33.33 vs 33.33 ms (900 frames each); `gpu_ms` 20.02 vs 19.86 (+0.15), `render_ms` +0.10, `game_ms` −0.13 |
+
+| Truck, nadir | Boat, nadir | Truck on the right edge (truncation 0.60) |
+|---|---|---|
+| ![](docs/images/gt/nadir-truck.jpg) | ![](docs/images/gt/nadir-boat.jpg) | ![](docs/images/gt/edge-truck.jpg) |
+
+| Boat behind a Beaufort 6 crest (visibility 0.12) | Same view, Beaufort 0 (visibility 0.83) | Truck across the Presidio (visibility 0.93) |
+|---|---|---|
+| ![](docs/images/gt/crest-boat-b6.jpg) | ![](docs/images/gt/calm-boat-b0.jpg) | ![](docs/images/gt/terrain-truck.jpg) |
+
+Overlays: modal mask magenta, `bbox` green, `bbox_amodal` orange (when it differs), `obb`
+yellow, `box3d` cyan.
+
+Findings from the live run:
+
+- **Single Layer Water writes scene depth on Metal** (spec Risk 1 did not happen): crests hide
+  the hull, down to 12 % visible, and the overlays show the mask following the waterline.
+- **A boat's visibility is < 1 from the side even on a flat sea**: the hull below the waterline
+  is in the custom-depth silhouette but under the water (0.83 at 3° depression). It is what
+  the spec defines (water counts as an occluder) and `bbox` is correct; `bbox_amodal`
+  includes the submerged hull. Documented.
+- **Side-view OBBs tilt**: the minimum-area rectangle of a boat's wedge-shaped profile leans
+  ~7–9° off the hull line; from above it follows the heading (errors above). Documented; use
+  `box3d` for orientation.
+- Frame time: the engine is locked to 30 fps, so the wall-clock median sits at 33.33 ms either
+  way; the GPU cost of the ID pass + second readback is ~0.15 ms at 720p.
+- The first acceptance attempt's low view tracked the truck from a fixed height above an
+  assumed ground and ended up inside the hill (Cesium tile skirts and the sea showing through);
+  replaced by a fixed camera placed by a CIGI HOT query.
+
+Deviations from the spec / plan:
+
+- Check 3 gained a stricter gate: the brief's bar (≥ 10 % below 0.9) is also met by a flat sea
+  in that view (100 % at 0.83, the submerged hull), so it cannot show crests. The script adds a
+  Beaufort 0 run of the same view and requires ≥ 10 % of the Beaufort 6 annotations below the
+  calm median − 0.1. The brief's bar is still checked and reported.
+- Check 1's expected OBB angle comes from the annotation's own `box3d.yaw_deg` (the entity's
+  geo pose, independent of the mask), mapped into the image with the camera yaw; the spec's
+  "modal area ≤ old projected box area" is not checked (the old box is no longer written; the
+  Task 7 smoke run compared the modal box with the `box3d` corner extent: ≤ 2 px over).
+- Check 4 uses a fixed camera 20 m above HOT ground, 250–600 m from the truck, instead of a
+  camera tracking the truck at ~400 m.
+- `IsInstanceIdPassSupported` is separate from `IsSensorGraphSupported`, so a ground-truth
+  shader failure can't disable video.
+- Entities sharing a stencil value in one frame fall back to `projection` (never expected).
+- When no tagged primitive renders in a frame UE binds dummy custom depth/stencil, so the
+  frame's IDs are all zero and its entities are dropped rather than falling back.
+- The analyzer costs ~4 ms at 1080p (task thread, Development build), above the spec's
+  1–2 ms estimate; within the frame budget, it runs off the game thread.
+
+Carry-overs:
+
+- Vehicle-on-vehicle amodal masks (custom depth draws only tagged vehicles, in one pass).
+- Per-frame instance PNG (only RLE per annotation today).
+- Depth map and KLV frame corners are still pinhole (3B.3 "distortion-aware ground truth").
+- TSR jitter: up to ~0.5 render texel misregistration of mask edges (not corrected).
+- Linux/Vulkan unverified for `InstanceIdCS` (written portable: integer ops, no wave
+  intrinsics).
+- Deferred minors: no RLE fixture for the negative-delta path; `MinAreaRect` tolerances are
+  absolute; a degenerate (zero-area) projected hull reports truncation 0; no
+  `ProjectOrientedBox` test with distortion and yaw; `ReuseDelayFrames` counts `GFrameCounter`
+  (safe at the fixed 30 fps); the duplicate-stencil warning repeats every frame; the
+  analyzer's perf test is wall-clock; no VOC `<occluded>` test; the COCO JSON escape covers
+  only `\` and `"`.
 
 ## Milestone 3: GPU-resident sensor pipeline
 
@@ -967,6 +1085,8 @@ Carried to 3B.3 (found in the 3B.2 final review):
   (dark current also integrates over the frame time, not the AE's integration time).
 - **Distortion-aware ground truth**: bounding boxes, depth and the KLV frame corners are pinhole;
   with `optics.k1`/`k2` ≠ 0 the labels misalign with the distorted image toward the edges.
+  Boxes, masks and the projected 3D box are done in 2.7 (measured in the distorted output);
+  the depth map and KLV corners are still pinhole.
 - **AGC max gain cap**: the IR AGC has no ceiling on its display stretch, so a flat or black scene
   gets a huge display gain (amplified noise).
 - **Mode-switch AE transients**: skip histograms with `Serial < SnapAfterSerial` while a snap is

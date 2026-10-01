@@ -27,6 +27,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/send_dis_test.py` | Send DIS Entity State PDUs: scripted truck + boat (`both`, `truck-loop`, `boat-circle`) |
 | `scripts/dis_vehicle_check.py` | End-to-end DIS vehicle check (shots + COCO labels) |
 | `scripts/ocean_check.py` | Ocean acceptance: DIS boat at Beaufort 0/3/6 (+ `--cigi` Wave Control): COCO, boat altitude vs sea level, HOT, frame times, shots |
+| `scripts/gt_occlusion_check.py` | Ground-truth acceptance (ROADMAP 2.7): nadir / edge / Beaufort 6 crest / terrain views, COCO checks, mask/box overlays, frame time ML on vs off |
 | `scripts/klv_conformance/check.js` | Check KLV against misb.js (packets.jsonl, .ts, or udp://) |
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
 | `scripts/ci_validate.sh`       | Integration test (health wait + video/KLV validation)         |
@@ -51,13 +52,13 @@ camsim/
       Entity/                      # Actor lifecycle, dead-reckoning, articulated parts
       Environment/                 # Sky, fog, weather, day/night
       Geospatial/                  # Cesium terrain queries, WGS84 conversions
-      GroundTruth/                 # COCO/VOC annotations (entity_id, bbox, geo), depth maps
+      GroundTruth/                 # COCO/VOC annotations from rendered instance masks (bbox, OBB, visibility, RLE, box3d), depth maps
       Ocean/                       # Sea level + Gerstner waves (FOceanWaves), ocean mesh, MPC writes
       Metadata/                    # MISB ST 0601/ST 0102 KLV builder
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (307 tests across 56 files)
+      Tests/                       # UE5 Automation tests (338 tests across 59 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -99,7 +100,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (307 tests across 56 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (338 tests across 59 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -136,6 +137,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Headless tests on macOS**: add `-DisablePython` — Python's startup type generation deadlocks under `-nullrhi` on macOS. Xcode 27 needs `MaxVersion` raised in the engine's `Engine/Config/Apple/Apple_SDK.json`, and a real (non-nullrhi) run needs `xcodebuild -downloadComponent MetalToolchain`
 - **DIS vehicles sit on the rendered surface**: land (domain 1) and surface (domain 3) entities are clamped at every pose commit by traces against Cesium tiles (`Entity/SurfaceClamp.h`, `SurfaceProbe.h`); needs `create_physics_meshes`. The sender's altitude is ignored unless `dis.clamp_to_surface: false`. Guide: `docs/dis.md`
 - **Ocean** (ROADMAP 2.6, `ocean:`, on by default): sea level = EGM96 geoid + CIGI tide; `FOceanWaves` (Gerstner, sim time) is the single source for boat placement (`ClampWater`), HAT/HOT (max(Cesium hit, sea surface incl. waves)) and the drawn sea (`UProceduralMeshComponent` warped grid + `M_Ocean` WPO via `MPC_Ocean`; the CPU/GPU mirror is `Shaders/Private/CamSimOcean.ush`, held to 2 cm by `CamSim.GPU.Ocean.MatchesCpu`). `M_Ocean`/`MPC_Ocean` are generated — edit `scripts/ocean/make_ocean_material.py` (or the .ush) and rerun `scripts/ocean/make_ocean_material.sh`, never hand-edit the assets. Piers Cesium drapes below sea level flood (known)
+- **Ground-truth masks** (ROADMAP 2.7, guide `docs/ground-truth.md`): entities render custom depth with a stencil value 1..255 (`FStencilSlotAllocator`, reuse delayed 4 frames); `r.CustomDepth=3`; `InstanceIdCS` runs in the sensor graph only on annotated frames and shares `UndistortScale` with `SensorCS` — change both together; `FInstanceMaskAnalyzer` turns the readback into boxes/OBBs/visibility/RLE on the task thread
 - **Altitudes are WGS-84 ellipsoid heights everywhere** (CIGI 3.3 defines its "MSL" as the ellipsoid, and Cesium uses HAE). Only KLV Tags 15/25 are true MSL, via the EGM96 grid in `Geospatial/Geoid.h` (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS — run `git lfs pull` if it's a pointer file)
 - **UE unit scale**: 1 UE unit = 1 cm — divide `FVector::Dist()` by 100 for metres
 - **macOS multicast**: UDP multicast to 239.x.x.x on loopback requires `sudo route add -net 239.0.0.0/8 -interface lo0`, or use unicast: `CAMSIM_MULTICAST_ADDR=127.0.0.1`
