@@ -588,6 +588,8 @@ sensor_modes:
     #   adc_bits: 12
     #   hot_pixel_fraction: 1e-5
     #   dead_pixel_fraction: 1e-5
+    #   band_lo_um: 0.4
+    #   band_hi_um: 0.7
     # ROADMAP 3B — auto-exposure (GPU sensor path), calibrated 2026-09-27 on the bench shots
     # (M1 Pro, SF). Scene median (log2 of absolute scene-linear luminance): daylight 10.9–12.4,
     # dawn 9.4, dusk 8.9, night_slant 6.6. target_grey 0.18 exposes the median to 18% grey
@@ -625,17 +627,21 @@ sensor_modes:
     #   adc_bits: 14
     #   hot_pixel_fraction: 1e-4
     #   dead_pixel_fraction: 1e-4
+    #   band_lo_um: 3.0              # thermal radiance band (ROADMAP 4A)
+    #   band_hi_um: 5.0
     # lwir_uncooled (640x512 VOx) would instead set:
     #   optics: {f_number: 1.2, pixel_pitch_um: 12.0, wavelength_um: 10.0}
     #   detector: {type: microbolometer, temporal_noise: 0.004, pixel_fpn: 0.003,
     #              column_fpn: 0.0015, row_fpn: 0.001, max_analog_gain_db: 0, adc_bits: 14,
-    #              hot_pixel_fraction: 1e-4, dead_pixel_fraction: 1e-4}
+    #              hot_pixel_fraction: 1e-4, dead_pixel_fraction: 1e-4,
+    #              band_lo_um: 8.0, band_hi_um: 12.0}
     #
     # Radiance-based AGC (percentile stretch)
     agc_enabled: true
     agc_low_percentile: 0.01
     agc_high_percentile: 0.99
     agc_lag_frames: 2           # frames for AGC convergence (0 = instant)
+    agc_max_display_gain: 40.0  # ROADMAP 4A: cap on the thermal (radiance) AGC's display gain
     # ROADMAP 3B — auto-exposure (GPU sensor path). With agc_enabled the AE still sets the
     # photon gain (integration time, hence the noise level) and the AGC stretches the
     # percentile band on the normalised signal; kept at the uncompensated defaults.
@@ -646,6 +652,15 @@ sensor_modes:
       highlight_percentile: 0.99
       lag_frames: 2
       manual_gain_ev: -12
+    # ROADMAP 4A — thermal radiance AE (signal = L / B(300 K)): exposes a 300 K scene to mid-range.
+    # The exposure: block above stays in use for thermal.enabled: false (luminance proxy).
+    thermal_exposure:
+      min_gain_ev: -8
+      max_photon_gain_ev: 0
+      target_grey: 0.5
+      highlight_percentile: 0.99
+      lag_frames: 2
+      manual_gain_ev: -1
 # NVG (formerly sensor_modes.nvg, SensorId 2) was removed — ROADMAP 3B.2.
 
 # --- Optical Realism (Phase 15) ---
@@ -761,6 +776,7 @@ ocean:
   vessel_motion: true                    # CAMSIM_OCEAN_MOTION_ENABLED — boats pitch/roll/heave with the waves
   vessel_motion_scale: 1.0               # CAMSIM_OCEAN_MOTION_SCALE
   max_radius_km: 400.0                   # CAMSIM_OCEAN_MAX_RADIUS_KM — horizon cap for the ocean mesh
+  water_temperature_c: 15.0              # CAMSIM_OCEAN_WATER_TEMPERATURE_C — initial; CIGI Maritime Surface overrides
   material: "/Game/Ocean/M_Ocean"        # startup only
 
 # --- Thermal radiance for IR (ROADMAP 4A, docs/thermal.md) ---
@@ -972,6 +988,7 @@ entity_types:
       roll: 0.0
     half_length_m: 3.78
     half_beam_m: 1.53
+    # thermal_material: vehicle_paint  # ROADMAP 4A default; thermal_offset_k defaults to +8 K for land/sea vehicles
   # DIS surface platforms. Mako 655 rigid-hull inflatable (fast rescue
   # craft), CC BY 4.0 (entities/boat/LICENSE.md). Scale 1.19: real 6.55 m.
   "3001":
@@ -988,6 +1005,7 @@ entity_types:
     z_offset_m: -0.49
     half_length_m: 3.27
     half_beam_m: 1.31
+    # thermal_material: vehicle_paint  # ROADMAP 4A default; thermal_offset_k defaults to +8 K for land/sea vehicles
   # Example animated character entity (Phase 22D).
   # Requires skeletal mesh + Animation Blueprint assets in UE editor (see TODO.md).
   # "1010":

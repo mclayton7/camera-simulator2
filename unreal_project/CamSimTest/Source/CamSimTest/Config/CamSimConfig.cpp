@@ -467,17 +467,20 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				YamlFloat(ModeNode, "signal_weight_r", MC.SignalWeights.X);
 				YamlFloat(ModeNode, "signal_weight_g", MC.SignalWeights.Y);
 				YamlFloat(ModeNode, "signal_weight_b", MC.SignalWeights.Z);
-				if (YamlHas(ModeNode, "exposure"))
+				auto ParseExposure = [](ryml::ConstNodeRef ENode, FSensorExposureConfig& X)
 				{
-					ryml::ConstNodeRef ENode = ModeNode["exposure"];
-					YamlBool (ENode, "auto",                 MC.Exposure.bAuto);
-					YamlFloat(ENode, "min_gain_ev",          MC.Exposure.MinGainEv);
-					YamlFloat(ENode, "max_photon_gain_ev",   MC.Exposure.MaxPhotonGainEv);
-					YamlFloat(ENode, "target_grey",          MC.Exposure.TargetGrey);
-					YamlFloat(ENode, "highlight_percentile", MC.Exposure.HighlightPercentile);
-					YamlInt  (ENode, "lag_frames",           MC.Exposure.LagFrames);
-					YamlFloat(ENode, "manual_gain_ev",       MC.Exposure.ManualGainEv);
-				}
+					YamlBool (ENode, "auto",                 X.bAuto);
+					YamlFloat(ENode, "min_gain_ev",          X.MinGainEv);
+					YamlFloat(ENode, "max_photon_gain_ev",   X.MaxPhotonGainEv);
+					YamlFloat(ENode, "target_grey",          X.TargetGrey);
+					YamlFloat(ENode, "highlight_percentile", X.HighlightPercentile);
+					YamlInt  (ENode, "lag_frames",           X.LagFrames);
+					YamlFloat(ENode, "manual_gain_ev",       X.ManualGainEv);
+				};
+				if (YamlHas(ModeNode, "exposure")) ParseExposure(ModeNode["exposure"], MC.Exposure);
+				// ROADMAP 4A: thermal radiance AE + AGC cap
+				if (YamlHas(ModeNode, "thermal_exposure")) ParseExposure(ModeNode["thermal_exposure"], MC.ThermalExposure);
+				YamlFloat(ModeNode, "agc_max_display_gain", MC.AGCMaxDisplayGain);
 
 				// ---------------------------------------------------------------
 				// ROADMAP 3B.2 Task 5: sensor-class preset + optics/detector.
@@ -528,6 +531,8 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 					YamlInt  (DNode, "adc_bits",             MC.Detector.AdcBits);
 					YamlFloat(DNode, "hot_pixel_fraction",   MC.Detector.HotPixelFraction);
 					YamlFloat(DNode, "dead_pixel_fraction",  MC.Detector.DeadPixelFraction);
+					YamlFloat(DNode, "band_lo_um",           MC.Detector.BandLoUm);
+					YamlFloat(DNode, "band_hi_um",           MC.Detector.BandHiUm);
 				}
 			};
 
@@ -979,6 +984,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlBool  (O, "vessel_motion",       Cfg.Ocean.bVesselMotion);
 			YamlFloat (O, "vessel_motion_scale", Cfg.Ocean.VesselMotionScale);
 			YamlFloat (O, "max_radius_km",       Cfg.Ocean.MaxRadiusKm);
+			YamlFloat (O, "water_temperature_c", Cfg.Ocean.WaterTemperatureC);
 			YamlString(O, "material",            Cfg.Ocean.MaterialPath);
 		}
 
@@ -1352,6 +1358,22 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Thermal.ExtinctionPerKmLwir = GetEnvFloat(TEXT("CAMSIM_THERMAL_EXTINCTION_LWIR"),     Cfg.Thermal.ExtinctionPerKmLwir);
 	Cfg.Thermal.FogIrFactor         = GetEnvFloat(TEXT("CAMSIM_THERMAL_FOG_IR_FACTOR"),       Cfg.Thermal.FogIrFactor);
 
+	// ROADMAP 4A acceptance: MWIR/LWIR and 1080p runs without editing the yaml.
+	Cfg.CaptureWidth  = GetEnvInt(TEXT("CAMSIM_CAPTURE_WIDTH"),  Cfg.CaptureWidth);
+	Cfg.CaptureHeight = GetEnvInt(TEXT("CAMSIM_CAPTURE_HEIGHT"), Cfg.CaptureHeight);
+	Cfg.Ocean.WaterTemperatureC = GetEnvFloat(TEXT("CAMSIM_OCEAN_WATER_TEMPERATURE_C"), Cfg.Ocean.WaterTemperatureC);
+	{
+		const FString IrPreset = GetEnv(TEXT("CAMSIM_IR_PRESET"), FString());
+		FSensorModeConfig* IrM = Cfg.SensorModeConfigs.Find(ESensorMode::IR);
+		if (!IrPreset.IsEmpty() && IrM)
+		{
+			// Re-applies the whole preset (yaml optics:/detector: overrides are dropped); an unknown
+			// name keeps the current values and Validate() reports it.
+			IrM->Preset = IrPreset;
+			CamSimSensorPresets::Apply(IrPreset, *IrM);
+		}
+	}
+
 	// Phase 24: rendering quality env var overrides
 	{
 		FRenderingQualityConfig& RQ = Cfg.RenderingQuality;
@@ -1580,6 +1602,19 @@ TArray<FString> FCamSimConfig::Validate() const
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].exposure: highlight_percentile=%.3f out of (0, 1]"),
 				ModeId, M.Exposure.HighlightPercentile));
 		}
+		// ROADMAP 4A: thermal radiance AE, AGC cap, band
+		if (!(M.ThermalExposure.MinGainEv >= -40.0f))
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].thermal_exposure: min_gain_ev (%.1f) must be >= -40"), ModeId, M.ThermalExposure.MinGainEv));
+		if (!(M.ThermalExposure.MaxPhotonGainEv >= M.ThermalExposure.MinGainEv))
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].thermal_exposure: min_gain_ev (%.1f) > max_photon_gain_ev (%.1f)"),
+				ModeId, M.ThermalExposure.MinGainEv, M.ThermalExposure.MaxPhotonGainEv));
+		if (!(M.ThermalExposure.HighlightPercentile > 0.0f && M.ThermalExposure.HighlightPercentile <= 1.0f))
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].thermal_exposure: highlight_percentile=%.3f out of (0, 1]"), ModeId, M.ThermalExposure.HighlightPercentile));
+		if (!(M.AGCMaxDisplayGain >= 1.0f) || !FMath::IsFinite(M.AGCMaxDisplayGain))
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].agc_max_display_gain=%.2f must be finite and >= 1"), ModeId, M.AGCMaxDisplayGain));
+		if (!(M.Detector.BandLoUm > 0.0f && M.Detector.BandHiUm > M.Detector.BandLoUm && M.Detector.BandHiUm <= 30.0f))
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector: band_lo_um (%.2f) / band_hi_um (%.2f) must satisfy 0 < lo < hi <= 30"),
+				ModeId, M.Detector.BandLoUm, M.Detector.BandHiUm));
 		if (M.AGCLowPercentile < 0.0f || M.AGCHighPercentile > 1.0f || M.AGCLowPercentile >= M.AGCHighPercentile)
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d]: agc_low_percentile (%.3f) / agc_high_percentile (%.3f) must satisfy 0 <= low < high <= 1"),
@@ -1767,6 +1802,8 @@ TArray<FString> FCamSimConfig::Validate() const
 	{
 		Errors.Add(FString::Printf(TEXT("ocean.choppiness=%.2f out of range [0, 1]"), Ocean.Choppiness));
 	}
+	if (!(Ocean.WaterTemperatureC >= -2.0f && Ocean.WaterTemperatureC <= 40.0f))
+		Errors.Add(FString::Printf(TEXT("ocean.water_temperature_c=%.2f out of range [-2, 40]"), Ocean.WaterTemperatureC));
 
 		// Thermal (ROADMAP 4A). Written !(x in range) so NaN is reported too.
 	if (!(Thermal.AirTemperatureC >= -80.0f && Thermal.AirTemperatureC <= 60.0f))

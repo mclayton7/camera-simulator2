@@ -578,6 +578,7 @@ struct FCamSimConfig
 		bool    bVesselMotion     = true;     // boats pitch/roll/heave with the waves
 		float   VesselMotionScale = 1.0f;
 		float   MaxRadiusKm       = 400.0f;   // horizon cap for the ocean mesh
+		float   WaterTemperatureC = 15.0f;    // initial water temperature (thermal water class) until CIGI Maritime Surface sets it
 		FString MaterialPath      = TEXT("/Game/Ocean/M_Ocean");
 	};
 	FOceanConfig Ocean;

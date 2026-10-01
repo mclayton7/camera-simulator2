@@ -58,6 +58,10 @@ struct FSensorDetectorConfig
 	int32 AdcBits        = 12;
 	float HotPixelFraction  = 1e-5f;
 	float DeadPixelFraction = 1e-5f;
+
+	/** Spectral band (micrometres) of the thermal radiance integral (ROADMAP 4A). The preset sets it. */
+	float BandLoUm          = 0.4f;
+	float BandHiUm          = 0.7f;
 };
 
 // ---------------------------------------------------------------------------
@@ -95,6 +99,19 @@ struct FSensorModeConfig
 	/** Sensor auto-exposure (GPU sensor path, ROADMAP 3B). */
 	FSensorExposureConfig Exposure;
 
+	/** ROADMAP 4A: the AE for the thermal radiance input (signal = L / B(300 K), ~1 for a 300 K scene):
+	 *  the photon gain exposes a 300 K scene to mid-range. Separate from Exposure, which the
+	 *  thermal.enabled: false luminance proxy keeps using. */
+	FSensorExposureConfig ThermalExposure = []
+	{
+		FSensorExposureConfig E;
+		E.MinGainEv       = -8.0f;
+		E.MaxPhotonGainEv = 0.0f;
+		E.TargetGrey      = 0.5f;
+		E.ManualGainEv    = -1.0f;
+		return E;
+	}();
+
 	// Radiance-Based AGC (GPU sensor path, IR percentile stretch)
 	/** Enable histogram-stretch AGC (typically IR). */
 	bool  bAGCEnabled        = false;
@@ -104,6 +121,9 @@ struct FSensorModeConfig
 	float AGCHighPercentile  = 0.99f;
 	/** Number of frames for AGC convergence (0 = instant, 1-3 typical). */
 	int32 AGCLagFrames       = 0;
+	/** ROADMAP 4A: highest display gain (normalised DN) the thermal (radiance) IR AGC may use; the band is
+	 *  centred on mid-grey when the cap binds. The 3B.2 luminance proxy AGC is not capped. */
+	float AGCMaxDisplayGain  = 40.0f;
 
 	// Sensor-class preset (ROADMAP 3B.2 Task 5): "eo_hd_cmos", "mwir_cooled",
 	// "lwir_uncooled". Supplies Optics/Detector defaults; yaml optics:/detector:

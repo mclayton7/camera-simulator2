@@ -240,8 +240,8 @@ Guide: [`dis.md`](dis.md) (test sender, type mapping, surface placement, ground 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `capture_width` | int | `1920` | Render target width in pixels. |
-| `capture_height` | int | `1080` | Render target height in pixels. |
+| `capture_width` | int | `1920` | Render target width in pixels. Env `CAMSIM_CAPTURE_WIDTH` (restart only). |
+| `capture_height` | int | `1080` | Render target height in pixels. Env `CAMSIM_CAPTURE_HEIGHT` (restart only). |
 | `frame_rate` | float | `30.0` | Fixed tick rate (must match `DefaultEngine.ini` `FixedFrameRate`). |
 | `readback_ready_polls` | int | `2` | `CAMSIM_READBACK_READY_POLLS` | Number of consecutive `FRHIGPUTextureReadback::IsReady()` polls required before `Lock()`. Increase on Linux/Vulkan if occasional partial-row tearing appears. |
 | `hfov_deg` | float | `60.0` | Horizontal field of view in degrees. Used for KLV metadata and Cesium tile preloading. Overridden per-frame by CIGI View Definition packets. |
@@ -366,6 +366,10 @@ were also removed in 3B.2; see "Removed in 3B.2" below.)
 | `agc_low_percentile` | float | `0.01` | `0.01` | Black-point percentile `[0, 1]` when AGC is enabled. |
 | `agc_high_percentile` | float | `0.99` | `0.99` | White-point percentile `[0, 1]` when AGC is enabled. |
 | `agc_lag_frames` | int | `0` | `2` | Frames for AGC convergence (`0` = instant). IR env override: `CAMSIM_IR_AGC_LAG_FRAMES`. |
+| `agc_max_display_gain` | float | `40` | `40` | ROADMAP 4A. Highest display gain of the **thermal** IR AGC (normalised DN); when it binds, the band is centred on mid-grey. The 3B.2 luminance proxy AGC is not capped. Must be >= 1. |
+
+`CAMSIM_IR_PRESET` re-applies the named preset to the IR mode after the yaml is read (dropping yaml `optics:`/`detector:` overrides); an unknown name is a validation error.
+
 
 **`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point (full well, i.e. ADC full scale, which displays as white), then clamps the total gain to `[min_gain_ev, max_photon_gain_ev + detector.max_analog_gain_db/20·log2(10)]` (ROADMAP 3B.2). The total is split photon-first: the photon stage (integration time) takes gain up to `max_photon_gain_ev`, and only the remainder is analog gain, applied after the detector noise (so it amplifies noise too). A microbolometer has no analog stage. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_photon_gain_ev` (mean luma 26 in 3B.1, photon gain only). Re-measured with the full 3B.2 model and unchanged defaults (ROADMAP 3B.2, 720p): daylight EO mean luma 106–118 with ≤ 0.1% of pixels luma-clipped, dawn/dusk 104/91, `night_slant` 34 — analog gain lifts it past the photon clamp, so its temporal noise is 1.83 DN against 1.13 DN in daylight. The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
 
@@ -378,6 +382,18 @@ were also removed in 3B.2; see "Removed in 3B.2" below.)
 | `exposure.highlight_percentile` | float | `0.99` | `0.99` | This percentile of the histogram is kept below clipping. |
 | `exposure.lag_frames` | int | `2` | `2` | Convergence time constant in frames at 30 Hz (sim time); `0` = instant. |
 | `exposure.manual_gain_ev` | float | `-12.0` | `-12.0` | Gain used when `exposure.auto` is `false`. |
+
+**`sensor_modes.<mode>.thermal_exposure`** (ROADMAP 4A). The AE for the thermal radiance input (signal = L / B(300 K), about 1 for a 300 K scene): the photon gain exposes a 300 K scene to mid-range. `exposure` keeps serving `thermal.enabled: false` (the luminance proxy). Same fields as `exposure`; no env overrides.
+
+| Field | Type | EO default | IR default | Description |
+|-------|------|------------|------------|-------------|
+| `thermal_exposure.auto` | bool | `true` | `true` | Auto-exposure on; `false` uses `manual_gain_ev`. |
+| `thermal_exposure.min_gain_ev` | float | `-8.0` | `-8.0` | Lowest gain. Must be `>= -40`. |
+| `thermal_exposure.max_photon_gain_ev` | float | `0.0` | `0.0` | Highest photon-stage gain; must be `>= min_gain_ev`. |
+| `thermal_exposure.target_grey` | float | `0.5` | `0.5` | Value the histogram median is exposed to (300 K mid-range). |
+| `thermal_exposure.highlight_percentile` | float | `0.99` | `0.99` | Kept below clipping; in `(0, 1]`. |
+| `thermal_exposure.lag_frames` | int | `2` | `2` | Convergence time constant in frames (sim time). |
+| `thermal_exposure.manual_gain_ev` | float | `-1.0` | `-1.0` | Gain used when `auto` is `false`. |
 
 With `agc_enabled` the IR `exposure` block still sets the photon gain (integration time, hence the noise level); the IR AGC then maps its `agc_low_percentile`…`agc_high_percentile` band of the normalised signal to the output range.
 
@@ -410,6 +426,7 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 | `detector.max_analog_gain_db` | 30 | 0 (AGC) | 0 (no analog stage) |
 | `optics.f_number` / `pixel_pitch_um` / `wavelength_um` | 4 / 2.9 / 0.55 | 4 / 15 / 4.0 | 1.2 / 12 / 10 |
 | `detector.hot_pixel_fraction` / `dead_pixel_fraction` | 1e-5 / 1e-5 | 1e-4 / 1e-4 | 1e-4 / 1e-4 |
+| `detector.band_lo_um` / `band_hi_um` | 0.4 / 0.7 | 3 / 5 | 8 / 12 |
 | `optics.vignetting_exponent` / `extra_blur_px` / `k1` / `k2` | 4 / 0 / 0 / 0 | 4 / 0 / 0 / 0 | 4 / 0 / 0 / 0 |
 
 `optics:`/`detector:` override keys:
@@ -433,11 +450,12 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 | `detector.pixel_fpn`, `detector.column_fpn`, `detector.row_fpn` | float | Fixed-pattern noise components, fraction of full scale (microbolometer). Must be `>= 0`. |
 | `detector.adc_bits` | int | ADC resolution in bits. Must be in `[8, 16]`. |
 | `detector.hot_pixel_fraction`, `detector.dead_pixel_fraction` | float | Defect pixel fractions. Must be in `[0, 0.01]`. |
+| `detector.band_lo_um`, `detector.band_hi_um` | float | Thermal radiance band in µm (ROADMAP 4A); `0 < lo < hi ≤ 30`. |
 
 **Validation errors:** unknown `preset` or `detector.type`; `full_well_e <= 0`; `adc_bits` outside `[8, 16]`; negative
 noise parameters or `f_number <= 0`; `pixel_pitch_um` / `wavelength_um <= 0` or `extra_blur_px < 0`;
 `vignetting_exponent` outside `[0, 8]`; `exposure.min_gain_ev < -40`;
-defect fractions outside `[0, 0.01]`; `|k1|` or `|k2| > 1` (a NaN fails every range check); a distortion that "does not converge out
+defect fractions outside `[0, 0.01]`; `band_lo_um`/`band_hi_um` not satisfying `0 < lo < hi <= 30`; `agc_max_display_gain < 1`; `thermal_exposure` like `exposure`; `|k1|` or `|k2| > 1` (a NaN fails every range check); a distortion that "does not converge out
 to the frame corner": the sensor inverts `k1`/`k2` with a fixed 3-step Newton recurrence (CPU and
 GPU alike), checked at 64 distorted radii from the centre to the corner of the
 `capture_width × capture_height` frame at `hfov_deg` (e.g. `k1: -1.0` fails at 60°, `-0.3` passes).
@@ -596,6 +614,8 @@ to asset paths and flags:
 | `rotation` | map | No | `pitch` / `yaw` / `roll` offset in degrees so the model's nose points along UE +X (the entity's heading). |
 | `z_offset_m` | float | No (default `0.0`) | Vertical offset of the model from the entity origin, in metres (+ = up). Surface-clamped entities have their origin on the terrain / water, so a boat uses a negative value to sit at its draft (the shipped `3001` uses `-0.49`). |
 | `half_length_m` / `half_beam_m` | float | No | Half length / half width of the footprint after `scale`, in metres. Used by the DIS surface clamp's four ground traces (see [`dis.md`](dis.md#surface-placement)) and vessel wave motion; the loaded mesh's bounds are used when absent. |
+| `thermal_material` | string | No (default `vehicle_paint`) | ROADMAP 4A. `FThermalMaterialTable` class name for this type's pixels; an unknown name falls back with one warning. |
+| `thermal_offset_k` | float | No | ROADMAP 4A. Temperature offset in K. Default +8 for land/sea vehicles (entities placed on the surface), else 0. Outside `[-50, 500]` is ignored with a warning. |
 
 Entity type IDs are defined by the host simulation. CamSim does not reserve any
 specific IDs -- the mapping is entirely user-configured.
@@ -857,6 +877,7 @@ ocean:
   vessel_motion: true
   vessel_motion_scale: 1.0
   max_radius_km: 400.0
+  water_temperature_c: 15.0
   material: "/Game/Ocean/M_Ocean"
 ```
 
@@ -869,6 +890,7 @@ ocean:
 | `ocean.vessel_motion` | `CAMSIM_OCEAN_MOTION_ENABLED` | `true` | Boats pitch/roll/heave with the waves. |
 | `ocean.vessel_motion_scale` | `CAMSIM_OCEAN_MOTION_SCALE` | `1.0` | Amplitude multiplier on vessel motion. |
 | `ocean.max_radius_km` | `CAMSIM_OCEAN_MAX_RADIUS_KM` | `400.0` | Horizon cap for the ocean mesh; must be finite and > 0. Hot-reloadable (read every tick). |
+| `ocean.water_temperature_c` | `CAMSIM_OCEAN_WATER_TEMPERATURE_C` | `15.0` | Initial water temperature for the thermal water class (ROADMAP 4A); CIGI Maritime Surface Conditions overrides it. Startup only. `[-2, 40]`. |
 | `ocean.material` | *(none — set via YAML only)* | `/Game/Ocean/M_Ocean` | Ocean material asset path. **Startup only.** |
 
 Removed: the old `phase19:` block (`ocean_enabled`, `beaufort_state`,

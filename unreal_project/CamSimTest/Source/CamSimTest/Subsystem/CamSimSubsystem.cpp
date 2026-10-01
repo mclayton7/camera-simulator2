@@ -720,6 +720,9 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		{
 			Impl->Ocean = MakeUnique<FOceanSurface>();
 			ApplyOceanConfig(Config.Ocean);
+			// ROADMAP 4A: the thermal water class's temperature until CIGI Maritime Surface Conditions sets one
+			// (startup only, so a hot reload never overrides the host's value).
+			Impl->Ocean->SetWaterTempC(Config.Ocean.WaterTemperatureC);
 			// Sim time before any actor ticks, so boat placement and the material share one t.
 			Impl->OceanPreTickHandle = FWorldDelegates::OnWorldPreActorTick.AddLambda(
 				[this](UWorld* World, ELevelTick, float)

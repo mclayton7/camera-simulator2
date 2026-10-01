@@ -250,6 +250,21 @@ void FEntityTypeTable::LoadFromYamlString(const FString& YamlContent)
 		YamlString(EntryNode, "anim_blueprint", Entry.AnimBlueprintPath);
 		YamlString(EntryNode, "entity_category", Entry.EntityCategory);
 
+		// ROADMAP 4A — thermal class + offset (the class name is resolved by FThermalFrameBuilder, which warns once on an unknown name)
+		YamlString(EntryNode, "thermal_material", Entry.ThermalMaterial);
+		float OffsetK = 0.0f;
+		if (YamlFloat(EntryNode, "thermal_offset_k", OffsetK))
+		{
+			if (FMath::IsFinite(OffsetK) && OffsetK >= -50.0f && OffsetK <= 500.0f)
+			{
+				Entry.ThermalOffsetK = OffsetK;
+			}
+			else
+			{
+				UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: type %u thermal_offset_k %.2f out of range [-50, 500]; ignored"), TypeId, OffsetK);
+			}
+		}
+
 		if (!ValidateMeshAssetPath(Entry.AssetPath, Entry.bSkeletal, TypeId, TEXT("mesh")))
 		{
 			++SkippedEntries;

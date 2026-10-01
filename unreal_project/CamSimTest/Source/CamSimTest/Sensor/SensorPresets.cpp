@@ -28,6 +28,8 @@ bool CamSimSensorPresets::Apply(const FString& Name, FSensorModeConfig& InOut)
 		InOut.Detector.AdcBits           = 12;
 		InOut.Detector.HotPixelFraction  = 1e-5f;
 		InOut.Detector.DeadPixelFraction = 1e-5f;
+		InOut.Detector.BandLoUm          = 0.4f;
+		InOut.Detector.BandHiUm          = 0.7f;
 		return true;
 	}
 
@@ -50,6 +52,8 @@ bool CamSimSensorPresets::Apply(const FString& Name, FSensorModeConfig& InOut)
 		InOut.Detector.AdcBits           = 14;
 		InOut.Detector.HotPixelFraction  = 1e-4f;
 		InOut.Detector.DeadPixelFraction = 1e-4f;
+		InOut.Detector.BandLoUm          = 3.0f;
+		InOut.Detector.BandHiUm          = 5.0f;
 		return true;
 	}
 
@@ -71,6 +75,8 @@ bool CamSimSensorPresets::Apply(const FString& Name, FSensorModeConfig& InOut)
 		InOut.Detector.AdcBits           = 14;
 		InOut.Detector.HotPixelFraction  = 1e-4f;
 		InOut.Detector.DeadPixelFraction = 1e-4f;
+		InOut.Detector.BandLoUm          = 8.0f;
+		InOut.Detector.BandHiUm          = 12.0f;
 		// FullWellE/ReadNoiseE/Prnu/DsnuE/DarkCurrentEs: not applicable
 		// (microbolometer) — struct defaults.
 		return true;

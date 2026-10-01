@@ -43,6 +43,11 @@ struct FEntityTypeEntry
 	bool    bAnimated         = false;   // use USkeletalMeshComponent + AnimInstance
 	FString AnimBlueprintPath;           // e.g. "/Game/Characters/ABP_Soldier.ABP_Soldier_C"
 	FString EntityCategory;              // "character" | "vehicle" | "" (auto)
+
+	// ROADMAP 4A — thermal class for this type's pixels (FThermalMaterialTable name; empty = vehicle_paint)
+	// and a temperature offset in K (unset = +8 K for land/sea vehicles, 0 otherwise).
+	FString ThermalMaterial;
+	TOptional<float> ThermalOffsetK;
 };
 
 /**
