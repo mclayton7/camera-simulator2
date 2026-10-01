@@ -18,8 +18,8 @@ deterministic, so the camera predicts where they are):
                                     Presidio loop (trees / terrain in between)
   crest  ground truth on, CAMSIM_OCEAN_BEAUFORT=6: crest_boat - ~300 m from the boat at
          ~3 deg depression (crests between the camera and the hull)
-  calm   the same grazing view at CAMSIM_OCEAN_BEAUFORT=0 (baseline: the hull below the
-         waterline is hidden by the water even on a flat sea; informational)
+  calm   the same grazing view at CAMSIM_OCEAN_BEAUFORT=0 (baseline, informational: with the
+         submerged-hull cut a flat-sea side view has visibility ~1.0)
   mloff  CAMSIM_ML_ENABLED=0: nadir_truck, nadir_boat again (frame-time baseline)
 
 Each view records the COCO frame-id range it covers (the COCO file is tailed live) and the
@@ -31,7 +31,9 @@ OBB yellow, 3D box cyan). Checks (exit 0 only when 1, 2, 3, 5, 6 pass):
      heading error <= 10 deg (expected angle: the entity's box3d yaw mapped into the image)
   2. edge_truck: some frame with 0.3 <= truncation <= 0.7 whose modal bbox reaches x = W
   3. crest_boat: >= 10 % of boat annotations with visibility < 0.9 (spec Risk 1 if none);
-     calm_boat's distribution is printed beside it
+     calm_boat's distribution (expected ~1.0: the hull below the water at the boat is cut from the
+     amodal silhouette) and the crest-vs-calm comparison are printed beside it (INFO), or
+     an explicit SKIP when OUTDIR has no calm run
   4. terrain_truck: fraction with visibility < 0.9 (informational)
   5. every `segmentation` decodes (pycocotools) and its area equals `area`
   6. median frame time (frames.jsonl wall_ms) over the nadir views, ground truth on vs off:
@@ -498,12 +500,23 @@ def check_all(
         )
     )
 
-    # 3 (baseline, informational): the same grazing view on a flat sea. The hull below the
-    # waterline is in the amodal silhouette but under the water, so a side view of a boat
-    # is below 1 even at Beaufort 0; the crest run must dip well below this.
+    # 3 (baseline, informational): the same grazing view on a flat sea. Since the submerged-hull
+    # cut (final review I2) the hull below the water is not silhouette, so a calm side view
+    # is ~1.0 and the brief's bar above is the gate again; the crest-vs-calm line is info.
     p = anns("calm_boat", "boat")
     calm = [a["visibility"] for _, a in p if "visibility" in a]
-    if calm:
+    if not calm:
+        lines.append(
+            (
+                "3",
+                None,
+                (
+                    "SKIP calm_boat baseline: no calm run (or no boat annotations) in "
+                    "this OUTDIR; crest-vs-calm comparison not made"
+                ),
+            )
+        )
+    else:
         low = sum(1 for v in calm if v < CREST_VIS)
         lines.append(
             (
@@ -512,24 +525,21 @@ def check_all(
                 (
                     f"calm_boat (Beaufort 0, same view): {len(p)} anns; visibility < "
                     f"{CREST_VIS}: {low} ({100 * low / len(calm):.1f} %); median "
-                    f"{med(calm):.3f} min {min(calm):.3f} max {max(calm):.3f}"
+                    f"{med(calm):.3f} min {min(calm):.3f} max {max(calm):.3f} "
+                    "(expect ~1.0: submerged hull cut)"
                 ),
             )
         )
-
-        # Stricter than the brief's bar (which the calm sea also clears): the crests must
-        # take visibility well below the flat-sea value, not just below 0.9.
         bar = med(calm) - CREST_BELOW_CALM
         low = sum(1 for v in vis if v < bar)
         frac = low / len(vis) if vis else 0.0
         lines.append(
             (
                 "3",
-                bool(vis) and frac >= CREST_FRACTION,
+                None,
                 (
                     f"crest_boat vs calm: visibility < calm median - {CREST_BELOW_CALM:g} "
-                    f"({bar:.3f}): {low} ({100 * frac:.1f} %, want >= "
-                    f"{100 * CREST_FRACTION:.0f} %); above the calm max: "
+                    f"({bar:.3f}): {low} ({100 * frac:.1f} %); above the calm max: "
                     f"{sum(1 for v in vis if v > max(calm))} (hull lifted on a crest)"
                 ),
             )
@@ -634,6 +644,8 @@ def main() -> int:
     report = []
     for check, ok, text in lines:
         tag = "INFO" if ok is None else ("PASS" if ok else "FAIL")
+        if ok is None and text.startswith("SKIP "):
+            tag, text = "SKIP", text[len("SKIP ") :]
         report.append(f"[{check}] {tag} {text}")
     text = "\n".join(report)
     (out / "summary.txt").write_text(text + "\n")

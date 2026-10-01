@@ -29,7 +29,9 @@ What the user chose:
 Assumptions: COCO JSONL stays the primary output and only gains fields (`bbox`, `area` change
 meaning — tighter, mask area — but keep their COCO semantics); VOC gets the modal box plus
 `occluded`. "Occluded" means anything rendered in front, water included (a hull below a crest is
-hidden even where clear water would show it faintly). macOS/Metal is the verified platform; the
+hidden even where clear water would show it faintly). The hull below the water surface at the
+boat is not part of the silhouette at all (§2, final-review ruling), so a boat on a flat sea is
+fully visible. macOS/Metal is the verified platform; the
 shader stays Vulkan-portable (no float atomics, no wave intrinsics).
 
 ## Current state (verified 2026-09-30)
@@ -81,14 +83,16 @@ capture: snapshot + slot→entity*      visible = amodal ∧ CustomDepth ≈ Sce
   released when the entity is destroyed or purged. A value is reused only after a full frame ring
   has passed (≥ 4 frames) since release, so an in-flight frame never maps a reused value to the
   wrong entity: the allocator keeps a `ReleasedAtFrame` per value.
-- On spawn (and on a model swap), every `UPrimitiveComponent` on the entity actor gets
-  `SetRenderCustomDepth(true)` and `SetCustomDepthStencilValue(Slot)`. Entities with no free
+- On spawn (and on a model swap), every `UMeshComponent` on the entity actor gets
+  `SetRenderCustomDepth(true)` and `SetCustomDepthStencilValue(Slot)` — meshes only: particle
+  systems (rotor wash, smoke, wakes) never join the vehicle's mask. Entities with no free
   value (more than 255 live) get custom depth off and fall back to the projected-box path (§5);
   logged once per session.
 - `DefaultEngine.ini`: `r.CustomDepth=3` (custom depth with stencil). Cesium tiles and the ocean
   never write custom depth.
-- Only when `ml_training.enabled` and `bounding_boxes`: with ground truth off nothing is tagged
-  and the pass doesn't run (zero cost).
+- Only when `ml_training.enabled` and `bounding_boxes` **and** the instance-ID pass is available
+  (`UCamSimSubsystem::IsGroundTruthMaskAvailable`, decided once at startup with the sensor graph):
+  with ground truth off (or the pass unavailable) nothing is tagged and the pass doesn't run.
 
 ## 2. Instance-ID pass (render thread)
 
@@ -115,9 +119,32 @@ it** (the request gains `bInstanceIds`; the capture component sets it on annotat
   `AddReadbackBufferPass` sequence as the NV12 copy; the slot completes when both have landed.
 - Budget: ≤ 0.15 ms GPU at 1080p on an M1 Pro (one load of three textures per pixel).
 
-Water: Single Layer Water writes scene depth, so a hull behind a crest fails the depth test.
-This is verified by the acceptance run (§7); if SLW does not write depth on Metal, the fallback
-is to test against `FOceanWaves` height on the CPU — a spec change, raised before implementing.
+Water: Single Layer Water writes scene depth, so a hull behind a crest fails the depth test
+(verified on Metal by the acceptance run, §7).
+
+Submerged-hull cut (final-review ruling I2, as implemented): the custom-depth silhouette includes
+the hull below the waterline, which no camera above the water can see — without a cut a side-view
+boat on a flat sea had visibility 0.83. So an amodal pixel whose custom-depth point lies below its
+**entity's water plane** is dropped from amodal **unless it is visible** (visible ⇒ amodal always
+holds). The water plane of each tagged entity is the tangent plane of the sea surface (EGM96 geoid
++ CIGI tide + the active waves: `FOceanSurface::SurfaceHeightM`, the surface boats are placed on) at
+the entity's position, normal = local up; computed per capture on the game thread in UE world
+doubles (`CamSimGroundTruth::ComputeSeaSurfacePlane`), carried in the grab request as
+`stencil → plane`, and moved into translated world with the view's pre-view translation on the
+render thread (LWC: floats only after translation); the shader holds 256 planes, one per stencil
+(`(0, 0, 0, 1)` = no cut). It reconstructs the point from the texel centre in the view rect and the
+custom device Z through an explicit `ClipToTranslatedWorld` (the view's inverse translated
+view-projection; reversed Z). Crests between the camera and the boat are above the water at the
+boat, so they still occlude. Ocean off or no sea surface: no cut. A land vehicle's plane is the sea
+surface under it, far below unless the land is below sea level (which the ocean mesh floods
+anyway); lakes get no cut.
+
+Deviation from the ruling as first written (a still-water plane, geoid + tide only, at the camera's
+frame centre): measured live, it cut the crest occlusion along with the submerged hull. A boat
+hidden by a crest sits in the trough behind it, below still water, so its hidden hull was dropped
+as "submerged": Beaufort 6 crest view, 2.1 % of annotations below visibility 0.9 (brief bar
+≥ 10 %), amodal height 44 px in troughs vs ~100 px level. With the per-entity sea-surface plane:
+45.1 % below 0.9, min 0.185, calm Beaufort 0 still 1.000.
 
 Jitter: with TSR on, scene textures are jittered by up to ½ render pixel, so mask edges can be off
 by ≤ 1 output pixel. Documented, not corrected.
@@ -132,8 +159,15 @@ the hull of each row's extreme pixels). Then per entity:
 
 - `bbox` (modal) = `[minx, miny, maxx - minx + 1, maxy - miny + 1]` in pixel-edge coordinates
   (a one-pixel mask is `[x, y, 1, 1]`). `bbox_amodal` likewise from the amodal mask.
-- `obb` / `obb_amodal`: minimum-area rectangle (rotating calipers) of the convex hull of the row
-  extremes' pixel **corners** (each pixel contributes its 4 corners, so a 1×1 mask gives 1×1).
+- `obb` / `obb_amodal`: a rectangle around the convex hull of the row extremes' pixel
+  **corners** (each pixel contributes its 4 corners, so a 1×1 mask gives 1×1), oriented by the
+  **projected vehicle axis** (final-review ruling I3): when `box3d.corners_px` is valid, the axis
+  runs from the rear-face centre (mean of corners 0, 1, 4, 5) to the front-face centre (mean of
+  2, 3, 6, 7) in the image; if it is at least 0.25 × the amodal mask's longer AABB side, the
+  rectangle is the hull projected on that axis and its normal (`CamSimMask::RectAlongAxis`), the
+  same axis for `obb` and `obb_amodal`. Otherwise (head-on, strongly foreshortened, no valid
+  corners) the minimum-area rectangle (rotating calipers). Min-area alone tilted side views of
+  wedge-shaped hulls by 7–9° and turned crest-split fragments into diagonal slivers.
   Format `[cx, cy, w, h, angle_deg]`: `w` is the longer side, `angle_deg` ∈ [-90, 90) is the
   rotation of the `w` axis from image +x toward +y (clockwise on screen). Corners are
   `c ± (w/2)(cosθ, sinθ) ± (h/2)(−sinθ, cosθ)`.
@@ -150,9 +184,11 @@ the hull of each row's extreme pixels). Then per entity:
 
 At capture, per entity (in the snapshot, after the existing cone-cull):
 
-- **Box:** the entity's local bounds — union of every primitive component's bounds in the
-  actor's local frame (`CalculateComponentsBoundingBoxInLocalSpace(false)`), so it is the
-  model's own box rotated with the vehicle, not a world AABB.
+- **Box:** the entity's local bounds — the union, in the actor's local frame, of the bounds of
+  the meshes §1 tags that are visible and have a mesh asset (`ACamSimEntity::GetGroundTruthLocalBox`;
+  final-review ruling I1: particles, lights and empty mesh slots never widen it), so it is the
+  model's own box rotated with the vehicle, not a world AABB. The projected fallback box uses
+  the same box.
 - `box3d`: `{"size_m":[L,W,H], "yaw_deg", "pitch_deg", "roll_deg", "corners_px":[[x,y]×8]}`.
   Size along body X (fwd), Y (right), Z (up). Attitude is the entity's geo pose (CIGI convention:
   heading from true north, as `GetGeoPose`). Corner order: bottom face then top, each

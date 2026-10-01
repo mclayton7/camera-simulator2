@@ -13,8 +13,10 @@ Acceptance and numbers: ROADMAP 2.7, `scripts/gt_occlusion_check.py`.
 
 ## How it works
 
-1. **Tagging (game thread).** With `ml_training.enabled` and `bounding_boxes` on, every
-   primitive of every entity actor renders custom depth with a stencil value 1..255
+1. **Tagging (game thread).** With `ml_training.enabled` and `bounding_boxes` on (and the
+   instance-ID pass available — decided once at startup), every mesh of every entity actor
+   (`UMeshComponent`s only: rotor wash, smoke and wake particles never join the mask) renders
+   custom depth with a stencil value 1..255
    (`FStencilSlotAllocator`, lowest free first; a released value is reused only 4 frames
    later, so a frame still in the readback ring never maps it to the wrong entity).
    `r.CustomDepth=3` (custom depth with stencil). Cesium tiles and the ocean never write
@@ -24,11 +26,17 @@ Acceptance and numbers: ROADMAP 2.7, `scripts/gt_occlusion_check.py`.
    `InstanceIdCS` runs in the sensor graph: for each **output** pixel it finds the source
    position exactly as `SensorCS`'s distortion resample does (they share `UndistortScale`),
    reads the custom stencil (the entity's whole silhouette: *amodal*) and compares custom depth
-   with scene depth (the entity is *visible* there when nothing is nearer). The result,
-   `visible | amodal << 8` per pixel, is read back with the frame's NV12.
+   with scene depth (the entity is *visible* there when nothing is nearer). Where the ocean is on,
+   a hidden silhouette pixel whose surface point lies below **the water at that entity** (the
+   sea surface under it — EGM96 geoid + CIGI tide + waves, the surface boats float on — as a
+   horizontal plane) is dropped from the silhouette: nobody above the water sees the submerged
+   hull, so it is not "occluded" either. Visible pixels always stay, and wave crests between the
+   camera and the boat (above the water at the boat) still hide the hull. The
+   result, `visible | amodal << 8` per pixel, is read back with the frame's NV12.
 3. **Mask analysis (task thread).** `FInstanceMaskAnalyzer` scans the ID image once: per entity
-   the modal (visible) and amodal pixel counts, boxes, convex hulls → minimum-area rectangles,
-   and the modal mask as COCO RLE. The 3D box is projected (pinhole + the forward lens
+   the modal (visible) and amodal pixel counts, boxes, convex hulls → oriented rectangles along
+   the vehicle's projected axis (minimum-area when that axis is too short to trust), and the
+   modal mask as COCO RLE. The 3D box is projected (pinhole + the forward lens
    distortion) for `box3d.corners_px` and `truncation`.
 
 With ground truth off nothing is tagged and the pass doesn't run.
@@ -89,14 +97,14 @@ segmentation's `size` = `[H, W]`.
 | `area` | px | Modal pixel count (the mask area, COCO convention), not `w·h`. |
 | `iscrowd` | 0 | Always 0. |
 | `mask_source` | `render` / `projection` | `render`: everything here measured from the frame. `projection`: the fallback (see Limitations) — `bbox` is the projected world-aligned bounds and `area = w·h`; `visibility`, `segmentation`, `obb*`, `bbox_amodal` are absent. |
-| `visibility` | 0..1 | Visible / silhouette pixels **inside the frame**: modal count / amodal count. 1 = nothing in front of it. Anything rendered nearer counts as an occluder, water included. |
-| `bbox_amodal` | `[x, y, w, h]` px | Box of the whole silhouette inside the frame, ignoring occluders (the custom-stencil coverage). |
-| `obb`, `obb_amodal` | `[cx, cy, w, h, angle_deg]` px, deg | Minimum-area rectangle around the modal / amodal mask (rotating calipers over the pixel corners, so a 1×1 mask gives `w = h = 1`). `w ≥ h`; `angle_deg` is the rotation of the `w` axis from image +x toward +y (clockwise on screen), in [-90, 90) (a square: [-45, 45)). Corners: `c ± (w/2)(cos θ, sin θ) ± (h/2)(−sin θ, cos θ)`. |
+| `visibility` | 0..1 | Visible / silhouette pixels **inside the frame**: modal count / amodal count. 1 = nothing in front of it. Anything rendered nearer counts as an occluder, wave crests included; the hull below the water at the boat is not part of the silhouette, so a boat on a flat sea is 1. |
+| `bbox_amodal` | `[x, y, w, h]` px | Box of the whole silhouette inside the frame, ignoring occluders (the custom-stencil coverage, less the submerged hull). |
+| `obb`, `obb_amodal` | `[cx, cy, w, h, angle_deg]` px, deg | Rectangle around the modal / amodal mask's pixel corners (a 1×1 mask gives `w = h = 1`), aligned with the vehicle's **projected axis**: from the rear-face centre (mean of `corners_px` 0, 1, 4, 5) to the front-face centre (2, 3, 6, 7); the extents are the mask projected on that axis and its normal. Both boxes share the axis. When the axis is shorter than a quarter of the amodal mask's longer side (head-on or strongly foreshortened) or `corners_px` is `null`, the minimum-area rectangle (rotating calipers) instead. `w ≥ h`; `angle_deg` is the rotation of the `w` axis from image +x toward +y (clockwise on screen), in [-90, 90) (a square: [-45, 45)). Corners: `c ± (w/2)(cos θ, sin θ) ± (h/2)(−sin θ, cos θ)`. |
 | `segmentation` | COCO compressed RLE | Modal mask, `{"size": [H, W], "counts": "..."}`, column-major, pycocotools' string encoding. Absent with `ml_training.segmentation: false` (it is the bulk of each line). |
 | `truncation` | 0..1 | Fraction of the projected 3D box's image outline outside the frame: 1 − area(hull of the 8 projected corners ∩ image) / area(hull). Absent when unknown (a corner behind the camera). Independent of `visibility`, which only counts pixels inside the frame. |
 | `truncated` | 0 / 1 | `truncation > 0.01`; when `truncation` is unknown, 1 if the amodal mask touches the image edge. |
-| `box3d.size_m` | `[L, W, H]` m | The model's own bounds (union of its primitives, actor-local) along body X (forward), Y (right), Z (up). |
-| `box3d.yaw_deg`, `pitch_deg`, `roll_deg` | deg | The entity's attitude, CIGI convention: yaw = heading from true north, clockwise; pitch nose-up positive; roll right-wing-down positive. |
+| `box3d.size_m` | `[L, W, H]` m | The model's own bounds — the union of its tagged meshes (visible, with a mesh asset; never particles or lights), actor-local — along body X (forward), Y (right), Z (up). |
+| `box3d.yaw_deg`, `pitch_deg`, `roll_deg` | deg | The entity's attitude, CIGI convention: yaw = heading from true north, clockwise, in [0, 360); pitch nose-up positive; roll right-wing-down positive. |
 | `box3d.corners_px` | 8 × `[x, y]` px, or `null` | The box's corners projected into the image (pinhole + the forward lens distortion `r_d = r_u (1 + k1 r_u² + k2 r_u⁴)`), so they land on the distorted image as the masks do. Order: bottom face, then top face, each **rear-left, rear-right, front-right, front-left** (body frame). `null` when any corner is behind the camera. Corners may lie outside the image. |
 | `geo` | `{lat, lon, alt_m}` | The entity origin at capture (WGS-84 degrees, ellipsoid metres); for a clamped vehicle its ground contact / waterline. |
 
@@ -150,13 +158,16 @@ one past the last covered pixel (`xmax = x + w` of the COCO `bbox`).
   the output colour is TSR-resolved, so mask edges can be misregistered by up to ~0.5 render
   texel (≤ 1 output pixel). With FXAA (the default) there is no jitter.
 - **Water is an occluder.** A hull below a wave crest is not visible even where clear water
-  would show it faintly. The hull below the waterline is part of the amodal silhouette, so a
-  boat seen from the side has `visibility` < 1 even on a flat sea (0.83 for the Mako 655 at
-  ~3° depression, Beaufort 0); `bbox_amodal` includes the submerged hull. From above the deck
-  hides it (`visibility` 1).
-- **OBBs of side views.** `obb` is the minimum-area rectangle of the visible pixels, not the
-  vehicle's axis: for a wedge-shaped profile (a boat from the side) it can tilt by several
-  degrees from the hull line. Use `box3d` for the vehicle's orientation.
+  would show it faintly. The hull below the water at the boat (a horizontal plane at the sea
+  surface, waves included, under the boat's origin) is cut from the silhouette, so a boat on a
+  flat sea has `visibility` 1 from any angle, and `bbox_amodal` ends at the waterline. The plane
+  is flat across the hull: on a steep wave a pitched boat's bow or stern can dip below it or lift
+  above it by a few decimetres. Boats on lakes above sea level get no cut (their submerged hull
+  counts as hidden), and neither does anything on land below sea level (flooded by the ocean mesh).
+- **OBBs of head-on and diagonal views.** The OBB follows the vehicle's projected axis, so for a
+  near-square silhouette seen diagonally it is looser than the minimum-area rectangle would be
+  (it stays aligned with the vehicle). When the axis is shorter than a quarter of the silhouette
+  (head-on), it falls back to the minimum-area rectangle, which may not follow the heading.
 - **More than 255 tagged entities.** Entities beyond the 255 stencil values get no tag and fall
   back to `mask_source: "projection"` (the old loose box), as do entities that share a stencil
   value in one frame (never expected; logged). A frame whose ID readback failed also falls

@@ -626,18 +626,27 @@ What was built:
 
 - Tagging: `FStencilSlotAllocator` (`Entity/`) gives each live entity a custom-depth stencil
   value 1..255 (lowest free first, reuse delayed 4 frames so a frame in the readback ring never
-  maps a value to the wrong entity); every primitive of the actor renders custom depth with it,
-  only when `ml_training.enabled` and `bounding_boxes`. `r.CustomDepth=3`.
+  maps a value to the wrong entity); every mesh of the actor (`UMeshComponent`s, never
+  particles) renders custom depth with it, only when `ml_training.enabled` and `bounding_boxes`
+  and the ID pass is available (`UCamSimSubsystem::IsGroundTruthMaskAvailable`, decided once at
+  startup). `r.CustomDepth=3`.
 - `InstanceIdCS` (`CamSimShaders`, `Shaders/Private/CamSimInstanceId.usf`): per output pixel,
   the source position of `SensorCS`'s distortion resample (shared `UndistortScale`), then
   `amodal` = custom stencil and `visible` = amodal where custom depth is not behind scene
-  depth; `visible | amodal << 8`, two pixels per `uint32`. It runs in the sensor graph only on
+  depth; `visible | amodal << 8`, two pixels per `uint32`. With the ocean on, a hidden amodal
+  pixel whose custom-depth point lies below its entity's water plane (the sea surface with
+  waves at the entity, `ComputeSeaSurfacePlane`, one plane per stencil, moved into translated
+  world on the render thread) is cut from the silhouette (final review I2): the submerged hull. It runs in the sensor graph only on
   annotated frames, and its readback rides in the frame's ring slot (the slot completes when
   both copies land). `IsInstanceIdPassSupported` gates it separately from the sensor graph.
 - `FInstanceMaskAnalyzer` (`GroundTruth/`, task thread): one scan of the ID image → modal /
-  amodal counts and boxes, row-extreme convex hulls → minimum-area rectangles (`MinAreaRect`,
-  rotating calipers), modal COCO RLE (`EncodeCocoRle`, pycocotools-compatible).
-- `ProjectOrientedBox` (`GroundTruth/FEntityProjection`): the entity's local bounds rotated
+  amodal counts and boxes, row-extreme convex hulls → oriented rectangles along the projected
+  vehicle axis (box3d rear-face → front-face centre, `RectAlongAxis`; final review I3), or the
+  minimum-area rectangle (`MinAreaRect`, rotating calipers) when that axis is < 0.25 × the
+  silhouette's longer side or the corners are invalid; modal COCO RLE (`EncodeCocoRle`,
+  pycocotools-compatible). `stat CamSimGroundTruth` times it.
+- `ProjectOrientedBox` (`GroundTruth/FEntityProjection`): the entity's local bounds (the union
+  of its tagged, shown meshes — `ACamSimEntity::GetGroundTruthLocalBox`, final review I1) rotated
   with its pose, 8 corners through the pinhole + forward distortion, truncation by
   Sutherland–Hodgman clipping of their hull against the image.
 - COCO gains `mask_source`, `visibility`, `bbox_amodal`, `obb`, `obb_amodal`, `segmentation`,
@@ -647,61 +656,83 @@ What was built:
 - Tests: `CamSim.GroundTruth.*` (mask geometry, RLE against pycocotools fixtures, analyzer,
   projection, allocator, writers), `CamSim.Render.FrameGrab.IdWaitDecision`,
   `CamSim.GPU.GroundTruth.InstanceId.*` (synthetic, scaled depth, distortion matches
-  `SensorCS`); `scripts/tests/test_gt_check_lib.py`.
+  `SensorCS`, submerged-hull cut); `scripts/tests/test_gt_check_lib.py`. Final fix wave added
+  `Box3D.MeshesOnly`, `Box3D.YawCornerOrder`, `SeaSurfacePlane.AtEntity`,
+  `Mask.RectAlongAxis`, `Analyzer.ObbFollowsVehicleAxis`, `Analyzer.ObbAxisFallsBackToMinArea`,
+  `Collector.CachedAtOpen`, `GPU.GroundTruth.InstanceId.SubmergedCut`.
 
-Acceptance (`scripts/gt_occlusion_check.py .cache/gt_check`, macOS M-series, Metal,
-2026-09-30; exit 0). DIS truck + boat (`send_dis_test.py both`), ground truth on every frame
-(`annotation_interval_frames` 1), depth map off, 1280 × 720. Four launches: `main` (Beaufort 3),
-`crest` (Beaufort 6), `calm` (Beaufort 0), `mloff` (`CAMSIM_ML_ENABLED=0`). Every annotation in
-every run was `mask_source: render` (main 3262 truck + 652 boat, crest 3096, calm 3022; one
-stable ID per vehicle).
+Acceptance (`scripts/gt_occlusion_check.py .cache/gt_check_final`, macOS M-series, Metal,
+2026-09-30, after the final-review fix wave; exit 0). DIS truck + boat (`send_dis_test.py both`),
+ground truth on every frame (`annotation_interval_frames` 1), depth map off, 1280 × 720. Four
+launches: `main` (Beaufort 3), `crest` (Beaufort 6), `calm` (Beaufort 0), `mloff`
+(`CAMSIM_ML_ENABLED=0`). Every annotation in every run was `mask_source: render` (main 3412 truck
++ 657 boat, crest 2975, calm 3156; one stable ID per vehicle), and every OBB took the vehicle-axis
+path (no min-area fallback in these views).
 
 | # | Check | Result |
 |---|---|---|
-| 1 | Nadir truck (10° FOV, ~330 m up): visibility median ≥ 0.95, truncation ≤ 0.01, OBB heading error median ≤ 10° | **PASS**: 450 annotations, visibility 1.000 (min 1.000), truncation 0, heading error median 0.00° (max 3.81°) |
-| 1 | Nadir boat, same bars | **PASS**: 450, visibility 1.000 (min 0.812), truncation 0, heading error median 0.57° (max 2.01°) |
-| 2 | Edge framing (look-at point offset half a footprint): some frame with 0.3 ≤ truncation ≤ 0.7 and the modal box reaching x = W | **PASS**: 287 of 536 (truncation 0.47–1.00 over the view) |
-| 3 | Beaufort 6, ~300 m at ~3° depression: ≥ 10 % with visibility < 0.9 | **PASS**: 747 of 1109 (67.4 %), median 0.727, min 0.121 |
-| 3 | …same view at Beaufort 0 (baseline, info) | 1091 annotations, visibility 0.829–0.833 (the hull below the waterline) |
-| 3 | …Beaufort 6 below the calm median − 0.1 (0.730): ≥ 10 % (added, see deviations) | **PASS**: 561 (50.6 %); 430 above the calm max (hull lifted on a crest) |
-| 4 | Fixed camera 20 m above the ground (CIGI HOT), 250 m outside the loop, across the Presidio (info) | 1278 annotations, 27.8 % with visibility < 0.9, median 0.947; the truck disappears from the labels behind the ridge |
-| 5 | Every `segmentation` decodes (pycocotools) and its area equals `area` | **PASS**: 10032 masks, 0 problems |
-| 6 | Frame time, nadir views, ground truth on vs off: \|Δ median\| < 2 ms | **PASS**: wall 33.33 vs 33.33 ms (900 frames each); `gpu_ms` 20.02 vs 19.86 (+0.15), `render_ms` +0.10, `game_ms` −0.13 |
+| 1 | Nadir truck (10° FOV, ~330 m up): visibility median ≥ 0.95, truncation ≤ 0.01, OBB heading error median ≤ 10° | **PASS**: 450 annotations, visibility 1.000 (min 1.000), truncation 0, heading error median 0.00° (max 0.03°) |
+| 1 | Nadir boat, same bars | **PASS**: 450, visibility 1.000 (min 0.815), truncation 0, heading error median 0.02° (max 0.03°) |
+| 2 | Edge framing (look-at point offset half a footprint): some frame with 0.3 ≤ truncation ≤ 0.7 and the modal box reaching x = W | **PASS**: 281 of 537 (truncation 0.43–0.99 over the view) |
+| 3 | Beaufort 6, ~300 m at ~3° depression: ≥ 10 % with visibility < 0.9 (the gate) | **PASS**: 475 of 1053 (45.1 %), median 0.954, min 0.185 |
+| 3 | …same view at Beaufort 0 (baseline, info) | 1180 annotations, visibility 1.000 in every one (submerged hull cut) |
+| 3 | …Beaufort 6 below the calm median − 0.1 (0.900) (info) | 475 (45.1 %) |
+| 4 | Fixed camera 20 m above the ground (CIGI HOT), 250 m outside the loop, across the Presidio (info) | 1274 annotations, 38.7 % with visibility < 0.9, median 0.921; the truck disappears from the labels behind the ridge |
+| 5 | Every `segmentation` decodes (pycocotools) and its area equals `area` | **PASS**: 10200 masks, 0 problems |
+| 6 | Frame time, nadir views, ground truth on vs off: \|Δ median\| < 2 ms | **PASS**: wall 33.33 vs 33.33 ms (900 frames each); `gpu_ms` 20.04 vs 19.89 (+0.16), `render_ms` +0.08, `game_ms` −0.22 |
 
-| Truck, nadir | Boat, nadir | Truck on the right edge (truncation 0.60) |
+| Truck, nadir (OBB along the heading) | Boat, nadir | Truck on the right edge (truncation 0.58) |
 |---|---|---|
 | ![](docs/images/gt/nadir-truck.jpg) | ![](docs/images/gt/nadir-boat.jpg) | ![](docs/images/gt/edge-truck.jpg) |
 
-| Boat behind a Beaufort 6 crest (visibility 0.12) | Same view, Beaufort 0 (visibility 0.83) | Truck across the Presidio (visibility 0.93) |
+| Boat behind a Beaufort 6 crest (visibility 0.44) | Same view, Beaufort 0 (visibility 1.00) | Truck across the Presidio (visibility 0.54) |
 |---|---|---|
 | ![](docs/images/gt/crest-boat-b6.jpg) | ![](docs/images/gt/calm-boat-b0.jpg) | ![](docs/images/gt/terrain-truck.jpg) |
 
 Overlays: modal mask magenta, `bbox` green, `bbox_amodal` orange (when it differs), `obb`
 yellow, `box3d` cyan.
 
-Findings from the live run:
+Findings from the live runs:
 
 - **Single Layer Water writes scene depth on Metal** (spec Risk 1 did not happen): crests hide
-  the hull, down to 12 % visible, and the overlays show the mask following the waterline.
-- **A boat's visibility is < 1 from the side even on a flat sea**: the hull below the waterline
-  is in the custom-depth silhouette but under the water (0.83 at 3° depression). It is what
-  the spec defines (water counts as an occluder) and `bbox` is correct; `bbox_amodal`
-  includes the submerged hull. Documented.
-- **Side-view OBBs tilt**: the minimum-area rectangle of a boat's wedge-shaped profile leans
-  ~7–9° off the hull line; from above it follows the heading (errors above). Documented; use
-  `box3d` for orientation.
+  the hull, down to 18.5 % visible, and the overlays show the mask following the waterline.
+- **Submerged hull** (first acceptance, before the fix wave): the custom-depth silhouette
+  included the hull below the waterline, so a side-view boat on a flat sea had visibility 0.83
+  in every frame. Now cut at the sea surface under the boat: 1.000 at Beaufort 0.
+- **The cut plane must follow the waves at the boat, not still water.** The fix wave first cut
+  at a still-water plane (geoid + tide) at the frame centre. Live, that erased the crest
+  occlusion too — a boat hidden by a crest is in the trough behind it, below still water: only
+  2.1 % of the Beaufort 6 annotations fell below 0.9 (amodal height 44 px in troughs vs
+  ~100 px level). With one plane per entity at the wave surface under it: 45.1 %.
+- **Side-view OBBs no longer tilt**: the minimum-area rectangle of the boat's wedge-shaped
+  profile leaned 9.1° (median, Beaufort 0 side view, first acceptance) off the projected hull
+  axis; the OBB is now built on that axis (0.00°), and crest-split fragments no longer give
+  diagonal slivers.
 - Frame time: the engine is locked to 30 fps, so the wall-clock median sits at 33.33 ms either
-  way; the GPU cost of the ID pass + second readback is ~0.15 ms at 720p.
+  way; the GPU cost of the ID pass + second readback is ~0.15 ms at 720p. Between launches the
+  host flips between two states (`gpu_ms` ~16.4 / `game_ms` ~1.6 vs ~20 / ~6.8) whatever ground
+  truth does; one `main` run in the fix wave landed in the other state from its `mloff` and
+  reported ±3.5 / ±5.2 ms "differences" (the gate, wall time, passed regardless).
+- Cesium streaming is not guaranteed: one fix-wave `main` launch got no terrain tiles (the HOT
+  query for `terrain_truck` returned nothing and the views showed only sea); it was re-run.
 - The first acceptance attempt's low view tracked the truck from a fixed height above an
   assumed ground and ended up inside the hill (Cesium tile skirts and the sea showing through);
   replaced by a fixed camera placed by a CIGI HOT query.
+- `InstanceMaskAnalyzer` (Perf1080p, wall clock, Development build, two blobs): median 2.53 ms
+  run alone, 5.4 ms inside the full suite; `stat CamSimGroundTruth` shows it live.
 
 Deviations from the spec / plan:
 
-- Check 3 gained a stricter gate: the brief's bar (≥ 10 % below 0.9) is also met by a flat sea
-  in that view (100 % at 0.83, the submerged hull), so it cannot show crests. The script adds a
-  Beaufort 0 run of the same view and requires ≥ 10 % of the Beaufort 6 annotations below the
-  calm median − 0.1. The brief's bar is still checked and reported.
+- Check 3: the first acceptance added a stricter gate (≥ 10 % of Beaufort 6 frames below the calm
+  median − 0.1) because the brief's bar was also met by a flat sea (the submerged hull, 0.83).
+  With the submerged-hull cut the calm baseline is 1.000, so the brief's bar (≥ 10 % below 0.9)
+  is the gate again; the calm baseline and the crest-vs-calm comparison are printed as info, and
+  a missing calm run prints an explicit SKIP.
+- Submerged-hull cut (final review I2): the ruling said a still-water plane at the camera's
+  frame centre; implemented as one plane per entity at the sea surface with waves under it (see
+  findings: the still-water plane failed the brief's crest bar at 2.1 %). Spec §2.
+- OBB (final review I3): along the projected vehicle axis when `corners_px` is valid and that axis
+  is ≥ 0.25 × the amodal mask's longer side, else min-area (spec §3 said min-area).
 - Check 1's expected OBB angle comes from the annotation's own `box3d.yaw_deg` (the entity's
   geo pose, independent of the mask), mapped into the image with the camera yaw; the spec's
   "modal area ≤ old projected box area" is not checked (the old box is no longer written; the
@@ -709,16 +740,19 @@ Deviations from the spec / plan:
 - Check 4 uses a fixed camera 20 m above HOT ground, 250–600 m from the truck, instead of a
   camera tracking the truck at ~400 m.
 - `IsInstanceIdPassSupported` is separate from `IsSensorGraphSupported`, so a ground-truth
-  shader failure can't disable video.
+  shader failure can't disable video; tagging and the ID readbacks follow one startup decision
+  (`IsGroundTruthMaskAvailable`).
 - Entities sharing a stencil value in one frame fall back to `projection` (never expected).
 - When no tagged primitive renders in a frame UE binds dummy custom depth/stencil, so the
   frame's IDs are all zero and its entities are dropped rather than falling back.
-- The analyzer costs ~4 ms at 1080p (task thread, Development build), above the spec's
-  1–2 ms estimate; within the frame budget, it runs off the game thread.
+- The analyzer costs ~2.5 ms at 1080p (task thread, Development build, measured alone), above
+  the spec's 1–2 ms estimate; within the frame budget, it runs off the game thread.
 
 Carry-overs:
 
 - Vehicle-on-vehicle amodal masks (custom depth draws only tagged vehicles, in one pass).
+- Submerged-hull cut: one horizontal plane per entity at the wave surface under its origin (a
+  pitched boat on a steep wave is off by decimetres at bow/stern); lake boats get no cut.
 - Per-frame instance PNG (only RLE per annotation today).
 - Depth map and KLV frame corners are still pinhole (3B.3 "distortion-aware ground truth").
 - TSR jitter: up to ~0.5 render texel misregistration of mask edges (not corrected).
@@ -726,7 +760,7 @@ Carry-overs:
   intrinsics).
 - Deferred minors: no RLE fixture for the negative-delta path; `MinAreaRect` tolerances are
   absolute; a degenerate (zero-area) projected hull reports truncation 0; no
-  `ProjectOrientedBox` test with distortion and yaw; `ReuseDelayFrames` counts `GFrameCounter`
+  `ProjectOrientedBox` test with distortion (yaw is covered by `Box3D.YawCornerOrder`); `ReuseDelayFrames` counts `GFrameCounter`
   (safe at the fixed 30 fps); the duplicate-stencil warning repeats every frame; the
   analyzer's perf test is wall-clock; no VOC `<occluded>` test; the COCO JSON escape covers
   only `\` and `"`.
