@@ -159,6 +159,10 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
   `repo_setup.sh` writes Cesium into `/opt/UE/Engine/Plugins/Marketplace`, so run it as a user who
   can write there (or with sudo). Not yet verified on Linux: that packaging (`BuildCookRun`) uses
   the prebuilt `UnrealGame` libs and doesn't rebuild Cesium.
+- *(2026-09-30)* First Linux workstation brought up: UE 5.8.3 at `/opt/UnrealEngine-5.8.3`
+  (`/opt/UE` symlink), Cesium installed into the engine, ThirdParty rebuilt, headless suite and
+  `ci_validate.sh --native` pass. Linux receivers need `net.core.rmem_max` raised (see 1.14);
+  persist it with a file in `/etc/sysctl.d/` on each Linux host.
 - Open `CamSimTest` once in the 5.8 editor and resave the maps, so assets stop loading through
   the 5.7 upgrade path.
 - VideoToolbox adds about 10 frames (~330 ms at 30 fps) of pipeline latency. FFmpeg exposes no
@@ -183,6 +187,7 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
 | 1.11 | ~~KLV Tags 15/25 carry ellipsoid height but are defined as MSL.~~ **Done 2026-09-26.** `Geospatial/Geoid.h` samples NGA's 15′ EGM96 grid (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS, staged as a loose file; regenerate with `scripts/make_egm96_dac.py`). Tags 15/25 are now MSL; ellipsoid heights go in new Tags 75/78. Without the grid, 15/25 are omitted rather than mislabelled. Cesium Native's `EarthGravitationalModel1996Grid` was not used: it clamps instead of wrapping at 360°→0°, so it is off within 0.25° west of the prime meridian (0.17 m at NGA's test point). `check.js` verifies 15/25/75/78 with its own geoid sampler. Tests: `Geoid.MatchesNgaReference` (NGA's reference points, ±0.1 m), KLV conformance packets. CIGI altitudes needed no change: CIGI 3.3 defines its "MSL" as the ellipsoid surface. |
 | 1.12 | ~~`camsim_health.json` field `dropped` reports watchdog reconnects.~~ **Done 2026-09-26.** `dropped` is now the encoder queue's real drop count (`ACamSimCamera::GetDroppedFrameCount`; the old `DroppedFrameCount` member was never incremented), and reconnects have their own `watchdog_reconnects` field. Editor runs now write the file to `Saved/` instead of the shared engine `Binaries/` directory. Still open: in the opt-in per-category `frame_drops` block, `encoder_busy` and `socket_error` are never incremented (only `readback_timeout` is). |
 | 1.13 | ~~An attached camera platform can lag its parent by one frame.~~ **Done 2026-09-26.** It was wider than attachment: the camera captured in `TG_PrePhysics`, before `FCamSimEntityManager` (a tickable object, run after `TG_PostPhysics`) applied that frame's CIGI entity states, so every entity in the image was a frame stale, and environment changes landed a frame late too. Now one ordered pass: the entity manager applies entity states, then the camera platform state (`ApplyHostPlatformState`), resolves attachments parent-first, then the camera's own attachment (`FollowAttachParent`); the camera ticks in `TG_PostUpdateWork` after `ACamSimEnvironment` and captures. Remaining lag: an entity attached to a camera platform that is itself attached. Not yet measured live: needs a moving parent entity in `send_cigi_test.py`. |
+| 1.14 | **Keyframe bursts overflow UDP receivers.** Found 2026-09-30 when NVENC was enabled on Linux (`build_thirdparty.sh` now builds it against pinned nv-codec-headers; it used to require a CUDA toolkit and never did). NVENC at 4 Mbit/s sends a ~180 KB IDR every second (30-frame GOP) as ~140 back-to-back datagrams, which overflows Linux's default 208 KB socket buffer: the receiver drops packets and the IDR decodes corrupt. Workaround in place: `check.js` requests a 16 MB buffer and warns when it is capped, and the host needs `sysctl net.core.rmem_max=26214400`. **Deferred 2026-10-01**: an FFmpeg receiver held to stock Linux limits (`buffer_size=212992`, which the kernel doubles to ~416 KB) decoded 3 × 10 s at 4 and at 10 Mbit/s with 0 drops and 0 decode errors; NVENC's IDR stayed ~180 KB at both rates. Only receivers that never enlarge their socket buffer are affected. If one turns up (or a radio link, or bigger IDRs at 1080p), the agreed fix is intra refresh (latency over fast join) behind a `streaming.intra_refresh` switch (default on, off for ROVER until verified), libx264 and NVENC `intra-refresh=1` with the refresh period = GOP; first verify SPS/PPS repetition and recovery points for mid-stream join. |
 
 ---
 
@@ -1053,6 +1058,20 @@ The full model costs ~0.6 ms (720p) / ~1.3 ms (1080p) of GPU over 3B.1's display
 doesn't move the frame time. Sensor GPU p95 at 1080p by PSF radius (EO, Task 10): default R 2 +
 cos⁴ 1.71 ms, R 3 1.87, R 4 2.38, R 5 2.58, R 8 3.24 ms.
 
+**Linux, 2026-10-01** (Ubuntu 24.04, Core Ultra 9 285K, RTX 5080, driver 595.91.07, Vulkan SM6,
+NVENC, power profile `performance`; baseline `scripts/bench/baselines/linux-rtx5080-3b2-720p.json`,
+shots `scripts/bench/shots/linux/3b2/`), 720p, per phase: frame p95 34.3 / 38.9 / 35.4 / 36.9 ms;
+GPU frame p50 2.4–2.6 ms (~7× the M1 Pro); sensor graph GPU 0.09 ms; render thread p50 2.9–3.3 ms
+(as macOS); game thread p50 4.0–5.3 ms (~1.6× macOS, not yet investigated); 30.0 fps, 0 dropped.
+On the `balanced` power profile the render and game threads were ~2× and ~1.25× slower, so
+benchmark Linux hosts on `performance`. Frames > 66 ms (1 / 0 / 1 / 2) all fall in the first
+0.5 s of a phase, i.e. on the camera cut: an Insights trace of the far-origin cut shows a 206 ms
+game-thread frame, 117 ms of it `Cesium::RemoveCollisionForTiles` (two tilesets dropping every
+tile's physics mesh, which `create_physics_meshes` adds) plus 28 ms `ShowTilesToRender` and
+13 ms `OriginShift`; the render/RHI threads just wait. **Accepted**: one stalled frame on a
+long jump, which hosts rarely command. The bench's `game_ms` attributes such a stall to the
+frame after the hitch.
+
 Exposure and noise (720p `*_sensor.png`, BT.709 luma of the decoded frame, 0–255; "clipped" =
 any RGB channel ≥ 255, "luma-clipped" = luma ≥ 255; temporal noise = std of the difference of two
 consecutive `/snapshot/sensor` frames / √2, centre half, luma DN):
@@ -1105,10 +1124,12 @@ Known issues and open points for the visual review:
 - **Yosemite snap coarseness** since the crossfade went off (above): restoring
   `use_lod_transitions` costs the game thread 8–12 ms p50 (3B.1 terrain check), so it's a
   trade-off for the user, not fixed here.
-- **Linux/Vulkan unverified.** The shader is plain compute (integer atomics, no float atomics or
-  wave intrinsics), but nothing has run on Vulkan. There is no CPU fallback any more: a host
-  without `IsSensorGraphSupported` (Mesa llvmpipe/lavapipe in the CPU Docker path) produces no
-  frames and `/ready` stays false. Verify on the first Linux run.
+- ~~**Linux/Vulkan unverified.**~~ **Verified on NVIDIA 2026-09-30** (Ubuntu 24.04, RTX 5080,
+  driver 595.91.07, Vulkan SM6): the sensor graph is available, frames flow, and
+  `ci_validate.sh --native` passes (H.264 via NVENC, misb.js KLV at the commanded pose). Still
+  unverified: Mesa llvmpipe/lavapipe (the CPU Docker path). There is no CPU fallback, so a host
+  without `IsSensorGraphSupported` produces no frames and `/ready` stays false. GPU tests
+  (`CamSim.GPU.*`) have not been run on Vulkan yet.
 - **Cut convergence**: a camera cut or mode switch snaps the AE on the first histogram whose
   serial is at or after the cut, but histograms already in flight from before the cut still
   arrive first and nudge the gain for one frame (within the 1–3-frame convergence above).

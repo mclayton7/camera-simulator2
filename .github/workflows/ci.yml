@@ -199,6 +199,7 @@ jobs:
         working-directory: scripts/klv_conformance
         run: |
           npm ci --no-audit --no-fund
+          npm test
           node check.js packets "$GITHUB_WORKSPACE/unreal_project/CamSimTest/Saved/KlvConformance/packets.jsonl"
 
       - name: Upload automation report

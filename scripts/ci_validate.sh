@@ -62,8 +62,6 @@ else
     READY_TIMEOUT="${CAMSIM_READY_TIMEOUT:-60}"
     STREAM_URL="udp://239.1.1.1:5004"
 fi
-# ffmpeg's udp timeout is in microseconds: give up if no packet arrives for 5 s.
-STREAM_INPUT="${STREAM_URL}?timeout=5000000"
 
 FAILURES=0
 fail() { echo "[FAIL] $*"; FAILURES=$((FAILURES + 1)); }
@@ -158,10 +156,14 @@ fi
 # -----------------------------------------------------------------------
 # Capture a short segment (all streams: video + KLV)
 # -----------------------------------------------------------------------
+# Raw datagrams, not `ffmpeg -c copy`: ffmpeg <= 6.1's remux strips 5 bytes
+# from every KLV packet (see scripts/klv_conformance/mpegts.js).
+KLV_DIR="${REPO_ROOT}/scripts/klv_conformance"
+(cd "${KLV_DIR}" && npm ci --no-audit --no-fund --silent)
 echo "==> Capturing ${CAPTURE_DURATION}s from ${STREAM_URL}..."
-with_timeout $((CAPTURE_DURATION + 15)) ffmpeg -y -v error -nostdin \
-    -i "${STREAM_INPUT}" -t "${CAPTURE_DURATION}" -map 0 -c copy "${CAPTURE}" \
-    2>"${WORK_DIR}/capture.log" || true
+with_timeout $((CAPTURE_DURATION + 15)) node "${KLV_DIR}/check.js" capture \
+    "${STREAM_URL}" "${CAPTURE}" --duration-sec "${CAPTURE_DURATION}" \
+    >"${WORK_DIR}/capture.log" 2>&1 || true
 
 if [ ! -s "${CAPTURE}" ]; then
     fail "No stream received on ${STREAM_URL}"
@@ -181,23 +183,25 @@ echo "${PROBE}" | grep -q 'codec_tag_string=KLVA' || fail "No KLVA data stream"
 # -----------------------------------------------------------------------
 # Decode check
 # -----------------------------------------------------------------------
-DECODE_ERRORS="$(ffmpeg -v error -nostdin -i "${CAPTURE}" -map 0:v -f null - 2>&1 | wc -l | tr -d ' ')"
+# The raw capture joins mid-GOP; a video-only stream copy starts it at the
+# first keyframe, so frames whose SPS/PPS weren't captured don't count.
+VIDEO="${WORK_DIR}/video.ts"
+ffmpeg -y -v error -nostdin -i "${CAPTURE}" -map 0:v -c copy "${VIDEO}" 2>/dev/null || true
+DECODE_ERRORS="$(ffmpeg -v error -nostdin -i "${VIDEO}" -map 0:v -f null - 2>&1 | wc -l | tr -d ' ')"
 if [ "${DECODE_ERRORS}" -eq 0 ]; then
     echo "[ci] No decode errors"
 else
     fail "${DECODE_ERRORS} decode error line(s)"
-    ffmpeg -v error -nostdin -i "${CAPTURE}" -map 0:v -f null - 2>&1 | head -5
+    ffmpeg -v error -nostdin -i "${VIDEO}" -map 0:v -f null - 2>&1 | head -5
 fi
 
 # -----------------------------------------------------------------------
 # KLV conformance against misb.js
 # -----------------------------------------------------------------------
 echo "==> Validating KLV with misb.js..."
-KLV_DIR="${REPO_ROOT}/scripts/klv_conformance"
 KLV_ARGS=(--max-age-sec 600 --min-packets 10)
 [ "${MODE}" = "native" ] && KLV_ARGS+=(--expect-position "${HOST_LAT},${HOST_LON},${HOST_ALT}")
-if (cd "${KLV_DIR}" && npm ci --no-audit --no-fund --silent) \
-    && node "${KLV_DIR}/check.js" stream "${CAPTURE}" "${KLV_ARGS[@]}"; then
+if node "${KLV_DIR}/check.js" stream "${CAPTURE}" "${KLV_ARGS[@]}"; then
     :
 else
     fail "KLV does not conform to misb.js"

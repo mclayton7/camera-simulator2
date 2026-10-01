@@ -11,21 +11,26 @@
 //   node check.js stream <file.ts | klv.bin | udp://addr:port> [--max-age-sec N]
 //                        [--min-packets N] [--duration-sec N]
 //                        [--expect-position LAT,LON,ALT]
-//       Extracts the KLV data stream (via ffmpeg for .ts and udp://, which is
-//       captured for --duration-sec, default 5) and checks every
+//       Extracts the KLV data stream (demuxed by mpegts.js for .ts and udp://,
+//       which is captured for --duration-sec, default 5) and checks every
 //       ST 0601 packet: parses, checksum valid, no unknown tags, and the
 //       timestamp (tag 2) is UTC within N seconds of now. With
 //       --expect-position (ALT is WGS-84 ellipsoid height, like CIGI's), the
 //       sensor position (tags 13/14/15/75) must match the pose the CIGI host
 //       commanded, which proves the camera follows the host.
 //
+//   node check.js capture <udp://addr:port> <out.ts> [--duration-sec N]
+//       Writes the raw datagrams received in --duration-sec (default 5) to
+//       out.ts, byte for byte. Use this rather than `ffmpeg -c copy`, whose
+//       remux can damage KLV (see mpegts.js).
+//
 // Exit code 0 = conformant, 1 = failures, 2 = usage / IO error.
 
 'use strict'
 
 const fs = require('fs')
-const { execFileSync } = require('child_process')
 const { st0601 } = require('@vidterra/misb.js')
+const { extractKlvFromTs, captureUdp } = require('./mpegts')
 
 const ST0601_KEY = st0601.key
 
@@ -203,14 +208,10 @@ function checkPackets(path) {
 	return lines.length
 }
 
-function extractKlv(path, durationSec) {
-	const ffmpegArgs = ['-map', '0:d:0', '-c', 'copy', '-f', 'data', '-']
-	if (/^udp:\/\//i.test(path)) {
-		return execFileSync('ffmpeg', ['-v', 'error', '-i', path, '-t', String(durationSec), ...ffmpegArgs],
-			{ maxBuffer: 1 << 30, timeout: (durationSec + 30) * 1000 })
-	}
+async function extractKlv(path, durationSec) {
+	if (/^udp:\/\//i.test(path)) return extractKlvFromTs(await captureUdp(path, durationSec))
 	if (!/\.(ts|m2ts|mts)$/i.test(path)) return fs.readFileSync(path)
-	return execFileSync('ffmpeg', ['-v', 'error', '-i', path, ...ffmpegArgs], { maxBuffer: 1 << 30 })
+	return extractKlvFromTs(fs.readFileSync(path))
 }
 
 function berLength(buf, pos) {
@@ -224,8 +225,8 @@ function berLength(buf, pos) {
 	return { header: 1 + n, length }
 }
 
-function checkStream(path, maxAgeSec, minPackets, durationSec, expectPosition) {
-	const data = extractKlv(path, durationSec)
+async function checkStream(path, maxAgeSec, minPackets, durationSec, expectPosition) {
+	const data = await extractKlv(path, durationSec)
 	const nowUs = Date.now() * 1000
 	let count = 0
 	let prevTs = null
@@ -262,7 +263,7 @@ function checkStream(path, maxAgeSec, minPackets, durationSec, expectPosition) {
 	return count
 }
 
-function main() {
+async function main() {
 	const [mode, path, ...rest] = process.argv.slice(2)
 	const optStr = name => {
 		const i = rest.indexOf(name)
@@ -274,16 +275,28 @@ function main() {
 		console.error('--expect-position takes LAT,LON,ALT')
 		process.exit(2)
 	}
-	if (!path || !['packets', 'stream'].includes(mode)) {
+	if (!path || !['packets', 'stream', 'capture'].includes(mode) || (mode === 'capture' && !rest[0])) {
 		console.error('usage: check.js packets <packets.jsonl>')
 		console.error('       check.js stream <file.ts|klv.bin|udp://addr:port> [--max-age-sec N] [--min-packets N] [--duration-sec N] [--expect-position LAT,LON,ALT]')
+		console.error('       check.js capture <udp://addr:port> <out.ts> [--duration-sec N]')
 		process.exit(2)
+	}
+	if (mode === 'capture') {
+		try {
+			const data = await captureUdp(path, opt('--duration-sec', 5))
+			fs.writeFileSync(rest[0], data)
+			console.log(`Captured ${data.length} bytes from ${path}`)
+		} catch (e) {
+			console.error(`error: ${e.message}`)
+			process.exit(2)
+		}
+		return
 	}
 	let count
 	try {
 		count = mode === 'packets'
 			? checkPackets(path)
-			: checkStream(path, opt('--max-age-sec', 3600), opt('--min-packets', 1), opt('--duration-sec', 5), position)
+			: await checkStream(path, opt('--max-age-sec', 3600), opt('--min-packets', 1), opt('--duration-sec', 5), position)
 	} catch (e) {
 		console.error(`error: ${e.message}`)
 		process.exit(2)
