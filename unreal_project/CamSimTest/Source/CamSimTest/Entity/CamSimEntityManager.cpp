@@ -5,6 +5,7 @@
 #include "Camera/CamSimCamera.h"
 #include "Entity/EntityTypeTable.h"
 #include "Entity/SurfaceProbe.h"
+#include "Entity/StencilSlotAllocator.h"
 #include "GroundTruth/FEntityProjection.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "Environment/CamSimParticleManager.h"
@@ -46,6 +47,7 @@ FCamSimEntityManager::~FCamSimEntityManager()
 		}
 	}
 	EntityMap.Empty();
+	StencilOf.Empty();
 	LastPoseApplySeconds.Empty();
 	LastScenarioUpdateSeconds.Empty();
 	ScenarioRemovedEntities.Empty();
@@ -273,6 +275,11 @@ void FCamSimEntityManager::ForgetEntity(const FEntityKey& Key)
 		PM->OnEntityRemoved(Key);
 	}
 	EntityMap.Remove(Key);
+	uint8 Stencil = 0;
+	if (StencilOf.RemoveAndCopyValue(Key, Stencil))
+	{
+		StencilSlots.Release(Stencil, GFrameCounter);
+	}
 	LastPoseApplySeconds.Remove(Key);
 	if (Key.Source == EHostSource::Scenario)
 	{
@@ -314,6 +321,26 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FEntityCommand& C)
 	Entity->Key      = C.Key;
 	Entity->EntityId = static_cast<uint16>(C.Key.Id & 0xFFFF);
 	Entity->AnnotationId = AnnotationIds.Allocate();
+	if (Subsystem && Subsystem->GetConfig().MLTraining.bEnabled && Subsystem->GetConfig().MLTraining.bBoundingBoxes)
+	{
+		// A stale entry for this key (actor died before PurgeStaleEntities ran) must not leak its value.
+		uint8 Old = 0;
+		if (StencilOf.RemoveAndCopyValue(C.Key, Old))
+		{
+			StencilSlots.Release(Old, GFrameCounter);
+		}
+		const uint8 Stencil = StencilSlots.Allocate(GFrameCounter);
+		if (Stencil == 0 && !bLoggedStencilExhausted)
+		{
+			bLoggedStencilExhausted = true;
+			UE_LOG(LogCamSim, Warning, TEXT("EntityManager: more than 255 ground-truth entities; extra entities get projected boxes (logged once)"));
+		}
+		if (Stencil != 0)
+		{
+			StencilOf.Add(C.Key, Stencil);
+		}
+		Entity->SetGroundTruthStencil(Stencil);
+	}
 	Entity->SetEntityTypeTable(TypeTable);
 	if (!SurfaceProbe && Subsystem)
 	{
@@ -416,11 +443,26 @@ void FCamSimEntityManager::GetEntitySnapshot(
 		Data.bVisible   = bVisible;
 		Data.bTruncated = bTruncated;
 		Data.ScreenBBox = ScreenBBox;
+		Data.StencilValue = Entity->GetGroundTruthStencil();
+		const FBox LocalBox = Entity->CalculateComponentsBoundingBoxInLocalSpace(/*bNonColliding=*/true);
+		if (LocalBox.IsValid)
+		{
+			const FProjectedBox3D P = FEntityProjection::ProjectOrientedBox(LocalBox, Entity->GetActorTransform(),
+				ViewProj.ViewProjectionMatrix, ViewProj.ImageWidth, ViewProj.ImageHeight, ViewProj.FocalPx, ViewProj.K1, ViewProj.K2);
+			Data.bHasBox3D     = true;
+			Data.Box3DSizeM    = LocalBox.GetSize() * Entity->GetActorScale3D() / 100.0;
+			Data.bCornersValid = P.bValid;
+			FMemory::Memcpy(Data.CornersPx, P.Corners, sizeof(P.Corners));
+			Data.Truncation    = P.Truncation;
+			if (P.bValid) Data.bTruncated = P.Truncation > 0.01;
+		}
 		CamSimFrames::FGeoPose Geo;
 		if (Entity->GetGeoPose(Geo))
 		{
 			Data.bHasGeo = true;
 			Data.Lat = Geo.Lat; Data.Lon = Geo.Lon; Data.AltM = Geo.Alt;
+			const FRotator R = Geo.Neu.Rotator();
+			Data.YawDeg = R.Yaw; Data.PitchDeg = R.Pitch; Data.RollDeg = R.Roll;
 		}
 		OutSnapshot.Add(MoveTemp(Data));
 	}

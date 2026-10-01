@@ -7,6 +7,7 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "CamSimTest.h"
 
+#include "Components/MeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PoseableMeshComponent.h"
@@ -220,6 +221,18 @@ void ACamSimEntity::SetEntityType(uint16 Type)
 // when FStreamableManager finishes streaming the asset in.
 // -------------------------------------------------------------------------
 
+void ACamSimEntity::SetGroundTruthStencil(uint8 Value)
+{
+	GroundTruthStencil = Value;
+	// Meshes only: particle systems (smoke, wakes) must not join the vehicle's mask.
+	TInlineComponentArray<UMeshComponent*> Meshes(this);
+	for (UMeshComponent* M : Meshes)
+	{
+		M->SetRenderCustomDepth(Value != 0);
+		M->SetCustomDepthStencilValue(Value);
+	}
+}
+
 void ACamSimEntity::ApplyLoadedSkeletalMesh(USkeletalMesh* Mesh,
                                              const FEntityTypeEntry& Entry,
                                              uint16 Type)
@@ -231,6 +244,7 @@ void ACamSimEntity::ApplyLoadedSkeletalMesh(USkeletalMesh* Mesh,
 	SkelMeshComp->SetRelativeLocation(FVector(0.0, 0.0, Entry.ModelZOffsetCm));
 	SkelMeshComp->SetVisibility(true);
 	StaticMeshComp->SetVisibility(false);
+	SetGroundTruthStencil(GroundTruthStencil);
 	UE_LOG(LogCamSim, Log,
 		TEXT("ACamSimEntity[%u]: loaded skeletal mesh '%s' (type %u, scale=%.3f)"),
 		EntityId, *Entry.AssetPath, Type, Entry.ModelScale);
@@ -247,6 +261,7 @@ void ACamSimEntity::ApplyLoadedStaticMesh(UStaticMesh* Mesh,
 	StaticMeshComp->SetRelativeLocation(FVector(0.0, 0.0, Entry.ModelZOffsetCm));
 	StaticMeshComp->SetVisibility(true);
 	SkelMeshComp->SetVisibility(false);
+	SetGroundTruthStencil(GroundTruthStencil);
 	UE_LOG(LogCamSim, Log,
 		TEXT("ACamSimEntity[%u]: loaded static mesh '%s' (type %u, scale=%.3f)"),
 		EntityId, *Entry.AssetPath, Type, Entry.ModelScale);
@@ -348,6 +363,7 @@ void ACamSimEntity::InitAnimatedCharacter(const FEntityTypeEntry& Entry)
 	AnimMeshComp->SetVisibility(true);
 	StaticMeshComp->SetVisibility(false);
 	SkelMeshComp->SetVisibility(false);
+	SetGroundTruthStencil(GroundTruthStencil);
 
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: initialized animated character '%s'"),
 		EntityId, *Entry.AssetPath);

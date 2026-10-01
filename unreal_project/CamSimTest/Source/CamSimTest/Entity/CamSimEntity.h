@@ -55,6 +55,10 @@ public:
 	uint16 EntityType = 0;
 	uint32 AnnotationId = 0;  // session-unique ground-truth ID, set at spawn
 
+	/** Custom-depth stencil value (1..255) the GPU ground-truth pass reads; 0 = untagged. Applies to meshes only. */
+	void  SetGroundTruthStencil(uint8 Value);
+	uint8 GetGroundTruthStencil() const { return GroundTruthStencil; }
+
 	/** Inject the surface probe (owned by the entity manager); null disables surface placement. */
 	void SetSurfaceProbe(const ISurfaceProbe* InProbe) { SurfaceProbe = InProbe; }
 
@@ -115,6 +119,8 @@ protected:
 	virtual void BeginPlay() override;
 
 private:
+	uint8 GroundTruthStencil = 0;
+
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USceneComponent> Root;
 

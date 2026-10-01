@@ -411,6 +411,13 @@ TArray<FEntityAnnotationData> UCamSimCaptureComponent::BuildGroundTruthSnapshot(
 		Cfg.CaptureWidth, Cfg.CaptureHeight);
 	ViewProj.ImageWidth  = Cfg.CaptureWidth;
 	ViewProj.ImageHeight = Cfg.CaptureHeight;
+	if (OpticsCache.bValid)
+	{
+		// The same optics this frame's sensor graph resamples with.
+		ViewProj.FocalPx = OpticsCache.Params.FocalPx;
+		ViewProj.K1      = OpticsCache.Params.K1;
+		ViewProj.K2      = OpticsCache.Params.K2;
+	}
 
 	// Cheap cone-cull hint, ~30% wider than the HFOV so entities barely
 	// outside still get projected (the AABB projection clips correctly).

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "GroundTruth/FEntityProjection.h"
+#include "Entity/StencilSlotAllocator.h"
 #include "GroundTruth/AnnotationTypes.h"
 #include "GroundTruth/FGroundTruthCollector.h"
 #include "Config/CamSimConfig.h"
@@ -330,5 +331,33 @@ bool FGroundTruthDistortPixelTest::RunTest(const FString&)
 	TestNearlyEqual(TEXT("round trip x"), Back.X, Pin.X, 0.05);
 	TestNearlyEqual(TEXT("round trip y"), Back.Y, Pin.Y, 0.05);
 	TestEqual(TEXT("no focal -> identity"), FEntityProjection::DistortPixel(Pin, W, H, 0.0f, K1, K2), Pin);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthStencilAllocTest, "CamSim.GroundTruth.StencilAllocator.Order",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthStencilAllocTest::RunTest(const FString&)
+{
+	FStencilSlotAllocator A;
+	TestEqual(TEXT("first"), A.Allocate(0), uint8(1));
+	TestEqual(TEXT("second"), A.Allocate(0), uint8(2));
+	for (int32 I = 3; I <= 255; ++I) A.Allocate(0);
+	TestEqual(TEXT("exhausted"), A.Allocate(0), uint8(0));
+	A.Release(0, 0);  // ignored
+	TestEqual(TEXT("still exhausted"), A.Allocate(1), uint8(0));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthStencilReuseTest, "CamSim.GroundTruth.StencilAllocator.DelayedReuse",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthStencilReuseTest::RunTest(const FString&)
+{
+	FStencilSlotAllocator A;
+	const uint8 V1 = A.Allocate(10), V2 = A.Allocate(10);
+	A.Release(V1, 100);
+	TestEqual(TEXT("released value not reused within the delay"), A.Allocate(101), uint8(3));
+	TestEqual(TEXT("reused once the delay has passed"), A.Allocate(100 + FStencilSlotAllocator::ReuseDelayFrames), V1);
+	TestTrue(TEXT("delay covers the ring"), FStencilSlotAllocator::ReuseDelayFrames > 3);
+	(void)V2;
 	return true;
 }

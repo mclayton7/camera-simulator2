@@ -8,6 +8,7 @@
 #include "Config/CamSimConfig.h"
 #include "Sim/CommandSink.h"
 #include "GroundTruth/AnnotationTypes.h"
+#include "Entity/StencilSlotAllocator.h"
 
 class UCamSimSubsystem;
 class ACamSimEntity;
@@ -102,6 +103,11 @@ private:
 
 	/** Ground-truth annotation IDs, handed out at spawn (never repeated within a session). */
 	FAnnotationIdAllocator AnnotationIds;
+
+	/** Custom-depth stencil values for ground-truth masks; released in ForgetEntity (every removal path). */
+	FStencilSlotAllocator StencilSlots;
+	TMap<FEntityKey, uint8> StencilOf;
+	bool bLoggedStencilExhausted = false;
 
 	/** Place attached (child) entities relative to their parents' current poses. */
 	void ResolveAttachedEntities();
