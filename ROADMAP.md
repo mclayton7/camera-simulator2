@@ -1121,8 +1121,8 @@ Carried to 3B.3 (found in the 3B.2 final review):
   with `optics.k1`/`k2` ≠ 0 the labels misalign with the distorted image toward the edges.
   Boxes, masks and the projected 3D box are done in 2.7 (measured in the distorted output);
   the depth map and KLV corners are still pinhole.
-- **AGC max gain cap**: the IR AGC has no ceiling on its display stretch, so a flat or black scene
-  gets a huge display gain (amplified noise).
+- ~~**AGC max gain cap**~~: done in 4A (`agc_max_display_gain`, default 40, thermal IR AGC). The 3B.2 luminance
+  proxy AGC is still uncapped.
 - **Mode-switch AE transients**: skip histograms with `Serial < SnapAfterSerial` while a snap is
   pending (instead of letting them nudge the gain), and seed a mode's first entry rather than
   starting from the neutral gain.
@@ -1256,91 +1256,106 @@ follow visible albedo, night IR goes dark, and ATR models learn EO cues.
 | 4.5 | **Class-ID stencil reuse:** the same stencil gives semantic and instance segmentation for ML ground truth.                                                                                                       |
 | 4.6 | **Validation:** compare against reference imagery / published contrast data (e.g. NETD-limited scenes, diurnal crossover).                                                                                       |
 
-### 4A Thermal core (in progress)
+### 4A Thermal core (implemented on macOS; awaiting visual review)
 
 Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
-`docs/superpowers/plans/2026-10-01-thermal-core.md`.
+`docs/superpowers/plans/2026-10-01-thermal-core.md`; guide: `docs/thermal.md`. Branch `feat/thermal-core`.
+Covers 4.1 (one material table, no data asset yet), 4.4 (thermal pass feeding the 3B detector) and the
+4.5 stencil plumbing; terrain classes (4B), entity thermal state (4C) and labels/validation (4D) follow.
 
-- Spike (plan Task 1, 2026-10-01): GBuffer base colour at `ReplacingTonemapper` with
-  `r.Substrate=True`, `r.Substrate.ProjectGBufferFormat=0` — verdict **LINEAR**
-  (GBufferC 1280x720 PF_B8G8R8A8, sRGB flag 1; non-zero 1.000, in-range 1.000, median 0.194 (mean 0.204, std 0.066);
-  the dumped image did look like unlit albedo: aerial imagery of Presidio trees and road, no shading or cast shadows).
-  Atmosphere sun light for `K_lum`: `DirectionalLight` on
-  `CesiumSunSky_0`, 111000 lux (colour white), ground transmittance (0.925825, 0.844161, 0.719899). Consequence: Task 8 sets
-  `CamSimThermalPass::bBaseColorAtTonemapper = true`, `bBaseColorSrgbEncoded = false`.
-  - The 0.194 median is the raw stored byte value before sRGB decode (about 0.03 linear when sampled through the sRGB SRV).
-    The probe fired about 10 s after launch, so tiles may not have been at full LOD (this affects only the median's plausibility).
-  - Condition for LINEAR: GBufferC is PF_B8G8R8A8 with `TexCreate_SRGB`, so Task 8 must sample it through the engine's
-    scene-texture SRV (`SceneTextures.GBufferCTexture` from the uniform buffer, hardware sRGB decode), never raw byte loads
-    or a copy that drops the sRGB flag. Task 8's GPU test should confirm a known albedo comes back linear.
-  - Confirmed (Task 8): `CamSim.GPU.Thermal.MatchesCpu` "sRGB-format base texture" binds a PF_B8G8R8A8 + `TexCreate_SRGB`
-    base colour and ThermalCS matches the reference fed the linear values (3.0e-4 relative radiance on Metal: the hardware
-    decode isn't bit-exact), against > 1e-2 for the raw bytes read as linear.
-- Live wiring (plan Task 14, 2026-10-01): in IR with thermal available and `thermal.enabled` (live), the game thread
-  builds `FThermalFrameParams` per tick (camera pose from the KLV position, geodetic up from the georeference's ESU
-  frame) and hands them to the render thread in the same command as the sensor parameters; ThermalCS runs inside
-  `RDG_EVENT_SCOPE_STAT(CamSimThermal)` ahead of SensorCS (`bRadianceInput`, `SignalWeights` (1,0,0),
-  `InputScale = 1/B(300 K)`), with the thermal AE slot and UE exposure fixed at −12 EV. EO and `thermal.enabled: false`
-  are unchanged. `camsim.Thermal.Log 1` logs the builder's class temperatures, sky, `K_lum` and AE gain once a second.
-  Live smoke (M1 Pro, 720p, Presidio, 21 Dec, ground truth off): ThermalCS 0.083 ms median / 0.095 ms p95
-  (`thermal_gpu_ms`); night (02:00 local) terrain 284.8 K, water 287.7 K, truck white-hot on mid-grey ground; noon
-  terrain 303.0 K, water 288.5 K, sky darkest, sunlit land textured by the solar term and the truck's shadow cooler;
-  the IR land/water/sky edges sit exactly on the EO coastline of the same pose (no offset or stretch).
-- Live acceptance (plan Task 15, 2026-10-01): `scripts/thermal_check.py` (MWIR + LWIR, 21 Dec noon and 02:00, DIS
-  truck + boat, 5 launches) passes every gate on the M1 Pro (spec thresholds unchanged):
-  (a) night mean Y 116.0 MWIR / 137.7 LWIR, black 0.01 % / 0.13 %; (b) night truck box − ring +67.6 / +30.1 DN;
-  (c) water − land (radius-matched, so vignetting cancels) +36.9 → −114.6 MWIR, +21.2 → −87.8 LWIR (night → noon);
-  (d) noon shadow − sunlit −41.3 / −32.3 DN; (e) sky − terrain −14.7 / −45.1 MWIR, −6.9 / −23.3 LWIR (night / noon);
-  (f) ThermalCS p95 0.097 ms at 1920x1080 (0.096 ms at 720p: barely resolution-dependent);
-  (g) EO mean Y thermal on − off −0.001 DN, frame time and sensor_gpu_ms identical, ThermalCS never runs in EO.
-  Deviation from the plan's pose list: the sky view is pitched +8° (not +20°) with the 90° horizontal FOV
-  (58.7° vertical), so the top 30 % rows are all sky and the bottom 30 % all terrain.
-  Known 4A limitations seen in the shots: one terrain class, so night terrain is nearly flat and the AGC stretches the
-  IR optics' cos⁴ vignetting; the truck clips white at night (MWIR); the thermal cloud term follows CIGI weather only.
-  - Edge shimmer (found here, fixed by Task 17): on the static coast pose, temporal std of Y on edge pixels / interior
-    land was 6.7 (night) and 7.0 (noon) in MWIR, 1.1 / 2.1 in LWIR, against 0.99 for EO of the same pose (limit 2). At
-    noon the flicker sat on every albedo / shadow edge, not only class edges (MWIR std p99 10 DN, p99.9 25 DN).
-- TSR-resolved thermal (plan Task 17, 2026-10-01): cause of the shimmer — at `ReplacingTonemapper` ThermalCS mixed
-  jittered render-resolution inputs (depth, custom depth / stencil, GBuffer base colour) with TSR-resolved scene colour,
-  so the class map and the fast term moved against each other by the sub-pixel jitter every frame. Fix: ThermalCS runs
-  at `EPostProcessingPass::BeforeDOF` (before DOF and the temporal upscaler; subscribed per frame on the render thread
-  only while thermal parameters are set; the engine always passes `bIsPassEnabled` for it). Its `WRITE_SCENE_COLOR`
-  permutation writes `float4(L, L, L, 1)` (raw W m⁻² sr⁻¹) into a new texture with scene colour's desc at the same view
-  rect, which the chain carries on as scene colour, so TSR resolves the radiance with the same jitter as its inputs.
-  SensorCS at `ReplacingTonemapper` reads the resolved scene colour as radiance (`bRadianceInput`, no bloom,
-  `InputScale = 1/B(300 K)` unchanged). Per-pixel maths unchanged (`CamSim.GPU.Thermal.SceneColorOutputMatchesCpu`:
-  fp16 output within 1e-3 of the reference — Metal stores fp16 UAVs by truncation, one ulp = 9.8e-4 — texels outside
-  the output rect untouched). Also fixed: GBufferC is no longer `Load`ed when no base colour is bound.
-  Acceptance (`thermal_check.py --band both`, all gates pass): new gate (h) coast shimmer ≤ 2 — MWIR 1.21 night /
-  1.57 noon, LWIR 1.01 / 1.03 (EO baseline 1.00); (a)–(g) unchanged in substance ((f) ThermalCS p95 0.142 ms at 1080p,
-  (g) EO −0.003 → +0.003 DN). An EO↔IR switch shows no TSR ghosting: the first switched snapshot (~130 ms) already
-  carries none of the previous mode's structure; an IR pan at 5°/s keeps clean edges.
-  - `thermal_gpu_ms` on Metal: MetalRHI times a stat scope by the encoders that begin inside it, and RDG kept ThermalCS
-    in one compute encoder with the DOF / TSR passes after it (the scope read ~7.3 ms at any resolution while the frame's
-    GPU time was unchanged). Never-culled 1-texel blits before and inside the scope give it its own encoder.
-  - Known limit: post-DOF translucency (particles) is composited by TSR in visible colour on top of the radiance
-    (particles are not thermally modelled in 4A).
-  - TSR precision (fix round 1): with BeforeDOF alone, MWIR night interior temporal std rose from 0.31 to 0.79 DN.
-    Confirmed cause: `bSupportsAlpha` is false (`TemporalSuperResolution.cpp:1927`), so TSR's output and history are
-    PF_FloatR11G11B10 (`:1965`/`:1966`), dithered by `QuantizeForFloatRenderTarget` (`TSRUpdateHistory.usf:1339`):
-    ~0.2–0.4 K radiance steps in MWIR, 0.5–1 K in LWIR, far above the detector NETD. Fix: `FThermalTsrAlpha`
-    (`Camera/ThermalTsrAlpha.h`) sets `r.TSR.AlphaChannel=1` (SetByCode) while thermal IR runs and restores the saved
-    value otherwise (a console override wins), so TSR's output and history are RGBA16F and the format change drops the
-    history at each switch; EO keeps −1. Measured (M1 Pro, MWIR night coast, two launches each): interior std 0.79 →
-    0.32 DN, edge std 0.95 → 0.56 DN (shimmer ratio 1.21 → 1.75, still ≤ 2). Cost, accepted (ruling R12; the frame
-    stays under 33 ms): IR GPU frame time +1.6 ms on the M1 Pro (median `gpu_ms` 26.83/26.88 → 28.42/28.43 ms at 720p,
-    27.58 → 29.18 ms with a 1920x1080 capture; EO unchanged) — the alpha path also turns off TSR's 16-bit VALU and
-    doubles its colour bandwidth. First EO→IR switch hitch: up to one frame of 84 ms GPU / 31 ms render (alpha off:
-    ≤ 38 / 4 ms), no dropped frames, wall time ≤ 35 ms. Alternative if a weaker GPU needs it: keep R11G11B10 and
-    write the radiance as a signed two-channel encoding (e.g. a coarse part plus a residual about a per-frame pedestal),
-    decoded by SensorCS.
-    Gate (h) denominator floor (ruling R13): ratio = edge std / max(interior std, 1/sqrt(12) DN), the 8-bit snapshot's
-    own rounding noise (`SNAPSHOT_QUANT_STD_DN`); report.md/json carry both ratios. With RGBA16F, MWIR noon interior
-    land fell to 0.19 DN — below what the 8-bit snapshot resolves — and the raw ratio read 2.14 although its edge std,
-    0.41 DN, is the lowest yet (6.40 originally, 0.75 with BeforeDOF alone; ~0.03 px rms of TSR edge convergence at
-    15 DN/px edges). Acceptance with the fix (`.cache/thermal_check/t17c`, re-checked with the floor): all gates pass;
-    (h) floored / raw: MWIR 1.19 / 1.19 night, 1.43 / 2.14 noon; LWIR 1.00 / 1.00, 1.01 / 1.01.
-  No editor or asset changes are needed for 4A.
+**Built.** In IR mode each pixel's in-band (MWIR 3-5 um / LWIR 8-12 um, from the preset) radiance comes
+from a surface temperature and emissivity, plus sky and path terms; SensorCS then runs unchanged on radiance.
+
+- Closed-form diurnal class temperatures on the game thread (`FThermalModel`: semi-infinite solid, 7 Fourier terms,
+  sim time, no state), a Swinbank sky (`FThermalSky`), an in-band Planck LUT (`FBandRadiance`), built-in classes plus
+  `thermal.materials` overrides, and `entity_types.*.thermal_material` / `thermal_offset_k`.
+- `FThermalFrameBuilder` fills `FThermalFrameParams` per tick; `ThermalCS` (`CamSimThermal.usf`) classifies sky /
+  entity (custom stencil) / water (sea sphere) / terrain, adds a per-pixel solar term from the EO render and GBuffer
+  base colour (read through its sRGB SRV), and applies path extinction. `CamSimThermalRef::EvaluatePixel` is its CPU mirror.
+- Task 17: ThermalCS runs at `BeforeDOF` (pre-TSR) and writes radiance into scene colour, which TSR resolves; SensorCS
+  at `ReplacingTonemapper` reads the resolved radiance. `r.TSR.AlphaChannel=1` only while thermal IR runs (RGBA16F).
+- IR AE slot with its own `thermal_exposure` (signal = L / B(300 K)); UE exposure fixed at -12 EV; AGC display-gain cap
+  `agc_max_display_gain` (default 40, thermal only) — this closes 3B.3's "AGC max gain cap".
+- Entity stencils are tagged whenever thermal is available (not only for ground truth). `thermal.enabled: false`
+  restores the 3B.2 luminance proxy; EO is bit-for-bit unchanged (gate g).
+- `camsim.Thermal.Log 1` logs class temperatures, sky, `K_lum` and AE gain once a second; `thermal_gpu_ms` in the
+  frame stats; `scripts/thermal_check.py` is the acceptance run.
+
+**Results** (`scripts/thermal_check.py --band both`, M1 Pro, Presidio, 21 Dec, sun elev 28.8 at noon, DIS truck + boat;
+`.cache/thermal_check/t17c`, git 3341207). Every gate passes; thresholds are the spec's.
+
+| Gate | Check | MWIR night | MWIR noon | LWIR night | LWIR noon |
+|---|---|---|---|---|---|
+| a | mean Y in [60, 180], black < 5 % | 115.6, 0.01 % | 133.0, 0.02 % (info) | 137.0, 0.14 % | 132.2, 0.03 % (info) |
+| b | truck box - ring >= +3 DN | +69.2 | +62.5 (info) | +31.3 | +46.4 (info) |
+| c | water - land flips sign (DN) | +38.4 | -115.1 | +21.1 | -87.4 |
+| d | shadow - sunlit < 0 (DN) | - | -50.3 | - | -28.8 |
+| e | sky - terrain < 0 (DN) | -14.7 | -45.6 | -6.9 | -23.1 |
+| h | coast shimmer ratio <= 2 (floored; raw) | 1.19 (1.19) | 1.43 (2.14) | 1.00 (1.00) | 1.01 (1.01) |
+| f | `ThermalCS` p95 <= 0.5 ms at 1080p | 0.141 ms (958 frames) | | | |
+| g | EO mean Y thermal on - off, <= 1 DN | +0.004 DN (frame time 33.36 vs 33.34 ms; ThermalCS never ran) | | | |
+
+Gate (h) denominator is floored at the 8-bit snapshot's rounding noise, 1/sqrt(12) = 0.289 DN (ruling R13): MWIR noon
+edge std is 0.41 DN against an interior of 0.19 DN, below what the snapshot resolves. EO baseline for the same pose: 0.99.
+Boat vs water ring (info): MWIR +32.7 night / +12.3 noon, LWIR +17.4 / +22.5.
+
+**Performance** (M1 Pro, Metal)
+
+| Item | Measured |
+|---|---|
+| `ThermalCS` p95 | 0.137 ms MWIR / 0.136 ms LWIR at 720p (about 4.8k IR frames each); 0.141 ms at 1080p |
+| Builder | 2.5 us per frame, 32 classes |
+| GPU vs CPU reference (`CamSim.GPU.Thermal.MatchesCpu`) | 2.5e-6 max relative radiance error; 3.0e-4 with the hardware sRGB base colour |
+| IR TSR alpha path | +1.6 ms GPU per frame (720p median 26.83 to 28.42 ms; 1080p 27.58 to 29.18 ms); EO unchanged; accepted, ruling R12 |
+| First EO to IR switch | one 84 ms GPU frame (TSR alpha PSO compile, not precached; alpha off: <= 38 ms); no dropped frames |
+
+**How it got here (decisions worth keeping)**
+
+- Spike (Task 1): GBuffer base colour at `ReplacingTonemapper` with `r.Substrate=True`,
+  `r.Substrate.ProjectGBufferFormat=0` is **LINEAR**: GBufferC is `PF_B8G8R8A8` + `TexCreate_SRGB` (1280x720 probe, raw-byte
+  median 0.194, about 0.03 linear), so ThermalCS must sample it through the scene-texture SRV, never raw loads
+  (`bBaseColorSrgbEncoded = false`). Sun light for `K_lum`: the `DirectionalLight` on `CesiumSunSky_0`, 111000 lux.
+  Confirmed in Task 8 (a PF_B8G8R8A8 + SRGB texture reads linear; a raw read is > 1e-2 off).
+- `K_lum` divides the sun illuminance by `S_clear x cloud factor` so an unshadowed horizontal surface gives
+  `S_abs,pix = S_abs,ref`; it assumes the UE sun light is not itself cloud-dimmed (ruling R7).
+- Edge shimmer: Task 15 measured MWIR 6.7 (night) / 7.0 (noon), LWIR 1.1 / 2.1 against 0.99 for EO. Cause: ThermalCS at the
+  tonemapper mixed jittered render-resolution inputs with TSR-resolved colour. Fix (Task 17): `BeforeDOF` placement
+  (MWIR 1.21 / 1.57, LWIR 1.01 / 1.03), then TSR RGBA16F because R11G11B10 quantised radiance to 0.2-0.4 K MWIR /
+  0.5-1 K LWIR (MWIR night interior std 0.79 to 0.32 DN, ruling R11). Alternative if a weaker GPU needs the 1.6 ms back: R11G11B10
+  with a signed two-channel radiance encoding decoded by SensorCS.
+- `thermal_gpu_ms` on Metal: a stat scope is timed by the encoders that begin inside it, and RDG kept ThermalCS in one
+  compute encoder with DOF/TSR after it (the scope read about 7.3 ms at any resolution). Never-culled 1-texel copies before
+  and inside the scope give it its own encoder.
+
+**Known issues**
+
+- **One terrain class.** Night terrain is nearly uniform and the AGC stretches the optics' cos^4 vignetting; noon contrast is
+  albedo-driven, so dark vegetation reads warm (risk of an "EO negative" look). 4B land cover fixes both.
+- **MWIR truck clips white at night** (+8 K offset on a cool background).
+- **The thermal cloud term follows CIGI weather only**: EO cloud layers do not cool the scene (cloud shadows do, via
+  scene colour).
+- **Particles** are composited by TSR in visible colour over the radiance (not thermally modelled).
+- **IR TSR costs +1.6 ms**, and the first EO to IR switch has a PSO hitch (above).
+- **Linux/Vulkan unverified**, including sRGB decode precision of the base colour (Metal's hardware decode differs from the
+  reference formula by 3e-4 relative radiance).
+- **Mode-switch histogram**: one in-flight histogram can nudge the new AE slot's gain before the snap (the 3B.2 cut
+  convergence, 1 to 3 frames).
+
+**Carried over**
+
+- 4B: land-cover classes for terrain (replaces `terrain_default`), a vegetation class that lowers the noon albedo contrast.
+- 4C: per-part entity temperatures (engine, exhaust, tyres), running state; the LUT already reaches 1000 K for exhausts.
+- 4D: semantic class in ground truth, validation against published data, thermal shadow lag.
+- Deferred minors from the reviews: `FBandRadiance::Build` with an invalid band sets a flat LUT (callers must validate);
+  the Planck monotonic test covers MWIR only; `TemperatureK` silently clamps an out-of-range class; the IR fallback warning says
+  "visible-light proxy" while the frame runs radiance-tuned parameters; `GetThermalGpuMs` uses the requested-not-ran flag;
+  the TSR alpha cvar is left at Code priority after IR and its PSO is not precached; coast regions in `thermal_check` are
+  fixed image fractions, not stencil-classified; the config `thermal_exposure` table has identical EO/IR columns;
+  `CAMSIM_IR_PRESET` re-apply can leave the yaml detector type name stale.
+
+**Editor / human changes: none.** 4A adds no assets, textures or materials; everything is code, shaders and config.
+Visual review of the shot set (`.cache/thermal_check/t17c/shots`: MWIR/LWIR noon and night, plus the EO comparison) is the
+remaining step before this is closed.
 
 ---
 

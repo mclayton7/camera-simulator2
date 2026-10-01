@@ -38,10 +38,14 @@ Four threads collaborate with explicit ownership boundaries:
 │  • Primary view: queues a grab request; the game viewport       │
 │    renders the sensor view (TSR) after the tick                 │
 │  • Sensor AE/AGC (FSensorController) → sensor graph params      │
+│  • IR: FThermalFrameBuilder → FThermalFrameParams (class temps, │
+│    sky, stencil table) → render thread with the sensor params   │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ ENQUEUE_RENDER_COMMAND
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  Render Thread                                                  │
+│  • IR + thermal: ThermalCS at BeforeDOF (pre-TSR) writes        │
+│    radiance into scene colour; TSR resolves it (RGBA16F)        │
 │  • FCamSimFrameGrabExtension: GPU sensor graph replaces the     │
 │    tonemapper → NV12 buffer → FRHIGPUBufferReadback (async)     │
 │  • Poll command: readback ready → TArray<uint8> (NV12)          │
@@ -149,6 +153,10 @@ receives `Tick()` calls without being an `AActor`.
 | `Camera/CamSimPlatformRig.h/.cpp` | Platform pose from CIGI, attachment, first-person view |
 | `Camera/CamSimCaptureComponent.h/.cpp` | Capture (grab request), async GPU readback, sensor model dispatch, encoder thread |
 | `Camera/CamSimFrameGrabExtension.h/.cpp` | Scene view extension: runs the GPU sensor graph in place of the tonemapper (primary view) and reads its NV12 output back into the readback ring |
+| `Thermal/ThermalModel`, `ThermalSky`, `BandRadiance`, `ThermalMaterials` | Thermal IR (ROADMAP 4A): closed-form class temperatures, sky temperature, in-band Planck LUT, material table |
+| `Thermal/ThermalFrameBuilder`, `ThermalFrameSources` | Per-tick `FThermalFrameParams` from clock, environment, camera and entities |
+| `Thermal/ThermalReference.h/.cpp` | `CamSimThermalRef::EvaluatePixel`, the CPU mirror of `ThermalCS` (`Shaders/Private/CamSimThermal.usf`) |
+| `Camera/ThermalTsrAlpha.h` | `r.TSR.AlphaChannel=1` while thermal IR runs (RGBA16F TSR for radiance) |
 | `Camera/CamSimFrameStats.h/.cpp` | Per-frame render stats JSONL and scene-render counter (bench harness) |
 | `Health/CamSimSnapshotService.h/.cpp` | `GET /snapshot` and `GET /snapshot/sensor` (ROADMAP 3B): the next sensor-graph output frame (the NV12 that is encoded) as PNG; since 3B.2 both serve the same image (there is no pre-sensor frame) |
 | `Camera/CamSimTelemetryAssembler.h/.cpp` | Telemetry behind the KLV tags, boresight frame centre |

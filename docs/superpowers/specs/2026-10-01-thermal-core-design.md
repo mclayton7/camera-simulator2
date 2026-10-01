@@ -32,13 +32,22 @@ and cooler shadows, and water is warmer than land at night and cooler at noon.
 
 ```
 game thread                                    render thread (IR mode, thermal on)
-FThermalFrameBuilder ── FThermalFrameParams ──► ThermalCS ──► radiance (R32F, view rect)
+FThermalFrameBuilder ── FThermalFrameParams ──► ThermalCS @ BeforeDOF (pre-TSR, render resolution)
   ├ FThermalModel (closed form, per class)          │  inputs: SceneDepth, CustomDepth/Stencil,
   ├ FThermalSky (sky temperature)                   │  GBuffer base colour, SceneColor, View UB
-  ├ FBandRadiance (in-band Planck LUT)              ▼
-  └ stencil → class/offset table (entities)    SensorCS (unchanged maths; input = radiance,
-                                                no pre-exposure division, no bloom, weights (1,0,0))
+  ├ FBandRadiance (in-band Planck LUT)              ▼  writes float4(L, L, L, 1) into scene colour
+  └ stencil → class/offset table (entities)    DOF → TSR (RGBA16F, resolves the radiance)
+                                                    ▼
+                                               SensorCS @ ReplacingTonemapper (unchanged maths; input =
+                                               resolved radiance, no pre-exposure division, no bloom,
+                                               weights (1,0,0))
 ```
+
+(Task 17 moved ThermalCS from `ReplacingTonemapper`, where it mixed jittered render-resolution
+inputs with TSR-resolved scene colour and shimmered at class edges, to `BeforeDOF`. TSR then
+resolves the radiance with the same jitter as its inputs. While thermal IR runs
+`r.TSR.AlphaChannel=1` makes TSR's output and history RGBA16F; its default R11G11B10 would
+quantise radiance to 0.2-0.4 K (MWIR) / 0.5-1 K (LWIR), above the detector NETD.)
 
 New code:
 
@@ -54,8 +63,8 @@ New code:
 | `AddThermalPass` | `CamSimShaders/Public/ThermalPass.h`, `Private/ThermalPass.cpp` | RDG pass |
 | `ThermalCS` | `Shaders/Private/CamSimThermal.usf` + `CamSimThermalCommon.ush` | per-pixel classify → temperature → radiance |
 
-Changed: `CamSimFrameGrabExtension` (runs the thermal pass in IR mode and feeds its output to
-`AddSensorPasses`), `SensorGraph` (an input flag: radiance input, no pre-exposure, no bloom),
+Changed: `CamSimFrameGrabExtension` (runs the thermal pass at `BeforeDOF` in IR mode; `SensorCS`
+reads the TSR-resolved radiance as scene colour), `SensorGraph` (an input flag: radiance input, no pre-exposure, no bloom),
 `SensorPresets` (`band_lo_um`/`band_hi_um`), config (`thermal:` section, `entity_types.*.thermal_*`),
 the IR AE seed (radiance input changes the signal scale).
 
@@ -102,9 +111,10 @@ diffuse surface of albedo a lit by irradiance E, its luminance is a·E/π. So
     S_abs,pix = (1 − a_pix) · E_pix,   a_pix = BaseLum
 
 with BaseLum the luminance of the GBuffer base colour and K_lum the luminous efficacy that
-maps the scene's photometric units to W m⁻² (computed once from the sun light's illuminance
-at the frame's sun elevation vs. the clear-sky S, so the reference sunlit surface gives
-S_abs,pix = S_abs,ref exactly). E_pix is clamped to [0, 1.5 · S_clear(t)] so specular highlights
+maps the scene's photometric units to W m⁻². K_lum divides the sun light's illuminance (at the
+frame's sun elevation) by S_clear × the cloud factor, so an unshadowed horizontal surface gives
+S_abs,pix = S_abs,ref exactly (ruling R7; this assumes the UE sun light's illuminance is not
+itself cloud-dimmed: cloud shadows reach the pixel through scene colour). E_pix is clamped to [0, 1.5 · S_clear(t)] so specular highlights
 and emissive surfaces do not create hot spots.
 
 **Fallback** (if Substrate's blendable GBuffer does not expose base colour at the tonemapper,
@@ -112,6 +122,11 @@ decided by the spike task): the fast term is dropped (k_fast = 0) and a warning 
 everything else is unchanged.
 
 ## Classification (per pixel, in order)
+
+ThermalCS runs at `BeforeDOF`, before the temporal upscaler: depth, custom depth / stencil, base
+colour and scene colour are all render-resolution and share the TSR jitter, so classes and the
+fast term move together; TSR then resolves the radiance. It writes the radiance to scene colour
+(`WRITE_SCENE_COLOR` permutation, `float4(L, L, L, 1)`, raw W m⁻² sr⁻¹, alpha 1).
 
 1. **Sky**: device depth at the far plane. Radiance = B(T_sky(elevation)) where elevation comes
    from the view ray. No surface term, no path term (T_sky already includes the atmosphere).
@@ -140,6 +155,8 @@ everything else is unchanged.
 - β per band: `thermal.extinction_per_km` (default MWIR 0.15, LWIR 0.10) plus a fog term from
   the environment visibility, β_fog = 3.912 / V_km · `thermal.fog_ir_factor` (default 0.4; IR
   sees farther than visible through haze).
+- ThermalCS writes raw L into scene colour; TSR carries it in RGBA16F (alpha channel enabled
+  only while thermal IR runs). SensorCS then reads the resolved scene colour as radiance.
 - The detector signal is L / B(300 K). The IR AE/AGC then set gain and stretch as today.
   Preset sensitivity (`max_photon_gain_ev`) is re-tuned so a 300 K scene sits mid-range.
 
@@ -178,17 +195,18 @@ the 256-entry stencil table. Measured with an `FGPUStat` scope like `SensorGpuTi
   DIS truck and boat; checks (a) night IR mean luma 60–180 and < 5 % black, (b) vehicle box mean
   vs. surrounding terrain ≥ 3 AGC-stretched DN brighter at night (white-hot), (c) water vs land
   sign flips between noon and night, (d) shadowed terrain cooler than sunlit at noon, (e) sky
-  darker than terrain, (f) ThermalCS p95 ≤ 0.5 ms, (g) EO unchanged (thermal off for EO).
+  darker than terrain, (f) ThermalCS p95 ≤ 0.5 ms, (g) EO unchanged (thermal off for EO), (h) coast-edge temporal std / interior std <= 2 (interior
+  floored at the 8-bit snapshot's rounding noise, 0.289 DN).
   Shots go to the user for visual review.
 
 ## Risks
 
 - **Substrate GBuffer base colour** at `ReplacingTonemapper` is unverified → first plan task is
   a spike; fallback above.
-- **Jitter**: depth/stencil are render-resolution and jittered under temporal AA, while scene
-  colour is resolved, so class edges can shimmer. IR presets blur more (PSF) which hides
-  sub-pixel shimmer; the acceptance run measures edge temporal noise and a 3×3 class vote is the
-  fallback if needed.
+- **Jitter** (resolved in Task 17): at `ReplacingTonemapper` the jittered render-resolution
+  inputs and the resolved scene colour disagreed by the sub-pixel jitter, giving 6.7-7.0x edge
+  shimmer in MWIR. ThermalCS now runs at `BeforeDOF` so TSR resolves the radiance; acceptance gate
+  (h) holds edge / interior temporal std <= 2 (measured 1.0-1.4, floored).
 - **AE retune**: radiance has a large offset and small contrast; the AGC's percentile stretch
   handles it, but the IR AGC's missing max-gain cap (3B.3) can amplify a flat night scene. 4A
   adds the cap (`agc.max_display_gain`, default 40).

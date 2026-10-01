@@ -466,8 +466,8 @@ until the FOV narrows again.
 The defaults (`eo_hd_cmos`, `mwir_cooled`) are the final 3B.2 values; none changed during the
 3B.2 bench calibration. Two looks to know about: `cos⁴` vignetting (`vignetting_exponent: 4`)
 darkens the corners of a 60° HFOV frame to ~0.48× the centre (set a lower exponent for flatter
-optics), and IR still sees the visible-light scene (thermal radiance is ROADMAP Milestone 4), so
-night IR is dark.
+optics), and IR renders thermal radiance (ROADMAP 4A, [`thermal.md`](thermal.md)); with
+`thermal.enabled: false` it sees the visible-light scene and night IR is dark.
 
 **Validation warnings** (logged at startup, never fatal): an optical PSF sigma
 `σ_o = sqrt((0.42 λ N / pitch)² + extra_blur_px²)` above 2/3 px (PSF radius > 3) exceeds the 1080p

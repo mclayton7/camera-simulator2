@@ -56,10 +56,11 @@ camsim/
       GroundTruth/                 # COCO/VOC annotations from rendered instance masks (bbox, OBB, visibility, RLE, box3d), depth maps
       Ocean/                       # Sea level + Gerstner waves (FOceanWaves), ocean mesh, MPC writes
       Metadata/                    # MISB ST 0601/ST 0102 KLV builder
+      Thermal/                     # IR radiance (4A): class model, sky, Planck LUT, frame builder, ThermalCS CPU mirror
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (347 tests across 59 files)
+      Tests/                       # UE5 Automation tests (405 tests across 69 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -101,7 +102,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (347 tests across 59 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (405 tests across 69 files, 22 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -150,9 +151,9 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Physical sensor model** (ROADMAP 3B.2): one fused compute pass, `SensorCS` — optics (distortion resample, cos⁴ vignetting, PSF blur) → electrons → detector noise (photon: PRNU/shot/dark/DSNU/read, full-well clip, analog gain; microbolometer: temporal + pixel/column/row FPN) → ADC → defects → display → NV12. `CamSimSensorRef::Run` (`Sensor/SensorReference.cpp`) is the CPU reference: the shader mirrors it expression for expression, and `CamSim.GPU.Sensor.*` hold them to Y ≤ 1 DN, UV ≤ 2 DN. Change both together. Noise is a PCG hash of (x, y, frame, seed, stream) (`CamSimShaders/Public/SensorHash.h`), never a GPU RNG; round with `floor(x + 0.5)`, never HLSL `round`; no float atomics or wave intrinsics (portable to Vulkan)
 - **Sensor presets** (`Sensor/SensorPresets.cpp`): `sensor_modes.<mode>.preset` (`eo_hd_cmos`, `mwir_cooled` default IR, `lwir_uncooled`) fills optics/detector; `optics:`/`detector:` blocks override single fields. Physics tests `CamSim.Sensor.Physics.*` (16) check the reference against closed-form photon-transfer, FPN and PSF results — keep them passing when retuning presets
 - **Sensor AE clips at full well**: `FSensorController::ClipLinear` = 1.0 (normalised full scale = white after the knee). The PSF radius R = min(ceil(3σ_o)+1, 8); R ≥ 4 (σ_o > 2/3 px) switches to the large-tile shader and is over the 2 ms 1080p budget (a startup warning, not an error)
-- **IR is a visible-light proxy** until Milestone 4: the IR detector sees the scene's luminance, so night IR is dark (bright clouds set the AGC's top). Don't calibrate around it
+- **Thermal IR** (ROADMAP 4A, guide `docs/thermal.md`): in IR, `ThermalCS` runs at `EPostProcessingPass::BeforeDOF` (pre-TSR, subscribed only while thermal params are set) and writes `float4(L, L, L, 1)` radiance into scene colour; TSR resolves it and `SensorCS` (at the tonemapper) reads the resolved radiance (`bRadianceInput`, weights (1,0,0), `InputScale = 1/B(300 K)`). `CamSimThermalRef::EvaluatePixel` (`Thermal/ThermalReference.cpp`) is its CPU mirror: change both together; `CamSim.GPU.Thermal.MatchesCpu` holds them to 1e-4. Class temperatures are closed-form per class on the game thread (`FThermalModel`, sim time, no state, cached Fourier fit), built per tick by `FThermalFrameBuilder`. UE exposure is fixed at −12 EV in thermal mode (the thermal AE slot has its own `thermal_exposure`). `r.TSR.AlphaChannel=1` is set (`FThermalTsrAlpha`) only while thermal IR is active: TSR's default R11G11B10 output would quantise radiance to 0.2–0.4 K (MWIR), above NETD; it costs +1.6 ms in IR and a first-switch PSO hitch. The per-pixel solar term reads GBuffer base colour through its sRGB SRV (raw loads are not linear); `K_lum` divides by `S_clear × cloud factor` and assumes the UE sun light isn't itself cloud-dimmed. Entity stencils are tagged whenever thermal is available (not only for ML). `thermal.enabled: false` restores the 3B.2 luminance proxy. Terrain is one class until 4B; acceptance is `scripts/thermal_check.py` (gates a–h)
 - **Shaders** live in `unreal_project/CamSimTest/Shaders/` (virtual path `/CamSim`), compiled by the `CamSimShaders` module (`PostConfigInit`)
-- **GPU pass timing on Metal**: `RQT_AbsoluteTime` render queries resolve to the command buffer's end time truncated to whole seconds, so they can't time a pass. Use an `RDG_EVENT_SCOPE_STAT` with an `FGPUStat` subclass (`OnTimingResults`) as `Camera/SensorGpuTimer.h` does
+- **GPU pass timing on Metal**: `RQT_AbsoluteTime` render queries resolve to the command buffer's end time truncated to whole seconds, so they can't time a pass. Use an `RDG_EVENT_SCOPE_STAT` with an `FGPUStat` subclass (`OnTimingResults`) as `Camera/SensorGpuTimer.h` does. The stat scope is timed by the encoders that *begin inside it*: if RDG keeps the pass in an encoder opened earlier, it reads the whole encoder (ThermalCS read ~7.3 ms at any resolution). Put never-culled 1-texel copies around the pass so it gets its own encoder
 - **Health port restart**: restarting CamSim within ~30 s of the last run finds :8080 in TIME_WAIT. The health server logs "port 8080 is busy … NOT listening" and retries every 2 s until it binds (no reuse flag: UE's only option also sets SO_REUSEPORT, which would let two CamSims share the port). `run_bench.py` still waits the port out before launching
 - **IDE false positives**: clang diagnostics for UE types are wrong — UBT handles includes at build time
 - **Docker networking**: `network_mode: host` required for UDP multicast routing
