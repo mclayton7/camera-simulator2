@@ -18,6 +18,7 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "Time/SimClock.h"
 #include "Sensor/SensorOptics.h"
+#include "InstanceIdPass.h"
 
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/Engine.h"
@@ -78,7 +79,31 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 		UE_LOG(LogCamSim, Error, TEXT("ACamSimCamera: sensor graph unavailable — no frames will be produced (see the subsystem's startup error)"));
 	}
 
+	// Ground truth (ROADMAP 2.7): per-slot instance-ID readbacks, so annotated
+	// frames measure boxes/masks from the render. InstanceIdCS is checked apart
+	// from the sensor graph: a missing ID shader only costs the measured boxes.
+	IdReadbackPool.Reset();
+	IdIntervalFrames = FMath::Max(1, Cfg.MLTraining.AnnotationIntervalFrames);
+	if (bSensorGraph && Cfg.MLTraining.bEnabled && Cfg.MLTraining.bBoundingBoxes)
+	{
+		FString Why;
+		if (IsInstanceIdPassSupported(Why))
+		{
+			for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
+			{
+				IdReadbackPool.Add(MakeUnique<FRHIGPUBufferReadback>(*FString::Printf(TEXT("CamSimInstanceIdReadback_%d"), Idx)));
+			}
+			UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ground truth — instance-ID readback enabled (every %d frame(s))"), IdIntervalFrames);
+		}
+		else
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("ACamSimCamera: ground truth is on but the instance-ID pass is unavailable (%s); ")
+				TEXT("annotations use projected boxes (mask_source \"projection\")"), *Why);
+		}
+	}
+
 	for (TAtomic<uint32>& Gen : GrabbedGeneration) { Gen.Store(0); }
+	for (TAtomic<uint32>& Gen : IdGrabbedGeneration) { Gen.Store(0); }
 	if (bSensorGraph && !EnsureGrabExtension())
 	{
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — game viewport not created yet; grabbing starts when it is"));
@@ -128,6 +153,7 @@ void UCamSimCaptureComponent::Shutdown()
 	FlushRenderingCommands();
 	GrabExtension.Reset();
 	Nv12ReadbackPool.Reset();
+	IdReadbackPool.Reset();
 	DepthReadbackPool.Reset();
 }
 
@@ -451,6 +477,10 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	S.Entities = Subsystem ? BuildGroundTruthSnapshot() : TArray<FEntityAnnotationData>();
 	const uint32 Gen = ++NextGeneration;
 	S.Telemetry = Telemetry;
+	// IDs only on frames the collector annotates (same FrameIdx and interval).
+	S.bWantIds = IdReadbackPool.IsValidIndex(Slot) && IdReadbackPool[Slot]
+		&& (FrameIdx % static_cast<uint64>(IdIntervalFrames)) == 0;
+	S.InstanceIds.Reset();
 	S.ReadyStreak     .Store(0, EMemoryOrder::Relaxed);
 	S.DepthReadyStreak.Store(0, EMemoryOrder::Relaxed);
 	S.PollAttempts    .Store(0, EMemoryOrder::Relaxed);
@@ -487,12 +517,16 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	// frame's scene render runs.
 	TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> Ext = GrabExtension;
 	TAtomic<uint32>* Grabbed = &GrabbedGeneration[Slot];
+	TAtomic<uint32>* IdGrabbed = &IdGrabbedGeneration[Slot];
 	FRHIGPUBufferReadback* Nv12Readback = Nv12ReadbackPool[Slot].Get();
+	FRHIGPUBufferReadback* IdReadback = S.bWantIds ? IdReadbackPool[Slot].Get() : nullptr;
+	const bool bWantIds = S.bWantIds;
 	ENQUEUE_RENDER_COMMAND(CamSimRequestGrab)(
-		[Ext, Nv12Readback, Gen, FrameIdx, Slot, Grabbed, DepthRT, DepthReadback, EnqueueDepthCopy](FRHICommandListImmediate& RHICmdList)
+		[Ext, Nv12Readback, IdReadback, bWantIds, Gen, FrameIdx, Slot, Grabbed, IdGrabbed, DepthRT, DepthReadback, EnqueueDepthCopy]
+		(FRHICommandListImmediate& RHICmdList)
 	{
 		if (!Ext) return;
-		Ext->PushRequest_RenderThread({ FrameIdx, Gen, Slot }, Nv12Readback, Grabbed);
+		Ext->PushRequest_RenderThread({ FrameIdx, Gen, Slot, bWantIds }, Nv12Readback, IdReadback, Grabbed, IdGrabbed);
 		// Depth (ML) comes from its own SceneCapture, copied directly.
 		EnqueueDepthCopy(RHICmdList, DepthRT, DepthReadback);
 	});
@@ -530,6 +564,7 @@ void UCamSimCaptureComponent::Poll()
 			S.Nv12.Reset();
 			S.Depth.Reset();
 			S.Entities.Reset();
+			S.InstanceIds.Reset();
 			Ring.Release(Slot);
 			continue;
 		}
@@ -549,10 +584,12 @@ void UCamSimCaptureComponent::Poll()
 		}
 
 		bSensorBusy = true;
-		SubmitFrameToEncoder(MoveTemp(S.Nv12), S.Telemetry, FrameIdx, MoveTemp(S.Depth), MoveTemp(S.Entities));
+		SubmitFrameToEncoder(MoveTemp(S.Nv12), S.Telemetry, FrameIdx, MoveTemp(S.Depth), MoveTemp(S.Entities),
+			MoveTemp(S.InstanceIds));
 		S.Nv12.Reset();
 		S.Depth.Reset();
 		S.Entities.Reset();
+		S.InstanceIds.Reset();
 		Ring.Release(Slot);
 	}
 
@@ -602,10 +639,15 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 	const uint32 CaptureGen     = S.Generation.Load(EMemoryOrder::SequentiallyConsistent);
 	TAtomic<uint32>* Grabbed    = &GrabbedGeneration[Slot];
 	FReadbackRing* RingPtr      = &Ring;
+	// Ground truth: this slot's instance-ID copy (16 bits per output pixel).
+	const bool   bWantIds       = S.bWantIds;
+	FRHIGPUBufferReadback* IdReadback = (bWantIds && IdReadbackPool.IsValidIndex(Slot)) ? IdReadbackPool[Slot].Get() : nullptr;
+	TAtomic<uint32>* IdGrabbed  = &IdGrabbedGeneration[Slot];
+	const uint32 IdBytes        = static_cast<uint32>(GpuSensorSize.X * GpuSensorSize.Y * 2);
 
 	ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
 		[RingPtr, &S, Slot, DepthReadback, Nv12Readback, Nv12Bytes, ReadyPollsRequired,
-		 CaptureW, CaptureH, CaptureGen, Grabbed]
+		 CaptureW, CaptureH, CaptureGen, Grabbed, IdReadback, IdGrabbed, IdBytes]
 		(FRHICommandListImmediate&)
 	{
 		// Stale poll: the slot was delivered (and maybe reused) since it was enqueued.
@@ -617,7 +659,15 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 		S.PollAttempts.Store(Attempt, EMemoryOrder::Relaxed);
 		const CamSimReadback::EPollDecision Decision = CamSimReadback::DecidePoll(
 			Grabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen,
-			[Nv12Readback]() { return Nv12Readback && Nv12Readback->IsReady(); },
+			// The ID copy (issued before the NV12 one) is waited for only if it was
+			// really issued for this capture; a pass that couldn't run never blocks.
+			[Nv12Readback, IdReadback, IdGrabbed, CaptureGen]()
+			{
+				if (!Nv12Readback || !Nv12Readback->IsReady()) return false;
+				const bool bWaitIds = CamSimReadback::ShouldWaitForIds(IdReadback != nullptr,
+					IdGrabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen);
+				return !bWaitIds || IdReadback->IsReady();
+			},
 			Attempt, MaxReadbackPolls);
 		if (Decision == CamSimReadback::EPollDecision::TimedOut)
 		{
@@ -644,6 +694,19 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 			S.Nv12.SetNumUninitialized(Nv12Bytes);
 			FMemory::Memcpy(S.Nv12.GetData(), Raw, Nv12Bytes);
 			Nv12Readback->Unlock();
+		}
+
+		// Instance IDs: a failed lock leaves the slot without them (the collector
+		// falls back to projected boxes); it never fails the frame.
+		S.InstanceIds.Reset();
+		if (CamSimReadback::ShouldWaitForIds(IdReadback != nullptr, IdGrabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen))
+		{
+			if (const void* Raw = IdReadback->Lock(IdBytes))  // null: do NOT Unlock
+			{
+				S.InstanceIds.SetNumUninitialized(IdBytes / sizeof(uint32));
+				FMemory::Memcpy(S.InstanceIds.GetData(), Raw, IdBytes);
+				IdReadback->Unlock();
+			}
 		}
 
 		// Opportunistic depth: it may lag the sensor frame; skip this frame's if so.
@@ -687,7 +750,7 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 
 void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	TArray<uint8> Nv12Data, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres,
-	TArray<FEntityAnnotationData> Entities)
+	TArray<FEntityAnnotationData> Entities, TArray<uint32> InstanceIds)
 {
 	if (!EncoderThread)
 	{
@@ -700,6 +763,7 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	const int32              CaptureH  = Subsystem ? Subsystem->GetConfig().CaptureHeight : 0;
 	FEncoderThread*          EncThread = EncoderThread.Get();  // outlives the task
 	FPipelineLatencyTracker* LT        = LatencyTracker;       // outlives the task
+	const FIntPoint          IdSize    = GpuSensorSize;        // the ID buffer's size (fixed at Initialize)
 
 	// The sensor model already ran on the GPU (3B). The ML ground-truth writers
 	// (file I/O) stay off the game thread; bSensorBusy is cleared after them,
@@ -707,7 +771,7 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
 		[this, EncThread, Collector, CaptureW, CaptureH, LT,
 		 Nv12 = MoveTemp(Nv12Data), Telemetry, FrameIdx, Depth = MoveTemp(DepthMetres),
-		 Entities = MoveTemp(Entities)]() mutable
+		 Entities = MoveTemp(Entities), IdSize, InstanceIds = MoveTemp(InstanceIds)]() mutable
 	{
 		SCOPE_CYCLE_COUNTER(STAT_CamSimEncode);
 		// SensorStart/End bracket this background stage (latency tracking, 28G).
@@ -716,7 +780,10 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 		// ML ground truth annotation and depth (Phase 17)
 		if (Collector)
 		{
-			Collector->WriteAnnotationFrame(Entities, Telemetry, FrameIdx);
+			// The frame's instance-ID image when it was read back (measured boxes and
+			// masks); otherwise the collector writes projected boxes.
+			FInstanceIdImage Ids{ IdSize.X, IdSize.Y, MoveTemp(InstanceIds) };
+			Collector->WriteAnnotationFrame(MoveTemp(Entities), Ids.Words.Num() ? &Ids : nullptr, Telemetry, FrameIdx);
 			if (Depth.Num() > 0)
 			{
 				Collector->WriteDepthFrame(Depth, CaptureW, CaptureH, FrameIdx);

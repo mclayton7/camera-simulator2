@@ -6,6 +6,8 @@
 #include "PostProcess/PostProcessMaterialInputs.h"
 #include "Sensor/SensorStatsMailbox.h"
 #include "SensorGraph.h"
+#include "InstanceIdPass.h"
+#include "SceneTexturesConfig.h"   // FSceneTextureUniformParameters
 #include "RHIGPUReadback.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
@@ -31,11 +33,49 @@ bool FCamSimFrameGrabExtension::IsActiveThisFrame_Internal(const FSceneViewExten
 }
 
 void FCamSimFrameGrabExtension::PushRequest_RenderThread(const FFrameGrabRequest& R,
-	FRHIGPUBufferReadback* Nv12Readback, TAtomic<uint32>* GrabbedGeneration)
+	FRHIGPUBufferReadback* Nv12Readback, FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* GrabbedGeneration,
+	TAtomic<uint32>* IdGrabbedGeneration)
 {
 	check(IsInRenderingThread());
-	TargetsBySlot.Add(R.TargetIndex, { Nv12Readback, GrabbedGeneration });
+	TargetsBySlot.Add(R.TargetIndex, { Nv12Readback, GrabbedGeneration, IdReadback, IdGrabbedGeneration });
 	Requests.Push(R);
+}
+
+void FCamSimFrameGrabExtension::AddInstanceIdReadback_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
+	const FPostProcessMaterialInputs& Inputs, uint32 Gen, FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* IdGrabbed)
+{
+	// The deferred renderer's scene textures (depth, custom depth, custom stencil)
+	// ride in the post-process inputs' scene-texture uniform buffer.
+	const FSceneTextureUniformParameters* St = Inputs.SceneTextures.SceneTextures
+		? Inputs.SceneTextures.SceneTextures->GetParameters().GetContents() : nullptr;
+	if (!St || !St->SceneDepthTexture || !St->CustomDepthTexture || !St->CustomStencilTexture)
+	{
+		if (!bWarnedNoSceneTextures)
+		{
+			bWarnedNoSceneTextures = true;
+			UE_LOG(LogCamSim, Warning, TEXT("GroundTruth: the post-process inputs carry no scene depth / custom depth / stencil; ")
+				TEXT("annotations fall back to projected boxes (logged once)"));
+		}
+		return;
+	}
+
+	FInstanceIdInputs Ii;
+	Ii.SceneDepth        = St->SceneDepthTexture;
+	Ii.CustomDepth       = St->CustomDepthTexture;
+	Ii.CustomStencil     = St->CustomStencilTexture;
+	// The primary view's: ViewRectMin / ViewSizeAndInvSize are its render-resolution
+	// rect in scene-texture texels (TSR upscales only after the depth passes).
+	Ii.ViewUniformBuffer = View.ViewUniformBuffer.GetReference();
+	Ii.OutputSize        = CaptureSize;
+	const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, Ii, Params);
+
+	const uint32 IdBytes = static_cast<uint32>(CaptureSize.X * CaptureSize.Y * 2);  // 16 bits per pixel
+	AddReadbackBufferPass(GraphBuilder, RDG_EVENT_NAME("CamSimInstanceIdReadback"), Ids,
+		[IdReadback, Ids, IdBytes, IdGrabbed, Gen](FRHICommandListImmediate& RHICmdList)
+	{
+		IdReadback->EnqueueCopy(RHICmdList, Ids->GetRHI(), IdBytes);
+		IdGrabbed->Store(Gen, EMemoryOrder::SequentiallyConsistent);
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +170,13 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunSensor_RenderThread(FRDGBuilder
 		const FTargets* T = TargetsBySlot.Find(Req.TargetIndex);
 		if (T && T->Nv12Readback && T->GrabbedGeneration)
 		{
+			// Ground truth (ROADMAP 2.7): the instance-ID copy is queued BEFORE the
+			// NV12 one, whose lambda publishes GrabbedGeneration — so once the poll
+			// sees the generation, IdGrabbed already says whether an ID copy exists.
+			if (Req.bInstanceIds && T->IdReadback && T->IdGrabbed)
+			{
+				AddInstanceIdReadback_RenderThread(GraphBuilder, View, Inputs, Req.Generation, T->IdReadback, T->IdGrabbed);
+			}
 			// Inline on the render thread: the generation is published only once
 			// the copy is really queued (the AddReadbackBufferPass lambda below
 			// stores it right after EnqueueCopy).

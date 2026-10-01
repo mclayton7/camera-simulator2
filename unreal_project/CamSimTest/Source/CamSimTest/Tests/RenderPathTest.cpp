@@ -288,6 +288,32 @@ bool FReadbackPollDecisionTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// Ground truth (ROADMAP 2.7): the poll waits for a slot's instance-ID copy only
+// when the capture asked for IDs AND the copy was really issued for this
+// generation; an ID pass that couldn't run must not hold the NV12 frame.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FReadbackIdWaitDecisionTest,
+	"CamSim.Render.FrameGrab.IdWaitDecision",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FReadbackIdWaitDecisionTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSimReadback;
+	TestTrue (TEXT("wanted and issued for this capture: wait for it"), ShouldWaitForIds(true, 7, 7));
+	TestFalse(TEXT("wanted but never issued (stale generation): don't wait"), ShouldWaitForIds(true, 4, 7));
+	TestFalse(TEXT("wanted but never issued (initial 0): don't wait"), ShouldWaitForIds(true, 0, 7));
+	TestFalse(TEXT("not wanted: never wait, even with a matching generation"), ShouldWaitForIds(false, 7, 7));
+
+	// Combined with DecidePoll as the capture component does: a missing ID copy
+	// leaves the NV12 frame consumable.
+	bool bIdReady = false;
+	auto Fence = [&bIdReady](bool bWant, uint32 IdGen) { return [&bIdReady, bWant, IdGen]() { return !ShouldWaitForIds(bWant, IdGen, 7) || bIdReady; }; };
+	TestTrue(TEXT("NV12 ready, ID copy not issued: consume"), DecidePoll(7, 7, Fence(true, 4), 1, 60) == EPollDecision::Consume);
+	TestTrue(TEXT("NV12 ready, ID copy issued but in flight: wait"), DecidePoll(7, 7, Fence(true, 7), 1, 60) == EPollDecision::Wait);
+	bIdReady = true;
+	TestTrue(TEXT("NV12 and ID copy ready: consume"), DecidePoll(7, 7, Fence(true, 7), 2, 60) == EPollDecision::Consume);
+	return true;
+}
+
 // -------------------------------------------------------------------------
 // Motion blur is explicit: UE's default (on, amount 0.5) must not leak into
 // the sensor when optical realism is off ("clean ML frames").

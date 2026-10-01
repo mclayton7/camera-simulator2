@@ -10,6 +10,7 @@ struct FFrameGrabRequest
 	uint64 FrameIndex  = 0;
 	uint32 Generation  = 0;           // the slot's capture generation at request time
 	int32  TargetIndex = INDEX_NONE;  // grab render target / readback slot
+	bool   bInstanceIds = false;      // also run InstanceIdCS and read its buffer back (ground truth, ROADMAP 2.7)
 };
 
 /**
@@ -61,5 +62,17 @@ namespace CamSimReadback
 			return EPollDecision::Consume;
 		}
 		return Attempt >= MaxAttempts ? EPollDecision::TimedOut : EPollDecision::Wait;
+	}
+
+	/**
+	 * Whether the poll must also wait for the slot's instance-ID copy (ground
+	 * truth, ROADMAP 2.7). Only when the capture asked for IDs and the grab
+	 * extension really issued that copy for this generation (IdGrabbed); a pass
+	 * that couldn't run leaves IdGrabbed behind, and the frame goes out without
+	 * IDs instead of waiting for a copy that never comes.
+	 */
+	inline bool ShouldWaitForIds(bool bWantIds, uint32 IdGrabbedGeneration, uint32 CaptureGeneration)
+	{
+		return bWantIds && IdGrabbedGeneration == CaptureGeneration;
 	}
 }

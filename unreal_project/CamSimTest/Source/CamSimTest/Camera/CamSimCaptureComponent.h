@@ -146,7 +146,7 @@ private:
 	/** Offer a delivered frame to a snapshot service (NV12 converted to BGRA). */
 	void OfferSnapshot(FCamSimSnapshotService& Snap, const FSlot& S) const;
 	void SubmitFrameToEncoder(TArray<uint8> Nv12, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres,
-	                          TArray<FEntityAnnotationData> Entities);
+	                          TArray<FEntityAnnotationData> Entities, TArray<uint32> InstanceIds);
 
 	UPROPERTY(Transient)
 	TObjectPtr<USceneCaptureComponent2D> Sensor;
@@ -185,6 +185,14 @@ private:
 	static constexpr int32 GpuStallLogThreshold = 60;
 	/** One NV12 readback per ring slot. */
 	TArray<TUniquePtr<FRHIGPUBufferReadback>> Nv12ReadbackPool;
+	/**
+	 * Ground truth (ROADMAP 2.7): one instance-ID readback per ring slot, created only
+	 * when ml_training.enabled && bounding_boxes and InstanceIdCS is available. Empty =
+	 * no IDs requested (annotations use projected boxes).
+	 */
+	TArray<TUniquePtr<FRHIGPUBufferReadback>> IdReadbackPool;
+	/** Collector's annotation interval (fixed at Initialize, as the collector's): IDs only on annotated frames. */
+	int32 IdIntervalFrames = 1;
 	FSensorController   SensorController;
 	/** Histograms, render thread → game thread. */
 	FSensorStatsMailbox StatsMailbox;
@@ -223,6 +231,12 @@ private:
 	 * writer: render (grab pass) → reader: render (poll) (SeqCst).
 	 */
 	TAtomic<uint32> GrabbedGeneration[FReadbackRing::NumSlots];
+	/**
+	 * Per slot: the generation whose instance-ID copy was issued (stored before
+	 * GrabbedGeneration). Lagging GrabbedGeneration = no IDs this frame.
+	 * writer: render (grab pass) → reader: render (poll) (SeqCst).
+	 */
+	TAtomic<uint32> IdGrabbedGeneration[FReadbackRing::NumSlots];
 
 	/** Persistent encoder thread — drains processed frames from an SPSC queue. */
 	TUniquePtr<FEncoderThread, FEncoderThreadDeleter> EncoderThread;
@@ -260,6 +274,8 @@ private:
 		TArray<uint8>    Nv12;                    // render writes → game reads after Complete
 		TArray<float>    Depth;
 		TArray<FEntityAnnotationData> Entities;   // game thread fills at capture; moved to the background task
+		TArray<uint32>   InstanceIds;             // render writes → game reads after Complete (empty = none)
+		bool             bWantIds = false;        // game thread at capture; captured by value into the poll
 		// Reset by the game thread at capture, advanced by the render thread's polls.
 		TAtomic<uint8>   ReadyStreak      { 0 };  // "N consecutive Ready polls before consuming"
 		TAtomic<uint8>   DepthReadyStreak { 0 };

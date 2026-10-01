@@ -49,9 +49,12 @@ public:
 	 * game-viewport frame into Nv12Readback. GrabbedGeneration is set to
 	 * R.Generation once the copy is really issued, so the poll never trusts a
 	 * fence left over from an earlier cycle.
+	 * With R.bInstanceIds, InstanceIdCS also runs and its buffer is copied into
+	 * IdReadback; IdGrabbedGeneration is set to R.Generation only when that copy
+	 * is issued (before GrabbedGeneration), so the poll knows whether to wait for it.
 	 */
 	void PushRequest_RenderThread(const FFrameGrabRequest& R, FRHIGPUBufferReadback* Nv12Readback,
-		TAtomic<uint32>* GrabbedGeneration);
+		FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* GrabbedGeneration, TAtomic<uint32>* IdGrabbedGeneration);
 
 	/** Game thread: stop matching any viewport (before the owner is destroyed). */
 	void Detach_GameThread() { GameViewport.Store(nullptr); }
@@ -63,17 +66,23 @@ private:
 	FScreenPassTexture RunSensor_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
 		const FPostProcessMaterialInputs& Inputs);
 	void ReadStats_RenderThread(FRDGBuilder& GraphBuilder, FRDGBufferRef Histogram, uint32 Serial);
+	/** Run InstanceIdCS on this view's scene textures and queue its copy into IdReadback (stores Gen in IdGrabbed). */
+	void AddInstanceIdReadback_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
+		const FPostProcessMaterialInputs& Inputs, uint32 Gen, FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* IdGrabbed);
 
 	struct FTargets
 	{
 		FRHIGPUBufferReadback*  Nv12Readback      = nullptr;
 		TAtomic<uint32>*        GrabbedGeneration = nullptr;
+		FRHIGPUBufferReadback*  IdReadback        = nullptr;   // ground truth (optional)
+		TAtomic<uint32>*        IdGrabbed         = nullptr;
 	};
 
 	TAtomic<FViewport*>    GameViewport { nullptr };
 	FFrameGrabRequestQueue Requests;        // render thread
 	TMap<int32, FTargets>  TargetsBySlot;   // render thread
 	bool                   bWarnedViewSize = false;  // render thread
+	bool                   bWarnedNoSceneTextures = false;  // render thread
 
 	// ROADMAP 3B — GPU sensor
 	const FIntPoint      CaptureSize;                          // fixed at construction
