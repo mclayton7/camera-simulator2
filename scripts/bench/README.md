@@ -71,3 +71,16 @@ Stored results: `baselines/<platform>-<gpu>-<label>.json` and
 
 Needs a Cesium ion token (config) and network. Compare warm-cache runs only.
 Run-to-run noise on the M1 Pro is recorded in ROADMAP 3A.
+
+## Entity load scaling
+
+```bash
+CONFIG=my_1080p.yaml scripts/bench/load_scale.sh [OUT]   # ~15 min
+python3 scripts/bench/load_report.py [OUT]
+```
+
+Runs the Docker image at ~0, 100, 250 and 500 CIGI entities
+(`scripts/stress_entity_rendering.py`, which also flies the camera), then 500
+with ML ground truth on, with and without the depth map. Each point is a fresh
+container, 75 s recorded, frames 25–75 s summarised: thread times, fps, drops,
+frame latency and annotated entities per frame. Results: ROADMAP 3B exit check.

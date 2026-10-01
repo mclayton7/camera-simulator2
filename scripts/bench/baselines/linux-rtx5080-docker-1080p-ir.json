@@ -1,7 +1,7 @@
 {
   "meta": {
-    "label": "docker-1080p-ir",
-    "git": "908dbb1",
+    "label": "fix-1080p-ir",
+    "git": "544706a",
     "platform": "Linux-6.17.0-1032-oem-x86_64-with-glibc2.39",
     "machine": "x86_64",
     "sensor_path": "gpu",
@@ -11,34 +11,33 @@
     "env": {
       "CAMSIM_TRACK_PIPELINE_LATENCY": "1"
     },
-    "ready_s": 30.5,
+    "ready_s": 24.4,
     "latency": {
-      "frame_latency_ms_p50": 14.287,
-      "frame_latency_ms_p95": 32.149,
-      "frame_latency_ms_p99": 33.005
+      "frame_latency_ms_p50": 13.676,
+      "frame_latency_ms_p95": 29.453,
+      "frame_latency_ms_p99": 32.142
     },
     "warmup_ran": false,
     "smoke": false,
     "sensor": "ir",
     "config": "deploy/camsim_config.yaml with capture_width 1920, capture_height 1080",
-    "latency_note": "from a 20 s smoke run of the fixed image (the full run predates the PipelineLatencyTracker fix)",
     "resources": {
       "pstate": {
         "P1": 118
       },
       "cpu_pct": {
-        "mean": 100.4,
-        "p95": 141.1,
+        "mean": 79.2,
+        "p95": 107.6,
         "n": 118
       },
       "mem_mib": {
-        "mean": 2640.1,
-        "p95": 3188.7,
+        "mean": 2216.6,
+        "p95": 2486.3,
         "n": 118
       },
       "gpu_util": {
-        "mean": 14.2,
-        "p95": 16.0,
+        "mean": 13.4,
+        "p95": 15.0,
         "n": 118
       },
       "enc_util": {
@@ -47,13 +46,13 @@
         "n": 118
       },
       "gpu_mem_mib": {
-        "mean": 7325.1,
-        "p95": 8807.0,
+        "mean": 5419.8,
+        "p95": 6238.0,
         "n": 118
       },
       "gr_mhz": {
-        "mean": 2618.6,
-        "p95": 2677.0,
+        "mean": 2610.0,
+        "p95": 2610.0,
         "n": 118
       }
     }
@@ -61,79 +60,79 @@
   "phases": {
     "orbit": {
       "frames": 3600,
-      "wall_ms_p50": 33.31,
-      "wall_ms_p95": 34.003,
-      "wall_ms_p99": 37.719,
-      "game_ms_p50": 7.214,
-      "render_ms_p50": 3.821,
-      "rhi_ms_p50": 0.868,
-      "gpu_ms_p50": 4.52,
-      "gpu_ms_p95": 5.361,
+      "wall_ms_p50": 33.322,
+      "wall_ms_p95": 33.798,
+      "wall_ms_p99": 35.333,
+      "game_ms_p50": 3.016,
+      "render_ms_p50": 3.682,
+      "rhi_ms_p50": 0.84,
+      "gpu_ms_p50": 4.375,
+      "gpu_ms_p95": 5.225,
       "hitches_66": 0,
       "hitches_100": 0,
-      "popin_fraction": 0.46416666666666667,
+      "popin_fraction": 0.5283333333333333,
       "families_mean": 1.0,
       "dropped": 0,
       "emitted_fps": 29.999666593970677,
-      "sensor_gpu_ms_p50": 0.141,
+      "sensor_gpu_ms_p50": 0.14,
       "sensor_gpu_ms_p95": 0.143
     },
     "slew": {
       "frames": 1800,
-      "wall_ms_p50": 33.255,
-      "wall_ms_p95": 39.53,
-      "wall_ms_p99": 40.301,
-      "game_ms_p50": 7.406,
-      "render_ms_p50": 3.919,
-      "rhi_ms_p50": 0.892,
-      "gpu_ms_p50": 4.55,
-      "gpu_ms_p95": 5.417,
+      "wall_ms_p50": 33.283,
+      "wall_ms_p95": 39.539,
+      "wall_ms_p99": 39.978,
+      "game_ms_p50": 4.027,
+      "render_ms_p50": 3.691,
+      "rhi_ms_p50": 0.842,
+      "gpu_ms_p50": 4.388,
+      "gpu_ms_p95": 5.195,
       "hitches_66": 0,
       "hitches_100": 0,
       "popin_fraction": 0.0,
       "families_mean": 1.0,
       "dropped": 0,
-      "emitted_fps": 29.999333010029556,
+      "emitted_fps": 30.00733925338533,
       "sensor_gpu_ms_p50": 0.141,
       "sensor_gpu_ms_p95": 0.143
     },
     "low_pass": {
       "frames": 2700,
-      "wall_ms_p50": 33.271,
-      "wall_ms_p95": 34.608,
-      "wall_ms_p99": 35.319,
-      "game_ms_p50": 7.416,
-      "render_ms_p50": 4.296,
-      "rhi_ms_p50": 0.947,
-      "gpu_ms_p50": 4.734,
-      "gpu_ms_p95": 5.515,
-      "hitches_66": 1,
+      "wall_ms_p50": 33.303,
+      "wall_ms_p95": 34.105,
+      "wall_ms_p99": 34.581,
+      "game_ms_p50": 3.64,
+      "render_ms_p50": 4.007,
+      "rhi_ms_p50": 0.895,
+      "gpu_ms_p50": 4.441,
+      "gpu_ms_p95": 5.26,
+      "hitches_66": 0,
       "hitches_100": 0,
-      "popin_fraction": 0.827037037037037,
+      "popin_fraction": 0.6892592592592592,
       "families_mean": 1.0,
       "dropped": 0,
-      "emitted_fps": 30.00789386226103,
+      "emitted_fps": 30.005558627784584,
       "sensor_gpu_ms_p50": 0.141,
       "sensor_gpu_ms_p95": 0.143
     },
     "far_origin": {
-      "frames": 2694,
-      "wall_ms_p50": 33.276,
-      "wall_ms_p95": 34.945,
-      "wall_ms_p99": 36.661,
-      "game_ms_p50": 7.796,
-      "render_ms_p50": 3.962,
-      "rhi_ms_p50": 1.085,
-      "gpu_ms_p50": 4.156,
-      "gpu_ms_p95": 4.957,
+      "frames": 2698,
+      "wall_ms_p50": 33.296,
+      "wall_ms_p95": 34.322,
+      "wall_ms_p99": 35.767,
+      "game_ms_p50": 4.659,
+      "render_ms_p50": 4.102,
+      "rhi_ms_p50": 0.987,
+      "gpu_ms_p50": 4.072,
+      "gpu_ms_p95": 4.882,
       "hitches_66": 1,
       "hitches_100": 1,
-      "popin_fraction": 0.9573125463994061,
+      "popin_fraction": 0.9077094143810229,
       "families_mean": 1.0,
       "dropped": 0,
-      "emitted_fps": 29.942849451246257,
-      "sensor_gpu_ms_p50": 0.133,
-      "sensor_gpu_ms_p95": 0.142
+      "emitted_fps": 30.00834492350487,
+      "sensor_gpu_ms_p50": 0.14,
+      "sensor_gpu_ms_p95": 0.143
     }
   }
 }

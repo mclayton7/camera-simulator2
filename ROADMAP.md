@@ -1063,15 +1063,56 @@ cos⁴ 1.71 ms, R 3 1.87, R 4 2.38, R 5 2.58, R 8 3.24 ms.
 reference; full bench, warm cache, default sensor model incl. PSF R 2 + cos⁴; NVENC; baselines
 `scripts/bench/baselines/linux-rtx5080-docker-1080p-{eo,ir}.json`; `run_bench.py --docker --config
 <1080p yaml> --sensor eo|ir`): 30.0 fps, 0 dropped in every phase, EO and IR alike. Against the
-33.3 ms budget (50% = 16.7 ms), over all measured frames: **GPU frame p50 / p95 / p99 4.5 / 5.3 /
-5.7 ms (17% at p99)**, sensor graph 0.13–0.16 ms (vs 1.7 ms on the M1 Pro), render thread 4.0 / 5.3 /
-6.2 ms, RHI ≤ 1.9 ms, **game thread 6.8–7.4 / 10.2–10.5 / 13.6–13.8 ms (41% at p99): the binding
-constraint**, and the one that scales with resolution (720p: 4.2 / 6.9 / 10.5 ms), unlike the
-render thread. Likely Cesium tile selection (screen-space error picks more tiles for more pixels)
-but not traced. GPU held P1 at ~2.63 GHz, 14% busy; NVENC 2.5%. Frame latency (CIGI dequeue →
-encoded) p50 / p95 / p99: EO 12.5 / 23.3 / 24.6 ms, IR 14.3 / 32.1 / 33.0 ms. **Criterion met on
-this host for GPU, render and game threads at p99**; the frame-time p95 (35.8–41 ms per phase,
+33.3 ms budget (50% = 16.7 ms), over all measured frames, after the duplicate-terrain fix below
+(before it in brackets): **GPU frame p50 / p99 4.3 / 5.5 ms (17%)** [4.5 / 5.7], sensor graph
+0.13–0.16 ms (vs 1.7 ms on the M1 Pro), render thread p99 5.1–5.6 ms [6.0–6.2], **game thread
+p50 / p95 / p99 3.7–3.8 / 6.1–6.6 / 10.0–10.2 ms (31% at p99)** [6.8–7.4 / 10.2–10.5 / 13.6–13.8].
+GPU held P1 at ~2.63 GHz, 14% busy; NVENC 2.5%; RSS 2.2–2.5 GB [2.6–3.2]. Frame latency (CIGI dequeue
+→ encoded) p50 / p95 / p99: EO 12.5 / 26.7 / 32.3 ms, IR 13.7 / 29.5 / 32.1 ms. **Criterion met on
+this host for GPU, render and game threads at p99**; the frame-time p95 (35–40 ms per phase,
 camera-cut hitches) is the same caveat as on macOS.
+
+*What the game thread spends* (Insights, 20 s orbit, 720p vs 1080p, before the fix): the whole
+720p→1080p growth (+2.1 ms) was `Cesium::TilesetTick` (3.3 → 5.3 ms): `updateView` (tile selection,
++1.0) and `ShowTilesToRender` (+0.95), of which `ApplyActorCollisionSettings` + `SetCollisionEnabled`
+~1.6 ms at 1080p. Cesium for Unreal 2.29.1 re-applies the collision profile and
+`SetCollisionEnabled(QueryAndPhysics)` to *every* rendered tile *every* frame
+(`Cesium3DTileset.cpp` `showTilesToRender`), so the cost follows the tile count, which follows
+pixels (screen-space error) and, with `frustum_culling: false`, the whole 360° render set. Worth
+an upstream issue (skip unchanged tiles). Levers measured at 1080p (20 s smoke, before the fix;
+game thread p50 / p99): baseline 7.2 / 10.2 ms with 2,307 tiles per tileset; `frustum_culling:
+true` 1.7 / 3.9 (570 tiles; costs the sharp gimbal snap, see that key's comment);
+`maximum_screen_space_error: 24` 3.9 / 7.0 (1,345 tiles); `create_physics_meshes: false` 4.8 / 7.5
+(breaks HAT/HOT, LOS, KLV frame centre). And the trace found **a duplicate terrain**: both tilesets
+in `Main.umap` streamed Cesium World Terrain, because `ApplyCesiumBackendConfig` wrote the terrain
+config onto every tileset, including the level's Cesium OSM Buildings (ion 96188). Fixed: only the
+terrain tileset is configured (`CamSim::Geospatial::SelectTerrainTileset`), others are destroyed
+(OSM Buildings as-is draws untextured white over the imagery; decided 2026-10-01 to leave
+buildings out). **Human follow-up:** delete the OSM Buildings tileset actor from `Main.umap` (it is
+still requested at level load, then destroyed).
+
+*Entity load* (1080p EO in Docker, after the fix; `stress_entity_rendering.py --count N --entity-type
+1001`, F-16s in a 500 m ring viewed from ~1.2 km, ~73% annotated per frame at ~8×8 px; one 50 s window
+per point, single runs; p50 / p99 ms): 30.0 fps, 0 dropped, 0 frames > 66 ms at every point.
+
+| Entities | Game thread | Render thread | GPU | Frame latency |
+| --- | --- | --- | --- | --- |
+| ~0 | 3.0 / 10.9 | 3.9 / 5.0 | 4.6 / 5.9 | 15.1 / 30.4 |
+| 100 | 5.1 / 13.5 | 4.2 / 5.4 | 4.7 / 6.0 | 16.1 / 31.0 |
+| 250 | 6.4 / 14.4 | 4.9 / 6.3 | 4.9 / 6.1 | 17.6 / 32.7 |
+| 500 | 6.4 / 14.5 | 6.7 / 8.5 | 5.2 / 6.5 | 12.3 / 32.7 |
+| 500 + ML ground truth | 7.2 / 11.2 | **15.0 / 17.2** | 7.1 / 8.4 | 23.9 / 33.1 |
+| 500 + ML, `depth_map: false` | 10.1 / 18.1 | 8.5 / 12.3 | 5.5 / 6.7 | 20.8 / 33.2 |
+
+The first number over 50% of the budget: **ML ground truth's render thread at 500 entities (p99 52%)**.
+`ml_training.depth_map` (default on) renders the scene a second time through a `SceneCapture`
+(`UCamSimCaptureComponent::CreateDepthCapture`; `families` 2 per frame): ~6.5 ms of render thread and
+~1.6 ms GPU at p50. Candidates: derive depth from the primary view's scene depth in the sensor graph
+(as `InstanceIdCS` does for masks) instead of a second render, or a depth interval > 1. The game-thread
+rise with depth off (p99 18.1 ms) is a single run and unexplained; repeat before acting on it. Found on
+the way: `stress_entity_rendering.py` and `test_entity_rendering.py` defaulted `--camera-id` to 0 while
+the canonical config's `camera_entity_id` is 1, so the camera never moved (fixed: camera 1, entities
+100+, gimbal level).
 
 **Linux, 2026-10-01** (Ubuntu 24.04, Core Ultra 9 285K, RTX 5080, driver 595.91.07, Vulkan SM6,
 NVENC, power profile `performance`; baseline `scripts/bench/baselines/linux-rtx5080-3b2-720p.json`,
