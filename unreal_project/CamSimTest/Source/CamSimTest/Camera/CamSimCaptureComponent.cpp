@@ -15,6 +15,9 @@
 #include "Entity/CamSimEntityManager.h"
 #include "GroundTruth/FEntityProjection.h"
 #include "GroundTruth/FGroundTruthCollector.h"
+#include "GroundTruth/StillWaterPlane.h"
+#include "Geospatial/CamSimGeospatialProvider.h"
+#include "Ocean/OceanSurface.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "Time/SimClock.h"
 #include "Sensor/SensorOptics.h"
@@ -454,6 +457,20 @@ TArray<FEntityAnnotationData> UCamSimCaptureComponent::BuildGroundTruthSnapshot(
 	return EntityMgr->GetEntitySnapshot(ViewProj);
 }
 
+FStillWaterPlane UCamSimCaptureComponent::ComputeWaterPlane(const FCamSimTelemetry& T) const
+{
+	const FOceanSurface* Ocean = Subsystem ? Subsystem->GetOceanSurface() : nullptr;   // null: ocean off
+	const FCamSimGeospatialProvider* Geo = Subsystem ? Subsystem->GetGeospatialProvider() : nullptr;
+	UWorld* World = GetWorld();
+	if (!Ocean || !Geo || !World) return FStillWaterPlane();
+	// As FOceanManager::Tick (live: ocean.max_radius_km is hot-reloadable; a bad value means the default).
+	double MaxRadiusKm = Subsystem->GetConfig().Ocean.MaxRadiusKm;
+	if (!FMath::IsFinite(MaxRadiusKm) || MaxRadiusKm <= 0.0) MaxRadiusKm = FCamSimConfig::FOceanConfig().MaxRadiusKm;
+	return CamSimGroundTruth::ComputeStillWaterPlane(*Ocean, T.Latitude, T.Longitude, T.Altitude,
+		T.FrameCenterLat, T.FrameCenterLon, T.FrameCenterLat != 0.0 || T.FrameCenterLon != 0.0, MaxRadiusKm,
+		[Geo, World](double Lat, double Lon, double AltM, FVector& Out) { return Geo->GeoToWorld(World, Lat, Lon, AltM, Out); });
+}
+
 void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 {
 	if (!Sensor || !bSensorGraph) return;       // no sensor graph: no frames (logged at startup)
@@ -474,12 +491,12 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	// slot like Telemetry — up to three frames are in flight in the readback
 	// ring, so this must not be shared collector state (ROADMAP: ground truth
 	// per-frame snapshots).
-	S.Entities = Subsystem ? BuildGroundTruthSnapshot() : TArray<FEntityAnnotationData>();
+	// Only frames the collector annotates (same FrameIdx and interval) get a snapshot and IDs.
+	const bool bAnnotated = (FrameIdx % static_cast<uint64>(IdIntervalFrames)) == 0;
+	S.Entities = (Subsystem && bAnnotated) ? BuildGroundTruthSnapshot() : TArray<FEntityAnnotationData>();
 	const uint32 Gen = ++NextGeneration;
 	S.Telemetry = Telemetry;
-	// IDs only on frames the collector annotates (same FrameIdx and interval).
-	S.bWantIds = IdReadbackPool.IsValidIndex(Slot) && IdReadbackPool[Slot]
-		&& (FrameIdx % static_cast<uint64>(IdIntervalFrames)) == 0;
+	S.bWantIds = bAnnotated && IdReadbackPool.IsValidIndex(Slot) && IdReadbackPool[Slot];
 	S.InstanceIds.Reset();
 	S.ReadyStreak     .Store(0, EMemoryOrder::Relaxed);
 	S.DepthReadyStreak.Store(0, EMemoryOrder::Relaxed);
@@ -520,13 +537,19 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	TAtomic<uint32>* IdGrabbed = &IdGrabbedGeneration[Slot];
 	FRHIGPUBufferReadback* Nv12Readback = Nv12ReadbackPool[Slot].Get();
 	FRHIGPUBufferReadback* IdReadback = S.bWantIds ? IdReadbackPool[Slot].Get() : nullptr;
-	const bool bWantIds = S.bWantIds;
+	FFrameGrabRequest Req;
+	Req.FrameIndex   = FrameIdx;
+	Req.Generation   = Gen;
+	Req.TargetIndex  = Slot;
+	Req.bInstanceIds = S.bWantIds;
+	// Still-water plane for the submerged-hull cut, at this frame's camera (game thread, doubles).
+	if (S.bWantIds) Req.WaterPlane = ComputeWaterPlane(Telemetry);
 	ENQUEUE_RENDER_COMMAND(CamSimRequestGrab)(
-		[Ext, Nv12Readback, IdReadback, bWantIds, Gen, FrameIdx, Slot, Grabbed, IdGrabbed, DepthRT, DepthReadback, EnqueueDepthCopy]
+		[Ext, Nv12Readback, IdReadback, Req, Grabbed, IdGrabbed, DepthRT, DepthReadback, EnqueueDepthCopy]
 		(FRHICommandListImmediate& RHICmdList)
 	{
 		if (!Ext) return;
-		Ext->PushRequest_RenderThread({ FrameIdx, Gen, Slot, bWantIds }, Nv12Readback, IdReadback, Grabbed, IdGrabbed);
+		Ext->PushRequest_RenderThread(Req, Nv12Readback, IdReadback, Grabbed, IdGrabbed);
 		// Depth (ML) comes from its own SceneCapture, copied directly.
 		EnqueueDepthCopy(RHICmdList, DepthRT, DepthReadback);
 	});

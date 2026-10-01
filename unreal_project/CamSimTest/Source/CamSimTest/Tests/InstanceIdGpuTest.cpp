@@ -64,8 +64,17 @@ namespace
 		return Tex;
 	}
 
+	/** The still-water cut's inputs (off by default). */
+	struct FWaterCut
+	{
+		bool       bOn = false;
+		FVector4f  Plane = FVector4f(0.0f, 0.0f, 1.0f, 0.0f);
+		FMatrix44f ClipToTranslatedWorld = FMatrix44f::Identity;
+	};
+
 	/** Upload, run AddInstanceIdPass over Rect of the textures, read the packed ids back. Empty on failure. */
-	TArray<uint32> RunInstanceIdOnGpu(const FIdTextures& Tex, FIntRect Rect, FIntPoint OutSize, const FSensorFrameParams& P)
+	TArray<uint32> RunInstanceIdOnGpu(const FIdTextures& Tex, FIntRect Rect, FIntPoint OutSize, const FSensorFrameParams& P,
+		const FWaterCut& Water = FWaterCut())
 	{
 		TArray<uint32> Result;
 		ENQUEUE_RENDER_COMMAND(CamSimInstanceIdGpuTest)([&](FRHICommandListImmediate& RHICmdList)
@@ -85,6 +94,9 @@ namespace
 				In.CustomStencil = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(Stencil));
 				In.DepthViewRect = Rect;
 				In.OutputSize = OutSize;
+				In.bWaterCut = Water.bOn;
+				In.WaterPlane = Water.Plane;
+				In.ClipToTranslatedWorld = Water.ClipToTranslatedWorld;
 				const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, In, P);
 				AddEnqueueCopyPass(GraphBuilder, &Rb, Ids, Bytes);
 				GraphBuilder.Execute();
@@ -295,5 +307,67 @@ bool FInstanceIdScaledDistortedTest::RunTest(const FString& Parameters)
 		TestEqual(*FString::Printf(TEXT("%s pass mismatches"), Axis == 0 ? TEXT("column") : TEXT("row")), Mismatches, 0);
 		TestTrue(TEXT("most output pixels map inside the rect"), InRange > W * H / 2);
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInstanceIdWaterCutTest, "CamSim.GPU.GroundTruth.InstanceId.StillWaterCut",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FInstanceIdWaterCutTest::RunTest(const FString& Parameters)
+{
+	if (SkipWithoutGpu(*this)) return true;
+	// Final review I2. A camera at the translated-world origin looking along +X (UE axes), reversed-Z infinite
+	// perspective; a tagged wall 10 m ahead spans every row, so it straddles the still-water plane z = -Zcut,
+	// put on the boundary between rows 15 and 16. Columns 8..15 are visible, 16..23 hidden behind an occluder.
+	// Expected: hidden texels below the plane leave amodal; visible texels below it stay in both channels;
+	// with the cut off nothing changes.
+	constexpr int32 W = 32, H = 24, Split = 16;
+	const double HalfFov = FMath::DegreesToRadians(30.0), MinZ = 10.0, D = 1000.0;
+	const FMatrix UeToView(FPlane(0, 0, 1, 0), FPlane(1, 0, 0, 0), FPlane(0, 1, 0, 0), FPlane(0, 0, 0, 1));
+	const FMatrix ViewProj = UeToView * FReversedZPerspectiveMatrix(HalfFov, double(W), double(H), MinZ);
+	const FMatrix ClipToWorld = ViewProj.Inverse();
+	const float WallZ = static_cast<float>(MinZ / D);   // device Z of a point D ahead (reversed, infinite far)
+	const double TanY = FMath::Tan(HalfFov) * H / W;
+	const double Zcut = -(1.0 - 2.0 * Split / H) * D * TanY;   // world z of the row-16 top edge (> 0 here)
+
+	FIdTextures Tex(W, H, 0.0f);
+	for (int32 Y = 0; Y < H; ++Y)
+	{
+		for (int32 X = 8; X < 24; ++X) Tex.Tag(X, Y, 5, WallZ, X < 16 ? WallZ : 0.5f);   // 0.5: occluder nearer
+	}
+	FSensorFrameParams P;
+	FWaterCut Cut;
+	Cut.bOn = true;
+	Cut.Plane = FVector4f(0.0f, 0.0f, 1.0f, static_cast<float>(Zcut));   // height = z + Zcut
+	Cut.ClipToTranslatedWorld = FMatrix44f(ClipToWorld);
+	const TArray<uint32> On = RunInstanceIdOnGpu(Tex, FIntRect(0, 0, W, H), FIntPoint(W, H), P, Cut);
+	const TArray<uint32> Off = RunInstanceIdOnGpu(Tex, FIntRect(0, 0, W, H), FIntPoint(W, H), P);
+	if (!TestEqual(TEXT("buffer size (on)"), On.Num(), W * H / 2) || !TestEqual(TEXT("buffer size (off)"), Off.Num(), W * H / 2)) return true;
+
+	int32 Dropped = 0, VisibleBelowKept = 0, Mismatches = 0;
+	for (int32 Y = 0; Y < H; ++Y)
+	{
+		for (int32 X = 0; X < W; ++X)
+		{
+			// CPU reconstruction (doubles) agrees with the hard-coded split.
+			const FVector4 Hc = ClipToWorld.TransformFVector4(FVector4((X + 0.5) / W * 2.0 - 1.0, 1.0 - (Y + 0.5) / H * 2.0, WallZ, 1.0));
+			const bool bBelow = Hc.Z / Hc.W + Zcut < 0.0;
+			TestEqual(*FString::Printf(TEXT("row %d below the plane on the CPU"), Y), bBelow, Y >= Split);
+			const bool bTagged = X >= 8 && X < 24, bVisible = X < 16;
+			const uint32 OffExpect = !bTagged ? 0u : ((bVisible ? 5u : 0u) | (5u << 8));
+			const uint32 OnExpect = (bTagged && !bVisible && Y >= Split) ? 0u : OffExpect;
+			Dropped += (OffExpect != 0 && OnExpect == 0) ? 1 : 0;
+			VisibleBelowKept += (bTagged && bVisible && Y >= Split) ? 1 : 0;
+			const uint32 GotOn = PixelOf(On, W, X, Y), GotOff = PixelOf(Off, W, X, Y);
+			if ((GotOn != OnExpect || GotOff != OffExpect) && ++Mismatches <= 20)
+			{
+				AddError(FString::Printf(TEXT("pixel (%d, %d): cut on 0x%04x (want 0x%04x), off 0x%04x (want 0x%04x)"),
+					X, Y, GotOn, OnExpect, GotOff, OffExpect));
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d hidden texels below still water dropped; %d visible ones below it kept; %d mismatches"),
+		Dropped, VisibleBelowKept, Mismatches));
+	TestEqual(TEXT("mismatches"), Mismatches, 0);
+	TestEqual(TEXT("hidden-below texels"), Dropped, 8 * (H - Split));
 	return true;
 }

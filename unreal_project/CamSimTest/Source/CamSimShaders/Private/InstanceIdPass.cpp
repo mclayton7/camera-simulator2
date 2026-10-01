@@ -17,6 +17,9 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCamSimInstanceIdParameters, )
 	SHADER_PARAMETER(float, FocalPx)
 	SHADER_PARAMETER(float, K1)
 	SHADER_PARAMETER(float, K2)
+	SHADER_PARAMETER(uint32, WaterCut)
+	SHADER_PARAMETER(FVector4f, WaterPlane)
+	SHADER_PARAMETER(FMatrix44f, ClipToTranslatedWorld)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepth)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, CustomDepth)
 	// FSceneTextureUniformParameters::CustomStencilTexture's declared type, so Task 7 binds it unchanged.
@@ -95,6 +98,9 @@ FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInpu
 	Pass->FocalPx       = P.FocalPx;
 	Pass->K1            = P.K1;
 	Pass->K2            = P.K2;
+	Pass->WaterCut      = In.bWaterCut ? 1u : 0u;
+	Pass->WaterPlane    = In.WaterPlane;
+	Pass->ClipToTranslatedWorld = In.ClipToTranslatedWorld;
 	Pass->SceneDepth    = In.SceneDepth;
 	Pass->CustomDepth   = In.CustomDepth;
 	Pass->CustomStencil = In.CustomStencil;

@@ -42,8 +42,10 @@ void FCamSimFrameGrabExtension::PushRequest_RenderThread(const FFrameGrabRequest
 }
 
 void FCamSimFrameGrabExtension::AddInstanceIdReadback_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
-	const FPostProcessMaterialInputs& Inputs, uint32 Gen, FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* IdGrabbed)
+	const FPostProcessMaterialInputs& Inputs, const FFrameGrabRequest& Req, FRHIGPUBufferReadback* IdReadback,
+	TAtomic<uint32>* IdGrabbed)
 {
+	const uint32 Gen = Req.Generation;
 	// The deferred renderer's scene textures (depth, custom depth, custom stencil)
 	// ride in the post-process inputs' scene-texture uniform buffer.
 	const FSceneTextureUniformParameters* St = Inputs.SceneTextures.SceneTextures
@@ -67,6 +69,16 @@ void FCamSimFrameGrabExtension::AddInstanceIdReadback_RenderThread(FRDGBuilder& 
 	// rect in scene-texture texels (TSR upscales only after the depth passes).
 	Ii.ViewUniformBuffer = View.ViewUniformBuffer.GetReference();
 	Ii.OutputSize        = CaptureSize;
+	// Still-water cut (final review I2): world (doubles) -> translated world with this view's pre-view
+	// translation, so only camera-relative values reach floats (LWC).
+	if (Req.WaterPlane.bValid)
+	{
+		const FVector N = Req.WaterPlane.Normal;
+		const FVector P = Req.WaterPlane.Point + View.ViewMatrices.GetPreViewTranslation();
+		Ii.bWaterCut  = true;
+		Ii.WaterPlane = FVector4f(FVector3f(N), static_cast<float>(-FVector::DotProduct(N, P)));
+		Ii.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetInvTranslatedViewProjectionMatrix());
+	}
 	const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, Ii, Params);
 
 	const uint32 IdBytes = static_cast<uint32>(CaptureSize.X * CaptureSize.Y * 2);  // 16 bits per pixel
@@ -175,7 +187,7 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunSensor_RenderThread(FRDGBuilder
 			// sees the generation, IdGrabbed already says whether an ID copy exists.
 			if (Req.bInstanceIds && T->IdReadback && T->IdGrabbed)
 			{
-				AddInstanceIdReadback_RenderThread(GraphBuilder, View, Inputs, Req.Generation, T->IdReadback, T->IdGrabbed);
+				AddInstanceIdReadback_RenderThread(GraphBuilder, View, Inputs, Req, T->IdReadback, T->IdGrabbed);
 			}
 			// Inline on the render thread: the generation is published only once
 			// the copy is really queued (the AddReadbackBufferPass lambda below

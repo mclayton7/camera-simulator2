@@ -17,6 +17,8 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Entity/CamSimEntity.h"
+#include "GroundTruth/StillWaterPlane.h"
+#include "Ocean/OceanSurface.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
@@ -603,5 +605,38 @@ bool FGroundTruthMeshLocalBoxTest::RunTest(const FString&)
 
 	GEngine->DestroyWorldContext(World);
 	World->DestroyWorld(false);
+	return true;
+}
+
+// I2 (final review): the still-water plane InstanceIdCS cuts with — sea level (geoid + tide, no waves) at the
+// ocean mesh's centre (frame centre when valid, else nadir), normal = local up; invalid without a sea level.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthStillWaterPlaneTest, "CamSim.GroundTruth.StillWaterPlane.GeoidTideAtCentre",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthStillWaterPlaneTest::RunTest(const FString&)
+{
+	// Geoid -32 m south of 37.801, -30 m north of it: tells the frame centre from the nadir.
+	FOceanSurface Ocean([](double Lat, double) { return TOptional<double>(Lat >= 37.801 ? -30.0 : -32.0); });
+	Ocean.SetBeaufort(6.0, 270.0, 0.5);   // waves must not move the still-water plane
+	Ocean.SetTideOffsetM(1.5);
+	// A flat stand-in for the georeference: east = +X, north = -Y (UE), up = +Z, metres -> cm.
+	auto Flat = [](double Lat, double Lon, double AltM, FVector& Out)
+	{
+		Out = FVector((Lon + 122.4) * 1.0e7, -(Lat - 37.8) * 1.0e7, AltM * 100.0);
+		return true;
+	};
+	const FStillWaterPlane Fc = CamSimGroundTruth::ComputeStillWaterPlane(Ocean, 37.8, -122.4, 200.0, 37.802, -122.4, true, 400.0, Flat);
+	TestTrue(TEXT("frame centre: valid"), Fc.bValid);
+	TestNearlyEqual(TEXT("frame centre: height = geoid + tide there"), Fc.Point.Z, -2850.0, 1e-6);
+	TestNearlyEqual(TEXT("frame centre: at the frame centre"), Fc.Point.Y, -20000.0, 1e-3);
+	TestTrue(TEXT("normal = up"), Fc.Normal.Equals(FVector::UpVector, 1e-9));
+
+	const FStillWaterPlane Nadir = CamSimGroundTruth::ComputeStillWaterPlane(Ocean, 37.8, -122.4, 200.0, 0.0, 0.0, false, 400.0, Flat);
+	TestTrue(TEXT("nadir: valid"), Nadir.bValid);
+	TestNearlyEqual(TEXT("nadir: height = geoid + tide at the nadir"), Nadir.Point.Z, -3050.0, 1e-6);
+
+	FOceanSurface NoGrid([](double, double) { return TOptional<double>(); });
+	TestFalse(TEXT("no sea level: no cut"), CamSimGroundTruth::ComputeStillWaterPlane(NoGrid, 37.8, -122.4, 200.0, 0.0, 0.0, false, 400.0, Flat).bValid);
+	auto NoGeo = [](double, double, double, FVector&) { return false; };
+	TestFalse(TEXT("no georeference: no cut"), CamSimGroundTruth::ComputeStillWaterPlane(Ocean, 37.8, -122.4, 200.0, 0.0, 0.0, false, 400.0, NoGeo).bValid);
 	return true;
 }

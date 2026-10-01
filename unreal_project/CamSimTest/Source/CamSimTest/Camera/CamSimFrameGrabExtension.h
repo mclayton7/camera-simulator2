@@ -68,7 +68,8 @@ private:
 	void ReadStats_RenderThread(FRDGBuilder& GraphBuilder, FRDGBufferRef Histogram, uint32 Serial);
 	/** Run InstanceIdCS on this view's scene textures and queue its copy into IdReadback (stores Gen in IdGrabbed). */
 	void AddInstanceIdReadback_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
-		const FPostProcessMaterialInputs& Inputs, uint32 Gen, FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* IdGrabbed);
+		const FPostProcessMaterialInputs& Inputs, const FFrameGrabRequest& Req, FRHIGPUBufferReadback* IdReadback,
+		TAtomic<uint32>* IdGrabbed);
 
 	struct FTargets
 	{

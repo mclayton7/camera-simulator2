@@ -25,6 +25,7 @@ class FCamSimFrameGrabExtension;
 class FCamSimSnapshotService;
 struct FPipelineLatencyTracker;
 struct FCamSimConfig;
+struct FStillWaterPlane;
 
 /**
  * Forward-declared deleter so the component can hold a
@@ -139,6 +140,8 @@ private:
 	void CreateDepthCapture(const FCamSimConfig& Cfg);
 	/** Build this frame's entity annotation snapshot (empty when the collector is off). */
 	TArray<FEntityAnnotationData> BuildGroundTruthSnapshot() const;
+	/** Still-water plane for InstanceIdCS's submerged-hull cut at this camera; invalid (no cut) when the ocean is off. */
+	FStillWaterPlane ComputeWaterPlane(const FCamSimTelemetry& Telemetry) const;
 	/** One render-thread poll per in-flight slot. */
 	void EnqueuePolls();
 	void EnqueuePoll(int32 Slot);

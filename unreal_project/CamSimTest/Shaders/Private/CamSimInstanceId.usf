@@ -1,6 +1,9 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 // Ground truth (ROADMAP 2.7): InstanceIdCS — per output pixel, which tagged entity is visible and which entity's
 // silhouette covers it, sampled at the same distorted source position as SensorCS. Integer ops only (Metal + Vulkan).
+// Still-water cut (final review I2): with WaterCut, an amodal pixel whose custom-depth point lies below the
+// still-water sea plane is dropped unless it is visible (visible => amodal always holds), so the submerged hull
+// is not part of the silhouette while wave crests (above still water) still occlude.
 // Known limitation: under TSR the depth/stencil are jittered at render resolution while the output colour is not,
 // so labels can be misregistered by up to ~0.5 render texel.
 
@@ -17,6 +20,9 @@ float2 HalfOut;         // 0.5 * W, 0.5 * H
 float  FocalPx;
 float  K1;
 float  K2;
+uint     WaterCut;               // 0: no cut (ocean off, no sea level)
+float4   WaterPlane;             // translated world (cm): height above still water = dot(xyz, P) + w
+float4x4 ClipToTranslatedWorld;  // inverse translated view-projection of the depth textures' view (reversed Z)
 Texture2D<float> SceneDepth;      // device Z, reversed (1 near, 0 far)
 Texture2D<float> CustomDepth;     // device Z of the tagged entities only
 Texture2D<uint2> CustomStencil;   // FSceneTextureUniformParameters::CustomStencilTexture's type; read as the engine does
@@ -59,6 +65,14 @@ uint IdAt(int2 P)
 	const float CustomZ = CustomDepth.Load(int3(T, 0));
 	// Reversed Z: larger is nearer. The entity is visible when nothing is nearer than its own surface.
 	const uint Visible = (CustomZ >= SceneZ * (1.0 - 1e-4)) ? Amodal : 0;
+	if (WaterCut != 0 && Visible == 0)
+	{
+		// The entity's own surface at this texel: texel centre in the view rect -> NDC, device Z = custom depth.
+		const float2 Uv = (float2(T - Min) + 0.5) / float2(Size);
+		const float4 H = mul(float4(Uv.x * 2.0 - 1.0, 1.0 - Uv.y * 2.0, CustomZ, 1.0), ClipToTranslatedWorld);
+		const float3 Pw = H.xyz / H.w;
+		if (dot(WaterPlane.xyz, Pw) + WaterPlane.w < 0.0) return 0;   // hidden and under still water: not silhouette
+	}
 	return Visible | (Amodal << 8);
 }
 
