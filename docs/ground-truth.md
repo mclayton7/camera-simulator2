@@ -49,7 +49,7 @@ Under `ml_training.output_dir`:
 |---|---|---|
 | `camsim_coco.jsonl` | `coco_export` (default on) | One JSON object per annotated frame (below). |
 | `annotations/frame_NNNNNNNN.xml` | `voc_export` (default off) | Pascal VOC, one file per annotated frame. |
-| `depth/depth_NNNNNNNN.png` | `depth_map` (default on) | 16-bit depth, 0 m → 0, `depth_far_plane_m` → 65535. |
+| `depth/depth_NNNNNNNN.png` | `depth_map` (default on) | 16-bit linear view depth (along the optical axis), 0 m → 0, `depth_far_plane_m` → 65535 (sky and anything farther clamp there). Taken from the primary view's scene depth by `InstanceIdCS` (same source texel as the masks: lens-distorted, FOV-matched, no second render); 0 = no source sample (outside a barrel-distorted frame). Written by its own task, at most 4 in flight (skips logged). |
 
 `NNNNNNNN` is the frame index (the COCO `frame_id`).
 
@@ -173,8 +173,8 @@ one past the last covered pixel (`xmax = x + w` of the COCO `bbox`).
   value in one frame (never expected; logged). A frame whose ID readback failed also falls
   back to projection for every entity. If no tagged mesh draws in a frame (e.g. a
   model still loading), its entities have no IDs in the image and are dropped from that frame.
-- **Depth map and KLV corners are still pinhole**: with `optics.k1`/`k2` ≠ 0 they drift from
-  the distorted image toward the edges (ROADMAP 3B.3). The 2D labels and `box3d.corners_px`
-  are distortion-aware.
+- **KLV corners are still pinhole**: with `optics.k1`/`k2` ≠ 0 they drift from the distorted
+  image toward the edges (ROADMAP 3B.3). The 2D labels, `box3d.corners_px` and (since
+  2026-10-01) the depth map are distortion-aware.
 - `truncation` clips the straight-edged hull of the 8 distorted corners: under strong
   distortion it is an approximation.

@@ -72,9 +72,11 @@ namespace
 		FMatrix44f ClipToTranslatedWorld = FMatrix44f::Identity;
 	};
 
-	/** Upload, run AddInstanceIdPass over Rect of the textures, read the packed ids back. Empty on failure. */
+	/** Upload, run AddInstanceIdPass over Rect of the textures, read the packed ids back. Empty on failure.
+	 *  With OutDepth, also the depth output (metres per output pixel) for InvDeviceZToWorldZ. */
 	TArray<uint32> RunInstanceIdOnGpu(const FIdTextures& Tex, FIntRect Rect, FIntPoint OutSize, const FSensorFrameParams& P,
-		const FWaterCut& Water = FWaterCut())
+		const FWaterCut& Water = FWaterCut(), TArray<float>* OutDepth = nullptr,
+		FVector4f InvDeviceZToWorldZ = FVector4f(0.0f, 0.0f, 0.0f, 0.0f))
 	{
 		TArray<uint32> Result;
 		ENQUEUE_RENDER_COMMAND(CamSimInstanceIdGpuTest)([&](FRHICommandListImmediate& RHICmdList)
@@ -84,7 +86,9 @@ namespace
 			FTextureRHIRef StencilTex = UploadStencil(RHICmdList, Tex.Stencil, Tex.Extent);
 
 			FRHIGPUBufferReadback Rb(TEXT("CamSimTestInstanceIds"));
+			FRHIGPUBufferReadback DepthRb(TEXT("CamSimTestDepth"));
 			const uint32 Bytes = static_cast<uint32>(OutSize.X * OutSize.Y / 2) * sizeof(uint32);
+			const uint32 DepthBytes = static_cast<uint32>(OutSize.X * OutSize.Y) * sizeof(float);
 			{
 				FRDGBuilder GraphBuilder(RHICmdList);
 				FInstanceIdInputs In;
@@ -97,8 +101,11 @@ namespace
 				In.bWaterCut = Water.bOn;
 				In.WaterPlanes = Water.Planes;
 				In.ClipToTranslatedWorld = Water.ClipToTranslatedWorld;
-				const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, In, P);
+				In.InvDeviceZToWorldZ = InvDeviceZToWorldZ;
+				FRDGBufferRef Depth = nullptr;
+				const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, In, P, OutDepth ? &Depth : nullptr);
 				AddEnqueueCopyPass(GraphBuilder, &Rb, Ids, Bytes);
+				if (OutDepth) AddEnqueueCopyPass(GraphBuilder, &DepthRb, Depth, DepthBytes);
 				GraphBuilder.Execute();
 			}
 			RHICmdList.SubmitAndBlockUntilGPUIdle();
@@ -106,6 +113,12 @@ namespace
 			Result.SetNumUninitialized(Bytes / sizeof(uint32));
 			FMemory::Memcpy(Result.GetData(), Rb.Lock(Bytes), Bytes);
 			Rb.Unlock();
+			if (OutDepth && DepthRb.IsReady())
+			{
+				OutDepth->SetNumUninitialized(OutSize.X * OutSize.Y);
+				FMemory::Memcpy(OutDepth->GetData(), DepthRb.Lock(DepthBytes), DepthBytes);
+				DepthRb.Unlock();
+			}
 		});
 		FlushRenderingCommands();
 		return Result;
@@ -370,5 +383,33 @@ bool FInstanceIdWaterCutTest::RunTest(const FString& Parameters)
 		Dropped, VisibleBelowKept, Mismatches));
 	TestEqual(TEXT("mismatches"), Mismatches, 0);
 	TestEqual(TEXT("hidden-below texels"), Dropped, 8 * (H - Split));
+	return true;
+}
+
+// ML depth map from the same pass (WRITE_DEPTH): linear view depth in metres of each output pixel's source texel.
+// Reversed-Z infinite perspective with near plane N cm: InvDeviceZToWorldZ = (0, 0, 1/N, 0), so depth = N / device Z.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInstanceIdDepthTest, "CamSim.GPU.GroundTruth.Depth.Synthetic",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FInstanceIdDepthTest::RunTest(const FString& Parameters)
+{
+	if (SkipWithoutGpu(*this)) return true;
+	constexpr int32 W = 8, H = 4;
+	constexpr float NearCm = 10.0f;
+	FIdTextures Tex(W, H, 0.0f);   // sky (device Z 0) everywhere ...
+	for (int32 X = 0; X < W; ++X) { Tex.SceneDepth[1 * W + X] = 0.001f * (X + 1); }   // ... except row 1
+	Tex.Tag(3, 2, 5, 0.5f, 0.5f);  // an entity texel: depth is the scene depth, tagged or not
+	FSensorFrameParams P;   // optics off
+	TArray<float> Depth;
+	const TArray<uint32> Words = RunInstanceIdOnGpu(Tex, FIntRect(0, 0, W, H), FIntPoint(W, H), P, FWaterCut(), &Depth,
+		FVector4f(0.0f, 0.0f, 1.0f / NearCm, 0.0f));
+	if (!TestEqual(TEXT("depth has one float per pixel"), Depth.Num(), W * H)) return true;
+	TestEqual(TEXT("ids still written"), PixelOf(Words, W, 3, 2), 5u | (5u << 8));
+	for (int32 X = 0; X < W; ++X)
+	{
+		const float Expect = NearCm / (0.001f * (X + 1)) * 0.01f;   // 100 m, 50 m, ...
+		TestNearlyEqual(*FString::Printf(TEXT("row 1 x=%d metres"), X), Depth[1 * W + X], Expect, Expect * 1e-4f);
+	}
+	TestNearlyEqual(TEXT("entity texel"), Depth[2 * W + 3], NearCm / 0.5f * 0.01f, 1e-5f);
+	TestEqual(TEXT("sky maps to the far value"), Depth[0], 1.0e7f);
 	return true;
 }

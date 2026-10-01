@@ -499,7 +499,7 @@ Per-frame ground truth for ML/ATR training (COCO JSONL, Pascal VOC XML, 16-bit d
 |-------|------|---------|---------|-------------|
 | `ml_training.enabled` | bool | `false` | `CAMSIM_ML_ENABLED` | Master toggle. |
 | `ml_training.output_dir` | string | `ml_output` | `CAMSIM_ML_OUTPUT_DIR` | Output directory (relative paths resolve from the binary directory). |
-| `ml_training.depth_map` | bool | `true` | `CAMSIM_ML_DEPTH_ENABLED` | 16-bit grayscale depth PNG per frame. |
+| `ml_training.depth_map` | bool | `true` | `CAMSIM_ML_DEPTH_ENABLED` | 16-bit grayscale depth PNG per annotated frame: linear view depth from the primary view's scene depth, aligned with the image and masks (no second render; `docs/ground-truth.md`). |
 | `ml_training.bounding_boxes` | bool | `true` | `CAMSIM_ML_BBOX_ENABLED` | Per-frame entity annotations. |
 | `ml_training.coco_export` | bool | `true` | `CAMSIM_ML_COCO_ENABLED` | COCO JSONL (one object per frame). |
 | `ml_training.voc_export` | bool | `false` | `CAMSIM_ML_VOC_ENABLED` | Pascal VOC XML per frame. |

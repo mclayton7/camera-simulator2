@@ -1107,8 +1107,16 @@ per point, single runs; p50 / p99 ms): 30.0 fps, 0 dropped, 0 frames > 66 ms at 
 The first number over 50% of the budget: **ML ground truth's render thread at 500 entities (p99 52%)**.
 `ml_training.depth_map` (default on) renders the scene a second time through a `SceneCapture`
 (`UCamSimCaptureComponent::CreateDepthCapture`; `families` 2 per frame): ~6.5 ms of render thread and
-~1.6 ms GPU at p50. Candidates: derive depth from the primary view's scene depth in the sensor graph
-(as `InstanceIdCS` does for masks) instead of a second render, or a depth interval > 1. Repeats (3 runs
+~1.6 ms GPU at p50. **Done 2026-10-01**: `InstanceIdCS` (`WRITE_DEPTH` permutation) writes the depth map
+from the primary view's scene depth at the masks' source texel, read back per slot like the IDs; the
+`SceneCapture` is gone (`families` 1). The old capture had **written blank maps** (every pixel at the far
+plane) since at least 3B.2, and never got the sensor FOV (90° default vs 60°): the new maps are the first
+correct ones, lens-distorted and FOV-matched (F-16 at 300 m reads 296.7 m). Real maps PNG-compress slowly
+enough to halve the capture rate when written inside the frame task (15 fps at 500 entities), so they are
+written by their own tasks (≤ 4 in flight; `UCamSimCaptureComponent::Shutdown` also now waits for the frame
+task). 500 entities + ML at 1080p, 2 runs: 30.0 fps, 0 dropped, depth for every annotated frame; render
+thread p50 / p99 9.2 / 11.6–12.3 ms (was 15.0 / 17.2), GPU 5.9 / 7.2 (was 7.1 / 8.4). Test:
+`CamSim.GPU.GroundTruth.Depth.Synthetic`. Repeats (3 runs
 each of the two ML points): render thread and GPU repeat within ~0.5 ms (depth on 14.8–15.0 / 17.0–17.4,
 off 8.3–8.5 / 11.7–12.3), but **the game thread at 500 entities varies run to run: p50 6.9–10.6 ms,
 p99 11.2–18.1 ms (up to 54% of the budget)**, independent of the depth map. So at 500 entities the game
@@ -1189,7 +1197,9 @@ Known issues and open points for the visual review:
   Mesa lavapipe (the CPU Docker path) **does not work** (2026-10-01, ROADMAP 1.15): lavapipe
   segfaults compiling UE 5.8 SM6 pipelines, before any CamSim shader. There is no CPU
   fallback, so a host without `IsSensorGraphSupported` produces no frames and `/ready` stays false. GPU tests
-  (`CamSim.GPU.*`) have not been run on Vulkan yet.
+  on Vulkan (2026-10-01, `run_gpu_tests.sh` now Linux-aware): `GroundTruth` 6/6, `Sensor` 10/10, `Entity` 2/2
+  pass; `CamSim.GPU.Ocean.MatchesCpu` crashes the run (Vulkan's `RHIReadSurfaceData` asserts "Unsupported
+  format [100]" on its `RTF_R32f` target via `ReadLinearColorPixels`): needs a buffer readback.
 - **Cut convergence**: a camera cut or mode switch snaps the AE on the first histogram whose
   serial is at or after the cut, but histograms already in flight from before the cut still
   arrive first and nudge the gain for one frame (within the 1–3-frame convergence above).
@@ -1200,8 +1210,8 @@ Carried to 3B.3 (found in the 3B.2 final review):
   (dark current also integrates over the frame time, not the AE's integration time).
 - **Distortion-aware ground truth**: bounding boxes, depth and the KLV frame corners are pinhole;
   with `optics.k1`/`k2` ≠ 0 the labels misalign with the distorted image toward the edges.
-  Boxes, masks and the projected 3D box are done in 2.7 (measured in the distorted output);
-  the depth map and KLV corners are still pinhole.
+  Boxes, masks and the projected 3D box are done in 2.7 (measured in the distorted output), the depth map
+  on 2026-10-01 (from `InstanceIdCS`); the KLV corners are still pinhole.
 - **AGC max gain cap**: the IR AGC has no ceiling on its display stretch, so a flat or black scene
   gets a huge display gain (amplified noise).
 - **Mode-switch AE transients**: skip histograms with `Serial < SnapAfterSerial` while a snap is
