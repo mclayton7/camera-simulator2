@@ -10,8 +10,8 @@ they contain special YAML characters.
 
 **Canonical file:** `deploy/camsim_config.yaml` is the single source of truth
 for all three deployment modes. `run.sh` copies it into the UE project
-directory before launch; the container `entrypoint.sh` copies it into the
-binary directory. Edit only `deploy/camsim_config.yaml`; the project-dir copy
+directory before launch; the Docker image bakes it into the project directory
+(`/opt/camsim/CamSimTest/camsim_config.yaml`, mount over it to override). Edit only `deploy/camsim_config.yaml`; the project-dir copy
 is generated and is listed in `.gitignore`.
 
 **Unknown keys:** a key that no setting reads (a typo such as `cigi_prot`, or a
@@ -714,6 +714,10 @@ CAMSIM_STRUCTURED_LOG_MAX_MB=100
 CAMSIM_HEALTH_HTTP_ENABLED=1
 CAMSIM_HEALTH_HTTP_PORT=8080
 CAMSIM_TRACK_PIPELINE_LATENCY=0
+
+# Docker entrypoint only (deploy/entrypoint.sh, docs/docker.md)
+CAMSIM_BINARY=                       # game binary (default: Development, then Shipping)
+CAMSIM_ALLOW_SOFTWARE_RENDERING=0    # 1 = try Mesa lavapipe without a GPU (crashes on Mesa <= 26.2)
 ```
 
 ## Phase 28 — Operational Hardening

@@ -35,12 +35,23 @@ if compgen -G "/dev/nvidia[0-9]*" >/dev/null; then
     fi
     echo "[entrypoint] Vulkan device: ${DEVICE}"
 else
+    echo "[entrypoint] No NVIDIA GPU passed in (run with --gpus all)." >&2
+    if [ "${CAMSIM_ALLOW_SOFTWARE_RENDERING:-0}" != "1" ]; then
+        echo "[entrypoint] CamSim needs a GPU: the sensor graph has no CPU fallback, and Mesa" >&2
+        echo "             lavapipe crashes compiling UE 5.8 SM6 pipelines (Mesa 25.2/26.2," >&2
+        echo "             docs/docker.md). CAMSIM_ALLOW_SOFTWARE_RENDERING=1 tries it anyway." >&2
+        exit 1
+    fi
     LVP_ICD="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -1 || true)"
-    echo "[entrypoint] No NVIDIA GPU passed in (run with --gpus all)."
-    echo "[entrypoint] Falling back to Mesa lavapipe (${LVP_ICD:-not found}): UNVERIFIED since"
-    echo "             ROADMAP 3B.2. Without the GPU sensor graph no frames are produced."
+    echo "[entrypoint] CAMSIM_ALLOW_SOFTWARE_RENDERING=1: trying Mesa lavapipe (${LVP_ICD:-not found})"
     [ -n "${LVP_ICD}" ] && export VK_ICD_FILENAMES="${LVP_ICD}"
-    EXTRA_ARGS+=("-ini:Engine:[/Script/Engine.RendererSettings]:r.RayTracing=False")
+    # UE's device selection skips CPU devices without -AllowSoftwareRendering.
+    # Lavapipe passes VP_UE_Vulkan_SM6 but not the RT profile (8 descriptor sets),
+    # and caps allocations at 128 MB, below Nanite's default 512 MB streaming pool
+    # (fatal at startup). CamSim draws no Nanite meshes.
+    EXTRA_ARGS+=("-AllowSoftwareRendering"
+                 "-ini:Engine:[ConsoleVariables]:r.Nanite.Streaming.StreamingPoolSize=64"
+                 "-ini:Engine:[/Script/Engine.RendererSettings]:r.RayTracing=False")
 fi
 
 # -----------------------------------------------------------------------

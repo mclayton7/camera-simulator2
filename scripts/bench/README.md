@@ -22,7 +22,24 @@ uv run --with numpy --with pillow python scripts/bench/run_bench.py --label smok
 ```
 
 Flags: `--skip-warmup` (only when the cache is
-already warm), `--trace` (Unreal Insights `trace.utrace`), `--out DIR`.
+already warm), `--trace` (Unreal Insights `trace.utrace`), `--out DIR`,
+`--env KEY=VALUE` (extra CamSim environment, repeatable; e.g.
+`CAMSIM_TRACK_PIPELINE_LATENCY=1` records the pipeline latency quantiles
+into `meta.latency`, `CAMSIM_ENCODER=libx264`).
+
+### Against the Docker image
+
+```bash
+uv run --with numpy --with pillow python scripts/bench/run_bench.py --label docker \
+  --docker camsim:latest [--env CAMSIM_ENCODER=libx264]
+```
+
+Runs the image (`docs/docker.md`) with `--gpus all`, host networking and the
+output directory mounted at `/bench`; named volumes `camsim-bench-data` and
+`camsim-bench-cache` keep the Cesium tile cache and driver shader cache warm
+between runs. Adds `container.log` to the output and `meta.runtime`, `meta.gpu`,
+`meta.encoder`, `meta.ready_s` to `results.json`. `--no-gpu` runs it without
+the GPU, which currently fails (ROADMAP 1.15: lavapipe can't run UE 5.8).
 Output (default `.cache/bench/<time>-<label>/`): `results.json` (`meta.sensor_path`
 is what CamSim's `/metrics` reported: `gpu` — the GPU sensor graph is the only path since 3B.2), `frames.jsonl`, `phases.json`,
 `shots/*.png` + `shots/*_sensor.png`, `slew.ts`.

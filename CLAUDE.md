@@ -59,7 +59,7 @@ camsim/
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (347 tests across 59 files)
+      Tests/                       # UE5 Automation tests (348 tests across 59 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -101,7 +101,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (347 tests across 59 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (348 tests across 59 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -146,7 +146,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Fixed framerate**: Engine locked to 30fps via DefaultEngine.ini (`bUseFixedFrameRate=True`). `DeltaTime` is therefore constant: measure frame time with the wall clock (the bench does)
 - **The sensor is the primary view** (the only render path since 3B.2, ROADMAP 3A): the game viewport renders it with TSR and `FCamSimFrameGrabExtension` grabs the result. `SceneCapture` only holds pose/FOV/post-process — it is never captured; don't call `CaptureScene()` on it. Screen messages are disabled, since the viewport canvas would be burned into the video
 - **Readback ring** (`Camera/ReadbackRing.h`): up to three captures in flight, delivered strictly in capture order; a full ring skips the new frame (counted as `EncoderBusy`). The ring carries the sensor graph's NV12 (1.5 bytes/px); the CPU only de-interleaves UV before encoding
-- **GPU sensor graph** (ROADMAP 3B; the only sensor path since 3B.2 — no CPU sensor model, no burned-in overlays): replaces UE's tonemapper via `ISceneViewExtension::EPostProcessingPass::ReplacingTonemapper`; UE exposure is manual and driven by the sensor AE (`AutoExposureBias` = sensor gain, so `View.PreExposure` tracks it and the shader divides it out). `UCamSimSubsystem::IsSensorGraphAvailable()` is decided once at startup (primary view, NV12 dims, `IsSensorGraphSupported`); without it (e.g. NullRHI) no frames are produced and `/ready` stays false. There is no CPU fallback. Linux/Vulkan is verified on NVIDIA (2026-09-30); Mesa (llvmpipe/lavapipe, the CPU Docker path) is unverified since 3B.2. Streams are tagged BT.709 transfer
+- **GPU sensor graph** (ROADMAP 3B; the only sensor path since 3B.2 — no CPU sensor model, no burned-in overlays): replaces UE's tonemapper via `ISceneViewExtension::EPostProcessingPass::ReplacingTonemapper`; UE exposure is manual and driven by the sensor AE (`AutoExposureBias` = sensor gain, so `View.PreExposure` tracks it and the shader divides it out). `UCamSimSubsystem::IsSensorGraphAvailable()` is decided once at startup (primary view, NV12 dims, `IsSensorGraphSupported`); without it (e.g. NullRHI) no frames are produced and `/ready` stays false. There is no CPU fallback. Linux/Vulkan is verified on NVIDIA (2026-09-30); Mesa lavapipe (the CPU Docker path) does not work: it segfaults compiling UE 5.8 SM6 pipelines (ROADMAP 1.15). Streams are tagged BT.709 transfer
 - **Physical sensor model** (ROADMAP 3B.2): one fused compute pass, `SensorCS` — optics (distortion resample, cos⁴ vignetting, PSF blur) → electrons → detector noise (photon: PRNU/shot/dark/DSNU/read, full-well clip, analog gain; microbolometer: temporal + pixel/column/row FPN) → ADC → defects → display → NV12. `CamSimSensorRef::Run` (`Sensor/SensorReference.cpp`) is the CPU reference: the shader mirrors it expression for expression, and `CamSim.GPU.Sensor.*` hold them to Y ≤ 1 DN, UV ≤ 2 DN. Change both together. Noise is a PCG hash of (x, y, frame, seed, stream) (`CamSimShaders/Public/SensorHash.h`), never a GPU RNG; round with `floor(x + 0.5)`, never HLSL `round`; no float atomics or wave intrinsics (portable to Vulkan)
 - **Sensor presets** (`Sensor/SensorPresets.cpp`): `sensor_modes.<mode>.preset` (`eo_hd_cmos`, `mwir_cooled` default IR, `lwir_uncooled`) fills optics/detector; `optics:`/`detector:` blocks override single fields. Physics tests `CamSim.Sensor.Physics.*` (16) check the reference against closed-form photon-transfer, FPN and PSF results — keep them passing when retuning presets
 - **Sensor AE clips at full well**: `FSensorController::ClipLinear` = 1.0 (normalised full scale = white after the knee). The PSF radius R = min(ceil(3σ_o)+1, 8); R ≥ 4 (σ_o > 2/3 px) switches to the large-tile shader and is over the 2 ms 1080p budget (a startup warning, not an error)
@@ -199,7 +199,8 @@ scripts/ci_validate.sh --docker camsim:latest   # end-to-end check on the GPU
 
 - Packaged Development build on Ubuntu 24.04; the NVIDIA driver comes from the host via the Container Toolkit (`NVIDIA_DRIVER_CAPABILITIES=all`: `graphics` = Vulkan, `video` = NVENC). Never install `libnvidia-*` in the image
 - The image needs `libegl1`: the NVIDIA Vulkan ICD dlopens `libEGL.so.1`, which the toolkit doesn't inject (else `ERROR_INCOMPATIBLE_DRIVER`)
-- The entrypoint detects the GPU by `/dev/nvidia*`: under CDI injection `NVIDIA_VISIBLE_DEVICES` reads `void` even with `--gpus all`. No GPU → Mesa lavapipe, UNVERIFIED since 3B.2
+- The entrypoint detects the GPU by `/dev/nvidia*`: under CDI injection `NVIDIA_VISIBLE_DEVICES` reads `void` even with `--gpus all`. No GPU → it refuses to start: lavapipe crashes compiling UE 5.8 SM6 pipelines (`CAMSIM_ALLOW_SOFTWARE_RENDERING=1` tries anyway)
 - Non-root user (uid 1000); `-userdir=/var/lib/camsim` puts `Saved/` and Cesium's tile cache on a volume
+- Never let BuildCookRun stage into `Saved/StagedBuilds/` (its default): once that directory exists, `run.sh` silently switches to packaged Shipping mode, so `--build-only` packages instead of building the editor and the bench/check scripts launch a stale package. `package_for_docker.sh` stages under `.cache/staging`
 - Assets loaded by path at runtime aren't found by the cook: list their directories in `DirectoriesToAlwaysCook` (`DefaultGame.ini`). The Game target needs `bEnableExceptions` (Editor targets force it on), so a packaging break can hide behind a clean editor build
 - Health: HTTP server on port `8080` exposes `GET /live`, `GET /health` (alias for `/live`), `GET /ready`, and `GET /metrics` (Prometheus format). Legacy `camsim_health.json` file also still written every 90 ticks for backward compatibility.

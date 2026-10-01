@@ -15,8 +15,8 @@
 # or: docker compose -f deploy/docker-compose.yml up
 #
 # Host requirements: NVIDIA driver + nvidia-container-toolkit
-# (docs/docker.md). Without a GPU the entrypoint falls back to Mesa lavapipe,
-# which is unverified since ROADMAP 3B.2 (no CPU sensor fallback).
+# (docs/docker.md). A GPU is required: Mesa lavapipe crashes compiling UE 5.8
+# SM6 pipelines, so the entrypoint refuses to start without one.
 
 FROM ubuntu:24.04
 
@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libglx0 \
         # vulkaninfo: the entrypoint logs the selected device
         vulkan-tools \
-        # Mesa lavapipe: CPU Vulkan fallback when no GPU is passed in
+        # Mesa lavapipe: only for CAMSIM_ALLOW_SOFTWARE_RENDERING=1 experiments
         mesa-vulkan-drivers \
         # SDL needs an X display even with -RenderOffScreen
         xvfb \

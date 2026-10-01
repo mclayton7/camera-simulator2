@@ -18,6 +18,13 @@ graph has no CPU fallback) and NVENC H.264/H.265 encoding.
 
 Docker Desktop (macOS/Windows) has no NVIDIA GPU passthrough; run natively there.
 
+**A GPU is required.** There is no CPU sensor path, and Mesa lavapipe (CPU Vulkan)
+can't run UE 5.8: it segfaults compiling the engine's SM6 pipelines (Mesa 25.2.8
+and 26.2.3, ROADMAP 1.15). Without a GPU the entrypoint exits with an error;
+`CAMSIM_ALLOW_SOFTWARE_RENDERING=1` makes it try lavapipe anyway (it passes
+`-AllowSoftwareRendering` and shrinks Nanite's streaming pool under lavapipe's
+128 MB allocation limit), for testing newer Mesa.
+
 ## Build
 
 ```bash
@@ -73,7 +80,7 @@ the same on the self-hosted runner.
 |---|---|
 | `vkCreateInstance failed with ERROR_INCOMPATIBLE_DRIVER` | The NVIDIA Vulkan ICD (`libGLX_nvidia.so.0`) dlopens `libEGL.so.1`, a distro package (`libegl1`) the toolkit does not inject. The image installs it. |
 | Entrypoint: "device node present but Vulkan found no device" | `NVIDIA_DRIVER_CAPABILITIES` lacks `graphics`. |
-| Entrypoint: "No NVIDIA GPU passed in" | No `--gpus` / device reservation. It falls back to Mesa lavapipe, unverified since ROADMAP 3B.2. |
+| Entrypoint: "No NVIDIA GPU passed in", exit 1 | No `--gpus` / device reservation (see "A GPU is required"). |
 | Encoder falls back to libx264 | `NVIDIA_DRIVER_CAPABILITIES` lacks `video` (no `libnvidia-encode`). |
 
 Notes:

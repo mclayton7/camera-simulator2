@@ -80,12 +80,16 @@ echo "==> Stage dest:    ${STAGE_DEST}"
 
 mkdir -p "${ARCHIVE_DIR}"
 
+# Stage under .cache/, not BuildCookRun's default Saved/StagedBuilds/: run.sh
+# switches to its packaged (Shipping) mode whenever that directory exists.
+
 "${RUN_UAT}" BuildCookRun \
     -project="${UE_PROJECT}" \
     -noP4 \
     -platform=Linux \
     -clientconfig=Development \
     -build -cook -stage -pak -archive \
+    -stagingdirectory="${REPO_ROOT}/.cache/staging" \
     -archivedirectory="${ARCHIVE_DIR}" \
     -utf8output
 
