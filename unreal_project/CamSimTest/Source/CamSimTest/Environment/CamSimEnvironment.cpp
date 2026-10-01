@@ -93,17 +93,6 @@ void ACamSimEnvironment::BeginPlay()
 	// Copy Phase 18 config once at startup
 	Phase18Cfg = Subsystem->GetConfig().Phase18;
 
-	// 18L: Populate runtime zone list from YAML-configured positions
-	for (const FCamSimConfig::FPhase18Config::FWeatherZoneConfig& ZCfg : Phase18Cfg.WeatherZoneConfigs)
-	{
-		FWeatherZone Z;
-		Z.ZoneID  = ZCfg.ZoneID;
-		Z.LatDeg  = ZCfg.LatDeg;
-		Z.LonDeg  = ZCfg.LonDeg;
-		Z.RadiusM = ZCfg.RadiusM;
-		ActiveWeatherZones.Add(Z);
-	}
-
 	// The sim clock is UTC: CesiumSunSky must not apply a zone or DST.
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 	if (CesiumSunSkyActor)
@@ -179,25 +168,21 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 		ApplyAtmosphere();
 	}
 
+	// Global weather only: regional weather (RegionId > 0) is not supported and is ignored.
 	FCigiWeatherState WxState;
+	FCigiWeatherState LatestGlobalWx;
 	bool bGotWeather = false;
 	while (Receiver->DequeueWeatherState(WxState))
 	{
-		if (WxState.RegionId > 0)
+		if (WxState.RegionId == 0)
 		{
-			FWeatherZoneParams ZParams;
-			ZParams.FogDensity    = FMath::Lerp(0.0f, 0.1f, WxState.Coverage / 100.0f);
-			ZParams.VisibilityM   = WxState.VisibilityRng;
-			ZParams.CloudCoverage = WxState.Coverage / 100.0f;
-			UpdateWeatherZone(WxState.RegionId, ZParams);
-		}
-		else
-		{
+			LatestGlobalWx = WxState;
 			bGotWeather = true;
 		}
 	}
 	if (bGotWeather)
 	{
+		WxState = LatestGlobalWx;
 		CurrentWeather = WxState;
 		if (!bReceivedWeather)
 		{
@@ -205,22 +190,8 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 				WxState.Coverage, WxState.BaseElev);
 		}
 		bReceivedWeather = true;
-
-		// 18L: capture fog baseline before weather apply (for zone blending reference)
-		if (HeightFog)
-		{
-			UExponentialHeightFogComponent* FogComp = HeightFog->GetComponent();
-			if (FogComp)
-			{
-				GlobalWeatherBaseline.FogDensity = FogComp->FogDensity;
-			}
-		}
-
 		ApplyWeather();
 	}
-
-	// 18L: Blend zone weather toward camera
-	BlendWeatherZones();
 
 	// Ocean (ROADMAP 2.6) — drain CIGI Wave Control queue
 	{
@@ -470,7 +441,6 @@ void ACamSimEnvironment::ApplyAtmosphere()
 	CachedAtmosSnapshot.AtmosphericVisibilityM = CurrentAtmosphere.Visibility;
 
 	ApplySecondFogLayer();
-	ApplySkyAtmosphericScattering();
 
 	UE_LOG(LogCamSim, Verbose,
 		TEXT("ACamSimEnvironment: visibility=%.0fm  fogDensity=%.6f"),
@@ -574,75 +544,9 @@ void ACamSimEnvironment::ApplyWeather()
 		}
 	}
 
-	ApplyGodRays();
-
 	UE_LOG(LogCamSim, Verbose,
 		TEXT("ACamSimEnvironment: weather coverage=%.0f%%  baseElev=%.0fm  thickness=%.0fm"),
 		CurrentWeather.Coverage, CurrentWeather.BaseElev, CurrentWeather.Thickness);
-}
-
-// -------------------------------------------------------------------------
-// Phase 18L: Weather zone blending
-// -------------------------------------------------------------------------
-
-void ACamSimEnvironment::SetCameraPosition(double LatDeg, double LonDeg)
-{
-	CameraLatDeg = LatDeg;
-	CameraLonDeg = LonDeg;
-}
-
-void ACamSimEnvironment::UpdateWeatherZone(uint16 RegionId, const FWeatherZoneParams& Params)
-{
-	for (FWeatherZone& Z : ActiveWeatherZones)
-	{
-		if (Z.ZoneID == static_cast<int32>(RegionId))
-		{
-			Z.Params = Params;
-			return;
-		}
-	}
-	// Zone not in runtime list — it may have a position configured in YAML.
-	// Ignore if not pre-configured (position-less zones cannot be blended).
-	UE_LOG(LogCamSim, Verbose,
-		TEXT("ACamSimEnvironment: RegionId %d has no YAML position config — ignoring zone update."),
-		static_cast<int32>(RegionId));
-}
-
-float ACamSimEnvironment::GreatCircleApproxM(double Lat1, double Lon1, double Lat2, double Lon2)
-{
-	// Flat-earth approximation, valid for radii < ~100 km
-	const double dLat = FMath::DegreesToRadians(Lat2 - Lat1);
-	const double dLon = FMath::DegreesToRadians(Lon2 - Lon1)
-	                  * FMath::Cos(FMath::DegreesToRadians((Lat1 + Lat2) * 0.5));
-	return static_cast<float>(FMath::Sqrt(dLat*dLat + dLon*dLon) * 6371000.0);
-}
-
-void ACamSimEnvironment::BlendWeatherZones()
-{
-	if (!Phase18Cfg.bWeatherZones || ActiveWeatherZones.IsEmpty()) return;
-
-	float                     BestAlpha  = 0.0f;
-	const FWeatherZoneParams* BestParams = nullptr;
-
-	for (const FWeatherZone& Z : ActiveWeatherZones)
-	{
-		const float DistM = GreatCircleApproxM(CameraLatDeg, CameraLonDeg, Z.LatDeg, Z.LonDeg);
-		const float Alpha = FMath::Clamp(1.0f - (DistM / Z.RadiusM), 0.0f, 1.0f);
-		if (Alpha > BestAlpha) { BestAlpha = Alpha; BestParams = &Z.Params; }
-	}
-
-	if (BestAlpha <= 0.0f || !BestParams) return;
-
-	// Blend fog
-	if (HeightFog)
-	{
-		UExponentialHeightFogComponent* FogComp = HeightFog->GetComponent();
-		if (FogComp)
-		{
-			FogComp->SetFogDensity(
-				FMath::Lerp(GlobalWeatherBaseline.FogDensity, BestParams->FogDensity, BestAlpha));
-		}
-	}
 }
 
 // -------------------------------------------------------------------------
@@ -670,40 +574,4 @@ void ACamSimEnvironment::ApplySecondFogLayer()
 	FogComp->SecondFogData.FogDensity      = FMath::Clamp(Phase18Cfg.FogDensity,       0.0f, 1.0f);
 	FogComp->SecondFogData.FogHeightFalloff = FMath::Clamp(Phase18Cfg.FogHeightFalloff, 0.0f, 1.0f);
 	FogComp->MarkRenderStateDirty();
-}
-
-void ACamSimEnvironment::ApplyGodRays()
-{
-	if (!SunLight || !Phase18Cfg.bGodRays) return;
-
-	UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(SunLight->GetLightComponent());
-	if (!LightComp) return;
-
-	LightComp->bEnableLightShaftBloom    = true;
-	LightComp->bEnableLightShaftOcclusion = true;
-	LightComp->LightShaftOverrideDirection = FVector::ZeroVector; // auto-from-sun
-
-	// Scale bloom tint intensity by config
-	const float Intensity = FMath::Clamp(Phase18Cfg.GodRayIntensity, 0.0f, 4.0f);
-	LightComp->BloomScale = Intensity;
-	LightComp->MarkRenderStateDirty();
-}
-
-void ACamSimEnvironment::ApplySkyAtmosphericScattering()
-{
-	if (!SkyAtmosphere || !Phase18Cfg.bAtmosphericScattering) return;
-
-	USkyAtmosphereComponent* AtmosComp = SkyAtmosphere->GetComponent();
-	if (!AtmosComp) return;
-
-	// Base Rayleigh scattering coefficient (UE default ~0.0331 /km at sea level)
-	// We multiply by the user's Rayleigh factor
-	const float RayleighBase = 0.0331f;
-	AtmosComp->RayleighScatteringScale = FMath::Clamp(Phase18Cfg.RayleighScattering * RayleighBase, 0.0f, 1.0f);
-
-	// Base Mie scattering coefficient (UE default ~0.003996 /km)
-	const float MieBase = 0.003996f;
-	AtmosComp->MieScatteringScale = FMath::Clamp(Phase18Cfg.MieScattering * MieBase, 0.0f, 1.0f);
-
-	AtmosComp->MarkRenderStateDirty();
 }

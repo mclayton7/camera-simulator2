@@ -5,11 +5,6 @@
 #include "CamSimTest.h"
 
 #include "Async/ParallelFor.h"
-#include "GenericPlatform/GenericPlatformFile.h"
-#include "HAL/FileManager.h"
-#include "HAL/PlatformFileManager.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
 
 FMultiViewFrameSink::FMultiViewFrameSink(const FCamSimConfig& InConfig)
 	: Config(InConfig)
@@ -53,38 +48,6 @@ bool FMultiViewFrameSink::Open()
 	{
 		UE_LOG(LogCamSim, Error, TEXT("FMultiViewFrameSink: no output views opened"));
 		return false;
-	}
-
-	bGroundTruthEnabled = Config.GroundTruth.bEnabled;
-	GroundTruthIntervalFrames = FMath::Max(1, Config.GroundTruth.IntervalFrames);
-	GroundTruthPath = Config.GroundTruth.OutputPath;
-	if (GroundTruthPath.IsEmpty())
-	{
-		GroundTruthPath = FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("camsim_groundtruth.jsonl"));
-	}
-	if (FPaths::IsRelative(GroundTruthPath))
-	{
-		GroundTruthPath = FPaths::ConvertRelativePathToFull(
-			FPaths::Combine(FPlatformProcess::BaseDir(), GroundTruthPath));
-	}
-	if (bGroundTruthEnabled)
-	{
-		// Phase 2: open a persistent append handle instead of using
-		// FFileHelper::SaveStringToFile per line — saves 30 open/close
-		// syscall cycles per second at 30 fps with ground truth on.
-		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-		PlatformFile.DeleteFile(*GroundTruthPath);
-		GroundTruthHandle_ = PlatformFile.OpenWrite(*GroundTruthPath, /*bAppend=*/true);
-		if (!GroundTruthHandle_)
-		{
-			UE_LOG(LogCamSim, Warning,
-				TEXT("FMultiViewFrameSink: could not open ground-truth sidecar at %s"), *GroundTruthPath);
-			bGroundTruthEnabled = false;
-		}
-		else
-		{
-			UE_LOG(LogCamSim, Log, TEXT("FMultiViewFrameSink: ground-truth sidecar enabled -> %s"), *GroundTruthPath);
-		}
 	}
 
 	bIsOpen = true;
@@ -141,24 +104,12 @@ void FMultiViewFrameSink::EncodeFrame(const FSensorFrame& Frame,
 	{
 		++SuccessfulFrameCount;
 	}
-
-	if (bGroundTruthEnabled && ((FrameIdx % static_cast<uint64>(GroundTruthIntervalFrames)) == 0))
-	{
-		WriteGroundTruthLine(Telemetry, FrameIdx, EncodedViews);
-	}
 }
 
 void FMultiViewFrameSink::Close()
 {
 	if (!bIsOpen) return;
 	bIsOpen = false;
-
-	// Phase 2: close the persistent ground-truth handle.
-	if (GroundTruthHandle_)
-	{
-		delete GroundTruthHandle_;
-		GroundTruthHandle_ = nullptr;
-	}
 
 	for (FViewRuntime& View : Views)
 	{
@@ -199,35 +150,6 @@ void FMultiViewFrameSink::BuildViewRuntimes()
 		}
 	}
 
-	// Phase 21D.2 — inject ATAK FMV output view
-	if (Config.Streaming.bAtakViewEnabled)
-	{
-		FCamSimConfig::FOutputViewConfig AtakView;
-		AtakView.ViewId       = 100; // ATAK view
-		AtakView.bEnabled     = true;
-		AtakView.MulticastAddr = Config.Streaming.AtakAddr;
-		AtakView.MulticastPort = Config.Streaming.AtakPort;
-		AtakView.VideoBitrate  = Config.Streaming.AtakBitrate;
-		AtakView.H264Preset    = TEXT("ultrafast");
-		AtakView.H264Tune      = TEXT("zerolatency");
-		AtakView.HFovDeg       = 0.0f;
-
-		FViewRuntime Runtime;
-		Runtime.ViewId = AtakView.ViewId;
-		Runtime.ViewConfig = Config;
-		Runtime.ViewConfig.MulticastAddr = AtakView.MulticastAddr;
-		Runtime.ViewConfig.MulticastPort = AtakView.MulticastPort;
-		Runtime.ViewConfig.VideoBitrate  = AtakView.VideoBitrate;
-		Runtime.ViewConfig.H264Preset    = AtakView.H264Preset;
-		Runtime.ViewConfig.H264Tune      = AtakView.H264Tune;
-		// Force ROVER compat on ATAK view for Baseline profile
-		Runtime.ViewConfig.Streaming.bRoverCompat = true;
-		Runtime.OutputHFovDeg = 0.0f;
-		Runtime.RouteLabel = FString::Printf(TEXT("udp://%s:%d [ATAK]"),
-			*AtakView.MulticastAddr, AtakView.MulticastPort);
-		Views.Add(MoveTemp(Runtime));
-	}
-
 	if (Views.Num() == 0)
 	{
 		FCamSimConfig::FOutputViewConfig DefaultView;
@@ -241,47 +163,6 @@ void FMultiViewFrameSink::BuildViewRuntimes()
 		DefaultView.HFovDeg = 0.0f;
 		AddRuntime(DefaultView);
 	}
-}
-
-void FMultiViewFrameSink::WriteGroundTruthLine(const FCamSimTelemetry& Telemetry,
-                                               uint64 FrameIdx,
-                                               int32 EncodedViewCount) const
-{
-	if (GroundTruthPath.IsEmpty()) return;
-
-	FString ViewsJson;
-	ViewsJson += TEXT("[");
-	for (int32 i = 0; i < Views.Num(); ++i)
-	{
-		ViewsJson += FString::Printf(TEXT("{\"view_id\":%d,\"route\":\"%s\"}"),
-			Views[i].ViewId, *Views[i].RouteLabel);
-		if (i + 1 < Views.Num()) ViewsJson += TEXT(",");
-	}
-	ViewsJson += TEXT("]");
-
-	const FString Line = FString::Printf(
-		TEXT("{\"frame\":%llu,\"timestamp_us\":%llu,\"lat\":%.8f,\"lon\":%.8f,\"alt_m\":%.3f,")
-		TEXT("\"yaw_deg\":%.3f,\"pitch_deg\":%.3f,\"roll_deg\":%.3f,")
-		TEXT("\"hfov_deg\":%.3f,\"vfov_deg\":%.3f,")
-		TEXT("\"gimbal_yaw_deg\":%.3f,\"gimbal_pitch_deg\":%.3f,\"gimbal_roll_deg\":%.3f,")
-		TEXT("\"slant_range_m\":%.3f,\"frame_center_lat\":%.8f,\"frame_center_lon\":%.8f,")
-		TEXT("\"sensor_mode\":%u,\"sensor_polarity\":%u,")
-		TEXT("\"encoded_views\":%d,\"configured_views\":%d,\"views\":%s}\n"),
-		FrameIdx, Telemetry.TimestampUs,
-		Telemetry.Latitude, Telemetry.Longitude, Telemetry.Altitude,
-		Telemetry.Yaw, Telemetry.Pitch, Telemetry.Roll,
-		Telemetry.HFovDeg, Telemetry.VFovDeg,
-		Telemetry.GimbalYaw, Telemetry.GimbalPitch, Telemetry.GimbalRoll,
-		Telemetry.SlantRangeM, Telemetry.FrameCenterLat, Telemetry.FrameCenterLon,
-		static_cast<unsigned>(Telemetry.SensorMode),
-		static_cast<unsigned>(Telemetry.SensorPolarity),
-		EncodedViewCount, Views.Num(), *ViewsJson);
-
-	// Phase 2: write through the persistent handle (opened in Open()).
-	if (!GroundTruthHandle_) return;
-
-	const FTCHARToUTF8 Utf8(*Line);
-	GroundTruthHandle_->Write(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
 }
 
 void FMultiViewFrameSink::ApplyDigitalZoomNv12(const TArray<uint8>& SourceNv12,

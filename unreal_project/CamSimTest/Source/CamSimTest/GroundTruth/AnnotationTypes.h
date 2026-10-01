@@ -10,14 +10,14 @@
  *
  * Per-entity annotation snapshot captured on the game thread.
  * Passed by value to the task thread alongside the pixel buffer.
- * Contains everything needed to write COCO/VOC bounding box records.
+ * Contains everything needed to write COCO bounding box records.
  */
 struct FEntityAnnotationData
 {
 	uint32  EntityId   = 0;      // session-unique annotation ID (FAnnotationIdAllocator), stable for the entity's life
 	uint16  EntityType = 0;
 	FString ClassName;       // from FEntityTypeEntry::ClassName; falls back to "type_NNNN"
-	FString Source;           // host source: "dis", "cigi", "scenario", ...
+	FString Source;           // host source: "dis", "cigi", ...
 	FString SourceId;         // the source's own ID: "1.1.3" (DIS site.app.entity), "7" (CIGI)
 
 	// Screen-space 2D bounding box in pixel coordinates (top-left origin).

@@ -14,7 +14,6 @@ class UCamSimSubsystem;
 class ACamSimEntity;
 class UWorld;
 class FEntityTypeTable;
-class FScenarioEngine;
 class FCigiHostAdapter;
 class FCesiumSurfaceProbe;
 
@@ -83,7 +82,7 @@ private:
 	UCamSimSubsystem*       Subsystem  = nullptr;
 	const FEntityTypeTable* TypeTable  = nullptr;
 
-	// Live entity actors. Each source (CIGI, DIS, scenario) has its own IDs.
+	// Live entity actors. Each source (CIGI, DIS) has its own IDs.
 	TMap<FEntityKey, ACamSimEntity*> EntityMap;
 
 	TUniquePtr<FCigiHostAdapter> CigiAdapter;
@@ -112,7 +111,6 @@ private:
 	/** Place attached (child) entities relative to their parents' current poses. */
 	void ResolveAttachedEntities();
 	static constexpr int32 MaxAttachDepth = 8;
-	void ProcessScenarioEntities();
 	void ApplyEntityCommand(const FEntityCommand& Command, double NowSeconds, bool bBypassRateLimit);
 	float GetEntityMaxUpdateRateHz(const FEntityKey& Key) const;
 
@@ -125,12 +123,4 @@ private:
 
 	// Runtime update throttling to reduce transform churn under large-entity loads.
 	TMap<FEntityKey, double> LastPoseApplySeconds;
-	TMap<uint16, double> LastScenarioUpdateSeconds;   // scenario entity IDs
-	uint64 ScenarioStartMicros = 0;   // sim time the scenario started
-	uint64 LastScenarioMicros  = 0;   // sim time of the previous scenario tick
-	double ScenarioLongitude   = 0.0; // for local solar time of day
-	TSet<uint16> ScenarioRemovedEntities;
-
-	// Phase 23: Scenario engine (waypoints, triggers, pattern-of-life)
-	TUniquePtr<FScenarioEngine> ScenarioEngine;
 };

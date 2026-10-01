@@ -326,7 +326,7 @@ bool FCigiQueryHandler::ResolvePoint(bool bEntityRelative, uint16 EntityId, doub
 uint16 FCigiQueryHandler::ResolveEntityId(const AActor* HitActor) const
 {
 	// Only the CIGI host's own entities: another source's ID would mean
-	// nothing to it (DIS and scenario entities are "not an entity").
+	// nothing to it (DIS entities are "not an entity").
 	const ACamSimEntity* Entity = Cast<ACamSimEntity>(HitActor);
 	if (Entity && Entity->Key.Source == EHostSource::Cigi && Entity->Key.Id <= MAX_uint16)
 	{

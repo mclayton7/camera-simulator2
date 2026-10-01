@@ -34,8 +34,7 @@ struct FCigiEntityState
 	// are meaningful). See FCigiHostClock.
 	double HostTimeSec = 0.0;
 
-	// Entity classification from CIGI EntityCtrlV3 — used by FCamSimParticleManager
-	// Kind=1 (Platform), Domain=1 (Air), Category=2=fixed-wing, Category=3=rotary-wing
+	// Entity classification from CIGI EntityCtrlV3 (DIS-style kind / domain / category)
 	uint8 EntityKind     = 0;
 	uint8 EntityDomain   = 0;
 	uint8 EntityCategory = 0;

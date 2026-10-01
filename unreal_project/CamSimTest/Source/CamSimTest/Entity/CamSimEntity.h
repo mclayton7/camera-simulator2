@@ -121,9 +121,6 @@ public:
 	/** Current damage state (0=intact, 1=damaged, 2=destroyed). */
 	uint8 GetDamageState() const { return DamageState; }
 
-	/** Configure gradual damage interpolation (Phase 22C). */
-	void SetDamageInterpolation(bool bEnabled, float RateSec);
-
 	// AActor interface
 	virtual void Tick(float DeltaTime) override;
 
@@ -206,12 +203,6 @@ private:
 
 	// Damage state (0=intact, 1=damaged, 2=destroyed)
 	uint8 DamageState = 0;
-
-	// Phase 22C: Damage transition interpolation
-	uint8 TargetDamageState    = 0;
-	float DamageBlendAlpha     = 1.0f;
-	bool  bDamageInterpolating = false;
-	float DamageInterpolationRate = 1.0f;
 
 	// Set to true after the first ApplyPose — suppresses the one-time world-location log
 	bool bPoseLogged = false;

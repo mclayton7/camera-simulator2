@@ -26,7 +26,6 @@ Four threads collaborate with explicit ownership boundaries:
 │                                   RateCtrlQueue                 │
 │                                   ArtPartQueue                  │
 │                                   CompCtrlQueue                 │
-│                                   scenario.entities             │
 │  • ACamSimEnvironment::Tick() — drains Celestial/Atmos/Weather  │
 │  • ACamSimCamera::Tick() (TG_PostUpdateWork, last) — View/Sensor│
 │      Ctrl, ArtPart queues; captures the frame                   │
@@ -52,7 +51,6 @@ Four threads collaborate with explicit ownership boundaries:
 │  Task Thread (pool)                                             │
 │  • Fan-out to one or more output views                          │
 │  • Per-view: NV12 de-interleave + libx264 + KLV + MPEG-TS send  │
-│  • Optional JSONL ground-truth sidecar write                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -145,19 +143,19 @@ receives `Tick()` calls without being an `AActor`.
 | `CIGI/CigiQueryHandler.h/.cpp` | Drain query queues, run UE line traces, stage responses via provider-neutral geospatial transforms |
 | `Geospatial/CamSimGeospatialProvider.h/.cpp` | Geospatial provider facade (Phase F foundation, Cesium adapter) |
 | `CIGI/CigiPacketTypes.h` | All CIGI struct definitions |
-| `Camera/CamSimCamera.h/.cpp` | Sensor actor: tick orchestration, CIGI view state, hot reload |
+| `Camera/CamSimCamera.h/.cpp` | Sensor actor: tick orchestration, CIGI view state |
 | `Camera/CamSimPlatformRig.h/.cpp` | Platform pose from CIGI, attachment, first-person view |
 | `Camera/CamSimCaptureComponent.h/.cpp` | Capture (grab request), async GPU readback, sensor model dispatch, encoder thread |
 | `Camera/CamSimFrameGrabExtension.h/.cpp` | Scene view extension: runs the GPU sensor graph in place of the tonemapper (primary view) and reads its NV12 output back into the readback ring |
 | `Camera/CamSimFrameStats.h/.cpp` | Per-frame render stats JSONL and scene-render counter (bench harness) |
 | `Health/CamSimSnapshotService.h/.cpp` | `GET /snapshot` and `GET /snapshot/sensor` (ROADMAP 3B): the next sensor-graph output frame (the NV12 that is encoded) as PNG; since 3B.2 both serve the same image (there is no pre-sensor frame) |
 | `Camera/CamSimTelemetryAssembler.h/.cpp` | Telemetry behind the KLV tags, boresight frame centre |
-| `Camera/CamSimStreamingController.h/.cpp` | Cesium streaming cameras, slew prefetch, adaptive SSE, terrain gate |
+| `Camera/CamSimStreamingController.h/.cpp` | Cesium streaming cameras, FOV-scaled culled SSE, terrain gate |
 | `Entity/CamSimEntityManager.h/.cpp` | Entity lifecycle management |
 | `Entity/CamSimEntity.h/.cpp` | Per-entity actor, DR, art parts, lights |
 | `Entity/EntityTypeTable.h/.cpp` | Type ID → asset path lookup |
 | `Environment/CamSimEnvironment.h/.cpp` | Sky, fog, weather from CIGI |
-| `Encoder/MultiViewFrameSink.h/.cpp` | Multi-view fan-out and optional ground-truth sidecar |
+| `Encoder/MultiViewFrameSink.h/.cpp` | Multi-view fan-out (per-view digital zoom) |
 | `Encoder/VideoEncoder.h/.cpp` | Per-view FFmpeg H.264 + MPEG-TS + KLV |
 | `Metadata/KlvBuilder.h/.cpp` | MISB ST 0601 KLV |
 | `Config/CamSimConfig.h/.cpp` | JSON + env var config |

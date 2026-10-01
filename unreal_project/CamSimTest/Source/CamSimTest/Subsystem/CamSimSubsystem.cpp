@@ -14,10 +14,8 @@
 #include "Encoder/IFrameSink.h"
 #include "Metadata/KlvBuilder.h"        // FKlvBuilder::SetSecurityMetadata (Phase 12A)
 #include "GroundTruth/FGroundTruthCollector.h"
-#include "Environment/CamSimParticleManager.h"
 #include "DIS/DisReceiver.h"
 #include "DIS/DisEntityAdapter.h"
-#include "Streaming/CotSender.h"
 #include "Logging/CamSimJsonLogger.h"
 #include "Diagnostics/PipelineLatencyTracker.h"
 #include "Health/CamSimHealthServer.h"
@@ -33,7 +31,6 @@
 #include "DynamicRHI.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "Misc/ScopeRWLock.h"
 #include "CesiumIonServer.h"
 #include "Cesium3DTileset.h"
 #include "EngineUtils.h"
@@ -62,10 +59,8 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCigiQueryHandler>    QueryHandler;
 	TUniquePtr<FCamSimGeospatialProvider> GeospatialProvider;
 	TUniquePtr<FGroundTruthCollector>     GroundTruthCollector;
-	TUniquePtr<FCamSimParticleManager>    ParticleManager;
 	TUniquePtr<FDisReceiver>             DisReceiver;
 	TUniquePtr<FDisEntityAdapter>        DisAdapter;
-	TUniquePtr<FCotSender>               CotSender;
 	TUniquePtr<FCamSimJsonLogger>        JsonLogger;
 	TUniquePtr<FPipelineLatencyTracker>  LatencyTracker;
 	TUniquePtr<FCamSimHealthServer>     HealthServer;
@@ -89,7 +84,6 @@ struct UCamSimSubsystem::FSubsystemImpl
 	uint32 WatchdogLastCheckTick    = 0;
 	uint32 WatchdogReconnectCount   = 0;  // total, reported in health/metrics
 	uint32 WatchdogConsecutiveReconnects = 0;  // since frames last flowed; bounded by watchdog_max_reconnects
-	uint32 HealthFileTick           = 0;
 
 	// Runtime health snapshot counters
 	uint32 HealthLastTick           = 0;
@@ -102,9 +96,6 @@ struct UCamSimSubsystem::FSubsystemImpl
 
 	// IG mode: 0=Standby, 1=Operate
 	uint8  IGMode                   = 0;
-
-	// Prometheus metrics
-	uint32 PrometheusLastTick       = 0;
 
 	// §10.4 metrics: rolling-1-second FPS measurement (updated from Tick).
 	uint32 FpsLastSampleFrameCntr     = 0;
@@ -126,14 +117,11 @@ struct UCamSimSubsystem::FSubsystemImpl
 		GeospatialProvider.Reset();
 		if (GroundTruthCollector) { GroundTruthCollector->Close(); }
 		GroundTruthCollector.Reset();
-		ParticleManager.Reset();
 		if (CigiSender) CigiSender->Close();
 		CigiSender.Reset();
 		if (VideoEncoder) VideoEncoder->Close();
 		VideoEncoder.Reset();
 		EntityManager.Reset();
-		if (CotSender) CotSender->Close();
-		CotSender.Reset();
 		DisAdapter.Reset();
 		if (DisReceiver) DisReceiver->Stop();
 		DisReceiver.Reset();
@@ -210,11 +198,6 @@ FCamSimSnapshotService* UCamSimSubsystem::GetSensorSnapshotService() const
 	return Impl ? Impl->SensorSnapshotService.Get() : nullptr;
 }
 
-FCamSimParticleManager* UCamSimSubsystem::GetParticleManager() const
-{
-	return ImplGet(Impl, &FSubsystemImpl::ParticleManager);
-}
-
 FDisReceiver* UCamSimSubsystem::GetDisReceiver() const
 {
 	return ImplGet(Impl, &FSubsystemImpl::DisReceiver);
@@ -223,11 +206,6 @@ FDisReceiver* UCamSimSubsystem::GetDisReceiver() const
 FDisEntityAdapter* UCamSimSubsystem::GetDisAdapter() const
 {
 	return ImplGet(Impl, &FSubsystemImpl::DisAdapter);
-}
-
-FCotSender* UCamSimSubsystem::GetCotSender() const
-{
-	return ImplGet(Impl, &FSubsystemImpl::CotSender);
 }
 
 FPipelineLatencyTracker* UCamSimSubsystem::GetLatencyTracker() const
@@ -275,35 +253,6 @@ bool UCamSimSubsystem::GetEntityGeoPose(const FEntityKey& Key, CamSimFrames::FGe
 	return IsValid(Entity) && Entity->GetGeoPose(OutPose);
 }
 
-void UCamSimSubsystem::HotReloadConfig(const FCamSimConfig& NewCfg)
-{
-	{
-		// Write-lock the swap so a non-game-thread reader calling
-		// GetConfigSnapshot() either sees the old struct whole or the new
-		// struct whole — never a torn nested TMap mid-assignment.
-		FRWScopeLock Lock(ConfigLock_, SLT_Write);
-
-		// Preserve fields that cannot change without a restart.
-		FCamSimConfig Reloaded = NewCfg;
-		FCamSimConfig::KeepRestartOnlySettings(Config, Reloaded);
-		Config = MoveTemp(Reloaded);
-	}
-
-	// Phase 22A: Re-parse entity types on hot-reload (no config lock — own data)
-	EntityTypeTable.HotReload();
-	EntityTypeTable.PreloadGltfMeshes();
-
-	// Refresh the cached tileset list in case the hot-reload spawned or
-	// destroyed any tilesets, then reapply Cesium tuning so runtime edits to
-	// SSE / cache / culling / descendant-limit take effect without reloading
-	// the level.
-	RefreshCachedTilesets();
-	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Config);
-
-	// Ocean (ROADMAP 2.6): re-apply the hot-reloadable wave fields.
-	ApplyOceanConfig(Config.Ocean);
-}
-
 void UCamSimSubsystem::RefreshCachedTilesets()
 {
 	CachedTilesets_.Reset();
@@ -325,12 +274,6 @@ const TArray<TWeakObjectPtr<ACesium3DTileset>>& UCamSimSubsystem::GetCachedTiles
 		const_cast<UCamSimSubsystem*>(this)->RefreshCachedTilesets();
 	}
 	return CachedTilesets_;
-}
-
-TSharedRef<const FCamSimConfig, ESPMode::ThreadSafe> UCamSimSubsystem::GetConfigSnapshot() const
-{
-	FRWScopeLock Lock(ConfigLock_, SLT_ReadOnly);
-	return MakeShared<const FCamSimConfig, ESPMode::ThreadSafe>(Config);
 }
 
 void UCamSimSubsystem::StoreCesiumIonServer(UCesiumIonServer* Server)
@@ -520,7 +463,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	// Phase 28G: pipeline latency tracker
 	if (Config.Performance.bTrackPipelineLatency)
 	{
-		const int32 BufSize = static_cast<int32>(Config.Performance.OutputFrameRateHz * 10.0f);
+		const int32 BufSize = static_cast<int32>(Config.FrameRate * 10.0f);
 		Impl->LatencyTracker = MakeUnique<FPipelineLatencyTracker>(BufSize);
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: pipeline latency tracking enabled (buffer=%d)"), BufSize);
 	}
@@ -558,13 +501,14 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 				const int32 EntityCount = ImplPtr->EntityManager
 					? ImplPtr->EntityManager->GetEntityCount() : 0;
 
-				int32 FrameDropsTotal = 0;
+				int32 DropsEncoderBusy = 0, DropsReadbackTimeout = 0, DropsSocketError = 0, SensorStatsStale = 0;
 				if (ACamSimCamera* Cam = Camera_.Get())
 				{
-					if (Cam->IsTrackingFrameDrops())
-					{
-						FrameDropsTotal = Cam->GetFrameDropStats().Total();
-					}
+					const FFrameDropStats& D = Cam->GetFrameDropStats();
+					DropsEncoderBusy     = D.EncoderBusy.Load();
+					DropsReadbackTimeout = D.ReadbackTimeout.Load();
+					DropsSocketError     = D.SocketError.Load();
+					SensorStatsStale     = D.SensorStatsStale.Load();
 				}
 
 				FString Body;
@@ -588,7 +532,17 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 				Body += TEXT("# HELP camsim_frame_drops_total Total frame drops across all categories.\n");
 				Body += TEXT("# TYPE camsim_frame_drops_total counter\n");
-				Body += FString::Printf(TEXT("camsim_frame_drops_total %d\n"), FrameDropsTotal);
+				Body += FString::Printf(TEXT("camsim_frame_drops_total %d\n"),
+					DropsEncoderBusy + DropsReadbackTimeout + DropsSocketError);
+				Body += TEXT("# HELP camsim_frame_drops_by_reason_total Frame drops by cause.\n");
+				Body += TEXT("# TYPE camsim_frame_drops_by_reason_total counter\n");
+				Body += FString::Printf(TEXT("camsim_frame_drops_by_reason_total{reason=\"encoder_busy\"} %d\n"), DropsEncoderBusy);
+				Body += FString::Printf(TEXT("camsim_frame_drops_by_reason_total{reason=\"readback_timeout\"} %d\n"), DropsReadbackTimeout);
+				Body += FString::Printf(TEXT("camsim_frame_drops_by_reason_total{reason=\"socket_error\"} %d\n"), DropsSocketError);
+				// Not a frame drop: the sensor histogram went stale and AE held its gain.
+				Body += TEXT("# HELP camsim_sensor_stats_stale_total Frames whose sensor histogram was stale (AE held).\n");
+				Body += TEXT("# TYPE camsim_sensor_stats_stale_total counter\n");
+				Body += FString::Printf(TEXT("camsim_sensor_stats_stale_total %d\n"), SensorStatsStale);
 
 				Body += TEXT("# HELP camsim_cigi_packets_total Total CIGI packets received.\n");
 				Body += TEXT("# TYPE camsim_cigi_packets_total counter\n");
@@ -667,18 +621,6 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			Config.DIS.Port, Config.DIS.ExerciseId);
 	}
 
-	// Start CoT sender (Phase 21D.1)
-	if (Config.Streaming.bCotEnabled)
-	{
-		Impl->CotSender = MakeUnique<FCotSender>(Config);
-		if (!Impl->CotSender->Open())
-		{
-			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: CoT sender failed to open"));
-		}
-		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: CoT enabled (addr=%s:%d interval=%.1fs)"),
-			*Config.Streaming.CotAddr, Config.Streaming.CotPort, Config.Streaming.CotIntervalSec);
-	}
-
 	// Start FFmpeg encoder / MPEG-TS muxer(s)
 	Impl->VideoEncoder = MakeUnique<FMultiViewFrameSink>(Config);
 	if (!Impl->VideoEncoder->Open())
@@ -718,11 +660,6 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	{
 		UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: ground truth collector failed to open"));
 	}
-
-	// Create particle effect manager (Phase 18F/G/H/I)
-	Impl->ParticleManager = MakeUnique<FCamSimParticleManager>(this);
-	Impl->ParticleManager->Initialize(Config);
-	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: particle manager created"));
 
 	// Ocean surface (ROADMAP 2.6): sea level (EGM96 + tide) and the active wave set.
 	if (Config.Ocean.bEnabled)
@@ -852,24 +789,6 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 	if (Impl->QueryHandler)
 	{
 		Impl->QueryHandler->Tick(DeltaTime);
-	}
-
-	// Tick particle effect manager (Phase 18F/G/H/I)
-	if (Impl->ParticleManager)
-	{
-		Impl->ParticleManager->Tick(DeltaTime);
-	}
-
-	// Tick CoT sender (Phase 21D.1)
-	if (Impl->CotSender)
-	{
-		// Get telemetry from camera if available
-		FCamSimTelemetry CotTelemetry;
-		if (ACamSimCamera* Cam = Camera_.Get())
-		{
-			CotTelemetry = Cam->GetCurrentTelemetry();
-		}
-		Impl->CotSender->Tick(DeltaTime, CotTelemetry);
 	}
 
 	// Determine IG operating mode (Phase 12D):
@@ -1015,169 +934,6 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		Impl->HealthLastSuccessFrame = EncoderSuccess;
 		Impl->HealthLastRxPacketCount = RxPackets;
 		Impl->HealthLastWallSec = NowSec;
-	}
-
-	// Write structured health JSON every 90 ticks (~3s at 30fps) for Docker HEALTHCHECK
-	if (Impl->FrameCntr > 0 && (Impl->FrameCntr - Impl->HealthFileTick) >= 90)
-	{
-		const uint64 EncOk = (Encoder && Encoder->IsOpen())
-			? Encoder->GetSuccessfulFrameCount() : 0;
-		const uint64 CigiRx = Impl->CigiReceiver ? Impl->CigiReceiver->GetReceivedPacketCount() : 0;
-		const uint32 LastHost = Impl->CigiReceiver ? Impl->CigiReceiver->GetLastHostFrame() : 0;
-		const double UptimeSec = FPlatformTime::Seconds() - Impl->StartTimeSec;
-
-		FString HealthJson = FString::Printf(
-			TEXT("{\"frame\":%u,\"encoder_ok\":%s,\"frames_encoded\":%llu,\"cigi_rx\":%llu,\"dropped\":%llu,\"watchdog_reconnects\":%u,\"uptime_s\":%.1f,\"last_host_frame\":%u,\"terrain_ready\":%s"),
-			Impl->FrameCntr,
-			(Encoder && Encoder->IsOpen()) ? TEXT("true") : TEXT("false"),
-			EncOk,
-			CigiRx,
-			Camera_.Get() ? Camera_->GetDroppedFrameCount() : 0ull,
-			Impl->WatchdogReconnectCount,
-			UptimeSec,
-			LastHost,
-			(Camera_.Get() && Camera_->IsTerrainReady()) ? TEXT("true") : TEXT("false"));
-		if (bSensorGraphAvailable)
-		{
-			HealthJson += TEXT(",\"sensor_path\":\"gpu\"");
-		}
-
-		// Phase 27B — append per-category frame drop stats when tracking is enabled
-		if (ACamSimCamera* Cam = Camera_.Get())
-		{
-			if (Cam->IsTrackingFrameDrops())
-			{
-				const FFrameDropStats& D = Cam->GetFrameDropStats();
-				HealthJson += FString::Printf(
-					TEXT(",\"frame_drops\":{\"encoder_busy\":%d,\"readback_timeout\":%d,\"socket_error\":%d,\"sensor_stats_stale\":%d,\"total\":%d}"),
-					D.EncoderBusy.Load(), D.ReadbackTimeout.Load(), D.SocketError.Load(), D.SensorStatsStale.Load(), D.Total());
-			}
-		}
-		// Phase 28G: pipeline latency percentiles
-		if (Impl->LatencyTracker)
-		{
-			auto P = Impl->LatencyTracker->ComputePercentiles();
-			HealthJson += FString::Printf(
-				TEXT(",\"latency_us\":{\"readback_p50\":%.0f,\"readback_p95\":%.0f,\"readback_p99\":%.0f,")
-				TEXT("\"sensor_p50\":%.0f,\"sensor_p95\":%.0f,\"sensor_p99\":%.0f,")
-				TEXT("\"encode_p50\":%.0f,\"encode_p95\":%.0f,\"encode_p99\":%.0f,")
-				TEXT("\"total_p50\":%.0f,\"total_p95\":%.0f,\"total_p99\":%.0f}"),
-				P.ReadbackUs[0], P.ReadbackUs[1], P.ReadbackUs[2],
-				P.SensorUs[0], P.SensorUs[1], P.SensorUs[2],
-				P.EncodeUs[0], P.EncodeUs[1], P.EncodeUs[2],
-				P.TotalUs[0], P.TotalUs[1], P.TotalUs[2]);
-		}
-		HealthJson += TEXT("}");
-
-		// Dispatch the SaveStringToFile off the game thread — rewriting the
-		// file every 3 s shouldn't cost game-thread frame time. Task scheduler
-		// serialises background tasks so we won't race ourselves.
-		// Packaged builds (Docker) write next to the executable. When running
-		// through the editor binary that directory is the shared engine
-		// install, so use the project's Saved/ instead.
-		static const FString HealthPath = []
-		{
-			const FString BaseDir = FPaths::ConvertRelativePathToFull(FPlatformProcess::BaseDir());
-			const bool bEngineBinary = FPaths::IsUnderDirectory(BaseDir,
-				FPaths::ConvertRelativePathToFull(FPaths::EngineDir()));
-			return FPaths::Combine(bEngineBinary ? FPaths::ProjectSavedDir() : BaseDir,
-				TEXT("camsim_health.json"));
-		}();
-		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-			[Body = MoveTemp(HealthJson), Path = HealthPath]()
-		{
-			if (!FFileHelper::SaveStringToFile(Body, *Path))
-			{
-				UE_LOG(LogCamSim, Warning,
-					TEXT("UCamSimSubsystem: failed to write health file %s"), *Path);
-			}
-		});
-		Impl->HealthFileTick = Impl->FrameCntr;
-	}
-
-	// Write Prometheus-compatible metrics file (Phase 12D)
-	if (!Config.PrometheusMetricsPath.IsEmpty() && Impl->FrameCntr > 0
-		&& (Impl->FrameCntr - Impl->PrometheusLastTick) >= 90)
-	{
-		const uint64 EncOk = (Encoder && Encoder->IsOpen())
-			? Encoder->GetSuccessfulFrameCount() : 0;
-		const uint64 CigiRx = Impl->CigiReceiver ? Impl->CigiReceiver->GetReceivedPacketCount() : 0;
-		const double UptimeSec = FPlatformTime::Seconds() - Impl->StartTimeSec;
-
-		FString Prom = FString::Printf(
-			TEXT("# HELP camsim_frame_count Total game ticks\n"
-			     "# TYPE camsim_frame_count counter\n"
-			     "camsim_frame_count %u\n"
-			     "# HELP camsim_encoder_frames_total Total successfully encoded frames\n"
-			     "# TYPE camsim_encoder_frames_total counter\n"
-			     "camsim_encoder_frames_total %llu\n"
-			     "# HELP camsim_encoder_ok Whether encoder is open\n"
-			     "# TYPE camsim_encoder_ok gauge\n"
-			     "camsim_encoder_ok %d\n"
-			     "# HELP camsim_cigi_rx_total Total CIGI packets received\n"
-			     "# TYPE camsim_cigi_rx_total counter\n"
-			     "camsim_cigi_rx_total %llu\n"
-			     "# HELP camsim_uptime_seconds Uptime in seconds\n"
-			     "# TYPE camsim_uptime_seconds gauge\n"
-			     "camsim_uptime_seconds %.1f\n"
-			     "# HELP camsim_watchdog_reconnects_total Total encoder watchdog reconnects\n"
-			     "# TYPE camsim_watchdog_reconnects_total counter\n"
-			     "camsim_watchdog_reconnects_total %u\n"
-			     "# HELP camsim_ig_mode IG operating mode (0=Standby 1=Operate)\n"
-			     "# TYPE camsim_ig_mode gauge\n"
-			     "camsim_ig_mode %u\n"),
-			Impl->FrameCntr,
-			EncOk,
-			(Encoder && Encoder->IsOpen()) ? 1 : 0,
-			CigiRx,
-			UptimeSec,
-			Impl->WatchdogReconnectCount,
-			static_cast<uint32>(Impl->IGMode));
-
-		// Phase 28G: append pipeline latency metrics
-		if (Impl->LatencyTracker)
-		{
-			auto P = Impl->LatencyTracker->ComputePercentiles();
-			Prom += FString::Printf(
-				TEXT("# HELP camsim_latency_readback_us Readback latency microseconds\n"
-				     "# TYPE camsim_latency_readback_us gauge\n"
-				     "camsim_latency_readback_us{quantile=\"0.5\"} %.0f\n"
-				     "camsim_latency_readback_us{quantile=\"0.95\"} %.0f\n"
-				     "camsim_latency_readback_us{quantile=\"0.99\"} %.0f\n"
-				     "# HELP camsim_latency_sensor_us Sensor pipeline latency microseconds\n"
-				     "# TYPE camsim_latency_sensor_us gauge\n"
-				     "camsim_latency_sensor_us{quantile=\"0.5\"} %.0f\n"
-				     "camsim_latency_sensor_us{quantile=\"0.95\"} %.0f\n"
-				     "camsim_latency_sensor_us{quantile=\"0.99\"} %.0f\n"
-				     "# HELP camsim_latency_encode_us Encode latency microseconds\n"
-				     "# TYPE camsim_latency_encode_us gauge\n"
-				     "camsim_latency_encode_us{quantile=\"0.5\"} %.0f\n"
-				     "camsim_latency_encode_us{quantile=\"0.95\"} %.0f\n"
-				     "camsim_latency_encode_us{quantile=\"0.99\"} %.0f\n"
-				     "# HELP camsim_latency_total_us Total pipeline latency microseconds\n"
-				     "# TYPE camsim_latency_total_us gauge\n"
-				     "camsim_latency_total_us{quantile=\"0.5\"} %.0f\n"
-				     "camsim_latency_total_us{quantile=\"0.95\"} %.0f\n"
-				     "camsim_latency_total_us{quantile=\"0.99\"} %.0f\n"),
-				P.ReadbackUs[0], P.ReadbackUs[1], P.ReadbackUs[2],
-				P.SensorUs[0], P.SensorUs[1], P.SensorUs[2],
-				P.EncodeUs[0], P.EncodeUs[1], P.EncodeUs[2],
-				P.TotalUs[0], P.TotalUs[1], P.TotalUs[2]);
-		}
-
-		// Same async-dispatch pattern as the health file — the 90-tick cadence
-		// is slow enough that background tasks won't pile up.
-		const FString PromPath = Config.PrometheusMetricsPath;
-		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-			[Body = MoveTemp(Prom), Path = PromPath]()
-		{
-			if (!FFileHelper::SaveStringToFile(Body, *Path))
-			{
-				UE_LOG(LogCamSim, Warning,
-					TEXT("UCamSimSubsystem: failed to write prometheus metrics %s"), *Path);
-			}
-		});
-		Impl->PrometheusLastTick = Impl->FrameCntr;
 	}
 
 	// Refresh the /metrics cache on the game thread at ~1 Hz. HTTP scrapers

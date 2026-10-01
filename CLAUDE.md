@@ -53,13 +53,13 @@ camsim/
       Entity/                      # Actor lifecycle, dead-reckoning, articulated parts
       Environment/                 # Sky, fog, weather, day/night
       Geospatial/                  # Cesium terrain queries, WGS84 conversions
-      GroundTruth/                 # COCO/VOC annotations from rendered instance masks (bbox, OBB, visibility, RLE, box3d), depth maps
+      GroundTruth/                 # COCO annotations from rendered instance masks (bbox, OBB, visibility, RLE, box3d), depth maps
       Ocean/                       # Sea level + Gerstner waves (FOceanWaves), ocean mesh, MPC writes
       Metadata/                    # MISB ST 0601/ST 0102 KLV builder
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (348 tests across 59 files)
+      Tests/                       # UE5 Automation tests (312 tests across 55 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -101,7 +101,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (348 tests across 59 files, all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (312 tests across 55 files, all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -205,4 +205,4 @@ scripts/ci_validate.sh --docker camsim:latest   # end-to-end check on the GPU
 - Non-root user (uid 1000); `-userdir=/var/lib/camsim` puts `Saved/` and Cesium's tile cache on a volume
 - Never let BuildCookRun stage into `Saved/StagedBuilds/` (its default): once that directory exists, `run.sh` silently switches to packaged Shipping mode, so `--build-only` packages instead of building the editor and the bench/check scripts launch a stale package. `package_for_docker.sh` stages under `.cache/staging`
 - Assets loaded by path at runtime aren't found by the cook: list their directories in `DirectoriesToAlwaysCook` (`DefaultGame.ini`). The Game target needs `bEnableExceptions` (Editor targets force it on), so a packaging break can hide behind a clean editor build
-- Health: HTTP server on port `8080` exposes `GET /live`, `GET /health` (alias for `/live`), `GET /ready`, and `GET /metrics` (Prometheus format). Legacy `camsim_health.json` file also still written every 90 ticks for backward compatibility.
+- Health: HTTP server on port `8080` exposes `GET /live`, `GET /health` (alias for `/live`), `GET /ready`, and `GET /metrics` (Prometheus format).

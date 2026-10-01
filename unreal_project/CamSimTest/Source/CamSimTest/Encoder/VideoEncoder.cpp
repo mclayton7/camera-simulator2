@@ -97,23 +97,8 @@ bool FVideoEncoder::Open()
 		return false;
 	}
 
-	// Phase 21E.1 — ROVER PID override
-	if (Config.Streaming.bRoverCompat)
-	{
-		VideoStream->id = Config.Streaming.RoverVideoPid;
-		KlvStream->id   = Config.Streaming.RoverKlvPid;
-		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: ROVER compat — video PID=0x%04X klv PID=0x%04X"),
-			Config.Streaming.RoverVideoPid, Config.Streaming.RoverKlvPid);
-	}
-
 	// Write MPEG-TS header
-	AVDictionary* MuxOpts = nullptr;
-	if (Config.Streaming.bRoverCompat)
-	{
-		av_dict_set(&MuxOpts, "mpegts_pmt_start_pid", "4096", 0);
-	}
-	Ret = avformat_write_header(FmtCtx, Config.Streaming.bRoverCompat ? &MuxOpts : nullptr);
-	if (MuxOpts) av_dict_free(&MuxOpts);
+	Ret = avformat_write_header(FmtCtx, nullptr);
 	if (Ret < 0)
 	{
 		LogFfmpegError(Ret, TEXT("avformat_write_header"));
@@ -124,9 +109,7 @@ bool FVideoEncoder::Open()
 
 	const TCHAR* CodecLabel = Config.VideoCodec.ToLower().Contains(TEXT("265"))
 		? TEXT("H.265") : TEXT("H.264");
-	const float LogEffectiveFps = (Config.Performance.OutputFrameRateHz > 0.0f)
-		? FMath::Clamp(Config.Performance.OutputFrameRateHz, 1.0f, 120.0f)
-		: Config.FrameRate;
+	const float LogEffectiveFps = FMath::Clamp(Config.FrameRate, 1.0f, 120.0f);
 	UE_LOG(LogCamSim, Log,
 		TEXT("FVideoEncoder: %s %dx%d @ %.0ffps  bitrate=%d bps  preset=%s  tune=%s  -> %s"),
 		CodecLabel, Config.CaptureWidth, Config.CaptureHeight, LogEffectiveFps,
@@ -231,16 +214,6 @@ void FVideoEncoder::ApplyEncoderOptions(bool bWantH265)
 		// Signal CBR HRD so downstream links and decoders see a constant rate.
 		av_opt_set(VideoCodecCtx->priv_data, "nal-hrd", "cbr", 0);
 	}
-
-	// Phase 21E.1 — ROVER Baseline profile override.
-	if (Config.Streaming.bRoverCompat && !bUsingNvenc && !bWantH265)
-	{
-		VideoCodecCtx->profile = AV_PROFILE_H264_CONSTRAINED_BASELINE;
-		// libx264 takes "baseline" + constraint flags; VT names the profile directly.
-		av_opt_set(VideoCodecCtx->priv_data, "profile",
-			bUsingVideoToolbox ? "constrained_baseline" : "baseline", 0);
-		UE_LOG(LogCamSim, Log, TEXT("FVideoEncoder: ROVER Baseline profile set"));
-	}
 }
 
 bool FVideoEncoder::TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265)
@@ -260,9 +233,7 @@ bool FVideoEncoder::TryOpenVideoCodec(const AVCodec* Codec, bool bWantH265)
 	VideoCodecCtx->width       = Config.CaptureWidth;
 	VideoCodecCtx->height      = Config.CaptureHeight;
 	VideoCodecCtx->pix_fmt     = AV_PIX_FMT_YUV420P;
-	const float EffectiveFps = (Config.Performance.OutputFrameRateHz > 0.0f)
-		? FMath::Clamp(Config.Performance.OutputFrameRateHz, 1.0f, 120.0f)
-		: Config.FrameRate;
+	const float EffectiveFps = FMath::Clamp(Config.FrameRate, 1.0f, 120.0f);
 	VideoCodecCtx->time_base    = AVRational{1, (int)FMath::RoundToInt(EffectiveFps)};
 	VideoCodecCtx->framerate    = AVRational{(int)FMath::RoundToInt(EffectiveFps), 1};
 	VideoCodecCtx->bit_rate     = Config.VideoBitrate;

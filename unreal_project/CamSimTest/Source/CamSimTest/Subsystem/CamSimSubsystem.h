@@ -19,10 +19,8 @@ class FCigiQueryHandler;
 class FCamSimGeospatialProvider;
 class FGroundTruthCollector;
 class FCamSimSnapshotService;
-class FCamSimParticleManager;
 class FDisReceiver;
 class FDisEntityAdapter;
-class FCotSender;
 class FOceanSurface;
 class ACamSimCamera;
 class ACesium3DTileset;
@@ -72,16 +70,14 @@ public:
 	FCamSimSnapshotService* GetSnapshotService() const;
 	/** GET /snapshot/sensor service (ROADMAP 3B); null unless operational.snapshot_endpoint_enabled. */
 	FCamSimSnapshotService* GetSensorSnapshotService() const;
-	FCamSimParticleManager* GetParticleManager() const;
 	FDisReceiver*          GetDisReceiver()     const;
 	FDisEntityAdapter*     GetDisAdapter()      const;
-	FCotSender*            GetCotSender()       const;
 	FPipelineLatencyTracker* GetLatencyTracker() const;
 
 	/** The sea (ROADMAP 2.6); nullptr when ocean.enabled is off or the EGM96 grid is missing. */
 	FOceanSurface*       GetOceanSurface();
 	const FOceanSurface* GetOceanSurface() const;
-	/** Apply the hot-reloadable ocean fields (Beaufort, direction, choppiness). */
+	/** Apply the configured waves (Beaufort, direction, choppiness). */
 	void ApplyOceanConfig(const FCamSimConfig::FOceanConfig& Cfg);
 
 	/** Store the transient UCesiumIonServer created by ApplyCesiumBackendConfig.
@@ -90,10 +86,8 @@ public:
 	void StoreCesiumIonServer(UCesiumIonServer* Server);
 
 	/**
-	 * Return the live config. Game-thread-only. Cross-thread readers should
-	 * either (a) snapshot the fields they need at construction, as the
-	 * receivers and encoder do, or (b) call GetConfigSnapshot() which copies
-	 * under the same lock that HotReloadConfig takes when swapping.
+	 * The config, loaded once in Initialize. Cross-thread readers snapshot the
+	 * fields they need at construction, as the receivers and encoder do.
 	 */
 	const FCamSimConfig&    GetConfig()        const { return Config; }
 	const FEntityTypeTable& GetEntityTypeTable() const { return EntityTypeTable; }
@@ -126,24 +120,7 @@ public:
 	 */
 	static bool CanRunSensorGraph(const FCamSimConfig& Cfg, FString& OutWhy);
 
-	/**
-	 * Thread-safe snapshot of the current config. Takes the hot-reload
-	 * read lock, returns a shared copy that the caller can keep for the
-	 * duration of its work without worrying about a concurrent HotReloadConfig
-	 * mutating nested TMap fields (e.g. SensorModeConfigs).
-	 */
-	TSharedRef<const FCamSimConfig, ESPMode::ThreadSafe> GetConfigSnapshot() const;
-
-	/**
-	 * Phase 27D — Hot-reload: replace mutable config fields at runtime.
-	 * Immutable fields (CigiPort, MulticastAddr, VideoCodec) are preserved
-	 * from the current config and not overwritten. Serialised via ConfigLock_
-	 * so non-game-thread readers that go through GetConfigSnapshot() observe
-	 * a coherent struct.
-	 */
-	void HotReloadConfig(const FCamSimConfig& NewCfg);
-
-	// Phase 27B — camera registration for health JSON frame drop stats
+	// Phase 27B — camera registration for /metrics frame drop stats
 	void             RegisterCamera(ACamSimCamera* Camera);
 	ACamSimCamera*   GetCamera() const;
 
@@ -157,14 +134,13 @@ public:
 
 	/**
 	 * Phase 3: cached tileset pointer list. Populated lazily on first access
-	 * (and refreshable on demand) so per-tick adaptive-SSE / tile-prefetch
-	 * loops in ACamSimCamera::Tick don't run TActorIterator every frame.
+	 * (and refreshable on demand) so per-tick loops in ACamSimCamera::Tick
+	 * don't run TActorIterator every frame.
 	 * TWeakObjectPtr handles destroyed-tileset cleanup naturally.
 	 */
 	const TArray<TWeakObjectPtr<ACesium3DTileset>>& GetCachedTilesets() const;
 
-	/** Force a refresh of the cached tileset list (e.g. after a hot-reload
-	 *  that creates new tilesets). Must be called on the game thread. */
+	/** Force a refresh of the cached tileset list. Must be called on the game thread. */
 	void RefreshCachedTilesets();
 
 private:
@@ -173,8 +149,6 @@ private:
 	bool             bGroundTruthMaskAvailable = false;
 	bool             bGroundTruthDepthAvailable = false;
 	FEntityTypeTable EntityTypeTable;
-	/** Serialises HotReloadConfig writes against cross-thread Config snapshot reads. */
-	mutable FRWLock  ConfigLock_;
 
 	// Phase 27B — weak reference to the camera actor (game thread only)
 	TWeakObjectPtr<ACamSimCamera> Camera_;

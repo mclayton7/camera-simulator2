@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Config/CamSimConfig.h"   // FCamSimConfig::FOpticalRealismConfig (nested)
 
 class APlayerController;
 struct FPostProcessSettings;
@@ -37,9 +36,8 @@ namespace CamSimRender
 	void RefreshPlayerView(APlayerController* PC, float DeltaSeconds);
 
 	/**
-	 * Motion blur on only when optical realism and its motion blur are both
-	 * enabled; otherwise explicitly off. Left alone, UE's default (on, amount
-	 * 0.5) smears every gimbal slew even with optical realism disabled.
+	 * Motion blur explicitly off. Left alone, UE's default (on, amount 0.5)
+	 * smears every gimbal slew.
 	 */
-	void ApplyMotionBlur(const FCamSimConfig::FOpticalRealismConfig& O, FPostProcessSettings& PP, FEngineShowFlags& Flags);
+	void DisableMotionBlur(FPostProcessSettings& PP, FEngineShowFlags& Flags);
 }

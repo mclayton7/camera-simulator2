@@ -14,7 +14,7 @@ struct FCamSimTelemetry;
  * IAnnotationWriter
  *
  * Pure-virtual interface for per-frame ground-truth annotation output.
- * Implementations: FCocoAnnotationWriter (17G), FVocAnnotationWriter (17H).
+ * Implementation: FCocoAnnotationWriter (17G).
  * Future: FSemanticSegWriter (17B), FInstanceSegWriter (17C).
  *
  * All Write() calls happen on the background task thread, serialised by

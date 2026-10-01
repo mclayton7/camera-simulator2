@@ -54,7 +54,6 @@ public:
 
 	// Phase 27B — drop stats for the health JSON
 	const FFrameDropStats& GetFrameDropStats() const { return CaptureComp->GetFrameDropStats(); }
-	bool IsTrackingFrameDrops() const { return CaptureComp->IsTrackingFrameDrops(); }
 
 	/** Frames dropped because the encoder thread's queue was full. */
 	uint64 GetDroppedFrameCount() const { return CaptureComp->GetDroppedFrameCount(); }
@@ -78,7 +77,7 @@ public:
 	/** Current platform geodetic pose (orientation in local NEU). */
 	bool GetPlatformGeoPose(CamSimFrames::FGeoPose& OutPose) const { return Platform.GetPose(OutPose); }
 
-	/** Snapshot of the current telemetry for external consumers (e.g. CoT sender). */
+	/** Snapshot of the current telemetry for external consumers. */
 	FCamSimTelemetry GetCurrentTelemetry() const { return Telemetry.Get(); }
 
 	/** Sensor component (for the Sensor Extended Response, opcode 107). */
@@ -137,21 +136,11 @@ private:
 
 	FPipelineLatencyTracker* LatencyTracker = nullptr;
 
-	// Phase 27D — config hot reload. The mtime stat runs on a background task
-	// (slow storage must not block the game thread); the next tick consumes
-	// bHotReloadFileChanged and reloads on the game thread.
-	float     HotReloadAccumSec = 0.0f;
-	FDateTime LastConfigMTime = FDateTime::MinValue();
-	TAtomic<bool> bHotReloadFileChanged { false };
-	TAtomic<bool> bHotReloadStatInFlight { false };
-
 	uint64 TickCount            = 0;
 	double LastHeartbeatWallSec = 0.0;
 
 	/** CIGI View Definition, Sensor Control, View Control / Art Part → sensor state. */
 	void ApplyCigiViewState(float DeltaTime);
-	/** Focus depth of field at the slant range (Phase 15E). */
-	void UpdateAutoFocus();
 	void EmitHeartbeatIfDue();
 	/** Append this tick's render stats (ROADMAP 3A). */
 	void RecordFrameStats();
@@ -164,6 +153,4 @@ private:
 	FVector PrevViewLocCm = FVector::ZeroVector;
 	FQuat   PrevViewRot   = FQuat::Identity;
 	bool    bHasPrevView  = false;
-	/** A parse failure keeps the current config and lets the tick carry on. */
-	void PollHotReloadConfig(float DeltaTime);
 };

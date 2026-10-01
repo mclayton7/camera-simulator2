@@ -57,9 +57,6 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 {
 	Sensor    = InSensor;
 	Subsystem = InSubsystem;
-	bTrackFrameDrops = Cfg.Performance.bTrackFrameDropsByCategory;
-	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: FrameDropTracking=%s"),
-		bTrackFrameDrops ? TEXT("enabled") : TEXT("disabled"));
 
 	Sensor->FOVAngle = Cfg.HFovDeg;
 
@@ -120,9 +117,8 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 	// Persistent encoder thread (decouples the sensor model from encoding).
 	if (IFrameSink* Enc = Subsystem->GetVideoEncoder())
 	{
-		const float OutputFps = (Cfg.Performance.OutputFrameRateHz > 0.0f) ? Cfg.Performance.OutputFrameRateHz : Cfg.FrameRate;
 		// Reset(new …): MakeUnique's default deleter can't convert to ours.
-		EncoderThread.Reset(new FEncoderThread(Enc, OutputFps));
+		EncoderThread.Reset(new FEncoderThread(Enc, Cfg.FrameRate));
 		EncoderThread->Start();
 		if (LatencyTracker) EncoderThread->SetLatencyTracker(LatencyTracker);
 	}
@@ -189,50 +185,10 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 	// the grabbed frame. Screenshots and movie dumps suppress it the same way.
 	GAreScreenMessagesEnabled = false;
 
-	// 15A motion blur: always explicit (off unless optical realism enables it),
-	// on both the capture and the primary view.
-	CamSimRender::ApplyMotionBlur(Cfg.OpticalRealism, PP, Sensor->ShowFlags);
-	if (ViewFlags) ViewFlags->SetMotionBlur(Sensor->ShowFlags.MotionBlur != 0);
-
-	// Phase 15 — GPU-side optical realism
-	if (Cfg.OpticalRealism.bEnabled)
-	{
-		const auto& O = Cfg.OpticalRealism;
-		Sensor->ShowFlags.SetBloom(O.bBloom);
-		if (ViewFlags) ViewFlags->SetBloom(O.bBloom);  // 15C
-		if (O.bBloom)
-		{
-			PP.bOverride_BloomIntensity = true;
-			PP.BloomIntensity = O.BloomIntensity;
-			PP.bOverride_BloomThreshold = true;
-			PP.BloomThreshold = O.BloomThreshold;
-		}
-		if (O.bDepthOfField)  // 15E
-		{
-			PP.bOverride_DepthOfFieldFstop = true;
-			PP.DepthOfFieldFstop = O.ApertureFStop;
-			PP.bOverride_DepthOfFieldSensorWidth = true;
-			PP.DepthOfFieldSensorWidth = O.SensorWidth;
-			if (O.FocalDistance > 0.0f)
-			{
-				PP.bOverride_DepthOfFieldFocalDistance = true;
-				PP.DepthOfFieldFocalDistance = O.FocalDistance;
-			}
-		}
-		Sensor->ShowFlags.SetLensFlares(O.bLensFlare);
-		if (ViewFlags) ViewFlags->SetLensFlares(O.bLensFlare);  // 15F
-		if (O.bLensFlare)
-		{
-			PP.bOverride_LensFlareIntensity = true;
-			PP.LensFlareIntensity = O.LensFlareIntensity;
-			PP.bOverride_LensFlareBokehSize = true;
-			PP.LensFlareBokehSize = O.LensFlareBokehSize;
-			PP.bOverride_LensFlareThreshold = true;
-			PP.LensFlareThreshold = O.LensFlareThreshold;
-		}
-		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: optical realism enabled (blur=%d bloom=%d DoF=%d flare=%d)"),
-			O.bMotionBlur, O.bBloom, O.bDepthOfField, O.bLensFlare);
-	}
+	// Motion blur off on both the capture and the primary view: UE's default
+	// (on, amount 0.5) smears every gimbal slew.
+	CamSimRender::DisableMotionBlur(PP, Sensor->ShowFlags);
+	if (ViewFlags) ViewFlags->SetMotionBlur(false);
 
 	// ROADMAP 3B: the sensor owns exposure. UE runs manual so its eye adaptation
 	// never fights the sensor AE; UpdateSensorParams sets the bias each tick only
@@ -266,7 +222,6 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 			if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name)) CVar->Set(Value, ECVF_SetByCode);
 		};
 		SetCVarI(TEXT("r.RayTracing"),             RQ.bRayTracingEnabled ? 1 : 0);
-		SetCVarI(TEXT("r.RayTracing.Reflections"), RQ.bRayTracedReflections ? 1 : 0);  // 24D
 		SetCVar (TEXT("r.Shadow.DistanceScale"),                        RQ.ShadowDistanceScale);  // 24E
 		SetCVarI(TEXT("r.Shadow.Virtual.ResolutionLodBiasDirectional"), RQ.VSMResolutionBias);
 		SetCVarI(TEXT("r.Shadow.Virtual.MaxPhysicalPages"),             RQ.VSMMaxPhysicalPages);
@@ -279,14 +234,14 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 
 		UE_LOG(LogCamSim, Log,
 			TEXT("ACamSimCamera: RenderingQuality — shadows=%d contactShadow=%d AO=%.2f "
-			     "RTRefl=%d shadowDist=%.1f VSMBias=%d TSR%%=%d AA=%s"),
+			     "shadowDist=%.1f VSMBias=%d TSR%%=%d AA=%s"),
 			(int)RQ.bEntityShadows, (int)RQ.bContactShadows, RQ.AOIntensity,
-			(int)RQ.bRayTracedReflections, RQ.ShadowDistanceScale,
+			RQ.ShadowDistanceScale,
 			RQ.VSMResolutionBias, RQ.TSRScreenPercentage, TEXT("TSR"));
 	}
 
-	// 27F — configurable render frame rate
-	const float TargetRenderFps = FMath::Clamp(Cfg.Performance.RenderFrameRateHz, 1.0f, 120.0f);
+	// frame_rate: the engine renders (and the sensor integrates) one frame per output frame.
+	const float TargetRenderFps = FMath::Clamp(Cfg.FrameRate, 1.0f, 120.0f);
 	if (!FMath::IsNearlyEqual(TargetRenderFps, 30.0f))
 	{
 		GEngine->SetMaxFPS(TargetRenderFps);
@@ -300,11 +255,8 @@ void UCamSimCaptureComponent::ApplyRenderSettings(const FCamSimConfig& Cfg)
 		GEngine->Exec(GetWorld(), *FString::Printf(TEXT("r.Streaming.PoolSize %d"), Cfg.Performance.TexturePoolBudgetMB));
 	}
 
-	UE_LOG(LogCamSim, Log,
-		TEXT("ACamSimCamera: Performance — renderFPS=%.0f outputFPS=%.0f texturePoolMB=%d dropTracking=%s hotReload=%s"),
-		TargetRenderFps, Cfg.Performance.OutputFrameRateHz, Cfg.Performance.TexturePoolBudgetMB,
-		Cfg.Performance.bTrackFrameDropsByCategory ? TEXT("1") : TEXT("0"),
-		Cfg.Performance.bHotReloadConfig ? TEXT("1") : TEXT("0"));
+	UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: Performance — FPS=%.0f texturePoolMB=%d"),
+		TargetRenderFps, Cfg.Performance.TexturePoolBudgetMB);
 }
 
 void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarity, bool bCameraCut, float LiveHFovDeg, const FCamSimConfig& Cfg)
@@ -328,13 +280,13 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	// One detector integration per rendered frame. The controller copies the
 	// mode's seed and detector config into the params (DarkE = DarkCurrentEs /
 	// FrameRateHz, AdcMax = 2^bits - 1, FrameIndex = Serial).
-	In.FrameRateHz  = Cfg.Performance.RenderFrameRateHz > 0.0f ? Cfg.Performance.RenderFrameRateHz : 30.0f;
+	In.FrameRateHz  = Cfg.FrameRate > 0.0f ? Cfg.FrameRate : 30.0f;
 	const FSensorModeConfig* ModeCfg = Cfg.SensorModeConfigs.Find(Mode);
 	static const FSensorModeConfig DefaultModeCfg;
 	const FSensorModeConfig& MC = ModeCfg ? *ModeCfg : DefaultModeCfg;
 	const uint32 StaleBefore = SensorController.GetStaleEpisodes();
 	FSensorFrameParams Params = SensorController.Update(In, MC);
-	if (SensorController.GetStaleEpisodes() != StaleBefore && bTrackFrameDrops) FrameDropStats.SensorStatsStale++;
+	if (SensorController.GetStaleEpisodes() != StaleBefore) FrameDropStats.SensorStatsStale++;
 
 	// Lens model (ROADMAP 3B.2): focal length from this frame's FOV, so zoom changes the
 	// distortion/vignetting footprint. Recomputed only when the lens or the FOV changes.
@@ -377,17 +329,6 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	});
 }
 
-bool UCamSimCaptureComponent::ShouldSkipFrameForDecimation(const FCamSimConfig& Cfg)
-{
-	const float RenderFps = Cfg.Performance.RenderFrameRateHz;
-	const float OutputFps = Cfg.Performance.OutputFrameRateHz;
-	if (RenderFps <= OutputFps || OutputFps <= 0.0f) return false;
-
-	RenderFrameCounter++;
-	const uint64 DecimationRatio = FMath::RoundToInt64(RenderFps / OutputFps);
-	return DecimationRatio > 1 && (RenderFrameCounter % DecimationRatio) != 0;
-}
-
 // -------------------------------------------------------------------------
 // Capture — request the sensor graph's NV12 output for the next frame
 // -------------------------------------------------------------------------
@@ -402,7 +343,7 @@ bool UCamSimCaptureComponent::IsReadyForCapture() const
 void UCamSimCaptureComponent::NoteCaptureSkipped()
 {
 	// Every slot is in flight or waiting for the sensor task: downstream is behind.
-	if (bTrackFrameDrops) FrameDropStats.EncoderBusy++;
+	FrameDropStats.EncoderBusy++;
 }
 
 TArray<FEntityAnnotationData> UCamSimCaptureComponent::BuildGroundTruthSnapshot() const
@@ -525,7 +466,7 @@ void UCamSimCaptureComponent::Poll()
 		const uint64 FrameIdx = Ring.GetFrameIndex(Slot);
 		if (bFailed)
 		{
-			if (bTrackFrameDrops) FrameDropStats.ReadbackTimeout++;
+			FrameDropStats.ReadbackTimeout++;
 			UE_LOG(LogCamSim, Warning, TEXT("CamSimReadback frame %llu: readback failed or timed out (lock null, bad format, or never grabbed)"), FrameIdx);
 			if (++ConsecutiveGpuFailures >= GpuStallLogThreshold && !bLoggedGpuStall)
 			{
@@ -572,7 +513,7 @@ void UCamSimCaptureComponent::Poll()
 
 void UCamSimCaptureComponent::OfferSnapshot(FCamSimSnapshotService& Snap, const FSlot& S) const
 {
-	// The size the sensor graph was set up with (never the live, hot-reloadable config).
+	// The size the sensor graph was set up with.
 	if (S.Nv12.Num() != CamSimNv12::NumBytes(GpuSensorSize.X, GpuSensorSize.Y)) return;
 	TArray<FColor> Bgra;
 	CamSimNv12::ToBgra(S.Nv12.GetData(), GpuSensorSize.X, GpuSensorSize.Y, Bgra);

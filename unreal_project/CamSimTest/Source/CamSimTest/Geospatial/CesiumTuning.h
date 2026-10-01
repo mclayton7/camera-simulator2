@@ -13,8 +13,7 @@ namespace CamSim::Geospatial
 	 * Apply Cesium tileset streaming parameters (SSE, cache, culling, physics)
 	 * to every ACesium3DTileset in the world. Safe to call with a null World.
 	 *
-	 * Called from ACamSimCamera::BeginPlay and UCamSimSubsystem::HotReloadConfig
-	 * (so runtime tuning takes effect without a level reload).
+	 * Called from ACamSimCamera::BeginPlay.
 	 */
 	void ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg);
 

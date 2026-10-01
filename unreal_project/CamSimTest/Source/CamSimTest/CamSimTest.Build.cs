@@ -46,9 +46,6 @@ public class CamSimTest : ModuleRules
 			"glTFRuntime",
 			// PNG encoding for depth maps (Phase 17A)
 			"ImageWrapper",
-			// Niagara particle FX (Phase 18F/G/H/I)
-			"Niagara",
-			"NiagaraCore",
 			// HTTP health endpoints (Phase 28C)
 			"HTTPServer",
 			// HTTP client for automation tests of the HTTP server

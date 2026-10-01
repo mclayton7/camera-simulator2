@@ -125,7 +125,7 @@ void FOceanManager::Tick(const FCamSimTelemetry* Cam)
 
 	// Centre and wave anchor come from the camera alone: boat placement needs the anchor even
 	// when nothing is drawn (M_Ocean/MPC missing, no georeference).
-	// Read live: ocean.max_radius_km is hot-reloadable. Validate() rejects a bad value, but guard
+	// Validate() rejects a bad ocean.max_radius_km, but guard
 	// here too (a config that bypassed Validate): not finite or <= 0 → the default, warned once.
 	double MaxRadiusKm = Subsystem->GetConfig().Ocean.MaxRadiusKm;
 	if (!FMath::IsFinite(MaxRadiusKm) || MaxRadiusKm <= 0.0)
