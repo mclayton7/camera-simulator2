@@ -2,6 +2,7 @@
 
 #include "GroundTruth/FEntityProjection.h"
 #include "Math/Matrix.h"
+#include "GroundTruth/MaskGeometry.h"
 
 bool FEntityProjection::ProjectAABB(
     const FBox& WorldAABB,
@@ -124,4 +125,37 @@ FMatrix FEntityProjection::BuildViewProjectionMatrix(
 	ProjMatrix.M[3][3] = 0.0f;
 
 	return ViewMatrix * ProjMatrix;
+}
+
+FVector2D FEntityProjection::DistortPixel(const FVector2D& Pinhole, int32 W, int32 H, float FocalPx, float K1, float K2)
+{
+	if (!(FocalPx > 0.0f)) return Pinhole;
+	const double Cx = 0.5 * W, Cy = 0.5 * H;
+	const double Xu = (Pinhole.X - Cx) / FocalPx, Yu = (Pinhole.Y - Cy) / FocalPx;
+	const double R2 = Xu * Xu + Yu * Yu;
+	const double S = 1.0 + K1 * R2 + K2 * R2 * R2;
+	return FVector2D(Cx + Xu * S * FocalPx, Cy + Yu * S * FocalPx);
+}
+
+FProjectedBox3D FEntityProjection::ProjectOrientedBox(const FBox& L, const FTransform& ActorToWorld,
+	const FMatrix& VP, int32 W, int32 H, float FocalPx, float K1, float K2)
+{
+	// bottom face then top; each rear-left, rear-right, front-right, front-left (body X fwd, Y right)
+	const FVector Local[8] = {
+		{L.Min.X, L.Min.Y, L.Min.Z}, {L.Min.X, L.Max.Y, L.Min.Z}, {L.Max.X, L.Max.Y, L.Min.Z}, {L.Max.X, L.Min.Y, L.Min.Z},
+		{L.Min.X, L.Min.Y, L.Max.Z}, {L.Min.X, L.Max.Y, L.Max.Z}, {L.Max.X, L.Max.Y, L.Max.Z}, {L.Max.X, L.Min.Y, L.Max.Z} };
+	FProjectedBox3D Out;
+	for (int32 I = 0; I < 8; ++I)
+	{
+		const FVector4 Clip = VP.TransformFVector4(FVector4(ActorToWorld.TransformPosition(Local[I]), 1.0));
+		if (Clip.W <= 0.0) return FProjectedBox3D();   // behind the camera: invalid, truncation unknown
+		const FVector2D Pin((Clip.X / Clip.W + 1.0) * 0.5 * W, (1.0 - Clip.Y / Clip.W) * 0.5 * H);
+		Out.Corners[I] = DistortPixel(Pin, W, H, FocalPx, K1, K2);
+	}
+	Out.bValid = true;
+	const TArray<FVector2D> Hull = CamSimMask::ConvexHull(TArray<FVector2D>(Out.Corners, 8));
+	const double Area = CamSimMask::PolygonArea(Hull);
+	const double Inside = CamSimMask::PolygonArea(CamSimMask::ClipToRect(Hull, FBox2D(FVector2D(0, 0), FVector2D(W, H))));
+	Out.Truncation = Area > 0.0 ? FMath::Clamp(1.0 - Inside / Area, 0.0, 1.0) : 0.0;
+	return Out;
 }

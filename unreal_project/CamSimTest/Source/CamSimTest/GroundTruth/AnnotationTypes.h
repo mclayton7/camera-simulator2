@@ -104,4 +104,16 @@ struct FViewProjectionData
 	FVector CameraLocation       = FVector::ZeroVector;
 	FVector CameraForward        = FVector::ForwardVector;
 	float   CullConeHalfAngleCos = 0.0f;
+
+	/** Sensor optics for projecting 3D boxes through the lens distortion. FocalPx 0 = pinhole. */
+	float   FocalPx = 0.0f;   // output pixels
+	float   K1 = 0.0f, K2 = 0.0f;
+};
+
+/** An entity's oriented 3D box projected to the image. Corners: bottom face then top, each rear-left, rear-right, front-right, front-left. */
+struct FProjectedBox3D
+{
+	bool bValid = false;
+	FVector2D Corners[8];
+	double Truncation = -1.0;   // fraction of the projected hull outside the frame; -1 = unknown
 };

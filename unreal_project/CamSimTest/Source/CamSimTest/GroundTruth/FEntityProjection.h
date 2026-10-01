@@ -47,4 +47,13 @@ struct FEntityProjection
 	    int32  ImageWidth,
 	    int32  ImageHeight,
 	    float  NearClipCm = 10.0f);
+
+	/** Pinhole pixel (continuous, pixel i spans [i, i+1)) -> distorted output pixel: rd = ru (1 + K1 ru^2 + K2 ru^4)
+	 *  about the image centre, normalised by FocalPx. FocalPx <= 0 returns the input. */
+	static FVector2D DistortPixel(const FVector2D& Pinhole, int32 W, int32 H, float FocalPx, float K1, float K2);
+
+	/** LocalBox (actor space, cm) through ActorToWorld and ViewProj, then DistortPixel. bValid false (Truncation -1) when
+	 *  any corner has clip w <= 0. Truncation = 1 - area(hull ∩ [0,W]x[0,H]) / area(hull), clamped to [0, 1]. */
+	static FProjectedBox3D ProjectOrientedBox(const FBox& LocalBox, const FTransform& ActorToWorld,
+	    const FMatrix& ViewProjectionMatrix, int32 W, int32 H, float FocalPx, float K1, float K2);
 };

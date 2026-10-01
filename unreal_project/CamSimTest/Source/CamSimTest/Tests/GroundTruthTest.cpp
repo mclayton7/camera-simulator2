@@ -6,6 +6,7 @@
 #include "GroundTruth/AnnotationTypes.h"
 #include "GroundTruth/FGroundTruthCollector.h"
 #include "Config/CamSimConfig.h"
+#include "Sensor/SensorOptics.h"
 #include "Metadata/CamSimTelemetry.h"
 #include "Sim/Commands.h"  // FEntityKey, EHostSource
 #include "HAL/FileManager.h"
@@ -266,5 +267,68 @@ bool FGroundTruthPerFrameSnapshotTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("source fields"), Lines[1].Contains(TEXT("\"source\":\"dis\",\"source_id\":\"1.1.1\"")));
 	TestTrue(TEXT("geo pose written when known"), Lines[0].Contains(TEXT("\"truncated\":0,\"geo\":{\"lat\":37.81500000,\"lon\":-122.44000000,\"alt_m\":-32.125}}")));
 	TestFalse(TEXT("no geo when unknown"), Lines[1].Contains(TEXT("\"geo\"")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthBox3DCentredTest, "CamSim.GroundTruth.Box3D.Centred",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthBox3DCentredTest::RunTest(const FString&)
+{
+	const FMatrix VP = FEntityProjection::BuildViewProjectionMatrix(FVector::ZeroVector, FRotator::ZeroRotator, 60.0f, 1920, 1080);
+	const FBox Local(FVector(-300, -100, 0), FVector(300, 100, 250));   // 6 x 2 x 2.5 m
+	const FTransform At(FRotator::ZeroRotator, FVector(10000, 0, -125));  // 100 m ahead, centred
+	const FProjectedBox3D P = FEntityProjection::ProjectOrientedBox(Local, At, VP, 1920, 1080, 0.0f, 0.0f, 0.0f);
+	TestTrue(TEXT("valid"), P.bValid);
+	TestNearlyEqual(TEXT("no truncation"), P.Truncation, 0.0, 1e-9);
+	// corner 0 = bottom rear-left (X min, Y min, Z min) is left of and below the centre
+	TestTrue(TEXT("rear-left is left"), P.Corners[0].X < 960.0);
+	TestTrue(TEXT("bottom is below"), P.Corners[0].Y > 540.0);
+	TestTrue(TEXT("top above bottom"), P.Corners[4].Y < P.Corners[0].Y);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthBox3DHalfOffTest, "CamSim.GroundTruth.Box3D.HalfOffEdge",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthBox3DHalfOffTest::RunTest(const FString&)
+{
+	const FMatrix VP = FEntityProjection::BuildViewProjectionMatrix(FVector::ZeroVector, FRotator::ZeroRotator, 60.0f, 1920, 1080);
+	// Flat face-on box (thin in X) centred on the right image edge: x_ndc = 1 at y = tan(30°) * depth
+	const double Depth = 10000.0, EdgeY = FMath::Tan(FMath::DegreesToRadians(30.0)) * Depth;
+	const FBox Local(FVector(-1, -200, -200), FVector(1, 200, 200));
+	const FProjectedBox3D P = FEntityProjection::ProjectOrientedBox(Local, FTransform(FVector(Depth, EdgeY, 0)), VP, 1920, 1080, 0.0f, 0.0f, 0.0f);
+	TestTrue(TEXT("valid"), P.bValid);
+	TestNearlyEqual(TEXT("half truncated"), P.Truncation, 0.5, 0.02);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthBox3DBehindTest, "CamSim.GroundTruth.Box3D.BehindCamera",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthBox3DBehindTest::RunTest(const FString&)
+{
+	const FMatrix VP = FEntityProjection::BuildViewProjectionMatrix(FVector::ZeroVector, FRotator::ZeroRotator, 60.0f, 1920, 1080);
+	const FBox Local(FVector(-500, -100, -100), FVector(500, 100, 100));   // straddles the camera plane
+	const FProjectedBox3D P = FEntityProjection::ProjectOrientedBox(Local, FTransform(FVector(200, 0, 0)), VP, 1920, 1080, 0.0f, 0.0f, 0.0f);
+	TestFalse(TEXT("invalid"), P.bValid);
+	TestTrue(TEXT("truncation unknown"), P.Truncation < 0.0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthDistortPixelTest, "CamSim.GroundTruth.Box3D.DistortPixel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthDistortPixelTest::RunTest(const FString&)
+{
+	const int32 W = 1920, H = 1080;
+	const float F = CamSimOptics::FocalPx(W, 60.0f), K1 = -0.15f, K2 = 0.02f;
+	const FVector2D Pin(1700.0, 900.0);
+	const FVector2D D = FEntityProjection::DistortPixel(Pin, W, H, F, K1, K2);
+	TestTrue(TEXT("barrel (k1<0) pulls inward"), FVector2D::Distance(D, FVector2D(960, 540)) < FVector2D::Distance(Pin, FVector2D(960, 540)));
+	// Round trip with the sensor's inverse
+	const double Xd = (D.X - 0.5 * W) / F, Yd = (D.Y - 0.5 * H) / F, Rd = FMath::Sqrt(Xd * Xd + Yd * Yd);
+	float Ru = 0.0f;
+	TestTrue(TEXT("converges"), CamSimOptics::UndistortRadius(static_cast<float>(Rd), K1, K2, Ru));
+	const FVector2D Back(0.5 * W + Xd * (Ru / Rd) * F, 0.5 * H + Yd * (Ru / Rd) * F);
+	TestNearlyEqual(TEXT("round trip x"), Back.X, Pin.X, 0.05);
+	TestNearlyEqual(TEXT("round trip y"), Back.Y, Pin.Y, 0.05);
+	TestEqual(TEXT("no focal -> identity"), FEntityProjection::DistortPixel(Pin, W, H, 0.0f, K1, K2), Pin);
 	return true;
 }
