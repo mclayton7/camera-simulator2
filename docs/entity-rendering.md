@@ -327,23 +327,23 @@ Phase C adds stress and deterministic replay tooling:
 
 ### Prerequisites
 
-- CamSim is running with `camera_entity_id: 0` in config.
+- The scripts' `--camera-id` matches `camera_entity_id` (1 in `deploy/camsim_config.yaml`, the scripts' default; the code default is 0). Scene entities default to ID 100.
 - `entity_types` block maps type `1001` to an asset (or any type you use).
 - For art-part tests: the skeletal mesh has bones named `ArtPart_00`, etc.
 
 ### 8A — Spawn and remove
 
 ```bash
-# Spawn entity 1 (type 1001) for 20 seconds
+# Spawn entity 100 (type 1001) for 20 seconds
 uv run scripts/test_entity_rendering.py spawn \
-    --entity-id 1 --entity-type 1001 \
+    --entity-id 100 --entity-type 1001 \
     --lat 37.6213 --lon -122.379 --alt 1000 \
     --duration 20
 
-# Verify log: "EntityManager: spawned entity 1 (type 1001)"
+# Verify log: "EntityManager: spawned entity cigi:100 (type 1001)"
 
 # Remove it
-uv run scripts/test_entity_rendering.py remove --entity-id 1
+uv run scripts/test_entity_rendering.py remove --entity-id 100
 # Verify log: "EntityManager: removed entity 1"
 ```
 
@@ -433,7 +433,7 @@ with the camera:
 uv run scripts/send_cigi_test.py --entity-id 0 --tour &
 
 # Terminal 2 — scene entity (entity id=1)
-uv run scripts/test_entity_rendering.py spawn --entity-id 1 --duration 60
+uv run scripts/test_entity_rendering.py spawn --entity-id 100 --duration 60
 ```
 
 KLV metadata should continue updating correctly (`scripts/klv_conformance/check.js`) and there
