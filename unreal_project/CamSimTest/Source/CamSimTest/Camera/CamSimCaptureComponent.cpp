@@ -22,6 +22,7 @@
 #include "Time/SimClock.h"
 #include "Sensor/SensorOptics.h"
 #include "Thermal/ThermalFrameSources.h"
+#include "CesiumGeoreference.h"
 
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/Engine.h"
@@ -333,14 +334,49 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	const bool bThermal = ShouldRunThermal(Mode, CamSimThermalAvailability::IsAvailableThisTick(
 		Subsystem && Subsystem->IsThermalAvailable(), Cfg.Thermal.bEnabled, GrabExtension->AreThermalInputsMissing()));
 	TSharedPtr<FThermalFrameParams, ESPMode::ThreadSafe> ThermalParams;
+	TSharedPtr<const FLandCoverGpuWindow, ESPMode::ThreadSafe> LandCoverGpu;   // ROADMAP 4B: travels with this tick's thermal params
 	if (bThermal)
 	{
 		ThermalBuilder.Configure(Cfg.Thermal, MC.Detector.BandLoUm, MC.Detector.BandHiUm);
 		FThermalFrameInputs TIn;
 		CamSimThermal::GatherFrameInputs(GetWorld(), *Subsystem, ThermalLat, ThermalLon, ThermalAlt, ThermalUp, TIn);
+		// ROADMAP 4B: land cover. The window updates (and builds off-thread) only while thermal IR runs; its East/North axes are
+		// recomputed every tick at the window centre (Cesium origin shifts rotate the UE axes) and checked against the camera's
+		// geodetic up (orthonormal, East-South-Up handedness): a bad frame renders land cover off.
+		if (Cfg.Thermal.LandCover.bEnabled)
+		{
+			FLandCoverWindow::FSettings LS;
+			LS.Dir              = Cfg.Thermal.LandCover.Dir;
+			LS.Texels           = Cfg.Thermal.LandCover.WindowTexels;
+			LS.RecentreFraction = Cfg.Thermal.LandCover.RecentreFraction;
+			LandCover.Configure(LS);
+			LandCover.Update(ThermalLat, ThermalLon);
+			for (const FString& W : LandCover.TakeWarnings()) { UE_LOG(LogCamSim, Warning, TEXT("Thermal land cover: %s"), *W); }
+			const TSharedPtr<const FLandCoverWindowData, ESPMode::ThreadSafe> Window = LandCover.GetCurrent();
+			if (Window.IsValid() && ThermalGeoreference.IsValid())
+			{
+				FVector East = FVector::ZeroVector, North = FVector::ZeroVector;
+				CamSimThermal::LandCoverAxesWorld(*ThermalGeoreference.Get(), Window->Spec.CentreLatDeg, Window->Spec.CentreLonDeg, East, North);
+				if (!CamSimThermal::AreLandCoverAxesValid(East, North, TIn.UpWorld))
+				{
+					if (!bLoggedLandCoverAxes)
+					{
+						UE_LOG(LogCamSim, Warning, TEXT("Thermal land cover: window #%u axes failed the orthonormal/handedness check "
+							"(E=%s N=%s Up=%s); land cover off for those frames (logged once)"),
+							Window->Id, *East.ToString(), *North.ToString(), *TIn.UpWorld.ToString());
+						bLoggedLandCoverAxes = true;
+					}
+				}
+				else if (CamSimThermal::SetLandCover(TIn, Window.Get(), East, North))
+				{
+					LandCoverGpu = LandCover.GetCurrentGpu();
+				}
+			}
+		}
 		ThermalParams = MakeShared<FThermalFrameParams, ESPMode::ThreadSafe>();
 		TArray<FString> Warnings;
 		ThermalBuilder.Build(TIn, *ThermalParams, &Warnings);
+		LandCoverWindowIdLastTick = ThermalParams->bLandCover != 0u ? ThermalParams->LandCoverWindowId : 0u;
 		for (const FString& W : Warnings) { UE_LOG(LogCamSim, Warning, TEXT("Thermal: %s"), *W); }
 		if (CVarCamSimThermalLog.GetValueOnGameThread() > 0 && (ParamsSerial % 30u) == 0u)
 		{
@@ -348,12 +384,14 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 			FString Classes;
 			for (uint32 C = 0; C < FMath::Min<uint32>(T.NumClasses, 8u); ++C) { Classes += FString::Printf(TEXT(" %.1f"), T.ClassTempK[C]); }
 			UE_LOG(LogCamSim, Log, TEXT("Thermal: classes[K]%s terrain=%u water=%u Tair=%.1f K cloud=%.2f epsZ=%.3f KLum=%.1f "
-				"KFast=%.2f EClamp=%.0f signalScale=%.4g gainEv=%.2f sunLux=%.0f entities=%d"),
+				"KFast=%.2f EClamp=%.0f signalScale=%.4g gainEv=%.2f sunLux=%.0f entities=%d landCover=%u"),
 				*Classes, T.TerrainClass, T.WaterClass, T.TairK, T.Cloud, T.SkyEpsZ, T.KLum, T.KFastScale, T.EClampWm2,
-				ThermalBuilder.GetSignalScale(), SensorController.GetGainEv(), TIn.SunIlluminanceLux, TIn.Entities.Num());
+				ThermalBuilder.GetSignalScale(), SensorController.GetGainEv(), TIn.SunIlluminanceLux, TIn.Entities.Num(),
+				T.bLandCover != 0u ? T.LandCoverWindowId : 0u);
 		}
 	}
 	bThermalActiveLastTick = bThermal;
+	if (!bThermal) LandCoverWindowIdLastTick = 0u;
 
 	FSensorControllerInput In;
 	In.Mode         = static_cast<ESensorGraphMode>(FMath::Clamp(static_cast<int32>(Mode), 0, 1));
@@ -415,18 +453,21 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	// Thermal radiance through TSR needs RGBA16F output/history (R11G11B10 quantizes it far above the detector NETD).
 	ThermalTsrAlpha.Update(bThermal, FThermalTsrAlpha::FindCVar());
 
-	// One command: a frame never pairs IR thermal parameters with EO sensor parameters (or the reverse).
+	// One command: a frame never pairs IR thermal parameters with EO sensor parameters (or the reverse), nor thermal parameters
+	// with another tick's land-cover window (ROADMAP 4B).
 	TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> Ext = GrabExtension;
 	TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> ConstThermal = ThermalParams;
-	ENQUEUE_RENDER_COMMAND(CamSimSensorParams)([Ext, Params, ConstThermal](FRHICommandListImmediate&)
+	ENQUEUE_RENDER_COMMAND(CamSimSensorParams)([Ext, Params, ConstThermal, LandCoverGpu](FRHICommandListImmediate&)
 	{
 		Ext->SetParams_RenderThread(Params);
-		Ext->SetThermalParams_RenderThread(ConstThermal);
+		Ext->SetThermalParams_RenderThread(ConstThermal, LandCoverGpu);
 	});
 }
 
-void UCamSimCaptureComponent::SetThermalPose(double LatDeg, double LonDeg, double AltHaeM, const FVector& UpWorld)
+void UCamSimCaptureComponent::SetThermalPose(double LatDeg, double LonDeg, double AltHaeM, const FVector& UpWorld,
+	ACesiumGeoreference* Georeference)
 {
+	ThermalGeoreference = Georeference;
 	ThermalLat = LatDeg;
 	ThermalLon = LonDeg;
 	ThermalAlt = AltHaeM;

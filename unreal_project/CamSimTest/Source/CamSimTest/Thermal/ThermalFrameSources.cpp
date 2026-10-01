@@ -191,6 +191,17 @@ bool CamSimThermal::SetLandCover(FThermalFrameInputs& Out, const FLandCoverWindo
 	return true;
 }
 
+bool CamSimThermal::AreLandCoverAxesValid(const FVector& EastWorld, const FVector& NorthWorld, const FVector& UpWorld)
+{
+	auto Finite = [](const FVector& V) { return FMath::IsFinite(V.X) && FMath::IsFinite(V.Y) && FMath::IsFinite(V.Z); };
+	if (!Finite(EastWorld) || !Finite(NorthWorld) || !Finite(UpWorld)) return false;
+	auto Unit = [](const FVector& V) { return FMath::Abs(V.Size() - 1.0) <= 1e-3; };
+	if (!Unit(EastWorld) || !Unit(NorthWorld) || !Unit(UpWorld)) return false;
+	if (FMath::Abs(FVector::DotProduct(EastWorld, NorthWorld)) > 1e-3) return false;
+	if (FMath::Abs(FVector::DotProduct(EastWorld, UpWorld)) > 0.02 || FMath::Abs(FVector::DotProduct(NorthWorld, UpWorld)) > 0.02) return false;
+	return FVector::DotProduct(UpWorld, FVector::CrossProduct(EastWorld, NorthWorld)) < -0.99;
+}
+
 void CamSimThermal::LandCoverAxesWorld(const ACesiumGeoreference& Geo, double LatDeg, double LonDeg, FVector& OutEast, FVector& OutNorth)
 {
 	const FVector Centre = Geo.TransformLongitudeLatitudeHeightPositionToUnreal(FVector(LonDeg, LatDeg, 0.0));   // longitude first

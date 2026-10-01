@@ -284,3 +284,33 @@ bool FLandCoverWindowEstimateTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+// Review Focus 4: a frame binds a window texture only when it is the window its parameters were built against.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandCoverPairingTest, "CamSim.Thermal.LandCover.FramePairingById",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FLandCoverPairingTest::RunTest(const FString& Parameters)
+{
+	using CamSimLandCover::ShouldBindWindow;
+	TestTrue (TEXT("same window, texture uploaded"), ShouldBindWindow(1u, 7u, 7u, true));
+	TestFalse(TEXT("params from window 7, texture from window 8 (swap mid-flight)"), ShouldBindWindow(1u, 7u, 8u, true));
+	TestFalse(TEXT("upload not run yet"), ShouldBindWindow(1u, 7u, 7u, false));
+	TestFalse(TEXT("land cover off in the params"), ShouldBindWindow(0u, 7u, 7u, true));
+	TestFalse(TEXT("no window id"), ShouldBindWindow(1u, 0u, 0u, true));
+
+	// Every re-centre publishes a new id, so params built before a swap can never match the window published after it.
+	FLandCoverWindow W;
+	W.Configure(Settings(WriteSfDir(TEXT("Pairing")), 256));
+	W.Update(CamLat, CamLon);
+	W.FinishBuildForTest();
+	if (!TestTrue(TEXT("first window"), W.GetCurrentGpu().IsValid())) return false;
+	const uint32 First = W.GetCurrentGpu()->Id;
+	double Lat = 0.0, Lon = 0.0;
+	CamSimLandCover::WindowENToGeodetic(W.GetCurrent()->Spec, 0.0, 800.0, Lat, Lon);
+	W.Update(Lat, Lon);
+	W.FinishBuildForTest();
+	const uint32 Second = W.GetCurrentGpu()->Id;
+	TestNotEqual(TEXT("new id per window"), First, Second);
+	TestEqual(TEXT("CPU and GPU halves share the id"), W.GetCurrent()->Id, Second);
+	TestFalse(TEXT("old params never bind the new texture"), ShouldBindWindow(1u, First, Second, true));
+	return true;
+}

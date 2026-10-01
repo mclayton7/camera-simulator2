@@ -43,6 +43,11 @@ namespace CamSimThermal
 	 *  Called every frame (Cesium origin shifting rotates the UE axes). Game thread. */
 	CAMSIMTEST_API void LandCoverAxesWorld(const ACesiumGeoreference& Geo, double LatDeg, double LonDeg, FVector& OutEast, FVector& OutNorth);
 
+	/** Whether land-cover axes are usable (ROADMAP 4B): finite, unit (±1e-3), East ⟂ North (|E.N| <= 1e-3), both horizontal
+	 *  (|E.Up|, |N.Up| <= 0.02, so the camera's up serves for a window centre within ~100 km) and with the East-South-Up
+	 *  handedness of the UE world (left-handed: Up . (East x North) < -0.99). A transposed or mirrored axis fails. */
+	CAMSIMTEST_API bool AreLandCoverAxesValid(const FVector& EastWorld, const FVector& NorthWorld, const FVector& UpWorld);
+
 	/** World → FThermalFrameInputs (game thread). Fields it cannot read keep their defaults. */
 	CAMSIMTEST_API void GatherFrameInputs(UWorld* World, const UCamSimSubsystem& Subsystem, double CamLatDeg, double CamLonDeg,
 		double CamAltHaeM, const FVector& UpWorld, FThermalFrameInputs& Out);

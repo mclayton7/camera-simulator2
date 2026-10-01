@@ -101,3 +101,16 @@ private:
 	bool bWarnedPole = false;
 	bool bWarnedNoData = false;
 };
+
+namespace CamSimLandCover
+{
+	/**
+	 * Render thread (ROADMAP 4B): whether a frame may bind its land-cover texture. The parameters must ask for land cover,
+	 * the GPU window must be the one they were built against (same id; a re-centre publishes a new id) and its upload must have
+	 * run. Otherwise the frame renders land cover off: never a texture from one window with another window's mapping.
+	 */
+	inline bool ShouldBindWindow(uint32 bLandCover, uint32 ParamsWindowId, uint32 GpuWindowId, bool bHasTexture)
+	{
+		return bLandCover != 0u && ParamsWindowId != 0u && ParamsWindowId == GpuWindowId && bHasTexture;
+	}
+}
