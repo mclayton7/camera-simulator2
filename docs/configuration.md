@@ -951,7 +951,7 @@ thermal:
 | `thermal.air_diurnal_swing_k` | `CAMSIM_THERMAL_AIR_DIURNAL_SWING_K` | `8.0` | Peak-to-peak diurnal air swing, peak at 15:00 local solar; `[0, 30]`. |
 | `thermal.extinction_per_km.mwir` / `.lwir` | `CAMSIM_THERMAL_EXTINCTION_MWIR` / `_LWIR` | `0.15` / `0.10` | Band extinction β per km; the band is MWIR when the IR preset's band centre is below 6.5 µm. `[0, 10]`. |
 | `thermal.fog_ir_factor` | `CAMSIM_THERMAL_FOG_IR_FACTOR` | `0.4` | While CIGI Atmosphere Control has fog enabled, β += 3.912 / V_km × factor; `[0, 2]`. |
-| `thermal.materials.<name>` | *(yaml only)* | — | Overrides a built-in class (`terrain_default`, `water`, `vehicle_paint`, `asphalt`, `vegetation`, `concrete`) or adds one (unset fields copy `terrain_default`; ≤ 32 classes). Fields: `albedo` `[0,1)`, `emissivity` `(0,1]`, `thermal_inertia` J m⁻² K⁻¹ s⁻½ `[0,20000]`, `convection_w_m2k` `(0,200]`, `k_fast` K/(W m⁻²) `[0,0.2]`, `temperature` `model`\|`water`. Names: lower-case letters, digits, `_`. |
+| `thermal.materials.<name>` | *(yaml only)* | — | Overrides a built-in class (`terrain_default`, `water`, `vehicle_paint`, `asphalt`, `vegetation`, `concrete`, `tree_canopy`, `shrubland`, `grassland`, `cropland`, `built_up`, `bare_soil`, `snow_ice`, `wetland`) or adds one (unset fields copy `terrain_default`; ≤ 32 classes). Fields: `albedo` `[0,1)`, `emissivity` `(0,1]`, `thermal_inertia` J m⁻² K⁻¹ s⁻½ `[0,20000]`, `convection_w_m2k` `(0,200]`, `k_fast` K/(W m⁻²) `[0,0.2]`, `temperature` `model`\|`water`\|`snow`. Names: lower-case letters, digits, `_`. |
 
 Built-in classes:
 
@@ -963,3 +963,13 @@ Built-in classes:
 | `asphalt` | 0.10 | 0.95 | 1500 | 10 | 0.02 | model |
 | `vegetation` | 0.20 | 0.98 | 300 | 15 | 0.008 | model |
 | `concrete` | 0.35 | 0.92 | 1800 | 10 | 0.015 | model |
+| `tree_canopy` | 0.40\* | 0.98 | 800 | 25 | 0.004 | model |
+| `shrubland` | 0.30\* | 0.97 | 600 | 15 | 0.008 | model |
+| `grassland` | 0.30\* | 0.97 | 300 | 8 | 0.010 | model |
+| `cropland` | 0.30\* | 0.97 | 700 | 12 | 0.010 | model |
+| `built_up` | 0.20 | 0.93 | 1650 | 10 | 0.018 | model |
+| `bare_soil` | 0.25 | 0.93 | 900 | 10 | 0.025 | model |
+| `snow_ice` | 0.75 | 0.99 | 600 | 10 | 0.005 | snow (model, capped at 273.15 K) |
+| `wetland` | 0.40\* | 0.98 | 2500 | 15 | 0.004 | model |
+
+\* Effective albedo: folds evapotranspiration into the absorbed solar (the model has no latent heat term).

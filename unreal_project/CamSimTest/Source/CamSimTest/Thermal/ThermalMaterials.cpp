@@ -44,7 +44,7 @@ namespace
 			E.Add(FString::Printf(TEXT("%s.k_fast=%.4f out of range [0, 0.2]"), *P, *S.KFast));
 		EThermalTemperatureSource Unused;
 		if (!S.Temperature.IsEmpty() && !FThermalMaterialTable::ParseSource(S.Temperature, Unused))
-			E.Add(FString::Printf(TEXT("%s.temperature '%s' must be model or water"), *P, *S.Temperature));
+			E.Add(FString::Printf(TEXT("%s.temperature '%s' must be model, water or snow"), *P, *S.Temperature));
 		return E;
 	}
 
@@ -56,7 +56,9 @@ namespace
 
 const TArray<FThermalMaterial>& FThermalMaterialTable::BuiltIns()
 {
-	// k_fast per the spec (asphalt 0.02, vegetation 0.008, metal paint 0.04). Index order is fixed (see the header).
+	// k_fast per the 4A spec (asphalt 0.02, vegetation 0.008, metal paint 0.04). Index order is fixed (see the header).
+	// ROADMAP 4B land-cover classes: vegetation albedos are effective values that fold evapotranspiration into the absorbed
+	// solar (the model has no latent term); a high h_c keeps canopies near air temperature (cool at noon, warm at night).
 	static const TArray<FThermalMaterial> B = {
 		MakeMaterial(TEXT("terrain_default"), 0.20f, 0.95f, 1200.0f, 10.0f, 0.015f),
 		MakeMaterial(TEXT("water"),           0.06f, 0.98f,    0.0f, 10.0f, 0.0f, EThermalTemperatureSource::Water),
@@ -64,6 +66,14 @@ const TArray<FThermalMaterial>& FThermalMaterialTable::BuiltIns()
 		MakeMaterial(TEXT("asphalt"),         0.10f, 0.95f, 1500.0f, 10.0f, 0.02f),
 		MakeMaterial(TEXT("vegetation"),      0.20f, 0.98f,  300.0f, 15.0f, 0.008f),
 		MakeMaterial(TEXT("concrete"),        0.35f, 0.92f, 1800.0f, 10.0f, 0.015f),
+		MakeMaterial(TEXT("tree_canopy"),     0.40f, 0.98f,  800.0f, 25.0f, 0.004f),
+		MakeMaterial(TEXT("shrubland"),       0.30f, 0.97f,  600.0f, 15.0f, 0.008f),
+		MakeMaterial(TEXT("grassland"),       0.30f, 0.97f,  300.0f,  8.0f, 0.010f),
+		MakeMaterial(TEXT("cropland"),        0.30f, 0.97f,  700.0f, 12.0f, 0.010f),
+		MakeMaterial(TEXT("built_up"),        0.20f, 0.93f, 1650.0f, 10.0f, 0.018f),
+		MakeMaterial(TEXT("bare_soil"),       0.25f, 0.93f,  900.0f, 10.0f, 0.025f),
+		MakeMaterial(TEXT("snow_ice"),        0.75f, 0.99f,  600.0f, 10.0f, 0.005f, EThermalTemperatureSource::Snow),
+		MakeMaterial(TEXT("wetland"),         0.40f, 0.98f, 2500.0f, 15.0f, 0.004f),
 	};
 	return B;
 }
@@ -72,6 +82,7 @@ bool FThermalMaterialTable::ParseSource(const FString& Name, EThermalTemperature
 {
 	if (Name.Equals(TEXT("model"), ESearchCase::IgnoreCase)) { Out = EThermalTemperatureSource::Model; return true; }
 	if (Name.Equals(TEXT("water"), ESearchCase::IgnoreCase)) { Out = EThermalTemperatureSource::Water; return true; }
+	if (Name.Equals(TEXT("snow"),  ESearchCase::IgnoreCase)) { Out = EThermalTemperatureSource::Snow;  return true; }
 	return false;
 }
 

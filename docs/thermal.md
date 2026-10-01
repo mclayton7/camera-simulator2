@@ -90,7 +90,7 @@ extinction plus, with CIGI fog and visibility under 10 km, `3.912 / V_km * fog_i
 
 ## Classes and keys
 
-Built-in classes (index order fixed), overridable and extensible under `thermal.materials`
+Built-in classes (index order fixed; 6-13 added by 4B land cover), overridable and extensible under `thermal.materials`
 (unset fields copy `terrain_default`, at most 32 classes):
 
 | Class | albedo | emissivity | inertia | h_c | k_fast | temperature |
@@ -101,6 +101,16 @@ Built-in classes (index order fixed), overridable and extensible under `thermal.
 | `asphalt` | 0.10 | 0.95 | 1500 | 10 | 0.02 | model |
 | `vegetation` | 0.20 | 0.98 | 300 | 15 | 0.008 | model |
 | `concrete` | 0.35 | 0.92 | 1800 | 10 | 0.015 | model |
+| `tree_canopy` | 0.40\* | 0.98 | 800 | 25 | 0.004 | model |
+| `shrubland` | 0.30\* | 0.97 | 600 | 15 | 0.008 | model |
+| `grassland` | 0.30\* | 0.97 | 300 | 8 | 0.010 | model |
+| `cropland` | 0.30\* | 0.97 | 700 | 12 | 0.010 | model |
+| `built_up` | 0.20 | 0.93 | 1650 | 10 | 0.018 | model |
+| `bare_soil` | 0.25 | 0.93 | 900 | 10 | 0.025 | model |
+| `snow_ice` | 0.75 | 0.99 | 600 | 10 | 0.005 | snow (model, capped at 273.15 K) |
+| `wetland` | 0.40\* | 0.98 | 2500 | 15 | 0.004 | model |
+
+\* Effective albedo: folds evapotranspiration into the absorbed solar (the model has no latent heat term).
 
 Every key, range and env var is in [`configuration.md`](configuration.md#thermal-thermal):
 `thermal.enabled`, `air_temperature_c`, `air_diurnal_swing_k`, `extinction_per_km.{mwir,lwir}`,
@@ -119,7 +129,7 @@ thermal:
 ```
 
 Names are lower-case letters, digits and `_`. Validation errors (range, name, `temperature` not
-`model`/`water`, more than 32 classes) are logged at startup.
+`model`/`water`/`snow`, more than 32 classes) are logged at startup.
 Nothing selects a material per terrain location yet: terrain pixels use `terrain_default`
 until 4B land cover. Classes are reached today through entity types.
 
