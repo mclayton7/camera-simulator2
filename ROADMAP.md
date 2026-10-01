@@ -159,6 +159,10 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
   `repo_setup.sh` writes Cesium into `/opt/UE/Engine/Plugins/Marketplace`, so run it as a user who
   can write there (or with sudo). Not yet verified on Linux: that packaging (`BuildCookRun`) uses
   the prebuilt `UnrealGame` libs and doesn't rebuild Cesium.
+- *(2026-09-30)* First Linux workstation brought up: UE 5.8.3 at `/opt/UnrealEngine-5.8.3`
+  (`/opt/UE` symlink), Cesium installed into the engine, ThirdParty rebuilt, headless suite and
+  `ci_validate.sh --native` pass. Linux receivers need `net.core.rmem_max` raised (see 1.14);
+  persist it with a file in `/etc/sysctl.d/` on each Linux host.
 - Open `CamSimTest` once in the 5.8 editor and resave the maps, so assets stop loading through
   the 5.7 upgrade path.
 - VideoToolbox adds about 10 frames (~330 ms at 30 fps) of pipeline latency. FFmpeg exposes no
@@ -743,10 +747,12 @@ Known issues and open points for the visual review:
 - **Yosemite snap coarseness** since the crossfade went off (above): restoring
   `use_lod_transitions` costs the game thread 8–12 ms p50 (3B.1 terrain check), so it's a
   trade-off for the user, not fixed here.
-- **Linux/Vulkan unverified.** The shader is plain compute (integer atomics, no float atomics or
-  wave intrinsics), but nothing has run on Vulkan. There is no CPU fallback any more: a host
-  without `IsSensorGraphSupported` (Mesa llvmpipe/lavapipe in the CPU Docker path) produces no
-  frames and `/ready` stays false. Verify on the first Linux run.
+- ~~**Linux/Vulkan unverified.**~~ **Verified on NVIDIA 2026-09-30** (Ubuntu 24.04, RTX 5080,
+  driver 595.91.07, Vulkan SM6): the sensor graph is available, frames flow, and
+  `ci_validate.sh --native` passes (H.264 via NVENC, misb.js KLV at the commanded pose). Still
+  unverified: Mesa llvmpipe/lavapipe (the CPU Docker path). There is no CPU fallback, so a host
+  without `IsSensorGraphSupported` produces no frames and `/ready` stays false. GPU tests
+  (`CamSim.GPU.*`) have not been run on Vulkan yet.
 - **Cut convergence**: a camera cut or mode switch snaps the AE on the first histogram whose
   serial is at or after the cut, but histograms already in flight from before the cut still
   arrive first and nudge the gain for one frame (within the 1–3-frame convergence above).
