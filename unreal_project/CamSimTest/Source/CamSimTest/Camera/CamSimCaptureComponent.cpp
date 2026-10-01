@@ -449,19 +449,12 @@ TArray<FEntityAnnotationData> UCamSimCaptureComponent::BuildGroundTruthSnapshot(
 
 TArray<FEntityWaterPlane> UCamSimCaptureComponent::ComputeWaterPlanes(const TArray<FEntityAnnotationData>& Entities) const
 {
-	TArray<FEntityWaterPlane> Out;
 	const FOceanSurface* Ocean = Subsystem ? Subsystem->GetOceanSurface() : nullptr;   // null: ocean off
 	const FCamSimGeospatialProvider* Geo = Subsystem ? Subsystem->GetGeospatialProvider() : nullptr;
 	UWorld* World = GetWorld();
-	if (!Ocean || !Geo || !World) return Out;
+	if (!Ocean || !Geo || !World) return {};
 	auto GeoToWorld = [Geo, World](double Lat, double Lon, double AltM, FVector& W) { return Geo->GeoToWorld(World, Lat, Lon, AltM, W); };
-	for (const FEntityAnnotationData& E : Entities)
-	{
-		if (E.StencilValue == 0 || !E.bHasGeo) continue;
-		const FSeaSurfacePlane P = CamSimGroundTruth::ComputeSeaSurfacePlane(*Ocean, E.Lat, E.Lon, GeoToWorld);
-		if (P.bValid) Out.Add({ E.StencilValue, P.Point, P.Normal });
-	}
-	return Out;
+	return CamSimGroundTruth::BuildEntityWaterPlanes(Entities, *Ocean, GeoToWorld);   // surface vessels only
 }
 
 void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)

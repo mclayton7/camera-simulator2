@@ -445,6 +445,7 @@ void FCamSimEntityManager::GetEntitySnapshot(
 		Data.bTruncated = bTruncated;
 		Data.ScreenBBox = ScreenBBox;
 		Data.StencilValue = Entity->GetGroundTruthStencil();
+		Data.bWaterSurface = Entity->IsWaterSurfaceVessel();
 		const FProjectedBox3D P = FEntityProjection::ProjectOrientedBox(LocalBox, Entity->GetActorTransform(),
 			ViewProj.ViewProjectionMatrix, ViewProj.ImageWidth, ViewProj.ImageHeight, ViewProj.FocalPx, ViewProj.K1, ViewProj.K2);
 		Data.bHasBox3D     = true;

@@ -34,6 +34,7 @@ struct FEntityAnnotationData
 	bool    bVisible   = false;  // false → entity fully outside frustum; omit from annotations
 	bool    bTruncated = false;  // true → bbox was clamped to image boundary
 
+	bool    bWaterSurface = false;  // surface vessel (placed on water): its hidden hull is cut at the sea
 	uint8   StencilValue  = 0;      // custom-depth stencil 1..255; 0 = untagged (projection fallback)
 	// Oriented 3D box (game thread, Task 4)
 	bool    bHasBox3D     = false;

@@ -643,6 +643,36 @@ bool FGroundTruthSeaSurfacePlaneTest::RunTest(const FString&)
 	return true;
 }
 
+// Residual fix: only surface vessels (placed on water) get a cut plane; land vehicles and aircraft none.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthWaterPlanesSurfaceOnlyTest, "CamSim.GroundTruth.SeaSurfacePlane.SurfaceVesselsOnly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthWaterPlanesSurfaceOnlyTest::RunTest(const FString&)
+{
+	FOceanSurface Ocean([](double, double) { return TOptional<double>(-32.0); });
+	Ocean.SetAnchor(37.8, -122.4);
+	Ocean.SetBeaufort(3.0, 270.0, 0.5);
+	Ocean.SetTime(1.0);
+	auto Flat = [](double Lat, double Lon, double AltM, FVector& Out)
+	{
+		Out = FVector((Lon + 122.4) * 1.0e7, -(Lat - 37.8) * 1.0e7, AltM * 100.0);
+		return true;
+	};
+	auto Make = [](uint8 Stencil, bool bWater, bool bGeo)
+	{
+		FEntityAnnotationData E;
+		E.StencilValue = Stencil; E.bWaterSurface = bWater; E.bHasGeo = bGeo;
+		E.Lat = 37.8013; E.Lon = -122.3991;
+		return E;
+	};
+	const TArray<FEntityAnnotationData> Es = { Make(1, true, true), Make(2, false, true), Make(3, true, false), Make(0, true, true) };
+	const TArray<FEntityWaterPlane> Planes = CamSimGroundTruth::BuildEntityWaterPlanes(Es, Ocean, Flat);
+	if (!TestEqual(TEXT("only the surface vessel with a stencil and a pose gets a plane"), Planes.Num(), 1)) return false;
+	TestEqual(TEXT("it is the vessel's stencil"), static_cast<int32>(Planes[0].Stencil), 1);
+	TestEqual(TEXT("a land vehicle alone: no plane"),
+		CamSimGroundTruth::BuildEntityWaterPlanes({ Make(2, false, true) }, Ocean, Flat).Num(), 0);
+	return true;
+}
+
 // M1 (final review): the collector reads only what Open() cached — a hot reload that changes the config while
 // frames are in flight (capture size, min_visible_pixels, segmentation) must not change how they are measured.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGtCollectorCachedConfigTest, "CamSim.GroundTruth.Collector.CachedAtOpen",
@@ -677,5 +707,53 @@ bool FGtCollectorCachedConfigTest::RunTest(const FString&)
 	TestTrue(TEXT("still measured from the IDs (cached size)"), Text.Contains(TEXT("\"mask_source\":\"render\"")));
 	TestTrue(TEXT("not dropped (cached min_visible_pixels)"), Text.Contains(TEXT("\"entity_id\":70000")));
 	TestTrue(TEXT("segmentation still written (cached)"), Text.Contains(TEXT("\"segmentation\"")));
+	return true;
+}
+
+
+// Task-3 gap (final review I3 depends on it): ProjectOrientedBox's corner order under yaw. A nadir camera
+// (pitch -90, yaw 0: image right = world +Y, image up = world +X) over boxes yawed 90° and 30°; every corner
+// must land where body rear/front (X), left/right (Y), bottom/top (Z) predicts through an independent pinhole.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthBox3DYawCornerOrderTest, "CamSim.GroundTruth.Box3D.YawCornerOrder",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthBox3DYawCornerOrderTest::RunTest(const FString&)
+{
+	constexpr int32 W = 1920, H = 1080;
+	constexpr double HFov = 60.0, CamZ = 10000.0;
+	const FMatrix VP = FEntityProjection::BuildViewProjectionMatrix(FVector(0, 0, CamZ), FRotator(-90.0, 0.0, 0.0), HFov, W, H);
+	const double F = 0.5 * W / FMath::Tan(FMath::DegreesToRadians(0.5 * HFov));
+	const FBox Local(FVector(-300, -100, 0), FVector(300, 100, 250));   // 6 x 2 x 2.5 m, X forward, Y right
+	// Semantic corners (rear = -X, left = -Y, bottom = -Z), in the documented order.
+	struct FSem { double X, Y, Z; const TCHAR* Name; };
+	const FSem Sem[8] = {
+		{-300, -100, 0, TEXT("bottom rear-left")}, {-300, 100, 0, TEXT("bottom rear-right")},
+		{ 300,  100, 0, TEXT("bottom front-right")}, { 300, -100, 0, TEXT("bottom front-left")},
+		{-300, -100, 250, TEXT("top rear-left")}, {-300, 100, 250, TEXT("top rear-right")},
+		{ 300,  100, 250, TEXT("top front-right")}, { 300, -100, 250, TEXT("top front-left")} };
+	for (const double Yaw : { 90.0, 30.0 })
+	{
+		const FTransform At(FRotator(0.0, Yaw, 0.0), FVector(500.0, -300.0, 0.0));
+		const FProjectedBox3D P = FEntityProjection::ProjectOrientedBox(Local, At, VP, W, H, 0.0f, 0.0f, 0.0f);
+		if (!TestTrue(*FString::Printf(TEXT("yaw %g: valid"), Yaw), P.bValid)) continue;
+		for (int32 K = 0; K < 8; ++K)
+		{
+			const FVector Wp = At.TransformPosition(FVector(Sem[K].X, Sem[K].Y, Sem[K].Z));
+			const double Depth = CamZ - Wp.Z;
+			const FVector2D Expect(0.5 * W + F * Wp.Y / Depth, 0.5 * H - F * Wp.X / Depth);
+			TestTrue(*FString::Printf(TEXT("yaw %g: corner %d (%s) at %s, predicted %s"), Yaw, K, Sem[K].Name,
+				*P.Corners[K].ToString(), *Expect.ToString()), P.Corners[K].Equals(Expect, 0.05));
+		}
+		if (Yaw == 90.0)
+		{
+			// Hand check: heading +Y (image right) — front corners right of rear ones; left side (world +X) on top.
+			TestTrue(TEXT("yaw 90: front right of rear"), P.Corners[2].X > P.Corners[1].X && P.Corners[3].X > P.Corners[0].X);
+			TestTrue(TEXT("yaw 90: left above right"), P.Corners[0].Y < P.Corners[1].Y && P.Corners[3].Y < P.Corners[2].Y);
+		}
+		// The I3 axis (rear-face centre -> front-face centre) points along the heading in the image.
+		const FVector2D Axis = 0.25 * (P.Corners[2] + P.Corners[3] + P.Corners[6] + P.Corners[7])
+			- 0.25 * (P.Corners[0] + P.Corners[1] + P.Corners[4] + P.Corners[5]);
+		const double ImageDeg = FMath::RadiansToDegrees(FMath::Atan2(Axis.Y, Axis.X));
+		TestNearlyEqual(*FString::Printf(TEXT("yaw %g: image axis angle = yaw - 90"), Yaw), ImageDeg, Yaw - 90.0, 0.5);
+	}
 	return true;
 }

@@ -162,7 +162,7 @@ one past the last covered pixel (`xmax = x + w` of the COCO `bbox`).
   surface, waves included, under the boat's origin) is cut from the silhouette, so a boat on a
   flat sea has `visibility` 1 from any angle, and `bbox_amodal` ends at the waterline. The plane
   is flat across the hull: on a steep wave a pitched boat's bow or stern can dip below it or lift
-  above it by a few decimetres. Boats on lakes above sea level get no cut (their submerged hull
+  above it by a few decimetres. Only surface vessels (DIS domain 3, placed on water) get the cut: land vehicles and aircraft get none. Boats on lakes above sea level get no cut (their submerged hull
   counts as hidden), and neither does anything on land below sea level (flooded by the ocean mesh).
 - **OBBs of head-on and diagonal views.** The OBB follows the vehicle's projected axis, so for a
   near-square silhouette seen diagonally it is looser than the minimum-area rectangle would be

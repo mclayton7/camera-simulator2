@@ -68,6 +68,9 @@ public:
 	/** GetGroundTruthLocalBox for any actor (testable without an ACamSimEntity). */
 	static FBox ComputeMeshLocalBox(const AActor& Actor);
 
+	/** True for surface vessels (the entity's surface placement is water: DIS domain 3). */
+	bool IsWaterSurfaceVessel() const { return SurfaceMode == ESurfaceMode::Water; }
+
 	/** Inject the surface probe (owned by the entity manager); null disables surface placement. */
 	void SetSurfaceProbe(const ISurfaceProbe* InProbe) { SurfaceProbe = InProbe; }
 

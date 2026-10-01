@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "GroundTruth/SeaSurfacePlane.h"
+#include "GroundTruth/AnnotationTypes.h"
 #include "Ocean/OceanSurface.h"
 
 namespace CamSimGroundTruth
@@ -18,6 +19,19 @@ namespace CamSimGroundTruth
 		Out.bValid = true;
 		Out.Point  = P;
 		Out.Normal = N;
+		return Out;
+	}
+
+	TArray<FEntityWaterPlane> BuildEntityWaterPlanes(const TArray<FEntityAnnotationData>& Entities,
+		const FOceanSurface& Ocean, FGeoToWorldFn GeoToWorld)
+	{
+		TArray<FEntityWaterPlane> Out;
+		for (const FEntityAnnotationData& E : Entities)
+		{
+			if (!E.bWaterSurface || E.StencilValue == 0 || !E.bHasGeo) continue;
+			const FSeaSurfacePlane P = ComputeSeaSurfacePlane(Ocean, E.Lat, E.Lon, GeoToWorld);
+			if (P.bValid) Out.Add({ E.StencilValue, P.Point, P.Normal });
+		}
 		return Out;
 	}
 }

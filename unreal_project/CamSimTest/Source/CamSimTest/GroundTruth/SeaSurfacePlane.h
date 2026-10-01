@@ -23,6 +23,8 @@ struct FEntityWaterPlane
 	FVector Normal  = FVector::UpVector;
 };
 
+struct FEntityAnnotationData;
+
 namespace CamSimGroundTruth
 {
 	/** Geodetic (deg, deg, m HAE) to UE world (cm); false when unavailable (no georeference). */
@@ -37,4 +39,9 @@ namespace CamSimGroundTruth
 	 */
 	CAMSIMTEST_API FSeaSurfacePlane ComputeSeaSurfacePlane(const FOceanSurface& Ocean, double Lat, double Lon,
 		FGeoToWorldFn GeoToWorld);
+
+	/** The per-entity cut planes for a frame: surface vessels only (bWaterSurface); land vehicles, aircraft and
+	 *  the rest get none. Needs a stencil, a geodetic pose and a valid sea surface under the entity. */
+	CAMSIMTEST_API TArray<FEntityWaterPlane> BuildEntityWaterPlanes(const TArray<FEntityAnnotationData>& Entities,
+		const FOceanSurface& Ocean, FGeoToWorldFn GeoToWorld);
 }
