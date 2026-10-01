@@ -13,7 +13,8 @@
 #include "Tests/ThermalTestScene.h"
 
 // CamSim.GPU.Thermal.*: ThermalCS (CamSimThermal.usf) against CamSimThermalRef on synthetic textures — sky, entity
-// visible/occluded/over water, water, terrain, shadow, NaN/Inf — within 1e-4 relative radiance (ROADMAP 4A).
+// visible/occluded/over water, water, terrain, shadow, NaN/Inf — within 1e-4 relative radiance (ROADMAP 4A); the land-cover
+// lookup, bilinear blend and base-colour refinement of terrain pixels (ROADMAP 4B, LandCoverMatchesCpu).
 
 namespace
 {
@@ -73,6 +74,16 @@ namespace
 		return Tex;
 	}
 
+	/** The land-cover window as the runtime binds it: PF_R8_UINT, one code per texel. */
+	FTextureRHIRef UploadCodes(FRHICommandListImmediate& RHICmdList, const TArray<uint8>& Codes, int32 N)
+	{
+		const FRHITextureCreateDesc Desc = FRHITextureCreateDesc::Create2D(TEXT("CamSimTestLandCover"), N, N, PF_R8_UINT)
+			.SetFlags(ETextureCreateFlags::ShaderResource).SetInitialState(ERHIAccess::SRVMask);
+		FTextureRHIRef Tex = RHICmdList.CreateTexture(Desc);
+		RHICmdList.UpdateTexture2D(Tex, 0, FUpdateTextureRegion2D(0, 0, 0, 0, N, N), N, Codes.GetData());
+		return Tex;
+	}
+
 	/** sRGB byte of a linear grey (the encoder's rounding: floor(x + 0.5)). */
 	uint8 LinearToSrgbByte(float L)
 	{
@@ -85,8 +96,10 @@ namespace
 	enum class EBase : uint8 { None, Float, HardwareSrgb };
 
 	/** Upload the scene into textures laid out per L (view rects offset inside larger textures), run AddThermalPass, read back.
-	 *  HardwareSrgb: base colour as the bytes of BaseBytes (DW x DH) in an sRGB-flagged 8-bit texture. */
-	TArray<float> RunThermalOnGpu(const CamSimThermalTest::FThermalTestScene& S, const FLayout& L, EBase BaseMode, const TArray<uint8>& BaseBytes)
+	 *  HardwareSrgb: base colour as the bytes of BaseBytes (DW x DH) in an sRGB-flagged 8-bit texture.
+	 *  LandCover: the window codes (S.P.LandCoverTexels^2) bound as FThermalPassInputs::LandCover; null: none bound. */
+	TArray<float> RunThermalOnGpu(const CamSimThermalTest::FThermalTestScene& S, const FLayout& L, EBase BaseMode,
+		const TArray<uint8>& BaseBytes, const TArray<uint8>* LandCover = nullptr)
 	{
 		const TArray<FLinearColor> Color = Embed(S.Color, S.W, S.H, L.ColorExtent, L.ColorMin, FLinearColor::Black);
 		const TArray<float> Depth = Embed(S.Depth, S.DW, S.DH, L.DepthExtent, L.DepthMin, 0.0f);
@@ -104,6 +117,8 @@ namespace
 			FTextureRHIRef StencilTex = UploadStencil(RHICmdList, Stencil, L.DepthExtent);
 			FTextureRHIRef BaseTex    = BaseMode == EBase::HardwareSrgb ? UploadSrgbBase(RHICmdList, Bytes, L.DepthExtent)
 				: UploadRgba(RHICmdList, Base, L.DepthExtent, TEXT("CamSimTestThermalBase"));
+			const int32 LcN = static_cast<int32>(S.P.LandCoverTexels);
+			FTextureRHIRef LcTex = LandCover ? UploadCodes(RHICmdList, *LandCover, LcN) : FTextureRHIRef();
 			FRHIGPUTextureReadback Rb(TEXT("CamSimTestThermalRadiance"));
 			{
 				FRDGBuilder GraphBuilder(RHICmdList);
@@ -117,6 +132,7 @@ namespace
 				In.BaseColor      = BaseMode != EBase::None
 					? GraphBuilder.RegisterExternalTexture(CreateRenderTarget(BaseTex, TEXT("CamSimTestThermalBase"))) : nullptr;
 				In.DepthViewRect  = FIntRect(L.DepthMin, L.DepthMin + FIntPoint(S.DW, S.DH));
+				In.LandCover = LandCover ? GraphBuilder.RegisterExternalTexture(CreateRenderTarget(LcTex, TEXT("CamSimTestLandCover"))) : nullptr;
 				const FRDGTextureRef Radiance = AddThermalPass(GraphBuilder, In, S.P);
 				AddEnqueueCopyPass(GraphBuilder, &Rb, Radiance);
 				GraphBuilder.Execute();
@@ -422,5 +438,58 @@ bool FThermalGpuEndToEndTest::RunTest(const FString& Parameters)
 	TestTrue(*FString::Printf(TEXT("white-hot: sky (%.1f) darker than terrain (%.1f)"), SkyY, TerrainY), SkyY < TerrainY);
 	TestTrue(*FString::Printf(TEXT("night: entity (%.1f) brighter than terrain (%.1f)"), EntityY, TerrainY), EntityY > TerrainY);
 	TestTrue(*FString::Printf(TEXT("terrain mid-grey (16..235 limited range): %.1f"), TerrainY), TerrainY > 40.0 && TerrainY < 220.0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalGpuLandCoverTest, "CamSim.GPU.Thermal.LandCoverMatchesCpu",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalGpuLandCoverTest::RunTest(const FString& Parameters)
+{
+	if (GUsingNullRHI) { AddInfo(TEXT("skipped: NullRHI (run scripts/run_gpu_tests.sh)")); return true; }
+	constexpr float MirrorTol = 1e-4f;   // ThermalCS vs CamSimThermalRef (never loosen it)
+	struct FCase { const TCHAR* Name; float Yaw; int32 DW, DH; FIntPoint ColorPad, DepthPad; bool bBase; bool bLandCover; };
+	const FCase Cases[] = {
+		{ TEXT("yaw 0, refined"),               0.0f,    64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true  },
+		{ TEXT("yaw 30, refined"),              30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  true  },
+		{ TEXT("yaw 30, no base colour"),       30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), false, true  },
+		{ TEXT("half-res depth, offset rects"), -117.0f, 32, 18, FIntPoint(3, 2), FIntPoint(4, 3), true,  true  },
+		{ TEXT("land cover off, window bound"), 30.0f,   64, 36, FIntPoint(0, 0), FIntPoint(0, 0), true,  false },
+	};
+	for (const FCase& C : Cases)
+	{
+		CamSimThermalTest::FThermalTestScene S = CamSimThermalTest::MakeLandCoverScene(64, 36, C.DW, C.DH, C.Yaw);
+		if (!C.bLandCover) S.P.bLandCover = 0;
+		const TArray<CamSimThermalRef::FPixelResult> Ref = CamSimThermalRef::Run(S.Images(C.bBase), S.P);
+		FLayout L;
+		L.ColorMin = C.ColorPad;
+		L.ColorExtent = FIntPoint(S.W, S.H) + C.ColorPad * 2;
+		L.DepthMin = C.DepthPad;
+		L.DepthExtent = FIntPoint(C.DW, C.DH) + C.DepthPad * 2;
+		const EBase Base = C.bBase ? EBase::Float : EBase::None;
+		const TArray<float> Gpu = RunThermalOnGpu(S, L, Base, TArray<uint8>(), &S.LandCover);
+		if (!TestEqual(*FString::Printf(TEXT("%s: readback"), C.Name), Gpu.Num(), S.W * S.H)) continue;
+		int32 Bad = 0, Land = 0, WorstI = 0;
+		float WorstRel = 0.0f;
+		for (int32 I = 0; I < Gpu.Num(); ++I)
+		{
+			const float R = Ref[I].Radiance;
+			const float Rel = FMath::Abs(Gpu[I] - R) / FMath::Max(FMath::Abs(R), 1e-6f);
+			Land += Ref[I].bLandCover ? 1 : 0;
+			if (!(Rel <= MirrorTol)) ++Bad;
+			if (!(Rel <= WorstRel)) { WorstRel = Rel; WorstI = I; }
+		}
+		AddInfo(FString::Printf(TEXT("%s: worst relative %.2e at pixel (%d, %d), %d land-cover pixels"), C.Name, WorstRel, WorstI % S.W, WorstI / S.W, Land));
+		TestEqual(*FString::Printf(TEXT("%s: every pixel within %.0e of CamSimThermalRef"), C.Name, MirrorTol), Bad, 0);
+		if (C.bLandCover)
+		{
+			TestTrue(*FString::Printf(TEXT("%s: land cover exercised"), C.Name), Land >= 300);
+		}
+		else
+		{
+			const TArray<float> Unbound = RunThermalOnGpu(S, L, Base, TArray<uint8>(), nullptr);
+			TestTrue(TEXT("bLandCover = 0: bit for bit the same as no window bound"),
+				Unbound.Num() == Gpu.Num() && FMemory::Memcmp(Unbound.GetData(), Gpu.GetData(), Gpu.Num() * sizeof(float)) == 0);
+		}
+	}
 	return true;
 }

@@ -1,5 +1,5 @@
 // Copyright CamSim Contributors. All Rights Reserved.
-// Thermal core (ROADMAP 4A): ThermalCS's per-pixel maths and parameters. CPU twin: CamSimThermalRef::EvaluatePixel
+// Thermal core (ROADMAP 4A; 4B adds the land-cover lookup for terrain pixels): ThermalCS's per-pixel maths and parameters. CPU twin: CamSimThermalRef::EvaluatePixel
 // (CamSimTest/Thermal/ThermalReference.cpp), mirrored expression for expression (same order, same constants);
 // CamSim.GPU.Thermal.MatchesCpu holds them to 1e-4 relative radiance. Plain float maths: no atomics, no wave intrinsics.
 
@@ -34,6 +34,29 @@ float    EClampWm2;
 float    KFastScale;
 uint     bBaseColorSrgb;
 uint     UseBaseColor;                   // 0: no base colour bound (fast term off)
+
+// Land cover (ROADMAP 4B): CamSimThermalRef::{SampleLandCover, RefinementWeights, RefinedClassData, BlendLandCover}.
+#define LANDCOVER_FAMILY_VEGETATION 1u   // FThermalFrameParams::LandCoverFamily* / ELandCoverFamily
+#define LANDCOVER_FAMILY_BUILT_UP   2u
+#define LANDCOVER_FAMILY_BARE       3u
+uint4    LandCoverClassPacked[16];       // code c -> class: byte (c & 3) of component (c >> 2) & 3 of entry c >> 4
+uint4    LandCoverFamilyPacked[16];      // same layout: 0 none, 1 vegetation, 2 built-up, 3 bare
+uint     UseLandCover;                   // bLandCover and a window of the right size bound
+float3   LandCoverEast;                  // unit East at the window centre (translated world)
+float3   LandCoverNorth;
+float2   LandCoverCamOffsetM;            // camera (E, N) from the window centre, m
+float    LandCoverTexelM;
+uint     LandCoverTexels;
+uint     bLandCoverRefine;
+float    VegIndexLo;
+float    VegIndexHi;
+float    AsphaltMaxLuma;
+float    AsphaltRampLuma;
+uint     VegetationClass;
+uint     BareSoilClass;
+uint     AsphaltClass;
+uint     ConcreteClass;
+Texture2D<uint> LandCover;               // window codes, row 0 = north (zero-uint dummy when UseLandCover == 0: never loaded then)
 
 /** Non-finite on the bits: Metal fast-math may fold isnan/isinf or V != V away. */
 bool IsNonFinite(float V) { return (asuint(V) & 0x7fffffffu) >= 0x7f800000u; }
@@ -71,6 +94,99 @@ float3 ClipToWorld(float Nx, float Ny, float Z)
 	return float3(H.x / H.w, H.y / H.w, H.z / H.w);
 }
 
+uint PackedByte(uint4 Entry, uint Code) { return (Entry[(Code >> 2u) & 3u] >> ((Code & 3u) * 8u)) & 0xFFu; }
+uint LandCoverClassOf(uint Code)  { return PackedByte(LandCoverClassPacked[Code >> 4u], Code); }
+uint LandCoverFamilyOf(uint Code) { return PackedByte(LandCoverFamilyPacked[Code >> 4u], Code); }
+
+/** CamSimThermalRef::ClassData: (T, eps, k_fast, S_abs,ref), class clamped. */
+float4 ClassDataOf(uint Class) { return ClassData[min(Class, max(NumClasses, 1u) - 1u)]; }
+
+/** CamSimThermalRef::SampleLandCover: false outside the texel-centre grid; else the north-west texel I0 and the fractions F. */
+bool LandCoverCoords(float3 Pw, out int2 I0, out float2 F)
+{
+	I0 = int2(0, 0);
+	F = float2(0.0, 0.0);
+	const float E = dot(Pw, LandCoverEast) / 100.0 + LandCoverCamOffsetM.x;
+	const float N = dot(Pw, LandCoverNorth) / 100.0 + LandCoverCamOffsetM.y;
+	const float Half = float(LandCoverTexels) * 0.5;
+	const float X = E / LandCoverTexelM + Half - 0.5;
+	const float Y = Half - N / LandCoverTexelM - 0.5;
+	const float MaxI = float(LandCoverTexels) - 1.0;
+	// Bit tests first: Metal fast-math may fold the NaN behaviour of the comparisons (CPU: !(X >= 0 && ...)).
+	if (IsNonFinite(X) || IsNonFinite(Y)) return false;
+	if (X < 0.0 || X > MaxI || Y < 0.0 || Y > MaxI) return false;
+	const float X0 = min(floor(X), MaxI - 1.0);
+	const float Y0 = min(floor(Y), MaxI - 1.0);
+	I0 = int2(int(X0), int(Y0));
+	F = float2(X - X0, Y - Y0);
+	return true;
+}
+
+/** CamSimThermalRef::RefinementWeights: (vegetation v, concrete c) of a linear base colour. */
+float2 RefinementWeights(float3 Base)
+{
+	const float Sum = Base.x + Base.y + Base.z;
+	const float ExG = (2.0 * Base.y - Base.x - Base.z) / (Sum + 1e-4);
+	const float Veg = clamp((ExG - VegIndexLo) / max(VegIndexHi - VegIndexLo, 1e-4), 0.0, 1.0);
+	const float Concrete = clamp((Lum709(Base) - AsphaltMaxLuma) / max(AsphaltRampLuma, 1e-4) + 0.5, 0.0, 1.0);
+	return float2(Veg, Concrete);
+}
+
+/** The refinement target classes' data, loaded once per pixel (CPU: ClassData(P, P.VegetationClass) etc. per texel). */
+struct FLandCoverTargets
+{
+	float4 Vegetation;
+	float4 BareSoil;
+	float4 Asphalt;
+	float4 Concrete;
+};
+
+FLandCoverTargets LoadLandCoverTargets()
+{
+	FLandCoverTargets T;
+	T.Vegetation = ClassDataOf(VegetationClass);
+	T.BareSoil   = ClassDataOf(BareSoilClass);
+	T.Asphalt    = ClassDataOf(AsphaltClass);
+	T.Concrete   = ClassDataOf(ConcreteClass);
+	return T;
+}
+
+/** CamSimThermalRef::RefinedClassData (same multiply/add order per texel). */
+float4 RefinedClassData(uint Code, float2 Wt, bool bRefine, FLandCoverTargets Tg)
+{
+	const float4 Own = ClassDataOf(LandCoverClassOf(Code));
+	if (!bRefine) return Own;
+	const uint Family = LandCoverFamilyOf(Code);
+	const float V = Wt.x;
+	const float C = Wt.y;
+	if (Family == LANDCOVER_FAMILY_VEGETATION)
+	{
+		return Own * V + Tg.BareSoil * (1.0 - V);
+	}
+	if (Family == LANDCOVER_FAMILY_BUILT_UP)
+	{
+		return Tg.Vegetation * V + (Tg.Asphalt * (1.0 - C) + Tg.Concrete * C) * (1.0 - V);
+	}
+	if (Family == LANDCOVER_FAMILY_BARE)
+	{
+		return Tg.Vegetation * V + Own * (1.0 - V);
+	}
+	return Own;
+}
+
+/** CamSimThermalRef::BlendLandCover: bilinear blend of the four texels' refined class data. R8_UINT codes: Load, never sampled. */
+float4 BlendLandCover(int2 I0, float2 F, float3 Base, bool bRefine)
+{
+	const float2 Wt = bRefine ? RefinementWeights(Base) : float2(0.0, 0.0);
+	const FLandCoverTargets Tg = LoadLandCoverTargets();
+	const uint C00 = LandCover.Load(int3(I0, 0)) & 0xFFu;
+	const uint C10 = LandCover.Load(int3(I0 + int2(1, 0), 0)) & 0xFFu;
+	const uint C01 = LandCover.Load(int3(I0 + int2(0, 1), 0)) & 0xFFu;
+	const uint C11 = LandCover.Load(int3(I0 + int2(1, 1), 0)) & 0xFFu;
+	return RefinedClassData(C00, Wt, bRefine, Tg) * ((1.0 - F.x) * (1.0 - F.y)) + RefinedClassData(C10, Wt, bRefine, Tg) * (F.x * (1.0 - F.y))
+		+ RefinedClassData(C01, Wt, bRefine, Tg) * ((1.0 - F.x) * F.y) + RefinedClassData(C11, Wt, bRefine, Tg) * (F.x * F.y);
+}
+
 struct FThermalSample
 {
 	float  U;
@@ -99,6 +215,7 @@ float EvaluatePixel(FThermalSample S)
 	const float Range = sqrt(dot(Pw, Pw));
 	uint Class = TerrainClass;
 	float Offset = 0.0;
+	bool bTerrain = true;
 	const uint Stencil = S.Stencil & 0xFFu;
 	if (Stencil > 0u && S.CustomZ >= S.DeviceZ * EntityDepthRatio)
 	{
@@ -106,20 +223,32 @@ float EvaluatePixel(FThermalSample S)
 		const bool bOdd = (Stencil & 1u) != 0u;
 		Class = (uint)(bOdd ? E.z : E.x);
 		Offset = bOdd ? E.w : E.y;
+		bTerrain = false;
 	}
 	else if (bWater != 0u)
 	{
 		const float Vert = dot(Pw, Up);
 		const float D2 = max(Range * Range - Vert * Vert, 0.0);
 		const float Height = CamHeightCm + Vert + D2 / (2.0 * SeaRadiusCm);
-		if (Height < WaterBandCm) Class = WaterClass;
+		if (Height < WaterBandCm)
+		{
+			Class = WaterClass;
+			bTerrain = false;
+		}
 	}
 	Class = min(Class, max(NumClasses, 1u) - 1u);
-	const float4 Cd = ClassData[Class];
+	// Decode only with a base colour bound (S.Base is zero and unused otherwise; the CPU decodes unconditionally).
+	const float3 Base = (UseBaseColor != 0u && bBaseColorSrgb != 0u) ? float3(SrgbToLinear(S.Base.x), SrgbToLinear(S.Base.y), SrgbToLinear(S.Base.z)) : S.Base;
+	float4 Cd = ClassData[Class];
+	if (bTerrain && UseLandCover != 0u)
+	{
+		int2 I0;
+		float2 F;
+		if (LandCoverCoords(Pw, I0, F)) Cd = BlendLandCover(I0, F, Base, UseBaseColor != 0u && bLandCoverRefine != 0u);
+	}
 	float T = Cd.x + Offset;
 	if (UseBaseColor != 0u && KFastScale > 0.0)
 	{
-		const float3 Base = (bBaseColorSrgb != 0u) ? float3(SrgbToLinear(S.Base.x), SrgbToLinear(S.Base.y), SrgbToLinear(S.Base.z)) : S.Base;
 		const float BaseLum = Lum709(Base);
 		const float E = clamp(THERMAL_PI * Lum709(S.Color) / (max(BaseLum, 0.03) * max(KLum, 1e-6)), 0.0, EClampWm2);
 		const float SAbs = (1.0 - clamp(BaseLum, 0.0, 1.0)) * E;
