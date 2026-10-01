@@ -99,7 +99,7 @@ Built-in classes (index order fixed; 6-13 added by 4B land cover), overridable a
 | `water` | 0.06 | 0.98 | - | - | 0 | water temperature +/- 0.5 K |
 | `vehicle_paint` | 0.30 | 0.90 | 600 | 12 | 0.04 | model |
 | `asphalt` | 0.10 | 0.95 | 1500 | 10 | 0.02 | model |
-| `vegetation` | 0.20 | 0.98 | 300 | 15 | 0.008 | model |
+| `vegetation` | 0.40\* | 0.98 | 500 | 18 | 0.008 | model |
 | `concrete` | 0.35 | 0.92 | 1800 | 10 | 0.015 | model |
 | `tree_canopy` | 0.40\* | 0.98 | 800 | 25 | 0.004 | model |
 | `shrubland` | 0.40\* | 0.97 | 600 | 18 | 0.008 | model |

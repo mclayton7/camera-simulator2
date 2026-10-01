@@ -64,7 +64,7 @@ const TArray<FThermalMaterial>& FThermalMaterialTable::BuiltIns()
 		MakeMaterial(TEXT("water"),           0.06f, 0.98f,    0.0f, 10.0f, 0.0f, EThermalTemperatureSource::Water),
 		MakeMaterial(TEXT("vehicle_paint"),   0.30f, 0.90f,  600.0f, 12.0f, 0.04f),
 		MakeMaterial(TEXT("asphalt"),         0.10f, 0.95f, 1500.0f, 10.0f, 0.02f),
-		MakeMaterial(TEXT("vegetation"),      0.20f, 0.98f,  300.0f, 15.0f, 0.008f),
+		MakeMaterial(TEXT("vegetation"),      0.40f, 0.98f,  500.0f, 18.0f, 0.008f),
 		MakeMaterial(TEXT("concrete"),        0.35f, 0.92f, 1800.0f, 10.0f, 0.015f),
 		MakeMaterial(TEXT("tree_canopy"),     0.40f, 0.98f,  800.0f, 25.0f, 0.004f),
 		MakeMaterial(TEXT("shrubland"),       0.40f, 0.97f,  600.0f, 18.0f, 0.008f),

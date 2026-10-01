@@ -102,7 +102,7 @@ bool FThermalLandCoverContrastTest::RunTest(const FString& Parameters)
 	FString Line;
 	for (int32 C = 0; C < Table.Num(); ++C) Line += FString::Printf(TEXT(" %s %.1f/%.1f"), *Table.Get(C).Name, K(C, Noon), K(C, Night));
 	AddInfo(TEXT("noon/02:00 K:") + Line);
-	const int32 Veg[] = { T::TreeCanopy, T::Shrubland, T::Grassland, T::Cropland };
+	const int32 Veg[] = { T::Vegetation, T::TreeCanopy, T::Shrubland, T::Grassland, T::Cropland };
 	for (const int32 V : Veg)
 	{
 		for (const int32 Hot : { T::BuiltUp, T::BareSoil })
@@ -116,6 +116,10 @@ bool FThermalLandCoverContrastTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("night: concrete warmer than grassland by >= 1 K"), K(T::Concrete, Night) - K(T::Grassland, Night) >= 1.0);
 	TestTrue(TEXT("night: built-up warmer than tree canopy by >= 1 K"), K(T::BuiltUp, Night) - K(T::TreeCanopy, Night) >= 1.0);
 	TestTrue(TEXT("night: bare soil warmer than tree canopy by >= 1 K"), K(T::BareSoil, Night) - K(T::TreeCanopy, Night) >= 1.0);
+	for (const int32 Hot : { T::BuiltUp, T::BareSoil })
+	{
+		TestTrue(*FString::Printf(TEXT("night: %s warmer than vegetation"), *Table.Get(Hot).Name), K(Hot, Night) - K(T::Vegetation, Night) >= 1.0);
+	}
 	TestTrue(TEXT("night: tree canopy warmer than grassland by >= 0.5 K"), K(T::TreeCanopy, Night) - K(T::Grassland, Night) >= 0.5);
 	return true;
 }
