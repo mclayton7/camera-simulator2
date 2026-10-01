@@ -93,6 +93,12 @@ void ACamSimEnvironment::BeginPlay()
 	// Copy Phase 18 config once at startup
 	Phase18Cfg = Subsystem->GetConfig().Phase18;
 
+	// Air temperature until CIGI Atmosphere Control sets it (ROADMAP 4A thermal.air_temperature_c).
+	if (FMath::IsFinite(Subsystem->GetConfig().Thermal.AirTemperatureC))
+	{
+		CachedAtmosSnapshot.AirTempCelsius = Subsystem->GetConfig().Thermal.AirTemperatureC;
+	}
+
 	// 18L: Populate runtime zone list from YAML-configured positions
 	for (const FCamSimConfig::FPhase18Config::FWeatherZoneConfig& ZCfg : Phase18Cfg.WeatherZoneConfigs)
 	{
@@ -426,8 +432,25 @@ void ACamSimEnvironment::ApplySun(const FDateTime& Utc)
 // ApplyAtmosphere — fog/visibility
 // -------------------------------------------------------------------------
 
+void ACamSimEnvironment::FoldAtmosphere(FAtmosphericSnapshot& S, const FCigiAtmosphereState& A)
+{
+	if (FMath::IsFinite(A.AirTemp)) S.AirTempCelsius = A.AirTemp;
+	if (FMath::IsFinite(A.Visibility) && A.Visibility > 0.0f) S.AtmosphericVisibilityM = A.Visibility;
+	if (FMath::IsFinite(A.Humidity)) S.RelativeHumidity = FMath::Clamp(A.Humidity / 100.0f, 0.0f, 1.0f);
+	S.bFogActive = S.AtmosphericVisibilityM < FogVisibilityM;
+}
+
+void ACamSimEnvironment::FoldWeather(FAtmosphericSnapshot& S, const FCigiWeatherState& W)
+{
+	S.CloudCover01 = FMath::IsFinite(W.Coverage) ? FMath::Clamp(W.Coverage / 100.0f, 0.0f, 1.0f) : 0.0f;
+}
+
 void ACamSimEnvironment::ApplyAtmosphere()
 {
+	// Snapshot first: the CIGI values hold whether or not there is a fog actor to drive (ROADMAP 4A).
+	FoldAtmosphere(CachedAtmosSnapshot, CurrentAtmosphere);
+	if (!CurrentAtmosphere.bAtmosEn) CachedAtmosSnapshot.bFogActive = false;   // the fog is not drawn
+
 	if (!HeightFog) return;
 
 	UExponentialHeightFogComponent* FogComp = HeightFog->GetComponent();
@@ -466,9 +489,6 @@ void ACamSimEnvironment::ApplyAtmosphere()
 		FogComp->SetFogInscatteringColor(FLinearColor(0.1f, 0.12f, 0.18f));
 	}
 
-	// Update Phase 18 atmospheric snapshot
-	CachedAtmosSnapshot.AtmosphericVisibilityM = CurrentAtmosphere.Visibility;
-
 	ApplySecondFogLayer();
 	ApplySkyAtmosphericScattering();
 
@@ -494,9 +514,11 @@ void ACamSimEnvironment::ApplyWeather()
 				FogComp->SetFogDensity(0.00002f); // Clear day baseline
 			}
 		}
+		CachedAtmosSnapshot.CloudCover01 = 0.0f;   // no weather: clear sky (ROADMAP 4A)
 		return;
 	}
 
+	FoldWeather(CachedAtmosSnapshot, CurrentWeather);
 	const float Coverage01 = FMath::Clamp(CurrentWeather.Coverage / 100.0f, 0.0f, 1.0f);
 
 	// Fallback: adjust fog to simulate overcast when no volumetric cloud actor exists

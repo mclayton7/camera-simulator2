@@ -28,6 +28,7 @@
 #include "Geospatial/Geoid.h"           // CamSim::Geospatial::GetGeoidUndulation
 #include "SensorGraph.h"                // IsSensorGraphSupported (ROADMAP 3B)
 #include "InstanceIdPass.h"             // IsInstanceIdPassSupported (ROADMAP 2.7)
+#include "ThermalPass.h"                // IsThermalPassSupported, CamSimThermalPass (ROADMAP 4A)
 #include "CamSimTest.h"
 #include "Engine/World.h"
 #include "DynamicRHI.h"
@@ -436,6 +437,23 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		{
 			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: ground truth is on but the instance-ID pass is unavailable (%s); ")
 				TEXT("entities are not tagged and annotations use projected boxes (mask_source \"projection\")"), *Why);
+		}
+	}
+
+	// Thermal (ROADMAP 4A): ThermalCS, decided once. Without it IR stays the 3B.2 visible-light proxy.
+	bThermalAvailable = false;
+	if (bSensorGraphAvailable && Config.Thermal.bEnabled)
+	{
+		FString Why;
+		bThermalAvailable = IsThermalPassSupported(Why);
+		if (!bThermalAvailable)
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("Thermal: ThermalCS unavailable (%s); IR uses the visible-light proxy"), *Why);
+		}
+		else if (!CamSimThermalPass::bBaseColorAtTonemapper)
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("Thermal: GBuffer base colour is not readable at the tonemapper (ROADMAP 4A spike); ")
+				TEXT("the per-pixel solar term is off (k_fast = 0)"));
 		}
 	}
 

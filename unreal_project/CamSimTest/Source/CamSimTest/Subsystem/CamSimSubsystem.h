@@ -113,6 +113,15 @@ public:
 	bool IsGroundTruthMaskAvailable() const { return bGroundTruthMaskAvailable; }
 
 	/**
+	 * ROADMAP 4A: whether ThermalCS runs this session — the sensor graph runs, thermal.enabled, and ThermalCS is in the
+	 * shader map. Decided once in Initialize; false: IR uses the visible-light proxy.
+	 */
+	bool IsThermalAvailable() const { return bThermalAvailable; }
+
+	/** Whether entities get custom-depth stencil values: ground-truth masks or thermal need them. */
+	bool IsEntityStencilTaggingEnabled() const { return IsGroundTruthMaskAvailable() || IsThermalAvailable(); }
+
+	/**
 	 * The config preconditions (primary view, NV12 dimensions), then
 	 * IsSensorGraphSupported (a real RHI with SM5 compute and the shaders).
 	 * Game thread, after RHI init. On false, OutWhy says what's missing.
@@ -164,6 +173,7 @@ private:
 	FCamSimConfig    Config;
 	bool             bSensorGraphAvailable = false;
 	bool             bGroundTruthMaskAvailable = false;
+	bool             bThermalAvailable = false;
 	FEntityTypeTable EntityTypeTable;
 	/** Serialises HotReloadConfig writes against cross-thread Config snapshot reads. */
 	mutable FRWLock  ConfigLock_;

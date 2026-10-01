@@ -4,6 +4,7 @@
 #include "Entity/EntityTypeTable.h"
 #include "Entity/EntityMeshLoader.h"
 #include "Entity/SurfaceProbe.h"
+#include "Hosts/DisCommands.h"       // CamSim::Dis::SurfaceModeFor (IsSurfaceVehicle)
 #include "Subsystem/CamSimSubsystem.h"
 #include "CamSimTest.h"
 
@@ -398,6 +399,22 @@ void ACamSimEntity::InitAnimatedCharacter(const FEntityTypeEntry& Entry)
 // ApplyPose — snap position + orientation from CIGI packet
 // -------------------------------------------------------------------------
 
+bool ACamSimEntity::IsSurfaceVehicleClass(const FEntityClassification& Class, const FString& EntityCategory)
+{
+	if (CamSim::Dis::SurfaceModeFor(Class.Kind, Class.Domain, /*bClampToSurface=*/true) != ESurfaceMode::None) return true;
+	for (const TCHAR* Category : { TEXT("truck"), TEXT("boat"), TEXT("ground"), TEXT("sea") })
+	{
+		if (EntityCategory.Equals(Category, ESearchCase::IgnoreCase)) return true;
+	}
+	return false;
+}
+
+bool ACamSimEntity::IsSurfaceVehicle() const
+{
+	const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr;
+	return IsSurfaceVehicleClass(Classification, Entry ? Entry->EntityCategory : FString());
+}
+
 void ACamSimEntity::ApplyCommand(const FEntityCommand& Command)
 {
 	if (!GlobeAnchor) return;
@@ -405,6 +422,11 @@ void ACamSimEntity::ApplyCommand(const FEntityCommand& Command)
 	if (Command.Motion.IsSet())
 	{
 		SetMotion(*Command.Motion);
+	}
+
+	if (Command.Classification.Kind != 0 || Command.Classification.Domain != 0 || Command.Classification.Category != 0)
+	{
+		Classification = Command.Classification;
 	}
 
 	const bool bNowAttached = Command.Attachment.IsSet();

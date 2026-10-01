@@ -4,6 +4,7 @@
 #include "Entity/CamSimEntity.h"
 #include "Camera/CamSimCamera.h"
 #include "Entity/EntityTypeTable.h"
+#include "Thermal/ThermalFrameBuilder.h"   // FThermalStencilEntity
 #include "Entity/SurfaceProbe.h"
 #include "Entity/StencilSlotAllocator.h"
 #include "GroundTruth/FEntityProjection.h"
@@ -321,9 +322,9 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FEntityCommand& C)
 	Entity->Key      = C.Key;
 	Entity->EntityId = static_cast<uint16>(C.Key.Id & 0xFFFF);
 	Entity->AnnotationId = AnnotationIds.Allocate();
-	// Tagged only when the instance-ID pass runs (decided once at startup): an untagged entity costs no
+	// Tagged only when the instance-ID pass or ThermalCS runs (decided once at startup): an untagged entity costs no
 	// custom-depth draw and gets the projected box.
-	if (Subsystem && Subsystem->IsGroundTruthMaskAvailable())
+	if (Subsystem && Subsystem->IsEntityStencilTaggingEnabled())
 	{
 		// A stale entry for this key (actor died before PurgeStaleEntities ran) must not leak its value.
 		uint8 Old = 0;
@@ -444,7 +445,8 @@ void FCamSimEntityManager::GetEntitySnapshot(
 		Data.bVisible   = bVisible;
 		Data.bTruncated = bTruncated;
 		Data.ScreenBBox = ScreenBBox;
-		Data.StencilValue = Entity->GetGroundTruthStencil();
+		// Thermal can tag entities without the instance-ID pass: only report the stencil when masks are measured.
+		Data.StencilValue = (Subsystem && Subsystem->IsGroundTruthMaskAvailable()) ? Entity->GetGroundTruthStencil() : 0;
 		Data.bWaterSurface = Entity->IsWaterSurfaceVessel();
 		const FProjectedBox3D P = FEntityProjection::ProjectOrientedBox(LocalBox, Entity->GetActorTransform(),
 			ViewProj.ViewProjectionMatrix, ViewProj.ImageWidth, ViewProj.ImageHeight, ViewProj.FocalPx, ViewProj.K1, ViewProj.K2);
@@ -500,6 +502,24 @@ float FCamSimEntityManager::GetEntityMaxUpdateRateHz(const FEntityKey& Key) cons
 		return FMath::Max(0.0f, *OverrideHz);
 	}
 	return FMath::Max(0.0f, Cfg.EntityScale.DefaultMaxUpdateRateHz);
+}
+
+void FCamSimEntityManager::GetThermalStencilEntities(TArray<FThermalStencilEntity>& Out) const
+{
+	Out.Reset();
+	for (const TPair<FEntityKey, uint8>& KV : StencilOf)
+	{
+		const ACamSimEntity* E = FindEntity(KV.Key);   // null for a pending-kill actor
+		if (!E || KV.Value == 0) continue;
+		FThermalStencilEntity& T = Out.AddDefaulted_GetRef();
+		T.Stencil = KV.Value;
+		if (const FEntityTypeEntry* Type = TypeTable ? TypeTable->FindEntry(E->EntityType) : nullptr)
+		{
+			T.ThermalMaterial = Type->ThermalMaterial;
+			T.ThermalOffsetK  = Type->ThermalOffsetK;
+		}
+		T.bSurfaceVehicle = E->IsSurfaceVehicle();
+	}
 }
 
 ACamSimEntity* FCamSimEntityManager::FindEntity(const FEntityKey& Key) const

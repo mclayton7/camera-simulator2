@@ -71,6 +71,15 @@ public:
 	/** True for surface vessels (the entity's surface placement is water: DIS domain 3). */
 	bool IsWaterSurfaceVessel() const { return SurfaceMode == ESurfaceMode::Water; }
 
+	/**
+	 * Land or sea vehicle (thermal: +8 K default offset, ROADMAP 4A): a DIS/CIGI platform in the land or surface domain
+	 * (the domains CamSim::Dis::SurfaceModeFor places on the surface), or a type whose entity_category is
+	 * truck/boat/ground/sea.
+	 */
+	bool IsSurfaceVehicle() const;
+	/** IsSurfaceVehicle's rule for a classification and an entity_category (case-insensitive). Pure. */
+	static bool IsSurfaceVehicleClass(const FEntityClassification& Class, const FString& EntityCategory);
+
 	/** Inject the surface probe (owned by the entity manager); null disables surface placement. */
 	void SetSurfaceProbe(const ISurfaceProbe* InProbe) { SurfaceProbe = InProbe; }
 
@@ -132,6 +141,9 @@ protected:
 
 private:
 	uint8 GroundTruthStencil = 0;
+
+	/** Last non-empty classification a command carried (CIGI Conformal Clamp carries none and keeps it). */
+	FEntityClassification Classification;
 
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USceneComponent> Root;

@@ -17,6 +17,7 @@ class FEntityTypeTable;
 class FScenarioEngine;
 class FCigiHostAdapter;
 class FCesiumSurfaceProbe;
+struct FThermalStencilEntity;
 
 /**
  * FCamSimEntityManager
@@ -69,6 +70,12 @@ public:
 
 	/** A live entity actor by key, or nullptr. */
 	ACamSimEntity* FindEntity(const FEntityKey& Key) const;
+
+	/**
+	 * The live stencil-tagged entities with their thermal class (ROADMAP 4A), rebuilt per call. StencilOf holds
+	 * exactly the live tagged entities (values are released 4 frames late), so a reused value maps to its current owner.
+	 */
+	void GetThermalStencilEntities(TArray<FThermalStencilEntity>& Out) const;
 
 	/** Current number of live entity actors (for /metrics camsim_entity_count). */
 	int32 GetEntityCount() const { return EntityMap.Num(); }
