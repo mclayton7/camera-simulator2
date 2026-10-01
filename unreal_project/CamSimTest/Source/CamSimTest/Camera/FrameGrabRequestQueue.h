@@ -12,6 +12,7 @@ struct FFrameGrabRequest
 	uint32 Generation  = 0;           // the slot's capture generation at request time
 	int32  TargetIndex = INDEX_NONE;  // grab render target / readback slot
 	bool   bInstanceIds = false;      // also run InstanceIdCS and read its buffer back (ground truth, ROADMAP 2.7)
+	bool   bDepth       = false;      // also read back InstanceIdCS's depth output (ml_training.depth_map)
 	/** With bInstanceIds: per tagged entity, the water plane (UE world, doubles) below which its hidden silhouette
 	 *  is cut (submerged hull); empty = no cut. */
 	TArray<FEntityWaterPlane> WaterPlanes;

@@ -159,6 +159,10 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
   `repo_setup.sh` writes Cesium into `/opt/UE/Engine/Plugins/Marketplace`, so run it as a user who
   can write there (or with sudo). Not yet verified on Linux: that packaging (`BuildCookRun`) uses
   the prebuilt `UnrealGame` libs and doesn't rebuild Cesium.
+- *(2026-09-30)* First Linux workstation brought up: UE 5.8.3 at `/opt/UnrealEngine-5.8.3`
+  (`/opt/UE` symlink), Cesium installed into the engine, ThirdParty rebuilt, headless suite and
+  `ci_validate.sh --native` pass. Linux receivers need `net.core.rmem_max` raised (see 1.14);
+  persist it with a file in `/etc/sysctl.d/` on each Linux host.
 - Open `CamSimTest` once in the 5.8 editor and resave the maps, so assets stop loading through
   the 5.7 upgrade path.
 - VideoToolbox adds about 10 frames (~330 ms at 30 fps) of pipeline latency. FFmpeg exposes no
@@ -183,6 +187,8 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
 | 1.11 | ~~KLV Tags 15/25 carry ellipsoid height but are defined as MSL.~~ **Done 2026-09-26.** `Geospatial/Geoid.h` samples NGA's 15′ EGM96 grid (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS, staged as a loose file; regenerate with `scripts/make_egm96_dac.py`). Tags 15/25 are now MSL; ellipsoid heights go in new Tags 75/78. Without the grid, 15/25 are omitted rather than mislabelled. Cesium Native's `EarthGravitationalModel1996Grid` was not used: it clamps instead of wrapping at 360°→0°, so it is off within 0.25° west of the prime meridian (0.17 m at NGA's test point). `check.js` verifies 15/25/75/78 with its own geoid sampler. Tests: `Geoid.MatchesNgaReference` (NGA's reference points, ±0.1 m), KLV conformance packets. CIGI altitudes needed no change: CIGI 3.3 defines its "MSL" as the ellipsoid surface. |
 | 1.12 | ~~`camsim_health.json` field `dropped` reports watchdog reconnects.~~ **Done 2026-09-26.** `dropped` is now the encoder queue's real drop count (`ACamSimCamera::GetDroppedFrameCount`; the old `DroppedFrameCount` member was never incremented), and reconnects have their own `watchdog_reconnects` field. Editor runs now write the file to `Saved/` instead of the shared engine `Binaries/` directory. Still open: in the opt-in per-category `frame_drops` block, `encoder_busy` and `socket_error` are never incremented (only `readback_timeout` is). |
 | 1.13 | ~~An attached camera platform can lag its parent by one frame.~~ **Done 2026-09-26.** It was wider than attachment: the camera captured in `TG_PrePhysics`, before `FCamSimEntityManager` (a tickable object, run after `TG_PostPhysics`) applied that frame's CIGI entity states, so every entity in the image was a frame stale, and environment changes landed a frame late too. Now one ordered pass: the entity manager applies entity states, then the camera platform state (`ApplyHostPlatformState`), resolves attachments parent-first, then the camera's own attachment (`FollowAttachParent`); the camera ticks in `TG_PostUpdateWork` after `ACamSimEnvironment` and captures. Remaining lag: an entity attached to a camera platform that is itself attached. Not yet measured live: needs a moving parent entity in `send_cigi_test.py`. |
+| 1.14 | **Keyframe bursts overflow UDP receivers.** Found 2026-09-30 when NVENC was enabled on Linux (`build_thirdparty.sh` now builds it against pinned nv-codec-headers; it used to require a CUDA toolkit and never did). NVENC at 4 Mbit/s sends a ~180 KB IDR every second (30-frame GOP) as ~140 back-to-back datagrams, which overflows Linux's default 208 KB socket buffer: the receiver drops packets and the IDR decodes corrupt. Workaround in place: `check.js` requests a 16 MB buffer and warns when it is capped, and the host needs `sysctl net.core.rmem_max=26214400`. **Deferred 2026-10-01**: an FFmpeg receiver held to stock Linux limits (`buffer_size=212992`, which the kernel doubles to ~416 KB) decoded 3 × 10 s at 4 and at 10 Mbit/s with 0 drops and 0 decode errors; NVENC's IDR stayed ~180 KB at both rates. Only receivers that never enlarge their socket buffer are affected. If one turns up (or a radio link, or bigger IDRs at 1080p), the agreed fix is intra refresh (latency over fast join) behind a `streaming.intra_refresh` switch (default on, off for ROVER until verified), libx264 and NVENC `intra-refresh=1` with the refresh period = GOP; first verify SPS/PPS repetition and recovery points for mid-stream join. |
+| 1.15 | ~~Package CamSim as a Docker image that keeps the NVIDIA GPU.~~ **Done 2026-10-01** (guide: `docs/docker.md`). The `deploy/` scaffold had never run: the packaged (Game) target didn't compile (`bEnableExceptions` is forced on only for Editor targets, and rapidyaml and Cesium Native's headers use `try`/`throw`), `package_for_docker.sh` expected UE4's `LinuxNoEditor/`, and the entrypoint expected a Shipping binary. In the container, the NVIDIA Vulkan ICD failed with `ERROR_INCOMPATIBLE_DRIVER`: `libGLX_nvidia` dlopens `libEGL.so.1`, a distro package (`libegl1`) the Container Toolkit doesn't inject. The entrypoint keyed GPU detection on `NVIDIA_VISIBLE_DEVICES`, which reads `void` under CDI injection even with `--gpus all`, so it always took the Mesa path; it also hardcoded the wrong ICD path, and the image pinned `libnvidia-encode-535` against the host's 595 driver. Now: Ubuntu 24.04 runtime, driver from the host (`NVIDIA_DRIVER_CAPABILITIES=all`: `graphics` = Vulkan, `video` = NVENC), GPU detected by `/dev/nvidia*`, `-userdir=/var/lib/camsim` puts `Saved/` and Cesium's tile cache on a volume, health check on `GET /live`. The cook missed path-loaded assets (`/Game/Ocean`, `/glTFRuntime` base materials), now in `DirectoriesToAlwaysCook`, and `entities/` glTFs are staged into the package (`Entity/EntityPaths.h`). `ci_validate.sh --docker` runs the image with `--gpus all`, a scripted CIGI host, `/ready`, and the KLV position check. Verified on RTX 5080 / driver 595.91 / toolkit 1.20.1: ready in 26 s cold, 18 s warm, `h264_nvenc`, 149/149 KLV packets conform to misb.js, image 565 MB compressed. **No-GPU (Mesa lavapipe) path: does not work** (found 2026-10-01 by the GPU-vs-CPU comparison). Three layers: UE's device selection skips CPU devices without `-AllowSoftwareRendering`; lavapipe caps allocations at 128 MB, below Nanite's 512 MB streaming pool (fatal); with both worked around, lavapipe segfaults inside its pipeline compiler on UE 5.8's SM6 SPIR-V, even `ClearUAVShader` (Mesa 25.2.8 and kisak 26.2.3; with PSO precaching off it moves to the first compute pipeline). Lavapipe passes `VP_UE_Vulkan_SM6` by UE's own profile header (fails only the RT profile: 8 < 9 descriptor sets); bindless can't be turned off for SM6 and `VK_EXT_descriptor_heap` (the alternative) is newer still. The entrypoint now refuses to start without a GPU; `CAMSIM_ALLOW_SOFTWARE_RENDERING=1` keeps the worked-around path for testing future Mesa. Reopen when Mesa changes, or with SwiftShader. **GPU comparison** (2026-10-01, full bench, 720p, warm cache; `scripts/bench/baselines/linux-rtx5080-{native-nvenc,docker-nvenc,docker-x264}-720p.json`): all three hold 30 fps with 0 drops in every phase. Docker costs nothing on the GPU (GPU frame p50 2.68–2.92 ms vs native 2.66–2.89, sensor graph 0.078 ms both) and is lighter on the host than the native *editor* build (game thread p50 3.6–4.6 vs 4.2–6.7 ms, wall p99 35–40 vs 38–43 ms, RSS 2.8 vs 4.9 GB, CPU 71% vs 89% of a core): a cooked package vs uncooked editor assets, not containerisation. Ready in 14 s warm (native 20 s). libx264 instead of NVENC adds ~9% of a core and the same frame latency (p50 11.8 vs 11.7 ms), but GPU frame times rise to p50 3.8–10.1 / p95 ~11–12 ms: without NVENC holding clocks the GPU (9% busy at 720p) drops to P3–P8 (median 1.06 GHz core, 810 MHz memory, 26 W vs 2.61 GHz / 14.8 GHz / 54 W in P1). Power management, not cost; it would matter only near the frame budget. The run found `camsim_frame_latency_ms` p99 ≈ 10.7 h: `FPipelineLatencyTracker` counted unstamped stages (0) as start times, so a frame with no CIGI dequeue reported the machine's uptime; fixed, test `CamSim.Phase28.Latency.UnstampedStage_IsSkipped`. `run_bench.py --docker IMAGE [--no-gpu] [--env K=V]` runs the bench against the image. Also found: `package_for_docker.sh` had been shipping a **stale package**: with a custom staging directory UAT's `-archive` copies nothing, so the script re-copied the previous archive (the image missed the latency fix and `ci_validate.sh` still passed). It now copies from the staging directory and fails unless the staged binary is byte-identical to the build output. And: BuildCookRun's default staging dir (`Saved/StagedBuilds/Linux`) flipped `run.sh` into packaged Shipping mode (`package_for_docker.sh` now stages under `.cache/staging`), and that Linux Shipping package, launched by `run.sh`, sat at `first_frame: false, terrain_ready: false` for 12 min with CIGI flowing (Shipping writes no log; undiagnosed, the Development package in Docker works). Still open: the `docker-build`/`docker-release` CI jobs haven't run on a runner yet (the runner needs nvidia-container-toolkit, `docs/ci-runner-setup.md`). **Human follow-up:** when the `/Game/Effects` Niagara systems and `M_Crater` are authored, add `/Game/Effects` to `DirectoriesToAlwaysCook` in `DefaultGame.ini`, or the package won't carry them. |
 
 ---
 
@@ -1054,6 +1060,102 @@ The full model costs ~0.6 ms (720p) / ~1.3 ms (1080p) of GPU over 3B.1's display
 doesn't move the frame time. Sensor GPU p95 at 1080p by PSF radius (EO, Task 10): default R 2 +
 cos⁴ 1.71 ms, R 3 1.87, R 4 2.38, R 5 2.58, R 8 3.24 ms.
 
+**Exit criterion check, Linux 1080p in Docker (2026-10-01)** (RTX 5080, i.e. below the RTX 5090
+reference; full bench, warm cache, default sensor model incl. PSF R 2 + cos⁴; NVENC; baselines
+`scripts/bench/baselines/linux-rtx5080-docker-1080p-{eo,ir}.json`; `run_bench.py --docker --config
+<1080p yaml> --sensor eo|ir`): 30.0 fps, 0 dropped in every phase, EO and IR alike. Against the
+33.3 ms budget (50% = 16.7 ms), over all measured frames, after the duplicate-terrain fix below
+(before it in brackets): **GPU frame p50 / p99 4.3 / 5.5 ms (17%)** [4.5 / 5.7], sensor graph
+0.13–0.16 ms (vs 1.7 ms on the M1 Pro), render thread p99 5.1–5.6 ms [6.0–6.2], **game thread
+p50 / p95 / p99 3.7–3.8 / 6.1–6.6 / 10.0–10.2 ms (31% at p99)** [6.8–7.4 / 10.2–10.5 / 13.6–13.8].
+GPU held P1 at ~2.63 GHz, 14% busy; NVENC 2.5%; RSS 2.2–2.5 GB [2.6–3.2]. Frame latency (CIGI dequeue
+→ encoded) p50 / p95 / p99: EO 12.5 / 26.7 / 32.3 ms, IR 13.7 / 29.5 / 32.1 ms. **Criterion met on
+this host for GPU, render and game threads at p99**; the frame-time p95 (35–40 ms per phase,
+camera-cut hitches) is the same caveat as on macOS.
+
+*What the game thread spends* (Insights, 20 s orbit, 720p vs 1080p, before the fix): the whole
+720p→1080p growth (+2.1 ms) was `Cesium::TilesetTick` (3.3 → 5.3 ms): `updateView` (tile selection,
++1.0) and `ShowTilesToRender` (+0.95), of which `ApplyActorCollisionSettings` + `SetCollisionEnabled`
+~1.6 ms at 1080p. Cesium for Unreal 2.29.1 re-applies the collision profile and
+`SetCollisionEnabled(QueryAndPhysics)` to *every* rendered tile *every* frame
+(`Cesium3DTileset.cpp` `showTilesToRender`), so the cost follows the tile count, which follows
+pixels (screen-space error) and, with `frustum_culling: false`, the whole 360° render set. Worth
+an upstream issue (skip unchanged tiles). Levers measured at 1080p (20 s smoke, before the fix;
+game thread p50 / p99): baseline 7.2 / 10.2 ms with 2,307 tiles per tileset; `frustum_culling:
+true` 1.7 / 3.9 (570 tiles; costs the sharp gimbal snap, see that key's comment);
+`maximum_screen_space_error: 24` 3.9 / 7.0 (1,345 tiles); `create_physics_meshes: false` 4.8 / 7.5
+(breaks HAT/HOT, LOS, KLV frame centre). And the trace found **a duplicate terrain**: both tilesets
+in `Main.umap` streamed Cesium World Terrain, because `ApplyCesiumBackendConfig` wrote the terrain
+config onto every tileset, including the level's Cesium OSM Buildings (ion 96188). Fixed: only the
+terrain tileset is configured (`CamSim::Geospatial::SelectTerrainTileset`), others are destroyed
+(OSM Buildings as-is draws untextured white over the imagery; decided 2026-10-01 to leave
+buildings out). **Human follow-up:** delete the OSM Buildings tileset actor from `Main.umap` (it is
+still requested at level load, then destroyed).
+
+*Entity load* (1080p EO in Docker, after the fix; `stress_entity_rendering.py --count N --entity-type
+1001`, F-16s in a 500 m ring viewed from ~1.2 km, ~73% annotated per frame at ~8×8 px; one 50 s window
+per point, single runs; p50 / p99 ms): 30.0 fps, 0 dropped, 0 frames > 66 ms at every point.
+
+| Entities | Game thread | Render thread | GPU | Frame latency |
+| --- | --- | --- | --- | --- |
+| ~0 | 3.0 / 10.9 | 3.9 / 5.0 | 4.6 / 5.9 | 15.1 / 30.4 |
+| 100 | 5.1 / 13.5 | 4.2 / 5.4 | 4.7 / 6.0 | 16.1 / 31.0 |
+| 250 | 6.4 / 14.4 | 4.9 / 6.3 | 4.9 / 6.1 | 17.6 / 32.7 |
+| 500 | 6.4 / 14.5 | 6.7 / 8.5 | 5.2 / 6.5 | 12.3 / 32.7 |
+| 500 + ML ground truth | 7.2 / 11.2 | **15.0 / 17.2** | 7.1 / 8.4 | 23.9 / 33.1 |
+| 500 + ML, `depth_map: false` | 10.1 / 18.1 | 8.5 / 12.3 | 5.5 / 6.7 | 20.8 / 33.2 |
+
+The first number over 50% of the budget: **ML ground truth's render thread at 500 entities (p99 52%)**.
+`ml_training.depth_map` (default on) renders the scene a second time through a `SceneCapture`
+(`UCamSimCaptureComponent::CreateDepthCapture`; `families` 2 per frame): ~6.5 ms of render thread and
+~1.6 ms GPU at p50. **Done 2026-10-01**: `InstanceIdCS` (`WRITE_DEPTH` permutation) writes the depth map
+from the primary view's scene depth at the masks' source texel, read back per slot like the IDs; the
+`SceneCapture` is gone (`families` 1). The old capture had **written blank maps** (every pixel at the far
+plane) since at least 3B.2, and never got the sensor FOV (90° default vs 60°): the new maps are the first
+correct ones, lens-distorted and FOV-matched (F-16 at 300 m reads 296.7 m). Real maps PNG-compress slowly
+enough to halve the capture rate when written inside the frame task (15 fps at 500 entities), so they are
+written by their own tasks (≤ 4 in flight; `UCamSimCaptureComponent::Shutdown` also now waits for the frame
+task). 500 entities + ML at 1080p, 2 runs: 30.0 fps, 0 dropped, depth for every annotated frame; render
+thread p50 / p99 9.2 / 11.6–12.3 ms (was 15.0 / 17.2), GPU 5.9 / 7.2 (was 7.1 / 8.4). Test:
+`CamSim.GPU.GroundTruth.Depth.Synthetic`. Repeats (3 runs
+each of the two ML points): render thread and GPU repeat within ~0.5 ms (depth on 14.8–15.0 / 17.0–17.4,
+off 8.3–8.5 / 11.7–12.3), but **the game thread at 500 entities varies run to run: p50 6.9–10.6 ms,
+p99 11.2–18.1 ms (up to 54% of the budget)**, independent of the depth map. **Attributed 2026-10-01: CPU placement.** Insights traces of 3 runs: the slow
+run does the same work (identical call counts) with every timer 30–60% slower; the Core Ultra 9 285K is hybrid
+(P-cores 0–7 at 5.7 GHz, E-cores 8–23 at 4.7 GHz), and sampling the game thread's CPU showed the slow run
+spent all of it on E-cores (game p50 9.4 / p99 17.5 ms) and the fast ones on P-cores (6.5 / 14.8). Pinned to
+the P-cores (`--cpuset-cpus=0-7`), 3 runs repeat at 6.51–6.56 / 14.4–14.6 ms, the render thread drops ~0.7 ms
+(5.3 vs 6.0), and 500 entities + ML still holds 30 fps with every depth map (game 7.2 / 8.8). The entrypoint and
+`scripts/run.sh` now pin to the P-cores automatically (`CAMSIM_PIN_PCORES`). Earlier Linux bench numbers were
+unpinned, so some of their spread is this. Also seen in the traces: each static entity also ticks its hidden
+skeletal/anim mesh components (~1,000 `USkinnedMeshComponent` ticks per frame at 500 entities, ~0.5–0.9 ms of
+game thread); disabling tick on the unused components is a cheap follow-up.
+
+*Deployment terrain settings* (decided 2026-10-01, `scripts/bench/snap_test.py`, 1080p, pinned): after a
+90° snap the defaults are sharp within 0.3 s (86% of the settled sharpness); `frustum_culling: true`
+shows holes (missing shoreline) and coarse tiles at 0.3 s (30–34%) and settles by ~3 s, for game p50 1.3 vs
+2.9 ms; SSE 24 has no holes but stays at 63–79% of the default sharpness for good (coarser tiles carry
+coarser imagery), game p50 1.9 ms. **Defaults kept**; frustum culling is the opt-in for snap-free, budget-limited setups; guidance
+table in `docs/configuration.md` (Cesium Tile Streaming). Untested: `ForbidHoles` (hard-coded off in
+`CesiumTuning.cpp` because it grows the render set during motion) would remove the holes under frustum culling. Found on
+the way: `stress_entity_rendering.py` and `test_entity_rendering.py` defaulted `--camera-id` to 0 while
+the canonical config's `camera_entity_id` is 1, so the camera never moved (fixed: camera 1, entities
+100+, gimbal level).
+
+**Linux, 2026-10-01** (Ubuntu 24.04, Core Ultra 9 285K, RTX 5080, driver 595.91.07, Vulkan SM6,
+NVENC, power profile `performance`; baseline `scripts/bench/baselines/linux-rtx5080-3b2-720p.json`,
+shots `scripts/bench/shots/linux/3b2/`), 720p, per phase: frame p95 34.3 / 38.9 / 35.4 / 36.9 ms;
+GPU frame p50 2.4–2.6 ms (~7× the M1 Pro); sensor graph GPU 0.09 ms; render thread p50 2.9–3.3 ms
+(as macOS); game thread p50 4.0–5.3 ms (~1.6× macOS, not yet investigated); 30.0 fps, 0 dropped.
+On the `balanced` power profile the render and game threads were ~2× and ~1.25× slower, so
+benchmark Linux hosts on `performance`. Frames > 66 ms (1 / 0 / 1 / 2) all fall in the first
+0.5 s of a phase, i.e. on the camera cut: an Insights trace of the far-origin cut shows a 206 ms
+game-thread frame, 117 ms of it `Cesium::RemoveCollisionForTiles` (two tilesets dropping every
+tile's physics mesh, which `create_physics_meshes` adds) plus 28 ms `ShowTilesToRender` and
+13 ms `OriginShift`; the render/RHI threads just wait. **Accepted**: one stalled frame on a
+long jump, which hosts rarely command. The bench's `game_ms` attributes such a stall to the
+frame after the hitch.
+
 Exposure and noise (720p `*_sensor.png`, BT.709 luma of the decoded frame, 0–255; "clipped" =
 any RGB channel ≥ 255, "luma-clipped" = luma ≥ 255; temporal noise = std of the difference of two
 consecutive `/snapshot/sensor` frames / √2, centre half, luma DN):
@@ -1106,10 +1208,15 @@ Known issues and open points for the visual review:
 - **Yosemite snap coarseness** since the crossfade went off (above): restoring
   `use_lod_transitions` costs the game thread 8–12 ms p50 (3B.1 terrain check), so it's a
   trade-off for the user, not fixed here.
-- **Linux/Vulkan unverified.** The shader is plain compute (integer atomics, no float atomics or
-  wave intrinsics), but nothing has run on Vulkan. There is no CPU fallback any more: a host
-  without `IsSensorGraphSupported` (Mesa llvmpipe/lavapipe in the CPU Docker path) produces no
-  frames and `/ready` stays false. Verify on the first Linux run.
+- ~~**Linux/Vulkan unverified.**~~ **Verified on NVIDIA 2026-09-30** (Ubuntu 24.04, RTX 5080,
+  driver 595.91.07, Vulkan SM6): the sensor graph is available, frames flow, and
+  `ci_validate.sh --native` passes (H.264 via NVENC, misb.js KLV at the commanded pose).
+  Mesa lavapipe (the CPU Docker path) **does not work** (2026-10-01, ROADMAP 1.15): lavapipe
+  segfaults compiling UE 5.8 SM6 pipelines, before any CamSim shader. There is no CPU
+  fallback, so a host without `IsSensorGraphSupported` produces no frames and `/ready` stays false. GPU tests
+  on Vulkan (2026-10-01, `run_gpu_tests.sh` now Linux-aware): `GroundTruth` 6/6, `Sensor` 10/10, `Entity` 2/2
+  pass; `CamSim.GPU.Ocean.MatchesCpu` crashes the run (Vulkan's `RHIReadSurfaceData` asserts "Unsupported
+  format [100]" on its `RTF_R32f` target via `ReadLinearColorPixels`): needs a buffer readback.
 - **Cut convergence**: a camera cut or mode switch snaps the AE on the first histogram whose
   serial is at or after the cut, but histograms already in flight from before the cut still
   arrive first and nudge the gain for one frame (within the 1–3-frame convergence above).
@@ -1120,8 +1227,8 @@ Carried to 3B.3 (found in the 3B.2 final review):
   (dark current also integrates over the frame time, not the AE's integration time).
 - **Distortion-aware ground truth**: bounding boxes, depth and the KLV frame corners are pinhole;
   with `optics.k1`/`k2` ≠ 0 the labels misalign with the distorted image toward the edges.
-  Boxes, masks and the projected 3D box are done in 2.7 (measured in the distorted output);
-  the depth map and KLV corners are still pinhole.
+  Boxes, masks and the projected 3D box are done in 2.7 (measured in the distorted output), the depth map
+  on 2026-10-01 (from `InstanceIdCS`); the KLV corners are still pinhole.
 - ~~**AGC max gain cap**~~: done in 4A (`agc_max_display_gain`, default 40, thermal IR AGC). The 3B.2 luminance
   proxy AGC is still uncapped.
 - **Mode-switch AE transients**: skip histograms with `Serial < SnapAfterSerial` while a snap is
@@ -1131,8 +1238,8 @@ Carried to 3B.3 (found in the 3B.2 final review):
   laser spot was removed; wire it to ground truth/KLV or delete it.
 - **Before Linux CI**: NullRHI tests read the machine-local `unreal_project/CamSimTest/camsim_config.yaml`
   (gitignored; `run.sh` refreshes it, a direct test run doesn't) — make the tests self-contained;
-  add GPU tests for a NaN bloom texel and for non-same-size + bloom + blur partial thread groups;
-  lavapipe (Mesa Vulkan) may lack what the sensor graph needs.
+  add GPU tests for a NaN bloom texel and for non-same-size + bloom + blur partial thread groups.
+  (Lavapipe can't run UE 5.8 at all, ROADMAP 1.15, so CI needs a GPU runner.)
 - **Config NaN checks**: `highlight_percentile`, the AGC percentiles and `max_photon_gain_ev` still
   use range checks that a NaN passes; make them NaN-safe like the other sensor keys.
 - **Python floor**: `scripts/check_cigi_responses.py` and `scripts/capture_cigi_stream.py` catch
@@ -1337,8 +1444,10 @@ Boat vs water ring (info): MWIR +32.7 night / +12.3 noon, LWIR +17.4 / +22.5.
   scene colour).
 - **Particles** are composited by TSR in visible colour over the radiance (not thermally modelled).
 - **IR TSR costs +1.6 ms**, and the first EO to IR switch has a PSO hitch (above).
-- **Linux/Vulkan unverified**, including sRGB decode precision of the base colour (Metal's hardware decode differs from the
-  reference formula by 3e-4 relative radiance).
+- **Linux/Vulkan unverified for thermal**: the 3B sensor graph and `InstanceIdCS` run on NVIDIA Vulkan (verified
+  2026-09-30/10-01, above), but `ThermalCS`, the BeforeDOF subscription and RGBA16F TSR have only run on Metal; untested
+  there too is the sRGB decode precision of the base colour (Metal's hardware decode differs from the reference formula by
+  3e-4 relative radiance). The ThermalCS timing copies are Metal-only (`IsMetalPlatform`); other RHIs time the scope directly.
 - **Mode-switch histogram**: one in-flight histogram can nudge the new AE slot's gain before the snap (the 3B.2 cut
   convergence, 1 to 3 frames).
 

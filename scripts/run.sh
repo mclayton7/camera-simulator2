@@ -339,6 +339,17 @@ UE_COMMON_ARGS=(
     "-ZenDataPath=${DDC_ZEN_ROOT}"
 )
 [ "${PLATFORM}" = "linux" ] && UE_COMMON_ARGS+=("-vulkan")
+
+# Hybrid Intel CPUs: keep UE on the P-cores (as deploy/entrypoint.sh). On an
+# E-core the game thread runs ~45% slower, which made benchmark runs vary.
+PIN=()
+if [ "${PLATFORM}" = "linux" ] && [ "${CAMSIM_PIN_PCORES:-1}" != "0" ] && [ -e /sys/devices/cpu_atom/cpus ]; then
+    PCORES="$(cat /sys/devices/cpu_core/cpus 2>/dev/null || true)"
+    if [ -n "${PCORES}" ] && taskset -c "${PCORES}" true 2>/dev/null; then
+        PIN=(taskset -c "${PCORES}")
+        echo "==> Hybrid CPU: pinning UE to P-cores ${PCORES} (CAMSIM_PIN_PCORES=0 to disable)"
+    fi
+fi
 [ "${HEADLESS}" -eq 1 ]     && UE_COMMON_ARGS+=("-RenderOffScreen")
 
 echo "==> Platform: ${PLATFORM}  Mode: ${MODE}$([ "${HEADLESS}" -eq 1 ] && echo " (headless)")"
@@ -376,7 +387,7 @@ if [ "${MODE}" = "packaged" ]; then
         exit 1
     }
     echo "    Binary: ${BINARY}"
-    env "${DDC_ENV[@]}" "${BINARY}" "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
+    env "${DDC_ENV[@]}" "${PIN[@]+"${PIN[@]}"}" "${BINARY}" "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
 else
     if [ "${PLATFORM}" = "mac" ]; then
         # UE on macOS logs to ~/Library/Logs/<Project>, not the project Saved/ dir
@@ -385,7 +396,7 @@ else
         LOG_FILE="${LOG_DIR}/CamSimTest.log"
     fi
     echo "    Editor: ${UE_BINARY}"
-    env "${DDC_ENV[@]}" "${UE_BINARY}" "${UE_PROJECT}" -game "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
+    env "${DDC_ENV[@]}" "${PIN[@]+"${PIN[@]}"}" "${UE_BINARY}" "${UE_PROJECT}" -game "${UE_COMMON_ARGS[@]}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
 fi
 UE_PID=$!
 

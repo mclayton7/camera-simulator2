@@ -3,8 +3,10 @@
 #
 # Stage a LinuxNoEditor package of CamSimTest for the Docker image build.
 #
-# Wraps `RunUAT.sh BuildCookRun` and copies the resulting `LinuxNoEditor/`
-# directory into `deploy/staged/`, where `deploy/Dockerfile` COPYs from.
+# Wraps `RunUAT.sh BuildCookRun` and copies the resulting `Linux/` package
+# into `deploy/staged/`, where `deploy/Dockerfile` COPYs from. The repo's
+# `entities/` glTF models (loaded at runtime by glTFRuntime, so not cooked)
+# are staged into the package at `CamSimTest/entities/`.
 #
 # Usage:
 #   scripts/package_for_docker.sh
@@ -15,8 +17,8 @@
 #   UE_ROOT    Path to the UE installation root (derived from UE_BINARY).
 #
 # Output:
-#   .cache/staged/LinuxNoEditor/     intermediate (kept; reused by next run)
-#   deploy/staged/LinuxNoEditor/     final destination consumed by Dockerfile
+#   .cache/staging/Linux/    BuildCookRun staging (kept; reused by next run)
+#   deploy/staged/Linux/     final destination consumed by Dockerfile
 #
 # Idempotent: re-running on a clean tree reuses the DDC cache and incremental
 # build output, so the second invocation is much faster than the first.
@@ -25,7 +27,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UE_PROJECT="${REPO_ROOT}/unreal_project/CamSimTest/CamSimTest.uproject"
-ARCHIVE_DIR="${REPO_ROOT}/.cache/staged"
+STAGING_DIR="${REPO_ROOT}/.cache/staging"
 STAGE_DEST="${REPO_ROOT}/deploy/staged"
 
 # -------------------------------------------------------------------------
@@ -69,35 +71,51 @@ export UE_ZenDataPath="${DDC_ZEN_ROOT}"
 export UE_ZenSubprocessDataPath="${DDC_ZEN_ROOT}"
 
 # -------------------------------------------------------------------------
-# Build → cook → stage → pak → archive
+# Build → cook → stage → pak
 # -------------------------------------------------------------------------
 echo "==> UE root:       ${UE_ROOT}"
 echo "==> Project:       ${UE_PROJECT}"
-echo "==> Archive dir:   ${ARCHIVE_DIR}"
+echo "==> Staging dir:   ${STAGING_DIR}"
 echo "==> Stage dest:    ${STAGE_DEST}"
 
-mkdir -p "${ARCHIVE_DIR}"
+mkdir -p "${STAGING_DIR}"
+
+# Stage under .cache/, not BuildCookRun's default Saved/StagedBuilds/: run.sh
+# switches to its packaged (Shipping) mode whenever that directory exists.
+# No -archive: with a custom staging directory UAT's archive step copies
+# nothing (silently), so we copy from the staging directory ourselves.
 
 "${RUN_UAT}" BuildCookRun \
     -project="${UE_PROJECT}" \
     -noP4 \
     -platform=Linux \
     -clientconfig=Development \
-    -build -cook -stage -pak -archive \
-    -archivedirectory="${ARCHIVE_DIR}" \
+    -build -cook -stage -pak \
+    -stagingdirectory="${STAGING_DIR}" \
     -utf8output
 
 # -------------------------------------------------------------------------
 # Copy into deploy/staged/ for the Dockerfile to COPY.
 # -------------------------------------------------------------------------
-if [ ! -d "${ARCHIVE_DIR}/LinuxNoEditor" ]; then
-    echo "[ERROR] Expected ${ARCHIVE_DIR}/LinuxNoEditor after BuildCookRun" >&2
+# UE5 stages to Linux/ (UE4 called it LinuxNoEditor/).
+PACKAGE_DIR="${STAGING_DIR}/Linux"
+GAME_BIN="${PACKAGE_DIR}/CamSimTest/Binaries/Linux/CamSimTest"
+if [ ! -f "${GAME_BIN}" ]; then
+    echo "[ERROR] Expected ${GAME_BIN} after BuildCookRun" >&2
+    exit 1
+fi
+# The staged binary must be the one this build produced (staging keeps
+# mtimes, so compare contents) — never ship a stale package silently.
+BUILT_BIN="${REPO_ROOT}/unreal_project/CamSimTest/Binaries/Linux/CamSimTest"
+if ! cmp -s "${GAME_BIN}" "${BUILT_BIN}"; then
+    echo "[ERROR] ${GAME_BIN} differs from the build output ${BUILT_BIN}: stale package" >&2
     exit 1
 fi
 
-rm -rf "${STAGE_DEST}/LinuxNoEditor"
+rm -rf "${STAGE_DEST}/Linux"
 mkdir -p "${STAGE_DEST}"
-cp -a "${ARCHIVE_DIR}/LinuxNoEditor" "${STAGE_DEST}/"
+cp -a "${PACKAGE_DIR}" "${STAGE_DEST}/"
+cp -a "${REPO_ROOT}/entities" "${STAGE_DEST}/Linux/CamSimTest/entities"
 
-echo "==> Staged at: ${STAGE_DEST}/LinuxNoEditor"
-ls "${STAGE_DEST}/LinuxNoEditor/CamSimTest/Binaries/Linux/" 2>/dev/null || true
+echo "==> Staged at: ${STAGE_DEST}/Linux"
+ls "${STAGE_DEST}/Linux/CamSimTest/Binaries/Linux/" 2>/dev/null || true

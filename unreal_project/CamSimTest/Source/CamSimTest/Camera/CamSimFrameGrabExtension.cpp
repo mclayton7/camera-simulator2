@@ -41,17 +41,20 @@ bool FCamSimFrameGrabExtension::IsActiveThisFrame_Internal(const FSceneViewExten
 
 void FCamSimFrameGrabExtension::PushRequest_RenderThread(const FFrameGrabRequest& R,
 	FRHIGPUBufferReadback* Nv12Readback, FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* GrabbedGeneration,
-	TAtomic<uint32>* IdGrabbedGeneration)
+	TAtomic<uint32>* IdGrabbedGeneration, FRHIGPUBufferReadback* DepthReadback, TAtomic<uint32>* DepthGrabbedGeneration)
 {
 	check(IsInRenderingThread());
-	TargetsBySlot.Add(R.TargetIndex, { Nv12Readback, GrabbedGeneration, IdReadback, IdGrabbedGeneration });
+	TargetsBySlot.Add(R.TargetIndex,
+		{ Nv12Readback, GrabbedGeneration, IdReadback, IdGrabbedGeneration, DepthReadback, DepthGrabbedGeneration });
 	Requests.Push(R);
 }
 
-void FCamSimFrameGrabExtension::AddInstanceIdReadback_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
-	const FPostProcessMaterialInputs& Inputs, const FFrameGrabRequest& Req, FRHIGPUBufferReadback* IdReadback,
-	TAtomic<uint32>* IdGrabbed)
+void FCamSimFrameGrabExtension::AddGroundTruthReadback_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
+	const FPostProcessMaterialInputs& Inputs, const FFrameGrabRequest& Req, const FTargets& T)
 {
+	const bool bIds   = Req.bInstanceIds && T.IdReadback && T.IdGrabbed;
+	const bool bDepth = Req.bDepth && T.DepthReadback && T.DepthGrabbed;
+	if (!bIds && !bDepth) return;
 	const uint32 Gen = Req.Generation;
 	// The deferred renderer's scene textures (depth, custom depth, custom stencil)
 	// ride in the post-process inputs' scene-texture uniform buffer.
@@ -90,15 +93,35 @@ void FCamSimFrameGrabExtension::AddInstanceIdReadback_RenderThread(FRDGBuilder& 
 		}
 		Ii.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetInvTranslatedViewProjectionMatrix());
 	}
-	const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, Ii, Params);
+	// ML depth map from the same scene depth and texel mapping (no second scene render).
+	Ii.InvDeviceZToWorldZ = View.InvDeviceZToWorldZTransform;
+	FRDGBufferRef Depth = nullptr;
+	const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, Ii, Params, bDepth ? &Depth : nullptr);
 
-	const uint32 IdBytes = static_cast<uint32>(CaptureSize.X * CaptureSize.Y * 2);  // 16 bits per pixel
-	AddReadbackBufferPass(GraphBuilder, RDG_EVENT_NAME("CamSimInstanceIdReadback"), Ids,
-		[IdReadback, Ids, IdBytes, IdGrabbed, Gen](FRHICommandListImmediate& RHICmdList)
+	if (bIds)
 	{
-		IdReadback->EnqueueCopy(RHICmdList, Ids->GetRHI(), IdBytes);
-		IdGrabbed->Store(Gen, EMemoryOrder::SequentiallyConsistent);
-	});
+		FRHIGPUBufferReadback* IdReadback = T.IdReadback;
+		TAtomic<uint32>* IdGrabbed = T.IdGrabbed;
+		const uint32 IdBytes = static_cast<uint32>(CaptureSize.X * CaptureSize.Y * 2);  // 16 bits per pixel
+		AddReadbackBufferPass(GraphBuilder, RDG_EVENT_NAME("CamSimInstanceIdReadback"), Ids,
+			[IdReadback, Ids, IdBytes, IdGrabbed, Gen](FRHICommandListImmediate& RHICmdList)
+		{
+			IdReadback->EnqueueCopy(RHICmdList, Ids->GetRHI(), IdBytes);
+			IdGrabbed->Store(Gen, EMemoryOrder::SequentiallyConsistent);
+		});
+	}
+	if (bDepth)
+	{
+		FRHIGPUBufferReadback* DepthReadback = T.DepthReadback;
+		TAtomic<uint32>* DepthGrabbed = T.DepthGrabbed;
+		const uint32 DepthBytes = static_cast<uint32>(CaptureSize.X * CaptureSize.Y * sizeof(float));
+		AddReadbackBufferPass(GraphBuilder, RDG_EVENT_NAME("CamSimDepthReadback"), Depth,
+			[DepthReadback, Depth, DepthBytes, DepthGrabbed, Gen](FRHICommandListImmediate& RHICmdList)
+		{
+			DepthReadback->EnqueueCopy(RHICmdList, Depth->GetRHI(), DepthBytes);
+			DepthGrabbed->Store(Gen, EMemoryOrder::SequentiallyConsistent);
+		});
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -319,13 +342,10 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunSensor_RenderThread(FRDGBuilder
 		const FTargets* T = TargetsBySlot.Find(Req.TargetIndex);
 		if (T && T->Nv12Readback && T->GrabbedGeneration)
 		{
-			// Ground truth (ROADMAP 2.7): the instance-ID copy is queued BEFORE the
-			// NV12 one, whose lambda publishes GrabbedGeneration — so once the poll
-			// sees the generation, IdGrabbed already says whether an ID copy exists.
-			if (Req.bInstanceIds && T->IdReadback && T->IdGrabbed)
-			{
-				AddInstanceIdReadback_RenderThread(GraphBuilder, View, Inputs, Req, T->IdReadback, T->IdGrabbed);
-			}
+			// Ground truth (ROADMAP 2.7): the instance-ID and depth copies are queued
+			// BEFORE the NV12 one, whose lambda publishes GrabbedGeneration — so once the
+			// poll sees the generation, IdGrabbed / DepthGrabbed say whether those exist.
+			AddGroundTruthReadback_RenderThread(GraphBuilder, View, Inputs, Req, *T);
 			// Inline on the render thread: the generation is published only once
 			// the copy is really queued (the AddReadbackBufferPass lambda below
 			// stores it right after EnqueueCopy).

@@ -11,6 +11,21 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 
+namespace CamSim::Geospatial
+{
+int32 SelectTerrainTileset(TConstArrayView<int64> IonAssetIds)
+{
+	for (int32 i = 0; i < IonAssetIds.Num(); ++i)
+	{
+		if (IonAssetIds[i] == CesiumWorldTerrainAssetId)
+		{
+			return i;
+		}
+	}
+	return IonAssetIds.IsEmpty() ? INDEX_NONE : 0;
+}
+} // namespace CamSim::Geospatial
+
 namespace
 {
 FString NormalizeProvider(const FString& Value)
@@ -109,13 +124,33 @@ UCesiumIonServer* ApplyCesiumBackendConfig(
 		// Note: IonToken is intentionally not logged here or anywhere in this function.
 	}
 
-	// --- Steps 2 & 3: Terrain source + imagery overlay per tileset ---
-	bool bFoundAnyTileset = false;
+	// --- Steps 2 & 3: Terrain source + imagery overlay on the terrain tileset ---
+	// CamSim streams one terrain tileset. Others in the level (Main.umap also
+	// carries Cesium OSM Buildings) used to be overwritten with the terrain
+	// config, i.e. a second copy of the terrain at twice the streaming,
+	// collision and game-thread cost; they are removed instead.
+	TArray<ACesium3DTileset*> Tilesets;
+	TArray<int64> IonAssetIds;
 	for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
 	{
-		bFoundAnyTileset = true;
-		ACesium3DTileset* Tileset = *It;
+		Tilesets.Add(*It);
+		IonAssetIds.Add(It->GetTilesetSource() == ETilesetSource::FromCesiumIon ? It->GetIonAssetID() : -1);
+	}
+	const bool bFoundAnyTileset = Tilesets.Num() > 0;
+	const int32 TerrainIndex = CamSim::Geospatial::SelectTerrainTileset(IonAssetIds);
+	for (int32 i = 0; i < Tilesets.Num(); ++i)
+	{
+		if (i != TerrainIndex)
+		{
+			UE_LOG(LogCamSim, Log,
+				TEXT("ApplyCesiumBackendConfig: removing extra tileset '%s' (ion asset %lld); terrain is '%s'"),
+				*Tilesets[i]->GetName(), IonAssetIds[i], *Tilesets[TerrainIndex]->GetName());
+			Tilesets[i]->Destroy();
+		}
+	}
 
+	if (ACesium3DTileset* Tileset = Tilesets.IsValidIndex(TerrainIndex) ? Tilesets[TerrainIndex] : nullptr)
+	{
 		// Apply custom ion server to this tileset
 		if (CustomServer)
 		{

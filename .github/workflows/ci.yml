@@ -199,6 +199,7 @@ jobs:
         working-directory: scripts/klv_conformance
         run: |
           npm ci --no-audit --no-fund
+          npm test
           node check.js packets "$GITHUB_WORKSPACE/unreal_project/CamSimTest/Saved/KlvConformance/packets.jsonl"
 
       - name: Upload automation report
@@ -217,8 +218,8 @@ jobs:
   # Phase 28A: Integration test (packaged Docker, headless)
   #
   # Runs on the self-hosted runner with UE5: packages the project via
-  # RunUAT BuildCookRun (~5-30 min depending on cache state), then brings
-  # the docker compose stack up and validates video / KLV output.
+  # RunUAT BuildCookRun (~5-30 min depending on cache state), then builds
+  # the image and validates video / KLV output from it on the runner's GPU.
   #
   # Gated on CAMSIM_UE5_RUNNER_AVAILABLE (see docker-build rationale) and
   # additionally branch-gated to pushes to main to keep PRs fast.
@@ -241,34 +242,20 @@ jobs:
         run: bash scripts/package_for_docker.sh
         timeout-minutes: 45
 
-      - name: Build and start CamSim (headless)
-        run: |
-          cd deploy
-          docker compose up -d --build
+      - name: Build image
+        run: docker build -t camsim:ci-${{ github.sha }} --build-arg GIT_SHA=${{ github.sha }} deploy/
         timeout-minutes: 15
-
-      - name: Wait for health file
-        run: |
-          for i in $(seq 1 30); do
-            if docker compose -f deploy/docker-compose.yml exec camsim test -f /opt/camsim/camsim_health.json; then
-              echo "Health file found"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Health file not found after 60s"
-          exit 1
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
+      # Runs the image on the runner's NVIDIA GPU (--gpus all), drives it with
+      # a scripted CIGI host and checks /ready, video and KLV.
       - name: Run CI validation
-        run: bash scripts/ci_validate.sh
-
-      - name: Collect logs
-        if: always()
-        run: docker compose -f deploy/docker-compose.yml logs > docker-logs.txt 2>&1
+        env:
+          CAMSIM_CI_DOCKER_LOG: docker-logs.txt
+        run: bash scripts/ci_validate.sh --docker camsim:ci-${{ github.sha }}
 
       - name: Upload logs
         if: always()
@@ -276,10 +263,6 @@ jobs:
         with:
           name: docker-logs
           path: docker-logs.txt
-
-      - name: Teardown
-        if: always()
-        run: docker compose -f deploy/docker-compose.yml down -v
 
       - name: Cleanup staged tree
         if: always()

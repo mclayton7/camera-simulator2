@@ -282,11 +282,29 @@ FFMPEG_CONFIGURE_EXTRA=(
     --extra-ldflags="-L${X264_INSTALL}/lib ${ARCH_CFLAGS:+${ARCH_CFLAGS}}"
 )
 
-# Enable NVENC if CUDA headers are available (Linux only)
-if [ "${PLATFORM}" = "linux" ] && [ -d "/usr/local/cuda/include" ]; then
-    FFMPEG_CONFIGURE_EXTRA+=(--enable-nvenc --enable-encoder=h264_nvenc)
-    FFMPEG_CONFIGURE_EXTRA+=(--extra-cflags="-I/usr/local/cuda/include")
-    echo "==> NVENC support enabled (CUDA headers found)"
+# NVENC (Linux): FFmpeg needs only NVIDIA's nv-codec-headers at build time (no
+# CUDA toolkit); it dlopens libcuda / libnvidia-encode from the driver at
+# runtime, so the build works on hosts without a GPU and the encoder falls back
+# to libx264 there. The headers' NVENC API version sets the minimum driver:
+# 12.1 is the oldest FFmpeg 8.1 accepts and needs driver >= 530.41.
+NVCODEC_PKGCONFIG=""
+if [ "${PLATFORM}" = "linux" ]; then
+    NVCODEC_TAG="n12.1.14.0"
+    NVCODEC_SRC="${BUILD_DIR}/nv-codec-headers"
+    NVCODEC_INSTALL="${BUILD_DIR}/nvcodec_install"
+    if [ -d "${NVCODEC_SRC}" ] && \
+       [ "$(git -C "${NVCODEC_SRC}" describe --tags --exact-match 2>/dev/null)" != "${NVCODEC_TAG}" ]; then
+        rm -rf "${NVCODEC_SRC}" "${NVCODEC_INSTALL}"
+    fi
+    if [ ! -d "${NVCODEC_SRC}" ]; then
+        echo "==> Cloning nv-codec-headers (${NVCODEC_TAG})..."
+        git clone --depth 1 --branch "${NVCODEC_TAG}" \
+            https://github.com/FFmpeg/nv-codec-headers.git "${NVCODEC_SRC}"
+    fi
+    make -C "${NVCODEC_SRC}" install PREFIX="${NVCODEC_INSTALL}" >/dev/null
+    NVCODEC_PKGCONFIG="${NVCODEC_INSTALL}/lib/pkgconfig"
+    FFMPEG_CONFIGURE_EXTRA+=(--enable-ffnvcodec --enable-nvenc)
+    echo "==> NVENC support enabled (nv-codec-headers ${NVCODEC_TAG})"
 fi
 [ -n "${FFMPEG_EXTRA}" ] && FFMPEG_CONFIGURE_EXTRA+=("${FFMPEG_EXTRA}")
 [ -n "${HOST_TRIPLE}"  ] && FFMPEG_CONFIGURE_EXTRA+=("${HOST_TRIPLE}")
@@ -294,7 +312,7 @@ fi
 [ -n "${CXX:-}"        ] && FFMPEG_CONFIGURE_EXTRA+=(--cxx="${CXX}")
 
 if [ "${PLATFORM}" = "linux" ]; then
-    TMPDIR="${BUILD_DIR}" PKG_CONFIG_PATH="${X264_INSTALL}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" \
+    TMPDIR="${BUILD_DIR}" PKG_CONFIG_PATH="${X264_INSTALL}/lib/pkgconfig:${NVCODEC_PKGCONFIG}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" \
         ./configure "${FFMPEG_CONFIGURE_EXTRA[@]}"
 else
     PKG_CONFIG_PATH="${X264_INSTALL}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" \

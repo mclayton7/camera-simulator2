@@ -63,9 +63,12 @@ public:
 	 * With R.bInstanceIds, InstanceIdCS also runs and its buffer is copied into
 	 * IdReadback; IdGrabbedGeneration is set to R.Generation only when that copy
 	 * is issued (before GrabbedGeneration), so the poll knows whether to wait for it.
+	 * R.bDepth does the same for the depth output (DepthReadback / DepthGrabbedGeneration); the pass runs
+	 * when either is wanted.
 	 */
 	void PushRequest_RenderThread(const FFrameGrabRequest& R, FRHIGPUBufferReadback* Nv12Readback,
-		FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* GrabbedGeneration, TAtomic<uint32>* IdGrabbedGeneration);
+		FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* GrabbedGeneration, TAtomic<uint32>* IdGrabbedGeneration,
+		FRHIGPUBufferReadback* DepthReadback = nullptr, TAtomic<uint32>* DepthGrabbedGeneration = nullptr);
 
 	/**
 	 * Any thread (ROADMAP 4A): the render thread gave thermal up for the session (ThermalCS's inputs missing at BeforeDOF,
@@ -87,10 +90,11 @@ private:
 	FScreenPassTexture RunThermal_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
 		const FPostProcessMaterialInputs& Inputs);
 	void ReadStats_RenderThread(FRDGBuilder& GraphBuilder, FRDGBufferRef Histogram, uint32 Serial);
-	/** Run InstanceIdCS on this view's scene textures and queue its copy into IdReadback (stores Gen in IdGrabbed). */
-	void AddInstanceIdReadback_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
-		const FPostProcessMaterialInputs& Inputs, const FFrameGrabRequest& Req, FRHIGPUBufferReadback* IdReadback,
-		TAtomic<uint32>* IdGrabbed);
+	struct FTargets;
+	/** Run InstanceIdCS on this view's scene textures and queue the copies the request wants: IDs into
+	 *  T.IdReadback (stores Gen in T.IdGrabbed), depth into T.DepthReadback (Gen in T.DepthGrabbed). */
+	void AddGroundTruthReadback_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View,
+		const FPostProcessMaterialInputs& Inputs, const FFrameGrabRequest& Req, const FTargets& T);
 
 	struct FTargets
 	{
@@ -98,6 +102,8 @@ private:
 		TAtomic<uint32>*        GrabbedGeneration = nullptr;
 		FRHIGPUBufferReadback*  IdReadback        = nullptr;   // ground truth (optional)
 		TAtomic<uint32>*        IdGrabbed         = nullptr;
+		FRHIGPUBufferReadback*  DepthReadback     = nullptr;   // ML depth map (optional)
+		TAtomic<uint32>*        DepthGrabbed      = nullptr;
 	};
 
 	TAtomic<FViewport*>    GameViewport { nullptr };

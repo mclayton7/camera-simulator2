@@ -122,6 +122,13 @@ public:
 	bool IsEntityStencilTaggingEnabled() const { return IsGroundTruthMaskAvailable() || IsThermalAvailable(); }
 
 	/**
+	 * ML depth map (Phase 17A): whether InstanceIdCS's depth output is read back this session — the sensor
+	 * graph runs, ml_training.enabled && depth_map, and InstanceIdCS is available. Decided once in Initialize.
+	 * Independent of bounding_boxes (depth needs no stencil tags).
+	 */
+	bool IsGroundTruthDepthAvailable() const { return bGroundTruthDepthAvailable; }
+
+	/**
 	 * The config preconditions (primary view, NV12 dimensions), then
 	 * IsSensorGraphSupported (a real RHI with SM5 compute and the shaders).
 	 * Game thread, after RHI init. On false, OutWhy says what's missing.
@@ -174,6 +181,7 @@ private:
 	bool             bSensorGraphAvailable = false;
 	bool             bGroundTruthMaskAvailable = false;
 	bool             bThermalAvailable = false;
+	bool             bGroundTruthDepthAvailable = false;
 	FEntityTypeTable EntityTypeTable;
 	/** Serialises HotReloadConfig writes against cross-thread Config snapshot reads. */
 	mutable FRWLock  ConfigLock_;

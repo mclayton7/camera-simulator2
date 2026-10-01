@@ -95,10 +95,12 @@ FPipelineLatencyTracker::FLatencyPercentiles FPipelineLatencyTracker::ComputePer
 		const uint64 EncComp  = R.Stages[static_cast<int32>(EPipelineStage::EncodeComplete)];
 		const uint64 CigiDq   = R.Stages[static_cast<int32>(EPipelineStage::CigiDequeue)];
 
-		if (Readback > RbIssue)  ReadbackDeltas.Add(CyclesToUs(Readback - RbIssue));
-		if (SensorE > SensorS)   SensorDeltas.Add(CyclesToUs(SensorE - SensorS));
-		if (EncComp > SensorE)   EncodeDeltas.Add(CyclesToUs(EncComp - SensorE));
-		if (EncComp > CigiDq)    TotalDeltas.Add(CyclesToUs(EncComp - CigiDq));
+		// A stage left unstamped this frame reads 0 (CommitFrame zeroes them); a
+		// delta from it would be the machine's whole uptime, so skip it.
+		if (RbIssue && Readback > RbIssue)  ReadbackDeltas.Add(CyclesToUs(Readback - RbIssue));
+		if (SensorS && SensorE > SensorS)   SensorDeltas.Add(CyclesToUs(SensorE - SensorS));
+		if (SensorE && EncComp > SensorE)   EncodeDeltas.Add(CyclesToUs(EncComp - SensorE));
+		if (CigiDq && EncComp > CigiDq)     TotalDeltas.Add(CyclesToUs(EncComp - CigiDq));
 	}
 
 	ReadbackDeltas.Sort();

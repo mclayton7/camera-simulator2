@@ -29,13 +29,20 @@ struct FInstanceIdInputs
 	bool       bWaterCut = false;
 	TStaticArray<FVector4f, 256> WaterPlanes = TStaticArray<FVector4f, 256>(InPlace, NoWaterPlane());
 	FMatrix44f ClipToTranslatedWorld = FMatrix44f::Identity;
+	/** Depth output (ml_training.depth_map): FSceneView::InvDeviceZToWorldZTransform of the depth textures' view. */
+	FVector4f InvDeviceZToWorldZ = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
 };
 
 /**
- * Whether InstanceIdCS (both view-rect permutations) is in the global shader map. Game thread, after RHI
+ * Whether InstanceIdCS (all view-rect x depth permutations) is in the global shader map. Game thread, after RHI
  * init. Kept apart from IsSensorGraphSupported so a missing ground-truth shader cannot disable the video path.
  */
 CAMSIMSHADERS_API bool IsInstanceIdPassSupported(FString& OutWhy);
 
-/** One uint32 per two output pixels (pixel 2k low 16 bits): visible | amodal << 8. FocalPx/K1/K2 from Params. */
-CAMSIMSHADERS_API FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInputs& In, const FSensorFrameParams& Params);
+/**
+ * One uint32 per two output pixels (pixel 2k low 16 bits): visible | amodal << 8. FocalPx/K1/K2 from Params.
+ * With OutDepth, the same pass also writes one float per output pixel (row-major): the source texel's linear view
+ * depth in metres (sky/far: 1e7; outside the distorted source: 0), the ML depth map without a second render.
+ */
+CAMSIMSHADERS_API FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInputs& In,
+	const FSensorFrameParams& Params, FRDGBufferRef* OutDepth = nullptr);

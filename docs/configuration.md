@@ -10,8 +10,8 @@ they contain special YAML characters.
 
 **Canonical file:** `deploy/camsim_config.yaml` is the single source of truth
 for all three deployment modes. `run.sh` copies it into the UE project
-directory before launch; the container `entrypoint.sh` copies it into the
-binary directory. Edit only `deploy/camsim_config.yaml`; the project-dir copy
+directory before launch; the Docker image bakes it into the project directory
+(`/opt/camsim/CamSimTest/camsim_config.yaml`, mount over it to override). Edit only `deploy/camsim_config.yaml`; the project-dir copy
 is generated and is listed in `.gitignore`.
 
 **Unknown keys:** a key that no setting reads (a typo such as `cigi_prot`, or a
@@ -298,6 +298,23 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 | `use_lod_transitions` | bool | `false` | `CAMSIM_USE_LOD_TRANSITIONS` | Cesium's dithered LOD crossfade, which hides tile LOD pops. Off by default: Cesium updates every tile in the render set each frame while it's on, off-screen tiles included, which cost ~6 ms of game thread per frame and doubled hitches in moving-camera phases (SF bench, M1 Pro, culled SSE 16). Needs temporal AA (TSR, the primary view's anti-aliasing) to resolve the dither. |
 | `lod_transition_length` | float | `0.5` | `CAMSIM_LOD_TRANSITION_LENGTH` | Crossfade duration in seconds. |
 
+**Choosing the terrain settings for a deployment** (Linux, RTX 5080, Docker, 1080p, one terrain
+tileset, P-core pinned; 2026-10-01; `scripts/bench/snap_test.py`, 90° gimbal snaps at 3 km over SF;
+sharpness = edge variance of the frame, as % of the defaults' settled view; two snaps each):
+
+| Setting | Game thread p50 (settled) | Frame +0.3 s after a snap | +1 s | +3 s |
+| --- | --- | --- | --- | --- |
+| Defaults (`frustum_culling: false`, SSE 16) | 2.9 ms | sharp (86%) | 96–99% | 100% |
+| `frustum_culling: true` | 1.3 ms | holes (missing shore) and coarse city (30–34%) | 77–82% | ~100% |
+| `maximum_screen_space_error: 24` | 1.9 ms | no holes, but soft (56–67%) | 61–75% | **63–79%: permanently softer** |
+
+Keep the defaults for training/ISR imagery: they are the only setting without visible artifacts,
+and the budget allows them (1080p game thread p99 ~10 ms; 500 entities ~14.5 ms, under 50%). Turn
+`frustum_culling` on only where the gimbal never snaps (steady flight, fixed sensor) and the game
+thread is short of budget (many entities, several output streams). Raising
+`maximum_screen_space_error` trades sharpness everywhere, always (coarser terrain tiles also carry
+coarser imagery); not recommended at 1080p.
+
 ### Terrain Readiness Gate
 
 Holds frame output until Cesium has loaded tiles for the view, at startup and after a
@@ -517,7 +534,7 @@ Per-frame ground truth for ML/ATR training (COCO JSONL, Pascal VOC XML, 16-bit d
 |-------|------|---------|---------|-------------|
 | `ml_training.enabled` | bool | `false` | `CAMSIM_ML_ENABLED` | Master toggle. |
 | `ml_training.output_dir` | string | `ml_output` | `CAMSIM_ML_OUTPUT_DIR` | Output directory (relative paths resolve from the binary directory). |
-| `ml_training.depth_map` | bool | `true` | `CAMSIM_ML_DEPTH_ENABLED` | 16-bit grayscale depth PNG per frame. |
+| `ml_training.depth_map` | bool | `true` | `CAMSIM_ML_DEPTH_ENABLED` | 16-bit grayscale depth PNG per annotated frame: linear view depth from the primary view's scene depth, aligned with the image and masks (no second render; `docs/ground-truth.md`). |
 | `ml_training.bounding_boxes` | bool | `true` | `CAMSIM_ML_BBOX_ENABLED` | Per-frame entity annotations. |
 | `ml_training.coco_export` | bool | `true` | `CAMSIM_ML_COCO_ENABLED` | COCO JSONL (one object per frame). |
 | `ml_training.voc_export` | bool | `false` | `CAMSIM_ML_VOC_ENABLED` | Pascal VOC XML per frame. |
@@ -734,6 +751,11 @@ CAMSIM_STRUCTURED_LOG_MAX_MB=100
 CAMSIM_HEALTH_HTTP_ENABLED=1
 CAMSIM_HEALTH_HTTP_PORT=8080
 CAMSIM_TRACK_PIPELINE_LATENCY=0
+
+# Docker entrypoint only (deploy/entrypoint.sh, docs/docker.md)
+CAMSIM_BINARY=                       # game binary (default: Development, then Shipping)
+CAMSIM_ALLOW_SOFTWARE_RENDERING=0    # 1 = try Mesa lavapipe without a GPU (crashes on Mesa <= 26.2)
+CAMSIM_PIN_PCORES=1                  # hybrid Intel CPUs: pin to the P-cores (also scripts/run.sh on Linux); 0 = off
 ```
 
 ## Phase 28 — Operational Hardening

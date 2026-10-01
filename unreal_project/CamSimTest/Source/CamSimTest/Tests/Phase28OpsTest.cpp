@@ -191,6 +191,35 @@ bool FPhase28LatencyFullBufferTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase28LatencyUnstampedStageTest,
+	"CamSim.Phase28.Latency.UnstampedStage_IsSkipped",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPhase28LatencyUnstampedStageTest::RunTest(const FString& Parameters)
+{
+	// Frames with no CIGI dequeue stamp (no host packet that frame) used to
+	// count EncodeComplete - 0, i.e. the whole uptime, as their latency.
+	FPipelineLatencyTracker Tracker(300);
+	const uint64 Base = 1ull << 40;  // a large cycle count, like a real clock
+	const uint64 Delta = FMath::Max<uint64>(1, static_cast<uint64>(0.010 / FPlatformTime::GetSecondsPerCycle64()));
+	for (int32 i = 0; i < 100; ++i)
+	{
+		const uint64 T = Base + static_cast<uint64>(i) * 4 * Delta;
+		if (i % 2 == 0)
+		{
+			Tracker.SetStageTimestamp(EPipelineStage::CigiDequeue, T);
+		}
+		Tracker.SetStageTimestamp(EPipelineStage::EncodeComplete, T + Delta);
+		Tracker.CommitFrame();
+	}
+
+	const FPipelineLatencyTracker::FLatencyPercentiles P = Tracker.ComputePercentiles();
+	TestTrue(TEXT("Total P99 is the 10 ms delta, not the clock value"),
+		FMath::IsNearlyEqual(P.TotalUs[2], 10000.0f, 50.0f));
+	TestEqual(TEXT("Readback has no stamped frames"), P.ReadbackUs[0], 0.0f);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase28LatencyEmptyTest,
 	"CamSim.Phase28.Latency.EmptyTracker_ReturnsZero",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

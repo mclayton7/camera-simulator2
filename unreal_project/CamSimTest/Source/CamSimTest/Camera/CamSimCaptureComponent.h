@@ -7,8 +7,8 @@
 #include "HAL/ThreadSafeBool.h"
 #include "Metadata/CamSimTelemetry.h"
 #include "Sensor/SensorTypes.h"      // ESensorMode
-// FRHIGPUTextureReadback needs a complete type here because the UHT-generated
-// .gen.cpp instantiates TArray<TUniquePtr<FRHIGPUTextureReadback>>'s destructor.
+// FRHIGPUBufferReadback needs a complete type here because the UHT-generated
+// .gen.cpp instantiates TArray<TUniquePtr<FRHIGPUBufferReadback>>'s destructor.
 #include "RHIGPUReadback.h"
 #include "Camera/ReadbackRing.h"
 #include "Camera/SensorGpuTimer.h"
@@ -152,7 +152,6 @@ public:
 
 private:
 	void ApplyRenderSettings(const FCamSimConfig& Cfg);
-	void CreateDepthCapture(const FCamSimConfig& Cfg);
 	/** Build this frame's entity annotation snapshot (empty when the collector is off). */
 	TArray<FEntityAnnotationData> BuildGroundTruthSnapshot() const;
 	/** Per tagged entity, the sea-surface plane InstanceIdCS cuts its submerged hull at; empty when the ocean is off. */
@@ -172,19 +171,6 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UCamSimSubsystem> Subsystem;
 
-	/** Optional depth capture for ML training data (Phase 17A). */
-	UPROPERTY(Transient)
-	TObjectPtr<USceneCaptureComponent2D> DepthCapture;
-
-	/** Depth render targets, one per readback slot (PF_R32_FLOAT). */
-	UPROPERTY(Transient)
-	TArray<TObjectPtr<UTextureRenderTarget2D>> DepthRenderTargets;
-
-	/**
-	 * One depth readback helper per slot, so the EnqueueCopy of a newer frame
-	 * can't race the Lock/Unlock still targeting an older one.
-	 */
-	TArray<TUniquePtr<FRHIGPUTextureReadback>> DepthReadbackPool;
 
 	/** ROADMAP 3A/3B: runs the sensor graph in the game viewport (null until the viewport exists). */
 	TSharedPtr<FCamSimFrameGrabExtension, ESPMode::ThreadSafe> GrabExtension;
@@ -209,7 +195,13 @@ private:
 	 * no IDs requested (annotations use projected boxes).
 	 */
 	TArray<TUniquePtr<FRHIGPUBufferReadback>> IdReadbackPool;
-	/** Collector's annotation interval (fixed at Initialize, as the collector's): IDs only on annotated frames. */
+	/**
+	 * ML depth map (Phase 17A): one readback per ring slot of InstanceIdCS's depth output (the primary
+	 * view's scene depth, no second render), created only when UCamSimSubsystem::IsGroundTruthDepthAvailable.
+	 * Empty = no depth requested.
+	 */
+	TArray<TUniquePtr<FRHIGPUBufferReadback>> DepthReadbackPool;
+	/** Collector's annotation interval (fixed at Initialize, as the collector's): IDs and depth only on annotated frames. */
 	int32 IdIntervalFrames = 1;
 	FSensorController   SensorController;
 	/** Histograms, render thread → game thread. */
@@ -267,6 +259,8 @@ private:
 	 * writer: render (grab pass) → reader: render (poll) (SeqCst).
 	 */
 	TAtomic<uint32> IdGrabbedGeneration[FReadbackRing::NumSlots];
+	/** Per slot: the generation whose depth copy was issued (as IdGrabbedGeneration). */
+	TAtomic<uint32> DepthGrabbedGeneration[FReadbackRing::NumSlots];
 
 	/** Persistent encoder thread — drains processed frames from an SPSC queue. */
 	TUniquePtr<FEncoderThread, FEncoderThreadDeleter> EncoderThread;
@@ -287,6 +281,15 @@ private:
 	FThreadSafeBool bSensorBusy;
 
 	/**
+	 * Depth-map PNG writes run as their own background tasks, so they don't hold bSensorBusy (a real 1080p
+	 * depth map takes long enough to halve the capture rate). Bounded: past MaxDepthWritesInFlight a frame's
+	 * depth is skipped and counted. writer/reader: background tasks + game (Shutdown waits for 0).
+	 */
+	TAtomic<int32>  DepthWritesInFlight { 0 };
+	TAtomic<uint64> DepthWritesSkipped { 0 };
+	static constexpr int32 MaxDepthWritesInFlight = 4;
+
+	/**
 	 * ROADMAP 3A.1 — readback ring. A capture takes the next free slot, so up
 	 * to NumSlots readbacks are in flight and a frame can be captured every
 	 * tick. Slot states and in-order delivery live in FReadbackRing; per-slot
@@ -302,13 +305,13 @@ private:
 		/** This capture's generation: stale poll commands for a reused slot no-op. writer: game → reader: render. */
 		TAtomic<uint32>  Generation       { 0 };
 		TArray<uint8>    Nv12;                    // render writes → game reads after Complete
-		TArray<float>    Depth;
+		TArray<float>    Depth;                   // metres, GpuSensorSize; render writes → game reads after Complete
 		TArray<FEntityAnnotationData> Entities;   // game thread fills at capture; moved to the background task
 		TArray<uint32>   InstanceIds;             // render writes → game reads after Complete (empty = none)
 		bool             bWantIds = false;        // game thread at capture; captured by value into the poll
+		bool             bWantDepth = false;      // ditto, for the depth map
 		// Reset by the game thread at capture, advanced by the render thread's polls.
 		TAtomic<uint8>   ReadyStreak      { 0 };  // "N consecutive Ready polls before consuming"
-		TAtomic<uint8>   DepthReadyStreak { 0 };
 		TAtomic<uint32>  PollAttempts     { 0 };  // past MaxReadbackPolls the slot fails
 	};
 	FSlot Slots[FReadbackRing::NumSlots];
