@@ -6,6 +6,7 @@
 #include "Misc/Paths.h"
 #include "Sensor/SensorOptics.h"
 #include "Sensor/SensorPresets.h"
+#include "Thermal/ThermalMaterials.h"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -981,6 +982,46 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlString(O, "material",            Cfg.Ocean.MaterialPath);
 		}
 
+				// Thermal radiance for IR (ROADMAP 4A)
+		if (YamlHas(Root, "thermal"))
+		{
+			ryml::ConstNodeRef T = Root["thermal"];
+			YamlBool (T, "enabled",             Cfg.Thermal.bEnabled);
+			YamlFloat(T, "air_temperature_c",   Cfg.Thermal.AirTemperatureC);
+			YamlFloat(T, "air_diurnal_swing_k", Cfg.Thermal.AirDiurnalSwingK);
+			if (YamlHas(T, "extinction_per_km"))
+			{
+				ryml::ConstNodeRef X = T["extinction_per_km"];
+				YamlFloat(X, "mwir", Cfg.Thermal.ExtinctionPerKmMwir);
+				YamlFloat(X, "lwir", Cfg.Thermal.ExtinctionPerKmLwir);
+			}
+			YamlFloat(T, "fog_ir_factor",       Cfg.Thermal.FogIrFactor);
+			if (YamlHas(T, "materials"))
+			{
+				ryml::ConstNodeRef Ms = T["materials"];
+				if (Ms.is_map())
+				{
+					YamlKeysAreData(Ms);   // class names; their fields are still checked
+					for (ryml::ConstNodeRef MNode : Ms)
+					{
+						FThermalMaterialSpec Spec;
+						Spec.Name = RymlToFString(MNode.key());
+						if (MNode.is_map())
+						{
+							float V = 0.0f;
+							if (YamlFloat(MNode, "albedo", V))           Spec.Albedo = V;
+							if (YamlFloat(MNode, "emissivity", V))       Spec.Emissivity = V;
+							if (YamlFloat(MNode, "thermal_inertia", V))  Spec.ThermalInertia = V;
+							if (YamlFloat(MNode, "convection_w_m2k", V)) Spec.ConvectionWm2K = V;
+							if (YamlFloat(MNode, "k_fast", V))           Spec.KFast = V;
+							YamlString(MNode, "temperature", Spec.Temperature);
+						}
+						Cfg.Thermal.Materials.Add(MoveTemp(Spec));
+					}
+				}
+			}
+		}
+
 		// Cesium backend: ion server, terrain source, imagery overlay
 		if (YamlHas(Root, "cesium"))
 		{
@@ -1302,6 +1343,14 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Ocean.bVesselMotion     = GetEnvBool (TEXT("CAMSIM_OCEAN_MOTION_ENABLED"), Cfg.Ocean.bVesselMotion);
 	Cfg.Ocean.VesselMotionScale = GetEnvFloat(TEXT("CAMSIM_OCEAN_MOTION_SCALE"),   Cfg.Ocean.VesselMotionScale);
 	Cfg.Ocean.MaxRadiusKm       = GetEnvFloat(TEXT("CAMSIM_OCEAN_MAX_RADIUS_KM"),  Cfg.Ocean.MaxRadiusKm);
+
+		// Thermal (ROADMAP 4A)
+	Cfg.Thermal.bEnabled            = GetEnvBool (TEXT("CAMSIM_THERMAL_ENABLED"),             Cfg.Thermal.bEnabled);
+	Cfg.Thermal.AirTemperatureC     = GetEnvFloat(TEXT("CAMSIM_THERMAL_AIR_TEMPERATURE_C"),   Cfg.Thermal.AirTemperatureC);
+	Cfg.Thermal.AirDiurnalSwingK    = GetEnvFloat(TEXT("CAMSIM_THERMAL_AIR_DIURNAL_SWING_K"), Cfg.Thermal.AirDiurnalSwingK);
+	Cfg.Thermal.ExtinctionPerKmMwir = GetEnvFloat(TEXT("CAMSIM_THERMAL_EXTINCTION_MWIR"),     Cfg.Thermal.ExtinctionPerKmMwir);
+	Cfg.Thermal.ExtinctionPerKmLwir = GetEnvFloat(TEXT("CAMSIM_THERMAL_EXTINCTION_LWIR"),     Cfg.Thermal.ExtinctionPerKmLwir);
+	Cfg.Thermal.FogIrFactor         = GetEnvFloat(TEXT("CAMSIM_THERMAL_FOG_IR_FACTOR"),       Cfg.Thermal.FogIrFactor);
 
 	// Phase 24: rendering quality env var overrides
 	{
@@ -1718,6 +1767,19 @@ TArray<FString> FCamSimConfig::Validate() const
 	{
 		Errors.Add(FString::Printf(TEXT("ocean.choppiness=%.2f out of range [0, 1]"), Ocean.Choppiness));
 	}
+
+		// Thermal (ROADMAP 4A). Written !(x in range) so NaN is reported too.
+	if (!(Thermal.AirTemperatureC >= -80.0f && Thermal.AirTemperatureC <= 60.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.air_temperature_c=%.2f out of range [-80, 60]"), Thermal.AirTemperatureC));
+	if (!(Thermal.AirDiurnalSwingK >= 0.0f && Thermal.AirDiurnalSwingK <= 30.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.air_diurnal_swing_k=%.2f out of range [0, 30]"), Thermal.AirDiurnalSwingK));
+	if (!(Thermal.ExtinctionPerKmMwir >= 0.0f && Thermal.ExtinctionPerKmMwir <= 10.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.extinction_per_km.mwir=%.3f out of range [0, 10]"), Thermal.ExtinctionPerKmMwir));
+	if (!(Thermal.ExtinctionPerKmLwir >= 0.0f && Thermal.ExtinctionPerKmLwir <= 10.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.extinction_per_km.lwir=%.3f out of range [0, 10]"), Thermal.ExtinctionPerKmLwir));
+	if (!(Thermal.FogIrFactor >= 0.0f && Thermal.FogIrFactor <= 2.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.fog_ir_factor=%.2f out of range [0, 2]"), Thermal.FogIrFactor));
+	Errors.Append(FThermalMaterialTable::Validate(Thermal.Materials));
 
 	RangeCheckFloat(TEXT("Performance.RenderFrameRateHz"), Performance.RenderFrameRateHz, 1.0f, 120.0f);
 	if (Performance.OutputFrameRateHz < 1.0f || Performance.OutputFrameRateHz > Performance.RenderFrameRateHz)

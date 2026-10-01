@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Sensor/SensorTypes.h"         // ESensorMode, sensor config structs
+#include "Thermal/ThermalTypes.h"        // FThermalMaterialSpec
 
 /**
  * Runtime configuration for CamSim.
@@ -580,6 +581,21 @@ struct FCamSimConfig
 		FString MaterialPath      = TEXT("/Game/Ocean/M_Ocean");
 	};
 	FOceanConfig Ocean;
+
+		/** Thermal radiance for IR (ROADMAP 4A, docs/thermal.md). */
+	struct FThermalConfig
+	{
+		// Startup decides whether thermal is available (and entities get stencils for it); a live
+		// false (hot reload) runs IR as the 3B.2 luminance proxy for A/B comparison.
+		bool  bEnabled            = true;
+		float AirTemperatureC     = 15.0f;   // daily mean, until CIGI Atmosphere Control sets it
+		float AirDiurnalSwingK    = 8.0f;    // peak-to-peak; T_air = mean + swing/2 cos(w (t - 15 h local solar))
+		float ExtinctionPerKmMwir = 0.15f;   // band extinction, per km
+		float ExtinctionPerKmLwir = 0.10f;
+		float FogIrFactor         = 0.4f;    // beta_fog = 3.912 / V_km * factor (IR sees farther than visible)
+		TArray<FThermalMaterialSpec> Materials;   // thermal.materials overrides / additions (yaml only)
+	};
+	FThermalConfig Thermal;
 
 	/** Cesium backend: ion server, terrain source, imagery overlay */
 	struct FCesiumBackendConfig

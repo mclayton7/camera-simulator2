@@ -880,3 +880,42 @@ its flat-plane `FGerstnerOceanSurface` renderer are gone, replaced by the
 `ocean:` block above and the analytic `FOceanSurface`/`FOceanWaves`. The
 Niagara vessel-wake-trail and SSR-reflection sub-features (19B, 19D) have no
 successor yet.
+
+## Thermal (`thermal:`)
+
+IR radiance (ROADMAP 4A, guide: [`docs/thermal.md`](thermal.md)). In IR mode each pixel's
+in-band radiance comes from a surface temperature (a closed-form diurnal model per material
+class, plus a per-pixel solar term from the EO render) and emissivity, with sky and path terms,
+and goes through the unchanged sensor model. The band comes from the IR preset
+(`detector.band_lo_um`/`band_hi_um`).
+
+```yaml
+thermal:
+  enabled: true
+  air_temperature_c: 15.0
+  air_diurnal_swing_k: 8.0
+  extinction_per_km: {mwir: 0.15, lwir: 0.10}
+  fog_ir_factor: 0.4
+  materials:            # optional
+    asphalt: {albedo: 0.1, k_fast: 0.02}
+```
+
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `thermal.enabled` | `CAMSIM_THERMAL_ENABLED` | `true` | **Startup** decides whether the thermal pass is available (and entities get custom-depth stencils for it). A hot reload to `false` runs IR as the 3B.2 luminance proxy (A/B); back to `true` restores thermal if it was available at startup. |
+| `thermal.air_temperature_c` | `CAMSIM_THERMAL_AIR_TEMPERATURE_C` | `15.0` | Daily mean air temperature until a CIGI Atmosphere Control packet sets one; `[-80, 60]`. |
+| `thermal.air_diurnal_swing_k` | `CAMSIM_THERMAL_AIR_DIURNAL_SWING_K` | `8.0` | Peak-to-peak diurnal air swing, peak at 15:00 local solar; `[0, 30]`. |
+| `thermal.extinction_per_km.mwir` / `.lwir` | `CAMSIM_THERMAL_EXTINCTION_MWIR` / `_LWIR` | `0.15` / `0.10` | Band extinction β per km; the band is MWIR when the IR preset's band centre is below 6.5 µm. `[0, 10]`. |
+| `thermal.fog_ir_factor` | `CAMSIM_THERMAL_FOG_IR_FACTOR` | `0.4` | While CIGI Atmosphere Control has fog enabled, β += 3.912 / V_km × factor; `[0, 2]`. |
+| `thermal.materials.<name>` | *(yaml only)* | — | Overrides a built-in class (`terrain_default`, `water`, `vehicle_paint`, `asphalt`, `vegetation`, `concrete`) or adds one (unset fields copy `terrain_default`; ≤ 32 classes). Fields: `albedo` `[0,1)`, `emissivity` `(0,1]`, `thermal_inertia` J m⁻² K⁻¹ s⁻½ `[0,20000]`, `convection_w_m2k` `(0,200]`, `k_fast` K/(W m⁻²) `[0,0.2]`, `temperature` `model`\|`water`. Names: lower-case letters, digits, `_`. |
+
+Built-in classes:
+
+| Class | albedo | ε | inertia | h_c | k_fast | temperature |
+|---|---|---|---|---|---|---|
+| `terrain_default` | 0.20 | 0.95 | 1200 | 10 | 0.015 | model |
+| `water` | 0.06 | 0.98 | — | — | 0 | water ± 0.5 K |
+| `vehicle_paint` | 0.30 | 0.90 | 600 | 12 | 0.04 | model |
+| `asphalt` | 0.10 | 0.95 | 1500 | 10 | 0.02 | model |
+| `vegetation` | 0.20 | 0.98 | 300 | 15 | 0.008 | model |
+| `concrete` | 0.35 | 0.92 | 1800 | 10 | 0.015 | model |

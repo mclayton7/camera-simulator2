@@ -763,6 +763,27 @@ ocean:
   max_radius_km: 400.0                   # CAMSIM_OCEAN_MAX_RADIUS_KM — horizon cap for the ocean mesh
   material: "/Game/Ocean/M_Ocean"        # startup only
 
+# --- Thermal radiance for IR (ROADMAP 4A, docs/thermal.md) ---
+# IR mode renders in-band (MWIR/LWIR) radiance from per-pixel surface temperature and emissivity.
+# enabled: false restores the 3B.2 luminance proxy (startup decides availability; a hot reload to
+# false switches IR back to the proxy for A/B comparison).
+thermal:
+  enabled: true                 # CAMSIM_THERMAL_ENABLED
+  air_temperature_c: 15.0       # CAMSIM_THERMAL_AIR_TEMPERATURE_C — daily mean until CIGI Atmosphere Control sets it
+  air_diurnal_swing_k: 8.0      # CAMSIM_THERMAL_AIR_DIURNAL_SWING_K — peak-to-peak, peak at 15:00 local solar
+  extinction_per_km:
+    mwir: 0.15                  # CAMSIM_THERMAL_EXTINCTION_MWIR
+    lwir: 0.10                  # CAMSIM_THERMAL_EXTINCTION_LWIR
+  fog_ir_factor: 0.4            # CAMSIM_THERMAL_FOG_IR_FACTOR — beta_fog = 3.912 / V_km * factor
+  # materials:                  # overrides of / additions to the built-in classes (yaml only)
+  #   asphalt:
+  #     albedo: 0.1
+  #     emissivity: 0.95
+  #     thermal_inertia: 1500   # J m^-2 K^-1 s^-1/2
+  #     convection_w_m2k: 10
+  #     k_fast: 0.02            # K per W m^-2 absorbed above the class reference
+  #     temperature: model      # model | water
+
 # Phase 27 — Performance & Optimization
 performance:
   # 27B Frame drop categorization (log drops by cause: encoder_busy, readback_timeout, socket_error)
