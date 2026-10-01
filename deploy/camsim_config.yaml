@@ -400,6 +400,14 @@ ml_training:
   # Env: CAMSIM_ML_VOC_ENABLED
   voc_export: false
 
+  # Drop annotations with fewer visible (unoccluded, in-frame) pixels than this.
+  # Fully hidden vehicles are never labelled. Env: CAMSIM_ML_MIN_VISIBLE_PIXELS
+  min_visible_pixels: 1
+
+  # COCO RLE "segmentation" (modal mask) per annotation; the bulk of each line.
+  # Env: CAMSIM_ML_SEGMENTATION_ENABLED
+  segmentation: true
+
   # Write annotations every N frames (1 = every frame, 30 = 1 Hz at 30fps).
   # Env: CAMSIM_ML_INTERVAL_FRAMES
   annotation_interval_frames: 1

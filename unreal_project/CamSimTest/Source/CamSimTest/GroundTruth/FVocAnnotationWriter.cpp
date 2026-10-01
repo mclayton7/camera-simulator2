@@ -75,6 +75,8 @@ void FVocAnnotationWriter::WriteFrame(
 		Xml += FString::Printf(TEXT("\t\t<source_id>%s</source_id>\n"), *SafeSourceId);
 		Xml += TEXT("\t\t<pose>Unspecified</pose>\n");
 		Xml += FString::Printf(TEXT("\t\t<truncated>%d</truncated>\n"), E.bTruncated ? 1 : 0);
+		if (E.bMaskMeasured)
+			Xml += FString::Printf(TEXT("\t\t<occluded>%d</occluded>\n"), (E.AmodalPixels > 0 && double(E.VisiblePixels) / E.AmodalPixels < 0.95) ? 1 : 0);
 		Xml += TEXT("\t\t<difficult>0</difficult>\n");
 		Xml += TEXT("\t\t<bndbox>\n");
 		Xml += FString::Printf(TEXT("\t\t\t<xmin>%d</xmin>\n"), XMin);

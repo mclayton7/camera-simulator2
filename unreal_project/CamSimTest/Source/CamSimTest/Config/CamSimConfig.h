@@ -405,6 +405,8 @@ struct FCamSimConfig
 	//   CAMSIM_ML_VOC_ENABLED         - write Pascal VOC XML per frame (default 0)
 	//   CAMSIM_ML_INTERVAL_FRAMES     - annotation cadence             (default 1)
 	//   CAMSIM_ML_DEPTH_FAR_PLANE_M   - depth quantization ceiling (m) (default 5000)
+	//   CAMSIM_ML_MIN_VISIBLE_PIXELS  - drop annotations with fewer visible px (default 1, min 1)
+	//   CAMSIM_ML_SEGMENTATION_ENABLED - COCO RLE segmentation per annotation (default 1)
 	struct FMLTrainingConfig
 	{
 		bool    bEnabled                 = false;
@@ -415,6 +417,8 @@ struct FCamSimConfig
 		bool    bCocoExport              = true;   // 17G: streaming COCO JSONL
 		bool    bVocExport               = false;  // 17H: Pascal VOC XML per frame
 		float   DepthFarPlaneM           = 5000.0f;
+		int32   MinVisiblePixels         = 1;      // ml_training.min_visible_pixels (>= 1)
+		bool    bSegmentation            = true;   // ml_training.segmentation: COCO RLE modal mask
 	};
 	FMLTrainingConfig MLTraining;
 

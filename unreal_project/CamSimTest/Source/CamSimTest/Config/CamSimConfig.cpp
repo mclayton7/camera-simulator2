@@ -607,6 +607,12 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				if (YamlInt(MLNode, "annotation_interval_frames", Interval))
 					Cfg.MLTraining.AnnotationIntervalFrames = FMath::Max(1, Interval);
 			}
+			{
+				int32 MinPx = Cfg.MLTraining.MinVisiblePixels;
+				if (YamlInt(MLNode, "min_visible_pixels", MinPx))
+					Cfg.MLTraining.MinVisiblePixels = FMath::Max(1, MinPx);
+			}
+			YamlBool  (MLNode, "segmentation",             Cfg.MLTraining.bSegmentation);
 		}
 
 		// Entity runtime scale controls (LOD/culling/update throttling).
@@ -1224,6 +1230,8 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.MLTraining.bVocExport = GetEnvInt(TEXT("CAMSIM_ML_VOC_ENABLED"), Cfg.MLTraining.bVocExport ? 1 : 0) != 0;
 	Cfg.MLTraining.AnnotationIntervalFrames = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_ML_INTERVAL_FRAMES"), Cfg.MLTraining.AnnotationIntervalFrames));
 	Cfg.MLTraining.DepthFarPlaneM = GetEnvFloat(TEXT("CAMSIM_ML_DEPTH_FAR_PLANE_M"), Cfg.MLTraining.DepthFarPlaneM);
+	Cfg.MLTraining.MinVisiblePixels = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_ML_MIN_VISIBLE_PIXELS"), Cfg.MLTraining.MinVisiblePixels));
+	Cfg.MLTraining.bSegmentation = GetEnvInt(TEXT("CAMSIM_ML_SEGMENTATION_ENABLED"), Cfg.MLTraining.bSegmentation ? 1 : 0) != 0;
 	Cfg.EntityScale.MaxDrawDistanceM = GetEnvFloat(TEXT("CAMSIM_ENTITY_MAX_DRAW_DISTANCE_M"), Cfg.EntityScale.MaxDrawDistanceM);
 	Cfg.EntityScale.TickRateHz = GetEnvFloat(TEXT("CAMSIM_ENTITY_TICK_RATE_HZ"), Cfg.EntityScale.TickRateHz);
 	Cfg.EntityScale.DefaultMaxUpdateRateHz = GetEnvFloat(

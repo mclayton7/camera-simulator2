@@ -6,6 +6,9 @@
 #include "Entity/StencilSlotAllocator.h"
 #include "GroundTruth/AnnotationTypes.h"
 #include "GroundTruth/FGroundTruthCollector.h"
+#include "GroundTruth/MaskGeometry.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
 #include "Config/CamSimConfig.h"
 #include "Sensor/SensorOptics.h"
 #include "Metadata/CamSimTelemetry.h"
@@ -266,7 +269,7 @@ bool FGroundTruthPerFrameSnapshotTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("frame 2 has the boat"), Lines[0].Contains(TEXT("\"frame_id\":2")) && Lines[0].Contains(TEXT("\"entity_id\":70001")) && Lines[0].Contains(TEXT("\"name\":\"boat\"")));
 	TestTrue(TEXT("frame 1 has the truck"), Lines[1].Contains(TEXT("\"frame_id\":1")) && Lines[1].Contains(TEXT("\"entity_id\":70000")) && Lines[1].Contains(TEXT("\"name\":\"truck\"")));
 	TestTrue(TEXT("source fields"), Lines[1].Contains(TEXT("\"source\":\"dis\",\"source_id\":\"1.1.1\"")));
-	TestTrue(TEXT("geo pose written when known"), Lines[0].Contains(TEXT("\"truncated\":0,\"geo\":{\"lat\":37.81500000,\"lon\":-122.44000000,\"alt_m\":-32.125}}")));
+	TestTrue(TEXT("geo pose written when known"), Lines[0].Contains(TEXT("\"truncated\":0,\"mask_source\":\"projection\",\"geo\":{\"lat\":37.81500000,\"lon\":-122.44000000,\"alt_m\":-32.125}}")));
 	TestFalse(TEXT("no geo when unknown"), Lines[1].Contains(TEXT("\"geo\"")));
 	return true;
 }
@@ -359,5 +362,184 @@ bool FGroundTruthStencilReuseTest::RunTest(const FString&)
 	TestEqual(TEXT("reused once the delay has passed"), A.Allocate(100 + FStencilSlotAllocator::ReuseDelayFrames), V1);
 	TestTrue(TEXT("delay covers the ring"), FStencilSlotAllocator::ReuseDelayFrames > 3);
 	(void)V2;
+	return true;
+}
+
+
+// -------------------------------------------------------------------------
+// Measured fields: collector + COCO writer (ATR ground truth, Task 6)
+// -------------------------------------------------------------------------
+namespace
+{
+	FInstanceIdImage GtMakeImage(int32 W, int32 H) { FInstanceIdImage I; I.Width = W; I.Height = H; I.Words.Init(0u, W * H / 2); return I; }
+	void GtSet(FInstanceIdImage& I, int32 X, int32 Y, uint8 Visible, uint8 Amodal)
+	{
+		const int32 Idx = Y * I.Width + X; uint32& W = I.Words[Idx >> 1];
+		const uint32 V = uint32(Visible) | (uint32(Amodal) << 8);
+		W = (Idx & 1) ? ((W & 0x0000FFFFu) | (V << 16)) : ((W & 0xFFFF0000u) | V);
+	}
+
+	/** Runs one frame through a COCO-only collector and returns the parsed single line (null on failure) plus the raw text. */
+	TSharedPtr<FJsonObject> GtRunCoco(FAutomationTestBase& T, const TCHAR* DirName, int32 W, int32 H,
+		const FInstanceIdImage* Ids, TArray<FEntityAnnotationData> Entities, FString& OutRaw)
+	{
+		const FString Dir = FPaths::Combine(FPaths::ProjectSavedDir(), DirName);
+		IFileManager::Get().DeleteDirectory(*Dir, false, true);
+		FCamSimConfig Cfg;
+		Cfg.MLTraining.bEnabled = true; Cfg.MLTraining.OutputDir = Dir;
+		Cfg.MLTraining.bBoundingBoxes = true; Cfg.MLTraining.bCocoExport = true;
+		Cfg.MLTraining.bVocExport = false; Cfg.MLTraining.bDepthMap = false;
+		Cfg.CaptureWidth = W; Cfg.CaptureHeight = H;
+		{
+			FGroundTruthCollector Collector(Cfg);
+			if (!T.TestTrue(TEXT("collector opened"), Collector.Open())) return nullptr;
+			FCamSimTelemetry Tel;
+			Collector.WriteAnnotationFrame(MoveTemp(Entities), Ids, Tel, 0);
+			Collector.Close();
+		}
+		TArray<FString> Files;
+		IFileManager::Get().FindFilesRecursive(Files, *Dir, TEXT("*.jsonl"), true, false);
+		if (!T.TestEqual(TEXT("one COCO file"), Files.Num(), 1)) return nullptr;
+		TArray<FString> Lines;
+		FFileHelper::LoadFileToStringArray(Lines, *Files[0]);
+		if (!T.TestEqual(TEXT("one line"), Lines.Num(), 1)) return nullptr;
+		OutRaw = Lines[0];
+		TSharedPtr<FJsonObject> Obj;
+		if (!T.TestTrue(TEXT("line parses as JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Lines[0]), Obj)) || !Obj) return nullptr;
+		return Obj;
+	}
+
+	FEntityAnnotationData GtEntity(uint8 Stencil)
+	{
+		FEntityAnnotationData E;
+		E.EntityId = 70000; E.EntityType = 2001; E.ClassName = TEXT("truck");
+		E.Source = TEXT("dis"); E.SourceId = TEXT("1.1.1");
+		E.StencilValue = Stencil; E.bVisible = true;
+		E.ScreenBBox = FBox2D(FVector2D(0, 0), FVector2D(5, 3));
+		return E;
+	}
+
+	TArray<double> GtNumbers(const TArray<TSharedPtr<FJsonValue>>& A)
+	{
+		TArray<double> Out; for (const TSharedPtr<FJsonValue>& V : A) Out.Add(V->AsNumber()); return Out;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGtCollectorMeasuredFieldsTest, "CamSim.GroundTruth.Collector.MeasuredFields",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGtCollectorMeasuredFieldsTest::RunTest(const FString&)
+{
+	FInstanceIdImage I = GtMakeImage(6, 4);
+	for (int32 Y = 1; Y <= 2; ++Y) for (int32 X = 1; X <= 3; ++X) GtSet(I, X, Y, 7, 7);
+	FEntityAnnotationData E = GtEntity(7);
+	E.bHasBox3D = true; E.Box3DSizeM = FVector(6, 2, 2.5); E.bCornersValid = true; E.Truncation = 0.0;
+	for (int32 C = 0; C < 8; ++C) E.CornersPx[C] = FVector2D(C, 2 * C);
+	FString Raw;
+	const TSharedPtr<FJsonObject> Root = GtRunCoco(*this, TEXT("gt_measured_test"), 6, 4, &I, { E }, Raw);
+	if (!Root) return false;
+	AddInfo(Raw);
+	const TArray<TSharedPtr<FJsonValue>>& Anns = Root->GetArrayField(TEXT("annotations"));
+	if (!TestEqual(TEXT("one annotation"), Anns.Num(), 1)) return false;
+	const TSharedPtr<FJsonObject> A = Anns[0]->AsObject();
+	TestEqual(TEXT("mask_source"), A->GetStringField(TEXT("mask_source")), FString(TEXT("render")));
+	TestEqual(TEXT("bbox"), GtNumbers(A->GetArrayField(TEXT("bbox"))), TArray<double>({ 1, 1, 3, 2 }));
+	TestEqual(TEXT("area"), A->GetNumberField(TEXT("area")), 6.0);
+	TestNearlyEqual(TEXT("visibility"), A->GetNumberField(TEXT("visibility")), 1.0, 1e-9);
+	TestNearlyEqual(TEXT("truncation"), A->GetNumberField(TEXT("truncation")), 0.0, 1e-9);
+	TestEqual(TEXT("bbox_amodal"), GtNumbers(A->GetArrayField(TEXT("bbox_amodal"))), TArray<double>({ 1, 1, 3, 2 }));
+	const TArray<double> Obb = GtNumbers(A->GetArrayField(TEXT("obb")));
+	if (TestEqual(TEXT("obb has 5 numbers"), Obb.Num(), 5))
+	{
+		TestNearlyEqual(TEXT("obb w"), Obb[2], 3.0, 1e-2);
+		TestNearlyEqual(TEXT("obb h"), Obb[3], 2.0, 1e-2);
+		TestNearlyEqual(TEXT("obb angle"), Obb[4], 0.0, 1e-2);
+	}
+	TestEqual(TEXT("obb_amodal has 5 numbers"), A->GetArrayField(TEXT("obb_amodal")).Num(), 5);
+	const TSharedPtr<FJsonObject> Seg = A->GetObjectField(TEXT("segmentation"));
+	TestEqual(TEXT("segmentation.size"), GtNumbers(Seg->GetArrayField(TEXT("size"))), TArray<double>({ 4, 6 }));
+	TestEqual(TEXT("segmentation.counts"), Seg->GetStringField(TEXT("counts")), CamSimMask::EncodeCocoRle({ 5, 2, 2, 2, 2, 2, 9 }));
+	const TSharedPtr<FJsonObject> B3 = A->GetObjectField(TEXT("box3d"));
+	TestEqual(TEXT("box3d corners_px"), B3->GetArrayField(TEXT("corners_px")).Num(), 8);
+	for (const TSharedPtr<FJsonValue>& P : B3->GetArrayField(TEXT("corners_px"))) TestEqual(TEXT("corner is a pair"), P->AsArray().Num(), 2);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGtCollectorFallbackTest, "CamSim.GroundTruth.Collector.FallbackWithoutIds",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGtCollectorFallbackTest::RunTest(const FString&)
+{
+	FInstanceIdImage Wrong = GtMakeImage(8, 4);   // capture size is 6x4: ignored
+	for (int32 Y = 1; Y <= 2; ++Y) for (int32 X = 1; X <= 3; ++X) GtSet(Wrong, X, Y, 7, 7);
+	for (int32 Pass = 0; Pass < 2; ++Pass)
+	{
+		FString Raw;
+		const TSharedPtr<FJsonObject> Root = GtRunCoco(*this, TEXT("gt_fallback_test"), 6, 4, Pass ? &Wrong : nullptr, { GtEntity(7) }, Raw);
+		if (!Root) return false;
+		const TArray<TSharedPtr<FJsonValue>>& Anns = Root->GetArrayField(TEXT("annotations"));
+		if (!TestEqual(TEXT("one annotation"), Anns.Num(), 1)) return false;
+		const TSharedPtr<FJsonObject> A = Anns[0]->AsObject();
+		TestEqual(TEXT("mask_source"), A->GetStringField(TEXT("mask_source")), FString(TEXT("projection")));
+		TestEqual(TEXT("bbox from ScreenBBox"), GtNumbers(A->GetArrayField(TEXT("bbox"))), TArray<double>({ 0, 0, 5, 3 }));
+		TestFalse(TEXT("no visibility"), A->HasField(TEXT("visibility")));
+		TestFalse(TEXT("no segmentation"), A->HasField(TEXT("segmentation")));
+		TestFalse(TEXT("no obb"), A->HasField(TEXT("obb")));
+		TestFalse(TEXT("no truncation when unknown"), A->HasField(TEXT("truncation")));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGtCocoRleEscapedTest, "CamSim.GroundTruth.Coco.RleEscaped",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGtCocoRleEscapedTest::RunTest(const FString&)
+{
+	FInstanceIdImage I = GtMakeImage(40, 40);
+	for (int32 Y = 17; Y <= 19; ++Y) GtSet(I, 0, Y, 5, 5);   // column-major run 17..19
+	FString Raw;
+	const TSharedPtr<FJsonObject> Root = GtRunCoco(*this, TEXT("gt_rle_escape_test"), 40, 40, &I, { GtEntity(5) }, Raw);
+	if (!Root) return false;
+	const TArray<TSharedPtr<FJsonValue>>& Anns = Root->GetArrayField(TEXT("annotations"));
+	if (!TestEqual(TEXT("one annotation"), Anns.Num(), 1)) return false;
+	TestEqual(TEXT("counts survives escaping"), Anns[0]->AsObject()->GetObjectField(TEXT("segmentation"))->GetStringField(TEXT("counts")), FString(TEXT("a03\\a1")));
+	TestTrue(TEXT("backslash is escaped on the wire"), Raw.Contains(TEXT("a03\\\\a1")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGtCollectorHiddenDroppedTest, "CamSim.GroundTruth.Collector.HiddenDropped",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGtCollectorHiddenDroppedTest::RunTest(const FString&)
+{
+	FInstanceIdImage I = GtMakeImage(6, 4);
+	for (int32 Y = 1; Y <= 2; ++Y) for (int32 X = 1; X <= 3; ++X) GtSet(I, X, Y, 0, 7);   // amodal only
+	FString Raw;
+	const TSharedPtr<FJsonObject> Root = GtRunCoco(*this, TEXT("gt_hidden_test"), 6, 4, &I, { GtEntity(7) }, Raw);
+	if (!Root) return false;
+	TestEqual(TEXT("no annotations"), Root->GetArrayField(TEXT("annotations")).Num(), 0);
+	TestTrue(TEXT("empty array on the wire"), Raw.Contains(TEXT("\"annotations\":[]")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGtConfigNewKeysTest, "CamSim.GroundTruth.Config.NewKeys",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGtConfigNewKeysTest::RunTest(const FString&)
+{
+	const FString Yaml = TEXT("ml_training:\n  min_visible_pixels: 25\n  segmentation: false\n");
+	FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
+	TestEqual(TEXT("min_visible_pixels"), Cfg.MLTraining.MinVisiblePixels, 25);
+	TestFalse(TEXT("segmentation"), Cfg.MLTraining.bSegmentation);
+	TestTrue(TEXT("no unknown keys"), Cfg.UnknownYamlKeys.IsEmpty());
+
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_ML_MIN_VISIBLE_PIXELS"), TEXT("0"));
+	Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_ML_MIN_VISIBLE_PIXELS"), TEXT(""));
+	TestEqual(TEXT("env 0 clamps to 1"), Cfg.MLTraining.MinVisiblePixels, 1);
+
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_ML_SEGMENTATION_ENABLED"), TEXT("1"));
+	Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
+	FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_ML_SEGMENTATION_ENABLED"), TEXT(""));
+	TestTrue(TEXT("env enables segmentation"), Cfg.MLTraining.bSegmentation);
+
+	const FCamSimConfig Def;
+	TestEqual(TEXT("default min_visible_pixels"), Def.MLTraining.MinVisiblePixels, 1);
+	TestTrue(TEXT("default segmentation"), Def.MLTraining.bSegmentation);
 	return true;
 }

@@ -4,6 +4,7 @@
 #include "GroundTruth/FCocoAnnotationWriter.h"
 #include "GroundTruth/FVocAnnotationWriter.h"
 #include "GroundTruth/FDepthMapWriter.h"
+#include "GroundTruth/InstanceMaskAnalyzer.h"
 #include "Config/CamSimConfig.h"
 #include "Metadata/KlvBuilder.h"  // FCamSimTelemetry
 #include "CamSimTest.h"
@@ -50,6 +51,7 @@ bool FGroundTruthCollector::Open()
 		if (Config.MLTraining.bCocoExport)
 		{
 			auto Coco = MakeUnique<FCocoAnnotationWriter>();
+			Coco->SetImageSize(Config.CaptureWidth, Config.CaptureHeight);
 			if (Coco->Open(OutputDir))
 				Writers.Add(MoveTemp(Coco));
 		}
@@ -94,11 +96,17 @@ void FGroundTruthCollector::Close()
 }
 
 void FGroundTruthCollector::WriteAnnotationFrame(
-    const TArray<FEntityAnnotationData>& Entities,
+    TArray<FEntityAnnotationData> Entities, const FInstanceIdImage* Ids,
     const FCamSimTelemetry& Telemetry, uint64 FrameIdx)
 {
 	if (!bIsOpen || !bEnabled || Writers.IsEmpty()) return;
 	if ((FrameIdx % static_cast<uint64>(AnnotationIntervalFrames)) != 0) return;
+
+	// Measure from the rendered ID image; the size check guards a hot-reloaded capture size.
+	if (Ids && Ids->IsValid() && Ids->Width == Config.CaptureWidth && Ids->Height == Config.CaptureHeight)
+	{
+		FInstanceMaskAnalyzer::Analyze(*Ids, Entities, Config.MLTraining.MinVisiblePixels, Config.MLTraining.bSegmentation);
+	}
 
 	// Filter to only visible entities before handing off to writers.
 	// Writers may still skip zero-area boxes, but invisible entities must never

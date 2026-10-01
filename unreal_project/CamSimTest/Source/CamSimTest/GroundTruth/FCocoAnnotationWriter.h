@@ -34,8 +34,13 @@ public:
 	virtual void Close() override;
 	virtual bool IsOpen() const override { return bIsOpen; }
 
+	/** Image size for segmentation.size; call before Open(). */
+	void SetImageSize(int32 InWidth, int32 InHeight) { ImageWidth = InWidth; ImageHeight = InHeight; }
+
 private:
 	bool       bIsOpen    = false;
+	int32      ImageWidth  = 1920;
+	int32      ImageHeight = 1080;
 	FString    JsonlPath;
 	IFileHandle* FileHandle = nullptr;  // persistent append handle; owned by this writer
 };

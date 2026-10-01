@@ -43,9 +43,19 @@ public:
 	 * Called on background task thread inside FMultiViewFrameSink::EncodeFrame().
 	 * Entities is this frame's own snapshot (built on the game thread into the
 	 * readback-ring slot at capture time); no state is retained across calls.
+	 * Ids (optional): the frame's output-space instance-ID image. When valid and the
+	 * size of the capture, boxes/masks are measured from it; otherwise (null, invalid
+	 * or wrong size) the projected boxes are written (mask_source "projection").
 	 */
-	void WriteAnnotationFrame(const TArray<FEntityAnnotationData>& Entities,
+	void WriteAnnotationFrame(TArray<FEntityAnnotationData> Entities, const FInstanceIdImage* Ids,
 	                          const FCamSimTelemetry& Telemetry, uint64 FrameIdx);
+
+	/** Projection-only form (no ID image): boxes come from the entity snapshot. */
+	void WriteAnnotationFrame(const TArray<FEntityAnnotationData>& Entities,
+	                          const FCamSimTelemetry& Telemetry, uint64 FrameIdx)
+	{
+		WriteAnnotationFrame(Entities, nullptr, Telemetry, FrameIdx);
+	}
 
 	/**
 	 * Write a 16-bit PNG depth map for the current frame.

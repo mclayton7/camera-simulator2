@@ -491,6 +491,23 @@ state, and active view routes) for analytics and dataset generation workflows.
 | `ground_truth.output_path` | string | `camsim_groundtruth.jsonl` | `CAMSIM_GROUND_TRUTH_PATH` | Output path (relative paths resolve from binary directory). |
 | `ground_truth.interval_frames` | int | `1` | `CAMSIM_GROUND_TRUTH_INTERVAL_FRAMES` | Emit every N frames. |
 
+### ML Training Data (`ml_training:`)
+
+Per-frame ground truth for ML/ATR training (COCO JSONL, Pascal VOC XML, 16-bit depth).
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `ml_training.enabled` | bool | `false` | `CAMSIM_ML_ENABLED` | Master toggle. |
+| `ml_training.output_dir` | string | `ml_output` | `CAMSIM_ML_OUTPUT_DIR` | Output directory (relative paths resolve from the binary directory). |
+| `ml_training.depth_map` | bool | `true` | `CAMSIM_ML_DEPTH_ENABLED` | 16-bit grayscale depth PNG per frame. |
+| `ml_training.bounding_boxes` | bool | `true` | `CAMSIM_ML_BBOX_ENABLED` | Per-frame entity annotations. |
+| `ml_training.coco_export` | bool | `true` | `CAMSIM_ML_COCO_ENABLED` | COCO JSONL (one object per frame). |
+| `ml_training.voc_export` | bool | `false` | `CAMSIM_ML_VOC_ENABLED` | Pascal VOC XML per frame. |
+| `ml_training.min_visible_pixels` | int | `1` | `CAMSIM_ML_MIN_VISIBLE_PIXELS` | Drop annotations with fewer visible (unoccluded, in-frame) pixels than this. Fully hidden vehicles are never labelled. Clamped to >= 1. |
+| `ml_training.segmentation` | bool | `true` | `CAMSIM_ML_SEGMENTATION_ENABLED` | COCO RLE `segmentation` (modal mask) per annotation; the bulk of each line. |
+| `ml_training.annotation_interval_frames` | int | `1` | `CAMSIM_ML_INTERVAL_FRAMES` | Write every N frames. |
+| `ml_training.depth_far_plane_m` | float | `5000` | `CAMSIM_ML_DEPTH_FAR_PLANE_M` | Depth quantization ceiling (0 m -> 0, far -> 65535). |
+
 ### Entity Runtime Scale Controls (Phase C3)
 
 `entity_scale` applies runtime throttles for dense scenes:
