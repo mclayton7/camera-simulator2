@@ -417,3 +417,136 @@ bool FSensorMicrobolometerNoAnalogTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("microbolometer type"), P.DetectorType, 1u);
 	return true;
 }
+
+// ---------------------------------------------------------------------------
+// ROADMAP 4A: thermal radiance input (signal = L / B(300 K), ~1 for a 300 K scene)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+	FSensorModeConfig ThermalCfg()
+	{
+		FSensorModeConfig C;
+		C.bAGCEnabled = true;
+		C.AGCLowPercentile = 0.01f;
+		C.AGCHighPercentile = 0.99f;
+		C.AGCLagFrames = 0;
+		C.ThermalExposure.LagFrames = 0;
+		C.Detector.MaxAnalogGainDb = 0.0f;
+		return C;
+	}
+
+	FSensorControllerInput Radiance(const FSensorHistogram* H, uint32 Serial)
+	{
+		FSensorControllerInput I = In(H, Serial);
+		I.Mode = ESensorGraphMode::IR;
+		I.bRadianceInput = true;
+		return I;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorThermalExposureTest, "CamSim.Sensor.Controller.RadianceUsesThermalExposure",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorThermalExposureTest::RunTest(const FString& Parameters)
+{
+	FSensorController C;
+	FSensorModeConfig Cfg = ThermalCfg();
+	Cfg.bAGCEnabled = false;
+	const FSensorHistogram H = Flat(0.0f, 1);   // a 300 K scene
+	const float SceneLog2 = FSensorHistogram::BinCentreLog2(FSensorHistogram::BinOf(1.0f));
+	const FSensorFrameParams P = C.Update(Radiance(&H, 1), Cfg);
+	TestEqual(TEXT("300 K scene exposed to mid-range (thermal target grey 0.5)"), FMath::Exp2(SceneLog2) * P.PhotonGain, 0.5f, 0.5f * 0.01f);
+	TestTrue(TEXT("inside the thermal limits [-8, 0] EV"), C.GetGainEv() >= -8.0f && C.GetGainEv() <= 0.0f);
+	const FSensorHistogram Cold = Flat(-6.0f, 2);   // far too dark for the thermal camera: clamps at its max gain
+	FSensorControllerInput I = Radiance(&Cold, 2);
+	I.bCameraCut = true;
+	C.Update(I, Cfg);
+	TestEqual(TEXT("clamped at thermal max_photon_gain_ev (0)"), C.GetGainEv(), 0.0f, 1e-4f);
+	TestEqual(TEXT("TotalGainCapEv with the thermal block"), FSensorController::TotalGainCapEv(Cfg, Cfg.ThermalExposure), 0.0f);
+	TestEqual(TEXT("TotalGainCapEv (luminance) unchanged"), FSensorController::TotalGainCapEv(Cfg), Cfg.Exposure.MaxPhotonGainEv);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorRadianceSlotTest, "CamSim.Sensor.Controller.RadianceSlotIndependent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorRadianceSlotTest::RunTest(const FString& Parameters)
+{
+	FSensorController C;
+	FSensorModeConfig Cfg = ThermalCfg();
+	Cfg.bAGCEnabled = false;
+	Cfg.Exposure.LagFrames = 0;
+	FSensorControllerInput Lum = In(nullptr, 1);
+	Lum.Mode = ESensorGraphMode::IR;
+	const FSensorHistogram Night = Flat(4.0f, 1);
+	Lum.NewHistogram = &Night;
+	const float LumPhoton = C.Update(Lum, Cfg).PhotonGain;
+	const FSensorHistogram Warm = Flat(0.0f, 2);
+	C.Update(Radiance(&Warm, 2), Cfg);
+	C.Update(Radiance(&Warm, 3), Cfg);
+	TestTrue(TEXT("radiance slot converged elsewhere"), FMath::Abs(FMath::Log2(LumPhoton) - C.GetGainEv()) > 1.0f);
+	FSensorControllerInput Back = In(nullptr, 4);   // no new histogram: the luminance slot's state is emitted
+	Back.Mode = ESensorGraphMode::IR;
+	TestEqual(TEXT("luminance slot untouched by radiance frames"), C.Update(Back, Cfg).PhotonGain, LumPhoton, LumPhoton * 1e-5f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorThermalAgcInterpTest, "CamSim.Sensor.Controller.ThermalAgcInterpolatedPercentiles",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorThermalAgcInterpTest::RunTest(const FString& Parameters)
+{
+	FSensorController C;
+	const FSensorModeConfig Cfg = ThermalCfg();
+	FSensorHistogram H;
+	const int32 B = FSensorHistogram::BinOf(1.0f);
+	H.Bins[B] = 600; H.Bins[B + 1] = 400; H.Serial = 1;
+	const FSensorFrameParams P = C.Update(Radiance(&H, 1), Cfg);
+	// 1 %: 10 of bin B's 600; 99 %: 390 of bin B+1's 400 (uniform within a bin).
+	const float Lo = FSensorHistogram::MinLog2 + (B + 10.0f / 600.0f) / FSensorHistogram::BinsPerStop;
+	const float Hi = FSensorHistogram::MinLog2 + (B + 1 + 390.0f / 400.0f) / FSensorHistogram::BinsPerStop;
+	const float N = P.PhotonGain * P.AnalogGain;
+	TestEqual(TEXT("low percentile -> margin (0.1)"), FMath::Exp2(Lo) * N * P.DisplayGain + P.DisplayOffset, FSensorController::ThermalAgcMargin, 1e-4f);
+	TestEqual(TEXT("high percentile -> 1 - margin (0.9)"), FMath::Exp2(Hi) * N * P.DisplayGain + P.DisplayOffset, 1.0f - FSensorController::ThermalAgcMargin, 1e-4f);
+	float Out = 0.0f;
+	TestTrue(TEXT("interp percentile"), FSensorController::PercentileLog2Interp(H, 0.3f, Out));
+	TestEqual(TEXT("30 % = half of bin B"), Out, FSensorHistogram::MinLog2 + (B + 0.5f) / FSensorHistogram::BinsPerStop, 1e-5f);
+	TestFalse(TEXT("empty histogram"), FSensorController::PercentileLog2Interp(FSensorHistogram(), 0.5f, Out));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorThermalAgcCapTest, "CamSim.Sensor.Controller.ThermalAgcFlatSceneCapped",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorThermalAgcCapTest::RunTest(const FString& Parameters)
+{
+	// Review focus 1: a flat night scene (every pixel in one bin) and a bimodal land/water frame.
+	FSensorModeConfig Cfg = ThermalCfg();
+	const FSensorHistogram Flat0 = Flat(0.0f, 1);
+	{
+		FSensorController C;
+		const FSensorFrameParams P = C.Update(Radiance(&Flat0, 1), Cfg);
+		TestTrue(TEXT("default cap: finite, <= 40"), FMath::IsFinite(P.DisplayGain) && P.DisplayGain > 0.0f && P.DisplayGain <= 40.0f);
+		TestTrue(TEXT("finite offset"), FMath::IsFinite(P.DisplayOffset));
+	}
+	{
+		Cfg.AGCMaxDisplayGain = 5.0f;   // binds for a one-bin band
+		FSensorController C;
+		const FSensorFrameParams P = C.Update(Radiance(&Flat0, 1), Cfg);
+		TestEqual(TEXT("cap binds"), P.DisplayGain, 5.0f);
+		const int32 B = FSensorHistogram::BinOf(1.0f);
+		const float N = P.PhotonGain * P.AnalogGain;
+		const float Lo = FMath::Exp2(FSensorHistogram::MinLog2 + (B + 0.01f) / FSensorHistogram::BinsPerStop) * N;
+		const float Hi = FMath::Exp2(FSensorHistogram::MinLog2 + (B + 0.99f) / FSensorHistogram::BinsPerStop) * N;
+		TestEqual(TEXT("capped band centred on mid-grey"), 0.5f * (Lo + Hi) * P.DisplayGain + P.DisplayOffset, 0.5f, 1e-4f);
+	}
+	{
+		Cfg.AGCMaxDisplayGain = 40.0f;   // bimodal: half land (bin B), half water (bin B + 2)
+		FSensorController C;
+		FSensorHistogram H;
+		const int32 B = FSensorHistogram::BinOf(1.0f);
+		H.Bins[B] = 5000; H.Bins[B + 2] = 5000; H.Serial = 1;
+		const FSensorFrameParams P = C.Update(Radiance(&H, 1), Cfg);
+		const float N = P.PhotonGain * P.AnalogGain;
+		const float Land = FMath::Exp2(FSensorHistogram::BinCentreLog2(B)) * N * P.DisplayGain + P.DisplayOffset;
+		TestTrue(*FString::Printf(TEXT("the lower mode is not black (v = %.3f)"), Land), Land > 0.05f);
+	}
+	return true;
+}

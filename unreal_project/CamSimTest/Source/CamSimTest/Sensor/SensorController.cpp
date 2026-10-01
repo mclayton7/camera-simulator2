@@ -22,6 +22,27 @@ bool FSensorController::PercentileLog2(const FSensorHistogram& H, float P, float
 	return true;
 }
 
+bool FSensorController::PercentileLog2Interp(const FSensorHistogram& H, float P, float& OutLog2)
+{
+	const uint64 Total = H.Total();
+	if (Total == 0) return false;
+	const double Target = FMath::Clamp(static_cast<double>(P), 0.0, 1.0) * static_cast<double>(Total);
+	uint64 Cum = 0;
+	for (int32 B = 0; B < FSensorHistogram::NumBins; ++B)
+	{
+		const uint64 Next = Cum + H.Bins[B];
+		if (H.Bins[B] > 0 && static_cast<double>(Next) >= Target)
+		{
+			const double F = FMath::Clamp((Target - static_cast<double>(Cum)) / static_cast<double>(H.Bins[B]), 0.0, 1.0);
+			OutLog2 = FSensorHistogram::MinLog2 + static_cast<float>((B + F) / FSensorHistogram::BinsPerStop);
+			return true;
+		}
+		Cum = Next;
+	}
+	OutLog2 = FSensorHistogram::MinLog2 + FSensorHistogram::NumBins / FSensorHistogram::BinsPerStop;
+	return true;
+}
+
 float FSensorController::Smoothing(double DeltaSimSec, int32 LagFrames, bool bSnap)
 {
 	if (bSnap || LagFrames <= 0) return 1.0f;
@@ -40,17 +61,28 @@ uint32 FSensorController::ModeSeed(ESensorGraphMode Mode, uint32 ConfigSeed)
 	return ConfigSeed ^ CamSimHash::Pcg(static_cast<uint32>(ModeIndex(Mode)) + 1u);
 }
 
-float FSensorController::TotalGainCapEv(const FSensorModeConfig& Cfg)
+int32 FSensorController::SlotOf(const FSensorControllerInput& In)
+{
+	if (In.Mode == ESensorGraphMode::EO) return 0;
+	return In.bRadianceInput ? 2 : 1;
+}
+
+const FSensorExposureConfig& FSensorController::ExposureOf(const FSensorModeConfig& Cfg, const FSensorControllerInput& In)
+{
+	return SlotOf(In) == 2 ? Cfg.ThermalExposure : Cfg.Exposure;
+}
+
+float FSensorController::TotalGainCapEv(const FSensorModeConfig& Cfg, const FSensorExposureConfig& E)
 {
 	const bool bAnalogStage = Cfg.Detector.Type != ESensorDetectorType::Microbolometer;
 	const float AnalogEv = bAnalogStage ? FMath::Max(Cfg.Detector.MaxAnalogGainDb, 0.0f) / 20.0f * FMath::Log2(10.0f) : 0.0f;
-	return Cfg.Exposure.MaxPhotonGainEv + AnalogEv;
+	return E.MaxPhotonGainEv + AnalogEv;
 }
 
 void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeConfig& Cfg,
 	const FSensorControllerInput& In, bool bSnap)
 {
-	const FSensorExposureConfig& E = Cfg.Exposure;
+	const FSensorExposureConfig& E = ExposureOf(Cfg, In);
 	float Target = E.ManualGainEv;
 	float Median = 0.0f, High = 0.0f;
 	if (PercentileLog2(H, 0.5f, Median) && PercentileLog2(H, E.HighlightPercentile, High))
@@ -67,8 +99,8 @@ void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeCon
 	{
 		return;  // empty histogram: keep the current gain
 	}
-	Target = FMath::Clamp(Target, E.MinGainEv, TotalGainCapEv(Cfg));
-	float& GainEv = GainEvByMode[ModeIndex(In.Mode)];
+	Target = FMath::Clamp(Target, E.MinGainEv, TotalGainCapEv(Cfg, E));
+	float& GainEv = GainEvByMode[SlotOf(In)];
 	GainEv += (Target - GainEv) * Smoothing(In.DeltaSimSec, E.LagFrames, bSnap);
 }
 
@@ -76,9 +108,12 @@ void FSensorController::UpdateIrAgc(const FSensorHistogram& H, const FSensorMode
 	const FSensorControllerInput& In, bool bSnap)
 {
 	float Lo = 0.0f, Hi = 0.0f, Median = 0.0f;
-	if (!PercentileLog2(H, Cfg.AGCLowPercentile, Lo) || !PercentileLog2(H, Cfg.AGCHighPercentile, Hi)) return;
+	// Thermal radiance has a large offset and a small contrast: interpolated percentiles keep the stretch from jumping a
+	// whole 9 % bin at a time.
+	auto Percentile = [&](float P, float& Out) { return In.bRadianceInput ? PercentileLog2Interp(H, P, Out) : PercentileLog2(H, P, Out); };
+	if (!Percentile(Cfg.AGCLowPercentile, Lo) || !Percentile(Cfg.AGCHighPercentile, Hi)) return;
 	if (PercentileLog2(H, 0.5f, Median)) LastMedianLog2 = Median;
-	Hi = FMath::Max(Hi, Lo + 1.0f / FSensorHistogram::BinsPerStop);  // never a zero-width band
+	Hi = FMath::Max(Hi, Lo + (In.bRadianceInput ? 1e-3f : 1.0f / FSensorHistogram::BinsPerStop));  // never a zero-width band
 	const float A = Smoothing(In.DeltaSimSec, Cfg.AGCLagFrames, bSnap);
 	IrLoLog2 += (Lo - IrLoLog2) * A;
 	IrHiLog2 += (Hi - IrHiLog2) * A;
@@ -86,11 +121,12 @@ void FSensorController::UpdateIrAgc(const FSensorHistogram& H, const FSensorMode
 
 FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, const FSensorModeConfig& Cfg)
 {
-	if (In.Mode != LastMode || In.bCameraCut)
+	const int32 Slot = SlotOf(In);
+	if (Slot != LastSlot || In.bCameraCut)
 	{
 		bSnapPending = true;
 		SnapAfterSerial = In.Serial;
-		LastMode = In.Mode;
+		LastSlot = Slot;
 	}
 	const bool bIrAgc = (In.Mode == ESensorGraphMode::IR) && Cfg.bAGCEnabled;
 
@@ -147,8 +183,8 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	// Total AE gain, clamped against the CURRENT mode's config (the state may
 	// have converged under different limits), then split: the photon stage
 	// (integration time) first, analog gain only past its limit.
-	const FSensorExposureConfig& E = Cfg.Exposure;
-	const float TotalEv  = FMath::Clamp(GainEvByMode[ModeIndex(In.Mode)], E.MinGainEv, TotalGainCapEv(Cfg));
+	const FSensorExposureConfig& E = ExposureOf(Cfg, In);
+	const float TotalEv  = FMath::Clamp(GainEvByMode[Slot], E.MinGainEv, TotalGainCapEv(Cfg, E));
 	const float PhotonEv = FMath::Min(TotalEv, E.MaxPhotonGainEv);
 	const float AnalogEv = FMath::Max(TotalEv - PhotonEv, 0.0f);
 	P.PhotonGain = FMath::Exp2(PhotonEv);
@@ -156,12 +192,32 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 
 	if (bIrAgc)
 	{
-		// Percentile band in signal units -> normalised DN, then stretched to [0, 1].
+		// Percentile band in signal units -> normalised DN, then stretched to [0, 1] (luminance proxy) or to
+		// [margin, 1 - margin] with the gain capped and the band centred when the cap binds (thermal radiance).
 		const float N    = P.PhotonGain * P.AnalogGain;
 		const float LoN  = FMath::Exp2(IrLoLog2) * N;
 		const float HiN  = FMath::Max(FMath::Exp2(IrHiLog2) * N, LoN + 1e-6f);
-		P.DisplayGain    = 1.0f / (HiN - LoN);
-		P.DisplayOffset  = -LoN * P.DisplayGain;
+		if (In.bRadianceInput)
+		{
+			const float Span = 1.0f - 2.0f * ThermalAgcMargin;
+			const float Gain = Span / (HiN - LoN);
+			const float Cap  = FMath::Max(Cfg.AGCMaxDisplayGain, 1.0f);
+			if (Gain > Cap)
+			{
+				P.DisplayGain   = Cap;
+				P.DisplayOffset = 0.5f - 0.5f * (LoN + HiN) * Cap;
+			}
+			else
+			{
+				P.DisplayGain   = Gain;
+				P.DisplayOffset = ThermalAgcMargin - LoN * Gain;
+			}
+		}
+		else
+		{
+			P.DisplayGain   = 1.0f / (HiN - LoN);
+			P.DisplayOffset = -LoN * P.DisplayGain;
+		}
 		LastEmittedGainEv = FMath::Log2(N * P.DisplayGain);
 	}
 	else
