@@ -1256,6 +1256,19 @@ follow visible albedo, night IR goes dark, and ATR models learn EO cues.
 | 4.5 | **Class-ID stencil reuse:** the same stencil gives semantic and instance segmentation for ML ground truth.                                                                                                       |
 | 4.6 | **Validation:** compare against reference imagery / published contrast data (e.g. NETD-limited scenes, diurnal crossover).                                                                                       |
 
+### 4A Thermal core (in progress)
+
+Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
+`docs/superpowers/plans/2026-10-01-thermal-core.md`.
+
+- Spike (plan Task 1, 2026-10-01): GBuffer base colour at `ReplacingTonemapper` with
+  `r.Substrate=True`, `r.Substrate.ProjectGBufferFormat=0` — verdict **LINEAR**
+  (GBufferC 1280x720 PF_B8G8R8A8, sRGB flag 1; non-zero 1.000, in-range 1.000, median 0.194 (mean 0.204, std 0.066);
+  the dumped image did look like unlit albedo: aerial imagery of Presidio trees and road, no shading or cast shadows).
+  Atmosphere sun light for `K_lum`: `DirectionalLight` on
+  `CesiumSunSky_0`, 111000 lux (colour white), ground transmittance (0.925825, 0.844161, 0.719899). Consequence: Task 8 sets
+  `CamSimThermalPass::bBaseColorAtTonemapper = true`, `bBaseColorSrgbEncoded = false`.
+
 ---
 
 ## Milestone 5: Drone-community interfaces
