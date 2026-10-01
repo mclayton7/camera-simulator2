@@ -695,6 +695,20 @@ The full model costs ~0.6 ms (720p) / ~1.3 ms (1080p) of GPU over 3B.1's display
 doesn't move the frame time. Sensor GPU p95 at 1080p by PSF radius (EO, Task 10): default R 2 +
 cos⁴ 1.71 ms, R 3 1.87, R 4 2.38, R 5 2.58, R 8 3.24 ms.
 
+**Linux, 2026-10-01** (Ubuntu 24.04, Core Ultra 9 285K, RTX 5080, driver 595.91.07, Vulkan SM6,
+NVENC, power profile `performance`; baseline `scripts/bench/baselines/linux-rtx5080-3b2-720p.json`,
+shots `scripts/bench/shots/linux/3b2/`), 720p, per phase: frame p95 34.3 / 38.9 / 35.4 / 36.9 ms;
+GPU frame p50 2.4–2.6 ms (~7× the M1 Pro); sensor graph GPU 0.09 ms; render thread p50 2.9–3.3 ms
+(as macOS); game thread p50 4.0–5.3 ms (~1.6× macOS, not yet investigated); 30.0 fps, 0 dropped.
+On the `balanced` power profile the render and game threads were ~2× and ~1.25× slower, so
+benchmark Linux hosts on `performance`. Frames > 66 ms (1 / 0 / 1 / 2) all fall in the first
+0.5 s of a phase, i.e. on the camera cut: an Insights trace of the far-origin cut shows a 206 ms
+game-thread frame, 117 ms of it `Cesium::RemoveCollisionForTiles` (two tilesets dropping every
+tile's physics mesh, which `create_physics_meshes` adds) plus 28 ms `ShowTilesToRender` and
+13 ms `OriginShift`; the render/RHI threads just wait. **Accepted**: one stalled frame on a
+long jump, which hosts rarely command. The bench's `game_ms` attributes such a stall to the
+frame after the hitch.
+
 Exposure and noise (720p `*_sensor.png`, BT.709 luma of the decoded frame, 0–255; "clipped" =
 any RGB channel ≥ 255, "luma-clipped" = luma ≥ 255; temporal noise = std of the difference of two
 consecutive `/snapshot/sensor` frames / √2, centre half, luma DN):
