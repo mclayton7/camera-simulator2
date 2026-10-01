@@ -5155,3 +5155,27 @@ EOF
 | Performance: +0.1 ms ThermalCS, window build < 100 ms off-thread, memory | 4 (`WindowBuildTime`), 11 (gate f record), 12 |
 | Testing: `CamSim.Thermal.LandCover.*`, `Reference.*` additions, `GPU.Thermal` land-cover cases, `test_fetch_worldcover.py`, `thermal_check` (i)–(l) | 1–4, 7, 8, 11 |
 | Risks: dry grass (prior keeps vegetation family), baked shadows (soft ramp), licence attribution | 6–7 (families, ramp), 1, 12 (attribution) |
+
+---
+
+### Task 13: Break the 10 m grid — smoothstep blend weights + geo-anchored domain warp (added 2026-10-01, before Task 11)
+
+Added after Task 10's live run: with land cover on, the IR frames show square 10 m blocks (`.cache/lc_task10/shots/sheet_close.png`, night most visibly). Bilinear blending of class values is C0 at texel centres, so the gradient creases there form a visible grid once the AGC stretches a low-contrast night frame. Spec success criterion (d) ("class boundaries follow features in the imagery, not 10 m blocks") is not met.
+
+Fix (mirrored in `CamSimThermalRef` and `CamSimThermalCommon.ush`, expression for expression):
+1. **Smoothstep fractions.** In `SampleLandCover`/`LandCoverCoords`, replace the bilinear fractions by `S(f) = f·f·(3 − 2f)` before forming the four weights. The blend becomes C1 across texel centres (no creases); weights still sum to 1 and stay in [0, 1].
+2. **Geo-anchored domain warp.** Before computing the texel coordinates, offset (E, N) by `W·(n₁, n₂)` metres, where `n₁, n₂ ∈ [−1, 1]` are two independent smooth value-noise fields (bilinear-smoothstep interpolation of a PCG hash on an integer lattice of spacing `WarpCellM`, default 20 m) evaluated at `(E, N) + WindowAnchorM`, and `W = WarpAmpM` (default 6 m, i.e. 0.6 texel). `WindowAnchorM` is the window centre's East/North offset from a per-session anchor (the first window's centre), computed in doubles on the CPU with `CamSimLandCover::GeodeticToWindowEN` and stored in float — so the warp is fixed to the ground across window re-centres and frames (no shimmer, no swimming). Use the existing integer PCG hash (`CamSimShaders/Public/SensorHash.h` / its HLSL twin) with its own stream key; no floating-point hash.
+3. Params: `FThermalFrameParams::{LandCoverAnchorM (float2), LandCoverWarpAmpM, LandCoverWarpCellM}`; config `thermal.land_cover.warp_amplitude_m` (default 6, range [0, 20], 0 disables) and `warp_cell_m` (default 20, range [5, 200]); NaN-safe validation; canonical yaml + configuration.md; builder fills them (anchor latched at the first valid window per session, reset on `Configure` of the land-cover dir).
+4. Warped positions that leave the texel-centre grid fall back to `terrain_default` exactly like unwarped ones (no out-of-bounds Load).
+
+**Files:** `Thermal/ThermalReference.{h,cpp}`, `Shaders/Private/CamSimThermalCommon.ush`, `Source/CamSimShaders/Public/ThermalFrameParams.h`, `Source/CamSimShaders/Private/ThermalPass.cpp` (param binding), `Thermal/ThermalFrameBuilder.{h,cpp}`, `Config/CamSimConfig.{h,cpp}`, `deploy/camsim_config.yaml`, `docs/configuration.md`; tests `Tests/ThermalLandCoverReferenceTest.cpp`, `Tests/ThermalGpuTest.cpp`, `Tests/ThermalLandCoverConfigTest.cpp`, `Tests/ThermalLandCoverBuilderTest.cpp`; `scripts/thermal_check.py` + `scripts/tests/test_thermal_check.py`.
+
+- [ ] **Step 1: Failing tests first.**
+  - Reference: (a) weights are C1 — sample the blended temperature along a line crossing a texel centre between two classes in fine steps and assert the discrete second difference has no spike at the centre (max |Δ²| at the centre ≤ 2× the median elsewhere), whereas the bilinear version would spike; (b) warp is deterministic and ground-anchored: the same ground point evaluated with two different window centres (anchor offsets differing by the centre shift) gives the same warped (E, N) to 1e-3 m; (c) `warp_amplitude_m = 0` reproduces the Task 7/8 smoothstep-only result and land cover off is still bit-identical to 4A (`LandCoverOffIs4A` unchanged); (d) warped positions outside the grid → `terrain_default`.
+  - GPU: extend `CamSim.GPU.Thermal.LandCoverMatchesCpu` with warp on (non-zero anchor, rotated axes) within 1e-4.
+  - Config/builder: keys, ranges, NaN; anchor latched once and stable across re-centres.
+  - Run → RED.
+- [ ] **Step 2: Implement** as above.
+- [ ] **Step 3: Gate (m) in `thermal_check.py`** — grid visibility on the night nadir view at the mixed pose, land cover on, entities masked, central 60 %: from the image's 2D power spectrum, the energy in a narrow band around the window-grid fundamental (period `10 m / GSD` px along the image axes; nadir, heading 0, so the window axes are the image axes) divided by the mean energy in the two neighbouring bands of equal width must be ≤ 2.0 (no distinct grid peak). Report the same metric for a run with `warp_amplitude_m: 0` and for the Task 10 build (bilinear) as evidence. Pure helper + pytest on synthetic images (a 10-px checker grid trips it; noise passes).
+- [ ] **Step 4: Verify** — `run_tests CamSim`, `scripts/run_gpu_tests.sh CamSim.GPU`, pytest, and a live check: re-shoot the Task 10 close/wide sheet (land cover on, noon + night) with the fix and look at it; gate (m) passes; ThermalCS p95 still ≤ 0.5 ms (gate f); no swimming of the pattern when panning (compare two frames 1 s apart during a slow pan: warped class boundaries move with the ground).
+- [ ] **Step 5: Commit** (trailers per Global Constraints).
