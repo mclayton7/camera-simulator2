@@ -245,6 +245,7 @@ void ACamSimCamera::RecordFrameStats()
 	S.bCameraCut    = bCameraCutThisFrame;
 	S.ViewFamilies  = ViewFamilyCounter ? ViewFamilyCounter->ConsumeCount() : 0;
 	S.SensorGpuMs      = CaptureComp->GetSensorGpuMs();
+	S.ThermalGpuMs     = CaptureComp->GetThermalGpuMs();
 	S.SensorGainEv     = CaptureComp->GetSensorGainEv();
 	S.SceneMedianLog2  = CaptureComp->GetSceneMedianLog2();
 	S.bHasSensorStats  = CaptureComp->HasSensorGraph();

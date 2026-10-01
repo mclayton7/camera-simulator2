@@ -116,6 +116,8 @@ public:
 	bool HasSensorGraph() const { return bSensorGraph; }
 	/** GPU time of the sensor graph in ms; -1 when unknown or without the graph. */
 	float GetSensorGpuMs() const { return GpuTimer.GetLatestMs(); }
+	/** GPU time of ThermalCS in ms; -1 unless the thermal pass ran last tick (ROADMAP 4A). */
+	float GetThermalGpuMs() const { return bThermalActiveLastTick ? GpuTimer.GetThermalLatestMs() : -1.0f; }
 	/** Log2 of the sensor gain emitted last tick. */
 	float GetSensorGainEv() const { return SensorController.GetGainEv(); }
 	/** Median scene signal (log2) of the last histogram the controller used. */
@@ -202,6 +204,8 @@ private:
 	/** Render thread (via the extension), except GetLatestMs. */
 	FSensorGpuTimer     GpuTimer;
 	uint32 ParamsSerial = 0;
+	/** The thermal pass was requested last tick (IR, thermal available and enabled, inputs gathered). */
+	bool bThermalActiveLastTick = false;
 	double LastSensorUpdateSimSec = -1.0;
 	/**
 	 * Optics fields of FSensorFrameParams (CamSimOptics::SetOptics) for the key below: recomputed

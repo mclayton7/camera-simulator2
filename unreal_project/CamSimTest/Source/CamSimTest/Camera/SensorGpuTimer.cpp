@@ -2,9 +2,10 @@
 
 #include "Camera/SensorGpuTimer.h"
 
-FCamSimSensorGpuStat GPUStat_CamSimSensor;
+FCamSimGpuStat GPUStat_CamSimSensor(TEXT("CamSimSensor"), TEXT("CamSim sensor"));
+FCamSimGpuStat GPUStat_CamSimThermal(TEXT("CamSimThermal"), TEXT("CamSim thermal"));
 
-FCamSimSensorGpuStat::EOnTimingResultsAction FCamSimSensorGpuStat::OnTimingResults(
+FCamSimGpuStat::EOnTimingResultsAction FCamSimGpuStat::OnTimingResults(
 	UE::RHI::GPUProfiler::FQueue Queue, double BusyMs, double /*IdleMs*/, double /*WaitMs*/)
 {
 	if (Queue.Type == UE::RHI::GPUProfiler::FQueue::EType::Graphics && Queue.Index == 0)
@@ -18,6 +19,15 @@ float FSensorGpuTimer::GetLatestMs() const
 {
 #if HAS_GPU_STATS
 	return GPUStat_CamSimSensor.LatestMs.Load(EMemoryOrder::Relaxed);
+#else
+	return -1.0f;
+#endif
+}
+
+float FSensorGpuTimer::GetThermalLatestMs() const
+{
+#if HAS_GPU_STATS
+	return GPUStat_CamSimThermal.LatestMs.Load(EMemoryOrder::Relaxed);
 #else
 	return -1.0f;
 #endif

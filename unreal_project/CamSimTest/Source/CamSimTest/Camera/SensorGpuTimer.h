@@ -16,16 +16,18 @@
  * timestamps elsewhere) and reports each stat's busy time per frame through
  * FGPUStat::OnTimingResults, which this stat captures.
  */
-struct FCamSimSensorGpuStat final : public UE::RHI::GPUProfiler::FGPUStat
+/** One GPU profiler stat whose newest busy time is kept for the bench (CamSimSensor, CamSimThermal). */
+struct FCamSimGpuStat final : public UE::RHI::GPUProfiler::FGPUStat
 {
-	FCamSimSensorGpuStat() : FGPUStat(TEXT("CamSimSensor"), TEXT("CamSim sensor"), nullptr) {}
+	FCamSimGpuStat(const TCHAR* InName, const TCHAR* InDisplayName) : FGPUStat(InName, InDisplayName, nullptr) {}
 	virtual EOnTimingResultsAction OnTimingResults(UE::RHI::GPUProfiler::FQueue Queue, double BusyMs, double IdleMs, double WaitMs) override;
 	/** Newest frame's busy time in ms; -1 until the first result. Any thread. */
 	TAtomic<float> LatestMs { -1.0f };  // writer: GPU profiler thread (relaxed)
 };
 
-/** RDG_EVENT_SCOPE_STAT(GraphBuilder, CamSimSensor, ...) resolves to this (HAS_GPU_STATS builds). */
-extern FCamSimSensorGpuStat GPUStat_CamSimSensor;
+/** RDG_EVENT_SCOPE_STAT(GraphBuilder, CamSimSensor, ...) / (…, CamSimThermal, ...) resolve to these (HAS_GPU_STATS builds). */
+extern FCamSimGpuStat GPUStat_CamSimSensor;
+extern FCamSimGpuStat GPUStat_CamSimThermal;
 
 /**
  * Reads the sensor graph's GPU time. The graph is wrapped in
@@ -36,4 +38,7 @@ class FSensorGpuTimer
 public:
 	/** Newest completed measurement in ms; -1 when GPU stats are compiled out or none finished yet. Any thread. */
 	float GetLatestMs() const;
+
+	/** ThermalCS's newest GPU time (ROADMAP 4A); -1 as GetLatestMs. Stale while the pass does not run: callers gate it (UCamSimCaptureComponent::GetThermalGpuMs). */
+	float GetThermalLatestMs() const;
 };
