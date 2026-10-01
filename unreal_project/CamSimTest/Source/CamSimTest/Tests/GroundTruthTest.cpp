@@ -16,6 +16,12 @@
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Entity/CamSimEntity.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "Engine/Engine.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/BoxComponent.h"
 
 // -------------------------------------------------------------------------
 // Ground Truth / ML Training Data Automation Tests (Phase 17)
@@ -541,5 +547,61 @@ bool FGtConfigNewKeysTest::RunTest(const FString&)
 	const FCamSimConfig Def;
 	TestEqual(TEXT("default min_visible_pixels"), Def.MLTraining.MinVisiblePixels, 1);
 	TestTrue(TEXT("default segmentation"), Def.MLTraining.bSegmentation);
+	return true;
+}
+
+// I1 (final review): box3d comes from the shown meshes only — a non-mesh primitive (stands in for rotor wash /
+// smoke particles), an empty mesh slot and a hidden mesh never widen it; nested attachment is followed.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundTruthMeshLocalBoxTest, "CamSim.GroundTruth.Box3D.MeshesOnly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FGroundTruthMeshLocalBoxTest::RunTest(const FString&)
+{
+	UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));   // 100 cm, centred
+	if (!TestNotNull(TEXT("engine cube"), Cube)) return false;
+
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	FWorldContext& Context = GEngine->CreateNewWorldContext(EWorldType::Game);
+	Context.SetCurrentWorld(World);
+
+	AActor* A = World->SpawnActor<AActor>();
+	USceneComponent* Root = NewObject<USceneComponent>(A);
+	A->SetRootComponent(Root);
+	Root->RegisterComponent();
+	A->SetActorLocationAndRotation(FVector(5000.0, -2000.0, 300.0), FRotator(0.0, 37.0, 0.0));   // actor pose must not leak in
+
+	auto AddMesh = [&](USceneComponent* Parent, UStaticMesh* Mesh, const FVector& At, const FVector& Scale)
+	{
+		UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(A);
+		C->SetStaticMesh(Mesh);
+		C->SetupAttachment(Parent);
+		C->SetRelativeLocation(At);
+		C->SetRelativeScale3D(Scale);
+		C->RegisterComponent();
+		return C;
+	};
+	// Body: a 4 x 2 x 1 m box under a nested scene component offset 1 m forward, raised 0.5 m.
+	USceneComponent* Mid = NewObject<USceneComponent>(A);
+	Mid->SetupAttachment(Root);
+	Mid->SetRelativeLocation(FVector(100.0, 0.0, 0.0));
+	Mid->RegisterComponent();
+	AddMesh(Mid, Cube, FVector(0.0, 0.0, 50.0), FVector(4.0, 2.0, 1.0));
+	// A big non-mesh primitive (particles stand-in), an empty mesh slot far away, a hidden mesh far away.
+	UBoxComponent* Wash = NewObject<UBoxComponent>(A);
+	Wash->SetupAttachment(Root);
+	Wash->SetBoxExtent(FVector(2000.0));
+	Wash->RegisterComponent();
+	AddMesh(Root, nullptr, FVector(-3000.0, 0.0, 0.0), FVector(1.0));
+	AddMesh(Root, Cube, FVector(0.0, 3000.0, 0.0), FVector(1.0))->SetVisibility(false);
+
+	const FBox B = ACamSimEntity::ComputeMeshLocalBox(*A);
+	TestTrue(TEXT("valid"), B.IsValid != 0);
+	TestTrue(*FString::Printf(TEXT("min (-100,-100,0) got %s"), *B.Min.ToString()), B.Min.Equals(FVector(-100.0, -100.0, 0.0), 0.01));
+	TestTrue(*FString::Printf(TEXT("max (300,100,100) got %s"), *B.Max.ToString()), B.Max.Equals(FVector(300.0, 100.0, 100.0), 0.01));
+	// The old source (every primitive) is what the review caught: the particles stand-in widens it.
+	const FBox Old = A->CalculateComponentsBoundingBoxInLocalSpace(/*bNonColliding=*/true);
+	TestTrue(TEXT("all-primitive box is wider (the bug)"), Old.GetSize().X > 3000.0);
+
+	GEngine->DestroyWorldContext(World);
+	World->DestroyWorld(false);
 	return true;
 }

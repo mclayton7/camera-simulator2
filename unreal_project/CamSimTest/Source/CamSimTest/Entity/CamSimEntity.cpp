@@ -233,6 +233,31 @@ void ACamSimEntity::SetGroundTruthStencil(uint8 Value)
 	}
 }
 
+namespace
+{
+	/** A mesh slot that draws something: static/skinned meshes need their asset; other mesh types (procedural) count. */
+	bool HasMeshAsset(const UMeshComponent* M)
+	{
+		if (const UStaticMeshComponent* S = Cast<UStaticMeshComponent>(M)) return S->GetStaticMesh() != nullptr;
+		if (const USkinnedMeshComponent* K = Cast<USkinnedMeshComponent>(M)) return K->GetSkinnedAsset() != nullptr;
+		return true;
+	}
+}
+
+FBox ACamSimEntity::ComputeMeshLocalBox(const AActor& Actor)
+{
+	FBox Box(ForceInit);
+	const FTransform ActorToWorld = Actor.GetActorTransform();
+	TInlineComponentArray<UMeshComponent*> Meshes(&Actor);   // the set SetGroundTruthStencil tags
+	for (const UMeshComponent* M : Meshes)
+	{
+		if (!M || !M->IsRegistered() || !M->IsVisible() || M->bHiddenInGame || !HasMeshAsset(M)) continue;
+		// Component -> actor through any nesting (the component's world transform relative to the actor's).
+		Box += M->CalcBounds(M->GetComponentTransform().GetRelativeTransform(ActorToWorld)).GetBox();
+	}
+	return Box;
+}
+
 void ACamSimEntity::ApplyLoadedSkeletalMesh(USkeletalMesh* Mesh,
                                              const FEntityTypeEntry& Entry,
                                              uint16 Type)

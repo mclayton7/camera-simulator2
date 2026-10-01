@@ -59,6 +59,15 @@ public:
 	void  SetGroundTruthStencil(uint8 Value);
 	uint8 GetGroundTruthStencil() const { return GroundTruthStencil; }
 
+	/**
+	 * Ground-truth box3d (ROADMAP 2.7): the union of the actor-space (cm, actor scale removed) bounds of the meshes
+	 * SetGroundTruthStencil tags, counting only visible ones with a mesh asset. Particles (rotor wash, smoke,
+	 * wakes), lights and empty mesh slots never count. Invalid (IsValid == 0) when no mesh is shown yet.
+	 */
+	FBox GetGroundTruthLocalBox() const { return ComputeMeshLocalBox(*this); }
+	/** GetGroundTruthLocalBox for any actor (testable without an ACamSimEntity). */
+	static FBox ComputeMeshLocalBox(const AActor& Actor);
+
 	/** Inject the surface probe (owned by the entity manager); null disables surface placement. */
 	void SetSurfaceProbe(const ISurfaceProbe* InProbe) { SurfaceProbe = InProbe; }
 

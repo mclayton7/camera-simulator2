@@ -426,12 +426,11 @@ void FCamSimEntityManager::GetEntitySnapshot(
 		if (Data.ClassName.IsEmpty())
 			Data.ClassName = FString::Printf(TEXT("type_%u"), Entity->EntityType);
 
-		// World-space AABB from all components (non-colliding meshes included)
-		FVector Origin, Extent;
-		Entity->GetActorBounds(/*bOnlyCollidingComponents=*/false, Origin, Extent);
-		if (Extent.IsNearlyZero()) continue;
-
-		const FBox WorldAABB(Origin - Extent, Origin + Extent);
+		// The shown meshes only (particles, lights and empty mesh slots excluded): box3d and the projected
+		// fallback box both come from it. No mesh shown yet: nothing is drawn, nothing to label.
+		const FBox LocalBox = Entity->GetGroundTruthLocalBox();
+		if (!LocalBox.IsValid || LocalBox.GetExtent().IsNearlyZero()) continue;
+		const FBox WorldAABB = LocalBox.TransformBy(Entity->GetActorTransform());
 
 		FBox2D ScreenBBox(ForceInit);
 		bool   bTruncated = false;
@@ -444,18 +443,14 @@ void FCamSimEntityManager::GetEntitySnapshot(
 		Data.bTruncated = bTruncated;
 		Data.ScreenBBox = ScreenBBox;
 		Data.StencilValue = Entity->GetGroundTruthStencil();
-		const FBox LocalBox = Entity->CalculateComponentsBoundingBoxInLocalSpace(/*bNonColliding=*/true);
-		if (LocalBox.IsValid)
-		{
-			const FProjectedBox3D P = FEntityProjection::ProjectOrientedBox(LocalBox, Entity->GetActorTransform(),
-				ViewProj.ViewProjectionMatrix, ViewProj.ImageWidth, ViewProj.ImageHeight, ViewProj.FocalPx, ViewProj.K1, ViewProj.K2);
-			Data.bHasBox3D     = true;
-			Data.Box3DSizeM    = LocalBox.GetSize() * Entity->GetActorScale3D() / 100.0;
-			Data.bCornersValid = P.bValid;
-			FMemory::Memcpy(Data.CornersPx, P.Corners, sizeof(P.Corners));
-			Data.Truncation    = P.Truncation;
-			if (P.bValid) Data.bTruncated = P.Truncation > 0.01;
-		}
+		const FProjectedBox3D P = FEntityProjection::ProjectOrientedBox(LocalBox, Entity->GetActorTransform(),
+			ViewProj.ViewProjectionMatrix, ViewProj.ImageWidth, ViewProj.ImageHeight, ViewProj.FocalPx, ViewProj.K1, ViewProj.K2);
+		Data.bHasBox3D     = true;
+		Data.Box3DSizeM    = LocalBox.GetSize() * Entity->GetActorScale3D() / 100.0;
+		Data.bCornersValid = P.bValid;
+		FMemory::Memcpy(Data.CornersPx, P.Corners, sizeof(P.Corners));
+		Data.Truncation    = P.Truncation;
+		if (P.bValid) Data.bTruncated = P.Truncation > 0.01;
 		CamSimFrames::FGeoPose Geo;
 		if (Entity->GetGeoPose(Geo))
 		{
