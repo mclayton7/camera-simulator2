@@ -44,7 +44,7 @@ float LutAt(uint I) { return LogLut[I >> 2u][I & 3u]; }
 float LutRadiance(float TK)
 {
 	float T = TK;
-	if (!(T >= LutMinK)) T = LutMinK;
+	if (IsNonFinite(T) || T < LutMinK) T = LutMinK;   // bit test: Metal fast-math may fold !(T >= LutMinK)
 	if (T > LutMaxK) T = LutMaxK;
 	const float X = (T - LutMinK) * LutScale;
 	const uint I = min((uint)floor(X), (uint)(THERMAL_LUT_SIZE - 2));

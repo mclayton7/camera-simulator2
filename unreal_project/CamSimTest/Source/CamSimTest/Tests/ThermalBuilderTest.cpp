@@ -5,6 +5,7 @@
 #include "Misc/AutomationTest.h"
 #include "HAL/PlatformTime.h"
 #include "Camera/CamSimCaptureComponent.h"
+#include "Camera/ThermalAvailability.h"
 #include "Thermal/ThermalFrameBuilder.h"
 #include "Thermal/ThermalMaterials.h"
 #include "Thermal/ThermalReference.h"
@@ -288,5 +289,55 @@ bool FThermalModeGateTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("IR + available"), UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::IR, true));
 	TestFalse(TEXT("EO never"), UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::EO, true));
 	TestFalse(TEXT("IR unavailable (thermal.enabled false / no shader)"), UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::IR, false));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalAvailabilityGateTest, "CamSim.Thermal.Availability.Gate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalAvailabilityGateTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSimThermalAvailability;
+	TestTrue(TEXT("r.CustomDepth 3 has the stencil"), CustomDepthModeHasStencil(3));
+	TestFalse(TEXT("r.CustomDepth 1 has no stencil"), CustomDepthModeHasStencil(1));
+	TestFalse(TEXT("r.CustomDepth 0 (off)"), CustomDepthModeHasStencil(0));
+
+	TestTrue(TEXT("IR, available, enabled, inputs present"),
+		UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::IR, IsAvailableThisTick(true, true, false)));
+	TestFalse(TEXT("IR, inputs missing -> luminance proxy"),
+		UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::IR, IsAvailableThisTick(true, true, true)));
+	TestFalse(TEXT("IR, thermal.enabled false"),
+		UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::IR, IsAvailableThisTick(true, false, false)));
+	TestFalse(TEXT("IR, unavailable at startup"),
+		UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::IR, IsAvailableThisTick(false, true, false)));
+	TestFalse(TEXT("EO never"),
+		UCamSimCaptureComponent::ShouldRunThermal(ESensorMode::EO, IsAvailableThisTick(true, true, false)));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalInputsMonitorTest, "CamSim.Thermal.Availability.InputsMonitor",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalInputsMonitorTest::RunTest(const FString& Parameters)
+{
+	using EGiveUp = FThermalInputsMonitor::EGiveUp;
+	{
+		FThermalInputsMonitor M;
+		TestTrue(TEXT("radiance delivered: keep thermal"), M.Observe(true, false, true) == EGiveUp::None);
+		TestTrue(TEXT("EO frame (no thermal params): nothing"), M.Observe(false, false, false) == EGiveUp::None);
+		TestTrue(TEXT("missing inputs: give up at once"), M.Observe(true, true, false) == EGiveUp::InputsMissing);
+		TestTrue(TEXT("given up is sticky"), M.HasGivenUp());
+		TestTrue(TEXT("reported once"), M.Observe(true, true, false) == EGiveUp::None);
+		TestTrue(TEXT("still given up after radiance"), M.Observe(true, false, true) == EGiveUp::None && M.HasGivenUp());
+	}
+	{
+		FThermalInputsMonitor M;
+		const int32 N = FThermalInputsMonitor::MaxFramesWithoutRadiance;
+		for (int32 K = 0; K < N - 1; ++K) TestTrue(TEXT("a few frames without radiance are tolerated"), M.Observe(true, false, false) == EGiveUp::None);
+		TestTrue(TEXT("radiance resets the count"), M.Observe(true, false, true) == EGiveUp::None);
+		for (int32 K = 0; K < N - 1; ++K) M.Observe(true, false, false);
+		TestTrue(TEXT("EO frame resets the count"), M.Observe(false, false, false) == EGiveUp::None);
+		for (int32 K = 0; K < N - 1; ++K) TestTrue(TEXT("count restarted"), M.Observe(true, false, false) == EGiveUp::None);
+		TestTrue(TEXT("N consecutive frames without radiance: give up"), M.Observe(true, false, false) == EGiveUp::NoRadiance);
+		TestTrue(TEXT("sticky"), M.HasGivenUp());
+	}
 	return true;
 }

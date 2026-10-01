@@ -588,7 +588,8 @@ Carry-overs:
   publish the mesh's centre, radius and warp alpha to placement behind a flag (and apply the
   same fade), or a denser grid / smaller centre cell.
 - Regional/Entity-scoped Wave Control and Maritime Surface Conditions (logged once, ignored).
-- Physical IR of water (Milestone 4); until then IR sees the visible-light proxy.
+- IR of water: 4A gives water its own thermal class (water temperature, hemispheric sky reflection);
+  waves, foam and sun glint are not modelled in IR yet (Milestone 4 follow-ups).
 - Ripples run on engine time (the material Time node), not sim time; the three fixed ripple
   directions hatch visibly at close zoom; ripple precision degrades > 200 km from the anchor.
 - The close-up tile-streaming hitch above (not ocean work).
@@ -1347,11 +1348,14 @@ Boat vs water ring (info): MWIR +32.7 night / +12.3 noon, LWIR +17.4 / +22.5.
 - 4C: per-part entity temperatures (engine, exhaust, tyres), running state; the LUT already reaches 1000 K for exhausts.
 - 4D: semantic class in ground truth, validation against published data, thermal shadow lag.
 - Deferred minors from the reviews: `FBandRadiance::Build` with an invalid band sets a flat LUT (callers must validate);
-  the Planck monotonic test covers MWIR only; `TemperatureK` silently clamps an out-of-range class; the IR fallback warning says
-  "visible-light proxy" while the frame runs radiance-tuned parameters; `GetThermalGpuMs` uses the requested-not-ran flag;
+  the Planck monotonic test covers MWIR only; `TemperatureK` silently clamps an out-of-range class; `GetThermalGpuMs` uses the requested-not-ran flag;
   the TSR alpha cvar is left at Code priority after IR and its PSO is not precached; coast regions in `thermal_check` are
   fixed image fractions, not stencil-classified; the config `thermal_exposure` table has identical EO/IR columns;
   `CAMSIM_IR_PRESET` re-apply can leave the yaml detector type name stale.
+- ThermalCS's R32F output path (no `OutputSceneColor`) and its permutations are test-only since Task 17: the
+  `CamSim.GPU.Thermal.*` tests still use them. Cleanup: move those tests onto the `WRITE_SCENE_COLOR` path and drop `OutRadiance`.
+- No TSR history reset on an EO to IR switch when the user already set `r.TSR.AlphaChannel=1` (the cvar doesn't change, so the
+  RGBA16F history carries the last EO frame's colour into the first IR frames; edge case).
 
 **Editor / human changes: none.** 4A adds no assets, textures or materials; everything is code, shaders and config.
 Visual review of the shot set (`.cache/thermal_check/t17c/shots`: MWIR/LWIR noon and night, plus the EO comparison) is the

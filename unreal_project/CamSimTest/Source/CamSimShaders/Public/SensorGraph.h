@@ -17,8 +17,9 @@ struct FSensorGraphInputs
 	FIntRect       BloomViewRect;              // sampled at the scene sample's normalised position, clamped to this rect
 	FRHIUniformBuffer* ViewUniformBuffer = nullptr;  // runtime: divides out View.OneOverPreExposure; null in tests (InputScale used)
 	FIntPoint      OutputSize = FIntPoint::ZeroValue;  // capture size; X % 4 == 0, Y % 2 == 0
-	/** ROADMAP 4A: SceneColor is ThermalCS radiance (R32F, loads as (L, 0, 0)). View pre-exposure is not divided out
-	 *  (InputScale = 1 / B(300 K) scales it) and Bloom is ignored. */
+	/** ROADMAP 4A: SceneColor is in-band radiance (runtime: the RGBA16F scene colour holding (L, L, L, 1) that ThermalCS
+	 *  wrote at BeforeDOF and TSR resolved; tests may pass ThermalCS's R32F (L, 0, 0)). SignalWeights (1, 0, 0) read L.
+	 *  View pre-exposure is not divided out (InputScale = 1 / B(300 K) scales it) and Bloom is ignored. */
 	bool           bRadianceInput = false;
 };
 

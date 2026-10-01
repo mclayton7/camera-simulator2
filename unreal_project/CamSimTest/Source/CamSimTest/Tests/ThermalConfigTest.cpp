@@ -132,6 +132,28 @@ bool FThermalConfigValidateTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// An IR mode with a visible-band detector underflows the radiance LUT (black frames): warned when thermal is on.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalConfigIrBandWarningTest, "CamSim.Thermal.Config.IrBandWarning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalConfigIrBandWarningTest::RunTest(const FString& Parameters)
+{
+	auto Warned = [](const TArray<FString>& W)
+	{
+		return W.ContainsByPredicate([](const FString& X) { return X.Contains(TEXT("band_lo_um")) && X.Contains(TEXT("sensor_modes[1]")); });
+	};
+	const FCamSimConfig Visible = FCamSimConfig::LoadFromYamlString(TEXT("sensor_modes:\n  ir:\n    preset: eo_hd_cmos\n"));
+	TestTrue (TEXT("IR preset eo_hd_cmos warned"), Warned(Visible.ValidateWarnings()));
+	TestFalse(TEXT("but not an error"), Visible.Validate().ContainsByPredicate([](const FString& X) { return X.Contains(TEXT("band_lo_um")); }));
+	TestTrue (TEXT("detector band_lo_um 1.0 warned"), Warned(FCamSimConfig::LoadFromYamlString(
+		TEXT("sensor_modes:\n  ir:\n    detector:\n      band_lo_um: 1.0\n      band_hi_um: 2.0\n")).ValidateWarnings()));
+	TestFalse(TEXT("thermal off: no warning"), Warned(FCamSimConfig::LoadFromYamlString(
+		TEXT("thermal:\n  enabled: false\nsensor_modes:\n  ir:\n    preset: eo_hd_cmos\n")).ValidateWarnings()));
+	TestFalse(TEXT("mwir_cooled: no warning"), Warned(FCamSimConfig::LoadFromYamlString(TEXT("sensor_modes:\n  ir:\n    preset: mwir_cooled\n")).ValidateWarnings()));
+	TestFalse(TEXT("lwir_uncooled: no warning"), Warned(FCamSimConfig::LoadFromYamlString(TEXT("sensor_modes:\n  ir:\n    preset: lwir_uncooled\n")).ValidateWarnings()));
+	TestFalse(TEXT("EO visible band: no warning"), Warned(FCamSimConfig::LoadFromYamlString(TEXT("sensor_modes:\n  eo:\n    preset: eo_hd_cmos\n")).ValidateWarnings()));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalMaterialTableTest, "CamSim.Thermal.Config.MaterialTable",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FThermalMaterialTableTest::RunTest(const FString& Parameters)

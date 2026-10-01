@@ -1848,5 +1848,21 @@ TArray<FString> FCamSimConfig::ValidateWarnings() const
 				static_cast<int32>(Pair.Key), SigmaO, Radius, CamSimOptics::BudgetPsfRadius));
 		}
 	}
+	// Thermal (ROADMAP 4A): the radiance LUT spans scene temperatures (~200-400 K), which emit next to nothing below
+	// ~1.5 um, so an IR mode with a visible-band detector (e.g. preset eo_hd_cmos, 0.4-0.7 um) underflows to a black frame.
+	if (Thermal.bEnabled)
+	{
+		if (const FSensorModeConfig* Ir = SensorModeConfigs.Find(ESensorMode::IR))
+		{
+			if (Ir->Detector.BandLoUm < 1.5f)
+			{
+				Warnings.Add(FString::Printf(
+					TEXT("sensor_modes[%d].detector: band_lo_um=%.2f is below 1.5 um with thermal.enabled; the thermal "
+					     "radiance of scene temperatures underflows in that band (black IR frames) — use an IR preset "
+					     "(mwir_cooled, lwir_uncooled) or a band in the 3-5 / 8-12 um windows"),
+					static_cast<int32>(ESensorMode::IR), Ir->Detector.BandLoUm));
+			}
+		}
+	}
 	return Warnings;
 }

@@ -8,7 +8,8 @@
 /**
  * In-band blackbody radiance (ROADMAP 4A): Planck's spectral radiance integrated over a detector band
  * [LoUm, HiUm] in W m^-2 sr^-1, and its LUT over FThermalFrameParams::LutMinK..LutMaxK (ln B, interpolated
- * linearly: <= 0.02 % error from 150 K up, CamSim.Thermal.Planck.LutMatchesIntegral). Pure; game thread.
+ * linearly; CamSim.Thermal.Planck.LutMatchesIntegral asserts <= 0.1 % relative error at mid-cell temperatures over the
+ * whole MWIR and LWIR LUTs). Pure; game thread.
  */
 class CAMSIMTEST_API FBandRadiance
 {

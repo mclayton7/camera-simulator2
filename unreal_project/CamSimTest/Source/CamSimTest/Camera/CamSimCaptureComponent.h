@@ -117,8 +117,9 @@ public:
 	/** ROADMAP 4A: fixed UE AutoExposureBias while the thermal pass runs (ThermalCS divides View.PreExposure out). */
 	static constexpr float ThermalUeExposureEv = -12.0f;
 	/**
-	 * ROADMAP 4A: whether this tick's IR frame is thermal radiance. bThermalAvailable = the subsystem's startup decision
-	 * AND the live thermal.enabled (a hot reload to false restores the luminance proxy).
+	 * ROADMAP 4A: whether this tick's IR frame is thermal radiance. bThermalAvailable = CamSimThermalAvailability::
+	 * IsAvailableThisTick: the subsystem's startup decision AND the live thermal.enabled (a hot reload to false restores the
+	 * luminance proxy) AND NOT the render thread's "thermal inputs missing" flag (FCamSimFrameGrabExtension).
 	 */
 	static bool ShouldRunThermal(ESensorMode Mode, bool bThermalAvailable) { return Mode == ESensorMode::IR && bThermalAvailable; }
 	/** ROADMAP 4A: the camera's geodetic pose (WGS-84, HAE m) and geodetic up in UE world space. Call every tick before UpdateSensorParams. */

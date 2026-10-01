@@ -144,7 +144,11 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilde
 	if (!ThermalParams.IsValid() || !SceneColor.IsValid() || !St || !St->SceneDepthTexture || !St->CustomDepthTexture
 		|| !St->CustomStencilTexture)
 	{
-		return SceneColor;   // RunSensor_RenderThread warns (visible-light proxy)
+		// RunSensor_RenderThread gives thermal up (FThermalInputsMonitor) and warns; the game thread then switches IR
+		// to the visible-light proxy.
+		bThermalInputsMissingThisFrame = true;
+		ThermalInputsMissingFrame = Frame;
+		return SceneColor;
 	}
 
 	// ClipToTranslatedWorld is the view's (jittered, camera at the translated-world origin), as InstanceIdCS uses it:
@@ -269,20 +273,36 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunSensor_RenderThread(FRDGBuilder
 
 	// ROADMAP 4A Task 17: thermal IR — ThermalCS ran at BeforeDOF this frame, so scene colour is the TSR-resolved in-band
 	// radiance (raw W m^-2 sr^-1: no pre-exposure, no bloom; Params.InputScale = 1 / B(300 K) set by the game thread).
-	const bool bRadiance = bThermalSceneColor && ThermalParams.IsValid()
-		&& ThermalSceneColorFrame == (View.Family ? View.Family->FrameNumber : 0);
+	const uint32 FrameNumber = View.Family ? View.Family->FrameNumber : 0;
+	const bool bRadiance = bThermalSceneColor && ThermalParams.IsValid() && ThermalSceneColorFrame == FrameNumber;
+	const bool bInputsMissing = bThermalInputsMissingThisFrame && ThermalInputsMissingFrame == FrameNumber;
 	bThermalSceneColor = false;
+	bThermalInputsMissingThisFrame = false;
 	if (bRadiance)
 	{
 		In.Bloom          = nullptr;
 		In.BloomViewRect  = FIntRect();
 		In.bRadianceInput = true;
 	}
-	else if (ThermalParams.IsValid() && !bWarnedThermalInputs)
+	// Without radiance this frame's parameters (signal weights, input scale, AE slot) still expect it, so the frame is
+	// wrong; once the monitor gives up (immediately for missing inputs, after a few frames otherwise) the game thread
+	// stops sending thermal parameters and IR renders the visible-light proxy from its next tick on. Logged once.
+	switch (ThermalInputsMonitor.Observe(ThermalParams.IsValid(), bInputsMissing, bRadiance))
 	{
-		bWarnedThermalInputs = true;
-		UE_LOG(LogCamSim, Warning, TEXT("Thermal: the post-process inputs carry no depth / custom depth / stencil at BeforeDOF; ")
-			TEXT("IR falls back to the visible-light proxy this session (logged once)"));
+	case FThermalInputsMonitor::EGiveUp::InputsMissing:
+		bThermalInputsMissing.Store(true, EMemoryOrder::Relaxed);
+		UE_LOG(LogCamSim, Warning, TEXT("Thermal: the post-process inputs carry no scene colour / depth / custom depth / ")
+			TEXT("custom stencil at BeforeDOF (r.CustomDepth must be 3); IR switches to the visible-light proxy for the rest ")
+			TEXT("of the session (logged once)"));
+		break;
+	case FThermalInputsMonitor::EGiveUp::NoRadiance:
+		bThermalInputsMissing.Store(true, EMemoryOrder::Relaxed);
+		UE_LOG(LogCamSim, Warning, TEXT("Thermal: ThermalCS radiance did not reach the sensor graph for %d consecutive frames ")
+			TEXT("(BeforeDOF pass not run); IR switches to the visible-light proxy for the rest of the session (logged once)"),
+			FThermalInputsMonitor::MaxFramesWithoutRadiance);
+		break;
+	default:
+		break;
 	}
 
 	FSensorGraphOutputs Out;

@@ -340,8 +340,10 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	static const FSensorModeConfig DefaultModeCfg;
 	const FSensorModeConfig& MC = ModeCfg ? *ModeCfg : DefaultModeCfg;
 
-	// ROADMAP 4A: IR renders thermal radiance when ThermalCS is available (startup) and thermal.enabled (live).
-	const bool bThermal = ShouldRunThermal(Mode, Subsystem && Subsystem->IsThermalAvailable() && Cfg.Thermal.bEnabled);
+	// ROADMAP 4A: IR renders thermal radiance when ThermalCS is available (startup), thermal.enabled (live) and the render
+	// thread hasn't found its inputs missing (then this tick already renders the luminance proxy).
+	const bool bThermal = ShouldRunThermal(Mode, CamSimThermalAvailability::IsAvailableThisTick(
+		Subsystem && Subsystem->IsThermalAvailable(), Cfg.Thermal.bEnabled, GrabExtension->AreThermalInputsMissing()));
 	TSharedPtr<FThermalFrameParams, ESPMode::ThreadSafe> ThermalParams;
 	if (bThermal)
 	{
@@ -382,7 +384,7 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	if (SensorController.GetStaleEpisodes() != StaleBefore && bTrackFrameDrops) FrameDropStats.SensorStatsStale++;
 	if (bThermal)
 	{
-		// The graph's input is R32F radiance (loads as (L, 0, 0)); the detector signal is L / B(300 K).
+		// The graph's input is the TSR-resolved RGBA16F scene colour holding (L, L, L, 1); the detector signal is L / B(300 K).
 		Params.SignalWeights = FVector3f(1.0f, 0.0f, 0.0f);
 		Params.InputScale    = ThermalBuilder.GetSignalScale();
 	}

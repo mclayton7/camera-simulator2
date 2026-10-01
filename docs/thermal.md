@@ -173,6 +173,8 @@ set, and writes radiance into scene colour so TSR resolves it with the same jitt
 - The thermal cloud term follows CIGI weather only; EO cloud layers do not cool the scene.
 - Particles are composited in visible colour (above).
 - Entities have one class plus an offset, no engine, exhaust or tyre detail (4C).
+- At most 255 entities are stencil-tagged at once (shared with ground truth); the rest render as
+  terrain in IR (and get projected ground-truth boxes), with a one-time EntityManager warning.
 - No thermal shadow lag, sun glint in MWIR or heating from artificial lights.
 - Linux/Vulkan is unverified, including sRGB decode precision of the base colour.
 - After an EO/IR mode switch one in-flight histogram can nudge the new slot's gain before the

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "SceneViewExtension.h"
 #include "Camera/FrameGrabRequestQueue.h"
+#include "Camera/ThermalAvailability.h"
 #include "SensorFrameParams.h"
 #include "ThermalFrameParams.h"
 
@@ -66,6 +67,13 @@ public:
 	void PushRequest_RenderThread(const FFrameGrabRequest& R, FRHIGPUBufferReadback* Nv12Readback,
 		FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* GrabbedGeneration, TAtomic<uint32>* IdGrabbedGeneration);
 
+	/**
+	 * Any thread (ROADMAP 4A): the render thread gave thermal up for the session (ThermalCS's inputs missing at BeforeDOF,
+	 * or radiance never reached the sensor graph). The capture component reads it every tick and folds it into
+	 * ShouldRunThermal, so the next ticks render the visible-light proxy instead of reading luminance as radiance.
+	 */
+	bool AreThermalInputsMissing() const { return bThermalInputsMissing.Load(EMemoryOrder::Relaxed); }
+
 	/** Game thread: stop matching any viewport (before the owner is destroyed). */
 	void Detach_GameThread() { GameViewport.Store(nullptr); }
 
@@ -103,7 +111,11 @@ private:
 	FSensorStatsMailbox* const Mailbox;                        // fixed at construction
 	FSensorFrameParams   Params;                               // render thread
 	TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> ThermalParams;   // render thread; null = thermal off
-	bool                 bWarnedThermalInputs = false;         // render thread
+	FThermalInputsMonitor ThermalInputsMonitor;                // render thread
+	TAtomic<bool>        bThermalInputsMissing { false };      // render -> game (sticky)
+	/** RunThermal_RenderThread bailed for missing inputs in this frame number (consumed by RunSensor_RenderThread). */
+	bool                 bThermalInputsMissingThisFrame = false;   // render thread
+	uint32               ThermalInputsMissingFrame = 0;        // render thread
 	/** Set by RunThermal_RenderThread (BeforeDOF), consumed by RunSensor_RenderThread later in the same view's post
 	 *  processing: scene colour at the tonemapper is then TSR-resolved radiance. Tagged with the view family's frame
 	 *  number, so a flag left by a frame whose tonemapper never ran can't leak into a later frame. */

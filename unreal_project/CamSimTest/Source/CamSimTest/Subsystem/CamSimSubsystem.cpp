@@ -28,6 +28,8 @@
 #include "Geospatial/Geoid.h"           // CamSim::Geospatial::GetGeoidUndulation
 #include "SensorGraph.h"                // IsSensorGraphSupported (ROADMAP 3B)
 #include "InstanceIdPass.h"             // IsInstanceIdPassSupported (ROADMAP 2.7)
+#include "Camera/ThermalAvailability.h"   // CamSimThermalAvailability (ROADMAP 4A)
+#include "HAL/IConsoleManager.h"
 #include "ThermalPass.h"                // IsThermalPassSupported, CamSimThermalPass (ROADMAP 4A)
 #include "CamSimTest.h"
 #include "Engine/World.h"
@@ -446,6 +448,14 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	{
 		FString Why;
 		bThermalAvailable = IsThermalPassSupported(Why);
+		// ThermalCS reads the entity classes from the custom stencil, which UE writes only with r.CustomDepth = 3.
+		const IConsoleVariable* CustomDepthCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.CustomDepth"));
+		const int32 CustomDepthMode = CustomDepthCVar ? CustomDepthCVar->GetInt() : 0;
+		if (bThermalAvailable && !CamSimThermalAvailability::CustomDepthModeHasStencil(CustomDepthMode))
+		{
+			bThermalAvailable = false;
+			Why = FString::Printf(TEXT("r.CustomDepth is %d, needs 3 (custom depth with stencil)"), CustomDepthMode);
+		}
 		if (!bThermalAvailable)
 		{
 			UE_LOG(LogCamSim, Warning, TEXT("Thermal: ThermalCS unavailable (%s); IR uses the visible-light proxy"), *Why);

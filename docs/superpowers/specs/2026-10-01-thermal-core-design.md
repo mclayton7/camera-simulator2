@@ -209,4 +209,4 @@ the 256-entry stencil table. Measured with an `FGPUStat` scope like `SensorGpuTi
   (h) holds edge / interior temporal std <= 2 (measured 1.0-1.4, floored).
 - **AE retune**: radiance has a large offset and small contrast; the AGC's percentile stretch
   handles it, but the IR AGC's missing max-gain cap (3B.3) can amplify a flat night scene. 4A
-  adds the cap (`agc.max_display_gain`, default 40).
+  adds the cap (`sensor_modes.<mode>.agc_max_display_gain`, default 40).

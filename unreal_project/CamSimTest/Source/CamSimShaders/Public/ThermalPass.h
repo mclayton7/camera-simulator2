@@ -45,7 +45,8 @@ struct FThermalPassInputs
 CAMSIMSHADERS_API bool IsThermalPassSupported(FString& OutWhy);
 
 /**
- * ThermalCS: in-band radiance (W m^-2 sr^-1, raw — no pre-exposure). Without OutputSceneColor: a new R32F texture, extent
- * SceneColorRect.Size(), its view rect at (0, 0). With it: returns OutputSceneColor, written at OutputRect. See CamSimThermalRef.
+ * ThermalCS: in-band radiance (W m^-2 sr^-1, raw — no pre-exposure). Runtime (Task 17): OutputSceneColor set, returns it
+ * holding (L, L, L, 1) at OutputRect (RGBA16F scene colour, then resolved by TSR). Without OutputSceneColor (test-only
+ * path, CamSim.GPU.Thermal.*): a new R32F texture, extent SceneColorRect.Size(), its view rect at (0, 0). See CamSimThermalRef.
  */
 CAMSIMSHADERS_API FRDGTextureRef AddThermalPass(FRDGBuilder& GraphBuilder, const FThermalPassInputs& In, const FThermalFrameParams& Params);

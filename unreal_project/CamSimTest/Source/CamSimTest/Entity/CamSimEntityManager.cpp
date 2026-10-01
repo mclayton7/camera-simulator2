@@ -336,7 +336,8 @@ ACamSimEntity* FCamSimEntityManager::SpawnEntity(const FEntityCommand& C)
 		if (Stencil == 0 && !bLoggedStencilExhausted)
 		{
 			bLoggedStencilExhausted = true;
-			UE_LOG(LogCamSim, Warning, TEXT("EntityManager: more than 255 ground-truth entities; extra entities get projected boxes (logged once)"));
+			UE_LOG(LogCamSim, Warning, TEXT("EntityManager: more than 255 stencil-tagged entities; extra entities get projected ground-truth boxes ")
+				TEXT("and render as terrain in thermal IR (logged once)"));
 		}
 		if (Stencil != 0)
 		{
