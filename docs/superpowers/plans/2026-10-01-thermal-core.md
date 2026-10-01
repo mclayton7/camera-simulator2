@@ -5328,3 +5328,27 @@ EOF
 ```
 
 - [ ] **Step 4: Visual review hand-off** — send the user the MWIR/LWIR noon/night shot set (and the EO comparison) for visual review; ROADMAP 4A stays "awaiting visual review" until they sign off.
+
+---
+
+### Task 17: TSR-resolved thermal — run `ThermalCS` before the temporal upscaler (added 2026-10-01)
+
+Added after Task 15's acceptance run: MWIR edge shimmer measured 6.7–7.0× (edge vs interior temporal std; EO baseline 0.99; spec limit 2). Cause: at `ReplacingTonemapper` ThermalCS mixes jittered render-resolution inputs (depth, custom depth/stencil, GBuffer base colour) with TSR-resolved scene colour, so every class and albedo edge flickers frame to frame. The spec's 3×3 class-vote fallback can't fix albedo/shadow edges. Fix: run ThermalCS at `EPostProcessingPass::BeforeDOF` (UE 5.8 `PostProcessing.cpp`: BeforeDOF delegates run before the temporal upscaler and receive the same `SceneTextures`), where scene colour is pre-TSR and jittered consistently with the other inputs, write the radiance into scene colour, and let TSR (history + anti-flicker) resolve it. `SensorCS` at `ReplacingTonemapper` then reads the resolved radiance from scene colour.
+
+**Files:**
+- Modify: `Source/CamSimShaders/Public/ThermalPass.h`, `Private/ThermalPass.cpp`, `Shaders/Private/CamSimThermal.usf` (output mode)
+- Modify: `Source/CamSimTest/Camera/CamSimFrameGrabExtension.h`, `.cpp` (BeforeDOF subscription; ReplacingTonemapper reads scene colour as radiance)
+- Modify: `Source/CamSimTest/Tests/ThermalGpuTest.cpp` (scene-colour output case)
+- Modify: `scripts/thermal_check.py` (+ its pytest if helpers change): edge shimmer becomes gate (h): MWIR and LWIR edge/interior temporal-std ratio ≤ 2.0 on the static views
+- Modify: `ROADMAP.md` (4A entry: the shimmer finding and the fix)
+
+**Interfaces:**
+- `FThermalPassInputs` gains `FRDGTextureRef OutputSceneColor = nullptr; FIntRect OutputRect;` — when set, ThermalCS writes `float4(L, L, L, 1)` into it at `OutputRect` (scene-colour format, typically PF_FloatRGBA) instead of allocating its R32F output; `AddThermalPass` returns the written texture either way. Implement as a shader permutation (`WRITE_SCENE_COLOR`), keeping the per-pixel maths identical (CamSimThermalRef unchanged).
+- `FCamSimFrameGrabExtension`: `SubscribeToPostProcessingPass` also subscribes `BeforeDOF` when thermal params are set (render thread decides per frame from `ThermalParams.IsValid()`); the BeforeDOF callback runs ThermalCS (inside the `CamSimThermal` stat scope, setting `ClipToTranslatedWorld` from the view as today) and returns the radiance scene colour. `RunSensor_RenderThread`, when the BeforeDOF pass ran this frame, uses scene colour as the radiance input (`bRadianceInput = true`, no bloom, view rect = scene colour's) and no longer runs ThermalCS itself. If BeforeDOF did not run (no scene textures), keep today's warning path.
+- Radiance values stay raw L (W m⁻² sr⁻¹; MWIR ~2, LWIR ~40) — finite in fp16, no pre-exposure multiply; `InputScale = GetSignalScale()` unchanged.
+
+- [ ] **Step 1: GPU test first.** In `ThermalGpuTest.cpp` add `CamSim.GPU.Thermal.SceneColorOutputMatchesCpu`: same synthetic scene, `OutputSceneColor` = a PF_FloatRGBA texture larger than the view with a non-zero `OutputRect.Min`; read back and check R=G=B=L within the fp16 tolerance (relative 1e-3) against `CamSimThermalRef::Run`, and that texels outside `OutputRect` are untouched (pre-filled sentinel). Run `scripts/run_gpu_tests.sh CamSim.GPU.Thermal` → RED (compile error / missing field).
+- [ ] **Step 2: Implement the permutation and the BeforeDOF wiring** as above. Verify in engine source that the BeforeDOF delegate's `FPostProcessMaterialInputs` carries `SceneTextures` and that its returned texture must keep the input's view rect (follow `AddSceneViewExtensionPassChain`).
+- [ ] **Step 3: Tests** — `scripts/run_gpu_tests.sh CamSim.GPU` all pass; `run_tests CamSim` 0 failed.
+- [ ] **Step 4: Live** — `uv run scripts/thermal_check.py --band both`: gates (a)–(g) still pass and new gate (h) shimmer ≤ 2.0 passes in both bands; check an EO↔IR switch visually for TSR history ghosting (record what you see; if ghosting lasts > 1 s, request a camera cut on mode switch via the view state). Note in ROADMAP that post-DOF translucency (particles) is composited by TSR in visible colour on top of the radiance (known limit; particles are not thermally modelled in 4A).
+- [ ] **Step 5: Commit** (trailers per Global Constraints).
