@@ -55,6 +55,20 @@ else
 fi
 
 # -----------------------------------------------------------------------
+# Hybrid Intel CPUs (P- and E-cores): keep UE on the P-cores. Left to the
+# scheduler, the game thread sometimes lands on an E-core for a whole run and
+# runs ~45% slower (500 entities: game p50 9.4 vs 6.5 ms). Opt out with
+# CAMSIM_PIN_PCORES=0; skipped when the container's cpuset excludes them.
+# -----------------------------------------------------------------------
+PIN=()
+PCORES="$(cat /sys/devices/cpu_core/cpus 2>/dev/null || true)"
+if [ "${CAMSIM_PIN_PCORES:-1}" != "0" ] && [ -n "${PCORES}" ] && [ -e /sys/devices/cpu_atom/cpus ] \
+    && taskset -c "${PCORES}" true 2>/dev/null; then
+    PIN=(taskset -c "${PCORES}")
+    echo "[entrypoint] Hybrid CPU: pinning CamSim to P-cores ${PCORES} (CAMSIM_PIN_PCORES=0 to disable)"
+fi
+
+# -----------------------------------------------------------------------
 # Virtual display: SDL needs an X display even with -RenderOffScreen; UE
 # renders offscreen through Vulkan and never draws to it.
 # -----------------------------------------------------------------------
@@ -70,7 +84,7 @@ _term() {
 trap _term TERM INT
 
 echo "[entrypoint] Launching ${GAME_BINARY}"
-"${GAME_BINARY}" \
+"${PIN[@]+"${PIN[@]}"}" "${GAME_BINARY}" \
     "/Game/Main?game=/Script/CamSimTest.CamSimGameMode" \
     -RenderOffScreen \
     -vulkan \

@@ -1119,8 +1119,16 @@ thread p50 / p99 9.2 / 11.6–12.3 ms (was 15.0 / 17.2), GPU 5.9 / 7.2 (was 7.1 
 `CamSim.GPU.GroundTruth.Depth.Synthetic`. Repeats (3 runs
 each of the two ML points): render thread and GPU repeat within ~0.5 ms (depth on 14.8–15.0 / 17.0–17.4,
 off 8.3–8.5 / 11.7–12.3), but **the game thread at 500 entities varies run to run: p50 6.9–10.6 ms,
-p99 11.2–18.1 ms (up to 54% of the budget)**, independent of the depth map. So at 500 entities the game
-thread is also at the 50% line; its variance is not yet attributed (an Insights trace across runs would). Found on
+p99 11.2–18.1 ms (up to 54% of the budget)**, independent of the depth map. **Attributed 2026-10-01: CPU placement.** Insights traces of 3 runs: the slow
+run does the same work (identical call counts) with every timer 30–60% slower; the Core Ultra 9 285K is hybrid
+(P-cores 0–7 at 5.7 GHz, E-cores 8–23 at 4.7 GHz), and sampling the game thread's CPU showed the slow run
+spent all of it on E-cores (game p50 9.4 / p99 17.5 ms) and the fast ones on P-cores (6.5 / 14.8). Pinned to
+the P-cores (`--cpuset-cpus=0-7`), 3 runs repeat at 6.51–6.56 / 14.4–14.6 ms, the render thread drops ~0.7 ms
+(5.3 vs 6.0), and 500 entities + ML still holds 30 fps with every depth map (game 7.2 / 8.8). The entrypoint and
+`scripts/run.sh` now pin to the P-cores automatically (`CAMSIM_PIN_PCORES`). Earlier Linux bench numbers were
+unpinned, so some of their spread is this. Also seen in the traces: each static entity also ticks its hidden
+skeletal/anim mesh components (~1,000 `USkinnedMeshComponent` ticks per frame at 500 entities, ~0.5–0.9 ms of
+game thread); disabling tick on the unused components is a cheap follow-up. Found on
 the way: `stress_entity_rendering.py` and `test_entity_rendering.py` defaulted `--camera-id` to 0 while
 the canonical config's `camera_entity_id` is 1, so the camera never moved (fixed: camera 1, entities
 100+, gimbal level).

@@ -718,6 +718,7 @@ CAMSIM_TRACK_PIPELINE_LATENCY=0
 # Docker entrypoint only (deploy/entrypoint.sh, docs/docker.md)
 CAMSIM_BINARY=                       # game binary (default: Development, then Shipping)
 CAMSIM_ALLOW_SOFTWARE_RENDERING=0    # 1 = try Mesa lavapipe without a GPU (crashes on Mesa <= 26.2)
+CAMSIM_PIN_PCORES=1                  # hybrid Intel CPUs: pin to the P-cores (also scripts/run.sh on Linux); 0 = off
 ```
 
 ## Phase 28 — Operational Hardening

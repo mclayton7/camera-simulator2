@@ -52,6 +52,12 @@ docker run --rm --gpus all --init --network host --shm-size 1g \
 - Configure with `CAMSIM_*` variables ([configuration.md](configuration.md)),
   or mount a config over `/opt/camsim/CamSimTest/camsim_config.yaml`.
 - Extra arguments after the image name go to UE.
+- On hybrid Intel CPUs (P- and E-cores, e.g. Core Ultra 285K) the entrypoint pins
+  CamSim to the P-cores (`/sys/devices/cpu_core/cpus`, via `taskset`). Unpinned, the
+  game thread sometimes spends a whole run on an E-core and runs ~45% slower
+  (500 entities: game p50 9.4 vs 6.5 ms); pinned, runs repeat within 0.1 ms and the
+  render thread is ~10% faster too. `CAMSIM_PIN_PCORES=0` disables it; it is skipped
+  when the container's cpuset excludes the P-cores.
 - Health: `GET :8080/live` (the image `HEALTHCHECK`), `/ready` (needs CIGI
   traffic), `/metrics`.
 - State lives in two volumes (compose creates them): `/var/lib/camsim` is
