@@ -1108,8 +1108,11 @@ The first number over 50% of the budget: **ML ground truth's render thread at 50
 `ml_training.depth_map` (default on) renders the scene a second time through a `SceneCapture`
 (`UCamSimCaptureComponent::CreateDepthCapture`; `families` 2 per frame): ~6.5 ms of render thread and
 ~1.6 ms GPU at p50. Candidates: derive depth from the primary view's scene depth in the sensor graph
-(as `InstanceIdCS` does for masks) instead of a second render, or a depth interval > 1. The game-thread
-rise with depth off (p99 18.1 ms) is a single run and unexplained; repeat before acting on it. Found on
+(as `InstanceIdCS` does for masks) instead of a second render, or a depth interval > 1. Repeats (3 runs
+each of the two ML points): render thread and GPU repeat within ~0.5 ms (depth on 14.8–15.0 / 17.0–17.4,
+off 8.3–8.5 / 11.7–12.3), but **the game thread at 500 entities varies run to run: p50 6.9–10.6 ms,
+p99 11.2–18.1 ms (up to 54% of the budget)**, independent of the depth map. So at 500 entities the game
+thread is also at the 50% line; its variance is not yet attributed (an Insights trace across runs would). Found on
 the way: `stress_entity_rendering.py` and `test_entity_rendering.py` defaulted `--camera-id` to 0 while
 the canonical config's `camera_entity_id` is 1, so the camera never moved (fixed: camera 1, entities
 100+, gimbal level).
