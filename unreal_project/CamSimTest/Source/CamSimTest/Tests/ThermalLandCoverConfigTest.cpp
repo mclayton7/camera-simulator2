@@ -80,6 +80,11 @@ bool FThermalLandCoverConfigYamlTest::RunTest(const FString& Parameters)
 	}
 	TestEqual(TEXT("a non-numeric key keeps Code -1"),
 		FCamSimConfig::LoadFromYamlString(TEXT("thermal:\n  land_cover:\n    classes:\n      trees: vegetation\n")).Thermal.LandCover.Classes[0].Code, -1);
+	AddExpectedMessage(TEXT("Config: unknown key 'thermal.land_cover.window_texel'"), EAutomationExpectedErrorFlags::Contains, 1);
+	AddExpectedMessage(TEXT("Config: unknown key 'thermal.land_cover.classes"), EAutomationExpectedErrorFlags::Contains, 0);
+	TestTrue(TEXT("a non-map classes value is reported"),
+		FCamSimConfig::LoadFromYamlString(TEXT("thermal:\n  land_cover:\n    classes: [10, 20]\n")).UnknownYamlKeys
+			.ContainsByPredicate([](const FString& K) { return K.StartsWith(TEXT("thermal.land_cover.classes")); }));
 	TestTrue(TEXT("a typo is an unknown key"),
 		FCamSimConfig::LoadFromYamlString(TEXT("thermal:\n  land_cover:\n    window_texel: 512\n")).UnknownYamlKeys
 			.Contains(TEXT("thermal.land_cover.window_texel")));
@@ -111,11 +116,12 @@ bool FThermalLandCoverConfigValidateTest::RunTest(const FString& Parameters)
 	auto With = [](TFunction<void(FLc&)> Set) { FCamSimConfig C; Set(C.Thermal.LandCover); return C.Validate(); };
 	TestTrue (TEXT("window 128"),     HasError(With([](FLc& L) { L.WindowTexels = 128; }), TEXT("thermal.land_cover.window_texels")));
 	TestTrue (TEXT("window odd"),     HasError(With([](FLc& L) { L.WindowTexels = 1001; }), TEXT("thermal.land_cover.window_texels")));
-	TestTrue (TEXT("window 16386"),    HasError(With([](FLc& L) { L.WindowTexels = 16386; }), TEXT("thermal.land_cover.window_texels")));
+	TestTrue (TEXT("window 8194"),    HasError(With([](FLc& L) { L.WindowTexels = 8194; }), TEXT("thermal.land_cover.window_texels")));
 	TestTrue (TEXT("window huge"),     HasError(With([](FLc& L) { L.WindowTexels = 2000000000; }), TEXT("thermal.land_cover.window_texels")));
 	TestTrue (TEXT("window negative"), HasError(With([](FLc& L) { L.WindowTexels = -2048; }), TEXT("thermal.land_cover.window_texels")));
+	TestTrue (TEXT("window 16384"),    HasError(With([](FLc& L) { L.WindowTexels = 16384; }), TEXT("thermal.land_cover.window_texels")));
 	TestFalse(TEXT("window 256 ok"),   HasError(With([](FLc& L) { L.WindowTexels = 256; }), TEXT("land_cover")));
-	TestFalse(TEXT("window 16384 ok"), HasError(With([](FLc& L) { L.WindowTexels = 16384; }), TEXT("land_cover")));
+	TestFalse(TEXT("window 8192 ok"), HasError(With([](FLc& L) { L.WindowTexels = 8192; }), TEXT("land_cover")));
 	TestTrue (TEXT("recentre 0.5"),   HasError(With([](FLc& L) { L.RecentreFraction = 0.5f; }), TEXT("thermal.land_cover.recentre_fraction")));
 	TestTrue (TEXT("recentre NaN"),   HasError(With([NaN](FLc& L) { L.RecentreFraction = NaN; }), TEXT("thermal.land_cover.recentre_fraction")));
 	TestTrue (TEXT("lo >= hi"),       HasError(With([](FLc& L) { L.VegIndexLo = 0.3f; L.VegIndexHi = 0.3f; }), TEXT("thermal.land_cover.veg_index")));

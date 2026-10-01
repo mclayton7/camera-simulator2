@@ -802,7 +802,7 @@ thermal:
   land_cover:                   # ROADMAP 4B: terrain thermal classes from ESA WorldCover (docs/thermal.md)
     enabled: true               # CAMSIM_THERMAL_LAND_COVER_ENABLED — false = 4A (every terrain pixel terrain_default)
     dir: Content/NonUFS/LandCover  # CAMSIM_THERMAL_LAND_COVER_DIR — index.json + tiles (scripts/landcover/fetch_worldcover.py), relative to the project
-    window_texels: 2048         # CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS — camera-centred window of 10 m texels (2048 = 20.48 km; even, 256..16384)
+    window_texels: 2048         # CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS — camera-centred window of 10 m texels (2048 = 20.48 km; even, 256..8192; 2048 is the recommended size)
     recentre_fraction: 0.25     # CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION — rebuild when the camera is this fraction of the window off-centre
     veg_index_lo: 0.05          # CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_LO — base-colour excess green where the vegetation weight starts
     veg_index_hi: 0.20          # CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_HI — ... and reaches 1

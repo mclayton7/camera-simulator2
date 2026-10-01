@@ -1055,6 +1055,10 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 							LC.Classes.Add(MoveTemp(Spec));
 						}
 					}
+					else
+					{
+						Cfg.UnknownYamlKeys.AddUnique(TEXT("thermal.land_cover.classes (must be a map of code: material)"));
+					}
 				}
 			}
 		}
@@ -1859,8 +1863,8 @@ TArray<FString> FCamSimConfig::Validate() const
 	Errors.Append(FThermalMaterialTable::Validate(Thermal.Materials));
 	// Land cover (ROADMAP 4B). Written !(x in range) so NaN is reported too.
 	const FThermalConfig::FLandCoverConfig& LC = Thermal.LandCover;
-	if (!(LC.WindowTexels >= 256 && LC.WindowTexels <= 16384 && LC.WindowTexels % 2 == 0))
-		Errors.Add(FString::Printf(TEXT("thermal.land_cover.window_texels=%d must be even, in [256, 16384]"), LC.WindowTexels));
+	if (!(LC.WindowTexels >= 256 && LC.WindowTexels <= 8192 && LC.WindowTexels % 2 == 0))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.window_texels=%d must be even, in [256, 8192]"), LC.WindowTexels));
 	if (!(LC.RecentreFraction >= 0.01f && LC.RecentreFraction <= 0.45f))
 		Errors.Add(FString::Printf(TEXT("thermal.land_cover.recentre_fraction=%.3f out of range [0.01, 0.45]"), LC.RecentreFraction));
 	if (!(LC.VegIndexLo >= -1.0f && LC.VegIndexHi <= 2.0f && LC.VegIndexLo < LC.VegIndexHi))
