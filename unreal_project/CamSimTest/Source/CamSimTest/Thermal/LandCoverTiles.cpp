@@ -105,6 +105,8 @@ bool FLandCoverTileCache::DecodeTilePng(IImageWrapperModule& Module, TConstArray
 	return true;
 }
 
+std::atomic<double> FLandCoverTileCache::TestLoadDelaySeconds{ 0.0 };
+
 FLandCoverTileCache::FLandCoverTileCache(const FString& InDir, int32 InMaxTiles)
 	: Dir(ResolveDir(InDir))
 	, MaxTiles(FMath::Max(InMaxTiles, 4))
@@ -130,18 +132,24 @@ FLandCoverTileCache::FLandCoverTileCache(const FString& InDir, int32 InMaxTiles)
 TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe> FLandCoverTileCache::Get(int32 LatIndex, int32 LonIndex)
 {
 	const FIntPoint Key(LatIndex, LonIndex);
-	FScopeLock L(&Lock);
-	if (FEntry* E = Cache.Find(Key))
+	const FString* File = Index.Files.Find(Key);   // Index is immutable after construction
+	if (!bValid || !File) return nullptr;
 	{
-		E->LastUse = ++UseCounter;
-		return E->Tile;
+		FScopeLock L(&Lock);
+		if (FEntry* E = Cache.Find(Key))
+		{
+			E->LastUse = ++UseCounter;
+			return E->Tile;
+		}
+		if (Failed.Contains(Key)) return nullptr;
 	}
-	const FString* File = Index.Files.Find(Key);
-	if (!bValid || !File || Failed.Contains(Key)) return nullptr;
 
+	// File I/O and decode run unlocked, so TakeWarnings / NumCached (game thread) never wait for a load. Two threads
+	// loading the same tile both decode; the first insert wins and the other result is dropped.
 	const FString Path = FPaths::Combine(Dir, *File);
 	TArray<uint8> Png, Codes;
 	FString Why;
+	if (const double Delay = TestLoadDelaySeconds.load(); Delay > 0.0) FPlatformProcess::Sleep(static_cast<float>(Delay));
 	if (!FFileHelper::LoadFileToArray(Png, *Path, FILEREAD_Silent))
 	{
 		Why = TEXT("missing (git lfs pull?)");
@@ -150,10 +158,18 @@ TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe> FLandCoverTileCache::Get(i
 	{
 		DecodeTilePng(*ImageWrapper, Png, Codes, Why);
 	}
+
+	FScopeLock L(&Lock);
+	if (FEntry* E = Cache.Find(Key))   // inserted by a concurrent load meanwhile
+	{
+		E->LastUse = ++UseCounter;
+		return E->Tile;
+	}
 	if (Codes.Num() != TilePx * TilePx)
 	{
-		Failed.Add(Key);
-		Warnings.Add(FString::Printf(TEXT("land-cover tile %s: %s; treated as no data"), *Path, *Why));
+		bool bAlreadyFailed = false;
+		Failed.Add(Key, &bAlreadyFailed);
+		if (!bAlreadyFailed) Warnings.Add(FString::Printf(TEXT("land-cover tile %s: %s; treated as no data"), *Path, *Why));
 		return nullptr;
 	}
 	++Loads;

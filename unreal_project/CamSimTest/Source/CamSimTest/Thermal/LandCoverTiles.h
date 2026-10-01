@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "HAL/CriticalSection.h"
+#include <atomic>
 
 class IImageWrapperModule;
 
@@ -57,8 +58,11 @@ public:
 	/** Warnings since the last call (each failed tile once). Any thread. */
 	TArray<FString> TakeWarnings();
 	int32 NumCached() const;
-	/** Decodes so far (cache hits don't count). */
+	/** Decodes kept in the cache so far (cache hits and a concurrent duplicate decode don't count). */
 	int32 NumLoads() const;
+
+	/** Tests only: seconds every tile load sleeps before reading its file (simulates a slow disk / decode). */
+	static std::atomic<double> TestLoadDelaySeconds;
 
 private:
 	struct FEntry
@@ -74,7 +78,7 @@ private:
 	IImageWrapperModule* ImageWrapper = nullptr;
 	FLandCoverIndex Index;
 
-	mutable FCriticalSection Lock;   // guards everything below
+	mutable FCriticalSection Lock;   // guards everything below; never held across file I/O or decode
 	TMap<FIntPoint, FEntry> Cache;
 	TSet<FIntPoint> Failed;
 	TArray<FString> Warnings;

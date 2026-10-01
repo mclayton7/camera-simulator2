@@ -54,6 +54,9 @@ public:
 		bool operator==(const FSettings&) const = default;
 	};
 
+	/** Upper bound on the tiles a window touches: sizes the build's pin set. */
+	static int32 EstimateTiles(const CamSimLandCover::FWindowSpec& S);
+
 	FLandCoverWindow() = default;
 	~FLandCoverWindow();
 	FLandCoverWindow(const FLandCoverWindow&) = delete;
@@ -65,7 +68,7 @@ public:
 	void Update(double CamLatDeg, double CamLonDeg);
 
 	TSharedPtr<const FLandCoverWindowData, ESPMode::ThreadSafe> GetCurrent() const { return Current; }
-	TSharedPtr<FLandCoverGpuWindow, ESPMode::ThreadSafe> GetCurrentGpu() const { return CurrentGpu; }
+	TSharedPtr<const FLandCoverGpuWindow, ESPMode::ThreadSafe> GetCurrentGpu() const { return CurrentGpu; }
 	bool IsAvailable() const;
 	bool IsBuildInFlight() const { return bBuildInFlight; }
 	/** Tests: wait for the in-flight build and harvest it as Update would. */
@@ -85,7 +88,7 @@ private:
 	bool bConfigured = false;
 	TSharedPtr<FLandCoverTileCache, ESPMode::ThreadSafe> Cache;
 	TSharedPtr<const FLandCoverWindowData, ESPMode::ThreadSafe> Current;
-	TSharedPtr<FLandCoverGpuWindow, ESPMode::ThreadSafe> CurrentGpu;
+	TSharedPtr<const FLandCoverGpuWindow, ESPMode::ThreadSafe> CurrentGpu;   // the upload command holds the mutable ref
 	TOptional<CamSimLandCover::FWindowSpec> LastSpec;   // the last window started (published or not): the recentre box
 	UE::Tasks::TTask<FBuildResult> Build;
 	bool   bBuildInFlight = false;

@@ -7,23 +7,27 @@
 #include "RenderingThread.h"
 #include "Thermal/LandCoverTiles.h"
 
-namespace
+int32 FLandCoverWindow::EstimateTiles(const CamSimLandCover::FWindowSpec& S)
 {
-	/** Upper bound on the tiles a window touches (its corners' lat/lon span in tiles, +1 each way): sizes the pin set. */
-	int32 EstimateWindowTiles(const CamSimLandCover::FWindowSpec& S)
-	{
-		const double Half = 0.5 * S.Texels * S.TexelM;
-		double LatN = 0.0, LonE = 0.0, LatS = 0.0, LonW = 0.0;
-		CamSimLandCover::WindowENToGeodetic(S, Half, Half, LatN, LonE);
-		CamSimLandCover::WindowENToGeodetic(S, -Half, -Half, LatS, LonW);
-		const double Rows = FMath::Abs(LatN - LatS) / FLandCoverTileCache::TileDeg + 2.0;
-		const double Cols = FMath::Min(FMath::Abs(LonE - LonW), 360.0) / FLandCoverTileCache::TileDeg + 2.0;
-		return static_cast<int32>(FMath::Min(Rows * Cols, 65536.0));
-	}
+	// The small-area mapping makes latitude a function of North only and longitude a function of East only (Resample
+	// evaluates columns at the centre latitude), so the E/W edges at N = 0 give the exact longitude extent at any latitude.
+	// WindowENToGeodetic does not wrap longitude, so the span is continuous across the antimeridian; > 360 deg (only
+	// possible at very high latitude) means every tile column.
+	const double Half = 0.5 * S.Texels * S.TexelM;
+	double LatN = 0.0, LatS = 0.0, LonE = 0.0, LonW = 0.0, Unused = 0.0;
+	CamSimLandCover::WindowENToGeodetic(S, 0.0, Half, LatN, Unused);
+	CamSimLandCover::WindowENToGeodetic(S, 0.0, -Half, LatS, Unused);
+	CamSimLandCover::WindowENToGeodetic(S, Half, 0.0, Unused, LonE);
+	CamSimLandCover::WindowENToGeodetic(S, -Half, 0.0, Unused, LonW);
+	const double Rows = FMath::Abs(LatN - LatS) / FLandCoverTileCache::TileDeg + 2.0;
+	const double Cols = FMath::Min(FMath::Abs(LonE - LonW) / FLandCoverTileCache::TileDeg + 2.0, 360.0 / FLandCoverTileCache::TileDeg);
+	return static_cast<int32>(FMath::Min(Rows * Cols, 65536.0));
 }
 
 FLandCoverWindow::~FLandCoverWindow()
 {
+	// The task holds the tile cache, not this object, but waiting keeps a running build from outliving the module (unload,
+	// live coding) whose code it is executing.
 	if (bBuildInFlight) Build.Wait();
 }
 
@@ -59,7 +63,7 @@ void FLandCoverWindow::Update(double CamLatDeg, double CamLonDeg)
 		}
 		return;
 	}
-	Warnings.Append(Cache->TakeWarnings());
+	if (!bBuildInFlight) Warnings.Append(Cache->TakeWarnings());   // during a build, Harvest collects them
 	if (!CamSimLandCover::IsWindowAllowed(CamLatDeg))
 	{
 		if (!bWarnedPole)
@@ -103,7 +107,7 @@ void FLandCoverWindow::StartBuild(double CamLatDeg, double CamLonDeg)
 		// current tile's codes, and the window can touch more tiles than the LRU holds (high latitude, small MaxCachedTiles),
 		// so each tile is fetched once and outlives any eviction.
 		TMap<FIntPoint, TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe>> Pinned;
-		Pinned.Reserve(EstimateWindowTiles(Spec));
+		Pinned.Reserve(EstimateTiles(Spec));
 		Data->NonZeroTexels = CamSimLandCover::Resample(Spec, [&Pinned, &Tiles, &Data](int32 LatIndex, int32 LonIndex) -> const uint8*
 		{
 			const FIntPoint Key(LatIndex, LonIndex);
@@ -149,7 +153,7 @@ void FLandCoverWindow::Harvest()
 
 void FLandCoverWindow::Publish(const FBuildResult& Data)
 {
-	const TSharedPtr<FLandCoverGpuWindow, ESPMode::ThreadSafe> Gpu = MakeShared<FLandCoverGpuWindow, ESPMode::ThreadSafe>();
+	const TSharedRef<FLandCoverGpuWindow, ESPMode::ThreadSafe> Gpu = MakeShared<FLandCoverGpuWindow, ESPMode::ThreadSafe>();
 	Gpu->Id = Data->Id;
 	Gpu->Texels = Data->Spec.Texels;
 	if (Settings.bCreateGpuTexture)

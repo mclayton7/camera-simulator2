@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/ScopeExit.h"
+#include "Tasks/Task.h"
 #include "Thermal/LandCoverTiles.h"
 #include "Tests/LandCoverTestTiles.h"
 
@@ -159,5 +161,41 @@ bool FLandCoverSampleTest::RunTest(const FString& Parameters)
 	}
 	TestEqual(TEXT("only WorldCover codes"), Unknown, 0);
 	TestEqual(TEXT("no warnings"), Cache.TakeWarnings().Num(), 0);
+	return true;
+}
+
+// Fix round 1: a tile load (file I/O + PNG decode) runs outside the cache lock, so TakeWarnings / NumCached on the game
+// thread return promptly while a build decodes; two threads loading the same tile cache it once.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandCoverSlowLoadTest, "CamSim.Thermal.LandCover.SlowLoadDoesNotHoldLock",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FLandCoverSlowLoadTest::RunTest(const FString& Parameters)
+{
+	const FString Dir = TempDir(TEXT("SlowLoad"));
+	WriteTileDir(Dir, { Uniform(755, -2450, 10) });
+	FLandCoverTileCache Cache(Dir);
+	FLandCoverTileCache::TestLoadDelaySeconds = 0.5;
+	ON_SCOPE_EXIT { FLandCoverTileCache::TestLoadDelaySeconds = 0.0; };
+	auto Load = [&Cache]() { return Cache.Get(755, -2450); };
+	UE::Tasks::TTask<TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe>> A = UE::Tasks::Launch(UE_SOURCE_LOCATION, [Load]() { return Load(); });
+	UE::Tasks::TTask<TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe>> B = UE::Tasks::Launch(UE_SOURCE_LOCATION, [Load]() { return Load(); });
+	FPlatformProcess::Sleep(0.1f);
+	double WorstMs = 0.0;
+	for (int32 K = 0; K < 5; ++K)
+	{
+		const double T0 = FPlatformTime::Seconds();
+		Cache.TakeWarnings();
+		Cache.NumCached();
+		Cache.NumLoads();
+		WorstMs = FMath::Max(WorstMs, (FPlatformTime::Seconds() - T0) * 1000.0);
+	}
+	AddInfo(FString::Printf(TEXT("cache calls during a 500 ms load: worst %.3f ms"), WorstMs));
+	TestFalse(TEXT("the loads are still sleeping"), A.IsCompleted() && B.IsCompleted());
+	TestTrue(FString::Printf(TEXT("lock not held across the load (worst %.1f ms)"), WorstMs), WorstMs < 50.0);
+	A.Wait();
+	B.Wait();
+	TestTrue(TEXT("both got the tile"), A.GetResult().IsValid() && B.GetResult().IsValid());
+	TestTrue(TEXT("the same cached tile"), A.GetResult() == B.GetResult());
+	TestEqual(TEXT("cached once"), Cache.NumCached(), 1);
+	TestEqual(TEXT("one load kept"), Cache.NumLoads(), 1);
 	return true;
 }

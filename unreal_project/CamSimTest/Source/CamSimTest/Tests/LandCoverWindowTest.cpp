@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/ScopeExit.h"
 #include "Thermal/LandCoverWindow.h"
 #include "Tests/LandCoverTestTiles.h"
 
@@ -208,5 +209,78 @@ bool FLandCoverWindowPinTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("every texel covered"), W.GetCurrent()->NonZeroTexels, NonZero);
 	TestTrue(TEXT("codes identical to an uncached resample"), W.GetCurrent()->Codes == Expected);
 	TestEqual(TEXT("no warnings"), W.TakeWarnings().Num(), 0);
+	return true;
+}
+
+// Fix round 1: Update / TakeWarnings never wait for a build that is decoding tiles (no hitch on re-centre).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandCoverWindowNoBlockTest, "CamSim.Thermal.LandCover.UpdateNeverWaitsForBuild",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FLandCoverWindowNoBlockTest::RunTest(const FString& Parameters)
+{
+	FLandCoverWindow W;
+	W.Configure(Settings(WriteSfDir(TEXT("NoBlock")), 256));   // 2 tiles at the camera
+	FLandCoverTileCache::TestLoadDelaySeconds = 0.4;
+	ON_SCOPE_EXIT { FLandCoverTileCache::TestLoadDelaySeconds = 0.0; };
+	W.Update(CamLat, CamLon);
+	FPlatformProcess::Sleep(0.05f);   // the build is now inside its first tile load
+	double WorstMs = 0.0;
+	for (int32 K = 0; K < 10; ++K)
+	{
+		const double T0 = FPlatformTime::Seconds();
+		W.Update(CamLat, CamLon);
+		W.TakeWarnings();
+		WorstMs = FMath::Max(WorstMs, (FPlatformTime::Seconds() - T0) * 1000.0);
+	}
+	AddInfo(FString::Printf(TEXT("Update + TakeWarnings during a slow build: worst %.3f ms"), WorstMs));
+	TestTrue(TEXT("still building"), W.IsBuildInFlight());
+	TestTrue(FString::Printf(TEXT("Update + TakeWarnings return promptly (worst %.1f ms)"), WorstMs), WorstMs < 50.0);
+	FLandCoverTileCache::TestLoadDelaySeconds = 0.0;
+	W.FinishBuildForTest();
+	TestTrue(TEXT("published"), W.GetCurrent().IsValid());
+	return true;
+}
+
+// Fix round 1: flying over a pole after a window exists turns land cover off, and it rebuilds on the way back.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandCoverWindowPoleAfterTest, "CamSim.Thermal.LandCover.PoleAfterPublishedWindow",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FLandCoverWindowPoleAfterTest::RunTest(const FString& Parameters)
+{
+	FLandCoverWindow W;
+	W.Configure(Settings(WriteSfDir(TEXT("PoleAfter")), 256));
+	W.Update(CamLat, CamLon);
+	W.FinishBuildForTest();
+	if (!TestTrue(TEXT("window published"), W.GetCurrent().IsValid() && W.GetCurrentGpu().IsValid())) return false;
+	W.TakeWarnings();
+	W.Update(89.5, 0.0);
+	TestFalse(TEXT("pole: no CPU window"), W.GetCurrent().IsValid());
+	TestFalse(TEXT("pole: no GPU window"), W.GetCurrentGpu().IsValid());
+	TestEqual(TEXT("pole: no build"), W.GetBuildsStarted(), 1u);
+	TestEqual(TEXT("one pole warning"), W.TakeWarnings().Num(), 1);
+	W.Update(CamLat, CamLon);
+	TestEqual(TEXT("back: rebuild started"), W.GetBuildsStarted(), 2u);
+	W.FinishBuildForTest();
+	TestTrue(TEXT("back: window id 2"), W.GetCurrent().IsValid() && W.GetCurrent()->Id == 2u && W.GetCurrentGpu()->Id == 2u);
+	return true;
+}
+
+// Fix round 1: the pin set's size estimate covers every tile a window touches (mid latitude, antimeridian, 88.9 deg).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandCoverWindowEstimateTest, "CamSim.Thermal.LandCover.PinSetEstimateCoversWindow",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FLandCoverWindowEstimateTest::RunTest(const FString& Parameters)
+{
+	const FVector2D Centres[] = { { CamLat, CamLon }, { 0.0, 179.99 }, { 0.0, -179.99 }, { 88.9, 0.0 }, { -88.95, 179.95 } };
+	for (const FVector2D& C : Centres)
+	{
+		CamSimLandCover::FWindowSpec S;
+		S.CentreLatDeg = C.X; S.CentreLonDeg = C.Y; S.Texels = 2048; S.TexelM = FLandCoverWindow::TexelM;
+		TSet<FIntPoint> Touched;
+		TArray<uint8> Out;
+		CamSimLandCover::Resample(S, [&Touched](int32 I, int32 J) -> const uint8* { Touched.Add(FIntPoint(I, J)); return nullptr; }, Out);
+		const int32 Estimate = FLandCoverWindow::EstimateTiles(S);
+		TestTrue(FString::Printf(TEXT("(%.2f, %.2f): estimate %d >= %d tiles touched"), C.X, C.Y, Estimate, Touched.Num()),
+			Estimate >= Touched.Num());
+		TestTrue(FString::Printf(TEXT("(%.2f, %.2f): estimate %d not wildly over %d"), C.X, C.Y, Estimate, Touched.Num()),
+			Estimate <= 2 * Touched.Num() + 16);
+	}
 	return true;
 }
