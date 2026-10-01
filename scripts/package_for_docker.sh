@@ -3,8 +3,10 @@
 #
 # Stage a LinuxNoEditor package of CamSimTest for the Docker image build.
 #
-# Wraps `RunUAT.sh BuildCookRun` and copies the resulting `LinuxNoEditor/`
-# directory into `deploy/staged/`, where `deploy/Dockerfile` COPYs from.
+# Wraps `RunUAT.sh BuildCookRun` and copies the resulting `Linux/` package
+# into `deploy/staged/`, where `deploy/Dockerfile` COPYs from. The repo's
+# `entities/` glTF models (loaded at runtime by glTFRuntime, so not cooked)
+# are staged into the package at `CamSimTest/entities/`.
 #
 # Usage:
 #   scripts/package_for_docker.sh
@@ -15,8 +17,8 @@
 #   UE_ROOT    Path to the UE installation root (derived from UE_BINARY).
 #
 # Output:
-#   .cache/staged/LinuxNoEditor/     intermediate (kept; reused by next run)
-#   deploy/staged/LinuxNoEditor/     final destination consumed by Dockerfile
+#   .cache/staged/Linux/     intermediate (kept; reused by next run)
+#   deploy/staged/Linux/     final destination consumed by Dockerfile
 #
 # Idempotent: re-running on a clean tree reuses the DDC cache and incremental
 # build output, so the second invocation is much faster than the first.
@@ -90,14 +92,17 @@ mkdir -p "${ARCHIVE_DIR}"
 # -------------------------------------------------------------------------
 # Copy into deploy/staged/ for the Dockerfile to COPY.
 # -------------------------------------------------------------------------
-if [ ! -d "${ARCHIVE_DIR}/LinuxNoEditor" ]; then
-    echo "[ERROR] Expected ${ARCHIVE_DIR}/LinuxNoEditor after BuildCookRun" >&2
+# UE5 archives to Linux/ (UE4 called it LinuxNoEditor/).
+PACKAGE_DIR="${ARCHIVE_DIR}/Linux"
+if [ ! -d "${PACKAGE_DIR}" ]; then
+    echo "[ERROR] Expected ${PACKAGE_DIR} after BuildCookRun" >&2
     exit 1
 fi
 
-rm -rf "${STAGE_DEST}/LinuxNoEditor"
+rm -rf "${STAGE_DEST}/Linux"
 mkdir -p "${STAGE_DEST}"
-cp -a "${ARCHIVE_DIR}/LinuxNoEditor" "${STAGE_DEST}/"
+cp -a "${PACKAGE_DIR}" "${STAGE_DEST}/"
+cp -a "${REPO_ROOT}/entities" "${STAGE_DEST}/Linux/CamSimTest/entities"
 
-echo "==> Staged at: ${STAGE_DEST}/LinuxNoEditor"
-ls "${STAGE_DEST}/LinuxNoEditor/CamSimTest/Binaries/Linux/" 2>/dev/null || true
+echo "==> Staged at: ${STAGE_DEST}/Linux"
+ls "${STAGE_DEST}/Linux/CamSimTest/Binaries/Linux/" 2>/dev/null || true

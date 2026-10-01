@@ -1,92 +1,83 @@
 #!/usr/bin/env bash
-# CamSim Docker entrypoint
-# Detects GPU availability and selects appropriate Vulkan ICD, then launches UE.
+# CamSim Docker entrypoint: pick the Vulkan driver, start a virtual display,
+# launch the packaged game headless. Extra arguments are passed to UE.
 set -euo pipefail
 
-BINARY_DIR=/opt/camsim
-GAME_BINARY="${BINARY_DIR}/CamSimTest/Binaries/Linux/CamSimTest-Linux-Shipping"
-CONFIG_SRC="${BINARY_DIR}/camsim_config.yaml"
-CONFIG_DST="${BINARY_DIR}/CamSimTest/Binaries/Linux/camsim_config.yaml"
+GAME_DIR=/opt/camsim
+BIN_DIR="${GAME_DIR}/CamSimTest/Binaries/Linux"
 
-# -----------------------------------------------------------------------
-# Copy default config if not already present (allows volume-mount override)
-# -----------------------------------------------------------------------
-if [ -f "${CONFIG_SRC}" ] && [ ! -f "${CONFIG_DST}" ]; then
-    cp "${CONFIG_SRC}" "${CONFIG_DST}"
+# Development packages are named CamSimTest, Shipping ones CamSimTest-Linux-Shipping.
+GAME_BINARY="${CAMSIM_BINARY:-}"
+if [ -z "${GAME_BINARY}" ]; then
+    for CANDIDATE in "${BIN_DIR}/CamSimTest" "${BIN_DIR}/CamSimTest-Linux-Shipping"; do
+        [ -x "${CANDIDATE}" ] && { GAME_BINARY="${CANDIDATE}"; break; }
+    done
+fi
+if [ -z "${GAME_BINARY}" ] || [ ! -x "${GAME_BINARY}" ]; then
+    echo "[entrypoint] No game binary in ${BIN_DIR} (set CAMSIM_BINARY)" >&2
+    exit 1
 fi
 
 # -----------------------------------------------------------------------
-# Vulkan ICD selection
+# Vulkan driver. Detect the GPU by its device node, not NVIDIA_VISIBLE_DEVICES:
+# with CDI injection (toolkit >= 1.17, `--gpus all`) that variable reads
+# "void" inside the container even though the GPU is present. The toolkit
+# drops its ICD manifest in /etc/vulkan/icd.d, which the loader finds itself.
 # -----------------------------------------------------------------------
-EXTRA_ARGS=""
-
-if [ -n "${NVIDIA_VISIBLE_DEVICES:-}" ] && [ "${NVIDIA_VISIBLE_DEVICES}" != "void" ]; then
-    echo "[entrypoint] NVIDIA GPU detected (NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES})"
-    # NVIDIA Vulkan ICD installed by nvidia-container-toolkit
-    export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+EXTRA_ARGS=()
+if compgen -G "/dev/nvidia[0-9]*" >/dev/null; then
+    DEVICE="$(vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*//p' | head -1 || true)"
+    if [ -z "${DEVICE}" ]; then
+        echo "[entrypoint] NVIDIA device node present but Vulkan found no device." >&2
+        echo "             Is NVIDIA_DRIVER_CAPABILITIES missing 'graphics'? vulkaninfo:" >&2
+        vulkaninfo --summary 2>&1 | tail -5 >&2 || true
+        exit 1
+    fi
+    echo "[entrypoint] Vulkan device: ${DEVICE}"
 else
-    echo "[entrypoint] No NVIDIA GPU — using Mesa llvmpipe (CPU Vulkan)"
-    export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-    # Disable ray tracing on CPU path (llvmpipe doesn't support it)
-    EXTRA_ARGS="-ini:Engine:[/Script/Engine.RendererSettings]:r.RayTracing=False"
+    LVP_ICD="$(compgen -G "/usr/share/vulkan/icd.d/lvp_icd*.json" | head -1 || true)"
+    echo "[entrypoint] No NVIDIA GPU passed in (run with --gpus all)."
+    echo "[entrypoint] Falling back to Mesa lavapipe (${LVP_ICD:-not found}): UNVERIFIED since"
+    echo "             ROADMAP 3B.2. Without the GPU sensor graph no frames are produced."
+    [ -n "${LVP_ICD}" ] && export VK_ICD_FILENAMES="${LVP_ICD}"
+    EXTRA_ARGS+=("-ini:Engine:[/Script/Engine.RendererSettings]:r.RayTracing=False")
 fi
 
 # -----------------------------------------------------------------------
-# Virtual display — SDL2 requires an X11 display even in -RenderOffScreen
-# mode.  Start Xvfb so SDL can initialise; UE renders via Vulkan offscreen
-# and never actually draws to the framebuffer.
+# Virtual display: SDL needs an X display even with -RenderOffScreen; UE
+# renders offscreen through Vulkan and never draws to it.
 # -----------------------------------------------------------------------
-Xvfb :1 -screen 0 1280x720x24 -nolisten tcp &
+Xvfb :99 -screen 0 1280x720x24 -nolisten tcp >/dev/null 2>&1 &
 XVFB_PID=$!
-export DISPLAY=:1
-echo "[entrypoint] Xvfb started (PID ${XVFB_PID}, DISPLAY=${DISPLAY})"
+export DISPLAY=:99
 
-# -----------------------------------------------------------------------
-# SIGTERM → clean shutdown
-# -----------------------------------------------------------------------
+UE_PID=""
 _term() {
-    echo "[entrypoint] SIGTERM received — forwarding to UE process"
-    kill -TERM "${UE_PID}" 2>/dev/null || true
+    echo "[entrypoint] Stopping CamSim"
+    [ -n "${UE_PID}" ] && kill -TERM "${UE_PID}" 2>/dev/null || true
 }
-trap _term SIGTERM SIGINT
+trap _term TERM INT
 
-# -----------------------------------------------------------------------
-# Launch Unreal Engine
-# -----------------------------------------------------------------------
-echo "[entrypoint] Launching: ${GAME_BINARY}"
+echo "[entrypoint] Launching ${GAME_BINARY}"
 "${GAME_BINARY}" \
-    /Game/Main \
+    "/Game/Main?game=/Script/CamSimTest.CamSimGameMode" \
     -RenderOffScreen \
+    -vulkan \
     -nosound \
     -unattended \
-    -vulkan \
     -log \
-    ${EXTRA_ARGS} \
+    -userdir=/var/lib/camsim \
+    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" \
     "$@" &
-
 UE_PID=$!
-echo "[entrypoint] UE PID = ${UE_PID}"
 
-# Wait for readiness: health file signals the engine is encoding frames
-HEALTH_FILE="${BINARY_DIR}/CamSimTest/Binaries/Linux/camsim_health.json"
-READY_TIMEOUT=120
-READY_ELAPSED=0
-while [ "${READY_ELAPSED}" -lt "${READY_TIMEOUT}" ]; do
-    if [ -f "${HEALTH_FILE}" ]; then
-        echo "[entrypoint] CamSim ready (health file present after ${READY_ELAPSED}s)"
-        break
-    fi
-    # Check if UE process is still alive
-    if ! kill -0 "${UE_PID}" 2>/dev/null; then
-        echo "[entrypoint] UE process exited before becoming ready"
-        break
-    fi
-    sleep 2
-    READY_ELAPSED=$((READY_ELAPSED + 2))
-done
-
-wait "${UE_PID}"
-EXIT_CODE=$?
-echo "[entrypoint] UE exited with code ${EXIT_CODE}"
+# A trapped signal interrupts `wait`; wait again for UE's actual exit code.
+EXIT_CODE=0
+wait "${UE_PID}" || EXIT_CODE=$?
+if kill -0 "${UE_PID}" 2>/dev/null; then
+    EXIT_CODE=0
+    wait "${UE_PID}" || EXIT_CODE=$?
+fi
+echo "[entrypoint] CamSim exited with code ${EXIT_CODE}"
 kill "${XVFB_PID}" 2>/dev/null || true
 exit "${EXIT_CODE}"

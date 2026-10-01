@@ -30,7 +30,8 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/gt_occlusion_check.py` | Ground-truth acceptance (ROADMAP 2.7): nadir / edge / Beaufort 6 crest / terrain views, COCO checks, mask/box overlays, frame time ML on vs off |
 | `scripts/klv_conformance/check.js` | Check KLV against misb.js (packets.jsonl, .ts, or udp://) |
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
-| `scripts/ci_validate.sh`       | Integration test (health wait + video/KLV validation)         |
+| `scripts/package_for_docker.sh` | BuildCookRun → `deploy/staged/Linux/` (+ `entities/`) for the Docker image |
+| `scripts/ci_validate.sh`       | Integration test: runs the image with `--gpus all` + CIGI host, `/ready`, video/KLV |
 | `scripts/ci_validate.sh --native` | Same, without Docker (macOS): launch headless + CIGI host + checks |
 | `scripts/bench/run_bench.py` | Render benchmark + reference shots (`--smoke`, `--trace`); `compare.py` diffs two runs |
 | `scripts/run_gpu_tests.sh`     | `CamSim.GPU.*` automation tests on the real RHI (Metal)       |
@@ -189,12 +190,16 @@ Only the vars you need at the console every day are listed below:
 
 ## Docker
 
+Guide: [`docs/docker.md`](docs/docker.md). Verified on RTX 5080 / driver 595 / toolkit 1.20 (2026-10-01).
+
 ```bash
-cd deploy && docker compose up        # GPU (NVIDIA)
-CAMSIM_ENCODER=libx264 docker compose up  # Mesa llvmpipe path: UNVERIFIED since 3B.2 (no CPU sensor fallback; needs the GPU sensor graph)
+scripts/package_for_docker.sh && docker compose -f deploy/docker-compose.yml up --build
+scripts/ci_validate.sh --docker camsim:latest   # end-to-end check on the GPU
 ```
 
-- Non-root user (uid 1000)
-- Entrypoint auto-detects NVIDIA vs Mesa
-- CPU path disables ray tracing via `-ini` flag
+- Packaged Development build on Ubuntu 24.04; the NVIDIA driver comes from the host via the Container Toolkit (`NVIDIA_DRIVER_CAPABILITIES=all`: `graphics` = Vulkan, `video` = NVENC). Never install `libnvidia-*` in the image
+- The image needs `libegl1`: the NVIDIA Vulkan ICD dlopens `libEGL.so.1`, which the toolkit doesn't inject (else `ERROR_INCOMPATIBLE_DRIVER`)
+- The entrypoint detects the GPU by `/dev/nvidia*`: under CDI injection `NVIDIA_VISIBLE_DEVICES` reads `void` even with `--gpus all`. No GPU → Mesa lavapipe, UNVERIFIED since 3B.2
+- Non-root user (uid 1000); `-userdir=/var/lib/camsim` puts `Saved/` and Cesium's tile cache on a volume
+- Assets loaded by path at runtime aren't found by the cook: list their directories in `DirectoriesToAlwaysCook` (`DefaultGame.ini`). The Game target needs `bEnableExceptions` (Editor targets force it on), so a packaging break can hide behind a clean editor build
 - Health: HTTP server on port `8080` exposes `GET /live`, `GET /health` (alias for `/live`), `GET /ready`, and `GET /metrics` (Prometheus format). Legacy `camsim_health.json` file also still written every 90 ticks for backward compatibility.

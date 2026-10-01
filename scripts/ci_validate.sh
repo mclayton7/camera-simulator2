@@ -8,14 +8,15 @@
 #
 # Modes:
 #   --native   Launch via scripts/run.sh --headless --local (macOS or Linux,
-#              no Docker). Drives CamSim with a scripted CIGI host
-#              (send_cigi_test.py --sweep), since /ready requires CIGI traffic,
-#              and checks the KLV sensor position matches the commanded pose.
-#              Readiness = HTTP GET /ready on the health port.
-#              Stream = udp://127.0.0.1:5004 (unicast, no multicast route needed).
-#   --docker   (default) Run the camsim image with host networking.
-#              Readiness = camsim_health.json inside the container.
-#              Stream = udp://239.1.1.1:5004.
+#              no Docker).
+#   --docker   (default) Run the camsim image with host networking and the
+#              NVIDIA GPU (--gpus all; needs nvidia-container-toolkit).
+#
+# Both modes drive CamSim with a scripted CIGI host (send_cigi_test.py
+# --sweep), since /ready requires CIGI traffic, and check the KLV sensor
+# position matches the commanded pose.
+# Readiness = HTTP GET /ready on the health port.
+# Stream = udp://127.0.0.1:5004 (unicast, no multicast route needed).
 #
 # Requirements: ffmpeg, ffprobe, curl, perl, python3, node + npm; docker for --docker.
 #
@@ -24,8 +25,9 @@
 #   ./scripts/ci_validate.sh [--docker] [image_name]
 #
 # Environment:
-#   CAMSIM_READY_TIMEOUT   Seconds to wait for readiness (default: 60 docker,
-#                          600 native — a cold native start compiles shaders)
+#   CAMSIM_CI_DOCKER_LOG   --docker: save the container log to this file
+#   CAMSIM_READY_TIMEOUT   Seconds to wait for readiness (default 600: a cold
+#                          start compiles shaders)
 #
 # Exit: 0 = pass, 1 = fail
 
@@ -55,13 +57,8 @@ HOST_LAT=37.7749
 HOST_LON=-122.4194
 HOST_ALT=1000
 
-if [ "${MODE}" = "native" ]; then
-    READY_TIMEOUT="${CAMSIM_READY_TIMEOUT:-600}"
-    STREAM_URL="udp://127.0.0.1:${CAMSIM_MULTICAST_PORT:-5004}"
-else
-    READY_TIMEOUT="${CAMSIM_READY_TIMEOUT:-60}"
-    STREAM_URL="udp://239.1.1.1:5004"
-fi
+READY_TIMEOUT="${CAMSIM_READY_TIMEOUT:-600}"
+STREAM_URL="udp://127.0.0.1:${CAMSIM_MULTICAST_PORT:-5004}"
 
 FAILURES=0
 fail() { echo "[FAIL] $*"; FAILURES=$((FAILURES + 1)); }
@@ -81,6 +78,7 @@ cleanup() {
         "${SCRIPT_DIR}/stop.sh" >/dev/null 2>&1 || true
     else
         echo "[ci] Stopping container..."
+        [ -n "${CAMSIM_CI_DOCKER_LOG:-}" ] && docker logs "${CONTAINER_NAME}" >"${CAMSIM_CI_DOCKER_LOG}" 2>&1 || true
         docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
     fi
     rm -rf "${WORK_DIR}"
@@ -97,60 +95,51 @@ if [ "${MODE}" = "native" ]; then
     fi
     echo "==> Starting CamSim natively (headless, unicast)..."
     "${SCRIPT_DIR}/run.sh" --headless --local --detach
-
-    echo "==> Starting scripted CIGI host (heading sweep at ${HOST_LAT}, ${HOST_LON}, ${HOST_ALT} m)..."
-    python3 "${SCRIPT_DIR}/send_cigi_test.py" --sweep --port "${CAMSIM_CIGI_PORT:-8888}" \
-        --lat "${HOST_LAT}" --lon "${HOST_LON}" --alt "${HOST_ALT}" \
-        >"${WORK_DIR}/cigi_host.log" 2>&1 &
-    CIGI_PID=$!
-
-    echo "==> Waiting for GET /ready on :${HEALTH_PORT} (timeout=${READY_TIMEOUT}s)..."
     UE_PID="$(head -1 "${REPO_ROOT}/.cache/camsim.pid")"
-    ELAPSED=0
-    READY=0
-    while [ "${ELAPSED}" -lt "${READY_TIMEOUT}" ]; do
-        if ! kill -0 "${UE_PID}" 2>/dev/null; then
-            echo "[FAIL] CamSim exited during startup"
-            exit 1
-        fi
-        if curl -sf -m 2 "http://127.0.0.1:${HEALTH_PORT}/ready" >"${WORK_DIR}/ready.json" 2>/dev/null; then
-            echo "[ci] Ready after ${ELAPSED}s: $(cat "${WORK_DIR}/ready.json")"
-            READY=1
-            break
-        fi
-        sleep 2
-        ELAPSED=$((ELAPSED + 2))
-    done
-    if [ "${READY}" -eq 0 ]; then
-        echo "[FAIL] /ready did not return 200 within ${READY_TIMEOUT}s"
-        curl -s -m 2 "http://127.0.0.1:${HEALTH_PORT}/ready" || true
-        exit 1
-    fi
+    camsim_alive() { kill -0 "${UE_PID}" 2>/dev/null; }
 else
-    echo "==> Starting CamSim container (CPU/Mesa, headless)..."
+    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    echo "==> Starting CamSim container (NVIDIA GPU, headless, unicast)..."
     docker run -d \
         --name "${CONTAINER_NAME}" \
+        --gpus all \
+        --init \
         --network host \
         --shm-size 1g \
+        -e CAMSIM_MULTICAST_ADDR=127.0.0.1 \
+        ${CAMSIM_CESIUM_ION_TOKEN:+-e CAMSIM_CESIUM_ION_TOKEN} \
         "${IMAGE}"
+    camsim_alive() { [ "$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null)" = "true" ]; }
+fi
 
-    echo "==> Waiting for health file (timeout=${READY_TIMEOUT}s)..."
-    HEALTH_FILE=/opt/camsim/CamSimTest/Binaries/Linux/camsim_health.json
-    ELAPSED=0
-    while [ "${ELAPSED}" -lt "${READY_TIMEOUT}" ]; do
-        if docker exec "${CONTAINER_NAME}" test -f "${HEALTH_FILE}" 2>/dev/null; then
-            echo "[ci] Health file found after ${ELAPSED}s"
-            echo "[ci] Health: $(docker exec "${CONTAINER_NAME}" cat "${HEALTH_FILE}" 2>/dev/null || echo "{}")"
-            break
-        fi
-        sleep 2
-        ELAPSED=$((ELAPSED + 2))
-    done
-    if [ "${ELAPSED}" -ge "${READY_TIMEOUT}" ]; then
-        echo "[FAIL] Health file not found within ${READY_TIMEOUT}s"
-        docker logs "${CONTAINER_NAME}" --tail 50
+echo "==> Starting scripted CIGI host (heading sweep at ${HOST_LAT}, ${HOST_LON}, ${HOST_ALT} m)..."
+python3 "${SCRIPT_DIR}/send_cigi_test.py" --sweep --port "${CAMSIM_CIGI_PORT:-8888}" \
+    --lat "${HOST_LAT}" --lon "${HOST_LON}" --alt "${HOST_ALT}" \
+    >"${WORK_DIR}/cigi_host.log" 2>&1 &
+CIGI_PID=$!
+
+echo "==> Waiting for GET /ready on :${HEALTH_PORT} (timeout=${READY_TIMEOUT}s)..."
+ELAPSED=0
+READY=0
+while [ "${ELAPSED}" -lt "${READY_TIMEOUT}" ]; do
+    if ! camsim_alive; then
+        echo "[FAIL] CamSim exited during startup"
+        [ "${MODE}" = "docker" ] && docker logs "${CONTAINER_NAME}" --tail 50
         exit 1
     fi
+    if curl -sf -m 2 "http://127.0.0.1:${HEALTH_PORT}/ready" >"${WORK_DIR}/ready.json" 2>/dev/null; then
+        echo "[ci] Ready after ${ELAPSED}s: $(cat "${WORK_DIR}/ready.json")"
+        READY=1
+        break
+    fi
+    sleep 2
+    ELAPSED=$((ELAPSED + 2))
+done
+if [ "${READY}" -eq 0 ]; then
+    echo "[FAIL] /ready did not return 200 within ${READY_TIMEOUT}s"
+    curl -s -m 2 "http://127.0.0.1:${HEALTH_PORT}/ready" || true
+    [ "${MODE}" = "docker" ] && docker logs "${CONTAINER_NAME}" --tail 50
+    exit 1
 fi
 
 # -----------------------------------------------------------------------
@@ -167,7 +156,6 @@ with_timeout $((CAPTURE_DURATION + 15)) node "${KLV_DIR}/check.js" capture \
 
 if [ ! -s "${CAPTURE}" ]; then
     fail "No stream received on ${STREAM_URL}"
-    [ "${MODE}" = "docker" ] && echo "       (multicast needs a route: sudo ip route add 239.0.0.0/8 dev lo)"
     exit 1
 fi
 echo "[ci] Captured $(wc -c < "${CAPTURE}" | tr -d ' ') bytes"
@@ -200,7 +188,7 @@ fi
 # -----------------------------------------------------------------------
 echo "==> Validating KLV with misb.js..."
 KLV_ARGS=(--max-age-sec 600 --min-packets 10)
-[ "${MODE}" = "native" ] && KLV_ARGS+=(--expect-position "${HOST_LAT},${HOST_LON},${HOST_ALT}")
+KLV_ARGS+=(--expect-position "${HOST_LAT},${HOST_LON},${HOST_ALT}")
 if node "${KLV_DIR}/check.js" stream "${CAPTURE}" "${KLV_ARGS[@]}"; then
     :
 else

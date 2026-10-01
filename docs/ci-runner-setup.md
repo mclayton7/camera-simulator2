@@ -8,9 +8,10 @@ labelled `camsim-ue5`. This document covers one-time setup.
 
 | Requirement                                 | Why                                                                |
 | ------------------------------------------- | ------------------------------------------------------------------ |
-| Linux x86_64 (Ubuntu 22.04 tested)          | Matches `deploy/Dockerfile` base image                             |
+| Linux x86_64 (Ubuntu 24.04 tested)          | Matches `deploy/Dockerfile` base image                             |
+| NVIDIA GPU + driver + [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) | `integration-test` runs the image with `--gpus all` (the sensor graph has no CPU fallback); see `docs/docker.md` |
 | UE5.8 at `/opt/UE/Engine/Binaries/Linux/UnrealEditor` | `scripts/run.sh` and `scripts/package_for_docker.sh` auto-discover via `find /opt -path '*/Binaries/Linux/UnrealEditor'` |
-| Docker + Docker Buildx                      | `integration-test` runs `docker compose up`, `docker-release` pushes to GHCR |
+| Docker + Docker Buildx                      | `integration-test` builds and runs the image, `docker-release` pushes to GHCR |
 | Python 3.10+                                | `scripts/parse_automation_report.py` (stdlib only)                 |
 | Build deps: `cmake nasm yasm pkg-config libx264-dev libssl-dev` | `scripts/build_thirdparty_linux.sh` first run                 |
 | ~80 GB free disk                            | UE5 install (~50 GB) + DDC cache + Docker layers + staged packages |
@@ -34,6 +35,11 @@ labelled `camsim-ue5`. This document covers one-time setup.
    sudo usermod -aG docker "$USER"
    newgrp docker
    docker version
+   ```
+   Then install the NVIDIA Container Toolkit and check the GPU reaches a container:
+   ```bash
+   sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+   docker run --rm --gpus all ubuntu:24.04 nvidia-smi
    ```
 
 3. **Register the GitHub Actions runner.** From the repo on github.com:

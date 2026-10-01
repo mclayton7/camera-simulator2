@@ -1,0 +1,5 @@
+# Keep the image lean: split DWARF (CamSimTest.sym, kept, is what UE uses to
+# symbolise crash callstacks in the log) and the Vulkan debug/capture layers
+# a Development package stages (only loaded under -vulkandebug).
+staged/Linux/CamSimTest/Binaries/Linux/*.debug
+staged/Linux/Engine/Binaries/ThirdParty/Vulkan/Linux/libVkLayer_*
