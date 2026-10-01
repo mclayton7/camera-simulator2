@@ -595,6 +595,22 @@ struct FCamSimConfig
 		float ExtinctionPerKmLwir = 0.10f;
 		float FogIrFactor         = 0.4f;    // beta_fog = 3.912 / V_km * factor (IR sees farther than visible)
 		TArray<FThermalMaterialSpec> Materials;   // thermal.materials overrides / additions (yaml only)
+
+		/** Terrain thermal classes from land cover (ROADMAP 4B, docs/thermal.md). Every key applies on hot reload. */
+		struct FLandCoverConfig
+		{
+			bool    bEnabled         = true;
+			FString Dir              = TEXT("Content/NonUFS/LandCover");   // index.json + tiles; relative to the project directory
+			int32   WindowTexels     = 2048;    // camera-centred window, 10 m texels (2048 = 20.48 km)
+			float   RecentreFraction = 0.25f;   // rebuild when the camera is this fraction of the window from its centre
+			float   VegIndexLo       = 0.05f;   // base-colour excess green where the vegetation weight starts
+			float   VegIndexHi       = 0.20f;   // ... and reaches 1
+			float   AsphaltMaxLuma   = 0.12f;   // built-up: linear base luminance below which ground is asphalt (soft ramp)
+			TArray<FLandCoverClassSpec> Classes;   // WorldCover code -> material overrides (yaml only)
+
+			bool operator==(const FLandCoverConfig&) const = default;
+		};
+		FLandCoverConfig LandCover;
 	};
 	FThermalConfig Thermal;
 

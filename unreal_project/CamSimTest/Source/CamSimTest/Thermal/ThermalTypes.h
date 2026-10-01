@@ -25,3 +25,13 @@ struct FThermalMaterialSpec
 
 	bool operator==(const FThermalMaterialSpec&) const = default;
 };
+
+/** thermal.land_cover.classes.<code>: the thermal material of one WorldCover code (ROADMAP 4B). */
+struct FLandCoverClassSpec
+{
+	FString Key;          // the yaml key as written (for messages)
+	int32   Code = -1;    // 0..255; -1 when the key is not a decimal code (FCamSimConfig::Validate reports it)
+	FString Material;     // thermal class name (thermal.materials or a built-in)
+
+	bool operator==(const FLandCoverClassSpec&) const = default;
+};

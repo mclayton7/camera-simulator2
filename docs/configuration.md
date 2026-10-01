@@ -942,6 +942,10 @@ thermal:
   fog_ir_factor: 0.4
   materials:            # optional
     asphalt: {albedo: 0.1, k_fast: 0.02}
+  land_cover:           # ROADMAP 4B
+    enabled: true
+    window_texels: 2048
+    classes: {10: tree_canopy}
 ```
 
 | Key | Env | Default | Description |
@@ -952,6 +956,13 @@ thermal:
 | `thermal.extinction_per_km.mwir` / `.lwir` | `CAMSIM_THERMAL_EXTINCTION_MWIR` / `_LWIR` | `0.15` / `0.10` | Band extinction β per km; the band is MWIR when the IR preset's band centre is below 6.5 µm. `[0, 10]`. |
 | `thermal.fog_ir_factor` | `CAMSIM_THERMAL_FOG_IR_FACTOR` | `0.4` | While CIGI Atmosphere Control has fog enabled, β += 3.912 / V_km × factor; `[0, 2]`. |
 | `thermal.materials.<name>` | *(yaml only)* | — | Overrides a built-in class (`terrain_default`, `water`, `vehicle_paint`, `asphalt`, `vegetation`, `concrete`, `tree_canopy`, `shrubland`, `grassland`, `cropland`, `built_up`, `bare_soil`, `snow_ice`, `wetland`) or adds one (unset fields copy `terrain_default`; ≤ 32 classes). Fields: `albedo` `[0,1)`, `emissivity` `(0,1]`, `thermal_inertia` J m⁻² K⁻¹ s⁻½ `[0,20000]`, `convection_w_m2k` `(0,200]`, `k_fast` K/(W m⁻²) `[0,0.2]`, `temperature` `model`\|`water`\|`snow`. Names: lower-case letters, digits, `_`. |
+| `thermal.land_cover.enabled` | `CAMSIM_THERMAL_LAND_COVER_ENABLED` | `true` | ROADMAP 4B. Terrain pixels take their thermal class from land cover (ESA WorldCover). `false`: 4A output bit for bit (every terrain pixel `terrain_default`). Live. |
+| `thermal.land_cover.dir` | `CAMSIM_THERMAL_LAND_COVER_DIR` | `Content/NonUFS/LandCover` | Directory with `index.json` and the tiles (`scripts/landcover/fetch_worldcover.py`); relative to the project directory (staged as loose files). Missing: one warning, land cover off. Must be non-empty when enabled. Live. |
+| `thermal.land_cover.window_texels` | `CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS` | `2048` | Side of the camera-centred window in 10 m texels (2048 = 20.48 km; 4 MB). Terrain outside it uses `terrain_default`. Even, `[256, 16384]`. Live. |
+| `thermal.land_cover.recentre_fraction` | `CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION` | `0.25` | A new window is built (task thread) when the camera is this fraction of the window size from its centre, East or North. `[0.01, 0.45]`. Live. |
+| `thermal.land_cover.veg_index_lo` / `veg_index_hi` | `CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_LO` / `_HI` | `0.05` / `0.20` | Vegetation weight v = saturate((ExG − lo) / (hi − lo)), ExG = (2G − R − B) / (R + G + B) of the linear GBuffer base colour. `-1 <= lo < hi <= 2`. Live. |
+| `thermal.land_cover.asphalt_max_luma` | `CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA` | `0.12` | Built-up ground below this linear base luminance is asphalt, above it concrete (0.04-wide soft ramp). `[0, 1]`. Live. |
+| `thermal.land_cover.classes.<code>` | *(yaml only)* | see `docs/thermal.md` | WorldCover code (0–255) → thermal material name; an unknown material keeps the default with one warning. |
 
 Built-in classes:
 
