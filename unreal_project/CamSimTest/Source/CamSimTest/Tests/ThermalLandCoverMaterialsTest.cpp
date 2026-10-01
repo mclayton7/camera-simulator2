@@ -70,12 +70,11 @@ bool FThermalSnowTest::RunTest(const FString& Parameters)
 	const FThermalMaterialTable T;
 	FThermalModel M;
 	M.Update(SanFrancisco(172), T);   // June: the model alone would be well above 0 C
-	double Hi = -1e9, Lo = 1e9;
+	double Hi = -1e9;
 	for (int32 Min = 0; Min < 1440; Min += 5)
 	{
 		const double K = M.TemperatureK(FThermalMaterialTable::SnowIce, Min * 60.0, 288.15);
 		Hi = FMath::Max(Hi, K);
-		Lo = FMath::Min(Lo, K);
 	}
 	TestTrue(*FString::Printf(TEXT("snow max %.2f K <= 273.15 K"), Hi), Hi <= FThermalModel::SnowMaxK + 1e-9);
 	TestTrue(TEXT("terrain_default at noon is above freezing (the cap matters)"),
@@ -88,8 +87,8 @@ bool FThermalSnowTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// The spec's success criteria (a) and (b) at class level: noon vegetation cooler than built-up/bare, night built-up warmer
-// than open vegetation, canopy warmer than grass at night. 21 Dec, Presidio, clear sky.
+// Class-level diurnal contrasts (ROADMAP 4B goal): noon vegetation reads cool and built-up/bare ground hot; at night
+// built-up/bare is warmer than vegetation, and canopy is warmer than open grass. 21 Dec, Presidio, clear sky.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalLandCoverContrastTest, "CamSim.Thermal.Materials.DiurnalContrastsAtSanFrancisco",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FThermalLandCoverContrastTest::RunTest(const FString& Parameters)
@@ -103,12 +102,20 @@ bool FThermalLandCoverContrastTest::RunTest(const FString& Parameters)
 	FString Line;
 	for (int32 C = 0; C < Table.Num(); ++C) Line += FString::Printf(TEXT(" %s %.1f/%.1f"), *Table.Get(C).Name, K(C, Noon), K(C, Night));
 	AddInfo(TEXT("noon/02:00 K:") + Line);
+	const int32 Veg[] = { T::TreeCanopy, T::Shrubland, T::Grassland, T::Cropland };
+	for (const int32 V : Veg)
+	{
+		for (const int32 Hot : { T::BuiltUp, T::BareSoil })
+		{
+			TestTrue(*FString::Printf(TEXT("noon: %s warmer than %s by >= 1 K"), *Table.Get(Hot).Name, *Table.Get(V).Name),
+				K(Hot, Noon) - K(V, Noon) >= 1.0);
+		}
+	}
 	TestTrue(TEXT("noon: asphalt warmer than tree canopy by >= 1 K"), K(T::Asphalt, Noon) - K(T::TreeCanopy, Noon) >= 1.0);
-	TestTrue(TEXT("noon: bare soil warmer than tree canopy by >= 1 K"), K(T::BareSoil, Noon) - K(T::TreeCanopy, Noon) >= 1.0);
-	TestTrue(TEXT("noon: built-up warmer than tree canopy by >= 1 K"), K(T::BuiltUp, Noon) - K(T::TreeCanopy, Noon) >= 1.0);
 	TestTrue(TEXT("night: asphalt warmer than grassland by >= 1 K"), K(T::Asphalt, Night) - K(T::Grassland, Night) >= 1.0);
 	TestTrue(TEXT("night: concrete warmer than grassland by >= 1 K"), K(T::Concrete, Night) - K(T::Grassland, Night) >= 1.0);
-	TestTrue(TEXT("night: built-up warmer than grassland by >= 1 K"), K(T::BuiltUp, Night) - K(T::Grassland, Night) >= 1.0);
+	TestTrue(TEXT("night: built-up warmer than tree canopy by >= 1 K"), K(T::BuiltUp, Night) - K(T::TreeCanopy, Night) >= 1.0);
+	TestTrue(TEXT("night: bare soil warmer than tree canopy by >= 1 K"), K(T::BareSoil, Night) - K(T::TreeCanopy, Night) >= 1.0);
 	TestTrue(TEXT("night: tree canopy warmer than grassland by >= 0.5 K"), K(T::TreeCanopy, Night) - K(T::Grassland, Night) >= 0.5);
 	return true;
 }

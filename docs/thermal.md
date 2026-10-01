@@ -102,11 +102,11 @@ Built-in classes (index order fixed; 6-13 added by 4B land cover), overridable a
 | `vegetation` | 0.20 | 0.98 | 300 | 15 | 0.008 | model |
 | `concrete` | 0.35 | 0.92 | 1800 | 10 | 0.015 | model |
 | `tree_canopy` | 0.40\* | 0.98 | 800 | 25 | 0.004 | model |
-| `shrubland` | 0.30\* | 0.97 | 600 | 15 | 0.008 | model |
-| `grassland` | 0.30\* | 0.97 | 300 | 8 | 0.010 | model |
-| `cropland` | 0.30\* | 0.97 | 700 | 12 | 0.010 | model |
+| `shrubland` | 0.40\* | 0.97 | 600 | 18 | 0.008 | model |
+| `grassland` | 0.50\* | 0.97 | 300 | 15 | 0.010 | model |
+| `cropland` | 0.40\* | 0.97 | 700 | 15 | 0.010 | model |
 | `built_up` | 0.20 | 0.93 | 1650 | 10 | 0.018 | model |
-| `bare_soil` | 0.25 | 0.93 | 900 | 10 | 0.025 | model |
+| `bare_soil` | 0.25 | 0.93 | 1300 | 8 | 0.025 | model |
 | `snow_ice` | 0.75 | 0.99 | 600 | 10 | 0.005 | snow (model, capped at 273.15 K) |
 | `wetland` | 0.40\* | 0.98 | 2500 | 15 | 0.004 | model |
 
