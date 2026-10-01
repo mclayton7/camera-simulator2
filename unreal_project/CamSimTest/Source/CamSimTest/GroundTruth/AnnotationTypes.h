@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GroundTruth/MaskGeometry.h"
 
 /**
  * FEntityAnnotationData
@@ -32,6 +33,32 @@ struct FEntityAnnotationData
 
 	bool    bVisible   = false;  // false → entity fully outside frustum; omit from annotations
 	bool    bTruncated = false;  // true → bbox was clamped to image boundary
+
+	uint8   StencilValue  = 0;      // custom-depth stencil 1..255; 0 = untagged (projection fallback)
+	// Oriented 3D box (game thread, Task 4)
+	bool    bHasBox3D     = false;
+	FVector Box3DSizeM    = FVector::ZeroVector;   // body X (length), Y (width), Z (height), metres
+	double  YawDeg = 0.0, PitchDeg = 0.0, RollDeg = 0.0;  // CIGI convention (heading from true north)
+	bool    bCornersValid = false;                 // false: a corner is behind the near plane
+	FVector2D CornersPx[8];                         // output pixels, order in Global Constraints
+	double  Truncation    = -1.0;                  // [0,1]; < 0 = unknown
+	// Mask analysis (task thread, FInstanceMaskAnalyzer)
+	bool    bMaskMeasured = false;                 // true: ScreenBBox and below come from the rendered mask
+	int32   VisiblePixels = 0;
+	int32   AmodalPixels  = 0;
+	FBox2D  AmodalBBox    = FBox2D(ForceInit);     // pixel-edge coords, like ScreenBBox when measured
+	CamSimMask::FOrientedBox Obb, ObbAmodal;
+	FString SegmentationRle;                        // empty when segmentation is off
+};
+
+/** Output-space instance IDs (ROADMAP 2.7): two pixels per word, pixel 2k in the low 16 bits;
+ *  each pixel = visible stencil | (amodal stencil << 8). */
+struct FInstanceIdImage
+{
+	int32 Width = 0, Height = 0;
+	TArray<uint32> Words;
+	bool IsValid() const { return Width > 0 && Height > 0 && (Width % 2) == 0 && Words.Num() == Width * Height / 2; }
+	uint16 At(int32 X, int32 Y) const { const int32 I = Y * Width + X; const uint32 W = Words[I >> 1]; return static_cast<uint16>((I & 1) ? (W >> 16) : (W & 0xFFFF)); }
 };
 
 /** Hands out annotation IDs: from 1, never repeated within a session (game thread). */
