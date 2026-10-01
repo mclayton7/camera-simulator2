@@ -56,6 +56,34 @@ struct FThermalFrameParams
 	float  KFastScale     = 1.0f;              // 0: fast term off (no base colour / no sun light: Task 1 fallback)
 	uint32 bBaseColorSrgb = 0;                 // 1: GBufferC values are sRGB-encoded (Task 1 SRGB_ENCODED)
 
+	// Land cover (ROADMAP 4B). Terrain pixels inside the camera-centred window blend the class data of the four nearest
+	// WorldCover texels (refined per pixel by the base colour); outside it, or with bLandCover = 0, they are TerrainClass (4A).
+	static constexpr int32 NumLandCoverCodes = 256;
+	static constexpr uint8 LandCoverFamilyNone = 0, LandCoverFamilyVegetation = 1, LandCoverFamilyBuiltUp = 2, LandCoverFamilyBare = 3;
+	uint8     LandCoverClass[NumLandCoverCodes]  = {};   // WorldCover code -> class index
+	uint8     LandCoverFamily[NumLandCoverCodes] = {};   // WorldCover code -> LandCoverFamily*
+	uint32    bLandCover          = 0;
+	uint32    LandCoverWindowId   = 0;                   // FLandCoverWindowData::Id these mapping values belong to (0 = none)
+	// Window coordinates of a translated-world point Pw (cm): E = dot(Pw, LandCoverEast) / 100 + LandCoverCamOffsetM.X,
+	// N = dot(Pw, LandCoverNorth) / 100 + LandCoverCamOffsetM.Y (metres; +E east, +N north). East/North are unit,
+	// dimensionless, expressed in UE world axes (translated world shares them) at the window centre; the offset comes from
+	// CamSimLandCover::GeodeticToWindowEN(camera) (doubles on the CPU), never from a separate tangent-plane transform.
+	// Texel (x, y) centre: E = (x + 0.5 - T/2) TexelM, N = (T/2 - y - 0.5) TexelM (row 0 north, column 0 west, row-major).
+	FVector3f LandCoverEast       = FVector3f(1.0f, 0.0f, 0.0f);    // unit East at the window centre, UE world axes
+	FVector3f LandCoverNorth      = FVector3f(0.0f, -1.0f, 0.0f);   // unit North (UE +Y is south at the georeference origin)
+	FVector2f LandCoverCamOffsetM = FVector2f::ZeroVector;          // camera (East, North) from the window centre, m (CPU doubles)
+	float     LandCoverTexelM     = 10.0f;
+	uint32    LandCoverTexels     = 2048;
+	uint32    bLandCoverRefine    = 0;                   // base-colour refinement (needs the base colour, not sunlight)
+	float     VegIndexLo          = 0.05f;               // v = saturate((ExG - lo) / max(hi - lo, 1e-4))
+	float     VegIndexHi          = 0.20f;
+	float     AsphaltMaxLuma      = 0.12f;               // built-up concrete weight = saturate((BaseLum - max) / ramp + 0.5)
+	float     AsphaltRampLuma     = 0.04f;
+	uint32    VegetationClass     = 4;                   // refinement targets (FThermalMaterialTable indices)
+	uint32    BareSoilClass       = 11;
+	uint32    AsphaltClass        = 3;
+	uint32    ConcreteClass       = 5;
+
 	float InputScale = 1.0f;                   // multiplies scene colour; tests only (runtime also multiplies View.OneOverPreExposure)
 };
 

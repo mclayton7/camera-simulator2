@@ -2,19 +2,101 @@
 
 #include "Thermal/ThermalReference.h"
 
+#include "Thermal/LandCoverClasses.h"
+
+static_assert(static_cast<uint8>(ELandCoverFamily::Vegetation) == FThermalFrameParams::LandCoverFamilyVegetation
+	&& static_cast<uint8>(ELandCoverFamily::BuiltUp) == FThermalFrameParams::LandCoverFamilyBuiltUp
+	&& static_cast<uint8>(ELandCoverFamily::Bare) == FThermalFrameParams::LandCoverFamilyBare
+	&& static_cast<uint8>(ELandCoverFamily::None) == FThermalFrameParams::LandCoverFamilyNone,
+	"land-cover families: ELandCoverFamily, FThermalFrameParams and LANDCOVER_FAMILY_* in CamSimThermalCommon.ush must agree");
+
 namespace CamSimThermalRef
 {
 	namespace
 	{
 		constexpr float PiF = 3.14159265f;   // THERMAL_PI in CamSimThermalCommon.ush
+	}
 
-		float Lum709(const FVector3f& C) { return 0.2126f * C.X + 0.7152f * C.Y + 0.0722f * C.Z; }
+	float Lum709(const FVector3f& C) { return 0.2126f * C.X + 0.7152f * C.Y + 0.0722f * C.Z; }
 
-		FVector3f ClipToWorld(const FThermalFrameParams& P, float Nx, float Ny, float Z)
+	FVector3f ClipToWorld(const FThermalFrameParams& P, float Nx, float Ny, float Z)
+	{
+		const FVector4f H = P.ClipToTranslatedWorld.TransformFVector4(FVector4f(Nx, Ny, Z, 1.0f));
+		return FVector3f(H.X / H.W, H.Y / H.W, H.Z / H.W);
+	}
+
+	FVector4f ClassData(const FThermalFrameParams& P, uint32 Class)
+	{
+		const uint32 C = FMath::Min(Class, FMath::Max(P.NumClasses, 1u) - 1u);
+		return FVector4f(P.ClassTempK[C], P.ClassEmissivity[C], P.ClassKFast[C], P.ClassSAbsRef[C]);
+	}
+
+	FLandCoverSample SampleLandCover(const FThermalFrameParams& P, const uint8* Codes, const FVector3f& Pw)
+	{
+		FLandCoverSample S;
+		if (!Codes || P.bLandCover == 0u || P.LandCoverTexels < 2u) return S;
+		const float E = FVector3f::DotProduct(Pw, P.LandCoverEast) / 100.0f + P.LandCoverCamOffsetM.X;
+		const float N = FVector3f::DotProduct(Pw, P.LandCoverNorth) / 100.0f + P.LandCoverCamOffsetM.Y;
+		const float Half = static_cast<float>(P.LandCoverTexels) * 0.5f;
+		const float X = E / P.LandCoverTexelM + Half - 0.5f;
+		const float Y = Half - N / P.LandCoverTexelM - 0.5f;
+		const float MaxI = static_cast<float>(P.LandCoverTexels) - 1.0f;
+		// Explicit non-finite test first (HLSL: asuint bit test, since Metal fast-math may fold NaN comparisons); then the
+		// texel-centre grid (the comparisons also reject NaN on the CPU).
+		if (!FMath::IsFinite(X) || !FMath::IsFinite(Y)) return S;
+		if (!(X >= 0.0f && X <= MaxI && Y >= 0.0f && Y <= MaxI)) return S;
+		const float X0 = FMath::Min(FMath::FloorToFloat(X), MaxI - 1.0f);
+		const float Y0 = FMath::Min(FMath::FloorToFloat(Y), MaxI - 1.0f);
+		const float Fx = X - X0, Fy = Y - Y0;
+		const int32 I = static_cast<int32>(X0), J = static_cast<int32>(Y0), W = static_cast<int32>(P.LandCoverTexels);
+		S.bInside = true;
+		S.Codes[0] = Codes[J * W + I];
+		S.Codes[1] = Codes[J * W + I + 1];
+		S.Codes[2] = Codes[(J + 1) * W + I];
+		S.Codes[3] = Codes[(J + 1) * W + I + 1];
+		S.Weights[0] = (1.0f - Fx) * (1.0f - Fy);
+		S.Weights[1] = Fx * (1.0f - Fy);
+		S.Weights[2] = (1.0f - Fx) * Fy;
+		S.Weights[3] = Fx * Fy;
+		return S;
+	}
+
+	FVector2f RefinementWeights(const FThermalFrameParams& P, const FVector3f& Base)
+	{
+		const float Sum = Base.X + Base.Y + Base.Z;
+		const float ExG = (2.0f * Base.Y - Base.X - Base.Z) / (Sum + 1e-4f);
+		const float Veg = FMath::Clamp((ExG - P.VegIndexLo) / FMath::Max(P.VegIndexHi - P.VegIndexLo, 1e-4f), 0.0f, 1.0f);
+		const float Concrete = FMath::Clamp((Lum709(Base) - P.AsphaltMaxLuma) / FMath::Max(P.AsphaltRampLuma, 1e-4f) + 0.5f, 0.0f, 1.0f);
+		return FVector2f(Veg, Concrete);
+	}
+
+	FVector4f RefinedClassData(const FThermalFrameParams& P, uint8 Code, const FVector2f& Weights, bool bRefine)
+	{
+		const FVector4f Own = ClassData(P, P.LandCoverClass[Code]);
+		if (!bRefine) return Own;
+		const uint8 Family = P.LandCoverFamily[Code];
+		const float V = Weights.X, C = Weights.Y;
+		if (Family == FThermalFrameParams::LandCoverFamilyVegetation)
 		{
-			const FVector4f H = P.ClipToTranslatedWorld.TransformFVector4(FVector4f(Nx, Ny, Z, 1.0f));
-			return FVector3f(H.X / H.W, H.Y / H.W, H.Z / H.W);
+			return Own * V + ClassData(P, P.BareSoilClass) * (1.0f - V);
 		}
+		if (Family == FThermalFrameParams::LandCoverFamilyBuiltUp)
+		{
+			return ClassData(P, P.VegetationClass) * V
+				+ (ClassData(P, P.AsphaltClass) * (1.0f - C) + ClassData(P, P.ConcreteClass) * C) * (1.0f - V);
+		}
+		if (Family == FThermalFrameParams::LandCoverFamilyBare)
+		{
+			return ClassData(P, P.VegetationClass) * V + Own * (1.0f - V);
+		}
+		return Own;
+	}
+
+	FVector4f BlendLandCover(const FThermalFrameParams& P, const FLandCoverSample& S, const FVector3f& Base, bool bRefine)
+	{
+		const FVector2f Wt = bRefine ? RefinementWeights(P, Base) : FVector2f::ZeroVector;
+		return RefinedClassData(P, S.Codes[0], Wt, bRefine) * S.Weights[0] + RefinedClassData(P, S.Codes[1], Wt, bRefine) * S.Weights[1]
+			+ RefinedClassData(P, S.Codes[2], Wt, bRefine) * S.Weights[2] + RefinedClassData(P, S.Codes[3], Wt, bRefine) * S.Weights[3];
 	}
 
 	float LutRadiance(const FThermalFrameParams& P, float TK) { return ThermalLutRadiance(P.LogLut, TK); }
@@ -78,17 +160,27 @@ namespace CamSimThermalRef
 			}
 		}
 		Class = FMath::Min(Class, FMath::Max(P.NumClasses, 1u) - 1u);
-		float T = P.ClassTempK[Class] + Offset;
+		const FVector3f Base = (P.bBaseColorSrgb != 0u)
+			? FVector3f(SrgbToLinear(S.Base.X), SrgbToLinear(S.Base.Y), SrgbToLinear(S.Base.Z)) : S.Base;
+		FVector4f Cd = ClassData(P, Class);
+		if (R.Class == EPixelClass::Terrain)
+		{
+			const FLandCoverSample L = SampleLandCover(P, S.LandCover, Pw);
+			if (L.bInside)
+			{
+				Cd = BlendLandCover(P, L, Base, S.bHasBase && P.bLandCoverRefine != 0u);
+				R.bLandCover = true;
+			}
+		}
+		float T = Cd.X + Offset;
 		if (S.bHasBase && P.KFastScale > 0.0f)
 		{
-			const FVector3f Base = (P.bBaseColorSrgb != 0u)
-				? FVector3f(SrgbToLinear(S.Base.X), SrgbToLinear(S.Base.Y), SrgbToLinear(S.Base.Z)) : S.Base;
 			const float BaseLum = Lum709(Base);
 			const float E = FMath::Clamp(PiF * Lum709(S.Color) / (FMath::Max(BaseLum, 0.03f) * FMath::Max(P.KLum, 1e-6f)), 0.0f, P.EClampWm2);
 			const float SAbs = (1.0f - FMath::Clamp(BaseLum, 0.0f, 1.0f)) * E;
-			T += P.KFastScale * P.ClassKFast[Class] * (SAbs - P.ClassSAbsRef[Class]);
+			T += P.KFastScale * Cd.Z * (SAbs - Cd.W);
 		}
-		const float Eps = P.ClassEmissivity[Class];
+		const float Eps = Cd.Y;
 		const float LSurf = Eps * LutRadiance(P, T) + (1.0f - Eps) * P.SkyHemiRadiance;
 		const float Tau = FMath::Exp(-P.BetaPerCm * Range);
 		R.TempK = T;
@@ -102,6 +194,7 @@ namespace CamSimThermalRef
 		check(In.SceneColor->Num() == In.W * In.H);
 		check(In.SceneDepth->Num() == In.DepthW * In.DepthH && In.CustomDepth->Num() == In.DepthW * In.DepthH && In.Stencil->Num() == In.DepthW * In.DepthH);
 		check(!In.BaseColor || In.BaseColor->Num() == In.DepthW * In.DepthH);
+		check(!In.LandCover || In.LandCover->Num() == static_cast<int32>(P.LandCoverTexels * P.LandCoverTexels));
 		TArray<FPixelResult> Out;
 		Out.SetNum(In.W * In.H);
 		for (int32 Y = 0; Y < In.H; ++Y)
@@ -125,6 +218,7 @@ namespace CamSimThermalRef
 					S.Base = FVector3f(B.R, B.G, B.B);
 					S.bHasBase = true;
 				}
+				S.LandCover = In.LandCover ? In.LandCover->GetData() : nullptr;
 				Out[Y * In.W + X] = EvaluatePixel(P, S);
 			}
 		}
