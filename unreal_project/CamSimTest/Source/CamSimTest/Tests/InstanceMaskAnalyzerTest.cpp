@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "GroundTruth/InstanceMaskAnalyzer.h"
+#include "HAL/PlatformTime.h"
+#include "CamSimTest.h"
 
 namespace
 {
@@ -125,5 +127,75 @@ bool FAnalyzerSizeMismatchTest::RunTest(const FString&)
 	FInstanceIdImage Empty;
 	FInstanceMaskAnalyzer::Analyze(Empty, E, 1, true);
 	TestEqual(TEXT("still kept"), E.Num(), 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnalyzerDuplicateStencilTest, "CamSim.GroundTruth.Analyzer.DuplicateStencilFallsBack",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FAnalyzerDuplicateStencilTest::RunTest(const FString&)
+{
+	FInstanceIdImage I = MakeImage(8, 2);
+	for (int32 X = 0; X < 4; ++X) Set(I, X, 0, 3, 3);
+	Set(I, 6, 1, 4, 4);
+	AddExpectedError(TEXT("stencil value shared"), EAutomationExpectedErrorFlags::Contains, 0);
+	TArray<FEntityAnnotationData> E = { Tagged(3, 1), Tagged(3, 2), Tagged(4, 3) };
+	FInstanceMaskAnalyzer::Analyze(I, E, 1, true);
+	if (!TestEqual(TEXT("all kept"), E.Num(), 3)) return false;
+	TestFalse(TEXT("dup A not measured"), E[0].bMaskMeasured);
+	TestFalse(TEXT("dup B not measured"), E[1].bMaskMeasured);
+	TestTrue(TEXT("unique still measured"), E[2].bMaskMeasured);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnalyzerCornerRleTest, "CamSim.GroundTruth.Analyzer.CornerRle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FAnalyzerCornerRleTest::RunTest(const FString&)
+{
+	// W=6, H=4, column-major: (0,0) -> 0,1,23 ; (5,3) -> 23,1
+	FInstanceIdImage I = MakeImage(6, 4); Set(I, 0, 0, 2, 2);
+	TArray<FEntityAnnotationData> E = { Tagged(2, 1) };
+	FInstanceMaskAnalyzer::Analyze(I, E, 1, true);
+	TestEqual(TEXT("top-left"), E[0].SegmentationRle, CamSimMask::EncodeCocoRle({ 0, 1, 23 }));
+	FInstanceIdImage J = MakeImage(6, 4); Set(J, 5, 3, 2, 2);
+	TArray<FEntityAnnotationData> F = { Tagged(2, 1) };
+	FInstanceMaskAnalyzer::Analyze(J, F, 1, true);
+	TestEqual(TEXT("bottom-right"), F[0].SegmentationRle, CamSimMask::EncodeCocoRle({ 23, 1 }));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnalyzerEmptyAmodalTest, "CamSim.GroundTruth.Analyzer.EmptyAmodalUsesModal",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FAnalyzerEmptyAmodalTest::RunTest(const FString&)
+{
+	FInstanceIdImage I = MakeImage(8, 2);
+	Set(I, 2, 1, 3, 0); Set(I, 3, 1, 3, 0);
+	TArray<FEntityAnnotationData> E = { Tagged(3, 1) };
+	FInstanceMaskAnalyzer::Analyze(I, E, 1, false);
+	if (!TestEqual(TEXT("kept"), E.Num(), 1)) return false;
+	TestEqual(TEXT("amodal falls back to modal count"), E[0].AmodalPixels, 2);
+	TestEqual(TEXT("amodal box max x"), E[0].AmodalBBox.Max.X, 4.0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnalyzerPerf1080pTest, "CamSim.GroundTruth.Analyzer.Perf1080p",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FAnalyzerPerf1080pTest::RunTest(const FString&)
+{
+	FInstanceIdImage I = MakeImage(1920, 1080);
+	for (int32 Y = 300; Y < 400; ++Y) for (int32 X = 400; X < 600; ++X) Set(I, X, Y, 1, 1);
+	for (int32 Y = 600; Y < 700; ++Y) for (int32 X = 1200; X < 1400; ++X) Set(I, X, Y, 2, 2);
+	TArray<double> Ms;
+	for (int32 R = 0; R < 5; ++R)
+	{
+		TArray<FEntityAnnotationData> E = { Tagged(1, 1), Tagged(2, 2) };
+		const double T0 = FPlatformTime::Seconds();
+		FInstanceMaskAnalyzer::Analyze(I, E, 1, true);
+		Ms.Add((FPlatformTime::Seconds() - T0) * 1000.0);
+		if (!TestEqual(TEXT("both measured"), E.Num(), 2)) return false;
+		TestEqual(TEXT("visible px"), E[0].VisiblePixels, 20000);
+	}
+	Ms.Sort();
+	UE_LOG(LogCamSim, Display, TEXT("Analyzer 1080p median %.3f ms"), Ms[2]);
+	TestTrue(TEXT("median < 15 ms"), Ms[2] < 15.0);
 	return true;
 }
