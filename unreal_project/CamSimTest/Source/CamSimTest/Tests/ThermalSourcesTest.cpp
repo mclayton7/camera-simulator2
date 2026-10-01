@@ -9,6 +9,7 @@
 #include "Ocean/OceanWaves.h"
 #include "Thermal/ThermalFrameBuilder.h"
 #include "Thermal/ThermalFrameSources.h"
+#include "Thermal/LandCoverWindow.h"
 
 // CamSim.Thermal.Sources.*: world → FThermalFrameInputs helpers (ROADMAP 4A).
 
@@ -141,5 +142,40 @@ bool FThermalSourcesSurfaceVehicleTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("category boat"),        ACamSimEntity::IsSurfaceVehicleClass({}, TEXT("boat")));
 	TestFalse(TEXT("category character"),  ACamSimEntity::IsSurfaceVehicleClass({}, TEXT("character")));
 	TestFalse(TEXT("category vehicle"),    ACamSimEntity::IsSurfaceVehicleClass({ 1, 2, 2 }, TEXT("vehicle")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalSourcesLandCoverTest, "CamSim.Thermal.Sources.LandCoverInputSanitized",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalSourcesLandCoverTest::RunTest(const FString& Parameters)
+{
+	const double NaN = std::numeric_limits<double>::quiet_NaN();
+	FLandCoverWindowData W;
+	W.Id = 3;
+	W.Spec.CentreLatDeg = 37.79; W.Spec.CentreLonDeg = -122.475; W.Spec.Texels = 2048; W.Spec.TexelM = 10.0f;
+	W.NonZeroTexels = 100;
+	FThermalFrameInputs In;
+	TestTrue(TEXT("valid window accepted"), CamSimThermal::SetLandCover(In, &W, FVector(2, 0, 0), FVector(0, -3, 0)));
+	TestTrue(TEXT("bValid"), In.LandCover.bValid);
+	TestEqual(TEXT("id"), In.LandCover.WindowId, 3u);
+	TestEqual(TEXT("centre lat"), In.LandCover.CentreLatDeg, 37.79);
+	TestEqual(TEXT("texels"), In.LandCover.Texels, 2048);
+	TestTrue(TEXT("axes normalised"), In.LandCover.EastWorld.Equals(FVector(1, 0, 0), 1e-12) && In.LandCover.NorthWorld.Equals(FVector(0, -1, 0), 1e-12));
+	auto Rejects = [&](const FLandCoverWindowData* Win, const FVector& E, const FVector& N)
+	{
+		FThermalFrameInputs X;
+		const bool bOk = CamSimThermal::SetLandCover(X, Win, E, N);
+		return !bOk && !X.LandCover.bValid;
+	};
+	TestTrue(TEXT("no window"), Rejects(nullptr, FVector(1, 0, 0), FVector(0, -1, 0)));
+	FLandCoverWindowData Empty = W;
+	Empty.NonZeroTexels = 0;
+	TestTrue(TEXT("window without data"), Rejects(&Empty, FVector(1, 0, 0), FVector(0, -1, 0)));
+	FLandCoverWindowData NoId = W;
+	NoId.Id = 0;
+	TestTrue(TEXT("window id 0"), Rejects(&NoId, FVector(1, 0, 0), FVector(0, -1, 0)));
+	TestTrue(TEXT("NaN east"), Rejects(&W, FVector(NaN, 0, 0), FVector(0, -1, 0)));
+	TestTrue(TEXT("zero north"), Rejects(&W, FVector(1, 0, 0), FVector::ZeroVector));
+	TestTrue(TEXT("axes not at right angles"), Rejects(&W, FVector(1, 0, 0), FVector(1, 1, 0)));
 	return true;
 }

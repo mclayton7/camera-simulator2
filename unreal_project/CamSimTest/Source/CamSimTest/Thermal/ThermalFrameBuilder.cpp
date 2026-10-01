@@ -2,6 +2,7 @@
 
 #include "Thermal/ThermalFrameBuilder.h"
 #include "Thermal/ThermalSky.h"
+#include "Thermal/LandCoverGeometry.h"
 #include "Time/SimClock.h"
 
 static_assert(FThermalMaterialTable::MaxClasses == FThermalFrameParams::MaxClasses, "class table sizes must agree");
@@ -33,9 +34,14 @@ void FThermalFrameBuilder::Configure(const FCamSimConfig::FThermalConfig& Cfg, f
 	{
 		Band.Build(BandLoUm, BandHiUm);
 	}
-	if (!bConfigured || !(Config.Materials == Cfg.Materials))
+	const bool bMaterials = !bConfigured || !(Config.Materials == Cfg.Materials);
+	if (bMaterials)
 	{
 		PendingWarnings.Append(Materials.Build(Cfg.Materials));
+	}
+	if (bMaterials || !(Config.LandCover.Classes == Cfg.LandCover.Classes))
+	{
+		PendingWarnings.Append(LandCoverTable.Build(Cfg.LandCover.Classes, Materials));
 	}
 	Config = Cfg;
 	bConfigured = true;
@@ -147,4 +153,47 @@ void FThermalFrameBuilder::Build(const FThermalFrameInputs& In, FThermalFramePar
 	Out.SeaRadiusCm = static_cast<float>(GaussianRadiusM(In.CamLatDeg) * 100.0);
 	Out.WaterBandCm = static_cast<float>((WaterBandBaseM + FMath::Max(In.MaxWaveAmplitudeM, 0.0)) * 100.0);
 	Out.InputScale  = 1.0f;
+
+	// Land cover (ROADMAP 4B). The tables and thresholds are filled every frame; without an enabled, valid window the mapping
+	// fields are reset to their defaults and bLandCover = 0, so ThermalCS runs 4A's terrain path.
+	FMemory::Memcpy(Out.LandCoverClass, LandCoverTable.Class, sizeof(Out.LandCoverClass));
+	FMemory::Memcpy(Out.LandCoverFamily, LandCoverTable.Family, sizeof(Out.LandCoverFamily));
+	Out.VegetationClass  = FThermalMaterialTable::Vegetation;
+	Out.BareSoilClass    = FThermalMaterialTable::BareSoil;
+	Out.AsphaltClass     = FThermalMaterialTable::Asphalt;
+	Out.ConcreteClass    = FThermalMaterialTable::Concrete;
+	Out.VegIndexLo       = Config.LandCover.VegIndexLo;
+	Out.VegIndexHi       = Config.LandCover.VegIndexHi;
+	Out.AsphaltMaxLuma   = Config.LandCover.AsphaltMaxLuma;
+	Out.AsphaltRampLuma  = AsphaltRampLuma;
+	Out.bLandCoverRefine = In.bBaseColorAvailable ? 1u : 0u;   // not the fast term: base colour is valid at night too
+	const FThermalLandCoverInput& L = In.LandCover;
+	if (Config.LandCover.bEnabled && L.bValid && L.WindowId != 0u && L.Texels >= 2 && L.TexelM > 0.0f
+		&& CamSimLandCover::IsWindowAllowed(L.CentreLatDeg))
+	{
+		CamSimLandCover::FWindowSpec Spec;
+		Spec.CentreLatDeg = L.CentreLatDeg;
+		Spec.CentreLonDeg = L.CentreLonDeg;
+		Spec.Texels = L.Texels;
+		Spec.TexelM = L.TexelM;
+		const FVector2D Off = CamSimLandCover::GeodeticToWindowEN(Spec, In.CamLatDeg, In.CamLonDeg);   // doubles
+		Out.bLandCover          = 1u;
+		Out.LandCoverWindowId   = L.WindowId;
+		Out.LandCoverEast       = FVector3f(L.EastWorld);
+		Out.LandCoverNorth      = FVector3f(L.NorthWorld);
+		Out.LandCoverCamOffsetM = FVector2f(static_cast<float>(Off.X), static_cast<float>(Off.Y));
+		Out.LandCoverTexelM     = L.TexelM;
+		Out.LandCoverTexels     = static_cast<uint32>(L.Texels);
+	}
+	else
+	{
+		static const FThermalFrameParams LandCoverOff;
+		Out.bLandCover          = 0u;
+		Out.LandCoverWindowId   = 0u;
+		Out.LandCoverEast       = LandCoverOff.LandCoverEast;
+		Out.LandCoverNorth      = LandCoverOff.LandCoverNorth;
+		Out.LandCoverCamOffsetM = LandCoverOff.LandCoverCamOffsetM;
+		Out.LandCoverTexelM     = LandCoverOff.LandCoverTexelM;
+		Out.LandCoverTexels     = LandCoverOff.LandCoverTexels;
+	}
 }

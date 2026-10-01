@@ -8,6 +8,8 @@ class UWorld;
 class UCamSimSubsystem;
 class FOceanWaves;
 struct FThermalFrameInputs;
+struct FLandCoverWindowData;
+class ACesiumGeoreference;
 
 /**
  * The running world → FThermalFrameInputs (ROADMAP 4A): CIGI atmosphere/weather (via ACamSimEnvironment's snapshot),
@@ -32,6 +34,14 @@ namespace CamSimThermal
 	CAMSIMTEST_API void SetSea(FThermalFrameInputs& Out, TOptional<double> SeaLevelHaeM, double MaxWaveAmplitudeM);
 	/** Non-finite or negative illuminance → 0. */
 	CAMSIMTEST_API double SanitizeLux(double Lux);
+
+	/** The land-cover window this frame maps against (ROADMAP 4B). No window, a window without data or id, or axes that aren't
+	 *  finite, non-zero and at right angles (|E.N| <= 1e-3 after normalising) leave Out.LandCover invalid (land cover off).
+	 *  Returns whether it was accepted. */
+	CAMSIMTEST_API bool SetLandCover(FThermalFrameInputs& Out, const FLandCoverWindowData* Window, const FVector& EastWorld, const FVector& NorthWorld);
+	/** East and North (UE world) at a geodetic point from the Cesium georeference: the East-South-Up frame there, South negated.
+	 *  Called every frame (Cesium origin shifting rotates the UE axes). Game thread. */
+	CAMSIMTEST_API void LandCoverAxesWorld(const ACesiumGeoreference& Geo, double LatDeg, double LonDeg, FVector& OutEast, FVector& OutNorth);
 
 	/** World → FThermalFrameInputs (game thread). Fields it cannot read keep their defaults. */
 	CAMSIMTEST_API void GatherFrameInputs(UWorld* World, const UCamSimSubsystem& Subsystem, double CamLatDeg, double CamLonDeg,
