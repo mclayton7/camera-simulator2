@@ -1131,10 +1131,10 @@ skeletal/anim mesh components (~1,000 `USkinnedMeshComponent` ticks per frame at
 game thread); disabling tick on the unused components is a cheap follow-up.
 
 *Deployment terrain settings* (decided 2026-10-01, `scripts/bench/snap_test.py`, 1080p, pinned): after a
-90° snap the defaults are sharp within 0.3 s (80–86% of the settled sharpness); `frustum_culling: true`
-shows holes (missing shoreline) and coarse tiles at 0.3 s (30%) and settles by ~3 s, for game p50 1.3 vs
-2.9 ms; SSE 24 has no holes but stays ~63% as sharp for good (coarser tiles carry coarser imagery), game
-p50 1.9 ms. **Defaults kept**; frustum culling is the opt-in for snap-free, budget-limited setups; guidance
+90° snap the defaults are sharp within 0.3 s (86% of the settled sharpness); `frustum_culling: true`
+shows holes (missing shoreline) and coarse tiles at 0.3 s (30–34%) and settles by ~3 s, for game p50 1.3 vs
+2.9 ms; SSE 24 has no holes but stays at 63–79% of the default sharpness for good (coarser tiles carry
+coarser imagery), game p50 1.9 ms. **Defaults kept**; frustum culling is the opt-in for snap-free, budget-limited setups; guidance
 table in `docs/configuration.md` (Cesium Tile Streaming). Untested: `ForbidHoles` (hard-coded off in
 `CesiumTuning.cpp` because it grows the render set during motion) would remove the holes under frustum culling. Found on
 the way: `stress_entity_rendering.py` and `test_entity_rendering.py` defaulted `--camera-id` to 0 while

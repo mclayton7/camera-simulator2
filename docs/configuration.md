@@ -300,13 +300,13 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 
 **Choosing the terrain settings for a deployment** (Linux, RTX 5080, Docker, 1080p, one terrain
 tileset, P-core pinned; 2026-10-01; `scripts/bench/snap_test.py`, 90° gimbal snaps at 3 km over SF;
-sharpness = edge variance of the frame, final view ≈ 100%):
+sharpness = edge variance of the frame, as % of the defaults' settled view; two snaps each):
 
 | Setting | Game thread p50 (settled) | Frame +0.3 s after a snap | +1 s | +3 s |
 | --- | --- | --- | --- | --- |
-| Defaults (`frustum_culling: false`, SSE 16) | 2.9 ms | sharp (80–86%) | 96% | 100% |
-| `frustum_culling: true` | 1.3 ms | holes (missing shore) and coarse city (30%) | 77% | 100% |
-| `maximum_screen_space_error: 24` | 1.9 ms | no holes, but soft (55–64%) | 61% | **63%: permanently softer** |
+| Defaults (`frustum_culling: false`, SSE 16) | 2.9 ms | sharp (86%) | 96–99% | 100% |
+| `frustum_culling: true` | 1.3 ms | holes (missing shore) and coarse city (30–34%) | 77–82% | ~100% |
+| `maximum_screen_space_error: 24` | 1.9 ms | no holes, but soft (56–67%) | 61–75% | **63–79%: permanently softer** |
 
 Keep the defaults for training/ISR imagery: they are the only setting without visible artifacts,
 and the budget allows them (1080p game thread p99 ~10 ms; 500 entities ~14.5 ms, under 50%). Turn
