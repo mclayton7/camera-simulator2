@@ -81,6 +81,10 @@ struct UCamSimSubsystem::FSubsystemImpl
 	// IG frame counter — incremented each tick; sent in every SOF packet
 	uint32 FrameCntr = 0;
 
+	// The CIGI datagram staged by Tick() and not yet sent by FlushCigiFrame(), with its frame number.
+	bool   bCigiFramePending = false;
+	uint32 PendingCigiFrameCntr = 0;
+
 	// Encoder watchdog
 	uint64 WatchdogLastSuccessFrame = 0;
 	uint64 WatchdogLastCapturedFrame = 0;
@@ -456,11 +460,15 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		Config.SecurityMetadata.Caveats,
 		Config.SecurityMetadata.ReleasingInstructions);
 
-	// Phase 26: configure KLV tail number and target gate
+	// Phase 26: configure KLV identity strings (Tags 3, 4, 10, 59) and target gate
 	FKlvBuilder::Configure(
 		Config.Phase26.PlatformTailNumber,
 		Config.Phase26.TargetTrackGateWidth,
-		Config.Phase26.TargetTrackGateHeight);
+		Config.Phase26.TargetTrackGateHeight,
+		Config.Phase26.MissionId,
+		Config.Phase26.PlatformDesignation,
+		Config.Phase26.PlatformCallSign,
+		Config.Phase26.bKlvFullRangeAttitude);
 
 	// Phase 13B: allocate Pimpl — all sub-objects owned via TUniquePtr
 	Impl = MakePimpl<FSubsystemImpl>();
@@ -765,6 +773,43 @@ void UCamSimSubsystem::Deinitialize()
 }
 
 // -------------------------------------------------------------------------
+// FlushCigiFrame
+// -------------------------------------------------------------------------
+
+void UCamSimSubsystem::FlushCigiFrame()
+{
+	if (!Impl || !Impl->bCigiFramePending) return;
+	Impl->bCigiFramePending = false;
+	if (!Impl->CigiSender) return;
+
+	// Stage Sensor Extended Response from camera telemetry
+	if (ACamSimCamera* Cam = Camera_.Get())
+	{
+		const FCamSimTelemetry& Telem = Cam->GetTelemetry();
+		// SensorStat: 1=Tracking when sensor is on, 0=Searching when off.
+		// SensorComp is private on ACamSimCamera; go through the public accessor.
+		UCamSimSensorComponent* SensorComp = Cam->GetSensorComp();
+		const uint8 SensorStat = (SensorComp && SensorComp->IsOn()) ? 1 : 0;
+		// GateXoff/GateYoff: 0.0 = centered (no pixel-level tracking)
+		Impl->CigiSender->SetSensorResponse(
+			0,                           // ViewId
+			Telem.SensorMode,            // SensorId (0=EO, 1=IR)
+			SensorStat,
+			0.0f, 0.0f,                  // GateXoff, GateYoff (centered)
+			0, 0,                        // GateSzX, GateSzY (no gate dimensions)
+			Telem.FrameCenterLat,        // TrackPntLat (degrees)
+			Telem.FrameCenterLon,        // TrackPntLon (degrees)
+			Telem.FrameCenterElev,       // TrackPntAlt (metres)
+			Impl->PendingCigiFrameCntr
+		);
+	}
+
+	// Flush SOF + all staged responses into one UDP datagram
+	const uint32 LastHostFrame = Impl->CigiReceiver ? Impl->CigiReceiver->GetLastHostFrame() : 0;
+	Impl->CigiSender->FlushFrame(Impl->PendingCigiFrameCntr, LastHostFrame, Impl->IGMode);
+}
+
+// -------------------------------------------------------------------------
 // Tick
 // -------------------------------------------------------------------------
 
@@ -816,6 +861,9 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		Impl->SensorSnapshotService->Tick(FPlatformTime::Seconds());
 	}
 
+	// The camera didn't send last frame's datagram (it didn't tick): send it now.
+	FlushCigiFrame();
+
 	// Drain HAT/HOT + LOS query queues and stage responses
 	if (Impl->QueryHandler)
 	{
@@ -830,36 +878,13 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: IG mode -> Operate (first CIGI packet received)"));
 	}
 
-	// Stage Sensor Extended Response from camera telemetry
-	if (Impl->CigiSender)
+	// Stage this frame's datagram (SOF + responses). The camera sends it from its
+	// tick, after computing this frame's frame centre; without one, send it now.
+	Impl->bCigiFramePending    = true;
+	Impl->PendingCigiFrameCntr = Impl->FrameCntr;
+	if (!Camera_.Get())
 	{
-		if (ACamSimCamera* Cam = Camera_.Get())
-		{
-			FCamSimTelemetry Telem = Cam->GetCurrentTelemetry();
-			// SensorStat: 1=Tracking when sensor is on, 0=Searching when off.
-			// SensorComp is private on ACamSimCamera; go through the public accessor.
-			UCamSimSensorComponent* SensorComp = Cam->GetSensorComp();
-			const uint8 SensorStat = (SensorComp && SensorComp->IsOn()) ? 1 : 0;
-			// GateXoff/GateYoff: 0.0 = centered (no pixel-level tracking)
-			Impl->CigiSender->SetSensorResponse(
-				0,                           // ViewId
-				Telem.SensorMode,            // SensorId (0=EO, 1=IR)
-				SensorStat,
-				0.0f, 0.0f,                  // GateXoff, GateYoff (centered)
-				0, 0,                        // GateSzX, GateSzY (no gate dimensions)
-				Telem.FrameCenterLat,        // TrackPntLat (degrees)
-				Telem.FrameCenterLon,        // TrackPntLon (degrees)
-				Telem.FrameCenterElev,       // TrackPntAlt (metres)
-				Impl->FrameCntr
-			);
-		}
-	}
-
-	// Flush SOF + all staged responses into one UDP datagram
-	if (Impl->CigiSender)
-	{
-		const uint32 LastHostFrame = Impl->CigiReceiver ? Impl->CigiReceiver->GetLastHostFrame() : 0;
-		Impl->CigiSender->FlushFrame(Impl->FrameCntr, LastHostFrame, Impl->IGMode);
+		FlushCigiFrame();
 	}
 
 	// -----------------------------------------------------------------------

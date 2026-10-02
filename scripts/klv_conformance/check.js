@@ -35,8 +35,26 @@ const { extractKlvFromTs, captureUdp } = require('./mpegts')
 const ST0601_KEY = st0601.key
 
 // Tags CamSim emits. Anything else in a decoded packet is a failure.
-const KNOWN_TAGS = new Set([1, 2, 4, 5, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-	23, 24, 25, 43, 44, 47, 48, 56, 65, 75, 78])
+const KNOWN_TAGS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+	23, 24, 25, 35, 36, 37, 39, 43, 44, 47, 48, 55, 56, 59, 64, 65, 75, 78, 79, 80,
+	82, 83, 84, 85, 86, 87, 88, 89, 90, 91])
+
+// Tags 90/91 (Platform Pitch/Roll Angle, Full; sent only with phase26.klv_full_range_attitude)
+// are int32 mapped to ±90° in ST 0601, but
+// misb.js 0.1.30 reads only their first two bytes (readInt16BE on a 4-byte value) and so
+// decodes every angle as ~0°. Decode them from the raw value per ST 0601 instead; misb.js
+// must still accept the packet (it checks they are 4 bytes).
+const FULL_ANGLE_TAGS = new Set([90, 91])
+const decodeFullAngle = buf => buf.readInt32BE(0) * 90 / 2147483647
+
+// ISA static pressure at an MSL altitude from the sea-level value (Tag 37), as
+// FKlvBuilder::StaticPressureMb computes it.
+function staticPressure(seaLevelMb, mslM) {
+	const h = Math.min(Math.max(mslM, -900), 20000)
+	let ratio = Math.pow(1 - 2.25577e-5 * Math.min(h, 11000), 5.25588)
+	if (h > 11000) ratio *= Math.exp(-(h - 11000) / 6341.62)
+	return seaLevelMb * ratio
+}
 
 // EGM96 geoid height above WGS-84 (m), bilinear over the same 15' grid CamSim
 // ships, implemented independently of CamSim's C++ (Geospatial/Geoid.cpp). Tags 15/25
@@ -68,6 +86,12 @@ const LSB = {
 	az: 360 / 4294967295,
 	elev: 360 / 4294967294,
 	range: 5000000 / 4294967295,
+	fullAngle: 180 / 4294967294,
+	windDir: 360 / 65535,
+	windSpeed: 100 / 255,
+	pressure: 5000 / 65535,
+	humidity: 100 / 255,
+	velocity: 654 / 65534,
 }
 
 let failures = 0
@@ -83,7 +107,7 @@ function parseQuietly(buf) {
 	const original = console.debug
 	console.debug = (...args) => logs.push(args.join(' '))
 	try {
-		return { values: st0601.parse(buf), logs }
+		return { values: st0601.parse(buf, { payload: true }), logs }
 	} finally {
 		console.debug = original
 	}
@@ -98,6 +122,9 @@ function checkCommon(ctx, buf) {
 		return null
 	}
 	const values = parsed.values
+	for (const v of values) {
+		if (FULL_ANGLE_TAGS.has(v.key)) v.value = decodeFullAngle(v.packet)
+	}
 	const byKey = new Map(values.map(v => [v.key, v]))
 
 	if (values[0]?.key !== 2) fail(ctx, `first tag is ${values[0]?.key}, expected 2 (timestamp)`)
@@ -150,11 +177,20 @@ function checkPackets(path) {
 		if (!byKey) continue
 
 		equal(ctx, byKey, 2, t.timestampUs)
-		if (c.tail) equal(ctx, byKey, 4, c.tail)
-		else absent(ctx, byKey, 4, 'no tail number configured')
+		for (const [key, value, what] of [[3, c.mission, 'mission ID'], [4, c.tail, 'tail number'],
+			[10, c.designation, 'platform designation'], [59, c.callSign, 'call sign']]) {
+			if (value) equal(ctx, byKey, key, value)
+			else absent(ctx, byKey, key, `no ${what} configured`)
+		}
 		near(ctx, byKey, 5, ((t.yaw % 360) + 360) % 360, 1.5 * LSB.heading, { wrap: 360 })
-		near(ctx, byKey, 6, t.pitch, 1.5 * LSB.pitch)
-		near(ctx, byKey, 7, t.roll, 1.5 * LSB.roll)
+		near(ctx, byKey, 6, Math.max(-20, Math.min(20, t.pitch)), 1.5 * LSB.pitch)
+		near(ctx, byKey, 7, Math.max(-50, Math.min(50, t.roll)), 1.5 * LSB.roll)
+		if (c.fullRangeAttitude) {
+			near(ctx, byKey, 90, Math.max(-90, Math.min(90, t.pitch)), 1.5 * LSB.fullAngle)
+			near(ctx, byKey, 91, Math.max(-90, Math.min(90, t.roll)), 1.5 * LSB.fullAngle)
+		} else {
+			for (const key of [90, 91]) absent(ctx, byKey, key, 'klv_full_range_attitude is off')
+		}
 		equal(ctx, byKey, 11, t.sensorMode === 1 ? 'IR' : 'EO')
 		equal(ctx, byKey, 12, 'Geodetic WGS84')
 		near(ctx, byKey, 13, t.lat, 1.5 * LSB.lat)
@@ -201,7 +237,46 @@ function checkPackets(path) {
 
 		if (t.groundSpeed > 0) near(ctx, byKey, 56, t.groundSpeed, 0.5)
 		else absent(ctx, byKey, 56, 'ground speed is 0')
-		absent(ctx, byKey, 8, 'tag 8 is true airspeed, which CamSim does not model')
+
+		// Host kinematics (CIGI packet 201): Tag 8 is true airspeed, Tag 56 ground speed.
+		if (t.hasAirspeed) {
+			near(ctx, byKey, 8, t.tas, 0.5)
+			near(ctx, byKey, 9, t.ias, 0.5)
+		} else {
+			for (const key of [8, 9]) absent(ctx, byKey, key, 'no host airspeed')
+		}
+		if (t.hasMagHeading) near(ctx, byKey, 64, ((t.magHeading % 360) + 360) % 360, 1.5 * LSB.heading, { wrap: 360 })
+		else absent(ctx, byKey, 64, 'no host magnetic heading')
+		if (t.hasVelocity) {
+			near(ctx, byKey, 79, t.velN, 1.5 * LSB.velocity)
+			near(ctx, byKey, 80, t.velE, 1.5 * LSB.velocity)
+		} else {
+			for (const key of [79, 80]) absent(ctx, byKey, key, 'no host velocity')
+		}
+
+		// Weather at the platform, once the host has sent Atmosphere Control.
+		if (t.hasAtmosphere) {
+			near(ctx, byKey, 35, ((t.windDir % 360) + 360) % 360, 1.5 * LSB.windDir, { wrap: 360 })
+			near(ctx, byKey, 36, t.windSpeed, LSB.windSpeed)
+			near(ctx, byKey, 37, staticPressure(t.baroMb, t.alt - geoidUndulation(t.lat, t.lon)), LSB.pressure + 0.01)
+			equal(ctx, byKey, 39, Math.round(t.airTemp))
+			near(ctx, byKey, 55, t.humidity * 100, LSB.humidity)
+		} else {
+			for (const key of [35, 36, 37, 39, 55]) absent(ctx, byKey, key, 'no host atmosphere')
+		}
+
+		// Image corners 1-4 (Tags 82/83 ... 88/89): sent only for corners on the ground.
+		const corners = t.corners ?? [null, null, null, null]
+		corners.forEach((corner, i) => {
+			const [latKey, lonKey] = [82 + 2 * i, 83 + 2 * i]
+			if (corner) {
+				near(ctx, byKey, latKey, corner[0], 1.5 * LSB.lat)
+				near(ctx, byKey, lonKey, corner[1], 1.5 * LSB.lon)
+			} else {
+				absent(ctx, byKey, latKey, `corner ${i + 1} does not see the ground`)
+				absent(ctx, byKey, lonKey, `corner ${i + 1} does not see the ground`)
+			}
+		})
 
 		equal(ctx, byKey, 65, 9)
 	}

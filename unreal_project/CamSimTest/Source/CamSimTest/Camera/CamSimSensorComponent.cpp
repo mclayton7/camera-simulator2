@@ -3,7 +3,6 @@
 #include "Camera/CamSimSensorComponent.h"
 #include "CamSimTest.h"
 #include "CIGI/CigiPacketTypes.h"
-#include "CIGI/CigiReceiver.h"
 #include "Config/CamSimConfig.h"
 #include "Components/SceneCaptureComponent2D.h"
 
@@ -13,16 +12,13 @@ UCamSimSensorComponent::UCamSimSensorComponent()
 }
 
 // -------------------------------------------------------------------------
-// TickSensor — drain sensor control queue and update state
+// TickSensor — apply this frame's Sensor Control packets
 // -------------------------------------------------------------------------
 
-void UCamSimSensorComponent::TickSensor(FCigiReceiver* Receiver, const FCamSimConfig& Config,
-                                         USceneCaptureComponent2D* SceneCapture)
+void UCamSimSensorComponent::TickSensor(TConstArrayView<FCigiSensorControl> SensorControls,
+                                         const FCamSimConfig& Config, USceneCaptureComponent2D* SceneCapture)
 {
-	if (!Receiver) return;
-
-	FCigiSensorControl Sensor;
-	while (Receiver->DequeueSensorControl(Sensor))
+	for (const FCigiSensorControl& Sensor : SensorControls)
 	{
 		ApplySensorControl(Sensor, Config, SceneCapture);
 	}
@@ -79,9 +75,24 @@ float UCamSimSensorComponent::ApplySensorControl(const FCigiSensorControl& Senso
 		AppliedFov = SceneCapture->FOVAngle;
 	}
 
-	UE_LOG(LogCamSim, Log,
-		TEXT("UCamSimSensorComponent: sensor=%u mode=%u on=%d polarity=%u gain=%.2f"),
-		Sensor.SensorId, static_cast<uint8>(CurrentSensorMode), bSensorOn ? 1 : 0, SensorPolarity, Sensor.Gain);
+	// Hosts resend Sensor Control (up to every frame): log state changes only.
+	const bool bChanged = LastLoggedSensorId != static_cast<int32>(Sensor.SensorId)
+		|| bLastLoggedOn != bSensorOn || LastLoggedPolarity != SensorPolarity;
+	if (bChanged)
+	{
+		LastLoggedSensorId = Sensor.SensorId;
+		bLastLoggedOn      = bSensorOn;
+		LastLoggedPolarity = SensorPolarity;
+		UE_LOG(LogCamSim, Log,
+			TEXT("UCamSimSensorComponent: sensor=%u mode=%u on=%d polarity=%u gain=%.2f"),
+			Sensor.SensorId, static_cast<uint8>(CurrentSensorMode), bSensorOn ? 1 : 0, SensorPolarity, Sensor.Gain);
+	}
+	else
+	{
+		UE_LOG(LogCamSim, Verbose,
+			TEXT("UCamSimSensorComponent: sensor=%u mode=%u on=%d polarity=%u gain=%.2f (unchanged)"),
+			Sensor.SensorId, static_cast<uint8>(CurrentSensorMode), bSensorOn ? 1 : 0, SensorPolarity, Sensor.Gain);
+	}
 
 	return AppliedFov;
 }

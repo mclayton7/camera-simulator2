@@ -41,7 +41,7 @@ SPSC queues:
 ```
 FEntityCtrlProcessor::OnPacketReceived()
         │
-        ├─ EntityId == camera_entity_id ──► CameraEntityQueue ──► ACamSimCamera
+        ├─ EntityId == camera_entity_id ──► CameraFrameQueue  ──► ACamSimCamera
         │
         └─ all other EntityIds          ──► EntityStateQueue  ──► FCamSimEntityManager
 ```

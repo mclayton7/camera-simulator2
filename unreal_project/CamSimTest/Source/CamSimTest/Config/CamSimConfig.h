@@ -437,6 +437,19 @@ struct FCamSimConfig
 		// Tag 4: Platform Tail Number (ISO 646, up to 127 chars; empty = omit)
 		FString PlatformTailNumber;
 
+		// Tag 3: Mission ID (ISO 646, up to 127 chars; empty = omit)
+		FString MissionId;
+
+		// Tag 10: Platform Designation, e.g. "MQ-1B" (ISO 646, up to 127 chars; empty = omit)
+		FString PlatformDesignation;
+
+		// Tag 59: Platform Call Sign (ISO 646, up to 127 chars; empty = omit)
+		FString PlatformCallSign;
+
+		// Tags 90/91: full-range platform pitch/roll (int32, ±90°). Off by default:
+		// misb.js 0.1.30, the downstream reference decoder, decodes them as ~0°.
+		bool bKlvFullRangeAttitude = false;
+
 		// Tag 43: Target Track Gate Width (pixels, 0 = omit)
 		float TargetTrackGateWidth = 0.0f;
 

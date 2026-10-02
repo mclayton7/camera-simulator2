@@ -21,17 +21,17 @@ class CigiIGSession;
  *   - Binds a UDP socket on CigiPort
  *   - Feeds raw bytes into the CIGI Class Library (CCL) parser
  *   - Routes parsed packets into SPSC queues consumed by the game thread:
- *       CameraEntityQueue  – entity states for the camera entity (id == CameraEntityId)
+ *       CameraFrameQueue   – one FCigiCameraFrame per datagram (ACamSimCamera): the
+ *                            camera entity's Entity Control, View Control, View
+ *                            Definition, Sensor Control, camera Art Part and
+ *                            Platform Kinematics (user-defined packet 201), published
+ *                            together after the datagram is parsed (HITL.md gap 2)
  *       EntityStateQueue   – entity states for all other entities (FCamSimEntityManager)
- *       ViewDefQueue       – view definition packets (ACamSimCamera)
- *       SensorCtrlQueue    – sensor control packets  (ACamSimCamera)
- *       ViewCtrlQueue      – view control packets    (ACamSimCamera)
  *       CelestialQueue     – celestial control (UCamSimEnvironment)
  *       AtmosphereQueue    – atmosphere control (UCamSimEnvironment)
  *       WeatherQueue       – weather control    (UCamSimEnvironment)
  *       RateCtrlQueue      – rate control       (FCamSimEntityManager)
  *       ArtPartQueue       – art part control   (FCamSimEntityManager)
- *       CameraArtPartQueue – art part control targeting camera entity (ACamSimCamera)
  *       CompCtrlQueue      – component control  (FCamSimEntityManager)
  *
  * Thread safety: Only the game thread calls Dequeue*; only the receiver thread
@@ -69,17 +69,13 @@ public:
 #define CAMSIM_DEQUEUE(MethodName, QueueMember, OutType) \
 	bool MethodName(OutType& Out) { return QueueMember.Dequeue(Out); }
 
-	/** Camera entity states (EntityId == CameraEntityId). Consumed by ACamSimCamera. */
-	CAMSIM_DEQUEUE(DequeueCameraEntityState, CameraEntityQueue,   FCigiEntityState)
+	/**
+	 * Camera state from one datagram (pose, gimbal, FOV, sensor, kinematics),
+	 * oldest first. Consumed by ACamSimCamera at one point per frame.
+	 */
+	CAMSIM_DEQUEUE(DequeueCameraFrame,       CameraFrameQueue,    FCigiCameraFrame)
 	/** Non-camera entity states. Consumed by FCamSimEntityManager. */
 	CAMSIM_DEQUEUE(DequeueEntityState,       EntityStateQueue,    FCigiEntityState)
-	CAMSIM_DEQUEUE(DequeueViewDefinition,    ViewDefQueue,        FCigiViewDefinition)
-	/** Sensor control packets (opcode 17). Consumed by ACamSimCamera. */
-	CAMSIM_DEQUEUE(DequeueSensorControl,     SensorCtrlQueue,     FCigiSensorControl)
-	/** View control packets (opcode 16). Consumed by ACamSimCamera. */
-	CAMSIM_DEQUEUE(DequeueViewControl,       ViewCtrlQueue,       FCigiViewControl)
-	/** Art part packets for the camera entity. Consumed by ACamSimCamera (gimbal). */
-	CAMSIM_DEQUEUE(DequeueCameraArtPart,     CameraArtPartQueue,  FCigiArtPartControl)
 	CAMSIM_DEQUEUE(DequeueCelestialState,    CelestialQueue,      FCigiCelestialState)
 	CAMSIM_DEQUEUE(DequeueAtmosphereState,   AtmosphereQueue,     FCigiAtmosphereState)
 	CAMSIM_DEQUEUE(DequeueWeatherState,      WeatherQueue,        FCigiWeatherState)
@@ -149,7 +145,7 @@ private:
 	FCigiHostClock   HostClock;  // receiver thread only
 
 	// Bounded SPSC queues: receiver thread produces, game thread consumes.
-	// Camera entity is routed separately so ACamSimCamera and FCamSimEntityManager
+	// Camera packets are routed separately so ACamSimCamera and FCamSimEntityManager
 	// each have their own exclusive consumer, preserving SPSC invariant.
 	// Capacities are sized to absorb a ~1 s game-thread stall at typical CIGI
 	// fan-in without unbounded heap growth. Drop-newest on overflow.
@@ -157,17 +153,13 @@ private:
 	static constexpr int32 CigiControlQueueCapacity = 512;   // view/sensor/rate
 	static constexpr int32 CigiRequestQueueCapacity = 1024;  // HAT/HOT/LOS bursts
 
-	TBoundedSpscQueue<FCigiEntityState>      CameraEntityQueue  { CigiControlQueueCapacity };
+	TBoundedSpscQueue<FCigiCameraFrame>      CameraFrameQueue   { CigiControlQueueCapacity };  // one per datagram
 	TBoundedSpscQueue<FCigiEntityState>      EntityStateQueue   { CigiEntityQueueCapacity };
-	TBoundedSpscQueue<FCigiViewDefinition>   ViewDefQueue       { CigiControlQueueCapacity };
-	TBoundedSpscQueue<FCigiSensorControl>    SensorCtrlQueue    { CigiControlQueueCapacity };  // opcode 17
-	TBoundedSpscQueue<FCigiViewControl>      ViewCtrlQueue      { CigiControlQueueCapacity };  // opcode 16
 	TBoundedSpscQueue<FCigiCelestialState>   CelestialQueue     { CigiControlQueueCapacity };
 	TBoundedSpscQueue<FCigiAtmosphereState>  AtmosphereQueue    { CigiControlQueueCapacity };
 	TBoundedSpscQueue<FCigiWeatherState>     WeatherQueue       { CigiControlQueueCapacity };
 	TBoundedSpscQueue<FCigiRateControl>      RateCtrlQueue      { CigiEntityQueueCapacity };
 	TBoundedSpscQueue<FCigiArtPartControl>   ArtPartQueue       { CigiEntityQueueCapacity };
-	TBoundedSpscQueue<FCigiArtPartControl>   CameraArtPartQueue { CigiControlQueueCapacity };
 	TBoundedSpscQueue<FCigiComponentControl> CompCtrlQueue      { CigiEntityQueueCapacity };
 	TBoundedSpscQueue<FCigiHatHotRequest>    HatHotReqQueue     { CigiRequestQueueCapacity };  // opcode 24
 	TBoundedSpscQueue<FCigiLosSegRequest>    LosSegReqQueue     { CigiRequestQueueCapacity };  // opcode 25
@@ -204,6 +196,16 @@ private:
 	TUniquePtr<CigiBaseEventProcessor> MaritimeSurfaceProc;
 
 	bool CreateSocket();
+
+	/**
+	 * Parse one datagram: environment and user-defined packets raw, the rest
+	 * through CCL, then publish the camera packets as one FCigiCameraFrame.
+	 * Receiver thread only.
+	 */
+	void ProcessDatagram(uint8* Buf, int32 Len);
+
+	/** Camera packets of the datagram being parsed (receiver thread only). */
+	FCigiCameraFrame PendingCameraFrame;
 
 	// Phase 12E: CIGI input recording
 	// Raw UDP datagrams written as [uint64 timestamp_us][uint32 length][bytes...]

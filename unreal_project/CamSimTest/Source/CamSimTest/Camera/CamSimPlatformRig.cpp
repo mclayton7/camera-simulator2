@@ -3,7 +3,7 @@
 #include "Camera/CamSimPlatformRig.h"
 #include "Camera/CamSimTelemetryAssembler.h"
 #include "CamSimTest.h"
-#include "CIGI/CigiReceiver.h"
+#include "CIGI/CigiPacketTypes.h"
 #include "Config/CamSimConfig.h"
 #include "Entity/CamSimEntity.h"
 #include "Entity/CamSimEntityManager.h"
@@ -41,21 +41,9 @@ void FCamSimPlatformRig::Initialize(AActor* InOwner, UCesiumGlobeAnchorComponent
 	}
 }
 
-void FCamSimPlatformRig::ApplyHostPlatformState()
+void FCamSimPlatformRig::ApplyHostEntityState(const FCigiEntityState& State)
 {
-	if (HostStateFrame == GFrameCounter) return;
-	HostStateFrame = GFrameCounter;
-
-	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
-	if (!Receiver || !Anchor) return;
-
-	FCigiEntityState State;
-	bool bGotState = false;
-	while (Receiver->DequeueCameraEntityState(State))
-	{
-		bGotState = true;
-	}
-	if (!bGotState) return;
+	if (!Anchor) return;
 
 	if (FMath::IsNaN(State.Latitude) || FMath::IsNaN(State.Longitude) || FMath::IsNaN(State.Altitude) ||
 		FMath::IsNaN(State.Yaw) || FMath::IsNaN(State.Pitch) || FMath::IsNaN(State.Roll))

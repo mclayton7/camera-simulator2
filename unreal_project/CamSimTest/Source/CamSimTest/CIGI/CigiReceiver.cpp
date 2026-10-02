@@ -99,10 +99,11 @@ public:
 		State.HostTimeSec = Receiver->HostClock.Now();
 		// CIGI V3 EntityCtrl has no Kind/Domain/Category fields; leave at defaults (0).
 
-		// Route by entity ID: camera entity → CameraEntityQueue; others → EntityStateQueue
+		// Route by entity ID: camera entity → this datagram's camera frame; others → EntityStateQueue
 		if (State.EntityId == static_cast<uint16>(Receiver->Config.CameraEntityId))
 		{
-			Receiver->CameraEntityQueue.Enqueue(State);
+			Receiver->PendingCameraFrame.bHasPose = true;  // last one in the datagram wins
+			Receiver->PendingCameraFrame.Pose     = State;
 		}
 		else
 		{
@@ -132,7 +133,7 @@ public:
 		View.NearPlane = 0.1f;
 		View.FarPlane  = 1e6f;
 
-		Receiver->ViewDefQueue.Enqueue(View);
+		Receiver->PendingCameraFrame.ViewDefinitions.Add(View);
 	}
 };
 
@@ -198,10 +199,10 @@ public:
 		Art.Pitch      = static_cast<float>(Pkt->GetPitch());
 		Art.Yaw        = static_cast<float>(Pkt->GetYaw());
 
-		// Route to camera gimbal queue or general entity queue
+		// Route to the camera gimbal (this datagram's camera frame) or the entity queue
 		if (Art.EntityId == static_cast<uint16>(Receiver->Config.CameraEntityId))
 		{
-			Receiver->CameraArtPartQueue.Enqueue(Art);
+			Receiver->PendingCameraFrame.ArtParts.Add(Art);
 		}
 		else
 		{
@@ -252,7 +253,7 @@ public:
 		Sensor.TrackMode = static_cast<uint8>(Pkt->GetTrackMode());
 		Sensor.Gain      = static_cast<float>(Pkt->GetGain());
 
-		Receiver->SensorCtrlQueue.Enqueue(Sensor);
+		Receiver->PendingCameraFrame.SensorControls.Add(Sensor);
 	}
 };
 
@@ -284,7 +285,7 @@ public:
 		View.Pitch    = static_cast<float>(Pkt->GetPitch());
 		View.Yaw      = static_cast<float>(Pkt->GetYaw());
 
-		Receiver->ViewCtrlQueue.Enqueue(View);
+		Receiver->PendingCameraFrame.ViewControls.Add(View);
 	}
 };
 
@@ -413,7 +414,9 @@ public:
 };
 
 // -------------------------------------------------------------------------
-// Direct packet parsing for environment packets (opcodes 9, 10, 12).
+// Direct packet parsing for environment packets (opcodes 9, 10, 12) and the
+// user-defined Platform Kinematics packet (opcode 201; CCL skips user-defined
+// opcodes it has no handler for).
 //
 // CCL uses a "hold" mechanism (CigiHoldEnvCtrl) for Celestial and Atmosphere
 // packets that merges them before dispatching to event processors.  This makes
@@ -451,6 +454,15 @@ struct FReader
 		float F;
 		FMemory::Memcpy(&F, &Bits, sizeof(F));
 		return F;
+	}
+	double F64(const uint8* P) const
+	{
+		const uint64 Hi = U32(bBigEndian ? P : P + 4);
+		const uint64 Lo = U32(bBigEndian ? P + 4 : P);
+		const uint64 Bits = (Hi << 32) | Lo;
+		double D;
+		FMemory::Memcpy(&D, &Bits, sizeof(D));
+		return D;
 	}
 };
 
@@ -542,6 +554,28 @@ static void PreParseEnvPackets(const uint8* Buf, int32 Len, FCigiReceiver* Recei
 			State.VertWindSp    = R.F32(P + 40);
 			State.WindDir       = R.F32(P + 44);
 			Receiver->WeatherQueue.Enqueue(State);
+		}
+		else if (PktId == FCigiPlatformKinematics::Opcode && PktSize >= FCigiPlatformKinematics::PacketSize)
+		{
+			// Platform Kinematics (user-defined opcode 201, 48 bytes, hitl/PROTOCOL.md section 2)
+			// [2-3]entityId [4]flags [5-7]reserved [8]TAS [12]IAS [16]magHeading
+			// [20]velN [24]velE [28]velD (float) [32-39]sampleUtc (double) [40-47]reserved
+			FCigiPlatformKinematics K;
+			K.EntityId             = R.U16(P + 2);
+			K.Flags                = P[4];
+			K.TrueAirspeedMps      = R.F32(P + 8);
+			K.IndicatedAirspeedMps = R.F32(P + 12);
+			K.MagneticHeadingDeg   = R.F32(P + 16);
+			K.VelNorthMps          = R.F32(P + 20);
+			K.VelEastMps           = R.F32(P + 24);
+			K.VelDownMps           = R.F32(P + 28);
+			K.SampleUtcSec         = R.F64(P + 32);
+			// Only the camera platform carries KLV kinematics; other IDs are ignored.
+			if (K.EntityId == static_cast<uint16>(Receiver->Config.CameraEntityId))
+			{
+				Receiver->PendingCameraFrame.bHasKinematics = true;
+				Receiver->PendingCameraFrame.Kinematics     = K;
+			}
 		}
 
 		Pos += PktSize;
@@ -878,18 +912,7 @@ uint32 FCigiReceiver::Run()
 			PrevTimestamp = Timestamp;
 
 			++ReceivedPacketCount;
-			HostClock.BeginMessage(FPlatformTime::Seconds());
-			FCigiRawEnvParser::PreParseEnvPackets(RecvBuf, static_cast<int32>(Length), this);
-			try
-			{
-				IncomingMsg->ProcessIncomingMsg(reinterpret_cast<Cigi_uint8*>(RecvBuf), static_cast<int>(Length));
-			}
-			catch (const std::exception& Ex)
-			{
-				UE_LOG(LogCamSim, Warning,
-					TEXT("FCigiReceiver: CCL playback exception: %hs"), Ex.what());
-			}
-			catch (...) {}
+			ProcessDatagram(RecvBuf, static_cast<int32>(Length));
 		}
 		delete PlaybackFile;
 		UE_LOG(LogCamSim, Log, TEXT("FCigiReceiver: playback complete"));
@@ -922,29 +945,7 @@ uint32 FCigiReceiver::Run()
 				}
 			}
 
-			// Pre-parse environment packets directly from raw buffer
-			// (bypasses CCL's hold mechanism for celestial/atmos/weather)
-			HostClock.BeginMessage(FPlatformTime::Seconds());
-			FCigiRawEnvParser::PreParseEnvPackets(RecvBuf, BytesRead, this);
-
-			// Feed raw bytes to CCL parser for entity/view/other packets
-			// Phase 13C: catch typed exceptions for better diagnostics
-			try
-			{
-				IncomingMsg->ProcessIncomingMsg(reinterpret_cast<Cigi_uint8*>(RecvBuf), BytesRead);
-			}
-			catch (const std::exception& Ex)
-			{
-				UE_LOG(LogCamSim, Warning,
-					TEXT("FCigiReceiver: CCL exception parsing packet (%d bytes): %hs"),
-					BytesRead, Ex.what());
-			}
-			catch (...)
-			{
-				UE_LOG(LogCamSim, Warning,
-					TEXT("FCigiReceiver: CCL threw unknown exception parsing packet (%d bytes)"),
-					BytesRead);
-			}
+			ProcessDatagram(RecvBuf, BytesRead);
 		}
 		else
 		{
@@ -957,6 +958,45 @@ uint32 FCigiReceiver::Run()
 	}
 
 	return 0;
+}
+
+void FCigiReceiver::ProcessDatagram(uint8* Buf, int32 Len)
+{
+	PendingCameraFrame.Reset();
+
+	// Pre-parse environment and user-defined packets directly from the raw
+	// buffer (bypasses CCL's hold mechanism for celestial/atmos/weather).
+	HostClock.BeginMessage(FPlatformTime::Seconds());
+	FCigiRawEnvParser::PreParseEnvPackets(Buf, Len, this);
+
+	// Feed raw bytes to CCL parser for entity/view/other packets
+	// Phase 13C: catch typed exceptions for better diagnostics
+	try
+	{
+		IncomingMsg->ProcessIncomingMsg(reinterpret_cast<Cigi_uint8*>(Buf), Len);
+	}
+	catch (const std::exception& Ex)
+	{
+		UE_LOG(LogCamSim, Warning,
+			TEXT("FCigiReceiver: CCL exception parsing packet (%d bytes): %hs"), Len, Ex.what());
+	}
+	catch (...)
+	{
+		UE_LOG(LogCamSim, Warning,
+			TEXT("FCigiReceiver: CCL threw unknown exception parsing packet (%d bytes)"), Len);
+	}
+
+	// Publish the camera packets together (HITL.md gap 2). A sample time only
+	// describes the pose of its own datagram.
+	if (PendingCameraFrame.bHasKinematics && !PendingCameraFrame.bHasPose)
+	{
+		PendingCameraFrame.Kinematics.Flags &= ~FCigiPlatformKinematics::FlagSampleTime;
+	}
+	if (!PendingCameraFrame.IsEmpty())
+	{
+		CameraFrameQueue.Enqueue(MoveTemp(PendingCameraFrame));
+		PendingCameraFrame = FCigiCameraFrame();
+	}
 }
 
 void FCigiReceiver::Exit()
@@ -1016,17 +1056,13 @@ bool FCigiReceiver::CreateSocket()
 
 uint64 FCigiReceiver::GetTotalDropCount() const
 {
-	return CameraEntityQueue.GetDropCount()
+	return CameraFrameQueue.GetDropCount()
 	     + EntityStateQueue.GetDropCount()
-	     + ViewDefQueue.GetDropCount()
-	     + SensorCtrlQueue.GetDropCount()
-	     + ViewCtrlQueue.GetDropCount()
 	     + CelestialQueue.GetDropCount()
 	     + AtmosphereQueue.GetDropCount()
 	     + WeatherQueue.GetDropCount()
 	     + RateCtrlQueue.GetDropCount()
 	     + ArtPartQueue.GetDropCount()
-	     + CameraArtPartQueue.GetDropCount()
 	     + CompCtrlQueue.GetDropCount()
 	     + HatHotReqQueue.GetDropCount()
 	     + LosSegReqQueue.GetDropCount()

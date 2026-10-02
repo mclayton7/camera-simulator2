@@ -409,6 +409,10 @@ void ACamSimEnvironment::FoldAtmosphere(FAtmosphericSnapshot& S, const FCigiAtmo
 	if (FMath::IsFinite(A.Visibility) && A.Visibility > 0.0f) S.AtmosphericVisibilityM = A.Visibility;
 	if (FMath::IsFinite(A.Humidity)) S.RelativeHumidity = FMath::Clamp(A.Humidity / 100.0f, 0.0f, 1.0f);
 	S.bFogActive = S.AtmosphericVisibilityM < FogVisibilityM;
+	if (FMath::IsFinite(A.WindDir))     S.WindDirectionDeg = A.WindDir;
+	if (FMath::IsFinite(A.HorizWindSp)) S.WindSpeedMps     = FMath::Max(0.0f, A.HorizWindSp);
+	if (FMath::IsFinite(A.BaroPress) && A.BaroPress > 0.0f) S.BaroPressureMb = A.BaroPress;
+	S.bHostAtmosphere = true;
 }
 
 void ACamSimEnvironment::FoldWeather(FAtmosphericSnapshot& S, const FCigiWeatherState& W)

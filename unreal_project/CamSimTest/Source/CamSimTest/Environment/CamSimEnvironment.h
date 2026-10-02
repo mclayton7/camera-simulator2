@@ -56,12 +56,20 @@ public:
 		uint8 WeatherPrecipType      = 0;      // 0=none, 1=rain, 2=snow
 		float CloudCover01           = 0.0f;   // CIGI Weather Control coverage / 100, clamped (0 with no weather) (ROADMAP 4A)
 		bool  bFogActive             = false;  // atmosphere visibility < FogVisibilityM (ROADMAP 4A)
+		// Set once the host has sent Atmosphere Control; the KLV weather tags (35-37, 39, 55) need it.
+		bool  bHostAtmosphere        = false;
+		float WindDirectionDeg       = 0.0f;     // from, true north
+		float WindSpeedMps           = 0.0f;     // horizontal
+		float BaroPressureMb         = 1013.25f; // sea level
 	};
 
 	/** Visibility below which the atmosphere counts as fog (thermal path extinction, ROADMAP 4A). */
 	static constexpr float FogVisibilityM = 10000.0f;
 
-	/** CIGI Atmosphere Control → snapshot: air temperature (finite only), visibility (finite, > 0), humidity, fog. */
+	/**
+	 * CIGI Atmosphere Control → snapshot: air temperature (finite only), visibility (finite, > 0), humidity, fog,
+	 * wind and pressure (finite only), and marks the host atmosphere as received.
+	 */
 	static void FoldAtmosphere(FAtmosphericSnapshot& S, const FCigiAtmosphereState& A);
 	/** CIGI Weather Control (global) → snapshot cloud cover (coverage % / 100, clamped; non-finite → 0). */
 	static void FoldWeather(FAtmosphericSnapshot& S, const FCigiWeatherState& W);

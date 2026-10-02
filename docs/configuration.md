@@ -176,7 +176,7 @@ entity_types:
 | `cigi_port` | int | `8888` | `CAMSIM_CIGI_PORT` | UDP port for incoming CIGI 3.3 packets (Host -> IG). |
 | `cigi_response_addr` | string | `"127.0.0.1"` | `CAMSIM_CIGI_RESPONSE_ADDR` | Destination IP address for IG -> Host packets (SOF heartbeat, HAT/HOT responses, LOS responses). Set to the host simulation's IP. |
 | `cigi_response_port` | int | `8889` | `CAMSIM_CIGI_RESPONSE_PORT` | Destination UDP port for IG -> Host packets. |
-| `camera_entity_id` | int | `0` | -- | CIGI Entity ID that controls the camera. All other entity IDs are managed by the entity renderer. Must match the `--entity-id` value passed to `send_cigi_test.py`. |
+| `camera_entity_id` | int | `0` | `CAMSIM_CAMERA_ENTITY_ID` | CIGI Entity ID that controls the camera. All other entity IDs are managed by the entity renderer. Must match the `--entity-id` value passed to `send_cigi_test.py`. The user-defined Platform Kinematics packet (opcode 201, `hitl/PROTOCOL.md` §2) applies only with this Entity ID. |
 
 ### DIS Input (IEEE 1278.1)
 
@@ -324,14 +324,14 @@ Used as the initial camera pose before the first CIGI Entity Control packet arri
 
 ### Gimbal and Sensor (Phase 9)
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `gimbal_max_slew_rate` | float | `0.0` | Maximum gimbal slew rate in degrees per second. `0` means unlimited (instant). Applies to both yaw and pitch axes. |
-| `gimbal_pitch_min` | float | `-90.0` | Lower pitch limit in degrees (negative = looking down). |
-| `gimbal_pitch_max` | float | `30.0` | Upper pitch limit in degrees. |
-| `gimbal_yaw_min` | float | `-180.0` | Left yaw limit in degrees relative to platform heading. |
-| `gimbal_yaw_max` | float | `180.0` | Right yaw limit in degrees relative to platform heading. |
-| `sensor_fov_presets` | float[] | `[60.0, 20.0, 5.0]` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0-1.0) selects the preset by index. A preset is applied only when the gain selects a different one, so a host that resends the same gain keeps a View Definition FOV; a View Definition in the same frame as a preset change wins. |
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `gimbal_max_slew_rate` | float | `0.0` | `CAMSIM_GIMBAL_MAX_SLEW_RATE` | Maximum gimbal slew rate in degrees per second for CIGI Articulated Part Control on the camera entity (all three axes). `0` means unlimited (instant). View Control always snaps. |
+| `gimbal_pitch_min` | float | `-90.0` | `CAMSIM_GIMBAL_PITCH_MIN` | Lower pitch limit in degrees (negative = looking down). |
+| `gimbal_pitch_max` | float | `30.0` | `CAMSIM_GIMBAL_PITCH_MAX` | Upper pitch limit in degrees. A HITL host that owns the gimbal limits sets `90`. |
+| `gimbal_yaw_min` | float | `-180.0` | `CAMSIM_GIMBAL_YAW_MIN` | Left yaw limit in degrees relative to platform heading. Yaw is unwound to −180..180 before the limits, so View Control's 0–360 range works (270 = −90). |
+| `gimbal_yaw_max` | float | `180.0` | `CAMSIM_GIMBAL_YAW_MAX` | Right yaw limit in degrees relative to platform heading. Limits spanning 360° mean continuous yaw: a rate-limited slew takes the short way across ±180. Narrower limits are mechanical stops: the slew goes the long way round instead. |
+| `sensor_fov_presets` | float[] | `[60.0, 20.0, 5.0]` | `CAMSIM_SENSOR_FOV_PRESETS` | Horizontal FOV values in degrees, ordered wide to narrow. The Sensor Control packet's Gain field (0.0-1.0) selects the preset by index. A preset is applied only when the gain selects a different one, so a host that resends the same gain keeps a View Definition FOV; a View Definition in the same frame as a preset change wins. Empty (`[]`) ignores Gain: the FOV comes from View Definition only. The env var takes a comma-separated list (`60,20,5`, brackets optional); `none`, `off` or `[]` empties it. |
 
 ### Sensor Modes (per-waveband)
 
@@ -528,6 +528,21 @@ Embedded in every KLV packet as ST 0601 Tag 48. Required for STANAG 4609 complia
 | `security_metadata.caveats` | string | `""` | -- | Security caveats (optional). |
 | `security_metadata.releasing_instructions` | string | `""` | -- | Releasing instructions (optional). |
 
+### KLV Identity and Track Gate (`phase26:`)
+
+Optional MISB ST 0601 strings and the target track gate. Every string is ISO 646, up to
+127 characters; an empty value omits its tag. See [`klv-tags.md`](klv-tags.md).
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `phase26.mission_id` | string | `""` | `CAMSIM_MISSION_ID` | Tag 3, Mission ID. |
+| `phase26.platform_tail_number` | string | `""` | `CAMSIM_PLATFORM_TAIL_NUMBER` | Tag 4, Platform Tail Number. |
+| `phase26.platform_designation` | string | `""` | `CAMSIM_PLATFORM_DESIGNATION` | Tag 10, Platform Designation (e.g. `MQ-1B`). |
+| `phase26.platform_call_sign` | string | `""` | `CAMSIM_PLATFORM_CALL_SIGN` | Tag 59, Platform Call Sign. |
+| `phase26.klv_full_range_attitude` | bool | `false` | `CAMSIM_KLV_FULL_RANGE_ATTITUDE` | Send Tags 90/91 (full-range platform pitch/roll, ±90°) alongside Tags 6/7. Off by default: misb.js 0.1.30 decodes them as ≈0° (see [`klv-tags.md`](klv-tags.md)). |
+| `phase26.target_track_gate_width` | float | `0` | `CAMSIM_TARGET_TRACK_GATE_WIDTH` | Tag 43, gate width in pixels (0 = omit). |
+| `phase26.target_track_gate_height` | float | `0` | `CAMSIM_TARGET_TRACK_GATE_HEIGHT` | Tag 44, gate height in pixels (0 = omit). |
+
 ### Recording & Playback (Phase 12E)
 
 | Field | Type | Default | Env var | Description |
@@ -602,6 +617,15 @@ CAMSIM_CIGI_PORT=8888
 CAMSIM_CIGI_RESPONSE_ADDR=127.0.0.1
 CAMSIM_CIGI_RESPONSE_PORT=8889
 
+# Camera platform and gimbal
+CAMSIM_CAMERA_ENTITY_ID=1
+CAMSIM_GIMBAL_MAX_SLEW_RATE=0.0
+CAMSIM_GIMBAL_PITCH_MIN=-90.0
+CAMSIM_GIMBAL_PITCH_MAX=30.0
+CAMSIM_GIMBAL_YAW_MIN=-180.0
+CAMSIM_GIMBAL_YAW_MAX=180.0
+CAMSIM_SENSOR_FOV_PRESETS=60,20,5     # "none" = ignore Sensor Control Gain
+
 # Video output
 CAMSIM_MULTICAST_ADDR=239.1.1.1   # or 127.0.0.1 for unicast loopback test
 CAMSIM_MULTICAST_PORT=5004
@@ -638,6 +662,13 @@ CAMSIM_MAX_CACHED_MB=2048
 
 # Encoder (Phase 12B)
 CAMSIM_VIDEO_CODEC=h264
+
+# KLV identity (phase26:; empty = tag omitted)
+CAMSIM_MISSION_ID=
+CAMSIM_PLATFORM_TAIL_NUMBER=
+CAMSIM_PLATFORM_DESIGNATION=
+CAMSIM_PLATFORM_CALL_SIGN=
+CAMSIM_KLV_FULL_RANGE_ATTITUDE=0     # 1 = also send Tags 90/91 (misb.js 0.1.30 misdecodes them)
 
 # Security metadata (Phase 12A)
 CAMSIM_SECURITY_CLASSIFICATION=UNCLASSIFIED

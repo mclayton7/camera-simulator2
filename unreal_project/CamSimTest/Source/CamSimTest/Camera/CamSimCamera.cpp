@@ -16,6 +16,7 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "UnrealEngine.h"  // FSystemResolution
+#include "Misc/App.h"
 #include "Camera/CamSimRenderPath.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/GameInstance.h"
@@ -179,7 +180,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 
 	// Platform pose. Normally FCamSimEntityManager already applied it this
 	// frame, in order with the other entities; this covers running without one.
-	Platform.ApplyHostPlatformState();
+	ApplyHostPlatformState();
 	Platform.FollowAttachParent();
 
 	ApplyCigiViewState(DeltaTime);
@@ -188,12 +189,17 @@ void ACamSimCamera::Tick(float DeltaTime)
 
 	// Telemetry that depends on the final pose, gimbal and FOV of this frame.
 	Telemetry.SetFieldOfView(SceneCapture->FOVAngle,
-		SceneCapture->FOVAngle * static_cast<float>(Cfg.CaptureHeight) / static_cast<float>(Cfg.CaptureWidth));
+		CamSimTelemetry::VerticalFovDeg(SceneCapture->FOVAngle, Cfg.CaptureWidth, Cfg.CaptureHeight));
 	Telemetry.ReadEnvironment(GetWorld());
 
-	// Stream tiles for the true frustum of this frame, then find the frame centre.
+	// Stream tiles for the true frustum of this frame, then find the frame
+	// centre and image corners on the ground.
 	Streaming.UpdateCameras(this, *SceneCapture, Cfg);
-	Telemetry.UpdateFrameCenter(GetWorld(), *SceneCapture, this, Subsystem->GetGeospatialProvider());
+	Telemetry.UpdateFootprint(GetWorld(), SceneCapture, this, Subsystem->GetGeospatialProvider());
+
+	// Start of Frame + Sensor Extended Response now, so the response carries
+	// this frame's centre with this frame's number.
+	Subsystem->FlushCigiFrame();
 
 	ApplyPrimaryView();
 	UpdateCameraCut();
@@ -324,20 +330,46 @@ void ACamSimCamera::CaptureAndEncode()
 // CIGI view state
 // -------------------------------------------------------------------------
 
+void ACamSimCamera::ApplyHostPlatformState()
+{
+	if (HostStateFrame == GFrameCounter) return;
+	HostStateFrame = GFrameCounter;
+
+	FCigiReceiver* Receiver = Subsystem ? Subsystem->GetCigiReceiver() : nullptr;
+	if (!Receiver) return;
+
+	// One read point per frame for everything the host says about the camera.
+	FCigiCameraFrame Frame;
+	bool bGotFrame = false;
+	while (Receiver->DequeueCameraFrame(Frame))
+	{
+		HostFrame.Append(Frame);
+		bGotFrame = true;
+	}
+	if (!bGotFrame) return;
+
+	if (HostFrame.bHasPose)
+	{
+		Platform.ApplyHostEntityState(HostFrame.Pose);
+	}
+	Telemetry.ApplyHostFrame(HostFrame.bHasPose, HostFrame.bHasKinematics ? &HostFrame.Kinematics : nullptr,
+		FApp::GetCurrentTime());
+	// Pose and kinematics are applied; the view packets wait for Tick().
+	HostFrame.bHasPose       = false;
+	HostFrame.bHasKinematics = false;
+}
+
 void ACamSimCamera::ApplyCigiViewState(float DeltaTime)
 {
-	FCigiReceiver* Receiver = Subsystem->GetCigiReceiver();
-	if (!Receiver) return;
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 
 	// Sensor Control (opcode 17): a gain that selects a new preset sets the FOV.
-	SensorComp->TickSensor(Receiver, Cfg, SceneCapture);
+	SensorComp->TickSensor(HostFrame.SensorControls, Cfg, SceneCapture);
 	Telemetry.SetSensor(static_cast<uint8>(SensorComp->GetMode()), SensorComp->GetPolarity());
 
 	// View Definition (opcode 21) → horizontal FOV. Applied after Sensor Control
 	// so an explicit FOV wins when both arrive in the same host frame.
-	FCigiViewDefinition ViewDef;
-	while (Receiver->DequeueViewDefinition(ViewDef))
+	for (const FCigiViewDefinition& ViewDef : HostFrame.ViewDefinitions)
 	{
 		const float NewHFov = FMath::Clamp(ViewDef.HFovDeg(), 1.0f, 179.0f);
 		if (NewHFov != SceneCapture->FOVAngle)
@@ -349,7 +381,8 @@ void ACamSimCamera::ApplyCigiViewState(float DeltaTime)
 
 	// View Control (opcode 16) + camera Art Part → gimbal; a View Control
 	// naming an entity starts the first-person view (Phase 22G).
-	GimbalComp->TickGimbal(DeltaTime, Receiver, Cfg);
+	GimbalComp->TickGimbal(DeltaTime, HostFrame.ViewControls, HostFrame.ArtParts, Cfg);
+	HostFrame.Reset();
 	Platform.UpdateFirstPersonView(GimbalComp->GetLastViewControlEntityId());
 	SceneCapture->SetRelativeRotation(GimbalComp->GetGimbalRelativeRotation());
 	Telemetry.SetGimbal(GimbalComp->GetGimbalYaw(), GimbalComp->GetGimbalPitch(), GimbalComp->GetGimbalRoll());

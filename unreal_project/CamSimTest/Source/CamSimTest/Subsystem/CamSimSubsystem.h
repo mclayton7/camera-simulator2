@@ -53,9 +53,21 @@ public:
 
 	/**
 	 * Called once per game tick from FCamSimEntityManager::Tick().
-	 * Drives FCigiQueryHandler + FCigiSender (SOF + response flush).
+	 * Drives FCigiQueryHandler and stages this frame's FCigiSender datagram
+	 * (sent by FlushCigiFrame).
 	 */
 	void Tick(float DeltaTime);
+
+	/**
+	 * Send this frame's CIGI IG-to-host datagram: Start of Frame, the staged
+	 * HAT/HOT and LOS responses, and the Sensor Extended Response (opcode 107)
+	 * with the camera's frame centre. Tick() stages the frame; ACamSimCamera
+	 * calls this once it has computed this frame's frame centre, so the
+	 * response's centre and frame number match. Without a camera Tick() sends
+	 * it; a frame the camera missed goes out at the start of the next Tick().
+	 * Game thread; once per frame (later calls do nothing).
+	 */
+	void FlushCigiFrame();
 
 	// Accessors used by ACamSimCamera and FCamSimEntityManager
 	FCigiReceiver*        GetCigiReceiver()  const;

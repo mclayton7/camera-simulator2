@@ -27,6 +27,10 @@ static TArray<uint8> CachedST0102Payload;
 // Phase 26: cached config statics
 // -------------------------------------------------------------------------
 static TArray<uint8> GCachedTailNumberAnsi;
+static TArray<uint8> GCachedMissionIdAnsi;
+static TArray<uint8> GCachedDesignationAnsi;
+static TArray<uint8> GCachedCallSignAnsi;
+static bool GFullRangeAttitude = false;  // Tags 90/91 (phase26.klv_full_range_attitude)
 static uint8  GCachedTargetGateWidth  = 0;
 static uint8  GCachedTargetGateHeight = 0;
 
@@ -62,6 +66,42 @@ static void AppendStringTag(TArray<uint8>& V, uint8 Tag, const char* Str)
 	FKlvBuilder::AppendTag(V, Tag, reinterpret_cast<const uint8*>(Str), Len);
 }
 
+// Append a configured string tag (pre-converted bytes); omitted when empty
+static void AppendCachedString(TArray<uint8>& V, uint8 Tag, const TArray<uint8>& Ansi)
+{
+	if (Ansi.Num() == 0) return;
+	FKlvBuilder::AppendTag(V, Tag, Ansi.GetData(), static_cast<uint8>(Ansi.Num()));
+}
+
+// Append big-endian 2- and 4-byte values
+static void AppendU16(TArray<uint8>& V, uint8 Tag, uint16 X)
+{
+	const uint8 Tmp[2] = { uint8((X >> 8) & 0xFF), uint8(X & 0xFF) };
+	FKlvBuilder::AppendTag(V, Tag, Tmp, 2);
+}
+
+static void AppendU32(TArray<uint8>& V, uint8 Tag, uint32 X)
+{
+	const uint8 Tmp[4] = { uint8((X >> 24) & 0xFF), uint8((X >> 16) & 0xFF), uint8((X >> 8) & 0xFF), uint8(X & 0xFF) };
+	FKlvBuilder::AppendTag(V, Tag, Tmp, 4);
+}
+
+// Tags 82-89: corner Index (0-3) latitude (even tag) or longitude (odd tag), when that corner sees the ground
+static void AppendCorner(TArray<uint8>& V, uint8 Tag, const FCamSimTelemetry& T)
+{
+	const int32 Index = (Tag - 82) / 2;
+	if (!(T.CornerValidMask & (1u << Index))) return;
+	const bool bLat = ((Tag - 82) % 2) == 0;
+	AppendLatLon4(V, Tag, bLat ? T.CornerLat[Index] : T.CornerLon[Index], bLat ? 90.0 : 180.0);
+}
+
+// Platform altitude above mean sea level (EGM96), or the ellipsoid height without the geoid grid
+static double PlatformMslAltitude(const FCamSimTelemetry& T)
+{
+	const TOptional<double> Undulation = CamSim::Geospatial::GetGeoidUndulation(T.Latitude, T.Longitude);
+	return T.Altitude - Undulation.Get(0.0);
+}
+
 static const TArray<FKlvTagDescriptor> KlvTagTable = {
 	// Tag 2 – UNIX Time Stamp, 8-byte unsigned, microseconds
 	{ 2, [](TArray<uint8>& V, const FCamSimTelemetry& T)
@@ -72,12 +112,16 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		FKlvBuilder::AppendTag(V, 2, Tmp, 8);
 	}},
 
+	// Tag 3 – Mission ID, ISO 646 string (config; omitted when empty)
+	{ 3, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		AppendCachedString(V, 3, GCachedMissionIdAnsi);
+	}},
+
 	// Tag 4 – Platform Tail Number, ISO 646 string (Phase 26A)
 	{ 4, [](TArray<uint8>& V, const FCamSimTelemetry&)
 	{
-		if (GCachedTailNumberAnsi.Num() == 0) return;
-		FKlvBuilder::AppendTag(V, 4, GCachedTailNumberAnsi.GetData(),
-			static_cast<uint8>(GCachedTailNumberAnsi.Num()));
+		AppendCachedString(V, 4, GCachedTailNumberAnsi);
 	}},
 
 	// Tag 5 – Platform Heading Angle, 2-byte unsigned, 0..360°
@@ -102,6 +146,28 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		int16 R = FKlvBuilder::MapPlatformRoll(T.Roll);
 		uint8 Tmp[2] = { uint8((R >> 8) & 0xFF), uint8(R & 0xFF) };
 		FKlvBuilder::AppendTag(V, 7, Tmp, 2);
+	}},
+
+	// Tag 8 – Platform True Airspeed, 1-byte unsigned, 0..255 m/s (host packet 201)
+	{ 8, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasAirspeed) return;
+		const uint8 Spd = FKlvBuilder::MapAirspeed(T.TrueAirspeedMps);
+		FKlvBuilder::AppendTag(V, 8, &Spd, 1);
+	}},
+
+	// Tag 9 – Platform Indicated Airspeed, 1-byte unsigned, 0..255 m/s (host packet 201)
+	{ 9, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasAirspeed) return;
+		const uint8 Spd = FKlvBuilder::MapAirspeed(T.IndicatedAirspeedMps);
+		FKlvBuilder::AppendTag(V, 9, &Spd, 1);
+	}},
+
+	// Tag 10 – Platform Designation, ISO 646 string (config; omitted when empty)
+	{ 10, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		AppendCachedString(V, 10, GCachedDesignationAnsi);
 	}},
 
 	// Tag 11 – Image Source Sensor, ISO 646 string
@@ -151,7 +217,7 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 	// Tag 17 – Sensor Vertical FOV, 2-byte unsigned 0..180°
 	{ 17, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
-		uint16 Fov = FKlvBuilder::MapFov(T.VFovDeg > 0.0f ? T.VFovDeg : T.HFovDeg * (9.0f / 16.0f));
+		uint16 Fov = FKlvBuilder::MapFov(T.VFovDeg > 0.0f ? T.VFovDeg : CamSimTelemetry::VerticalFovDeg(T.HFovDeg, 16, 9));
 		uint8 Tmp[2] = { uint8((Fov >> 8) & 0xFF), uint8(Fov & 0xFF) };
 		FKlvBuilder::AppendTag(V, 17, Tmp, 2);
 	}},
@@ -229,6 +295,41 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		FKlvBuilder::AppendTag(V, 25, Tmp, 2);
 	}},
 
+	// Tags 35-37, 39 – weather at the platform, from CIGI Atmosphere Control
+	// (omitted until the host sends one).
+	// Tag 35 – Wind Direction (from, true north), 2-byte unsigned, 0..360°
+	{ 35, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasAtmosphere) return;
+		AppendU16(V, 35, FKlvBuilder::MapHeading(T.WindDirectionDeg));
+	}},
+
+	// Tag 36 – Wind Speed, 1-byte unsigned, 0..100 m/s
+	{ 36, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasAtmosphere) return;
+		const uint8 Spd = FKlvBuilder::MapWindSpeed(T.WindSpeedMps);
+		FKlvBuilder::AppendTag(V, 36, &Spd, 1);
+	}},
+
+	// Tag 37 – Static Pressure at the platform, 2-byte unsigned, 0..5000 mbar.
+	// CIGI's barometric pressure is the sea-level value (HITL sends X-Plane's
+	// barometer_sealevel); reduce it to the platform's MSL altitude.
+	{ 37, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasAtmosphere) return;
+		AppendU16(V, 37, FKlvBuilder::MapStaticPressure(
+			FKlvBuilder::StaticPressureMb(T.BaroPressureMb, PlatformMslAltitude(T))));
+	}},
+
+	// Tag 39 – Outside Air Temperature, 1-byte signed, °C
+	{ 39, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasAtmosphere) return;
+		const int8 Temp = FKlvBuilder::MapAirTemperature(T.AirTempCelsius);
+		FKlvBuilder::AppendTag(V, 39, reinterpret_cast<const uint8*>(&Temp), 1);
+	}},
+
 	// Tag 43 – Target Track Gate Width, 1-byte unsigned, value = pixels / 2
 	{ 43, [](TArray<uint8>& V, const FCamSimTelemetry&)
 	{
@@ -275,12 +376,33 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		V.Append(CachedST0102Payload);
 	}},
 
+	// Tag 55 – Relative Humidity, 1-byte unsigned, 0..100 % (CIGI Atmosphere Control)
+	{ 55, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasAtmosphere) return;
+		const uint8 Rh = FKlvBuilder::MapHumidity(T.RelativeHumidity * 100.0f);
+		FKlvBuilder::AppendTag(V, 55, &Rh, 1);
+	}},
+
 	// Tag 56 – Platform Ground Speed, 1-byte unsigned, 0..255 m/s
 	{ 56, [](TArray<uint8>& V, const FCamSimTelemetry& T)
 	{
 		if (T.GroundSpeedMps <= 0.0f) return;
 		uint8 Spd = FKlvBuilder::MapGroundSpeed(T.GroundSpeedMps);
 		FKlvBuilder::AppendTag(V, 56, &Spd, 1);
+	}},
+
+	// Tag 59 – Platform Call Sign, ISO 646 string (config; omitted when empty)
+	{ 59, [](TArray<uint8>& V, const FCamSimTelemetry&)
+	{
+		AppendCachedString(V, 59, GCachedCallSignAnsi);
+	}},
+
+	// Tag 64 – Platform Magnetic Heading, 2-byte unsigned, 0..360° (host packet 201)
+	{ 64, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasMagneticHeading) return;
+		AppendU16(V, 64, FKlvBuilder::MapHeading(T.MagneticHeadingDeg));
 	}},
 
 	// Tag 65 – UAS LS Version Number, 1-byte unsigned, value=9 (ST 0601.9)
@@ -305,6 +427,49 @@ static const TArray<FKlvTagDescriptor> KlvTagTable = {
 		const uint16 Alt = static_cast<uint16>(FKlvBuilder::MapAltitude(T.FrameCenterElev));
 		uint8 Tmp[2] = { uint8((Alt >> 8) & 0xFF), uint8(Alt & 0xFF) };
 		FKlvBuilder::AppendTag(V, 78, Tmp, 2);
+	}},
+
+	// Tags 79/80 – Sensor North / East Velocity, 2-byte signed, ±327 m/s (host packet 201;
+	// the sensor rides on the platform, so its velocity is the platform's)
+	{ 79, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasVelocity) return;
+		AppendU16(V, 79, static_cast<uint16>(FKlvBuilder::MapVelocity(T.VelNorthMps)));
+	}},
+	{ 80, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!T.bHasVelocity) return;
+		AppendU16(V, 80, static_cast<uint16>(FKlvBuilder::MapVelocity(T.VelEastMps)));
+	}},
+
+	// Tags 82-89 – Corner Latitude/Longitude Points 1-4 (Full), 4-byte signed
+	// ±90° / ±180°, clockwise from the upper-left image corner. A corner whose
+	// ray sees no ground (above the horizon) is left out with both its tags.
+	// The offset Tags 26-33 (±0.075° from the frame centre) are not sent: these
+	// carry the same points at full precision and any distance.
+	{ 82, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendCorner(V, 82, T); }},
+	{ 83, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendCorner(V, 83, T); }},
+	{ 84, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendCorner(V, 84, T); }},
+	{ 85, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendCorner(V, 85, T); }},
+	{ 86, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendCorner(V, 86, T); }},
+	{ 87, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendCorner(V, 87, T); }},
+	{ 88, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendCorner(V, 88, T); }},
+	{ 89, [](TArray<uint8>& V, const FCamSimTelemetry& T) { AppendCorner(V, 89, T); }},
+
+	// Tags 90/91 – Platform Pitch / Roll Angle (Full), 4-byte signed, ±90°: the
+	// full-range versions of Tags 6/7 (±20° / ±50°), sent alongside them when
+	// phase26.klv_full_range_attitude is on (off by default): misb.js 0.1.30 reads
+	// only the first two bytes of these (readInt16BE), so it decodes them near 0°.
+	// scripts/klv_conformance/check.js decodes them per ST 0601.
+	{ 90, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!GFullRangeAttitude) return;
+		AppendU32(V, 90, static_cast<uint32>(FKlvBuilder::MapFullAngle90(T.Pitch)));
+	}},
+	{ 91, [](TArray<uint8>& V, const FCamSimTelemetry& T)
+	{
+		if (!GFullRangeAttitude) return;
+		AppendU32(V, 91, static_cast<uint32>(FKlvBuilder::MapFullAngle90(T.Roll)));
 	}},
 };
 
@@ -600,23 +765,96 @@ uint8 FKlvBuilder::MapGroundSpeed(float MetresPerSec)
 
 void FKlvBuilder::Configure(const FString& TailNumber,
                              float TargetTrackGateWidth,
-                             float TargetTrackGateHeight)
+                             float TargetTrackGateHeight,
+                             const FString& MissionId,
+                             const FString& PlatformDesignation,
+                             const FString& PlatformCallSign,
+                             bool bFullRangeAttitude)
 {
-	// Pre-convert tail number to ANSI bytes (avoids per-frame StringCast allocation)
-	GCachedTailNumberAnsi.Reset();
-	if (!TailNumber.IsEmpty())
+	GFullRangeAttitude = bFullRangeAttitude;
+	// Pre-convert the strings to ANSI bytes (avoids per-frame StringCast allocation)
+	auto Cache = [](TArray<uint8>& Out, const FString& Str)
 	{
-		auto Ansi = StringCast<ANSICHAR>(*TailNumber);
+		Out.Reset();
+		if (Str.IsEmpty()) return;
+		auto Ansi = StringCast<ANSICHAR>(*Str);
 		const int32 Len = FMath::Min(Ansi.Length(), 127);
-		GCachedTailNumberAnsi.Append(reinterpret_cast<const uint8*>(Ansi.Get()), Len);
-	}
+		Out.Append(reinterpret_cast<const uint8*>(Ansi.Get()), Len);
+	};
+	Cache(GCachedTailNumberAnsi,  TailNumber);
+	Cache(GCachedMissionIdAnsi,   MissionId);
+	Cache(GCachedDesignationAnsi, PlatformDesignation);
+	Cache(GCachedCallSignAnsi,    PlatformCallSign);
 	GCachedTargetGateWidth  = MapTrackGate(TargetTrackGateWidth);
 	GCachedTargetGateHeight = MapTrackGate(TargetTrackGateHeight);
 
+	auto OrNone = [](const FString& Str) { return Str.IsEmpty() ? TEXT("(none)") : *Str; };
 	UE_LOG(LogCamSim, Log,
-		TEXT("FKlvBuilder: Phase 26 configured (tail=%s, gate=%.0fx%.0f px)"),
-		TailNumber.IsEmpty() ? TEXT("(none)") : *TailNumber,
-		TargetTrackGateWidth, TargetTrackGateHeight);
+		TEXT("FKlvBuilder: Phase 26 configured (tail=%s, mission=%s, designation=%s, call sign=%s, gate=%.0fx%.0f px, tags 90/91 %s)"),
+		OrNone(TailNumber), OrNone(MissionId), OrNone(PlatformDesignation), OrNone(PlatformCallSign),
+		TargetTrackGateWidth, TargetTrackGateHeight, bFullRangeAttitude ? TEXT("on") : TEXT("off"));
+}
+
+// -------------------------------------------------------------------------
+// Kinematics and weather mappings (Tags 8, 9, 36, 37, 39, 55, 79, 80, 90, 91)
+// -------------------------------------------------------------------------
+
+uint8 FKlvBuilder::MapAirspeed(float MetresPerSec)
+{
+	if (!FMath::IsFinite(MetresPerSec)) MetresPerSec = 0.0f;
+	return static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(MetresPerSec), 0, 255));
+}
+
+uint8 FKlvBuilder::MapWindSpeed(float MetresPerSec)
+{
+	if (!FMath::IsFinite(MetresPerSec)) MetresPerSec = 0.0f;
+	const double Clamped = FMath::Clamp(static_cast<double>(MetresPerSec), 0.0, 100.0);
+	return static_cast<uint8>(FMath::RoundToInt(Clamped / 100.0 * 255.0));
+}
+
+uint16 FKlvBuilder::MapStaticPressure(float Millibars)
+{
+	if (!FMath::IsFinite(Millibars)) Millibars = 0.0f;
+	const double Clamped = FMath::Clamp(static_cast<double>(Millibars), 0.0, 5000.0);
+	return static_cast<uint16>(FMath::RoundToInt(Clamped / 5000.0 * 65535.0));
+}
+
+int8 FKlvBuilder::MapAirTemperature(float Celsius)
+{
+	if (!FMath::IsFinite(Celsius)) Celsius = 0.0f;
+	return static_cast<int8>(FMath::Clamp(FMath::RoundToInt(Celsius), -128, 127));
+}
+
+uint8 FKlvBuilder::MapHumidity(float Percent)
+{
+	if (!FMath::IsFinite(Percent)) Percent = 0.0f;
+	const double Clamped = FMath::Clamp(static_cast<double>(Percent), 0.0, 100.0);
+	return static_cast<uint8>(FMath::RoundToInt(Clamped / 100.0 * 255.0));
+}
+
+int16 FKlvBuilder::MapVelocity(float MetresPerSec)
+{
+	if (!FMath::IsFinite(MetresPerSec)) MetresPerSec = 0.0f;
+	const double Clamped = FMath::Clamp(static_cast<double>(MetresPerSec), -327.0, 327.0);
+	return static_cast<int16>(FMath::RoundToInt(Clamped / 327.0 * 32767.0));
+}
+
+int32 FKlvBuilder::MapFullAngle90(float Degrees)
+{
+	if (!FMath::IsFinite(Degrees)) Degrees = 0.0f;
+	const double Clamped = FMath::Clamp(static_cast<double>(Degrees), -90.0, 90.0);
+	return static_cast<int32>(FMath::RoundToInt64(Clamped / 90.0 * 2147483647.0));
+}
+
+float FKlvBuilder::StaticPressureMb(float SeaLevelMb, double MslAltitudeM)
+{
+	if (!FMath::IsFinite(SeaLevelMb) || !FMath::IsFinite(MslAltitudeM)) return 0.0f;
+	// ISA: troposphere to 11 km, then the isothermal layer above it.
+	const double H = FMath::Clamp(MslAltitudeM, -900.0, 20000.0);
+	const double TropoH = FMath::Min(H, 11000.0);
+	double Ratio = FMath::Pow(1.0 - 2.25577e-5 * TropoH, 5.25588);
+	if (H > 11000.0) Ratio *= FMath::Exp(-(H - 11000.0) / 6341.62);
+	return static_cast<float>(SeaLevelMb * Ratio);
 }
 
 // -------------------------------------------------------------------------

@@ -788,6 +788,10 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 		{
 			ryml::ConstNodeRef P = Root["phase26"];
 			YamlString(P, "platform_tail_number",     Cfg.Phase26.PlatformTailNumber);
+			YamlString(P, "mission_id",               Cfg.Phase26.MissionId);
+			YamlString(P, "platform_designation",     Cfg.Phase26.PlatformDesignation);
+			YamlString(P, "platform_call_sign",       Cfg.Phase26.PlatformCallSign);
+			YamlBool  (P, "klv_full_range_attitude",  Cfg.Phase26.bKlvFullRangeAttitude);
 			YamlFloat (P, "target_track_gate_width",  Cfg.Phase26.TargetTrackGateWidth);
 			YamlFloat (P, "target_track_gate_height", Cfg.Phase26.TargetTrackGateHeight);
 		}
@@ -918,6 +922,35 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.EntityScale.TickRateHz = GetEnvFloat(TEXT("CAMSIM_ENTITY_TICK_RATE_HZ"), Cfg.EntityScale.TickRateHz);
 	Cfg.EntityScale.DefaultMaxUpdateRateHz = GetEnvFloat(
 		TEXT("CAMSIM_ENTITY_DEFAULT_MAX_UPDATE_RATE_HZ"), Cfg.EntityScale.DefaultMaxUpdateRateHz);
+
+	// Camera platform and gimbal (HITL profile without editing the yaml)
+	Cfg.CameraEntityId             = GetEnvInt  (TEXT("CAMSIM_CAMERA_ENTITY_ID"),     Cfg.CameraEntityId);
+	Cfg.GimbalMaxSlewRateDegPerSec = GetEnvFloat(TEXT("CAMSIM_GIMBAL_MAX_SLEW_RATE"), Cfg.GimbalMaxSlewRateDegPerSec);
+	Cfg.GimbalPitchMin             = GetEnvFloat(TEXT("CAMSIM_GIMBAL_PITCH_MIN"),     Cfg.GimbalPitchMin);
+	Cfg.GimbalPitchMax             = GetEnvFloat(TEXT("CAMSIM_GIMBAL_PITCH_MAX"),     Cfg.GimbalPitchMax);
+	Cfg.GimbalYawMin               = GetEnvFloat(TEXT("CAMSIM_GIMBAL_YAW_MIN"),       Cfg.GimbalYawMin);
+	Cfg.GimbalYawMax               = GetEnvFloat(TEXT("CAMSIM_GIMBAL_YAW_MAX"),       Cfg.GimbalYawMax);
+	{
+		// Comma-separated degrees, wide to narrow ("60,20,5"); "none", "off" or "[]" disables
+		// the presets (Sensor Control Gain ignored; FOV from View Definition only).
+		FString Presets = GetEnv(TEXT("CAMSIM_SENSOR_FOV_PRESETS"), FString()).TrimStartAndEnd();
+		if (!Presets.IsEmpty())
+		{
+			Presets.RemoveFromStart(TEXT("["));
+			Presets.RemoveFromEnd(TEXT("]"));
+			Presets.TrimStartAndEndInline();
+			Cfg.SensorFovPresets.Empty();
+			if (!Presets.Equals(TEXT("none"), ESearchCase::IgnoreCase) && !Presets.Equals(TEXT("off"), ESearchCase::IgnoreCase))
+			{
+				TArray<FString> Items;
+				Presets.ParseIntoArray(Items, TEXT(","), /*bCullEmpty=*/true);
+				for (const FString& Item : Items)
+				{
+					Cfg.SensorFovPresets.Add(FCString::Atof(*Item.TrimStartAndEnd()));
+				}
+			}
+		}
+	}
 
 	// Phase 22G: FPS view
 	Cfg.FpsEntityId   = GetEnvInt  (TEXT("CAMSIM_FPS_ENTITY_ID"),    Cfg.FpsEntityId);
@@ -1060,6 +1093,10 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	{
 		FPhase26Config& P = Cfg.Phase26;
 		P.PlatformTailNumber    = GetEnv     (TEXT("CAMSIM_PLATFORM_TAIL_NUMBER"),      P.PlatformTailNumber);
+		P.MissionId             = GetEnv     (TEXT("CAMSIM_MISSION_ID"),                P.MissionId);
+		P.PlatformDesignation   = GetEnv     (TEXT("CAMSIM_PLATFORM_DESIGNATION"),      P.PlatformDesignation);
+		P.PlatformCallSign      = GetEnv     (TEXT("CAMSIM_PLATFORM_CALL_SIGN"),        P.PlatformCallSign);
+		P.bKlvFullRangeAttitude = GetEnvBool (TEXT("CAMSIM_KLV_FULL_RANGE_ATTITUDE"),   P.bKlvFullRangeAttitude);
 		P.TargetTrackGateWidth  = GetEnvFloat(TEXT("CAMSIM_TARGET_TRACK_GATE_WIDTH"),   P.TargetTrackGateWidth);
 		P.TargetTrackGateHeight = GetEnvFloat(TEXT("CAMSIM_TARGET_TRACK_GATE_HEIGHT"),  P.TargetTrackGateHeight);
 	}

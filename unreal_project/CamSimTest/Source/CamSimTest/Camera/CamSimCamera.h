@@ -9,6 +9,7 @@
 #include "Camera/CamSimStreamingController.h"
 #include "Camera/CamSimTelemetryAssembler.h"
 #include "Camera/CamSimFrameStats.h"
+#include "CIGI/CigiPacketTypes.h"            // FCigiCameraFrame
 #include "CamSimCamera.generated.h"
 
 class USceneCaptureComponent2D;
@@ -61,12 +62,16 @@ public:
 	uint64 GetFramesCaptured() const { return CaptureComp->GetFramesCaptured(); }
 
 	/**
-	 * Apply this frame's host platform state (CIGI Entity Control for the
-	 * camera entity). FCamSimEntityManager calls this before resolving
-	 * attachments, so entities attached to the platform use this frame's pose.
-	 * Runs once per frame; Tick() calls it too in case nothing else did.
+	 * Read this frame's host camera state: every FCigiCameraFrame the receiver
+	 * has published (one per datagram). Applies the platform pose (CIGI Entity
+	 * Control for the camera entity) and host kinematics now, and holds the
+	 * gimbal, FOV and sensor packets of the same datagrams for Tick(), so pose
+	 * and gimbal always come from the same datagrams (HITL.md gap 2).
+	 * FCamSimEntityManager calls this before resolving attachments, so entities
+	 * attached to the platform use this frame's pose. Runs once per frame;
+	 * Tick() calls it too in case nothing else did.
 	 */
-	void ApplyHostPlatformState() { Platform.ApplyHostPlatformState(); }
+	void ApplyHostPlatformState();
 
 	/** If the platform is attached to an entity, follow it. Call after the parent is placed. */
 	void FollowAttachParent() { Platform.FollowAttachParent(); }
@@ -79,6 +84,8 @@ public:
 
 	/** Snapshot of the current telemetry for external consumers. */
 	FCamSimTelemetry GetCurrentTelemetry() const { return Telemetry.Get(); }
+	/** The current telemetry, without a copy (game thread). */
+	const FCamSimTelemetry& GetTelemetry() const { return Telemetry.Get(); }
 
 	/** Sensor component (for the Sensor Extended Response, opcode 107). */
 	UCamSimSensorComponent* GetSensorComp() const { return SensorComp; }
@@ -139,8 +146,13 @@ private:
 	uint64 TickCount            = 0;
 	double LastHeartbeatWallSec = 0.0;
 
-	/** CIGI View Definition, Sensor Control, View Control / Art Part → sensor state. */
+	/** CIGI View Definition, Sensor Control, View Control / Art Part (held in HostFrame) → sensor state. */
 	void ApplyCigiViewState(float DeltaTime);
+
+	/** Camera packets read by ApplyHostPlatformState, applied by ApplyCigiViewState. */
+	FCigiCameraFrame HostFrame;
+	/** GFrameCounter of the last ApplyHostPlatformState run. */
+	uint64 HostStateFrame = MAX_uint64;
 	void EmitHeartbeatIfDue();
 	/** Append this tick's render stats (ROADMAP 3A). */
 	void RecordFrameStats();

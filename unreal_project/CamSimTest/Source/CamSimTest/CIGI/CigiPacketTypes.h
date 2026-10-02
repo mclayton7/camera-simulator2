@@ -381,6 +381,102 @@ struct FCigiMaritimeSurfaceState
 	float  Clarity        = 100.0f;   // percent, 0-100 (CIGI 3.3; CCL bounds-checks it)
 };
 
+/**
+ * FCigiPlatformKinematics
+ *
+ * User-defined CIGI packet 201, Platform Kinematics (hitl/PROTOCOL.md section 2):
+ * the camera platform's airspeeds, magnetic heading, NED velocity and the UTC
+ * time of the pose in the same datagram. CIGI 3.3 has no fields for them.
+ * Parsed raw (like Celestial), in the byte order of the datagram's IG Control.
+ * A field whose valid flag is clear is ignored.
+ */
+struct FCigiPlatformKinematics
+{
+	static constexpr uint8 Opcode     = 201;
+	static constexpr uint8 PacketSize = 48;
+
+	// Flags byte (offset 4)
+	static constexpr uint8 FlagAirspeeds       = 0x01;
+	static constexpr uint8 FlagMagneticHeading = 0x02;
+	static constexpr uint8 FlagNedVelocity     = 0x04;
+	static constexpr uint8 FlagSampleTime      = 0x08;
+
+	uint16 EntityId = 0;
+	uint8  Flags    = 0;
+
+	float  TrueAirspeedMps      = 0.0f;  // KLV Tag 8
+	float  IndicatedAirspeedMps = 0.0f;  // KLV Tag 9
+	float  MagneticHeadingDeg   = 0.0f;  // 0-360, KLV Tag 64
+	float  VelNorthMps          = 0.0f;  // KLV Tag 79
+	float  VelEastMps           = 0.0f;  // KLV Tag 80
+	float  VelDownMps           = 0.0f;
+	double SampleUtcSec         = 0.0;   // Unix epoch seconds of the pose in this datagram (KLV Tag 2)
+
+	bool HasAirspeeds()       const { return (Flags & FlagAirspeeds) != 0; }
+	bool HasMagneticHeading() const { return (Flags & FlagMagneticHeading) != 0; }
+	bool HasNedVelocity()     const { return (Flags & FlagNedVelocity) != 0; }
+	bool HasSampleTime()      const { return (Flags & FlagSampleTime) != 0; }
+};
+
+/**
+ * FCigiCameraFrame
+ *
+ * Everything one CIGI datagram says about the camera: the platform pose
+ * (Entity Control for camera_entity_id), the gimbal (View Control, Articulated
+ * Part on the camera entity), the field of view (View Definition), the sensor
+ * (Sensor Control) and Platform Kinematics (packet 201). The receiver publishes
+ * it as one queue item after the whole datagram is parsed, so the game thread
+ * reads pose and gimbal together: a datagram can never apply its gimbal a frame
+ * before its pose (HITL.md gap 2). Packets keep their order within each type.
+ */
+struct FCigiCameraFrame
+{
+	bool                         bHasPose = false;
+	FCigiEntityState             Pose;          // the last camera Entity Control in the datagram
+	TArray<FCigiViewControl>     ViewControls;
+	TArray<FCigiArtPartControl>  ArtParts;      // camera entity only
+	TArray<FCigiViewDefinition>  ViewDefinitions;
+	TArray<FCigiSensorControl>   SensorControls;
+	bool                         bHasKinematics = false;
+	FCigiPlatformKinematics      Kinematics;    // the last packet 201 for the camera entity
+
+	bool IsEmpty() const
+	{
+		return !bHasPose && !bHasKinematics && ViewControls.Num() == 0 && ArtParts.Num() == 0
+			&& ViewDefinitions.Num() == 0 && SensorControls.Num() == 0;
+	}
+
+	void Reset()
+	{
+		bHasPose = false;
+		bHasKinematics = false;
+		ViewControls.Reset();
+		ArtParts.Reset();
+		ViewDefinitions.Reset();
+		SensorControls.Reset();
+	}
+
+	/**
+	 * Fold a later datagram in: its pose and kinematics win, its packets append.
+	 * A sample time only describes the pose of its own datagram, so a later pose
+	 * without kinematics drops the earlier sample time.
+	 */
+	void Append(const FCigiCameraFrame& Later)
+	{
+		if (Later.bHasPose)
+		{
+			bHasPose = true;
+			Pose = Later.Pose;
+			Kinematics.Flags &= ~FCigiPlatformKinematics::FlagSampleTime;
+		}
+		if (Later.bHasKinematics) { bHasKinematics = true; Kinematics = Later.Kinematics; }
+		ViewControls.Append(Later.ViewControls);
+		ArtParts.Append(Later.ArtParts);
+		ViewDefinitions.Append(Later.ViewDefinitions);
+		SensorControls.Append(Later.SensorControls);
+	}
+};
+
 /** CIGI Wave Control (opcode 14) — ocean wave parameters from the host. */
 struct FCigiWaveState
 {

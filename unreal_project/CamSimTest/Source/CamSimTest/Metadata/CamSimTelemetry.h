@@ -15,6 +15,18 @@
  * don't have to transitively include the entire KLV builder API. KlvBuilder.h
  * still includes this header so existing KLV callers compile unchanged.
  */
+namespace CamSimTelemetry
+{
+	/** Vertical FOV of a rectilinear image: 2·atan(tan(HFOV/2)·H/W), degrees (KLV Tag 17). */
+	inline float VerticalFovDeg(float HFovDeg, int32 Width, int32 Height)
+	{
+		if (Width <= 0 || Height <= 0) return HFovDeg;
+		const double HalfH = FMath::DegreesToRadians(0.5 * static_cast<double>(HFovDeg));
+		return static_cast<float>(FMath::RadiansToDegrees(
+			2.0 * FMath::Atan(FMath::Tan(HalfH) * static_cast<double>(Height) / static_cast<double>(Width))));
+	}
+}
+
 struct FCamSimTelemetry
 {
 	uint64 TimestampUs = 0;    // POSIX microseconds (UTC)
@@ -41,8 +53,28 @@ struct FCamSimTelemetry
 	double FrameCenterLon  = 0.0;  // WGS-84 decimal degrees — Tag 24
 	double FrameCenterElev = 0.0;  // metres above ellipsoid  — Tag 25 (from terrain hit)
 
+	// Image corners on the ground (Tags 82-89), ST 0601 order: 0 upper left, 1 upper
+	// right, 2 lower right, 3 lower left. Bit i of CornerValidMask = corner i hit the
+	// ground (terrain, or the ellipsoid at the frame-centre height); others are omitted.
+	uint8  CornerValidMask = 0;
+	double CornerLat[4]    = { 0.0, 0.0, 0.0, 0.0 };  // WGS-84 decimal degrees
+	double CornerLon[4]    = { 0.0, 0.0, 0.0, 0.0 };
+
 	// Phase 26: additional ST 0601.9 fields
 	float  GroundSpeedMps  = 0.0f; // metres/sec — Tag 56 (0 = omit)
+
+	// Platform kinematics from the host (CIGI user-defined packet 201); omitted when not valid.
+	bool   bHasAirspeed         = false;
+	float  TrueAirspeedMps      = 0.0f;  // Tag 8
+	float  IndicatedAirspeedMps = 0.0f;  // Tag 9
+	bool   bHasMagneticHeading  = false;
+	float  MagneticHeadingDeg   = 0.0f;  // Tag 64
+	bool   bHasVelocity         = false;
+	float  VelNorthMps          = 0.0f;  // Tag 79
+	float  VelEastMps           = 0.0f;  // Tag 80
+	float  VelDownMps           = 0.0f;
+	// Tag 2 is the host's sample time (packet 201) rather than the sim clock.
+	bool   bTimestampFromHost   = false;
 
 	// Active sensor state snapshot (for optional sidecar ground-truth output).
 	uint8 SensorMode      = 0;    // 0=EO, 1=IR
@@ -53,8 +85,13 @@ struct FCamSimTelemetry
 
 	// Atmospheric snapshot for Phase 18 sensor + KLV annotation.
 	float AtmosphericVisibilityM = 10000.0f; // metres (meteorological visibility)
-	float RelativeHumidity       = 0.5f;     // [0,1]
-	float AirTempCelsius         = 15.0f;    // degrees Celsius
+	float RelativeHumidity       = 0.5f;     // [0,1] — Tag 55 (with bHasAtmosphere)
+	float AirTempCelsius         = 15.0f;    // degrees Celsius — Tag 39 (with bHasAtmosphere)
+	// CIGI Atmosphere Control from the host (Tags 35-37, 39, 55 are sent only once it has arrived).
+	bool  bHasAtmosphere         = false;
+	float WindDirectionDeg       = 0.0f;     // direction the wind blows from, true north — Tag 35
+	float WindSpeedMps           = 0.0f;     // horizontal — Tag 36
+	float BaroPressureMb         = 1013.25f; // sea-level pressure; Tag 37 reduces it to the platform altitude
 	float WeatherSeverity        = 0.0f;     // [0,1] — 0=clear, 1=severe
 	uint8 WeatherPrecipType      = 0;        // 0=none, 1=rain, 2=snow
 };

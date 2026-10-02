@@ -11,6 +11,7 @@ class UCesiumGlobeAnchorComponent;
 class UCamSimSubsystem;
 class FCamSimTelemetryAssembler;
 struct FCamSimConfig;
+struct FCigiEntityState;
 
 /**
  * FCamSimPlatformRig
@@ -29,11 +30,11 @@ public:
 		FCamSimTelemetryAssembler* InTelemetry, const FCamSimConfig& Cfg);
 
 	/**
-	 * Apply this frame's host state (CIGI Entity Control for the camera
-	 * entity). Runs once per frame: FCamSimEntityManager calls it before
-	 * resolving attachments; the camera's Tick calls it too in case nothing did.
+	 * Apply the host's platform state (the latest CIGI Entity Control for the
+	 * camera entity this frame). ACamSimCamera::ApplyHostPlatformState calls it
+	 * once per frame, with the gimbal packets of the same datagrams.
 	 */
-	void ApplyHostPlatformState();
+	void ApplyHostEntityState(const FCigiEntityState& State);
 
 	/** If the platform is attached to an entity, follow it. Once per frame, after the parent is placed. */
 	void FollowAttachParent();
@@ -65,8 +66,7 @@ private:
 	FVector  AttachOffsetFrd = FVector::ZeroVector;
 	FRotator AttachRotation  = FRotator::ZeroRotator;
 
-	// GFrameCounter of the last ApplyHostPlatformState / FollowAttachParent run
-	uint64 HostStateFrame   = MAX_uint64;
+	// GFrameCounter of the last FollowAttachParent run
 	uint64 AttachFollowFrame = MAX_uint64;
 
 	// Phase 22G first-person view

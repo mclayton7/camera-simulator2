@@ -7,7 +7,6 @@
 #include "Sensor/SensorTypes.h"   // ESensorMode
 #include "CamSimSensorComponent.generated.h"
 
-class FCigiReceiver;
 class USceneCaptureComponent2D;
 struct FCamSimConfig;
 struct FCigiSensorControl;
@@ -16,7 +15,7 @@ struct FCigiSensorControl;
  * UCamSimSensorComponent
  *
  * Owns sensor state (on/off, waveband, polarity, FOV preset) for ACamSimCamera.
- * Each Tick it drains FCigiReceiver::SensorCtrlQueue (opcode 17).
+ * Each tick it applies the frame's Sensor Control packets (opcode 17).
  *
  * Drives SceneCaptureComponent2D::FOVAngle when the gain field in a
  * SensorControl packet selects a new preset from FCamSimConfig::SensorFovPresets
@@ -31,11 +30,11 @@ public:
 	UCamSimSensorComponent();
 
 	/**
-	 * Drain sensor control queue and update internal state.
-	 * Pass the SceneCapture component so FOV changes are applied immediately.
-	 * Call from ACamSimCamera::ApplyCigiState() each game tick.
+	 * Apply this frame's Sensor Control packets (oldest first). Pass the
+	 * SceneCapture component so FOV changes are applied immediately.
+	 * Call from ACamSimCamera each game tick.
 	 */
-	void TickSensor(FCigiReceiver* Receiver, const FCamSimConfig& Config,
+	void TickSensor(TConstArrayView<FCigiSensorControl> SensorControls, const FCamSimConfig& Config,
 	                USceneCaptureComponent2D* SceneCapture);
 
 	/**
@@ -47,6 +46,9 @@ public:
 	 * Returns the SceneCapture's FOV after the packet (unchanged if no presets
 	 * are configured or the preset didn't change). Exposed so unit tests can drive the
 	 * component without an FCigiReceiver.
+	 *
+	 * Logs at Log level only when the sensor id, on/off or polarity changes
+	 * (hosts resend Sensor Control, up to every frame); otherwise Verbose.
 	 */
 	float ApplySensorControl(const FCigiSensorControl& Sensor, const FCamSimConfig& Config,
 	                         USceneCaptureComponent2D* SceneCapture);
@@ -60,4 +62,9 @@ private:
 	uint8       SensorPolarity     = 0;   // 0 = WhiteHot, 1 = BlackHot (IR only)
 	ESensorMode CurrentSensorMode  = ESensorMode::EO;
 	int32       LastPresetIdx      = INDEX_NONE;   // FOV preset the gain last selected
+
+	// Last Sensor Control logged at Log level (sensor id, on, polarity); -1 = none yet.
+	int32       LastLoggedSensorId = -1;
+	bool        bLastLoggedOn      = true;
+	uint8       LastLoggedPolarity = 0;
 };

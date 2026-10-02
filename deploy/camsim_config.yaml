@@ -90,6 +90,18 @@ phase26:
   # Env: CAMSIM_PLATFORM_TAIL_NUMBER
   platform_tail_number: ""
 
+  # Mission ID (Tag 3), platform designation (Tag 10, e.g. "MQ-1B") and call
+  # sign (Tag 59): ISO 646 strings up to 127 characters, empty = omit.
+  # Env: CAMSIM_MISSION_ID / CAMSIM_PLATFORM_DESIGNATION / CAMSIM_PLATFORM_CALL_SIGN
+  mission_id: ""
+  platform_designation: ""
+  platform_call_sign: ""
+
+  # Send Tags 90/91 (full-range platform pitch/roll, int32 ±90°) alongside 6/7.
+  # Off: misb.js 0.1.30, the downstream reference decoder, decodes them as ~0°.
+  # Env: CAMSIM_KLV_FULL_RANGE_ATTITUDE
+  klv_full_range_attitude: false
+
   # Target track gate dimensions in pixels (Tags 43/44, 0 = omit)
   # Env: CAMSIM_TARGET_TRACK_GATE_WIDTH / CAMSIM_TARGET_TRACK_GATE_HEIGHT
   target_track_gate_width:  0
@@ -286,6 +298,7 @@ sim_time_rate: 1.0
 
 # CIGI Entity ID that drives the camera. All other entity IDs are managed
 # by the entity renderer. Must match --entity-id in send_cigi_test.py.
+# Env: CAMSIM_CAMERA_ENTITY_ID
 camera_entity_id: 1
 
 # --- First-Person View (Phase 22G) ---
@@ -302,10 +315,14 @@ fps_eye_height_m: 1.7
 # --- Gimbal ---
 
 # Maximum gimbal slew rate in deg/s. 0 = unlimited (instant snap).
-# Applies to both yaw and pitch axes.
+# Applies to the Articulated Part slew on all three axes (View Control snaps).
+# Env: CAMSIM_GIMBAL_MAX_SLEW_RATE
 gimbal_max_slew_rate: 0.0
 
-# Physical axis limits in degrees. Applied after every slew update.
+# Physical axis limits in degrees. Applied after every slew update. Yaw is
+# unwound to -180..180 first (CIGI sends 0-360). Limits spanning 360 deg allow
+# continuous yaw (slews take the short way across 180); narrower ones are stops.
+# Env: CAMSIM_GIMBAL_PITCH_MIN / _PITCH_MAX / _YAW_MIN / _YAW_MAX
 gimbal_pitch_min: -90.0
 gimbal_pitch_max: 30.0
 gimbal_yaw_min: -180.0
@@ -314,6 +331,7 @@ gimbal_yaw_max: 180.0
 # --- Sensor FOV Presets ---
 # Ordered wide->narrow FOV values (degrees). Sensor Control Gain (0.0=wide,
 # 1.0=narrow) selects by index. Empty array = ignore Gain, use ViewDef FOV.
+# Env: CAMSIM_SENSOR_FOV_PRESETS="60,20,5" ("none" / "off" / "[]" = empty)
 sensor_fov_presets:
   - 60.0
   - 20.0

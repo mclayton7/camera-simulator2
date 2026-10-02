@@ -4,7 +4,6 @@
 #include "Misc/AutomationTest.h"
 
 #include "Camera/CamSimGimbalComponent.h"
-#include "CIGI/CigiReceiver.h"
 #include "Camera/CamSimSensorComponent.h"
 #include "CIGI/CigiPacketTypes.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -133,7 +132,7 @@ bool FCamSimGimbalViewCtrlClampTest::RunTest(const FString& /*Parameters*/)
 
 	// Send values well outside the envelope — both axes should clamp
 	FCigiViewControl Pkt;
-	Pkt.bYawEn = true;   Pkt.Yaw   = 200.0f;
+	Pkt.bYawEn = true;   Pkt.Yaw   = 120.0f;
 	Pkt.bPitchEn = true; Pkt.Pitch = -120.0f;
 	Pkt.bRollEn = true;  Pkt.Roll  =  0.0f;
 
@@ -142,10 +141,18 @@ bool FCamSimGimbalViewCtrlClampTest::RunTest(const FString& /*Parameters*/)
 	TestEqual(TEXT("pitch clamped to PitchMin"), Gimbal->GetGimbalPitch(), -45.0f);
 
 	// Hit the opposite limits
-	Pkt.Yaw = -300.0f; Pkt.Pitch = 90.0f;
+	Pkt.Yaw = -120.0f; Pkt.Pitch = 90.0f;
 	Gimbal->ApplyViewControl(Pkt, Cfg);
 	TestEqual(TEXT("yaw clamped to YawMin"),     Gimbal->GetGimbalYaw(),   -90.0f);
 	TestEqual(TEXT("pitch clamped to PitchMax"), Gimbal->GetGimbalPitch(),  10.0f);
+
+	// Yaw is unwound before the clamp: 200 is -160 (left of the stops, not right), 300 is -60.
+	Pkt.Yaw = 200.0f;
+	Gimbal->ApplyViewControl(Pkt, Cfg);
+	TestEqual(TEXT("yaw 200 = -160 clamps to YawMin"), Gimbal->GetGimbalYaw(), -90.0f);
+	Pkt.Yaw = 300.0f;
+	Gimbal->ApplyViewControl(Pkt, Cfg);
+	TestEqual(TEXT("yaw 300 = -60 is inside the limits"), Gimbal->GetGimbalYaw(), -60.0f);
 	return true;
 }
 
@@ -206,7 +213,8 @@ bool FCamSimGimbalSlewBetweenPacketsTest::RunTest(const FString& /*Parameters*/)
 	Cfg.GimbalMaxSlewRateDegPerSec = 60.0f;
 	Cfg.GimbalPitchMin = -180.0f; Cfg.GimbalPitchMax = 180.0f;
 	Cfg.GimbalYawMin   = -180.0f; Cfg.GimbalYawMax   = 180.0f;
-	FCigiReceiver IdleReceiver(Cfg);  // never started: every queue is empty
+	const TArray<FCigiViewControl>    NoViewControls;  // a frame without packets
+	const TArray<FCigiArtPartControl> NoArtParts;
 
 	FCigiViewControl Reset;
 	Reset.bYawEn = true; Reset.Yaw = 0.0f;
@@ -218,15 +226,15 @@ bool FCamSimGimbalSlewBetweenPacketsTest::RunTest(const FString& /*Parameters*/)
 	Gimbal->ApplyArtPart(Pkt, 0.25f, Cfg);
 	TestEqual(TEXT("first tick slews 15 deg"), Gimbal->GetGimbalYaw(), 15.0f);
 
-	Gimbal->TickGimbal(0.25f, &IdleReceiver, Cfg);
+	Gimbal->TickGimbal(0.25f, NoViewControls, NoArtParts, Cfg);
 	TestEqual(TEXT("tick without a packet keeps slewing"), Gimbal->GetGimbalYaw(), 30.0f);
-	Gimbal->TickGimbal(1.0f, &IdleReceiver, Cfg);
+	Gimbal->TickGimbal(1.0f, NoViewControls, NoArtParts, Cfg);
 	TestEqual(TEXT("reaches the target and stops"), Gimbal->GetGimbalYaw(), 60.0f);
 
 	FCigiViewControl Snap;
 	Snap.bYawEn = true; Snap.Yaw = -20.0f;
 	Gimbal->ApplyViewControl(Snap, Cfg);
-	Gimbal->TickGimbal(1.0f, &IdleReceiver, Cfg);
+	Gimbal->TickGimbal(1.0f, NoViewControls, NoArtParts, Cfg);
 	TestEqual(TEXT("ViewControl snap cancels the ArtPart target"), Gimbal->GetGimbalYaw(), -20.0f);
 	return true;
 }
@@ -247,12 +255,19 @@ bool FCamSimGimbalArtPartClampTest::RunTest(const FString& /*Parameters*/)
 
 	FCigiArtPartControl Pkt;
 	Pkt.bArtPartEn = true;
-	Pkt.bYawEn = true;   Pkt.Yaw   = 250.0f;
+	Pkt.bYawEn = true;   Pkt.Yaw   = 150.0f;
 	Pkt.bPitchEn = true; Pkt.Pitch = -120.0f;
 
 	Gimbal->ApplyArtPart(Pkt, 0.001f, Cfg);
 	TestEqual(TEXT("ArtPart yaw clamped to YawMax"),     Gimbal->GetGimbalYaw(),    90.0f);
 	TestEqual(TEXT("ArtPart pitch clamped to PitchMin"), Gimbal->GetGimbalPitch(), -45.0f);
+
+	// 250 is -110 once unwound: the nearer stop is YawMin.
+	Pkt.Yaw = 250.0f;
+	Gimbal->ApplyArtPart(Pkt, 0.001f, Cfg);
+	TestEqual(TEXT("ArtPart yaw 250 = -110 clamps to YawMin"), Gimbal->GetGimbalYaw(), -90.0f);
+	Pkt.Yaw = 150.0f;
+	Gimbal->ApplyArtPart(Pkt, 0.001f, Cfg);
 
 	// bArtPartEn = false → no-op
 	Pkt.bArtPartEn = false;

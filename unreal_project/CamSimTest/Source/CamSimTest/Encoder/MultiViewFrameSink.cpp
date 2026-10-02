@@ -2,6 +2,7 @@
 
 #include "Encoder/MultiViewFrameSink.h"
 #include "Encoder/Nv12.h"
+#include "Metadata/CamSimTelemetry.h"
 #include "CamSimTest.h"
 
 #include "Async/ParallelFor.h"
@@ -94,7 +95,7 @@ void FMultiViewFrameSink::EncodeFrame(const FSensorFrame& Frame,
 		}
 
 		ViewTelemetry.HFovDeg = TargetHFov;
-		ViewTelemetry.VFovDeg = TargetHFov * static_cast<float>(Height) / static_cast<float>(Width);
+		ViewTelemetry.VFovDeg = CamSimTelemetry::VerticalFovDeg(TargetHFov, Width, Height);
 
 		View.Encoder->EncodeFrame(*FrameForView, ViewTelemetry, FrameIdx);
 		++EncodedViews;

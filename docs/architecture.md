@@ -22,18 +22,19 @@ Four threads collaborate with explicit ownership boundaries:
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  Game Thread                                                    │
 │  • FCamSimEntityManager::Tick() — drains EntityStateQueue       │
-│      then CameraEntityQueue (ACamSimCamera::ApplyHostPlatform…) │
+│      then CameraFrameQueue (ACamSimCamera::ApplyHostPlatform…)  │
 │                                   RateCtrlQueue                 │
 │                                   ArtPartQueue                  │
 │                                   CompCtrlQueue                 │
 │  • ACamSimEnvironment::Tick() — drains Celestial/Atmos/Weather  │
-│  • ACamSimCamera::Tick() (TG_PostUpdateWork, last) — View/Sensor│
-│      Ctrl, ArtPart queues; captures the frame                   │
+│  • ACamSimCamera::Tick() (TG_PostUpdateWork, last) — applies the│
+│      held View/Sensor Ctrl, ArtPart; footprint; captures        │
 │  • FCigiQueryHandler::Tick() — drains HatHotReqQueue            │
 │                                        LosSegReqQueue           │
 │                                        LosVectReqQueue          │
 │                               UE line traces → FCigiSender      │
 │  • FCigiSender::FlushFrame() — SOF + response datagram → host   │
+│      (sent from the camera tick, after this frame's centre)     │
 │  • Primary view: queues a grab request; the game viewport       │
 │    renders the sensor view (TSR) after the tick                 │
 │  • Sensor AE/AGC (FSensorController) → sensor graph params      │
@@ -64,17 +65,13 @@ back-pressure that keeps encoding load at exactly one frame in flight.
 
 ## SPSC Queue Routing
 
-`FCigiReceiver` maintains twelve SPSC queues. The receiver thread is the sole
+`FCigiReceiver` maintains these SPSC queues. The receiver thread is the sole
 producer for all queues. Each queue has exactly one game-thread consumer:
 
 | Queue | Producer | Consumer |
 |-------|----------|----------|
-| `CameraEntityQueue` | `FEntityCtrlProcessor` (when `EntityId == CameraEntityId`) | `ACamSimCamera` |
+| `CameraFrameQueue` | `FCigiReceiver::ProcessDatagram`, one `FCigiCameraFrame` per datagram: the camera entity's Entity Control, View Control (16), View Definition (21), Sensor Control (17), camera Art Part and Platform Kinematics (user-defined 201, raw-parsed) | `ACamSimCamera` |
 | `EntityStateQueue` | `FEntityCtrlProcessor` (all other entity IDs) | `FCamSimEntityManager` |
-| `ViewDefQueue` | `FViewDefProcessor` | `ACamSimCamera` |
-| `SensorCtrlQueue` | `FSensorCtrlProcessor` (opcode 17) | `ACamSimCamera` |
-| `ViewCtrlQueue` | `FViewCtrlProcessor` (opcode 16) | `ACamSimCamera` |
-| `CameraArtPartQueue` | `FArtPartProcessor` (camera entity art parts) | `ACamSimCamera` |
 | `CelestialQueue` | `FCigiRawEnvParser` (raw bytes, bypasses CCL hold) | `ACamSimEnvironment` |
 | `AtmosphereQueue` | `FCigiRawEnvParser` | `ACamSimEnvironment` |
 | `WeatherQueue` | `FCigiRawEnvParser` | `ACamSimEnvironment` |
@@ -84,6 +81,11 @@ producer for all queues. Each queue has exactly one game-thread consumer:
 | `HatHotReqQueue` | `FHatHotReqProcessor` (opcode 24) | `FCigiQueryHandler` |
 | `LosSegReqQueue` | `FLosSegReqProcessor` (opcode 25) | `FCigiQueryHandler` |
 | `LosVectReqQueue` | `FLosVectReqProcessor` (opcode 26) | `FCigiQueryHandler` |
+
+The camera's packets travel as one item per datagram so the game thread reads the
+platform pose and the gimbal, FOV and sensor packets at one point
+(`ACamSimCamera::ApplyHostPlatformState`, from the entity-manager tick): a datagram
+that lands mid-frame can't apply its gimbal a frame before its pose.
 
 The camera/non-camera split is the key invariant: a single SPSC queue can only
 have one consumer. Routing at the producer side (`FEntityCtrlProcessor`) keeps
