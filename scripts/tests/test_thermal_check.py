@@ -127,19 +127,20 @@ def _rows(bands=("mwir", "lwir"), runs=ALL_RUNS) -> list[dict]:
 
 def test_expected_rows_cover_every_band_time_and_selected_run():
     rows = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
-    assert len(rows) == 2 * 11 + 3
+    assert len(rows) == 2 * 11 + 4
     assert ("e", "lwir", "noon") in rows and ("e", "lwir", "night") in rows
     assert not any(r[0] == "m" for r in rows)  # (m) is info only (Task 13 fix round 1)
     for b in ("mwir", "lwir"):  # (h) static coast shimmer, both times; 4B land-cover gates
         assert ("h", b, "night") in rows and ("h", b, "noon") in rows
         assert ("i", b, "noon") in rows and ("j", b, "night") in rows and ("k", b, "night") in rows
-    assert ("f", "mwir", "noon") in rows and ("g", "eo", "noon") in rows and ("l", "mwir", "noon") in rows
+    assert ("f", "mwir", "noon") in rows and ("g", "eo", "noon") in rows
+    assert ("l1", "mwir", "noon") in rows and ("l2", "mwir", "noon") in rows  # ruling S12
     assert rows[-1] == ("g", "eo", "noon")
     only_bands = tc.expected_rows(["mwir"], {"bands"})
     assert {r[0] for r in only_bands} == set("abcdehij")  # f, g, k, l not expected
     assert tc.expected_rows(["mwir"], {"eo"}) == [("g", "eo", "noon")]
     assert tc.expected_rows(["mwir"], {"lcoff"}) == []  # (k) needs the land-cover-on band run too
-    assert tc.expected_rows(["mwir"], {"pan"}) == [("l", "mwir", "noon")]
+    assert tc.expected_rows(["mwir"], {"pan"}) == [("l1", "mwir", "noon"), ("l2", "mwir", "noon")]
 
 
 def test_complete_rows_pass():
@@ -158,7 +159,7 @@ def test_a_missing_row_fails():
         assert tc.missing_rows(checks, exp) == [exp[drop]]
     # A whole band's run absent: its rows are missing even though every letter is present.
     checks = _rows(bands=("mwir",))
-    assert {c["check"] for c in checks} == set("abcdefghijkl")
+    assert {c["check"] for c in checks} == set("abcdefghijk") | {"l1", "l2"}
     assert tc.gate_passed(checks, exp) is False
     assert tc.gate_passed([], []) is False  # nothing expected -> not a pass
 
@@ -313,6 +314,7 @@ def test_run_groups_and_bands():
     assert tc.run_group("mwir") == "bands" and tc.run_band("mwir") == "mwir"
     assert tc.run_group("lwir_lcoff") == "lcoff" and tc.run_band("lwir_lcoff") == "lwir"
     assert tc.run_group("mwir_pan") == "pan" and tc.run_band("mwir_pan") is None
+    assert tc.run_group("mwir_pan_lcoff") == "pan" and tc.run_band("mwir_pan_lcoff") is None  # (l2) control
     assert tc.run_group("mwir_1080p") == "hd" and tc.run_group("eo_thermal_off") == "eo"
 
 
@@ -382,3 +384,95 @@ def test_median3_removes_isolated_defects():
     edge = np.zeros((20, 20), np.float32)
     edge[:, 10:] = 50.0  # a step edge survives
     assert np.array_equal(tc.median3(edge), edge)
+
+
+# ---- Ruling S12: (k) class-scale band-pass, (l1) median per-re-centre spike, (l2) excess over the control ----
+
+
+def test_band_px_converts_ground_scales_to_odd_boxes():
+    gsd = tc.nadir_gsd_m(800.0, 40.0, 1280)
+    assert gsd == pytest.approx(0.455, abs=1e-3)
+    assert tc.band_px(gsd) == (33, 331)
+    assert tc.grid_period_px(800.0, 40.0, 1280) == pytest.approx(10.0 / gsd)
+
+
+def _detector(rng, h=360, w=640, defects=60):
+    """A flat 4A-like night frame: vignetting, column FPN, temporal-mean noise and defect pixels."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    r2 = ((xx - w / 2) / (w / 2)) ** 2 + ((yy - h / 2) / (h / 2)) ** 2
+    y = 120.0 - 30.0 * r2 + rng.normal(0, 1.6, w)[None, :] + rng.normal(0, 1.3, (h, w))
+    idx = rng.integers(0, h * w, defects)
+    y.flat[idx] = np.where(rng.random(defects) < 0.5, 16.0, 235.0)
+    return y.astype(np.float32)
+
+
+def _blobs(rng, h=360, w=640, cell=60, amp=6.0):
+    """Land-cover-like regions: random levels on a coarse grid, smoothed (scales ~cell px)."""
+    g = rng.normal(0, amp, (h // cell + 2, w // cell + 2))
+    up = np.kron(g, np.ones((cell, cell)))[:h, :w].astype(np.float32)
+    return tc.box_blur(up, cell // 3 | 1)
+
+
+def test_class_structure_passes_band_limited_structure_and_fails_pure_noise():
+    rng = np.random.default_rng(5)
+    mask = tc.central_mask((360, 640))
+    lo, hi = 15, 151
+    off = _detector(rng)
+    on = _detector(rng) + _blobs(rng)
+    c_off, c_on = tc.class_structure_std(off, mask, lo, hi), tc.class_structure_std(on, mask, lo, hi)
+    assert c_on / c_off >= tc.STRUCTURE_RATIO
+    noise_only = _detector(rng)  # a second flat frame: no structure, only (different) detector noise
+    assert tc.class_structure_std(noise_only, mask, lo, hi) / c_off < 2.0
+    # the old high-pass metric is dominated by the defects and FPN on the same frames
+    assert tc.highpass_std(on, mask) / tc.highpass_std(off, mask) < tc.STRUCTURE_RATIO
+    assert math.isnan(tc.class_structure_std(off, np.zeros_like(mask), lo, hi))
+
+
+def test_class_structure_ignores_scales_outside_the_band():
+    mask = tc.central_mask((360, 640))
+    yy, xx = np.mgrid[0:360, 0:640]
+    fine = 100.0 + 10.0 * np.where((xx // 2) % 2 == 0, 1.0, -1.0)  # 4 px period, below 15 px
+    assert tc.class_structure_std(fine.astype(np.float32), mask, 15, 151) < 0.1 * 10.0  # box sidelobes: ~6 % of the input
+    ramp = (100.0 + 0.05 * xx).astype(np.float32)  # vignetting-scale gradient
+    assert tc.class_structure_std(ramp, mask, 15, 151) < 0.5
+
+
+def _pan(walls, t0=1000.0, dt=1.0 / 30.0, ids=None):
+    return [
+        {"t": t0 + i * dt, "wall_ms": w, "land_cover_window": (ids[i] if ids else 1)} for i, w in enumerate(walls)
+    ]
+
+
+def test_per_recentre_median_ignores_one_coincident_hitch():
+    n = 600
+    walls = [33.3] * n
+    ids = [1 + i // 100 for i in range(n)]  # re-centres at 100, 200, ..., 500
+    walls[300] = 40.3  # one background hitch at a re-centre
+    rows = _pan(walls, ids=ids)
+    ev = tc.window_events(rows)
+    assert ev == [100, 200, 300, 400, 500]
+    per = tc.per_recentre_spikes(rows, ev)
+    assert per[2] == pytest.approx(7.0) and tc.med(per) == pytest.approx(0.0)
+    # a stall at every re-centre is caught by the median
+    for e in ev:
+        walls[e + 1] = 36.3
+    per = tc.per_recentre_spikes(_pan(walls, ids=ids), ev)
+    assert tc.med(per) == pytest.approx(3.0) and tc.med(per) > tc.RECENTRE_MEDIAN_MS
+
+
+def test_control_excess_cancels_a_hitch_the_control_also_has():
+    n = 600
+    ids = [1 + i // 100 for i in range(n)]
+    on = [33.3] * n
+    on[300] = 40.3
+    ctrl = [33.3] * n
+    ctrl[301] = 40.5  # the same hitch, one frame later, in the land-cover-off pan (different launch, own t0)
+    rows, crows = _pan(on, ids=ids), _pan(ctrl, t0=5000.0, ids=[0] * n)
+    ev = tc.window_events(rows)
+    ex = tc.control_excess(rows, 1000.0, ev, crows, 5000.0)
+    assert len(ex) == 5 and max(ex) == pytest.approx(0.0)  # 40.3 vs 40.5 at 300: excess -0.2; elsewhere 0
+    assert ex[2] == pytest.approx(-0.2)
+    on[400] = 45.0  # a stall the control lacks
+    ex = tc.control_excess(_pan(on, ids=ids), 1000.0, ev, crows, 5000.0)
+    assert ex[3] == pytest.approx(45.0 - 33.3) and max(ex) > tc.RECENTRE_EXCESS_MS
+    assert math.isnan(tc.control_excess(rows, 1000.0, ev, [], 5000.0)[0])  # no control frames: fails
