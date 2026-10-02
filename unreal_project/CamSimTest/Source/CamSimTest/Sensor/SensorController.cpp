@@ -194,9 +194,11 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	{
 		// Percentile band in signal units -> normalised DN, then stretched to [0, 1] (luminance proxy) or to
 		// [margin, 1 - margin] with the gain capped and the band centred when the cap binds (thermal radiance).
+		// The band stops at full well (ClipLinear): the detector clips there, so a hot object beyond the AE's range (a
+		// burning vehicle, ROADMAP 4C) must stretch to white, not to the unclipped signal it never outputs.
 		const float N    = P.PhotonGain * P.AnalogGain;
-		const float LoN  = FMath::Exp2(IrLoLog2) * N;
-		const float HiN  = FMath::Max(FMath::Exp2(IrHiLog2) * N, LoN + 1e-6f);
+		const float LoN  = FMath::Min(FMath::Exp2(IrLoLog2) * N, ClipLinear - 1e-6f);
+		const float HiN  = FMath::Max(FMath::Min(FMath::Exp2(IrHiLog2) * N, ClipLinear), LoN + 1e-6f);
 		if (In.bRadianceInput)
 		{
 			const float Span = 1.0f - 2.0f * ThermalAgcMargin;

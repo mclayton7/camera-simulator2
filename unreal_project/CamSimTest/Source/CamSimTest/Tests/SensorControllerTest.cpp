@@ -550,3 +550,32 @@ bool FSensorThermalAgcCapTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorThermalAgcClipTest, "CamSim.Sensor.Controller.ThermalAgcBandStopsAtFullWell",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorThermalAgcClipTest::RunTest(const FString& Parameters)
+{
+	// ROADMAP 4C: a burning vehicle (~1000x B(300 K), 10 % of the frame) beyond the AE's min gain clips at full well. The
+	// AGC band must stop at full well (the detector cannot output more): the clipped vehicle displays white, not the dark
+	// grey of a band stretched to its unclipped signal.
+	FSensorModeConfig Cfg = ThermalCfg();
+	Cfg.ThermalExposure.bAuto = true;
+	Cfg.ThermalExposure.MinGainEv = -8.0f;
+	Cfg.ThermalExposure.MaxPhotonGainEv = 0.0f;
+	Cfg.ThermalExposure.TargetGrey = 0.5f;
+	FSensorHistogram H;
+	H.Bins[FSensorHistogram::BinOf(1.0f)] = 9000;                    // background at B(300 K)
+	H.Bins[FSensorHistogram::BinOf(FMath::Exp2(10.0f))] = 1000;     // burning truck
+	H.Serial = 1;
+	FSensorController C;
+	C.Update(Radiance(&H, 1), Cfg);
+	H.Serial = 2;
+	const FSensorFrameParams P = C.Update(Radiance(&H, 2), Cfg);
+	const float N = P.PhotonGain * P.AnalogGain;
+	TestTrue(TEXT("AE at its min gain: the truck clips"), FMath::Exp2(10.0f) * N > FSensorController::ClipLinear);
+	const float Truck = FMath::Min(FMath::Exp2(10.0f) * N, FSensorController::ClipLinear) * P.DisplayGain + P.DisplayOffset;
+	const float Ground = 1.0f * N * P.DisplayGain + P.DisplayOffset;
+	TestTrue(*FString::Printf(TEXT("clipped truck displays white (%.3f >= 0.85)"), Truck), Truck >= 0.85f);
+	TestTrue(*FString::Printf(TEXT("ground below the truck (%.3f)"), Ground), Ground < Truck - 0.5f);
+	return true;
+}
