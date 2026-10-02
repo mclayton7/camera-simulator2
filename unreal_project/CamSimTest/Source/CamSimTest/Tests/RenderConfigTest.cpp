@@ -82,68 +82,6 @@ bool FRenderConfigEnvTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// Hot reload can't switch the render path: the grab extension, AA, viewport
-// rendering, Cesium cameras and origin shift are all set up at BeginPlay.
-// A reload keeps the running values (final review, 3A).
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigHotReloadTest,
-	"CamSim.Config.HotReloadKeepsRestartOnlySettings",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FRenderConfigHotReloadTest::RunTest(const FString& Parameters)
-{
-	FCamSimConfig Running;
-	Running.CigiPort = 8888;
-	Running.Render.OriginShiftDistanceM = 20000.0;
-	Running.CaptureWidth = 1280;
-	Running.CaptureHeight = 720;
-
-	FCamSimConfig Reloaded;
-	Reloaded.CigiPort = 9999;
-	Reloaded.Render.OriginShiftDistanceM = 5000.0;
-	Reloaded.Render.CameraCutAngleDeg = 12.0f;   // live-tunable: takes effect
-	// ROADMAP 3B: capture size sizes the readback buffers, the sensor graph and
-	// the encoder once per session.
-	Reloaded.CaptureWidth = 1920;
-	Reloaded.CaptureHeight = 1080;
-
-	FCamSimConfig::KeepRestartOnlySettings(Running, Reloaded);
-
-	TestEqual(TEXT("CIGI port kept"), Reloaded.CigiPort, 8888);
-	TestEqual(TEXT("origin shift kept"), Reloaded.Render.OriginShiftDistanceM, 20000.0);
-	TestEqual(TEXT("camera cut threshold reloads"), Reloaded.Render.CameraCutAngleDeg, 12.0f);
-	TestEqual(TEXT("capture width kept"), Reloaded.CaptureWidth, 1280);
-	TestEqual(TEXT("capture height kept"), Reloaded.CaptureHeight, 720);
-	return true;
-}
-
-// Final-review F3: a hot-reloaded config is validated (after the restart-only settings are carried
-// over) before it replaces the running one; a config startup would reject is never applied live.
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigHotReloadValidatesTest,
-	"CamSim.Config.HotReloadRejectsInvalidConfig",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FRenderConfigHotReloadValidatesTest::RunTest(const FString& Parameters)
-{
-	const FCamSimConfig Running;
-	TestEqual(TEXT("valid reload accepted"),
-		FCamSimConfig::ValidateHotReload(Running, FCamSimConfig::LoadFromYamlString(TEXT("hfov_deg: 30.0\n"))).Num(), 0);
-
-	const TArray<FString> Bad = FCamSimConfig::ValidateHotReload(Running,
-		FCamSimConfig::LoadFromYamlString(TEXT("sensor_modes:\n  eo:\n    optics:\n      f_number: 0\n")));
-	TestTrue(TEXT("invalid sensor optics rejected"),
-		Bad.ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("f_number")); }));
-
-	// Restart-only settings are validated as they will run: a bad capture width in the file is ignored, not fatal.
-	FCamSimConfig OddWidth = FCamSimConfig::LoadFromYamlString(TEXT("hfov_deg: 30.0\n"));
-	OddWidth.CaptureWidth = 1282;
-	TestEqual(TEXT("restart-only capture width not validated"), FCamSimConfig::ValidateHotReload(Running, OddWidth).Num(), 0);
-
-	FCamSimConfig Unparsed;
-	Unparsed.bLoadedSuccessfully = false;
-	TestTrue(TEXT("parse failure rejected"), FCamSimConfig::ValidateHotReload(Running, Unparsed).Num() > 0);
-	return true;
-}
-
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderConfigRelativeFrameStatsPathTest,
 	"CamSim.Config.FrameStatsRelativePathUsesLaunchDir",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

@@ -52,9 +52,6 @@ void FCamSimTelemetryAssembler::ReadEnvironment(UWorld* World)
 	Telemetry.AirTempCelsius         = Snap.AirTempCelsius;
 	Telemetry.WeatherSeverity        = Snap.WeatherSeverity;
 	Telemetry.WeatherPrecipType      = Snap.WeatherPrecipType;
-
-	// 18L: the environment blends weather zones around the camera position.
-	It->SetCameraPosition(Telemetry.Latitude, Telemetry.Longitude);
 }
 
 void FCamSimTelemetryAssembler::UpdateFrameCenter(UWorld* World, const USceneCaptureComponent2D& Sensor,

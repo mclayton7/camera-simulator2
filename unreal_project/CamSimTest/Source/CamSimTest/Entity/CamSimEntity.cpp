@@ -138,12 +138,6 @@ void ACamSimEntity::SetShadowCasting(bool bCast)
 	if (AnimMeshComp)   { AnimMeshComp->CastShadow    = bCast; AnimMeshComp->bCastDynamicShadow   = bCast; }
 }
 
-void ACamSimEntity::SetDamageInterpolation(bool bEnabled, float RateSec)
-{
-	bDamageInterpolating  = bEnabled;
-	DamageInterpolationRate = FMath::Max(0.01f, RateSec);
-}
-
 // -------------------------------------------------------------------------
 // SetEntityType — load mesh by type ID
 // -------------------------------------------------------------------------
@@ -617,48 +611,33 @@ void ACamSimEntity::ApplyComponent(const FComponentCommand& C)
 		}
 		break;
 
-	case 10: // Damage state — swap mesh asset (Phase 22C: gradual interpolation)
+	case 10: // Damage state — swap mesh asset
 		{
-			const uint8 OldDamageState = DamageState;
-			const uint8 NewDamageState = FMath::Min(C.State, static_cast<uint8>(2));
+			DamageState = FMath::Min(C.State, static_cast<uint8>(2));
 			static const TCHAR* DamageNames[] = { TEXT("intact"), TEXT("damaged"), TEXT("destroyed") };
 			UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: damage state -> %u (%s)"),
-				EntityId, NewDamageState,
-				NewDamageState <= 2 ? DamageNames[NewDamageState] : TEXT("unknown"));
+				EntityId, DamageState, DamageNames[DamageState]);
 
-			if (bDamageInterpolating && DamageInterpolationRate > 0.0f && OldDamageState != NewDamageState)
+			const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr;
+			if (!Entry) break;
+
+			FString AssetPath;
+			if (DamageState == 1 && !Entry->DamagedAssetPath.IsEmpty())
+				AssetPath = Entry->DamagedAssetPath;
+			else if (DamageState == 2 && !Entry->DestroyedAssetPath.IsEmpty())
+				AssetPath = Entry->DestroyedAssetPath;
+			else
+				AssetPath = Entry->AssetPath;
+
+			if (Entry->bSkeletal)
 			{
-				// Gradual damage: start interpolation, defer mesh swap
-				TargetDamageState = NewDamageState;
-				DamageBlendAlpha  = 0.0f;
+				USkeletalMesh* Mesh = CamSimMeshLoader::LoadSkeletalMesh(AssetPath);
+				if (Mesh) SkelMeshComp->SetSkinnedAsset(Mesh);
 			}
 			else
 			{
-				// Immediate swap
-				DamageState = NewDamageState;
-				TargetDamageState = NewDamageState;
-
-				const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr;
-				if (!Entry) break;
-
-				FString AssetPath;
-				if (DamageState == 1 && !Entry->DamagedAssetPath.IsEmpty())
-					AssetPath = Entry->DamagedAssetPath;
-				else if (DamageState == 2 && !Entry->DestroyedAssetPath.IsEmpty())
-					AssetPath = Entry->DestroyedAssetPath;
-				else
-					AssetPath = Entry->AssetPath;
-
-				if (Entry->bSkeletal)
-				{
-					USkeletalMesh* Mesh = CamSimMeshLoader::LoadSkeletalMesh(AssetPath);
-					if (Mesh) SkelMeshComp->SetSkinnedAsset(Mesh);
-				}
-				else
-				{
-					UStaticMesh* Mesh = CamSimMeshLoader::LoadStaticMesh(AssetPath);
-					if (Mesh) StaticMeshComp->SetStaticMesh(Mesh);
-				}
+				UStaticMesh* Mesh = CamSimMeshLoader::LoadStaticMesh(AssetPath);
+				if (Mesh) StaticMeshComp->SetStaticMesh(Mesh);
 			}
 		}
 		break;
@@ -697,41 +676,6 @@ void ACamSimEntity::Tick(float DeltaTime)
 		if (UCamSimSubsystem* Sub = GetCamSimSubsystem(); Sub && Sub->GetOceanSurface())
 		{
 			CommitPose(LastCommitSender);
-		}
-	}
-
-	// Phase 22C: Gradual damage blend
-	if (bDamageInterpolating && DamageState != TargetDamageState && DamageInterpolationRate > 0.0f)
-	{
-		DamageBlendAlpha += DeltaTime / DamageInterpolationRate;
-		if (DamageBlendAlpha >= 1.0f)
-		{
-			DamageBlendAlpha = 1.0f;
-			DamageState = TargetDamageState;
-
-			// Complete mesh swap
-			const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr;
-			if (Entry)
-			{
-				FString AssetPath;
-				if (DamageState == 1 && !Entry->DamagedAssetPath.IsEmpty())
-					AssetPath = Entry->DamagedAssetPath;
-				else if (DamageState == 2 && !Entry->DestroyedAssetPath.IsEmpty())
-					AssetPath = Entry->DestroyedAssetPath;
-				else
-					AssetPath = Entry->AssetPath;
-
-				if (Entry->bSkeletal)
-				{
-					USkeletalMesh* Mesh = CamSimMeshLoader::LoadSkeletalMesh(AssetPath);
-					if (Mesh) SkelMeshComp->SetSkinnedAsset(Mesh);
-				}
-				else
-				{
-					UStaticMesh* Mesh = CamSimMeshLoader::LoadStaticMesh(AssetPath);
-					if (Mesh) StaticMeshComp->SetStaticMesh(Mesh);
-				}
-			}
 		}
 	}
 

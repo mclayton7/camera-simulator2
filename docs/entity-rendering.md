@@ -11,7 +11,7 @@ control (lights, damage), and removal.
 - [Entity routing](#entity-routing)
 - [Entity lifecycle](#entity-lifecycle)
 - [Configuration](#configuration)
-- [Phase C scale and scenario controls](#phase-c-scale-and-scenario-controls)
+- [Phase C scale controls](#phase-c-scale-controls)
 - [Dead-reckoning](#dead-reckoning)
 - [Articulated parts](#articulated-parts)
 - [Component control](#component-control)
@@ -77,7 +77,6 @@ On every tick `FCamSimEntityManager`:
 3. **Purges** stale entries where the actor has been externally invalidated.
 4. **Drains** rate control, art part, and component control queues, forwarding
    each packet to the matching entity by ID.
-5. **Applies** optional scenario-orchestrated entity states from `scenario.entities`.
 
 ### Spawn
 
@@ -153,7 +152,7 @@ warnings.
 
 ---
 
-## Phase C Scale and Scenario Controls
+## Phase C Scale Controls
 
 ### Runtime scale controls (`entity_scale`)
 
@@ -166,22 +165,6 @@ warnings.
 
 These controls are applied when entities spawn, and pose throttling is enforced
 in `FCamSimEntityManager::ApplyEntityState()`.
-
-### Scenario orchestration (`scenario`)
-
-When `scenario.enabled=true`, `FCamSimEntityManager` synthesizes entity states
-from `scenario.entities` using deterministic monotonic time
-(`FPlatformTime::Seconds`) with `scenario.time_scale`.
-
-Per scripted entity:
-
-- spawn at `spawn_time_sec`
-- update at `update_rate_hz` (or every tick if `0`)
-- move/rotate using configured linear and angular rates
-- despawn after `despawn_time_sec` (if greater than spawn time)
-
-Scenario entities coexist with live CIGI traffic and are processed each manager
-tick.
 
 ---
 

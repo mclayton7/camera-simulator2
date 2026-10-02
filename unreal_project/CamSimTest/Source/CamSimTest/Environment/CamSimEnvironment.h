@@ -18,24 +18,6 @@ class ACesiumSunSky;
 class UCamSimSubsystem;
 class ACamSimCamera;
 
-/** Weather parameters for a regional zone (blended when camera is inside the radius). */
-struct FWeatherZoneParams
-{
-	float FogDensity    = 0.0f;
-	float VisibilityM   = 10000.0f;
-	float CloudCoverage = 0.0f;
-};
-
-/** Runtime state of a weather zone — position from YAML config, params from CIGI. */
-struct FWeatherZone
-{
-	int32  ZoneID  = 0;
-	double LatDeg  = 0.0;
-	double LonDeg  = 0.0;
-	float  RadiusM = 10000.0f;
-	FWeatherZoneParams Params;
-};
-
 /**
  * ACamSimEnvironment
  *
@@ -87,9 +69,6 @@ public:
 	/** Thread-safe snapshot (written on game thread, read by ACamSimCamera same game thread). */
 	FAtmosphericSnapshot GetAtmosphericSnapshot() const { return CachedAtmosSnapshot; }
 
-	/** Called from ACamSimCamera::Tick() to update camera position for zone blending (18L). */
-	void SetCameraPosition(double LatDeg, double LonDeg);
-
 private:
 	// Cached UE environment actors (found via TActorIterator in BeginPlay)
 	UPROPERTY(Transient) TObjectPtr<ADirectionalLight>    SunLight;
@@ -125,12 +104,6 @@ private:
 	// Ocean (ROADMAP 2.6)
 	FOceanManager OceanManager;
 
-	// 18L: Weather zone blending
-	TArray<FWeatherZone>  ActiveWeatherZones;    // runtime zones (up to 16)
-	FWeatherZoneParams    GlobalWeatherBaseline; // fog density from last global weather update
-	double                CameraLatDeg = 0.0;   // updated each tick via SetCameraPosition()
-	double                CameraLonDeg = 0.0;
-
 	/** CIGI Celestial Sphere Control → sim clock date/time and rate. */
 	void ApplyCelestialControl(const FCigiCelestialState& Cel);
 	/** Sun position and lighting for a UTC time. */
@@ -140,13 +113,5 @@ private:
 
 	// Phase 18 helpers
 	void ApplySecondFogLayer();                              // 18C
-	void ApplyGodRays();                                     // 18E
-	void ApplySkyAtmosphericScattering();                    // 18J
 	void SetCloudShadowsEnabled(bool bEnabled, float Strength); // 18B
-
-	// 18L: Weather zone blending helpers
-	void  UpdateWeatherZone(uint16 RegionId, const FWeatherZoneParams& Params);
-	void  BlendWeatherZones();
-	static float GreatCircleApproxM(double Lat1, double Lon1, double Lat2, double Lon2);
-
 };

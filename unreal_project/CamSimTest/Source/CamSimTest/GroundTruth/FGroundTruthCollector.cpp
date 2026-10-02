@@ -2,7 +2,6 @@
 
 #include "GroundTruth/FGroundTruthCollector.h"
 #include "GroundTruth/FCocoAnnotationWriter.h"
-#include "GroundTruth/FVocAnnotationWriter.h"
 #include "GroundTruth/FDepthMapWriter.h"
 #include "GroundTruth/InstanceMaskAnalyzer.h"
 #include "Config/CamSimConfig.h"
@@ -58,13 +57,6 @@ bool FGroundTruthCollector::Open()
 			if (Coco->Open(OutputDir))
 				Writers.Add(MoveTemp(Coco));
 		}
-		if (Config.MLTraining.bVocExport)
-		{
-			auto Voc = MakeUnique<FVocAnnotationWriter>();
-			Voc->SetImageSize(Config.CaptureWidth, Config.CaptureHeight);
-			if (Voc->Open(OutputDir))
-				Writers.Add(MoveTemp(Voc));
-		}
 	}
 
 	// Depth writer
@@ -80,11 +72,10 @@ bool FGroundTruthCollector::Open()
 
 	bIsOpen = true;
 	UE_LOG(LogCamSim, Log,
-		TEXT("FGroundTruthCollector: opened — depth=%d bbox=%d coco=%d voc=%d interval=%d"),
+		TEXT("FGroundTruthCollector: opened — depth=%d bbox=%d coco=%d interval=%d"),
 		Config.MLTraining.bDepthMap ? 1 : 0,
 		Config.MLTraining.bBoundingBoxes ? 1 : 0,
 		Config.MLTraining.bCocoExport ? 1 : 0,
-		Config.MLTraining.bVocExport  ? 1 : 0,
 		AnnotationIntervalFrames);
 	return true;
 }

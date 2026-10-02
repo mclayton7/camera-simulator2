@@ -40,7 +40,7 @@ CIGI 3.3 UDP ──► FCigiReceiver ──► UE5 Game Thread ──► SceneCa
 | 8      | Rate Control             | Dead-reckoning (Phase 8)                                |
 | 9      | Celestial Sphere Control | Time of day, sun/moon (Phase 7)                         |
 | 10     | Atmosphere Control       | Fog, visibility (Phase 7)                               |
-| 12     | Weather Control          | Cloud layers (Phase 7)                                  |
+| 12     | Weather Control          | Cloud layers, global only (Phase 7)                     |
 | 16     | View Control             | Gimbal orientation (Phase 9)                            |
 | 17     | Sensor Control           | Sensor on/off, polarity, FOV preset (Phase 9)           |
 | 21     | View Definition          | Camera FOV                                              |
@@ -192,22 +192,6 @@ camsim/
             ├── CCL/                CIGI Class Library headers + static lib
             └── FFmpeg/             FFmpeg headers + static libs
 ```
-
-## Gotchas
-
-- **Phase 18 Niagara assets**: Particle effects (18F rotor wash, 18G smoke/fire, 18H contrails) and decal cratering (18I) are driven by Niagara/material assets that **are not bundled with the repository** — they must be authored in the UE editor once per checkout. Missing assets are non-fatal: the subsystem logs a single warning at load time and simply skips that effect; every other feature continues to work.
-
-  Create the following and save to `/Game/Effects/`:
-
-  | Asset | Type | Key exposed parameters |
-  |---|---|---|
-  | `NS_RotorWash` | Niagara System | `Velocity` (float), `Density` (float), `Radius` (float) |
-  | `NS_Smoke` | Niagara System | `EmitRate` (float), `Color` (LinearColor) |
-  | `NS_Fire` | Niagara System | `EmitRate` (float), `Scale` (float) |
-  | `NS_Contrail` | Niagara System | `Width` (float), `Opacity` (float) |
-  | `M_Crater` | Decal Material | Normal map input, burn ring albedo, opacity mask |
-
-  Asset paths are configurable via `phase18.niagara_*` and `phase18.crater_decal_material` in `camsim_config.yaml` — point them at existing content if you have preferred Niagara systems in another folder.
 
 ## Data attribution
 

@@ -10,7 +10,7 @@
  * Canonical simulation commands (ROADMAP 2.3; docs/superpowers/specs/
  * 2026-09-26-host-adapter-layer-design.md).
  *
- * Host adapters (CIGI, DIS, scenario, later the control API and MAVLink)
+ * Host adapters (CIGI, DIS, later the control API and MAVLink)
  * translate their protocols into these; the simulation consumes only these.
  * Conventions: WGS-84 geodetic positions with ellipsoid heights, orientation
  * as a local North-East-Up quaternion (see CamSimFrames), SI units, degrees
@@ -22,7 +22,6 @@ enum class EHostSource : uint8
 {
 	Cigi,
 	Dis,
-	Scenario,
 	ControlApi,
 	Mavlink,
 };
@@ -45,7 +44,6 @@ struct FEntityKey
 		{
 		case EHostSource::Cigi:       return FString::Printf(TEXT("cigi:%llu"), Id);
 		case EHostSource::Dis:        return FString::Printf(TEXT("dis:%llu.%llu.%llu"), (Id >> 32) & 0xFFFF, (Id >> 16) & 0xFFFF, Id & 0xFFFF);
-		case EHostSource::Scenario:   return FString::Printf(TEXT("scenario:%llu"), Id);
 		case EHostSource::ControlApi: return FString::Printf(TEXT("api:%llu"), Id);
 		case EHostSource::Mavlink:    return FString::Printf(TEXT("mavlink:%llu"), Id);
 		}
@@ -65,7 +63,7 @@ enum class EEntityLifecycle : uint8
 	Remove,   // destroy
 };
 
-/** DIS-style classification (kind / domain / category), used for effects. */
+/** DIS-style classification (kind / domain / category). */
 struct FEntityClassification
 {
 	uint8 Kind     = 0;   // 1 = platform

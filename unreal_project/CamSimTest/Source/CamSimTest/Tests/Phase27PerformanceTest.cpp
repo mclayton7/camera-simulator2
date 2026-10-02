@@ -20,25 +20,6 @@ bool FPhase27_ConfigDefaults::RunTest(const FString& Parameters)
 {
 	FCamSimConfig::FPerformanceConfig C;
 
-	// 27B
-	TestFalse(TEXT("bTrackFrameDropsByCategory default false"), C.bTrackFrameDropsByCategory);
-
-	// 27D
-	TestFalse(TEXT("bHotReloadConfig default false"), C.bHotReloadConfig);
-	TestEqual(TEXT("HotReloadPollIntervalSec default 5.0"), C.HotReloadPollIntervalSec, 5.0f);
-
-	// 27E
-	TestEqual(TEXT("TilePrefetchSlewThresholdDegPerSec default 10.0"), C.TilePrefetchSlewThresholdDegPerSec, 10.0f);
-	// Default 1.0 = "no boost" — also matches deploy/camsim_config.yaml. The use
-	// site (CamSimCamera.cpp) clamps to >= 1.0 anyway, so 1.0 is the meaningful
-	// disabled-by-default value.
-	TestEqual(TEXT("TilePrefetchFovBoost default 1.0"),               C.TilePrefetchFovBoost,               1.0f);
-	TestEqual(TEXT("TilePrefetchBoostFrames default 30"),             C.TilePrefetchBoostFrames,             30);
-
-	// 27F
-	TestEqual(TEXT("RenderFrameRateHz default 30.0"), C.RenderFrameRateHz, 30.0f);
-	TestEqual(TEXT("OutputFrameRateHz default 30.0"), C.OutputFrameRateHz, 30.0f);
-
 	// 27G
 	TestEqual(TEXT("TexturePoolBudgetMB default 0"), C.TexturePoolBudgetMB, 0);
 
@@ -54,28 +35,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhase27_EnvOverrides,
 
 bool FPhase27_EnvOverrides::RunTest(const FString& Parameters)
 {
-	setenv("CAMSIM_PERF_TRACK_DROPS",    "1",    1);
-	setenv("CAMSIM_PERF_HOT_RELOAD",     "1",    1);
-	setenv("CAMSIM_PERF_POLL_INTERVAL",  "10.0", 1);
-	setenv("CAMSIM_PERF_RENDER_FPS",     "60.0", 1);
-	setenv("CAMSIM_PERF_OUTPUT_FPS",     "30.0", 1);
 	setenv("CAMSIM_PERF_TEXTURE_POOL_MB","1024",  1);
 
 	FCamSimConfig Cfg = FCamSimConfig::Load();
 
-	TestTrue (TEXT("bTrackFrameDropsByCategory env override"), Cfg.Performance.bTrackFrameDropsByCategory);
-	TestTrue (TEXT("bHotReloadConfig env override"),           Cfg.Performance.bHotReloadConfig);
-	TestEqual(TEXT("HotReloadPollIntervalSec env override"),   Cfg.Performance.HotReloadPollIntervalSec, 10.0f);
-	TestEqual(TEXT("RenderFrameRateHz env override"),          Cfg.Performance.RenderFrameRateHz,        60.0f);
-	TestEqual(TEXT("OutputFrameRateHz env override"),          Cfg.Performance.OutputFrameRateHz,        30.0f);
 	TestEqual(TEXT("TexturePoolBudgetMB env override"),        Cfg.Performance.TexturePoolBudgetMB,      1024);
 
 	// Clean up env vars to avoid polluting subsequent tests
-	unsetenv("CAMSIM_PERF_TRACK_DROPS");
-	unsetenv("CAMSIM_PERF_HOT_RELOAD");
-	unsetenv("CAMSIM_PERF_POLL_INTERVAL");
-	unsetenv("CAMSIM_PERF_RENDER_FPS");
-	unsetenv("CAMSIM_PERF_OUTPUT_FPS");
 	unsetenv("CAMSIM_PERF_TEXTURE_POOL_MB");
 
 	return true;
@@ -99,12 +65,9 @@ bool FPhase27_FrameRateValidation::RunTest(const FString& Parameters)
 	TestEqual(TEXT("0 fps clamps to 1"),FMath::Clamp(0.0f,   MinFps, MaxFps), MinFps);
 	TestEqual(TEXT("200 fps clamps to 120"), FMath::Clamp(200.0f, MinFps, MaxFps), MaxFps);
 
-	// Render and output frame rates from defaults are within valid range
-	FCamSimConfig::FPerformanceConfig C;
-	TestTrue(TEXT("Default RenderFrameRateHz in [1,120]"),
-		C.RenderFrameRateHz >= MinFps && C.RenderFrameRateHz <= MaxFps);
-	TestTrue(TEXT("Default OutputFrameRateHz in [1,120]"),
-		C.OutputFrameRateHz >= MinFps && C.OutputFrameRateHz <= MaxFps);
+	// The default frame rate is within the valid range
+	FCamSimConfig C;
+	TestTrue(TEXT("Default FrameRate in [1,120]"), C.FrameRate >= MinFps && C.FrameRate <= MaxFps);
 
 	return true;
 }

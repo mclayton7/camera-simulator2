@@ -10,8 +10,8 @@
  * FSimClock
  *
  * The one authoritative simulation time (UTC date and time of day). Every
- * consumer of "what time is it in the simulation" reads it: KLV Tag 2, CoT,
- * the HUD date-time group, ground-truth annotations, and the sun.
+ * consumer of "what time is it in the simulation" reads it: KLV Tag 2,
+ * ground-truth annotations, and the sun.
  *
  * Time advances from an anchor at Rate × the monotonic clock: 1 = real
  * time, 0 = frozen (CIGI static time of day), >1 faster than real time. In
