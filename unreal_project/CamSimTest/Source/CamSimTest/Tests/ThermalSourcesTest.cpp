@@ -243,6 +243,22 @@ bool FThermalSourcesLandCoverAxesWorldTest::RunTest(const FString& Parameters)
 		const double Hand = FVector::DotProduct(ToUp, FVector::CrossProduct(East, North));
 		TestTrue(FString::Printf(TEXT("%s: Up.(E x N) = %.6f (UE left-handed: -1)"), C.Name, Hand), Hand < -0.9999);
 		TestTrue(FString::Printf(TEXT("%s: valid"), C.Name), CamSimThermal::AreLandCoverAxesValid(East, North, ToUp));
+		FVector East2, North2, CentreUp;
+		CamSimThermal::LandCoverAxesWorld(*Geo, C.Lat, C.Lon, East2, North2, &CentreUp);
+		TestTrue(FString::Printf(TEXT("%s: OutUp is the geodetic up there (dot %.7f)"), C.Name, FVector::DotProduct(CentreUp, ToUp)),
+			FVector::DotProduct(CentreUp, ToUp) > 0.99999 && East2.Equals(East, 0.0) && North2.Equals(North, 0.0));
+	}
+
+	// Long teleport: the camera is 3 degrees (~330 km) from a window that hasn't re-centred yet. Its up is ~3 degrees off the
+	// window's, which fails the horizontality check; the Up at the window centre (what the capture component checks) passes.
+	{
+		Geo->SetOriginLongitudeLatitudeHeight(FVector(-122.46, 37.7935, 0.0));
+		FVector East, North, CentreUp;
+		CamSimThermal::LandCoverAxesWorld(*Geo, 37.7935, -122.46, East, North, &CentreUp);
+		const FVector Cam = Geo->TransformLongitudeLatitudeHeightPositionToUnreal(FVector(-119.46, 37.7935, 0.0));
+		const FVector CamUp = Geo->ComputeEastSouthUpToUnrealTransformation(Cam).TransformVector(FVector(0.0, 0.0, 1.0)).GetSafeNormal();
+		TestFalse(TEXT("teleport: the camera's up fails"), CamSimThermal::AreLandCoverAxesValid(East, North, CamUp));
+		TestTrue (TEXT("teleport: the window-centre up passes"), CamSimThermal::AreLandCoverAxesValid(East, North, CentreUp));
 	}
 
 	GEngine->DestroyWorldContext(World);

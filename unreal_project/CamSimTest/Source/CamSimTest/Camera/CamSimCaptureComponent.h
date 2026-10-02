@@ -230,6 +230,8 @@ private:
 	uint32 LandCoverWindowIdLastTick = 0;
 	/** Axes that failed CamSimThermal::AreLandCoverAxesValid were logged (once per session; those frames render land cover off). */
 	bool bLoggedLandCoverAxes = false;
+	/** ROADMAP 4B: land cover is enabled but there is no Cesium georeference (no East/North axes): warned once, land cover off. */
+	bool bLoggedLandCoverNoGeoreference = false;
 	/** r.TSR.AlphaChannel = 1 while thermal runs (RGBA16F TSR output/history for the radiance), restored otherwise. */
 	FThermalTsrAlpha ThermalTsrAlpha;
 	double ThermalLat = 0.0, ThermalLon = 0.0, ThermalAlt = 0.0;

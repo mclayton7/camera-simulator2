@@ -27,8 +27,9 @@ struct FLandCoverIndex
 /**
  * Local land-cover tiles (ROADMAP 4B): index.json plus 8-bit greyscale PNGs whose values are WorldCover codes, decoded
  * with ImageWrapper and kept in an LRU of MaxTiles. Get() is thread-safe (the window build calls it on a task thread).
- * A tile listed in the index whose file is missing, not a PNG (e.g. a git LFS pointer) or the wrong size is reported once
- * (TakeWarnings) and treated as no data from then on. No network: only Dir is read.
+ * A tile listed in the index whose file is missing, not a PNG (e.g. a git LFS pointer) or the wrong size is treated as no
+ * data from then on and counted once into a single summary warning per TakeWarnings (per-tile detail at Verbose).
+ * No network: only Dir is read.
  */
 class CAMSIMTEST_API FLandCoverTileCache
 {
@@ -55,7 +56,8 @@ public:
 
 	/** The tile, or null when it is not in the index or failed to load. Any thread. */
 	TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe> Get(int32 LatIndex, int32 LonIndex);
-	/** Warnings since the last call (each failed tile once). Any thread. */
+	/** Warnings since the last call: at most one line, the number of tiles that failed since then (each tile counted once),
+	 *  the first one's path and reason, and the git lfs pull hint. Any thread. */
 	TArray<FString> TakeWarnings();
 	int32 NumCached() const;
 	/** Decodes kept in the cache so far (cache hits and a concurrent duplicate decode don't count). */
@@ -81,7 +83,8 @@ private:
 	mutable FCriticalSection Lock;   // guards everything below; never held across file I/O or decode
 	TMap<FIntPoint, FEntry> Cache;
 	TSet<FIntPoint> Failed;
-	TArray<FString> Warnings;
+	int32   FailedSinceTake = 0;   // tiles that failed since the last TakeWarnings
+	FString FirstFailure;          // the first of them, "path: reason"
 	uint64 UseCounter = 0;
 	int32  Loads = 0;
 };

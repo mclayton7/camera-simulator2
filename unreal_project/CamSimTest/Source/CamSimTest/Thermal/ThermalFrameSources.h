@@ -39,13 +39,15 @@ namespace CamSimThermal
 	 *  finite, non-zero and at right angles (|E.N| <= 1e-3 after normalising) leave Out.LandCover invalid (land cover off).
 	 *  Returns whether it was accepted. */
 	CAMSIMTEST_API bool SetLandCover(FThermalFrameInputs& Out, const FLandCoverWindowData* Window, const FVector& EastWorld, const FVector& NorthWorld);
-	/** East and North (UE world) at a geodetic point from the Cesium georeference: the East-South-Up frame there, South negated.
+	/** East and North (UE world) at a geodetic point from the Cesium georeference: the East-South-Up frame there, South negated;
+	 *  OutUp (optional) is that frame's Up, the one to check the axes against (AreLandCoverAxesValid), not the camera's.
 	 *  Called every frame (Cesium origin shifting rotates the UE axes). Game thread. */
-	CAMSIMTEST_API void LandCoverAxesWorld(const ACesiumGeoreference& Geo, double LatDeg, double LonDeg, FVector& OutEast, FVector& OutNorth);
+	CAMSIMTEST_API void LandCoverAxesWorld(const ACesiumGeoreference& Geo, double LatDeg, double LonDeg, FVector& OutEast, FVector& OutNorth,
+		FVector* OutUp = nullptr);
 
 	/** Whether land-cover axes are usable (ROADMAP 4B): finite, unit (±1e-3), East ⟂ North (|E.N| <= 1e-3), both horizontal
-	 *  (|E.Up|, |N.Up| <= 0.02, so the camera's up serves for a window centre within ~100 km) and with the East-South-Up
-	 *  handedness of the UE world (left-handed: Up . (East x North) < -0.99). A transposed or mirrored axis fails. */
+	 *  (|E.Up|, |N.Up| <= 0.02; pass the Up at the window centre from LandCoverAxesWorld, since the camera's up fails beyond
+	 *  ~100 km) and with the East-South-Up handedness of the UE world (left-handed: Up . (East x North) < -0.99). A transposed or mirrored axis fails. */
 	CAMSIMTEST_API bool AreLandCoverAxesValid(const FVector& EastWorld, const FVector& NorthWorld, const FVector& UpWorld);
 
 	/** World → FThermalFrameInputs (game thread). Fields it cannot read keep their defaults. */

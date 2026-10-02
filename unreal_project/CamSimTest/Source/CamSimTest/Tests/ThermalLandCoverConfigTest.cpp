@@ -188,10 +188,17 @@ bool FThermalLandCoverClassTableTest::RunTest(const FString& Parameters)
 
 	TestEqual(TEXT("override: no warnings"), Table.Build({ Spec(10, TEXT("vegetation")) }, Materials).Num(), 0);
 	TestEqual(TEXT("override applied"), static_cast<int32>(Table.Class[10]), T::Vegetation);
-	TestEqual(TEXT("family stays by code"), Table.Family[10], static_cast<uint8>(ELandCoverFamily::Vegetation));
+	TestEqual(TEXT("remapped code renders unrefined"), Table.Family[10], static_cast<uint8>(ELandCoverFamily::None));
+	TestEqual(TEXT("other codes keep their family"), Table.Family[20], static_cast<uint8>(ELandCoverFamily::Vegetation));
+	Table.Build({ Spec(50, TEXT("concrete")) }, Materials);
+	TestEqual(TEXT("50 -> concrete applied"), static_cast<int32>(Table.Class[50]), T::Concrete);
+	TestEqual(TEXT("50 -> concrete is not split back into asphalt/concrete"), Table.Family[50], static_cast<uint8>(ELandCoverFamily::None));
+	Table.Build({ Spec(50, TEXT("built_up")) }, Materials);
+	TestEqual(TEXT("override naming the default keeps the family"), Table.Family[50], static_cast<uint8>(ELandCoverFamily::BuiltUp));
 	const TArray<FString> W = Table.Build({ Spec(10, TEXT("lava")) }, Materials);
 	TestTrue(TEXT("unknown material warned"), W.Num() == 1 && W[0].Contains(TEXT("lava")));
 	TestEqual(TEXT("default kept"), static_cast<int32>(Table.Class[10]), T::TreeCanopy);
+	TestEqual(TEXT("unknown material keeps the family"), Table.Family[10], static_cast<uint8>(ELandCoverFamily::Vegetation));
 
 	FThermalMaterialSpec Gravel;
 	Gravel.Name = TEXT("gravel");

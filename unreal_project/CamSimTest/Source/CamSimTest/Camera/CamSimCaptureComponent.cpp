@@ -341,8 +341,8 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 		FThermalFrameInputs TIn;
 		CamSimThermal::GatherFrameInputs(GetWorld(), *Subsystem, ThermalLat, ThermalLon, ThermalAlt, ThermalUp, TIn);
 		// ROADMAP 4B: land cover. The window updates (and builds off-thread) only while thermal IR runs; its East/North axes are
-		// recomputed every tick at the window centre (Cesium origin shifts rotate the UE axes) and checked against the camera's
-		// geodetic up (orthonormal, East-South-Up handedness): a bad frame renders land cover off.
+		// recomputed every tick at the window centre (Cesium origin shifts rotate the UE axes) and checked against the Up there
+		// (orthonormal, East-South-Up handedness): a bad frame renders land cover off.
 		if (Cfg.Thermal.LandCover.bEnabled)
 		{
 			FLandCoverWindow::FSettings LS;
@@ -353,17 +353,26 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 			LandCover.Update(ThermalLat, ThermalLon);
 			for (const FString& W : LandCover.TakeWarnings()) { UE_LOG(LogCamSim, Warning, TEXT("Thermal land cover: %s"), *W); }
 			const TSharedPtr<const FLandCoverWindowData, ESPMode::ThreadSafe> Window = LandCover.GetCurrent();
+			if (!ThermalGeoreference.IsValid() && !bLoggedLandCoverNoGeoreference)
+			{
+				UE_LOG(LogCamSim, Warning, TEXT("Thermal land cover: no Cesium georeference, so the window has no East/North axes; "
+					"land cover off (logged once)"));
+				bLoggedLandCoverNoGeoreference = true;
+			}
 			if (Window.IsValid() && ThermalGeoreference.IsValid())
 			{
-				FVector East = FVector::ZeroVector, North = FVector::ZeroVector;
-				CamSimThermal::LandCoverAxesWorld(*ThermalGeoreference.Get(), Window->Spec.CentreLatDeg, Window->Spec.CentreLonDeg, East, North);
-				if (!CamSimThermal::AreLandCoverAxesValid(East, North, TIn.UpWorld))
+				FVector East = FVector::ZeroVector, North = FVector::ZeroVector, CentreUp = FVector::ZeroVector;
+				CamSimThermal::LandCoverAxesWorld(*ThermalGeoreference.Get(), Window->Spec.CentreLatDeg, Window->Spec.CentreLonDeg,
+					East, North, &CentreUp);
+				// Checked against Up at the window centre (same ESU frame), not the camera's: after a long teleport the camera can be
+				// far from the not-yet-recentred window, and its up would fail the horizontality check and spend the one warning.
+				if (!CamSimThermal::AreLandCoverAxesValid(East, North, CentreUp))
 				{
 					if (!bLoggedLandCoverAxes)
 					{
 						UE_LOG(LogCamSim, Warning, TEXT("Thermal land cover: window #%u axes failed the orthonormal/handedness check "
 							"(E=%s N=%s Up=%s); land cover off for those frames (logged once)"),
-							Window->Id, *East.ToString(), *North.ToString(), *TIn.UpWorld.ToString());
+							Window->Id, *East.ToString(), *North.ToString(), *CentreUp.ToString());
 						bLoggedLandCoverAxes = true;
 					}
 				}

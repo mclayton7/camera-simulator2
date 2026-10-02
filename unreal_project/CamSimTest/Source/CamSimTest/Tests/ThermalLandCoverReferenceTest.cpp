@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Tests/ThermalTestScene.h"
+#include "Thermal/ThermalMaterials.h"
+#include "Thermal/ThermalModel.h"
 
 #include <limits>
 
@@ -663,5 +665,48 @@ bool FThermalRefVegBlurTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("tiny blur: 1 texel"), CamSimThermalRef::VegBlurRadiusPx(Q, 1000.0f), 1);
 	Q.VegBlurM = 32.0f;
 	TestEqual(TEXT("close range: 32 texels"), CamSimThermalRef::VegBlurRadiusPx(Q, 1.0f), 32);
+	return true;
+}
+
+// Ruling S6: snow_ice has k_fast = 0, so the per-pixel fast term cannot lift a sunlit snow pixel above 0 C.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalRefSunlitSnowTest, "CamSim.Thermal.Reference.SunlitSnowStaysAtOrBelowFreezing",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalRefSunlitSnowTest::RunTest(const FString& Parameters)
+{
+	const FThermalMaterialTable Table;
+	FThermalSite Site;
+	Site.Year = 2026; Site.DayOfYear = 172; Site.LatDeg = 37.80; Site.LonDeg = -122.45;   // San Francisco, June noon
+	Site.TairMeanK = 288.15; Site.AirSwingK = 8.0; Site.Cloud = 0.0;
+	FThermalModel Model;
+	Model.Update(Site, Table);
+	const double Noon = 12.0 * 3600.0;
+	const double SRef0 = FThermalModel::ClearSkyGhi(FThermalModel::SunElevationDeg(Site, 12.0)) * FThermalModel::CloudFactor(Site.Cloud);
+	const FThermalMaterial& Snow = Table.Get(FThermalMaterialTable::SnowIce);
+	TestEqual(TEXT("built-in snow_ice k_fast is 0"), Snow.KFast, 0.0f);
+
+	// Slot 9 = snow_ice exactly as FThermalFrameBuilder fills it.
+	constexpr uint32 LcSnow = 9;
+	FThermalFrameParams P = MakeLandCoverParams(Down, 64, 36, 8, 10.0f, 0.0f);
+	P.NumClasses = LcSnow + 1;
+	P.ClassTempK[LcSnow]      = static_cast<float>(Model.TemperatureK(FThermalMaterialTable::SnowIce, Noon, 288.15));
+	P.ClassEmissivity[LcSnow] = Snow.Emissivity;
+	P.ClassKFast[LcSnow]      = Snow.KFast;
+	P.ClassSAbsRef[LcSnow]    = static_cast<float>((1.0 - Snow.Albedo) * SRef0);
+	P.LandCoverClass[70] = LcSnow;   // no refinement family
+	TestNearlyEqual(TEXT("June noon: the model sits at the snow cap"), P.ClassTempK[LcSnow], static_cast<float>(FThermalModel::SnowMaxK), 1e-3f);
+
+	const TArray<uint8> Codes = Uniform(8, 70);
+	FPixelSample S;
+	S.U = 0.5f; S.V = 0.6f;
+	S.DeviceZ = DeviceZForPlane(P, Down, S.U, S.V, -700.0f);
+	S.LandCover = Codes.GetData();
+	S.Base = FVector3f(0.10f, 0.10f, 0.10f);   // a dark texture under full sun: absorbed flux well above the reference
+	S.Color = FVector3f(1.0f, 1.0f, 1.0f) * (P.EClampWm2 * 0.10f * P.KLum / UE_PI);
+	S.bHasBase = true;
+	const FPixelResult R = CamSimThermalRef::EvaluatePixel(P, S);
+	TestTrue(TEXT("land cover applied"), R.bLandCover);
+	TestTrue(*FString::Printf(TEXT("sunlit snow %.4f K <= 273.15 K"), R.TempK), R.TempK <= static_cast<float>(FThermalModel::SnowMaxK));
+	P.ClassKFast[LcSnow] = 0.005f;   // the pre-S6 value: the same pixel would read above freezing (the test is sensitive)
+	TestTrue(TEXT("with k_fast 0.005 the fast term lifts it above 0 C"), CamSimThermalRef::EvaluatePixel(P, S).TempK > static_cast<float>(FThermalModel::SnowMaxK) + 0.1f);
 	return true;
 }

@@ -84,6 +84,12 @@ TArray<FString> FLandCoverClassTable::Build(const TArray<FLandCoverClassSpec>& S
 				S.Code, *S.Material, CamSimLandCover::DefaultMaterialName(static_cast<uint8>(S.Code))));
 			continue;
 		}
+		// A code remapped to a different material drops its refinement family, so the user's
+		// mapping renders as named (e.g. {50: concrete} is not split back into asphalt/concrete).
+		if (static_cast<uint8>(I) != Class[S.Code])
+		{
+			Family[S.Code] = static_cast<uint8>(ELandCoverFamily::None);
+		}
 		Class[S.Code] = static_cast<uint8>(I);
 	}
 	return Warnings;

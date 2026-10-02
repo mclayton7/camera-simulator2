@@ -72,7 +72,7 @@ const TArray<FThermalMaterial>& FThermalMaterialTable::BuiltIns()
 		MakeMaterial(TEXT("cropland"),        0.40f, 0.97f,  700.0f, 15.0f, 0.010f),
 		MakeMaterial(TEXT("built_up"),        0.20f, 0.93f, 1650.0f, 10.0f, 0.018f),
 		MakeMaterial(TEXT("bare_soil"),       0.25f, 0.93f, 1300.0f,  8.0f, 0.025f),
-		MakeMaterial(TEXT("snow_ice"),        0.75f, 0.99f,  600.0f, 10.0f, 0.005f, EThermalTemperatureSource::Snow),
+		MakeMaterial(TEXT("snow_ice"),        0.75f, 0.99f,  600.0f, 10.0f, 0.0f,   EThermalTemperatureSource::Snow),
 		MakeMaterial(TEXT("wetland"),         0.40f, 0.98f, 2500.0f, 15.0f, 0.004f),
 	};
 	return B;

@@ -202,10 +202,12 @@ bool CamSimThermal::AreLandCoverAxesValid(const FVector& EastWorld, const FVecto
 	return FVector::DotProduct(UpWorld, FVector::CrossProduct(EastWorld, NorthWorld)) < -0.99;
 }
 
-void CamSimThermal::LandCoverAxesWorld(const ACesiumGeoreference& Geo, double LatDeg, double LonDeg, FVector& OutEast, FVector& OutNorth)
+void CamSimThermal::LandCoverAxesWorld(const ACesiumGeoreference& Geo, double LatDeg, double LonDeg, FVector& OutEast, FVector& OutNorth,
+	FVector* OutUp)
 {
 	const FVector Centre = Geo.TransformLongitudeLatitudeHeightPositionToUnreal(FVector(LonDeg, LatDeg, 0.0));   // longitude first
 	const FMatrix EsuToUnreal = Geo.ComputeEastSouthUpToUnrealTransformation(Centre);
 	OutEast  = EsuToUnreal.TransformVector(FVector(1.0, 0.0, 0.0)).GetSafeNormal();
 	OutNorth = -EsuToUnreal.TransformVector(FVector(0.0, 1.0, 0.0)).GetSafeNormal();
+	if (OutUp) *OutUp = EsuToUnreal.TransformVector(FVector(0.0, 0.0, 1.0)).GetSafeNormal();
 }

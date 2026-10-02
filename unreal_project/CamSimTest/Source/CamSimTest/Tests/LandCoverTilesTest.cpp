@@ -115,7 +115,7 @@ bool FLandCoverCacheLruTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// Review Focus 1: a clone without `git lfs pull` (or a damaged tile) is reported once and treated as no data.
+// Review Focus 1: a clone without `git lfs pull` (or a damaged tile) is treated as no data and summarised in one warning.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandCoverCorruptTileTest, "CamSim.Thermal.LandCover.CorruptTileIsMissing",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FLandCoverCorruptTileTest::RunTest(const FString& Parameters)
@@ -129,8 +129,9 @@ bool FLandCoverCorruptTileTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("pointer file -> null"), Cache.Get(755, -2450).IsValid());
 	TestFalse(TEXT("deleted file -> null"), Cache.Get(755, -2449).IsValid());
 	const TArray<FString> W = Cache.TakeWarnings();
-	TestEqual(TEXT("one warning per bad tile"), W.Num(), 2);
-	TestTrue(TEXT("warning names the file and the fix"), W.Num() > 0 && W[0].Contains(TileFile(755, -2450)) && W[0].Contains(TEXT("git lfs pull")));
+	TestEqual(TEXT("one summary warning for both bad tiles"), W.Num(), 1);
+	TestTrue(TEXT("summary counts the tiles"), W.Num() == 1 && W[0].StartsWith(TEXT("2 land-cover tile(s)")));
+	TestTrue(TEXT("warning names the first file and the fix"), W.Num() > 0 && W[0].Contains(TileFile(755, -2450)) && W[0].Contains(TEXT("git lfs pull")));
 	Cache.Get(755, -2450);
 	Cache.Get(755, -2449);
 	TestEqual(TEXT("never retried, never re-warned"), Cache.TakeWarnings().Num(), 0);

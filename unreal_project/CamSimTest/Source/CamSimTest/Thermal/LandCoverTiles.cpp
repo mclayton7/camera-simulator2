@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Thermal/LandCoverTiles.h"
+#include "CamSimTest.h"
 #include "Dom/JsonObject.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
@@ -169,7 +170,13 @@ TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe> FLandCoverTileCache::Get(i
 	{
 		bool bAlreadyFailed = false;
 		Failed.Add(Key, &bAlreadyFailed);
-		if (!bAlreadyFailed) Warnings.Add(FString::Printf(TEXT("land-cover tile %s: %s; treated as no data"), *Path, *Why));
+		if (!bAlreadyFailed)
+		{
+			// One summary per TakeWarnings (i.e. per window build), not a line per tile: a clone without `git lfs pull` fails
+			// every tile the window touches. The per-tile detail goes to the Verbose log.
+			UE_LOG(LogCamSim, Verbose, TEXT("LandCover: tile %s: %s; treated as no data"), *Path, *Why);
+			if (FailedSinceTake++ == 0) FirstFailure = FString::Printf(TEXT("%s: %s"), *Path, *Why);
+		}
 		return nullptr;
 	}
 	++Loads;
@@ -194,7 +201,15 @@ TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe> FLandCoverTileCache::Get(i
 TArray<FString> FLandCoverTileCache::TakeWarnings()
 {
 	FScopeLock L(&Lock);
-	return MoveTemp(Warnings);
+	TArray<FString> Out;
+	if (FailedSinceTake > 0)
+	{
+		Out.Add(FString::Printf(TEXT("%d land-cover tile(s) unreadable, treated as no data (first: %s); if they are git LFS "
+			"pointers, run git lfs pull (per-tile detail: log LogCamSim Verbose)"), FailedSinceTake, *FirstFailure));
+		FailedSinceTake = 0;
+		FirstFailure.Reset();
+	}
+	return Out;
 }
 
 int32 FLandCoverTileCache::NumCached() const
