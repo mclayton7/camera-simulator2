@@ -67,7 +67,15 @@ committed world pose ─────────┴─► FCamSimEntityManager t
 
 Each entity carries a skin temperature and up to **4 parts**, each of kind `engine`, `exhaust` or
 `running_gear`. State lives in `FEntityThermalState`; `FEntityThermalModel::Step(State, Inputs,
-DtSim)` is pure (no UE objects), so tests drive it directly.
+Settings, Parts, SimSec)` is pure (no UE objects), so tests drive it directly.
+
+**State is stored as excess over the parked baseline** `B = T_class + off_k` (K): absolute
+`T = B + excess`. A parked, long-cold vehicle has zero excess and renders exactly as 4A, and the
+diurnal drift of `B` needs no state. `T_class` and `T_air` exist only in `FThermalFrameBuilder`
+(capture component, IR frames only), so the builder publishes an environment after each build
+(`FEntityThermalEnv`: `T_air` and `B` per stencil) that the entity manager latches and steps with on
+the next tick. With no environment yet (EO only so far) or for an untagged entity, `D = T_air − B` is
+taken as 0. The targets below are written as absolute temperatures; the model subtracts `B`.
 
 **Targets.** `T_class(t)` is the type's 4A class temperature (diurnal, closed form), `T_air` the air
 temperature, `v` the smoothed speed (m/s), `off_k` the type's `thermal_offset_k` (default 0 with 4C on).
@@ -103,7 +111,8 @@ temperature, `v` the smoothed speed (m/s), `off_k` the type's `thermal_offset_k`
 - `dt` is the sim-clock step. **Spawn**: state starts at the current targets. **Clock jump**: `dt < 0`
   or `dt > 3600 s` snaps every temperature to its target. **Frozen clock** (`dt = 0`): no change.
 - Deterministic in the input history and sim time; no RNG.
-- Temperatures are clamped to `[150, 1000] K` (the LUT range) after each step.
+- Excess is clamped to `[−200, 900] K` after each step; the builder clamps the absolute `B + excess` to
+  `[150, 1000] K` (the LUT range).
 
 ## 2. Inputs
 
@@ -131,9 +140,11 @@ vehicle cold. Destroyed or flaming → not running.
 
 **Speed.** From the committed world position (UE world, after surface clamping and attachment) each
 entity-manager tick, over the sim-clock step: `v_raw = |ΔP| / dt`, smoothed by an EMA with τ = 1 s
-(`v ← v + (v_raw − v)(1 − exp(−dt/1 s))`). A jump of more than 50 m in one tick, `dt ≤ 0`, or the
-first tick after spawn sets `v = 0` and skips the sample. Measured from positions, so it works for CIGI
-(no velocity on the wire), DIS (dead-reckoned) and attached entities alike.
+(`v ← v + (v_raw − v)(1 − exp(−dt/1 s))`). A teleport (below) or the first tick after spawn sets
+`v = 0` and skips the sample. Measured from positions, so it works for CIGI
+(no velocity on the wire), DIS (dead-reckoned) and attached entities alike. Positions are ECEF (from
+the entity's geodetic pose), not UE world, so Cesium origin shifts are not motion. The teleport rule
+is `|ΔP| > max(50 m, 400 m/s · dt)`; `dt ≤ 0` (frozen or rewound clock) keeps `v` and skips the sample.
 
 **Ownership.** `ACamSimEntity` owns `FEntityThermalState` plus its commanded inputs (engine, damage,
 flaming) and speed tracker; `ApplyComponent` sets the commanded inputs. `FCamSimEntityManager` steps
@@ -160,13 +171,19 @@ The transform is built on the game thread: the entity's world rotation and origi
 location, both in doubles, then converted to float. This is the same camera location the frame's
 translated world is centred on (the builder already takes it for land cover's `CamOffsetM`), so
 precision does not depend on distance from the georeference origin. The body frame is the entity's
-UE actor frame with Y and Z flipped (UE: X forward, Y right, Z up → body Z down), scaled cm → m. The
+UE actor frame with Z flipped (UE is left-handed X forward, Y right, Z up; body is right-handed X forward,
+Y right, Z down), scaled cm → m, actor scale ignored. The game thread cannot know the view's
+`PreViewTranslation`, so the builder writes the rotation rows and keeps each entity's world origin
+(double) in the params; the render thread, where `ClipToTranslatedWorld` is set, fills each row's `w`
+from `origin + PreViewTranslation` in doubles (`FinalizeEntityRecords`). The
 mesh `rotation`/`scale` in the type table is already in the actor's component transform, so part
 coordinates are in the vehicle's own frame as placed in the world (bow +X).
 
-`FThermalFrameParams::StencilClass` / `StencilOffsetK` and the `StencilData` uniform array are replaced
-by the records (skin T and class). With 4C disabled the builder writes skin T = `T_class + offset`
-(4A's +8 K default for surface vehicles applies only then) and no parts: 4A bit for bit.
+Record row 3's `w` is a valid flag. A valid record's skin T and class replace 4A's stencil table for
+that pixel; an invalid one (4C disabled, untagged, or rejected values) falls back to
+`StencilClass` / `StencilOffsetK` / the `StencilData` uniform array exactly as 4A, which the builder
+keeps filling (`B` per stencil). With 4C disabled no record is valid and 4A's +8 K default for surface
+vehicles applies: 4A bit for bit.
 
 **ThermalCS, entity pixel** (after 4A's entity classification; `Pw` is already reconstructed):
 
@@ -182,8 +199,8 @@ by the records (skin T and class). With 4C disabled the builder writes skin T = 
 
 HLSL lives in `CamSimThermalCommon.ush` (`EntityPartTemp`), mirrored by
 `CamSimThermalRef::EntityPartTemp` (same expressions, same order). Records are validated on the CPU:
-a non-finite value drops the part (or, for the transform or skin, the whole record → untagged
-treatment: 4A's default class at `T_class`) with a once-per-entity warning; count is clamped to 4.
+a non-finite value drops the part (or, for the transform or skin, the whole record → invalid: the
+4A stencil-table path) with a once-per-entity warning; count is clamped to 4.
 
 ## 4. Configuration
 
