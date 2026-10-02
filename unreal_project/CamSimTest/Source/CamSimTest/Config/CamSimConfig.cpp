@@ -752,6 +752,35 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 					}
 				}
 			}
+			if (YamlHas(T, "entity"))   // ROADMAP 4C
+			{
+				ryml::ConstNodeRef En = T["entity"];
+				FEntityThermalSettings& E = Cfg.Thermal.Entity;
+				YamlBool (En, "enabled",           E.bEnabled);
+				YamlFloat(En, "moving_mps",        E.MovingMps);
+				YamlFloat(En, "idle_hold_s",       E.IdleHoldS);
+				YamlFloat(En, "skin_running_k",    E.SkinRunningK);
+				YamlFloat(En, "convection_v0_mps", E.ConvectionV0Mps);
+				YamlFloat(En, "skin_tau_s",        E.SkinTauS);
+				YamlFloat(En, "burn_k",            E.BurnK);
+				YamlFloat(En, "burn_s",            E.BurnS);
+				YamlFloat(En, "hull_cool_tau_s",   E.HullCoolTauS);
+				struct FKindKey { c4::csubstr Key; EEntityThermalPartKind Kind; };
+				const FKindKey Kinds[] = { { "engine", EEntityThermalPartKind::Engine }, { "exhaust", EEntityThermalPartKind::Exhaust },
+					{ "running_gear", EEntityThermalPartKind::RunningGear } };
+				for (const FKindKey& K : Kinds)
+				{
+					if (!YamlHas(En, K.Key)) continue;
+					ryml::ConstNodeRef KN = En[K.Key];
+					FEntityThermalKindParams& P = E.Kind(K.Kind);
+					YamlFloat(KN, "delta_k",    P.DeltaK);
+					YamlFloat(KN, "temp_k",     P.TempK);
+					YamlFloat(KN, "k_per_mps",  P.KPerMps);
+					YamlFloat(KN, "max_k",      P.MaxK);
+					YamlFloat(KN, "tau_up_s",   P.TauUpS);
+					YamlFloat(KN, "tau_down_s", P.TauDownS);
+				}
+			}
 		}
 
 		// Cesium backend: ion server, terrain source, imagery overlay
@@ -1031,6 +1060,8 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Thermal.FogIrFactor         = GetEnvFloat(TEXT("CAMSIM_THERMAL_FOG_IR_FACTOR"),       Cfg.Thermal.FogIrFactor);
 	// Land cover (ROADMAP 4B)
 	FCamSimConfig::FThermalConfig::FLandCoverConfig& LC = Cfg.Thermal.LandCover;
+	// Entity thermal state (ROADMAP 4C)
+	Cfg.Thermal.Entity.bEnabled = GetEnvBool(TEXT("CAMSIM_THERMAL_ENTITY_ENABLED"), Cfg.Thermal.Entity.bEnabled);
 	LC.bEnabled         = GetEnvBool (TEXT("CAMSIM_THERMAL_LAND_COVER_ENABLED"),           LC.bEnabled);
 	LC.Dir              = GetEnv     (TEXT("CAMSIM_THERMAL_LAND_COVER_DIR"),               LC.Dir);
 	LC.WindowTexels     = GetEnvInt  (TEXT("CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS"),     LC.WindowTexels);
@@ -1472,6 +1503,39 @@ TArray<FString> FCamSimConfig::Validate() const
 	if (!(Thermal.FogIrFactor >= 0.0f && Thermal.FogIrFactor <= 2.0f))
 		Errors.Add(FString::Printf(TEXT("thermal.fog_ir_factor=%.2f out of range [0, 2]"), Thermal.FogIrFactor));
 	Errors.Append(FThermalMaterialTable::Validate(Thermal.Materials));
+	// Entity thermal state (ROADMAP 4C). Written !(x in range) so NaN is reported too.
+	{
+		const FEntityThermalSettings& E = Thermal.Entity;
+		auto InRange = [&Errors](const TCHAR* Name, float V, float Lo, float Hi)
+		{
+			if (!(V >= Lo && V <= Hi)) Errors.Add(FString::Printf(TEXT("thermal.entity.%s=%.3f out of range [%.1f, %.1f]"), Name, V, Lo, Hi));
+		};
+		auto Positive = [&Errors](const TCHAR* Name, float V)
+		{
+			if (!(V > 0.0f && V <= 1.0e6f)) Errors.Add(FString::Printf(TEXT("thermal.entity.%s=%.3f must be in (0, 1e6]"), Name, V));
+		};
+		const FEntityThermalKindParams& Eng  = E.Kind(EEntityThermalPartKind::Engine);
+		const FEntityThermalKindParams& Exh  = E.Kind(EEntityThermalPartKind::Exhaust);
+		const FEntityThermalKindParams& Gear = E.Kind(EEntityThermalPartKind::RunningGear);
+		InRange(TEXT("moving_mps"), E.MovingMps, 0.0f, 50.0f);
+		InRange(TEXT("idle_hold_s"), E.IdleHoldS, 0.0f, 86400.0f);
+		InRange(TEXT("skin_running_k"), E.SkinRunningK, -50.0f, 100.0f);
+		Positive(TEXT("convection_v0_mps"), E.ConvectionV0Mps);
+		Positive(TEXT("skin_tau_s"), E.SkinTauS);
+		InRange(TEXT("burn_k"), E.BurnK, 150.0f, 1000.0f);   // the radiance LUT range
+		InRange(TEXT("burn_s"), E.BurnS, 0.0f, 86400.0f);
+		Positive(TEXT("hull_cool_tau_s"), E.HullCoolTauS);
+		InRange(TEXT("engine.delta_k"), Eng.DeltaK, -50.0f, 500.0f);
+		InRange(TEXT("exhaust.temp_k"), Exh.TempK, 150.0f, 1000.0f);
+		InRange(TEXT("running_gear.k_per_mps"), Gear.KPerMps, 0.0f, 50.0f);
+		InRange(TEXT("running_gear.max_k"), Gear.MaxK, 0.0f, 500.0f);
+		Positive(TEXT("engine.tau_up_s"), Eng.TauUpS);
+		Positive(TEXT("engine.tau_down_s"), Eng.TauDownS);
+		Positive(TEXT("exhaust.tau_up_s"), Exh.TauUpS);
+		Positive(TEXT("exhaust.tau_down_s"), Exh.TauDownS);
+		Positive(TEXT("running_gear.tau_up_s"), Gear.TauUpS);
+		Positive(TEXT("running_gear.tau_down_s"), Gear.TauDownS);
+	}
 	// Land cover (ROADMAP 4B). Written !(x in range) so NaN is reported too.
 	const FThermalConfig::FLandCoverConfig& LC = Thermal.LandCover;
 	if (!(LC.WindowTexels >= 256 && LC.WindowTexels <= 8192 && LC.WindowTexels % 2 == 0))
