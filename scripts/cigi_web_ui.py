@@ -28,9 +28,8 @@ from pathlib import Path
 
 try:
     import websockets
-except ImportError:
-    print("ERROR: 'websockets' not installed.  Run:  uv run scripts/cigi_web_ui.py")
-    raise
+except ImportError:  # only the server needs it; the packers import without it (tests)
+    websockets = None
 
 
 # ---------------------------------------------------------------------------
@@ -276,16 +275,22 @@ def pack_view_control(
     x_off: float = 0.0,
     y_off: float = 0.0,
     z_off: float = 0.0,
+    group_id: int = 0,
 ) -> bytes:
-    """View Control — packet ID 16, 32 bytes (CIGI 3.3)."""
+    """View Control — packet ID 16, 32 bytes (CIGI 3.3, CigiViewCtrlV3::Pack).
+
+    0 id, 1 size, 2-3 View ID, 4 Group ID, 5 X/Y/Z Offset Enable (bits 0-2) |
+    Roll/Pitch/Yaw Enable (bits 3-5), 6-7 Entity ID, 8 X, 12 Y, 16 Z offsets,
+    20 Roll, 24 Pitch, 28 Yaw. CamSim: Entity ID 0 (non-zero = first-person
+    view of that entity), yaw within +-180 deg."""
     pkt = struct.pack(
-        ">BBHHBBffffff",
+        ">BBHBBHffffff",
         16,
         32,
         view_id & 0xFFFF,
+        group_id & 0xFF,
+        0x3F,  # all 6 DOF enabled
         entity_id & 0xFFFF,
-        0,  # group_id
-        0x3F,  # dof_flags: all 6 DOF enabled
         x_off,
         y_off,
         z_off,
@@ -668,6 +673,8 @@ async def main(ig_host: str, ig_port: int, rate_hz: float):
     async def _handler(ws, *args):
         await ws_handler(ws, state)
 
+    if websockets is None:
+        raise SystemExit("ERROR: 'websockets' not installed.  Run:  uv run scripts/cigi_web_ui.py")
     async with websockets.serve(_handler, "0.0.0.0", 8081):
         await asyncio.gather(
             frame_send_task(state),

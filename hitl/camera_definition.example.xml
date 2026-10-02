@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Minimal MAVLink camera definition file for the IG host's simulated camera
+  (https://mavlink.io/en/services/camera_def.html). For the rig, serve a copy of
+  Hooter's real camera's file instead, and bump <definition version> (and
+  camera.cam_definition_version in the TOML) whenever the sim's copy differs:
+  QGC caches the file by vendor, model and version.
+
+  The parameter names here must match [[camera.params]] in the TOML; their
+  "role" there maps them to Sensor Control (source: EO/IR, polarity).
+-->
+<mavlinkcamera>
+    <definition version="1">
+        <model>HITL camera</model>
+        <vendor>CamSim</vendor>
+    </definition>
+    <parameters>
+        <parameter name="CAM_MODE" type="uint32" default="0" description="Camera Mode">
+            <description>Camera Mode</description>
+            <options>
+                <option name="Photo" value="0" />
+                <option name="Video" value="1" />
+            </options>
+        </parameter>
+        <parameter name="CAM_SOURCE" type="uint8" default="0">
+            <description>Sensor</description>
+            <options>
+                <option name="EO" value="0" />
+                <option name="IR" value="1" />
+            </options>
+        </parameter>
+        <parameter name="CAM_POLARITY" type="uint8" default="0">
+            <description>IR polarity</description>
+            <options>
+                <option name="White hot" value="0" />
+                <option name="Black hot" value="1" />
+            </options>
+        </parameter>
+    </parameters>
+    <localization />
+</mavlinkcamera>

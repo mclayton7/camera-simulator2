@@ -1,0 +1,198 @@
+# IG host configuration (python -m camsim_hitl --config hitl.toml).
+# Every key is optional; the values below are the defaults unless marked
+# "example". Relative paths are relative to this file. Design: HITL.md.
+
+[log]
+level = "INFO"            # DEBUG | INFO | WARNING
+file = ""                 # also log to this file
+
+# ---------------------------------------------------------------------------
+# X-Plane truth (CamSimTruth plugin, hitl/PROTOCOL.md section 1)
+# ---------------------------------------------------------------------------
+[truth]
+listen = "0.0.0.0:49300"        # the plugin's `dest` in CamSimTruth.ini
+use_sender_clock = true         # de-jitter with the plugin's monotonic clock
+max_extrapolation_s = 0.1       # predict at most this far past the newest sample
+stale_after_s = 0.5             # warn (and hold) when truth is older than this
+replay_policy = "freeze"        # freeze: hold the last live pose in X-Plane replay; follow: render the replay
+sim_speed_warn_below = 0.98     # flag time dilation (sim_speed_actual_ogl)
+
+[truth.fallback]                # pose used before any truth arrives (bench tests)
+enabled = false
+latitude = 37.6213
+longitude = -122.379
+elevation_msl = 300.0
+heading_deg = 0.0
+pitch_deg = 0.0
+roll_deg = 0.0
+
+# ---------------------------------------------------------------------------
+# Heights and the camera offset
+# ---------------------------------------------------------------------------
+[geodesy]
+geoid_path = ""                 # "" = unreal_project/CamSimTest/Content/NonUFS/Geoid/WW15MGH.DAC (git lfs)
+allow_missing_geoid = false     # true: run with N = 0 (heights will be off by tens of metres)
+lever_arm_m = [0.0, 0.0, 0.0]   # camera from X-Plane's reference point, body forward/right/down, m
+
+[terrain_blend]                 # near the ground: altitude = Cesium HOT + AGL
+enabled = true
+band_low_m = 50.0               # full blend below this AGL ...
+band_high_m = 100.0             # ... none above this
+hot_poll_hz = 2.0               # HAT/HOT requests (only inside 1.5 x band_high_m)
+correction_tau_s = 0.5          # low-pass on the HOT correction
+hot_max_age_s = 3.0
+hot_max_distance_m = 50.0       # ignore a HOT measured further than this from the aircraft
+agl_source = "y_agl"            # y_agl | terrain_probe (elevation - the plugin's terrain probe)
+y_agl_offset_m = 0.0            # added to y_agl (y_agl may be measured at the wheels)
+
+# ---------------------------------------------------------------------------
+# CIGI to CamSim
+# ---------------------------------------------------------------------------
+[cigi]
+camsim_host = "127.0.0.1"
+camsim_port = 8888
+extra_destinations = []         # e.g. ["10.0.0.6:8888"]: a second CamSim (IR) gets the same datagram
+response_listen = "0.0.0.0:8889"  # CamSim's cigi_response_addr/port must point here
+camera_entity_id = 1            # CamSim's camera_entity_id
+frame_rate = 30.0               # initial guess; the SOF period is measured
+send_phase = 0.5                # send at SOF + 0.5 frame (HITL.md "Who drives the frame")
+render_offset_s = 0.0           # t_r = SOF + one frame + this
+sof_timeout_s = 1.0             # no SOF for this long: free-run with a warning
+free_run_rate_hz = 30.0
+resend_period_s = 1.0           # View Definition, Sensor Control, Celestial also re-sent this often
+send_platform_kinematics = true # user packet 201 (airspeeds, magnetic heading, NED velocity, sample UTC)
+view_control_entity_id = 0      # must stay 0 for CamSim (non-zero = first-person view path)
+fixed_view_deg = [0.0, -30.0, 0.0]  # roll, pitch, yaw relative to the airframe when [gimbal] is off
+default_hfov_deg = 60.0         # when [camera] is off
+default_sensor = "eo"           # eo | ir, when [camera] is off
+default_polarity = "white_hot"  # white_hot | black_hot
+stats_period_s = 10.0
+
+[time]
+source = "system"               # system: CamSim on wall-clock UTC (NTP everywhere); xplane: scenario time
+local_year = 0                  # xplane: the scenario's LOCAL year (0 = this year)
+resync_after_pause = true       # system: after an X-Plane pause, re-set CamSim's clock at the next minute
+star_intensity = 100.0
+
+[weather]
+enabled = true
+period_s = 1.0                  # Atmosphere + Weather (+ Wave) together
+coverage_source = "cloud_type"  # cloud_type | coverage
+coverage_scale_max = 6.0        # full scale of cloud_coverage (0-6 or 0-4: check on the rig)
+cloud_type_coverage_pct = [0.0, 20.0, 40.0, 75.0, 100.0, 100.0]  # X-Plane cloud_type 0..5 -> %
+cloud_type_cigi = [0, 5, 7, 9, 8, 10]                            # -> CIGI cloud type (ignored by CamSim)
+min_visibility_m = 100.0
+waves = true
+wave_amplitude_is_half_height = true  # CIGI wants crest-to-trough height (check on the rig)
+wave_dir_is_from = false              # true: add 180 deg (CIGI wants the direction waves travel toward)
+
+# ---------------------------------------------------------------------------
+# MAVLink: the gimbal and camera take the real payload's place on PX4's port
+# ---------------------------------------------------------------------------
+[mavlink]
+sysid = 1                       # MAV_SYS_ID of the vehicle
+
+# One entry per port. The gimbal and camera can share one (recommended: the
+# Gimbal-mode port) or each own one.
+#   serial:/dev/ttyUSB0:921600   the flight controller's TELEM2 (example)
+#   udpin:0.0.0.0:13280          PX4 SITL's gimbal-mode instance (it binds 13030, sends to 13280)
+#   udpout:127.0.0.1:13030       the same, connecting out
+[mavlink.links.payload]         # example
+url = "udpin:0.0.0.0:13280"
+drop_msg_ids = [93]             # HIL_ACTUATOR_CONTROLS: 200 Hz on every fast link under HIL
+
+[gimbal]
+enabled = true                  # example (default false)
+link = "payload"                # example
+compid = 154                    # MAV_COMP_ID_GIMBAL
+vendor_name = "CamSim"          # copy the real gimbal's
+model_name = "HITL gimbal"
+custom_name = ""
+firmware_version = "1.0.0.0"    # major.minor.patch.dev
+hardware_version = "1.0.0.0"
+uid = 0
+cap_flags = 0                   # 0 = derived from the axes and limits below
+joint_order = ["yaw", "roll", "pitch"]  # outer -> inner (the real gimbal's)
+roll_limits_deg = [-45.0, 45.0]
+pitch_limits_deg = [-120.0, 30.0]
+yaw_limits_deg = [-180.0, 180.0]        # a 360 deg span = continuous yaw
+max_rate_dps = [90.0, 120.0, 120.0]     # roll, pitch, yaw
+max_accel_dps2 = [600.0, 800.0, 800.0]
+servo_tau_s = 0.05              # first-order servo lag
+gyro_bias_dps = [0.0, 0.0, 0.0] # optional stabilisation error (bounded drift, 5 s leak)
+plant_rate_hz = 250.0           # >= 200
+status_rate_hz = 10.0           # GIMBAL_DEVICE_ATTITUDE_STATUS (SET_MESSAGE_INTERVAL overrides)
+heartbeat_rate_hz = 1.0
+setpoint_timeout_s = 2.0        # silence = link loss: hold, rates zeroed
+neutral_deg = [0.0, 0.0, 0.0]   # roll, pitch, yaw relative to the airframe
+retract_deg = [0.0, 0.0, 0.0]
+initial_deg = [0.0, -30.0, 0.0] # before the first setpoint
+
+[camera]
+enabled = true                  # example (default false)
+link = "payload"                # example
+compid = 100                    # the real camera's (QGC accepts 100-105)
+vendor_name = "CamSim"          # copy the real camera's vendor, model, flags, definition version
+model_name = "HITL camera"
+firmware_version = "1.0.0.0"
+flags = 71                      # CAMERA_CAP_FLAGS: CAPTURE_VIDEO|CAPTURE_IMAGE|HAS_MODES|HAS_BASIC_ZOOM
+cam_definition_version = 1
+definition_file = "camera_definition.example.xml"  # served at http://advertise_host:http_port/<name>
+lens_id = 0
+resolution = [1920, 1080]       # CamSim's output size
+sensor_size_mm = [6.17, 4.55]
+gimbal_device_id = 154          # 0 if camera and gimbal share one compid
+http_port = 8090
+advertise_host = "127.0.0.1"    # an address QGC can reach this host on
+heartbeat_rate_hz = 1.0
+fov_status_rate_hz = 1.0        # CAMERA_FOV_STATUS (SET_MESSAGE_INTERVAL overrides)
+initial_sensor = "eo"           # eo | ir
+initial_polarity = "white_hot"  # white_hot | black_hot
+storage_total_mib = 65536.0
+video_stream_uri = ""           # "" = no VIDEO_STREAM_INFORMATION
+
+[camera.zoom]
+model = "focal_length"          # focal_length | table
+focal_length_mm = [4.3, 129.0]
+sensor_width_mm = 6.17
+curve = "linear"                # linear | log: zoom % -> focal length
+hfov_table = []                 # model = "table": [[zoom_pct, hfov_deg], ...] (the real lens curve)
+initial_pct = 0.0
+step_pct = 10.0
+continuous_rate_pct_s = 25.0
+accept_focal_length = false     # only if the real camera supports ZOOM_TYPE_FOCAL_LENGTH
+accept_hfov = false             # only if the real camera supports ZOOM_TYPE_HORIZONTAL_FOV
+
+# Definition-file parameters (PARAM_EXT_*). role = source | polarity | mode maps
+# a parameter onto Sensor Control / CAMERA_SETTINGS; role_values gives its values.
+[[camera.params]]
+name = "CAM_MODE"
+type = "uint32"
+value = 0
+role = "mode"
+
+[[camera.params]]
+name = "CAM_SOURCE"
+type = "uint8"
+value = 0
+role = "source"
+role_values = { eo = 0, ir = 1 }
+
+[[camera.params]]
+name = "CAM_POLARITY"
+type = "uint8"
+value = 0
+role = "polarity"
+role_values = { white_hot = 0, black_hot = 1 }
+
+[camera.capture]
+snapshot_url = "http://127.0.0.1:8080/snapshot"  # CamSim: operational.snapshot_endpoint_enabled: true
+dir = "captures"
+timeout_s = 6.0
+dedup_window_s = 0.5            # one photo per trigger burst (TRIG_INTERFACE=3 sends up to three)
+capture_on_camera_trigger = false  # also treat CAMERA_TRIGGER (112) as a shot
+
+[camera.video]
+source = "udp://239.1.1.1:5004" # CamSim's MPEG-TS + KLV, recorded raw (never through ffmpeg)
+interface = "0.0.0.0"
+dir = "videos"

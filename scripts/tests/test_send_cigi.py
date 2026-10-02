@@ -53,8 +53,10 @@ def test_pack_view_definition_size_and_flags():
     assert len(pkt) == 32
     assert pkt[0] == 21  # packet ID (View Definition)
     assert pkt[1] == 32  # size
-    # Byte 5 flags: all five enable bits set (bits 0-4 → 0x1F).
-    assert pkt[5] == 0b00011111
+    # Byte 5 enables (CigiViewDefV3::Pack): near 0x01 | far 0x02 | left 0x04 |
+    # right 0x08 | top 0x10 | bottom 0x20.
+    assert pkt[5] == 0x3F
+    assert pkt[6] == 0  # perspective, no reorder, view type 0
     # FOV left/right at bytes 16-23 (float32 big-endian).
     fov_left, fov_right = struct.unpack(">ff", pkt[16:24])
     assert abs(fov_left - -30.0) < 1e-5
@@ -88,3 +90,35 @@ def test_pack_art_part_control_layout():
     assert pkt[4] == 0 and pkt[5] == 0x71
     roll, pitch, yaw = struct.unpack(">fff", pkt[20:32])
     assert (roll, pitch, yaw) == (0.0, -30.0, 45.0)
+
+
+def test_pack_view_control_layout_matches_ccl():
+    # CigiViewCtrlV3::Pack: 2-3 View ID, 4 Group ID, 5 enables, 6-7 Entity ID,
+    # 8-19 X/Y/Z offsets, 20 Roll, 24 Pitch, 28 Yaw.
+    pkt = sc.pack_view_control(90.0, -45.0, 5.0, view_id=0x0102, group_id=3, entity_id=0x0405)
+    assert len(pkt) == 32 and pkt[0] == 16 and pkt[1] == 32
+    assert struct.unpack(">H", pkt[2:4])[0] == 0x0102
+    assert pkt[4] == 3
+    assert pkt[5] == 0x38  # roll | pitch | yaw enable, offsets off
+    assert struct.unpack(">H", pkt[6:8])[0] == 0x0405
+    assert struct.unpack(">ffffff", pkt[8:32]) == (0.0, 0.0, 0.0, 5.0, -45.0, 90.0)
+
+
+def test_pack_view_control_wraps_yaw_to_pm180():
+    pkt = sc.pack_view_control(270.0, -10.0)
+    assert struct.unpack(">f", pkt[28:32])[0] == -90.0
+    assert struct.unpack(">f", sc.pack_view_control(180.0, 0.0)[28:32])[0] == -180.0
+
+
+def test_build_host_frame_with_gimbal():
+    d = sc.build_host_frame(0, 1, 37.0, -122.0, 100.0, 0.0, 0.0, 0.0, include_view_def=False, gimbal=(90.0, -45.0, 0.0))
+    assert _ids(d) == [1, 2, 17, 16]
+    assert 16 not in _ids(sc.build_host_frame(0, 1, 37.0, -122.0, 100.0, 0.0, 0.0, 0.0))
+
+
+def _ids(d):
+    ids, i = [], 0
+    while i < len(d):
+        ids.append(d[i])
+        i += d[i + 1]
+    return ids

@@ -6,12 +6,13 @@ Sends Host→IG CIGI 3.3 UDP datagrams containing:
   • IG Control packet       (required first packet in every host frame)
   • Entity Control packet   (moves the camera to a geospatial position)
   • View Definition packet  (optional, sets FOV)
+  • View Control packet     (optional, --gimbal: airframe-relative gimbal angles)
 
 Each datagram represents one "host frame" at the specified rate.
 
 CIGI 3.3 references:
   • CIGI ICD version 3.3, 15 June 2004 (CIGI_ICD_3.3.pdf)
-  • Packet IDs: IG Control=1, Entity Control=2, View Definition=21
+  • Packet IDs: IG Control=1, Entity Control=2, View Control=16, View Definition=21
 
 Usage:
     uv run scripts/send_cigi_test.py [options]
@@ -39,6 +40,8 @@ Options:
                         other values are unmapped and default to EO)
     --polarity POL      IR polarity: 0=WhiteHot, 1=BlackHot (default: 0; IR mode only)
     --fov-h DEGREES     Horizontal FOV for View Definition (default: 60)
+    --gimbal YAW PITCH ROLL  View Control angles relative to the airframe, degrees
+                        (yaw right +, pitch up +, roll right +; yaw sent within ±180)
     --time HHMM         Time of day (e.g. 0600 for sunrise, 2200 for night)
     --visibility METRES Visibility range (e.g. 500 for dense fog)
     --weather           Enable basic overcast weather layer
@@ -72,6 +75,10 @@ Examples:
 
     # Overcast weather:
     uv run scripts/send_cigi_test.py --weather
+
+    # Gimbal sign test (HITL.md phase 0): heading 0, level, camera yaw +90 pitch -45
+    # -> the frame centre should be due east, about one altitude away:
+    uv run scripts/send_cigi_test.py --yaw 0 --pitch 0 --gimbal 90 -45 0
 
     # Low stratus at 500 m base, 200 m thick:
     uv run scripts/send_cigi_test.py --weather --cloud-base 500 --cloud-thickness 200
@@ -203,10 +210,12 @@ def pack_view_definition(
       1     uint8   Packet Size (0x20 = 32)
       2-3   uint16  View ID
       4     uint8   Group ID
-      5     uint8   Near/Far Enable (bit 0) | FOV Left Enable (bit 1) |
-                    FOV Right Enable (bit 2) | FOV Top Enable (bit 3) |
-                    FOV Bottom Enable (bit 4) | Mirror Mode (bits 5-6) | reserved
-      6-7   uint16  reserved
+      5     uint8   Near (0x01) | Far (0x02) | Left (0x04) | Right (0x08) |
+                    Top (0x10) | Bottom (0x20) enables | Mirror Mode (bits 6-7)
+                    (CigiViewDefV3::Pack; CamSim reads only Right - Left)
+      6     uint8   Pixel Replicate (0-2) | Projection (3) | Reorder (4) |
+                    View Type (5-7)
+      7     uint8   reserved
       8-11  float32 Near Plane (metres)
       12-15 float32 Far Plane  (metres)
       16-19 float32 FOV Left   (degrees, negative = left of boresight)
@@ -214,8 +223,8 @@ def pack_view_definition(
       24-27 float32 FOV Top    (degrees, positive = above boresight)
       28-31 float32 FOV Bottom (degrees, negative = below boresight)
     """
-    # Enable all FOV fields and near/far
-    flags = 0b00011111  # bits 0-4 set
+    # Enable near/far and all four FOV fields
+    flags = 0x3F
 
     header = struct.pack(
         ">BBHBBxx",
@@ -236,6 +245,49 @@ def pack_view_definition(
     )
     pkt = header + planes_fov
     assert len(pkt) == 32, f"View Definition size error: {len(pkt)}"
+    return pkt
+
+
+def pack_view_control(
+    yaw: float,
+    pitch: float,
+    roll: float = 0.0,
+    view_id: int = 0,
+    group_id: int = 0,
+    entity_id: int = 0,
+) -> bytes:
+    """
+    View Control packet — Packet ID 16, Size 32 bytes (CIGI 3.3).
+
+    Byte layout (CigiViewCtrlV3::Pack):
+      0     uint8   Packet ID (0x10 = 16)
+      1     uint8   Packet Size (0x20 = 32)
+      2-3   uint16  View ID
+      4     uint8   Group ID
+      5     uint8   X/Y/Z Offset Enable (bits 0-2) | Roll/Pitch/Yaw Enable (bits 3-5)
+      6-7   uint16  Entity ID (CamSim: 0; non-zero takes the first-person-view path)
+      8-19  float32 X, Y, Z offsets (stored, never used by CamSim)
+      20-31 float32 Roll, Pitch, Yaw (degrees, relative to the camera platform)
+
+    Yaw is wrapped to [-180, 180): CamSim clamps it to +-180 without wrapping.
+    """
+    yaw = (yaw + 180.0) % 360.0 - 180.0
+    pkt = struct.pack(
+        ">BBHBBHffffff",
+        16,
+        32,
+        view_id & 0xFFFF,
+        group_id & 0xFF,
+        0x38,  # roll | pitch | yaw enable; offsets disabled
+        entity_id & 0xFFFF,
+        0.0,
+        0.0,
+        0.0,
+        roll,
+        pitch,
+        yaw,
+    )
+    assert len(pkt) == 32, f"View Control size error: {len(pkt)}"
     return pkt
 
 
@@ -486,8 +538,11 @@ def build_host_frame(
     celestial: dict | None = None,
     atmosphere: dict | None = None,
     weather: dict | None = None,
+    gimbal: tuple[float, float, float] | None = None,
 ) -> bytes:
-    """Assemble a complete CIGI 3.3 host frame datagram."""
+    """Assemble a complete CIGI 3.3 host frame datagram.
+
+    gimbal = (yaw, pitch, roll) degrees adds a View Control packet."""
     ig_ctrl = pack_ig_control(frame_ctr)
     entity = pack_entity_control(entity_id, lat, lon, alt, yaw, pitch, roll)
 
@@ -500,6 +555,9 @@ def build_host_frame(
         sensor_on=True,
         polarity=polarity,
     )
+
+    if gimbal is not None:
+        payload += pack_view_control(*gimbal)
 
     if include_view_def:
         half_h = fov_h / 2.0
@@ -674,6 +732,14 @@ def main():
     )
     ap.add_argument("--fov-h", type=float, default=60.0, help="Horizontal FOV degrees")
     ap.add_argument(
+        "--gimbal",
+        nargs=3,
+        type=float,
+        metavar=("YAW", "PITCH", "ROLL"),
+        default=None,
+        help="Send View Control every frame with these airframe-relative angles (deg)",
+    )
+    ap.add_argument(
         "--time",
         type=str,
         default=None,
@@ -789,6 +855,9 @@ def main():
     sensor_label = _SENSOR_NAMES.get(args.sensor_id, f"id={args.sensor_id}")
     pol_label = _POLARITY_NAMES.get(args.polarity, str(args.polarity))
     print(f"    Sensor: {sensor_label}  polarity: {pol_label}")
+    if args.gimbal:
+        gy, gp, gr = args.gimbal
+        print(f"    Gimbal (View Control): yaw={gy:.1f}° pitch={gp:.1f}° roll={gr:.1f}°")
     print("    Press Ctrl-C to stop")
     print()
 
@@ -860,6 +929,7 @@ def main():
                 celestial=celestial_frame,
                 atmosphere=atmosphere_base,
                 weather=weather_base,
+                gimbal=tuple(args.gimbal) if args.gimbal else None,
             )
             sock.sendto(pkt, (args.host, args.port))
             frame_ctr += 1

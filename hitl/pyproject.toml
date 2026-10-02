@@ -1,0 +1,22 @@
+[project]
+name = "camsim-hitl"
+version = "0.1.0"
+description = "IG host for the Hooter HITL rig: X-Plane truth + PX4 gimbal/camera -> CamSim CIGI 3.3"
+requires-python = ">=3.12"
+dependencies = [
+    "pymavlink>=2.4.41",
+    "pyserial>=3.5",
+]
+
+[project.scripts]
+camsim-hitl = "camsim_hitl.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["camsim_hitl"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
