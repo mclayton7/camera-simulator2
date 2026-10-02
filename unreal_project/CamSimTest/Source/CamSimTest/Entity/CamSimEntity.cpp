@@ -579,6 +579,9 @@ void ACamSimEntity::ApplyComponent(const FComponentCommand& C)
 {
 	if (C.ComponentClass != 0) return; // only handle entity-class components
 
+	// ROADMAP 4C: 10 damage, 11 power plant, 12 flaming feed the thermal state (10 also swaps meshes below).
+	CamSimEntityThermal::ApplyComponent(ThermalCmd, C.ComponentId, C.State);
+
 	switch (C.ComponentId)
 	{
 	case 0: // Nav lights (red/green/white)
@@ -653,6 +656,12 @@ void ACamSimEntity::ApplyComponent(const FComponentCommand& C)
 					EntityId, Anim->AnimStateIndex);
 			}
 		}
+		break;
+
+	case 11: // Power plant (ROADMAP 4C, thermal only)
+	case 12: // Flaming (ROADMAP 4C, thermal only)
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimEntity[%u]: %s %s"), EntityId,
+			C.ComponentId == 11 ? TEXT("power plant") : TEXT("flaming"), C.State != 0 ? TEXT("ON") : TEXT("OFF"));
 		break;
 
 	default:

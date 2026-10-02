@@ -30,6 +30,28 @@ namespace CamSim::Dis
 	 */
 	FEntityCommand ToEntityCommand(const FDisEntityStatePdu& Pdu, uint16 TypeId, bool bClampToSurface = true);
 
+	/** Platform appearance fields CamSim uses (ROADMAP 4C). Damage: 0 none, 1 slight/moderate, 2 destroyed. */
+	struct FPlatformAppearance
+	{
+		bool  bPowerPlant = false;
+		uint8 Damage      = 0;
+		bool  bFlaming    = false;
+		bool operator==(const FPlatformAppearance&) const = default;
+	};
+
+	/**
+	 * IEEE 1278.1 / SISO-REF-010 platform appearance (land, air and surface share these bits): bits 3-4 damage, bit 15
+	 * flaming, bit 22 power plant on. Unset for other kinds/domains (munitions, life forms, subsurface, space).
+	 */
+	TOptional<FPlatformAppearance> DecodePlatformAppearance(uint8 Kind, uint8 Domain, uint32 Appearance);
+
+	/**
+	 * Component commands (class 0) for the fields that changed: 10 damage, 11 power plant, 12 flaming. Previous unset (an
+	 * entity's first PDU): the fields that differ from the defaults (all off).
+	 */
+	void AppearanceCommands(const FEntityKey& Key, const TOptional<FPlatformAppearance>& Previous, const FPlatformAppearance& Now,
+		TArray<FComponentCommand>& Out);
+
 	/** The motion model for a dead-reckoning algorithm (unset for 0/1 = none/static). */
 	TOptional<FMotionModel> ToMotionModel(const FDisEntityStatePdu& Pdu, double LatDeg, double LonDeg);
 }

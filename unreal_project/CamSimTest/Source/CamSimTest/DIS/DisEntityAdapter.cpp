@@ -48,6 +48,18 @@ void FDisEntityAdapter::ProcessPdu(const FDisEntityStatePdu& Pdu, ISimCommandSin
 	Ts.LastUpdateSec = FPlatformTime::Seconds();
 
 	Sink.Submit(CamSim::Dis::ToEntityCommand(Pdu, MapEntityType(Pdu.EntityType), Config.DIS.bClampToSurface));
+
+	// ROADMAP 4C: platform appearance (power plant, damage, flaming) as component commands, only on change.
+	if (const TOptional<CamSim::Dis::FPlatformAppearance> A = CamSim::Dis::DecodePlatformAppearance(
+		Pdu.EntityType.EntityKind, Pdu.EntityType.Domain, Pdu.Appearance))
+	{
+		const CamSim::Dis::FPlatformAppearance* Prev = LastAppearance.Find(Pdu.EntityId);
+		TArray<FComponentCommand> Commands;
+		CamSim::Dis::AppearanceCommands(CamSim::Dis::Key(Pdu.EntityId),
+			Prev ? TOptional<CamSim::Dis::FPlatformAppearance>(*Prev) : TOptional<CamSim::Dis::FPlatformAppearance>(), *A, Commands);
+		for (const FComponentCommand& C : Commands) Sink.Submit(C);
+		LastAppearance.Add(Pdu.EntityId, *A);
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -75,6 +87,7 @@ void FDisEntityAdapter::SweepTimeouts(ISimCommandSink& Sink)
 		Sink.Submit(Remove);
 		UE_LOG(LogCamSim, Log, TEXT("FDisEntityAdapter: entity %s timed out → remove"), *DisId.ToString());
 		EntityTimestamps.Remove(DisId);
+		LastAppearance.Remove(DisId);
 	}
 }
 

@@ -7,6 +7,7 @@
 #include "Sim/Commands.h"
 #include "Geospatial/CigiFrames.h"
 #include "Entity/SurfaceClamp.h"
+#include "Thermal/EntityThermal.h"
 // StreamableManager gives us the complete FStreamableHandle type — needed so
 // the UHT-generated CamSimEntity.gen.cpp can destruct TSharedPtr<FStreamableHandle>.
 #include "Engine/StreamableManager.h"
@@ -129,6 +130,8 @@ public:
 
 	/** Current damage state (0=intact, 1=damaged, 2=destroyed). */
 	uint8 GetDamageState() const { return DamageState; }
+	/** Commanded thermal inputs (ROADMAP 4C): Component Control 11 power plant, 12 flaming, 10 damage. */
+	const FEntityThermalCommanded& GetThermalCommanded() const { return ThermalCmd; }
 
 	// AActor interface
 	virtual void Tick(float DeltaTime) override;
@@ -215,6 +218,8 @@ private:
 
 	// Damage state (0=intact, 1=damaged, 2=destroyed)
 	uint8 DamageState = 0;
+	// ROADMAP 4C: host-commanded thermal inputs (power plant, flaming; damage mirrors DamageState)
+	FEntityThermalCommanded ThermalCmd;
 
 	// Set to true after the first ApplyPose — suppresses the one-time world-location log
 	bool bPoseLogged = false;

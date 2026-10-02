@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "DIS/DisPduTypes.h"
+#include "Hosts/DisCommands.h"
 
 struct FCamSimConfig;
 class FDisReceiver;
@@ -65,6 +66,9 @@ private:
 		double       LastUpdateSec = 0.0;
 	};
 	TMap<FDisEntityId, FEntityTimestamp> EntityTimestamps;
+
+	// ROADMAP 4C: last decoded platform appearance per entity (component commands are emitted on change only)
+	TMap<FDisEntityId, CamSim::Dis::FPlatformAppearance> LastAppearance;
 
 	// Entity type mapping cache (populated from config)
 	// Key: "kind:domain:country:category:subcategory:specific:extra"

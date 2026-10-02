@@ -71,4 +71,33 @@ namespace CamSim::Dis
 		Out.Motion = ToMotionModel(Pdu, Out.Pose.Lat, Out.Pose.Lon);
 		return Out;
 	}
+
+	TOptional<FPlatformAppearance> DecodePlatformAppearance(uint8 Kind, uint8 Domain, uint32 Appearance)
+	{
+		if (Kind != 1 || Domain < 1 || Domain > 3) return {};
+		FPlatformAppearance A;
+		A.bPowerPlant = ((Appearance >> 22) & 1u) != 0u;
+		A.bFlaming    = ((Appearance >> 15) & 1u) != 0u;
+		const uint32 D = (Appearance >> 3) & 3u;
+		A.Damage = D == 3u ? 2 : (D == 0u ? 0 : 1);
+		return A;
+	}
+
+	void AppearanceCommands(const FEntityKey& Key, const TOptional<FPlatformAppearance>& Previous, const FPlatformAppearance& Now,
+		TArray<FComponentCommand>& Out)
+	{
+		const FPlatformAppearance Prev = Previous.Get(FPlatformAppearance());
+		auto Emit = [&Key, &Out](uint16 Id, uint8 State)
+		{
+			FComponentCommand C;
+			C.Key = Key;
+			C.ComponentClass = 0;
+			C.ComponentId = Id;
+			C.State = State;
+			Out.Add(C);
+		};
+		if (Now.Damage != Prev.Damage)           Emit(10, Now.Damage);
+		if (Now.bPowerPlant != Prev.bPowerPlant) Emit(11, Now.bPowerPlant ? 1 : 0);
+		if (Now.bFlaming != Prev.bFlaming)       Emit(12, Now.bFlaming ? 1 : 0);
+	}
 }
