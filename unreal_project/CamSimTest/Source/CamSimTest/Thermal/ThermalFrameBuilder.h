@@ -9,14 +9,30 @@
 #include "Thermal/BandRadiance.h"
 #include "Thermal/ThermalMaterials.h"
 #include "Thermal/ThermalModel.h"
+#include "Thermal/EntityThermalTypes.h"
 
 /** One stencil-tagged entity, as the entity manager reports it (ROADMAP 4A). */
 struct FThermalStencilEntity
 {
 	uint8   Stencil = 0;              // custom-depth stencil 1..255
 	FString ThermalMaterial;          // entity_types.<id>.thermal_material; empty = vehicle_paint
-	TOptional<float> ThermalOffsetK;  // entity_types.<id>.thermal_offset_k; unset = +8 K for a surface vehicle, else 0
+	TOptional<float> ThermalOffsetK;  // entity_types.<id>.thermal_offset_k; unset = +8 K for a surface vehicle with thermal.entity off, else 0
 	bool    bSurfaceVehicle = false;  // land/sea vehicle (placed on the surface)
+	// ROADMAP 4C (valid when bHasThermalState): pose, the type's part volumes and the stepped excess temperatures over B
+	bool    bHasThermalState = false;
+	FVector OriginWorld   = FVector::ZeroVector;   // actor location, UE world cm
+	FQuat   RotationWorld = FQuat::Identity;       // actor rotation (bow +X)
+	float   SkinExcessK   = 0.0f;
+	TArray<FEntityThermalPartSpec, TInlineAllocator<FEntityThermalSettings::MaxParts>> Parts;
+	float   PartExcessK[FEntityThermalSettings::MaxParts] = {};   // pairs with Parts[k]
+};
+
+/** What the entity thermal model steps with (ROADMAP 4C): this frame's air temperature and each stencil's baseline B. */
+struct FEntityThermalEnv
+{
+	bool  bValid = false;   // false: thermal.entity off (or no build yet)
+	float TairK  = 288.15f;
+	float BaselineK[FThermalFrameParams::NumStencils] = {};   // B = T_class + thermal_offset_k per stencil
 };
 
 /** The land-cover window one frame maps against (ROADMAP 4B); CamSimThermal::SetLandCover fills it from FLandCoverWindow. */
@@ -76,6 +92,8 @@ public:
 	static constexpr float  MaxWarpAmpM = 20.0f, MinWarpCellM = 5.0f, MaxWarpCellM = 200.0f, DefaultWarpCellM = 20.0f;
 
 	const FLandCoverClassTable& GetLandCoverTable() const { return LandCoverTable; }
+	/** The entity thermal environment of the last Build (ROADMAP 4C); invalid with thermal.entity off. */
+	const FEntityThermalEnv& GetEntityEnv() const { return EntityEnv; }
 
 	/** Rebuild the LUT when the band changes and the material table when thermal.materials changes. */
 	void Configure(const FCamSimConfig::FThermalConfig& Cfg, float BandLoUm, float BandHiUm);
@@ -102,6 +120,11 @@ private:
 	FLandCoverClassTable  LandCoverTable;
 	TArray<FString>       PendingWarnings;   // material table errors, reported by the next Build
 	TSet<FString>         WarnedMaterials;
+	// Entity thermal state (ROADMAP 4C)
+	FEntityThermalEnv     EntityEnv;
+	TSet<uint8>           WarnedEntityRecords;
+	void WriteEntityRecord(const FThermalStencilEntity& E, int32 Class, float BaseK, FThermalFrameParams& Out,
+		TFunctionRef<void(FString)> Warn);
 	// Land-cover warp anchor (ROADMAP 4B): the session's first valid window centre; reset when thermal.land_cover.dir changes.
 	bool                  bWarpAnchor = false;
 	double                WarpAnchorLatDeg = 0.0;

@@ -102,12 +102,19 @@ void FThermalFrameBuilder::Build(const FThermalFrameInputs& In, FThermalFramePar
 	Out.TerrainClass = FThermalMaterialTable::TerrainDefault;
 	Out.WaterClass   = FThermalMaterialTable::Water;
 
-	// Stencil table: rebuilt from the live entities every frame (a released stencil reverts to the default).
+	// Stencil table (4A) and entity records (4C): rebuilt from the live entities every frame (a released stencil reverts to
+	// the default class and an invalid record).
+	const bool bEntityThermal = Config.Entity.bEnabled;
 	for (int32 S = 0; S < FThermalFrameParams::NumStencils; ++S)
 	{
 		Out.StencilClass[S]   = static_cast<uint8>(FThermalMaterialTable::VehiclePaint);
 		Out.StencilOffsetK[S] = 0.0f;
 	}
+	FMemory::Memzero(Out.EntityRecords, sizeof(Out.EntityRecords));
+	FMemory::Memzero(Out.EntityOriginWorld, sizeof(Out.EntityOriginWorld));
+	EntityEnv.bValid = bEntityThermal;
+	EntityEnv.TairK  = static_cast<float>(TairK);
+	FMemory::Memzero(EntityEnv.BaselineK, sizeof(EntityEnv.BaselineK));
 	for (const FThermalStencilEntity& E : In.Entities)
 	{
 		if (E.Stencil == 0) continue;
@@ -126,7 +133,12 @@ void FThermalFrameBuilder::Build(const FThermalFrameInputs& In, FThermalFramePar
 			}
 		}
 		Out.StencilClass[E.Stencil]   = static_cast<uint8>(Class);
-		Out.StencilOffsetK[E.Stencil] = E.ThermalOffsetK.IsSet() ? *E.ThermalOffsetK : (E.bSurfaceVehicle ? DefaultVehicleOffsetK : 0.0f);
+		// 4C models a running vehicle's warmth, so the 4A stand-in (+8 K for land/sea vehicles) applies only with it off.
+		Out.StencilOffsetK[E.Stencil] = E.ThermalOffsetK.IsSet() ? *E.ThermalOffsetK
+			: ((E.bSurfaceVehicle && !bEntityThermal) ? DefaultVehicleOffsetK : 0.0f);
+		const float BaseK = Out.ClassTempK[Class] + Out.StencilOffsetK[E.Stencil];
+		EntityEnv.BaselineK[E.Stencil] = BaseK;
+		if (bEntityThermal && E.bHasThermalState) WriteEntityRecord(E, Class, BaseK, Out, Warn);
 	}
 	Out.EntityDepthRatio = 0.99f;
 
@@ -231,4 +243,47 @@ void FThermalFrameBuilder::Build(const FThermalFrameInputs& In, FThermalFramePar
 		Out.LandCoverWarpAmpM    = LandCoverOff.LandCoverWarpAmpM;
 		Out.LandCoverWarpCellM   = LandCoverOff.LandCoverWarpCellM;
 	}
+}
+
+void FThermalFrameBuilder::WriteEntityRecord(const FThermalStencilEntity& E, int32 Class, float BaseK, FThermalFrameParams& Out,
+	TFunctionRef<void(FString)> Warn)
+{
+	auto WarnOnce = [this, &E, &Warn](FString W)
+	{
+		if (WarnedEntityRecords.Contains(E.Stencil)) return;
+		WarnedEntityRecords.Add(E.Stencil);
+		Warn(MoveTemp(W));
+	};
+	const FQuat& Q = E.RotationWorld;
+	const bool bPose = !E.OriginWorld.ContainsNaN() && FMath::IsFinite(Q.X) && FMath::IsFinite(Q.Y) && FMath::IsFinite(Q.Z)
+		&& FMath::IsFinite(Q.W) && Q.SizeSquared() > 1e-6;
+	if (!bPose || !FMath::IsFinite(E.SkinExcessK))
+	{
+		WarnOnce(FString::Printf(TEXT("entity stencil %u: non-finite pose or skin temperature; 4A treatment for it (warned once)"), E.Stencil));
+		return;
+	}
+	FVector4f* R = &Out.EntityRecords[E.Stencil * FThermalFrameParams::EntityRecordFloat4s];
+	// UE actor frame (X forward, Y right, Z up; cm, left-handed) -> body (X forward, Y right, Z down; m)
+	const FQuat U = Q.GetNormalized();
+	R[0] = FVector4f(FVector3f(U.GetAxisX() / 100.0), 0.0f);
+	R[1] = FVector4f(FVector3f(U.GetAxisY() / 100.0), 0.0f);
+	R[2] = FVector4f(FVector3f(-U.GetAxisZ() / 100.0), 0.0f);
+	Out.EntityOriginWorld[E.Stencil] = E.OriginWorld;
+	int32 N = 0;
+	for (int32 K = 0; K < E.Parts.Num() && K < FThermalFrameParams::MaxEntityParts; ++K)
+	{
+		if (!FMath::IsFinite(E.PartExcessK[K]))
+		{
+			WarnOnce(FString::Printf(TEXT("entity stencil %u: part %d temperature not finite; part dropped (warned once)"), E.Stencil, K));
+			continue;
+		}
+		const FEntityThermalPartSpec& P = E.Parts[K];
+		const int32 Row = 4 + 3 * N;
+		R[Row + 0] = FVector4f(P.CentreM, P.Shape == EEntityThermalPartShape::Ellipsoid ? 1.0f : 0.0f);
+		R[Row + 1] = FVector4f(P.HalfM, P.FalloffM);
+		R[Row + 2] = FVector4f(FMath::Clamp(BaseK + E.PartExcessK[K], FThermalFrameParams::LutMinK, FThermalFrameParams::LutMaxK), 0.0f, 0.0f, 0.0f);
+		++N;
+	}
+	R[3] = FVector4f(FMath::Clamp(BaseK + E.SkinExcessK, FThermalFrameParams::LutMinK, FThermalFrameParams::LutMaxK),
+		static_cast<float>(Class), static_cast<float>(N), 1.0f);
 }

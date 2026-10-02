@@ -35,6 +35,25 @@ struct FThermalFrameParams
 	float StencilOffsetK[NumStencils] = {};
 	float EntityDepthRatio = 0.99f;            // visible when custom depth >= scene depth * ratio (reversed Z: within 1 %)
 
+	// Entity thermal records (ROADMAP 4C), indexed by stencil, EntityRecordFloat4s float4 each:
+	//   0-2   world -> body rows: Pb_i = dot(xyz, Pw) + w (Pw translated world cm, Pb body m: X forward, Y right, Z down);
+	//         w is filled by FinalizeEntityRecords on the render thread (the view's translation is only known there)
+	//   3     (skin T K, class index, part count 0..MaxEntityParts, valid 0/1); invalid -> 4A's StencilClass / StencilOffsetK
+	//   4+3k  (centre xyz m, shape 0 box / 1 ellipsoid)
+	//   5+3k  (half extents xyz m, falloff m)
+	//   6+3k  (T K, 0, 0, 0)
+	// HLSL: EntityRecords / EntityPartTemp in CamSimThermalCommon.ush; CPU: CamSimThermalRef::EntityPartTemp.
+	static constexpr int32 MaxEntityParts = 4;
+	static constexpr int32 EntityRecordFloat4s = 4 + 3 * MaxEntityParts;
+	FVector4f EntityRecords[NumStencils * EntityRecordFloat4s];   // zeroed by the constructor (FVector4f has no zero default)
+	FVector3d EntityOriginWorld[NumStencils];                    // UE world cm of each valid record's body origin (CPU only)
+
+	FThermalFrameParams()
+	{
+		FMemory::Memzero(EntityRecords, sizeof(EntityRecords));
+		FMemory::Memzero(EntityOriginWorld, sizeof(EntityOriginWorld));
+	}
+
 	// Geometry: translated world (cm), the camera at the origin
 	FMatrix44f ClipToTranslatedWorld = FMatrix44f::Identity;   // (NDC x, NDC y, device Z, 1) -> translated world, row vector
 	FVector3f  Up = FVector3f(0.0f, 0.0f, 1.0f);               // geodetic up at the camera
@@ -101,6 +120,24 @@ struct FThermalFrameParams
 
 	float InputScale = 1.0f;                   // multiplies scene colour; tests only (runtime also multiplies View.OneOverPreExposure)
 };
+
+/**
+ * Render thread (and tests): rows 0-2 .w of every valid entity record from its origin in translated world,
+ * w_i = -dot(row_i.xyz, origin + PreViewTranslation), in doubles until the dot (precision far from the georeference origin).
+ */
+inline void FinalizeEntityRecords(FThermalFrameParams& P, const FVector3d& PreViewTranslation)
+{
+	for (int32 S = 1; S < FThermalFrameParams::NumStencils; ++S)
+	{
+		FVector4f* R = &P.EntityRecords[S * FThermalFrameParams::EntityRecordFloat4s];
+		if (R[3].W == 0.0f) continue;
+		const FVector3d O = P.EntityOriginWorld[S] + PreViewTranslation;
+		for (int32 I = 0; I < 3; ++I)
+		{
+			R[I].W = static_cast<float>(-(double(R[I].X) * O.X + double(R[I].Y) * O.Y + double(R[I].Z) * O.Z));
+		}
+	}
+}
 
 /**
  * B(T) from the LUT: T clamped to [LutMinK, LutMaxK] (NaN -> LutMinK), ln B interpolated linearly, then exp.

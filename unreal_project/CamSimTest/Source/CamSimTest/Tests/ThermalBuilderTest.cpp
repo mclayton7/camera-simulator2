@@ -62,8 +62,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalBuilderStencilTest, "CamSim.Thermal.Bui
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FThermalBuilderStencilTest::RunTest(const FString& Parameters)
 {
-	// Review focus 4.
-	FThermalFrameBuilder B = MakeBuilder();
+	// Review focus 4. 4A's stencil table as it is with thermal.entity off (4C drops the implicit +8 K, checked at the end).
+	FCamSimConfig::FThermalConfig Cfg4A;
+	Cfg4A.Entity.bEnabled = false;
+	FThermalFrameBuilder B;
+	B.Configure(Cfg4A, 3.0f, 5.0f);
 	const FThermalMaterialTable& M = B.GetMaterials();
 	FThermalFrameInputs In = SanFrancisco(20, 10);
 	FThermalStencilEntity Truck; Truck.Stencil = 3; Truck.bSurfaceVehicle = true;
@@ -96,6 +99,12 @@ bool FThermalBuilderStencilTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("released stencil back to the default"), static_cast<int32>(P.StencilClass[5]), FThermalMaterialTable::VehiclePaint);
 	TestEqual(TEXT("released stencil offset 0"), P.StencilOffsetK[5], 0.0f);
 	TestEqual(TEXT("the unknown name warns once per session"), Warnings.Num(), 0);
+	// ROADMAP 4C on (the default): no implicit +8 K for surface vehicles; an explicit offset still applies.
+	FThermalFrameBuilder B4C = MakeBuilder();
+	In.Entities = { Truck, Paved };
+	B4C.Build(In, P);
+	TestEqual(TEXT("4C: truck 0 K"), P.StencilOffsetK[3], 0.0f);
+	TestEqual(TEXT("4C: explicit offset kept"), P.StencilOffsetK[5], -2.0f);
 	return true;
 }
 
