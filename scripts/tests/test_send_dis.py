@@ -104,3 +104,49 @@ def test_yaw_rate_wraps():
         rates.append(abs(r))
     assert min(headings) < 10.0 and max(headings) > 350.0  # the wrap happened
     assert max(rates) < expected * 1.5
+
+
+# ---- ROADMAP 4C: appearance bits and the park / parked / destroyed presets ----
+
+
+def test_appearance_packed_at_offset_84():
+    p = _pdu(appearance=sd.APPEARANCE_POWER_PLANT | sd.APPEARANCE_DESTROYED)
+    assert struct.unpack(">I", p[84:88])[0] == (1 << 22) | (3 << 3)
+    assert struct.unpack(">I", _pdu()[84:88])[0] == 0
+
+
+def test_truck_appearance_by_preset():
+    a = sd.truck_appearance
+    assert a("truck-park", 10.0, 120.0, False) == sd.APPEARANCE_POWER_PLANT
+    assert a("truck-park", 130.0, 120.0, False) == 0
+    assert a("truck-parked", 5.0, 120.0, False) == 0
+    assert a("truck-parked", 5.0, 120.0, True) == sd.APPEARANCE_POWER_PLANT
+    assert (
+        a("truck-destroyed", 5.0, 120.0, True)
+        == sd.APPEARANCE_DESTROYED | sd.APPEARANCE_FLAMING
+    )
+    assert a("truck-loop", 5.0, 120.0, False) == 0
+    assert a("truck-loop", 5.0, 120.0, True) == sd.APPEARANCE_POWER_PLANT
+
+
+def test_kinematics_park_stops_after_drive():
+    f = sd.PathFollower(sd.PRESETS["truck-loop"].waypoints_ne, 15.0)
+    assert sd.track_kinematics("truck-park", f, 10.0, 20.0, 15.0)[4] == 15.0
+    stop = sd.track_kinematics("truck-park", f, 20.0, 20.0, 15.0)
+    later = sd.track_kinematics("truck-park", f, 300.0, 20.0, 15.0)
+    assert later[:3] == stop[:3] and later[3] == 0.0 and later[4] == 0.0
+
+
+def test_kinematics_parked_and_destroyed_hold_the_start():
+    f = sd.PathFollower(sd.PRESETS["truck-loop"].waypoints_ne, 15.0)
+    start = f.state(0.0)
+    for name in ("truck-parked", "truck-destroyed"):
+        n, e, h, r, v = sd.track_kinematics(name, f, 50.0, 120.0, 15.0)
+        assert (n, e, h) == start[:3] and r == 0.0 and v == 0.0
+    # The loop keeps driving
+    assert sd.track_kinematics("truck-loop", f, 50.0, 120.0, 15.0)[4] == 15.0
+
+
+def test_new_presets_are_selectable():
+    for name in ("truck-park", "truck-parked", "truck-destroyed"):
+        assert name in sd.PRESETS

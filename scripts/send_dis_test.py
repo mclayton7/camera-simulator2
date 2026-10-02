@@ -2,8 +2,14 @@
 """Send DIS Entity State PDUs for a scripted truck and boat (CamSim DIS test sender).
 
 Usage:
-  send_dis_test.py [both|truck-loop|boat-circle] [--addr 127.0.0.1] [--port 3000]
-                   [--exercise 1] [--location LAT,LON] [--duration SEC] [--rate HZ] [--verbose]
+  send_dis_test.py [both|truck-loop|boat-circle|truck-park|truck-parked|truck-destroyed]
+                   [--addr 127.0.0.1] [--port 3000] [--exercise 1] [--location LAT,LON]
+                   [--duration SEC] [--rate HZ] [--drive-s SEC] [--engine-on] [--verbose]
+
+Thermal state presets (ROADMAP 4C; the truck's appearance carries the power-plant / damage bits):
+  truck-park       drive the truck loop for --drive-s seconds (power plant on), then stop there, power plant off
+  truck-parked     the truck stationary at the loop start, power plant off (--engine-on: idling)
+  truck-destroyed  the truck stationary at the loop start, damage destroyed + flaming
 
 CamSim needs `dis.enabled: true` (or CAMSIM_DIS_ENABLED=1). Altitude is sent as 0 m: CamSim
 places the vehicles on the terrain / water (dis.clamp_to_surface).
@@ -26,6 +32,11 @@ TRUCK_TYPE = (1, 1, 225, 7, 0, 0, 0)  # land, USA, large wheeled utility vehicle
 BOAT_TYPE = (1, 3, 225, 7, 0, 0, 0)  # surface, USA, light/patrol craft
 
 HEARTBEAT_S = 0.2  # 5 Hz
+
+# IEEE 1278.1 / SISO-REF-010 platform appearance (land, air, surface share these bits)
+APPEARANCE_POWER_PLANT = 1 << 22
+APPEARANCE_FLAMING = 1 << 15
+APPEARANCE_DESTROYED = 3 << 3  # damage bits 3-4 = 3
 HEADING_THRESHOLD = 3.0  # degrees
 TICK_HZ = 30.0
 
@@ -84,6 +95,7 @@ def pack_entity_state(
     exercise: int = 1,
     marking: str = "",
     t: float = 0.0,
+    appearance: int = 0,
 ) -> bytes:
     """One 144-byte IEEE 1278.1 Entity State PDU (layout: DIS/DisPduTypes.cpp)."""
     m = _ned_to_ecef(lat, lon)
@@ -104,7 +116,7 @@ def pack_entity_state(
     pdu += struct.pack(">fff", *vel)
     pdu += struct.pack(">ddd", x, y, z)
     pdu += struct.pack(">fff", psi, theta, phi)
-    pdu += struct.pack(">I", 0)  # appearance
+    pdu += struct.pack(">I", appearance & 0xFFFFFFFF)  # appearance
     pdu += struct.pack(">B", 4) + bytes(15)  # DR algorithm 4 + other params
     pdu += struct.pack(">fff", 0.0, 0.0, 0.0)  # linear acceleration
     pdu += struct.pack(
@@ -170,13 +182,15 @@ def _circle(radius: float, n: int = 36) -> list[tuple[float, float]]:
     ]
 
 
+TRUCK_LOOP_NE = [(-100.0, -150.0), (100.0, -150.0), (100.0, 150.0), (-100.0, 150.0)]
+
 PRESETS: dict[str, Preset] = {
     "truck-loop": Preset(
         "truck-loop",
         TRUCK_TYPE,
         (37.795, -122.460),
         15.0,
-        [(-100.0, -150.0), (100.0, -150.0), (100.0, 150.0), (-100.0, 150.0)],
+        TRUCK_LOOP_NE,
         marking="TRUCK1",
     ),
     "boat-circle": Preset(
@@ -188,7 +202,58 @@ PRESETS: dict[str, Preset] = {
         150.0,
         "BOAT1",
     ),
+    # ROADMAP 4C thermal states: the truck loop's path, driven or held (track_kinematics, truck_appearance)
+    "truck-park": Preset(
+        "truck-park",
+        TRUCK_TYPE,
+        (37.795, -122.460),
+        15.0,
+        TRUCK_LOOP_NE,
+        marking="TRUCK1",
+    ),
+    "truck-parked": Preset(
+        "truck-parked",
+        TRUCK_TYPE,
+        (37.795, -122.460),
+        15.0,
+        TRUCK_LOOP_NE,
+        marking="TRUCK1",
+    ),
+    "truck-destroyed": Preset(
+        "truck-destroyed",
+        TRUCK_TYPE,
+        (37.795, -122.460),
+        15.0,
+        TRUCK_LOOP_NE,
+        marking="TRUCK1",
+    ),
 }
+BOTH = ["truck-loop", "boat-circle"]
+
+
+def truck_appearance(preset: str, t: float, drive_s: float, engine_on: bool) -> int:
+    """Appearance bits of a track at time t (s since start); only the truck presets set any."""
+    if preset == "truck-destroyed":
+        return APPEARANCE_DESTROYED | APPEARANCE_FLAMING
+    if preset == "truck-park" and t < drive_s:
+        return APPEARANCE_POWER_PLANT
+    if preset.startswith("truck") and engine_on:
+        return APPEARANCE_POWER_PLANT
+    return 0
+
+
+def track_kinematics(
+    preset: str, follower: PathFollower, t: float, drive_s: float, speed_mps: float
+) -> tuple[float, float, float, float, float]:
+    """(north_m, east_m, heading_deg, yaw_rate_dps, speed_mps) of a track at time t."""
+    if preset in ("truck-parked", "truck-destroyed"):
+        n, e, h, _ = follower.state(0.0)
+        return n, e, h, 0.0, 0.0
+    if preset == "truck-park" and t >= drive_s:
+        n, e, h, _ = follower.state(drive_s)
+        return n, e, h, 0.0, 0.0
+    n, e, h, rate = follower.state(t)
+    return n, e, h, rate, speed_mps
 
 
 def ne_to_latlon(
@@ -208,6 +273,7 @@ class _Track:
     follower: PathFollower = field(init=False)
     last_sent: float = -1e9
     last_heading: float = 0.0
+    last_appearance: int = -1
 
     def __post_init__(self):
         self.follower = PathFollower(self.preset.waypoints_ne, self.preset.speed_mps)
@@ -218,6 +284,17 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("preset", nargs="?", default="both", choices=["both", *PRESETS])
+    ap.add_argument(
+        "--drive-s",
+        type=float,
+        default=120.0,
+        help="truck-park: seconds of driving before it stops",
+    )
+    ap.add_argument(
+        "--engine-on",
+        action="store_true",
+        help="truck presets: power plant on throughout",
+    )
     ap.add_argument("--addr", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=3000)
     ap.add_argument("--exercise", type=int, default=1)
@@ -231,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args(argv)
 
-    names = list(PRESETS) if a.preset == "both" else [a.preset]
+    names = BOTH if a.preset == "both" else [a.preset]
     tracks = []
     for i, name in enumerate(names, start=1):
         p = PRESETS[name]
@@ -255,12 +332,16 @@ def main(argv: list[str] | None = None) -> int:
         while a.duration <= 0 or time.monotonic() - t0 < a.duration:
             t = time.monotonic() - t0
             for tr in tracks:
-                n, e, h, rate = tr.follower.state(t)
+                n, e, h, rate, speed = track_kinematics(
+                    tr.preset.name, tr.follower, t, a.drive_s, tr.preset.speed_mps
+                )
+                appearance = truck_appearance(tr.preset.name, t, a.drive_s, a.engine_on)
+                changed = appearance != tr.last_appearance
                 turned = (
                     abs((h - tr.last_heading + 180.0) % 360.0 - 180.0)
                     > HEADING_THRESHOLD
                 )
-                if t - tr.last_sent < heartbeat and not turned:
+                if t - tr.last_sent < heartbeat and not turned and not changed:
                     continue
                 lat, lon = ne_to_latlon(tr.center, n, e)
                 sock.sendto(
@@ -271,15 +352,16 @@ def main(argv: list[str] | None = None) -> int:
                         lon,
                         0.0,
                         h,
-                        tr.preset.speed_mps,
+                        speed,
                         rate,
                         a.exercise,
                         tr.preset.marking,
                         time.time(),
+                        appearance,
                     ),
                     (a.addr, a.port),
                 )
-                tr.last_sent, tr.last_heading = t, h
+                tr.last_sent, tr.last_heading, tr.last_appearance = t, h, appearance
                 if a.verbose:
                     print(
                         f"{t:7.2f} {tr.preset.name:12s} {lat:.6f} {lon:.6f} hdg {h:6.1f} rate {rate:6.2f}"
