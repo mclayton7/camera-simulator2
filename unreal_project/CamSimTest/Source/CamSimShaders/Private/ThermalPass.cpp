@@ -12,6 +12,8 @@ static_assert(FThermalFrameParams::LutSize == 1024, "LogLut[256] below and THERM
 static_assert(FThermalFrameParams::MaxClasses == 32, "ClassData[32] below and in CamSimThermalCommon.ush");
 static_assert(FThermalFrameParams::NumStencils == 256, "StencilData[128] below and in CamSimThermalCommon.ush");
 static_assert(FThermalFrameParams::NumLandCoverCodes == 256, "LandCover*Packed[16] below and in CamSimThermalCommon.ush");
+static_assert(FThermalFrameParams::EntityRecordFloat4s == 16 && FThermalFrameParams::MaxEntityParts == 4,
+	"ENTITY_RECORD_FLOAT4S / ENTITY_MAX_PARTS in CamSimThermalCommon.ush");
 
 /** 16 bytes -> 4 little-endian uints (CamSimThermalCommon.ush PackedByte unpacks them). */
 static FUintVector4 PackBytes16(const uint8* B)
@@ -34,6 +36,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCamSimThermalParameters, )
 	SHADER_PARAMETER(float, LutScale)
 	SHADER_PARAMETER_ARRAY(FVector4f, ClassData, [32])
 	SHADER_PARAMETER_ARRAY(FVector4f, StencilData, [128])
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, EntityRecords)
 	SHADER_PARAMETER(uint32, NumClasses)
 	SHADER_PARAMETER(uint32, TerrainClass)
 	SHADER_PARAMETER(uint32, WaterClass)
@@ -173,6 +176,10 @@ FRDGTextureRef AddThermalPass(FRDGBuilder& GraphBuilder, const FThermalPassInput
 		Pass->StencilData[K] = FVector4f(static_cast<float>(P.StencilClass[2 * K]), P.StencilOffsetK[2 * K],
 			static_cast<float>(P.StencilClass[2 * K + 1]), P.StencilOffsetK[2 * K + 1]);
 	}
+	// ROADMAP 4C: per-stencil entity records (64 KB), uploaded with this frame's parameters (the data is copied).
+	const FRDGBufferRef EntityRecords = CreateStructuredBuffer(GraphBuilder, TEXT("CamSimThermalEntityRecords"), sizeof(FVector4f),
+		FThermalFrameParams::NumStencils * FThermalFrameParams::EntityRecordFloat4s, P.EntityRecords, sizeof(P.EntityRecords));
+	Pass->EntityRecords    = GraphBuilder.CreateSRV(EntityRecords);
 	Pass->NumClasses       = P.NumClasses;
 	Pass->TerrainClass     = P.TerrainClass;
 	Pass->WaterClass       = P.WaterClass;

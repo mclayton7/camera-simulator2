@@ -180,6 +180,8 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilde
 	// before TSR, scene colour, depth and stencil share one render-resolution, jittered view.
 	FThermalFrameParams TP = *ThermalParams;
 	TP.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
+	// ROADMAP 4C: entity record rows' w from each body origin in this view's translated world (doubles until the dot).
+	FinalizeEntityRecords(TP, View.ViewMatrices.GetPreViewTranslation());
 	// Angle of one base-colour (render-resolution) texel at the view centre: 2 tan(hfov / 2) / view width (veg_blur_m footprint).
 	const double ProjX = View.ViewMatrices.GetProjectionMatrix().M[0][0];
 	const int32 RenderW = SceneColor.ViewRect.Width();   // before TSR: the render-resolution rect depth and GBuffer share

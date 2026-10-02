@@ -519,3 +519,50 @@ bool FThermalGpuLandCoverTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalGpuEntityPartsTest, "CamSim.GPU.Thermal.EntityPartsMatchesCpu",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalGpuEntityPartsTest::RunTest(const FString& Parameters)
+{
+	if (GUsingNullRHI) { AddInfo(TEXT("skipped: NullRHI (run scripts/run_gpu_tests.sh)")); return true; }
+	// ROADMAP 4C: stencil 3 (visible on terrain, U 0.60-0.70, V 0.70-0.80) gets a record whose body origin sits at that patch's
+	// centre, rotated 30 deg: a box, an overlapping later hot ellipsoid and a cooler box. Stencil 5 keeps 4A (invalid record).
+	CamSimThermalTest::FThermalTestScene S = CamSimThermalTest::MakeScene(64, 36, 64, 36);
+	const float U = 0.65f, V = 0.75f;
+	const float Z = CamSimThermalTest::DeviceZForPlane(S.P, S.ViewRot, U, V, -700.0f);
+	const FVector3f C = CamSimThermalRef::ClipToWorld(S.P, U * 2.0f - 1.0f, 1.0f - V * 2.0f, Z);
+	const FQuat Q(FVector::UpVector, FMath::DegreesToRadians(30.0));
+	FVector4f* R = &S.P.EntityRecords[3 * FThermalFrameParams::EntityRecordFloat4s];
+	R[0] = FVector4f(FVector3f(Q.GetAxisX() / 100.0), 0.0f);
+	R[1] = FVector4f(FVector3f(Q.GetAxisY() / 100.0), 0.0f);
+	R[2] = FVector4f(FVector3f(-Q.GetAxisZ() / 100.0), 0.0f);
+	R[3] = FVector4f(300.0f, 2.0f, 3.0f, 1.0f);
+	R[4]  = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);   R[5]  = FVector4f(1.5f, 1.0f, 0.5f, 0.6f);  R[6]  = FVector4f(360.0f, 0.0f, 0.0f, 0.0f);
+	R[7]  = FVector4f(0.8f, 0.3f, 0.0f, 1.0f);   R[8]  = FVector4f(0.7f, 0.5f, 0.4f, 0.3f);  R[9]  = FVector4f(700.0f, 0.0f, 0.0f, 0.0f);
+	R[10] = FVector4f(-1.5f, -0.8f, 0.0f, 0.0f); R[11] = FVector4f(0.4f, 0.4f, 0.4f, 0.2f);  R[12] = FVector4f(270.0f, 0.0f, 0.0f, 0.0f);
+	S.P.EntityOriginWorld[3] = FVector3d(C);
+	FinalizeEntityRecords(S.P, FVector3d::ZeroVector);   // the test scene's translated world is its world
+	const TArray<CamSimThermalRef::FPixelResult> Ref = CamSimThermalRef::Run(S.Images(true), S.P);
+	FLayout L;
+	L.ColorExtent = FIntPoint(S.W, S.H);
+	L.ColorMin = FIntPoint(0, 0);
+	L.DepthExtent = FIntPoint(S.DW, S.DH);
+	L.DepthMin = FIntPoint(0, 0);
+	const TArray<float> Gpu = RunThermalOnGpu(S, L, EBase::Float, TArray<uint8>());
+	if (!TestEqual(TEXT("readback"), Gpu.Num(), S.W * S.H)) return false;
+	int32 Bad = 0, Hot = 0, Cool = 0, WorstI = 0;
+	float Worst = 0.0f;
+	for (int32 I = 0; I < Gpu.Num(); ++I)
+	{
+		const float Rel = FMath::Abs(Gpu[I] - Ref[I].Radiance) / FMath::Max(FMath::Abs(Ref[I].Radiance), 1e-6f);
+		if (!(Rel <= 1e-4f)) ++Bad;
+		if (!(Rel <= Worst)) { Worst = Rel; WorstI = I; }
+		if (Ref[I].Class == CamSimThermalRef::EPixelClass::Entity && Ref[I].TempK > 330.0f) ++Hot;
+		if (Ref[I].Class == CamSimThermalRef::EPixelClass::Entity && Ref[I].TempK < 295.0f) ++Cool;
+	}
+	AddInfo(FString::Printf(TEXT("max relative %.3g at (%d, %d); %d hot, %d cool entity pixels"), Worst, WorstI % S.W, WorstI / S.W, Hot, Cool));
+	TestEqual(*FString::Printf(TEXT("pixels beyond 1e-4 (worst %.3g at (%d, %d), gpu %.6g ref %.6g)"), Worst, WorstI % S.W, WorstI / S.W,
+		Gpu[WorstI], Ref[WorstI].Radiance), Bad, 0);
+	TestTrue(TEXT("hot parts visible"), Hot > 0);
+	return true;
+}

@@ -16,6 +16,10 @@ float    LutMaxK;
 float    LutScale;
 float4   ClassData[32];                  // x T_class (K), y emissivity, z k_fast, w S_abs,ref (W m^-2)
 float4   StencilData[128];               // stencil 2k: (x class, y offset K); 2k + 1: (z class, w offset K)
+// Entity records (ROADMAP 4C): FThermalFrameParams::EntityRecords; row 3 .w = valid (else StencilData as 4A).
+#define ENTITY_RECORD_FLOAT4S 16         // FThermalFrameParams::EntityRecordFloat4s
+#define ENTITY_MAX_PARTS 4               // FThermalFrameParams::MaxEntityParts
+StructuredBuffer<float4> EntityRecords;
 uint     NumClasses;
 uint     TerrainClass;
 uint     WaterClass;
@@ -288,6 +292,43 @@ float3 LoadVegBase(FThermalSample S, float3 Base, float RangeCm)
 	return ((((Base + T0) + T1) + T2) + T3) * 0.2;
 }
 
+/** CamSimThermalRef::EntityPartTemp (same expressions, same order): skin blended with the record's part volumes. */
+float EntityPartTemp(uint Stencil, float3 Pw)
+{
+	const uint B = Stencil * ENTITY_RECORD_FLOAT4S;
+	const float4 M0 = EntityRecords[B + 0u];
+	const float4 M1 = EntityRecords[B + 1u];
+	const float4 M2 = EntityRecords[B + 2u];
+	const float4 R3 = EntityRecords[B + 3u];
+	const float3 Pb = float3(M0.x * Pw.x + M0.y * Pw.y + M0.z * Pw.z + M0.w,
+	                         M1.x * Pw.x + M1.y * Pw.y + M1.z * Pw.z + M1.w,
+	                         M2.x * Pw.x + M2.y * Pw.y + M2.z * Pw.z + M2.w);
+	float T = R3.x;
+	const uint N = min((uint)R3.z, (uint)ENTITY_MAX_PARTS);
+	for (uint K = 0u; K < N; ++K)
+	{
+		const float4 A = EntityRecords[B + 4u + 3u * K];
+		const float4 H = EntityRecords[B + 5u + 3u * K];
+		const float Tk = EntityRecords[B + 6u + 3u * K].x;
+		const float3 D = float3(Pb.x - A.x, Pb.y - A.y, Pb.z - A.z);
+		float Dist;
+		if (A.w > 0.5)
+		{
+			const float3 Q = float3(D.x / H.x, D.y / H.y, D.z / H.z);
+			Dist = (sqrt(Q.x * Q.x + Q.y * Q.y + Q.z * Q.z) - 1.0) * min(H.x, min(H.y, H.z));
+		}
+		else
+		{
+			const float3 E = float3(max(abs(D.x) - H.x, 0.0), max(abs(D.y) - H.y, 0.0), max(abs(D.z) - H.z, 0.0));
+			Dist = sqrt(E.x * E.x + E.y * E.y + E.z * E.z);
+		}
+		const float St = clamp(Dist / H.w, 0.0, 1.0);
+		const float W = 1.0 - St * St * (3.0 - 2.0 * St);
+		T = T + (Tk - T) * W;
+	}
+	return T;
+}
+
 /** CamSimThermalRef::EvaluatePixel: in-band radiance of one output pixel. */
 float EvaluatePixel(FThermalSample S)
 {
@@ -307,12 +348,22 @@ float EvaluatePixel(FThermalSample S)
 	float Offset = 0.0;
 	bool bTerrain = true;
 	const uint Stencil = S.Stencil & 0xFFu;
+	bool bEntityRecord = false;   // ROADMAP 4C: T from EntityPartTemp instead of T_class + offset
 	if (Stencil > 0u && S.CustomZ >= S.DeviceZ * EntityDepthRatio)
 	{
-		const float4 E = StencilData[Stencil >> 1u];
-		const bool bOdd = (Stencil & 1u) != 0u;
-		Class = (uint)(bOdd ? E.z : E.x);
-		Offset = bOdd ? E.w : E.y;
+		const float4 R3 = EntityRecords[Stencil * ENTITY_RECORD_FLOAT4S + 3u];
+		if (R3.w != 0.0)
+		{
+			Class = (uint)R3.y;
+			bEntityRecord = true;
+		}
+		else
+		{
+			const float4 E = StencilData[Stencil >> 1u];
+			const bool bOdd = (Stencil & 1u) != 0u;
+			Class = (uint)(bOdd ? E.z : E.x);
+			Offset = bOdd ? E.w : E.y;
+		}
 		bTerrain = false;
 	}
 	else if (bWater != 0u)
@@ -342,7 +393,7 @@ float EvaluatePixel(FThermalSample S)
 			Cd = BlendLandCover(I0, F, Base, VegBase, bRefine);
 		}
 	}
-	float T = Cd.x + Offset;
+	float T = bEntityRecord ? EntityPartTemp(Stencil, Pw) : Cd.x + Offset;
 	if (UseBaseColor != 0u && KFastScale > 0.0)
 	{
 		const float BaseLum = Lum709(Base);
