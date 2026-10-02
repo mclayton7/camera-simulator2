@@ -4,12 +4,13 @@
 Usage:
   send_dis_test.py [both|truck-loop|boat-circle|truck-park|truck-parked|truck-destroyed]
                    [--addr 127.0.0.1] [--port 3000] [--exercise 1] [--location LAT,LON]
-                   [--duration SEC] [--rate HZ] [--drive-s SEC] [--engine-on] [--verbose]
+                   [--duration SEC] [--rate HZ] [--drive-s SEC] [--hold-s SEC] [--engine-on] [--verbose]
 
 Thermal state presets (ROADMAP 4C; the truck's appearance carries the power-plant / damage bits):
   truck-park       drive the truck loop for --drive-s seconds (power plant on), then stop there, power plant off
-  truck-parked     the truck stationary at the loop start, power plant off (--engine-on: idling)
-  truck-destroyed  the truck stationary at the loop start, damage destroyed + flaming
+  truck-parked     the truck stationary at the loop start (--hold-s: where the loop is then), power plant
+                   off (--engine-on: idling)
+  truck-destroyed  the truck stationary like truck-parked, damage destroyed + flaming
 
 CamSim needs `dis.enabled: true` (or CAMSIM_DIS_ENABLED=1). Altitude is sent as 0 m: CamSim
 places the vehicles on the terrain / water (dis.clamp_to_surface).
@@ -243,11 +244,17 @@ def truck_appearance(preset: str, t: float, drive_s: float, engine_on: bool) -> 
 
 
 def track_kinematics(
-    preset: str, follower: PathFollower, t: float, drive_s: float, speed_mps: float
+    preset: str,
+    follower: PathFollower,
+    t: float,
+    drive_s: float,
+    speed_mps: float,
+    hold_s: float = 0.0,
 ) -> tuple[float, float, float, float, float]:
-    """(north_m, east_m, heading_deg, yaw_rate_dps, speed_mps) of a track at time t."""
+    """(north_m, east_m, heading_deg, yaw_rate_dps, speed_mps) of a track at time t. truck-parked / truck-destroyed stand
+    where the loop is at hold_s (0 = its start); truck-park stops where the loop is at drive_s."""
     if preset in ("truck-parked", "truck-destroyed"):
-        n, e, h, _ = follower.state(0.0)
+        n, e, h, _ = follower.state(hold_s)
         return n, e, h, 0.0, 0.0
     if preset == "truck-park" and t >= drive_s:
         n, e, h, _ = follower.state(drive_s)
@@ -295,6 +302,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="truck presets: power plant on throughout",
     )
+    ap.add_argument(
+        "--hold-s",
+        type=float,
+        default=0.0,
+        help="truck-parked / truck-destroyed: stand where the loop is at this time (0 = its start)",
+    )
     ap.add_argument("--addr", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=3000)
     ap.add_argument("--exercise", type=int, default=1)
@@ -333,7 +346,12 @@ def main(argv: list[str] | None = None) -> int:
             t = time.monotonic() - t0
             for tr in tracks:
                 n, e, h, rate, speed = track_kinematics(
-                    tr.preset.name, tr.follower, t, a.drive_s, tr.preset.speed_mps
+                    tr.preset.name,
+                    tr.follower,
+                    t,
+                    a.drive_s,
+                    tr.preset.speed_mps,
+                    a.hold_s,
                 )
                 appearance = truck_appearance(tr.preset.name, t, a.drive_s, a.engine_on)
                 changed = appearance != tr.last_appearance

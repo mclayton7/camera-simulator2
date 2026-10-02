@@ -29,7 +29,10 @@ PDUs (protocol version 7, site:application 1:1, entity numbers from 1) for scrip
 |--------|-------------|------|-------|
 | `truck-loop` | `1:1:225:7:0:0:0` (land, USA) marking `TRUCK1` | Closed 300 m (E–W) × 200 m (N–S) loop over the Presidio, centre 37.795 N, 122.460 W; driven clockwise seen from above | 15 m/s |
 | `boat-circle` | `1:3:225:7:0:0:0` (surface, USA) marking `BOAT1` | 150 m radius circle in the bay, centre 37.815 N, 122.440 W; clockwise | 8 m/s |
-| `both` (default) | both of the above | | |
+| `both` (default) | `truck-loop` and `boat-circle` | | |
+| `truck-park` | the truck | The truck loop for `--drive-s` seconds with the power-plant bit on, then stopped there with it off | 15 m/s, then 0 |
+| `truck-parked` | the truck | Stationary at the loop start (or `--hold-s`), power plant off (`--engine-on`: idling) | 0 |
+| `truck-destroyed` | the truck | Stationary like `truck-parked`, damage destroyed + flaming | 0 |
 
 Heading follows the path (turns are rounded at a constant rate). PDUs go out at a 5 Hz
 heartbeat plus immediately when the heading has changed by more than 3°. Dead reckoning is
@@ -44,6 +47,9 @@ CamSim places the vehicles on the surface.
 | `--location LAT,LON` | -- | Re-centre the selected preset(s), keeping their shape (with `both`, the second is ~220 m north of the first) |
 | `--duration SEC` | `0` | Stop after SEC seconds (0 = until Ctrl-C) |
 | `--rate HZ` | `5` | Heartbeat rate |
+| `--drive-s SEC` | `120` | `truck-park`: seconds of driving before it stops |
+| `--engine-on` | off | Truck presets: power-plant bit on throughout |
+| `--hold-s SEC` | `0` | `truck-parked` / `truck-destroyed`: stand where the loop is at SEC (0 = its start) |
 | `--verbose` | off | Print every PDU sent |
 
 ```bash
@@ -168,6 +174,23 @@ frames in flight.
 | `bbox`, `area`, `truncated` | Box `[x, y, w, h]` of the vehicle's visible pixels in the encoded frame, the visible pixel count, and whether it is cut by the frame edge (ROADMAP 2.7; see [`ground-truth.md`](ground-truth.md)) |
 | `visibility`, `truncation`, `bbox_amodal`, `obb`, `obb_amodal`, `segmentation`, `box3d`, `mask_source` | Occlusion, frame-edge cut, whole-silhouette box, oriented boxes, RLE mask and projected 3D box: [`ground-truth.md`](ground-truth.md) |
 | `geo` | `{lat, lon, alt_m}`: the entity origin's geodetic position at capture (WGS-84 degrees, ellipsoid metres); for a clamped vehicle that is its ground contact / waterline point |
+
+## Appearance (thermal IR)
+
+For platforms (kind 1) in the land, air and surface domains, CamSim decodes the Entity State
+appearance bits shared by those records (IEEE 1278.1 / SISO-REF-010) into the same component
+commands a CIGI host sends ([`entity-rendering.md`](entity-rendering.md)):
+
+| Bits | Meaning | Becomes |
+|------|---------|---------|
+| 22 | Power plant on | CompId 11 (engine state, thermal IR) |
+| 3–4 | Damage: 0 none, 1 slight, 2 moderate, 3 destroyed | CompId 10: none → 0, slight/moderate → 1, destroyed → 2 |
+| 15 | Flaming | CompId 12 (burns while set, thermal IR) |
+
+A command is sent only when a decoded value changes (an entity's first PDU sends the ones that
+differ from all-off), so heartbeats cost nothing. A destroyed DIS entity also swaps to its type's
+`mesh_destroyed` when one is configured. Other kinds (munitions, life forms) and domains are not
+decoded.
 
 ## Limitations
 

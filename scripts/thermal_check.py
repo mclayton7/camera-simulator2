@@ -42,10 +42,11 @@ Launches (--runs):
          EO baseline for the coastline shimmer ratio
   entity (ROADMAP 4C) per band, night, nadir 120 m over the truck, 20 deg FOV (10 frames each):
            <band>_ent_park  send_dis_test.py truck-park --drive-s 60: ent_running while it drives
-                            (power plant on), then ent_park5 / ent_park180 where it stopped, 5 s and
-                            180 s after it stopped with the power plant off
-           <band>_ent_cold  truck-parked: ent_parked, stationary since spawn, power plant off
-         and mwir_ent_dead (truck-destroyed: ent_dead, damage destroyed + flaming)
+                            (power plant on), then ent_park5 / ent_park600 where it stopped, 5 s and
+                            600 s after it stopped with the power plant off
+           <band>_ent_cold  truck-parked --hold-s 60: ent_parked, stationary since spawn on the spot where
+                            the park run stops (same background), power plant off
+         and mwir_ent_dead (truck-destroyed --hold-s 60: ent_dead, damage destroyed + flaming)
 
 Each frame is a /snapshot PNG (the NV12 frame converted to RGB); Y is recovered exactly for
 IR (grey: U = V = 128) and as BT.709 luma for EO. The middle frame of each view is saved to
@@ -99,7 +100,7 @@ row (a view with no frames, an absent run) fails:
       Every entity statistic is the median over the frames with a truck COCO box; ring-referenced
       because the runs' AGC states differ
   (o) entity, night: running truck box p99 - box median >= +20 DN MWIR, +10 DN LWIR (hot parts)
-  (p) entity, night: box mean - ring after parking: at +180 s below +5 s, and above the parked-cold
+  (p) entity, night: box mean - ring after parking: at +600 s below +5 s, and above the parked-cold
       truck's (cooling, still warm). The mean, not p99: in MWIR the hot parts clip at the display
       ceiling (Y 235), so p99 cannot show them cooling
   (q) entity, night, MWIR: destroyed truck box - ring >= +60 DN (burning)
@@ -688,9 +689,9 @@ def box_ring_stats(y: np.ndarray, anns: list[dict | None]) -> dict:
 
 
 def entity_gate_rows(
-    band: str, run: dict, cold: dict, park5: dict, park180: dict, dead: dict | None
+    band: str, run: dict, cold: dict, park5: dict, park600: dict, dead: dict | None
 ) -> list[dict]:
-    """Gates (n)-(q) (ROADMAP 4C) from box_ring_stats of the running, parked-cold, parked (+5 s, +180 s) and destroyed truck."""
+    """Gates (n)-(q) (ROADMAP 4C) from box_ring_stats of the running, parked-cold, parked (+5 s, +600 s) and destroyed truck."""
 
     def row(check, value, threshold, ok, detail):
         ok = bool(ok) and not math.isnan(value)
@@ -727,15 +728,15 @@ def entity_gate_rows(
     )
     # Box mean, not p99: in MWIR the hot parts clip at the display ceiling, so p99 cannot fall.
     h5 = park5["mean"] - park5["ring"]
-    h180 = park180["mean"] - park180["ring"]
+    h600 = park600["mean"] - park600["ring"]
     hc = cold_c
     rows.append(
         row(
             "p",
-            h5 - h180,
-            "box - ring: +180 s < +5 s and > parked-cold",
-            h180 < h5 and h180 > hc,
-            f"+5 s {h5:.1f}, +180 s {h180:.1f}, parked-cold {hc:.1f}",
+            h5 - h600,
+            "box - ring: +600 s < +5 s and > parked-cold",
+            h600 < h5 and h600 > hc,
+            f"+5 s {h5:.1f}, +600 s {h600:.1f}, parked-cold {hc:.1f}",
         )
     )
     if dead is not None:
@@ -957,7 +958,6 @@ def _poses():
         ),
         # ROADMAP 4C: the truck close up, moving (truck-park while driving) or where it stands still
         "ent_running": dvc.nadir_on(truck, ground + ENT_UP_M, ENT_FOV),
-        "ent_start": ent_static(0.0),
         "ent_stop": ent_static(ENT_DRIVE_S),
         "nadir_static": static(
             scenario.Pose(
@@ -1053,7 +1053,7 @@ def build_runs(bands: list[str], wanted: set[str]) -> list[RunSpec]:
                     lambda tod: [
                         View("ent_running", p["ent_running"], 10, "truck"),
                         View("ent_park5", p["ent_stop"], 10, "truck", at_s=ENT_DRIVE_S + 5.0),
-                        View("ent_park180", p["ent_stop"], 10, "truck", at_s=ENT_DRIVE_S + 180.0),
+                        View("ent_park600", p["ent_stop"], 10, "truck", at_s=ENT_DRIVE_S + 600.0),
                     ],
                     exec_cmds=["camsim.Thermal.Log 1"],
                     dis_args=["truck-park", "--drive-s", str(ENT_DRIVE_S)],
@@ -1065,8 +1065,8 @@ def build_runs(bands: list[str], wanted: set[str]) -> list[RunSpec]:
                     env,
                     1,
                     ["night"],
-                    lambda tod: [View("ent_parked", p["ent_start"], 10, "truck")],
-                    dis_args=["truck-parked"],
+                    lambda tod: [View("ent_parked", p["ent_stop"], 10, "truck")],
+                    dis_args=["truck-parked", "--hold-s", str(ENT_DRIVE_S)],
                 )
             )
         if "mwir" in bands:
@@ -1076,8 +1076,8 @@ def build_runs(bands: list[str], wanted: set[str]) -> list[RunSpec]:
                     {"CAMSIM_IR_PRESET": BANDS["mwir"]},
                     1,
                     ["night"],
-                    lambda tod: [View("ent_dead", p["ent_start"], 10, "truck")],
-                    dis_args=["truck-destroyed"],
+                    lambda tod: [View("ent_dead", p["ent_stop"], 10, "truck")],
+                    dis_args=["truck-destroyed", "--hold-s", str(ENT_DRIVE_S)],
                 )
             )
     if "eo" in wanted:
@@ -1806,7 +1806,7 @@ def check_all(
                         "detail": f"box - ring; box p99 {st['p99']:.1f}, median {st['median']:.1f}, ring {st['ring']:.1f}, {st['n']} frames",
                     }
                 )
-        need = ("ent_running", "ent_parked", "ent_park5", "ent_park180")
+        need = ("ent_running", "ent_parked", "ent_park5", "ent_park600")
         if all(k in stats for k in need):
             checks.extend(
                 entity_gate_rows(
@@ -1814,7 +1814,7 @@ def check_all(
                     stats["ent_running"],
                     stats["ent_parked"],
                     stats["ent_park5"],
-                    stats["ent_park180"],
+                    stats["ent_park600"],
                     stats.get("ent_dead"),
                 )
             )

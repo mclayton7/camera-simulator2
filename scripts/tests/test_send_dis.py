@@ -150,3 +150,13 @@ def test_kinematics_parked_and_destroyed_hold_the_start():
 def test_new_presets_are_selectable():
     for name in ("truck-park", "truck-parked", "truck-destroyed"):
         assert name in sd.PRESETS
+
+
+def test_hold_s_places_parked_presets_along_the_loop():
+    f = sd.PathFollower(sd.PRESETS["truck-loop"].waypoints_ne, 15.0)
+    at = f.state(60.0)
+    for name in ("truck-parked", "truck-destroyed"):
+        n, e, h, r, v = sd.track_kinematics(name, f, 5.0, 120.0, 15.0, hold_s=60.0)
+        assert (n, e, h) == at[:3] and r == 0.0 and v == 0.0
+    # truck-park stops at the same place when drive_s equals hold_s
+    assert sd.track_kinematics("truck-park", f, 500.0, 60.0, 15.0)[:3] == at[:3]
