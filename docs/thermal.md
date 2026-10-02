@@ -117,7 +117,9 @@ window renders it), so it does not move when the camera pans or the window re-ce
 
 **Refinement** (needs the GBuffer base colour, not sunlight, so it also runs at night): `v = saturate((ExG - veg_index_lo) / (veg_index_hi - veg_index_lo))`,
 `ExG = (2G - R - B) / (R + G + B)` of the linear base colour. The ExG is taken from the **mean of 5 base-colour samples** over a
-world-space footprint (the pixel and four diagonal taps `veg_blur_m` = 2 m away, 1 to 32 px from the depth and pixel angle). Why: Cesium
+world-space footprint: the pixel and four diagonal taps offset by R pixels along each image axis, R = `veg_blur_m` /
+(slant range x pixel angle), rounded and clamped to 1-32 px. Each tap is therefore sqrt(2) R pixels away (about 2.8 m on the
+ground at the 2 m default, facing the ground), and farther along the look direction at grazing angles (foreshortening). Why: Cesium
 imagery is JPEG, and its ~16 m chroma blocks drive ExG into square patches that the narrow green ramp turns into a block mosaic in
 IR (visible in the 1200 m close view, and not removable by the class-lookup warp). Diagonal taps never share the centre's row or
 column, so a block edge flips one tap at a time. 4 to 8 m radii hid the blocks entirely but the 5 sparse taps showed as shifted
@@ -150,8 +152,12 @@ soil into asphalt). Refinement is off when no base colour is bound (the 4A fallb
 | Moss and lichen | 100 | `grassland` |
 | No data / other | 0 | `terrain_default` |
 
+A code remapped to a different material renders that material unrefined: it leaves its refinement family (the table above
+becomes None for it), so `{50: concrete}` gives concrete, not the asphalt/concrete split, and `{10: vegetation}` is not blended
+toward `bare_soil`. Naming the code's default material keeps its family. An unknown material keeps the default (one warning).
+
 Vegetation classes fold evapotranspiration into an *effective* albedo (the closed-form model has no latent heat term), so they stay
-cool at noon. Class temperatures at San Francisco, 21 December (`CamSim.Thermal.LandCover.DiurnalContrastsAtSanFrancisco` pins
+cool at noon. Class temperatures at San Francisco, 21 December (`CamSim.Thermal.Materials.DiurnalContrastsAtSanFrancisco` pins
 the orderings: every vegetation class at least 1 K below `built_up` and `bare_soil` at noon; `built_up` and `bare_soil` at least 1 K
 above `tree_canopy` at night; `tree_canopy` at least 0.5 K above `grassland` at night):
 
@@ -172,23 +178,28 @@ above `tree_canopy` at night; `tree_canopy` at least 0.5 K above `grassland` at 
 | `snow_ice` | 273.1 | 273.1 |
 | `wetland` | 294.7 | 285.6 |
 
-**Snow.** `snow_ice` uses the `snow` temperature source: the model temperature capped at 273.15 K (the class value is already
-below it; the per-pixel fast term, `k_fast` 0.005, can still lift sunlit snow slightly above 0 C: known).
+**Snow.** `snow_ice` uses the `snow` temperature source: the model temperature capped at 273.15 K. Its `k_fast` is 0, so the
+per-pixel fast term cannot lift sunlit snow above 0 C (`CamSim.Thermal.Reference.SunlitSnowStaysAtOrBelowFreezing`); a user
+override with `k_fast` > 0 can.
 
 **Keys** (all in [`configuration.md`](configuration.md#thermal-thermal), under `thermal.land_cover`): `enabled`, `dir`,
 `window_texels`, `recentre_fraction`, `veg_index_lo/hi`, `asphalt_max_luma`, `warp_amplitude_m`, `warp_cell_m`, `veg_blur_m`,
-`classes.<code>`. `enabled: false` is 4A bit for bit (`CamSim.Thermal.Reference.LandCoverOffIs4A`,
-`CamSim.Thermal.Builder.LandCoverDisabledIs4A`, the GPU "off" case).
+`classes.<code>`. `enabled: false` reproduces 4A's output bit for bit with 4A's default classes
+(`CamSim.Thermal.Reference.LandCoverOffIs4A`, `CamSim.Thermal.Builder.LandCoverDisabledIs4A`, the GPU "off" case); the 4A
+`vegetation` class itself was retuned (effective albedo, so it keeps the land-cover orderings), so an entity type configured to
+`vegetation` reads cooler than in 4A. The 8 new built-ins leave 18 of the 32 class slots for user materials.
 
 **Another area.** Run `uv run scripts/landcover/fetch_worldcover.py --bbox W S E N --out DIR` (needs network and `rasterio`, which
 `uv run` fetches), point `thermal.land_cover.dir` at DIR (relative to the project directory). Open-ocean COGs that don't exist
 are listed under `missing` and read as no data. Keep `ATTRIBUTION.txt` with the data.
 
 **Edge cases.** No index / missing directory / no data in range: land cover off, one warning, 4A behaviour. An LFS pointer file
-instead of a PNG fails the tile decode (a warning; run `git lfs pull`). Outside the window (very high altitude): `terrain_default`.
-Within 1 degree of a pole: off. Antimeridian: tiles are fetched by their own lat/lon, longitude does not wrap inside a window.
-Axes that fail the orthonormality/handedness check, or a missing georeference: off for that frame (one warning). A null window
-texture (before its upload runs) is off for that frame.
+instead of a PNG fails the tile decode: the tile reads as no data, and each window build logs one summary warning (how many
+tiles failed, the first one, and the `git lfs pull` hint; per-tile detail at `Verbose`). Outside the window (very high
+altitude): `terrain_default`. Within 1 degree of a pole: off. Antimeridian: tiles are fetched by their own lat/lon, longitude
+does not wrap inside a window. Axes that fail the orthonormality/handedness check (against Up at the window centre): off for
+that frame (one warning per session). No Cesium georeference: off (one warning). A null window texture (before its upload
+runs) is off for that frame.
 
 ### Land-cover performance (M1 Pro, Metal, SF sample)
 
@@ -197,11 +208,23 @@ texture (before its upload runs) is off for that frame.
 | Window build (task thread, 2048^2, cold cache incl. PNG decode) | 27.0-27.3 ms for the first window (20 tiles with data, 10 outside the sample); 6-7 ms for later windows (cached tiles); 14.8 ms for the synthetic 30-tile test directory. Target < 100 ms |
 | Window swap | game thread: `MakeShared` + render-command enqueue; the 4 MB upload runs on the render thread and left no trace in frame times |
 | `ThermalCS` p95 at 1080p, land cover on | 0.408 ms (gate f, 959 frames; median 0.400, max 0.418; 0.407 at 720p) vs 4A's 0.141 ms |
-| Cost breakdown | lookup + blend +0.134 ms (Task 10, 0.305), smoothstep + warp +0.045 ms, 5-tap vegetation blur +0.06 ms |
-| Frame builder | about 16 us per frame with land cover (4A: 2.5 us) |
+| Frame builder (`CamSim.Thermal.Builder.PerFrameCost`, 32 entities) | 16.2 us per frame with land cover on, 13.3 us off (4A: 2.5 us) |
 | GPU vs CPU reference (`CamSim.GPU.Thermal.LandCoverMatchesCpu`) | worst relative radiance error 4.7e-6 over every case (limit 1e-4); land cover off is bit-identical to no window |
 
-The land-cover cost is above the +0.1 ms the spec planned (total +0.27 ms over 4A) but inside the 0.5 ms gate (f). Possible
+Where the +0.267 ms over 4A goes (`ThermalCS` p95 at 1080p, M1 Pro). Each land-cover increment is a with/without pair measured in one
+session; the sessions differ from each other and from 4A's, so the first and last rows carry the baseline and session differences
+and the rows sum to the total:
+
+| Step | p95 with / without | Increment |
+|---|---|---|
+| 4B build, land cover off vs 4A as recorded (ROADMAP 4A gate f) | 0.171 / 0.141 ms | +0.030 (baseline difference, not land-cover work) |
+| Lookup, class blend and refinement | 0.305 / 0.171 ms | +0.134 |
+| Smoothstep fractions and domain warp | 0.355 / 0.310 ms | +0.045 |
+| 5-tap vegetation blur (`veg_blur_m` 2 vs 0) | 0.423 / 0.360 ms | +0.063 |
+| Session-to-session variation (final gate (f) run 0.408 ms) | | -0.005 |
+| Total over 4A | 0.408 / 0.141 ms | +0.267 |
+
+The land-cover cost is above the +0.1 ms the spec planned but inside the 0.5 ms gate (f). Possible
 follow-ups: skip the vegetation taps for the None family and non-terrain pixels, read fewer class tables per pixel.
 
 ### Limits (4B)
@@ -215,7 +238,6 @@ follow-ups: skip the vegetation taps for the None family and non-terrain pixels,
   concrete reads asphalt).
 - WorldCover 2021 is one epoch (no seasons, no change since); a CPU copy of the window is kept next to its texture.
 - The warp amplitude is not validated against `warp_cell_m / 3` (documented only).
-- Snow can exceed 0 C through the per-pixel fast term until that is fixed (ruling: set `snow_ice.k_fast` 0 or cap after the fast term).
 - A pre-existing engine hitch of about +7 ms every ~30 s is visible in frame times, with land cover on or off; it is not 4B.
 - Linux/Vulkan is unverified for land cover (as for thermal).
 
@@ -251,7 +273,7 @@ Built-in classes (index order fixed; 6-13 added by 4B land cover), overridable a
 | `cropland` | 0.40\* | 0.97 | 700 | 15 | 0.010 | model |
 | `built_up` | 0.20 | 0.93 | 1650 | 10 | 0.018 | model |
 | `bare_soil` | 0.25 | 0.93 | 1300 | 8 | 0.025 | model |
-| `snow_ice` | 0.75 | 0.99 | 600 | 10 | 0.005 | snow (model, capped at 273.15 K) |
+| `snow_ice` | 0.75 | 0.99 | 600 | 10 | 0 | snow (model, capped at 273.15 K) |
 | `wetland` | 0.40\* | 0.98 | 2500 | 15 | 0.004 | model |
 
 \* Effective albedo: folds evapotranspiration into the absorbed solar (the model has no latent heat term).

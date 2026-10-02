@@ -800,7 +800,7 @@ thermal:
   #     k_fast: 0.02            # K per W m^-2 absorbed above the class reference
   #     temperature: model      # model | water | snow
   land_cover:                   # ROADMAP 4B: terrain thermal classes from ESA WorldCover (docs/thermal.md)
-    enabled: true               # CAMSIM_THERMAL_LAND_COVER_ENABLED — false = 4A (every terrain pixel terrain_default)
+    enabled: true               # CAMSIM_THERMAL_LAND_COVER_ENABLED — false = 4A output with 4A's default classes (every terrain pixel terrain_default)
     dir: Content/NonUFS/LandCover  # CAMSIM_THERMAL_LAND_COVER_DIR — index.json + tiles (scripts/landcover/fetch_worldcover.py), relative to the project
     window_texels: 2048         # CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS — camera-centred window of 10 m texels (2048 = 20.48 km; even, 256..8192; 2048 is the recommended size)
     recentre_fraction: 0.25     # CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION — rebuild when the camera is this fraction of the window off-centre
@@ -809,8 +809,8 @@ thermal:
     asphalt_max_luma: 0.12      # CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA — built-up: base luminance below which ground is asphalt
     warp_amplitude_m: 6         # CAMSIM_THERMAL_LAND_COVER_WARP_AMPLITUDE_M — ground-fixed warp of the class lookup, breaks the 10 m grid (0..20; 0 = off)
     warp_cell_m: 20             # CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M — warp noise cell size on the ground (5..200)
-    veg_blur_m: 2               # CAMSIM_THERMAL_LAND_COVER_VEG_BLUR_M — vegetation index from base colour averaged over this ground radius (hides imagery JPEG chroma blocks; 0..32, 0 = off)
-    # classes:                  # WorldCover code -> thermal material (yaml only; defaults in docs/thermal.md)
+    veg_blur_m: 2               # CAMSIM_THERMAL_LAND_COVER_VEG_BLUR_M — vegetation index from the base colour of the pixel + 4 diagonal taps offset R px on each image axis, R = veg_blur_m / (slant range x pixel angle), 1..32 px (tap distance sqrt(2)·R, foreshortened at grazing angles; hides imagery JPEG chroma blocks; 0..32, 0 = off)
+    # classes:                  # WorldCover code -> thermal material (yaml only; defaults in docs/thermal.md; a code remapped to another material renders it unrefined)
     #   10: tree_canopy
 
 # Phase 27 — Performance & Optimization

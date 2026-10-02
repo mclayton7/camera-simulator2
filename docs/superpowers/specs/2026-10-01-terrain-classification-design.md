@@ -38,7 +38,7 @@ ESA WorldCover 2021 v200 (10 m, uint8 codes, 3°×3° COGs, open S3 bucket)
                                                                    ├─ FLandCoverWindow: resample to a
 camera geodetic pose ──────────────────────────────────────────────┘   camera-centred East/North grid
                                                                         (2048², 10 m/texel = 20.48 km)
-                                                                        → R8 texture + mapping params
+                                                                        → R8_UINT texture + mapping params
 ```
 
 - The script reads only the windows it needs from the COGs (HTTP range reads; `rasterio` via
@@ -54,7 +54,7 @@ camera geodetic pose ───────────────────�
 
 ## Runtime
 
-**Window.** `FLandCoverWindow` keeps a 2048×2048 R8 texture centred near the camera nadir on a
+**Window.** `FLandCoverWindow` keeps a 2048×2048 `R8_UINT` texture centred near the camera nadir on a
 local East/North grid (10 m texels). When the nadir moves more than 25 % of the window from its
 centre, a new window is built on a task thread (tile loads + resample, target < 100 ms) and
 swapped in atomically on the game thread; the old one keeps rendering meanwhile (no hitch). The
@@ -137,11 +137,13 @@ within `MaxClasses = 32`.
   land-cover mapping (`East`, `North` float3, `CamOffsetM` float2, `TexelM`, `WindowTexels`,
   `bLandCover`), refinement thresholds, and the material indices for `vegetation`, `bare_soil`,
   `asphalt`, `concrete`.
-- `FThermalPassInputs` gains `FRDGTextureRef LandCover` (R8; null → off, black dummy bound).
-- `CamSimThermalRef::EvaluatePixel` takes the land-cover sample (4 codes + bilinear weights) as
+- `FThermalPassInputs` gains `FRDGTextureRef LandCover` (`PF_R8_UINT`; null → off, the zero-uint dummy
+  `GSystemTextures.GetZeroUIntDummy` bound).
+- `CamSimThermalRef::EvaluatePixel` takes the land-cover sample (4 codes + smoothstep weights) as
   input so the CPU reference stays a pure function and the shader stays its mirror.
 - New: `Thermal/LandCoverTiles.{h,cpp}` (tile index + PNG decode + LRU),
-  `Thermal/LandCoverWindow.{h,cpp}` (async window build, double-buffered, RHI texture),
+  `Thermal/LandCoverWindow.{h,cpp}` (async window build: the current window renders while at most one build is in flight,
+  then swaps in; RHI texture; the CPU copy of the codes is kept),
   `scripts/landcover/fetch_worldcover.py` (+ pytest for the tiling maths), config
   `thermal.land_cover.{enabled, dir, classes, window_texels, recentre_fraction, veg_index_lo,
   veg_index_hi, asphalt_max_luma, warp_amplitude_m, warp_cell_m, veg_blur_m}`
@@ -165,17 +167,18 @@ within `MaxClasses = 32`.
 
 ## Performance
 
-ThermalCS: + 4 R8 texel reads and a small blend for terrain pixels (budget + 0.1 ms at 1080p; as
-built +0.27 ms: lookup and blend, warp and the 5-tap vegetation blur, p95 0.407 ms, inside gate (f)'s
+ThermalCS: + 4 `R8_UINT` texel reads and a smoothstep blend for terrain pixels (budget + 0.1 ms at 1080p; as
+built +0.27 ms: lookup and blend, warp and the 5-tap vegetation blur, p95 0.408 ms, inside gate (f)'s
 0.5 ms; rulings S7, S10).
-Window build on a task thread, < 100 ms, never on the game or render thread. Memory: 4 MB per
-window ×2 (double buffer) + tile LRU (default 64 tiles).
+Window build on a task thread, < 100 ms, never on the game or render thread. Memory: as built, the
+current window (4 MB texture + its 4 MB CPU copy, kept) plus at most one in-flight build (4 MB CPU) + tile LRU (default 64
+tiles).
 
 ## Testing
 
 - `CamSim.Thermal.LandCover.*`: tile index parsing, PNG decode, LRU; window resample against an
   analytic pattern (orientation, scale, centre); re-centre trigger; missing tiles → 0; antimeridian.
-- `CamSim.Thermal.Reference.*` additions: bilinear material blend; vegetation-index refinement
+- `CamSim.Thermal.Reference.*` additions: smoothstep material blend; vegetation-index refinement
   both directions; asphalt/concrete split; no-base-colour fallback; land cover off = 4A output.
 - `CamSim.GPU.Thermal.MatchesCpu` additions: land-cover cases (synthetic window, rotated East/North).
 - `scripts/tests/test_fetch_worldcover.py`: tile naming/bbox maths, code passthrough.

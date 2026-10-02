@@ -1490,11 +1490,13 @@ lawns and roads.
   their class data with smoothstep weights, and refines it by the GBuffer base colour: vegetation index from a 5-tap world-space blur
   (`veg_blur_m` 2 m) and an asphalt/concrete luminance split in built-up. `CamSimThermalRef` mirrors it.
 - **Classes:** 8 new built-ins (`tree_canopy`, `shrubland`, `grassland`, `cropland`, `built_up`, `bare_soil`, `snow_ice`, `wetland`),
-  a `snow` temperature source (capped at 273.15 K) and the WorldCover code -> class table (`thermal.land_cover.classes.<code>`).
+  a `snow` temperature source (capped at 273.15 K; `snow_ice` has `k_fast` 0, so sunlit snow stays at or below 0 C, ruling S6) and
+  the WorldCover code -> class table (`thermal.land_cover.classes.<code>`; a code remapped to another material renders it unrefined).
+  The 14 built-ins leave 18 of the 32 class slots for user materials.
   Vegetation cooling is an effective albedo; the 4A `vegetation` class was retuned the same way.
 - **Keys:** `thermal.land_cover.{enabled, dir, window_texels, recentre_fraction, veg_index_lo/hi, asphalt_max_luma,
   warp_amplitude_m, warp_cell_m, veg_blur_m, classes}`, all with `CAMSIM_THERMAL_LAND_COVER_*` overrides. `enabled: false` is 4A bit
-  for bit.
+  for bit with 4A's default classes (the 4A `vegetation` class was retuned, ruling S4).
 - Gates (i)-(m) in `scripts/thermal_check.py`; the `pan` launch group also runs a land-cover-off control pan.
 
 **Results** (`scripts/thermal_check.py --band both`, M1 Pro, Presidio, 21 Dec, git 25f2b5b; `.cache/thermal_check/task12/report.json`).
@@ -1530,12 +1532,13 @@ Class temperatures at San Francisco, 21 Dec, noon / 02:00 (K): `terrain_default`
 
 | Item | Measured |
 |---|---|
-| `ThermalCS` p95 at 1080p | 0.408 ms (gate f) vs 4A's 0.141 ms: +0.27 ms against the +0.1 ms the spec planned (lookup and blend +0.134, warp +0.045, 5-tap vegetation blur +0.06; rulings S7, S10); 0.092 ms of margin under gate f |
+| `ThermalCS` p95 at 1080p | 0.408 ms (gate f) vs 4A's recorded 0.141 ms: +0.267 ms against the +0.1 ms the spec planned (rulings S7, S10); 0.092 ms of margin under gate f. Breakdown, each a with/without pair from one session: 4B branch land cover off 0.171 vs 4A 0.141 (+0.030, baseline difference), lookup + blend + refinement 0.305 vs 0.171 (+0.134), smoothstep + warp 0.355 vs 0.310 (+0.045), 5-tap blur 0.423 vs 0.360 (+0.063), session variation -0.005 (final run 0.408); sum +0.267 |
 | Window build (task thread, 2048^2, cold cache with PNG decode) | 27.0-27.3 ms for the first SF window (20 tiles with data), 6-7 ms for later windows, 14.8 ms for the synthetic 30-tile directory; target < 100 ms |
 | Window swap | game thread `MakeShared` + enqueue; the 4 MB upload is on the render thread and left no trace in frame times |
-| Frame builder | about 16 us per frame with land cover (4A 2.5 us) |
+| Frame builder | 16.2 us per frame with land cover on, 13.3 us off (`CamSim.Thermal.Builder.PerFrameCost`, final-fix run; 4A recorded 2.5 us) |
 | GPU vs CPU reference (`CamSim.GPU.Thermal.LandCoverMatchesCpu`) | worst relative radiance error 4.7e-6 over all cases (limit 1e-4); land cover off is bit-identical to no window |
 | Tests | `run_tests CamSim`: 462 succeeded + 5 with expected-warnings, 0 failed (467 tests, 77 files); `run_gpu_tests.sh CamSim.GPU`: 25 / 0; pytest 108 / 0; `ci_validate.sh --native` passes |
+| Final-review fixes (git aa6e7cd) | `run_tests CamSim`: 463 + 5 expected-warnings, 0 failed (468 tests); `run_gpu_tests.sh CamSim.GPU`: 25 / 0; pytest 108 / 0; `thermal_check.py --band mwir --runs bands`: every gate passes (a 115.0, b +68.1, c -145.5, d -70.2, e -15.8 / -40.2, h 1.18 / 1.63, i +68.9, j +29.4) |
 
 **How it got here (decisions worth keeping)**
 
@@ -1580,24 +1583,28 @@ Class temperatures at San Francisco, 21 Dec, noon / 02:00 (K): `terrain_default`
 - **Half-texel window border** (the four-texel lookup needs a full neighbourhood) and everything outside the window use `terrain_default`.
 - **WorldCover 2021 is a single epoch** (no seasons, no change); **no roads layer** (asphalt vs concrete is a luminance split, imagery
   shadows bias it).
-- **Snow can exceed 0 C** through the per-pixel fast term (`k_fast` 0.005) until fixed (ruling S6: set `snow_ice.k_fast` 0 or cap after the fast term).
 - **Pre-existing ~30 s engine hitch** (about +7 ms, one frame per ~30 s), seen with land cover off; source unknown, not 4B.
 - **ThermalCS is +0.27 ms over 4A**, above the +0.1 ms plan (ruling S10); follow-up: skip the vegetation taps for the None family and non-terrain pixels, load fewer class tables.
 - **Linux/Vulkan unverified** for land cover, as for thermal; the window texture upload test (`CamSim.GPU.LandCover.WindowUpload`) has only run on Metal.
 
 **Carried over**
 
-- Deferred minors from the reviews: invalid-material error reported twice (Validate + Build); a tile can be decoded twice when two callers race (the loser is dropped);
-  duplicate index entries overwrite silently, tests miss a truncated
-  or 16-bit PNG and a negative lat_index; `MaxTiles >= 4` clamp undocumented; pole-during-build publishes for at most one tick;
-  warnings are lost when `Configure` swaps the cache mid-build; `Configure` rebuilds the cache on any setting change and the destructor
-  waits up to 30 ms; no GPU case for sRGB base colour with land cover and none for extent-mismatch fallback; `PerFrameCost` does not time
-  the enabled land-cover branch; the axes check uses camera Up rather than Up at the window centre (a long teleport spends the single
-  warning); a null georeference silently disables land cover (warn once); a hot reload that disables land cover keeps the 4 MB
-  texture; the pooled wrapper is created per frame; the blur footprint wording (range x pixel angle, diagonal sqrt 2) in yaml/docs; the warp
-  folds back when amplitude >= cell/3 and is not validated; the 200 km anchor re-latch is lightly documented; GPU case selection is by name;
-  `VegBlurM` is set when land cover is off; gate (l2) control maximum masks stalls under ~7 ms; duplicate shot append and entities
-  not excluded from gate (k) filters in `thermal_check.py`.
+- Deferred minors from the reviews (none affects the default output):
+  - Data script: open-ocean 404 detection matches the exception text (fails safe: an unmatched error aborts the fetch);
+    `©` vs `(c)` spelling of the attribution differs between files.
+  - Tile cache: duplicate `index.json` entries overwrite silently; the `MaxTiles >= 4` clamp is undocumented; a tile can be decoded
+    twice when two callers race (the loser is dropped); a theoretical Cache/Failed overlap on a nondeterministic read.
+  - Window: a camera reaching a pole during a build publishes that window for at most one tick; warnings are lost when `Configure`
+    swaps the cache mid-build; `Configure` rebuilds the cache on any setting change and a `Configure` during a build restarts one
+    `Update` late; the destructor waits up to 30 ms for a build; a hot reload that disables land cover keeps the 4 MB texture; the
+    pooled texture wrapper is created per frame.
+  - Config: an invalid material is reported twice (Validate and Build); `warp_amplitude_m >= warp_cell_m / 3` folds the lookup back
+    and is documented but not validated; `VegBlurM` is filled in the params when land cover is off (unused).
+  - Test gaps: truncated or 16-bit PNG, negative `lat_index`, concurrent `Get`; `IsWindowAllowed(89.0)` boundary; the orientation
+    test is insensitive to a half-texel shift (the scale test covers it); no GPU case for an sRGB base colour with land cover or for
+    the extent-mismatch fallback; GPU land-cover cases are selected by name.
+  - `thermal_check.py`: the gate (l2) control maximum masks stalls under ~7 ms; a shot can be appended twice; the `PAN_HOLD_S`
+    comment is terse; entities are not excluded from the gate (k) filters.
 - Possible shader optimisation (ruling S10, above) to win back ~0.1 ms.
 - A roads layer (OSM) and seasonal land cover remain non-goals; per-building materials; semantic class in ground truth is 4D.
 
