@@ -201,10 +201,20 @@ namespace CamSimThermalRef
 		float Offset = 0.0f;
 		R.Class = EPixelClass::Terrain;
 		const uint32 Stencil = S.Stencil & 0xFFu;
+		bool bEntityRecord = false;   // ROADMAP 4C: T from EntityPartTemp instead of T_class + offset
 		if (Stencil > 0u && S.CustomZ >= S.DeviceZ * P.EntityDepthRatio)
 		{
-			Class = P.StencilClass[Stencil];
-			Offset = P.StencilOffsetK[Stencil];
+			const FVector4f& R3 = P.EntityRecords[Stencil * FThermalFrameParams::EntityRecordFloat4s + 3];
+			if (R3.W != 0.0f)
+			{
+				Class = static_cast<uint32>(R3.Y);
+				bEntityRecord = true;
+			}
+			else
+			{
+				Class = P.StencilClass[Stencil];
+				Offset = P.StencilOffsetK[Stencil];
+			}
 			R.Class = EPixelClass::Entity;
 		}
 		else if (P.bWater != 0u)
@@ -243,7 +253,7 @@ namespace CamSimThermalRef
 				R.bLandCover = true;
 			}
 		}
-		float T = Cd.X + Offset;
+		float T = bEntityRecord ? EntityPartTemp(P, Stencil, Pw) : Cd.X + Offset;
 		if (S.bHasBase && P.KFastScale > 0.0f)
 		{
 			const float BaseLum = Lum709(Base);
@@ -257,6 +267,40 @@ namespace CamSimThermalRef
 		R.TempK = T;
 		R.Radiance = Tau * LSurf + (1.0f - Tau) * BAir;
 		return R;
+	}
+
+	float EntityPartTemp(const FThermalFrameParams& P, uint32 Stencil, const FVector3f& Pw)
+	{
+		const FVector4f* R = &P.EntityRecords[(Stencil & 0xFFu) * FThermalFrameParams::EntityRecordFloat4s];
+		const FVector3f Pb(
+			R[0].X * Pw.X + R[0].Y * Pw.Y + R[0].Z * Pw.Z + R[0].W,
+			R[1].X * Pw.X + R[1].Y * Pw.Y + R[1].Z * Pw.Z + R[1].W,
+			R[2].X * Pw.X + R[2].Y * Pw.Y + R[2].Z * Pw.Z + R[2].W);
+		float T = R[3].X;
+		const int32 N = FMath::Min(static_cast<int32>(R[3].Z), FThermalFrameParams::MaxEntityParts);
+		for (int32 K = 0; K < N; ++K)
+		{
+			const FVector4f A = R[4 + 3 * K];
+			const FVector4f H = R[5 + 3 * K];
+			const float Tk = R[6 + 3 * K].X;
+			const FVector3f D(Pb.X - A.X, Pb.Y - A.Y, Pb.Z - A.Z);
+			float Dist;
+			if (A.W > 0.5f)
+			{
+				const FVector3f Q(D.X / H.X, D.Y / H.Y, D.Z / H.Z);
+				Dist = (FMath::Sqrt(Q.X * Q.X + Q.Y * Q.Y + Q.Z * Q.Z) - 1.0f) * FMath::Min(H.X, FMath::Min(H.Y, H.Z));
+			}
+			else
+			{
+				const FVector3f E(FMath::Max(FMath::Abs(D.X) - H.X, 0.0f), FMath::Max(FMath::Abs(D.Y) - H.Y, 0.0f),
+					FMath::Max(FMath::Abs(D.Z) - H.Z, 0.0f));
+				Dist = FMath::Sqrt(E.X * E.X + E.Y * E.Y + E.Z * E.Z);
+			}
+			const float St = FMath::Clamp(Dist / H.W, 0.0f, 1.0f);
+			const float W = 1.0f - St * St * (3.0f - 2.0f * St);
+			T = T + (Tk - T) * W;
+		}
+		return T;
 	}
 
 	TArray<FPixelResult> Run(const FImages& In, const FThermalFrameParams& P)

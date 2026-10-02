@@ -11,7 +11,8 @@
  * Per output pixel (in order):
  *  0. non-finite scene colour or depth -> B(T_air) (Invalid)
  *  1. sky: device Z <= 0 -> B(T_sky(el)), el from the view ray, T_sky = T_air ((1-c) eps(el) + c)^(1/4)
- *  2. entity: stencil s > 0 and custom Z >= scene Z * EntityDepthRatio -> class/offset from the stencil table
+ *  2. entity: stencil s > 0 and custom Z >= scene Z * EntityDepthRatio -> class/offset from the stencil table, or (valid
+ *     4C record) the record's class with T = EntityPartTemp instead of T_class + offset
  *  3. water: height above the sea h = H_cam + v + d^2 / 2R < WaterBandCm (v = P.up, d^2 = |P|^2 - v^2)
  *  4. terrain: TerrainClass
  *  4b. terrain inside the land-cover window (ROADMAP 4B): class data = blend of the four nearest texels' refined class data
@@ -100,6 +101,13 @@ namespace CamSimThermalRef
 	/** As above, v from VegBase. */
 	FVector4f BlendLandCover(const FThermalFrameParams& P, const FLandCoverSample& S, const FVector3f& Base, const FVector3f& VegBase, bool bRefine);
 
+	/**
+	 * Entity pixel temperature from a valid 4C record (ROADMAP 4C): Pb = rows 0-2 applied to Pw (translated world cm -> body m);
+	 * T = skin; for each part k in order: d = outside distance (box: |max(|Pb - c| - h, 0)|; ellipsoid: (|(Pb - c) / h| - 1) min(h)),
+	 * w = 1 - smoothstep(0, falloff, d) (smoothstep as t = saturate(d / falloff), t^2 (3 - 2t)), T += (T_k - T) w.
+	 * HLSL twin: EntityPartTemp in CamSimThermalCommon.ush.
+	 */
+	float EntityPartTemp(const FThermalFrameParams& P, uint32 Stencil, const FVector3f& Pw);
 	float LutRadiance(const FThermalFrameParams& P, float TK);
 	float SkyTemperatureK(const FThermalFrameParams& P, float SinEl);
 	float SrgbToLinear(float C);
