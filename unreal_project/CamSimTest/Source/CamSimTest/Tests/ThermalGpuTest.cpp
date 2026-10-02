@@ -157,10 +157,10 @@ bool FThermalGpuMatchesCpuTest::RunTest(const FString& Parameters)
 	if (GUsingNullRHI) { AddInfo(TEXT("skipped: NullRHI (run scripts/run_gpu_tests.sh)")); return true; }
 	// Mirror tolerance: ThermalCS vs CamSimThermalRef on the same inputs (never loosen it).
 	constexpr float MirrorTol = 1e-4f;
-	// The hardware sRGB decode is not bit-exact with CamSimThermalRef::SrgbToLinear (M1 Pro/Metal: 3.0e-4 relative radiance
-	// at the worst entity pixel, where the fast term's 1/BaseLum amplifies albedo errors); that case only proves the SRV
-	// returns linear values: the raw stored bytes read as linear would be off by > 1e-2 (several K).
-	constexpr float HardwareDecodeTol = 2e-3f;
+	// The hardware sRGB decode is not bit-exact with CamSimThermalRef::SrgbToLinear (M1 Pro/Metal: 3.0e-4 relative radiance,
+	// NVIDIA/Vulkan: 2.4e-3, at the worst entity pixel, where the fast term's 1/BaseLum amplifies albedo errors); that case
+	// only proves the SRV returns linear values: the raw stored bytes read as linear would be off by > 1e-2 (several K).
+	constexpr float HardwareDecodeTol = 5e-3f;
 	struct FCase { const TCHAR* Name; int32 W, H, DW, DH; FIntPoint ColorPad, DepthPad; EBase Base; bool bSrgb; };
 	const FCase Cases[] = {
 		{ TEXT("same size"),                    64, 36, 64, 36, FIntPoint(0, 0), FIntPoint(0, 0), EBase::Float,        false },

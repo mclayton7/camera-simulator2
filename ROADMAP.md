@@ -601,7 +601,8 @@ Carry-overs:
 - Ripples run on engine time (the material Time node), not sim time; the three fixed ripple
   directions hatch visibly at close zoom; ripple precision degrades > 200 km from the anchor.
 - The close-up tile-streaming hitch above (not ocean work).
-- Linux/Vulkan and SM6 are unverified for `M_Ocean` (compiled and tested on Metal SM5).
+- ~~Linux/Vulkan and SM6 are unverified for `M_Ocean`.~~ `CamSim.GPU.Ocean.MatchesCpu` passes on NVIDIA Vulkan SM6
+  (2026-10-02, max |diff| 3.8 mm).
 - Deferred minors from review: tests for zero-wave accessors, NaN/negative `SetWaves` input,
   the four untested ocean env vars, hot reload / restart-only logging for `ocean.enabled`,
   `FOceanManager` scope and Wave ID gates, a handler-level water-normal test; roughness
@@ -1217,8 +1218,9 @@ Known issues and open points for the visual review:
   segfaults compiling UE 5.8 SM6 pipelines, before any CamSim shader. There is no CPU
   fallback, so a host without `IsSensorGraphSupported` produces no frames and `/ready` stays false. GPU tests
   on Vulkan (2026-10-01, `run_gpu_tests.sh` now Linux-aware): `GroundTruth` 6/6, `Sensor` 10/10, `Entity` 2/2
-  pass; `CamSim.GPU.Ocean.MatchesCpu` crashes the run (Vulkan's `RHIReadSurfaceData` asserts "Unsupported
-  format [100]" on its `RTF_R32f` target via `ReadLinearColorPixels`): needs a buffer readback.
+  pass; `CamSim.GPU.Ocean.MatchesCpu` crashed the run (Vulkan's `RHIReadSurfaceData` asserts "Unsupported
+  format [100]" on its `RTF_R32f` target via `ReadLinearColorPixels`). **Fixed 2026-10-02**: it reads back with
+  `FRHIGPUTextureReadback`, and the full `CamSim.GPU` suite (25 tests) passes on Vulkan in one run.
 - **Cut convergence**: a camera cut or mode switch snaps the AE on the first histogram whose
   serial is at or after the cut, but histograms already in flight from before the cut still
   arrive first and nudge the gain for one frame (within the 1–3-frame convergence above).
@@ -1446,10 +1448,13 @@ Boat vs water ring (info): MWIR +32.7 night / +12.3 noon, LWIR +17.4 / +22.5.
   scene colour).
 - **Particles** are composited by TSR in visible colour over the radiance (not thermally modelled).
 - **IR TSR costs +1.6 ms**, and the first EO to IR switch has a PSO hitch (above).
-- **Linux/Vulkan unverified for thermal**: the 3B sensor graph and `InstanceIdCS` run on NVIDIA Vulkan (verified
-  2026-09-30/10-01, above), but `ThermalCS`, the BeforeDOF subscription and RGBA16F TSR have only run on Metal; untested
-  there too is the sRGB decode precision of the base colour (Metal's hardware decode differs from the reference formula by
-  3e-4 relative radiance). The ThermalCS timing copies are Metal-only (`IsMetalPlatform`); other RHIs time the scope directly.
+- ~~**Linux/Vulkan unverified for thermal**~~ **Verified on NVIDIA Vulkan 2026-10-02** (Ubuntu 24.04, RTX 5080,
+  driver 595.91.07): `thermal_check.py --band both` passes every gate (a–e, h–k per band, f, g, l1; l2 once the
+  ~30 s engine hitch below fell outside a re-centre: it failed 5.74 ms vs 5 ms on one of six re-centres, then passed
+  at 0.12 ms with the hitch in the control run instead) and `CamSim.GPU.Thermal` 6/6. Two fixes: ThermalCS bit-tests
+  the raw scene colour load for NaN/Inf (NVIDIA's compiler folded `IsNonFinite` of the scaled colour, so a NaN pixel
+  came out as terrain instead of B(T_air)); the hardware sRGB case's tolerance is 5e-3 (NVIDIA's decode is 2.4e-3
+  from the reference formula at the worst entity pixel, Metal's 3e-4; reading the raw bytes would be > 1e-2). The ThermalCS timing copies are Metal-only (`IsMetalPlatform`); other RHIs time the scope directly.
 - **Mode-switch histogram**: one in-flight histogram can nudge the new AE slot's gain before the snap (the 3B.2 cut
   convergence, 1 to 3 frames).
 
@@ -1587,7 +1592,7 @@ Class temperatures at San Francisco, 21 Dec, noon / 02:00 (K): `terrain_default`
   shadows bias it).
 - **Pre-existing ~30 s engine hitch** (about +7 ms, one frame per ~30 s), seen with land cover off; source unknown, not 4B.
 - **ThermalCS is +0.27 ms over 4A**, above the +0.1 ms plan (ruling S10); follow-up: skip the vegetation taps for the None family and non-terrain pixels, load fewer class tables.
-- **Linux/Vulkan unverified** for land cover, as for thermal; the window texture upload test (`CamSim.GPU.LandCover.WindowUpload`) has only run on Metal.
+- ~~**Linux/Vulkan unverified** for land cover~~ **Verified on NVIDIA Vulkan 2026-10-02** with thermal (above): gates i–l pass, `CamSim.GPU.LandCover.WindowUpload` 0 mismatches, `LandCoverMatchesCpu` worst 4.5e-6.
 
 **Carried over**
 

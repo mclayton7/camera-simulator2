@@ -239,7 +239,7 @@ follow-ups: skip the vegetation taps for the None family and non-terrain pixels,
 - WorldCover 2021 is one epoch (no seasons, no change since); a CPU copy of the window is kept next to its texture.
 - The warp amplitude is not validated against `warp_cell_m / 3` (documented only).
 - A pre-existing engine hitch of about +7 ms every ~30 s is visible in frame times, with land cover on or off; it is not 4B.
-- Linux/Vulkan is unverified for land cover (as for thermal).
+- Land cover is verified on Linux/Vulkan (NVIDIA, 2026-10-02), as is thermal.
 
 Data attribution (CC BY 4.0): © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by
 ESA WorldCover consortium.
@@ -350,7 +350,8 @@ set, and writes radiance into scene colour so TSR resolves it with the same jitt
 - At most 255 entities are stencil-tagged at once (shared with ground truth); the rest render as
   terrain in IR (and get projected ground-truth boxes), with a one-time EntityManager warning.
 - No thermal shadow lag, sun glint in MWIR or heating from artificial lights.
-- Linux/Vulkan is unverified, including sRGB decode precision of the base colour.
+- Verified on Linux/Vulkan (NVIDIA RTX 5080, 2026-10-02). NVIDIA's hardware sRGB decode of the base colour differs from
+  the reference formula by up to 2.4e-3 relative radiance at entity pixels (Metal: 3e-4).
 - After an EO/IR mode switch one in-flight histogram can nudge the new slot's gain before the
   snap (the 3B.2 cut convergence, 1 to 3 frames).
 

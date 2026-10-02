@@ -10,7 +10,7 @@ Usage: uv run scripts/thermal_check.py [--band mwir|lwir|both] [--out DIR]
   (caffeinate: a host that sleeps mid-run freezes CamSim and spoils the frame times)
 
 21 December 2026 at the Presidio, San Francisco: solar noon = 20:10 UTC (sun elevation
-28.8 deg), 02:00 local = 10:10 UTC. Every launch is headless (macOS, local build, unicast to
+28.8 deg), 02:00 local = 10:10 UTC. Every launch is headless (macOS or Linux, local build, unicast to
 127.0.0.1), with DIS on and `send_dis_test.py both` running; the camera is driven over CIGI
 (the vehicles' paths are deterministic, so the camera predicts where they are). IR is CIGI
 Sensor Control sensor 1; the IR preset comes from CAMSIM_IR_PRESET.
