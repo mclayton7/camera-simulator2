@@ -137,6 +137,52 @@ static bool YamlFloat(ryml::ConstNodeRef Node, c4::csubstr Key, float& Out)
 	return true;
 }
 
+/** A finite float scalar (yaml .nan/.inf and non-numbers rejected). */
+static bool ParseFiniteScalar(ryml::ConstNodeRef N, float& Out)
+{
+	if (!N.has_val()) return false;
+	const FString S = RymlToFString(N.val()).TrimStartAndEnd();
+	if (S.IsEmpty() || !S.IsNumeric()) return false;
+	Out = FCString::Atof(*S);
+	return FMath::IsFinite(Out);
+}
+
+/** One thermal_parts entry (ROADMAP 4C). False with a reason for unknown kind/shape, a missing or non-finite vector. */
+static bool ParseThermalPart(ryml::ConstNodeRef N, FEntityThermalPartSpec& Out, FString& OutWhy)
+{
+	if (!N.is_map()) { OutWhy = TEXT("not a map"); return false; }
+	FString Kind, Shape;
+	YamlString(N, "kind", Kind);
+	YamlString(N, "shape", Shape);
+	if (!CamSimEntityThermal::ParseKind(Kind, Out.Kind))   { OutWhy = FString::Printf(TEXT("unknown kind '%s'"), *Kind); return false; }
+	if (!CamSimEntityThermal::ParseShape(Shape, Out.Shape)) { OutWhy = FString::Printf(TEXT("unknown shape '%s'"), *Shape); return false; }
+	auto Vec3 = [&N](c4::csubstr Key, FVector3f& V) -> bool
+	{
+		if (!N.has_child(Key)) return false;
+		ryml::ConstNodeRef A = N[Key];
+		if (!A.is_seq() || A.num_children() != 3) return false;
+		float C[3];
+		for (int32 I = 0; I < 3; ++I)
+		{
+			if (!ParseFiniteScalar(A[I], C[I])) return false;
+		}
+		V = FVector3f(C[0], C[1], C[2]);
+		return true;
+	};
+	if (!Vec3("centre_m", Out.CentreM)) { OutWhy = TEXT("centre_m must be 3 finite numbers"); return false; }
+	if (!Vec3("half_m", Out.HalfM))     { OutWhy = TEXT("half_m must be 3 finite numbers"); return false; }
+	if (N.has_child("falloff_m") && !ParseFiniteScalar(N["falloff_m"], Out.FalloffM)) { OutWhy = TEXT("falloff_m not a finite number"); return false; }
+	const float Min = FEntityThermalPartSpec::MinExtentM;
+	Out.HalfM = FVector3f(FMath::Max(FMath::Abs(Out.HalfM.X), Min), FMath::Max(FMath::Abs(Out.HalfM.Y), Min), FMath::Max(FMath::Abs(Out.HalfM.Z), Min));
+	Out.FalloffM = FMath::Max(Out.FalloffM, Min);
+	float V = 0.0f;
+	if (N.has_child("delta_k") && ParseFiniteScalar(N["delta_k"], V))     Out.DeltaK  = FMath::Clamp(V, -50.0f, 500.0f);
+	if (N.has_child("temp_k") && ParseFiniteScalar(N["temp_k"], V))       Out.TempK   = FMath::Clamp(V, 150.0f, 1000.0f);
+	if (N.has_child("k_per_mps") && ParseFiniteScalar(N["k_per_mps"], V)) Out.KPerMps = FMath::Clamp(V, 0.0f, 50.0f);
+	if (N.has_child("max_k") && ParseFiniteScalar(N["max_k"], V))         Out.MaxK    = FMath::Clamp(V, 0.0f, 500.0f);
+	return true;
+}
+
 static bool YamlDouble(ryml::ConstNodeRef Node, c4::csubstr Key, double& Out)
 {
 	if (!Node.has_child(Key)) return false;
@@ -257,6 +303,31 @@ void FEntityTypeTable::LoadFromYamlString(const FString& YamlContent)
 			else
 			{
 				UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: type %u thermal_offset_k %.2f out of range [-50, 500]; ignored"), TypeId, OffsetK);
+			}
+		}
+
+		// ROADMAP 4C — thermal_parts: hot-spot volumes. Invalid parts are skipped with a warning; extras beyond MaxParts dropped.
+		if (EntryNode.has_child("thermal_parts"))
+		{
+			int32 Index = 0;
+			for (ryml::ConstNodeRef PN : EntryNode["thermal_parts"].children())
+			{
+				FEntityThermalPartSpec Spec;
+				FString Why;
+				if (!ParseThermalPart(PN, Spec, Why))
+				{
+					UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: type %u thermal_parts[%d] skipped: %s"), TypeId, Index, *Why);
+				}
+				else if (Entry.ThermalParts.Num() >= FEntityThermalSettings::MaxParts)
+				{
+					UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: type %u thermal_parts[%d] dropped: at most %d parts"),
+						TypeId, Index, FEntityThermalSettings::MaxParts);
+				}
+				else
+				{
+					Entry.ThermalParts.Add(Spec);
+				}
+				++Index;
 			}
 		}
 

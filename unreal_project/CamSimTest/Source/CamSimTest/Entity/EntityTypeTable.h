@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Thermal/EntityThermalTypes.h"
 #include "UObject/StrongObjectPtr.h"
 
 /**
@@ -48,6 +49,8 @@ struct FEntityTypeEntry
 	// and a temperature offset in K (unset = +8 K for land/sea vehicles, 0 otherwise).
 	FString ThermalMaterial;
 	TOptional<float> ThermalOffsetK;
+	// ROADMAP 4C — hot-spot volumes (body frame), at most FEntityThermalSettings::MaxParts, in priority order (later wins)
+	TArray<FEntityThermalPartSpec> ThermalParts;
 };
 
 /**
