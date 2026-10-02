@@ -107,7 +107,7 @@ def test_coast_masks_are_radius_matched_and_disjoint():
         assert r[m].min() >= 0.26 * 720 - 1e-6 and r[m].max() <= 0.40 * 720 + 1e-6
 
 
-ALL_RUNS = {"bands", "hd", "eo"}
+ALL_RUNS = {"bands", "hd", "eo", "lcoff", "pan"}
 
 
 def _rows(bands=("mwir", "lwir"), runs=ALL_RUNS) -> list[dict]:
@@ -127,15 +127,19 @@ def _rows(bands=("mwir", "lwir"), runs=ALL_RUNS) -> list[dict]:
 
 def test_expected_rows_cover_every_band_time_and_selected_run():
     rows = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
-    assert len(rows) == 2 * 8 + 2
+    assert len(rows) == 2 * 11 + 3
     assert ("e", "lwir", "noon") in rows and ("e", "lwir", "night") in rows
     assert not any(r[0] == "m" for r in rows)  # (m) is info only (Task 13 fix round 1)
-    for b in ("mwir", "lwir"):  # (h) static coast shimmer, both times
+    for b in ("mwir", "lwir"):  # (h) static coast shimmer, both times; 4B land-cover gates
         assert ("h", b, "night") in rows and ("h", b, "noon") in rows
-    assert ("f", "mwir", "noon") in rows and ("g", "eo", "noon") in rows
+        assert ("i", b, "noon") in rows and ("j", b, "night") in rows and ("k", b, "night") in rows
+    assert ("f", "mwir", "noon") in rows and ("g", "eo", "noon") in rows and ("l", "mwir", "noon") in rows
+    assert rows[-1] == ("g", "eo", "noon")
     only_bands = tc.expected_rows(["mwir"], {"bands"})
-    assert {r[0] for r in only_bands} == set("abcdeh")  # f, g not expected
+    assert {r[0] for r in only_bands} == set("abcdehij")  # f, g, k, l not expected
     assert tc.expected_rows(["mwir"], {"eo"}) == [("g", "eo", "noon")]
+    assert tc.expected_rows(["mwir"], {"lcoff"}) == []  # (k) needs the land-cover-on band run too
+    assert tc.expected_rows(["mwir"], {"pan"}) == [("l", "mwir", "noon")]
 
 
 def test_complete_rows_pass():
@@ -154,7 +158,7 @@ def test_a_missing_row_fails():
         assert tc.missing_rows(checks, exp) == [exp[drop]]
     # A whole band's run absent: its rows are missing even though every letter is present.
     checks = _rows(bands=("mwir",))
-    assert {c["check"] for c in checks} == set("abcdefgh")
+    assert {c["check"] for c in checks} == set("abcdefghijkl")
     assert tc.gate_passed(checks, exp) is False
     assert tc.gate_passed([], []) is False  # nothing expected -> not a pass
 
@@ -300,3 +304,81 @@ def test_grid_peak_ratio_ignores_masked_pixels():
     mask[140:260, 190:410] = False  # masked out (entity boxes): filled with the masked mean
     assert max(tc.grid_peak_ratio(y, mask, 10.0)) <= tc.GRID_PEAK_RATIO
     assert all(math.isnan(r) for r in tc.grid_peak_ratio(y, np.zeros_like(mask), 10.0))
+
+
+# ---- Gates (i)-(l): land cover (ROADMAP 4B Task 11) ----
+
+
+def test_run_groups_and_bands():
+    assert tc.run_group("mwir") == "bands" and tc.run_band("mwir") == "mwir"
+    assert tc.run_group("lwir_lcoff") == "lcoff" and tc.run_band("lwir_lcoff") == "lwir"
+    assert tc.run_group("mwir_pan") == "pan" and tc.run_band("mwir_pan") is None
+    assert tc.run_group("mwir_1080p") == "hd" and tc.run_group("eo_thermal_off") == "eo"
+
+
+def test_exg_and_greenness_masks():
+    rgb = np.full((100, 200, 3), 128, np.uint8)
+    rgb[:, :100] = (60, 140, 50)  # vegetation on the left
+    rgb[40:60, 140:160] = (40, 60, 160)  # water-blue patch on the right
+    rgb[70:80, 120:180] = (10, 10, 10)  # deep shadow
+    assert tc.exg(rgb)[50, 50] > 0.3 and abs(tc.exg(rgb)[30, 150]) < 1e-6  # neutral grey
+    veg, non = tc.greenness_masks(rgb)
+    assert not (veg & non).any()
+    assert veg[50, 60] and not veg[50, 150]
+    assert non[30, 130] and not non[50, 150] and not non[75, 150]  # blue and shadow excluded
+    assert not veg[5, 60] and not non[5, 130]  # outside the central 60 %
+    assert not veg[50, 99] and not non[50, 101]  # eroded at the boundary
+
+
+def test_veg_contrast_sign_and_small_regions():
+    y = np.full((50, 50), 100.0, np.float32)
+    veg = np.zeros((50, 50), bool)
+    non = np.zeros((50, 50), bool)
+    veg[:, :25], non[:, 25:] = True, True
+    y[:, :25] = 90.0
+    assert tc.veg_contrast(y, veg, non) == pytest.approx(10.0)
+    tiny = np.zeros((50, 50), bool)
+    tiny[0, 0] = True
+    assert math.isnan(tc.veg_contrast(y, tiny, non))
+
+
+def test_box_blur_and_highpass_std():
+    flat = np.full((80, 80), 50.0, np.float32)
+    assert np.allclose(tc.box_blur(flat, 33), 50.0)
+    mask = tc.central_mask((80, 80))
+    assert tc.highpass_std(flat, mask) == pytest.approx(0.0, abs=1e-5)
+    yy, xx = np.mgrid[0:80, 0:80]
+    checker = flat + 10.0 * np.where(((yy // 4) + (xx // 4)) % 2 == 0, 1.0, -1.0)
+    assert tc.highpass_std(checker, mask) == pytest.approx(10.0, rel=0.15)
+    ramp = flat + 0.5 * xx  # a smooth gradient (vignetting-like) is not structure
+    assert tc.highpass_std(ramp.astype(np.float32), mask) < 0.5
+
+
+def test_pan_offset_is_a_triangle_at_the_pan_speed():
+    period = 2.0 * tc.PAN_LEG_M / tc.PAN_SPEED_MPS
+    assert tc.pan_offset_m(0.0) == pytest.approx(0.0)
+    assert tc.pan_offset_m(period / 4) == pytest.approx(tc.PAN_LEG_M / 2)
+    assert tc.pan_offset_m(period / 2) == pytest.approx(tc.PAN_LEG_M)
+    assert tc.pan_offset_m(period) == pytest.approx(0.0, abs=1e-6)
+    assert (tc.pan_offset_m(10.0) - tc.pan_offset_m(9.0)) == pytest.approx(tc.PAN_SPEED_MPS)
+
+
+def test_window_events_and_recentre_spike():
+    ids = [0, 0, 1, 1, 1, 2, 2, 3]
+    rows = [{"land_cover_window": w, "wall_ms": 33.3} for w in ids]
+    rows[5]["wall_ms"] = 45.3
+    ev = tc.window_events(rows)
+    assert ev == [5, 7]  # the first window is not a re-centre
+    spike, base = tc.recentre_spike(rows, ev, radius=1)
+    assert base == pytest.approx(33.3) and spike == pytest.approx(12.0)
+    assert math.isnan(tc.recentre_spike(rows, [], radius=1)[0])
+    assert tc.window_events([{"land_cover_window": 1}, {"land_cover_window": 0}, {"land_cover_window": 1}]) == []
+
+
+def test_median3_removes_isolated_defects():
+    y = np.full((20, 20), 100.0, np.float32)
+    y[5, 5], y[10, 12] = 16.0, 235.0
+    assert np.allclose(tc.median3(y), 100.0)
+    edge = np.zeros((20, 20), np.float32)
+    edge[:, 10:] = 50.0  # a step edge survives
+    assert np.array_equal(tc.median3(edge), edge)
