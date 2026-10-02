@@ -72,6 +72,14 @@ namespace CamSimEntityThermal
 	CAMSIMTEST_API bool  ApplyComponent(FEntityThermalCommanded& C, uint16 ComponentId, uint8 State);
 }
 
+class FEntitySpeedTracker;
+namespace CamSimEntityThermal
+{
+	/** Skip the first step until the speed is measured, so a spawn snaps to the targets of its real state (a vehicle that
+	 *  appears driving starts running, not parked-cold). */
+	CAMSIMTEST_API bool ShouldDeferFirstStep(const FEntityThermalState& St, const FEntitySpeedTracker& Speed);
+}
+
 /**
  * Smoothed speed from successive ECEF positions (metres) on sim time. The raw speed is the displacement over a window of at
  * least WindowS (per-tick differences would rectify centimetre pose noise into ~1 m/s), then an EMA with EmaTauS.
@@ -88,7 +96,9 @@ public:
 	/** Returns the smoothed speed (m/s). */
 	float Update(const FVector& EcefM, double SimSec);
 	float GetSpeedMps() const { return SpeedMps; }
-	void  Reset() { bHasLast = false; SpeedMps = 0.0f; }
+	/** A windowed measurement exists (the first one seeds the speed directly, without the EMA ramp from 0). */
+	bool  HasMeasurement() const { return bMeasured; }
+	void  Reset() { bHasLast = false; bMeasured = false; SpeedMps = 0.0f; }
 
 private:
 	FVector LastEcefM = FVector::ZeroVector;
@@ -96,5 +106,6 @@ private:
 	FVector RefEcefM  = FVector::ZeroVector;   // window start
 	double  RefSec    = 0.0;
 	bool    bHasLast  = false;
+	bool    bMeasured = false;
 	float   SpeedMps  = 0.0f;
 };

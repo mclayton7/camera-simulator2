@@ -62,3 +62,32 @@ bool FEntityThermalShippedYamlTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEntityThermalMovingSpawnTest, "CamSim.Thermal.Entity.Integration.MovingSpawnStartsRunning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEntityThermalMovingSpawnTest::RunTest(const FString& Parameters)
+{
+	// A vehicle that appears already driving (no power-plant command) must start at the running targets, as a parked spawn
+	// starts parked: ACamSimEntity::StepThermal defers the first step until the speed is measured.
+	const FEntityThermalSettings S;
+	FEntityThermalPartSpec Eng;
+	Eng.Kind = EEntityThermalPartKind::Engine;
+	const TArray<FEntityThermalPartSpec> Parts = { Eng };
+	FEntitySpeedTracker Speed;
+	FEntityThermalState St;
+	constexpr double MPerDegLat = 111000.0;
+	for (int32 I = 0; I <= 30; ++I)
+	{
+		const double T = I / 30.0;
+		const FVector E = CamSimFrames::GeodeticToEcef(37.795 + 15.0 * T / MPerDegLat, -122.46, 5.0);
+		const float V = Speed.Update(E, T);
+		if (CamSimEntityThermal::ShouldDeferFirstStep(St, Speed)) continue;
+		FEntityThermalInputs In;
+		In.SimSec = T;
+		In.SpeedMps = V;
+		CamSimEntityThermal::Step(St, In, S, Parts);
+	}
+	TestTrue(TEXT("initialised within 1 s"), St.bInitialized);
+	TestNearlyEqual(TEXT("engine at the running target from the start"), St.PartExcessK[0], 45.0f, 0.5f);
+	return true;
+}

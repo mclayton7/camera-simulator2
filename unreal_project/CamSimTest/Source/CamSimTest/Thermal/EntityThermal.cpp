@@ -140,6 +140,11 @@ namespace CamSimEntityThermal
 	}
 }
 
+bool CamSimEntityThermal::ShouldDeferFirstStep(const FEntityThermalState& St, const FEntitySpeedTracker& Speed)
+{
+	return !St.bInitialized && !Speed.HasMeasurement();
+}
+
 float FEntitySpeedTracker::Update(const FVector& EcefM, double SimSec)
 {
 	if (EcefM.ContainsNaN() || !FMath::IsFinite(SimSec)) return SpeedMps;
@@ -167,8 +172,9 @@ float FEntitySpeedTracker::Update(const FVector& EcefM, double SimSec)
 	if (Window >= WindowS)
 	{
 		const double Raw = FVector::Dist(EcefM, RefEcefM) / Window;
-		const double A = 1.0 - FMath::Exp(-Window / EmaTauS);
+		const double A = bMeasured ? 1.0 - FMath::Exp(-Window / EmaTauS) : 1.0;   // the first measurement seeds the EMA
 		SpeedMps = static_cast<float>(SpeedMps + (Raw - SpeedMps) * A);
+		bMeasured = true;
 		RefEcefM = EcefM;
 		RefSec = SimSec;
 	}

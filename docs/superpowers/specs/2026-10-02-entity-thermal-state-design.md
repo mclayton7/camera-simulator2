@@ -21,8 +21,9 @@ Success, in the 4A acceptance views (Presidio, DIS truck and boat):
 
 1. running truck minus parked-cold truck, box mean, MWIR and LWIR night: ≥ +5 DN;
 2. running truck hot spot (box p99 minus box median) at night: ≥ +20 DN MWIR, ≥ +10 DN LWIR;
-3. 180 s after the truck parks with the engine off, its box p99 is lower than 5 s after parking and still
-   above the parked-cold truck's;
+3. 180 s after the truck parks with the engine off, its box mean (over the ring) is lower than 5 s after
+   parking and still above the parked-cold truck's (as built: the mean, not p99 — MWIR hot parts clip at
+   the display ceiling, so p99 cannot fall);
 4. a destroyed truck (DIS damage = 3) reads hot: box mean minus ring ≥ +60 DN MWIR night;
 5. `ThermalCS` p95 at 1080p stays ≤ 0.5 ms (gate f) with parts on;
 6. `thermal.entity.enabled: false` gives 4A output bit for bit; EO is unchanged (gate g).
@@ -265,16 +266,16 @@ entity_types:
 covering both shapes, overlap, a cooler part and a rotated body; GPU vs CPU ≤ 1e-4 relative radiance.
 The existing `MatchesCpu` / `LandCoverMatchesCpu` keep passing.
 
-**Acceptance (`scripts/thermal_check.py`, new gates m–p):** `send_dis_test.py` gains appearance
+**Acceptance (`scripts/thermal_check.py`, new gates n–q; `m` was already an info row):** `send_dis_test.py` gains appearance
 control and two modes: `truck-park` (drive, then stop with power plant off) and a parked-cold truck
 (spawned stationary, engine off). Night MWIR and LWIR:
 
 | Gate | check |
 |---|---|
-| m | running truck box mean − parked-cold truck box mean ≥ +5 DN |
-| n | running truck box p99 − box median ≥ +20 DN MWIR, +10 DN LWIR |
-| o | after parking: p99 at +180 s < p99 at +5 s, and > parked-cold p99 |
-| p | destroyed truck (damage 3) box mean − ring ≥ +60 DN MWIR |
+| n | running truck (box mean − ring) − parked-cold truck (box mean − ring) ≥ +5 DN (ring-referenced: the runs differ in AGC state) |
+| o | running truck box p99 − box median ≥ +20 DN MWIR, +10 DN LWIR |
+| p | after parking: box mean − ring at +180 s < at +5 s, and > parked-cold |
+| q | destroyed truck (damage 3) box mean − ring ≥ +60 DN MWIR |
 
 Gates a–l keep passing (b now with the running truck's parts). Visual review of the shot set
 (running, parked, cooling, burning; MWIR/LWIR; part overlays from the configured volumes) closes 4C.

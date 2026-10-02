@@ -261,3 +261,20 @@ bool FEntitySpeedJitterTest::RunTest(const FString& Parameters)
 	TestTrue(*FString::Printf(TEXT("jitter speed %.3f < 0.5"), Max), Max < 0.5f);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEntitySpeedFirstTest, "CamSim.Thermal.Entity.SpeedTracker.FirstMeasurementSeeds",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEntitySpeedFirstTest::RunTest(const FString& Parameters)
+{
+	// A moving spawn: no measurement until the first window, which then reads the true speed (no ramp from 0).
+	FEntitySpeedTracker T;
+	const FVector P0(6378137.0, 0.0, 0.0);
+	T.Update(P0, 0.0);
+	TestFalse(TEXT("no measurement at the first sample"), T.HasMeasurement());
+	for (int32 I = 1; I <= 14; ++I) T.Update(P0 + FVector(0.0, 15.0 * I / 30.0, 0.0), I / 30.0);
+	TestFalse(TEXT("none before the window"), T.HasMeasurement());
+	T.Update(P0 + FVector(0.0, 15.0 * 15 / 30.0, 0.0), 15 / 30.0);
+	TestTrue(TEXT("measured after 0.5 s"), T.HasMeasurement());
+	TestNearlyEqual(TEXT("first measurement = raw speed"), T.GetSpeedMps(), 15.0f, 0.01f);
+	return true;
+}

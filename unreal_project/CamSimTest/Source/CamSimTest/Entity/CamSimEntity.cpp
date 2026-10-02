@@ -585,6 +585,7 @@ void ACamSimEntity::StepThermal(double SimSec, const FEntityThermalSettings& Set
 	{
 		SpeedMps = ThermalSpeed.Update(CamSimFrames::GeodeticToEcef(Pose.Lat, Pose.Lon, Pose.Alt), SimSec);
 	}
+	if (CamSimEntityThermal::ShouldDeferFirstStep(ThermalState, ThermalSpeed)) return;   // spawn at the real state's targets
 	FEntityThermalInputs In;
 	In.Cmd = ThermalCmd;
 	In.Cmd.Damage = DamageState;   // Component Control 10 sets both; DamageState is the one the mesh swap uses
