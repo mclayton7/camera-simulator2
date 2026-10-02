@@ -209,6 +209,10 @@ camsim/
 
   Asset paths are configurable via `phase18.niagara_*` and `phase18.crater_decal_material` in `camsim_config.yaml` — point them at existing content if you have preferred Niagara systems in another folder.
 
+## Data attribution
+
+- Land cover for thermal IR (`unreal_project/CamSimTest/Content/NonUFS/LandCover`, ROADMAP 4B): © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium. Licence: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Source: [esa-worldcover.org](https://esa-worldcover.org).
+
 ## Links
 
 - [CIGI Class Library (CCL)](https://github.com/Hadron/cigi-ccl)

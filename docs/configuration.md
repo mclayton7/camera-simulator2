@@ -948,6 +948,8 @@ thermal:
     classes: {10: tree_canopy}
 ```
 
+The `thermal.land_cover.*` keys below are described, with the data pipeline, in [`thermal.md`](thermal.md#land-cover-roadmap-4b).
+
 | Key | Env | Default | Description |
 |---|---|---|---|
 | `thermal.enabled` | `CAMSIM_THERMAL_ENABLED` | `true` | **Startup** decides whether the thermal pass is available (and entities get custom-depth stencils for it). A hot reload to `false` runs IR as the 3B.2 luminance proxy (A/B); back to `true` restores thermal if it was available at startup. |
