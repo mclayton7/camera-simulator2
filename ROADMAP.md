@@ -825,7 +825,7 @@ macOS (M1 Pro) only; Linux/5090 runs are deferred.
 Design: `docs/superpowers/specs/2026-09-26-render-path-design.md` (approved); plan:
 `docs/superpowers/plans/2026-09-26-render-path.md`.
 
-**3A status (2026-09-27): implemented on macOS; awaiting visual review.** Measured with
+**3A status (2026-09-27): done; visual review signed off by the user 2026-09-27 (exit criteria below).** Measured with
 `scripts/bench/` on an M1 Pro, 1280x720, warm cache (baseline → 3A final, per phase):
 
 | Metric | Baseline (SceneCapture2D) | 3A (primary view) |
@@ -1034,7 +1034,7 @@ Carried into 3B.2 from the 3B.1 reviews (all before the first Linux/Vulkan run):
 - ~~3B.4 deletes the unused BGRA render-target ring and colour readback pool on the GPU path.~~
   Done in 3B.2 (Task 2).
 
-**3B.2 status (2026-09-28): physical sensor model implemented on macOS; awaiting visual review.**
+**3B.2 status: physical sensor model done; visual review signed off by the user 2026-10-02.**
 Spec: `docs/superpowers/specs/2026-09-27-physical-sensor-model-design.md`; plan:
 `docs/superpowers/plans/2026-09-27-physical-sensor-3b2.md`. The default config runs the whole
 model live in one fused GPU pass: optics (distortion resample, cos⁴ vignetting, pixel-integrated
@@ -1195,7 +1195,7 @@ EO mean 51 at 2.4 % clipped.
 | 4 | Sensor graph GPU p95 ≤ 2 ms at 1080p | ✅ 1.71 ms (default presets; PSF radius ≥ 4 exceeds it — warned at startup) |
 | 5 | Daylight EO 90–170, < 1 % clipped; night darker with more temporal noise; IR striping < 2 DN; cuts converge in 1–3 frames | ✅ 106–118, luma-clipped ≤ 0.1 % (◐ any-channel 1.2–1.8 % on the two far-origin shots: red saturation of sunlit dry grass, which the luma-metered AE doesn't see); night 34 with 1.83 vs 1.13 DN; `mwir_cooled` residual FPN ≤ 0.21 DN (column striping is `lwir_uncooled`'s, tested in `CamSim.Sensor.Physics.MicrobolometerFpn`); AE snap 1–3 frames |
 | 6 | `ci_validate --native`; Yosemite snaps 0 % coarse | ✅ ci_validate (150/150 KLV packets conformant). ❌ Yosemite: south/north snaps load 50–55 % with a coarse far field for ~1.7 s (east/west/horizon 0 %). **Not a 3B.2 regression**: identical at `81ae684` (pre-3B.2), and 0 % again at HEAD with `CAMSIM_USE_LOD_TRANSITIONS=1` — the crossfade default-off (`b5a7990`, made after the 3B.1 snap check) is the cause. Needs a decision (see known issues) |
-| 7 | Visual review of the new EO/IR shot set | ⏳ awaiting the user |
+| 7 | Visual review of the new EO/IR shot set | ✅ signed off by the user 2026-10-02 (IR shots predate 4A thermal) |
 | 8 | Docs | ✅ this section, `docs/configuration.md`, CLAUDE.md |
 
 Known issues and open points for the visual review:
