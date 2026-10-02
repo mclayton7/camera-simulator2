@@ -1,6 +1,6 @@
 # Entity thermal state for thermal IR (ROADMAP 4C) — design
 
-Status: approved in conversation 2026-10-02 (sections 1–3 reviewed; config/testing taken as recommended).
+Status: implemented 2026-10-02 (branch `feat/entity-thermal`); this text is aligned with the as-built design (see ROADMAP 4C).
 Builds on 4A (`2026-10-01-thermal-core-design.md`) and 4B (`2026-10-01-terrain-classification-design.md`).
 User decisions: state comes from CIGI + DIS + speed; temperatures lag (first order, sim time);
 hot parts are body-frame volumes from config (no assets); scope is engine/exhaust, running gear +
@@ -236,8 +236,8 @@ entity_types:
 - A part may override its kind's temperature parameter (`delta_k`, `temp_k`, `k_per_mps`, `max_k`); time
   constants are per kind only.
 - Ural/Mako part positions are first estimates from the glTF bounds (Ural: origin on the ground, 3.27 m
-  tall, X −3.31…+4.26 m; Mako: outboard at the stern). They are tuned against shots during
-  implementation and the tuned values are what ship.
+  tall, X −3.31…+4.26 m; Mako: outboard at the stern). As built they ship unchanged: every acceptance gate
+  passes with them; the visual review decides whether any volume needs moving.
 - Validation (warn and skip the part): unknown kind/shape, non-finite or missing vectors, half-extent or
   falloff ≤ 0 (clamped to 0.01 m if merely tiny), more than 4 parts (extras dropped). Range checks on
   the `thermal.entity` scalars (warn, keep default): temperatures within the LUT, time constants > 0.

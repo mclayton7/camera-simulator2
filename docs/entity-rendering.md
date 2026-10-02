@@ -266,7 +266,9 @@ subsystem:
 | 0 | Navigation lights (red/green/white point lights) | `0` = off, `1` = on |
 | 1 | Anti-collision strobe | `0` = off, `1` = on (1 Hz, 50% duty cycle) |
 | 2 | Landing light | `0` = off, `1` = on |
-| 10 | Damage state | `0` = intact, `1` = damaged, `2` = destroyed |
+| 10 | Damage state | `0` = intact, `1` = damaged, `2` = destroyed (thermal IR: `2` also burns, ROADMAP 4C) |
+| 11 | Power plant (thermal IR only, ROADMAP 4C) | `0` = off, `1` = on |
+| 12 | Flaming (CamSim-specific, thermal IR only, ROADMAP 4C) | `0` = off, `1` = on |
 
 ### Navigation lights
 
@@ -295,7 +297,17 @@ on/off control (no blink pattern) and is independent of nav/strobe states.
 CompId=10 triggers an asset swap on the mesh component. The `mesh_damaged` and
 `mesh_destroyed` paths from `entity_types` are used for states 1 and 2
 respectively. State 0 reloads the primary `mesh`. If the damage-variant path is
-empty in config, the swap is silently skipped.
+empty in config, the swap is silently skipped. In thermal IR, state 2 also starts a burn
+(`thermal.entity.burn_k` for `burn_s`, then a cooling hulk); state 1 has no thermal effect.
+
+### Power plant and flaming (thermal IR)
+
+CompId=11 sets the entity's engine state and CompId=12 makes it burn while set
+(`docs/thermal.md`, "Entity thermal state"). Neither changes the visible render. An entity
+also counts as running while it moves (or did within `thermal.entity.idle_hold_s`), so a host
+that never sends CompId 11 still gets hot engines on moving vehicles; CompId 11 = 1 is how a
+parked vehicle idles. DIS entities get the same commands from their appearance bits
+([`dis.md`](dis.md)).
 
 ---
 

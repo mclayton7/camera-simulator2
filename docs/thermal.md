@@ -302,10 +302,61 @@ reach classes through their type.
 ### Entity types
 
 `entity_types.<id>.thermal_material` names the class for that type's pixels (default
-`vehicle_paint`; an unknown name falls back with one warning). `thermal_offset_k` adds kelvin
-(default +8 K for land and surface vehicles, 0 otherwise; outside `[-50, 500]` it is ignored with a
-warning). Entities must be stencil-tagged: they are whenever thermal is available, not only for
+`vehicle_paint`; an unknown name falls back with one warning). `thermal_offset_k` adds kelvin to the
+skin (default 0; +8 K for land and surface vehicles only with `thermal.entity.enabled: false`;
+outside `[-50, 500]` it is ignored with a warning). `thermal_parts` adds hot spots (next section). Entities must be stencil-tagged: they are whenever thermal is available, not only for
 ground truth (stencil values 1..255 from `FStencilSlotAllocator`; exhaustion is logged).
+
+## Entity thermal state (ROADMAP 4C)
+
+Spec: `docs/superpowers/specs/2026-10-02-entity-thermal-state-design.md`. A vehicle's signature
+follows what it is doing: a running truck shows a hot engine deck and exhaust, warm running gear
+when it moves and a slightly warm skin; a long-parked one is paint at the diurnal temperature; one
+that just parked stays hot for minutes; a destroyed one burns, then cools as a hulk.
+
+**State** (`Thermal/EntityThermal.h`, pure): per entity a skin and up to 4 part temperatures,
+stored as the excess over the 4A baseline B = T_class + `thermal_offset_k` (absolute = B + excess,
+so a parked, cold vehicle is exactly 4A, and B's diurnal drift needs no state). The entity
+manager steps every entity once per tick after the poses are final, on **sim time**:
+T += (T_target − T)(1 − e^(−dt/τ)), τ the kind's up or down constant. The first step, a rewound
+clock or a jump over 1 h snap to the targets; a frozen clock freezes them. Targets (D = T_air − B;
+the frame builder publishes T_air and every stencil's B after each IR frame, latched by the
+entity manager, D = 0 until then or for an untagged entity):
+
+| | engine off | running |
+|---|---|---|
+| skin | D (1 − c) | D (1 − c) + `skin_running_k` c, with c = `convection_v0_mps` / (v0 + v) |
+| engine | the skin target | D + `delta_k` (45 K) |
+| exhaust | the skin target | `temp_k` − B (450 K) |
+| running_gear | the skin target | D + min(`k_per_mps` v, `max_k`) (1.5 K per m/s, 30 K) |
+| destroyed (`burn_s`) or flaming | `burn_k` − B on every surface (700 K) | |
+
+Running = commanded on (CIGI Component Control 11, DIS appearance bit 22), or moving faster than
+`moving_mps`, or moved within `idle_hold_s` (120 s); never while destroyed (CompId 10 = 2, DIS
+damage 3) or flaming (CompId 12, DIS bit 15). After a burn the skin cools with
+`hull_cool_tau_s` (1800 s). Speed is the entity's displacement in ECEF (origin shifts are not
+motion) over windows of ≥ 0.5 s, smoothed with a 1 s EMA; a jump beyond max(50 m, 400 m/s · dt) is
+a teleport (speed 0). Time constants (up / down): exhaust 20 / 60 s, engine 300 / 900 s, running
+gear 180 / 600 s, skin 600 s.
+
+**Hot spots** are volumes in the entity's body frame (X forward, Y right, Z down, metres from
+the entity origin; `entity_types.<id>.thermal_parts`, boxes or ellipsoids with a falloff shell),
+so any glTF works, including single-mesh models such as the Ural. Per frame the builder writes
+256 records indexed by stencil (`FThermalFrameParams::EntityRecords`, 16 float4: world-to-body
+rows, skin T, class, part count, valid flag, then centre/shape, half extents/falloff and T per
+part); the render thread fills the rows' translation from the entity origin plus the view's
+`PreViewTranslation` in doubles (`FinalizeEntityRecords`), so hot spots are placed to the
+millimetre far from the georeference origin. For an entity pixel `ThermalCS` maps the pixel's
+position into the body frame and starts from the skin T; each part, in order, pulls T toward its
+own by w = 1 − smoothstep(0, falloff, d) (d the distance outside the volume), so later parts win
+where volumes overlap and a part cooler than a sunlit skin cools it. Everything after that
+(emissivity, solar fast term, sky, path) is 4A with the class of the type. An invalid record (4C
+off, untagged, non-finite values) falls back to 4A's stencil table. `CamSimThermalRef::EntityPartTemp`
+is the CPU mirror (`CamSim.GPU.Thermal.EntityPartsMatchesCpu`, 1e-4).
+
+The shipped Ural (2001) has a running-gear box along the hull up to 1.24 m, an engine box over
+the front axle and an exhaust box on the right behind the cab; the Mako (3001) an ellipsoid on the
+outboard (`delta_k` 25). Tune volumes on shots: a box that intersects the cab heats the cab.
 
 ## TSR and the BeforeDOF path
 
@@ -346,7 +397,7 @@ set, and writes radiance into scene colour so TSR resolves it with the same jitt
 - A MWIR truck clips white at night (offset +8 K on a cool background, AGC centred on terrain).
 - The thermal cloud term follows CIGI weather only; EO cloud layers do not cool the scene.
 - Particles are composited in visible colour (above).
-- Entities have one class plus an offset, no engine, exhaust or tyre detail (4C).
+- Entities have one class plus an offset, no engine, exhaust or tyre detail (4C; see "Limits (4C)").
 - At most 255 entities are stencil-tagged at once (shared with ground truth); the rest render as
   terrain in IR (and get projected ground-truth boxes), with a one-time EntityManager warning.
 - No thermal shadow lag, sun glint in MWIR or heating from artificial lights.
@@ -355,11 +406,22 @@ set, and writes radiance into scene colour so TSR resolves it with the same jitt
 - After an EO/IR mode switch one in-flight histogram can nudge the new slot's gain before the
   snap (the 3B.2 cut convergence, 1 to 3 frames).
 
+## Limits (4C)
+
+- Hot spots are volumes, not surfaces: anything inside a volume heats, whichever panel it is.
+- No exhaust plume (hot gas behind jet engines), hot ground under or behind a parked vehicle,
+  tyre tracks or wakes. "Damaged" (CompId 10 = 1, DIS slight/moderate) has no thermal effect.
+- No default parts for the F-16 (type 1001); aircraft parts work through `thermal_parts`.
+- A host cannot set an initial thermal history ("parked 10 minutes ago"): an entity spawns at the
+  targets of its current state.
+- With no IR frame yet (EO only so far) the model steps with D = 0, so a vehicle driven in EO
+  enters IR with the right part excess but a skin that ignores air-vs-paint for the lag time.
+
 ## Acceptance
 
-`uv run scripts/thermal_check.py --band both` (use `caffeinate -ims`; 9 launches or more: per band
-`bands` and `lcoff`, then `hd`, `eo` (2), `pan` (with its control); MWIR + LWIR, 21 Dec noon and 02:00,
-DIS truck and boat) gates:
+`uv run scripts/thermal_check.py --band both` (use `caffeinate -ims`; 14 launches or more: per band
+`bands`, `lcoff` and `entity` (park + cold), then `hd`, `eo` (2), `pan` (with its control) and the MWIR
+destroyed-truck run; MWIR + LWIR, 21 Dec noon and 02:00, DIS truck and boat) gates:
 
 | Gate | Check |
 |---|---|
@@ -377,7 +439,11 @@ DIS truck and boat) gates:
 | l1 | 1.2 km pan with `recentre_fraction` 0.02 (>= 3 re-centres): median over re-centres of (max wall time within 15 frames minus the pan median) <= 2 ms |
 | l2 | same pan: max over re-centres of the excess over a land-cover-off control pan at the same view times <= 5 ms |
 | m | grid peak ratio, info only (no gate: a random block field has no peak at the grid fundamental) |
+| n | ROADMAP 4C, night, nadir 120 m / 20 deg on the truck: running truck (box − ring) minus parked-cold truck (box − ring) >= +5 DN |
+| o | running truck box p99 − box median >= +20 DN MWIR, +10 DN LWIR (hot parts) |
+| p | parked after driving: box − ring at +600 s below +5 s and above the parked-cold truck (box mean: MWIR hot parts clip at the display ceiling, so p99 cannot fall) |
+| q | MWIR: destroyed truck (DIS damage 3 + flaming) box − ring >= +60 DN |
 
 Gate (h)'s floor is the 8-bit snapshot's own rounding noise, 1/sqrt(12) DN (ruling R13). The run
 writes `report.md`/`report.json`, shots and mask overlays under the output directory
-(default `.cache/thermal_check/`). Latest results are in ROADMAP.md, 4A and 4B.
+(default `.cache/thermal_check/`). Latest results are in ROADMAP.md, 4A, 4B and 4C.

@@ -1464,7 +1464,7 @@ Boat vs water ring (info): MWIR +32.7 night / +12.3 noon, LWIR +17.4 / +22.5.
 **Carried over**
 
 - ~~4B: land-cover classes for terrain (replaces `terrain_default`), a vegetation class that lowers the noon albedo contrast.~~ Done, see 4B below.
-- 4C: per-part entity temperatures (engine, exhaust, tyres), running state; the LUT already reaches 1000 K for exhausts.
+- ~~4C: per-part entity temperatures (engine, exhaust, tyres), running state; the LUT already reaches 1000 K for exhausts.~~ Done, see 4C below.
 - 4D: semantic class in ground truth, validation against published data, thermal shadow lag.
 - Deferred minors from the reviews: `FBandRadiance::Build` with an invalid band sets a flat LUT (callers must validate);
   the Planck monotonic test covers MWIR only; `TemperatureK` silently clamps an out-of-range class; `GetThermalGpuMs` uses the requested-not-ran flag;
@@ -1624,6 +1624,86 @@ Class temperatures at San Francisco, 21 Dec, noon / 02:00 (K): `terrain_default`
 **Editor / human changes: none.** The data is produced by `fetch_worldcover.py` and committed through git LFS; 4B adds no assets, textures
 or materials. Data attribution (CC BY 4.0): © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed
 by ESA WorldCover consortium (README.md and `docs/thermal.md`).
+
+### 4C Entity thermal state (implemented 2026-10-02; visual review pending)
+
+**Status:** implemented on branch `feat/entity-thermal`; `thermal_check.py --band both` passes every gate (a–q) on Linux/Vulkan
+(RTX 5080, driver 595.91). Metal not yet run. Visual review of the 4C shot set (`.cache/thermal_check/4c_full/shots/*_ent_*`:
+running, parked 5 s / 600 s after driving, parked-cold, destroyed; MWIR/LWIR) and of the part volumes is the remaining step.
+
+Spec: `docs/superpowers/specs/2026-10-02-entity-thermal-state-design.md` (aligned with the as-built design); plan:
+`docs/superpowers/plans/2026-10-02-entity-thermal-state.md`; guide: `docs/thermal.md#entity-thermal-state-roadmap-4c`. Covers 4.3.
+
+**Built.**
+
+- **Model** (`Thermal/EntityThermal.{h,cpp}`, pure): per entity a skin and ≤ 4 parts (`engine`, `exhaust`, `running_gear`) stepped
+  on sim time by the entity manager after every pose is final; first-order lag with per-kind up/down constants (exhaust 20/60 s,
+  engine 300/900 s, running gear 180/600 s, skin 600 s, hull 1800 s after a burn); clock jumps snap, a frozen clock freezes. Stored as
+  the excess over the 4A baseline B = T_class + offset, so a parked, cold vehicle is 4A exactly. Running = commanded on, moving, or
+  moved within 120 s; speed cools the skin's excess over air (v0 / (v0 + v)); destroyed/flaming burns at 700 K.
+- **Inputs:** canonical Component Control 10 (damage), 11 (power plant, new), 12 (flaming, new); DIS appearance (land/air/surface
+  platforms: bits 3–4, 22, 15) mapped onto them on change by the DIS adapter (a destroyed DIS entity now also swaps to
+  `mesh_destroyed`). Speed from ECEF over ≥ 0.5 s windows (origin shifts are not motion, centimetre jitter stays parked); a spawn
+  defers its first step until the speed is measured, so a vehicle appearing mid-drive starts running.
+- **Render:** `entity_types.<id>.thermal_parts` body-frame boxes/ellipsoids with falloff (any glTF, including the single-mesh Ural);
+  256 per-stencil records (`FThermalFrameParams::EntityRecords`, 16 float4) uploaded as a structured buffer; world-to-body rows finalised
+  on the render thread from the entity origin + `PreViewTranslation` in doubles (1 mm at 100 km); `ThermalCS` blends parts over the skin
+  in config order; `CamSimThermalRef::EntityPartTemp` mirrors it. Invalid records fall back to 4A's stencil table:
+  `thermal.entity.enabled: false` is 4A bit for bit (including its +8 K vehicle default, which 4C drops).
+- **Config:** `thermal.entity.*` (`CAMSIM_THERMAL_ENTITY_ENABLED`); Ural (2001) and Mako (3001) ship part volumes (first estimates from
+  the glTF bounds, not hand-tuned: every gate passes; adjust after the visual review if a panel heats wrongly).
+- **Sensor fix found by gate q:** the IR AGC band now stops at full well (`FSensorController`). A 700 K truck beyond the thermal AE's
+  `min_gain_ev` (−8) clipped and the band stretched to its unclipped signal, so the burning truck displayed dark grey (Y 46) on a
+  black scene; it is now white. Scenes whose p99 stays below full well (all 4A/4B views) are unchanged (gates a–l re-run).
+- `send_dis_test.py`: appearance bits, `truck-park` / `truck-parked` / `truck-destroyed`, `--drive-s`, `--hold-s`, `--engine-on`.
+
+**Results** (`thermal_check.py --band both`, Linux/Vulkan RTX 5080, Presidio, 21 Dec 02:00, nadir 120 m / 20 deg on the truck;
+`.cache/thermal_check/4c_full`). Box statistics are medians over 10 frames, ring-referenced (box minus ring mean).
+
+| Gate | Check | MWIR | LWIR |
+|---|---|---|---|
+| n | running (box − ring) − parked-cold (box − ring) >= +5 DN | +96.4 (38.3 vs −58.2) | +71.3 (23.6 vs −47.7) |
+| o | running box p99 − median >= +20 / +10 DN | +94.0 | +35.0 |
+| p | box − ring at +600 s after parking < +5 s, > parked-cold | 36.1 → 6.0 (cold −58.2) | 26.8 → 1.9 (cold −47.7) |
+| q | destroyed box − ring >= +60 DN | +153.8 | – |
+| b (4A) | driving truck box − ring >= +3 DN, 330 m nadir | +22.6 (4A: +69, its +8 K skin) | +10.4 |
+| f (4A) | `ThermalCS` p95 at 1080p <= 0.5 ms | 0.168 ms (4B on the M1 Pro: 0.408 ms) | |
+| g (4A) | EO thermal on − off | 0.001 DN | |
+
+Every 4A/4B gate (a–e, h–l) passes in the same run. Tests: 472 NullRHI (25 new `CamSim.Thermal.Entity.*` plus
+`CamSim.Sensor.Controller.ThermalAgcBandStopsAtFullWell`), `CamSim.GPU` 26/26 (`CamSim.GPU.Thermal.EntityPartsMatchesCpu` 1.7e-6).
+
+**How it got here (decisions worth keeping)**
+
+- Body-frame volumes rather than glTF node names or authored masks: the shipped Ural is one mesh, node names are not portable,
+  masks need editor work per model.
+- Excess-over-baseline state: `T_class` / `T_air` exist only in the IR frame builder, so the builder publishes them back (latched); the
+  model keeps stepping in EO (D = 0) and the diurnal drift of B needs no state.
+- Speed by windowed displacement, not per-tick |dP|/dt (which rectifies ±2 cm pose noise into ~1 m/s, above `moving_mps`).
+- Gate p uses the box mean, not p99 (MWIR hot parts clip at the display ceiling, Y 235), and +600 s, not +180 s: for the first minutes
+  after parking the idle hold keeps the engine "running" and the lost convection warms the skin, so the box first warms slightly
+  (+180 s measured 35.5 → 36.8 MWIR). The parked-cold and destroyed trucks stand on the park spot (`--hold-s`): comparing contrasts
+  over two backgrounds (LWIR ring 143 vs 176 DN) failed LWIR p by 1.4 DN.
+- First acceptance run found two defects the unit tests could not: a moving spawn started parked-cold (gate b −31.6 DN) and the
+  AGC band beyond full well (gate q).
+
+**Known issues**
+
+- Hot spots are volumes, not panels; the shipped volumes are unreviewed first estimates.
+- A burning vehicle drives the thermal AE to its floor (`thermal_exposure.min_gain_ev` −8), so the rest of the frame is crushed to
+  black and quantised (detector defects show). A lower floor (−14 reaches 1000 K) would keep background contrast at the cost of noise.
+- One frame of the MWIR running view had a bright bar in the top rows (rows 0–16, x >= 713; not reproduced in the other 9 frames);
+  a snapshot/readback transient, uninvestigated.
+- Entities without a measurable pose (no globe anchor) never step (4A treatment).
+
+**Carried over**
+
+- 4D: semantic class in ground truth, validation against published data, thermal shadow lag.
+- Aircraft exhaust plumes; a thermal effect for "damaged"; hot ground under/behind parked vehicles, tyre tracks, wakes; default parts for
+  the F-16 (orientation unverified); host-set initial thermal history.
+- Metal run of `thermal_check.py --runs entity` and `CamSim.GPU.Thermal.EntityPartsMatchesCpu`.
+
+**Editor / human changes: none** (code, shaders, config). Human step: visual review of the 4C shots and part volumes.
 
 ---
 
