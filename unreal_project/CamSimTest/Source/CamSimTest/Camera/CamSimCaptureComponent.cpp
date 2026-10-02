@@ -337,6 +337,11 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 		ThermalParams = MakeShared<FThermalFrameParams, ESPMode::ThreadSafe>();
 		TArray<FString> Warnings;
 		ThermalBuilder.Build(TIn, *ThermalParams, &Warnings);
+		// ROADMAP 4C: the entity thermal model steps with this frame's T_air and baselines (latched until the next IR frame).
+		if (FCamSimEntityManager* EM = Subsystem ? Subsystem->GetEntityManager() : nullptr)
+		{
+			EM->SetEntityThermalEnv(ThermalBuilder.GetEntityEnv());
+		}
 		LandCoverWindowIdLastTick = ThermalParams->bLandCover != 0u ? ThermalParams->LandCoverWindowId : 0u;
 		for (const FString& W : Warnings) { UE_LOG(LogCamSim, Warning, TEXT("Thermal: %s"), *W); }
 		if (CVarCamSimThermalLog.GetValueOnGameThread() > 0 && (ParamsSerial % 30u) == 0u)

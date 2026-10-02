@@ -609,6 +609,19 @@ thermal:
     veg_blur_m: 2               # CAMSIM_THERMAL_LAND_COVER_VEG_BLUR_M — vegetation index from the base colour of the pixel + 4 diagonal taps offset R px on each image axis, R = veg_blur_m / (slant range x pixel angle), 1..32 px (tap distance sqrt(2)·R, foreshortened at grazing angles; hides imagery JPEG chroma blocks; 0..32, 0 = off)
     # classes:                  # WorldCover code -> thermal material (yaml only; defaults in docs/thermal.md; a code remapped to another material renders it unrefined)
     #   10: tree_canopy
+  entity:                       # ROADMAP 4C: running/parked/burning vehicles, part hot spots (docs/thermal.md)
+    enabled: true               # CAMSIM_THERMAL_ENTITY_ENABLED — false = 4A (one class + offset per entity, +8 K for land/sea vehicles)
+    moving_mps: 0.5             # faster than this = moving: the engine counts as running
+    idle_hold_s: 120            # ... and for this long after the vehicle stopped
+    skin_running_k: 4           # skin above the paint class while running
+    convection_v0_mps: 10       # the skin's excess over air scales by v0 / (v0 + v)
+    skin_tau_s: 600             # skin warm-up / cool-down time constant
+    burn_k: 700                 # destroyed (CIGI Component Control 10 = 2, DIS damage 3) or flaming (CompId 12, DIS bit 15): every surface
+    burn_s: 300                 # ... for this long after destroyed (flaming: while set)
+    hull_cool_tau_s: 1800       # skin cool-down after a burn
+    engine:       { delta_k: 45, tau_up_s: 300, tau_down_s: 900 }               # T_air + delta_k while running
+    exhaust:      { temp_k: 450, tau_up_s: 20, tau_down_s: 60 }                 # absolute while running
+    running_gear: { k_per_mps: 1.5, max_k: 30, tau_up_s: 180, tau_down_s: 600 } # T_air + min(k v, max) while running
 
 # Phase 27 — Performance & Optimization
 performance:
@@ -757,7 +770,12 @@ entity_types:
       roll: 0.0
     half_length_m: 3.78
     half_beam_m: 1.53
-    # thermal_material: vehicle_paint  # ROADMAP 4A default; thermal_offset_k defaults to +8 K for land/sea vehicles
+    # thermal_material: vehicle_paint  # ROADMAP 4A default; thermal_offset_k: additive skin offset (default 0; +8 K for land/sea vehicles only with thermal.entity off)
+    # ROADMAP 4C hot spots, body frame (X forward, Y right, Z down; metres from the origin on the ground). Later parts win where they overlap.
+    thermal_parts:
+      - { kind: running_gear, shape: box, centre_m: [0.47, 0, -0.62], half_m: [3.7, 1.55, 0.62], falloff_m: 0.15 }
+      - { kind: engine,  shape: box, centre_m: [3.45, 0, -1.45], half_m: [0.75, 0.75, 0.45], falloff_m: 0.3 }
+      - { kind: exhaust, shape: box, centre_m: [1.9, 1.25, -0.75], half_m: [0.5, 0.2, 0.2], falloff_m: 0.15 }
   # DIS surface platforms. Mako 655 rigid-hull inflatable (fast rescue
   # craft), CC BY 4.0 (entities/boat/LICENSE.md). Scale 1.19: real 6.55 m.
   "3001":
@@ -774,7 +792,10 @@ entity_types:
     z_offset_m: -0.49
     half_length_m: 3.27
     half_beam_m: 1.31
-    # thermal_material: vehicle_paint  # ROADMAP 4A default; thermal_offset_k defaults to +8 K for land/sea vehicles
+    # thermal_material: vehicle_paint  # ROADMAP 4A default; thermal_offset_k: additive skin offset (default 0; +8 K for land/sea vehicles only with thermal.entity off)
+    # ROADMAP 4C: outboard motor at the stern (origin on the water surface)
+    thermal_parts:
+      - { kind: engine, shape: ellipsoid, centre_m: [-3.3, 0, -0.75], half_m: [0.4, 0.35, 0.5], falloff_m: 0.2, delta_k: 25 }
   # Example animated character entity (Phase 22D).
   # Requires skeletal mesh + Animation Blueprint assets in UE editor (see TODO.md).
   # "1010":

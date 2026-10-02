@@ -132,6 +132,12 @@ public:
 	uint8 GetDamageState() const { return DamageState; }
 	/** Commanded thermal inputs (ROADMAP 4C): Component Control 11 power plant, 12 flaming, 10 damage. */
 	const FEntityThermalCommanded& GetThermalCommanded() const { return ThermalCmd; }
+	/**
+	 * Step the thermal state (ROADMAP 4C) to sim time SimSec: speed from this entity's ECEF position, targets from the
+	 * environment (bHasEnv false: D = 0). The entity manager calls it once per tick after every pose is final.
+	 */
+	void StepThermal(double SimSec, const FEntityThermalSettings& Settings, bool bHasEnv, float TairK, float BaselineK);
+	const FEntityThermalState& GetThermalState() const { return ThermalState; }
 
 	// AActor interface
 	virtual void Tick(float DeltaTime) override;
@@ -220,6 +226,8 @@ private:
 	uint8 DamageState = 0;
 	// ROADMAP 4C: host-commanded thermal inputs (power plant, flaming; damage mirrors DamageState)
 	FEntityThermalCommanded ThermalCmd;
+	FEntityThermalState     ThermalState;
+	FEntitySpeedTracker     ThermalSpeed;
 
 	// Set to true after the first ApplyPose — suppresses the one-time world-location log
 	bool bPoseLogged = false;

@@ -16,6 +16,7 @@
 #include "Entity/CamSimAnimInstance.h"
 #include "CesiumGlobeAnchorComponent.h"
 #include "Geospatial/CigiFrames.h"
+#include "Geospatial/EcefFrames.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/AssetManager.h"
@@ -144,6 +145,7 @@ void ACamSimEntity::SetShadowCasting(bool bCast)
 
 void ACamSimEntity::SetEntityType(uint16 Type)
 {
+	if (Type != EntityType) ThermalState = FEntityThermalState();   // ROADMAP 4C: other parts, other state
 	EntityType = Type;
 
 	const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(Type) : nullptr;
@@ -569,6 +571,32 @@ void ACamSimEntity::ApplyArticulation(const FArticulationCommand& P)
 
 	FTransform NewTM(Rot, Loc);
 	SkelMeshComp->SetBoneTransformByName(BoneName, NewTM, EBoneSpaces::ComponentSpace);
+}
+
+// -------------------------------------------------------------------------
+// StepThermal — entity thermal state (ROADMAP 4C)
+// -------------------------------------------------------------------------
+
+void ACamSimEntity::StepThermal(double SimSec, const FEntityThermalSettings& Settings, bool bHasEnv, float TairK, float BaselineK)
+{
+	CamSimFrames::FGeoPose Pose;
+	float SpeedMps = ThermalSpeed.GetSpeedMps();
+	if (GetGeoPose(Pose))
+	{
+		SpeedMps = ThermalSpeed.Update(CamSimFrames::GeodeticToEcef(Pose.Lat, Pose.Lon, Pose.Alt), SimSec);
+	}
+	FEntityThermalInputs In;
+	In.Cmd = ThermalCmd;
+	In.Cmd.Damage = DamageState;   // Component Control 10 sets both; DamageState is the one the mesh swap uses
+	In.SpeedMps = SpeedMps;
+	In.SimSec = SimSec;
+	In.bHasEnv = bHasEnv;
+	In.TairK = TairK;
+	In.BaselineK = BaselineK;
+	const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr;
+	const TConstArrayView<FEntityThermalPartSpec> Parts = Entry ? TConstArrayView<FEntityThermalPartSpec>(Entry->ThermalParts)
+		: TConstArrayView<FEntityThermalPartSpec>();
+	CamSimEntityThermal::Step(ThermalState, In, Settings, Parts);
 }
 
 // -------------------------------------------------------------------------

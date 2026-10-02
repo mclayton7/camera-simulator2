@@ -21,6 +21,7 @@
 #include "GameFramework/Actor.h"
 
 #include "Geospatial/CigiFrames.h"
+#include "Time/SimClock.h"
 
 // -------------------------------------------------------------------------
 // Constructor / Destructor
@@ -83,6 +84,9 @@ void FCamSimEntityManager::Tick(float DeltaTime)
 	if (Camera) Camera->ApplyHostPlatformState();
 	ResolveAttachedEntities();
 	if (Camera) Camera->FollowAttachParent();
+
+	// ROADMAP 4C: entity thermal state on sim time, after every pose is final for this tick.
+	StepEntityThermal(static_cast<double>(FSimClock::Get().NowMicros()) * 1e-6);
 
 	// Drive CIGI query handler and sender flush (SOF + HAT/HOT + LOS responses)
 	if (Subsystem)
@@ -466,12 +470,45 @@ void FCamSimEntityManager::GetThermalStencilEntities(TArray<FThermalStencilEntit
 		if (!E || KV.Value == 0) continue;
 		FThermalStencilEntity& T = Out.AddDefaulted_GetRef();
 		T.Stencil = KV.Value;
+		// ROADMAP 4C: pose, part volumes and the stepped excess temperatures
+		const FEntityThermalState& St = E->GetThermalState();
+		T.bHasThermalState = St.bInitialized;
+		T.OriginWorld      = E->GetActorLocation();
+		T.RotationWorld    = E->GetActorQuat();
+		T.SkinExcessK      = St.SkinExcessK;
 		if (const FEntityTypeEntry* Type = TypeTable ? TypeTable->FindEntry(E->EntityType) : nullptr)
 		{
 			T.ThermalMaterial = Type->ThermalMaterial;
 			T.ThermalOffsetK  = Type->ThermalOffsetK;
+			for (int32 K = 0; K < Type->ThermalParts.Num() && K < FEntityThermalSettings::MaxParts; ++K)
+			{
+				T.Parts.Add(Type->ThermalParts[K]);
+				T.PartExcessK[K] = St.PartExcessK[K];
+			}
 		}
 		T.bSurfaceVehicle = E->IsSurfaceVehicle();
+	}
+}
+
+void FCamSimEntityManager::SetEntityThermalEnv(const FEntityThermalEnv& Env)
+{
+	if (!ThermalEnv) ThermalEnv = MakeUnique<FEntityThermalEnv>();
+	*ThermalEnv = Env;
+}
+
+void FCamSimEntityManager::StepEntityThermal(double SimSec)
+{
+	if (!Subsystem) return;
+	const FEntityThermalSettings& Settings = Subsystem->GetConfig().Thermal.Entity;
+	if (!Settings.bEnabled) return;
+	const bool bEnv = ThermalEnv.IsValid() && ThermalEnv->bValid;
+	for (const TPair<FEntityKey, ACamSimEntity*>& KV : EntityMap)
+	{
+		ACamSimEntity* E = KV.Value;
+		if (!IsValid(E)) continue;
+		const uint8* Stencil = StencilOf.Find(KV.Key);
+		const bool bTagged = bEnv && Stencil && *Stencil != 0;
+		E->StepThermal(SimSec, Settings, bTagged, bTagged ? ThermalEnv->TairK : 0.0f, bTagged ? ThermalEnv->BaselineK[*Stencil] : 0.0f);
 	}
 }
 

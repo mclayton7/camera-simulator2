@@ -17,6 +17,7 @@ class FEntityTypeTable;
 class FCigiHostAdapter;
 class FCesiumSurfaceProbe;
 struct FThermalStencilEntity;
+struct FEntityThermalEnv;
 
 /**
  * FCamSimEntityManager
@@ -76,6 +77,12 @@ public:
 	 */
 	void GetThermalStencilEntities(TArray<FThermalStencilEntity>& Out) const;
 
+	/** Latch the thermal environment of the last IR frame (ROADMAP 4C; capture component, game thread). */
+	void SetEntityThermalEnv(const FEntityThermalEnv& Env);
+
+	/** Step every entity's thermal state to SimSec (Tick calls it after every pose is final; public for tests). */
+	void StepEntityThermal(double SimSec);
+
 	/** Current number of live entity actors (for /metrics camsim_entity_count). */
 	int32 GetEntityCount() const { return EntityMap.Num(); }
 
@@ -113,6 +120,9 @@ private:
 	/** Custom-depth stencil values for ground-truth masks; released in ForgetEntity (every removal path). */
 	FStencilSlotAllocator StencilSlots;
 	TMap<FEntityKey, uint8> StencilOf;
+
+	/** ROADMAP 4C: the last IR frame's T_air and per-stencil baselines (null until the first). */
+	TUniquePtr<FEntityThermalEnv> ThermalEnv;
 	bool bLoggedStencilExhausted = false;
 
 	/** Place attached (child) entities relative to their parents' current poses. */
