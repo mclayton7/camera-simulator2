@@ -2,10 +2,10 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "pillow"]
 # ///
-"""Thermal IR acceptance check (ROADMAP 4A, 4B gates i-m): MWIR / LWIR at noon and 02:00 with the DIS truck + boat.
+"""Thermal IR acceptance check (ROADMAP 4A, 4B gates i-m, 4C gates n-q): MWIR / LWIR at noon and 02:00 with the DIS truck + boat.
 
 Usage: uv run scripts/thermal_check.py [--band mwir|lwir|both] [--out DIR]
-                                       [--runs bands,hd,eo,lcoff,pan] [--check-only]
+                                       [--runs bands,hd,eo,lcoff,pan,entity] [--check-only]
   caffeinate -ims uv run scripts/thermal_check.py --band both
   (caffeinate: a host that sleeps mid-run freezes CamSim and spoils the frame times)
 
@@ -40,6 +40,12 @@ Launches (--runs):
   eo     two EO launches (sensor 0), noon, static nadir over the truck loop: thermal default
          (enabled) and CAMSIM_THERMAL_ENABLED=0; the first also takes the coast view as the
          EO baseline for the coastline shimmer ratio
+  entity (ROADMAP 4C) per band, night, nadir 120 m over the truck, 20 deg FOV (10 frames each):
+           <band>_ent_park  send_dis_test.py truck-park --drive-s 60: ent_running while it drives
+                            (power plant on), then ent_park5 / ent_park180 where it stopped, 5 s and
+                            180 s after it stopped with the power plant off
+           <band>_ent_cold  truck-parked: ent_parked, stationary since spawn, power plant off
+         and mwir_ent_dead (truck-destroyed: ent_dead, damage destroyed + flaming)
 
 Each frame is a /snapshot PNG (the NV12 frame converted to RGB); Y is recovered exactly for
 IR (grey: U = V = 128) and as BT.709 luma for EO. The middle frame of each view is saved to
@@ -49,7 +55,8 @@ the COCO box), all frames to OUT/<run>/frames/<time>_<view>.npz.
 Checks (spec "Testing"). Exit 0 only when every expected (check, band, time) row exists and
 passes: a, b, c, d, e, h, i, j per selected band when `bands` is in --runs, k per band when
 `bands` and `lcoff` are, l1 and l2 when `pan` is, f when `hd` is, g when `eo` is (so `--runs
-bands` alone can exit 0; f, g, k, l1, l2 are then not expected). A missing
+bands` alone can exit 0; f, g, k, l1, l2 are then not expected), n, o, p per band and q (MWIR)
+when `entity` is. A missing
 row (a view with no frames, an absent run) fails:
   (a) night nadir_truck: mean Y in [60, 180] and < 5 % of pixels at Y <= 16
   (b) night nadir_truck: truck box mean Y >= ring (box dilated 2x minus the box) mean + 3 DN
@@ -88,6 +95,14 @@ row (a view with no frames, an absent run) fails:
       each image axis, |f - f0| <= 0.15 f0) over the mean of the two neighbouring bands of equal
       width (~1 = no peak). It was gated <= 2, but cannot tell a visibly blocky frame from a fixed
       one (random block fields have sinc zeros at the fundamental), so it is reported only
+  (n) entity, night: running truck (box mean - ring mean) - parked-cold truck (box - ring) >= +5 DN.
+      Every entity statistic is the median over the frames with a truck COCO box; ring-referenced
+      because the runs' AGC states differ
+  (o) entity, night: running truck box p99 - box median >= +20 DN MWIR, +10 DN LWIR (hot parts)
+  (p) entity, night: box mean - ring after parking: at +180 s below +5 s, and above the parked-cold
+      truck's (cooling, still warm). The mean, not p99: in MWIR the hot parts clip at the display
+      ceiling (Y 235), so p99 cannot show them cooling
+  (q) entity, night, MWIR: destroyed truck box - ring >= +60 DN (burning)
 """
 
 from __future__ import annotations
@@ -166,6 +181,14 @@ PAN_LEG_M = 1200.0
 PAN_SPEED_MPS = 1000.0 / 60.0  # the spec's 1 km/min
 PAN_HOLD_S = 220.0  # > 1.5 triangle periods: >= 4 re-centres whatever the pan phase at the view start (150 s gave 3)
 PAN_RECENTRE_FRACTION = "0.02"  # 409.6 m: re-centres every ~25 s at 1 km/min (the default 25 % needs > 5 min)
+
+# ROADMAP 4C entity thermal state, gates (n)-(q) (spec "Testing"). Ring-referenced: box statistic minus the ring mean.
+ENT_UP_M = 120.0  # nadir height above the truck ground for the entity views
+ENT_FOV = 20.0
+ENT_DRIVE_S = 60.0  # truck-park: seconds of driving before it stops (power plant off)
+ENT_RUN_DN = 5.0  # (n) running - parked-cold contrast
+ENT_HOT_DN = {"mwir": 20.0, "lwir": 10.0}  # (o) running p99 - box median
+ENT_DEAD_DN = 60.0  # (q) destroyed box - ring (MWIR)
 
 # Fixed-pose regions as fractions of the image height (coast) / rows (sky).
 COAST_R = (0.26, 0.40)  # radius band from the image centre
@@ -580,6 +603,8 @@ def control_excess(
 
 
 def run_group(label: str) -> str:
+    if "_ent_" in label:
+        return "entity"  # ROADMAP 4C: park / cold / dead
     if label.startswith("mwir_pan"):
         return "pan"  # the pan and its land-cover-off control
     if label in BANDS:
@@ -596,6 +621,8 @@ def run_group(label: str) -> str:
 def run_band(label: str) -> str | None:
     if label in BANDS:
         return label
+    if "_ent_" in label:
+        return label.split("_ent_")[0]
     if label.endswith("_lcoff") and not label.startswith("mwir_pan"):
         return label[: -len("_lcoff")]
     return None
@@ -631,6 +658,97 @@ def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
         rows.append(("f", "mwir", "noon"))
     if "eo" in runs:
         rows.append(("g", "eo", "noon"))
+    if "entity" in runs:
+        for b in bands:
+            rows += [("n", b, "night"), ("o", b, "night"), ("p", b, "night")]
+        if "mwir" in bands:
+            rows.append(("q", "mwir", "night"))
+    return rows
+
+
+def box_ring_stats(y: np.ndarray, anns: list[dict | None]) -> dict:
+    """Medians over the frames with an annotation of: the box mean, the ring mean, the box p99 and the box median (DN)."""
+    per: dict[str, list[float]] = {"mean": [], "ring": [], "p99": [], "median": []}
+    for f, ann in zip(y, anns):
+        if ann is None:
+            continue
+        box = box_mask(f.shape, ann["bbox"])
+        ring = ring_mask(f.shape, ann["bbox"])
+        if box.sum() < MIN_PIXELS or ring.sum() < MIN_PIXELS:
+            continue
+        fy = f.astype(np.float32)
+        v = fy[box]
+        per["mean"].append(float(v.mean()))
+        per["ring"].append(region_mean(fy, ring))
+        per["p99"].append(float(np.percentile(v, 99)))
+        per["median"].append(float(np.median(v)))
+    out = {k: med(vs) for k, vs in per.items()}
+    out["n"] = len(per["mean"])
+    return out
+
+
+def entity_gate_rows(
+    band: str, run: dict, cold: dict, park5: dict, park180: dict, dead: dict | None
+) -> list[dict]:
+    """Gates (n)-(q) (ROADMAP 4C) from box_ring_stats of the running, parked-cold, parked (+5 s, +180 s) and destroyed truck."""
+
+    def row(check, value, threshold, ok, detail):
+        ok = bool(ok) and not math.isnan(value)
+        return {
+            "check": check,
+            "band": band,
+            "time": "night",
+            "value": value,
+            "threshold": threshold,
+            "pass": ok,
+            "detail": detail,
+        }
+
+    run_c, cold_c = run["mean"] - run["ring"], cold["mean"] - cold["ring"]
+    n = run_c - cold_c
+    rows = [
+        row(
+            "n",
+            n,
+            f">= +{ENT_RUN_DN:.0f} DN",
+            n >= ENT_RUN_DN,
+            f"running box - ring {run_c:.1f} vs parked-cold {cold_c:.1f} ({run['n']} / {cold['n']} frames)",
+        )
+    ]
+    o = run["p99"] - run["median"]
+    rows.append(
+        row(
+            "o",
+            o,
+            f">= +{ENT_HOT_DN[band]:.0f} DN",
+            o >= ENT_HOT_DN[band],
+            f"running box p99 {run['p99']:.1f} - median {run['median']:.1f}",
+        )
+    )
+    # Box mean, not p99: in MWIR the hot parts clip at the display ceiling, so p99 cannot fall.
+    h5 = park5["mean"] - park5["ring"]
+    h180 = park180["mean"] - park180["ring"]
+    hc = cold_c
+    rows.append(
+        row(
+            "p",
+            h5 - h180,
+            "box - ring: +180 s < +5 s and > parked-cold",
+            h180 < h5 and h180 > hc,
+            f"+5 s {h5:.1f}, +180 s {h180:.1f}, parked-cold {hc:.1f}",
+        )
+    )
+    if dead is not None:
+        q = dead["mean"] - dead["ring"]
+        rows.append(
+            row(
+                "q",
+                q,
+                f">= +{ENT_DEAD_DN:.0f} DN",
+                q >= ENT_DEAD_DN,
+                f"destroyed box - ring ({dead['n']} frames)",
+            )
+        )
     return rows
 
 
@@ -741,6 +859,7 @@ class View:
     cls: str | None = "truck"  # COCO class to pair with each frame
     hold_s: float = 0.0  # extra time on the view after capturing (frame-stats window)
     sensor_id: int | None = None  # overrides the run's sensor (EO frame in an IR run)
+    at_s: float | None = None  # capture no earlier than this sender time (ROADMAP 4C cool-down views)
 
 
 @dataclass
@@ -752,6 +871,7 @@ class RunSpec:
     views: Callable[[str], list[View]]  # time label -> views
     ml: bool = True
     exec_cmds: list[str] = field(default_factory=list)
+    dis_args: list[str] = field(default_factory=lambda: ["both"])  # send_dis_test.py arguments
 
 
 def _poses():
@@ -788,6 +908,20 @@ def _poses():
 
         return pose
 
+    def ent_point(t: float) -> tuple[float, float]:
+        """Where truck-park stands at sender time t (t >= ENT_DRIVE_S: where it stopped)."""
+        f = sd.PathFollower(truck.waypoints_ne, truck.speed_mps)
+        n, e, *_ = sd.track_kinematics("truck-park", f, t, ENT_DRIVE_S, truck.speed_mps)
+        return sd.ne_to_latlon(truck.center, n, e)
+
+    def ent_static(t: float):
+        lat, lon = ent_point(t)
+        return static(
+            scenario.Pose(
+                lat, lon, ground + ENT_UP_M, gimbal_pitch=-90.0, fov_h=ENT_FOV
+            )
+        )
+
     c = truck.center
     return {
         "nadir_truck": dvc.nadir_on(truck, ground + NADIR_UP_M, NADIR_FOV),
@@ -821,6 +955,10 @@ def _poses():
             gimbal_pitch=-90.0,
             fov_h=MIXED_FOV,
         ),
+        # ROADMAP 4C: the truck close up, moving (truck-park while driving) or where it stands still
+        "ent_running": dvc.nadir_on(truck, ground + ENT_UP_M, ENT_FOV),
+        "ent_start": ent_static(0.0),
+        "ent_stop": ent_static(ENT_DRIVE_S),
         "nadir_static": static(
             scenario.Pose(
                 c[0], c[1], ground + NADIR_UP_M, gimbal_pitch=-90.0, fov_h=NADIR_FOV
@@ -903,6 +1041,45 @@ def build_runs(bands: list[str], wanted: set[str]) -> list[RunSpec]:
                 ml=False,
             )
         )
+    if "entity" in wanted:  # ROADMAP 4C gates (n)-(q)
+        for b in bands:
+            env = {"CAMSIM_IR_PRESET": BANDS[b]}
+            runs.append(
+                RunSpec(
+                    f"{b}_ent_park",
+                    env,
+                    1,
+                    ["night"],
+                    lambda tod: [
+                        View("ent_running", p["ent_running"], 10, "truck"),
+                        View("ent_park5", p["ent_stop"], 10, "truck", at_s=ENT_DRIVE_S + 5.0),
+                        View("ent_park180", p["ent_stop"], 10, "truck", at_s=ENT_DRIVE_S + 180.0),
+                    ],
+                    exec_cmds=["camsim.Thermal.Log 1"],
+                    dis_args=["truck-park", "--drive-s", str(ENT_DRIVE_S)],
+                )
+            )
+            runs.append(
+                RunSpec(
+                    f"{b}_ent_cold",
+                    env,
+                    1,
+                    ["night"],
+                    lambda tod: [View("ent_parked", p["ent_start"], 10, "truck")],
+                    dis_args=["truck-parked"],
+                )
+            )
+        if "mwir" in bands:
+            runs.append(
+                RunSpec(
+                    "mwir_ent_dead",
+                    {"CAMSIM_IR_PRESET": BANDS["mwir"]},
+                    1,
+                    ["night"],
+                    lambda tod: [View("ent_dead", p["ent_start"], 10, "truck")],
+                    dis_args=["truck-destroyed"],
+                )
+            )
     if "eo" in wanted:
         for label, env in (
             ("eo_thermal_on", {}),
@@ -1040,7 +1217,7 @@ def run_once(spec: RunSpec, out: Path) -> dict:
         dvc.wait_tiles(stats)
         time.sleep(3.0)
         sender = subprocess.Popen(
-            [sys.executable, str(REPO / "scripts" / "send_dis_test.py"), "both"],
+            [sys.executable, str(REPO / "scripts" / "send_dis_test.py"), *spec.dis_args],
             stdout=subprocess.DEVNULL,
         )
         tracker = dvc.Tracker(host, time.monotonic())
@@ -1052,6 +1229,8 @@ def run_once(spec: RunSpec, out: Path) -> dict:
                 time.sleep(2.0)
                 dvc.wait_tiles(stats, 60.0)
                 time.sleep(SETTLE_S)
+                if v.at_s is not None:  # ROADMAP 4C: a fixed sender time (cool-down after parking)
+                    time.sleep(max(0.0, tracker.t0 + v.at_s - time.monotonic()))
                 t0 = time.time()
                 rec = capture_view(
                     out, rdir, spec.label, tod_label, v, coco if spec.ml else None
@@ -1587,6 +1766,59 @@ def check_all(
                 }
             )
 
+    # (n)-(q) entity thermal state (ROADMAP 4C): running, parked-cold, cooling after parking, destroyed.
+    for band in bands:
+        park = results.get(f"{band}_ent_park")
+        cold = results.get(f"{band}_ent_cold")
+        dead = results.get(f"{band}_ent_dead")
+        if not park or not cold:
+            continue
+        stats: dict[str, dict] = {}
+        for r in (park, cold, dead):
+            if not r:
+                continue
+            for rec in r["views"]:
+                vd = load_view(out, r, rec)
+                if vd is None:
+                    continue
+                shots.append(rec["shot"])
+                st = box_ring_stats(vd.y, vd.anns)
+                stats[rec["view"]] = st
+                idx = next((i for i, a in enumerate(vd.anns) if a is not None), None)
+                if idx is not None:
+                    ann = vd.anns[idx]
+                    shots.append(
+                        overlay(
+                            out,
+                            vd,
+                            box_mask(vd.y.shape[1:], ann["bbox"]),
+                            ring_mask(vd.y.shape[1:], ann["bbox"]),
+                            ann,
+                            idx,
+                        )
+                    )
+                info.append(
+                    {
+                        "check": f"entity {rec['view']}",
+                        "band": band,
+                        "time": "night",
+                        "value": st["mean"] - st["ring"],
+                        "detail": f"box - ring; box p99 {st['p99']:.1f}, median {st['median']:.1f}, ring {st['ring']:.1f}, {st['n']} frames",
+                    }
+                )
+        need = ("ent_running", "ent_parked", "ent_park5", "ent_park180")
+        if all(k in stats for k in need):
+            checks.extend(
+                entity_gate_rows(
+                    band,
+                    stats["ent_running"],
+                    stats["ent_parked"],
+                    stats["ent_park5"],
+                    stats["ent_park180"],
+                    stats.get("ent_dead"),
+                )
+            )
+
     # (l) no frame-time spike when the land-cover window re-centres during a 1 km/min pan (ruling S12): l1 the median
     # per-re-centre spike, l2 each re-centre against the land-cover-off control pan at the same view time.
     run, ctrl = results.get("mwir_pan"), results.get("mwir_pan_lcoff")
@@ -1739,7 +1971,9 @@ def main() -> int:
     ap.add_argument("--band", choices=["mwir", "lwir", "both"], default="both")
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
-        "--runs", default="bands,hd,eo,lcoff,pan", help="comma list of: bands, hd, eo, lcoff, pan"
+        "--runs",
+        default="bands,hd,eo,lcoff,pan,entity",
+        help="comma list of: bands, hd, eo, lcoff, pan, entity",
     )
     ap.add_argument(
         "--check-only", action="store_true", help="re-run the checks on --out"
@@ -1754,7 +1988,7 @@ def main() -> int:
     wanted = set(filter(None, a.runs.split(",")))
 
     results: dict[str, dict] = {}
-    for spec in build_runs(bands, {"bands", "hd", "eo", "lcoff", "pan"}):
+    for spec in build_runs(bands, {"bands", "hd", "eo", "lcoff", "pan", "entity"}):
         band = run_band(spec.label)
         if band is not None and band not in bands:
             continue

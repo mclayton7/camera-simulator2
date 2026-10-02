@@ -476,3 +476,67 @@ def test_control_excess_cancels_a_hitch_the_control_also_has():
     ex = tc.control_excess(_pan(on, ids=ids), 1000.0, ev, crows, 5000.0)
     assert ex[3] == pytest.approx(45.0 - 33.3) and max(ex) > tc.RECENTRE_EXCESS_MS
     assert math.isnan(tc.control_excess(rows, 1000.0, ev, [], 5000.0)[0])  # no control frames: fails
+
+
+# ---- Gates (n)-(q): entity thermal state (ROADMAP 4C) ----
+
+
+def test_entity_runs_group_and_band():
+    assert tc.run_group("mwir_ent_park") == "entity" and tc.run_band("mwir_ent_park") == "mwir"
+    assert tc.run_group("lwir_ent_cold") == "entity" and tc.run_band("lwir_ent_cold") == "lwir"
+    assert tc.run_group("mwir_ent_dead") == "entity" and tc.run_band("mwir_ent_dead") == "mwir"
+
+
+def test_entity_expected_rows():
+    rows = tc.expected_rows(["mwir", "lwir"], {"entity"})
+    for b in ("mwir", "lwir"):
+        for g in ("n", "o", "p"):
+            assert (g, b, "night") in rows
+    assert ("q", "mwir", "night") in rows and ("q", "lwir", "night") not in rows
+    assert not any(r[0] in "nopq" for r in tc.expected_rows(["mwir"], {"bands"}))
+
+
+def _frames(box_val: float, ring_val: float, hot: float | None = None, n: int = 3):
+    """Frames with a 40x40 box at (60, 60) of box_val (a 5x5 hot spot of `hot`: 1.6 %, above p99), ring_val around it."""
+    ys, anns = [], []
+    for _ in range(n):
+        y = np.full((200, 200), ring_val, np.float32)
+        y[60:100, 60:100] = box_val
+        if hot is not None:
+            y[70:75, 70:75] = hot
+        ys.append(y.astype(np.uint8))
+        anns.append({"bbox": [60, 60, 40, 40]})
+    return np.stack(ys), anns
+
+
+def test_box_ring_stats():
+    y, anns = _frames(150.0, 100.0, hot=250.0)
+    s = tc.box_ring_stats(y, anns)
+    assert s["n"] == 3
+    assert abs(s["ring"] - 100.0) < 1e-6
+    assert abs(s["median"] - 150.0) < 1e-6
+    assert s["p99"] == 250.0
+    assert abs(s["mean"] - (150.0 + 25 * 100.0 / 1600)) < 1e-3
+    empty = tc.box_ring_stats(y, [None, None, None])
+    assert empty["n"] == 0 and math.isnan(empty["mean"])
+
+
+def test_entity_gates_pass_and_fail():
+    run = tc.box_ring_stats(*_frames(150.0, 100.0, hot=250.0))
+    cold = tc.box_ring_stats(*_frames(110.0, 100.0))
+    # p99 clipped (250) in all three, as MWIR's display ceiling does: (p) must still see the mean fall
+    p5 = tc.box_ring_stats(*_frames(140.0, 100.0, hot=250.0))
+    p180 = tc.box_ring_stats(*_frames(120.0, 100.0, hot=250.0))
+    dead = tc.box_ring_stats(*_frames(250.0, 100.0))
+    rows = tc.entity_gate_rows("mwir", run, cold, p5, p180, dead)
+    by = {r["check"]: r for r in rows}
+    assert set(by) == {"n", "o", "p", "q"}
+    assert all(r["pass"] for r in rows), rows
+    # A running truck no warmer than the cold one fails (n); no hot spot fails (o); no cool-down fails (p)
+    flat = tc.box_ring_stats(*_frames(110.0, 100.0))
+    rows = {r["check"]: r for r in tc.entity_gate_rows("lwir", flat, cold, p5, p5, None)}
+    assert not rows["n"]["pass"] and not rows["o"]["pass"] and not rows["p"]["pass"]
+    assert "q" not in rows  # destroyed is MWIR only / optional
+    # Missing data never passes
+    nan = tc.box_ring_stats(_frames(110.0, 100.0)[0], [None] * 3)
+    assert not {r["check"]: r for r in tc.entity_gate_rows("mwir", nan, cold, p5, p180, dead)}["n"]["pass"]
