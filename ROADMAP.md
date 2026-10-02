@@ -1368,7 +1368,10 @@ follow visible albedo, night IR goes dark, and ATR models learn EO cues.
 | 4.5 | **Class-ID stencil reuse:** the same stencil gives semantic and instance segmentation for ML ground truth.                                                                                                       |
 | 4.6 | **Validation:** compare against reference imagery / published contrast data (e.g. NETD-limited scenes, diurnal crossover).                                                                                       |
 
-### 4A Thermal core (implemented on macOS; awaiting visual review)
+### 4A Thermal core (done 2026-10-02)
+
+**Status:** visual review signed off by the user 2026-10-02 (`thermal_check.py --band both` shots, Linux/Vulkan run);
+verified on Metal and NVIDIA Vulkan.
 
 Spec: `docs/superpowers/specs/2026-10-01-thermal-core-design.md`; plan:
 `docs/superpowers/plans/2026-10-01-thermal-core.md`; guide: `docs/thermal.md`. Branch `feat/thermal-core`.
@@ -1477,13 +1480,16 @@ Boat vs water ring (info): MWIR +32.7 night / +12.3 noon, LWIR +17.4 / +22.5.
 Visual review of the shot set (`.cache/thermal_check/t17c/shots`: MWIR/LWIR noon and night, plus the EO comparison) is the
 remaining step before this is closed.
 
-### 4B Terrain classification (implemented on macOS; awaiting visual review)
+### 4B Terrain classification (done 2026-10-02)
+
+**Status:** visual review signed off by the user 2026-10-02 (`nadir_mixed` / `mixed_eo` shots and overlays, Linux/Vulkan run);
+verified on Metal and NVIDIA Vulkan.
 
 Spec: `docs/superpowers/specs/2026-10-01-terrain-classification-design.md` (aligned with the as-built design); plan:
 `docs/superpowers/plans/2026-10-01-terrain-classification.md`; guide: `docs/thermal.md#land-cover-roadmap-4b`. Branch
 `feat/terrain-classification`. Covers 4.2. Visual review of the `nadir_mixed` shots (land cover on and off, MWIR/LWIR,
-noon and night), the EO `mixed_eo` shot and the overlays is the remaining step: spec success (d), boundaries following trees,
-lawns and roads.
+noon and night), the EO `mixed_eo` shot and the overlays (spec success (d), boundaries following trees, lawns and roads):
+signed off 2026-10-02.
 
 **Built.**
 
