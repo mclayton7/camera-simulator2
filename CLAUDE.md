@@ -36,6 +36,9 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/ci_validate.sh --native` | Same, without Docker (macOS): launch headless + CIGI host + checks |
 | `scripts/bench/run_bench.py` | Render benchmark + reference shots (`--smoke`, `--trace`); `compare.py` diffs two runs |
 | `scripts/run_gpu_tests.sh`     | `CamSim.GPU.*` automation tests on the real RHI (Metal / Vulkan) |
+| `uv run --project hitl python -m camsim_hitl --config <file>.toml` | HITL IG host: X-Plane truth + PX4 gimbal/camera (MAVLink) → CIGI (`hitl/README.md`, design `HITL.md`) |
+| `uv run --project hitl --with pytest pytest hitl/tests` | IG host tests |
+| `hitl/xplane_plugin/` (`fetch_sdk.sh`, CMake, ctest) | CamSimTruth X-Plane 11 plugin: read-only truth datagram (`hitl/PROTOCOL.md`) |
 
 ## Documentation
 
@@ -61,13 +64,14 @@ camsim/
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (375 tests across 65 files)
+      Tests/                       # UE5 Automation tests (388 tests across 66 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
       CCL/                         # CIGI Class Library (static lib)
       FFmpeg/                      # libavcodec/format/util/swscale + libx264
     Config/                        # DefaultEngine.ini, DefaultGame.ini
+  hitl/                            # HITL rig (HITL.md): Python IG host (camsim_hitl), X-Plane truth plugin, wire formats (PROTOCOL.md)
   deploy/                          # Dockerfile, docker-compose.yml, entrypoint.sh, camsim_config.yaml
   scripts/                         # Build, run, test, validation scripts
   docs/                            # architecture.md, configuration.md, klv-tags.md, etc.
@@ -103,7 +107,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (375 tests across 65 files, 23 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (388 tests across 66 files, 23 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -157,6 +161,8 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Shaders** live in `unreal_project/CamSimTest/Shaders/` (virtual path `/CamSim`), compiled by the `CamSimShaders` module (`PostConfigInit`)
 - **GPU pass timing on Metal**: `RQT_AbsoluteTime` render queries resolve to the command buffer's end time truncated to whole seconds, so they can't time a pass. Use an `RDG_EVENT_SCOPE_STAT` with an `FGPUStat` subclass (`OnTimingResults`) as `Camera/SensorGpuTimer.h` does. The stat scope is timed by the encoders that *begin inside it*: if RDG keeps the pass in an encoder opened earlier, it reads the whole encoder (ThermalCS read ~7.3 ms at any resolution). Put never-culled 1-texel copies around the pass so it gets its own encoder
 - **Health port restart**: restarting CamSim within ~30 s of the last run finds :8080 in TIME_WAIT. The health server logs "port 8080 is busy … NOT listening" and retries every 2 s until it binds (no reuse flag: UE's only option also sets SO_REUSEPORT, which would let two CamSims share the port). `run_bench.py` still waits the port out before launching
+- **HITL packet 201**: CIGI user-defined packet 201 (Platform Kinematics, `hitl/PROTOCOL.md` §2) feeds KLV Tags 2/8/9/56/64/79/80; the receiver publishes each datagram's camera packets as one `FCigiCameraFrame` (`CameraFrameQueue`), so pose and gimbal always come from the same datagram. Change the parser and `hitl/camsim_hitl/cigi.py` together
+- **pymavlink `get_payload()` is wrong on MAVLink 2 frames** (it assumes the v1 header); the IG host takes the payload from `get_msgbuf()[10:10+len]`
 - **IDE false positives**: clang diagnostics for UE types are wrong — UBT handles includes at build time
 - **Docker networking**: `network_mode: host` required for UDP multicast routing
 - **Hybrid CPUs (P/E cores)**: `deploy/entrypoint.sh` and `scripts/run.sh` (Linux) pin UE to the P-cores (`taskset`, `/sys/devices/cpu_core/cpus`; `CAMSIM_PIN_PCORES=0` to disable). Unpinned, the game thread can sit on an E-core for a whole run (~45% slower), which looked like run-to-run benchmark noise

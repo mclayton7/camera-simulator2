@@ -1474,6 +1474,65 @@ remaining step before this is closed.
 
 ---
 
+## HITL support (Hooter rig, `HITL.md`; done 2026-10-01)
+
+CamSim side of the X-Plane 11 + PX4 hardware-in-the-loop rig (`HITL.md` gaps 1–12). The IG host,
+the gimbal/camera simulator and the X-Plane truth plugin live outside CamSim in `hitl/`
+(`hitl/README.md`, wire formats in `hitl/PROTOCOL.md`), so they add no CamSim feature phase
+(rule 5); these are correctness and KLV-fidelity fixes.
+
+- **Gimbal:** View Control / Art Part yaw (and roll) are unwound before the limits (CIGI 0–360,
+  so 270 = −90). A rate-limited yaw slews the short way across ±180 when the limits span 360°,
+  otherwise it respects the stops.
+- **One read point per datagram:** the receiver publishes each datagram's camera packets (camera
+  Entity Control, View Control, View Definition, Sensor Control, camera Art Part, packet 201) as
+  one `FCigiCameraFrame` on `CameraFrameQueue`; `ACamSimCamera::ApplyHostPlatformState` reads them
+  once per frame, so pose and gimbal can't come from different datagrams.
+- **Gimbal sign convention pinned to the world** (`CamSim.Hitl.Gimbal.SignConventionInWorld`).
+- **Sensor Control** logs only on a state change.
+- **KLV:**
+  - Tag 17 = 2·atan(tan(HFOV/2)·H/W).
+  - Tags 90/91 (full pitch/roll) are opt-in via `phase26.klv_full_range_attitude` /
+    `CAMSIM_KLV_FULL_RANGE_ATTITUDE` (default off: misb.js 0.1.30 misdecodes them as ~0°;
+    check.js decodes them per ST 0601 when on).
+  - Tags 35/36/37/39/55 from Atmosphere Control, sent once one has arrived (Tag 37 = sea-level
+    pressure reduced to the platform's MSL altitude, ISA).
+  - Tags 3/10/59 from config (`phase26.mission_id` / `platform_designation` /
+    `platform_call_sign`).
+  - User-defined CIGI packet 201 Platform Kinematics (`hitl/PROTOCOL.md` §2), raw-parsed in the
+    datagram's byte order: Tags 8/9/64/79/80, Tag 56 from the NED velocity, Tag 2 = the host's
+    `sample_utc` (carried forward between poses, monotonic; sim clock fallback). Fields expire
+    after 1 s.
+  - Image corners: Tags 82–89 from the four corner rays (terrain trace, else the ellipsoid at the
+    frame-centre height; corners above the horizon omitted). The frame-centre fallback is now
+    ray–ellipsoid with the full attitude (roll included). Offset Tags 26–33 are not sent.
+    0.03–0.11 ms per frame measured.
+- **Config:** `CAMSIM_*` env overrides for `camera_entity_id`, `gimbal_*`, `sensor_fov_presets`
+  (`none` disables).
+- **Sensor Extended Response (107) lag fixed:** SOF and responses are sent from the camera tick
+  after the frame centre is computed (`UCamSimSubsystem::FlushCigiFrame`), so frame number and
+  centre match. SOF now leaves a few ms later in the same frame.
+
+Outside CamSim (`hitl/`):
+
+- **IG host** (`hitl/camsim_hitl`, Python): SOF-paced CIGI host driven by X-Plane truth (EGM96,
+  lever arm, near-ground HOT blend, render-time prediction), a Gimbal Protocol v2 device (154) and
+  a Camera Protocol component. Verified on PX4 v1.17 SIH SITL and MAVSDK `gimbal_device_tester`.
+- **CamSimTruth** X-Plane 11 plugin (C, XPLM303): read-only truth datagram every frame. Built and
+  tested on Linux against a stub XPLM; mac/Windows builds unverified.
+- **Tooling (gap 16):** `cigi_web_ui.py` View Control layout, `send_cigi_test.py --gimbal`,
+  `check_cigi_responses.py` parses 102/103/107.
+
+Tests: 13 new (`Tests/HitlTest.cpp`, `CamSim.Hitl.*`), KlvConformance export case
+`hitl_kinematics_weather_corners`, check.js `KNOWN_TAGS` and checks for the new tags.
+
+Still open for the rig (`HITL.md`): gap 13 (one cloud layer, no rain/snow), gap 14 (HAT/HOT only
+hits loaded tiles; the host polls), and the on-rig checks listed in `hitl/README.md`.
+
+**Editor / human changes: none.**
+
+---
+
 ## Milestone 5: Drone-community interfaces
 
 | ID  | Item                                                                                                             |
