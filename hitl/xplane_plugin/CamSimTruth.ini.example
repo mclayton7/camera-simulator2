@@ -1,0 +1,14 @@
+# CamSimTruth.ini: copy to X-Plane 11/Resources/plugins/CamSimTruth/CamSimTruth.ini
+# Read once when the plugin is enabled. Every key is optional.
+
+# IG host receiving the truth datagrams (hitl/PROTOCOL.md section 1).
+dest = 127.0.0.1:49300
+
+# 0 = load but send nothing.
+enabled = 1
+
+# Seconds between weather-block refreshes (flag bit2). 0 = every datagram.
+weather_period_s = 1.0
+
+# Terrain probes per second (flag bit3). Comment out for every datagram; 0 = off.
+# terrain_probe_hz = 10

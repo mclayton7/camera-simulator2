@@ -1,0 +1,5 @@
+# X-Plane SDK, fetched by fetch_sdk.sh (not checked in)
+.sdk/
+# CMake build trees
+build/
+build-*/
