@@ -116,7 +116,7 @@ bool FLandCoverWindowNoDataTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// Review Focus 3: a hot reload during a build never publishes the stale result.
+// Review Focus 3: a reconfigure during a build never publishes the stale result.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandCoverWindowReconfigureTest, "CamSim.Thermal.LandCover.ReconfigureDiscardsInFlightBuild",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FLandCoverWindowReconfigureTest::RunTest(const FString& Parameters)

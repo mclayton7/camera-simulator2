@@ -189,10 +189,10 @@ bool FThermalBuilderLandCoverClassesTest::RunTest(const FString& Parameters)
 	ToGravel.Code = 50;
 	ToGravel.Key = TEXT("50");
 	Cfg.LandCover.Classes.Add(ToGravel);
-	B.Configure(Cfg, 3.0f, 5.0f);   // hot reload of the classes
+	B.Configure(Cfg, 3.0f, 5.0f);   // reconfigure the classes
 	B.Build(In, P);
-	TestEqual(TEXT("hot reload: code 50 -> gravel"), static_cast<int32>(P.LandCoverClass[50]), B.GetMaterials().Find(TEXT("gravel")));
-	TestEqual(TEXT("hot reload: code 10 back to tree_canopy"), static_cast<int32>(P.LandCoverClass[10]), FThermalMaterialTable::TreeCanopy);
+	TestEqual(TEXT("reconfigure: code 50 -> gravel"), static_cast<int32>(P.LandCoverClass[50]), B.GetMaterials().Find(TEXT("gravel")));
+	TestEqual(TEXT("reconfigure: code 10 back to tree_canopy"), static_cast<int32>(P.LandCoverClass[10]), FThermalMaterialTable::TreeCanopy);
 	return true;
 }
 
@@ -272,7 +272,7 @@ bool FThermalBuilderLandCoverWarpTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("far window: re-latched"), Q.LandCoverAnchorM, FVector2f::ZeroVector);
 		In.LandCover = Window(37.83, -122.43);
 	}
-	B.Configure(Cfg, 3.0f, 5.0f);              // hot reload, same dir: anchor kept
+	B.Configure(Cfg, 3.0f, 5.0f);              // reconfigure, same dir: anchor kept
 	B.Build(In, P);
 	TestNearlyEqual(TEXT("reload, same dir: anchor kept"), P.LandCoverAnchorM.X, static_cast<float>(Expect.X), 1e-3f);
 	Cfg.LandCover.Dir = TEXT("Content/NonUFS/OtherLandCover");

@@ -1598,7 +1598,7 @@ Class temperatures at San Francisco, 21 Dec, noon / 02:00 (K): `terrain_default`
     twice when two callers race (the loser is dropped); a theoretical Cache/Failed overlap on a nondeterministic read.
   - Window: a camera reaching a pole during a build publishes that window for at most one tick; warnings are lost when `Configure`
     swaps the cache mid-build; `Configure` rebuilds the cache on any setting change and a `Configure` during a build restarts one
-    `Update` late; the destructor waits up to 30 ms for a build; a hot reload that disables land cover keeps the 4 MB texture; the
+    `Update` late; the destructor waits up to 30 ms for a build; the
     pooled texture wrapper is created per frame.
   - Config: an invalid material is reported twice (Validate and Build); `warp_amplitude_m >= warp_cell_m / 3` folds the lookup back
     and is documented but not validated; `VegBlurM` is filled in the params when land cover is off (unused).

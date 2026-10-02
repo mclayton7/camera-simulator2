@@ -354,7 +354,7 @@ struct FCamSimConfig
 		float FogIrFactor         = 0.4f;    // beta_fog = 3.912 / V_km * factor (IR sees farther than visible)
 		TArray<FThermalMaterialSpec> Materials;   // thermal.materials overrides / additions (yaml only)
 
-		/** Terrain thermal classes from land cover (ROADMAP 4B, docs/thermal.md). Every key applies on hot reload. */
+		/** Terrain thermal classes from land cover (ROADMAP 4B, docs/thermal.md). */
 		struct FLandCoverConfig
 		{
 			bool    bEnabled         = true;
