@@ -14,6 +14,7 @@ class FViewport;
 class FSensorStatsMailbox;
 struct FPostProcessMaterialInputs;
 struct FScreenPassTexture;
+struct FLandCoverGpuWindow;
 
 /**
  * FCamSimFrameGrabExtension (ROADMAP 3A/3B)
@@ -51,9 +52,15 @@ public:
 	 * the same render command as SetParams_RenderThread, so sensor and thermal parameters always belong to one tick.
 	 * With parameters, ThermalCS turns the scene into in-band radiance at BeforeDOF (Task 17): it replaces scene colour
 	 * ahead of the temporal upscaler, so TSR resolves the radiance with its depth/stencil-consistent jitter, and the
-	 * sensor graph at ReplacingTonemapper reads the resolved radiance.
+	 * sensor graph at ReplacingTonemapper reads the resolved radiance. LandCover (ROADMAP 4B) is the window those parameters
+	 * were built against; ThermalCS binds its texture only when CamSimLandCover::ShouldBindWindow agrees.
 	 */
-	void SetThermalParams_RenderThread(TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> P) { ThermalParams = MoveTemp(P); }
+	void SetThermalParams_RenderThread(TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> P,
+		TSharedPtr<const FLandCoverGpuWindow, ESPMode::ThreadSafe> LandCover = nullptr)
+	{
+		ThermalParams = MoveTemp(P);
+		ThermalLandCover = MoveTemp(LandCover);
+	}
 
 	/**
 	 * Render thread: copy the sensor graph's NV12 output for the next
@@ -117,6 +124,7 @@ private:
 	FSensorStatsMailbox* const Mailbox;                        // fixed at construction
 	FSensorFrameParams   Params;                               // render thread
 	TSharedPtr<const FThermalFrameParams, ESPMode::ThreadSafe> ThermalParams;   // render thread; null = thermal off
+	TSharedPtr<const FLandCoverGpuWindow, ESPMode::ThreadSafe> ThermalLandCover;   // render thread; the window ThermalParams map against
 	FThermalInputsMonitor ThermalInputsMonitor;                // render thread
 	TAtomic<bool>        bThermalInputsMissing { false };      // render -> game (sticky)
 	/** RunThermal_RenderThread bailed for missing inputs in this frame number (consumed by RunSensor_RenderThread). */

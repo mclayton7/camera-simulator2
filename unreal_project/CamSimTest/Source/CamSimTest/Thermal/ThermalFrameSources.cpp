@@ -3,6 +3,8 @@
 #include "Thermal/ThermalFrameSources.h"
 #include "Thermal/ThermalFrameBuilder.h"
 #include "ThermalPass.h"
+#include "Thermal/LandCoverWindow.h"
+#include "CesiumGeoreference.h"
 #include "Environment/CamSimEnvironment.h"
 #include "Entity/CamSimEntityManager.h"
 #include "Ocean/OceanSurface.h"
@@ -166,4 +168,46 @@ void CamSimThermal::GatherFrameInputs(UWorld* World, const UCamSimSubsystem& Sub
 	{
 		EM->GetThermalStencilEntities(Out.Entities);
 	}
+}
+
+bool CamSimThermal::SetLandCover(FThermalFrameInputs& Out, const FLandCoverWindowData* Window, const FVector& EastWorld, const FVector& NorthWorld)
+{
+	Out.LandCover = FThermalLandCoverInput();
+	if (!Window || Window->Id == 0u || Window->NonZeroTexels <= 0) return false;
+	auto Finite = [](const FVector& V) { return FMath::IsFinite(V.X) && FMath::IsFinite(V.Y) && FMath::IsFinite(V.Z); };
+	if (!Finite(EastWorld) || !Finite(NorthWorld)) return false;
+	const FVector E = EastWorld.GetSafeNormal();
+	const FVector N = NorthWorld.GetSafeNormal();
+	if (E.IsZero() || N.IsZero() || FMath::Abs(FVector::DotProduct(E, N)) > 1e-3) return false;
+	FThermalLandCoverInput& L = Out.LandCover;
+	L.bValid       = true;
+	L.WindowId     = Window->Id;
+	L.CentreLatDeg = Window->Spec.CentreLatDeg;
+	L.CentreLonDeg = Window->Spec.CentreLonDeg;
+	L.Texels       = Window->Spec.Texels;
+	L.TexelM       = Window->Spec.TexelM;
+	L.EastWorld    = E;
+	L.NorthWorld   = N;
+	return true;
+}
+
+bool CamSimThermal::AreLandCoverAxesValid(const FVector& EastWorld, const FVector& NorthWorld, const FVector& UpWorld)
+{
+	auto Finite = [](const FVector& V) { return FMath::IsFinite(V.X) && FMath::IsFinite(V.Y) && FMath::IsFinite(V.Z); };
+	if (!Finite(EastWorld) || !Finite(NorthWorld) || !Finite(UpWorld)) return false;
+	auto Unit = [](const FVector& V) { return FMath::Abs(V.Size() - 1.0) <= 1e-3; };
+	if (!Unit(EastWorld) || !Unit(NorthWorld) || !Unit(UpWorld)) return false;
+	if (FMath::Abs(FVector::DotProduct(EastWorld, NorthWorld)) > 1e-3) return false;
+	if (FMath::Abs(FVector::DotProduct(EastWorld, UpWorld)) > 0.02 || FMath::Abs(FVector::DotProduct(NorthWorld, UpWorld)) > 0.02) return false;
+	return FVector::DotProduct(UpWorld, FVector::CrossProduct(EastWorld, NorthWorld)) < -0.99;
+}
+
+void CamSimThermal::LandCoverAxesWorld(const ACesiumGeoreference& Geo, double LatDeg, double LonDeg, FVector& OutEast, FVector& OutNorth,
+	FVector* OutUp)
+{
+	const FVector Centre = Geo.TransformLongitudeLatitudeHeightPositionToUnreal(FVector(LonDeg, LatDeg, 0.0));   // longitude first
+	const FMatrix EsuToUnreal = Geo.ComputeEastSouthUpToUnrealTransformation(Centre);
+	OutEast  = EsuToUnreal.TransformVector(FVector(1.0, 0.0, 0.0)).GetSafeNormal();
+	OutNorth = -EsuToUnreal.TransformVector(FVector(0.0, 1.0, 0.0)).GetSafeNormal();
+	if (OutUp) *OutUp = EsuToUnreal.TransformVector(FVector(0.0, 0.0, 1.0)).GetSafeNormal();
 }

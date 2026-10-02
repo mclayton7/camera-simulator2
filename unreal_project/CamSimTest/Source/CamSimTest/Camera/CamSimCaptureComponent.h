@@ -16,10 +16,12 @@
 #include "Sensor/SensorStatsMailbox.h"
 #include "GroundTruth/AnnotationTypes.h"
 #include "Thermal/ThermalFrameBuilder.h"
+#include "Thermal/LandCoverWindow.h"
 #include "Camera/ThermalTsrAlpha.h"
 #include "CamSimCaptureComponent.generated.h"
 
 class USceneCaptureComponent2D;
+class ACesiumGeoreference;
 class UTextureRenderTarget2D;
 class UCamSimSubsystem;
 class FEncoderThread;
@@ -119,8 +121,13 @@ public:
 	 * AND NOT the render thread's "thermal inputs missing" flag (FCamSimFrameGrabExtension).
 	 */
 	static bool ShouldRunThermal(ESensorMode Mode, bool bThermalAvailable) { return Mode == ESensorMode::IR && bThermalAvailable; }
-	/** ROADMAP 4A: the camera's geodetic pose (WGS-84, HAE m) and geodetic up in UE world space. Call every tick before UpdateSensorParams. */
-	void SetThermalPose(double LatDeg, double LonDeg, double AltHaeM, const FVector& UpWorld);
+	/**
+	 * ROADMAP 4A: the camera's geodetic pose (WGS-84, HAE m) and geodetic up in UE world space. Call every tick before
+	 * UpdateSensorParams. ROADMAP 4B: the georeference the land-cover window's East/North axes come from (null: land cover off).
+	 */
+	void SetThermalPose(double LatDeg, double LonDeg, double AltHaeM, const FVector& UpWorld, ACesiumGeoreference* Georeference = nullptr);
+	/** Land-cover window paired with the last tick's thermal parameters; 0 when land cover was off (frame stats). */
+	uint32 GetLandCoverWindowId() const { return LandCoverWindowIdLastTick; }
 
 	/** Whether the GPU sensor graph runs this session (fixed at Initialize). */
 	bool HasSensorGraph() const { return bSensorGraph; }
@@ -213,6 +220,14 @@ private:
 	 * reloads of the band, materials and the other thermal.* keys apply on the next frame.
 	 */
 	FThermalFrameBuilder ThermalBuilder;
+	/** ROADMAP 4B: camera-centred land-cover window, updated on thermal IR ticks only (task-thread builds, never blocks). */
+	FLandCoverWindow LandCover;
+	TWeakObjectPtr<ACesiumGeoreference> ThermalGeoreference;
+	uint32 LandCoverWindowIdLastTick = 0;
+	/** Axes that failed CamSimThermal::AreLandCoverAxesValid were logged (once per session; those frames render land cover off). */
+	bool bLoggedLandCoverAxes = false;
+	/** ROADMAP 4B: land cover is enabled but there is no Cesium georeference (no East/North axes): warned once, land cover off. */
+	bool bLoggedLandCoverNoGeoreference = false;
 	/** r.TSR.AlphaChannel = 1 while thermal runs (RGBA16F TSR output/history for the radiance), restored otherwise. */
 	FThermalTsrAlpha ThermalTsrAlpha;
 	double ThermalLat = 0.0, ThermalLon = 0.0, ThermalAlt = 0.0;

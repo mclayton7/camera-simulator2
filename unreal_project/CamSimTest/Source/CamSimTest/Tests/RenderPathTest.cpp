@@ -36,6 +36,7 @@ bool FFrameStatsRowTest::RunTest(const FString& Parameters)
 	S.FramesEmitted = 42; S.FramesDropped = 1;
 	S.MinLoadProgressPct = 87.5f; S.Sse = 16.0; S.bCameraCut = true; S.ViewFamilies = 2;
 	S.SensorGpuMs = 1.25; S.ThermalGpuMs = 0.375f; S.SensorGainEv = -13.5; S.SceneMedianLog2 = 11.0; S.bHasSensorStats = true;
+	S.LandCoverWindow = 3;
 
 	const FString Row = CamSimFormatFrameStatsRow(S);
 	TestFalse(TEXT("no newline"), Row.Contains(TEXT("\n")));
@@ -56,6 +57,7 @@ bool FFrameStatsRowTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("families"), static_cast<int32>(Obj->GetNumberField(TEXT("families"))), 2);
 	TestEqual(TEXT("sensor_gpu_ms"), Obj->GetNumberField(TEXT("sensor_gpu_ms")), 1.25);
 	TestEqual(TEXT("thermal_gpu_ms"), Obj->GetNumberField(TEXT("thermal_gpu_ms")), 0.375);
+	TestEqual(TEXT("land_cover_window"), static_cast<int32>(Obj->GetNumberField(TEXT("land_cover_window"))), 3);
 	TestEqual(TEXT("sensor_gain_ev"), Obj->GetNumberField(TEXT("sensor_gain_ev")), -13.5);
 	TestEqual(TEXT("scene_median_log2"), Obj->GetNumberField(TEXT("scene_median_log2")), 11.0);
 	for (const TCHAR* Key : { TEXT("game_ms"), TEXT("render_ms"), TEXT("rhi_ms") })
@@ -67,6 +69,7 @@ bool FFrameStatsRowTest::RunTest(const FString& Parameters)
 	S.bHasSensorStats = false;
 	S.SensorGpuMs = -1.0f;
 	S.ThermalGpuMs = -1.0f;
+	S.LandCoverWindow = 0;
 	TSharedPtr<FJsonObject> Legacy;
 	if (!TestTrue(TEXT("legacy row valid JSON"),
 		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(CamSimFormatFrameStatsRow(S)), Legacy) && Legacy.IsValid()))
@@ -74,6 +77,7 @@ bool FFrameStatsRowTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	TestEqual(TEXT("legacy thermal_gpu_ms"), Legacy->GetNumberField(TEXT("thermal_gpu_ms")), -1.0);
+	TestEqual(TEXT("legacy land_cover_window"), static_cast<int32>(Legacy->GetNumberField(TEXT("land_cover_window"))), 0);
 	TestTrue(TEXT("legacy sensor_gain_ev null"), Legacy->HasTypedField<EJson::Null>(TEXT("sensor_gain_ev")));
 	TestTrue(TEXT("legacy scene_median_log2 null"), Legacy->HasTypedField<EJson::Null>(TEXT("scene_median_log2")));
 	TestEqual(TEXT("legacy sensor_gpu_ms"), Legacy->GetNumberField(TEXT("sensor_gpu_ms")), -1.0);

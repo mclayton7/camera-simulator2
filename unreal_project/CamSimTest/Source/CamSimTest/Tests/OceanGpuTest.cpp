@@ -5,6 +5,7 @@
 #include "RHI.h"
 #include "UObject/StrongObjectPtr.h"
 #include "RenderingThread.h"
+#include "RHIGPUReadback.h"
 #include "ShaderCompiler.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -151,13 +152,24 @@ bool FOceanGpuMatchesCpuTest::RunTest(const FString& Parameters)
 	Cap->CaptureScene();
 	FlushRenderingCommands();
 
-	TArray<FLinearColor> Pixels;
+	// Raw R32F readback: ReadLinearColorPixels asserts on R32F under Vulkan ("Unsupported format for conversion to FLinearColor").
+	TArray<float> Pixels;
 	FTextureRenderTargetResource* Res = Target->GameThread_GetRenderTargetResource();
 	if (!TestNotNull(TEXT("render target resource"), Res)) return false;
-	if (!TestTrue(TEXT("read depth"), Res->ReadLinearColorPixels(Pixels)) || !TestEqual(TEXT("pixel count"), Pixels.Num(), CapturePx * CapturePx))
+	ENQUEUE_RENDER_COMMAND(CamSimOceanGpuTestReadback)([Res, &Pixels](FRHICommandListImmediate& RHICmdList)
 	{
-		return false;
-	}
+		FRHIGPUTextureReadback Rb(TEXT("CamSimTestOceanDepth"));
+		Rb.EnqueueCopy(RHICmdList, Res->GetRenderTargetTexture());
+		RHICmdList.SubmitAndBlockUntilGPUIdle();
+		if (!Rb.IsReady()) return;
+		int32 Pitch = 0;
+		const float* Data = static_cast<const float*>(Rb.Lock(Pitch));
+		Pixels.SetNumUninitialized(CapturePx * CapturePx);
+		for (int32 Y = 0; Y < CapturePx; ++Y) FMemory::Memcpy(&Pixels[Y * CapturePx], Data + static_cast<int64>(Y) * Pitch, CapturePx * sizeof(float));
+		Rb.Unlock();
+	});
+	FlushRenderingCommands();
+	if (!TestEqual(TEXT("read depth: pixel count"), Pixels.Num(), CapturePx * CapturePx)) return false;
 
 	// Pixel centre -> world: camera right = +Y, camera up = +X (pitch -90, yaw 0), rows go down.
 	const double PxM = OrthoWidthM / CapturePx;
@@ -170,7 +182,7 @@ bool FOceanGpuMatchesCpuTest::RunTest(const FString& Parameters)
 		const int32 Row = 8 + 14 * i, Col = 8 + 14 * j;
 		const double X = (CapturePx * 0.5 - (Row + 0.5)) * PxM;   // North, m
 		const double Y = ((Col + 0.5) - CapturePx * 0.5) * PxM;   // East, m
-		const double DepthCm = Pixels[Row * CapturePx + Col].R;
+		const double DepthCm = Pixels[Row * CapturePx + Col];
 		const double Rendered = CameraHeightM - DepthCm / 100.0;
 		const double Expected = W.HeightAtPlane(X, Y);
 		const double Diff = Rendered - Expected;

@@ -15,6 +15,8 @@
 #include "ScreenPass.h"
 #include "SceneView.h"
 #include "UnrealClient.h"
+#include "PooledRenderTarget.h"
+#include "Thermal/LandCoverWindow.h"
 
 /** RDG resources of the thermal timing brackets' 1-texel copies (RunThermal_RenderThread). */
 BEGIN_SHADER_PARAMETER_STRUCT(FCamSimTexelCopyParameters, )
@@ -178,6 +180,10 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilde
 	// before TSR, scene colour, depth and stencil share one render-resolution, jittered view.
 	FThermalFrameParams TP = *ThermalParams;
 	TP.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
+	// Angle of one base-colour (render-resolution) texel at the view centre: 2 tan(hfov / 2) / view width (veg_blur_m footprint).
+	const double ProjX = View.ViewMatrices.GetProjectionMatrix().M[0][0];
+	const int32 RenderW = SceneColor.ViewRect.Width();   // before TSR: the render-resolution rect depth and GBuffer share
+	TP.BaseTexelAngle = (ProjX > 0.0 && RenderW > 0) ? static_cast<float>(2.0 / (ProjX * RenderW)) : 0.0f;
 
 	// A new texture with scene colour's desc (ThermalCS reads the scene's luminance from the old one for the fast term).
 	// Only its view rect is written: texels outside it are undefined, as in the engine's own scene colour, and TSR reads
@@ -196,6 +202,13 @@ FScreenPassTexture FCamSimFrameGrabExtension::RunThermal_RenderThread(FRDGBuilde
 	Ti.ViewUniformBuffer = View.ViewUniformBuffer.GetReference();
 	Ti.OutputSceneColor  = Out;
 	Ti.OutputRect        = SceneColor.ViewRect;
+	// ROADMAP 4B: the land-cover window these parameters were built against (ref-counted, set in the same render command).
+	// A mismatched id or a texture whose upload hasn't run leaves Ti.LandCover null: land cover off for this frame.
+	if (ThermalLandCover.IsValid() && CamSimLandCover::ShouldBindWindow(TP.bLandCover, TP.LandCoverWindowId, ThermalLandCover->Id,
+		ThermalLandCover->Texture.IsValid()))
+	{
+		Ti.LandCover = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(ThermalLandCover->Texture, TEXT("CamSimLandCover")));
+	}
 	// Metal timing brackets (thermal_gpu_ms): MetalRHI times a GPU stat scope by the stage counters of the encoders that
 	// BEGIN inside it (start of the first, end of the last), and RDG keeps consecutive compute passes in one encoder.
 	// Unbracketed, ThermalCS shared its compute encoder with the post-processing passes after it (DOF, TSR): the scope read

@@ -9,6 +9,10 @@
 #include "Ocean/OceanWaves.h"
 #include "Thermal/ThermalFrameBuilder.h"
 #include "Thermal/ThermalFrameSources.h"
+#include "Thermal/LandCoverWindow.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "CesiumGeoreference.h"
 
 // CamSim.Thermal.Sources.*: world → FThermalFrameInputs helpers (ROADMAP 4A).
 
@@ -141,5 +145,123 @@ bool FThermalSourcesSurfaceVehicleTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("category boat"),        ACamSimEntity::IsSurfaceVehicleClass({}, TEXT("boat")));
 	TestFalse(TEXT("category character"),  ACamSimEntity::IsSurfaceVehicleClass({}, TEXT("character")));
 	TestFalse(TEXT("category vehicle"),    ACamSimEntity::IsSurfaceVehicleClass({ 1, 2, 2 }, TEXT("vehicle")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalSourcesLandCoverTest, "CamSim.Thermal.Sources.LandCoverInputSanitized",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalSourcesLandCoverTest::RunTest(const FString& Parameters)
+{
+	const double NaN = std::numeric_limits<double>::quiet_NaN();
+	FLandCoverWindowData W;
+	W.Id = 3;
+	W.Spec.CentreLatDeg = 37.79; W.Spec.CentreLonDeg = -122.475; W.Spec.Texels = 2048; W.Spec.TexelM = 10.0f;
+	W.NonZeroTexels = 100;
+	FThermalFrameInputs In;
+	TestTrue(TEXT("valid window accepted"), CamSimThermal::SetLandCover(In, &W, FVector(2, 0, 0), FVector(0, -3, 0)));
+	TestTrue(TEXT("bValid"), In.LandCover.bValid);
+	TestEqual(TEXT("id"), In.LandCover.WindowId, 3u);
+	TestEqual(TEXT("centre lat"), In.LandCover.CentreLatDeg, 37.79);
+	TestEqual(TEXT("texels"), In.LandCover.Texels, 2048);
+	TestTrue(TEXT("axes normalised"), In.LandCover.EastWorld.Equals(FVector(1, 0, 0), 1e-12) && In.LandCover.NorthWorld.Equals(FVector(0, -1, 0), 1e-12));
+	auto Rejects = [&](const FLandCoverWindowData* Win, const FVector& E, const FVector& N)
+	{
+		FThermalFrameInputs X;
+		const bool bOk = CamSimThermal::SetLandCover(X, Win, E, N);
+		return !bOk && !X.LandCover.bValid;
+	};
+	TestTrue(TEXT("no window"), Rejects(nullptr, FVector(1, 0, 0), FVector(0, -1, 0)));
+	FLandCoverWindowData Empty = W;
+	Empty.NonZeroTexels = 0;
+	TestTrue(TEXT("window without data"), Rejects(&Empty, FVector(1, 0, 0), FVector(0, -1, 0)));
+	FLandCoverWindowData NoId = W;
+	NoId.Id = 0;
+	TestTrue(TEXT("window id 0"), Rejects(&NoId, FVector(1, 0, 0), FVector(0, -1, 0)));
+	TestTrue(TEXT("NaN east"), Rejects(&W, FVector(NaN, 0, 0), FVector(0, -1, 0)));
+	TestTrue(TEXT("zero north"), Rejects(&W, FVector(1, 0, 0), FVector::ZeroVector));
+	TestTrue(TEXT("axes not at right angles"), Rejects(&W, FVector(1, 0, 0), FVector(1, 1, 0)));
+	return true;
+}
+
+// Controller carry-over (ROADMAP 4B): the land-cover axes the capture feeds SetLandCover must be orthonormal East/North with
+// the UE world's handedness (UE is left-handed: Up . (East x North) = -1); anything else is land cover off for that frame.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalSourcesLandCoverAxesValidTest, "CamSim.Thermal.Sources.LandCoverAxesValid",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalSourcesLandCoverAxesValidTest::RunTest(const FString& Parameters)
+{
+	using CamSimThermal::AreLandCoverAxesValid;
+	const double NaN = std::numeric_limits<double>::quiet_NaN();
+	const FVector E(1, 0, 0), N(0, -1, 0), U(0, 0, 1);   // UE world at the georeference origin: +X east, +Y south, +Z up
+	TestTrue (TEXT("East-South-Up at the origin"), AreLandCoverAxesValid(E, N, U));
+	const FRotator R(10.0, 33.0, -4.0);                   // any rotation keeps the handedness
+	TestTrue (TEXT("rotated"), AreLandCoverAxesValid(R.RotateVector(E), R.RotateVector(N), R.RotateVector(U)));
+	TestTrue (TEXT("up 0.5 deg off (camera up vs window-centre up)"),
+		AreLandCoverAxesValid(E, N, FRotator(0.5, 0.0, 0.0).RotateVector(U)));
+	TestFalse(TEXT("north mirrored (south)"), AreLandCoverAxesValid(E, -N, U));
+	TestFalse(TEXT("east mirrored (west)"), AreLandCoverAxesValid(-E, N, U));
+	TestFalse(TEXT("east/north swapped (transposed)"), AreLandCoverAxesValid(N, E, U));
+	TestFalse(TEXT("east not unit"), AreLandCoverAxesValid(2.0 * E, N, U));
+	TestFalse(TEXT("not at right angles"), AreLandCoverAxesValid(E, (N + 0.01 * E), U));
+	TestFalse(TEXT("north along up"), AreLandCoverAxesValid(E, U, U));
+	TestFalse(TEXT("NaN"), AreLandCoverAxesValid(FVector(NaN, 0, 0), N, U));
+	TestFalse(TEXT("zero"), AreLandCoverAxesValid(FVector::ZeroVector, N, U));
+	return true;
+}
+
+// LandCoverAxesWorld against geodesy: East/North are the directions to points 10 m east/north of the window centre, near and
+// far from the georeference origin and after an origin shift (which rotates the UE axes), and pass AreLandCoverAxesValid.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalSourcesLandCoverAxesWorldTest, "CamSim.Thermal.Sources.LandCoverAxesWorld",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalSourcesLandCoverAxesWorldTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	FWorldContext& Context = GEngine->CreateNewWorldContext(EWorldType::Game);
+	Context.SetCurrentWorld(World);
+	ACesiumGeoreference* Geo = World->SpawnActor<ACesiumGeoreference>();
+
+	struct FCase { const TCHAR* Name; double OriginLon, OriginLat, Lon, Lat; };
+	const FCase Cases[] = {
+		{ TEXT("SF, at origin"),             -122.46, 37.7935, -122.46,  37.7935 },
+		{ TEXT("SF, window 8 km NE"),        -122.46, 37.7935, -122.39,  37.85 },
+		{ TEXT("SF after origin shift"),      -77.0,  38.9,    -122.46,  37.7935 },
+		{ TEXT("southern/eastern hemisphere"), 151.2, -33.9,    151.25, -33.85 },
+	};
+	for (const FCase& C : Cases)
+	{
+		Geo->SetOriginLongitudeLatitudeHeight(FVector(C.OriginLon, C.OriginLat, 0.0));
+		FVector East, North;
+		CamSimThermal::LandCoverAxesWorld(*Geo, C.Lat, C.Lon, East, North);
+		const double DLat = 10.0 / 111132.0;
+		const double DLon = 10.0 / (111320.0 * FMath::Cos(FMath::DegreesToRadians(C.Lat)));
+		const FVector Here   = Geo->TransformLongitudeLatitudeHeightPositionToUnreal(FVector(C.Lon, C.Lat, 0.0));
+		const FVector ToEast = (Geo->TransformLongitudeLatitudeHeightPositionToUnreal(FVector(C.Lon + DLon, C.Lat, 0.0)) - Here).GetSafeNormal();
+		const FVector ToNorth = (Geo->TransformLongitudeLatitudeHeightPositionToUnreal(FVector(C.Lon, C.Lat + DLat, 0.0)) - Here).GetSafeNormal();
+		const FVector ToUp   = (Geo->TransformLongitudeLatitudeHeightPositionToUnreal(FVector(C.Lon, C.Lat, 10.0)) - Here).GetSafeNormal();
+		const double De = FVector::DotProduct(East, ToEast), Dn = FVector::DotProduct(North, ToNorth);
+		TestTrue(FString::Printf(TEXT("%s: east (dot %.7f)"), C.Name, De), De > 0.99999);
+		TestTrue(FString::Printf(TEXT("%s: north (dot %.7f)"), C.Name, Dn), Dn > 0.99999);
+		const double Hand = FVector::DotProduct(ToUp, FVector::CrossProduct(East, North));
+		TestTrue(FString::Printf(TEXT("%s: Up.(E x N) = %.6f (UE left-handed: -1)"), C.Name, Hand), Hand < -0.9999);
+		TestTrue(FString::Printf(TEXT("%s: valid"), C.Name), CamSimThermal::AreLandCoverAxesValid(East, North, ToUp));
+		FVector East2, North2, CentreUp;
+		CamSimThermal::LandCoverAxesWorld(*Geo, C.Lat, C.Lon, East2, North2, &CentreUp);
+		TestTrue(FString::Printf(TEXT("%s: OutUp is the geodetic up there (dot %.7f)"), C.Name, FVector::DotProduct(CentreUp, ToUp)),
+			FVector::DotProduct(CentreUp, ToUp) > 0.99999 && East2.Equals(East, 0.0) && North2.Equals(North, 0.0));
+	}
+
+	// Long teleport: the camera is 3 degrees (~330 km) from a window that hasn't re-centred yet. Its up is ~3 degrees off the
+	// window's, which fails the horizontality check; the Up at the window centre (what the capture component checks) passes.
+	{
+		Geo->SetOriginLongitudeLatitudeHeight(FVector(-122.46, 37.7935, 0.0));
+		FVector East, North, CentreUp;
+		CamSimThermal::LandCoverAxesWorld(*Geo, 37.7935, -122.46, East, North, &CentreUp);
+		const FVector Cam = Geo->TransformLongitudeLatitudeHeightPositionToUnreal(FVector(-119.46, 37.7935, 0.0));
+		const FVector CamUp = Geo->ComputeEastSouthUpToUnrealTransformation(Cam).TransformVector(FVector(0.0, 0.0, 1.0)).GetSafeNormal();
+		TestFalse(TEXT("teleport: the camera's up fails"), CamSimThermal::AreLandCoverAxesValid(East, North, CamUp));
+		TestTrue (TEXT("teleport: the window-centre up passes"), CamSimThermal::AreLandCoverAxesValid(East, North, CentreUp));
+	}
+
+	GEngine->DestroyWorldContext(World);
+	World->DestroyWorld(false);
 	return true;
 }

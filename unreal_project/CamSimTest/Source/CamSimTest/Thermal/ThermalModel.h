@@ -36,6 +36,7 @@ public:
 	static constexpr double Omega        = 2.0 * UE_DOUBLE_PI / DaySeconds;
 	static constexpr double AirPeakHour  = 15.0;
 	static constexpr double WaterSwingK  = 0.5;
+	static constexpr double SnowMaxK     = 273.15;   // snow-source classes never exceed 0 C (ROADMAP 4B)
 	static constexpr double Sigma        = 5.670374419e-8;
 	static constexpr double RefitDegrees = 0.5;
 
@@ -66,6 +67,7 @@ private:
 	struct FClass
 	{
 		bool   bWater  = false;
+		bool   bSnow   = false;
 		double H       = 1.0;
 		double Inertia = 0.0;
 		FHarmonics F;

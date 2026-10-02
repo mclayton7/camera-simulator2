@@ -11,6 +11,14 @@
 static_assert(FThermalFrameParams::LutSize == 1024, "LogLut[256] below and THERMAL_LUT_SIZE in CamSimThermalCommon.ush");
 static_assert(FThermalFrameParams::MaxClasses == 32, "ClassData[32] below and in CamSimThermalCommon.ush");
 static_assert(FThermalFrameParams::NumStencils == 256, "StencilData[128] below and in CamSimThermalCommon.ush");
+static_assert(FThermalFrameParams::NumLandCoverCodes == 256, "LandCover*Packed[16] below and in CamSimThermalCommon.ush");
+
+/** 16 bytes -> 4 little-endian uints (CamSimThermalCommon.ush PackedByte unpacks them). */
+static FUintVector4 PackBytes16(const uint8* B)
+{
+	auto U = [B](int32 K) { return uint32(B[4 * K]) | (uint32(B[4 * K + 1]) << 8) | (uint32(B[4 * K + 2]) << 16) | (uint32(B[4 * K + 3]) << 24); };
+	return FUintVector4(U(0), U(1), U(2), U(3));
+}
 
 /** ThermalCS parameters (CamSimThermal.usf + CamSimThermalCommon.ush). */
 BEGIN_SHADER_PARAMETER_STRUCT(FCamSimThermalParameters, )
@@ -46,6 +54,30 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCamSimThermalParameters, )
 	SHADER_PARAMETER(float, KFastScale)
 	SHADER_PARAMETER(uint32, bBaseColorSrgb)
 	SHADER_PARAMETER(uint32, UseBaseColor)
+	SHADER_PARAMETER_ARRAY(FUintVector4, LandCoverClassPacked, [16])
+	SHADER_PARAMETER_ARRAY(FUintVector4, LandCoverFamilyPacked, [16])
+	SHADER_PARAMETER(uint32, UseLandCover)
+	SHADER_PARAMETER(FVector3f, LandCoverEast)
+	SHADER_PARAMETER(FVector3f, LandCoverNorth)
+	SHADER_PARAMETER(FVector2f, LandCoverCamOffsetM)
+	SHADER_PARAMETER(float, LandCoverTexelM)
+	SHADER_PARAMETER(uint32, LandCoverTexels)
+	SHADER_PARAMETER(FVector2f, LandCoverAnchorM)
+	SHADER_PARAMETER(FVector2f, LandCoverAnchorScale)
+	SHADER_PARAMETER(float, LandCoverWarpAmpM)
+	SHADER_PARAMETER(float, LandCoverWarpCellM)
+	SHADER_PARAMETER(uint32, bLandCoverRefine)
+	SHADER_PARAMETER(float, VegIndexLo)
+	SHADER_PARAMETER(float, VegIndexHi)
+	SHADER_PARAMETER(float, AsphaltMaxLuma)
+	SHADER_PARAMETER(float, AsphaltRampLuma)
+	SHADER_PARAMETER(float, VegBlurM)
+	SHADER_PARAMETER(float, BaseTexelAngle)
+	SHADER_PARAMETER(uint32, VegetationClass)
+	SHADER_PARAMETER(uint32, BareSoilClass)
+	SHADER_PARAMETER(uint32, AsphaltClass)
+	SHADER_PARAMETER(uint32, ConcreteClass)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, LandCover)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneColor)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepth)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, CustomDepth)
@@ -161,6 +193,35 @@ FRDGTextureRef AddThermalPass(FRDGBuilder& GraphBuilder, const FThermalPassInput
 	Pass->KFastScale       = P.KFastScale;
 	Pass->bBaseColorSrgb   = P.bBaseColorSrgb;
 	Pass->UseBaseColor     = In.BaseColor ? 1u : 0u;
+	for (int32 K = 0; K < FThermalFrameParams::NumLandCoverCodes / 16; ++K)
+	{
+		Pass->LandCoverClassPacked[K]  = PackBytes16(&P.LandCoverClass[16 * K]);
+		Pass->LandCoverFamilyPacked[K] = PackBytes16(&P.LandCoverFamily[16 * K]);
+	}
+	const bool bLandCover = In.LandCover != nullptr && P.bLandCover != 0u && P.LandCoverTexels >= 2u
+		&& In.LandCover->Desc.Extent == FIntPoint(static_cast<int32>(P.LandCoverTexels), static_cast<int32>(P.LandCoverTexels));
+	Pass->UseLandCover        = bLandCover ? 1u : 0u;
+	Pass->LandCoverEast       = P.LandCoverEast;
+	Pass->LandCoverNorth      = P.LandCoverNorth;
+	Pass->LandCoverCamOffsetM = P.LandCoverCamOffsetM;
+	Pass->LandCoverTexelM     = P.LandCoverTexelM;
+	Pass->LandCoverTexels     = P.LandCoverTexels;
+	Pass->LandCoverAnchorM     = P.LandCoverAnchorM;
+	Pass->LandCoverAnchorScale = P.LandCoverAnchorScale;
+	Pass->LandCoverWarpAmpM    = P.LandCoverWarpAmpM;
+	Pass->LandCoverWarpCellM   = P.LandCoverWarpCellM;
+	Pass->bLandCoverRefine    = P.bLandCoverRefine;
+	Pass->VegIndexLo          = P.VegIndexLo;
+	Pass->VegIndexHi          = P.VegIndexHi;
+	Pass->AsphaltMaxLuma      = P.AsphaltMaxLuma;
+	Pass->AsphaltRampLuma     = P.AsphaltRampLuma;
+	Pass->VegBlurM         = P.VegBlurM;
+	Pass->BaseTexelAngle   = P.BaseTexelAngle;
+	Pass->VegetationClass     = P.VegetationClass;
+	Pass->BareSoilClass       = P.BareSoilClass;
+	Pass->AsphaltClass        = P.AsphaltClass;
+	Pass->ConcreteClass       = P.ConcreteClass;
+	Pass->LandCover           = bLandCover ? In.LandCover : GSystemTextures.GetZeroUIntDummy(GraphBuilder);
 	Pass->SceneColor       = In.SceneColor;
 	Pass->SceneDepth       = In.SceneDepth;
 	Pass->CustomDepth      = In.CustomDepth;

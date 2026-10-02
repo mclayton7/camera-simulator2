@@ -1,0 +1,4 @@
+ESA WorldCover 10m 2021 v200
+© ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium
+Licence: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+Source: https://esa-worldcover.org (tiles cut by scripts/landcover/fetch_worldcover.py)

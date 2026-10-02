@@ -30,6 +30,11 @@ struct FThermalPassInputs
 	FRDGTextureRef    CustomDepth   = nullptr;   // device Z of the tagged entities
 	FRDGTextureSRVRef CustomStencil = nullptr;   // uint; read via STENCIL_COMPONENT_SWIZZLE
 	FRDGTextureRef    BaseColor     = nullptr;   // GBufferC; null: fast term off
+	/**
+	 * ROADMAP 4B: the land-cover window (PF_R8_UINT, Params.LandCoverTexels^2 WorldCover codes, row 0 = north). Null, another
+	 * extent, or Params.bLandCover == 0: land cover off (terrain = TerrainClass, as 4A) and the zero-uint dummy is bound.
+	 */
+	FRDGTextureRef    LandCover     = nullptr;
 	FIntRect          DepthViewRect;             // region of the depth/stencil/base textures (ignored when ViewUniformBuffer is set)
 	FRHIUniformBuffer* ViewUniformBuffer = nullptr;   // runtime: rect = View.ViewRectMin/ViewSizeAndInvSize, colour * View.OneOverPreExposure
 	/**

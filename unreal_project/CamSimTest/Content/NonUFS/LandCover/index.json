@@ -1,0 +1,118 @@
+{
+  "format": "camsim-landcover-1",
+  "source": "ESA WorldCover 10m 2021 v200",
+  "source_url": "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{name}_Map.tif",
+  "licence": "CC BY 4.0",
+  "attribution": "© ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium",
+  "tile_deg": 0.05,
+  "tile_px": 600,
+  "bbox": [
+    -122.56,
+    37.69,
+    -122.35,
+    37.84
+  ],
+  "tiles": [
+    {
+      "file": "+37.65_-122.60.png",
+      "lat_index": 753,
+      "lon_index": -2452
+    },
+    {
+      "file": "+37.65_-122.55.png",
+      "lat_index": 753,
+      "lon_index": -2451
+    },
+    {
+      "file": "+37.65_-122.50.png",
+      "lat_index": 753,
+      "lon_index": -2450
+    },
+    {
+      "file": "+37.65_-122.45.png",
+      "lat_index": 753,
+      "lon_index": -2449
+    },
+    {
+      "file": "+37.65_-122.40.png",
+      "lat_index": 753,
+      "lon_index": -2448
+    },
+    {
+      "file": "+37.70_-122.60.png",
+      "lat_index": 754,
+      "lon_index": -2452
+    },
+    {
+      "file": "+37.70_-122.55.png",
+      "lat_index": 754,
+      "lon_index": -2451
+    },
+    {
+      "file": "+37.70_-122.50.png",
+      "lat_index": 754,
+      "lon_index": -2450
+    },
+    {
+      "file": "+37.70_-122.45.png",
+      "lat_index": 754,
+      "lon_index": -2449
+    },
+    {
+      "file": "+37.70_-122.40.png",
+      "lat_index": 754,
+      "lon_index": -2448
+    },
+    {
+      "file": "+37.75_-122.60.png",
+      "lat_index": 755,
+      "lon_index": -2452
+    },
+    {
+      "file": "+37.75_-122.55.png",
+      "lat_index": 755,
+      "lon_index": -2451
+    },
+    {
+      "file": "+37.75_-122.50.png",
+      "lat_index": 755,
+      "lon_index": -2450
+    },
+    {
+      "file": "+37.75_-122.45.png",
+      "lat_index": 755,
+      "lon_index": -2449
+    },
+    {
+      "file": "+37.75_-122.40.png",
+      "lat_index": 755,
+      "lon_index": -2448
+    },
+    {
+      "file": "+37.80_-122.60.png",
+      "lat_index": 756,
+      "lon_index": -2452
+    },
+    {
+      "file": "+37.80_-122.55.png",
+      "lat_index": 756,
+      "lon_index": -2451
+    },
+    {
+      "file": "+37.80_-122.50.png",
+      "lat_index": 756,
+      "lon_index": -2450
+    },
+    {
+      "file": "+37.80_-122.45.png",
+      "lat_index": 756,
+      "lon_index": -2449
+    },
+    {
+      "file": "+37.80_-122.40.png",
+      "lat_index": 756,
+      "lon_index": -2448
+    }
+  ],
+  "missing": []
+}

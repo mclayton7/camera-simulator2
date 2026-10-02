@@ -6,6 +6,7 @@
 #include "Misc/Paths.h"
 #include "Sensor/SensorOptics.h"
 #include "Sensor/SensorPresets.h"
+#include "Thermal/LandCoverClasses.h"
 #include "Thermal/ThermalMaterials.h"
 
 #ifdef __clang__
@@ -714,6 +715,43 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 					}
 				}
 			}
+			if (YamlHas(T, "land_cover"))   // ROADMAP 4B
+			{
+				ryml::ConstNodeRef L = T["land_cover"];
+				FCamSimConfig::FThermalConfig::FLandCoverConfig& LC = Cfg.Thermal.LandCover;
+				YamlBool  (L, "enabled",           LC.bEnabled);
+				YamlString(L, "dir",               LC.Dir);
+				YamlInt   (L, "window_texels",     LC.WindowTexels);
+				YamlFloat (L, "recentre_fraction", LC.RecentreFraction);
+				YamlFloat (L, "veg_index_lo",      LC.VegIndexLo);
+				YamlFloat (L, "veg_index_hi",      LC.VegIndexHi);
+				YamlFloat (L, "asphalt_max_luma",  LC.AsphaltMaxLuma);
+				YamlFloat (L, "warp_amplitude_m",  LC.WarpAmplitudeM);
+				YamlFloat (L, "warp_cell_m",       LC.WarpCellM);
+				YamlFloat (L, "veg_blur_m",        LC.VegBlurM);
+				if (YamlHas(L, "classes"))
+				{
+					ryml::ConstNodeRef Cs = L["classes"];
+					if (Cs.is_map())
+					{
+						YamlKeysAreData(Cs);   // WorldCover codes
+						for (ryml::ConstNodeRef C : Cs)
+						{
+							FLandCoverClassSpec Spec;
+							Spec.Key = RymlToFString(C.key());
+							bool bDigits = Spec.Key.Len() > 0 && Spec.Key.Len() <= 3;
+							for (const TCHAR Ch : Spec.Key) bDigits &= (Ch >= TEXT('0') && Ch <= TEXT('9'));
+							Spec.Code = bDigits ? FCString::Atoi(*Spec.Key) : -1;
+							if (C.has_val()) Spec.Material = RymlToFString(C.val());
+							LC.Classes.Add(MoveTemp(Spec));
+						}
+					}
+					else
+					{
+						Cfg.UnknownYamlKeys.AddUnique(TEXT("thermal.land_cover.classes (must be a map of code: material)"));
+					}
+				}
+			}
 		}
 
 		// Cesium backend: ion server, terrain source, imagery overlay
@@ -991,6 +1029,18 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Thermal.ExtinctionPerKmMwir = GetEnvFloat(TEXT("CAMSIM_THERMAL_EXTINCTION_MWIR"),     Cfg.Thermal.ExtinctionPerKmMwir);
 	Cfg.Thermal.ExtinctionPerKmLwir = GetEnvFloat(TEXT("CAMSIM_THERMAL_EXTINCTION_LWIR"),     Cfg.Thermal.ExtinctionPerKmLwir);
 	Cfg.Thermal.FogIrFactor         = GetEnvFloat(TEXT("CAMSIM_THERMAL_FOG_IR_FACTOR"),       Cfg.Thermal.FogIrFactor);
+	// Land cover (ROADMAP 4B)
+	FCamSimConfig::FThermalConfig::FLandCoverConfig& LC = Cfg.Thermal.LandCover;
+	LC.bEnabled         = GetEnvBool (TEXT("CAMSIM_THERMAL_LAND_COVER_ENABLED"),           LC.bEnabled);
+	LC.Dir              = GetEnv     (TEXT("CAMSIM_THERMAL_LAND_COVER_DIR"),               LC.Dir);
+	LC.WindowTexels     = GetEnvInt  (TEXT("CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS"),     LC.WindowTexels);
+	LC.RecentreFraction = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION"), LC.RecentreFraction);
+	LC.VegIndexLo       = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_LO"),      LC.VegIndexLo);
+	LC.VegIndexHi       = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_HI"),      LC.VegIndexHi);
+	LC.AsphaltMaxLuma   = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA"),  LC.AsphaltMaxLuma);
+	LC.WarpAmplitudeM   = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_AMPLITUDE_M"),  LC.WarpAmplitudeM);
+	LC.WarpCellM        = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M"),       LC.WarpCellM);
+	LC.VegBlurM         = GetEnvFloat(TEXT("CAMSIM_THERMAL_LAND_COVER_VEG_BLUR_M"),        LC.VegBlurM);
 
 	// ROADMAP 4A acceptance: MWIR/LWIR and 1080p runs without editing the yaml.
 	Cfg.CaptureWidth  = GetEnvInt(TEXT("CAMSIM_CAPTURE_WIDTH"),  Cfg.CaptureWidth);
@@ -1422,6 +1472,25 @@ TArray<FString> FCamSimConfig::Validate() const
 	if (!(Thermal.FogIrFactor >= 0.0f && Thermal.FogIrFactor <= 2.0f))
 		Errors.Add(FString::Printf(TEXT("thermal.fog_ir_factor=%.2f out of range [0, 2]"), Thermal.FogIrFactor));
 	Errors.Append(FThermalMaterialTable::Validate(Thermal.Materials));
+	// Land cover (ROADMAP 4B). Written !(x in range) so NaN is reported too.
+	const FThermalConfig::FLandCoverConfig& LC = Thermal.LandCover;
+	if (!(LC.WindowTexels >= 256 && LC.WindowTexels <= 8192 && LC.WindowTexels % 2 == 0))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.window_texels=%d must be even, in [256, 8192]"), LC.WindowTexels));
+	if (!(LC.RecentreFraction >= 0.01f && LC.RecentreFraction <= 0.45f))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.recentre_fraction=%.3f out of range [0.01, 0.45]"), LC.RecentreFraction));
+	if (!(LC.VegIndexLo >= -1.0f && LC.VegIndexHi <= 2.0f && LC.VegIndexLo < LC.VegIndexHi))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.veg_index_lo/hi=%.3f/%.3f must satisfy -1 <= lo < hi <= 2"), LC.VegIndexLo, LC.VegIndexHi));
+	if (!(LC.AsphaltMaxLuma >= 0.0f && LC.AsphaltMaxLuma <= 1.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.asphalt_max_luma=%.3f out of range [0, 1]"), LC.AsphaltMaxLuma));
+	if (!(LC.WarpAmplitudeM >= 0.0f && LC.WarpAmplitudeM <= 20.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.warp_amplitude_m=%.3f out of range [0, 20]"), LC.WarpAmplitudeM));
+	if (!(LC.WarpCellM >= 5.0f && LC.WarpCellM <= 200.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.warp_cell_m=%.3f out of range [5, 200]"), LC.WarpCellM));
+	if (!(LC.VegBlurM >= 0.0f && LC.VegBlurM <= 32.0f))
+		Errors.Add(FString::Printf(TEXT("thermal.land_cover.veg_blur_m=%.3f out of range [0, 32]"), LC.VegBlurM));
+	if (LC.bEnabled && LC.Dir.TrimStartAndEnd().IsEmpty())
+		Errors.Add(TEXT("thermal.land_cover.dir is empty (set it, or thermal.land_cover.enabled: false)"));
+	Errors.Append(CamSimLandCover::ValidateClassSpecs(LC.Classes));
 
 	return Errors;
 }

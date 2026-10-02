@@ -247,9 +247,26 @@ bool FThermalBuilderCostTest::RunTest(const FString& Parameters)
 		B.Build(In, P);
 	}
 	const double UsPerFrame = (FPlatformTime::Seconds() - T0) * 1e6 / Frames;
-	AddInfo(FString::Printf(TEXT("builder: %.1f us per frame (budget 50 us)"), UsPerFrame));
+	AddInfo(FString::Printf(TEXT("builder: %.1f us per frame, land cover off (budget 50 us)"), UsPerFrame));
 	if (UsPerFrame > 50.0) AddWarning(FString::Printf(TEXT("builder over the 50 us budget: %.1f us"), UsPerFrame));
 	TestTrue(TEXT("builder per frame well under a millisecond"), UsPerFrame < 500.0);
+
+	// ROADMAP 4B: the land-cover branch (class/family tables, window mapping, warp anchor) on a valid window.
+	In.LandCover.bValid = true; In.LandCover.WindowId = 5; In.LandCover.CentreLatDeg = 37.79; In.LandCover.CentreLonDeg = -122.475;
+	In.LandCover.Texels = 2048; In.LandCover.TexelM = 10.0f;
+	In.LandCover.EastWorld = FVector(1.0, 0.0, 0.0); In.LandCover.NorthWorld = FVector(0.0, -1.0, 0.0);
+	B.Build(In, P);
+	TestEqual(TEXT("land cover on for the second timing"), P.bLandCover, 1u);
+	const double T1 = FPlatformTime::Seconds();
+	for (int32 F = 0; F < Frames; ++F)
+	{
+		In.UtcMicros += 33333;
+		B.Build(In, P);
+	}
+	const double UsPerFrameLc = (FPlatformTime::Seconds() - T1) * 1e6 / Frames;
+	AddInfo(FString::Printf(TEXT("builder: %.1f us per frame, land cover on (budget 50 us)"), UsPerFrameLc));
+	if (UsPerFrameLc > 50.0) AddWarning(FString::Printf(TEXT("builder (land cover on) over the 50 us budget: %.1f us"), UsPerFrameLc));
+	TestTrue(TEXT("builder per frame with land cover well under a millisecond"), UsPerFrameLc < 500.0);
 	return true;
 }
 

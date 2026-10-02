@@ -905,7 +905,13 @@ thermal:
   fog_ir_factor: 0.4
   materials:            # optional
     asphalt: {albedo: 0.1, k_fast: 0.02}
+  land_cover:           # ROADMAP 4B
+    enabled: true
+    window_texels: 2048
+    classes: {10: tree_canopy}
 ```
+
+The `thermal.land_cover.*` keys below are described, with the data pipeline, in [`thermal.md`](thermal.md#land-cover-roadmap-4b).
 
 | Key | Env | Default | Description |
 |---|---|---|---|
@@ -914,7 +920,17 @@ thermal:
 | `thermal.air_diurnal_swing_k` | `CAMSIM_THERMAL_AIR_DIURNAL_SWING_K` | `8.0` | Peak-to-peak diurnal air swing, peak at 15:00 local solar; `[0, 30]`. |
 | `thermal.extinction_per_km.mwir` / `.lwir` | `CAMSIM_THERMAL_EXTINCTION_MWIR` / `_LWIR` | `0.15` / `0.10` | Band extinction β per km; the band is MWIR when the IR preset's band centre is below 6.5 µm. `[0, 10]`. |
 | `thermal.fog_ir_factor` | `CAMSIM_THERMAL_FOG_IR_FACTOR` | `0.4` | While CIGI Atmosphere Control has fog enabled, β += 3.912 / V_km × factor; `[0, 2]`. |
-| `thermal.materials.<name>` | *(yaml only)* | — | Overrides a built-in class (`terrain_default`, `water`, `vehicle_paint`, `asphalt`, `vegetation`, `concrete`) or adds one (unset fields copy `terrain_default`; ≤ 32 classes). Fields: `albedo` `[0,1)`, `emissivity` `(0,1]`, `thermal_inertia` J m⁻² K⁻¹ s⁻½ `[0,20000]`, `convection_w_m2k` `(0,200]`, `k_fast` K/(W m⁻²) `[0,0.2]`, `temperature` `model`\|`water`. Names: lower-case letters, digits, `_`. |
+| `thermal.materials.<name>` | *(yaml only)* | — | Overrides a built-in class (`terrain_default`, `water`, `vehicle_paint`, `asphalt`, `vegetation`, `concrete`, `tree_canopy`, `shrubland`, `grassland`, `cropland`, `built_up`, `bare_soil`, `snow_ice`, `wetland`) or adds one (unset fields copy `terrain_default`; ≤ 32 classes, so 18 slots are left for user materials after the 14 built-ins). Fields: `albedo` `[0,1)`, `emissivity` `(0,1]`, `thermal_inertia` J m⁻² K⁻¹ s⁻½ `[0,20000]`, `convection_w_m2k` `(0,200]`, `k_fast` K/(W m⁻²) `[0,0.2]`, `temperature` `model`\|`water`\|`snow`. Names: lower-case letters, digits, `_`. |
+| `thermal.land_cover.enabled` | `CAMSIM_THERMAL_LAND_COVER_ENABLED` | `true` | ROADMAP 4B. Terrain pixels take their thermal class from land cover (ESA WorldCover). `false`: 4A output bit for bit with 4A's default classes (every terrain pixel `terrain_default`; the 4A `vegetation` class was retuned, so an entity type set to `vegetation` differs from 4A). |
+| `thermal.land_cover.dir` | `CAMSIM_THERMAL_LAND_COVER_DIR` | `Content/NonUFS/LandCover` | Directory with `index.json` and the tiles (`scripts/landcover/fetch_worldcover.py`); relative to the project directory (staged as loose files). Missing: one warning, land cover off. Must be non-empty when enabled. |
+| `thermal.land_cover.window_texels` | `CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS` | `2048` | Side of the camera-centred window in 10 m texels (2048 = 20.48 km; 4 MB). Terrain outside it uses `terrain_default`. Even, `[256, 8192]`. 2048 is the recommended size; larger windows cost build time (task thread) and memory. |
+| `thermal.land_cover.recentre_fraction` | `CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION` | `0.25` | A new window is built (task thread) when the camera is this fraction of the window size from its centre, East or North. `[0.01, 0.45]`. |
+| `thermal.land_cover.veg_index_lo` / `veg_index_hi` | `CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_LO` / `_HI` | `0.05` / `0.20` | Vegetation weight v = saturate((ExG − lo) / (hi − lo)), ExG = (2G − R − B) / (R + G + B) of the linear GBuffer base colour. `-1 <= lo < hi <= 2`. |
+| `thermal.land_cover.asphalt_max_luma` | `CAMSIM_THERMAL_LAND_COVER_ASPHALT_MAX_LUMA` | `0.12` | Built-up ground below this linear base luminance is asphalt, above it concrete (0.04-wide soft ramp). `[0, 1]`. |
+| `thermal.land_cover.warp_amplitude_m` | `CAMSIM_THERMAL_LAND_COVER_WARP_AMPLITUDE_M` | `6` | Breaks the visible 10 m texel grid: the class lookup position is moved by up to this many metres East and North by two smooth noise fields fixed to the ground (they do not move when the camera pans or the window re-centres). `0` turns the warp off (class blending stays smooth). Keep it below `warp_cell_m / 3` (the default 6 m / 20 m does) or the warped lookup folds back on itself. `[0, 20]`. |
+| `thermal.land_cover.warp_cell_m` | `CAMSIM_THERMAL_LAND_COVER_WARP_CELL_M` | `20` | Cell size of the warp noise on the ground, in metres: larger cells give broader, gentler wiggles of the class boundaries. `[5, 200]`. |
+| `thermal.land_cover.veg_blur_m` | `CAMSIM_THERMAL_LAND_COVER_VEG_BLUR_M` | `2` | The vegetation weight is computed from the base colour averaged over 5 samples: the pixel and 4 diagonal neighbours offset by R pixels along each image axis, R = `veg_blur_m` / (slant range × pixel angle), rounded and clamped to 1-32 px. Each neighbour is √2·R pixels away (about 2.8 m on the ground at the 2 m default when facing the ground; longer along the look direction at grazing angles, where the ground is foreshortened). This hides the 16-pixel colour blocks of JPEG-compressed imagery, which the green index would otherwise turn into square patches in IR. The asphalt/concrete split still uses the pixel itself. Larger values smooth more, but the 5 sparse samples then show as faint shifted copies of roads and edges (visible from about 4 m at 0.45 m pixels). `0` = single sample. `[0, 32]`. |
+| `thermal.land_cover.classes.<code>` | *(yaml only)* | see `docs/thermal.md` | WorldCover code (0–255) → thermal material name; an unknown material keeps the default with one warning. A code mapped to a material other than its default renders it unrefined (no base-colour refinement: e.g. `50: concrete` is concrete everywhere, not the asphalt/concrete split). |
 
 Built-in classes:
 
@@ -924,5 +940,15 @@ Built-in classes:
 | `water` | 0.06 | 0.98 | — | — | 0 | water ± 0.5 K |
 | `vehicle_paint` | 0.30 | 0.90 | 600 | 12 | 0.04 | model |
 | `asphalt` | 0.10 | 0.95 | 1500 | 10 | 0.02 | model |
-| `vegetation` | 0.20 | 0.98 | 300 | 15 | 0.008 | model |
+| `vegetation` | 0.40\* | 0.98 | 500 | 18 | 0.008 | model |
 | `concrete` | 0.35 | 0.92 | 1800 | 10 | 0.015 | model |
+| `tree_canopy` | 0.40\* | 0.98 | 800 | 25 | 0.004 | model |
+| `shrubland` | 0.40\* | 0.97 | 600 | 18 | 0.008 | model |
+| `grassland` | 0.50\* | 0.97 | 300 | 15 | 0.010 | model |
+| `cropland` | 0.40\* | 0.97 | 700 | 15 | 0.010 | model |
+| `built_up` | 0.20 | 0.93 | 1650 | 10 | 0.018 | model |
+| `bare_soil` | 0.25 | 0.93 | 1300 | 8 | 0.025 | model |
+| `snow_ice` | 0.75 | 0.99 | 600 | 10 | 0 | snow (model, capped at 273.15 K; `k_fast` 0 keeps sunlit snow at or below 0 °C) |
+| `wetland` | 0.40\* | 0.98 | 2500 | 15 | 0.004 | model |
+
+\* Effective albedo: folds evapotranspiration into the absorbed solar (the model has no latent heat term).

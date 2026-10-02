@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Config/CamSimConfig.h"
+#include "Thermal/LandCoverClasses.h"
 #include "ThermalFrameParams.h"
 #include "Thermal/BandRadiance.h"
 #include "Thermal/ThermalMaterials.h"
@@ -16,6 +17,19 @@ struct FThermalStencilEntity
 	FString ThermalMaterial;          // entity_types.<id>.thermal_material; empty = vehicle_paint
 	TOptional<float> ThermalOffsetK;  // entity_types.<id>.thermal_offset_k; unset = +8 K for a surface vehicle, else 0
 	bool    bSurfaceVehicle = false;  // land/sea vehicle (placed on the surface)
+};
+
+/** The land-cover window one frame maps against (ROADMAP 4B); CamSimThermal::SetLandCover fills it from FLandCoverWindow. */
+struct FThermalLandCoverInput
+{
+	bool    bValid = false;
+	uint32  WindowId = 0;                              // FLandCoverWindowData::Id (pairs the params with the GPU window)
+	double  CentreLatDeg = 0.0;
+	double  CentreLonDeg = 0.0;
+	int32   Texels = 0;
+	float   TexelM = 10.0f;
+	FVector EastWorld  = FVector(1.0, 0.0, 0.0);       // unit East at the window centre, UE world (= translated world direction)
+	FVector NorthWorld = FVector(0.0, -1.0, 0.0);
 };
 
 /** The sim state one frame of thermal parameters is built from (CamSimThermal::GatherFrameInputs fills it). */
@@ -38,12 +52,14 @@ struct FThermalFrameInputs
 	bool    bBaseColorAvailable = true;  // CamSimThermalPass::bBaseColorAtTonemapper
 	bool    bBaseColorSrgb = false;      // CamSimThermalPass::bBaseColorSrgbEncoded
 	TArray<FThermalStencilEntity> Entities;
+	FThermalLandCoverInput LandCover;                  // ROADMAP 4B; invalid = land cover off this frame
 };
 
 /**
  * Fills FThermalFrameParams each frame (ROADMAP 4A): LUT for the preset's band, class temperatures from FThermalModel
  * at the local solar time, sky and path terms, K_lum, sea geometry, and the 256-entry stencil table rebuilt from the
- * live entities. ClipToTranslatedWorld is left for the render thread. Game thread.
+ * live entities; land-cover tables, the window mapping and the geo-anchored warp (ROADMAP 4B). ClipToTranslatedWorld is
+ * left for the render thread. Game thread.
  */
 class CAMSIMTEST_API FThermalFrameBuilder
 {
@@ -54,6 +70,12 @@ public:
 	static constexpr double CloudQuantum    = 0.01;    // input quantisation (keeps FThermalModel's exact-compare cache from refitting on jitter)
 	static constexpr double AirQuantumK     = 0.05;
 	static constexpr double MwirMaxCentreUm = 6.5;     // band centre below this: MWIR extinction
+	static constexpr float  AsphaltRampLuma = 0.04f;   // built-up asphalt -> concrete ramp width (base luminance)
+	static constexpr double MaxWarpAnchorM  = 200000.0;   // a window farther than this from the warp anchor re-latches it
+	static constexpr float  MaxVegBlurM = 32.0f;
+	static constexpr float  MaxWarpAmpM = 20.0f, MinWarpCellM = 5.0f, MaxWarpCellM = 200.0f, DefaultWarpCellM = 20.0f;
+
+	const FLandCoverClassTable& GetLandCoverTable() const { return LandCoverTable; }
 
 	/** Rebuild the LUT when the band changes and the material table when thermal.materials changes. */
 	void Configure(const FCamSimConfig::FThermalConfig& Cfg, float BandLoUm, float BandHiUm);
@@ -77,6 +99,11 @@ private:
 	FBandRadiance         Band;
 	FThermalMaterialTable Materials;
 	FThermalModel         Model;
+	FLandCoverClassTable  LandCoverTable;
 	TArray<FString>       PendingWarnings;   // material table errors, reported by the next Build
 	TSet<FString>         WarnedMaterials;
+	// Land-cover warp anchor (ROADMAP 4B): the session's first valid window centre; reset when thermal.land_cover.dir changes.
+	bool                  bWarpAnchor = false;
+	double                WarpAnchorLatDeg = 0.0;
+	double                WarpAnchorLonDeg = 0.0;
 };

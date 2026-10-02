@@ -106,6 +106,7 @@ bool FThermalModel::Update(const FThermalSite& NewSite, const FThermalMaterialTa
 		const FThermalMaterial& M = Materials.Get(C);
 		FClass& Out = Classes[C];
 		Out.bWater  = M.Source == EThermalTemperatureSource::Water;
+		Out.bSnow   = M.Source == EThermalTemperatureSource::Snow;
 		Out.H       = ExchangeCoefficient(Site, M);
 		Out.Inertia = M.ThermalInertia;
 		if (Out.bWater) continue;
@@ -128,5 +129,6 @@ double FThermalModel::TemperatureK(int32 Class, double LocalSolarSec, double Wat
 	{
 		return WaterTempK + WaterSwingK * FMath::Cos(Omega * (LocalSolarSec - AirPeakHour * 3600.0));
 	}
-	return Response(C.F, C.H, C.Inertia, LocalSolarSec);
+	const double T = Response(C.F, C.H, C.Inertia, LocalSolarSec);
+	return C.bSnow ? FMath::Min(T, SnowMaxK) : T;
 }

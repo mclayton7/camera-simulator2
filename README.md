@@ -193,6 +193,10 @@ camsim/
             └── FFmpeg/             FFmpeg headers + static libs
 ```
 
+## Data attribution
+
+- Land cover for thermal IR (`unreal_project/CamSimTest/Content/NonUFS/LandCover`, ROADMAP 4B): © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium. Licence: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Source: [esa-worldcover.org](https://esa-worldcover.org).
+
 ## Links
 
 - [CIGI Class Library (CCL)](https://github.com/Hadron/cigi-ccl)

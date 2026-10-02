@@ -2,15 +2,15 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "pillow"]
 # ///
-"""Thermal IR acceptance check (ROADMAP 4A): MWIR / LWIR at noon and 02:00 with the DIS truck + boat.
+"""Thermal IR acceptance check (ROADMAP 4A, 4B gates i-m): MWIR / LWIR at noon and 02:00 with the DIS truck + boat.
 
 Usage: uv run scripts/thermal_check.py [--band mwir|lwir|both] [--out DIR]
-                                       [--runs bands,hd,eo] [--check-only]
+                                       [--runs bands,hd,eo,lcoff,pan] [--check-only]
   caffeinate -ims uv run scripts/thermal_check.py --band both
   (caffeinate: a host that sleeps mid-run freezes CamSim and spoils the frame times)
 
 21 December 2026 at the Presidio, San Francisco: solar noon = 20:10 UTC (sun elevation
-28.8 deg), 02:00 local = 10:10 UTC. Every launch is headless (macOS, local build, unicast to
+28.8 deg), 02:00 local = 10:10 UTC. Every launch is headless (macOS or Linux, local build, unicast to
 127.0.0.1), with DIS on and `send_dis_test.py both` running; the camera is driven over CIGI
 (the vehicles' paths are deterministic, so the camera predicts where they are). IR is CIGI
 Sensor Control sensor 1; the IR preset comes from CAMSIM_IR_PRESET.
@@ -25,7 +25,18 @@ Launches (--runs):
            nadir_boat    nadir over the boat, 330 m up, 30 deg FOV (10, info)
            oblique_truck (noon only) 45 deg down from 233 m east of the truck, 25 deg FOV:
                          its shadow (cast north at noon) is beside it, not behind it (10)
+           nadir_mixed   (ROADMAP 4B) nadir over the Presidio land-cover mix
+                         (37.7935, -122.4600), 800 m up, 40 deg FOV (10)
+           mixed_eo      (noon only) the nadir_mixed pose seen by the EO sensor (sensor 0,
+                         3 frames): the greenness masks for (i) and (j)
   hd     mwir_cooled at 1920x1080 (CAMSIM_CAPTURE_WIDTH/HEIGHT), noon, nadir_truck for 20 s
+  lcoff  one per band, CAMSIM_THERMAL_LAND_COVER_ENABLED=0 (4A thermal), night, nadir_mixed:
+         the baseline for (k)
+  pan    mwir_cooled, noon, CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION=0.02 (409.6 m), nadir
+         600 m up over MIXED_CENTER panning east 1.2 km and back at 1 km/min for 220 s (no
+         snapshots: frame stats only), so the land-cover window re-centres several times;
+         then the same pan with CAMSIM_THERMAL_LAND_COVER_ENABLED=0 (mwir_pan_lcoff), the
+         frame-time control for (l2)
   eo     two EO launches (sensor 0), noon, static nadir over the truck loop: thermal default
          (enabled) and CAMSIM_THERMAL_ENABLED=0; the first also takes the coast view as the
          EO baseline for the coastline shimmer ratio
@@ -36,8 +47,9 @@ OUT/shots/, a region overlay to OUT/overlays/ (red / cyan = the two compared reg
 the COCO box), all frames to OUT/<run>/frames/<time>_<view>.npz.
 
 Checks (spec "Testing"). Exit 0 only when every expected (check, band, time) row exists and
-passes: a, b, c, d, e, h per selected band when `bands` is in --runs, f when `hd` is, g when
-`eo` is (so `--runs bands` alone can exit 0; f and g are then not expected). A missing
+passes: a, b, c, d, e, h, i, j per selected band when `bands` is in --runs, k per band when
+`bands` and `lcoff` are, l1 and l2 when `pan` is, f when `hd` is, g when `eo` is (so `--runs
+bands` alone can exit 0; f, g, k, l1, l2 are then not expected). A missing
 row (a view with no frames, an absent run) fails:
   (a) night nadir_truck: mean Y in [60, 180] and < 5 % of pixels at Y <= 16
   (b) night nadir_truck: truck box mean Y >= ring (box dilated 2x minus the box) mean + 3 DN
@@ -55,6 +67,27 @@ row (a view with no frames, an absent run) fails:
       the EO baseline is printed beside it, info). The truck box-boundary ratio is printed
       too, labelled motion-contaminated: the truck moves against its box, so it is not a
       shimmer measure
+  (i) noon nadir_mixed (ROADMAP 4B): non-vegetation - vegetation mean Y >= +3 DN (white-hot:
+      vegetation cooler). Masks from the noon mixed_eo frame: excess green (2g - r - b) / (r + g
+      + b) > 0.06 = vegetation, < 0.02 = non-vegetation ground (minus water-blue and Y < 30 DN
+      shadow), central 60 %, eroded 2 px, entity boxes removed; IR temporal mean of 10 frames
+  (j) night nadir_mixed: the same with the same (noon EO) masks, >= +2 DN
+  (k) night nadir_mixed: visible class structure (ruling S12). Temporal mean, 3 x 3 median
+      (defect pixels), band-passed to ground scales 15-150 m (box(15 m / GSD) - box(150 m /
+      GSD), GSD from 800 m and 40 deg), spatial std over the central 60 % with entities masked:
+      land cover on >= 3 x the lcoff launch's at the same pose. The 33 px high-pass std and its
+      3 x 3-median variant are info rows (detector noise dominates them on the flat 4A frame)
+  (l1) pan: per land-cover window re-centre (window id change in frame stats), max wall_ms
+      within 15 frames minus the pan's median wall_ms; the median over re-centres <= 2 ms,
+      with >= 3 re-centres (the raw max is an info row)
+  (l2) pan: per re-centre, max wall_ms within 15 frames minus the max wall_ms of the
+      land-cover-off control pan over the same view-time span; the max <= 5 ms
+  (m) INFO ONLY (not gated): night nadir_mixed (ROADMAP 4B Task 13) land-cover window grid. On the
+      temporal-mean frame (central 60 %, entity boxes masked), the 2D power spectrum's mean in a
+      band around the grid fundamental (period 10 m / GSD px, GSD from 800 m and 40 deg; along
+      each image axis, |f - f0| <= 0.15 f0) over the mean of the two neighbouring bands of equal
+      width (~1 = no peak). It was gated <= 2, but cannot tell a visibly blocky frame from a fixed
+      one (random block fields have sinc zeros at the fundamental), so it is reported only
 """
 
 from __future__ import annotations
@@ -106,6 +139,33 @@ SHIMMER_RATIO = 2.0
 # below it, so a quieter detector (MWIR at noon: 0.19 DN) must not inflate the edge ratio.
 SNAPSHOT_QUANT_STD_DN = 1.0 / math.sqrt(12.0)
 MIN_PIXELS = 50
+
+# ROADMAP 4B Task 13, gate (m): no visible land-cover window grid at night.
+MIXED_CENTER = (37.7935, -122.4600)  # Presidio interior: forest, lawns, roads, buildings, no open water
+MIXED_UP_M = 800.0  # above the truck ground (dvc.TRUCK_GROUND_HAE)
+MIXED_FOV = 40.0
+CENTRAL = 0.6  # central 60 % of the frame (IR optics: distortion and vignetting grow outwards)
+GRID_TEXEL_M = 10.0  # land-cover window texel
+GRID_BAND = 0.15  # band half-width as a fraction of the grid fundamental (the terrain height is not known exactly)
+GRID_PEAK_RATIO = 2.0  # (m, info only) fundamental band / neighbouring bands; the former gate
+
+# ROADMAP 4B land-cover gates (spec "Testing", i-l). MIXED_CENTER / MIXED_UP_M / MIXED_FOV / CENTRAL above.
+VEG_NOON_DN = 3.0  # (i) noon: non-vegetation - vegetation >= +3 DN (white-hot: vegetation cooler)
+VEG_NIGHT_DN = 2.0  # (j) night: non-vegetation (built-up / bare) - vegetation >= +2 DN
+STRUCTURE_RATIO = 3.0  # (k) night class-scale band-pass std, land cover on / off (ruling S12)
+STRUCTURE_LO_M, STRUCTURE_HI_M = 15.0, 150.0  # (k) band: ground scales of land-cover regions
+RECENTRE_MEDIAN_MS = 2.0  # (l1) median over re-centres of (max wall_ms near it - pan median)
+RECENTRE_EXCESS_MS = 5.0  # (l2) max over re-centres of (max wall_ms near it - control max at the same view time)
+MIN_RECENTRES = 3
+RECENTRE_RADIUS = 15  # frames either side of a re-centre
+EXG_VEG = 0.06  # EO display RGB excess green above this: vegetation
+EXG_NONVEG = 0.02  # ... below this: non-vegetation ground (neutral grey has ExG = 0)
+HIGHPASS_K = 33
+PAN_UP_M = 600.0
+PAN_LEG_M = 1200.0
+PAN_SPEED_MPS = 1000.0 / 60.0  # the spec's 1 km/min
+PAN_HOLD_S = 220.0  # > 1.5 triangle periods: >= 4 re-centres whatever the pan phase at the view start (150 s gave 3)
+PAN_RECENTRE_FRACTION = "0.02"  # 409.6 m: re-centres every ~25 s at 1 km/min (the default 25 % needs > 5 min)
 
 # Fixed-pose regions as fractions of the image height (coast) / rows (sky).
 COAST_R = (0.26, 0.40)  # radius band from the image centre
@@ -332,13 +392,222 @@ def aligned_crops(
     return np.stack(out), [cw / 2.0 - bw / 2.0, ch / 2.0 - bh / 2.0, bw, bh]
 
 
+def central_mask(shape: tuple[int, int], frac: float = CENTRAL) -> np.ndarray:
+    h, w = shape
+    y0, x0 = round(h * (1.0 - frac) / 2.0), round(w * (1.0 - frac) / 2.0)
+    m = np.zeros(shape, bool)
+    m[y0 : h - y0, x0 : w - x0] = True
+    return m
+
+
+def nadir_gsd_m(up_m: float, fov_deg: float, width_px: int) -> float:
+    """Ground sample distance (m / px) of a nadir view at the image centre."""
+    return 2.0 * up_m * math.tan(math.radians(fov_deg / 2.0)) / width_px
+
+
+def grid_period_px(
+    up_m: float, fov_deg: float, width_px: int, texel_m: float = GRID_TEXEL_M
+) -> float:
+    """Image period of the land-cover window grid in a nadir view: texel / GSD."""
+    return texel_m / nadir_gsd_m(up_m, fov_deg, width_px)
+
+
+def grid_peak_ratio(
+    y: np.ndarray, mask: np.ndarray, period_px: float, band: float = GRID_BAND
+) -> tuple[float, float]:
+    """Gate (m): (x, y) ratios of the mean power in a band around the grid fundamental f0 = 1 / period_px along each
+    image axis (|f_axis| in f0 (1 +- band), |f_other| <= band f0) to the mean power of the two neighbouring bands of equal
+    width (f0 (1 - 3 band) .. f0 (1 - band) and f0 (1 + band) .. f0 (1 + 3 band)). Pixels outside mask (entities, the
+    border) are set to the masked mean; the mask's bounding box is Hann-windowed. ~1: no grid; nan: empty mask."""
+    if mask.sum() < MIN_PIXELS:
+        return float("nan"), float("nan")
+    rows, cols = np.nonzero(mask)
+    r0, r1, c0, c1 = rows.min(), rows.max() + 1, cols.min(), cols.max() + 1
+    crop = y[r0:r1, c0:c1].astype(np.float64)
+    m = mask[r0:r1, c0:c1]
+    mean = crop[m].mean()
+    crop = np.where(m, crop, mean) - mean
+    h, w = crop.shape
+    power = np.abs(np.fft.fft2(crop * np.outer(np.hanning(h), np.hanning(w)))) ** 2
+    fy = np.abs(np.fft.fftfreq(h))[:, None] * np.ones((1, w))
+    fx = np.abs(np.fft.fftfreq(w))[None, :] * np.ones((h, 1))
+    f0 = 1.0 / period_px
+    hw = band * f0
+
+    def ratio(along: np.ndarray, across: np.ndarray) -> float:
+        def mean_in(lo: float, hi: float) -> float:
+            sel = (along >= lo) & (along < hi) & (across <= hw)
+            return float(power[sel].mean()) if sel.any() else float("nan")
+
+        centre = mean_in(f0 - hw, f0 + hw)
+        sides = 0.5 * (mean_in(f0 - 3 * hw, f0 - hw) + mean_in(f0 + hw, f0 + 3 * hw))
+        return centre / sides if sides > 0 else float("nan")
+
+    return ratio(fx, fy), ratio(fy, fx)
+
+
+def exg(rgb: np.ndarray) -> np.ndarray:
+    """Excess green of a display RGB image in chromatic coordinates: (2g - r - b) / (r + g + b)."""
+    f = rgb.astype(np.float32) / 255.0
+    return (2.0 * f[..., 1] - f[..., 0] - f[..., 2]) / (f.sum(axis=-1) + 1e-6)
+
+
+def erode(mask: np.ndarray, r: int) -> np.ndarray:
+    """Binary erosion by a (2r + 1)^2 square; pixels within r of the border are cleared."""
+    if r <= 0:
+        return mask.copy()
+    h, w = mask.shape
+    inner = np.ones((h - 2 * r, w - 2 * r), bool)
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            inner &= mask[r + dy : h - r + dy, r + dx : w - r + dx]
+    out = np.zeros_like(mask)
+    out[r : h - r, r : w - r] = inner
+    return out
+
+
+def greenness_masks(rgb: np.ndarray, erode_px: int = 2) -> tuple[np.ndarray, np.ndarray]:
+    """(vegetation, non-vegetation ground) from an EO frame: ExG > EXG_VEG / ExG < EXG_NONVEG; non-vegetation excludes
+    water-blue (b > g, b > r) and deep shadow (Y < 30 DN). Central region only, eroded (EO/IR distortion differ)."""
+    e = exg(rgb)
+    f = rgb.astype(np.float32)
+    blue = (f[..., 2] > f[..., 1]) & (f[..., 2] > f[..., 0])
+    c = central_mask(rgb.shape[:2])
+    veg = erode((e > EXG_VEG) & c, erode_px)
+    non = erode((e < EXG_NONVEG) & ~blue & (y_from_rgb(rgb) >= 30.0) & c, erode_px)
+    return veg, non
+
+
+def veg_contrast(y: np.ndarray, veg: np.ndarray, non: np.ndarray) -> float:
+    """Non-vegetation minus vegetation mean Y (white-hot: > 0 = vegetation cooler); nan if a region is too small."""
+    if veg.sum() < MIN_PIXELS or non.sum() < MIN_PIXELS:
+        return float("nan")
+    return region_mean(y, non) - region_mean(y, veg)
+
+
+def box_blur(y: np.ndarray, k: int) -> np.ndarray:
+    """k x k box mean (k odd), edges replicated, through an integral image."""
+    r = k // 2
+    h, w = y.shape
+    p = np.pad(y.astype(np.float64), r, mode="edge")
+    s = np.pad(p.cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+    tot = s[k : k + h, k : k + w] - s[0:h, k : k + w] - s[k : k + h, 0:w] + s[0:h, 0:w]
+    return (tot / (k * k)).astype(np.float32)
+
+
+def median3(y: np.ndarray) -> np.ndarray:
+    """3 x 3 median (edges replicated): removes isolated defect pixels."""
+    h, w = y.shape
+    p = np.pad(y.astype(np.float32), 1, mode="edge")
+    return np.median(np.stack([p[dy : dy + h, dx : dx + w] for dy in range(3) for dx in range(3)]), axis=0)
+
+
+def highpass_std(y: np.ndarray, mask: np.ndarray, k: int = HIGHPASS_K) -> float:
+    """Spatial std of Y minus its k x k box mean over mask: structure, not vignetting or AGC level."""
+    if mask.sum() < MIN_PIXELS:
+        return float("nan")
+    hp = y.astype(np.float32) - box_blur(y, k)
+    return float(hp[mask].std())
+
+
+def band_px(gsd_m: float, lo_m: float = STRUCTURE_LO_M, hi_m: float = STRUCTURE_HI_M) -> tuple[int, int]:
+    """(lo, hi) odd box sizes in px for a band-pass of ground scales lo_m..hi_m at gsd_m."""
+    return int(round(lo_m / gsd_m)) | 1, int(round(hi_m / gsd_m)) | 1
+
+
+def class_structure_std(y: np.ndarray, mask: np.ndarray, lo_px: int, hi_px: int) -> float:
+    """Gate (k): spatial std over mask of a 3 x 3 median (defect pixels out) band-passed between box sizes lo_px and
+    hi_px (box(lo) - box(hi)): land-cover-scale structure, without pixel noise / FPN (below lo) or vignetting (above
+    hi). nan for a small mask."""
+    if mask.sum() < MIN_PIXELS:
+        return float("nan")
+    m = median3(y)
+    return float((box_blur(m, lo_px) - box_blur(m, hi_px))[mask].std())
+
+
+def pan_offset_m(t: float, leg_m: float = PAN_LEG_M, speed: float = PAN_SPEED_MPS) -> float:
+    """East offset of the gate (l) pan: a triangle wave 0 -> leg -> 0 at `speed` m/s."""
+    period = 2.0 * leg_m / speed
+    ph = (t % period) / period
+    return leg_m * (2.0 * ph if ph < 0.5 else 2.0 * (1.0 - ph))
+
+
+def window_events(rows: list[dict]) -> list[int]:
+    """Row indices where the land-cover window id changes from one nonzero id to another (re-centres)."""
+    ev, prev = [], 0
+    for i, r in enumerate(rows):
+        w = int(r.get("land_cover_window") or 0)
+        if w and prev and w != prev:
+            ev.append(i)
+        if w:
+            prev = w
+    return ev
+
+
+def recentre_spike(rows: list[dict], events: list[int], radius: int = RECENTRE_RADIUS) -> tuple[float, float]:
+    """(max wall_ms within `radius` rows of a re-centre minus the median wall_ms of all rows, that median)."""
+    wall = [float(r["wall_ms"]) for r in rows]
+    if not events or not wall:
+        return float("nan"), float("nan")
+    base = float(np.median(wall))
+    near = [wall[j] for i in events for j in range(max(0, i - radius), min(len(wall), i + radius + 1))]
+    return max(near) - base, base
+
+
+def per_recentre_spikes(rows: list[dict], events: list[int], radius: int = RECENTRE_RADIUS) -> list[float]:
+    """Gate (l1): for each re-centre, max wall_ms within `radius` rows minus the median wall_ms of all rows."""
+    return [recentre_spike(rows, [e], radius)[0] for e in events]
+
+
+def control_excess(
+    rows: list[dict],
+    t0: float,
+    events: list[int],
+    ctrl_rows: list[dict],
+    ctrl_t0: float,
+    radius: int = RECENTRE_RADIUS,
+) -> list[float]:
+    """Gate (l2): for each re-centre, max wall_ms within `radius` rows minus the max wall_ms of the control run (land
+    cover off, same pan) over the same view-time span (t - t0 vs t - ctrl_t0). nan where the control has no frames."""
+    out = []
+    for e in events:
+        lo, hi = max(0, e - radius), min(len(rows) - 1, e + radius)
+        on = max(float(r["wall_ms"]) for r in rows[lo : hi + 1])
+        a, b = rows[lo]["t"] - t0, rows[hi]["t"] - t0
+        ctrl = [float(r["wall_ms"]) for r in ctrl_rows if a <= r["t"] - ctrl_t0 <= b]
+        out.append(on - max(ctrl) if ctrl else float("nan"))
+    return out
+
+
+def run_group(label: str) -> str:
+    if label.startswith("mwir_pan"):
+        return "pan"  # the pan and its land-cover-off control
+    if label in BANDS:
+        return "bands"
+    if label == "mwir_1080p":
+        return "hd"
+    if label.startswith("eo_"):
+        return "eo"
+    if label.endswith("_lcoff"):
+        return "lcoff"
+    raise ValueError(label)
+
+
+def run_band(label: str) -> str | None:
+    if label in BANDS:
+        return label
+    if label.endswith("_lcoff") and not label.startswith("mwir_pan"):
+        return label[: -len("_lcoff")]
+    return None
+
+
 Row = tuple[str, str, str]  # (check, band, time)
 
 
 def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
-    """Every gate row the selected bands and runs must produce. a, b, c, d, e, h come from the
-    band runs (only when `bands` is selected); f from `hd` and g from `eo`, each expected
-    only when that run group is selected (so `--runs bands` can pass on its own)."""
+    """Every gate row the selected bands and runs must produce. a-e, h, i, j come from the band runs; k needs the band runs
+    and their land-cover-off twins (lcoff); l the pan run; f the hd run; g the eo runs. Each is expected only when its run
+    groups are selected (so `--runs bands` can pass on its own). (m) is info only, never expected."""
     rows: list[Row] = []
     if "bands" in runs:
         for b in bands:
@@ -351,7 +620,13 @@ def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
                 ("e", b, "noon"),
                 ("h", b, "night"),
                 ("h", b, "noon"),
+                ("i", b, "noon"),
+                ("j", b, "night"),
             ]
+    if "bands" in runs and "lcoff" in runs:
+        rows += [("k", b, "night") for b in bands]
+    if "pan" in runs:
+        rows += [("l1", "mwir", "noon"), ("l2", "mwir", "noon")]
     if "hd" in runs:
         rows.append(("f", "mwir", "noon"))
     if "eo" in runs:
@@ -419,7 +694,7 @@ def render_markdown(report: dict) -> str:
         return f"{v:.3f}" if isinstance(v, float) else str(v)
 
     lines = [
-        "# Thermal check (ROADMAP 4A)",
+        "# Thermal check (ROADMAP 4A/4B)",
         "",
         f"Result: **{'PASS' if report['passed'] else 'FAIL'}**  ",
         "  ".join(f"{k}: {v}" for k, v in report["meta"].items()),
@@ -465,6 +740,7 @@ class View:
     frames: int = 10
     cls: str | None = "truck"  # COCO class to pair with each frame
     hold_s: float = 0.0  # extra time on the view after capturing (frame-stats window)
+    sensor_id: int | None = None  # overrides the run's sensor (EO frame in an IR run)
 
 
 @dataclass
@@ -530,6 +806,21 @@ def _poses():
         "oblique_truck": oblique_on(
             233.0, 233.0, 25.0, 90.0
         ),  # margin for ground-height error
+        "nadir_mixed": static(  # ROADMAP 4B: land-cover mix (gates i, j, k, m)
+            scenario.Pose(
+                MIXED_CENTER[0],
+                MIXED_CENTER[1],
+                ground + MIXED_UP_M,
+                gimbal_pitch=-90.0,
+                fov_h=MIXED_FOV,
+            )
+        ),
+        "pan": lambda t: scenario.Pose(  # ROADMAP 4B gate (l): 1 km/min east and back
+            *sd.ne_to_latlon(MIXED_CENTER, 0.0, pan_offset_m(t)),
+            ground + PAN_UP_M,
+            gimbal_pitch=-90.0,
+            fov_h=MIXED_FOV,
+        ),
         "nadir_static": static(
             scenario.Pose(
                 c[0], c[1], ground + NADIR_UP_M, gimbal_pitch=-90.0, fov_h=NADIR_FOV
@@ -551,6 +842,9 @@ def build_runs(bands: list[str], wanted: set[str]) -> list[RunSpec]:
         ]
         if tod == "noon":
             v.append(View("oblique_truck", p["oblique_truck"], 10, "truck"))
+        v.append(View("nadir_mixed", p["nadir_mixed"], 10, "truck"))  # (i) noon, (j, k, m) night
+        if tod == "noon":
+            v.append(View("mixed_eo", p["nadir_mixed"], 3, None, sensor_id=0))  # greenness masks for (i) and (j)
         return v
 
     if "bands" in wanted:
@@ -563,6 +857,33 @@ def build_runs(bands: list[str], wanted: set[str]) -> list[RunSpec]:
                     ["night", "noon"],
                     band_views,
                     exec_cmds=["camsim.Thermal.Log 1"],
+                )
+            )
+    if "lcoff" in wanted:
+        for b in bands:
+            runs.append(
+                RunSpec(
+                    f"{b}_lcoff",
+                    {"CAMSIM_IR_PRESET": BANDS[b], "CAMSIM_THERMAL_LAND_COVER_ENABLED": "0"},
+                    1,
+                    ["night"],
+                    lambda tod: [View("nadir_mixed", p["nadir_mixed"], 10, "truck")],
+                )
+            )
+    if "pan" in wanted:
+        for label, extra in (("mwir_pan", {}), ("mwir_pan_lcoff", {"CAMSIM_THERMAL_LAND_COVER_ENABLED": "0"})):
+            runs.append(
+                RunSpec(
+                    label,
+                    {
+                        "CAMSIM_IR_PRESET": "mwir_cooled",
+                        "CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION": PAN_RECENTRE_FRACTION,
+                        **extra,
+                    },
+                    1,
+                    ["noon"],
+                    lambda tod: [View("pan", p["pan"], 0, None, hold_s=PAN_HOLD_S)],
+                    ml=False,
                 )
             )
     if "hd" in wanted:
@@ -689,8 +1010,8 @@ def run_once(spec: RunSpec, out: Path) -> dict:
     env.update(spec.env)
     first_tod = TIMES[spec.times[0]]
 
-    def apply(pose, tod: dict):
-        return dataclasses.replace(pose, sensor_id=spec.sensor_id, **tod)
+    def apply(pose, tod: dict, sensor: int | None = None):
+        return dataclasses.replace(pose, sensor_id=spec.sensor_id if sensor is None else sensor, **tod)
 
     rb.wait_port_free(int(rb.HEALTH.rsplit(":", 1)[1]))
     host = rb.Host()
@@ -727,7 +1048,7 @@ def run_once(spec: RunSpec, out: Path) -> dict:
             tod = TIMES[tod_label]
             for v in spec.views(tod_label):
                 print(f"[thermal] {spec.label}: {tod_label} {v.name}", flush=True)
-                tracker.pose_at = lambda t, v=v, tod=tod: apply(v.pose_at(t), tod)
+                tracker.pose_at = lambda t, v=v, tod=tod: apply(v.pose_at(t), tod, v.sensor_id)
                 time.sleep(2.0)
                 dvc.wait_tiles(stats, 60.0)
                 time.sleep(SETTLE_S)
@@ -1029,6 +1350,27 @@ def check_band(
                     )
                 )
 
+    # (m) night nadir over the land-cover mix: no distinct peak at the window-grid fundamental.
+    vd = views.get(("night", "nadir_mixed"))
+    if vd is not None:
+        period = grid_period_px(MIXED_UP_M, MIXED_FOV, vd.y.shape[2])
+        ent = entity_mask(vd)
+        mask = central_mask(vd.y.shape[1:]) & ~ent
+        mean_img = vd.y.astype(np.float32).mean(axis=0)
+        rx, ry = grid_peak_ratio(mean_img, mask, period)
+        r = max(rx, ry)
+        # Info only (fix round 1): the metric cannot tell the visibly blocky Task 10 build (0.68) from the fixed one; a
+        # random-valued block field has sinc zeros, not a peak, at the grid fundamental.
+        add(
+            info,
+            "m (grid peak ratio, info)",
+            r,
+            time_="night",
+            detail=f"x {rx:.2f}, y {ry:.2f} (~1 = no peak; was gated <= {GRID_PEAK_RATIO:g}) at period {period:.1f} px (10 m at {MIXED_UP_M:g} m, {MIXED_FOV:g} deg); "
+            f"{int(mask.sum())} px, entities masked ({int(ent.sum())} px)",
+        )
+        shots.append(overlay(out, vd, ~mask, None, None, len(vd.y) // 2))
+
     # (c) gate: sign flip.
     if "night" in coast_d and "noon" in coast_d:
         n, d = coast_d["night"], coast_d["noon"]
@@ -1071,6 +1413,92 @@ def check_band(
             ann = vd.anns[idx]
             sh, lit, _ = shadow_masks(vd.y.shape[1:], ann, elev, az)
             shots.append(overlay(out, vd, sh, lit, ann, idx))
+
+
+def entity_mask(vd: ViewData) -> np.ndarray:
+    """Union of the view's COCO boxes (1.5x) over its frames: entities are not terrain."""
+    m = np.zeros(vd.y.shape[1:], bool)
+    for a in vd.anns:
+        if a is not None:
+            m |= box_mask(m.shape, scale_box(a["bbox"], 1.5))
+    return m
+
+
+def check_land_cover(
+    out: Path, band: str, views: dict, off_views: dict, checks: list, info: list, shots: list
+) -> None:
+    """(i) noon and (j) night: non-vegetation minus vegetation IR mean (masks from the noon EO frame of the same pose);
+    (k) night high-pass std with land cover on / off (ROADMAP 4B)."""
+    eo = views.get(("noon", "mixed_eo"))
+    rgb = None
+    if eo is not None and Path(eo.rec["shot"]).exists():
+        rgb = np.asarray(Image.open(eo.rec["shot"]).convert("RGB"))
+    for tod, check, limit in (("noon", "i", VEG_NOON_DN), ("night", "j", VEG_NIGHT_DN)):
+        vd = views.get((tod, "nadir_mixed"))
+        if vd is None or rgb is None or rgb.shape[:2] != vd.y.shape[1:]:
+            continue  # the row stays missing: the gate fails
+        veg, non = greenness_masks(rgb)
+        ent = entity_mask(vd)
+        veg, non = veg & ~ent, non & ~ent
+        img = vd.y.astype(np.float32).mean(axis=0)
+        d = veg_contrast(img, veg, non)
+        checks.append(
+            {
+                "check": check,
+                "band": band,
+                "time": tod,
+                "value": d,
+                "threshold": f">= +{limit:g} DN (non-vegetation - vegetation)",
+                "pass": bool(d >= limit),  # NaN fails
+                "detail": f"vegetation {int(veg.sum())} px, mean {region_mean(img, veg):.1f}; "
+                f"non-vegetation {int(non.sum())} px, mean {region_mean(img, non):.1f}",
+            }
+        )
+        shots.append(overlay(out, vd, veg, non, None, len(vd.y) // 2))
+    on = views.get(("night", "nadir_mixed"))
+    off = off_views.get(("night", "nadir_mixed"))
+    if on is not None and off is not None and on.y.shape[1:] == off.y.shape[1:]:
+        mask = central_mask(on.y.shape[1:]) & ~entity_mask(on) & ~entity_mask(off)
+        y_on, y_off = on.y.astype(np.float32).mean(axis=0), off.y.astype(np.float32).mean(axis=0)
+        gsd = nadir_gsd_m(MIXED_UP_M, MIXED_FOV, on.y.shape[2])
+        lo, hi = band_px(gsd)
+        c_on, c_off = class_structure_std(y_on, mask, lo, hi), class_structure_std(y_off, mask, lo, hi)
+        ratio = c_on / max(c_off, 1e-6)
+        checks.append(
+            {
+                "check": "k",
+                "band": band,
+                "time": "night",
+                "value": ratio,
+                "threshold": f">= {STRUCTURE_RATIO:g}x land cover off",
+                "pass": bool(ratio >= STRUCTURE_RATIO),  # NaN fails
+                "detail": f"{STRUCTURE_LO_M:g}-{STRUCTURE_HI_M:g} m band-pass std (3x3 median, box {lo} - box {hi} px at "
+                f"{gsd:.3f} m/px) {c_on:.2f} DN vs {c_off:.2f} DN (4A), {int(mask.sum())} px",
+            }
+        )
+        shots.append(off.rec["shot"])
+        s_on, s_off = highpass_std(y_on, mask), highpass_std(y_off, mask)
+        info.append(
+            {
+                "check": "k high-pass (info)",
+                "band": band,
+                "time": "night",
+                "value": s_on / max(s_off, 1e-6),
+                "detail": f"{HIGHPASS_K} px high-pass std {s_on:.2f} DN vs {s_off:.2f} DN (detector noise dominates the 4A frame)",
+            }
+        )
+        # Info: the same after a 3 x 3 median (defect pixels are detector artefacts, identical on and off).
+        m_on, m_off = highpass_std(median3(y_on), mask), highpass_std(median3(y_off), mask)
+        info.append(
+            {
+                "check": "k (defects removed, info)",
+                "band": band,
+                "time": "night",
+                "value": m_on / max(m_off, 1e-6),
+                "detail": f"3x3 median, then high-pass std {m_on:.2f} DN vs {m_off:.2f} DN",
+            }
+        )
+        shots.append(off.rec["shot"])
 
 
 def coast_shimmer(vd: ViewData) -> dict | None:
@@ -1123,6 +1551,14 @@ def check_all(
                 views[(rec["time"], rec["view"])] = vd
                 shots.append(rec["shot"])
         check_band(out, band, views, checks, info, shots)
+        off_views = {}
+        off_run = results.get(f"{band}_lcoff")
+        if off_run:
+            for rec in off_run["views"]:
+                vd = load_view(out, off_run, rec)
+                if vd is not None:
+                    off_views[(rec["time"], rec["view"])] = vd
+        check_land_cover(out, band, views, off_views, checks, info, shots)
         rows = load_rows(out / band / "frames.jsonl")
         th = [r["thermal_gpu_ms"] for r in rows if r.get("thermal_gpu_ms", -1) > 0]
         info.append(
@@ -1148,6 +1584,64 @@ def check_all(
                     "time": "-",
                     "value": "-",
                     "detail": s,
+                }
+            )
+
+    # (l) no frame-time spike when the land-cover window re-centres during a 1 km/min pan (ruling S12): l1 the median
+    # per-re-centre spike, l2 each re-centre against the land-cover-off control pan at the same view time.
+    run, ctrl = results.get("mwir_pan"), results.get("mwir_pan_lcoff")
+
+    def pan_rows(r: dict) -> tuple[list[dict], float]:
+        w = r["views"][0]
+        rows = [x for x in load_rows(out / r["label"] / "frames.jsonl") if w["t0"] <= x["t"] <= w["t1"] and not x.get("cut")]
+        return rows, w["t0"]
+
+    if run:
+        rows, t0 = pan_rows(run)
+        ev = window_events(rows)
+        spike, base = recentre_spike(rows, ev)
+        per = per_recentre_spikes(rows, ev)
+        m = med(per)
+        enough = len(ev) >= MIN_RECENTRES
+        checks.append(
+            {
+                "check": "l1",
+                "band": "mwir",
+                "time": "noon",
+                "value": m,
+                "threshold": f"median <= {RECENTRE_MEDIAN_MS:g} ms over the pan median, >= {MIN_RECENTRES} re-centres",
+                "pass": bool(enough and m <= RECENTRE_MEDIAN_MS),
+                "detail": f"{len(ev)} re-centres in {len(rows)} frames; per re-centre "
+                + ", ".join(f"{x:+.2f}" for x in per)
+                + f" ms; median wall {base:.2f} ms",
+            }
+        )
+        quiet = [float(r["wall_ms"]) for i, r in enumerate(rows) if all(abs(i - e) > RECENTRE_RADIUS for e in ev)]
+        info.append(
+            {
+                "check": "l max spike (info)",
+                "band": "mwir",
+                "time": "noon",
+                "value": spike,
+                "detail": f"max wall_ms near any re-centre - median; max away from re-centres "
+                f"{max(quiet, default=float('nan')) - base:+.2f} ms (background hitches)",
+            }
+        )
+        if ctrl:
+            c_rows, c_t0 = pan_rows(ctrl)
+            ex = control_excess(rows, t0, ev, c_rows, c_t0)
+            worst = max(ex) if ex and not any(math.isnan(x) for x in ex) else float("nan")
+            checks.append(
+                {
+                    "check": "l2",
+                    "band": "mwir",
+                    "time": "noon",
+                    "value": worst,
+                    "threshold": f"max <= {RECENTRE_EXCESS_MS:g} ms over the land-cover-off control, >= {MIN_RECENTRES} re-centres",
+                    "pass": bool(enough and worst <= RECENTRE_EXCESS_MS),  # NaN fails
+                    "detail": "per re-centre (max near it - control max at the same view time) "
+                    + ", ".join(f"{x:+.2f}" for x in ex)
+                    + f" ms; control {len(c_rows)} frames, max window id {max((int(r.get('land_cover_window') or 0) for r in c_rows), default=0)}",
                 }
             )
 
@@ -1245,7 +1739,7 @@ def main() -> int:
     ap.add_argument("--band", choices=["mwir", "lwir", "both"], default="both")
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
-        "--runs", default="bands,hd,eo", help="comma list of: bands, hd, eo"
+        "--runs", default="bands,hd,eo,lcoff,pan", help="comma list of: bands, hd, eo, lcoff, pan"
     )
     ap.add_argument(
         "--check-only", action="store_true", help="re-run the checks on --out"
@@ -1260,20 +1754,15 @@ def main() -> int:
     wanted = set(filter(None, a.runs.split(",")))
 
     results: dict[str, dict] = {}
-    for spec in build_runs(bands, {"bands", "hd", "eo"}):
-        if spec.label not in bands and spec.label in BANDS:
+    for spec in build_runs(bands, {"bands", "hd", "eo", "lcoff", "pan"}):
+        band = run_band(spec.label)
+        if band is not None and band not in bands:
             continue
-        group = (
-            "bands"
-            if spec.label in BANDS
-            else ("hd" if spec.label == "mwir_1080p" else "eo")
-        )
+        group = run_group(spec.label)
         if group in wanted and not a.check_only:
             results[spec.label] = run_once(spec, out)
         elif (out / spec.label / "run.json").exists():
-            results[spec.label] = json.loads(
-                (out / spec.label / "run.json").read_text()
-            )
+            results[spec.label] = json.loads((out / spec.label / "run.json").read_text())
 
     checks, info, shots = check_all(out, results, bands)
     sha = subprocess.run(

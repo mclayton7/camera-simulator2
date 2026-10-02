@@ -19,7 +19,6 @@ Texture2D<float4>  SceneColor;
 Texture2D<float>   SceneDepth;
 Texture2D<float>   CustomDepth;
 Texture2D<uint2>   CustomStencil;   // FSceneTextureUniformParameters::CustomStencilTexture's type
-Texture2D<float4>  BaseColor;       // GBufferC (1x1 black dummy when UseBaseColor == 0: never loaded then)
 #if WRITE_SCENE_COLOR
 int2  OutputMin;                    // OutSceneColor texel of output pixel (0, 0)
 RWTexture2D<float4> OutSceneColor;
@@ -61,14 +60,20 @@ void ThermalCS(uint3 Id : SV_DispatchThreadID)
 	S.DeviceZ = SceneDepth.Load(int3(T, 0));
 	S.CustomZ = CustomDepth.Load(int3(T, 0));
 	S.Stencil = CustomStencil.Load(int3(T, 0)) STENCIL_COMPONENT_SWIZZLE & 0xFFu;
-	S.Color = SceneColor.Load(int3(ColorViewMin + P, 0)).rgb * ColorScale();
+	const float3 RawColor = SceneColor.Load(int3(ColorViewMin + P, 0)).rgb;
+	S.Color = RawColor * ColorScale();
 	// Guarded: T indexes the depth rect, outside the 1x1 dummy (an out-of-bounds Load is undefined without robustness).
 	S.Base = float3(0.0, 0.0, 0.0);
+	S.BaseTexel = T;
+	S.BaseMin = DMin;
+	S.BaseMax = DMin + DSize - 1;
 	if (UseBaseColor != 0u)
 	{
 		S.Base = BaseColor.Load(int3(T, 0)).rgb;
 	}
-	const float L = EvaluatePixel(S);
+	// Test the loaded bits, not the scaled colour: Vulkan (NVIDIA) folds the bit test after the multiply away.
+	const bool bBadColor = IsNonFinite(RawColor.x) || IsNonFinite(RawColor.y) || IsNonFinite(RawColor.z);
+	const float L = bBadColor ? LutRadiance(TairK) : EvaluatePixel(S);
 #if WRITE_SCENE_COLOR
 	OutSceneColor[OutputMin + P] = float4(L, L, L, 1.0);
 #else

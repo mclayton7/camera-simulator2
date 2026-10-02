@@ -56,6 +56,49 @@ struct FThermalFrameParams
 	float  KFastScale     = 1.0f;              // 0: fast term off (no base colour / no sun light: Task 1 fallback)
 	uint32 bBaseColorSrgb = 0;                 // 1: GBufferC values are sRGB-encoded (Task 1 SRGB_ENCODED)
 
+	// Land cover (ROADMAP 4B). Terrain pixels inside the camera-centred window blend the class data of the four nearest
+	// WorldCover texels (refined per pixel by the base colour); outside it, or with bLandCover = 0, they are TerrainClass (4A).
+	static constexpr int32 NumLandCoverCodes = 256;
+	static constexpr uint8 LandCoverFamilyNone = 0, LandCoverFamilyVegetation = 1, LandCoverFamilyBuiltUp = 2, LandCoverFamilyBare = 3;
+	uint8     LandCoverClass[NumLandCoverCodes]  = {};   // WorldCover code -> class index
+	uint8     LandCoverFamily[NumLandCoverCodes] = {};   // WorldCover code -> LandCoverFamily*
+	uint32    bLandCover          = 0;
+	uint32    LandCoverWindowId   = 0;                   // FLandCoverWindowData::Id these mapping values belong to (0 = none)
+	// Window coordinates of a translated-world point Pw (cm): E = dot(Pw, LandCoverEast) / 100 + LandCoverCamOffsetM.X,
+	// N = dot(Pw, LandCoverNorth) / 100 + LandCoverCamOffsetM.Y (metres; +E east, +N north). East/North are unit,
+	// dimensionless, expressed in UE world axes (translated world shares them) at the window centre; the offset comes from
+	// CamSimLandCover::GeodeticToWindowEN(camera) (doubles on the CPU), never from a separate tangent-plane transform.
+	// Texel (x, y) centre: E = (x + 0.5 - T/2) TexelM, N = (T/2 - y - 0.5) TexelM (row 0 north, column 0 west, row-major).
+	FVector3f LandCoverEast       = FVector3f(1.0f, 0.0f, 0.0f);    // unit East at the window centre, UE world axes
+	FVector3f LandCoverNorth      = FVector3f(0.0f, -1.0f, 0.0f);   // unit North (UE +Y is south at the georeference origin)
+	FVector2f LandCoverCamOffsetM = FVector2f::ZeroVector;          // camera (East, North) from the window centre, m (CPU doubles)
+	float     LandCoverTexelM     = 10.0f;
+	uint32    LandCoverTexels     = 2048;
+	// Geo-anchored domain warp of the lookup (Task 13: breaks the visible 10 m grid). Ground coordinates of window point (E, N):
+	// G = LandCoverAnchorM + LandCoverAnchorScale * (E, N), i.e. CamSimLandCover::GeodeticToWindowEN(session anchor, point)
+	// exactly (both mappings are linear in lat/lon), so G is fixed to the ground across re-centres. The lookup position is
+	// (E, N) + LandCoverWarpAmpM * (n1(G), n2(G)), n1, n2 in [-1, 1]: smoothstep value noise of the PCG hash on a lattice
+	// of LandCoverWarpCellM (CamSimHash::LandCoverWarpStream). LandCoverWarpAmpM <= 0: no warp (the struct default).
+	FVector2f LandCoverAnchorM     = FVector2f::ZeroVector;   // window centre from the session anchor, m (CPU doubles)
+	FVector2f LandCoverAnchorScale = FVector2f(1.0f, 1.0f);   // (N cos phi)_anchor / (N cos phi)_centre, M_anchor / M_centre
+	float     LandCoverWarpAmpM    = 0.0f;
+	float     LandCoverWarpCellM   = 20.0f;
+	uint32    bLandCoverRefine    = 0;                   // base-colour refinement (needs the base colour, not sunlight)
+	float     VegIndexLo          = 0.05f;               // v = saturate((ExG - lo) / max(hi - lo, 1e-4))
+	float     VegIndexHi          = 0.20f;
+	float     AsphaltMaxLuma      = 0.12f;               // built-up concrete weight = saturate((BaseLum - max) / ramp + 0.5)
+	float     AsphaltRampLuma     = 0.04f;
+	// Vegetation index from a world-space blurred base colour (fix round 1: JPEG chroma blocks in the imagery): the centre texel
+	// and 4 diagonal taps (+R, +R), (-R, +R), (+R, -R), (-R, -R) (never on the centre's row or column, so an axis-aligned JPEG block
+	// edge flips one tap at a time), R = clamp(floor(VegBlurM * 100 / (Range_cm * BaseTexelAngle)
+	// + 0.5), 1, 32). The asphalt/concrete split stays on the centre texel. VegBlurM <= 0 or BaseTexelAngle <= 0: single tap.
+	float     VegBlurM            = 0.0f;                // thermal.land_cover.veg_blur_m
+	float     BaseTexelAngle      = 0.0f;                // radians per base-colour (render-resolution) texel; set on the render thread
+	uint32    VegetationClass     = 4;                   // refinement targets (FThermalMaterialTable indices)
+	uint32    BareSoilClass       = 11;
+	uint32    AsphaltClass        = 3;
+	uint32    ConcreteClass       = 5;
+
 	float InputScale = 1.0f;                   // multiplies scene colour; tests only (runtime also multiplies View.OneOverPreExposure)
 };
 

@@ -2,6 +2,7 @@
 
 #include "Thermal/ThermalFrameBuilder.h"
 #include "Thermal/ThermalSky.h"
+#include "Thermal/LandCoverGeometry.h"
 #include "Time/SimClock.h"
 
 static_assert(FThermalMaterialTable::MaxClasses == FThermalFrameParams::MaxClasses, "class table sizes must agree");
@@ -33,9 +34,18 @@ void FThermalFrameBuilder::Configure(const FCamSimConfig::FThermalConfig& Cfg, f
 	{
 		Band.Build(BandLoUm, BandHiUm);
 	}
-	if (!bConfigured || !(Config.Materials == Cfg.Materials))
+	const bool bMaterials = !bConfigured || !(Config.Materials == Cfg.Materials);
+	if (bMaterials)
 	{
 		PendingWarnings.Append(Materials.Build(Cfg.Materials));
+	}
+	if (bMaterials || !(Config.LandCover.Classes == Cfg.LandCover.Classes))
+	{
+		PendingWarnings.Append(LandCoverTable.Build(Cfg.LandCover.Classes, Materials));
+	}
+	if (bConfigured && Config.LandCover.Dir != Cfg.LandCover.Dir)
+	{
+		bWarpAnchor = false;   // new land-cover data: the next window starts a new warp session
 	}
 	Config = Cfg;
 	bConfigured = true;
@@ -147,4 +157,78 @@ void FThermalFrameBuilder::Build(const FThermalFrameInputs& In, FThermalFramePar
 	Out.SeaRadiusCm = static_cast<float>(GaussianRadiusM(In.CamLatDeg) * 100.0);
 	Out.WaterBandCm = static_cast<float>((WaterBandBaseM + FMath::Max(In.MaxWaveAmplitudeM, 0.0)) * 100.0);
 	Out.InputScale  = 1.0f;
+
+	// Land cover (ROADMAP 4B). The tables and thresholds are filled every frame; without an enabled, valid window the mapping
+	// fields are reset to their defaults and bLandCover = 0, so ThermalCS runs 4A's terrain path.
+	FMemory::Memcpy(Out.LandCoverClass, LandCoverTable.Class, sizeof(Out.LandCoverClass));
+	FMemory::Memcpy(Out.LandCoverFamily, LandCoverTable.Family, sizeof(Out.LandCoverFamily));
+	Out.VegetationClass  = FThermalMaterialTable::Vegetation;
+	Out.BareSoilClass    = FThermalMaterialTable::BareSoil;
+	Out.AsphaltClass     = FThermalMaterialTable::Asphalt;
+	Out.ConcreteClass    = FThermalMaterialTable::Concrete;
+	Out.VegIndexLo       = Config.LandCover.VegIndexLo;
+	Out.VegIndexHi       = Config.LandCover.VegIndexHi;
+	Out.AsphaltMaxLuma   = Config.LandCover.AsphaltMaxLuma;
+	Out.AsphaltRampLuma  = AsphaltRampLuma;
+	Out.VegBlurM         = FMath::IsFinite(Config.LandCover.VegBlurM) ? FMath::Clamp(Config.LandCover.VegBlurM, 0.0f, MaxVegBlurM) : 0.0f;
+	Out.bLandCoverRefine = In.bBaseColorAvailable ? 1u : 0u;   // not the fast term: base colour is valid at night too
+	const FThermalLandCoverInput& L = In.LandCover;
+	if (Config.LandCover.bEnabled && L.bValid && L.WindowId != 0u && L.Texels >= 2 && L.TexelM > 0.0f
+		&& CamSimLandCover::IsWindowAllowed(L.CentreLatDeg))
+	{
+		CamSimLandCover::FWindowSpec Spec;
+		Spec.CentreLatDeg = L.CentreLatDeg;
+		Spec.CentreLonDeg = L.CentreLonDeg;
+		Spec.Texels = L.Texels;
+		Spec.TexelM = L.TexelM;
+		const FVector2D Off = CamSimLandCover::GeodeticToWindowEN(Spec, In.CamLatDeg, In.CamLonDeg);   // doubles
+		Out.bLandCover          = 1u;
+		Out.LandCoverWindowId   = L.WindowId;
+		Out.LandCoverEast       = FVector3f(L.EastWorld);
+		Out.LandCoverNorth      = FVector3f(L.NorthWorld);
+		Out.LandCoverCamOffsetM = FVector2f(static_cast<float>(Off.X), static_cast<float>(Off.Y));
+		Out.LandCoverTexelM     = L.TexelM;
+		Out.LandCoverTexels     = static_cast<uint32>(L.Texels);
+
+		// Geo-anchored warp (Task 13). Ground coordinates G = anchor offset + scale * (E, N) equal
+		// GeodeticToWindowEN(session anchor, point) exactly (both mappings are linear in lat/lon), so the warp pattern is fixed
+		// to the ground across re-centres; doubles here, floats in the shader.
+		CamSimLandCover::FWindowSpec Anchor = Spec;
+		Anchor.CentreLatDeg = WarpAnchorLatDeg;
+		Anchor.CentreLonDeg = WarpAnchorLonDeg;
+		FVector2D AnchorM = bWarpAnchor ? CamSimLandCover::GeodeticToWindowEN(Anchor, L.CentreLatDeg, L.CentreLonDeg) : FVector2D::ZeroVector;
+		if (!bWarpAnchor || !FMath::IsFinite(AnchorM.X) || !FMath::IsFinite(AnchorM.Y)
+			|| FMath::Abs(AnchorM.X) > MaxWarpAnchorM || FMath::Abs(AnchorM.Y) > MaxWarpAnchorM)
+		{
+			bWarpAnchor = true;   // the session's first window (or one too far from the anchor): it becomes the anchor
+			WarpAnchorLatDeg = Anchor.CentreLatDeg = L.CentreLatDeg;
+			WarpAnchorLonDeg = Anchor.CentreLonDeg = L.CentreLonDeg;
+			AnchorM = FVector2D::ZeroVector;
+		}
+		const double CosA = FMath::Cos(FMath::DegreesToRadians(WarpAnchorLatDeg));
+		const double CosC = FMath::Cos(FMath::DegreesToRadians(L.CentreLatDeg));
+		const double ScaleE = (CamSimLandCover::PrimeVerticalRadiusM(WarpAnchorLatDeg) * CosA) / (CamSimLandCover::PrimeVerticalRadiusM(L.CentreLatDeg) * CosC);
+		const double ScaleN = CamSimLandCover::MeridionalRadiusM(WarpAnchorLatDeg) / CamSimLandCover::MeridionalRadiusM(L.CentreLatDeg);
+		const float Amp  = Config.LandCover.WarpAmplitudeM;
+		const float Cell = Config.LandCover.WarpCellM;
+		Out.LandCoverAnchorM     = FVector2f(static_cast<float>(AnchorM.X), static_cast<float>(AnchorM.Y));
+		Out.LandCoverAnchorScale = FVector2f(static_cast<float>(ScaleE), static_cast<float>(ScaleN));
+		Out.LandCoverWarpAmpM    = FMath::IsFinite(Amp) ? FMath::Clamp(Amp, 0.0f, MaxWarpAmpM) : 0.0f;
+		Out.LandCoverWarpCellM   = FMath::IsFinite(Cell) ? FMath::Clamp(Cell, MinWarpCellM, MaxWarpCellM) : DefaultWarpCellM;
+	}
+	else
+	{
+		static const FThermalFrameParams LandCoverOff;
+		Out.bLandCover          = 0u;
+		Out.LandCoverWindowId   = 0u;
+		Out.LandCoverEast       = LandCoverOff.LandCoverEast;
+		Out.LandCoverNorth      = LandCoverOff.LandCoverNorth;
+		Out.LandCoverCamOffsetM = LandCoverOff.LandCoverCamOffsetM;
+		Out.LandCoverTexelM     = LandCoverOff.LandCoverTexelM;
+		Out.LandCoverTexels     = LandCoverOff.LandCoverTexels;
+		Out.LandCoverAnchorM     = LandCoverOff.LandCoverAnchorM;
+		Out.LandCoverAnchorScale = LandCoverOff.LandCoverAnchorScale;
+		Out.LandCoverWarpAmpM    = LandCoverOff.LandCoverWarpAmpM;
+		Out.LandCoverWarpCellM   = LandCoverOff.LandCoverWarpCellM;
+	}
 }

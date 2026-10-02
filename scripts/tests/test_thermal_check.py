@@ -107,7 +107,7 @@ def test_coast_masks_are_radius_matched_and_disjoint():
         assert r[m].min() >= 0.26 * 720 - 1e-6 and r[m].max() <= 0.40 * 720 + 1e-6
 
 
-ALL_RUNS = {"bands", "hd", "eo"}
+ALL_RUNS = {"bands", "hd", "eo", "lcoff", "pan"}
 
 
 def _rows(bands=("mwir", "lwir"), runs=ALL_RUNS) -> list[dict]:
@@ -127,14 +127,20 @@ def _rows(bands=("mwir", "lwir"), runs=ALL_RUNS) -> list[dict]:
 
 def test_expected_rows_cover_every_band_time_and_selected_run():
     rows = tc.expected_rows(["mwir", "lwir"], ALL_RUNS)
-    assert len(rows) == 2 * 8 + 2
+    assert len(rows) == 2 * 11 + 4
     assert ("e", "lwir", "noon") in rows and ("e", "lwir", "night") in rows
-    for b in ("mwir", "lwir"):  # (h) static coast shimmer, both times
+    assert not any(r[0] == "m" for r in rows)  # (m) is info only (Task 13 fix round 1)
+    for b in ("mwir", "lwir"):  # (h) static coast shimmer, both times; 4B land-cover gates
         assert ("h", b, "night") in rows and ("h", b, "noon") in rows
+        assert ("i", b, "noon") in rows and ("j", b, "night") in rows and ("k", b, "night") in rows
     assert ("f", "mwir", "noon") in rows and ("g", "eo", "noon") in rows
+    assert ("l1", "mwir", "noon") in rows and ("l2", "mwir", "noon") in rows  # ruling S12
+    assert rows[-1] == ("g", "eo", "noon")
     only_bands = tc.expected_rows(["mwir"], {"bands"})
-    assert {r[0] for r in only_bands} == set("abcdeh")  # f, g not expected
+    assert {r[0] for r in only_bands} == set("abcdehij")  # f, g, k, l not expected
     assert tc.expected_rows(["mwir"], {"eo"}) == [("g", "eo", "noon")]
+    assert tc.expected_rows(["mwir"], {"lcoff"}) == []  # (k) needs the land-cover-on band run too
+    assert tc.expected_rows(["mwir"], {"pan"}) == [("l1", "mwir", "noon"), ("l2", "mwir", "noon")]
 
 
 def test_complete_rows_pass():
@@ -153,7 +159,7 @@ def test_a_missing_row_fails():
         assert tc.missing_rows(checks, exp) == [exp[drop]]
     # A whole band's run absent: its rows are missing even though every letter is present.
     checks = _rows(bands=("mwir",))
-    assert {c["check"] for c in checks} == set("abcdefgh")
+    assert {c["check"] for c in checks} == set("abcdefghijk") | {"l1", "l2"}
     assert tc.gate_passed(checks, exp) is False
     assert tc.gate_passed([], []) is False  # nothing expected -> not a pass
 
@@ -241,3 +247,232 @@ def test_coast_shimmer_reports_raw_and_floored():
     sh = tc.coast_shimmer(tc.ViewData("r", "noon", "coast", frames, [None] * 30, {}))
     assert sh["value"] <= sh["raw"] + 1e-9
     assert "floored" in sh["detail"] and "raw" in sh["detail"]
+
+
+# ---- Gate (m): land-cover grid visibility (ROADMAP 4B Task 13) ----
+
+
+def test_grid_period_px_is_texel_over_gsd():
+    gsd = 2.0 * 800.0 * math.tan(math.radians(20.0)) / 1280.0
+    assert tc.grid_period_px(800.0, 40.0, 1280) == pytest.approx(10.0 / gsd)
+    assert tc.grid_period_px(800.0, 40.0, 1280) == pytest.approx(21.98, abs=0.01)
+
+
+def test_central_mask_keeps_the_middle_60_percent():
+    m = tc.central_mask((100, 200))
+    assert m.sum() == 60 * 120
+    assert m[50, 100] and not m[10, 100] and not m[50, 30]
+
+
+def _grid(h: int, w: int, period: int, amp: float = 10.0) -> np.ndarray:
+    """A 10-px checker grid: square waves along both image axes (every row and column has an edge every period / 2 px)."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    def sq(v):
+        return np.where((v // (period // 2)) % 2 == 0, 1.0, -1.0)
+
+    return 100.0 + amp * 0.5 * (sq(xx) + sq(yy))
+
+
+def test_grid_peak_ratio_trips_on_a_grid_at_the_window_period():
+    rng = np.random.default_rng(1)
+    y = _grid(400, 600, 10) + rng.normal(0.0, 3.0, (400, 600))
+    mask = tc.central_mask(y.shape)
+    rx, ry = tc.grid_peak_ratio(y, mask, 10.0)
+    assert rx > 2.0 * tc.GRID_PEAK_RATIO and ry > 2.0 * tc.GRID_PEAK_RATIO
+    # a weak grid buried in noise still shows (AGC-stretched night frames are low contrast)
+    weak = _grid(400, 600, 10, amp=1.0) + rng.normal(0.0, 3.0, (400, 600))
+    assert max(tc.grid_peak_ratio(weak, mask, 10.0)) > tc.GRID_PEAK_RATIO
+
+
+def test_grid_peak_ratio_passes_noise_ramps_and_other_periods():
+    rng = np.random.default_rng(2)
+    mask = tc.central_mask((400, 600))
+    noise = 100.0 + rng.normal(0.0, 5.0, (400, 600))
+    assert max(tc.grid_peak_ratio(noise, mask, 10.0)) <= tc.GRID_PEAK_RATIO
+    xx = np.mgrid[0:400, 0:600][1]
+    ramp = noise + 0.2 * xx  # vignetting-like gradient
+    assert max(tc.grid_peak_ratio(ramp, mask, 22.0)) <= tc.GRID_PEAK_RATIO
+    # a 10-px grid is not a 22-px window grid (the band sits between its harmonics)
+    assert max(tc.grid_peak_ratio(_grid(400, 600, 10) + rng.normal(0, 3.0, (400, 600)), mask, 26.0)) <= tc.GRID_PEAK_RATIO
+
+
+def test_grid_peak_ratio_ignores_masked_pixels():
+    rng = np.random.default_rng(3)
+    y = 100.0 + rng.normal(0.0, 5.0, (400, 600))
+    y[150:250, 200:400] = _grid(100, 200, 10, amp=60.0)  # an entity-like patch with a strong grid
+    mask = tc.central_mask(y.shape)
+    assert max(tc.grid_peak_ratio(y, mask, 10.0)) > tc.GRID_PEAK_RATIO
+    mask[140:260, 190:410] = False  # masked out (entity boxes): filled with the masked mean
+    assert max(tc.grid_peak_ratio(y, mask, 10.0)) <= tc.GRID_PEAK_RATIO
+    assert all(math.isnan(r) for r in tc.grid_peak_ratio(y, np.zeros_like(mask), 10.0))
+
+
+# ---- Gates (i)-(l): land cover (ROADMAP 4B Task 11) ----
+
+
+def test_run_groups_and_bands():
+    assert tc.run_group("mwir") == "bands" and tc.run_band("mwir") == "mwir"
+    assert tc.run_group("lwir_lcoff") == "lcoff" and tc.run_band("lwir_lcoff") == "lwir"
+    assert tc.run_group("mwir_pan") == "pan" and tc.run_band("mwir_pan") is None
+    assert tc.run_group("mwir_pan_lcoff") == "pan" and tc.run_band("mwir_pan_lcoff") is None  # (l2) control
+    assert tc.run_group("mwir_1080p") == "hd" and tc.run_group("eo_thermal_off") == "eo"
+
+
+def test_exg_and_greenness_masks():
+    rgb = np.full((100, 200, 3), 128, np.uint8)
+    rgb[:, :100] = (60, 140, 50)  # vegetation on the left
+    rgb[40:60, 140:160] = (40, 60, 160)  # water-blue patch on the right
+    rgb[70:80, 120:180] = (10, 10, 10)  # deep shadow
+    assert tc.exg(rgb)[50, 50] > 0.3 and abs(tc.exg(rgb)[30, 150]) < 1e-6  # neutral grey
+    veg, non = tc.greenness_masks(rgb)
+    assert not (veg & non).any()
+    assert veg[50, 60] and not veg[50, 150]
+    assert non[30, 130] and not non[50, 150] and not non[75, 150]  # blue and shadow excluded
+    assert not veg[5, 60] and not non[5, 130]  # outside the central 60 %
+    assert not veg[50, 99] and not non[50, 101]  # eroded at the boundary
+
+
+def test_veg_contrast_sign_and_small_regions():
+    y = np.full((50, 50), 100.0, np.float32)
+    veg = np.zeros((50, 50), bool)
+    non = np.zeros((50, 50), bool)
+    veg[:, :25], non[:, 25:] = True, True
+    y[:, :25] = 90.0
+    assert tc.veg_contrast(y, veg, non) == pytest.approx(10.0)
+    tiny = np.zeros((50, 50), bool)
+    tiny[0, 0] = True
+    assert math.isnan(tc.veg_contrast(y, tiny, non))
+
+
+def test_box_blur_and_highpass_std():
+    flat = np.full((80, 80), 50.0, np.float32)
+    assert np.allclose(tc.box_blur(flat, 33), 50.0)
+    mask = tc.central_mask((80, 80))
+    assert tc.highpass_std(flat, mask) == pytest.approx(0.0, abs=1e-5)
+    yy, xx = np.mgrid[0:80, 0:80]
+    checker = flat + 10.0 * np.where(((yy // 4) + (xx // 4)) % 2 == 0, 1.0, -1.0)
+    assert tc.highpass_std(checker, mask) == pytest.approx(10.0, rel=0.15)
+    ramp = flat + 0.5 * xx  # a smooth gradient (vignetting-like) is not structure
+    assert tc.highpass_std(ramp.astype(np.float32), mask) < 0.5
+
+
+def test_pan_offset_is_a_triangle_at_the_pan_speed():
+    period = 2.0 * tc.PAN_LEG_M / tc.PAN_SPEED_MPS
+    assert tc.pan_offset_m(0.0) == pytest.approx(0.0)
+    assert tc.pan_offset_m(period / 4) == pytest.approx(tc.PAN_LEG_M / 2)
+    assert tc.pan_offset_m(period / 2) == pytest.approx(tc.PAN_LEG_M)
+    assert tc.pan_offset_m(period) == pytest.approx(0.0, abs=1e-6)
+    assert (tc.pan_offset_m(10.0) - tc.pan_offset_m(9.0)) == pytest.approx(tc.PAN_SPEED_MPS)
+
+
+def test_window_events_and_recentre_spike():
+    ids = [0, 0, 1, 1, 1, 2, 2, 3]
+    rows = [{"land_cover_window": w, "wall_ms": 33.3} for w in ids]
+    rows[5]["wall_ms"] = 45.3
+    ev = tc.window_events(rows)
+    assert ev == [5, 7]  # the first window is not a re-centre
+    spike, base = tc.recentre_spike(rows, ev, radius=1)
+    assert base == pytest.approx(33.3) and spike == pytest.approx(12.0)
+    assert math.isnan(tc.recentre_spike(rows, [], radius=1)[0])
+    assert tc.window_events([{"land_cover_window": 1}, {"land_cover_window": 0}, {"land_cover_window": 1}]) == []
+
+
+def test_median3_removes_isolated_defects():
+    y = np.full((20, 20), 100.0, np.float32)
+    y[5, 5], y[10, 12] = 16.0, 235.0
+    assert np.allclose(tc.median3(y), 100.0)
+    edge = np.zeros((20, 20), np.float32)
+    edge[:, 10:] = 50.0  # a step edge survives
+    assert np.array_equal(tc.median3(edge), edge)
+
+
+# ---- Ruling S12: (k) class-scale band-pass, (l1) median per-re-centre spike, (l2) excess over the control ----
+
+
+def test_band_px_converts_ground_scales_to_odd_boxes():
+    gsd = tc.nadir_gsd_m(800.0, 40.0, 1280)
+    assert gsd == pytest.approx(0.455, abs=1e-3)
+    assert tc.band_px(gsd) == (33, 331)
+    assert tc.grid_period_px(800.0, 40.0, 1280) == pytest.approx(10.0 / gsd)
+
+
+def _detector(rng, h=360, w=640, defects=60):
+    """A flat 4A-like night frame: vignetting, column FPN, temporal-mean noise and defect pixels."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    r2 = ((xx - w / 2) / (w / 2)) ** 2 + ((yy - h / 2) / (h / 2)) ** 2
+    y = 120.0 - 30.0 * r2 + rng.normal(0, 1.6, w)[None, :] + rng.normal(0, 1.3, (h, w))
+    idx = rng.integers(0, h * w, defects)
+    y.flat[idx] = np.where(rng.random(defects) < 0.5, 16.0, 235.0)
+    return y.astype(np.float32)
+
+
+def _blobs(rng, h=360, w=640, cell=60, amp=6.0):
+    """Land-cover-like regions: random levels on a coarse grid, smoothed (scales ~cell px)."""
+    g = rng.normal(0, amp, (h // cell + 2, w // cell + 2))
+    up = np.kron(g, np.ones((cell, cell)))[:h, :w].astype(np.float32)
+    return tc.box_blur(up, cell // 3 | 1)
+
+
+def test_class_structure_passes_band_limited_structure_and_fails_pure_noise():
+    rng = np.random.default_rng(5)
+    mask = tc.central_mask((360, 640))
+    lo, hi = 15, 151
+    off = _detector(rng)
+    on = _detector(rng) + _blobs(rng)
+    c_off, c_on = tc.class_structure_std(off, mask, lo, hi), tc.class_structure_std(on, mask, lo, hi)
+    assert c_on / c_off >= tc.STRUCTURE_RATIO
+    noise_only = _detector(rng)  # a second flat frame: no structure, only (different) detector noise
+    assert tc.class_structure_std(noise_only, mask, lo, hi) / c_off < 2.0
+    # the old high-pass metric is dominated by the defects and FPN on the same frames
+    assert tc.highpass_std(on, mask) / tc.highpass_std(off, mask) < tc.STRUCTURE_RATIO
+    assert math.isnan(tc.class_structure_std(off, np.zeros_like(mask), lo, hi))
+
+
+def test_class_structure_ignores_scales_outside_the_band():
+    mask = tc.central_mask((360, 640))
+    yy, xx = np.mgrid[0:360, 0:640]
+    fine = 100.0 + 10.0 * np.where((xx // 2) % 2 == 0, 1.0, -1.0)  # 4 px period, below 15 px
+    assert tc.class_structure_std(fine.astype(np.float32), mask, 15, 151) < 0.1 * 10.0  # box sidelobes: ~6 % of the input
+    ramp = (100.0 + 0.05 * xx).astype(np.float32)  # vignetting-scale gradient
+    assert tc.class_structure_std(ramp, mask, 15, 151) < 0.5
+
+
+def _pan(walls, t0=1000.0, dt=1.0 / 30.0, ids=None):
+    return [
+        {"t": t0 + i * dt, "wall_ms": w, "land_cover_window": (ids[i] if ids else 1)} for i, w in enumerate(walls)
+    ]
+
+
+def test_per_recentre_median_ignores_one_coincident_hitch():
+    n = 600
+    walls = [33.3] * n
+    ids = [1 + i // 100 for i in range(n)]  # re-centres at 100, 200, ..., 500
+    walls[300] = 40.3  # one background hitch at a re-centre
+    rows = _pan(walls, ids=ids)
+    ev = tc.window_events(rows)
+    assert ev == [100, 200, 300, 400, 500]
+    per = tc.per_recentre_spikes(rows, ev)
+    assert per[2] == pytest.approx(7.0) and tc.med(per) == pytest.approx(0.0)
+    # a stall at every re-centre is caught by the median
+    for e in ev:
+        walls[e + 1] = 36.3
+    per = tc.per_recentre_spikes(_pan(walls, ids=ids), ev)
+    assert tc.med(per) == pytest.approx(3.0) and tc.med(per) > tc.RECENTRE_MEDIAN_MS
+
+
+def test_control_excess_cancels_a_hitch_the_control_also_has():
+    n = 600
+    ids = [1 + i // 100 for i in range(n)]
+    on = [33.3] * n
+    on[300] = 40.3
+    ctrl = [33.3] * n
+    ctrl[301] = 40.5  # the same hitch, one frame later, in the land-cover-off pan (different launch, own t0)
+    rows, crows = _pan(on, ids=ids), _pan(ctrl, t0=5000.0, ids=[0] * n)
+    ev = tc.window_events(rows)
+    ex = tc.control_excess(rows, 1000.0, ev, crows, 5000.0)
+    assert len(ex) == 5 and max(ex) == pytest.approx(0.0)  # 40.3 vs 40.5 at 300: excess -0.2; elsewhere 0
+    assert ex[2] == pytest.approx(-0.2)
+    on[400] = 45.0  # a stall the control lacks
+    ex = tc.control_excess(_pan(on, ids=ids), 1000.0, ev, crows, 5000.0)
+    assert ex[3] == pytest.approx(45.0 - 33.3) and max(ex) > tc.RECENTRE_EXCESS_MS
+    assert math.isnan(tc.control_excess(rows, 1000.0, ev, [], 5000.0)[0])  # no control frames: fails

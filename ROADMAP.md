@@ -601,7 +601,8 @@ Carry-overs:
 - Ripples run on engine time (the material Time node), not sim time; the three fixed ripple
   directions hatch visibly at close zoom; ripple precision degrades > 200 km from the anchor.
 - The close-up tile-streaming hitch above (not ocean work).
-- Linux/Vulkan and SM6 are unverified for `M_Ocean` (compiled and tested on Metal SM5).
+- ~~Linux/Vulkan and SM6 are unverified for `M_Ocean`.~~ `CamSim.GPU.Ocean.MatchesCpu` passes on NVIDIA Vulkan SM6
+  (2026-10-02, max |diff| 3.8 mm).
 - Deferred minors from review: tests for zero-wave accessors, NaN/negative `SetWaves` input,
   the four untested ocean env vars, hot reload / restart-only logging for `ocean.enabled`,
   `FOceanManager` scope and Wave ID gates, a handler-level water-normal test; roughness
@@ -1217,8 +1218,9 @@ Known issues and open points for the visual review:
   segfaults compiling UE 5.8 SM6 pipelines, before any CamSim shader. There is no CPU
   fallback, so a host without `IsSensorGraphSupported` produces no frames and `/ready` stays false. GPU tests
   on Vulkan (2026-10-01, `run_gpu_tests.sh` now Linux-aware): `GroundTruth` 6/6, `Sensor` 10/10, `Entity` 2/2
-  pass; `CamSim.GPU.Ocean.MatchesCpu` crashes the run (Vulkan's `RHIReadSurfaceData` asserts "Unsupported
-  format [100]" on its `RTF_R32f` target via `ReadLinearColorPixels`): needs a buffer readback.
+  pass; `CamSim.GPU.Ocean.MatchesCpu` crashed the run (Vulkan's `RHIReadSurfaceData` asserts "Unsupported
+  format [100]" on its `RTF_R32f` target via `ReadLinearColorPixels`). **Fixed 2026-10-02**: it reads back with
+  `FRHIGPUTextureReadback`, and the full `CamSim.GPU` suite (25 tests) passes on Vulkan in one run.
 - **Cut convergence**: a camera cut or mode switch snaps the AE on the first histogram whose
   serial is at or after the cut, but histograms already in flight from before the cut still
   arrive first and nudge the gain for one frame (within the 1–3-frame convergence above).
@@ -1360,7 +1362,7 @@ follow visible albedo, night IR goes dark, and ATR models learn EO cues.
 | ID  | Item                                                                                                                                                                                                             |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 4.1 | **Thermal material model:** a data asset keyed by physical material / class ID holding base temperature, emissivity, thermal inertia, and solar-loading response.                                                |
-| 4.2 | **Terrain classification:** drape a land-cover raster (e.g. ESA WorldCover) as a Cesium raster overlay so terrain and photogrammetry get thermal classes.                                                        |
+| 4.2 | **Terrain classification:** ESA WorldCover land cover plus imagery refinement gives terrain and photogrammetry thermal classes (4B). A camera-centred land-cover window sampled in `ThermalCS` replaced the Cesium raster-overlay idea.                                                        |
 | 4.3 | **Entity thermal state:** engine, exhaust, and skin temperatures driven by entity state (running, speed, damage) through the component/CIGI interface.                                                           |
 | 4.4 | **Thermal render pass:** compute in-band radiance (MWIR/LWIR) from temperature, emissivity, sky/solar terms, and path attenuation, independent of visible lighting. Feed it into the Milestone 3 detector model. |
 | 4.5 | **Class-ID stencil reuse:** the same stencil gives semantic and instance segmentation for ML ground truth.                                                                                                       |
@@ -1439,23 +1441,26 @@ Boat vs water ring (info): MWIR +32.7 night / +12.3 noon, LWIR +17.4 / +22.5.
 
 **Known issues**
 
-- **One terrain class.** Night terrain is nearly uniform and the AGC stretches the optics' cos^4 vignetting; noon contrast is
-  albedo-driven, so dark vegetation reads warm (risk of an "EO negative" look). 4B land cover fixes both.
+- **One terrain class** (fixed by 4B land cover, below). In 4A night terrain was nearly uniform and the AGC stretched the optics'
+  cos^4 vignetting; noon contrast was albedo-driven, so dark vegetation read warm (risk of an "EO negative" look).
 - **MWIR truck clips white at night** (+8 K offset on a cool background).
 - **The thermal cloud term follows CIGI weather only**: EO cloud layers do not cool the scene (cloud shadows do, via
   scene colour).
 - **Particles** are composited by TSR in visible colour over the radiance (not thermally modelled).
 - **IR TSR costs +1.6 ms**, and the first EO to IR switch has a PSO hitch (above).
-- **Linux/Vulkan unverified for thermal**: the 3B sensor graph and `InstanceIdCS` run on NVIDIA Vulkan (verified
-  2026-09-30/10-01, above), but `ThermalCS`, the BeforeDOF subscription and RGBA16F TSR have only run on Metal; untested
-  there too is the sRGB decode precision of the base colour (Metal's hardware decode differs from the reference formula by
-  3e-4 relative radiance). The ThermalCS timing copies are Metal-only (`IsMetalPlatform`); other RHIs time the scope directly.
+- ~~**Linux/Vulkan unverified for thermal**~~ **Verified on NVIDIA Vulkan 2026-10-02** (Ubuntu 24.04, RTX 5080,
+  driver 595.91.07): `thermal_check.py --band both` passes every gate (a–e, h–k per band, f, g, l1; l2 once the
+  ~30 s engine hitch below fell outside a re-centre: it failed 5.74 ms vs 5 ms on one of six re-centres, then passed
+  at 0.12 ms with the hitch in the control run instead) and `CamSim.GPU.Thermal` 6/6. Two fixes: ThermalCS bit-tests
+  the raw scene colour load for NaN/Inf (NVIDIA's compiler folded `IsNonFinite` of the scaled colour, so a NaN pixel
+  came out as terrain instead of B(T_air)); the hardware sRGB case's tolerance is 5e-3 (NVIDIA's decode is 2.4e-3
+  from the reference formula at the worst entity pixel, Metal's 3e-4; reading the raw bytes would be > 1e-2). The ThermalCS timing copies are Metal-only (`IsMetalPlatform`); other RHIs time the scope directly.
 - **Mode-switch histogram**: one in-flight histogram can nudge the new AE slot's gain before the snap (the 3B.2 cut
   convergence, 1 to 3 frames).
 
 **Carried over**
 
-- 4B: land-cover classes for terrain (replaces `terrain_default`), a vegetation class that lowers the noon albedo contrast.
+- ~~4B: land-cover classes for terrain (replaces `terrain_default`), a vegetation class that lowers the noon albedo contrast.~~ Done, see 4B below.
 - 4C: per-part entity temperatures (engine, exhaust, tyres), running state; the LUT already reaches 1000 K for exhausts.
 - 4D: semantic class in ground truth, validation against published data, thermal shadow lag.
 - Deferred minors from the reviews: `FBandRadiance::Build` with an invalid band sets a flat LUT (callers must validate);
@@ -1471,6 +1476,148 @@ Boat vs water ring (info): MWIR +32.7 night / +12.3 noon, LWIR +17.4 / +22.5.
 **Editor / human changes: none.** 4A adds no assets, textures or materials; everything is code, shaders and config.
 Visual review of the shot set (`.cache/thermal_check/t17c/shots`: MWIR/LWIR noon and night, plus the EO comparison) is the
 remaining step before this is closed.
+
+### 4B Terrain classification (implemented on macOS; awaiting visual review)
+
+Spec: `docs/superpowers/specs/2026-10-01-terrain-classification-design.md` (aligned with the as-built design); plan:
+`docs/superpowers/plans/2026-10-01-terrain-classification.md`; guide: `docs/thermal.md#land-cover-roadmap-4b`. Branch
+`feat/terrain-classification`. Covers 4.2. Visual review of the `nadir_mixed` shots (land cover on and off, MWIR/LWIR,
+noon and night), the EO `mixed_eo` shot and the overlays is the remaining step: spec success (d), boundaries following trees,
+lawns and roads.
+
+**Built.**
+
+- **Data:** `scripts/landcover/fetch_worldcover.py --bbox W S E N [--out DIR]` cuts ESA WorldCover 2021 v200 COGs (HTTP range
+  reads) into 0.05 degree tiles, 600 x 600 8-bit PNGs (a cell is 1/12000 degree; codes pass through losslessly), plus `index.json`
+  and `ATTRIBUTION.txt`. The San Francisco sample (20 tiles, 300 KB) is in `Content/NonUFS/LandCover` via git LFS. No network
+  at runtime.
+- **Runtime:** `FLandCoverTileCache` (PNG decode outside the lock, LRU), `FLandCoverWindow` (camera-centred 2048^2 R8_UINT window of
+  10 m texels, built on a task thread, swapped on the game thread, paired with each frame's thermal params by window id).
+- **Shader:** `ThermalCS` looks up four texels per terrain pixel through a ground-anchored domain warp (6 m / 20 m cells), blends
+  their class data with smoothstep weights, and refines it by the GBuffer base colour: vegetation index from a 5-tap world-space blur
+  (`veg_blur_m` 2 m) and an asphalt/concrete luminance split in built-up. `CamSimThermalRef` mirrors it.
+- **Classes:** 8 new built-ins (`tree_canopy`, `shrubland`, `grassland`, `cropland`, `built_up`, `bare_soil`, `snow_ice`, `wetland`),
+  a `snow` temperature source (capped at 273.15 K; `snow_ice` has `k_fast` 0, so sunlit snow stays at or below 0 C, ruling S6) and
+  the WorldCover code -> class table (`thermal.land_cover.classes.<code>`; a code remapped to another material renders it unrefined).
+  The 14 built-ins leave 18 of the 32 class slots for user materials.
+  Vegetation cooling is an effective albedo; the 4A `vegetation` class was retuned the same way.
+- **Keys:** `thermal.land_cover.{enabled, dir, window_texels, recentre_fraction, veg_index_lo/hi, asphalt_max_luma,
+  warp_amplitude_m, warp_cell_m, veg_blur_m, classes}`, all with `CAMSIM_THERMAL_LAND_COVER_*` overrides. `enabled: false` is 4A bit
+  for bit with 4A's default classes (the 4A `vegetation` class was retuned, ruling S4).
+- Gates (i)-(m) in `scripts/thermal_check.py`; the `pan` launch group also runs a land-cover-off control pan.
+
+**Results** (`scripts/thermal_check.py --band both`, M1 Pro, Presidio, 21 Dec, git 25f2b5b; `.cache/thermal_check/task12/report.json`).
+Every gate passes (the 4A gates (a)-(h) re-run); thresholds are the spec's except (k) and (l), redefined by ruling S12 (below).
+
+| Gate | Check | MWIR night | MWIR noon | LWIR night | LWIR noon |
+|---|---|---|---|---|---|
+| a | mean Y in [60, 180], black < 5 % | 115.0, 0.02 % | 114.6, 0.01 % (info) | 138.2, 0.12 % | 119.8, 0.03 % (info) |
+| b | truck box - ring >= +3 DN | +68.9 | +66.5 (info) | +30.4 | +59.4 (info) |
+| c | water - land flips sign (DN) | +33.1 | -112.4 | +18.6 | -87.1 |
+| d | shadow - sunlit < 0 (DN) | - | -72.5 | - | -53.9 |
+| e | sky - terrain < 0 (DN) | -15.8 | -40.1 | -7.4 | -19.7 |
+| h | coast shimmer ratio <= 2 (floored; raw) | 1.18 (1.18) | 1.66 (2.28) | 1.00 (1.00) | 1.01 (1.01) |
+| **i** | non-vegetation - vegetation >= +3 DN | - | **+68.6** (94.7 vs 163.3; 43 269 / 19 809 px) | - | **+47.9** (125.4 vs 173.3) |
+| **j** | non-vegetation - vegetation >= +2 DN | **+29.3** (143.7 vs 173.0) | - | **+23.7** (168.4 vs 192.2) | - |
+| **k** | band-passed 15-150 m std, land cover on / off >= 3x | **10.87x** (5.04 vs 0.46 DN) | - | **4.33x** (2.75 vs 0.63 DN) | - |
+| **l1** | median re-centre spike <= 2 ms (6 re-centres) | - | **+0.50 ms** (per re-centre +1.27, +0.30, +0.48, +0.32, +0.51, +0.57) | - | - |
+| **l2** | max excess over the land-cover-off control <= 5 ms | - | **+0.17 ms** (per re-centre +0.04, -0.34, +0.03, -0.19, +0.03, +0.17) | - | - |
+| f | `ThermalCS` p95 <= 0.5 ms at 1080p | | 0.408 ms (959 frames, median 0.400) | | |
+| g | EO mean Y thermal on - off, <= 1 DN | | -0.001 DN (109.34 vs 109.34) | | |
+
+Info rows: (m) grid peak ratio 0.73 MWIR / 0.92 LWIR (not gated, see below); (k) 33 px high-pass 1.94x MWIR / 1.05x LWIR and 10.96x /
+1.25x with defects removed; ThermalCS p95 at 720p 0.407 ms (about 5.7k IR frames per band); the raw maximum re-centre spike is +1.27 ms,
+while frames away from re-centres reach +7.17 ms (the background hitch below).
+
+Class temperatures at San Francisco, 21 Dec, noon / 02:00 (K): `terrain_default` 303.0 / 284.8, `water` 288.5 / 287.7,
+`asphalt` 303.5 / 285.6, `concrete` 297.9 / 285.5, `vegetation` 299.1 / 283.1, `tree_canopy` 296.7 / 283.7, `shrubland` 298.7 / 283.3,
+`grassland` 298.9 / 282.6, `cropland` 299.3 / 283.4, `built_up` 301.1 / 285.7, `bare_soil` 302.5 / 285.2, `snow_ice` 273.1 / 273.1,
+`wetland` 294.7 / 285.6 (`vehicle_paint` 303.4 / 283.3). At noon every vegetation class is at least 1.8 K below `built_up` and
+`bare_soil`; at night `built_up` and `bare_soil` are at least 1.5 K above `tree_canopy`.
+
+**Performance** (M1 Pro, Metal)
+
+| Item | Measured |
+|---|---|
+| `ThermalCS` p95 at 1080p | 0.408 ms (gate f) vs 4A's recorded 0.141 ms: +0.267 ms against the +0.1 ms the spec planned (rulings S7, S10); 0.092 ms of margin under gate f. Breakdown, each a with/without pair from one session: 4B branch land cover off 0.171 vs 4A 0.141 (+0.030, baseline difference), lookup + blend + refinement 0.305 vs 0.171 (+0.134), smoothstep + warp 0.355 vs 0.310 (+0.045), 5-tap blur 0.423 vs 0.360 (+0.063), session variation -0.005 (final run 0.408); sum +0.267 |
+| Window build (task thread, 2048^2, cold cache with PNG decode) | 27.0-27.3 ms for the first SF window (20 tiles with data), 6-7 ms for later windows, 14.8 ms for the synthetic 30-tile directory; target < 100 ms |
+| Window swap | game thread `MakeShared` + enqueue; the 4 MB upload is on the render thread and left no trace in frame times |
+| Frame builder | 16.2 us per frame with land cover on, 13.3 us off (`CamSim.Thermal.Builder.PerFrameCost`, final-fix run; 4A recorded 2.5 us) |
+| GPU vs CPU reference (`CamSim.GPU.Thermal.LandCoverMatchesCpu`) | worst relative radiance error 4.7e-6 over all cases (limit 1e-4); land cover off is bit-identical to no window |
+| Tests | `run_tests CamSim`: 462 succeeded + 5 with expected-warnings, 0 failed (467 tests, 77 files); `run_gpu_tests.sh CamSim.GPU`: 25 / 0; pytest 108 / 0; `ci_validate.sh --native` passes |
+| Final-review fixes (git aa6e7cd) | `run_tests CamSim`: 463 + 5 expected-warnings, 0 failed (468 tests); `run_gpu_tests.sh CamSim.GPU`: 25 / 0; pytest 108 / 0; `thermal_check.py --band mwir --runs bands`: every gate passes (a 115.0, b +68.1, c -145.5, d -70.2, e -15.8 / -40.2, h 1.18 / 1.63, i +68.9, j +29.4) |
+
+**How it got here (decisions worth keeping)**
+
+- Spec corrections found against the code and data (ruling S1): WorldCover cells are 1/12000 degree, so tiles are exactly 600 x 600
+  (not ~555 x 440); the asphalt/concrete split is in built-up only (in bare ground it turns bare soil into asphalt); the reference takes
+  window codes and sampling and blending are separate testable functions; refinement is gated on the base colour being bound, not on
+  the solar fast term (night refines too); the snow temperature is the model's capped at 273.15 K; vegetation cooling is an effective
+  albedo (no latent heat term); East/North are recomputed every frame (origin shifts rotate UE axes); an open-ocean COG 404 means no
+  data; the attribution includes "processed by ESA WorldCover consortium".
+- Class values (rulings S3, S4): the spec's orderings bind (vegetation >= 1 K cooler than built-up/bare at noon, built-up/bare warmer
+  than canopy at night, canopy warmer than grass), pinned by `DiurnalContrastsAtSanFrancisco`. The first literature-typical values
+  made noon grassland the hottest class, so grassland/shrub/cropland/bare were retuned, and so was the 4A `vegetation` class
+  (not used on the default path, so land cover off stays 4A bit for bit).
+- Task 13, breaking the 10 m grid (ruling S8): the first live result showed square 10 m blocks. Smoothstep fractions (C1 blend) and a
+  ground-anchored domain warp (anchored frame with a per-axis scale so a ground point gets the same offset from any window; test
+  worst mismatch 7.7e-4 m) fixed the class boundaries, but the squares were from elsewhere: Cesium imagery is JPEG and its ~16 m
+  chroma blocks drive the excess-green index, which the narrow ramp (0.05-0.20) turns into near-binary patches. Forcing v = 1 removed
+  every block. The fix computes ExG from 5 base-colour taps over a world-space footprint (ruling S9): diagonal taps (an axis cross
+  shares the centre's column; 15.8 K step vs 9.1 K measured), default 2 m (4-8 m removed the blocks but ghosted roads as shifted copies
+  with so few taps, ruling S10). Cost +0.06 ms.
+- Gate (m) is reported, not gated: a random-valued block or bilinear field has sinc zeros, not a peak, at the grid fundamental; the
+  visibly blocky build scored 0.68 and the fixed one 0.67-0.74. Criterion (d) is judged visually.
+- Gate (k) (ruling S12): the first definition, a 33 px high-pass std ratio >= 3x land cover off, measured the detector, not the scene:
+  1.94x MWIR (denominator: 69 defect pixels) and 1.05x LWIR (column FPN plus temporal noise). The gate is now the 15-150 m band-pass
+  spatial std after a 3x3 median, land cover on vs off, >= 3x in both bands: 10.87x / 4.33x. It no longer tests sub-15 m texture, which
+  is below the LWIR noise floor. Tuning classes to force the old metric was rejected.
+- Gate (l) (ruling S12): one +6.16 ms spike coincided with a re-centre but also occurs with land cover off. A periodic ~30 s engine
+  hitch (about +7 ms; spikes at 18.0, 47.9, 102.1, 132.0, 162.0, 191.9 s of view time) exists without land cover. (l) is now l1 (median
+  per-re-centre spike <= 2 ms) and l2 (max excess over a land-cover-off control pan at the same view times <= 5 ms), so a real
+  upload stall (at every re-centre) fails and an isolated hitch does not. The control launch is part of the `pan` group (exercised by the final run).
+- Window build never blocks the game thread (ruling S2): the tile cache decodes outside its lock and `Update` takes no cache lock while a
+  build is in flight (red/green tests: 400 ms and 752 ms worst calls before, 0.005 ms after).
+- Live alignment check (Task 10): class map vs EO overlay lines up to about a texel (golf course fairways, Mountain Lake, Richmond grid, Presidio
+  forest); orthonormality and handedness of the per-frame axes are validated at runtime and in tests (a flipped North fails the world test).
+
+**Known issues**
+
+- **10 m class-edge staircase between same-colour classes** (ruling S11): tree cover vs grassland is green on both sides, so imagery
+  cannot refine the edge; smoothstep and the 6 m warp soften it but a diagonal staircase can remain at close range (1200 m, 40 degrees).
+- **Small-area mapping error grows with tan(latitude)** and distance from the window centre: about one texel at the SF window corners, 9 %
+  at 89 degrees (windows within 1 degree of a pole are off).
+- **Half-texel window border** (the four-texel lookup needs a full neighbourhood) and everything outside the window use `terrain_default`.
+- **WorldCover 2021 is a single epoch** (no seasons, no change); **no roads layer** (asphalt vs concrete is a luminance split, imagery
+  shadows bias it).
+- **Pre-existing ~30 s engine hitch** (about +7 ms, one frame per ~30 s), seen with land cover off; source unknown, not 4B.
+- **ThermalCS is +0.27 ms over 4A**, above the +0.1 ms plan (ruling S10); follow-up: skip the vegetation taps for the None family and non-terrain pixels, load fewer class tables.
+- ~~**Linux/Vulkan unverified** for land cover~~ **Verified on NVIDIA Vulkan 2026-10-02** with thermal (above): gates i–l pass, `CamSim.GPU.LandCover.WindowUpload` 0 mismatches, `LandCoverMatchesCpu` worst 4.5e-6.
+
+**Carried over**
+
+- Deferred minors from the reviews (none affects the default output):
+  - Data script: open-ocean 404 detection matches the exception text (fails safe: an unmatched error aborts the fetch);
+    `©` vs `(c)` spelling of the attribution differs between files.
+  - Tile cache: duplicate `index.json` entries overwrite silently; the `MaxTiles >= 4` clamp is undocumented; a tile can be decoded
+    twice when two callers race (the loser is dropped); a theoretical Cache/Failed overlap on a nondeterministic read.
+  - Window: a camera reaching a pole during a build publishes that window for at most one tick; warnings are lost when `Configure`
+    swaps the cache mid-build; `Configure` rebuilds the cache on any setting change and a `Configure` during a build restarts one
+    `Update` late; the destructor waits up to 30 ms for a build; the
+    pooled texture wrapper is created per frame.
+  - Config: an invalid material is reported twice (Validate and Build); `warp_amplitude_m >= warp_cell_m / 3` folds the lookup back
+    and is documented but not validated; `VegBlurM` is filled in the params when land cover is off (unused).
+  - Test gaps: truncated or 16-bit PNG, negative `lat_index`, concurrent `Get`; `IsWindowAllowed(89.0)` boundary; the orientation
+    test is insensitive to a half-texel shift (the scale test covers it); no GPU case for an sRGB base colour with land cover or for
+    the extent-mismatch fallback; GPU land-cover cases are selected by name.
+  - `thermal_check.py`: the gate (l2) control maximum masks stalls under ~7 ms; a shot can be appended twice; the `PAN_HOLD_S`
+    comment is terse; entities are not excluded from the gate (k) filters.
+- Possible shader optimisation (ruling S10, above) to win back ~0.1 ms.
+- A roads layer (OSM) and seasonal land cover remain non-goals; per-building materials; semantic class in ground truth is 4D.
+
+**Editor / human changes: none.** The data is produced by `fetch_worldcover.py` and committed through git LFS; 4B adds no assets, textures
+or materials. Data attribution (CC BY 4.0): © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed
+by ESA WorldCover consortium (README.md and `docs/thermal.md`).
 
 ---
 

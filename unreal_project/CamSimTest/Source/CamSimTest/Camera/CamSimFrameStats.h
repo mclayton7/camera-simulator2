@@ -24,6 +24,7 @@ struct FCamSimFrameStatsSample
 	int32  ViewFamilies       = 0;    // scene renders this frame (viewport + captures)
 	float  SensorGpuMs        = -1.0f;  // GPU time of the sensor graph, -1 when unavailable (ROADMAP 3B)
 	float  ThermalGpuMs       = -1.0f;  // GPU time of ThermalCS, -1 when it did not run (ROADMAP 4A)
+	uint32 LandCoverWindow    = 0;      // land-cover window id paired with this tick's thermal params, 0 = none (ROADMAP 4B)
 	float  SensorGainEv       = 0.0f;   // log2 sensor gain
 	float  SceneMedianLog2    = 0.0f;   // log2 histogram median of the detector signal
 	bool   bHasSensorStats    = false;  // false: SensorGainEv/SceneMedianLog2 are written as null (legacy path)
