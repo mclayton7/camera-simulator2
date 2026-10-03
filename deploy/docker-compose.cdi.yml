@@ -1,0 +1,11 @@
+# GPU through CDI instead of the base file's device reservation, for hosts
+# where `--gpus` goes through the toolkit's legacy hook and the container gets
+# no Vulkan ICD (docs/docker.md). Needs a CDI spec (`nvidia-ctk cdi list`).
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.cdi.yml up
+
+services:
+  camsim:
+    deploy: !reset {}
+    devices:
+      - nvidia.com/gpu=all

@@ -23,14 +23,22 @@ fi
 # with CDI injection (toolkit >= 1.17, `--gpus all`) that variable reads
 # "void" inside the container even though the GPU is present. The toolkit
 # drops its ICD manifest in /etc/vulkan/icd.d, which the loader finds itself.
+# Without it the loader still finds lavapipe, so require an NVIDIA device.
 # -----------------------------------------------------------------------
 EXTRA_ARGS=()
 if compgen -G "/dev/nvidia[0-9]*" >/dev/null; then
-    DEVICE="$(vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*//p' | head -1 || true)"
+    DEVICES="$(vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*//p' || true)"
+    DEVICE="$(grep -m1 -i nvidia <<<"${DEVICES}" || true)"
     if [ -z "${DEVICE}" ]; then
-        echo "[entrypoint] NVIDIA device node present but Vulkan found no device." >&2
-        echo "             Is NVIDIA_DRIVER_CAPABILITIES missing 'graphics'? vulkaninfo:" >&2
-        vulkaninfo --summary 2>&1 | tail -5 >&2 || true
+        echo "[entrypoint] NVIDIA device node present but Vulkan has no NVIDIA device" >&2
+        echo "             (found: $(paste -sd, <<<"${DEVICES}"))." >&2
+        if [ ! -e /etc/vulkan/icd.d/nvidia_icd.json ]; then
+            echo "             No /etc/vulkan/icd.d/nvidia_icd.json: --gpus all went through the" >&2
+            echo "             toolkit's legacy hook, which skipped it. Use CDI instead:" >&2
+            echo "             --device nvidia.com/gpu=all (docs/docker.md)." >&2
+        else
+            echo "             Is NVIDIA_DRIVER_CAPABILITIES missing 'graphics'?" >&2
+        fi
         exit 1
     fi
     echo "[entrypoint] Vulkan device: ${DEVICE}"
