@@ -1670,7 +1670,9 @@ Spec: `docs/superpowers/specs/2026-10-02-entity-thermal-state-design.md` (aligne
 | f (4A) | `ThermalCS` p95 at 1080p <= 0.5 ms | 0.168 ms (4B on the M1 Pro: 0.408 ms) | |
 | g (4A) | EO thermal on − off | 0.001 DN | |
 
-Every 4A/4B gate (a–e, h–l) passes in the same run. Tests: 472 NullRHI (25 new `CamSim.Thermal.Entity.*` plus
+Every 4A/4B gate (a–e, h–l) passes in the same run. After the whole-branch review fixes (per-entity environment latch,
+horizontal speed) `--runs bands,entity` was re-run (`.cache/thermal_check/4c_final`): every gate passes with the same values to
+within 2 DN (n +95.6 / +69.6, p 35.5 → 5.7 / 26.7 → 1.8, q +153.6, b +23.0 / +9.8). Tests: 472 NullRHI (25 new `CamSim.Thermal.Entity.*` plus
 `CamSim.Sensor.Controller.ThermalAgcBandStopsAtFullWell`), `CamSim.GPU` 26/26 (`CamSim.GPU.Thermal.EntityPartsMatchesCpu` 1.7e-6).
 
 **How it got here (decisions worth keeping)**
