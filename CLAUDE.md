@@ -36,6 +36,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/ci_validate.sh`       | Integration test: runs the image with `--gpus all` + CIGI host, `/ready`, video/KLV |
 | `scripts/ci_validate.sh --native` | Same, without Docker (macOS): launch headless + CIGI host + checks |
 | `scripts/bench/run_bench.py` | Render benchmark + reference shots (`--smoke`, `--trace`); `compare.py` diffs two runs |
+| `scripts/bench/scale_bench.py IMAGE OUT N...` | Multi-instance capacity probe: N containers at once (`docs/capacity-linux-rtx5080.md`: 4 comfortable on the RTX 5080 box, VRAM-bound) |
 | `scripts/run_gpu_tests.sh`     | `CamSim.GPU.*` automation tests on the real RHI (Metal / Vulkan) |
 | `uv run --project hitl python -m camsim_hitl --config <file>.toml` | HITL IG host: X-Plane truth + PX4 gimbal/camera (MAVLink) → CIGI (`hitl/README.md`, design `HITL.md`) |
 | `uv run --project hitl --with pytest pytest hitl/tests` | IG host tests |

@@ -69,6 +69,12 @@ docker run --rm --gpus all --init --network host --shm-size 1g \
   convention). Compose allows 30 s (`stop_grace_period`); with plain
   `docker stop`, pass `-t 30`.
 
+### Several instances on one host
+
+Each instance needs its own CIGI, response, health and stream ports and its own cache volume. How many fit is set by GPU memory
+(about 3.3 GB per 720p instance): on the RTX 5080 development box, 4 run comfortably, 5 at the edge, 6 fail. Measurements, a
+`docker run` template and the probe (`scripts/bench/scale_bench.py`): [`capacity-linux-rtx5080.md`](capacity-linux-rtx5080.md).
+
 ## Validate
 
 ```bash
