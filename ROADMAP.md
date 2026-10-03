@@ -315,6 +315,8 @@ Scenario file ┘
   - ~~Implement the full DIS dead-reckoning set.~~ Algorithms 2–9 extrapolate (world/body
     velocity, body angular rate; 2.2). Still open: acceleration (parsed, not integrated) and
     PDU timestamps (2.5 carry-overs).
+  - An Entity State PDU with appearance bit 23 (deactivated) removes the entity at once instead
+    of after `dis.heartbeat_timeout_sec` (`CamSim.Dis.DeactivatedRemoves`).
 - **HLA:** support it through an external HLA↔DIS gateway, not natively.
 
 Design: `docs/superpowers/specs/2026-09-26-host-adapter-layer-design.md` (approved).

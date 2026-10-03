@@ -17,8 +17,8 @@ class ISimCommandSink;
  * FDisReceiver's Entity State PDUs and submits canonical entity commands
  * (Hosts/DisCommands.h: ECEF → geodetic and local attitude, dead-reckoning
  * motion model), keyed by the DIS entity ID in the DIS namespace; maps DIS
- * entity types to CamSim types; removes entities that time out; and tracks
- * the latest laser designator spot.
+ * entity types to CamSim types; removes entities that are deactivated
+ * (appearance bit 23) or time out; and tracks the latest laser designator spot.
  */
 class FDisEntityAdapter
 {
@@ -31,7 +31,7 @@ public:
 	 */
 	void Poll(ISimCommandSink& Sink);
 
-	/** One Entity State PDU → entity command (public for tests). */
+	/** One Entity State PDU → entity command, or a remove when it is deactivated (public for tests). */
 	void ProcessPdu(const FDisEntityStatePdu& Pdu, ISimCommandSink& Sink);
 
 
@@ -93,5 +93,7 @@ private:
 
 
 	void SweepTimeouts(ISimCommandSink& Sink);
+	/** Submit a remove and forget the entity's appearance (the caller drops its timestamp). */
+	void RemoveEntity(const FDisEntityId& DisId, ISimCommandSink& Sink);
 	void BuildTypeMaps();
 };

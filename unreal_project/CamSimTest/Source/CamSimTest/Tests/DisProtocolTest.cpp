@@ -542,6 +542,56 @@ bool FDisAdapterFramesTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisDeactivatedRemovesTest,
+	"CamSim.Dis.DeactivatedRemoves",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDisDeactivatedRemovesTest::RunTest(const FString& Parameters)
+{
+	struct FCapture : ISimCommandSink
+	{
+		TArray<FEntityCommand> Entities;
+		virtual void Submit(const FEntityCommand& C) override { Entities.Add(C); }
+		virtual void Submit(const FEntityMotionCommand&) override {}
+		virtual void Submit(const FArticulationCommand&) override {}
+		virtual void Submit(const FComponentCommand&) override {}
+	} Sink;
+
+	const FVector Ecef = CamSimFrames::GeodeticToEcef(37.8, -122.46, 0.0);
+	FDisEntityStatePdu Pdu;
+	Pdu.EntityId.Site = 1; Pdu.EntityId.Application = 1; Pdu.EntityId.Entity = 7;
+	Pdu.EntityType.EntityKind = 1; Pdu.EntityType.Domain = 1;
+	Pdu.LocationX = Ecef.X; Pdu.LocationY = Ecef.Y; Pdu.LocationZ = Ecef.Z;
+	constexpr uint32 Deactivated = 1u << 23;
+
+	FCamSimConfig Config;
+	FDisEntityAdapter Adapter(Config, nullptr);
+
+	Pdu.Appearance = Deactivated;
+	Adapter.ProcessPdu(Pdu, Sink);
+	TestEqual(TEXT("deactivated before any active PDU: nothing spawned"), Sink.Entities.Num(), 0);
+
+	Pdu.Appearance = 0;
+	Adapter.ProcessPdu(Pdu, Sink);
+	if (!TestEqual(TEXT("active PDU: one update"), Sink.Entities.Num(), 1)) return false;
+	TestTrue(TEXT("update is not a remove"), Sink.Entities[0].Lifecycle != EEntityLifecycle::Remove);
+
+	Pdu.Appearance = Deactivated | (1u << 22);  // other bits don't matter
+	Adapter.ProcessPdu(Pdu, Sink);
+	if (!TestEqual(TEXT("deactivated: one more command"), Sink.Entities.Num(), 2)) return false;
+	TestTrue(TEXT("it is a remove"), Sink.Entities[1].Lifecycle == EEntityLifecycle::Remove);
+	TestTrue(TEXT("for the same entity"), Sink.Entities[1].Key == CamSim::Dis::Key(Pdu.EntityId));
+
+	Adapter.ProcessPdu(Pdu, Sink);
+	TestEqual(TEXT("repeated deactivated PDU: ignored"), Sink.Entities.Num(), 2);
+
+	Pdu.Appearance = 0;
+	Adapter.ProcessPdu(Pdu, Sink);
+	TestTrue(TEXT("reactivated: spawned again"),
+		Sink.Entities.Num() == 3 && Sink.Entities[2].Lifecycle != EEntityLifecycle::Remove);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisClampConfigTest,
 	"CamSim.Dis.ClampToSurfaceConfig",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

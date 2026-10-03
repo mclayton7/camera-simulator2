@@ -17,7 +17,10 @@ accepts every exercise). Every `dis.*` key, its env var and default — heartbea
 default entity type, `clamp_to_surface`, the type map — is documented in one place:
 [`configuration.md`](configuration.md#dis-input-ieee-12781).
 
-Supported PDUs: Entity State (type 1) and Designator (type 24). Position is ECEF, orientation
+Supported PDUs: Entity State (type 1) and Designator (type 24). An entity is removed as soon as an Entity State
+PDU arrives with appearance bit 23 (State = deactivated, which simulation managers send on
+delete), or after `dis.heartbeat_timeout_sec` (12 s) with no Entity State PDU. Deactivated PDUs
+for an entity CamSim isn't showing are ignored, and a later active PDU spawns it again. Position is ECEF, orientation
 the ECEF-referenced psi/theta/phi Euler angles, both converted to WGS-84 geodetic pose.
 
 ## Test sender

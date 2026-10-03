@@ -43,6 +43,18 @@ void FDisEntityAdapter::Poll(ISimCommandSink& Sink)
 
 void FDisEntityAdapter::ProcessPdu(const FDisEntityStatePdu& Pdu, ISimCommandSink& Sink)
 {
+	// Appearance bit 23 (deactivated): the sender deleted the entity, remove it now instead of waiting for the heartbeat
+	// timeout. Later deactivated PDUs for it (or for one never seen) are ignored, so they neither spawn nor re-remove it.
+	if (CamSim::Dis::IsDeactivated(Pdu.Appearance))
+	{
+		if (EntityTimestamps.Remove(Pdu.EntityId) > 0)
+		{
+			RemoveEntity(Pdu.EntityId, Sink);
+			UE_LOG(LogCamSim, Log, TEXT("FDisEntityAdapter: entity %s deactivated → remove"), *Pdu.EntityId.ToString());
+		}
+		return;
+	}
+
 	FEntityTimestamp& Ts = EntityTimestamps.FindOrAdd(Pdu.EntityId);
 	Ts.DisId = Pdu.EntityId;
 	Ts.LastUpdateSec = FPlatformTime::Seconds();
@@ -81,14 +93,19 @@ void FDisEntityAdapter::SweepTimeouts(ISimCommandSink& Sink)
 	}
 	for (const FDisEntityId& DisId : TimedOut)
 	{
-		FEntityCommand Remove;
-		Remove.Key = CamSim::Dis::Key(DisId);
-		Remove.Lifecycle = EEntityLifecycle::Remove;
-		Sink.Submit(Remove);
-		UE_LOG(LogCamSim, Log, TEXT("FDisEntityAdapter: entity %s timed out → remove"), *DisId.ToString());
 		EntityTimestamps.Remove(DisId);
-		LastAppearance.Remove(DisId);
+		RemoveEntity(DisId, Sink);
+		UE_LOG(LogCamSim, Log, TEXT("FDisEntityAdapter: entity %s timed out → remove"), *DisId.ToString());
 	}
+}
+
+void FDisEntityAdapter::RemoveEntity(const FDisEntityId& DisId, ISimCommandSink& Sink)
+{
+	FEntityCommand Remove;
+	Remove.Key = CamSim::Dis::Key(DisId);
+	Remove.Lifecycle = EEntityLifecycle::Remove;
+	Sink.Submit(Remove);
+	LastAppearance.Remove(DisId);
 }
 
 // -------------------------------------------------------------------------

@@ -30,6 +30,12 @@ namespace CamSim::Dis
 	 */
 	FEntityCommand ToEntityCommand(const FDisEntityStatePdu& Pdu, uint16 TypeId, bool bClampToSurface = true);
 
+	/**
+	 * IEEE 1278.1 appearance bit 23 (State: 0 active, 1 deactivated), common to every entity kind. A simulation manager
+	 * sends it when it deletes an entity.
+	 */
+	inline bool IsDeactivated(uint32 Appearance) { return ((Appearance >> 23) & 1u) != 0u; }
+
 	/** Platform appearance fields CamSim uses (ROADMAP 4C). Damage: 0 none, 1 slight/moderate, 2 destroyed. */
 	struct FPlatformAppearance
 	{
