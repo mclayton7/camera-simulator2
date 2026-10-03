@@ -28,6 +28,10 @@
 #   CAMSIM_CI_DOCKER_LOG   --docker: save the container log to this file
 #   CAMSIM_READY_TIMEOUT   Seconds to wait for readiness (default 600: a cold
 #                          start compiles shaders)
+#   CAMSIM_DOCKER_GPU      --docker: GPU flag (default "--gpus all"; use
+#                          "--device nvidia.com/gpu=all" where only CDI
+#                          injects the Vulkan ICD, docs/docker.md)
+#   CAMSIM_HEALTH_HTTP_PORT  Health port, passed to the container (default 8080)
 #
 # Exit: 0 = pass, 1 = fail
 
@@ -102,12 +106,13 @@ else
     echo "==> Starting CamSim container (NVIDIA GPU, headless, unicast)..."
     docker run -d \
         --name "${CONTAINER_NAME}" \
-        --gpus all \
+        ${CAMSIM_DOCKER_GPU:---gpus all} \
         --init \
         --network host \
         --shm-size 1g \
         -e CAMSIM_MULTICAST_ADDR=127.0.0.1 \
         ${CAMSIM_CESIUM_ION_TOKEN:+-e CAMSIM_CESIUM_ION_TOKEN} \
+        ${CAMSIM_HEALTH_HTTP_PORT:+-e CAMSIM_HEALTH_HTTP_PORT} \
         "${IMAGE}"
     camsim_alive() { [ "$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null)" = "true" ]; }
 fi

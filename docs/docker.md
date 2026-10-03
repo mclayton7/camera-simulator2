@@ -8,10 +8,12 @@ graph has no CPU fallback) and NVENC H.264/H.265 encoding.
 
 ## Host requirements
 
-- Linux with an NVIDIA GPU and driver (verified: RTX 5080, driver 595.91).
+- Linux with an NVIDIA GPU and driver (verified: RTX 5080, driver 595.91;
+  RTX 1000 Ada Laptop 6 GB, driver 580.178, through CDI).
 - Docker 20.10+ and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   (verified: 1.20.1). Check with
-  `docker run --rm --gpus all ubuntu:24.04 nvidia-smi`.
+  `docker run --rm --gpus all ubuntu:24.04 nvidia-smi`. That proves CUDA, not
+  Vulkan: check `ls /etc/vulkan/icd.d` in the container too (next section).
 - Outbound internet for Cesium tiles, and `CAMSIM_CESIUM_ION_TOKEN` unless the
   level's default token suffices.
 - `net.core.rmem_max` raised on receivers (see CLAUDE.md, Linux UDP receive buffers).
@@ -45,9 +47,10 @@ docker run --rm --gpus all --init --network host --shm-size 1g \
 ```
 
 - `--gpus all` (or compose's `deploy.resources.reservations.devices`) passes
-  the GPU in. The image sets `NVIDIA_DRIVER_CAPABILITIES=all`: `graphics` is
-  needed for Vulkan and `video` for NVENC. Don't override it with
-  `compute,utility`.
+  the GPU in; on some hosts only CDI brings the Vulkan ICD with it (see
+  "Vulkan ICD missing" below). The image sets
+  `NVIDIA_DRIVER_CAPABILITIES=all`: `graphics` is needed for Vulkan and
+  `video` for NVENC. Don't override it with `compute,utility`.
 - `--network host` is required for multicast output and CIGI input.
 - Configure with `CAMSIM_*` variables ([configuration.md](configuration.md)),
   or mount a config over `/opt/camsim/CamSimTest/camsim_config.yaml`.
@@ -91,7 +94,8 @@ the same on the self-hosted runner.
 | Symptom | Cause |
 |---|---|
 | `vkCreateInstance failed with ERROR_INCOMPATIBLE_DRIVER` | The NVIDIA Vulkan ICD (`libGLX_nvidia.so.0`) dlopens `libEGL.so.1`, a distro package (`libegl1`) the toolkit does not inject. The image installs it. |
-| Entrypoint: "device node present but Vulkan found no device" | `NVIDIA_DRIVER_CAPABILITIES` lacks `graphics`. |
+| Entrypoint: "device node present but Vulkan has no NVIDIA device", no `/etc/vulkan/icd.d/nvidia_icd.json` | The ICD manifest wasn't mounted; see "Vulkan ICD missing". Before the entrypoint checked, UE ran on lavapipe and exited: "Forced Vulkan device could not be created at the project's supported feature levels". |
+| Same, with the manifest present | `NVIDIA_DRIVER_CAPABILITIES` lacks `graphics`. |
 | Entrypoint: "No NVIDIA GPU passed in", exit 1 | No `--gpus` / device reservation (see "A GPU is required"). |
 | Encoder falls back to libx264 | `NVIDIA_DRIVER_CAPABILITIES` lacks `video` (no `libnvidia-encode`). |
 
@@ -102,5 +106,19 @@ Notes:
   detects the GPU by `/dev/nvidia*` instead.
 - The toolkit puts the ICD manifest at `/etc/vulkan/icd.d/nvidia_icd.json`;
   the entrypoint leaves `VK_ICD_FILENAMES` unset so the loader finds it.
+- **Vulkan ICD missing.** `--gpus all` doesn't always use CDI. With
+  Ubuntu's `docker.io` 29.1.3 and toolkit 1.20.1 (driver 580), it went
+  through the legacy hook. That mounted the driver libraries and
+  `/dev/nvidia*` but not `nvidia_icd.json` or `nvidia_layers.json`, so
+  only lavapipe showed up. Bind-mounting the manifest alone wasn't enough:
+  `vkCreateInstance` still failed in `libGLX_nvidia.so.0`. docker-ce 29.8.2
+  with the same toolkit mounts both. The fix is to request the device by
+  its CDI name, which mounts everything in the host's spec
+  (`/run/cdi/nvidia.yaml`, made by `nvidia-ctk cdi generate`):
+  ```bash
+  docker run --device nvidia.com/gpu=all ...        # in place of --gpus all
+  docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.cdi.yml up
+  CAMSIM_DOCKER_GPU="--device nvidia.com/gpu=all" scripts/ci_validate.sh --docker
+  ```
 - Don't install `libnvidia-*` packages in the image: they would shadow or
   conflict with the host driver's libraries.
