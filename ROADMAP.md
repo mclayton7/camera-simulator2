@@ -1685,7 +1685,9 @@ Every 4A/4B gate (a–e, h–l) passes in the same run. Tests: 472 NullRHI (25 n
   (+180 s measured 35.5 → 36.8 MWIR). The parked-cold and destroyed trucks stand on the park spot (`--hold-s`): comparing contrasts
   over two backgrounds (LWIR ring 143 vs 176 DN) failed LWIR p by 1.4 DN.
 - First acceptance run found two defects the unit tests could not: a moving spawn started parked-cold (gate b −31.6 DN) and the
-  AGC band beyond full well (gate q).
+  AGC band beyond full well (gate q). The whole-branch review found two more: the IR environment was latched per stencil (an entity
+  spawned in EO after an IR session stepped against B = 0 K and looked on fire for minutes) — now latched per entity at the build;
+  and speed was 3D (a moored boat's heave, 1.3 m/s, and terrain-refinement height steps read as moving) — now horizontal.
 
 **Known issues**
 

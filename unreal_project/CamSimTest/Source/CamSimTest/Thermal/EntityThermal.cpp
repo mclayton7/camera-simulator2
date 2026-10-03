@@ -164,7 +164,7 @@ bool CamSimEntityThermal::ShouldDeferFirstStep(const FEntityThermalState& St, co
 	return !St.bInitialized && !Speed.HasMeasurement();
 }
 
-float FEntitySpeedTracker::Update(const FVector& EcefM, double SimSec)
+float FEntitySpeedTracker::Update(const FVector& EcefM, double SimSec, const FVector& UpUnit)
 {
 	if (EcefM.ContainsNaN() || !FMath::IsFinite(SimSec)) return SpeedMps;
 	if (!bHasLast)
@@ -177,7 +177,9 @@ float FEntitySpeedTracker::Update(const FVector& EcefM, double SimSec)
 	}
 	const double Dt = SimSec - LastSec;
 	if (Dt <= 0.0) return SpeedMps;
-	const double Step = FVector::Dist(EcefM, LastEcefM);
+	// Horizontal distance: the component along the geodetic up (heave, terrain refinement) is not travel.
+	auto Horizontal = [&UpUnit](const FVector& D) { return UpUnit.IsZero() ? D.Size() : (D - UpUnit * FVector::DotProduct(D, UpUnit)).Size(); };
+	const double Step = Horizontal(EcefM - LastEcefM);
 	LastEcefM = EcefM;
 	LastSec = SimSec;
 	if (Step > FMath::Max(TeleportMinM, TeleportMaxMps * Dt))
@@ -190,7 +192,7 @@ float FEntitySpeedTracker::Update(const FVector& EcefM, double SimSec)
 	const double Window = SimSec - RefSec;
 	if (Window >= WindowS)
 	{
-		const double Raw = FVector::Dist(EcefM, RefEcefM) / Window;
+		const double Raw = Horizontal(EcefM - RefEcefM) / Window;
 		const double A = bMeasured ? 1.0 - FMath::Exp(-Window / EmaTauS) : 1.0;   // the first measurement seeds the EMA
 		SpeedMps = static_cast<float>(SpeedMps + (Raw - SpeedMps) * A);
 		bMeasured = true;

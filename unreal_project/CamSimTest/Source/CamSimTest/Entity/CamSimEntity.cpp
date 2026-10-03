@@ -587,7 +587,9 @@ void ACamSimEntity::StepThermal(double SimSec, const FEntityThermalSettings& Set
 	float SpeedMps = ThermalSpeed.GetSpeedMps();
 	if (GetGeoPose(Pose))
 	{
-		SpeedMps = ThermalSpeed.Update(CamSimFrames::GeodeticToEcef(Pose.Lat, Pose.Lon, Pose.Alt), SimSec);
+		const double LatR = FMath::DegreesToRadians(Pose.Lat), LonR = FMath::DegreesToRadians(Pose.Lon);
+		const FVector Up(FMath::Cos(LatR) * FMath::Cos(LonR), FMath::Cos(LatR) * FMath::Sin(LonR), FMath::Sin(LatR));   // geodetic normal, ECEF
+		SpeedMps = ThermalSpeed.Update(CamSimFrames::GeodeticToEcef(Pose.Lat, Pose.Lon, Pose.Alt), SimSec, Up);
 	}
 	if (CamSimEntityThermal::ShouldDeferFirstStep(ThermalState, ThermalSpeed)) return;   // spawn at the real state's targets
 	FEntityThermalInputs In = CamSimEntityThermal::InputsFromLatch(ThermalEnvLatch, SimSec);

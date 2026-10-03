@@ -109,8 +109,9 @@ public:
 	static constexpr double TeleportMinM   = 50.0;
 	static constexpr double TeleportMaxMps = 400.0;
 
-	/** Returns the smoothed speed (m/s). */
-	float Update(const FVector& EcefM, double SimSec);
+	/** Returns the smoothed speed (m/s). UpUnit: geodetic up at the entity; the motion along it is removed (heave, terrain
+	 *  refinement are not travel). Zero: full 3D distance. */
+	float Update(const FVector& EcefM, double SimSec, const FVector& UpUnit = FVector::ZeroVector);
 	float GetSpeedMps() const { return SpeedMps; }
 	/** A windowed measurement exists (the first one seeds the speed directly, without the EMA ramp from 0). */
 	bool  HasMeasurement() const { return bMeasured; }

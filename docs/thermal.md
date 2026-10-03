@@ -320,8 +320,9 @@ so a parked, cold vehicle is exactly 4A, and B's diurnal drift needs no state). 
 manager steps every entity once per tick after the poses are final, on **sim time**:
 T += (T_target − T)(1 − e^(−dt/τ)), τ the kind's up or down constant. The first step, a rewound
 clock or a jump over 1 h snap to the targets; a frozen clock freezes them. Targets (D = T_air − B;
-the frame builder publishes T_air and every stencil's B after each IR frame, latched by the
-entity manager, D = 0 until then or for an untagged entity):
+the frame builder publishes T_air and every stencil's B after each IR frame, and the entity manager
+latches them into each entity through the stencil it holds at that build; an entity without a latch, e.g. spawned
+in EO since, steps with D = 0):
 
 | | engine off | running |
 |---|---|---|
@@ -335,7 +336,8 @@ Running = commanded on (CIGI Component Control 11, DIS appearance bit 22), or mo
 `moving_mps`, or moved within `idle_hold_s` (120 s); never while destroyed (CompId 10 = 2, DIS
 damage 3) or flaming (CompId 12, DIS bit 15). After a burn the skin cools with
 `hull_cool_tau_s` (1800 s). Speed is the entity's displacement in ECEF (origin shifts are not
-motion) over windows of ≥ 0.5 s, smoothed with a 1 s EMA; a jump beyond max(50 m, 400 m/s · dt) is
+motion; horizontal only, so wave heave and terrain-refinement height changes are not travel) over windows of ≥ 0.5 s,
+smoothed with a 1 s EMA; a jump beyond max(50 m, 400 m/s · dt) is
 a teleport (speed 0). Time constants (up / down): exhaust 20 / 60 s, engine 300 / 900 s, running
 gear 180 / 600 s, skin 600 s.
 

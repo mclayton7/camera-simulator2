@@ -278,3 +278,44 @@ bool FEntitySpeedFirstTest::RunTest(const FString& Parameters)
 	TestNearlyEqual(TEXT("first measurement = raw speed"), T.GetSpeedMps(), 15.0f, 0.01f);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEntitySpeedVerticalTest, "CamSim.Thermal.Entity.SpeedTracker.VerticalIsNotMotion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEntitySpeedVerticalTest::RunTest(const FString& Parameters)
+{
+	// Final review #2: speed is horizontal. Wave heave on a moored boat (1.5 m, 7 s) and a terrain-refinement height step under
+	// a parked truck (1 m, eased over 0.2 s) must not read as moving; horizontal driving with heave on top still reads true.
+	const FVector P0(6378137.0, 0.0, 0.0);
+	const FVector Up(1.0, 0.0, 0.0);   // geodetic up at (0 N, 0 E)
+	{
+		FEntitySpeedTracker T;
+		float Max = 0.0f;
+		for (int32 I = 0; I <= 900; ++I)
+		{
+			const double t = I / 30.0;
+			Max = FMath::Max(Max, T.Update(P0 + Up * (1.5 * FMath::Sin(2.0 * UE_DOUBLE_PI * t / 7.0)), t, Up));
+		}
+		TestTrue(*FString::Printf(TEXT("heave reads parked (%.3f < 0.5)"), Max), Max < 0.5f);
+	}
+	{
+		FEntitySpeedTracker T;
+		float Max = 0.0f;
+		for (int32 I = 0; I <= 300; ++I)
+		{
+			const double t = I / 30.0;
+			const double H = t < 5.0 ? 0.0 : 1.0 - FMath::Exp(-(t - 5.0) / 0.2);
+			Max = FMath::Max(Max, T.Update(P0 + Up * H, t, Up));
+		}
+		TestTrue(*FString::Printf(TEXT("height step reads parked (%.3f < 0.5)"), Max), Max < 0.5f);
+	}
+	{
+		FEntitySpeedTracker T;
+		for (int32 I = 0; I <= 300; ++I)
+		{
+			const double t = I / 30.0;
+			T.Update(P0 + FVector(0.0, 10.0 * t, 0.0) + Up * (1.5 * FMath::Sin(2.0 * UE_DOUBLE_PI * t / 7.0)), t, Up);
+		}
+		TestNearlyEqual(TEXT("horizontal speed with heave"), T.GetSpeedMps(), 10.0f, 0.1f);
+	}
+	return true;
+}

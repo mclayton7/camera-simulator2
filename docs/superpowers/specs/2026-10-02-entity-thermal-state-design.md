@@ -145,14 +145,17 @@ entity-manager tick, over the sim-clock step: `v_raw = |ΔP| / dt`, smoothed by 
 (`v ← v + (v_raw − v)(1 − exp(−dt/1 s))`). A teleport (below) or the first tick after spawn sets
 `v = 0` and skips the sample. Measured from positions, so it works for CIGI
 (no velocity on the wire), DIS (dead-reckoned) and attached entities alike. Positions are ECEF (from
-the entity's geodetic pose), not UE world, so Cesium origin shifts are not motion. The teleport rule
+the entity's geodetic pose), not UE world, so Cesium origin shifts are not motion, and horizontal only (the
+component along the geodetic up is removed: wave heave and terrain-refinement height changes are not travel). The teleport rule
 is `|ΔP| > max(50 m, 400 m/s · dt)`; `dt ≤ 0` (frozen or rewound clock) keeps `v` and skips the sample.
 
 **Ownership.** `ACamSimEntity` owns `FEntityThermalState` plus its commanded inputs (engine, damage,
 flaming) and speed tracker; `ApplyComponent` sets the commanded inputs. `FCamSimEntityManager` steps
 every entity's thermal state once per tick after poses are committed (its existing ordered pass), on
 sim time, with `T_class` and `T_air` from the thermal model for the current sim time.
-`GetThermalStencilEntities` returns, per tagged entity: stencil, type thermal config (as today), the
+After each IR build the entity manager latches T_air and each entity's own B (through the stencil it holds at that
+build) into the entity (`FEntityThermalLatch`); an entity without a latch (spawned since, or never in IR) steps with
+D = 0. `GetThermalStencilEntities` returns, per tagged entity: stencil, type thermal config (as today), the
 stepped skin and part temperatures, the part geometry, and the entity's world transform (double).
 
 ## 3. GPU evaluation and CPU mirror
