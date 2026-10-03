@@ -140,6 +140,25 @@ namespace CamSimEntityThermal
 	}
 }
 
+bool CamSimEntityThermal::LatchEnv(FEntityThermalLatch& Latch, bool bEnvValid, float TairK, float BaselineK)
+{
+	if (!bEnvValid || !FMath::IsFinite(TairK) || !FMath::IsFinite(BaselineK) || BaselineK < 150.0f) return false;
+	Latch.bValid = true;
+	Latch.TairK = TairK;
+	Latch.BaselineK = BaselineK;
+	return true;
+}
+
+FEntityThermalInputs CamSimEntityThermal::InputsFromLatch(const FEntityThermalLatch& Latch, double SimSec)
+{
+	FEntityThermalInputs In;
+	In.SimSec = SimSec;
+	In.bHasEnv = Latch.bValid;
+	In.TairK = Latch.TairK;
+	In.BaselineK = Latch.BaselineK;
+	return In;
+}
+
 bool CamSimEntityThermal::ShouldDeferFirstStep(const FEntityThermalState& St, const FEntitySpeedTracker& Speed)
 {
 	return !St.bInitialized && !Speed.HasMeasurement();

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Thermal/ThermalFrameBuilder.h"
+#include "Thermal/EntityThermal.h"
 #include "Thermal/ThermalMaterials.h"
 #include "Time/SimClock.h"
 
@@ -169,5 +170,35 @@ bool FThermalEntityRejectTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("bad part: record valid"), Row(P, 11, 3).W, 1.0f);
 	TestEqual(TEXT("bad part dropped"), Row(P, 11, 3).Z, 0.0f);
 	TestTrue(TEXT("warned"), Warnings.Num() >= 2);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalEntityLatchTest, "CamSim.Thermal.Entity.Builder.EnvLatchedPerEntity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalEntityLatchTest::RunTest(const FString& Parameters)
+{
+	// Final review #1: the environment of the last IR frame is latched per entity, at build time, from that entity's own
+	// stencil. A stencil that was not live then (an entity spawned later, e.g. in EO) has no baseline (0): latching it must
+	// fail, so the entity steps without an environment (D = 0) instead of with B = 0 K (a vehicle that looks on fire).
+	FThermalFrameBuilder B = Make(true);
+	FThermalFrameInputs In = Night();
+	In.Entities = { Truck(7) };
+	FThermalFrameParams P;
+	B.Build(In, P);
+	const FEntityThermalEnv& Env = B.GetEntityEnv();
+	FEntityThermalLatch Live, Later;
+	TestTrue(TEXT("live stencil latches"), CamSimEntityThermal::LatchEnv(Live, Env.bValid, Env.TairK, Env.BaselineK[7]));
+	TestNearlyEqual(TEXT("its baseline"), Live.BaselineK, Env.BaselineK[7], 1e-4f);
+	TestFalse(TEXT("a stencil not live at the build does not latch"), CamSimEntityThermal::LatchEnv(Later, Env.bValid, Env.TairK, Env.BaselineK[9]));
+	TestFalse(TEXT("still no env"), Later.bValid);
+	TestFalse(TEXT("4C off: no latch"), CamSimEntityThermal::LatchEnv(Later, false, Env.TairK, Env.BaselineK[7]));
+	// The unlatched entity spawned running steps against D = 0: excess bounded by the running targets (engine 45 K)
+	FEntityThermalPartSpec Eng; Eng.Kind = EEntityThermalPartKind::Engine;
+	const TArray<FEntityThermalPartSpec> Parts = { Eng };
+	FEntityThermalState St;
+	FEntityThermalInputs Step = CamSimEntityThermal::InputsFromLatch(Later, 10.0);
+	Step.Cmd.bEngineOn = true;
+	CamSimEntityThermal::Step(St, Step, FEntityThermalSettings(), Parts);
+	TestNearlyEqual(TEXT("engine excess = delta_k, not T_air + 45 against B = 0"), St.PartExcessK[0], 45.0f, 1e-3f);
 	return true;
 }

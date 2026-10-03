@@ -145,7 +145,11 @@ void ACamSimEntity::SetShadowCasting(bool bCast)
 
 void ACamSimEntity::SetEntityType(uint16 Type)
 {
-	if (Type != EntityType) ThermalState = FEntityThermalState();   // ROADMAP 4C: other parts, other state
+	if (Type != EntityType)   // ROADMAP 4C: other parts, other class: other state and baseline
+	{
+		ThermalState = FEntityThermalState();
+		ThermalEnvLatch = FEntityThermalLatch();
+	}
 	EntityType = Type;
 
 	const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(Type) : nullptr;
@@ -577,7 +581,7 @@ void ACamSimEntity::ApplyArticulation(const FArticulationCommand& P)
 // StepThermal — entity thermal state (ROADMAP 4C)
 // -------------------------------------------------------------------------
 
-void ACamSimEntity::StepThermal(double SimSec, const FEntityThermalSettings& Settings, bool bHasEnv, float TairK, float BaselineK)
+void ACamSimEntity::StepThermal(double SimSec, const FEntityThermalSettings& Settings)
 {
 	CamSimFrames::FGeoPose Pose;
 	float SpeedMps = ThermalSpeed.GetSpeedMps();
@@ -586,14 +590,10 @@ void ACamSimEntity::StepThermal(double SimSec, const FEntityThermalSettings& Set
 		SpeedMps = ThermalSpeed.Update(CamSimFrames::GeodeticToEcef(Pose.Lat, Pose.Lon, Pose.Alt), SimSec);
 	}
 	if (CamSimEntityThermal::ShouldDeferFirstStep(ThermalState, ThermalSpeed)) return;   // spawn at the real state's targets
-	FEntityThermalInputs In;
+	FEntityThermalInputs In = CamSimEntityThermal::InputsFromLatch(ThermalEnvLatch, SimSec);
 	In.Cmd = ThermalCmd;
 	In.Cmd.Damage = DamageState;   // Component Control 10 sets both; DamageState is the one the mesh swap uses
 	In.SpeedMps = SpeedMps;
-	In.SimSec = SimSec;
-	In.bHasEnv = bHasEnv;
-	In.TairK = TairK;
-	In.BaselineK = BaselineK;
 	const FEntityTypeEntry* Entry = TypeTable ? TypeTable->FindEntry(EntityType) : nullptr;
 	const TConstArrayView<FEntityThermalPartSpec> Parts = Entry ? TConstArrayView<FEntityThermalPartSpec>(Entry->ThermalParts)
 		: TConstArrayView<FEntityThermalPartSpec>();

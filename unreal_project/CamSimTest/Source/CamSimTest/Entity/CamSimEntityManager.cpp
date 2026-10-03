@@ -492,8 +492,13 @@ void FCamSimEntityManager::GetThermalStencilEntities(TArray<FThermalStencilEntit
 
 void FCamSimEntityManager::SetEntityThermalEnv(const FEntityThermalEnv& Env)
 {
-	if (!ThermalEnv) ThermalEnv = MakeUnique<FEntityThermalEnv>();
-	*ThermalEnv = Env;
+	// Called right after the builder ran on GetThermalStencilEntities of this tick, so StencilOf is the mapping it saw.
+	for (const TPair<FEntityKey, uint8>& KV : StencilOf)
+	{
+		ACamSimEntity* E = FindEntity(KV.Key);
+		if (!E || KV.Value == 0) continue;
+		E->LatchThermalEnv(Env.bValid, Env.TairK, Env.BaselineK[KV.Value]);
+	}
 }
 
 void FCamSimEntityManager::StepEntityThermal(double SimSec)
@@ -501,14 +506,9 @@ void FCamSimEntityManager::StepEntityThermal(double SimSec)
 	if (!Subsystem) return;
 	const FEntityThermalSettings& Settings = Subsystem->GetConfig().Thermal.Entity;
 	if (!Settings.bEnabled) return;
-	const bool bEnv = ThermalEnv.IsValid() && ThermalEnv->bValid;
 	for (const TPair<FEntityKey, ACamSimEntity*>& KV : EntityMap)
 	{
-		ACamSimEntity* E = KV.Value;
-		if (!IsValid(E)) continue;
-		const uint8* Stencil = StencilOf.Find(KV.Key);
-		const bool bTagged = bEnv && Stencil && *Stencil != 0;
-		E->StepThermal(SimSec, Settings, bTagged, bTagged ? ThermalEnv->TairK : 0.0f, bTagged ? ThermalEnv->BaselineK[*Stencil] : 0.0f);
+		if (IsValid(KV.Value)) KV.Value->StepThermal(SimSec, Settings);
 	}
 }
 

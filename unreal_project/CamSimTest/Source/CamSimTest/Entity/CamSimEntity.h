@@ -136,7 +136,9 @@ public:
 	 * Step the thermal state (ROADMAP 4C) to sim time SimSec: speed from this entity's ECEF position, targets from the
 	 * environment (bHasEnv false: D = 0). The entity manager calls it once per tick after every pose is final.
 	 */
-	void StepThermal(double SimSec, const FEntityThermalSettings& Settings, bool bHasEnv, float TairK, float BaselineK);
+	void StepThermal(double SimSec, const FEntityThermalSettings& Settings);
+	/** Latch an IR frame's T_air and this entity's baseline B (its stencil at that frame); ignored when invalid. */
+	void LatchThermalEnv(bool bEnvValid, float TairK, float BaselineK) { CamSimEntityThermal::LatchEnv(ThermalEnvLatch, bEnvValid, TairK, BaselineK); }
 	const FEntityThermalState& GetThermalState() const { return ThermalState; }
 
 	// AActor interface
@@ -228,6 +230,7 @@ private:
 	FEntityThermalCommanded ThermalCmd;
 	FEntityThermalState     ThermalState;
 	FEntitySpeedTracker     ThermalSpeed;
+	FEntityThermalLatch     ThermalEnvLatch;
 
 	// Set to true after the first ApplyPose — suppresses the one-time world-location log
 	bool bPoseLogged = false;

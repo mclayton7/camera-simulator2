@@ -39,6 +39,17 @@ struct FEntityThermalInputs
 	float  BaselineK = 288.15f;   // B = T_class + offset of this entity
 };
 
+/**
+ * The thermal environment an entity steps with: T_air and its own baseline B, latched from the last IR frame's builder output
+ * at that frame, through the stencil the entity held then (never through a stencil's later owner). Invalid: D = 0.
+ */
+struct FEntityThermalLatch
+{
+	bool  bValid    = false;
+	float TairK     = 288.15f;
+	float BaselineK = 288.15f;
+};
+
 /** Per-entity state. */
 struct FEntityThermalState
 {
@@ -70,6 +81,11 @@ namespace CamSimEntityThermal
 		TConstArrayView<FEntityThermalPartSpec> Parts);
 	/** Component Control (class 0) 10 damage, 11 power plant, 12 flaming -> commanded inputs. False for other IDs. */
 	CAMSIMTEST_API bool  ApplyComponent(FEntityThermalCommanded& C, uint16 ComponentId, uint8 State);
+	/** Latch an IR frame's environment for one entity. Fails (and leaves the latch as it was) unless the environment is valid
+	 *  and the baseline was built for that stencil (finite, >= 150 K: a stencil not live at the build reads 0). */
+	CAMSIMTEST_API bool  LatchEnv(FEntityThermalLatch& Latch, bool bEnvValid, float TairK, float BaselineK);
+	/** Step inputs (environment and time; commands and speed left default) from a latch. */
+	CAMSIMTEST_API FEntityThermalInputs InputsFromLatch(const FEntityThermalLatch& Latch, double SimSec);
 }
 
 class FEntitySpeedTracker;

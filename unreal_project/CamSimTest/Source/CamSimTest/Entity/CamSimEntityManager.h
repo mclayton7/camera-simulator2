@@ -77,7 +77,8 @@ public:
 	 */
 	void GetThermalStencilEntities(TArray<FThermalStencilEntity>& Out) const;
 
-	/** Latch the thermal environment of the last IR frame (ROADMAP 4C; capture component, game thread). */
+	/** Latch the last IR frame's thermal environment into every entity through the stencil it holds now, i.e. at that
+	 *  frame's build (ROADMAP 4C; capture component, game thread, same tick as the build). */
 	void SetEntityThermalEnv(const FEntityThermalEnv& Env);
 
 	/** Step every entity's thermal state to SimSec (Tick calls it after every pose is final; public for tests). */
@@ -120,9 +121,6 @@ private:
 	/** Custom-depth stencil values for ground-truth masks; released in ForgetEntity (every removal path). */
 	FStencilSlotAllocator StencilSlots;
 	TMap<FEntityKey, uint8> StencilOf;
-
-	/** ROADMAP 4C: the last IR frame's T_air and per-stencil baselines (null until the first). */
-	TUniquePtr<FEntityThermalEnv> ThermalEnv;
 	bool bLoggedStencilExhausted = false;
 
 	/** Place attached (child) entities relative to their parents' current poses. */
