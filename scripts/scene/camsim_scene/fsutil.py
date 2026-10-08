@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -36,3 +37,22 @@ def atomic_write(path: Path, data: bytes) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def normalise_modes(root: Path, skip: tuple[str, ...] = ()) -> None:
+    """Directories 0755 and files 0644 under root (root included; top-level names in `skip` left alone), so a packed
+    image doesn't depend on the build host's umask (mksquashfs keeps modes; mkdir and PIL follow the umask)."""
+    root = Path(root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        if dirpath == str(root):
+            dirnames[:] = [d for d in dirnames if d not in skip]
+            filenames = [f for f in filenames if f not in skip]
+        _chmod(dirpath, 0o755)
+        for f in filenames:
+            _chmod(os.path.join(dirpath, f), 0o644)
+
+
+def _chmod(path: str, mode: int) -> None:
+    st = os.lstat(path)
+    if not stat.S_ISLNK(st.st_mode) and stat.S_IMODE(st.st_mode) != mode:
+        os.chmod(path, mode)

@@ -40,3 +40,18 @@ def test_pack_is_reproducible_and_excludes_state(tmp_path):
     assert (tmp_path / "b.sqfs.build.json").read_text() == (pkg / "build.json").read_text()
     listing = subprocess.run(["unsquashfs", "-l", str(a)], capture_output=True, text=True, check=True).stdout
     assert "terrain/layer.json" in listing and ".state" not in listing and "build.json" not in listing
+
+
+@pytest.mark.skipif(shutil.which("mksquashfs") is None, reason="mksquashfs not installed")
+def test_packed_modes_do_not_depend_on_the_umask(tmp_path):
+    import os
+
+    old = os.umask(0o077)
+    try:
+        pkg, _, _ = build_synthetic(tmp_path)
+    finally:
+        os.umask(old)
+    image = pack.pack(pkg, tmp_path / "p.sqfs")
+    listing = subprocess.run(["unsquashfs", "-lls", str(image)], capture_output=True, text=True, check=True).stdout
+    modes = {line.split()[0] for line in listing.splitlines() if line[:1] in ("d", "-")}
+    assert modes == {"drwxr-xr-x", "-rw-r--r--"}, modes

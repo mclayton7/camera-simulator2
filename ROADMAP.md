@@ -1792,7 +1792,8 @@ generation, realism validation (R0–R6). US only, photogrammetry out of scope, 
 Pendleton (2026-10-07). Starts after 4D (rule 5), except R0 (offline tooling only). **R0 spike done
 2026-10-07** (`docs/realism-r0-spike.md`): a Pendleton package (3DEP + NAIP) rendered from `file://`
 with the internet blocked, < 1 px registration error vs CWT + Bing, frame-centre heights within 0.9 m
-of 3DEP.
+of 3DEP. **R0 tooling implemented 2026-10-08** (`scripts/scene/`, the `camsim-scene` CLI, guide
+`docs/scene-packages.md`); exit gates 1–6 pending (gates 1–4 and 6 on the Linux box, gate 5 on the Mac).
 
 **Human follow-up (editor):** for offline runs, remove the ion-backed actors from `Main.umap` (terrain
 ion 1 with its Bing overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B).

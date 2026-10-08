@@ -43,6 +43,7 @@ class TileResult:
 @dataclass
 class LayerStats:
     tiles: int = 0
+    files: int = 0  # files written to the package for this layer (= tiles for terrain and imagery)
     built: int = 0
     skipped: int = 0
     bytes: int = 0
@@ -51,6 +52,7 @@ class LayerStats:
 
     def add(self, r: TileResult) -> None:
         self.tiles += 1
+        self.files += 1
         self.built += not r.skipped
         self.skipped += r.skipped
         self.bytes += r.size

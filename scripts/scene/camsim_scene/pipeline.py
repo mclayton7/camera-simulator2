@@ -39,7 +39,7 @@ from .engine import (
     run_tile,
     tile_path,
 )
-from .fsutil import atomic_write, sha256_file
+from .fsutil import atomic_write, normalise_modes, sha256_file
 from .layers import imagery, landcover, terrain
 from .licences import DEFAULT_ALLOW, attribution_text, check_allowed
 from .manifest import STATE_DIR, AssetRecord, Manifest, SourceRecord, canonical_json, write_hashes
@@ -394,7 +394,8 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         atomic_write(marker, json.dumps({"inputs": inputs, "output": sha256_file(index_path)}).encode())
         st.built = len(index["tiles"])
     st.tiles = len(index["tiles"])
-    st.bytes = sum(p.stat().st_size for p in out.iterdir())
+    files = [p for p in out.iterdir() if p.is_file()]  # the PNGs + index.json + ATTRIBUTION.txt
+    st.files, st.bytes = len(files), sum(p.stat().st_size for p in files)
     st.seconds = round(time.monotonic() - t0, 3)
     st.peak_rss_mb = peak_rss_mb()
     return st
@@ -449,6 +450,7 @@ def build_scene(
         )
         stats["landcover"] = _build_landcover(pkg, m, ctx)
         atomic_write(pkg / "ATTRIBUTION.txt", attribution_text(m).encode())
+        normalise_modes(pkg, skip=(STATE_DIR,))
         m.hashes_sha256 = write_hashes(pkg, Markers(pkg).output_for_file)
         m.write(pkg / "manifest.json")
         info = {

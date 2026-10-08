@@ -208,3 +208,25 @@ def test_missing_footprint_outside_a_build_is_a_clear_error(tmp_path):
     del m.source("hi_dem").assets[0].metadata["footprint"]
     with pytest.raises(ContextError, match="camsim-scene fetch"):
         coverage(m, "terrain")
+
+
+def test_build_json_counts_files_per_layer(tmp_path, monkeypatch):
+    from camsim_scene import pipeline
+    from camsim_scene.context import BuildContext
+    from camsim_scene.manifest import SourceRecord
+
+    pkg, _, info = build_synthetic(tmp_path)
+    for layer in ("terrain", "imagery"):
+        assert info["layers"][layer]["files"] == info["layers"][layer]["tiles"] > 0
+    assert info["layers"]["landcover"]["files"] == 0
+    assert json.loads((pkg / "build.json").read_text())["layers"]["terrain"]["files"] > 0
+    m = Manifest.load(pkg / "manifest.json")
+    m.sources.append(SourceRecord("lc", "worldcover", "lc", "1", "CC-BY-4.0", "lc", {}, []))
+    m.layers["landcover"] = {"priorities": ["lc"], "bounds": [10.0, 10.0, 10.1, 10.04], "tile_deg": 0.05}
+    monkeypatch.setattr(
+        pipeline.landcover, "local_reader", lambda paths: lambda url, r, c: np.zeros((600, 600), np.uint8)
+    )
+    st = pipeline._build_landcover(pkg, m, BuildContext(str(pkg), m.to_dict(), {}, {}))
+    assert st.tiles == 2 and st.files == 4  # two PNGs + index.json + ATTRIBUTION.txt
+    st = pipeline._build_landcover(pkg, m, BuildContext(str(pkg), m.to_dict(), {}, {}))
+    assert st.skipped == 2 and st.files == 4

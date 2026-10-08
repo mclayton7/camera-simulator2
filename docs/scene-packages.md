@@ -252,10 +252,14 @@ Pendleton is ≈ 1.35 m. ETOPO heights (EGM2008) become ellipsoid heights throug
   interleaving writes.
 - **`manifest.json` vs `build.json`:** the manifest is deterministic (inputs, settings, pipelines, hashes; nothing
   time- or host-dependent). `build.json` holds the build facts: UTC times, host, tool git commit, the build-image
-  digest (`CAMSIM_SCENE_IMAGE_DIGEST`, set by `build.sh`), and per-layer stats (tiles, built/skipped, bytes, wall
-  time, peak RSS per worker). When the peak RSS of any worker exceeds `--max-worker-rss-mb` (default 2048), `build` exits with an error after finishing (the package is complete; the number is in `build.json`).
-- **Reproducibility contract:** the same `manifest.json` inputs + the same build-image digest ⇒ every file except
-  `build.json` byte-identical, and so the same `hashes.txt` and the same `.sqfs`. The image's apt packages aren't
+  digest (`CAMSIM_SCENE_IMAGE_DIGEST`, set by `build.sh`), and per-layer stats (tiles, files, built/skipped,
+  bytes, wall time, peak RSS per worker; `files` equals `tiles` for terrain and imagery, and counts the PNGs +
+  `index.json` + `ATTRIBUTION.txt` for land cover). At the end of a build every package directory is set to 0755
+  and every file to 0644 (`.state/` aside), so the packed image doesn't depend on the host's umask. When the peak RSS of any worker exceeds `--max-worker-rss-mb` (default 2048), `build` exits with an error after finishing (the package is complete; the number is in `build.json`).
+- **Reproducibility contract:** the same `manifest.json` inputs + the same build-image digest + the same host CPU
+  class ⇒ every file except `build.json` byte-identical, and so the same `hashes.txt` and the same `.sqfs`. The
+  CPU class matters because NumPy picks its float64 `sin`/`cos` kernels by CPU features (e.g. AVX-512 or not),
+  which can move the last bit of ECEF positions and normals: compare builds from machines of the same class. The image's apt packages aren't
   snapshot-pinned, so a rebuilt image may differ: keep the reference image by digest. Native (non-container)
   builds must pass `verify` but needn't match bytes.
 
