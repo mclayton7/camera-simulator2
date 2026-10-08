@@ -1627,11 +1627,12 @@ Class temperatures at San Francisco, 21 Dec, noon / 02:00 (K): `terrain_default`
 or materials. Data attribution (CC BY 4.0): © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed
 by ESA WorldCover consortium (README.md and `docs/thermal.md`).
 
-### 4C Entity thermal state (implemented 2026-10-02; visual review pending)
+### 4C Entity thermal state (done 2026-10-07)
 
 **Status:** implemented on branch `feat/entity-thermal`; `thermal_check.py --band both` passes every gate (a–q) on Linux/Vulkan
 (RTX 5080, driver 595.91). Metal not yet run. Visual review of the 4C shot set (`.cache/thermal_check/4c_full/shots/*_ent_*`:
-running, parked 5 s / 600 s after driving, parked-cold, destroyed; MWIR/LWIR) and of the part volumes is the remaining step.
+running, parked 5 s / 600 s after driving, parked-cold, destroyed; MWIR/LWIR) and of the part volumes: signed off by the user
+2026-10-07.
 
 Spec: `docs/superpowers/specs/2026-10-02-entity-thermal-state-design.md` (aligned with the as-built design); plan:
 `docs/superpowers/plans/2026-10-02-entity-thermal-state.md`; guide: `docs/thermal.md#entity-thermal-state-roadmap-4c`. Covers 4.3.
@@ -1709,7 +1710,7 @@ within 2 DN (n +95.6 / +69.6, p 35.5 → 5.7 / 26.7 → 1.8, q +153.6, b +23.0 /
   the F-16 (orientation unverified); host-set initial thermal history.
 - Metal run of `thermal_check.py --runs entity` and `CamSim.GPU.Thermal.EntityPartsMatchesCpu`.
 
-**Editor / human changes: none** (code, shaders, config). Human step: visual review of the 4C shots and part volumes.
+**Editor / human changes: none** (code, shaders, config). Human step: visual review of the 4C shots and part volumes (signed off 2026-10-07).
 
 ---
 
@@ -1780,6 +1781,22 @@ hits loaded tiles; the host polls), and the on-rig checks listed in `hitl/README
 | 5.2 | **RTSP/RTP output** alongside MPEG-TS multicast, for the autonomy/QGroundControl toolchain.                      |
 | 5.3 | **ROS 2 bridge** (images + camera info + TF) via the control API.                                                |
 | 5.4 | **CIGI 4.0** adapter.                                                                                            |
+
+---
+
+## Realism track (planned, `REALISM.md`)
+
+Scene content from a bounding box: self-contained (offline) scene packages, bare-earth terrain and
+imagery, roads/water in the land-cover window, generated buildings and vegetation, mission-aware
+generation, realism validation (R0–R6). US only, photogrammetry out of scope, first area Camp
+Pendleton (2026-10-07). Starts after 4D (rule 5), except R0 (offline tooling only). **R0 spike done
+2026-10-07** (`docs/realism-r0-spike.md`): a Pendleton package (3DEP + NAIP) rendered from `file://`
+with the internet blocked, < 1 px registration error vs CWT + Bing, frame-centre heights within 0.9 m
+of 3DEP.
+
+**Human follow-up (editor):** for offline runs, remove the ion-backed actors from `Main.umap` (terrain
+ion 1 with its Bing overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B).
+They request `api.cesium.com` at frame 0, before CamSim's config replaces them.
 
 ---
 

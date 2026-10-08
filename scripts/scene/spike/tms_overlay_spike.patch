@@ -1,0 +1,29 @@
+diff --git a/unreal_project/CamSimTest/Source/CamSimTest/Geospatial/CamSimGeospatialProvider.cpp b/unreal_project/CamSimTest/Source/CamSimTest/Geospatial/CamSimGeospatialProvider.cpp
+index 8927c2a..77df180 100644
+--- a/unreal_project/CamSimTest/Source/CamSimTest/Geospatial/CamSimGeospatialProvider.cpp
++++ b/unreal_project/CamSimTest/Source/CamSimTest/Geospatial/CamSimGeospatialProvider.cpp
+@@ -8,6 +8,7 @@
+ #include "CesiumIonServer.h"
+ #include "CesiumIonRasterOverlay.h"
+ #include "CesiumWebMapServiceRasterOverlay.h"
++#include "CesiumTileMapServiceRasterOverlay.h" // SPIKE (realism R0)
+ #include "Engine/World.h"
+ #include "EngineUtils.h"
+ 
+@@ -240,6 +241,16 @@ UCesiumIonServer* ApplyCesiumBackendConfig(
+ 			O->RegisterComponent();
+ 			O->Activate(false);
+ 		}
++		else if (ImagerySrc == TEXT("tms")) // SPIKE (realism R0): wms_url holds the TMS root
++		{
++			UCesiumTileMapServiceRasterOverlay* O =
++				NewObject<UCesiumTileMapServiceRasterOverlay>(Tileset, TEXT("CamSimImagery"));
++			O->Url = Config.Imagery.WmsUrl;
++			O->SetMaximumScreenSpaceError(Config.Imagery.MaximumScreenSpaceError);
++			O->SetMaximumSimultaneousTileLoads(Config.Imagery.MaximumSimultaneousTileLoads);
++			O->RegisterComponent();
++			O->Activate(false);
++		}
+ 		else if (ImagerySrc != TEXT("none"))
+ 		{
+ 			UE_LOG(LogCamSim, Warning,

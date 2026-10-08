@@ -1,0 +1,4 @@
+pkg/
+out/
+.venv/
+hot_*.json
