@@ -2,6 +2,7 @@ import hashlib
 import json
 
 import pytest
+import requests
 from fakes import FakeResponse, FakeSession
 
 from camsim_scene.cache import Cache, CacheError
