@@ -22,7 +22,7 @@ from pathlib import Path
 import requests
 
 from .fsutil import CHUNK, atomic_write
-from .net import Http, HttpError, redact
+from .net import Http, HttpError, redact, scrub
 
 Signer = Callable[[str, bool], str]
 REPO = Path(__file__).resolve().parents[3]
@@ -109,7 +109,7 @@ class Cache:
                     self.sleep(2**attempt)
             finally:
                 tmp.unlink(missing_ok=True)
-        raise CacheError(f"{redact(url)}: download failed after {self.attempts} attempts: {last}")
+        raise CacheError(f"{redact(url)}: download failed after {self.attempts} attempts: {scrub(last)}")
 
     def _chunks(self, href: str):
         if href.startswith("file://"):

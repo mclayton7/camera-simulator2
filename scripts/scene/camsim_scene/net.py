@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 import requests
@@ -18,6 +19,14 @@ class HttpError(Exception):
 def redact(url: str) -> str:
     """Drop the query string (Planetary Computer SAS tokens live there)."""
     return url.split("?", 1)[0]
+
+
+_QUERY = re.compile(r"\?[^\s)'\"]*")
+
+
+def scrub(text: object) -> str:
+    """Remove every query string from arbitrary text (requests puts the full path + query in exception messages)."""
+    return _QUERY.sub("?<redacted>", str(text))
 
 
 class Http:
@@ -40,7 +49,7 @@ class Http:
                 last = e
             if attempt + 1 < self.retries:
                 self.sleep(self.backoff_s * 2**attempt)
-        raise HttpError(f"{method} {redact(url)}: {last}")
+        raise HttpError(f"{method} {redact(url)}: {scrub(last)}")
 
     def get_json(self, url: str, params: dict | None = None):
         r = self._request("GET", url, params=params)

@@ -94,3 +94,17 @@ def test_http_retries_server_errors_then_reports(tmp_path):
     session = FakeSession(lambda m, u, kw: FakeResponse(status=503))
     with pytest.raises(HttpError, match="503"):
         Http(session=session, retries=2, sleep=lambda s: None).get_json("https://api")
+
+
+def test_network_error_text_never_leaks_query_token(tmp_path):
+    def boom(m, u, kw):
+        raise requests.ConnectionError("Max retries exceeded with url: /x.tif?sig=SECRET (Caused by X)")
+
+    cache, _ = make_cache(tmp_path, boom)
+    with pytest.raises(CacheError) as err:
+        cache.get(URL)
+    assert "SECRET" not in str(err.value)
+
+    with pytest.raises(HttpError) as err2:
+        Http(session=FakeSession(boom), retries=2, sleep=lambda s: None).get_json("https://api")
+    assert "SECRET" not in str(err2.value)
