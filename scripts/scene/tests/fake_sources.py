@@ -175,3 +175,19 @@ def fake_context(root: Path, scene: dict | None = None) -> BuildContext:
         tool={"name": "camsim-scene", "version": "test"},
     )
     return BuildContext(str(root / "pkg"), m.to_dict(), paths, {})
+
+
+def build_synthetic(tmp_path: Path, scene: dict | None = None, jobs: int = 1, name: str = "pkg", cache=None):
+    """plan + fetch + build a synthetic package; returns (pkg, cache, build info)."""
+    import io
+
+    from fakes import FakeHttp
+
+    from camsim_scene.cache import Cache
+    from camsim_scene.pipeline import build_scene, plan_scene
+
+    scene = scene or synthetic_scene(tmp_path / "src")
+    cache = cache or Cache(tmp_path / "cache")
+    pkg = tmp_path / name
+    plan_scene(parse_scene(scene), pkg, http=FakeHttp({}), out=io.StringIO())
+    return pkg, cache, build_scene(pkg, cache, jobs=jobs)
