@@ -1,0 +1,6 @@
+.venv
+out
+tests
+tools
+spike
+**/__pycache__
