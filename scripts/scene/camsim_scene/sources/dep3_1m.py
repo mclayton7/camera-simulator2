@@ -45,7 +45,7 @@ class Dep31m(SourceBase):
             },
         )
         if "error" in d:
-            raise HttpError(f"WESM query failed: {d['error']} (set sources.dep3_1m.geoid_overrides to proceed)")
+            raise HttpError(f"WESM query failed: {d['error']}")
         out: dict[str, dict] = {}
         for f in d.get("features", []):
             a = f["attributes"]
@@ -58,12 +58,21 @@ class Dep31m(SourceBase):
 
     def discover(self, area: Area) -> list[Asset]:
         overrides = self._options.get("geoid_overrides", {})
-        wesm = self._wesm(area.bounds)
         by_project: dict[str, list] = defaultdict(list)
         for it in tnm_products(self.http, area.bounds, DATASET):
             m = URL_RE.search(it.get("downloadURL", ""))
             if m:
                 by_project[m.group(1)].append((m, it))
+        try:
+            wesm = self._wesm(area.bounds)
+        except HttpError as e:
+            uncovered = sorted(p for p in by_project if p not in overrides)
+            if uncovered:
+                raise HttpError(
+                    f"{e}; set sources.dep3_1m.geoid_overrides for project(s) {', '.join(uncovered)} to proceed"
+                ) from e
+            log.warning("dep3_1m: WESM unavailable (%s); using geoid_overrides for every project", e)
+            wesm = {}
 
         def collected(p: str) -> str:
             ms = wesm.get(p, {}).get("collect_end", 0)
@@ -77,11 +86,13 @@ class Dep31m(SourceBase):
             geoid = overrides.get(p) or (next(iter(geoids)) if len(geoids) == 1 else None)
             did = geoid_datum(geoid) if geoid else None
             if did is None:
+                why = (
+                    f"geoid {geoid or sorted(geoids)} is unknown or has no PROJ grid"
+                    if geoids or geoid
+                    else "not in WESM"
+                )
                 log.warning(
-                    "dep3_1m: skipping project %s: geoid %s is unknown or has no PROJ grid (%s)",
-                    p,
-                    geoid or sorted(geoids),
-                    "set sources.dep3_1m.geoid_overrides if you know it",
+                    "dep3_1m: skipping project %s: %s (set sources.dep3_1m.geoid_overrides if you know it)", p, why
                 )
                 continue
             for m, it in sorted(by_project[p], key=lambda t: t[0].group(2)):

@@ -4,12 +4,14 @@ the `as_of` option (YYYYMMDD)."""
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 from .base import Area, Asset, Layer, SourceBase, SourceRaster
 from .tnm import tnm_products
 
+log = logging.getLogger(__name__)
 DATASET = "National Elevation Dataset (NED) 1/3 arc-second"
 URL_RE = re.compile(r"/historical/([ns]\d{2}[ew]\d{3})/USGS_13_\1_(\d{8})\.tif$")
 
@@ -27,15 +29,19 @@ class Dep313(SourceBase):
     def discover(self, area: Area) -> list[Asset]:
         as_of = self._options.get("as_of")
         best: dict[str, tuple[str, dict]] = {}
+        seen: set[str] = set()
         for it in tnm_products(self.http, area.bounds, DATASET):
             m = URL_RE.search(it.get("downloadURL", ""))
             if not m:
                 continue
             cell, date = m.groups()
+            seen.add(cell)
             if as_of and date > as_of:
                 continue
             if cell not in best or date > best[cell][0]:
                 best[cell] = (date, it)
+        for cell in sorted(seen - set(best)):
+            log.warning("dep3_13: cell %s has no copy on or before as_of %s; skipped", cell, as_of)
         assets = []
         for rank, cell in enumerate(sorted(best)):
             date, it = best[cell]

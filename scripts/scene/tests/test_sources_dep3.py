@@ -3,7 +3,7 @@ import logging
 import pytest
 from fakes import FakeHttp, fixture_json
 
-from camsim_scene.net import Http
+from camsim_scene.net import Http, HttpError
 from camsim_scene.sources import make_source
 from camsim_scene.sources.base import Area, Layer
 from camsim_scene.sources.dep3_1m import WESM_QUERY
@@ -61,3 +61,30 @@ def test_live_tnm_and_wesm_for_pendleton():
     assert make_source("dep3_13", http=http).discover(AREA)
     one_m = make_source("dep3_1m", http=http).discover(AREA)
     assert any(a.metadata["datum"] == "nad83_2011_navd88_geoid18" for a in one_m)
+
+
+def _wesm_down(params):
+    raise HttpError("HTTP 400")
+
+
+def test_dep3_1m_wesm_outage_with_full_overrides_proceeds(caplog):
+    http = FakeHttp({TNM_PRODUCTS: tnm("tnm_1m.json"), WESM_QUERY: _wesm_down})
+    ov = {"CA_SanDiegoCo_D24": "GEOID18", "San_Diego_CA_2014_LiDAR": "GEOID12B"}
+    with caplog.at_level(logging.WARNING):
+        assets = make_source("dep3_1m", options={"geoid_overrides": ov}, http=http).discover(AREA)
+    assert [a.group for a in assets] == ["CA_SanDiegoCo_D24", "San_Diego_CA_2014_LiDAR"]
+    assert "WESM unavailable" in caplog.text
+
+
+def test_dep3_1m_wesm_outage_without_full_overrides_names_projects():
+    http = FakeHttp({TNM_PRODUCTS: tnm("tnm_1m.json"), WESM_QUERY: _wesm_down})
+    src = make_source("dep3_1m", options={"geoid_overrides": {"CA_SanDiegoCo_D24": "GEOID18"}}, http=http)
+    with pytest.raises(HttpError, match="geoid_overrides for project.*San_Diego_CA_2014_LiDAR"):
+        src.discover(AREA)
+
+
+def test_dep3_13_as_of_before_every_copy_warns(caplog):
+    src = make_source("dep3_13", options={"as_of": "20000101"}, http=FakeHttp({TNM_PRODUCTS: tnm("tnm_13.json")}))
+    with caplog.at_level(logging.WARNING):
+        assert src.discover(AREA) == []
+    assert "n34w118" in caplog.text
