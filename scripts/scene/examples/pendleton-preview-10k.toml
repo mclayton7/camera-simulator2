@@ -1,0 +1,5 @@
+# R0 exit gate 6: ~10,000 km2 (~100 x 100 km) around Pendleton, preview profile (no NAIP, no 1 m DEM)
+name = "pendleton-preview-10k"
+bbox = [-117.97, 32.90, -116.90, 33.80]
+profile = "preview"
+ring_km = 100
