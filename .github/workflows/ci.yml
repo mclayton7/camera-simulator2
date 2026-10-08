@@ -93,6 +93,18 @@ jobs:
         # The bench tests (test_bench_*) need numpy and pillow.
         run: uv run --with pytest --with numpy --with pillow --with pycocotools pytest scripts/tests/ -v
 
+  scene-tests:
+    name: Scene package tooling (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Unit tests (scripts/scene/tests, no network)
+        run: uv run --project scripts/scene --frozen pytest scripts/scene/tests -q
+
   # -------------------------------------------------------------------
   # Phase 28A: Docker image build (self-hosted runner with UE5)
   #
