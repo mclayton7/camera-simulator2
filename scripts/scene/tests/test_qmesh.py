@@ -118,3 +118,32 @@ def test_layer_json_shape():
     lj = qmesh.layer_json("pendleton", [[{"startX": 0, "startY": 0, "endX": 1, "endY": 0}]], "USGS")
     assert lj["format"] == "quantized-mesh-1.0" and lj["scheme"] == "tms" and lj["projection"] == "EPSG:4326"
     assert lj["extensions"] == ["octvertexnormals"] and lj["maxzoom"] == 0 and lj["tiles"] == ["{z}/{x}/{y}.terrain"]
+
+
+def test_exactly_65536_vertices_round_trip():
+    """65,536 vertices: a high-water-mark code can reach 65,536, which uint16 indices can't hold (Cesium switches
+    to 32-bit only above 65,536 vertices). The last triangle repeats the first, so it references vertex 0 when
+    every vertex has been seen."""
+    n = 256
+    w, s, e, nn = B16
+    c, r = np.meshgrid(np.arange(n), np.arange(n))
+    lon = w + c.ravel() * (e - w) / (n - 1)
+    lat = s + r.ravel() * (nn - s) / (n - 1)
+    h = 100.0 + 50.0 * np.sin(c.ravel() / 9.0) * np.cos(r.ravel() / 7.0)
+    a = (r[:-1, :-1] * n + c[:-1, :-1]).ravel()
+    tris = np.concatenate([np.stack([a, a + 1, a + n + 1], 1), np.stack([a, a + n + 1, a + n], 1)])
+    tris = np.concatenate([tris, tris[:1]])
+    q = qmesh.decode(qmesh.encode(lon, lat, h, tris, B16))
+    order, t2 = qmesh.renumber(tris)
+    assert len(order) == 65536
+    assert np.array_equal(q.triangles, t2)
+    assert np.abs(q.heights()[: len(order)] - h[order]).max() <= 0.5 * (h.max() - h.min()) / QMAX + 1e-4
+    for edge, along in ((q.west, q.v), (q.south, q.u), (q.east, q.v), (q.north, q.u)):
+        assert len(edge) == n and edge.max() < len(order) and np.all(np.diff(along[edge].astype(int)) > 0)
+
+
+def test_index_codes_that_overflow_their_type_raise(monkeypatch):
+    lon, lat, h, tris = grid_mesh(B16)
+    monkeypatch.setattr(qmesh, "hwm_encode", lambda flat: np.full(len(flat), 70000, np.int64))
+    with pytest.raises(ValueError, match="index"):
+        qmesh.encode(lon, lat, h, tris, B16)

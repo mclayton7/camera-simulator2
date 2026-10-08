@@ -152,10 +152,21 @@ def vertex_normals(pts: np.ndarray, tris: np.ndarray, lon: np.ndarray, lat: np.n
     return out
 
 
+def _indices(values: np.ndarray, itype: str) -> bytes:
+    if values.size and int(values.max()) > np.iinfo(np.dtype(itype)).max:
+        raise ValueError(f"index code {int(values.max())} does not fit {np.dtype(itype)}")
+    return values.astype(itype).tobytes()
+
+
 def encode(lon, lat, height, triangles, bounds) -> bytes:
     """One uncompressed quantized-mesh tile. Triangles must be CCW in (lon, lat); vertices are renumbered."""
     lon, lat, height = (np.asarray(a, np.float64) for a in (lon, lat, height))
     order, tris = renumber(triangles)
+    used = len(order)
+    if used == 65536:
+        # A high-water-mark code can reach 65,536 here, but indices are 16-bit until the count exceeds 65,536
+        # (as Cesium decodes): add one unreferenced copy of the last vertex so the tile uses 32-bit indices.
+        order = np.append(order, order[-1])
     lon, lat, height = lon[order], lat[order], height[order]
     w, s, e, n = bounds
     u, v = _quantize(lon, w, e), _quantize(lat, s, n)
@@ -173,11 +184,11 @@ def encode(lon, lat, height, triangles, bounds) -> bytes:
         out += _zigzag(np.diff(q, prepend=0)).astype("<u2").tobytes()
     itype, align = ("<u4", 4) if nv > 65536 else ("<u2", 2)
     out += b"\0" * (-len(out) % align)
-    out += struct.pack("<I", len(tris)) + hwm_encode(tris.ravel()).astype(itype).tobytes()
+    out += struct.pack("<I", len(tris)) + _indices(hwm_encode(tris.ravel()), itype)
     for mask, along in ((u == 0, v), (v == 0, u), (u == QMAX, v), (v == QMAX, u)):
-        idx = np.nonzero(mask)[0]
+        idx = np.nonzero(mask[:used])[0]  # never the padding vertex
         idx = idx[np.argsort(along[idx], kind="stable")]
-        out += struct.pack("<I", len(idx)) + idx.astype(itype).tobytes()
+        out += struct.pack("<I", len(idx)) + _indices(idx, itype)
     enc = oct_encode(vertex_normals(pts, tris, lon, lat)).tobytes()
     out += struct.pack("<BI", EXT_OCT_NORMALS, len(enc)) + enc
     return bytes(out)
