@@ -147,3 +147,21 @@ def test_registry_builds_by_module_path_and_rejects_unknown():
     assert src.id == "my_id" and src.options() == {"k": 1}
     with pytest.raises(sources.UnknownSource):
         sources.make_source("nope")
+
+
+def test_prepare_requires_sha256_and_ignores_stale_part_files(tmp_path):
+    cache = StubCache(tmp_path)
+    strip = write_geotiff(
+        tmp_path / "strip.tif", np.ones((600, 600), np.float32), 0, 10, 0.01, tiled=False, overviews=()
+    )
+    with pytest.raises(ValueError):
+        base.prepare_raster(strip, Asset("s", "file://x"), cache)
+    asset = Asset("s", "file://x", sha256="ab" * 32)
+    out = base.prepare_raster(strip, asset, cache)
+    out.unlink()
+    stale = out.with_name(out.name + ".part")
+    stale.write_bytes(b"truncated")
+    out2 = base.prepare_raster(strip, asset, cache)
+    with rasterio.open(out2) as ds:
+        assert ds.width == 600
+    assert stale.read_bytes() == b"truncated"

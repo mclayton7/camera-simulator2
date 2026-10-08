@@ -7,6 +7,7 @@ numpy: the land-cover wrapper imports sources.worldcover in a minimal environmen
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import lru_cache
@@ -240,6 +241,8 @@ def prepare_raster(
     when the file is already tiled with overviews. `crs`/`transform` georeference files that carry none (Blue Marble)."""
     import warnings
 
+    if not asset.sha256:
+        raise ValueError(f"prepare_raster needs asset.sha256 (asset {asset.id!r}) to key the derived file")
     import rasterio
     import rasterio.shutil
     from rasterio.errors import NotGeoreferencedWarning
@@ -278,12 +281,12 @@ def prepare_raster(
             "compress": "deflate",
             "BIGTIFF": "IF_SAFER",
         }
-        tmp = dst.with_name(dst.name + ".stage.tif")
+        tmp = dst.with_name(f"{dst.name}.{uuid.uuid4().hex}.stage.tif")
         with rasterio.open(tmp, "w", **profile) as out:
             for row in range(0, ds.height, 512):
                 win = Window(0, row, ds.width, min(512, ds.height - row))
                 out.write(ds.read(window=win), window=win)
-    part = dst.with_name(dst.name + ".part")
+    part = dst.with_name(f"{dst.name}.{uuid.uuid4().hex}.part")
     try:
         rasterio.shutil.copy(
             tmp,
