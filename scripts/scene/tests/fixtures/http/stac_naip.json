@@ -1,0 +1,8 @@
+{"type": "FeatureCollection", "links": [], "features": [
+ {"id": "ca_m_3311754_nw_11_060_20220530", "bbox": [-117.377413, 33.185508, -117.310127, 33.251989],
+  "properties": {"naip:year": "2022", "proj:epsg": 26911, "datetime": "2022-05-30T16:00:00Z"},
+  "assets": {"image": {"href": "https://naipeuwest.blob.core.windows.net/naip/v002/ca/2022/ca_060cm_2022/33117/m_3311754_nw_11_060_20220530.tif"}}},
+ {"id": "ca_m_3311754_nw_11_060_20200521", "bbox": [-117.377413, 33.185508, -117.310127, 33.251989],
+  "properties": {"naip:year": "2020", "proj:epsg": 26911, "datetime": "2020-05-21T16:00:00Z"},
+  "assets": {"image": {"href": "https://naipeuwest.blob.core.windows.net/naip/v002/ca/2020/ca_060cm_2020/33117/m_3311754_nw_11_060_20200521.tif"}}}
+]}
