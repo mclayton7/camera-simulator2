@@ -1,20 +1,13 @@
 import numpy as np
 import pytest
 import rasterio
+from fakes import StubCache
 from PIL import Image
 from rasters import write_geotiff
 
 from camsim_scene import sources
 from camsim_scene.sources import base
 from camsim_scene.sources.base import Asset, SourceRaster
-
-
-class StubCache:
-    def __init__(self, root):
-        self.root = root
-
-    def derived_path(self, key, suffix):
-        return self.root / "derived" / key[:2] / f"{key}{suffix}"
 
 
 def plane_raster(tmp_path, west=10.0, north=11.0, res=0.01, n=100, **kw):

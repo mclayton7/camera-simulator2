@@ -71,3 +71,11 @@ class FakeHttp:
 
     def head(self, url):
         return self.routes.get(("HEAD", url), (404, None))
+
+
+class StubCache:
+    def __init__(self, root):
+        self.root = root
+
+    def derived_path(self, key, suffix):
+        return self.root / "derived" / key[:2] / f"{key}{suffix}"
