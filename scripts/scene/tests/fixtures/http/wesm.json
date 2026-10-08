@@ -1,0 +1,4 @@
+{"features": [
+ {"attributes": {"project": "CA_SanDiegoCo_D24", "workunit": "CA_SanDiegoCo_1_D24", "geoid": "GEOID18", "collect_end": 1733011200000}},
+ {"attributes": {"project": "CA_SanDiegoQL2_2014", "workunit": "San_Diego_CA_2014_LiDAR", "geoid": "GEOID12A", "collect_end": 1422748800000}}
+]}

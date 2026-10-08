@@ -1,0 +1,4 @@
+{"total": 2, "items": [
+ {"title": "USGS 1 Meter 11 x46y368 CA_SanDiegoCo_D24", "publicationDate": "2026-09-15", "sizeInBytes": 231550972, "downloadURL": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/CA_SanDiegoCo_D24/TIFF/USGS_1M_11_x46y368_CA_SanDiegoCo_D24.tif", "boundingBox": {"minX": -117.42944681599994, "maxX": -117.32175658099999, "minY": 33.16805754400008, "maxY": 33.258580119000044}},
+ {"title": "USGS 1 Meter 11 x46y368 San_Diego_CA_2014_LiDAR", "publicationDate": "2024-04-26", "sizeInBytes": 233216779, "downloadURL": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/San_Diego_CA_2014_LiDAR/TIFF/USGS_1M_11_x46y368_San_Diego_CA_2014_LiDAR.tif", "boundingBox": {"minX": -117.42944681599994, "maxX": -117.32175658099999, "minY": 33.16805754400008, "maxY": 33.258580119000044}}
+]}
