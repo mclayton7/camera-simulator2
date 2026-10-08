@@ -295,6 +295,10 @@ def _run_layer(
     return stats
 
 
+def _landcover_complete(index: dict, out: Path) -> bool:
+    return all((out / t["file"]).is_file() for t in index["tiles"])
+
+
 def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     st, out = LayerStats(), pkg / "landcover"
     prio = m.layers["landcover"]["priorities"]
@@ -307,8 +311,12 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     inputs = inputs_hash(m.layer_settings_hash("landcover"), __version__, *sorted(a.sha256 for a in rec.assets))
     marker, index_path = pkg / STATE_DIR / "landcover.json", out / "index.json"
     prev = json.loads(marker.read_text()) if marker.exists() else None
+    index = None
     if prev and prev["inputs"] == inputs and index_path.exists() and sha256_file(index_path) == prev["output"]:
         index = json.loads(index_path.read_text())
+        if not _landcover_complete(index, out):
+            index = None
+    if index is not None:
         st.skipped = len(index["tiles"])
     else:
         shutil.rmtree(out, ignore_errors=True)
@@ -344,12 +352,12 @@ def build_scene(
     pkg: Path, cache: Cache, jobs: int | None = None, json_progress: bool = False, max_worker_rss_mb: float = 2048.0
 ) -> dict:
     pkg = Path(pkg)
-    m = Manifest.load(pkg / "manifest.json")
-    if not m.is_fetched():
-        m = fetch_scene(pkg, cache)
     jobs = jobs or os.cpu_count() or 1
     started = _utc_now()
-    with BuildLock(pkg):
+    with BuildLock(pkg):  # before the fetch too: a second build must not rewrite manifest.json
+        m = Manifest.load(pkg / "manifest.json")
+        if not m.is_fetched():
+            m = fetch_scene(pkg, cache)
         ctx = make_context(pkg, m, cache)
         tplan = plan_tiles(m.region_objs(), "terrain", coverage(m, "terrain"))
         iplan = plan_tiles(m.region_objs(), "imagery", coverage(m, "imagery"))

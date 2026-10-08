@@ -166,3 +166,23 @@ def test_rss_bound_is_reported_after_a_complete_build(tmp_path):
     with pytest.raises(BuildError, match="RSS"):
         build_scene(pkg, Cache(tmp_path / "cache"), jobs=1, max_worker_rss_mb=1.0)
     assert (pkg / "hashes.txt").exists() and (pkg / "build.json").exists()
+
+
+def test_build_refuses_when_locked_before_fetching(tmp_path):
+    from camsim_scene.cache import Cache
+
+    pkg = tmp_path / "pkg"
+    plan_scene(parse_scene(synthetic_scene(tmp_path / "src")), pkg, http=FakeHttp({}), out=io.StringIO())
+    before = (pkg / "manifest.json").read_bytes()
+    with BuildLock(pkg), pytest.raises(BuildLocked):
+        build_scene(pkg, Cache(tmp_path / "cache"), jobs=1)
+    assert (pkg / "manifest.json").read_bytes() == before
+    assert not (tmp_path / "cache").exists()
+
+
+def test_landcover_skip_requires_every_listed_tile(tmp_path):
+    from camsim_scene.pipeline import _landcover_complete
+
+    (tmp_path / "a.png").write_bytes(b"png")
+    assert _landcover_complete({"tiles": [{"file": "a.png"}]}, tmp_path)
+    assert not _landcover_complete({"tiles": [{"file": "a.png"}, {"file": "b.png"}]}, tmp_path)
