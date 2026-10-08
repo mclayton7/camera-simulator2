@@ -35,6 +35,23 @@ def test_naip_follows_post_next_links():
     assert len(make_source("naip_pc", http=http).discover(AREA)) == 1
 
 
+def test_naip_follows_get_next_links_until_the_last_page():
+    feats = fixture_json("stac_naip.json")["features"]
+    f2 = {**feats[0], "id": "ca_m_page2"}
+    f3 = {**feats[0], "id": "ca_m_page3"}
+    p2, p3 = "https://example.test/search?token=p2", "https://example.test/search?token=p3"
+    http = FakeHttp(
+        {
+            STAC_SEARCH: lambda body: {"features": feats[:1], "links": [{"rel": "next", "href": p2}]},
+            p2: lambda params: {"features": [f2], "links": [{"rel": "next", "href": p3, "method": "GET"}]},
+            p3: lambda params: {"features": [f3], "links": [{"rel": "self", "href": p3}]},
+        }
+    )
+    ids = [a.id for a in make_source("naip_pc", http=http).discover(AREA)]
+    assert ids == sorted([feats[0]["id"], "ca_m_page2", "ca_m_page3"])
+    assert [c[0] for c in http.calls] == [STAC_SEARCH, p2, p3]
+
+
 def test_pc_signer_refreshes_on_force():
     tokens = iter(
         [

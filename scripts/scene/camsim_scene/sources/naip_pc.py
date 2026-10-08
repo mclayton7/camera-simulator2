@@ -54,21 +54,19 @@ class NaipPc(SourceBase):
 
     def discover(self, area: Area) -> list[Asset]:
         year = str(self._options.get("year", "2022"))
-        url, body = STAC_SEARCH, {"collections": ["naip"], "bbox": list(area.bounds), "limit": 250}
+        body = {"collections": ["naip"], "bbox": list(area.bounds), "limit": 250}
         items: list[dict] = []
-        while True:
-            d = self.http.post_json(url, body)
+        d = self.http.post_json(STAC_SEARCH, body)
+        while True:  # STAC API paging: follow `next` links (POST with a merged body, or GET) to the last page
             items += d.get("features", [])
             nxt = next((link for link in d.get("links", []) if link.get("rel") == "next"), None)
             if nxt is None:
                 break
-            url = nxt["href"]
             if nxt.get("method", "GET").upper() == "POST":
                 body = {**body, **nxt.get("body", {})}
+                d = self.http.post_json(nxt["href"], body)
             else:
-                d = self.http.get_json(url)
-                items += d.get("features", [])
-                break
+                d = self.http.get_json(nxt["href"])
         items = sorted((i for i in items if str(i["properties"].get("naip:year")) == year), key=lambda i: i["id"])
         if not items:
             log.warning("naip_pc: no NAIP %s items in %s", year, area.bounds)
