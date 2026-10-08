@@ -122,8 +122,9 @@ class WorkerState:
             if vertical_asset:
                 geoid = SourceRaster(path=Path(self.ctx.asset_paths[vertical_asset]), datum="wgs84", clamp_edges=True)
 
-                def sampler(lon, lat, g=geoid):
-                    return np.nan_to_num(g.sample(lon, lat, geoid_target_m(lon, lat))[0][0])
+                def sampler(lon, lat, target_m=None, g=geoid):
+                    t = geoid_target_m(lon, lat) if target_m is None else max(GEOID_TARGET_M, target_m)
+                    return np.nan_to_num(g.sample(lon, lat, t)[0][0])
 
             self._transforms[key] = DatumTransform(self.manifest.datum["datums"][datum_id], self.grid_paths, sampler)
         return self._transforms[key]

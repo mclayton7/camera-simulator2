@@ -143,15 +143,23 @@ class DatumTransform:
         x, y, _, _ = self._h.transform(lon, lat, np.zeros_like(lon), np.full_like(lon, EPOCH))
         return np.asarray(x), np.asarray(y)
 
-    def vertical_offset(self, slon: np.ndarray, slat: np.ndarray) -> np.ndarray:
-        """Ellipsoid height of the source's height zero at source-geographic lon/lat (h = H + offset)."""
+    def vertical_offset(self, slon: np.ndarray, slat: np.ndarray, target_m: float | None = None) -> np.ndarray:
+        """Ellipsoid height of the source's height zero at source-geographic lon/lat (h = H + offset). `target_m`
+        fixes a raster geoid's read resolution (verify's exact offsets: the zoom's lattice spacing); None infers it
+        from the query's lattice spacing."""
         slon, slat = np.asarray(slon, np.float64), np.asarray(slat, np.float64)
         if self.vertical == "none":
             return np.zeros_like(slon)
         if self.vertical == "raster_geoid":
-            return np.asarray(self._geoid(slon, slat), np.float64)
+            g = self._geoid(slon, slat) if target_m is None else self._geoid(slon, slat, target_m)
+            return np.asarray(g, np.float64)
         _, _, h, _ = self._v.transform(slon, slat, np.zeros_like(slon), np.full_like(slon, EPOCH))
         return np.asarray(h)
+
+
+def lattice_step_deg(z: int) -> float:
+    """Node spacing of the vertical offset lattice at zoom z."""
+    return tile_size_deg(z) / SUBGRID
 
 
 def offset_lattice(dt: DatumTransform, z: int, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
@@ -164,7 +172,7 @@ def offset_lattice(dt: DatumTransform, z: int, lon: np.ndarray, lat: np.ndarray)
     lon, lat = np.asarray(lon, np.float64), np.asarray(lat, np.float64)
     if dt.vertical == "none":
         return np.zeros_like(lon)
-    step = tile_size_deg(z) / SUBGRID
+    step = lattice_step_deg(z)
     turn = round(360.0 / step)  # nodes per revolution (an integer: step is a binary fraction of 180 degrees)
     i0 = int(np.floor((lon.min() + 180.0) / step))
     i1 = int(np.ceil((lon.max() + 180.0) / step))

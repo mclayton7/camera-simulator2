@@ -126,3 +126,19 @@ def test_coarse_geoid_neighbours_agree_on_their_edge(tmp_path):
     )
     assert np.array_equal(left[: edge_lat.size], right[: edge_lat.size])
     assert np.ptp(left[: edge_lat.size]) > 1.0  # the geoid varies along the edge
+
+
+def test_point_heights_reads_the_geoid_overview_for_the_zoom(tmp_path, monkeypatch):
+    """verify --deep evaluates offsets exactly at decoded TIN vertices (irregular, dense): the geoid read resolution
+    must follow the zoom (as the build's lattice did), not the points' spacing, or z0 reads the full grid."""
+    from camsim_scene.layers import terrain
+
+    e, geoid = _geoid_state(tmp_path)
+    rng = np.random.default_rng(1)
+    w, s, east, n = tiling.tile_bounds(0, 0, 0)
+    lon, lat = rng.uniform(w, east, 20000), rng.uniform(s, n, 20000)
+    reads = _spy_reads(monkeypatch, geoid)
+    h = terrain.point_heights(0, lon, lat, [e])
+    assert np.isfinite(h).all()
+    assert reads and all(lv == 3 for lv, _, _ in reads), reads  # z0 lattice: 5.6-degree nodes -> the 1/16 overview
+    assert all(wd * ht <= 100 * 100 for _, wd, ht in reads), reads  # full resolution would be ~720 x 720

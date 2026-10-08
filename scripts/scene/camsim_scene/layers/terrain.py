@@ -16,7 +16,7 @@ from scipy.ndimage import distance_transform_edt
 from .. import qmesh
 from ..config import FEATHER_M
 from ..config import TERRAIN_GRID as GRID
-from ..datum import offset_lattice
+from ..datum import lattice_step_deg, offset_lattice
 from ..sources.base import M_PER_DEG, project
 from ..tiling import Bounds, tile_bounds, tile_size_deg
 
@@ -88,7 +88,7 @@ def sample_group(
         if not take.any():
             continue
         off = (
-            e.transform.vertical_offset(slon, slat)
+            e.transform.vertical_offset(slon, slat, lattice_step_deg(z) * M_PER_DEG)
             if exact_offsets
             else offset_lattice(e.transform, z, lattice_lon, lat)
         )
@@ -144,7 +144,9 @@ def build_tile(z: int, x: int, y: int, entries) -> bytes:
 
 
 def point_heights(z: int, lon: np.ndarray, lat: np.ndarray, entries) -> np.ndarray:
-    """Highest-priority valid height at arbitrary points, vertical offsets evaluated exactly (verify --deep)."""
+    """Highest-priority valid height at arbitrary points, vertical offsets evaluated exactly (verify --deep). A raster
+    geoid is read at the zoom's lattice spacing, as the build read it, not at the points' (irregular, dense) spacing:
+    memory stays bounded at coarse zooms."""
     out = np.full(np.shape(lon), np.nan)
     for g in _groups(entries):
         need = np.isnan(out)
