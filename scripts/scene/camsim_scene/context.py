@@ -19,6 +19,10 @@ from .tiling import GLOBE, Bounds, Coverage
 GEOID_TARGET_M = 900.0  # ETOPO geoid grid resolution: read at full resolution, never finer
 
 
+class ContextError(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class BuildContext:
     pkg: str
@@ -72,7 +76,7 @@ def _footprint(a: AssetRecord, use_bbox: bool):
         bb = a.metadata.get("bbox")
         return None if bb is None else shapely.box(*bb)
     if "footprint" not in a.metadata:
-        raise ValueError(f"asset {a.id} has no footprint yet: run `camsim-scene fetch`")
+        raise ContextError(f"asset {a.id} has no footprint in manifest.json: run `camsim-scene fetch`")
     wkt = a.metadata["footprint"]
     return None if wkt is None else shapely.from_wkt(wkt)
 

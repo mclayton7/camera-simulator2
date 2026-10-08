@@ -7,6 +7,7 @@ build: plan the pyramids, run the tile jobs (resumable), then write layer.json, 
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import logging
@@ -67,10 +68,20 @@ def _utc_now() -> str:
     return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _lock(pkg: Path, locked: bool):
+    """The package's build lock, unless the caller already holds it (`locked`): flock is per open file, so taking
+    it twice in one process would refuse the second time."""
+    if locked:
+        return contextlib.nullcontext()
+    Path(pkg).mkdir(parents=True, exist_ok=True)
+    return BuildLock(pkg)
+
+
 # ---------------------------------------------------------------- plan
 
 
-def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr) -> Manifest:
+def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bool = False) -> Manifest:
+    """Discover every source's assets and write manifest.json (under the build lock: a running build refuses)."""
     http = http or Http()
     built: dict[str, tuple[str, object]] = {}
     for layer in LAYERS:
@@ -117,8 +128,8 @@ def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr) -> Manifes
         licence_allow=allow,
         tool=TOOL,
     )
-    pkg.mkdir(parents=True, exist_ok=True)
-    m.write(pkg / "manifest.json")
+    with _lock(pkg, locked):
+        m.write(Path(pkg) / "manifest.json")
     est = estimate(m)
     unknown = f" (+{est['unknown_sizes']} assets of unknown size)" if est["unknown_sizes"] else ""
     print(
@@ -161,7 +172,64 @@ def _cached_assets(rec: SourceRecord, cache: Cache):
         yield src, a, src.prepare(blob, to_asset(a), cache) or blob
 
 
-def fetch_scene(pkg: Path, cache: Cache) -> Manifest:
+def plan_differences(plan: ScenePlan, m: Manifest) -> list[str]:
+    """Manifest fields that re-planning `plan` would change (inputs only: discovery isn't re-run)."""
+
+    def norm(v):
+        return json.loads(canonical_json(v))
+
+    def source_options(sid: str):
+        opts = dict(plan.source_options.get(sid, {}))
+        return {"adapter": opts.pop("adapter", sid), "options": opts}
+
+    def manifest_options(sid: str):
+        try:
+            rec = m.source(sid)
+        except KeyError:
+            return None
+        return {"adapter": rec.adapter, "options": rec.options}
+
+    want = {
+        "name": plan.name,
+        "seed": plan.seed,
+        "regions": [r.to_dict() for r in plan.regions()],
+        "layers": layer_settings(plan),
+        "licence_allow": sorted(set(DEFAULT_ALLOW) | set(plan.allow)),
+        "sources": {sid: source_options(sid) for sid in plan.source_ids()},
+    }
+    have = {
+        "name": m.name,
+        "seed": m.seed,
+        "regions": m.regions,
+        "layers": m.layers,
+        "licence_allow": m.licence_allow,
+        "sources": {sid: manifest_options(sid) for sid in plan.source_ids()},
+    }
+    return [k for k in want if norm(want[k]) != norm(have[k])]
+
+
+def _needs_footprints(m: Manifest) -> bool:
+    """A non-global data asset of a terrain/imagery source without a footprint (fetch computes them)."""
+    for rec in m.sources:
+        src = make_source(rec.id, rec.adapter, rec.options)
+        if src.layer == Layer.LANDCOVER or src.global_coverage:
+            continue
+        if any(a.role == "data" and "footprint" not in a.metadata for a in rec.assets):
+            return True
+    return False
+
+
+def needs_fetch(m: Manifest) -> bool:
+    return not m.is_fetched() or _needs_footprints(m)
+
+
+def fetch_scene(pkg: Path, cache: Cache, locked: bool = False) -> Manifest:
+    """Download, hash and footprint every asset, rewriting manifest.json as it goes (under the build lock)."""
+    with _lock(pkg, locked):
+        return _fetch(Path(pkg), cache)
+
+
+def _fetch(pkg: Path, cache: Cache) -> Manifest:
     m = Manifest.load(pkg / "manifest.json")
     for rec in m.sources:
         for src, a, path in _cached_assets(rec, cache):
@@ -349,15 +417,21 @@ def _credits(m: Manifest, layer: str) -> str:
 
 
 def build_scene(
-    pkg: Path, cache: Cache, jobs: int | None = None, json_progress: bool = False, max_worker_rss_mb: float = 2048.0
+    pkg: Path,
+    cache: Cache,
+    jobs: int | None = None,
+    json_progress: bool = False,
+    max_worker_rss_mb: float = 2048.0,
+    locked: bool = False,
 ) -> dict:
+    """Fetch what's missing, then build. `locked`: the caller already holds the package's build lock."""
     pkg = Path(pkg)
     jobs = jobs or os.cpu_count() or 1
     started = _utc_now()
-    with BuildLock(pkg):  # before the fetch too: a second build must not rewrite manifest.json
+    with _lock(pkg, locked):  # before the fetch too: a second build must not rewrite manifest.json
         m = Manifest.load(pkg / "manifest.json")
-        if not m.is_fetched():
-            m = fetch_scene(pkg, cache)
+        if needs_fetch(m):
+            m = fetch_scene(pkg, cache, locked=True)
         ctx = make_context(pkg, m, cache)
         tplan = plan_tiles(m.region_objs(), "terrain", coverage(m, "terrain"))
         iplan = plan_tiles(m.region_objs(), "imagery", coverage(m, "imagery"))

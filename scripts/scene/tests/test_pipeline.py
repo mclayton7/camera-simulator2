@@ -186,3 +186,25 @@ def test_landcover_skip_requires_every_listed_tile(tmp_path):
     (tmp_path / "a.png").write_bytes(b"png")
     assert _landcover_complete({"tiles": [{"file": "a.png"}]}, tmp_path)
     assert not _landcover_complete({"tiles": [{"file": "a.png"}, {"file": "b.png"}]}, tmp_path)
+
+
+def test_build_recomputes_missing_footprints_of_a_hashed_manifest(tmp_path):
+    pkg, cache, _ = build_synthetic(tmp_path)
+    m = Manifest.load(pkg / "manifest.json")
+    for a in m.source("hi_dem").assets + m.source("hi_rgb").assets:
+        del a.metadata["footprint"]
+    m.write(pkg / "manifest.json")
+    assert m.is_fetched()
+    info = build_scene(pkg, cache, jobs=1)
+    assert info["layers"]["terrain"]["built"] == 0
+    assert all(a.metadata["footprint"] for a in Manifest.load(pkg / "manifest.json").source("hi_dem").assets)
+
+
+def test_missing_footprint_outside_a_build_is_a_clear_error(tmp_path):
+    from camsim_scene.context import ContextError, coverage
+
+    pkg, _, _ = build_synthetic(tmp_path)
+    m = Manifest.load(pkg / "manifest.json")
+    del m.source("hi_dem").assets[0].metadata["footprint"]
+    with pytest.raises(ContextError, match="camsim-scene fetch"):
+        coverage(m, "terrain")

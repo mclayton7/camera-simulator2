@@ -91,7 +91,7 @@ The steps can also be run one at a time:
 
 | Command | What it does |
 |---|---|
-| `camsim-scene plan PKG --config scene.toml` (or `--bbox W S E N [--name N] [--profile sim]`) | Discovers each source's assets, writes `manifest.json` (unhashed) and prints the estimated cache and package size. `--bbox` writes a default `<name>.scene.toml` |
+| `camsim-scene plan PKG --config scene.toml` (or `--bbox W S E N [--name N] [--profile sim]`) | Discovers each source's assets, writes `manifest.json` (unhashed) and prints the estimated cache and package size. `--bbox` writes a default `<name>.scene.toml` beside the package (`PKG/../`), or reuses one that matches; an existing file with a different bbox, profile or name is an error |
 | `camsim-scene fetch PKG` | Downloads every asset into the cache, hashes it, prepares derived COGs, computes footprints, hashes the datum grids |
 | `camsim-scene build PKG [--config scene.toml] [--replan] [-j N] [--json-progress] [--max-worker-rss-mb 2048]` | Runs the missing earlier steps, then the tile jobs (resumable) |
 | `camsim-scene verify PKG [--deep [--all]] [-j N]` | Checks the package, writes `PKG.verify.json`; exit 1 when a check fails |
@@ -103,7 +103,10 @@ exit with code 2 and a one-line message.
 
 `build` plans **only when `manifest.json` is missing**. After editing `scene.toml` for an existing package, pass
 `--replan` (with `--config` or `--bbox`) to re-plan; tiles that left the new plan are removed and unchanged tiles
-are kept.
+are kept. Without `--replan`, a `--config`/`--bbox`/`--allow` that differs from `manifest.json` (name, seed,
+regions, layer settings, licence allow-list, source options) is an error rather than silently ignored.
+`--name` and `--profile` only apply with `--bbox`. `plan`, `fetch` and `build` all take the package's build lock
+before writing `manifest.json`, so none of them can change it under a running build.
 
 Examples: `scripts/scene/examples/pendleton.toml` (gates 1–5, `sim`) and `pendleton-preview-10k.toml` (gate 6,
 ~10,000 km², `preview`).
@@ -244,8 +247,9 @@ Pendleton is ≈ 1.35 m. ETOPO heights (EGM2008) become ellipsoid heights throug
   Changing one layer's settings rebuilds only that layer; a new asset rebuilds only the tiles it touches.
 - **Stale removal:** tiles (and markers) that aren't in the current plan, e.g. after a smaller bbox or lower zoom,
   are deleted before the jobs run, so the package holds exactly the plan.
-- **Lock:** `build` holds an exclusive lock on `.state/lock`; a second build of the same package refuses with a
-  clear message instead of interleaving writes.
+- **Lock:** `build` holds an exclusive lock on `.state/lock` (so do `plan` and `fetch` while they write
+  `manifest.json`); a second build, plan or fetch of the same package refuses with a clear message instead of
+  interleaving writes.
 - **`manifest.json` vs `build.json`:** the manifest is deterministic (inputs, settings, pipelines, hashes; nothing
   time- or host-dependent). `build.json` holds the build facts: UTC times, host, tool git commit, the build-image
   digest (`CAMSIM_SCENE_IMAGE_DIGEST`, set by `build.sh`), and per-layer stats (tiles, built/skipped, bytes, wall
