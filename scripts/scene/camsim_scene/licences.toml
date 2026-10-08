@@ -1,0 +1,34 @@
+# Licence register for scene package sources (REALISM R0). Keys are SPDX license identifiers
+# (https://spdx.org/licenses/); licences SPDX doesn't list use its LicenseRef- prefix (US Government works have no
+# SPDX id). A build accepts only the licences on its allow-list (default: LicenseRef-PublicDomain-USGov, CC-BY-4.0;
+# add more with --allow <id> after checking the terms). `redistributable` is informational.
+
+[LicenseRef-PublicDomain-USGov]
+name = "Public domain (US Government work)"
+url = ""
+redistributable = true
+
+["CC-BY-4.0"]
+name = "Creative Commons Attribution 4.0 International"
+url = "https://creativecommons.org/licenses/by/4.0/"
+redistributable = true
+
+["ODbL-1.0"]
+name = "Open Database License 1.0 (share-alike)"
+url = "https://opendatacommons.org/licenses/odbl/1-0/"
+redistributable = true
+
+["CDLA-Permissive-2.0"]
+name = "Community Data License Agreement Permissive 2.0"
+url = "https://cdla.dev/permissive-2-0/"
+redistributable = true
+
+["CC-BY-NC-SA-4.0"]
+name = "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 (non-commercial)"
+url = "https://creativecommons.org/licenses/by-nc-sa/4.0/"
+redistributable = false
+
+[LicenseRef-Proprietary]
+name = "Proprietary (not redistributable)"
+url = ""
+redistributable = false
