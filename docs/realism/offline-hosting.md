@@ -165,6 +165,7 @@ block slack). For a **40,000 km²** package (20 terrain/km² to z16, 75 imagery/
   It has random access, a dentry index, no extraction, and integrity from one hash of the image.
   This is the best fit for "one file on the media, millions of files at runtime". **[unconfirmed for
   CamSim; standard Linux practice]**
+  `camsim-scene pack PKG` writes `PKG.sqfs` with exactly these settings (`docs/scene-packages.md`).
 
 ## 4. Global base layers (whole-Earth coverage outside the package)
 

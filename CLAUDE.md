@@ -29,7 +29,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/ocean_check.py` | Ocean acceptance: DIS boat at Beaufort 0/3/6 (+ `--cigi` Wave Control): COCO, boat altitude vs sea level, HOT, frame times, shots |
 | `scripts/gt_occlusion_check.py` | Ground-truth acceptance (ROADMAP 2.7): nadir / edge / Beaufort 6 crest / terrain views, COCO checks, mask/box overlays, frame time ML on vs off |
 | `scripts/thermal_check.py` | Thermal IR acceptance (ROADMAP 4A/4B/4C): MWIR/LWIR at noon and 02:00 with the DIS truck + boat — night IR level, white-hot vehicle, water/land crossover, cool shadows, cold sky, land-cover contrast, structure and re-centre hitch, ThermalCS time, EO untouched; 4C (`--runs entity`): running vs parked-cold truck, hot parts, cool-down after parking, burning when destroyed |
-| `scripts/landcover/fetch_worldcover.py` | Cut ESA WorldCover 2021 COGs (HTTP range reads) into land-cover tiles for thermal IR (`--bbox W S E N`; SF sample committed) |
+| `scripts/landcover/fetch_worldcover.py` | Cut ESA WorldCover 2021 COGs (HTTP range reads) into land-cover tiles for thermal IR (`--bbox W S E N`; SF sample committed) (wraps `camsim_scene`) |
 | `scripts/klv_conformance/check.js` | Check KLV against misb.js (packets.jsonl, .ts, or udp://) |
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
 | `scripts/package_for_docker.sh` | BuildCookRun → `deploy/staged/Linux/` (+ `entities/`) for the Docker image |
@@ -40,6 +40,9 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/run_gpu_tests.sh`     | `CamSim.GPU.*` automation tests on the real RHI (Metal / Vulkan) |
 | `uv run --project hitl python -m camsim_hitl --config <file>.toml` | HITL IG host: X-Plane truth + PX4 gimbal/camera (MAVLink) → CIGI (`hitl/README.md`, design `HITL.md`) |
 | `uv run --project hitl --with pytest pytest hitl/tests` | IG host tests |
+| `uv run --project scripts/scene camsim-scene plan\|fetch\|build\|verify\|pack\|attribution PKG` | Scene packages (REALISM R0): bbox → whole-globe terrain + imagery + land cover (`docs/scene-packages.md`) |
+| `scripts/scene/build.sh [--build-image] <args>` | Same, in the pinned build container (reference for byte-identical builds) |
+| `uv run --project scripts/scene --with pytest pytest scripts/scene/tests` | Scene tooling tests (no network; `--network` adds live API checks) |
 | `hitl/xplane_plugin/` (`fetch_sdk.sh`, CMake, ctest) | CamSimTruth X-Plane 11 plugin: read-only truth datagram (`hitl/PROTOCOL.md`) |
 
 ## Documentation
@@ -74,6 +77,7 @@ camsim/
       FFmpeg/                      # libavcodec/format/util/swscale + libx264
     Config/                        # DefaultEngine.ini, DefaultGame.ini
   hitl/                            # HITL rig (HITL.md): Python IG host (camsim_hitl), X-Plane truth plugin, wire formats (PROTOCOL.md)
+  scripts/scene/                   # camsim-scene: scene package build tooling (REALISM R0)
   deploy/                          # Dockerfile, docker-compose.yml, entrypoint.sh, camsim_config.yaml
   scripts/                         # Build, run, test, validation scripts
   docs/                            # architecture.md, configuration.md, klv-tags.md, etc.
@@ -122,6 +126,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
     `NullRHI` keeps it under 10 s end-to-end (no shader compile, no display). JSON results land at `.cache/automation-report/index.json` (UTF-8 BOM — read with `encoding="utf-8-sig"`).
   - Filter narrower: replace `CamSim` in `RunTests` with e.g. `CamSim.Sensor` or a single test path.
 - **GPU tests** (`CamSim.GPU.*`, real RHI; skipped under NullRHI): `scripts/run_gpu_tests.sh [filter]` (Metal on macOS, Vulkan + Xvfb on Linux; first run compiles shaders). Read GPU results back with `FRHIGPUTextureReadback`, never `ReadLinearColorPixels`: Vulkan asserts on R32F ("Unsupported format")
+- **Scene packages** (REALISM R0, `docs/scene-packages.md`): `uv run --project scripts/scene --with pytest pytest scripts/scene/tests` (no network; `--network` adds the live API checks); gate-5 render/height/registration tools in `scripts/scene/tools/`
 - **KLV conformance**: `node scripts/klv_conformance/check.js` (misb.js; run `npm ci` in that directory first)
 - **Python validation**: `scripts/test_video_output.sh`
 - **Integration**: `scripts/ci_validate.sh` (Docker headless + health wait + ffprobe + KLV check)
