@@ -47,22 +47,33 @@ def query_bounds(z: int, x: int, y: int) -> Bounds:
     return (w - m, s - m, e + m, n + m)
 
 
-def sample_grid(z: int, x: int, y: int) -> tuple[np.ndarray, np.ndarray]:
+def _unwrapped_grid(z: int, x: int, y: int) -> tuple[np.ndarray, np.ndarray]:
+    """The sample grid with contiguous longitudes (may leave [-180, 180] by the margin at the antimeridian)."""
     w, _s, _e, n = tile_bounds(z, x, y)
     d, m = spacing_deg(z), margin(z)
     k = np.arange(-m, GRID + m)
-    lon = w + k * d
-    lon = np.where(lon > 180.0, lon - 360.0, np.where(lon < -180.0, lon + 360.0, lon))
-    lat = np.clip(n - k * d, -90.0, 90.0)
-    return np.meshgrid(lon, lat)
+    return np.meshgrid(w + k * d, np.clip(n - k * d, -90.0, 90.0))
+
+
+def _wrap(lon: np.ndarray) -> np.ndarray:
+    return np.where(lon > 180.0, lon - 360.0, np.where(lon < -180.0, lon + 360.0, lon))
+
+
+def sample_grid(z: int, x: int, y: int) -> tuple[np.ndarray, np.ndarray]:
+    ulon, lat = _unwrapped_grid(z, x, y)
+    return _wrap(ulon), lat
 
 
 def _groups(entries) -> list[list]:
     return [list(g) for _, g in groupby(entries, key=lambda e: e.order[:3])]
 
 
-def sample_group(group, z: int, lon: np.ndarray, lat: np.ndarray, exact_offsets: bool = False):
-    """Ellipsoid heights from one merge group (its assets first-valid-wins) and where they are valid."""
+def sample_group(
+    group, z: int, lon: np.ndarray, lat: np.ndarray, exact_offsets: bool = False, lattice_lon: np.ndarray | None = None
+):
+    """Ellipsoid heights from one merge group (its assets first-valid-wins) and where they are valid. `lattice_lon`
+    is `lon` unwrapped (contiguous across the antimeridian) for the offset lattice; it defaults to `lon`."""
+    lattice_lon = lon if lattice_lon is None else lattice_lon
     h = np.full(lon.shape, np.nan)
     valid = np.zeros(lon.shape, bool)
     target_m = spacing_deg(z) * M_PER_DEG
@@ -76,7 +87,11 @@ def sample_group(group, z: int, lon: np.ndarray, lat: np.ndarray, exact_offsets:
         take = ok & need
         if not take.any():
             continue
-        off = e.transform.vertical_offset(slon, slat) if exact_offsets else offset_lattice(e.transform, z, lon, lat)
+        off = (
+            e.transform.vertical_offset(slon, slat)
+            if exact_offsets
+            else offset_lattice(e.transform, z, lattice_lon, lat)
+        )
         h[take] = vals[0][take] + off[take]
         valid |= take
     return h, valid
@@ -91,11 +106,12 @@ class TileGrid:
 
 
 def tile_grid(z: int, x: int, y: int, entries) -> TileGrid:
-    lon, lat = sample_grid(z, x, y)
+    ulon, lat = _unwrapped_grid(z, x, y)
+    lon = _wrap(ulon)
     groups = _groups(entries)
     if not groups:
         raise TerrainError(f"terrain {z}/{x}/{y}: no source covers the tile")
-    results = [sample_group(g, z, lon, lat) for g in groups]
+    results = [sample_group(g, z, lon, lat, lattice_lon=ulon) for g in groups]
     h, base_ok = results[-1]
     if not base_ok.all():
         raise TerrainError(f"terrain {z}/{x}/{y}: the lowest-priority source ({groups[-1][0].qid}) has gaps")

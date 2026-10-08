@@ -156,19 +156,27 @@ class DatumTransform:
 
 def offset_lattice(dt: DatumTransform, z: int, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
     """Vertical offset at ITRF lon/lat (any shape): exact on lattice nodes spaced tile_size(z)/32 and aligned to
-    the global tile grid, bilinear in between. Neighbouring tiles share the nodes on their common edge."""
+    the global tile grid, bilinear in between. Neighbouring tiles share the nodes on their common edge.
+
+    Longitudes must be contiguous (unwrapped, e.g. -180.5 rather than 179.5 for a tile at the antimeridian), so the
+    lattice spans the query and not the whole globe. Node longitudes are wrapped into [-180, 180) before the
+    transform, one contiguous run per side of the antimeridian, so the ±180 edge agrees with the neighbour across it."""
     lon, lat = np.asarray(lon, np.float64), np.asarray(lat, np.float64)
     if dt.vertical == "none":
         return np.zeros_like(lon)
     step = tile_size_deg(z) / SUBGRID
+    turn = round(360.0 / step)  # nodes per revolution (an integer: step is a binary fraction of 180 degrees)
     i0 = int(np.floor((lon.min() + 180.0) / step))
     i1 = int(np.ceil((lon.max() + 180.0) / step))
     j0 = int(np.floor((lat.min() + 90.0) / step))
     j1 = int(np.ceil((lat.max() + 90.0) / step))
-    node_lon = -180.0 + np.arange(i0, i1 + 1) * step
     node_lat = np.clip(-90.0 + np.arange(j0, j1 + 1) * step, -90.0, 90.0)
-    LO, LA = np.meshgrid(node_lon, node_lat)
-    nodes = dt.vertical_offset(*dt.to_source_geographic(LO, LA))
+    cols = np.arange(i0, i1 + 1)
+    runs = []
+    for k in np.unique(cols // turn):  # each run is contiguous in [-180, 180)
+        LO, LA = np.meshgrid(-180.0 + (cols[cols // turn == k] - k * turn) * step, node_lat)
+        runs.append(dt.vertical_offset(*dt.to_source_geographic(LO, LA)))
+    nodes = np.concatenate(runs, axis=1)
     c = (lon + 180.0) / step - i0
     r = (lat + 90.0) / step - j0
     return map_coordinates(nodes, [r, c], order=1, mode="nearest")

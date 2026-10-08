@@ -77,3 +77,66 @@ def test_offset_lattice_agrees_exactly_on_a_shared_edge():
         dt, z, np.concatenate([edge_lon, edge_lon + s / 2]), np.concatenate([edge_lat, edge_lat])
     )[:257]
     assert np.array_equal(left, right)
+
+
+class _CountingTransform:
+    """A duck-typed DatumTransform: identity horizontally, a smooth offset, records every lattice evaluation."""
+
+    vertical = "proj"
+
+    def __init__(self):
+        self.calls = []
+
+    def to_source_geographic(self, lon, lat):
+        return lon, lat
+
+    def vertical_offset(self, lon, lat):
+        self.calls.append(np.asarray(lon).copy())
+        return 30.0 * np.cos(np.radians(lon)) * np.cos(np.radians(lat)) + 0.01 * lat
+
+
+@pytest.mark.parametrize("x_side", ["west", "east"])
+def test_offset_lattice_at_the_antimeridian_stays_local(x_side):
+    z = 14
+    s = tiling.tile_size_deg(z)
+    x = 0 if x_side == "west" else (1 << (z + 1)) - 1
+    w, so, e, n = tiling.tile_bounds(z, x, 3000)
+    pad = 40 * s / 256  # tile + margin, longitudes unwrapped (past +-180)
+    lon, lat = np.meshgrid(np.linspace(w - pad, e + pad, 337), np.linspace(n + pad, so - pad, 337))
+    dt = _CountingTransform()
+    out = datum.offset_lattice(dt, z, lon, lat)
+    nodes = sum(c.size for c in dt.calls)
+    assert nodes <= (32 * (1 + 2 * 40 / 256) + 3) ** 2  # tile/32 spacing over tile + margin, not 360 degrees
+    assert len(dt.calls) == 2 and all(c.min() >= -180.0 and c.max() < 180.0 for c in dt.calls)
+    assert all(np.ptp(c) < 2 * s for c in dt.calls)  # each run is contiguous on its own side
+    exact = _CountingTransform().vertical_offset(lon, lat)
+    assert np.abs(out - exact).max() < 1e-3
+
+
+class _SeamTransform(_CountingTransform):
+    """Not periodic in longitude: -180 and +180 give different offsets unless the lattice wraps its nodes."""
+
+    def vertical_offset(self, lon, lat):
+        return 10.0 * np.sin(np.radians(lon) / 2) + 0.01 * lat
+
+
+def test_offset_lattice_agrees_exactly_across_the_antimeridian():
+    z = 14
+    s = tiling.tile_size_deg(z)
+    last = (1 << (z + 1)) - 1
+    so, n = tiling.tile_bounds(z, 0, 3000)[1::2]
+    edge_lat = np.linspace(so, n, 257)
+    west_tile = datum.offset_lattice(
+        _SeamTransform(),
+        z,
+        np.concatenate([np.full(257, -180.0), np.full(257, -180.0 + s)]),
+        np.concatenate([edge_lat, edge_lat]),
+    )[:257]
+    east_tile = datum.offset_lattice(
+        _SeamTransform(),
+        z,
+        np.concatenate([np.full(257, 180.0), np.full(257, 180.0 - s)]),
+        np.concatenate([edge_lat, edge_lat]),
+    )[:257]
+    assert tiling.tile_bounds(z, last, 3000)[2] == 180.0
+    assert np.array_equal(west_tile, east_tile)

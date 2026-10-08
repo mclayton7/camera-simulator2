@@ -135,3 +135,24 @@ def test_point_heights_match_vertices_away_from_seams(tmp_path):
     q = qmesh.decode(terrain.build_tile(z, x, y, entries))
     lon, lat = q.lonlat(tiling.tile_bounds(z, x, y))
     assert np.abs(terrain.point_heights(z, lon, lat, entries) - q.heights()).max() < 0.2
+
+
+def test_antimeridian_tile_gives_the_lattice_contiguous_longitudes(tmp_path, monkeypatch):
+    seen = []
+    real = terrain.offset_lattice
+
+    def spy(dt, z, lon, lat):
+        seen.append(np.asarray(lon).copy())
+        return real(dt, z, lon, lat)
+
+    monkeypatch.setattr(terrain, "offset_lattice", spy)
+    st = WorkerState(fake_context(tmp_path, smooth_scene(tmp_path)))
+    z = 13
+    for x in (0, (1 << (z + 1)) - 1):
+        entries = st.index["terrain"].query(terrain.query_bounds(z, x, 4000))
+        g = terrain.tile_grid(z, x, 4000, entries)
+        assert np.isfinite(g.h).all()
+        lon = seen[-1]
+        assert np.ptp(lon) < 2 * tiling.tile_size_deg(z)  # unwrapped, not spanning -180..180
+        assert lon.min() < -180.0 or lon.max() > 180.0
+        assert terrain.sample_grid(z, x, 4000)[0].min() >= -180.0  # rasters still see wrapped longitudes
