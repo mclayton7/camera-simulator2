@@ -284,6 +284,11 @@ after `build`) and exits 1 when any check fails.
 | `terrain_normals` | octahedral normals decode to unit length |
 | `imagery_decode` | every JPEG decodes at 256 × 256 |
 
+`verify.json` records the height errors overall (`terrain_error_m`: `n`, `p50`, `p99`, `max`, the gate numbers) and
+per zoom (`terrain_error_m.by_zoom`), and the `terrain_heights` line names the worst zoom. A check that can't run on
+a malformed package (a missing `layer.json`, an unparsable `hashes.txt` line, a corrupt tile) fails with the error
+as its detail instead of aborting `verify`.
+
 ## Packing and mounting
 
 `camsim-scene pack PKG [--out FILE]` needs `mksquashfs` (squashfs-tools ≥ 4.6; in the container, or

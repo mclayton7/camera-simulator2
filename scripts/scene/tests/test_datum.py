@@ -86,12 +86,14 @@ class _CountingTransform:
 
     def __init__(self):
         self.calls = []
+        self.targets = []
 
     def to_source_geographic(self, lon, lat):
         return lon, lat
 
-    def vertical_offset(self, lon, lat):
+    def vertical_offset(self, lon, lat, target_m=None):
         self.calls.append(np.asarray(lon).copy())
+        self.targets.append(target_m)
         return 30.0 * np.cos(np.radians(lon)) * np.cos(np.radians(lat)) + 0.01 * lat
 
 
@@ -116,7 +118,7 @@ def test_offset_lattice_at_the_antimeridian_stays_local(x_side):
 class _SeamTransform(_CountingTransform):
     """Not periodic in longitude: -180 and +180 give different offsets unless the lattice wraps its nodes."""
 
-    def vertical_offset(self, lon, lat):
+    def vertical_offset(self, lon, lat, target_m=None):
         return 10.0 * np.sin(np.radians(lon) / 2) + 0.01 * lat
 
 
@@ -140,3 +142,16 @@ def test_offset_lattice_agrees_exactly_across_the_antimeridian():
     )[:257]
     assert tiling.tile_bounds(z, last, 3000)[2] == 180.0
     assert np.array_equal(west_tile, east_tile)
+
+
+@pytest.mark.parametrize("z", [0, 5, 12])
+def test_offset_lattice_passes_the_zoom_read_resolution(z):
+    """The geoid read resolution is the zoom's lattice spacing by contract (build and verify read the same
+    overview), not inferred from the node coordinates."""
+    from camsim_scene.sources.base import M_PER_DEG
+
+    dt = _CountingTransform()
+    w, s, e, n = tiling.tile_bounds(z, 0, 0)
+    lon, lat = np.meshgrid(np.linspace(w, e, 9), np.linspace(s, n, 9))
+    datum.offset_lattice(dt, z, lon, lat)
+    assert dt.targets and all(t == datum.lattice_step_deg(z) * M_PER_DEG for t in dt.targets)

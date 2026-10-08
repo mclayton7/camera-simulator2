@@ -18,6 +18,7 @@ import numpy as np
 import pyproj
 from scipy.ndimage import map_coordinates
 
+from .sources.base import M_PER_DEG
 from .tiling import tile_size_deg
 
 EPOCH = 2010.0
@@ -145,8 +146,8 @@ class DatumTransform:
 
     def vertical_offset(self, slon: np.ndarray, slat: np.ndarray, target_m: float | None = None) -> np.ndarray:
         """Ellipsoid height of the source's height zero at source-geographic lon/lat (h = H + offset). `target_m`
-        fixes a raster geoid's read resolution (verify's exact offsets: the zoom's lattice spacing); None infers it
-        from the query's lattice spacing."""
+        fixes a raster geoid's read resolution (the zoom's lattice spacing: offset_lattice and verify's exact
+        offsets both pass it); None infers it from the query's lattice spacing (fallback)."""
         slon, slat = np.asarray(slon, np.float64), np.asarray(slat, np.float64)
         if self.vertical == "none":
             return np.zeros_like(slon)
@@ -173,6 +174,7 @@ def offset_lattice(dt: DatumTransform, z: int, lon: np.ndarray, lat: np.ndarray)
     if dt.vertical == "none":
         return np.zeros_like(lon)
     step = lattice_step_deg(z)
+    target_m = step * M_PER_DEG  # a raster geoid's read resolution follows the zoom, as in verify's exact offsets
     turn = round(360.0 / step)  # nodes per revolution (an integer: step is a binary fraction of 180 degrees)
     i0 = int(np.floor((lon.min() + 180.0) / step))
     i1 = int(np.ceil((lon.max() + 180.0) / step))
@@ -183,7 +185,7 @@ def offset_lattice(dt: DatumTransform, z: int, lon: np.ndarray, lat: np.ndarray)
     runs = []
     for k in np.unique(cols // turn):  # each run is contiguous in [-180, 180)
         LO, LA = np.meshgrid(-180.0 + (cols[cols // turn == k] - k * turn) * step, node_lat)
-        runs.append(dt.vertical_offset(*dt.to_source_geographic(LO, LA)))
+        runs.append(dt.vertical_offset(*dt.to_source_geographic(LO, LA), target_m))
     nodes = np.concatenate(runs, axis=1)
     c = (lon + 180.0) / step - i0
     r = (lat + 90.0) / step - j0

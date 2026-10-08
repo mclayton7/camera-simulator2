@@ -16,10 +16,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .cache import CacheError
 from .config import TERRAIN_GRID as GRID
 from .fsutil import atomic_write, sha256_file
 from .licences import LicenceError, attribution_text, check_allowed
 from .manifest import Manifest, package_files
+from .net import HttpError
 from .qmesh import QMAX, decode
 from .tiling import LayerPlan, available_keys, make_keys, tile_bounds
 from .tms import parse_tilemapresource, plan_bounds
@@ -33,6 +35,23 @@ class Check:
     name: str
     ok: bool
     detail: str = ""
+
+
+def _guard(name: str, fn, *args) -> Check:
+    """Run one check; a malformed package (missing file, bad line) fails the check instead of crashing verify."""
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001 - any failure to check is a failed check
+        return Check(name, False, f"{type(e).__name__}: {e}")
+
+
+def _error_stats(e: np.ndarray) -> dict:
+    return {
+        "n": int(e.size),
+        "p50": float(np.percentile(e, 50)) if e.size else 0.0,
+        "p99": float(np.percentile(e, 99)) if e.size else 0.0,
+        "max": float(e.max()) if e.size else 0.0,
+    }
 
 
 def _summary(problems: list[str]) -> str:
@@ -144,7 +163,8 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
     st = WorkerState(make_context(pkg, m, cache))
     rng = random.Random(m.seed)
     present = present_tiles(pkg, "terrain", "terrain")
-    errs, nonfinite, normals_bad, edges_bad = [], [], [], 0
+    errs: dict[int, list[np.ndarray]] = {}
+    nonfinite, normals_bad, edges_bad = [], [], 0
     for z, keys in present.items():
         ks = keys.tolist()
         pick = ks if all_tiles else rng.sample(ks, max(1, math.ceil(SAMPLE * len(ks))))
@@ -164,7 +184,7 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
             col = np.rint(q.u / QMAX * (GRID - 1)).astype(int)
             row = GRID - 1 - np.rint(q.v / QMAX * (GRID - 1)).astype(int)
             keep = ~seam[row, col]
-            errs.append(np.abs(h - terrain.point_heights(z, lon, lat, entries))[keep])
+            errs.setdefault(z, []).append(np.abs(h - terrain.point_heights(z, lon, lat, entries))[keep])
             for nx, ny, east in ((x + 1, y, True), (x, y + 1, False)):
                 if not np.isin(make_keys(nx, ny), keys):
                     continue
@@ -173,13 +193,11 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
                     edges_bad += _edge_problems(q, qb, q.east, qb.west, q.v, qb.v)
                 else:
                     edges_bad += _edge_problems(q, qb, q.north, qb.south, q.u, qb.u)
-    e = np.concatenate(errs) if errs else np.zeros(0)
-    stats = {
-        "n": int(e.size),
-        "p50": float(np.percentile(e, 50)) if e.size else 0.0,
-        "p99": float(np.percentile(e, 99)) if e.size else 0.0,
-        "max": float(e.max()) if e.size else 0.0,
-    }
+    per_zoom = {z: np.concatenate(v) for z, v in sorted(errs.items())}
+    stats = _error_stats(np.concatenate(list(per_zoom.values())) if per_zoom else np.zeros(0))
+    stats["by_zoom"] = {str(z): _error_stats(e) for z, e in per_zoom.items()}
+    worst = max(stats["by_zoom"].items(), key=lambda kv: kv[1]["p99"], default=None)
+    worst_text = f"; worst zoom z{worst[0]}: p99 {worst[1]['p99']:.3f} m, max {worst[1]['max']:.2f} m" if worst else ""
     jpgs = [str(p) for p in sorted((pkg / "imagery").rglob("*.jpg"))]
     chunks = [jpgs[i : i + 512] for i in range(0, len(jpgs), 512)]
     if jobs > 1 and len(chunks) > 1:
@@ -191,7 +209,8 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
         Check(
             "terrain_heights",
             stats["p50"] <= P50_M and stats["p99"] <= P99_M,
-            f"p50 {stats['p50']:.3f} m, p99 {stats['p99']:.3f} m, max {stats['max']:.2f} m over {stats['n']} vertices",
+            f"p50 {stats['p50']:.3f} m, p99 {stats['p99']:.3f} m, max {stats['max']:.2f} m over {stats['n']} vertices"
+            + worst_text,
         ),
         Check("terrain_finite", not nonfinite, _summary(nonfinite)),
         Check("terrain_normals", not normals_bad, _summary(normals_bad)),
@@ -207,17 +226,22 @@ def verify(
     pkg = Path(pkg)
     m = Manifest.load(pkg / "manifest.json")
     checks = [
-        _check_hashes(pkg, m),
-        _check_available(pkg),
-        _check_tms(pkg),
-        _check_licences(m),
-        _check_attribution(pkg, m),
+        _guard("hashes", _check_hashes, pkg, m),
+        _guard("terrain_available", _check_available, pkg),
+        _guard("tilemapresource", _check_tms, pkg),
+        _guard("licences", _check_licences, m),
+        _guard("attribution", _check_attribution, pkg, m),
     ]
     report: dict = {"package": str(pkg), "deep": deep}
     if deep:
         if cache is None:
             raise ValueError("verify --deep needs the fetch cache (the sources)")
-        deep_checks, report["terrain_error_m"] = _deep(pkg, m, cache, all_tiles, jobs)
+        try:
+            deep_checks, report["terrain_error_m"] = _deep(pkg, m, cache, all_tiles, jobs)
+        except (CacheError, HttpError):
+            raise  # the sources aren't available: an environment error, not a finding about the package
+        except Exception as e:  # noqa: BLE001 - e.g. a truncated tile: the deep checks fail, the report is written
+            deep_checks = [Check("deep", False, f"{type(e).__name__}: {e}")]
         checks += deep_checks
     report["checks"] = [asdict(c) for c in checks]
     report["ok"] = all(c.ok for c in checks)
