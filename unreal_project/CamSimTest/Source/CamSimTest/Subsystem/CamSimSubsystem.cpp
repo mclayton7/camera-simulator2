@@ -283,6 +283,16 @@ const TArray<TWeakObjectPtr<ACesium3DTileset>>& UCamSimSubsystem::GetCachedTiles
 	return CachedTilesets_;
 }
 
+void UCamSimSubsystem::PrepareCesiumWorld(UWorld* World)
+{
+	if (!CesiumWorldSetup_.TryBegin(World))
+	{
+		return;
+	}
+	StoreCesiumIonServer(CamSim::Geospatial::SetUpCesiumWorld(World, Config));
+	RefreshCachedTilesets();   // the destroyed tilesets must not stay in the cache
+}
+
 void UCamSimSubsystem::StoreCesiumIonServer(UCesiumIonServer* Server)
 {
 	if (Impl)

@@ -5,11 +5,28 @@
 #include "Camera/CamSimCamera.h"
 #include "Environment/CamSimEnvironment.h"
 #include "EngineUtils.h"
+#include "Engine/GameInstance.h"
+#include "Subsystem/CamSimSubsystem.h"
 
 ACamSimGameMode::ACamSimGameMode()
 {
 	// No default pawn — the camera actor drives the view directly.
 	DefaultPawnClass = nullptr;
+}
+
+void ACamSimGameMode::StartPlay()
+{
+	// Super::StartPlay dispatches BeginPlay to every actor, and ACesium3DTileset::BeginPlay
+	// loads its tileset: configure (or destroy) the level's tilesets first, so Main.umap's
+	// ion actors never send a request (REALISM R0 offline).
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UCamSimSubsystem* Subsystem = GameInstance->GetSubsystem<UCamSimSubsystem>())
+		{
+			Subsystem->PrepareCesiumWorld(GetWorld());
+		}
+	}
+	Super::StartPlay();
 }
 
 void ACamSimGameMode::BeginPlay()

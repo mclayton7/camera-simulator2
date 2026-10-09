@@ -8,6 +8,7 @@
 #include "CesiumIonServer.h"
 #include "CesiumIonRasterOverlay.h"
 #include "CesiumWebMapServiceRasterOverlay.h"
+#include "CesiumTileMapServiceRasterOverlay.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 
@@ -183,9 +184,11 @@ UCesiumIonServer* ApplyCesiumBackendConfig(
 			Tileset->SetIonAssetID(static_cast<int64>(Config.Terrain.IonAssetId));
 		}
 
-		// Refresh after terrain property changes (required for setter-based assignment).
+		// Refresh after terrain property changes once the tileset has begun play (it may have loaded).
 		// Skip refresh for flat — the tileset is just hidden, no tile loading change needed.
-		if (TerrainSrc != TEXT("flat"))
+		// Before BeginPlay (ACamSimGameMode::StartPlay) nothing has loaded yet and the first
+		// load uses the new source; a refresh would only load it twice.
+		if (TerrainSrc != TEXT("flat") && Tileset->HasActorBegunPlay())
 		{
 			Tileset->RefreshTileset();
 		}
@@ -231,6 +234,21 @@ UCesiumIonServer* ApplyCesiumBackendConfig(
 			O->Layers     = Config.Imagery.WmsLayers;
 			O->TileWidth  = Config.Imagery.WmsTileWidth;
 			O->TileHeight = Config.Imagery.WmsTileHeight;
+			O->SetMaximumScreenSpaceError(Config.Imagery.MaximumScreenSpaceError);
+			if (Config.Imagery.MaximumTextureSize > 0)
+			{
+				O->SetMaximumTextureSize(Config.Imagery.MaximumTextureSize);
+			}
+			O->SetMaximumSimultaneousTileLoads(Config.Imagery.MaximumSimultaneousTileLoads);
+			O->RegisterComponent();
+			O->Activate(false);
+		}
+		else if (ImagerySrc == TEXT("tms"))
+		{
+			// Url names tilemapresource.xml itself; for file:// a directory URL fails.
+			UCesiumTileMapServiceRasterOverlay* O =
+				NewObject<UCesiumTileMapServiceRasterOverlay>(Tileset, TEXT("CamSimImagery"));
+			O->Url = Config.Imagery.Url;
 			O->SetMaximumScreenSpaceError(Config.Imagery.MaximumScreenSpaceError);
 			if (Config.Imagery.MaximumTextureSize > 0)
 			{

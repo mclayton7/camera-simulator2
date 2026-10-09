@@ -9,7 +9,6 @@
 #include "Diagnostics/PipelineLatencyTracker.h"
 #include "Environment/CamSimEnvironment.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
-#include "Geospatial/CesiumTuning.h"
 #include "Subsystem/CamSimSubsystem.h"
 
 #include "Components/SceneCaptureComponent2D.h"
@@ -103,24 +102,16 @@ void ACamSimCamera::BeginPlay()
 
 	if (Cfg.Render.OriginShiftDistanceM > 0.0)
 	{
-		// ChangeCesiumGeoreference moves tilesets, so they must be Movable. The
-		// sky (CesiumSunSky) and globe-anchored actors follow the georeference.
-		for (TActorIterator<ACesium3DTileset> It(GetWorld()); It; ++It)
-		{
-			if (USceneComponent* TilesetRoot = It->GetRootComponent())
-			{
-				TilesetRoot->SetMobility(EComponentMobility::Movable);
-			}
-		}
+		// Tilesets are made Movable by PrepareCesiumWorld. The sky (CesiumSunSky)
+		// and globe-anchored actors follow the georeference.
 		OriginShift->SetDistance(Cfg.Render.OriginShiftDistanceM * 100.0);  // m -> UE cm (compared to GetActorLocation)
 		OriginShift->SetMode(ECesiumOriginShiftMode::ChangeCesiumGeoreference);
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: origin shift every %.0f m"), Cfg.Render.OriginShiftDistanceM);
 	}
 
-	// Tileset streaming parameters and the Cesium backend (ion server, terrain,
-	// imagery).
-	CamSim::Geospatial::ApplyCesiumTilesetTuning(GetWorld(), Cfg);
-	Subsystem->StoreCesiumIonServer(ApplyCesiumBackendConfig(GetWorld(), Cfg.CesiumBackend));
+	// Tileset tuning and the Cesium backend. Normally done already by
+	// ACamSimGameMode::StartPlay, before any tileset began play; a no-op then.
+	Subsystem->PrepareCesiumWorld(GetWorld());
 
 	// The game viewport renders at the stream resolution (ROADMAP 3A).
 	FSystemResolution::RequestResolutionChange(Cfg.CaptureWidth, Cfg.CaptureHeight, EWindowMode::Windowed);

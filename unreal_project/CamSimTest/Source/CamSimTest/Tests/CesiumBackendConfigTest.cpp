@@ -4,6 +4,14 @@
 #include "Misc/AutomationTest.h"
 #include "Config/CamSimConfig.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
+#include "Geospatial/CesiumWorldSetup.h"
+#include "Cesium3DTileset.h"
+#include "CesiumGeoreference.h"
+#include "CesiumTileMapServiceRasterOverlay.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "GameFramework/WorldSettings.h"
+#include "EngineUtils.h"
 
 // -------------------------------------------------------------------------
 // Cesium Backend Configuration — Automation Tests
@@ -50,5 +58,82 @@ bool FCesiumBackendSelectTerrainTilesetTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("no World Terrain: first"), SelectTerrainTileset({-1, 96188}), 0);
 	TestEqual(TEXT("single URL tileset"), SelectTerrainTileset({-1}), 0);
 	TestEqual(TEXT("none"), SelectTerrainTileset({}), INDEX_NONE);
+	return true;
+}
+
+// REALISM R0: configured before BeginPlay, the level's other tilesets are gone and the
+// terrain has its final source before it ever loads. Tilesets are spawned FromEllipsoid so
+// the test makes no request and touches no file.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCesiumBackendSetUpBeforeBeginPlayTest,
+	"CamSim.CesiumBackend.SetUpBeforeBeginPlay",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCesiumBackendSetUpBeforeBeginPlayTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	FWorldContext& Context = GEngine->CreateNewWorldContext(EWorldType::Game);
+	Context.SetCurrentWorld(World);
+	ON_SCOPE_EXIT
+	{
+		GEngine->DestroyWorldContext(World);
+		World->DestroyWorld(false);
+	};
+	// Cesium's camera lookup on spawn: a test world has no game viewport.
+	AddExpectedMessage(TEXT("No game viewport was found"), EAutomationExpectedErrorFlags::Contains, 0);
+	World->GetWorldSettings()->bEnableWorldBoundsChecks = false;   // as in Main.umap (Cesium warns otherwise)
+	World->SpawnActor<ACesiumGeoreference>();
+
+	auto SpawnEllipsoidTileset = [World]()
+	{
+		ACesium3DTileset* T = World->SpawnActorDeferred<ACesium3DTileset>(
+			ACesium3DTileset::StaticClass(), FTransform::Identity);
+		T->SetTilesetSource(ETilesetSource::FromEllipsoid);
+		T->FinishSpawning(FTransform::Identity);
+		return T;
+	};
+	ACesium3DTileset* Terrain = SpawnEllipsoidTileset();
+	SpawnEllipsoidTileset();   // stands in for Main.umap's OSM Buildings
+
+	FCamSimConfig Cfg;
+	Cfg.Render.OriginShiftDistanceM = 20000.0;
+	Cfg.CesiumBackend.Terrain.Source = TEXT("url");
+	Cfg.CesiumBackend.Terrain.Url    = TEXT("file:///nonexistent/terrain/layer.json");
+	Cfg.CesiumBackend.Imagery.Source = TEXT("tms");
+	Cfg.CesiumBackend.Imagery.Url    = TEXT("file:///nonexistent/imagery/tilemapresource.xml");
+
+	TestFalse(TEXT("world has not begun play"), World->HasBegunPlay());
+	CamSim::Geospatial::SetUpCesiumWorld(World, Cfg);
+
+	TArray<ACesium3DTileset*> Left;
+	for (TActorIterator<ACesium3DTileset> It(World); It; ++It) { Left.Add(*It); }
+	TestEqual(TEXT("one tileset left"), Left.Num(), 1);
+	TestTrue(TEXT("the first one is kept"), Left.Num() == 1 && Left[0] == Terrain);
+	TestFalse(TEXT("terrain has not begun play"), Terrain->HasActorBegunPlay());
+	TestTrue(TEXT("terrain source is FromUrl"), Terrain->GetTilesetSource() == ETilesetSource::FromUrl);
+	TestEqual(TEXT("terrain url"), Terrain->GetUrl(), Cfg.CesiumBackend.Terrain.Url);
+	TestTrue(TEXT("movable for origin shift"), Terrain->GetRootComponent()->Mobility == EComponentMobility::Movable);
+
+	TArray<UCesiumTileMapServiceRasterOverlay*> Overlays;
+	Terrain->GetComponents<UCesiumTileMapServiceRasterOverlay>(Overlays);
+	TestEqual(TEXT("one TMS overlay"), Overlays.Num(), 1);
+	TestTrue(TEXT("TMS url"), Overlays.Num() == 1 && Overlays[0]->Url == Cfg.CesiumBackend.Imagery.Url);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCesiumBackendSetupLatchTest,
+	"CamSim.CesiumBackend.SetupLatch",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCesiumBackendSetupLatchTest::RunTest(const FString& Parameters)
+{
+	UWorld* A = UWorld::CreateWorld(EWorldType::Game, false);
+	UWorld* B = UWorld::CreateWorld(EWorldType::Game, false);
+	ON_SCOPE_EXIT { A->DestroyWorld(false); B->DestroyWorld(false); };
+
+	CamSim::Geospatial::FCesiumWorldSetupLatch Latch;
+	TestFalse(TEXT("null world"), Latch.TryBegin(nullptr));
+	TestTrue(TEXT("first call for A"), Latch.TryBegin(A));
+	TestFalse(TEXT("second call for A (game mode, then camera)"), Latch.TryBegin(A));
+	TestTrue(TEXT("a new world runs again"), Latch.TryBegin(B));
 	return true;
 }

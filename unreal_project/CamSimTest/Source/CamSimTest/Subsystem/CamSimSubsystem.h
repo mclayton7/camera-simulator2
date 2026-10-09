@@ -9,6 +9,7 @@
 #include "Config/CamSimConfig.h"
 #include "Entity/EntityTypeTable.h"
 #include "Geospatial/CigiFrames.h"
+#include "Geospatial/CesiumWorldSetup.h"
 #include "CamSimSubsystem.generated.h"
 
 class FCigiReceiver;
@@ -97,6 +98,9 @@ public:
 	 *  Must be called on the game thread. */
 	void StoreCesiumIonServer(UCesiumIonServer* Server);
 
+	/** REALISM R0: Cesium setup for World, once (ACamSimGameMode::StartPlay, else ACamSimCamera::BeginPlay). */
+	void PrepareCesiumWorld(UWorld* World);
+
 	/**
 	 * The config, loaded once in Initialize. Cross-thread readers snapshot the
 	 * fields they need at construction, as the receivers and encoder do.
@@ -177,6 +181,7 @@ private:
 
 	// Phase 3: cached tileset pointer list (see public accessor).
 	mutable TArray<TWeakObjectPtr<ACesium3DTileset>> CachedTilesets_;
+	CamSim::Geospatial::FCesiumWorldSetupLatch CesiumWorldSetup_;
 	mutable bool bCachedTilesetsInitialized_ = false;
 
 	// Phase 13B: Pimpl — all owned subsystem components live in FSubsystemImpl,
