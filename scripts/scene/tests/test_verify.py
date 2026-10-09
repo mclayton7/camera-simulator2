@@ -5,7 +5,7 @@ from fake_sources import build_synthetic
 
 from camsim_scene import qmesh, tiling
 from camsim_scene.manifest import Manifest, write_hashes
-from camsim_scene.verify import verify
+from camsim_scene.verify import base_p99_limit, verify
 
 
 @pytest.fixture(scope="module")
@@ -55,20 +55,38 @@ def test_missing_tile_fails_availability(built, tmp_path):
     assert not checks(verify(pkg))["terrain_available"]["ok"]
 
 
-def test_deep_catches_wrong_heights_that_hash_correctly(built, tmp_path):
-    pkg = copy_pkg(built[0], tmp_path / "p")
-    for p in (pkg / "terrain/6").rglob("*.terrain"):
-        z, x, y = 6, int(p.parent.name), int(p.stem)
+def shift_zoom(pkg, z, dh):
+    """Raise every terrain tile at zoom z by dh metres and rehash, so only the deep height check can notice."""
+    for p in (pkg / f"terrain/{z}").rglob("*.terrain"):
+        x, y = int(p.parent.name), int(p.stem)
         q = qmesh.decode(p.read_bytes())
         lon, lat = q.lonlat(tiling.tile_bounds(z, x, y))
         p.write_bytes(
-            qmesh.gzip_tile(qmesh.encode(lon, lat, q.heights() + 10.0, q.triangles, tiling.tile_bounds(z, x, y)))
+            qmesh.gzip_tile(qmesh.encode(lon, lat, q.heights() + dh, q.triangles, tiling.tile_bounds(z, x, y)))
         )
     m = Manifest.load(pkg / "manifest.json")
     m.hashes_sha256 = write_hashes(pkg)
     m.write(pkg / "manifest.json")
+
+
+def test_deep_catches_wrong_heights_that_hash_correctly(built, tmp_path):
+    pkg = copy_pkg(built[0], tmp_path / "p")
+    shift_zoom(pkg, 6, 10.0)  # a scene zoom (above the synthetic globe's z2)
     r = verify(pkg, built[1], deep=True, all_tiles=True)
     assert checks(r)["hashes"]["ok"] and not checks(r)["terrain_heights"]["ok"]
+
+
+def test_base_zooms_are_held_to_a_fraction_of_the_tin_tolerance(built, tmp_path):
+    assert base_p99_limit(16) == 0.5 and base_p99_limit(8) == pytest.approx(0.7526, abs=1e-4)
+    pkg = copy_pkg(built[0], tmp_path / "p")
+    shift_zoom(pkg, 2, 2.0)  # well inside z2's 48 m: the datum-offset lattice is allowed metres there
+    r = verify(pkg, built[1], deep=True, all_tiles=True)
+    assert checks(r)["terrain_heights"]["ok"], checks(r)["terrain_heights"]["detail"]
+    assert r["terrain_error_m"]["base_max_zoom"] == 2 and r["terrain_error_m"]["by_zoom"]["2"]["p99_limit"] == pytest.approx(48.17, abs=0.01)
+    assert "z3" not in [k for k, v in r["terrain_error_m"]["by_zoom"].items() if "p99_limit" in v]
+    shift_zoom(pkg, 2, 500.0)  # a wrong tile, not lattice error
+    c = checks(verify(pkg, built[1], deep=True, all_tiles=True))["terrain_heights"]
+    assert not c["ok"] and "z2 p99" in c["detail"]
 
 
 def test_malformed_inputs_fail_their_check_instead_of_crashing(built, tmp_path):

@@ -282,14 +282,15 @@ after `build`) and exits 1 when any check fails.
 
 | Check | Passes when |
 |---|---|
-| `terrain_heights` | decoded vertex heights vs the highest-priority source resampled independently (exact datum offsets, 30 m feather bands excluded): p50 ≤ 5 cm, p99 ≤ 0.5 m |
+| `terrain_heights` | decoded vertex heights vs the highest-priority source resampled independently (exact datum offsets, 30 m feather bands excluded). Scene zooms (above the `globe` region's terrain max zoom): p50 ≤ 5 cm, p99 ≤ 0.5 m. Global base zooms, each on its own: p99 ≤ max(0.5 m, 1 % of the zoom's TIN tolerance) (z8 0.75 m, z7 1.5 m, z3 24 m), because the build applies datum offsets through a lattice (exact every tile/32, bilinear between) that is metres off the exact value at coarse zooms. A wrong or mirrored tile is far above either limit |
 | `terrain_edges` | same-zoom neighbours agree along shared edges within one height-quantisation step of either tile |
 | `terrain_finite` | no NaN or infinite values |
 | `terrain_normals` | octahedral normals decode to unit length |
 | `imagery_decode` | every JPEG decodes at 256 × 256 |
 
-`verify.json` records the height errors overall (`terrain_error_m`: `n`, `p50`, `p99`, `max`, the gate numbers) and
-per zoom (`terrain_error_m.by_zoom`), and the `terrain_heights` line names the worst zoom. A check that can't run on
+`verify.json` records the height errors overall (`terrain_error_m`: `n`, `p50`, `p99`, `max`), over the scene zooms
+(`terrain_error_m.scene`, the gate numbers; `base_max_zoom` is where the base stops) and per zoom
+(`terrain_error_m.by_zoom`, with `p99_limit` on base zooms), and the `terrain_heights` line names the worst zoom. A check that can't run on
 a malformed package (a missing `layer.json`, an unparsable `hashes.txt` line, a corrupt tile) fails with the error
 as its detail instead of aborting `verify`.
 
@@ -339,8 +340,17 @@ The R0 exit gates on the reference build. Filled in by gates 1–6.
 | 1 | Pendleton `sim` build in the reference container: wall time, peak RSS per worker, size and file count per layer | *pending* |
 | 2 | Build killed at ~50 % resumes without rebuilding finished tiles | *pending* |
 | 3 | Second clean build: identical `hashes.txt` and `.sqfs` | *pending* |
-| 4 | `verify --deep` | *pending* |
-| 5 | CamSim render: registration vs CWT + Bing (< 1 px), frame-centre heights (≤ 0.25 m on 1 m, ≤ 1 m on 1/3″), high oblique (no holes / untextured tiles), offline run | *pending* |
+| 4 | `verify --deep` | *pending* on the reference build. Native macOS build (2026-10-09): all checks pass, 199 s at `-j 8`; scene z9+ p50 0.001 m, p99 0.049 m (max 0.39 m, 342,704 vertices); base z0–z8 within limits, nearest z7 (p99 0.84 of 1.51 m) and z8 (0.42 of 0.75 m) |
+| 5 | CamSim render: registration vs CWT + Bing (< 1 px), frame-centre heights (≤ 0.25 m on 1 m, ≤ 1 m on 1/3″), high oblique (no holes / untextured tiles), offline run | **Pass except the offline log** (2026-10-09, M1 Pro / Metal, native macOS build of the package). Registration: all six EO shots ≤ 0.16 px (online and offline identical). Heights: 7/7 pass — 1 m points −0.10 … +0.20 m (three within 0.01 m), 1/3″ points −0.48 and −0.05 m; CWT on the same points fails 4/7 (up to +1.36 m). High oblique / ring edge: no holes or untextured tiles. Offline (`--offline`): renders fully, but `Main.umap`'s ion actors still request `api.cesium.com` (assets 1, 96188, 2) at frame 0 (blocked by the sandbox): closes with the editor follow-up in `ROADMAP.md` |
 | 6 | 10,000 km² `preview` build: time and size | *pending* |
 
-Gate 5 tools: `scripts/scene/tools/` (`render_check.py`, `hot_check.py`, `registration.py`).
+Gate 5 tools: `scripts/scene/tools/` (`render_check.py`, `hot_check.py`, `registration.py`). Notes from the run:
+
+- `ring_edge` looks west over open sea, so its 0.00 px registration says nothing (the window is water and cloud);
+  it is a coverage shot, not a registration one.
+- `hot_check.py`'s points must sit on flat ground inside the coverage they claim: CA_SanDiegoCo_D24 stops at the
+  base boundary (`x46y368` is 57 % nodata), and on a 1/3″ hillside (~20 m relief within 10 m) 1.5 m of
+  frame-centre offset reads as 3 m of height. Four points were moved for this (2026-10-09).
+- A dark, faintly banded strip ~450 m wide runs down the west edge of NAIP quarter-quad `ca_m_3311736_sw`
+  (2022) over the sea: it is in the NAIP file (filled from another flight line, no sun glint), not a build
+  artefact. It shows as a seam in `ring_edge`; flight-line colour balance is R1 work.

@@ -26,11 +26,13 @@ import check_cigi_responses as ccr
 POINTS = [  # five near Oceanside (1 m D24), two in the base interior (1/3" only)
     (33.2100, -117.3700),
     (33.2300, -117.3600),
-    (33.2400, -117.3900),
-    (33.2150, -117.3950),
-    (33.2450, -117.3700),
+    # D24 stops at the base boundary (x46y368 is 57 % nodata): these three are inside it, on flat ground
+    # (< 1.1 m relief within 50 m), so a frame-centre offset of a few metres doesn't read as height error
+    (33.2179, -117.3541),
+    (33.1998, -117.3755),
+    (33.2360, -117.3327),
     (33.3800, -117.4200),
-    (33.4200, -117.3500),
+    (33.3600, -117.3950),  # was 33.42 -117.35: ~20 m relief within 10 m, where 1.5 m of offset is 3 m of height
 ]
 LIMIT_M = {"1m": 0.25, '1/3"': 1.0}
 CIGI_RESPONSE_PORT = 8889

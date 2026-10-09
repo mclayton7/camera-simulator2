@@ -1,6 +1,7 @@
 """verify: quick checks always (hashes, availability, licences, attribution). --deep decodes a 2 % sample of the
 terrain tiles per zoom (--all: every tile), compares vertex heights with the sources resampled independently
-(highest-priority source, exact datum offsets, feather bands excluded), checks shared edges, NaNs and normals,
+(highest-priority source, exact datum offsets, feather bands excluded; scene zooms and the global base have
+separate limits), checks shared edges, NaNs and normals,
 and decodes every JPEG. Writes <pkg>.verify.json beside the package; the package itself is never modified."""
 
 from __future__ import annotations
@@ -26,8 +27,23 @@ from .qmesh import QMAX, decode
 from .tiling import LayerPlan, available_keys, make_keys, tile_bounds
 from .tms import parse_tilemapresource, plan_bounds
 
-P50_M, P99_M = 0.05, 0.5
+P50_M, P99_M = 0.05, 0.5  # scene zooms (above the global base)
+# Global base zooms: the build applies vertical datum offsets through a lattice (exact every tile/32, bilinear in
+# between) that verify evaluates exactly; at coarse zooms that difference is metres, so the base is held to 1 % of
+# the zoom's TIN tolerance (z8 0.75 m, z3 24 m), never tighter than P99_M. A mirrored or offset tile is far above it.
+BASE_TIN_FRACTION = 0.01
 SAMPLE = 0.02
+
+
+def base_max_zoom(m: Manifest) -> int:
+    """Highest zoom of the global base (the "globe" region's terrain max zoom), -1 when the package has none."""
+    return max((int(r["max_zoom"].get("terrain", -1)) for r in m.regions if r["name"] == "globe"), default=-1)
+
+
+def base_p99_limit(z: int) -> float:
+    from .layers.terrain import max_error
+
+    return max(P99_M, BASE_TIN_FRACTION * max_error(z))
 
 
 @dataclass
@@ -196,8 +212,25 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
     per_zoom = {z: np.concatenate(v) for z, v in sorted(errs.items())}
     stats = _error_stats(np.concatenate(list(per_zoom.values())) if per_zoom else np.zeros(0))
     stats["by_zoom"] = {str(z): _error_stats(e) for z, e in per_zoom.items()}
+    base = base_max_zoom(m)
+    scene = [e for z, e in per_zoom.items() if z > base]
+    stats["scene"] = _error_stats(np.concatenate(scene) if scene else np.zeros(0))
+    stats["base_max_zoom"] = base
+    over = []
+    for z in per_zoom:
+        if z <= base:
+            zs = stats["by_zoom"][str(z)]
+            zs["p99_limit"] = base_p99_limit(z)
+            if zs["p99"] > zs["p99_limit"]:
+                over.append(f"z{z} p99 {zs['p99']:.2f} m > {zs['p99_limit']:.2f} m")
+    sc = stats["scene"]
+    scene_ok = sc["p50"] <= P50_M and sc["p99"] <= P99_M
     worst = max(stats["by_zoom"].items(), key=lambda kv: kv[1]["p99"], default=None)
-    worst_text = f"; worst zoom z{worst[0]}: p99 {worst[1]['p99']:.3f} m, max {worst[1]['max']:.2f} m" if worst else ""
+    heights_text = (
+        f"scene z{base + 1}+: p50 {sc['p50']:.3f} m, p99 {sc['p99']:.3f} m, max {sc['max']:.2f} m over {sc['n']} vertices"
+        + (f"; base z0-z{base}: " + (", ".join(over) if over else "within limits") if base >= 0 else "")
+        + (f"; worst zoom z{worst[0]}: p99 {worst[1]['p99']:.3f} m, max {worst[1]['max']:.2f} m" if worst else "")
+    )
     jpgs = [str(p) for p in sorted((pkg / "imagery").rglob("*.jpg"))]
     chunks = [jpgs[i : i + 512] for i in range(0, len(jpgs), 512)]
     if jobs > 1 and len(chunks) > 1:
@@ -208,9 +241,8 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
     checks = [
         Check(
             "terrain_heights",
-            stats["p50"] <= P50_M and stats["p99"] <= P99_M,
-            f"p50 {stats['p50']:.3f} m, p99 {stats['p99']:.3f} m, max {stats['max']:.2f} m over {stats['n']} vertices"
-            + worst_text,
+            scene_ok and not over,
+            heights_text,
         ),
         Check("terrain_finite", not nonfinite, _summary(nonfinite)),
         Check("terrain_normals", not normals_bad, _summary(normals_bad)),
