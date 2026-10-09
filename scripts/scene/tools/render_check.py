@@ -40,6 +40,7 @@ SHOTS = {
     "high_oblique": P(lat=33.300, lon=-117.450, alt=6000, yaw=30, gimbal_pitch=-10, fov_h=60),
     "ring_edge": P(lat=33.350, lon=-117.430, alt=9000, yaw=270, gimbal_pitch=-12, fov_h=60),  # over the ring
     "bbox_edge": P(lat=33.430, lon=-117.560, alt=3000, yaw=270, gimbal_pitch=-15, fov_h=60),  # across the NAIP edge
+    "sea_offshore": P(lat=33.215, lon=-117.410, alt=600, yaw=240, gimbal_pitch=-30, fov_h=50),  # shore -> open sea
     "slant_ne_ir": P(lat=33.205, lon=-117.405, alt=800, yaw=45, gimbal_pitch=-20, fov_h=40, sensor_id=1),
 }
 

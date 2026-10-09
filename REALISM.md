@@ -311,7 +311,7 @@ is a checklist for this phase.
   URL names `tilemapresource.xml`. Pyramid down to zoom 0. Record the acquisition date and sun angle
   per tile in the manifest: imagery shadows are baked in and only look right near that sun position
   (a known limit, documented, not fixed). NAIP edge: margin + Sentinel-2 colour match + feather (`docs/superpowers/specs/2026-10-09-naip-edge-design.md`;
-  NAIP quarter-quads are bit-identical in their overlaps, so no per-file balancing).
+  NAIP quarter-quads are bit-identical in their overlaps, so no per-file balancing; open water is one source: NAIP clipped to land plus 200 m, the colour match land-only).
 - NAIP also has a near-infrared band. Package it as an NDVI layer next to the RGB tiles: it is a far
   better vegetation signal than 4B's GBuffer base-colour index (R2 decides whether `ThermalCS` uses
   it).

@@ -1802,8 +1802,9 @@ the offline profile (`scene.dir` + `scene.offline`, `cesium.imagery.source: tms`
 an offline package run send no request (`docs/scene-packages.md`, "Measured"). Repeating the offline run on
 Linux/Vulkan needs an egress-blocking equivalent of the macOS `--offline` sandbox (e.g. the packaged image with
 `docker run --network none` and the package mounted read-only). **R1 chunk 1 (NAIP edge)** implemented
-2026-10-09: `imagery_margin_km`, Sentinel-2 -> NAIP colour match, 200 m feather (`docs/scene-packages.md`, "Imagery
-edge"); acceptance on Pendleton pending.
+2026-10-09: `imagery_margin_km`, Sentinel-2 -> NAIP colour match, 200 m feather, water consistency (NAIP clipped 200 m off the
+WorldCover shore, land-only colour match) (`docs/scene-packages.md`, "Imagery edge"); acceptance on Pendleton
+pending.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

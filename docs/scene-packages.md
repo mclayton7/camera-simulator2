@@ -126,6 +126,7 @@ bmng_month = 7                              # [1, 12]: Blue Marble NG month (set
 jpeg_quality = 85                           # [1, 95]
 imagery_margin_km = 3                       # [0, 50], must be <= ring_km: NAIP is built this far beyond the bbox
 balance = true                              # colour-match Sentinel-2 to NAIP and feather NAIP's edge (Imagery edge)
+naip_water_buffer_m = 200                   # NAIP only this far beyond WorldCover water's edge (Imagery edge; 0 = off)
 allow = []                                  # extra licence ids (SPDX, see licences.toml)
 
 [priorities]                                # optional; defaults from the profile
@@ -178,7 +179,7 @@ discovered and built at the bbox's zoom, so NAIP's edge lies outside the bbox. I
 excluded), a 10 m lattice is sampled and fitted on its even half (the odd half is held out for the report): a per-band
 tone curve (257 quantiles, Sentinel-2 reflectance to NAIP DN) plus a grid of 2 km cell offsets (>= 500 samples per
 cell, 3x3 median over fitted cells, unfitted cells take the nearest fitted offset decayed by exp(-d / 10 km)). Every
-Sentinel-2 sample at every zoom is decoded through it and clamped at the curve's ends. The file is quantised, listed
+Sentinel-2 sample on land, at every zoom, is decoded through it and clamped at the curve's ends; over water it fades back to the R0 decode (see Water). The file is quantised, listed
 in `hashes.txt`, covered by `verify`, and its hash joins every imagery leaf's inputs hash; workers read it back from
 the file, so `-j 1` and `-j N` give the same bytes. The fit report (samples, cells, held-out MAE, bias and cell bias
 before and after, fit seconds) goes to the log and `build.json` under `balance`, never into `balance.json`. A rebuild
@@ -189,19 +190,36 @@ distance is computed on a lattice with equal degree spacing in latitude and long
 200 m north-south but 200 cos(lat) m east-west. Leaves well inside NAIP (every pixel NAIP and further than
 200 m + 500 m inside the footprints) skip it and are NAIP alone, with the same bytes as the full path.
 
+**Water.** Open water is one source, so boats see a uniform seabed through CamSim's ocean. The mask is WorldCover
+class 80 (all permanent water, sea and lakes alike), read pixel by pixel at 10 m from the package's WorldCover
+COGs; unknown counts as land. NAIP is kept only within `naip_water_buffer_m` (default 200 m) of land: beaches,
+surf and harbours keep NAIP, and the 200 m feather runs from the shore out to that clip line, so NAIP is whole on
+land and gone 200 m offshore. Beyond it Sentinel-2 (Blue Marble where the composite stops) is all there is, inside
+the bbox too. The colour match is land-only: it fades to the R0 Sentinel-2 decode over the first 100 m of water
+(`water_fade_m`), so open water is decoded exactly as in R0. Lakes, rivers and lagoons narrower than ~400 m lie
+within the buffer and keep NAIP. Distances use degrees of latitude on both axes, as the feather. Leaves with no
+water near them come out byte-identical to the no-mask path; the WorldCover hashes join the leaf inputs.
+`build.json`'s `balance.water_mask` says whether the mask was on. `naip_water_buffer_m = 0` keeps NAIP over water
+(the fade stays); values between 0 and 200 are rejected (the feather would fade NAIP on land). Without WorldCover
+in the package the build warns and neither applies.
+
 **No overlap.** When NAIP and Sentinel-2 share no land there is no `balance.json` and no feather: the legacy hard edge.
 
 **Upgrading.** Re-planning a package built before this change rebuilds all layers once (the new `margin` region changes
-every layer's settings hash); the terrain bytes come out identical.
+every layer's settings hash); the terrain bytes come out identical. Packages planned before the water mask need
+`build --replan` to pick up `naip_water_buffer_m` / `water_fade_m`; without them they build as before (no clip, no fade).
 
 **Off switch.** `balance = false` with `imagery_margin_km = 0` reproduces the R0 imagery tiles byte for byte.
 Without `balance`, no `balance.json` is written. With no NAIP in the package, or no shared land, there is no
 `balance.json` and Sentinel-2 is decoded as before.
 
 **Known limits.** Sentinel-2 stays 10 m, so the edge still loses resolution; flight-line seamlines inside NAIP
-remain (faint on land, strong sun-glint stripes over sea, a patchwork there); the fit is per package, not global.
+remain on land (faint), and NAIP's sea glint and fill blocks within 200 m of the shore; open water is Sentinel-2 at
+10 m, with a Sentinel-2 to Blue Marble step where the composite stops at sea; leaves over clipped sea are still built
+at NAIP's zoom (they hold upsampled Sentinel-2); the fit is per package, not global.
 Acceptance on Pendleton pending. `scripts/scene/tools/edge_shots.py OUT PKG [--before OLD]` writes labelled crops of
-the bbox edges for review, and `render_check.py` has a `bbox_edge` shot.
+the bbox edges for review, `scripts/scene/tools/water_check.py PKG --cache DIR` gates the open water, and `render_check.py` has `bbox_edge` and
+`sea_offshore` shots.
 
 ## Sources
 
