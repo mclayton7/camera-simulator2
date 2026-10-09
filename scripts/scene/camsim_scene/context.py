@@ -20,6 +20,7 @@ from .manifest import AssetRecord, Manifest
 from .sources import make_source
 from .sources.base import M_PER_DEG, Asset, SourceRaster
 from .tiling import GLOBE, Bounds, Coverage
+from .water import Water
 
 GEOID_TARGET_M = 900.0  # ETOPO geoid grid resolution: read at full resolution, never finer
 
@@ -95,6 +96,17 @@ def reference_footprints(m: Manifest, sid: str) -> list:
     ]
 
 
+def class_rasters(m: Manifest, asset_paths: dict) -> tuple[list, list[str]]:
+    """The package's WorldCover rasters (sorted by asset id) and their sha256s: the fit's land mask and the leaves'
+    water mask. Empty when the package has no WorldCover."""
+    if "worldcover" not in m.layers["landcover"]["priorities"]:
+        return [], []
+    rec = m.source("worldcover")
+    src = make_source(rec.id, rec.adapter, rec.options)
+    data = sorted((a for a in rec.assets if a.role == "data"), key=lambda a: a.id)
+    return [src.open(Path(asset_paths[f"{rec.id}/{a.id}"]), to_asset(a)) for a in data], [a.sha256 for a in data]
+
+
 def coverage(m: Manifest, layer: str, use_bbox: bool = False) -> Coverage:
     """Footprints of a layer's data assets, each with its source's zoom limit (discovery bboxes before fetch)."""
     cov = Coverage()
@@ -135,6 +147,8 @@ class WorkerState:
         self.balance: Balance | None = None
         self.balance_sha = ""
         self.ref_interior = None
+        self.water: Water | None = None
+        self.water_shas: list[str] = []
         s = self.manifest.layers["imagery"].get("balance")
         path = self.pkg / "imagery" / BALANCE_FILE
         if s and path.exists():
@@ -143,6 +157,10 @@ class WorkerState:
             fps = reference_footprints(self.manifest, s["reference"])
             if fps:
                 self.ref_interior = ref_interior(fps, s["feather_m"])
+            classes, shas = class_rasters(self.manifest, ctx.asset_paths)
+            if classes and s.get("water_fade_m"):  # a balance written before the water keys: no mask, as before
+                self.water = Water(tuple(classes), float(s.get("naip_water_buffer_m", 0.0)), float(s["water_fade_m"]))
+                self.water_shas = sorted(shas)
 
     def _transform(self, datum_id: str, vertical_asset: str | None) -> DatumTransform:
         key = (datum_id, vertical_asset)

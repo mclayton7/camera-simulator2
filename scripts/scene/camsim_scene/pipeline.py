@@ -29,7 +29,7 @@ from . import __version__, datum
 from . import balance as colour_balance
 from .cache import Cache
 from .config import LAYERS, TILING, ScenePlan, layer_settings
-from .context import BuildContext, WorkerState, coverage, reference_footprints, to_asset
+from .context import BuildContext, WorkerState, class_rasters, coverage, reference_footprints, to_asset
 from .engine import (
     BuildLock,
     LayerStats,
@@ -301,10 +301,11 @@ def _imagery_tile(z: int, x: int, y: int, leaf: bool):
     if leaf:
         bal = st.balance
         entries = st.index["imagery"].query(imagery.query_bounds(z, x, y, bal.feather_m if bal else 0.0))
-        # balance_sha only when there is a balance: leaves of packages without one keep their pre-balance hashes
-        extra = [st.balance_sha] if st.balance_sha else []
+        # balance_sha only when there is a balance: leaves of packages without one keep their pre-balance hashes;
+        # the WorldCover hashes only with a water mask, so a WorldCover change rebuilds the leaves
+        extra = [st.balance_sha, *st.water_shas] if st.balance_sha else []
         inputs = inputs_hash(st.settings["imagery"], __version__, "leaf", *extra, *sorted(e.sha256 for e in entries))
-        produce = partial(imagery.leaf_tile, z, x, y, entries, quality, bal, st.ref_interior)
+        produce = partial(imagery.leaf_tile, z, x, y, entries, quality, bal, st.ref_interior, st.water)
     else:
         outs = []
         for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
@@ -416,16 +417,6 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     return st
 
 
-def _class_rasters(m: Manifest, ctx: BuildContext) -> tuple[list, list[str]]:
-    """WorldCover rasters for the fit's water mask (none when the package has no land cover)."""
-    if "worldcover" not in m.layers["landcover"]["priorities"]:
-        return [], []
-    rec = m.source("worldcover")
-    src = make_source(rec.id, rec.adapter, rec.options)
-    data = [a for a in rec.assets if a.role == "data"]
-    return [src.open(Path(ctx.asset_paths[f"{rec.id}/{a.id}"]), to_asset(a)) for a in data], [a.sha256 for a in data]
-
-
 def _fit_balance(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
     """Fit (or reuse) imagery/balance.json before the imagery tiles; the report goes to build.json."""
     s = m.layers["imagery"].get("balance")
@@ -435,7 +426,12 @@ def _fit_balance(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
         out.unlink(missing_ok=True)
         marker.unlink(missing_ok=True)
         return None
-    classes, class_shas = _class_rasters(m, ctx)
+    classes, class_shas = class_rasters(m, ctx.asset_paths)
+    if not classes:
+        log.warning(
+            "balance: no WorldCover in the package: NAIP is not clipped at the coast and the colour match also "
+            "applies over water"
+        )
     shas = sorted(a.sha256 for sid in (s["reference"], s["target"]) for a in m.source(sid).assets) + sorted(class_shas)
     inputs = inputs_hash(m.layer_settings_hash("imagery"), __version__, "balance", *shas)
     prev = json.loads(marker.read_text()) if marker.exists() else None
@@ -461,6 +457,7 @@ def _fit_balance(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
         atomic_write(out, bal.to_json())
         output, report = sha256_file(out), {"fitted": True, **bal.report}
     report["seconds"] = round(time.monotonic() - t0, 3)
+    report["water_mask"] = bal is not None and bool(classes) and bool(s.get("water_fade_m"))
     atomic_write(marker, json.dumps({"inputs": inputs, "output": output, "report": report}).encode())
     log.info("balance: %s in %.1f s", "fitted" if bal else "not fitted", report["seconds"])
     return {**report, "skipped": False}
