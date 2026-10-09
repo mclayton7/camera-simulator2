@@ -1,6 +1,7 @@
 """Per-process view of a fetched manifest: a SourceRaster and DatumTransform per data asset, ordered by layer
-priority, behind an STRtree of footprints. BuildContext (plain data) is what crosses the process boundary;
-each worker builds its WorkerState once."""
+priority, behind an STRtree of footprints, plus the package's imagery colour match (imagery/balance.json) when
+there is one. BuildContext (plain data) is what crosses the process boundary; each worker builds its WorkerState
+once."""
 
 from __future__ import annotations
 
@@ -10,7 +11,11 @@ from pathlib import Path
 import numpy as np
 import shapely
 
+from .balance import FILE as BALANCE_FILE
+from .balance import Balance
 from .datum import DatumTransform
+from .fsutil import sha256_bytes
+from .layers.imagery import ref_interior
 from .manifest import AssetRecord, Manifest
 from .sources import make_source
 from .sources.base import M_PER_DEG, Asset, SourceRaster
@@ -81,6 +86,15 @@ def _footprint(a: AssetRecord, use_bbox: bool):
     return None if wkt is None else shapely.from_wkt(wkt)
 
 
+def reference_footprints(m: Manifest, sid: str) -> list:
+    """Footprints of a source's data assets (those that hold data): the colour match's reference coverage."""
+    return [
+        shapely.from_wkt(a.metadata["footprint"])
+        for a in m.source(sid).assets
+        if a.role == "data" and a.metadata.get("footprint")
+    ]
+
+
 def coverage(m: Manifest, layer: str, use_bbox: bool = False) -> Coverage:
     """Footprints of a layer's data assets, each with its source's zoom limit (discovery bboxes before fetch)."""
     cov = Coverage()
@@ -118,6 +132,17 @@ class WorkerState:
         self.settings = {layer: self.manifest.layer_settings_hash(layer) for layer in self.manifest.layers}
         self._transforms: dict[tuple, DatumTransform] = {}
         self.index = {layer: self._index(layer) for layer in ("terrain", "imagery")}
+        self.balance: Balance | None = None
+        self.balance_sha = ""
+        self.ref_interior = None
+        s = self.manifest.layers["imagery"].get("balance")
+        path = self.pkg / "imagery" / BALANCE_FILE
+        if s and path.exists():
+            data = path.read_bytes()
+            self.balance, self.balance_sha = Balance.from_json(data), sha256_bytes(data)
+            fps = reference_footprints(self.manifest, s["reference"])
+            if fps:
+                self.ref_interior = ref_interior(fps, s["feather_m"])
 
     def _transform(self, datum_id: str, vertical_asset: str | None) -> DatumTransform:
         key = (datum_id, vertical_asset)

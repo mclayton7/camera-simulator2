@@ -26,9 +26,10 @@ import numpy as np
 import shapely
 
 from . import __version__, datum
+from . import balance as colour_balance
 from .cache import Cache
 from .config import LAYERS, TILING, ScenePlan, layer_settings
-from .context import BuildContext, WorkerState, coverage, to_asset
+from .context import BuildContext, WorkerState, coverage, reference_footprints, to_asset
 from .engine import (
     BuildLock,
     LayerStats,
@@ -298,9 +299,12 @@ def _imagery_tile(z: int, x: int, y: int, leaf: bool):
     st = _STATE
     quality = st.manifest.layers["imagery"]["jpeg_quality"]
     if leaf:
-        entries = st.index["imagery"].query(imagery.query_bounds(z, x, y))
-        inputs = inputs_hash(st.settings["imagery"], __version__, "leaf", *sorted(e.sha256 for e in entries))
-        produce = partial(imagery.leaf_tile, z, x, y, entries, quality)
+        bal = st.balance
+        entries = st.index["imagery"].query(imagery.query_bounds(z, x, y, bal.feather_m if bal else 0.0))
+        # balance_sha only when there is a balance: leaves of packages without one keep their pre-balance hashes
+        extra = [st.balance_sha] if st.balance_sha else []
+        inputs = inputs_hash(st.settings["imagery"], __version__, "leaf", *extra, *sorted(e.sha256 for e in entries))
+        produce = partial(imagery.leaf_tile, z, x, y, entries, quality, bal, st.ref_interior)
     else:
         outs = []
         for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
@@ -412,6 +416,54 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     return st
 
 
+def _class_rasters(m: Manifest, ctx: BuildContext) -> tuple[list, list[str]]:
+    """WorldCover rasters for the fit's water mask (none when the package has no land cover)."""
+    if "worldcover" not in m.layers["landcover"]["priorities"]:
+        return [], []
+    rec = m.source("worldcover")
+    src = make_source(rec.id, rec.adapter, rec.options)
+    data = [a for a in rec.assets if a.role == "data"]
+    return [src.open(Path(ctx.asset_paths[f"{rec.id}/{a.id}"]), to_asset(a)) for a in data], [a.sha256 for a in data]
+
+
+def _fit_balance(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
+    """Fit (or reuse) imagery/balance.json before the imagery tiles; the report goes to build.json."""
+    s = m.layers["imagery"].get("balance")
+    out = pkg / "imagery" / colour_balance.FILE
+    marker = pkg / STATE_DIR / "balance.json"
+    if not s:
+        out.unlink(missing_ok=True)
+        marker.unlink(missing_ok=True)
+        return None
+    classes, class_shas = _class_rasters(m, ctx)
+    shas = sorted(a.sha256 for sid in (s["reference"], s["target"]) for a in m.source(sid).assets) + sorted(class_shas)
+    inputs = inputs_hash(m.layer_settings_hash("imagery"), __version__, "balance", *shas)
+    prev = json.loads(marker.read_text()) if marker.exists() else None
+    if prev and prev["inputs"] == inputs:
+        have = sha256_file(out) if out.exists() else None
+        if have == prev["output"]:
+            return {**prev["report"], "skipped": True}
+    t0 = time.monotonic()
+    fps = reference_footprints(m, s["reference"])
+    bal = None
+    if fps:
+        st = WorkerState(ctx)
+        bounds = shapely.union_all(fps).bounds
+        bal = colour_balance.fit_balance(
+            st.index["imagery"], classes, bounds, colour_balance.grid_for(m, s["cell_km"]), s
+        )
+    if bal is None:
+        out.unlink(missing_ok=True)
+        output, report = None, {"fitted": False}
+    else:
+        atomic_write(out, bal.to_json())
+        output, report = sha256_file(out), {"fitted": True, **bal.report}
+    report["seconds"] = round(time.monotonic() - t0, 3)
+    atomic_write(marker, json.dumps({"inputs": inputs, "output": output, "report": report}).encode())
+    log.info("balance: %s in %.1f s", "fitted" if bal else "not fitted", report["seconds"])
+    return {**report, "skipped": False}
+
+
 def _git_commit() -> str | None:
     if os.environ.get("CAMSIM_SCENE_GIT_COMMIT"):
         return os.environ["CAMSIM_SCENE_GIT_COMMIT"]
@@ -454,6 +506,7 @@ def build_scene(
         }
         lj = layer_json(m.name, available_ranges(tplan), _credits(m, "terrain"))
         atomic_write(pkg / "terrain" / "layer.json", canonical_json(lj).encode())
+        bal_report = _fit_balance(pkg, m, ctx)  # before the imagery workers start: they load balance.json
         stats["imagery"] = _run_layer(ctx, "imagery", iplan, _imagery_phases(iplan), imagery_batch, jobs, json_progress)
         atomic_write(
             pkg / "imagery" / "tilemapresource.xml",
@@ -476,6 +529,7 @@ def build_scene(
             "jobs": jobs,
             "cpu_count": os.cpu_count(),
             "layers": {k: v.to_dict() for k, v in stats.items()},
+            "balance": bal_report,
         }
         atomic_write(pkg / "build.json", (json.dumps(info, indent=2, sort_keys=True) + "\n").encode())
     peak = max(s.peak_rss_mb for s in stats.values())
