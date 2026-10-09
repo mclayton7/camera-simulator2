@@ -10,13 +10,15 @@ up is kept below, adapted to CamSim's architecture; what didn't is corrected.
 
 **Scheduling.** `ROADMAP.md` rule 5 says no new feature phases until Milestones 0–4 land. 4C's
 visual review was signed off on 2026-10-07; 4D (semantic class in ground truth, validation, thermal
-shadow lag) is still to do. So this track starts after 4D. The one exception is R0, which is offline tooling with
-no runtime change.
+shadow lag) is still to do. R0 went ahead as offline tooling with no runtime change. **Rule 5 waived for this
+track (2026-10-09):** R1 onward proceed before 4D; 4D stays open and runs alongside.
 
 **Status.** R0 spike done 2026-10-07 (`docs/realism-r0-spike.md`; research in `docs/realism/`): a
 Camp Pendleton package (3DEP terrain + NAIP imagery) rendered from local files with the internet
 blocked, registered to < 1 px against Cesium World Terrain + Bing, with CIGI frame-centre heights
-within 0.9 m of 3DEP truth. Next: the R0 spec.
+within 0.9 m of 3DEP truth. R0 done 2026-10-09 (`camsim-scene`, `docs/scene-packages.md`): gates 1–6 pass,
+including the offline profile. Left from R0: the offline run on Linux/Vulkan (`docker run --network none`) and
+a SquashFS vs plain-directory cold-start timing. Next: R1.
 
 **Scope decisions (2026-10-07).**
 

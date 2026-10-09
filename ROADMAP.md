@@ -1789,7 +1789,8 @@ hits loaded tiles; the host polls), and the on-rig checks listed in `hitl/README
 Scene content from a bounding box: self-contained (offline) scene packages, bare-earth terrain and
 imagery, roads/water in the land-cover window, generated buildings and vegetation, mission-aware
 generation, realism validation (R0–R6). US only, photogrammetry out of scope, first area Camp
-Pendleton (2026-10-07). Starts after 4D (rule 5), except R0 (offline tooling only). **R0 spike done
+Pendleton (2026-10-07). **Rule 5 waived for this track (2026-10-09):** R1 onward proceed before 4D, which
+stays open and runs alongside (R0 was offline tooling and needed no waiver). **R0 spike done
 2026-10-07** (`docs/realism-r0-spike.md`): a Pendleton package (3DEP + NAIP) rendered from `file://`
 with the internet blocked, < 1 px registration error vs CWT + Bing, frame-centre heights within 0.9 m
 of 3DEP. **R0 tooling implemented 2026-10-08** (`scripts/scene/`, the `camsim-scene` CLI, guide
