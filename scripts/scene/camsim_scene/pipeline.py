@@ -444,6 +444,8 @@ def _fit_balance(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
         if have == prev["output"]:
             return {**prev["report"], "skipped": True}
     t0 = time.monotonic()
+    out.unlink(missing_ok=True)  # an old or unreadable file must never block the refit
+    marker.unlink(missing_ok=True)
     fps = reference_footprints(m, s["reference"])
     bal = None
     if fps:
@@ -499,6 +501,7 @@ def build_scene(
         ctx = make_context(pkg, m, cache)
         tplan = plan_tiles(m.region_objs(), "terrain", coverage(m, "terrain"))
         iplan = plan_tiles(m.region_objs(), "imagery", coverage(m, "imagery"))
+        bal_report = _fit_balance(pkg, m, ctx)  # before any worker starts: they load balance.json
         stats = {
             "terrain": _run_layer(
                 ctx, "terrain", tplan, [_chunks(_terrain_items(tplan))], terrain_batch, jobs, json_progress
@@ -506,7 +509,6 @@ def build_scene(
         }
         lj = layer_json(m.name, available_ranges(tplan), _credits(m, "terrain"))
         atomic_write(pkg / "terrain" / "layer.json", canonical_json(lj).encode())
-        bal_report = _fit_balance(pkg, m, ctx)  # before the imagery workers start: they load balance.json
         stats["imagery"] = _run_layer(ctx, "imagery", iplan, _imagery_phases(iplan), imagery_batch, jobs, json_progress)
         atomic_write(
             pkg / "imagery" / "tilemapresource.xml",

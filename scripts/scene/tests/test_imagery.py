@@ -159,6 +159,17 @@ def test_leaf_blends_naip_into_the_matched_target(tmp_path):
     assert between.all()
 
 
+def test_naip_edge_with_nothing_behind_it_stays_naip(tmp_path):
+    st, bal = edge_state(tmp_path)
+    x, y = tile_at(Z15, EDGE, 10.1)
+    entries = naip_entries(st, Z15, x, y)  # no lower-priority source at all
+    rgb = imagery.leaf_rgb(Z15, x, y, entries, balance=bal).astype(int)
+    naip = imagery.leaf_rgb(Z15, x, y, entries).astype(int)
+    valid = pixel_lons(Z15, x, y) > EDGE + 0.0001  # ~10 m inside the valid-data edge, inside the ramp
+    assert valid.any() and (naip[:, :, valid] > 0).all()
+    assert np.array_equal(rgb[:, :, valid], naip[:, :, valid])  # not faded toward black
+
+
 def test_adjacent_leaves_agree_across_their_shared_edge_in_the_feather(tmp_path):
     # NAIP red is a flat 150 (the offset cancels the synthetic imagery), Sentinel-2 a flat 50 through the balance:
     # red is then 50 + 100 x the feather weight alone, rising ~1.2 DN per ~2.4 m pixel along the ramp

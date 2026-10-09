@@ -131,10 +131,13 @@ def leaf_rgb(z: int, x: int, y: int, entries, balance=None, interior=None) -> np
     if rok.all() and inside(interior, z, x, y):
         return ref_rgb
     wt = feather_weight(z, x, y, ref, balance.feather_m) if ref else np.zeros(lon.shape)
+    if (np.where(rok, wt, 0.0) >= 1.0).all():
+        return ref_rgb
+    sv, sok, sw = sample_entries(rest, lon, lat, tm)
+    wt = np.where(sok, wt, 1.0)  # nothing behind the reference here: keep it, never fade it toward black
     wt = np.where(rok, wt, 0.0)
     if (wt >= 1.0).all():
         return ref_rgb
-    sv, _, sw = sample_entries(rest, lon, lat, tm)
     rest_rgb = decode_entries(rest, sv, sw, lon, lat, balance)
     return np.rint(wt * ref_rgb + (1.0 - wt) * rest_rgb).astype(np.uint8)
 

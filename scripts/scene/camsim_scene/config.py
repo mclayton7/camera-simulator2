@@ -8,7 +8,7 @@ ring_km = 100
 bmng_month = 7
 jpeg_quality = 85
 imagery_margin_km = 3                      # NAIP fetched and built this far beyond the bbox (<= ring_km)
-balance = true                             # colour-match Sentinel-2 to NAIP and feather NAIP's edge
+balance = true                             # colour-match Sentinel-2 to NAIP and feather NAIP's edge (only where they share land)
 allow = []                                 # extra licence ids (see licences.toml)
 [priorities]                               # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "etopo2022"]

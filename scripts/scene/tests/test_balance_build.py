@@ -103,6 +103,18 @@ def test_turning_balance_on_adds_the_file_and_matches_a_fresh_build(tmp_path):
     assert hashes(a) == hashes(b)
 
 
+def test_unreadable_old_balance_json_does_not_block_the_refit(tmp_path):
+    scene = naip_s2_scene(tmp_path / "src")
+    a, cache, _ = build_synthetic(tmp_path, scene, name="a")
+    b, _, _ = build_synthetic(tmp_path, scene, name="b", cache=cache)
+    (b / "imagery/balance.json").write_text("not json, or an old format")
+    marker = b / ".state/balance.json"
+    marker.write_text(json.dumps({**json.loads(marker.read_text()), "inputs": "changed"}))  # the fit must run
+    info = build_scene(b, cache, jobs=1)
+    assert info["balance"]["fitted"] is True and info["balance"]["skipped"] is False
+    assert hashes(a) == hashes(b)
+
+
 def test_no_overlap_writes_no_balance_file(tmp_path):
     scene = naip_s2_scene(tmp_path / "src", s2_box=(11.0, 11.0, 11.2, 11.2))
     pkg, cache, info = build_synthetic(tmp_path, scene)

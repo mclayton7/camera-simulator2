@@ -189,6 +189,11 @@ distance is computed on a lattice with equal degree spacing in latitude and long
 200 m north-south but 200 cos(lat) m east-west. Leaves well inside NAIP (every pixel NAIP and further than
 200 m + 500 m inside the footprints) skip it and are NAIP alone, with the same bytes as the full path.
 
+**No overlap.** When NAIP and Sentinel-2 share no land there is no `balance.json` and no feather: the legacy hard edge.
+
+**Upgrading.** Re-planning a package built before this change rebuilds all layers once (the new `margin` region changes
+every layer's settings hash); the terrain bytes come out identical.
+
 **Off switch.** `balance = false` with `imagery_margin_km = 0` reproduces the R0 imagery tiles byte for byte.
 Without `balance`, no `balance.json` is written. With no NAIP in the package, or no shared land, there is no
 `balance.json` and Sentinel-2 is decoded as before.
