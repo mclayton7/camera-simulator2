@@ -149,6 +149,17 @@ five ways.
    | Buildings (footprint extrusions) | 10⁴–10⁶ buildings | 10⁶–10⁷ | Fine as 3D Tiles. |
    | Trees, if listed one by one | ~10⁷ | ~10⁹ | Impossible as explicit lists: runtime scatter instead (R4). |
 
+   Measured by the R0 gates (2026-10-09, 16 workers on a 24-core Core Ultra 9 285K; totals include the 100 km
+   base ring and the global z0–z8 base, so they overstate the per-km² cost of a larger box):
+
+   | Build | Area | Terrain | Imagery | Land cover | Package | Build time | Peak RSS / worker |
+   |---|---|---|---|---|---|---|---|
+   | `sim` (3DEP 1 m + NAIP), Pendleton | 1,295 km² | 182,602 tiles, 0.98 GB | 253,766 tiles, 1.96 GB | 43 MB | 2.9 GB (`.sqfs` 3.0 GB) | 12.5 min | 812 MB |
+   | `preview` (1/3″ + WC S2), Pendleton | 9,946 km² | 183,378 tiles, 0.96 GB | 177,350 tiles, 0.81 GB | 62 MB | 1.8 GB | 11.2 min | 647 MB |
+
+   Files on disk need 4 KB blocks: 5.5 GB and 4.0 GB, which the SquashFS image avoids. The fetch cache for the
+   `sim` build was 36 GB, mostly NAIP and the global ETOPO/Blue Marble sources.
+
 2. **Everything is tiled, out of core and resumable.** The build works one output tile at a time
    (never a whole-area raster in memory), in parallel, with a per-tile done marker so a failed
    40,000 km² build resumes, and each layer can be rebuilt alone. Tiles use one global scheme
