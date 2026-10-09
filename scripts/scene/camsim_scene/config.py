@@ -291,4 +291,5 @@ def default_scene_toml(name: str, bbox: Bounds, profile: str = "sim") -> str:
         f"bmng_month = 7\n"
         f"jpeg_quality = 85\n"
         f"imagery_margin_km = 3\n"
+        f"balance = true\n"
     )

@@ -299,7 +299,8 @@ is a checklist for this phase.
   WGS-84 ellipsoid heights (principle 7), over the package's global base. TIN by `pydelatin`,
   encoded by R0's writer, loaded through the existing `terrain.source: url` with a `file:///` URL
   (works today, no code change; three slashes, absolute path). The "one terrain tileset" rule
-  stays. Generate full low-zoom coverage rather than relying on Cesium's upsampling (the spike's
+  stays. Generate full low-zoom coverage rather than relying on Cesium's upsampling (done in R0: whole-globe z0-8 and
+  complete siblings) (the spike's
   remaining Chaos NaN-bounds ensure came from an upsampled tile). The ocean's sea level (EGM96)
   must still meet the coastline: NAVD88 zero is 0.38 m off EGM96 at Pendleton, and NOAA's
   shoreline is probably MHW; check at the Pendleton coast.
@@ -309,7 +310,8 @@ is a checklist for this phase.
   `imagery.source: tms` + `imagery.url` (landed with R0's offline profile, 2026-10-09); the
   URL names `tilemapresource.xml`. Pyramid down to zoom 0. Record the acquisition date and sun angle
   per tile in the manifest: imagery shadows are baked in and only look right near that sun position
-  (a known limit, documented, not fixed). Colour-balance seams between NAIP flight lines and states.
+  (a known limit, documented, not fixed). NAIP edge: margin + Sentinel-2 colour match + feather (`docs/superpowers/specs/2026-10-09-naip-edge-design.md`;
+  NAIP quarter-quads are bit-identical in their overlaps, so no per-file balancing).
 - NAIP also has a near-infrared band. Package it as an NDVI layer next to the RGB tiles: it is a far
   better vegetation signal than 4B's GBuffer base-colour index (R2 decides whether `ThermalCS` uses
   it).

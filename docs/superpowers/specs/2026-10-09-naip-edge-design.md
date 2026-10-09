@@ -56,21 +56,21 @@ absent) when the package has no NAIP or `balance` is off.
 
 - **Samples.** Lattice at 10 m over the union of NAIP footprints. At each node: NAIP RGB (`average` resampled from the
   nearest overview to 10 m), Sentinel-2 reflectance (raw DN × 1e-4, not decoded), WorldCover class. Kept: both valid,
-  class ≠ 80 (permanent water) and ≠ 0. Node order is fixed (row-major from the north-west), so the sample is
+  class ≠ 80 (permanent water) and ≠ 0. Node order is fixed (block-major; the statistics are order-independent), so the sample is
   deterministic.
-- **Tone curve.** Per band, 257 quantiles (0, 1/256 … 1) of S2 reflectance and of NAIP DN over all kept samples →
+- **Tone curve.** Per band, 257 quantiles (0, 1/256 … 1) of S2 reflectance and of NAIP DN over the kept samples of the even (fit) half of the lattice (odd (i + j) nodes are held out) →
   piecewise-linear map reflectance → DN. Stored as the two quantile arrays; strictly increasing x is enforced (ties
   dropped, first kept).
 - **Offset field.** Grid of 2 km cells (in degrees: 2 km / M_PER_DEG on latitude, the same in longitude ÷ cos(bbox
-  centre latitude)), aligned to the ring's south-west corner, covering the ring. Per cell with ≥ 500 kept samples:
+  centre latitude)), aligned to the ring's south-west corner, covering the ring. Per cell with ≥ 500 kept samples (even half only):
   median(NAIP − tone(S2)) per band. Then a 3×3 median filter over fitted cells only. Unfitted cells: the value of
   the nearest fitted cell (Euclidean on the grid, as `scipy.ndimage.distance_transform_edt` picks it), times exp(−d / 10 km), d = distance to
   that cell's centre. Bilinear between cell centres at sample time.
 - **Applied** to every Sentinel-2 (`wc_s2`) sample at every zoom: DN = clip(round(tone(r) + offset(lon, lat)), 0, 255)
   instead of `_s2_reflectance`. Parents still box-filter their children, so lower zooms inherit it.
 - **File.** `imagery/balance.json`: format version, source ids, feather width, the quantile arrays, grid origin /
-  cell size / shape, offsets. All values quantised to integer steps (quantiles 0.01 raw DN = 1e-6 reflectance, DN
-  0.1, grid floats 1e-9) before writing, so float-summation order can't change the bytes across machines. It is a
+  cell size / shape, offsets. Values are quantised before writing (quantiles 0.01 raw DN = 1e-6 reflectance, DN
+  0.1) and stored as floats; grid values are floats rounded to 1e-9 before writing, so float-summation order can't change the bytes across machines. It is a
   package file: in `hashes.txt`, covered by `verify`, and its sha256 joins every imagery leaf's inputs hash (a refit
   rebuilds every leaf, and parents follow). Workers always read the model back from this file.
 - **Fit report** (log + `build.json`, never `balance.json`, whose bytes must not depend on float statistics): samples
@@ -80,11 +80,11 @@ absent) when the package has no NAIP or `balance` is off.
 
 ### 3. Feather at the NAIP edge
 
-- In `leaf_rgb`, NAIP (`naip_pc` group) blends into the next group over `FEATHER_IMAGERY_M` = 200 m, measured inward
+- In `leaf_rgb`, NAIP (`naip_pc` group) blends into the next group over `BALANCE["feather_m"]` = 200 m, measured inward
   from NAIP's valid-data edge: w = clip(dist / 200 m, 0, 1), out = w · NAIP + (1 − w) · next. Inside the NAIP group
   first-valid-wins is unchanged (files are identical in overlaps).
 - Distance comes from NAIP's valid mask sampled on a lattice over the tile plus a margin of ≥ 200 m (the terrain
-  layer's margin/`distance_transform_edt` pattern; distance in degrees of latitude on both axes, as terrain), bilinearly
+  layer's margin/`distance_transform_edt` pattern; equal degree spacing in latitude and longitude, as terrain, so the ramp is 200 m north-south and 200·cos(lat) m east-west), bilinearly
   upsampled to the tile's pixels. Lattice spacing: the leaf's pixel size, doubled while it stays ≤ 4 m (z17: 2.4 m;
   z13 and coarser: one pixel), so nodes align across neighbouring tiles.
 - Leaves inside NAIP skip it: when every pixel is NAIP and the tile lies inside the union of NAIP footprints shrunk

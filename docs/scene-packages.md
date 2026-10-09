@@ -48,7 +48,10 @@ addressing (`scheme: tms`, `y_origin: south`).
 |---|---|---|---|
 | `globe` | whole Earth | z0–8 | z0–8 |
 | `ring` | bbox + `ring_km` (default 100) on every side | z9–10 | z9–10 |
+| `margin` | bbox + `imagery_margin_km` (default 3) on every side | ring's (z10) | the bbox's (z17 on NAIP) |
 | `bbox` | the scene's bbox | to the source limit: z16 on 3DEP 1 m, z14 on 1/3″, z8 on ETOPO (`preview`: 14) | z17 on NAIP, z13 on WC S2, z8 on Blue Marble (`preview`: 13) |
+
+NAIP is discovered over the margin, so its edge sits outside the bbox wherever NAIP exists there.
 
 A tile's depth is min(region limit, the limit of the best source actually covering it), for imagery as for
 terrain: ocean tiles inside the bbox stop where NAIP stops instead of upsampling Blue Marble to z17, and the
@@ -121,6 +124,8 @@ seed = 0                                    # integer, recorded in the manifest
 ring_km = 100                               # [0, 1000]: ring = bbox grown by this much on every side
 bmng_month = 7                              # [1, 12]: Blue Marble NG month (sets sources.bmng.month)
 jpeg_quality = 85                           # [1, 95]
+imagery_margin_km = 3                       # [0, 50], must be <= ring_km: NAIP is built this far beyond the bbox
+balance = true                              # colour-match Sentinel-2 to NAIP and feather NAIP's edge (Imagery edge)
 allow = []                                  # extra licence ids (SPDX, see licences.toml)
 
 [priorities]                                # optional; defaults from the profile
@@ -158,6 +163,40 @@ Unknown keys are errors. **Profiles** (Decision 3):
 **`allow`** adds licence ids to the default allow-list (`LicenseRef-PublicDomain-USGov`, `CC-BY-4.0`); `--allow
 <id>` on the command line does the same. Check the terms first: `licences.toml` lists the known ids and whether
 they're redistributable.
+
+## Imagery edge (R1)
+
+**Why.** The visible seam is NAIP to Sentinel-2 at the bbox edge. Sentinel-2 decoded the R0 way is brighter, hazier
+and less saturated than NAIP. NAIP needs no balancing between its own files: neighbouring quarter-quads are
+bit-identical where they overlap (USDA cuts them from one balanced state mosaic), so there is no per-file fitting.
+
+**Margin.** `imagery_margin_km` (default 3, range 0-50) grows the bbox into the `margin` region, where NAIP is
+discovered and built at the bbox's zoom, so NAIP's edge lies outside the bbox. It must be `<= ring_km`; a scene with
+`ring_km < 3` must set the margin explicitly (the default is rejected).
+
+**Colour match (`imagery/balance.json`).** Where NAIP and Sentinel-2 overlap on land (WorldCover classes 0 and 80
+excluded), a 10 m lattice is sampled and fitted on its even half (the odd half is held out for the report): a per-band
+tone curve (257 quantiles, Sentinel-2 reflectance to NAIP DN) plus a grid of 2 km cell offsets (>= 500 samples per
+cell, 3x3 median over fitted cells, unfitted cells take the nearest fitted offset decayed by exp(-d / 10 km)). Every
+Sentinel-2 sample at every zoom is decoded through it and clamped at the curve's ends. The file is quantised, listed
+in `hashes.txt`, covered by `verify`, and its hash joins every imagery leaf's inputs hash; workers read it back from
+the file, so `-j 1` and `-j N` give the same bytes. The fit report (samples, cells, held-out MAE, bias and cell bias
+before and after, fit seconds) goes to the log and `build.json` under `balance`, never into `balance.json`. A rebuild
+with unchanged inputs skips the fit.
+
+**Feather.** NAIP blends into the next imagery source over 200 m, measured inward from NAIP's valid-data edge. The
+distance is computed on a lattice with equal degree spacing in latitude and longitude (as terrain), so the ramp is
+200 m north-south but 200 cos(lat) m east-west. Leaves well inside NAIP (every pixel NAIP and further than
+200 m + 500 m inside the footprints) skip it and are NAIP alone, with the same bytes as the full path.
+
+**Off switch.** `balance = false` with `imagery_margin_km = 0` reproduces the R0 imagery tiles byte for byte.
+Without `balance`, no `balance.json` is written. With no NAIP in the package, or no shared land, there is no
+`balance.json` and Sentinel-2 is decoded as before.
+
+**Known limits.** Sentinel-2 stays 10 m, so the edge still loses resolution; flight-line seamlines inside NAIP
+remain (faint on land, strong sun-glint stripes over sea, a patchwork there); the fit is per package, not global.
+Acceptance on Pendleton pending. `scripts/scene/tools/edge_shots.py OUT PKG [--before OLD]` writes labelled crops of
+the bbox edges for review, and `render_check.py` has a `bbox_edge` shot.
 
 ## Sources
 
