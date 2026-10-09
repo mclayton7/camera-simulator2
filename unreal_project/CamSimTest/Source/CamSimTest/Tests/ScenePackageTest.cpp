@@ -262,3 +262,20 @@ bool FSceneTmsNeedsUrlTest::RunTest(const FString& Parameters)
 		E.ContainsByPredicate([](const FString& S) { return S.Contains(TEXT("cesium.imagery.url")); }));
 	return true;
 }
+
+// scene.offline exits on config errors only outside the editor: in PIE, _Exit would take the
+// whole editor (and unsaved work) down.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneOfflineExitPolicyTest,
+	"CamSim.Scene.Offline.ExitPolicy",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneOfflineExitPolicyTest::RunTest(const FString& Parameters)
+{
+	using CamSimScene::ShouldExitOnConfigErrors;
+	FCamSimConfig Cfg;
+	TestFalse(TEXT("online, game: run on"), ShouldExitOnConfigErrors(Cfg, /*bIsEditor=*/false));
+	Cfg.Scene.bOffline = true;
+	TestTrue(TEXT("offline, game (-game / packaged): exit"), ShouldExitOnConfigErrors(Cfg, false));
+	TestFalse(TEXT("offline, editor (PIE): never exit the editor"), ShouldExitOnConfigErrors(Cfg, true));
+	return true;
+}

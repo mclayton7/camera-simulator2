@@ -215,4 +215,9 @@ TArray<FString> ValidateSources(const FCamSimConfig& Cfg)
 	}
 	return Errors;
 }
+
+bool ShouldExitOnConfigErrors(const FCamSimConfig& Cfg, bool bIsEditor)
+{
+	return Cfg.Scene.bOffline && !bIsEditor;
+}
 } // namespace CamSimScene

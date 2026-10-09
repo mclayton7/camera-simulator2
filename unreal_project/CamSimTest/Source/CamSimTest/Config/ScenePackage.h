@@ -40,4 +40,10 @@ namespace CamSimScene
 	 * target) or none. Compares the exact strings ApplyCesiumBackendConfig dispatches on.
 	 */
 	TArray<FString> ValidateSources(const FCamSimConfig& Cfg);
+
+	/**
+	 * Whether config errors end the process: only with scene.offline, and never inside the
+	 * editor (PIE), where exiting would take the editor and its unsaved work down.
+	 */
+	bool ShouldExitOnConfigErrors(const FCamSimConfig& Cfg, bool bIsEditor);
 }

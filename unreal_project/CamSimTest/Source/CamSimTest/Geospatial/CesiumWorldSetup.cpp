@@ -39,7 +39,8 @@ bool ShouldSetUpCesiumWorld(const UWorld* World, const UGameInstance* Ours)
 	{
 		return false;
 	}
-	const UGameInstance* Owner = World->GetGameInstance();
-	return Owner == nullptr || Owner == Ours;
+	// LoadMap and seamless travel set the game instance before InitWorld. A world without one
+	// is a PIE world whose own subsystem doesn't exist yet (StartPlay covers it) or an ad-hoc one.
+	return Ours != nullptr && World->GetGameInstance() == Ours;
 }
 } // namespace CamSim::Geospatial

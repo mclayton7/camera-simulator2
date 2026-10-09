@@ -23,7 +23,7 @@ namespace CamSim::Geospatial
 
 	/**
 	 * Whether a world reported by FWorldDelegates::OnPostWorldInitialization is one to set up:
-	 * a game world whose game instance is Ours (or not assigned yet). That broadcast comes from
+	 * a game world whose game instance is Ours. That broadcast comes from
 	 * InitWorld, before InitializeActorsForPlay re-runs construction scripts on uncooked levels
 	 * (ACesium3DTileset::OnConstruction loads the tileset), so it is the first safe point.
 	 */

@@ -140,7 +140,7 @@ bool FCesiumBackendSetupLatchTest::RunTest(const FString& Parameters)
 }
 
 // Which worlds the subsystem sets up from OnPostWorldInitialization: game worlds of its own
-// game instance (or none yet), never editor or preview worlds.
+// game instance only, never editor or preview worlds.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCesiumBackendShouldSetUpWorldTest,
 	"CamSim.CesiumBackend.ShouldSetUpWorld",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -155,7 +155,9 @@ bool FCesiumBackendShouldSetUpWorldTest::RunTest(const FString& Parameters)
 	UGameInstance* Ours = NewObject<UGameInstance>(GetTransientPackage());
 	UGameInstance* Other = NewObject<UGameInstance>(GetTransientPackage());
 	TestFalse(TEXT("null world"), ShouldSetUpCesiumWorld(nullptr, Ours));
-	TestTrue(TEXT("game world, no game instance yet"), ShouldSetUpCesiumWorld(Game, Ours));
+	// LoadMap and seamless travel set the game instance before InitWorld; a world without one is
+	// a PIE world whose own subsystem doesn't exist yet, or an ad-hoc world: never ours.
+	TestFalse(TEXT("game world without a game instance"), ShouldSetUpCesiumWorld(Game, Ours));
 	TestFalse(TEXT("editor preview world"), ShouldSetUpCesiumWorld(Editor, Ours));
 	Game->SetGameInstance(Ours);
 	TestTrue(TEXT("game world of our game instance"), ShouldSetUpCesiumWorld(Game, Ours));

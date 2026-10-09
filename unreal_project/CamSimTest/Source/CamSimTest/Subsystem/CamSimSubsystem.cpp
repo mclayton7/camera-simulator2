@@ -3,6 +3,8 @@
 #include "Subsystem/CamSimSubsystem.h"
 
 #include <cstdlib>
+
+#include "Config/ScenePackage.h"
 #include "Camera/CamSimCamera.h"
 #include "Camera/CamSimSensorComponent.h"
 #include "Entity/CamSimEntityManager.h"
@@ -382,7 +384,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: %d config validation error(s) — check config"),
 				ValidationErrors.Num());
 			Config.bLoadedSuccessfully = false;
-			if (Config.Scene.bOffline)
+			if (CamSimScene::ShouldExitOnConfigErrors(Config, GIsEditor))
 			{
 				// REALISM R0: an offline run must not fall back to defaults (Cesium ion).
 				UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: scene.offline is set — exiting on config errors"));
@@ -390,6 +392,11 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 				// implementation), and nothing has started that needs an orderly shutdown.
 				GLog->Flush();
 				std::_Exit(1);
+			}
+			if (Config.Scene.bOffline && GIsEditor)
+			{
+				UE_LOG(LogCamSim, Error,
+					TEXT("UCamSimSubsystem: scene.offline is set but this is the editor (PIE) — not exiting; fix the config"));
 			}
 		}
 		if (!Config.Scene.Dir.IsEmpty() && Config.Scene.ResolveErrors.IsEmpty())
