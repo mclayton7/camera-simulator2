@@ -11,12 +11,14 @@ import contextlib
 import datetime as dt
 import json
 import logging
+import multiprocessing
 import os
 import platform
 import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from pathlib import Path
 
@@ -367,6 +369,18 @@ def _landcover_complete(index: dict, out: Path) -> bool:
     return all((out / t["file"]).is_file() for t in index["tiles"])
 
 
+def _run_isolated(fn, *args):
+    """fn(*args) in a fresh spawned process (fn must be importable; tests replace this with an inline call)."""
+    with ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn")) as ex:
+        return ex.submit(fn, *args).result()
+
+
+def _cut_landcover(bounds: tuple, out: Path, paths: dict[str, Path]) -> tuple[dict, float]:
+    """Runs in its own process, so its peak RSS isn't the main process's lifetime peak (fetch, planning)."""
+    index = landcover.fetch(bounds, out, reader=landcover.local_reader(paths), cut_by="camsim-scene")
+    return index, peak_rss_mb()
+
+
 def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     st, out = LayerStats(), pkg / "landcover"
     prio = m.layers["landcover"]["priorities"]
@@ -388,16 +402,13 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         st.skipped = len(index["tiles"])
     else:
         shutil.rmtree(out, ignore_errors=True)
-        index = landcover.fetch(
-            tuple(m.layers["landcover"]["bounds"]), out, reader=landcover.local_reader(paths), cut_by="camsim-scene"
-        )
+        index, st.peak_rss_mb = _run_isolated(_cut_landcover, tuple(m.layers["landcover"]["bounds"]), out, paths)
         atomic_write(marker, json.dumps({"inputs": inputs, "output": sha256_file(index_path)}).encode())
         st.built = len(index["tiles"])
     st.tiles = len(index["tiles"])
     files = [p for p in out.iterdir() if p.is_file()]  # the PNGs + index.json + ATTRIBUTION.txt
     st.files, st.bytes = len(files), sum(p.stat().st_size for p in files)
     st.seconds = round(time.monotonic() - t0, 3)
-    st.peak_rss_mb = peak_rss_mb()
     return st
 
 

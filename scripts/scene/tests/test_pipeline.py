@@ -226,7 +226,16 @@ def test_build_json_counts_files_per_layer(tmp_path, monkeypatch):
     monkeypatch.setattr(
         pipeline.landcover, "local_reader", lambda paths: lambda url, r, c: np.zeros((600, 600), np.uint8)
     )
+    monkeypatch.setattr(pipeline, "_run_isolated", lambda fn, *a: fn(*a))  # the patched reader stays in-process
     st = pipeline._build_landcover(pkg, m, BuildContext(str(pkg), m.to_dict(), {}, {}))
     assert st.tiles == 2 and st.files == 4  # two PNGs + index.json + ATTRIBUTION.txt
     st = pipeline._build_landcover(pkg, m, BuildContext(str(pkg), m.to_dict(), {}, {}))
     assert st.skipped == 2 and st.files == 4
+
+
+def test_run_isolated_uses_another_process():
+    import os
+
+    from camsim_scene import pipeline
+
+    assert pipeline._run_isolated(os.getpid) != os.getpid()
