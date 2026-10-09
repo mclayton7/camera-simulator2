@@ -14,10 +14,11 @@ def test_defaults_for_sim_profile():
     assert p.priorities["imagery"] == ["naip_pc", "wc_s2", "bmng"]
     assert p.priorities["landcover"] == ["worldcover"]
     assert p.source_options["bmng"]["month"] == 7 and p.source_options["naip_pc"]["year"] == "2022"
-    assert [r.name for r in p.regions()] == ["globe", "ring", "bbox"]
+    assert [r.name for r in p.regions()] == ["globe", "ring", "margin", "bbox"]
     assert [r.max_zoom for r in p.regions()] == [
         {"terrain": 8, "imagery": 8},
         {"terrain": 10, "imagery": 10},
+        {"terrain": 10, "imagery": 17},
         {"terrain": 16, "imagery": 17},
     ]
     assert p.source_ids() == ["dep3_1m", "dep3_13", "etopo2022", "naip_pc", "wc_s2", "bmng", "worldcover"]
@@ -26,7 +27,7 @@ def test_defaults_for_sim_profile():
 def test_preview_profile_has_no_naip_or_1m():
     p = parse_scene({"name": "pv", "bbox": PENDLETON, "profile": "preview"})
     assert p.priorities["terrain"] == ["dep3_13", "etopo2022"] and p.priorities["imagery"] == ["wc_s2", "bmng"]
-    assert p.regions()[2].max_zoom == {"terrain": 14, "imagery": 13}
+    assert p.regions()[3].max_zoom == {"terrain": 14, "imagery": 13}
 
 
 def test_ring_is_100_km_at_pendleton():
@@ -75,7 +76,7 @@ def test_bbox_crossing_antimeridian_is_rejected():
 
 
 def test_tiny_bbox_plans_to_z17():
-    p = parse_scene({"name": "tiny", "bbox": [-117.380001, 33.220001, -117.380000, 33.220002]})
+    p = parse_scene({"name": "tiny", "bbox": [-117.380001, 33.220001, -117.380000, 33.220002], "imagery_margin_km": 0})
     cov = tiling.Coverage([shapely.box(*tiling.GLOBE)], [17])
     plan = tiling.plan_tiles(p.regions(), "imagery", cov)
     assert plan.max_zoom == 17 and len(plan.tiles[17]) == 4
@@ -96,3 +97,50 @@ def test_default_scene_toml_round_trips(tmp_path):
     path.write_text(config.default_scene_toml("pendleton", tuple(PENDLETON), "sim"))
     p = config.load_scene(path)
     assert p.name == "pendleton" and p.bbox == tuple(PENDLETON) and p.profile == "sim"
+
+
+def test_margin_region_sits_between_ring_and_bbox():
+    p = config.parse_scene({"name": "t", "bbox": PENDLETON})
+    assert p.imagery_margin_km == 3.0 and p.balance is True
+    assert [r.name for r in p.regions()] == ["globe", "ring", "margin", "bbox"]
+    assert p.regions()[2].max_zoom == {"terrain": 10, "imagery": 17}
+    w, s, e, n = p.area("margin")
+    assert s == pytest.approx(PENDLETON[1] - 3.0 / config.KM_PER_DEG)
+    assert n == pytest.approx(PENDLETON[3] + 3.0 / config.KM_PER_DEG)
+    assert w < PENDLETON[0] and e > PENDLETON[2]
+
+
+def test_zero_margin_is_the_bbox():
+    p = config.parse_scene({"name": "t", "bbox": PENDLETON, "imagery_margin_km": 0})
+    assert p.area("margin") == p.bbox
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"imagery_margin_km": -1},
+        {"imagery_margin_km": 51},
+        {"imagery_margin_km": 20, "ring_km": 10},
+        {"balance": "yes"},
+    ],
+)
+def test_bad_margin_or_balance(bad):
+    with pytest.raises(config.ConfigError):
+        config.parse_scene({"name": "t", "bbox": PENDLETON, **bad})
+
+
+def test_balance_settings_need_naip_and_s2():
+    sim = config.layer_settings(config.parse_scene({"name": "t", "bbox": PENDLETON}))["imagery"]
+    assert sim["margin_km"] == 3.0
+    assert sim["balance"]["reference"] == "naip_pc" and sim["balance"]["target"] == "wc_s2"
+    assert sim["balance"]["feather_m"] == 200.0 and sim["balance"]["exclude_classes"] == [0, 80]
+    off = config.parse_scene({"name": "t", "bbox": PENDLETON, "balance": False})
+    assert config.layer_settings(off)["imagery"]["balance"] is None
+    preview = config.parse_scene({"name": "t", "bbox": PENDLETON, "profile": "preview"})
+    assert config.layer_settings(preview)["imagery"]["balance"] is None
+
+
+def test_naip_discovers_over_the_margin():
+    from camsim_scene.sources.naip_pc import NaipPc
+
+    assert NaipPc.area_kind == "margin"

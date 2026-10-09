@@ -1,4 +1,4 @@
-"""scene.toml -> ScenePlan: validation, profile defaults, regions (globe / ring / bbox).
+"""scene.toml -> ScenePlan: validation, profile defaults, regions (globe / ring / margin / bbox).
 
 name = "pendleton"
 bbox = [-117.62, 33.19, -117.24, 33.52]   # W S E N, degrees; must not cross the antimeridian
@@ -7,6 +7,8 @@ seed = 0
 ring_km = 100
 bmng_month = 7
 jpeg_quality = 85
+imagery_margin_km = 3                      # NAIP fetched and built this far beyond the bbox (<= ring_km)
+balance = true                             # colour-match Sentinel-2 to NAIP and feather NAIP's edge
 allow = []                                 # extra licence ids (see licences.toml)
 [priorities]                               # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "etopo2022"]
@@ -38,6 +40,8 @@ KEYS = {
     "ring_km",
     "bmng_month",
     "jpeg_quality",
+    "imagery_margin_km",
+    "balance",
     "allow",
     "priorities",
     "sources",
@@ -63,6 +67,17 @@ RING_ZOOM = {"terrain": 10, "imagery": 10}
 DEFAULT_SOURCE_OPTIONS = {"naip_pc": {"year": "2022"}}
 TERRAIN_GRID = 257
 FEATHER_M = 30.0
+BALANCE_REFERENCE, BALANCE_TARGET = "naip_pc", "wc_s2"
+BALANCE = {  # Sentinel-2 -> NAIP colour match and NAIP edge feather (balance.py, layers/imagery.py)
+    "fit_step_m": 10.0,
+    "cell_km": 2.0,
+    "min_cell_samples": 500,
+    "median_filter": 3,
+    "decay_km": 10.0,
+    "quantiles": 257,
+    "exclude_classes": [0, 80],  # WorldCover no data, permanent water
+    "feather_m": 200.0,
+}
 TILE_PX = 256
 TILING = {  # OGC TMS 2.0 WorldCRS84Quad, addressed TMS-style (y from the south) as Cesium expects
     "tile_matrix_set": "WorldCRS84Quad",
@@ -116,17 +131,26 @@ class ScenePlan:
     source_options: dict = field(default_factory=dict)
     zoom: dict = field(default_factory=dict)
     allow: tuple[str, ...] = ()
+    imagery_margin_km: float = 3.0
+    balance: bool = True
 
     def ring_bounds(self) -> Bounds:
         return ring_bounds(self.bbox, self.ring_km)
 
     def area(self, kind: str) -> Bounds:
-        return {"globe": GLOBE, "ring": self.ring_bounds(), "bbox": self.bbox}[kind]
+        return {
+            "globe": GLOBE,
+            "ring": self.ring_bounds(),
+            "margin": ring_bounds(self.bbox, self.imagery_margin_km),
+            "bbox": self.bbox,
+        }[kind]
 
     def regions(self) -> list[Region]:
+        margin_zoom = {"terrain": self.zoom["ring"]["terrain"], "imagery": self.zoom["bbox"]["imagery"]}
         return [
             Region.from_bounds("globe", GLOBE, self.zoom["globe"]),
             Region.from_bounds("ring", self.ring_bounds(), self.zoom["ring"]),
+            Region.from_bounds("margin", self.area("margin"), margin_zoom),
             Region.from_bounds("bbox", self.bbox, self.zoom["bbox"]),
         ]
 
@@ -159,6 +183,14 @@ def parse_scene(data: dict) -> ScenePlan:
     if not 0.0 <= ring_km <= 1000.0:
         raise ConfigError(f"ring_km must be in [0, 1000], got {ring_km}")
     month = _int(data, "bmng_month", 7, 1, 12)
+    margin_km = float(data.get("imagery_margin_km", 3.0))
+    if not 0.0 <= margin_km <= 50.0:
+        raise ConfigError(f"imagery_margin_km must be in [0, 50], got {margin_km}")
+    if margin_km > ring_km:
+        raise ConfigError(f"imagery_margin_km ({margin_km}) must not exceed ring_km ({ring_km})")
+    balance = data.get("balance", True)
+    if not isinstance(balance, bool):
+        raise ConfigError(f"balance must be true or false, got {balance!r}")
     quality = _int(data, "jpeg_quality", 85, 1, 95)
     seed = _int(data, "seed", 0, 0, 2**31 - 1)
     prio = {k: list(v) for k, v in PROFILES[profile]["priorities"].items()}
@@ -189,7 +221,21 @@ def parse_scene(data: dict) -> ScenePlan:
     allow = data.get("allow", [])
     if not isinstance(allow, list) or not all(isinstance(a, str) for a in allow):
         raise ConfigError("allow must be a list of licence ids")
-    return ScenePlan(name, bbox, profile, seed, ring_km, month, quality, prio, options, zoom, tuple(allow))
+    return ScenePlan(
+        name,
+        bbox,
+        profile,
+        seed,
+        ring_km,
+        month,
+        quality,
+        prio,
+        options,
+        zoom,
+        tuple(allow),
+        imagery_margin_km=margin_km,
+        balance=balance,
+    )
 
 
 def load_scene(path: Path) -> ScenePlan:
@@ -198,6 +244,14 @@ def load_scene(path: Path) -> ScenePlan:
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path}: {e}") from e
     return parse_scene(data)
+
+
+def balance_settings(plan: ScenePlan) -> dict | None:
+    """The colour-match settings, or None when it is off or the package lacks NAIP or Sentinel-2."""
+    prio = plan.priorities["imagery"]
+    if not plan.balance or BALANCE_REFERENCE not in prio or BALANCE_TARGET not in prio:
+        return None
+    return {"reference": BALANCE_REFERENCE, "target": BALANCE_TARGET, **BALANCE}
 
 
 def layer_settings(plan: ScenePlan) -> dict:
@@ -218,6 +272,8 @@ def layer_settings(plan: ScenePlan) -> dict:
             "format": "jpeg",
             "jpeg_quality": plan.jpeg_quality,
             "subsampling": "4:2:0",
+            "margin_km": plan.imagery_margin_km,
+            "balance": balance_settings(plan),
         },
         "landcover": {"priorities": plan.priorities["landcover"], "bounds": list(plan.ring_bounds()), "tile_deg": 0.05},
     }
@@ -234,4 +290,5 @@ def default_scene_toml(name: str, bbox: Bounds, profile: str = "sim") -> str:
         f"ring_km = 100\n"
         f"bmng_month = 7\n"
         f"jpeg_quality = 85\n"
+        f"imagery_margin_km = 3\n"
     )

@@ -55,7 +55,7 @@ class Source(Protocol):
     attribution: str
     max_zoom: int
     global_coverage: bool
-    area_kind: str  # "globe" | "ring" | "bbox": where discovery looks
+    area_kind: str  # "globe" | "ring" | "margin" | "bbox": where discovery looks
     datum: str | None
 
     def options(self) -> dict: ...

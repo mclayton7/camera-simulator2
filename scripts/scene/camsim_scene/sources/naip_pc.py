@@ -45,7 +45,7 @@ class NaipPc(SourceBase):
     dataset = "USDA NAIP (Microsoft Planetary Computer)"
     attribution = "USDA Farm Production and Conservation - Business Center, Geospatial Enterprise Operations (NAIP)"
     max_zoom = 17
-    area_kind = "bbox"
+    area_kind = "margin"
     datum = "nad83_2011"
 
     def __init__(self, options=None, http=None):

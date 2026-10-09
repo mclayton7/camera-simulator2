@@ -10,11 +10,13 @@ from rasters import write_geotiff
 
 from camsim_scene import fsutil, qmesh, tiling
 from camsim_scene.config import parse_scene
+from camsim_scene.context import coverage
 from camsim_scene.engine import BuildLock, BuildLocked
 from camsim_scene.layers import terrain
 from camsim_scene.licences import LicenceError
 from camsim_scene.manifest import Manifest
 from camsim_scene.pipeline import BuildError, PlanError, build_scene, estimate, plan_scene
+from camsim_scene.tiling import plan_tiles
 
 
 def test_end_to_end_layout_and_hashes(tmp_path):
@@ -239,3 +241,32 @@ def test_run_isolated_uses_another_process():
     from camsim_scene import pipeline
 
     assert pipeline._run_isolated(os.getpid) != os.getpid()
+
+
+def _planned(tmp_path, margin_km, name):
+    scene = synthetic_scene(tmp_path / "src")
+    scene["imagery_margin_km"] = margin_km
+    return plan_scene(parse_scene(scene), tmp_path / name, http=FakeHttp({}), out=io.StringIO())
+
+
+def test_margin_changes_imagery_tiles_not_terrain(tmp_path):
+    m0, m3 = _planned(tmp_path, 0, "p0"), _planned(tmp_path, 3, "p3")
+    t0, t3 = estimate(m0)["tiles"], estimate(m3)["tiles"]
+    assert t0["terrain"] == t3["terrain"]
+    p0 = plan_tiles(m0.region_objs(), "terrain", coverage(m0, "terrain", use_bbox=True)).tiles
+    p3 = plan_tiles(m3.region_objs(), "terrain", coverage(m3, "terrain", use_bbox=True)).tiles
+    assert p0.keys() == p3.keys() and all(np.array_equal(p0[z], p3[z]) for z in p0)
+    assert m3.layers["imagery"]["margin_km"] == 3.0 and t3["imagery"] >= t0["imagery"]
+
+
+def test_naip_discovery_receives_the_margin_area(tmp_path, monkeypatch):
+    from camsim_scene.sources.naip_pc import NaipPc
+
+    seen = []
+    monkeypatch.setattr(NaipPc, "discover", lambda self, area: seen.append(tuple(area.bounds)) or [])
+    scene = synthetic_scene(tmp_path / "src")
+    scene["imagery_margin_km"] = 3
+    scene["priorities"]["imagery"] = ["naip_pc", *scene["priorities"]["imagery"]]
+    plan = parse_scene(scene)
+    plan_scene(plan, tmp_path / "pkg", http=FakeHttp({}), out=io.StringIO())
+    assert seen == [plan.area("margin")] and seen[0] != plan.bbox
