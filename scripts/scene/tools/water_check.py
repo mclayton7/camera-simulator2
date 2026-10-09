@@ -65,6 +65,12 @@ def tile_stats(pkg: Path, st, z: int, x: int, y: int) -> dict | None:
     }
 
 
+def sampling_failures(report: dict, lo: int, hi: int) -> list[str]:
+    """Record the zooms lo..hi with no sampled open-water tile; nothing sampled at all is a failure, not a pass."""
+    report["zooms_unsampled"] = [z for z in range(lo, hi + 1) if str(z) not in report["zooms"]]
+    return [] if report["zooms"] else ["no open-water leaves sampled"]
+
+
 def r2(v) -> list[float]:
     return [round(float(x), 2) for x in v]
 
@@ -81,6 +87,9 @@ def main() -> int:
     st = WorkerState(make_context(a.pkg, m, Cache(a.cache)))
     if st.balance is None or st.water is None:
         print(f"{a.pkg}: no water mask (no balance.json, no WorldCover, or no water settings)", file=sys.stderr)
+        return 2
+    if st.water.buffer_m == 0:
+        print(f"{a.pkg}: naip_water_buffer_m = 0 (water clip off); the gate would fail by design", file=sys.stderr)
         return 2
     plan = plan_tiles(m.region_objs(), "imagery", coverage(m, "imagery"))
     report, fails = {"zooms": {}}, []
@@ -104,6 +113,7 @@ def main() -> int:
         }
         if (pooled > MEAN_DN).any() or (p95 > TILE_P95_DN).any() or excess > STD_DN:
             fails.append(f"open water z{z}")
+    fails += sampling_failures(report, a.min_zoom, plan.max_zoom)
     if a.before_hashes:
         old = {}
         for line in a.before_hashes.read_text(encoding="utf-8").splitlines():
