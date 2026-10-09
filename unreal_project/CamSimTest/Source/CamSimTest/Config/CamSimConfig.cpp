@@ -1572,6 +1572,7 @@ TArray<FString> FCamSimConfig::Validate() const
 	Errors.Append(CamSimLandCover::ValidateClassSpecs(LC.Classes));
 
 	Errors.Append(Scene.ResolveErrors);
+	Errors.Append(CamSimScene::ValidateSources(*this));
 	return Errors;
 }
 

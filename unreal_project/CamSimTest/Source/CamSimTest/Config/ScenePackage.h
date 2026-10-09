@@ -33,4 +33,11 @@ namespace CamSimScene
 	 * (Validate() and ValidateWarnings() report them). No-op when scene.dir is empty.
 	 */
 	void ResolvePackage(FCamSimConfig& Cfg);
+
+	/**
+	 * Terrain/imagery source checks: tms needs cesium.imagery.url; with scene.offline, terrain
+	 * must be url (an existing file:/// target) or flat and imagery tms (an existing file:///
+	 * target) or none. Compares the exact strings ApplyCesiumBackendConfig dispatches on.
+	 */
+	TArray<FString> ValidateSources(const FCamSimConfig& Cfg);
 }

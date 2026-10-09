@@ -162,4 +162,57 @@ void ResolvePackage(FCamSimConfig& Cfg)
 		Cfg.Thermal.LandCover.Dir = Dir / TEXT("landcover");
 	}
 }
+
+TArray<FString> ValidateSources(const FCamSimConfig& Cfg)
+{
+	TArray<FString> Errors;
+	const FCamSimConfig::FCesiumBackendConfig& Cs = Cfg.CesiumBackend;
+	if (Cs.Imagery.Source == TEXT("tms") && Cs.Imagery.Url.IsEmpty())
+	{
+		Errors.Add(TEXT("cesium.imagery.source 'tms' needs cesium.imagery.url (the tilemapresource.xml URL)"));
+	}
+	if (!Cfg.Scene.bOffline)
+	{
+		return Errors;
+	}
+
+	auto CheckLocal = [&Errors](const TCHAR* Key, const FString& Url)
+	{
+		FString Path;
+		if (!FileUrlToPath(Url, Path))
+		{
+			Errors.Add(FString::Printf(TEXT("scene.offline: %s '%s' is not a file:/// URL"), Key, *Url));
+		}
+		else if (!FPaths::FileExists(Path))
+		{
+			Errors.Add(FString::Printf(TEXT("scene.offline: %s file '%s' does not exist"), Key, *Path));
+		}
+	};
+
+	if (Cs.Terrain.Source == TEXT("url"))
+	{
+		CheckLocal(TEXT("cesium.terrain.url"), Cs.Terrain.Url);
+	}
+	else if (Cs.Terrain.Source != TEXT("flat"))
+	{
+		Errors.Add(FString::Printf(
+			TEXT("scene.offline: cesium.terrain.source '%s' needs the network (use url with a file:/// URL, or flat)"),
+			*Cs.Terrain.Source));
+	}
+
+	if (Cs.Imagery.Source == TEXT("tms"))
+	{
+		if (!Cs.Imagery.Url.IsEmpty())
+		{
+			CheckLocal(TEXT("cesium.imagery.url"), Cs.Imagery.Url);
+		}
+	}
+	else if (Cs.Imagery.Source != TEXT("none"))
+	{
+		Errors.Add(FString::Printf(
+			TEXT("scene.offline: cesium.imagery.source '%s' needs the network (use tms with a file:/// URL, or none)"),
+			*Cs.Imagery.Source));
+	}
+	return Errors;
+}
 } // namespace CamSimScene

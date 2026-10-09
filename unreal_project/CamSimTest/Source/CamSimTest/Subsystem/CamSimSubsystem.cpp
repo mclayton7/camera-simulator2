@@ -356,6 +356,19 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: %d config validation error(s) — check config"),
 				ValidationErrors.Num());
 			Config.bLoadedSuccessfully = false;
+			if (Config.Scene.bOffline)
+			{
+				// REALISM R0: an offline run must not fall back to defaults (Cesium ion).
+				UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: scene.offline is set — exiting on config errors"));
+				GLog->Flush();
+				FPlatformMisc::RequestExitWithStatus(true, 1);
+			}
+		}
+		if (!Config.Scene.Dir.IsEmpty() && Config.Scene.ResolveErrors.IsEmpty())
+		{
+			UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: scene package '%s' at %s (offline %s); terrain %s, imagery %s"),
+				*Config.Scene.PackageName, *Config.Scene.Dir, Config.Scene.bOffline ? TEXT("on") : TEXT("off"),
+				*Config.CesiumBackend.Terrain.Url, *Config.CesiumBackend.Imagery.Url);
 		}
 	}
 

@@ -202,3 +202,63 @@ bool FSceneResolveAtLoadTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneOfflineRejectsNetworkTest,
+	"CamSim.Scene.Offline.RejectsNetworkSources",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneOfflineRejectsNetworkTest::RunTest(const FString& Parameters)
+{
+	using CamSimScene::ValidateSources;
+	{
+		FCamSimConfig Cfg;   // ion terrain + ion imagery
+		TestEqual(TEXT("online default: no errors"), ValidateSources(Cfg).Num(), 0);
+		Cfg.Scene.bOffline = true;
+		const TArray<FString> E = ValidateSources(Cfg);
+		TestEqual(TEXT("offline default: terrain + imagery"), E.Num(), 2);
+		TestTrue(TEXT("names terrain"), E.Num() == 2 && E[0].Contains(TEXT("cesium.terrain.source")));
+		TestTrue(TEXT("names imagery"), E.Num() == 2 && E[1].Contains(TEXT("cesium.imagery.source")));
+	}
+	const FString D = MakePackage(TEXT("offline_ok"), true, true, false);
+	auto Offline = [&](TFunctionRef<void(FCamSimConfig&)> Edit)
+	{
+		FCamSimConfig Cfg = ResolvedConfigFor(D);
+		Cfg.Scene.bOffline = true;
+		Edit(Cfg);
+		return ValidateSources(Cfg);
+	};
+	TestEqual(TEXT("package: ok"), Offline([](FCamSimConfig&) {}).Num(), 0);
+	TestEqual(TEXT("flat + none: ok"), Offline([](FCamSimConfig& C) {
+		C.CesiumBackend.Terrain.Source = TEXT("flat"); C.CesiumBackend.Imagery.Source = TEXT("none"); }).Num(), 0);
+	TestEqual(TEXT("wms rejected"), Offline([](FCamSimConfig& C) { C.CesiumBackend.Imagery.Source = TEXT("wms"); }).Num(), 1);
+	// FString == ignores case, in ApplyCesiumBackendConfig too: "TMS" is the tms source there and here.
+	TestEqual(TEXT("upper-case TMS accepted, as the backend does"),
+		Offline([](FCamSimConfig& C) { C.CesiumBackend.Imagery.Source = TEXT("TMS"); }).Num(), 0);
+	TestEqual(TEXT("upper-case WMS still rejected"),
+		Offline([](FCamSimConfig& C) { C.CesiumBackend.Imagery.Source = TEXT("WMS"); }).Num(), 1);
+	TestEqual(TEXT("https terrain rejected"), Offline([](FCamSimConfig& C) {
+		C.CesiumBackend.Terrain.Url = TEXT("https://example.com/layer.json"); }).Num(), 1);
+	TestEqual(TEXT("file://host rejected"), Offline([](FCamSimConfig& C) {
+		C.CesiumBackend.Terrain.Url = TEXT("file://host/layer.json"); }).Num(), 1);
+	{
+		const TArray<FString> E = Offline([&](FCamSimConfig& C) {
+			C.CesiumBackend.Imagery.Url = CamSimScene::PathToFileUrl(D / TEXT("imagery/missing.xml")); });
+		TestEqual(TEXT("missing file rejected"), E.Num(), 1);
+		TestTrue(TEXT("says it does not exist"), E.Num() == 1 && E[0].Contains(TEXT("does not exist")));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneTmsNeedsUrlTest,
+	"CamSim.Scene.Offline.TmsNeedsUrl",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneTmsNeedsUrlTest::RunTest(const FString& Parameters)
+{
+	FCamSimConfig Cfg;
+	Cfg.CesiumBackend.Imagery.Source = TEXT("tms");
+	const TArray<FString> E = Cfg.Validate();
+	TestTrue(TEXT("online tms without url is a Validate() error"),
+		E.ContainsByPredicate([](const FString& S) { return S.Contains(TEXT("cesium.imagery.url")); }));
+	return true;
+}
