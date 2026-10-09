@@ -267,3 +267,31 @@ def build_synthetic(tmp_path: Path, scene: dict | None = None, jobs: int = 1, na
     pkg = tmp_path / name
     plan_scene(parse_scene(scene), pkg, http=FakeHttp({}), out=io.StringIO())
     return pkg, cache, build_scene(pkg, cache, jobs=jobs)
+
+
+COAST = 10.10  # coast_scene's shoreline: land west of it, sea east
+LAKE = (10.0700, 10.0915, 10.0727, 10.0942)  # a 300 m lake inside the NAIP box (W S E N)
+POND = (10.0450, 10.0740, 10.0477, 10.0767)  # a 300 m pond outside the NAIP box, inside Sentinel-2's
+
+
+def coast_scene(root: Path, shore: float = COAST, extra_water=None) -> dict:
+    """naip_s2_scene at 11 m with a shoreline: NAIP over (10.06, 10.08, 10.14, 10.12), 60 DN darker east of COAST
+    (sea fill), Sentinel-2 over (10.04, 10.07, 10.16, 10.13), and a land-cover source `worldcover` (worldcover.tif
+    over the Sentinel-2 box, no overviews): 10 west of `shore`, 80 (water) east of it, in LAKE, and in `extra_water`
+    (a W S E N box) when given."""
+    box = (10.04, 10.07, 10.16, 10.13)
+    scene = naip_s2_scene(
+        root,
+        offset=lambda lon, lat: np.where(np.asarray(lon) >= COAST, -60.0, 0.0),
+        ref_box=(10.06, 10.08, 10.14, 10.12),
+        s2_box=box,
+        res=0.0001,
+    )
+    lon, lat = _cell_centres(box, 0.0001)
+    codes = np.where(lon >= shore, 80, 10).astype(np.uint8)
+    for w, s, e, n in [LAKE] + ([extra_water] if extra_water else []):
+        codes[(lon >= w) & (lon < e) & (lat >= s) & (lat < n)] = 80
+    write_geotiff(root / "worldcover.tif", codes, box[0], box[3], 0.0001, overviews=())
+    scene["priorities"] = {**scene["priorities"], "landcover": ["worldcover"]}
+    scene["sources"]["worldcover"] = source("landcover", root / "worldcover.tif", box)
+    return scene
