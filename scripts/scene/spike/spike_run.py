@@ -13,7 +13,7 @@ if mode == 'localterrain':
     env.update(CAMSIM_CESIUM_TERRAIN_SOURCE='url', CAMSIM_CESIUM_TERRAIN_URL=f'file://{pkg}/terrain/layer.json')
 if mode == 'local':
     env.update(CAMSIM_CESIUM_TERRAIN_SOURCE='url', CAMSIM_CESIUM_TERRAIN_URL=f'file://{pkg}/terrain/layer.json',
-               CAMSIM_CESIUM_IMAGERY_SOURCE='tms', CAMSIM_CESIUM_IMAGERY_WMS_URL=f'file://{pkg}/imagery/tilemapresource.xml',
+               CAMSIM_CESIUM_IMAGERY_SOURCE='tms', CAMSIM_CESIUM_IMAGERY_URL=f'file://{pkg}/imagery/tilemapresource.xml',
                CAMSIM_CESIUM_ION_TOKEN='')
 P = scenario.Pose
 shots = {

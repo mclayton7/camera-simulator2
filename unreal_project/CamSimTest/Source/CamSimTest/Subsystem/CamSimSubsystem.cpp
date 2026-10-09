@@ -1,6 +1,8 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Subsystem/CamSimSubsystem.h"
+
+#include <cstdlib>
 #include "Camera/CamSimCamera.h"
 #include "Camera/CamSimSensorComponent.h"
 #include "Entity/CamSimEntityManager.h"
@@ -290,7 +292,10 @@ void UCamSimSubsystem::PrepareCesiumWorld(UWorld* World)
 		return;
 	}
 	StoreCesiumIonServer(CamSim::Geospatial::SetUpCesiumWorld(World, Config));
-	RefreshCachedTilesets();   // the destroyed tilesets must not stay in the cache
+	// The destroyed tilesets must not stay in the cache. Rebuilt lazily: during InitWorld the
+	// game instance's world may still be the previous one.
+	CachedTilesets_.Reset();
+	bCachedTilesetsInitialized_ = false;
 }
 
 void UCamSimSubsystem::StoreCesiumIonServer(UCesiumIonServer* Server)
@@ -345,6 +350,17 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	// Load config (YAML parse + env var overrides) — Phase 13C: check success flag
 	Config = FCamSimConfig::Load();
+
+	// REALISM R0: configure the level's Cesium tilesets as soon as the world is initialised,
+	// before any of them can load (ion requests from Main.umap's actors).
+	PostWorldInitHandle_ = FWorldDelegates::OnPostWorldInitialization.AddWeakLambda(this,
+		[this](UWorld* World, const UWorld::InitializationValues)
+		{
+			if (CamSim::Geospatial::ShouldSetUpCesiumWorld(World, GetGameInstance()))
+			{
+				PrepareCesiumWorld(World);
+			}
+		});
 	if (!Config.bLoadedSuccessfully)
 	{
 		UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: config load failed — using defaults"));
@@ -370,8 +386,10 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			{
 				// REALISM R0: an offline run must not fall back to defaults (Cesium ion).
 				UE_LOG(LogCamSim, Error, TEXT("UCamSimSubsystem: scene.offline is set — exiting on config errors"));
+				// Exit code 1 now: RequestExitWithStatus ignores the code on macOS (generic
+				// implementation), and nothing has started that needs an orderly shutdown.
 				GLog->Flush();
-				FPlatformMisc::RequestExitWithStatus(true, 1);
+				std::_Exit(1);
 			}
 		}
 		if (!Config.Scene.Dir.IsEmpty() && Config.Scene.ResolveErrors.IsEmpty())
@@ -780,6 +798,7 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void UCamSimSubsystem::Deinitialize()
 {
 	UE_LOG(LogCamSim, Log, TEXT("UCamSimSubsystem: shutting down"));
+	FWorldDelegates::OnPostWorldInitialization.Remove(PostWorldInitHandle_);
 
 	// Ocean surface (ROADMAP 2.6): unregister the pre-actor-tick delegate before
 	// the Pimpl (and the FOceanSurface it owns) goes away.

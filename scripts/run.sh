@@ -437,5 +437,8 @@ else
         echo "    grep LogCamSim '${LOG_FILE}'"
     fi
 
-    wait "${UE_PID}" 2>/dev/null || true
+    # Pass UE's exit status through (e.g. 1 when scene.offline rejects the config).
+    UE_RC=0
+    wait "${UE_PID}" 2>/dev/null || UE_RC=$?
+    exit "${UE_RC}"
 fi

@@ -22,14 +22,7 @@ Pose = scenario.Pose
 def env_for(mode: str, pkg: Path | None) -> dict[str, str]:
     env = {"CAMSIM_SNAPSHOT_ENDPOINT_ENABLED": "1"}
     if mode == "package":
-        env.update(
-            CAMSIM_CESIUM_TERRAIN_SOURCE="url",
-            CAMSIM_CESIUM_TERRAIN_URL=f"file://{pkg}/terrain/layer.json",
-            CAMSIM_CESIUM_IMAGERY_SOURCE="tms",
-            CAMSIM_CESIUM_IMAGERY_WMS_URL=f"file://{pkg}/imagery/tilemapresource.xml",
-            CAMSIM_CESIUM_ION_TOKEN="",
-            CAMSIM_THERMAL_LAND_COVER_DIR=str(pkg / "landcover"),
-        )
+        env["CAMSIM_SCENE_DIR"] = str(pkg)
     return env
 
 
@@ -39,6 +32,7 @@ def camsim(env: dict[str, str], pose: Pose, offline: bool = False) -> Iterator[r
     (set `host.pose` to fly). `offline` (macOS) runs CamSim under sandbox-exec with ports 80/443 blocked."""
     cmd = [str(REPO / "scripts" / "run.sh"), "--headless", "--local", "--detach"]
     if offline:
+        env = dict(env, CAMSIM_SCENE_OFFLINE="1")
         cmd = ["sandbox-exec", "-f", str(Path(__file__).with_name("offline.sb")), *cmd]
     host = rb.Host()
     host.pose = pose

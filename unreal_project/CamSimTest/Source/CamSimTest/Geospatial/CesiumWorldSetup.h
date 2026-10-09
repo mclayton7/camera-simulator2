@@ -6,6 +6,7 @@
 #include "UObject/WeakObjectPtrTemplates.h"
 
 class UCesiumIonServer;
+class UGameInstance;
 class UWorld;
 struct FCamSimConfig;
 
@@ -19,6 +20,14 @@ namespace CamSim::Geospatial
 	 * Returns the ion server override, or nullptr (see ApplyCesiumBackendConfig).
 	 */
 	UCesiumIonServer* SetUpCesiumWorld(UWorld* World, const FCamSimConfig& Cfg);
+
+	/**
+	 * Whether a world reported by FWorldDelegates::OnPostWorldInitialization is one to set up:
+	 * a game world whose game instance is Ours (or not assigned yet). That broadcast comes from
+	 * InitWorld, before InitializeActorsForPlay re-runs construction scripts on uncooked levels
+	 * (ACesium3DTileset::OnConstruction loads the tileset), so it is the first safe point.
+	 */
+	bool ShouldSetUpCesiumWorld(const UWorld* World, const UGameInstance* Ours);
 
 	/** Runs SetUpCesiumWorld once per world: the game mode's StartPlay and the camera's BeginPlay both ask. */
 	class FCesiumWorldSetupLatch

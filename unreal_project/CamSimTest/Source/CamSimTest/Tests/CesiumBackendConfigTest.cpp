@@ -9,6 +9,7 @@
 #include "CesiumGeoreference.h"
 #include "CesiumTileMapServiceRasterOverlay.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/WorldSettings.h"
 #include "EngineUtils.h"
@@ -135,5 +136,31 @@ bool FCesiumBackendSetupLatchTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("first call for A"), Latch.TryBegin(A));
 	TestFalse(TEXT("second call for A (game mode, then camera)"), Latch.TryBegin(A));
 	TestTrue(TEXT("a new world runs again"), Latch.TryBegin(B));
+	return true;
+}
+
+// Which worlds the subsystem sets up from OnPostWorldInitialization: game worlds of its own
+// game instance (or none yet), never editor or preview worlds.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCesiumBackendShouldSetUpWorldTest,
+	"CamSim.CesiumBackend.ShouldSetUpWorld",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCesiumBackendShouldSetUpWorldTest::RunTest(const FString& Parameters)
+{
+	using CamSim::Geospatial::ShouldSetUpCesiumWorld;
+	UWorld* Game = UWorld::CreateWorld(EWorldType::Game, false);
+	UWorld* Editor = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+	ON_SCOPE_EXIT { Game->DestroyWorld(false); Editor->DestroyWorld(false); };
+
+	UGameInstance* Ours = NewObject<UGameInstance>(GetTransientPackage());
+	UGameInstance* Other = NewObject<UGameInstance>(GetTransientPackage());
+	TestFalse(TEXT("null world"), ShouldSetUpCesiumWorld(nullptr, Ours));
+	TestTrue(TEXT("game world, no game instance yet"), ShouldSetUpCesiumWorld(Game, Ours));
+	TestFalse(TEXT("editor preview world"), ShouldSetUpCesiumWorld(Editor, Ours));
+	Game->SetGameInstance(Ours);
+	TestTrue(TEXT("game world of our game instance"), ShouldSetUpCesiumWorld(Game, Ours));
+	Game->SetGameInstance(Other);
+	TestFalse(TEXT("game world of another game instance"), ShouldSetUpCesiumWorld(Game, Ours));
+	Game->SetGameInstance(nullptr);
 	return true;
 }

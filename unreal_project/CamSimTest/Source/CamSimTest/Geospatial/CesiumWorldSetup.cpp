@@ -6,6 +6,7 @@
 #include "Geospatial/CesiumTuning.h"
 
 #include "Cesium3DTileset.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 
@@ -30,5 +31,15 @@ UCesiumIonServer* SetUpCesiumWorld(UWorld* World, const FCamSimConfig& Cfg)
 	}
 	ApplyCesiumTilesetTuning(World, Cfg);
 	return ::ApplyCesiumBackendConfig(World, Cfg.CesiumBackend);   // declared at global scope
+}
+
+bool ShouldSetUpCesiumWorld(const UWorld* World, const UGameInstance* Ours)
+{
+	if (!World || !World->IsGameWorld())
+	{
+		return false;
+	}
+	const UGameInstance* Owner = World->GetGameInstance();
+	return Owner == nullptr || Owner == Ours;
 }
 } // namespace CamSim::Geospatial

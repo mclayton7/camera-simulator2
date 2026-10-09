@@ -182,6 +182,7 @@ private:
 	// Phase 3: cached tileset pointer list (see public accessor).
 	mutable TArray<TWeakObjectPtr<ACesium3DTileset>> CachedTilesets_;
 	CamSim::Geospatial::FCesiumWorldSetupLatch CesiumWorldSetup_;
+	FDelegateHandle PostWorldInitHandle_;
 	mutable bool bCachedTilesetsInitialized_ = false;
 
 	// Phase 13B: Pimpl — all owned subsystem components live in FSubsystemImpl,

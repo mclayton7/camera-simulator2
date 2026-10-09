@@ -14,12 +14,11 @@ be deleted once `scripts/scene/` has the real build engine.
 | `hot_check.py` | Frame-centre (CIGI 107) altitude vs 3DEP truth at nadir points |
 | `datum_check.py`, `naip_query.py`, `dem_coverage.py` | Datum, NAIP and 1 m DEM coverage probes |
 | `offline.sb` | macOS `sandbox-exec` profile that blocks ports 80/443 (offline run) |
-| `tms_overlay_spike.patch` | The throwaway `imagery.source: tms` branch used for the runs (not merged) |
 
 ```bash
 cd scripts/scene/spike && uv sync   # Python 3.12-3.13 (pydelatin wheels)
 uv run python gen_terrain.py --bbox -117.41 33.20 -117.35 33.25 --third <1/3" COG url> --onem <1 m COG url> --maxz 16 --out pkg/terrain
 uv run python gen_imagery.py --bbox -117.41 33.20 -117.35 33.25 --out pkg/imagery && uv run python pyramid_down.py pkg/imagery 10
-git apply tms_overlay_spike.patch && ../../run.sh --build-only   # local TMS imagery needs the patch
+../../run.sh --build-only   # cesium.imagery.source: tms (landed with the offline profile, 2026-10-09)
 uv run python spike_run.py out/local local "$PWD/pkg"
 ```
