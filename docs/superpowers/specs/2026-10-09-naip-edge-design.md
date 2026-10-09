@@ -13,6 +13,9 @@ Success, on the Camp Pendleton package:
   Sentinel-2)|, held-out samples) has a median over cells ≤ 5 DN per band (today's overall bias: 31 / 25 / 25 DN for
   R / G / B). It is a bias, not a per-pixel error: per pixel ~15 DN remains from resolution and date alone.
 - The edge sits ≥ `imagery_margin_km` outside the bbox wherever NAIP exists there.
+- Open water is one source: beyond 200 m from land (WorldCover class 80), every built pixel is the raw Sentinel-2
+  decode (no NAIP, no colour match), as uniform as Sentinel-2 itself (section 4). Boats in CamSim see a uniform
+  seabed through the ocean.
 - R0 gates 3 (byte-identical rebuild) and 4 (`verify --deep`) still pass.
 - Before/after screenshots of the west (San Clemente) and south (Oceanside) edges, reviewed by a human.
 
@@ -66,8 +69,9 @@ absent) when the package has no NAIP or `balance` is off.
   median(NAIP − tone(S2)) per band. Then a 3×3 median filter over fitted cells only. Unfitted cells: the value of
   the nearest fitted cell (Euclidean on the grid, as `scipy.ndimage.distance_transform_edt` picks it), times exp(−d / 10 km), d = distance to
   that cell's centre. Bilinear between cell centres at sample time.
-- **Applied** to every Sentinel-2 (`wc_s2`) sample at every zoom: DN = clip(round(tone(r) + offset(lon, lat)), 0, 255)
-  instead of `_s2_reflectance`. Parents still box-filter their children, so lower zooms inherit it.
+- **Applied** to every Sentinel-2 (`wc_s2`) sample at every zoom on land: DN = clip(round(tone(r) + offset(lon, lat)),
+  0, 255) instead of `_s2_reflectance`; over WorldCover water it fades out to `_s2_reflectance` (section 4). Parents
+  still box-filter their children, so lower zooms inherit it.
 - **File.** `imagery/balance.json`: format version, source ids, feather width, the quantile arrays, grid origin /
   cell size / shape, offsets. Values are quantised before writing (quantiles 0.01 raw DN = 1e-6 reflectance, DN
   0.1) and stored as floats; grid values are floats rounded to 1e-9 before writing, so float-summation order can't change the bytes across machines. It is a
@@ -91,14 +95,68 @@ absent) when the package has no NAIP or `balance` is off.
   by 200 m + 500 m (footprints are dilated by one coarse overview pixel), the leaf is NAIP alone. Same bytes as the
   full path; only faster.
 - Only the NAIP → next transition is feathered. Sentinel-2 → Blue Marble stays as it is.
+- With the water clip (section 4), "NAIP valid" means valid **and** within `naip_water_buffer_m` of land, so the ramp
+  also runs inward from the clip line offshore, and the interior shortcut is taken only when the clip removes nothing
+  from the tile's lattice.
 
-### 4. Config
+### 4. Water
+
+Acceptance on Pendleton (2026-10-09, `.superpowers/sdd/2026-10-09-naip-edge/sea-streaks.md`) found two problems
+over the sea. (a) The colour match turns Sentinel-2 water near-black: water reflectance lies below the land-fitted
+tone curve, and unfitted sea cells inherit coastal offsets (pure water [64, 85, 90] → [1, 24, 43] DN). (b) The
+margin pulls in NAIP quarter-quads over open sea that hold flat fill blocks and hard horizontal glint bands, different
+from quad to quad. CamSim's ocean (`M_Ocean`, Single Layer Water) shows the seabed imagery through, so this
+patchwork lands under every boat: bad for ATR training. Decision (user, 2026-10-09): water must be consistent for
+boats.
+
+- **Water mask.** ESA WorldCover 2021 class 80 (permanent water), read from the package's cached WorldCover COGs
+  (`worldcover`, discovered over the ring, so they cover every NAIP and Sentinel-2 pixel in the package). Codes are
+  read nearest-neighbour at full resolution (the pixel containing the point; no overview, no interpolation), first
+  raster wins. A point no raster covers, or code 0, counts as land: where the mask is unknown, NAIP and the colour
+  match stay as in sections 2–3.
+- **Distance to land.** Per leaf, on the feather lattice (section 3) grown by max(buffer, fade) + 2 nodes: water nodes
+  get the Euclidean distance to the nearest non-water node (`distance_transform_edt`; degrees of latitude on both
+  axes, as the feather, so east-west distances are cos(lat) shorter in metres), land nodes 0. Nodes align across
+  tiles, so neighbouring leaves agree. Bilinear to pixels, as the feather weight.
+- **NAIP clip (fix b).** NAIP is used only where the distance is ≤ `naip_water_buffer_m` = 200 m: land, beaches,
+  surf, harbours and any water within 200 m of land. On the lattice this ANDs into NAIP's valid mask, so the 200 m
+  feather runs from the clip line inward: NAIP is full weight on land up to the shoreline and gone 200 m offshore,
+  with no hard edge. Beyond, the next source (Sentinel-2, else Blue Marble) is all there is, inside the bbox too.
+  Where nothing lies behind NAIP, NAIP stays (never faded to black), as at its valid-data edge.
+- **Land-only colour match (fix a).** The Sentinel-2 decode is w · balanced + (1 − w) · `_s2_reflectance`, with
+  w = clip(1 − distance / `water_fade_m`, 0, 1), `water_fade_m` = 100 m: balanced on land, raw over water further
+  than 100 m from land. Open water is decoded exactly as before this branch. The fit is unchanged (it already skips
+  class 80).
+- **Inland water** is treated like the sea: WorldCover has one water class, and boats on lakes need the same
+  uniformity (an inland lake's surface is the imagery itself; CamSim's ocean is only at sea level). Water bodies
+  narrower than twice the buffer (~400 m: ponds, rivers, lagoons, marinas) lie entirely within 200 m of land and keep
+  NAIP. Wetlands (90) and mangroves (95) are land.
+- **Interior shortcut.** Taken only when, besides section 3's test, no node of the leaf's lattice is beyond the
+  buffer. A leaf with no water pixel anywhere near its lattice (one full-resolution window read) skips the water work
+  and is byte-identical to sections 2–3.
+- **Determinism.** Codes are a pure function of the cached COGs and the global lattice; the WorldCover assets'
+  sha256s join every balanced leaf's inputs hash, so a WorldCover change rebuilds the leaves.
+- **Switches.** The clip and the fade are part of the balance path (they need the feather and the decode it owns):
+  `balance = false` turns everything off, so the legacy byte-identity (`balance = false`, margin 0) holds whatever the
+  water settings. `naip_water_buffer_m = 0` turns the clip off alone (the fade stays). Buffers between 0 and 200 m are
+  rejected: the feather would then fade NAIP on land at the shore. No WorldCover in the package (or a manifest
+  written before this section, without the water keys): no clip and no fade, as sections 2–3, and the build logs a
+  warning. `build.json`'s `balance` report gains `water_mask` (true / false).
+- **Not changed.** The tile plan still follows NAIP's footprints, so leaves over clipped sea are still built at NAIP's
+  zoom and hold upsampled Sentinel-2; NAIP quarter-quads entirely at sea are still fetched. Both cost what they cost
+  today.
+
+### 5. Config
 
 - `imagery_margin_km` (scene file), default 3.
-- `balance` (scene file, bool), default true. Off: no `balance.json`, Sentinel-2 decoded as today, no feather.
-  `balance = false` with `imagery_margin_km = 0` reproduces a current package byte for byte.
-- Both land in the manifest (`layers.imagery`), so `layer_settings_hash` covers them.
-- `docs/scene-packages.md` documents both keys, `balance.json`, the feather, and the known limits.
+- `balance` (scene file, bool), default true. Off: no `balance.json`, Sentinel-2 decoded as today, no feather, no
+  water clip or fade. `balance = false` with `imagery_margin_km = 0` reproduces a current package byte for byte.
+- `naip_water_buffer_m` (scene file, float), default 200; 0 turns the clip off; otherwise 200 (the feather) to 5000.
+  Only read when `balance` applies. `water_fade_m` = 100 is a constant (`BALANCE`).
+- All land in the manifest (`layers.imagery`; the two water values inside `balance`), so `layer_settings_hash`
+  covers them.
+- `docs/scene-packages.md` documents the keys, `balance.json`, the feather, the water clip and fade, and the known
+  limits.
 
 ## Testing
 
@@ -113,6 +171,13 @@ pytest under `scripts/scene/tests`, synthetic rasters (`tests/rasters.py`), no n
 - `balance = false`, margin 0: leaf bytes identical to the current code on the fixture package.
 - Margin: `naip_pc` discovery area and the `margin` region grow by the margin; terrain tile set unchanged.
 - No NAIP in the package: no `balance.json`, Sentinel-2 decoded as today.
+- Water: class codes are the containing pixel, first raster wins, 0 outside; distance 0 on land and the offshore
+  distance over water; beyond the buffer a leaf equals the raw decode of the sources behind NAIP exactly; NAIP is
+  full weight on land up to the shore and fades across the buffer; the clip edge is continuous across leaves; the
+  Sentinel-2 decode is the balanced value on land and the raw decode beyond the fade; a lake narrower than twice the
+  buffer keeps NAIP; leaves with no water near them are identical to the no-water path; the interior shortcut is
+  not taken over open water; nothing behind NAIP keeps NAIP; buffer 0 keeps NAIP offshore; `-j 1` = `-j 2`; a
+  WorldCover change rebuilds leaves; `balance = false` ignores the mask.
 
 ## Acceptance (Pendleton, `sim`)
 
@@ -122,14 +187,22 @@ pytest under `scripts/scene/tests`, synthetic rasters (`tests/rasters.py`), no n
 3. Imagery build time: ≤ 10 % over today per built tile, same `-j` (the margin's extra tiles and the fit's seconds
    are reported separately).
 4. Screenshots: west and south edges at z13–z15, before and after; plus a CamSim render looking across the bbox edge
-   from altitude. Human review.
+   from altitude, and one looking from the coast out to sea. Human review.
+5. Water (`tools/water_check.py`): over open water (WorldCover 80, beyond max(buffer, fade) + 2 lattice nodes from
+   land) in sampled leaves of every zoom, built vs the raw decode of the sources behind NAIP: pooled mean |diff| ≤
+   1.5 DN per band and the 95th percentile over tiles of the per-tile mean ≤ 3 DN (no NAIP, no colour match); median
+   over tiles of (G std built − G std raw) ≤ 1 DN (no streaks); and, against `hashes.txt` of the same package built without section 4, no leaf
+   without water in its lattice changed.
 
 ## Known limits (go into `REALISM.md` / `docs/scene-packages.md`)
 
 - Sentinel-2 is 10 m: beyond NAIP the imagery is blurry whatever its colour. The margin moves that edge, it doesn't
   remove it.
-- Flight-line seamlines inside NAIP files stay (faint on land; strong at sea, mostly under the ocean).
-- The sea patchwork (NAIP glint stripes, Sentinel-2, Blue Marble) stays: chunk 3 (coastline).
+- Flight-line seamlines inside NAIP files stay on land (faint), and NAIP's sea glint or fill stays within 200 m of
+  the shore.
+- Open water is Sentinel-2 at 10 m (blurry, uniform); where the Sentinel-2 composite stops at sea, the Sentinel-2 →
+  Blue Marble step stays: chunk 3 (coastline).
+- The water mask is WorldCover 2021 at 10 m: shorelines that moved since, or are misclassified, move the clip.
 - The colour match is fitted per package: two adjacent packages may differ slightly at their shared ring.
 
 ## Out of scope
