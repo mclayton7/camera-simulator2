@@ -22,6 +22,13 @@ Buildings (ion 96188) have already sent their requests. `RefreshTileset()` then 
 
 ### 1. Cesium setup before any `BeginPlay`
 
+> **Correction (implementation, 2026-10-09):** `StartPlay` is too late on uncooked levels (editor `-game`):
+> `UWorld::InitializeActorsForPlay` re-runs construction scripts before `InitGame`, and
+> `ACesium3DTileset::OnConstruction` loads the tileset. The setup runs from
+> `FWorldDelegates::OnPostWorldInitialization` (in `InitWorld`), with `StartPlay` and the camera as latched
+> fallbacks. Offline fail-fast uses `std::_Exit(1)`: macOS ignores `RequestExitWithStatus`'s code.
+
+
 - New `ACamSimGameMode::StartPlay()` override: call `PrepareCesiumWorld()`, then `Super::StartPlay()` (which
   dispatches `BeginPlay` to every actor).
 - `PrepareCesiumWorld(UWorld*, const FCamSimConfig&, UCamSimSubsystem*)` (Geospatial) runs, in this order, the work

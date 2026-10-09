@@ -69,7 +69,7 @@ camsim/
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (472 tests across 80 files)
+      Tests/                       # UE5 Automation tests (487 tests across 82 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -113,7 +113,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (472 tests across 80 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (487 tests across 82 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -144,7 +144,8 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **Targets must stay on `BuildSettingsVersion.V7`**: UE 5.8 refuses an editor target whose build settings differ from the installed engine's ("modifies the values of properties … not allowed").
 - **Cesium lives in the engine, not the project**: `repo_setup.sh` installs it into `$UE_ROOT/Engine/Plugins/Marketplace/CesiumForUnreal` (auto-detected, or set `UE_ROOT`), where UBT uses the release zip's prebuilt binaries. Never put it back in `unreal_project/CamSimTest/Plugins/`: a project plugin overrides the engine one and gets rebuilt from source with the project's settings (~20 min), and Cesium 2.29.1 doesn't compile that way under Apple clang 21 (`IonQuickAddPanel.cpp` self-capture). Bump `CESIUM_VERSION` in `repo_setup.sh` to upgrade.
 - **ThirdParty must be built first**: Run `scripts/build_thirdparty.sh` before UE build — CCL + FFmpeg are static libs not checked in
-- **One terrain tileset**: `ApplyCesiumBackendConfig` configures the level's terrain tileset (first Cesium World Terrain, ion 1) and destroys every other `ACesium3DTileset` (it used to turn `Main.umap`'s OSM Buildings into a duplicate terrain). Cesium's game-thread cost tracks the rendered tile count (per-tile collision/visibility every frame, ROADMAP 3B exit check), so extra tilesets and `frustum_culling: false` are not free
+- **One terrain tileset**: `ApplyCesiumBackendConfig` configures the level's terrain tileset (first Cesium World Terrain, ion 1) and destroys every other `ACesium3DTileset` (it used to turn `Main.umap`'s OSM Buildings into a duplicate terrain). It runs at world init (`UCamSimSubsystem` on `FWorldDelegates::OnPostWorldInitialization` → `PrepareCesiumWorld`, latched; `ACamSimGameMode::StartPlay` and the camera are fallbacks): on uncooked levels `InitializeActorsForPlay` re-runs construction scripts and `ACesium3DTileset::OnConstruction` loads the tileset, so `StartPlay`/`BeginPlay` is already too late. Anything that spawns or edits tilesets must run there too. Cesium's game-thread cost tracks the rendered tile count (per-tile collision/visibility every frame, ROADMAP 3B exit check), so extra tilesets and `frustum_culling: false` are not free
+- **Scene packages at runtime** (REALISM R0, `docs/configuration.md` "Scene Package"): `scene.dir` (absolute) replaces terrain/imagery/land cover with the package's `file:///` layers (`Config/ScenePackage.h`); `scene.offline: true` rejects any network source and exits with status 1 on any config error (`std::_Exit`: macOS ignores `RequestExitWithStatus`'s code; `run.sh` passes UE's status through). TMS `cesium.imagery.url` names `tilemapresource.xml` itself
 - **Cesium coord order**: `TransformLongitudeLatitudeHeightPositionToUnreal(FVector(Lon, Lat, Alt))` — Longitude first, not Latitude
 - **Never pass CIGI angles to `SetActorRotation`**: UE world axes are Cesium East-South-Up only at the georeference origin (+X = East, so heading 0 would face east). Use `GlobeAnchor->SetEastSouthUpRotation(CamSimFrames::CigiToEastSouthUp(...))` from `Geospatial/CigiFrames.h`
 - **CIGI entity-relative fields**: when Attach State = Attach or a request's coordinate system = Entity, the Lat/Lon/Alt fields are X/Y/Z metre offsets in the reference entity's body frame (X fwd, Y right, Z down). Resolve via `UCamSimSubsystem::GetEntityGeoPose()`

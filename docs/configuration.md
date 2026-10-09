@@ -246,12 +246,41 @@ Controls which Cesium ion server, terrain source, and imagery overlay CamSim use
 | `CAMSIM_CESIUM_TERRAIN_SOURCE` | `cesium_ion` | Terrain source: `cesium_ion`, `url`, or `flat`. |
 | `CAMSIM_CESIUM_TERRAIN_ION_ASSET_ID` | `1` | Cesium ion asset ID for terrain (Cesium World Terrain = 1). |
 | `CAMSIM_CESIUM_TERRAIN_URL` | *(empty)* | Quantized-mesh terrain URL (used when `TERRAIN_SOURCE=url`). |
-| `CAMSIM_CESIUM_IMAGERY_SOURCE` | `cesium_ion` | Imagery overlay source: `cesium_ion`, `wms`, or `none`. |
+| `CAMSIM_CESIUM_IMAGERY_SOURCE` | `cesium_ion` | Imagery overlay source: `cesium_ion`, `wms`, `tms`, or `none`. |
 | `CAMSIM_CESIUM_IMAGERY_ION_ASSET_ID` | `2` | Cesium ion asset ID for imagery (Bing Maps Aerial = 2). |
 | `CAMSIM_CESIUM_IMAGERY_WMS_URL` | *(empty)* | WMS base URL (used when `IMAGERY_SOURCE=wms`). |
 | `CAMSIM_CESIUM_IMAGERY_WMS_LAYERS` | *(empty)* | WMS layer name(s), comma-separated. |
 | `CAMSIM_CESIUM_IMAGERY_WMS_TILE_WIDTH` | `256` | WMS tile width in pixels. |
 | `CAMSIM_CESIUM_IMAGERY_WMS_TILE_HEIGHT` | `256` | WMS tile height in pixels. |
+| `CAMSIM_CESIUM_IMAGERY_URL` | *(empty)* | TMS: URL of the pyramid's `tilemapresource.xml` itself, not its directory (`file:///…/imagery/tilemapresource.xml` for a local pyramid; three slashes, absolute, percent-encoded). Used when `IMAGERY_SOURCE=tms`, which requires it. YAML `cesium.imagery.url`. |
+
+Cesium is configured as soon as the world is initialised (`FWorldDelegates::OnPostWorldInitialization`, before
+construction scripts and `BeginPlay`): the level's terrain tileset gets these settings before it first loads, and
+every other `ACesium3DTileset` (`Main.umap`'s OSM Buildings) is destroyed before it can send a request.
+
+### Scene Package (`scene:`, REALISM R0)
+
+Runs CamSim on a scene package built by `camsim-scene` ([`docs/scene-packages.md`](scene-packages.md)).
+
+```yaml
+scene:
+  dir: ""          # absolute path to a package
+  offline: false   # no network
+```
+
+| Key | Environment Variable | Default | Description |
+|---|---|---|---|
+| `scene.dir` | `CAMSIM_SCENE_DIR` | *(empty)* | Absolute path to a scene package (`manifest.json`, `schema_version` 1). Each layer the package has replaces the matching setting, below. A relative path, a missing or invalid `manifest.json`, or another schema version is a config error. |
+| `scene.offline` | `CAMSIM_SCENE_OFFLINE` | `false` | No network: terrain must be `url` with an existing `file:///` target, or `flat`; imagery `tms` with an existing `file:///` target, or `none`. Any config error (these or others) is logged and CamSim exits with status 1 instead of running on defaults (which would be Cesium ion). |
+
+| Package file | Replaces |
+|---|---|
+| `terrain/layer.json` | `cesium.terrain.source: url`, `cesium.terrain.url: file:///…/terrain/layer.json` |
+| `imagery/tilemapresource.xml` | `cesium.imagery.source: tms`, `cesium.imagery.url: file:///…/imagery/tilemapresource.xml` |
+| `landcover/index.json` | `thermal.land_cover.dir: …/landcover` |
+
+A layer the package lacks leaves its setting alone. Overriding a non-default `cesium.terrain.*`, `cesium.imagery.*` or
+`thermal.land_cover.dir` logs a config warning naming the key. `~` is expanded to the home directory.
 
 ### Cesium Tile Streaming
 

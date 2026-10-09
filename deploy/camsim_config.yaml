@@ -654,12 +654,13 @@ cesium:
     url: ""               # quantized-mesh endpoint (ignored unless source: url)
 
   imagery:
-    source: cesium_ion    # cesium_ion | wms | none
+    source: cesium_ion    # cesium_ion | wms | tms | none
     ion_asset_id: 2       # Bing Maps Aerial (ignored unless source: cesium_ion)
     wms_url: ""           # ignored unless source: wms
     wms_layers: ""        # ignored unless source: wms
     wms_tile_width: 256
     wms_tile_height: 256
+    url: ""               # tms: URL of tilemapresource.xml itself, e.g. file:///data/pkg/imagery/tilemapresource.xml (CAMSIM_CESIUM_IMAGERY_URL)
     # Overlay SSE: controls imagery resolution. 2.0 = 1 source px covers 2x2 screen px,
     # 1.0 = 1:1 pixel mapping (sharpest for ISR). Plugin default 2.0.
     # Env: CAMSIM_CESIUM_IMAGERY_MAX_SSE
@@ -672,6 +673,11 @@ cesium:
     # Plugin default 20; keep low for real-time 30fps.
     # Env: CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS
     maximum_simultaneous_tile_loads: 20
+
+# --- Scene package (REALISM R0, docs/scene-packages.md) ---
+scene:
+  dir: ""          # CAMSIM_SCENE_DIR — absolute path to a package; its terrain/imagery/landcover replace cesium.terrain, cesium.imagery, thermal.land_cover.dir
+  offline: false   # CAMSIM_SCENE_OFFLINE — no network: terrain url/flat and imagery tms/none from file:///, and exit on any config error
 
 # --- Security Metadata (MISB ST 0102) ---
 # Embedded in every KLV packet as ST 0601 Tag 48.

@@ -1796,12 +1796,15 @@ of 3DEP. **R0 tooling implemented 2026-10-08** (`scripts/scene/`, the `camsim-sc
 `docs/scene-packages.md`). **Gates 1–4 and 6 passed 2026-10-09** on the Linux box in the reference container
 (Pendleton `sim` build 12.5 min at `-j 16`, worker peak RSS ≤ 812 MB; `verify --deep` clean; a second build and a
 killed-and-resumed build byte-identical to the first; 10,000 km² `preview` build 11 min, 4.0 GB). **Gate 5 passed
-2026-10-09** on the Mac (registration ≤ 0.16 px, frame-centre heights 7/7 within limits) except its offline log,
-which waits on the `Main.umap` follow-up below.
+2026-10-09** on the Mac (registration ≤ 0.16 px, frame-centre heights 7/7 within limits), including the offline log:
+the offline profile (`scene.dir` + `scene.offline`, `cesium.imagery.source: tms`, Cesium set up at world init) makes
+an offline package run send no request (`docs/scene-packages.md`, "Measured"). Repeating the offline run on
+Linux/Vulkan needs an egress-blocking equivalent of the macOS `--offline` sandbox (e.g. the packaged image with
+`docker run --network none` and the package mounted read-only).
 
-**Human follow-up (editor):** for offline runs, remove the ion-backed actors from `Main.umap` (terrain
-ion 1 with its Bing overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B).
-They request `api.cesium.com` at frame 0, before CamSim's config replaces them.
+**Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
+overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer
+need it: CamSim configures or destroys them at world init, before they load.
 
 ---
 

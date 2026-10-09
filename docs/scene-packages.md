@@ -318,18 +318,22 @@ docker run ... -v /mnt/pendleton:/data/scene/pendleton:ro ...
 Docker Desktop on macOS can't loop-mount: use the package directory itself (bind-mounted `:ro`). Background on
 why one image beats millions of loose files: [`docs/realism/offline-hosting.md`](realism/offline-hosting.md).
 
-## Using a package in CamSim (until R1)
+## Using a package in CamSim
 
-- **Terrain** works today: `cesium.terrain.source: url` with `cesium.terrain.url:
-  file:///…/pendleton/terrain/layer.json` (`CAMSIM_CESIUM_TERRAIN_SOURCE=url`, `CAMSIM_CESIUM_TERRAIN_URL`).
-- **Imagery** needs a TMS overlay, which lands in R1. Until then apply `scripts/scene/tools/tms_overlay.patch`
-  locally (never commit it) and set `CAMSIM_CESIUM_IMAGERY_SOURCE=tms`,
-  `CAMSIM_CESIUM_IMAGERY_WMS_URL=file:///…/pendleton/imagery/tilemapresource.xml`.
-- **Land cover** for thermal IR: `thermal.land_cover.dir` (`CAMSIM_THERMAL_LAND_COVER_DIR`) → `PKG/landcover`.
-- Set `CAMSIM_CESIUM_ION_TOKEN=""` so nothing is fetched from ion. `Main.umap` still holds the ion actors and
-  there is no offline config profile yet (both R1).
+```bash
+CAMSIM_SCENE_DIR=/abs/path/to/pendleton CAMSIM_SCENE_OFFLINE=1 scripts/run.sh --headless
+```
 
-`scripts/scene/tools/render_check.py` sets exactly this environment (see `scripts/scene/tools/README.md`).
+- `scene.dir` (`CAMSIM_SCENE_DIR`, absolute) points terrain (`terrain/layer.json`), imagery
+  (`imagery/tilemapresource.xml`, `cesium.imagery.source: tms`) and thermal land cover (`landcover/`) at the
+  package, as `file:///` URLs. Reference: `docs/configuration.md`, "Scene Package".
+- `scene.offline` (`CAMSIM_SCENE_OFFLINE`) refuses any network source and exits with status 1 on any config
+  error, instead of falling back to Cesium ion.
+- `Main.umap`'s ion actors (terrain ion 1 with Bing ion 2, OSM Buildings ion 96188) are reconfigured or destroyed
+  when the world is initialised, before they load, so an offline run sends no request.
+
+`scripts/scene/tools/render_check.py` sets this environment (`--offline` adds `CAMSIM_SCENE_OFFLINE=1` and fails on
+any logged outbound request; see `scripts/scene/tools/README.md`).
 
 ## Measured
 
@@ -341,7 +345,7 @@ The R0 exit gates on the reference build. Filled in by gates 1–6.
 | 2 | Build killed at ~50 % resumes without rebuilding finished tiles | **Pass** (same box). `docker kill` at terrain 92,481/182,602; the resume took no lock error and built 89,033 + skipped 93,569 = 182,602 terrain tiles (the extra skips finished after the last progress line), 10 min 30 s; `hashes.txt` identical to build A |
 | 3 | Second clean build: identical `hashes.txt` and `.sqfs` | **Pass** (same box). Build B from A's `manifest.json`: `hashes.txt` identical (438,661 files), both `.sqfs` sha256 `de89729b9e479e3beb9348f79f0bf72786e014d5ff855c8306c39eb5996ee1e3` |
 | 4 | `verify --deep` | **Pass** on the reference build (same box, 2 min 6 s at `-j 16`): every check `ok`; scene z9+ p50 0.001 m, p99 0.049 m (max 0.39 m, 342,731 vertices); base z0–z8 within limits, nearest z7 (p99 0.84 of 1.51 m) and z8 (0.42 of 0.75 m). Native macOS build (2026-10-09): all checks pass, 199 s at `-j 8`; scene z9+ p50 0.001 m, p99 0.049 m (max 0.39 m, 342,704 vertices); base z0–z8 within limits, nearest z7 (p99 0.84 of 1.51 m) and z8 (0.42 of 0.75 m) |
-| 5 | CamSim render: registration vs CWT + Bing (< 1 px), frame-centre heights (≤ 0.25 m on 1 m, ≤ 1 m on 1/3″), high oblique (no holes / untextured tiles), offline run | **Pass except the offline log** (2026-10-09, M1 Pro / Metal, native macOS build of the package). Registration: all six EO shots ≤ 0.16 px (online and offline identical). Heights: 7/7 pass — 1 m points −0.10 … +0.20 m (three within 0.01 m), 1/3″ points −0.48 and −0.05 m; CWT on the same points fails 4/7 (up to +1.36 m). High oblique / ring edge: no holes or untextured tiles. Offline (`--offline`): renders fully, but `Main.umap`'s ion actors still request `api.cesium.com` (assets 1, 96188, 2) at frame 0 (blocked by the sandbox): closes with the editor follow-up in `ROADMAP.md` |
+| 5 | CamSim render: registration vs CWT + Bing (< 1 px), frame-centre heights (≤ 0.25 m on 1 m, ≤ 1 m on 1/3″), high oblique (no holes / untextured tiles), offline run | **Pass** (2026-10-09, M1 Pro / Metal, native macOS build of the package). Registration: all six EO shots ≤ 0.16 px (online and offline identical). Heights: 7/7 pass — 1 m points −0.10 … +0.20 m (three within 0.01 m), 1/3″ points −0.48 and −0.05 m; CWT on the same points fails 4/7 (up to +1.36 m). High oblique / ring edge: no holes or untextured tiles. Offline: closed later on 2026-10-09 by the offline profile (`scene.dir` + `scene.offline`, Cesium set up at world init): `render_check.py --offline` logs no outbound request and no `cesium.com` line, the terrain loads once from `file:///`; registration ≤ 0.16 px and heights 7/7 again (same values) |
 | 6 | 10,000 km² `preview` build: time and size | **Pass** (same box, `pendleton-preview-10k`, 9,946 km²). Build **11 min 14 s**; terrain 183,378 tiles, 0.96 GB, 318 s, 647 MB; imagery 177,350, 0.81 GB, 219 s, 554 MB; land cover 3,564, 62 MB, 128 s, 195 MB. Package 1.8 GB (4.0 GB on disk). `plan` estimated 186,374 / 178,142 / 3,564 tiles and ~4.4 GB, cache 15.8 GB. `verify --deep` all `ok` (scene p50 0.004 m, p99 0.105 m) |
 
 Notes from gates 1–4 and 6 (Linux):

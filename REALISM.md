@@ -272,8 +272,10 @@ is a checklist for this phase.
   offshore. All public domain or CC BY.
 - Packaging: the package directory → one SquashFS/EROFS image (section 3, "Large areas"). Prototype
   it and time a cold start against a plain directory.
-- Offline config profile: no ion source anywhere; with a package and `offline: true`, fail fast
-  instead of falling back to ion.
+- ~~Offline config profile: no ion source anywhere; with a package and `offline: true`, fail fast
+  instead of falling back to ion.~~ **Done 2026-10-09**: `scene.dir` (package layers → terrain, TMS imagery,
+  land cover) and `scene.offline` (local `file:///` sources only, exit 1 on any config error), with Cesium set
+  up at world init so `Main.umap`'s ion actors never load (`docs/configuration.md`, "Scene Package").
 - Manifest schema (versioned), on-disk fetch cache under `.cache/scene/`, licence register with an
   allow-list (`redistributable`, `attribution`, `non-commercial`, `proprietary`). Building a package
   with a source outside the allow-list fails.
@@ -302,17 +304,16 @@ is a checklist for this phase.
 - Imagery: NAIP as local TMS tiles from the package (public domain, 0.6 m, some states 0.3 m;
   flown every 2–3 years per state, leaf-on, near midday). CA 2024 is only on the USDA image
   service or EarthExplorer (Planetary Computer stops at 2022, AWS is requester-pays). New config:
-  `imagery.source: tms` + `imagery.url` (the spike's throwaway patch, `scripts/scene/spike/`); the
+  `imagery.source: tms` + `imagery.url` (landed with R0's offline profile, 2026-10-09); the
   URL names `tilemapresource.xml`. Pyramid down to zoom 0. Record the acquisition date and sun angle
   per tile in the manifest: imagery shadows are baked in and only look right near that sun position
   (a known limit, documented, not fixed). Colour-balance seams between NAIP flight lines and states.
 - NAIP also has a near-infrared band. Package it as an NDVI layer next to the RGB tiles: it is a far
   better vegetation signal than 4B's GBuffer base-colour index (R2 decides whether `ThermalCS` uses
   it).
-- Offline: `Main.umap`'s own ion actors (terrain ion 1, OSM Buildings ion 96188, Bing ion 2)
-  request ion endpoints at frame 0, before CamSim's config replaces them. Remove them so an
-  air-gapped run never tries (**editor work, human**: strip the ion assets from `Main.umap`, or
-  have CamSim spawn its own terrain tileset).
+- ~~Offline: `Main.umap`'s own ion actors request ion endpoints at frame 0.~~ Solved without the editor
+  (2026-10-09): CamSim configures or destroys them at world init, before they load. Stripping them from
+  `Main.umap` is optional cleanup.
 - Docker/Linux: confirm `file://` from a mounted volume (the spike ran on macOS/Metal).
 - **Gates:** decoded vertices vs source DEM (spike: median 2–3 cm, p99 0.31 m). CIGI frame-centre
   and HAT/HOT heights vs 3DEP truth at surveyed points (spike: ≤ 0.22 m on 1 m data, ≤ 0.9 m on
