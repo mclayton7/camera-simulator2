@@ -401,12 +401,15 @@ struct FCamSimConfig
 
 		struct FImageryConfig
 		{
-			FString Source        = TEXT("cesium_ion"); // "cesium_ion" | "wms" | "none"
+			FString Source        = TEXT("cesium_ion"); // "cesium_ion" | "wms" | "tms" | "none"
 			int32   IonAssetId    = 2;                  // Bing Maps Aerial
 			FString WmsUrl        = TEXT("");
 			FString WmsLayers     = TEXT("");
 			int32   WmsTileWidth  = 256;
 			int32   WmsTileHeight = 256;
+			// source: tms — URL of the pyramid's tilemapresource.xml (the file itself, not its
+			// directory), e.g. file:///data/pkg/imagery/tilemapresource.xml. Env: CAMSIM_CESIUM_IMAGERY_URL
+			FString Url           = TEXT("");
 			// Raster overlay quality: applied before Activate() in ApplyCesiumBackendConfig.
 			// Overlay SSE controls imagery resolution: 2.0 = 1 source px covers 2x2 screen px,
 			// 1.0 = 1:1 pixel mapping (sharpest). Plugin default 2.0; ISR needs 1.0.
@@ -420,6 +423,22 @@ struct FCamSimConfig
 			int32   MaximumSimultaneousTileLoads = 20;
 		} Imagery;
 	} CesiumBackend;
+
+	/** Scene package (REALISM R0, docs/scene-packages.md). */
+	struct FSceneConfig
+	{
+		// Absolute path to a scene package (manifest.json + terrain/ imagery/ landcover/).
+		// Its layers replace cesium.terrain, cesium.imagery and thermal.land_cover.dir. Env: CAMSIM_SCENE_DIR
+		FString Dir = TEXT("");
+		// No network: terrain and imagery must be local file:/// sources, and any config error
+		// exits at startup instead of running on defaults. Env: CAMSIM_SCENE_OFFLINE
+		bool bOffline = false;
+
+		// Filled by CamSimScene::ResolvePackage at load (not config keys).
+		FString PackageName;
+		TArray<FString> ResolveErrors;
+		TArray<FString> ResolveWarnings;
+	} Scene;
 
 	// Phase 21 — DIS (IEEE 1278.1) Protocol
 	//   CAMSIM_DIS_ENABLED              - master toggle                  (default 0)

@@ -808,10 +808,19 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				YamlString(Im, "wms_layers",      Cfg.CesiumBackend.Imagery.WmsLayers);
 				YamlInt   (Im, "wms_tile_width",  Cfg.CesiumBackend.Imagery.WmsTileWidth);
 				YamlInt   (Im, "wms_tile_height", Cfg.CesiumBackend.Imagery.WmsTileHeight);
+				YamlString(Im, "url",             Cfg.CesiumBackend.Imagery.Url);
 				YamlDouble(Im, "maximum_screen_space_error",     Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError);
 				YamlInt   (Im, "maximum_texture_size",           Cfg.CesiumBackend.Imagery.MaximumTextureSize);
 				YamlInt   (Im, "maximum_simultaneous_tile_loads", Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads);
 			}
+		}
+
+		// REALISM R0: scene package
+		if (YamlHas(Root, "scene"))
+		{
+			ryml::ConstNodeRef Sc = Root["scene"];
+			YamlString(Sc, "dir",     Cfg.Scene.Dir);
+			YamlBool  (Sc, "offline", Cfg.Scene.bOffline);
 		}
 
 		// Phase 21: DIS protocol config
@@ -1117,6 +1126,9 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.CesiumBackend.Imagery.WmsLayers  = GetEnv(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_LAYERS"), Cfg.CesiumBackend.Imagery.WmsLayers);
 	Cfg.CesiumBackend.Imagery.WmsTileWidth  = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_TILE_WIDTH"),  Cfg.CesiumBackend.Imagery.WmsTileWidth);
 	Cfg.CesiumBackend.Imagery.WmsTileHeight = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_WMS_TILE_HEIGHT"), Cfg.CesiumBackend.Imagery.WmsTileHeight);
+	Cfg.CesiumBackend.Imagery.Url        = GetEnv(TEXT("CAMSIM_CESIUM_IMAGERY_URL"), Cfg.CesiumBackend.Imagery.Url);
+	Cfg.Scene.Dir      = GetEnv    (TEXT("CAMSIM_SCENE_DIR"),     Cfg.Scene.Dir);
+	Cfg.Scene.bOffline = GetEnvBool(TEXT("CAMSIM_SCENE_OFFLINE"), Cfg.Scene.bOffline);
 	Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError      = GetEnvDouble(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_SSE"),      Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError);
 	Cfg.CesiumBackend.Imagery.MaximumTextureSize          = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE"), Cfg.CesiumBackend.Imagery.MaximumTextureSize);
 	Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS"),  Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads);
