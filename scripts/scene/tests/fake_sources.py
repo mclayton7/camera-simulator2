@@ -71,6 +71,7 @@ class FakeSource(SourceBase):
             nodata=o.get("nodata"),
             nodata_rule=o.get("nodata_rule", "value"),
             clamp_edges=self.global_coverage,
+            decode=o.get("decode"),
             vertical_asset=f"{self.id}/geoid" if "geoid" in o else None,
         )
 
@@ -128,6 +129,81 @@ def synthetic_scene(root: Path, bbox=(10.0, 10.0, 10.5, 10.5)) -> dict:
             "hi_dem": source("terrain", root / "hi_dem.tif", hi_bbox, nodata=-9999.0),
             "base_rgb": source("imagery", root / "base_rgb.tif", globe, bands=[1, 2, 3], **{"global": True}),
             "hi_rgb": source("imagery", root / "hi_rgb.tif", hi_bbox, bands=[1, 2, 3], nodata_rule="all_zero"),
+        },
+    }
+
+
+def tone_truth(raw):
+    """The synthetic 'true' Sentinel-2 -> NAIP map (deliberately not today's decoder)."""
+    return 255.0 * (np.asarray(raw, np.float64) / 4000.0) ** (1.0 / 2.2) - 30.0
+
+
+def raw_truth(lon, lat, band: int):
+    """Smooth synthetic Sentinel-2 raw DN (period ~1.7 km): bilinear sampling stays within ~7.5 raw DN of it (under
+    1 NAIP DN)."""
+    return 1900.0 + 1500.0 * np.sin(np.asarray(lon) * 400.0 + band) * np.cos(np.asarray(lat) * 300.0)
+
+
+def _cell_centres(box, res):
+    w, s, e, n = box
+    nx, ny = round((e - w) / res), round((n - s) / res)
+    return np.meshgrid(w + (np.arange(nx) + 0.5) * res, n - (np.arange(ny) + 0.5) * res)
+
+
+def naip_s2_scene(
+    root: Path,
+    offset=lambda lon, lat: 0.0,
+    glint_east: bool = False,
+    ref_box=(10.0, 10.0, 10.2, 10.2),
+    s2_box=(9.8, 9.8, 10.4, 10.4),
+    res=0.0005,
+) -> dict:
+    """NAIP (`naip_pc`, uint8 = tone_truth(raw) + offset) over ref_box, Sentinel-2 (`wc_s2`, raw uint16 DN) over
+    s2_box, global base RGB + DEM. glint_east: NAIP east of the ref box's middle is +60 DN (and a class raster,
+    classes.tif, marks it water: 80; west 10)."""
+    base = synthetic_scene(root / "base")
+    root.mkdir(parents=True, exist_ok=True)
+    lon, lat = _cell_centres(s2_box, res)
+    raw = np.stack([raw_truth(lon, lat, b) for b in range(3)]).round().astype(np.uint16)
+    write_geotiff(root / "s2.tif", raw, s2_box[0], s2_box[3], res, overviews=(2, 4))
+    lon, lat = _cell_centres(ref_box, res)
+    rawr = np.stack([raw_truth(lon, lat, b) for b in range(3)]).round()
+    ref = tone_truth(rawr) + offset(lon, lat)
+    mid = (ref_box[0] + ref_box[2]) / 2
+    if glint_east:
+        ref = np.where(lon >= mid, ref + 60.0, ref)
+    write_geotiff(
+        root / "naip.tif", np.clip(np.rint(ref), 1, 255).astype(np.uint8), ref_box[0], ref_box[3], res, overviews=(2, 4)
+    )
+    classes = np.where(lon >= mid, 80, 10).astype(np.uint8)
+    write_geotiff(root / "classes.tif", classes, ref_box[0], ref_box[3], res, overviews=(2, 4))
+    s = base["sources"]
+    return {
+        "name": "edge",
+        "bbox": list(ref_box),
+        "ring_km": 30,
+        "imagery_margin_km": 0,
+        "priorities": {"terrain": ["base_dem"], "imagery": ["naip_pc", "wc_s2", "base_rgb"], "landcover": []},
+        "zoom": {
+            "globe": {"terrain": 2, "imagery": 2},
+            "ring": {"terrain": 3, "imagery": 3},
+            "bbox": {"terrain": 3, "imagery": 9},
+        },
+        "sources": {
+            "base_dem": s["base_dem"],
+            "base_rgb": s["base_rgb"],
+            "naip_pc": source(
+                "imagery", root / "naip.tif", ref_box, max_zoom=15, bands=[1, 2, 3], nodata_rule="all_zero"
+            ),
+            "wc_s2": source(
+                "imagery",
+                root / "s2.tif",
+                s2_box,
+                max_zoom=13,
+                bands=[1, 2, 3],
+                nodata_rule="all_zero",
+                decode="s2_reflectance",
+            ),
         },
     }
 

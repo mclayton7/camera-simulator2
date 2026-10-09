@@ -27,21 +27,49 @@ def query_bounds(z: int, x: int, y: int) -> Bounds:
     return (w - d, _s - d, e + d, n + d)
 
 
-def leaf_rgb(z: int, x: int, y: int, entries) -> np.ndarray:
-    (lon, lat), d = pixel_grid(z, x, y)
-    rgb = np.zeros((3, TILE_PX, TILE_PX), np.uint8)
-    filled = np.zeros((TILE_PX, TILE_PX), bool)
-    for e in entries:
-        if filled.all():
+def source_of(entry) -> str:
+    return entry.qid.split("/", 1)[0]
+
+
+def sample_entries(entries, lon: np.ndarray, lat: np.ndarray, target_m: float):
+    """Raw band values merged first-valid-wins in `entries` order: (values (3, ...) NaN where none, valid, index of
+    the entry each value came from (-1 none))."""
+    vals = np.full((3, *lon.shape), np.nan)
+    ok = np.zeros(lon.shape, bool)
+    which = np.full(lon.shape, -1, np.int32)
+    for k, e in enumerate(entries):
+        if ok.all():
             break
         slon, slat = e.transform.to_source_geographic(lon, lat)
         px, py = project(e.raster, slon, slat)
-        vals, ok = e.raster.sample(px, py, d * M_PER_DEG)
-        take = ok & ~filled
+        v, good = e.raster.sample(px, py, target_m)
+        take = good & ~ok
         if take.any():
-            rgb[:, take] = to_uint8(e.raster, vals)[:, take]
-            filled |= take
+            vals[:, take] = v[:3][:, take]
+            which[take] = k
+            ok |= take
+    return vals, ok, which
+
+
+def decode_entries(entries, vals, which, lon, lat, balance=None) -> np.ndarray:
+    """uint8 RGB: the balance's colour match for its target source, each raster's own decoder otherwise; 0 where no
+    entry."""
+    rgb = np.zeros((3, *which.shape), np.uint8)
+    for k, e in enumerate(entries):
+        m = which == k
+        if not m.any():
+            continue
+        if balance is not None and source_of(e) == balance.target:
+            rgb[:, m] = balance.apply(vals[:, m], lon[m], lat[m])
+        else:
+            rgb[:, m] = to_uint8(e.raster, vals[:, m])
     return rgb
+
+
+def leaf_rgb(z: int, x: int, y: int, entries) -> np.ndarray:
+    (lon, lat), d = pixel_grid(z, x, y)
+    vals, _, which = sample_entries(entries, lon, lat, d * M_PER_DEG)
+    return decode_entries(entries, vals, which, lon, lat)
 
 
 def encode_jpeg(rgb: np.ndarray, quality: int) -> bytes:

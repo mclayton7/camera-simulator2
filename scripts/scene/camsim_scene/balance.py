@@ -7,6 +7,7 @@ integer step, so float summation order can't change the file; workers always rea
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass, field
 
@@ -15,6 +16,7 @@ from scipy.ndimage import distance_transform_edt
 
 from .manifest import canonical_json
 from .sources.base import M_PER_DEG
+from .tiling import Bounds
 
 FILE = "balance.json"
 FORMAT = 1
@@ -170,3 +172,130 @@ def fill_offsets(values: np.ndarray, cell_km: float, decay_km: float, median_siz
         filt[:, y, x] = np.nanmedian(win, axis=1)
     d, (iy, ix) = distance_transform_edt(~fitted, return_indices=True)
     return filt[:, iy, ix] * np.exp(-d * cell_km / decay_km)
+
+
+log = logging.getLogger(__name__)
+BLOCK = 512  # lattice nodes per block side (~5 km at 10 m)
+
+
+def lattice_blocks(bounds, step_deg: float, block: int = BLOCK):
+    """Nodes at integer multiples of step_deg covering bounds, in blocks north to south, west to east:
+    (lon, lat, i, j) with i, j the global node indices (held-out split: (i + j) odd)."""
+    w, s, e, n = bounds
+    i0, i1 = math.floor(w / step_deg), math.ceil(e / step_deg)
+    j0, j1 = math.floor(s / step_deg), math.ceil(n / step_deg)
+    for jb in range(j1, j0, -block):
+        jj = np.arange(jb, max(j0, jb - block), -1)
+        for ib in range(i0, i1, block):
+            ii = np.arange(ib, min(i1, ib + block))
+            i, j = np.meshgrid(ii, jj)
+            yield i * step_deg, j * step_deg, i, j
+
+
+def land_mask(classes, lon, lat, target_m: float, exclude) -> np.ndarray:
+    """True where the land-cover class is known and not excluded. Bilinear class values that aren't integral (class
+    boundaries) are dropped. No class rasters: everything counts as land."""
+    from .sources.base import project
+
+    if not classes:
+        return np.ones(lon.shape, bool)
+    v = np.full(lon.shape, np.nan)
+    ok = np.zeros(lon.shape, bool)
+    for r in classes:
+        if ok.all():
+            break
+        px, py = project(r, lon, lat)
+        vals, good = r.sample(px, py, target_m)
+        take = good & ~ok
+        v[take] = vals[0][take]
+        ok |= take
+    code = np.rint(np.nan_to_num(v))
+    return ok & (np.abs(v - code) < 1e-6) & ~np.isin(code, list(exclude))
+
+
+def grid_for(m, cell_km: float) -> Grid:
+    ring = next(r for r in m.region_objs() if r.name == "ring")
+    return Grid.covering(ring.geometry().bounds, cell_km, (m.bbox[1] + m.bbox[3]) / 2)
+
+
+def _stats(pred, ref, cells, ncells, min_n) -> dict:
+    e = pred.astype(np.float64) - ref
+    cb = np.abs(cell_medians(e, cells, ncells, min_n))
+    good = np.isfinite(cb[0])
+
+    def r2(v):
+        return [round(float(x), 2) for x in v]
+
+    return {
+        "mae_dn": r2(np.abs(e).mean(axis=1)),
+        "bias_dn": r2(e.mean(axis=1)),
+        "cells": int(good.sum()),
+        "cell_bias_median_dn": r2(np.median(cb[:, good], axis=1)) if good.any() else None,
+        "cell_bias_p90_dn": r2(np.percentile(cb[:, good], 90, axis=1)) if good.any() else None,
+    }
+
+
+def fit_balance(index, classes, bounds: Bounds, grid: Grid, s: dict) -> Balance | None:
+    """Fit the colour match on a lattice over `bounds` (the reference's footprints): nodes where the reference and
+    the target are both valid and the land cover isn't excluded. Even (i + j) nodes fit, odd ones are held out for
+    the report. None when there are too few shared land samples."""
+    from .layers.imagery import sample_entries, source_of
+    from .sources.base import DECODERS
+
+    step_m = s["fit_step_m"]
+    step = step_m / M_PER_DEG
+    exclude = set(s["exclude_classes"])
+    parts = []
+    for lon, lat, i, j in lattice_blocks(bounds, step):
+        entries = index.query((float(lon.min()), float(lat.min()), float(lon.max()), float(lat.max())))
+        ref = [e for e in entries if source_of(e) == s["reference"]]
+        tgt = [e for e in entries if source_of(e) == s["target"]]
+        if not ref or not tgt:
+            continue
+        rv, rok, _ = sample_entries(ref, lon, lat, step_m)
+        tv, tok, _ = sample_entries(tgt, lon, lat, step_m)
+        keep = rok & tok & land_mask(classes, lon, lat, step_m, exclude)
+        if not keep.any():
+            continue
+        ix, iy = grid.index(lon[keep], lat[keep])
+        parts.append(
+            (
+                np.clip(np.rint(rv[:, keep]), 0, 255).astype(np.uint8),
+                np.clip(np.rint(tv[:, keep]), 0, 65535).astype(np.uint16),
+                (iy * grid.nx + ix).astype(np.int32),
+                ((i + j) % 2 == 1)[keep],
+                lon[keep].astype(np.float32),
+                lat[keep].astype(np.float32),
+            )
+        )
+    if not parts:
+        log.warning("balance: no shared land samples between %s and %s", s["reference"], s["target"])
+        return None
+    ref, raw, cell, held, lon, lat = (np.concatenate([p[k] for p in parts], axis=-1) for k in range(6))
+    fit = ~held
+    if fit.sum() < s["min_cell_samples"]:
+        log.warning("balance: only %d shared land samples; not fitted", int(fit.sum()))
+        return None
+    qs = np.linspace(0.0, 1.0, s["quantiles"])
+    xq = [np.quantile(raw[b, fit], qs) for b in range(3)]
+    yq = [np.quantile(ref[b, fit], qs) for b in range(3)]
+    ncells = grid.nx * grid.ny
+    tone_only = Balance.make(s["reference"], s["target"], s["feather_m"], xq, yq, grid, np.zeros(3 * ncells))
+    resid = ref[:, fit] - tone_only.tone(raw[:, fit])
+    values = cell_medians(resid, cell[fit], ncells, s["min_cell_samples"]).reshape(3, grid.ny, grid.nx)
+    offsets = fill_offsets(values, s["cell_km"], s["decay_km"], median_size=s["median_filter"])
+    bal = Balance.make(s["reference"], s["target"], s["feather_m"], xq, yq, grid, offsets)
+    rh, wh, ch = ref[:, held].astype(np.float64), raw[:, held], cell[held]
+    lonh, lath = lon[held].astype(np.float64), lat[held].astype(np.float64)
+    min_h = max(1, s["min_cell_samples"] // 2)
+    bal.report = {
+        "samples_fit": int(fit.sum()),
+        "samples_heldout": int(held.sum()),
+        "cells_fitted": int(np.isfinite(values[0]).sum()),
+        "heldout": {
+            "before": _stats(DECODERS["s2_reflectance"](wh.astype(np.float64)), rh, ch, ncells, min_h),
+            "after": _stats(bal.apply(wh, lonh, lath), rh, ch, ncells, min_h),
+        },
+    }
+    log.info("balance: %s", json.dumps(bal.report["heldout"]))
+    return bal
