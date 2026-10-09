@@ -9,6 +9,7 @@ bmng_month = 7
 jpeg_quality = 85
 imagery_margin_km = 3                      # NAIP fetched and built this far beyond the bbox (<= ring_km)
 balance = true                             # colour-match Sentinel-2 to NAIP and feather NAIP's edge (only where they share land)
+naip_water_buffer_m = 200                  # NAIP only this far beyond WorldCover water's edge (0 = off)
 allow = []                                 # extra licence ids (see licences.toml)
 [priorities]                               # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "etopo2022"]
@@ -42,6 +43,7 @@ KEYS = {
     "jpeg_quality",
     "imagery_margin_km",
     "balance",
+    "naip_water_buffer_m",
     "allow",
     "priorities",
     "sources",
@@ -77,7 +79,10 @@ BALANCE = {  # Sentinel-2 -> NAIP colour match and NAIP edge feather (balance.py
     "quantiles": 257,
     "exclude_classes": [0, 80],  # WorldCover no data, permanent water
     "feather_m": 200.0,
+    "water_fade_m": 100.0,  # the colour match fades out to raw Sentinel-2 over this much WorldCover water (water.py)
 }
+NAIP_WATER_BUFFER_M = 200.0  # default naip_water_buffer_m: NAIP kept within this distance of land
+MAX_WATER_BUFFER_M = 5000.0
 TILE_PX = 256
 TILING = {  # OGC TMS 2.0 WorldCRS84Quad, addressed TMS-style (y from the south) as Cesium expects
     "tile_matrix_set": "WorldCRS84Quad",
@@ -133,6 +138,7 @@ class ScenePlan:
     allow: tuple[str, ...] = ()
     imagery_margin_km: float = 3.0
     balance: bool = True
+    naip_water_buffer_m: float = NAIP_WATER_BUFFER_M
 
     def ring_bounds(self) -> Bounds:
         return ring_bounds(self.bbox, self.ring_km)
@@ -191,6 +197,16 @@ def parse_scene(data: dict) -> ScenePlan:
     balance = data.get("balance", True)
     if not isinstance(balance, bool):
         raise ConfigError(f"balance must be true or false, got {balance!r}")
+    buffer_m = data.get("naip_water_buffer_m", NAIP_WATER_BUFFER_M)
+    lo = BALANCE["feather_m"]  # a narrower buffer would let the feather fade NAIP on land at the shore
+    if (
+        isinstance(buffer_m, bool)
+        or not isinstance(buffer_m, (int, float))
+        or not (buffer_m == 0 or lo <= buffer_m <= MAX_WATER_BUFFER_M)
+    ):
+        raise ConfigError(
+            f"naip_water_buffer_m must be 0 (off) or in [{lo:g}, {MAX_WATER_BUFFER_M:g}], got {buffer_m!r}"
+        )
     quality = _int(data, "jpeg_quality", 85, 1, 95)
     seed = _int(data, "seed", 0, 0, 2**31 - 1)
     prio = {k: list(v) for k, v in PROFILES[profile]["priorities"].items()}
@@ -235,6 +251,7 @@ def parse_scene(data: dict) -> ScenePlan:
         tuple(allow),
         imagery_margin_km=margin_km,
         balance=balance,
+        naip_water_buffer_m=float(buffer_m),
     )
 
 
@@ -251,7 +268,12 @@ def balance_settings(plan: ScenePlan) -> dict | None:
     prio = plan.priorities["imagery"]
     if not plan.balance or BALANCE_REFERENCE not in prio or BALANCE_TARGET not in prio:
         return None
-    return {"reference": BALANCE_REFERENCE, "target": BALANCE_TARGET, **BALANCE}
+    return {
+        "reference": BALANCE_REFERENCE,
+        "target": BALANCE_TARGET,
+        **BALANCE,
+        "naip_water_buffer_m": plan.naip_water_buffer_m,
+    }
 
 
 def layer_settings(plan: ScenePlan) -> dict:
@@ -292,4 +314,5 @@ def default_scene_toml(name: str, bbox: Bounds, profile: str = "sim") -> str:
         f"jpeg_quality = 85\n"
         f"imagery_margin_km = 3\n"
         f"balance = true\n"
+        f"naip_water_buffer_m = 200\n"
     )

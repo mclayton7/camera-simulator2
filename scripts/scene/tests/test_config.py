@@ -144,3 +144,21 @@ def test_naip_discovers_over_the_margin():
     from camsim_scene.sources.naip_pc import NaipPc
 
     assert NaipPc.area_kind == "margin"
+
+
+def test_water_buffer_defaults_and_settings():
+    p = config.parse_scene({"name": "t", "bbox": PENDLETON})
+    assert p.naip_water_buffer_m == 200.0
+    s = config.layer_settings(p)["imagery"]["balance"]
+    assert s["naip_water_buffer_m"] == 200.0 and s["water_fade_m"] == 100.0
+    off = config.parse_scene({"name": "t", "bbox": PENDLETON, "naip_water_buffer_m": 0})
+    assert config.layer_settings(off)["imagery"]["balance"]["naip_water_buffer_m"] == 0.0
+    assert config.parse_scene({"name": "t", "bbox": PENDLETON, "naip_water_buffer_m": 500}).naip_water_buffer_m == 500.0
+    nob = config.parse_scene({"name": "t", "bbox": PENDLETON, "balance": False, "naip_water_buffer_m": 500})
+    assert config.layer_settings(nob)["imagery"]["balance"] is None
+
+
+@pytest.mark.parametrize("bad", [-1, 100, 199.9, 5001, "200", True])
+def test_bad_water_buffer(bad):
+    with pytest.raises(config.ConfigError):
+        config.parse_scene({"name": "t", "bbox": PENDLETON, "naip_water_buffer_m": bad})
