@@ -15,6 +15,8 @@ COPY pyproject.toml uv.lock .python-version README.md ./
 RUN uv sync --frozen --no-dev --no-install-project --python /usr/bin/python3.12
 COPY camsim_scene ./camsim_scene
 RUN uv sync --frozen --no-dev --python /usr/bin/python3.12
+# COPY keeps the host's modes: under umask 027 the sources aren't readable by the `-u` build user.
+RUN chmod -R a+rX /opt/camsim-scene
 ENV PATH=/opt/camsim-scene/.venv/bin:$PATH
 
 WORKDIR /work
