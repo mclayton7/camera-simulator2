@@ -9,8 +9,9 @@ NAIP's own look: Sentinel-2 is adjusted toward NAIP, never the reverse.
 
 Success, on the Camp Pendleton package:
 
-- Where NAIP and the Sentinel-2 composite cover the same land, the median |NAIP − matched Sentinel-2| per 2 km cell
-  is ≤ 5 DN per band (today ~31 DN bias: 31 / 25 / 25 for R / G / B).
+- Where NAIP and the Sentinel-2 composite cover the same land, the cell bias (per 2 km cell, |median(NAIP − matched
+  Sentinel-2)|, held-out samples) has a median over cells ≤ 5 DN per band (today's overall bias: 31 / 25 / 25 DN for
+  R / G / B). It is a bias, not a per-pixel error: per pixel ~15 DN remains from resolution and date alone.
 - The edge sits ≥ `imagery_margin_km` outside the bbox wherever NAIP exists there.
 - R0 gates 3 (byte-identical rebuild) and 4 (`verify --deep`) still pass.
 - Before/after screenshots of the west (San Clemente) and south (Oceanside) edges, reviewed by a human.
@@ -37,7 +38,7 @@ Success, on the Camp Pendleton package:
 
 ### 1. Imagery margin
 
-- New scene key `imagery_margin_km` (float, default 3, range 0–50). `ScenePlan.area("margin")` is the bbox grown by
+- New scene key `imagery_margin_km` (float, default 3, range 0–50, and ≤ `ring_km`). `ScenePlan.area("margin")` is the bbox grown by
   it (`ring_bounds`' rule).
 - New region `margin` between `ring` and `bbox`: max zoom = the bbox's for imagery, the ring's for terrain. Terrain
   depth is unchanged (the highest-detail region a tile overlaps wins, so terrain still reaches bbox depth only
@@ -63,16 +64,19 @@ absent) when the package has no NAIP or `balance` is off.
 - **Offset field.** Grid of 2 km cells (in degrees: 2 km / M_PER_DEG on latitude, the same in longitude ÷ cos(bbox
   centre latitude)), aligned to the ring's south-west corner, covering the ring. Per cell with ≥ 500 kept samples:
   median(NAIP − tone(S2)) per band. Then a 3×3 median filter over fitted cells only. Unfitted cells: the value of
-  the nearest fitted cell (Euclidean on the grid, ties to the lower index), times exp(−d / 10 km), d = distance to
+  the nearest fitted cell (Euclidean on the grid, as `scipy.ndimage.distance_transform_edt` picks it), times exp(−d / 10 km), d = distance to
   that cell's centre. Bilinear between cell centres at sample time.
 - **Applied** to every Sentinel-2 (`wc_s2`) sample at every zoom: DN = clip(round(tone(r) + offset(lon, lat)), 0, 255)
   instead of `_s2_reflectance`. Parents still box-filter their children, so lower zooms inherit it.
-- **File.** `imagery/balance.json`: format version, fit parameters, sample count, the quantile arrays, grid origin /
-  cell size / shape, offsets. All floats rounded (quantiles 1e-6 reflectance, DN to 0.1) before writing, so
-  float-summation order can't change the bytes across machines. It is a package file: in `hashes.txt`, covered by
-  `verify`, and its sha256 joins every imagery leaf's inputs hash (a refit rebuilds the leaves it changes, and
-  parents follow).
-- **Fit report** (log + `build.json`): sample count, held-out MAE and bias per band before and after, cells fitted.
+- **File.** `imagery/balance.json`: format version, source ids, feather width, the quantile arrays, grid origin /
+  cell size / shape, offsets. All values quantised to integer steps (quantiles 0.01 raw DN = 1e-6 reflectance, DN
+  0.1, grid floats 1e-9) before writing, so float-summation order can't change the bytes across machines. It is a
+  package file: in `hashes.txt`, covered by `verify`, and its sha256 joins every imagery leaf's inputs hash (a refit
+  rebuilds every leaf, and parents follow). Workers always read the model back from this file.
+- **Fit report** (log + `build.json`, never `balance.json`, whose bytes must not depend on float statistics): samples
+  fitted / held out, cells fitted, held-out MAE, bias and cell bias (median and p90 over cells) per band before and
+  after, fit seconds (reported separately from the per-tile build time). Held out = lattice nodes with odd (i + j).
+- A rebuild with unchanged inputs skips the fit (a marker under `.state/`, as land cover does).
 
 ### 3. Feather at the NAIP edge
 
@@ -80,8 +84,12 @@ absent) when the package has no NAIP or `balance` is off.
   from NAIP's valid-data edge: w = clip(dist / 200 m, 0, 1), out = w · NAIP + (1 − w) · next. Inside the NAIP group
   first-valid-wins is unchanged (files are identical in overlaps).
 - Distance comes from NAIP's valid mask sampled on a lattice over the tile plus a margin of ≥ 200 m (the terrain
-  layer's margin/`distance_transform_edt` pattern), at most 4 m spacing, bilinearly upsampled to the tile's pixels.
-  Leaves that NAIP covers completely (mask all valid within the margin) skip it: no cost in the interior.
+  layer's margin/`distance_transform_edt` pattern; distance in degrees of latitude on both axes, as terrain), bilinearly
+  upsampled to the tile's pixels. Lattice spacing: the leaf's pixel size, doubled while it stays ≤ 4 m (z17: 2.4 m;
+  z13 and coarser: one pixel), so nodes align across neighbouring tiles.
+- Leaves inside NAIP skip it: when every pixel is NAIP and the tile lies inside the union of NAIP footprints shrunk
+  by 200 m + 500 m (footprints are dilated by one coarse overview pixel), the leaf is NAIP alone. Same bytes as the
+  full path; only faster.
 - Only the NAIP → next transition is feathered. Sentinel-2 → Blue Marble stays as it is.
 
 ### 4. Config
@@ -111,7 +119,8 @@ pytest under `scripts/scene/tests`, synthetic rasters (`tests/rasters.py`), no n
 1. Colour gate: median |NAIP − matched S2| per 2 km cell ≤ 5 DN per band on land (from the fit report, held-out
    half).
 2. Rebuild from the manifest: `hashes.txt` identical (gate 3); `verify --deep` all `ok` (gate 4).
-3. Imagery build time: ≤ 10 % over today per tile (the margin's extra tiles are reported separately).
+3. Imagery build time: ≤ 10 % over today per built tile, same `-j` (the margin's extra tiles and the fit's seconds
+   are reported separately).
 4. Screenshots: west and south edges at z13–z15, before and after; plus a CamSim render looking across the bbox edge
    from altitude. Human review.
 
