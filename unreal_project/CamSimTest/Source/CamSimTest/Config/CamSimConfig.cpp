@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Config/CamSimConfig.h"
+#include "Config/ScenePackage.h"
 #include "CamSimTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -318,6 +319,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			UE_LOG(LogCamSim, Error, TEXT("Failed to parse %s: %hs - using defaults"), *YamlPath, Ex.what());
 			Cfg.bLoadedSuccessfully = false;
 			ApplyEnvOverrides(Cfg);
+			CamSimScene::ResolvePackage(Cfg);
 			return Cfg;
 		}
 
@@ -925,6 +927,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 	}
 
 	ApplyEnvOverrides(Cfg);
+	CamSimScene::ResolvePackage(Cfg);   // after env: CAMSIM_SCENE_DIR may set it
 	return Cfg;
 }
 
@@ -1568,6 +1571,7 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(TEXT("thermal.land_cover.dir is empty (set it, or thermal.land_cover.enabled: false)"));
 	Errors.Append(CamSimLandCover::ValidateClassSpecs(LC.Classes));
 
+	Errors.Append(Scene.ResolveErrors);
 	return Errors;
 }
 
@@ -1606,5 +1610,6 @@ TArray<FString> FCamSimConfig::ValidateWarnings() const
 			}
 		}
 	}
+	Warnings.Append(Scene.ResolveWarnings);
 	return Warnings;
 }
