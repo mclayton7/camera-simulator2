@@ -32,7 +32,7 @@ class NdviFit:
 
     @classmethod
     def make(cls, reference: str, target: str, gain: float, offset: float) -> NdviFit:
-        return cls(reference, target, int(round(gain * MICRO)), int(round(offset * MICRO)))
+        return cls(reference, target, round(gain * MICRO), round(offset * MICRO))
 
     @property
     def gain(self) -> float:
