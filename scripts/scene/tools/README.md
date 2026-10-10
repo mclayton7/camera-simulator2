@@ -7,6 +7,7 @@
 | `water_check.py` | R1 water gate: open-water leaves vs the raw Sentinel-2 decode, uniformity, and (`--before-hashes`) no leaf without water changed |
 | `coast_check.py` | R1 coast gate: package terrain along coast transects vs the drawn sea (EGM96 + `sea_level.json`): offshore below sea, no step at the old 3DEP edge, waterline vs WorldCover, offset vs pyproj; `--before PKG` compares |
 | `ndvi_check.py` | R1 chunk 2 NDVI gates: median NDVI per WorldCover class (plausibility), the bias across NAIP's edge (seam; also with the global fit only and unfitted), `--overview` false-colour PNG |
+| `road_registration.py` | R2 gate 2: OSM road centrelines vs the package's NAIP (z17): a seeded sample of motorway..tertiary asphalt points 50 m clear of junctions, bridges/tunnels and the margin edge, each matched to a dark box of the road's width across a +-30 m luma profile; median \|offset\| <= 10 m passes (`--json`, `--crops DIR` for the worst profiles) |
 | `registration.py` | Phase-correlation shift between a package shot and the CWT shot of the same pose (< 1 px passes) |
 | `camsim_session.py` | Shared by the two launchers: package/ion environment, `run.sh --detach` + CIGI host + `/ready`, `stop.sh` |
 | `offline.sb` | macOS `sandbox-exec` profile blocking ports 80/443 (`render_check.py --offline`, which also sets `CAMSIM_SCENE_OFFLINE=1` and fails on any logged request) |
