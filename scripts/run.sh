@@ -255,6 +255,13 @@ CONFIG_DST="${REPO_ROOT}/unreal_project/CamSimTest/camsim_config.yaml"
 if [ -f "${CONFIG_SRC}" ]; then
     cp -f "${CONFIG_SRC}" "${CONFIG_DST}"
     echo "==> Config: ${CONFIG_DST}"
+    # A packaged game's ProjectDir is the staged one: without its own copy it runs on
+    # the compiled-in defaults (camera_entity_id 0, so the CIGI host's entity 1 never
+    # drives the camera; ROADMAP 1.15). The Docker image COPYs it the same way.
+    if [ "${MODE}" = "packaged" ] && [ "${PLATFORM}" = "linux" ] && [ -d "${STAGED_DIR}" ]; then
+        cp -f "${CONFIG_SRC}" "${STAGED_DIR}/camsim_config.yaml"
+        echo "==> Config: ${STAGED_DIR}/camsim_config.yaml (packaged)"
+    fi
 elif [ ! -f "${CONFIG_DST}" ]; then
     echo "[WARN] No camsim_config.yaml found — entity types will not be loaded."
     echo "       Expected: ${CONFIG_SRC}"
