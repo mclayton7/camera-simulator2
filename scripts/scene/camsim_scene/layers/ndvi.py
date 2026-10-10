@@ -68,7 +68,7 @@ def leaf_ndvi(z, x, y, entries, fit=None, interior=None, water=None, reference="
     ref, rest = imagery.split_reference(entries, reference)
     rn, rok, _ = sample_ndvi(ref, lon, lat, tm)
     if fit is not None:
-        rn = np.where(rok, fit.apply(rn), np.nan)
+        rn = np.where(rok, fit.apply(rn, lon, lat), np.nan)
     allow, dpx = water_allow(z, x, y, water, feather_m)
     if imagery.reference_only(z, x, y, rok, interior, allow):
         return rn

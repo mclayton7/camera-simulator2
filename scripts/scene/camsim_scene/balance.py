@@ -73,6 +73,24 @@ class Grid:
         return cls(d["west"], d["south"], d["cell_lon"], d["cell_lat"], int(d["nx"]), int(d["ny"]))
 
 
+def offset_at(grid: Grid, offsets: np.ndarray, lon, lat) -> np.ndarray:
+    """offsets (bands, ny, nx) at (lon, lat): bilinear between cell centres, clamped at the grid's edge cells."""
+    g = grid
+    fx = np.clip((np.asarray(lon, np.float64) - g.west) / g.cell_lon - 0.5, 0.0, g.nx - 1.0)
+    fy = np.clip((np.asarray(lat, np.float64) - g.south) / g.cell_lat - 0.5, 0.0, g.ny - 1.0)
+    x0 = np.minimum(np.floor(fx).astype(np.int64), max(g.nx - 2, 0))
+    y0 = np.minimum(np.floor(fy).astype(np.int64), max(g.ny - 2, 0))
+    x1, y1 = np.minimum(x0 + 1, g.nx - 1), np.minimum(y0 + 1, g.ny - 1)
+    tx, ty = fx - x0, fy - y0
+    o = offsets
+    return (
+        o[:, y0, x0] * (1 - tx) * (1 - ty)
+        + o[:, y0, x1] * tx * (1 - ty)
+        + o[:, y1, x0] * (1 - tx) * ty
+        + o[:, y1, x1] * tx * ty
+    )
+
+
 @dataclass
 class Balance:
     reference: str
@@ -101,21 +119,7 @@ class Balance:
         return np.stack([np.interp(np.nan_to_num(raw[b]), self.xq[b], self.yq[b]) for b in range(3)])
 
     def offset_at(self, lon, lat) -> np.ndarray:
-        """Bilinear between cell centres, clamped at the grid's edge cells."""
-        g = self.grid
-        fx = np.clip((np.asarray(lon, np.float64) - g.west) / g.cell_lon - 0.5, 0.0, g.nx - 1.0)
-        fy = np.clip((np.asarray(lat, np.float64) - g.south) / g.cell_lat - 0.5, 0.0, g.ny - 1.0)
-        x0 = np.minimum(np.floor(fx).astype(np.int64), max(g.nx - 2, 0))
-        y0 = np.minimum(np.floor(fy).astype(np.int64), max(g.ny - 2, 0))
-        x1, y1 = np.minimum(x0 + 1, g.nx - 1), np.minimum(y0 + 1, g.ny - 1)
-        tx, ty = fx - x0, fy - y0
-        o = self.offsets
-        return (
-            o[:, y0, x0] * (1 - tx) * (1 - ty)
-            + o[:, y0, x1] * tx * (1 - ty)
-            + o[:, y1, x0] * (1 - tx) * ty
-            + o[:, y1, x1] * tx * ty
-        )
+        return offset_at(self.grid, self.offsets, lon, lat)
 
     def apply(self, raw, lon, lat) -> np.ndarray:
         return np.clip(np.rint(self.tone(raw) + self.offset_at(lon, lat)), 0, 255).astype(np.uint8)

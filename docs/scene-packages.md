@@ -24,7 +24,7 @@ Background: [`docs/realism/`](realism/) (data sources, Cesium findings, offline 
   imagery/tilemapresource.xml
   imagery/{z}/{x}/{y}.jpg       # geodetic TMS, 256 px, JPEG q85 4:2:0
   ndvi/tilemapresource.xml      # TMS 1.0, image/png (packages with an NDVI layer)
-  ndvi/fit.json                 # NAIP -> Sentinel-2 NDVI fit
+  ndvi/fit.json                 # NAIP -> Sentinel-2 NDVI fit (gain, offset, 2 km offset grid)
   ndvi/{z}/{x}/{y}.png          # 8-bit grayscale NDVI (0 nodata, 1..255 = -1..+1); tiles without data are absent
   landcover/index.json
   landcover/<lat>_<lon>.png     # the 4B thermal format (0.05° tiles, 600 × 600, 8-bit WorldCover codes)
@@ -253,12 +253,20 @@ mean of the valid child pixels in each 2 x 2 block.
 valid-data edge and is used only within `naip_water_buffer_m` of WorldCover land. Open sea beyond the composite's land
 tiles is nodata.
 
-**Fit (`ndvi/fit.json`).** NAIP NDVI is computed from uncalibrated DN; one linear map, `gain x ndvi + offset` (then
-clamped to [-1, 1]), puts it on Sentinel-2's scale. Least squares on the colour match's 10 m land lattice
-(WorldCover 0 and 80 excluded, even nodes fitted, odd held out, >= 500 samples), stored in integer millionths,
-hashed, and joined to every NDVI leaf's inputs. `build.json` -> `ndvi`: samples, gain, offset, held-out MAE and median
-bias before/after, and the residual median bias per NAIP acquisition date. No shared land: no `fit.json`, NAIP NDVI
-unfitted (warning). A rebuild with unchanged inputs skips the fit.
+**Fit (`ndvi/fit.json`).** NAIP NDVI is computed from uncalibrated DN. Two stages put it on Sentinel-2's scale, both on
+the colour match's 10 m land lattice (WorldCover 0 and 80 excluded, even nodes fitted, odd held out): one linear map,
+`gain x ndvi + offset` (least squares, >= 500 samples), then a smooth offset per 2 km cell: the median residual
+(Sentinel-2 minus fitted NAIP) of each cell with >= 500 samples, 3 x 3 median-filtered and filled outward with a
+10 km decay exactly as the colour match's offsets (`balance.cell_medians`, `fill_offsets`, `offset_at`). Applied to
+NAIP samples only: `clip(gain x ndvi + offset + cell_offset(lon, lat), -1, 1)`; Sentinel-2 is never changed. The
+offset removes the regional residual one global map leaves near NAIP's edge (Pendleton: a +0.047 step before it).
+`fit.json` (format 2) holds integers only: `gain_e6`, `offset_e6`, `grid` (`west_e9`, `south_e9`, `cell_lon_e9`,
+`cell_lat_e9` in nanodegrees, `nx`, `ny`) and `cell_offsets_e6` (`ny` rows of `nx` millionths, row 0 southernmost);
+it is hashed and joined to every NDVI leaf's inputs. `build.json` -> `ndvi`: samples, gain, offset, grid, `cells`
+(fitted) and `cells_filled`, the cell offset range, held-out MAE before / global only / after and median bias
+before/after, and the residual median bias per NAIP acquisition date. No shared land: no `fit.json`, NAIP NDVI
+unfitted (warning). A rebuild with unchanged inputs skips the fit; a package built before the grid refits (and
+rebuilds its NDVI tiles) after `build --replan`.
 
 **Off switch.** `ndvi = false` (the `preview` default): no `ndvi/`; every other file is unchanged. Setting
 `ndvi = true` without `naip_pc` or `wc_s2` in the imagery priorities is an error; without NAIP the layer is
@@ -277,8 +285,9 @@ unknown: NAIP flies with the sun at 30 degrees or more, so its elevation was bet
 limit, not corrected). Sentinel-2 assets record `composite: "2021"` (a year's median: no single sun). Asset metadata
 doesn't feed tile hashes, so re-planning adds it without rebuilding tiles.
 
-**Known limits.** NAIP NDVI is from DN: the fit matches Sentinel-2 on average, not per pixel. One global fit:
-per-flight-date differences are reported, not corrected. NDVI is leaf-on and dated (NAIP flies in the growing
+**Known limits.** NAIP NDVI is from DN: the fit matches Sentinel-2 on average, not per pixel. One global gain:
+regional (per-quad, per-flight-date) differences are removed only as a smooth 2 km offset field, and
+coastal cells with little shared land are extrapolated, not fitted; per-date residuals are reported. NDVI is leaf-on and dated (NAIP flies in the growing
 season; the composite is 2021). Outside NAIP it is 10 m Sentinel-2.
 
 `scripts/scene/tools/ndvi_check.py PKG --cache DIR [--overview OUT.png]` computes the plausibility and seam gates.

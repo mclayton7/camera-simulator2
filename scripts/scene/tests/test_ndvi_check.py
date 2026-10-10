@@ -67,6 +67,7 @@ def test_cli_on_a_synthetic_package(tmp_path, monkeypatch, capsys):
     seam = report["seam"]  # NAIP fitted onto Sentinel-2: no step at its edge; unfitted, NAIP is ~10 % lower
     assert seam["pairs"] > 50 and seam["pairs"] == seam["candidates"]  # exact footprints: 250 m in is pure NAIP
     assert abs(seam["bias"]) <= ndvi_check.SEAM_MAX and seam["bias_unfitted"] is not None
+    assert seam["bias_global"] is not None and abs(seam["bias_global"]) <= ndvi_check.SEAM_MAX  # no regional offset
     assert out.exists()
     # a point inside NAIP's 200 m feather isn't pure NAIP (a dilated footprint puts seam points there)
     from camsim_scene.cache import Cache

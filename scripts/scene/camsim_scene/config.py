@@ -95,6 +95,10 @@ NDVI = {  # NDVI layer (layers/ndvi.py) and its NAIP -> Sentinel-2 fit (ndvi_fit
     "fit_step_m": 10.0,
     "min_samples": 500,
     "exclude_classes": [0, 80],  # WorldCover no data, permanent water
+    "cell_km": BALANCE["cell_km"],  # residual offset cells (ndvi_fit.py): the colour match's grid settings
+    "min_cell_samples": BALANCE["min_cell_samples"],
+    "median_filter": BALANCE["median_filter"],
+    "decay_km": BALANCE["decay_km"],
 }
 NDVI_MAX_ZOOM = 15
 TILE_PX = 256

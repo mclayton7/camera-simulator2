@@ -572,9 +572,12 @@ def _fit_ndvi(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
         out.unlink(missing_ok=True)
         marker.unlink(missing_ok=True)
         return None
+    if "cell_km" not in s:
+        raise BuildError("ndvi: manifest.json was planned before the gridded NDVI fit; re-plan it (build --replan)")
     classes, class_shas = class_rasters(m, ctx.asset_paths)
     shas = sorted(a.sha256 for sid in (s["reference"], s["target"]) for a in m.source(sid).assets) + sorted(class_shas)
-    inputs = inputs_hash(m.layer_settings_hash("ndvi"), __version__, "ndvi_fit", *shas)
+    fmt = f"format{ndvi_fit.FORMAT}"  # a new file format refits even with unchanged settings
+    inputs = inputs_hash(m.layer_settings_hash("ndvi"), __version__, "ndvi_fit", fmt, *shas)
 
     def fit():
         fps = reference_footprints(m, s["reference"])

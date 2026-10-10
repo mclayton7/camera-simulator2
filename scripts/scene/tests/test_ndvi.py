@@ -15,7 +15,7 @@ class Linear:
     def __init__(self, gain, offset):
         self.gain, self.offset = gain, offset
 
-    def apply(self, n):
+    def apply(self, n, lon, lat):
         return self.gain * np.asarray(n) + self.offset
 
 

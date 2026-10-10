@@ -6,7 +6,7 @@ from fake_sources import COAST, NDVI_ZOOM, build_synthetic, coast_scene, fast_fi
 
 from camsim_scene import tiling
 from camsim_scene.layers import imagery, ndvi
-from camsim_scene.pipeline import build_scene
+from camsim_scene.pipeline import BuildError, build_scene
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +30,9 @@ def test_ndvi_layer_is_written_hashed_and_fitted(tmp_path):
     names = hashes(pkg)
     assert "ndvi/fit.json" in names and "ndvi/tilemapresource.xml" in names and "ndvi/10/" in names
     assert info["ndvi"]["fitted"] is True and info["ndvi"]["gain"] == pytest.approx(0.9, abs=0.03)
+    fit = json.loads((pkg / "ndvi/fit.json").read_text())
+    assert fit["format"] == 2 and len(fit["cell_offsets_e6"]) == fit["grid"]["ny"] == info["ndvi"]["grid"]["ny"]
+    assert info["ndvi"]["cells"] > 0 and "cell_offset_max" in info["ndvi"]
     assert info["layers"]["ndvi"]["files"] > 0
     built = json.loads((pkg / "build.json").read_text())
     assert built["ndvi"]["samples_fit"] > 0
@@ -114,3 +117,25 @@ def test_coast_ndvi_is_sentinel2_offshore(tmp_path):
     v, lon, lat = tile(pkg, 13, 10.11, 10.10)
     off = (lon > COAST + 0.004) & (lon < 10.139) & (lat > 10.081) & (lat < 10.119)
     assert np.abs(v[off] - s2_ndvi_truth(lon, lat)[off]).max() < 0.02
+
+
+def test_a_format_1_fit_is_refit(tmp_path):
+    pkg, cache, _ = build_synthetic(tmp_path, ndvi_scene(tmp_path / "src"))
+    before = hashes(pkg)
+    marker = pkg / ".state/ndvi_fit.json"
+    old = b'{"format": 1, "gain_e6": 900000, "offset_e6": 50000, "reference": "naip_pc", "target": "wc_s2"}'
+    (pkg / "ndvi/fit.json").write_bytes(old)  # a Task 4 package: its marker's inputs predate the grid settings
+    rec = json.loads(marker.read_text())
+    marker.write_text(json.dumps({**rec, "inputs": "pre-grid"}))
+    info = build_scene(pkg, cache, jobs=1)
+    assert info["ndvi"]["skipped"] is False and json.loads((pkg / "ndvi/fit.json").read_text())["format"] == 2
+    assert hashes(pkg) == before
+
+
+def test_a_manifest_planned_before_the_grid_asks_for_a_replan(tmp_path):
+    pkg, cache, _ = build_synthetic(tmp_path, ndvi_scene(tmp_path / "src"))
+    m = json.loads((pkg / "manifest.json").read_text())
+    del m["layers"]["ndvi"]["cell_km"]
+    (pkg / "manifest.json").write_text(json.dumps(m))
+    with pytest.raises(BuildError, match="replan"):
+        build_scene(pkg, cache, jobs=1)

@@ -8,8 +8,8 @@ Gate 3 (plausibility): median NDVI per WorldCover class on a lattice over the bb
 shrubland (20) and grassland (30), both above built-up (50) and bare (60), permanent water (80) below 0. Classes with
 fewer than MIN_N samples are reported and left out of the comparisons.
 Gate 4 (seam): land points every --step-m along NAIP's footprint edge, INSIDE_M inside (pure NAIP) and OUTSIDE_M
-outside (pure Sentinel-2): |median(inside - outside)| <= SEAM_MAX. The same median with unfitted NAIP NDVI inside is
-reported beside it. Pairs whose inside point is less than 0.95 INSIDE_M from the edge (near corners) are dropped.
+outside (pure Sentinel-2): |median(inside - outside)| <= SEAM_MAX. The same median with NAIP NDVI
+inside unfitted (bias_unfitted) and with the global fit only, no cell offsets (bias_global), is reported beside it. Pairs whose inside point is less than 0.95 INSIDE_M from the edge (near corners) are dropped.
 The manifest's NAIP footprints are dilated by about one coarse overview pixel (~80 m), so a point INSIDE_M inside
 one can still be in the build's 200 m feather: only pairs whose inside point is pure NAIP (reference weight 1 at the
 deepest NDVI zoom, as the build computes it, water buffer included) are kept ("candidates" counts them before).
@@ -204,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         fps = reference_footprints(m, s["reference"])
         ins, outs = seam_pairs(fps, a.step_m)
         if not ins.shape[1]:
-            report["seam"] = {"candidates": 0, "pairs": 0, "bias": None, "bias_unfitted": None}
+            report["seam"] = {"candidates": 0, "pairs": 0, "bias": None, "bias_global": None, "bias_unfitted": None}
             report["fails"].append("no seam pairs sampled")
             ins = outs = None
     if s["reference"] and ins is not None:
@@ -222,10 +222,13 @@ def main(argv: list[str] | None = None) -> int:
         raw, rok, _ = ndvi.sample_ndvi(ref, ins[0], ins[1], tm)
         kr = keep & rok
         bias = round(float(np.median(vi[keep] - vo[keep])), 4) if keep.any() else None
+        fit = st.ndvi_fit
+        glob = fit.apply_global(raw[kr]) - vo[kr] if fit is not None and kr.any() else None
         report["seam"] = {
             "candidates": candidates,
             "pairs": int(keep.sum()),
             "bias": bias,
+            "bias_global": round(float(np.median(glob)), 4) if glob is not None else None,
             "bias_unfitted": round(float(np.median(raw[kr] - vo[kr])), 4) if kr.any() else None,
         }
         if bias is None:

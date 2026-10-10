@@ -221,7 +221,7 @@ def _ndvi_values(pkg: Path, m: Manifest, st, rng: random.Random, all_tiles: bool
             plon, plat, w, have = lon.ravel()[idx], lat.ravel()[idx], wt[idx], code.ravel()[idx]
             rn, rok, _ = ndvi.sample_ndvi(ref, plon, plat, d * M_PER_DEG)
             if st.ndvi_fit is not None:
-                rn = st.ndvi_fit.apply(rn)
+                rn = st.ndvi_fit.apply(rn, plon, plat)
             sn, sok, _ = ndvi.sample_ndvi(rest, plon, plat, d * M_PER_DEG)
             use_ref = rok & ((w >= 1.0) | ~sok)
             use_rest = sok & (~rok | (w <= 0.0))

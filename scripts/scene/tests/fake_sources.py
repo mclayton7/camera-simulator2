@@ -264,6 +264,7 @@ def fast_fits(mp) -> None:
         (config.BALANCE, "min_cell_samples", 20),
         (config.NDVI, "fit_step_m", 200.0),
         (config.NDVI, "min_samples", 20),
+        (config.NDVI, "min_cell_samples", 20),
     ):
         mp.setitem(d, k, v)
 
