@@ -14,13 +14,25 @@ The zero-sum template B / |B| - I / |I| is correlated against G over integer shi
 the mean G on the shifted road edges minus the mean G on the shifted road interior (DN/m). The interior term matters:
 house fronts and roof edges are stronger than kerbs and run parallel to the street, and B alone locks onto them; a
 road's surface is smooth, a yard or a roof is not. The peak (dE, dN) is where the imagery's roads sit relative to OSM.
-A window is used when peak >= MIN_CONTRAST_DN_PER_M (a featureless window has no edge-vs-interior contrast) and, with
-m = the median of the correlation surface and q95 = its 95th percentile outside PEAK_EXCL_M of the peak,
-(peak - m) >= PROMINENCE x (q95 - m) (an ambiguous, repetitive window); otherwise it is excluded and counted. The
-ratio alone can't reject noise (pure noise scores 1.6-2.1), hence the floor. Windows with more than MAX_NAN_FRAC of
-their imagery missing are excluded too.
-Gate: median |shift| (Euclidean) <= GATE_M. The report also gives p90 and the signed mean (dE, dN), where a systematic
-OSM offset would show. `--overlays DIR` writes G with B at zero shift (red) and at the found shift (green) for the
+A window is used unless, in this order (the first failing clause is its `reason`):
+  "no road interior"     |I| < MIN_INTERIOR_FRAC x |B|: the roads are too narrow for an interior, and without one
+                         the template is not zero-sum (a flat surface could clear the floor);
+  "low contrast"         peak < MIN_CONTRAST_DN_PER_M: a featureless window has no edge-vs-interior contrast;
+  "peak at search edge"  the peak is within EDGE_MARGIN_M of the +-SEARCH_M border: unresolved, the true shift may
+                         lie beyond the search range;
+  "not prominent"        with m = the median of the correlation surface and q95 = its 95th percentile outside
+                         PEAK_EXCL_M of the peak, (peak - m) < PROMINENCE x (q95 - m): a ridge (straight parallel
+                         roads, where shifts along them score alike) or no clear peak.
+The prominence ratio alone can't reject noise (pure noise scores 1.6-2.1), hence the floor. Windows with more than
+MAX_NAN_FRAC of their imagery missing are excluded ("imagery missing"). `second` (the best other local maximum outside
+PEAK_EXCL_M) is reported per window as a diagnostic only.
+Aperture limit: the rule does not reject a periodic street grid (equal peaks one block apart score ~2.0, see
+test_periodic_grid_is_not_rejected), and a window dominated by one road direction can slide along that road or onto
+a parallel carriageway. Such windows make the p90 tail (I-5 at Pendleton: 14 m, one carriageway onto the next) while
+their zero-shift overlays show OSM on the road; the median is robust to them.
+Gate: median |shift| (Euclidean) <= GATE_M over the used windows, and only with enough evidence: at least
+MIN_USED_WINDOWS used and at least MIN_USED_FRAC of the windows tried (else FAIL with the reason). The report also gives
+p90, the signed mean (dE, dN), where a systematic OSM offset would show, and the exclusions by reason. `--overlays DIR` writes G with B at zero shift (red) and at the found shift (green) for the
 windows with the largest and the smallest shifts. Exits 1 when the gate fails."""
 
 from __future__ import annotations
@@ -47,6 +59,10 @@ MAX_WINDOWS = 60
 INTERIOR_INSET_M = 1.5  # the road interior I is the road surface this far inside its edges
 MIN_CONTRAST_DN_PER_M = 1.0  # peak: mean G on the edges minus mean G on the interior
 PROMINENCE = 1.25
+MIN_INTERIOR_FRAC = 0.1  # |I| / |B| below this: no usable road interior (roads under ~3 m wide); real roads >= 0.5
+MIN_USED_WINDOWS = 20  # the gate needs at least this many used windows
+MIN_USED_FRAC = 0.5  # ... and at least this fraction of the windows tried
+EDGE_MARGIN_M = 1.0  # a peak this close to the +-SEARCH_M border is unresolved (the true shift may lie beyond)
 PEAK_EXCL_M = 5.0
 MAX_NAN_FRAC = 0.01
 ZOOM = 17
@@ -180,22 +196,45 @@ def window_shift(g_ext: np.ndarray, b: np.ndarray, interior: np.ndarray, res: fl
     """Correlate the zero-sum template T = B / |B| - I / |I| (the window) against G (the window plus search_m on every
     side; both row 0 = north) over every integer shift: c = mean G on the shifted road edges - mean G on the shifted
     road interior, in DN/m. Returns {dE, dN (m: where the imagery's roads sit relative to OSM), peak, median, q95,
-    used}; `used` is the prominence rule (module docstring)."""
+    second, used, reason}: `used` and `reason` follow the acceptance rule (module docstring), first failing clause."""
+    from scipy.ndimage import maximum_filter
     from scipy.signal import correlate
 
     m = int(round(search_m / res))
     nb, ni = int(b.sum()), int(interior.sum())
-    if nb == 0:
-        return {"dE": 0.0, "dN": 0.0, "peak": 0.0, "median": 0.0, "q95": 0.0, "used": False}
-    t = b / nb - (interior / ni if ni else 0.0)
+    if nb == 0 or ni < MIN_INTERIOR_FRAC * nb:  # a token interior (junction blobs) isn't a zero-sum template
+        z = {"dE": 0.0, "dN": 0.0, "peak": 0.0, "median": 0.0, "q95": 0.0, "second": 0.0}
+        return {**z, "used": False, "reason": "no road edges" if nb == 0 else "no road interior"}
+    t = b / nb - interior / ni
     c = correlate(np.asarray(g_ext, np.float64), t, mode="valid", method="fft")  # c[i, j] = sum t * g[i:, j:]
     i, j = np.unravel_index(int(np.argmax(c)), c.shape)
     yy, xx = np.indices(c.shape)
     outside = np.hypot(yy - i, xx - j) * res > PEAK_EXCL_M
     peak, med = float(c[i, j]), float(np.median(c))
     q95 = float(np.percentile(c[outside], 95)) if outside.any() else peak
-    used = bool(peak >= MIN_CONTRAST_DN_PER_M and peak - med >= PROMINENCE * (q95 - med))
-    return {"dE": (j - m) * res, "dN": -(i - m) * res, "peak": peak, "median": med, "q95": q95, "used": used}
+    local_max = (maximum_filter(c, size=3, mode="nearest") == c) & outside  # diagnostic: the best other candidate
+    second = float(c[local_max].max()) if local_max.any() else med
+    de, dn = (j - m) * res, -(i - m) * res
+    if peak < MIN_CONTRAST_DN_PER_M:
+        reason = "low contrast"
+    elif max(abs(de), abs(dn)) >= search_m - EDGE_MARGIN_M:
+        reason = "peak at search edge"
+    elif not peak - med >= PROMINENCE * (q95 - med):
+        reason = "not prominent"
+    else:
+        reason = None
+    r = {"dE": de, "dN": dn, "peak": peak, "median": med, "q95": q95, "second": second}
+    return {**r, "used": reason is None, "reason": reason}
+
+
+def gate(shifts_used, n_tried: int) -> tuple[bool, str | None]:
+    """(pass, reason when not): median |shift| <= GATE_M over the used windows, given enough evidence (at least
+    MIN_USED_WINDOWS used, and at least MIN_USED_FRAC of the n_tried windows)."""
+    n = len(shifts_used)
+    if n < MIN_USED_WINDOWS or n < MIN_USED_FRAC * n_tried:
+        return False, f"too few windows used: {n} of {n_tried} (need >= {MIN_USED_WINDOWS} and >= {MIN_USED_FRAC:.0%})"
+    med = float(np.median(shifts_used))
+    return (True, None) if med <= GATE_M else (False, f"median |shift| {med:.2f} m > {GATE_M:.0f} m")
 
 
 def measure_window(sampler: TmsSampler, roads, win: dict) -> dict:
@@ -222,8 +261,6 @@ def measure_window(sampler: TmsSampler, roads, win: dict) -> dict:
     r = window_shift(g, b, interior, RES_M, SEARCH_M)
     out.update({k: (round(v, 3) if isinstance(v, float) else v) for k, v in r.items()})
     out["shift_m"] = round(math.hypot(r["dE"], r["dN"]), 3)
-    if not r["used"]:
-        out["reason"] = "not prominent"
     out["_g"], out["_b"] = g, b
     return out
 
@@ -261,6 +298,7 @@ def run(pkg: Path, cache_root: Path | None, n_windows: int, seed: int, overlays:
     used = [r for r in rows if r["used"]]
     sh = np.array([r["shift_m"] for r in used])
     med = float(np.median(sh)) if sh.size else None
+    ok, why = gate(sh, len(rows))
     report = {
         "pkg": str(pkg),
         "seed": seed,
@@ -275,6 +313,9 @@ def run(pkg: Path, cache_root: Path | None, n_windows: int, seed: int, overlays:
             "INTERIOR_INSET_M": INTERIOR_INSET_M,
             "MIN_CONTRAST_DN_PER_M": MIN_CONTRAST_DN_PER_M,
             "PROMINENCE": PROMINENCE,
+            "EDGE_MARGIN_M": EDGE_MARGIN_M,
+            "MIN_USED_WINDOWS": MIN_USED_WINDOWS,
+            "MIN_USED_FRAC": MIN_USED_FRAC,
             "PEAK_EXCL_M": PEAK_EXCL_M,
         },
         "n_windows": len(rows),
@@ -285,7 +326,11 @@ def run(pkg: Path, cache_root: Path | None, n_windows: int, seed: int, overlays:
         "mean_dE_m": float(np.mean([r["dE"] for r in used])) if used else None,
         "mean_dN_m": float(np.mean([r["dN"] for r in used])) if used else None,
         "gate_m": GATE_M,
-        "pass": med is not None and med <= GATE_M,
+        "pass": ok,
+        "fail_reason": why,
+        "excluded_by": {
+            k: sum(1 for r in rows if r.get("reason") == k) for k in sorted({r.get("reason") for r in rows} - {None})
+        },
         "roads": len(roads),
         "windows": [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows],
     }
@@ -314,7 +359,7 @@ def main(argv=None) -> int:
     print(
         f"road registration: median |shift| {fmt(r['median_shift_m'])}, p90 {fmt(r['p90_shift_m'])}, "
         f"mean (dE, dN) ({fmt(r['mean_dE_m'])}, {fmt(r['mean_dN_m'])}), windows used {r['n_used']}, "
-        f"excluded {r['n_excluded']} -> {'PASS' if r['pass'] else 'FAIL'} (gate {GATE_M:.0f} m)"
+        f"excluded {r['n_excluded']} {r['excluded_by']} -> {'PASS' if r['pass'] else 'FAIL: ' + r['fail_reason']}"
     )
     if a.json:
         a.json.parent.mkdir(parents=True, exist_ok=True)
