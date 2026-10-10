@@ -42,7 +42,34 @@ SHOTS = {
     "bbox_edge": P(lat=33.430, lon=-117.560, alt=3000, yaw=270, gimbal_pitch=-15, fov_h=60),  # across the NAIP edge
     "sea_offshore": P(lat=33.215, lon=-117.410, alt=600, yaw=240, gimbal_pitch=-30, fov_h=50),  # shore -> open sea
     "slant_ne_ir": P(lat=33.205, lon=-117.405, alt=800, yaw=45, gimbal_pitch=-20, fov_h=40, sensor_id=1),
+    # along the beach, out to sea
+    "coast_low": P(lat=33.300, lon=-117.470, alt=300, yaw=225, gimbal_pitch=-15, fov_h=50),
+    "coast_waves": P(lat=33.300, lon=-117.470, alt=300, yaw=225, gimbal_pitch=-15, fov_h=50),
 }
+# Ocean state has no CIGI control for Beaufort (ocean_check.py sets it by CAMSIM_OCEAN_BEAUFORT too), so these
+# shots run in a second CamSim session with that env set.
+BEAUFORT_SHOTS = {"coast_waves": "5"}
+GATE_TIMEOUT_TEXT = "terrain gate timed out"  # CamSimStreamingController.cpp (FTerrainReadinessGate, 30 s)
+
+
+def gate_timeout_lines(log: Path) -> list[str]:
+    """Log lines where the terrain readiness gate opened on its timeout instead of on loaded tiles."""
+    if not log.exists():
+        return []
+    return [ln for ln in log.read_text(errors="replace").splitlines() if GATE_TIMEOUT_TEXT in ln]
+
+
+def fly(host, shots: dict, out: Path, res: dict) -> None:
+    """Fly each shot: wait for terrain, time the wait, save the snapshot."""
+    for name, pose in shots.items():
+        host.pose = pose
+        time.sleep(1.0)
+        t = time.time()
+        ok = rb.wait_terrain(90)
+        res[name] = {"terrain_ready": ok, "ready_s": round(time.time() - t, 1)}
+        time.sleep(rb.SHOT_SETTLE_S + 2)
+        rb.fetch_snapshot(out / f"{name}.png")
+        print(name, ok, res[name]["ready_s"], flush=True)
 
 
 def main() -> int:
@@ -57,22 +84,33 @@ def main() -> int:
     a.out.mkdir(parents=True, exist_ok=True)
     res: dict = {"mode": a.mode, "offline": a.offline}
     t0 = time.time()
-    with camsim(env_for(a.mode, a.pkg and a.pkg.resolve()), SHOTS["nadir_2km"], a.offline) as host:
+    env = env_for(a.mode, a.pkg and a.pkg.resolve())
+    main_shots = {n: p for n, p in SHOTS.items() if n not in BEAUFORT_SHOTS}
+    netlines: list[str] = []
+    timeouts: list[str] = []
+    with camsim(env, SHOTS["nadir_2km"], a.offline) as host:
         res["ready_s"] = round(time.time() - t0)
-        for name, pose in SHOTS.items():
-            host.pose = pose
-            time.sleep(1.0)
-            ok = rb.wait_terrain(90)
-            time.sleep(rb.SHOT_SETTLE_S + 2)
-            rb.fetch_snapshot(a.out / f"{name}.png")
-            res[name] = {"terrain_ready": ok}
-            print(name, ok, flush=True)
+        fly(host, main_shots, a.out, res)
         metrics = (rb.http_text("/metrics") or "").splitlines()
         res["metrics"] = [m for m in metrics if "tile" in m.lower() or "terrain" in m.lower()][:20]
-    res["network_lines"] = network_lines(LOG)[:20]
+    # each session's launch replaces the log, so collect before the next one starts
+    netlines += network_lines(LOG)
+    timeouts += gate_timeout_lines(LOG)
+    for beaufort in sorted(set(BEAUFORT_SHOTS.values())):
+        shots = {n: SHOTS[n] for n, b in BEAUFORT_SHOTS.items() if b == beaufort}
+        with camsim(dict(env, CAMSIM_OCEAN_BEAUFORT=beaufort), next(iter(shots.values())), a.offline) as host:
+            fly(host, shots, a.out, res)
+        netlines += network_lines(LOG)
+        timeouts += gate_timeout_lines(LOG)
+    res["network_lines"] = netlines[:20]
+    res["gate_timeouts"] = timeouts
     (a.out / "result.json").write_text(json.dumps(res, indent=1))
     if a.offline and res["network_lines"]:
         print("FAIL: offline run logged network use:", *res["network_lines"], sep="\n  ")
+        return 1
+    not_ready = [n for n in SHOTS if not res.get(n, {}).get("terrain_ready")]
+    if res["gate_timeouts"] or not_ready:
+        print("FAIL: terrain gate timeouts:", len(res["gate_timeouts"]), "; shots not ready:", not_ready)
         return 1
     return 0
 

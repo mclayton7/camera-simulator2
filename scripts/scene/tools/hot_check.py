@@ -22,6 +22,8 @@ from camsim_session import Pose, camsim, env_for, rb  # also puts scripts/ on sy
 
 # isort: split
 import check_cigi_responses as ccr
+import ocean_check
+from coast_check import egm96
 
 POINTS = [  # five near Oceanside (1 m D24), two in the base interior (1/3" only)
     (33.2100, -117.3700),
@@ -34,6 +36,9 @@ POINTS = [  # five near Oceanside (1 m D24), two in the base interior (1/3" only
     (33.3800, -117.4200),
     (33.3600, -117.3950),  # was 33.42 -117.35: ~20 m relief within 10 m, where 1.5 m of offset is 3 m of height
 ]
+# >= 2 km offshore, inside the bbox
+SEA_POINTS = [(33.2100, -117.4300), (33.3000, -117.5000), (33.3700, -117.5900)]
+SEA_LIMIT_M = 0.05
 LIMIT_M = {"1m": 0.25, '1/3"': 1.0}
 CIGI_RESPONSE_PORT = 8889
 
@@ -67,6 +72,27 @@ def frame_centres(sock: socket.socket, seconds: float) -> list[dict]:
     return got
 
 
+def hat_hot(host, sock: socket.socket, rid: int, lat: float, lon: float, seconds: float = 3.0) -> dict | None:
+    """One-shot HAT/HOT request (opcode 24, extended) and its response (opcode 103) with the same ID."""
+    ocean_check.send_packets(host, ocean_check.pack_hat_hot_request(rid, lat, lon, req_type=2))
+    t_end = time.time() + seconds
+    while time.time() < t_end:
+        try:
+            d = sock.recv(65536)
+        except TimeoutError:
+            continue
+        for r in ccr.parse_responses(d)["hat_hot"]:
+            if r["op"] == 103 and r["id"] == rid and r["valid"]:
+                return r
+    return None
+
+
+def sea_offset(pkg: Path | None) -> float:
+    """sea_level.json offset_m (local MSL - EGM96) of the package; 0 on ion or when absent."""
+    p = pkg and pkg / "sea_level.json"
+    return float(json.loads(p.read_text())["offset_m"]) if p and p.exists() else 0.0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mode", choices=["package", "cwt"])
@@ -79,9 +105,11 @@ def main() -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", CIGI_RESPONSE_PORT))
     sock.settimeout(0.5)
-    out = []
+    out, hots, sea = [], [], []
+    offset = sea_offset(a.pkg)
+    rid = 100
     start = Pose(lat=POINTS[0][0], lon=POINTS[0][1], alt=1500, gimbal_pitch=-90, fov_h=20)
-    with camsim(env_for(a.mode, a.pkg and a.pkg.resolve()), start) as host:
+    with camsim({**env_for(a.mode, a.pkg and a.pkg.resolve()), "CAMSIM_OCEAN_BEAUFORT": "0"}, start) as host:
         for lat, lon in POINTS:
             host.pose = Pose(lat=lat, lon=lon, alt=1500, gimbal_pitch=-90, fov_h=20)
             time.sleep(1)
@@ -105,8 +133,51 @@ def main() -> int:
             }
             print(f"{lat:.4f} {lon:.4f} {src:5s} err {err:+.2f} m {'PASS' if rec['pass'] else 'FAIL'}", flush=True)
             out.append(rec)
-    ok = bool(out) and all(r["pass"] for r in out)
-    Path(f"hot_{a.mode}.json").write_text(json.dumps({"points": out, "pass": ok}, indent=1))
+            rid += 1
+            r = hat_hot(host, sock, rid, lat, lon)
+            if r is None:
+                hots.append({"pt": [lat, lon], "error": "no HAT/HOT response", "pass": False})
+                print(f"{lat:.4f} {lon:.4f} HOT no response FAIL", flush=True)
+                continue
+            t, src = truth(lat, lon, a.onem, a.third)
+            err = r["hot"] - t
+            hots.append(
+                {
+                    "pt": [lat, lon],
+                    "hot": round(r["hot"], 2),
+                    "truth": round(t, 2),
+                    "src": src,
+                    "err_m": round(err, 2),
+                    "pass": abs(err) <= LIMIT_M[src],
+                }
+            )
+            print(f"{lat:.4f} {lon:.4f} HOT {src:5s} err {err:+.2f} m {'PASS' if hots[-1]['pass'] else 'FAIL'}", flush=True)
+        for lat, lon in SEA_POINTS:
+            host.pose = Pose(lat=lat, lon=lon, alt=1500, gimbal_pitch=-90, fov_h=20)
+            time.sleep(1)
+            rb.wait_terrain(90)
+            time.sleep(1)
+            rid += 1
+            r = hat_hot(host, sock, rid, lat, lon)
+            expected = egm96(lat, lon) + offset
+            if r is None:
+                sea.append({"pt": [lat, lon], "expected": round(expected, 3), "error": "no HAT/HOT response", "pass": False})
+                print(f"{lat:.4f} {lon:.4f} sea no response FAIL", flush=True)
+                continue
+            err = r["hot"] - expected
+            sea.append(
+                {
+                    "pt": [lat, lon],
+                    "hot": round(r["hot"], 3),
+                    "expected": round(expected, 3),
+                    "offset_m": offset,
+                    "err_m": round(err, 3),
+                    "pass": abs(err) <= SEA_LIMIT_M,
+                }
+            )
+            print(f"{lat:.4f} {lon:.4f} sea HOT {r['hot']:.3f} expected {expected:.3f} {'PASS' if sea[-1]['pass'] else 'FAIL'}", flush=True)
+    ok = bool(out) and all(r["pass"] for r in out + hots + sea) and len(sea) == len(SEA_POINTS)
+    Path(f"hot_{a.mode}.json").write_text(json.dumps({"points": out, "hot": hots, "sea": sea, "pass": ok}, indent=1))
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 
