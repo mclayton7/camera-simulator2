@@ -232,9 +232,18 @@ Limits:
   offshore where the package has no land-cover tile.
 - Entities report 0: they have no collision today, so neither query hits one, and a
   hit on one would still report 0.
-- The lookup keeps up to 16 tiles; a miss decodes one PNG tile (600 × 600) on the game
-  thread, so the first query in a new 0.05° tile stalls that tick for the decode
-  (not measured; the cache bounds how often it happens).
+- The lookup keeps up to 64 tiles (about 0.4° square, ~23 MB); a miss decodes one PNG
+  tile (600 × 600) on the game thread, 2–4 ms on an M1 Pro. At most 2 misses load per
+  tick: a query past that budget reports 0 for a tile not loaded yet, and a later query
+  loads it. A cached lookup costs about 0.3–0.6 µs.
+- Measured 2026-10-10 (M1 Pro, Pendleton package, 900 HAT/HOT extended queries per
+  second, camera 20 km up): queries clustered within ~1 km add nothing measurable to
+  the lookups; queries scattered over ~33 km took the game thread from p99 2.8 ms to
+  55.9 ms (29.1 fps) with the earlier 16-tile cache and no budget, and to p99 3.4 ms
+  (30 fps) with the 64-tile cache and budget. In that run 90 queries in the first 5 s
+  reported 0 while their tiles loaded, then none. Each `CIGI material codes:` log line
+  (every 5 s while queries arrive) gives lookups, tile loads, deferred queries and
+  timings.
 
 ---
 

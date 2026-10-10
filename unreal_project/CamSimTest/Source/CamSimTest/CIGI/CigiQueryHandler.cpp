@@ -45,6 +45,7 @@ void FCigiQueryHandler::Tick(float DeltaTime)
 	const FCamSimGeospatialProvider* GeoProvider = Subsystem->GetGeospatialProvider();
 	if (!GeoProvider || !GeoProvider->IsAvailable(World)) return;
 
+	if (FLandCoverCodeLookup* Lookup = Subsystem->GetLandCoverLookup()) Lookup->BeginTick();
 	ProcessHatHotRequests(World, *GeoProvider);
 	ProcessLosSegRequests(World, *GeoProvider);
 	ProcessLosVectRequests(World, *GeoProvider);
@@ -67,8 +68,8 @@ void FCigiQueryHandler::Tick(float DeltaTime)
 			if (S.Calls > 0)
 			{
 				UE_LOG(LogCamSim, Log,
-					TEXT("CIGI material codes: %d lookups, %d tile loads, %.1f us mean, max %.1f us cached, max %.2f ms loading"),
-					S.Calls, S.Loads, 1e6 * S.TotalSec / S.Calls, 1e6 * S.MaxHitSec, 1e3 * S.MaxLoadSec);
+					TEXT("CIGI material codes: %d lookups, %d tile loads, %d deferred (answered 0), %.1f us mean, max %.1f us cached, max %.2f ms loading"),
+					S.Calls, S.Loads, S.Deferred, 1e6 * S.TotalSec / S.Calls, 1e6 * S.MaxHitSec, 1e3 * S.MaxLoadSec);
 			}
 		}
 	}

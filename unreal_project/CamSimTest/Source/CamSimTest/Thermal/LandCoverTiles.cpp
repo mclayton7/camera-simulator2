@@ -212,6 +212,14 @@ TArray<FString> FLandCoverTileCache::TakeWarnings()
 	return Out;
 }
 
+bool FLandCoverTileCache::IsResident(int32 LatIndex, int32 LonIndex) const
+{
+	const FIntPoint Key(LatIndex, LonIndex);
+	if (!bValid || !Index.Files.Contains(Key)) return true;
+	FScopeLock L(&Lock);
+	return Cache.Contains(Key) || Failed.Contains(Key);
+}
+
 int32 FLandCoverTileCache::NumCached() const
 {
 	FScopeLock L(&Lock);

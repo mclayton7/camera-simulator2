@@ -1838,7 +1838,9 @@ reads cooler than its verge (the gate (r) finding); warp wobble and verge wideni
 vector road codes their class albedo in the fast term instead of the imagery luminance, and stop dry verges refining to
 `bare_soil`; both are `ThermalCS` changes, so they belong with NDVI); large dark IR patches over I-5 and the runway grass
 that are absent from EO (cloud shadow through the solar term vs WorldCover tree cells: cause unverified); NDVI in
-`ThermalCS` (moved to its own spec), 3DHP when per-unit downloads exist.
+`ThermalCS` (moved to its own spec), 3DHP when per-unit downloads exist. **CIGI material-code lookup profiled** (2026-10-10, M1 Pro): cached lookups 0.3–0.6 µs; a tile miss decodes a PNG on the game thread
+(2–4 ms), and 900 queries/s scattered over ~33 km drove game-thread p99 to 55.9 ms (29.1 fps) with a 16-tile cache. Now 64 tiles
+and at most 2 loads per tick (a query past the budget answers 0 until its tile loads): p99 3.4 ms, 30 fps (`docs/terrain-feedback.md`).
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

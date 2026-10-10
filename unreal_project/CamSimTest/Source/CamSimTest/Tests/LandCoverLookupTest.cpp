@@ -39,12 +39,40 @@ bool FLandCoverLookupEdgesTest::RunTest(const FString& Parameters)
 	const double Pts[][2] = { { 33.35, -117.45 }, { 33.30, -117.45 }, { 0.025, 180.0 }, { 0.025, -180.0 }, { 0.025, 179.99999 } };
 	for (const auto& P : Pts)
 	{
+		L.BeginTick();   // one point per tick: the points span four tiles, past the per-tick load budget
 		FIntPoint Tile, In;
 		CamSimLandCover::CellToTile(CamSimLandCover::GlobalCell(P[0], P[1]), Tile, In);
 		const bool bHasTile = (Tile == FIntPoint(666, -2350)) || (Tile == FIntPoint(666, -2349)) || (Tile == FIntPoint(0, 3599)) || (Tile == FIntPoint(0, -3600));
 		const int32 Expected = bHasTile ? (In.Y + 3 * In.X) % 101 : 0;
 		TestEqual(*FString::Printf(TEXT("(%.5f, %.5f)"), P[0], P[1]), static_cast<int32>(L.Code(P[0], P[1])), Expected);
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandCoverLookupLoadBudgetTest, "CamSim.Thermal.LandCover.CodeLookup.LoadBudget",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FLandCoverLookupLoadBudgetTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSimLandCoverTest;
+	const FString Dir = TempDir(TEXT("CodeLookupBudget"));
+	TArray<uint8> Road; Road.Init(200, TilePx * TilePx);
+	// Three tiles side by side along 33.30 N: -117.50, -117.45, -117.40.
+	WriteTileDir(Dir, { FTestTile{ 666, -2350, Road }, FTestTile{ 666, -2349, Road }, FTestTile{ 666, -2348, Road } });
+	FLandCoverCodeLookup L;
+	L.Configure(Dir);
+	static_assert(FLandCoverCodeLookup::MaxLoadsPerTick == 2, "the test spends a budget of two loads");
+	const double Lat = 33.32, Lons[] = { -117.48, -117.43, -117.38 };
+	L.BeginTick();
+	TestEqual(TEXT("1st load"), static_cast<int32>(L.Code(Lat, Lons[0])), 200);
+	TestEqual(TEXT("2nd load"), static_cast<int32>(L.Code(Lat, Lons[1])), 200);
+	TestEqual(TEXT("3rd tile deferred"), static_cast<int32>(L.Code(Lat, Lons[2])), 0);
+	TestEqual(TEXT("cached tiles still answer"), static_cast<int32>(L.Code(Lat, Lons[0])), 200);
+	TestEqual(TEXT("no tile: no load, 0"), static_cast<int32>(L.Code(10.0, 10.0)), 0);
+	const FLandCoverLookupStats S = L.TakeStats();
+	TestEqual(TEXT("loads"), S.Loads, 2);
+	TestEqual(TEXT("deferred"), S.Deferred, 1);
+	L.BeginTick();
+	TestEqual(TEXT("next tick loads it"), static_cast<int32>(L.Code(Lat, Lons[2])), 200);
 	return true;
 }
 

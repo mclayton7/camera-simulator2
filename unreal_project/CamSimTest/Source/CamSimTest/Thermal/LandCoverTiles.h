@@ -54,6 +54,8 @@ public:
 	const FLandCoverIndex& GetIndex() const { return Index; }
 	bool HasTile(int32 LatIndex, int32 LonIndex) const { return Index.Files.Contains(FIntPoint(LatIndex, LonIndex)); }
 
+	/** True when Get() would not touch the disk: the tile is cached, failed before, or is not in the index. Any thread. */
+	bool IsResident(int32 LatIndex, int32 LonIndex) const;
 	/** The tile, or null when it is not in the index or failed to load. Any thread. */
 	TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe> Get(int32 LatIndex, int32 LonIndex);
 	/** Warnings since the last call: at most one line, the number of tiles that failed since then (each tile counted once),

@@ -31,6 +31,16 @@ uint8 FLandCoverCodeLookup::Code(double LatDeg, double LonDeg)
 	const int32 Loads0 = Cache->NumLoads();
 	FIntPoint Tile, In;   // Tile = (LatIndex, LonIndex); In = (column, row), row 0 = north
 	CamSimLandCover::CellToTile(CamSimLandCover::GlobalCell(LatDeg, LonDeg), Tile, In);
+	if (!Cache->IsResident(Tile.X, Tile.Y))
+	{
+		if (LoadsThisTick >= MaxLoadsPerTick)
+		{
+			++Stats.Calls;
+			++Stats.Deferred;
+			return 0;
+		}
+		++LoadsThisTick;
+	}
 	const TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe> T = Cache->Get(Tile.X, Tile.Y);
 	Warnings.Append(Cache->TakeWarnings());
 	const uint8 Result = T.IsValid() ? T->Codes[In.Y * FLandCoverTileCache::TilePx + In.X] : 0;
