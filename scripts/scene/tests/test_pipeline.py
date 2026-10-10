@@ -386,10 +386,12 @@ def test_features_burn_into_tiles_and_legend(tmp_path, monkeypatch):
     build()
     index = json.loads((pkg / "landcover" / "index.json").read_text())
     assert index["codes"] == {"200": "paved_asphalt"}
-    assert index["credits"] == ["© OSM"]
+    assert len(index["credits"]) == 1 and index["credits"][0].startswith("© OSM\nLicence: Open Database License")
     burned = sum(int((np.array(Image.open(pkg / "landcover" / t["file"])) == 200).sum()) for t in index["tiles"])
     assert burned > 300  # ~3.3 km of road at ~1 texel per 7.8 m column
-    assert "© OSM" in (pkg / "landcover" / "ATTRIBUTION.txt").read_text()
+    attribution = (pkg / "landcover" / "ATTRIBUTION.txt").read_text()
+    assert "© OSM" in attribution and "ODbL" in attribution and "OSM-derived" in attribution
+    assert "CC BY 4.0" in attribution  # WorldCover's own line stays
 
 
 def test_features_settings_change_rebuilds_landcover(tmp_path, monkeypatch):

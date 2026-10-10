@@ -46,7 +46,7 @@ from .engine import (
 )
 from .fsutil import atomic_write, normalise_modes, sha256_file
 from .layers import imagery, landcover, ndvi, terrain
-from .licences import DEFAULT_ALLOW, attribution_text, check_allowed
+from .licences import DEFAULT_ALLOW, attribution_text, check_allowed, layer_credit
 from .manifest import STATE_DIR, AssetRecord, Manifest, SourceRecord, canonical_json, write_hashes
 from .net import Http
 from .qmesh import layer_json
@@ -570,8 +570,11 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     paths = {a.url: Path(ctx.asset_paths[f"{rec.id}/{a.id}"]) for a in rec.assets}
     shas = sorted(a.sha256 for a in rec.assets)
     fs = lc.get("features")
+    credits = None
     if fs:  # REALISM R2: the feature extracts are inputs too (their settings are in the layer settings hash)
         shas += sorted(a.sha256 for sid in fs["sources"] for a in m.source(sid).assets)
+        credits = [layer_credit(m.source(sid).attribution, m.source(sid).licence) for sid in fs["sources"]]
+        shas += credits  # the layer's own notice is an output too
     inputs = inputs_hash(m.layer_settings_hash("landcover"), __version__, *shas)
     marker, index_path = pkg / STATE_DIR / "landcover.json", out / "index.json"
     prev = json.loads(marker.read_text()) if marker.exists() else None
@@ -587,7 +590,6 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         bounds = tuple(lc["bounds"])
         if fs:
             feats = _load_features(m, ctx)  # in the main process: the cut's process needs no cache
-            credits = [m.source(sid).attribution for sid in fs["sources"]]
             index, st.peak_rss_mb = _run_isolated(_cut_landcover, bounds, out, paths, feats, tuple(fs["area"]), credits)
         else:
             index, st.peak_rss_mb = _run_isolated(_cut_landcover, bounds, out, paths)
