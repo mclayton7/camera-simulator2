@@ -25,8 +25,12 @@ NAIP disc around piers; the turquoise shelf outline (ocean, not imagery). **R1 c
 accepted on Pendleton 2026-10-10** (`docs/scene-packages.md`, "Measured"): a 7,043-tile, 264 MB `ndvi/` layer whose
 global fit left a +0.0472 seam bias at NAIP's footprint edge, fixed by a gridded offset (seam 0.0000, held-out MAE
 0.0687, per-date bias within 0.003); sun elevation/window recorded per NAIP asset (70-79 deg at noon);
-`-j 1`/`-j 6` and off-switch checks identical. Next: the rest of R1 (coastline vs sea level, Linux/Docker `file://`,
-R1 gates).
+`-j 1`/`-j 6` and off-switch checks identical. **R1 complete on macOS on Pendleton 2026-10-10**
+(`docs/scene-packages.md`, "Measured"): the seabed is NOAA SD 1/3" + CRM under tidal water, and the sea sits at local MSL
+via `sea_level.json` (EGM96 +0.110 m at La Jolla). Gates pass; coast_check (b) is a literal fail (4.146 m), explained
+as the natural continental slope (the source has the same gradient). The bench is unchanged or faster. Still open
+(Linux not tested): `file://` from a mounted volume, `docker run --network none`, SquashFS vs plain-directory
+cold-start timing.
 
 **Scope decisions (2026-10-07).**
 
@@ -311,7 +315,10 @@ is a checklist for this phase.
   complete siblings) (the spike's
   remaining Chaos NaN-bounds ensure came from an upsampled tile). The ocean's sea level (EGM96)
   must still meet the coastline: NAVD88 zero is 0.38 m off EGM96 at Pendleton, and NOAA's
-  shoreline is probably MHW; check at the Pendleton coast.
+  shoreline is probably MHW; check at the Pendleton coast. ~~Seabed and sea level.~~ Done 2026-10-10
+  (`docs/scene-packages.md`, "Seabed" and "Sea level"): NOAA SD 1/3" + CRM under tidal water; local MSL
+  from `sea_level.json` (La Jolla +0.110 m over EGM96); offshore terrain 0.0 % above sea - 0.5 m, waterline 20 m median
+  from WorldCover.
 - Imagery: NAIP as local TMS tiles from the package (public domain, 0.6 m, some states 0.3 m;
   flown every 2–3 years per state, leaf-on, near midday). CA 2024 is only on the USDA image
   service or EarthExplorer (Planetary Computer stops at 2022, AWS is requester-pays). New config:
@@ -327,8 +334,10 @@ is a checklist for this phase.
 - ~~Offline: `Main.umap`'s own ion actors request ion endpoints at frame 0.~~ Solved without the editor
   (2026-10-09): CamSim configures or destroys them at world init, before they load. Stripping them from
   `Main.umap` is optional cleanup.
-- Docker/Linux: confirm `file://` from a mounted volume (the spike ran on macOS/Metal).
-- **Gates:** decoded vertices vs source DEM (spike: median 2–3 cm, p99 0.31 m). CIGI frame-centre
+- Docker/Linux: confirm `file://` from a mounted volume (the spike ran on macOS/Metal). Open (R1 gates ran on macOS only), with `docker run --network none` and the SquashFS cold-start timing.
+- ~~**Gates**~~ Done on macOS 2026-10-10 (`docs/scene-packages.md`, "Measured"; Linux items above open). Follow-ups:
+  coast_check (b) should compare against the source gradient; verify vertex error at tidal-mask edges (z14 max 2.08 m);
+  `point_heights` no longer breaks early (cost only in verify and hot tools). Original text: decoded vertices vs source DEM (spike: median 2–3 cm, p99 0.31 m). CIGI frame-centre
   and HAT/HOT heights vs 3DEP truth at surveyed points (spike: ≤ 0.22 m on 1 m data, ≤ 0.9 m on
   10 m). Geo-registration vs CWT + Bing < 1 px at 0.84 m GSD. A run with outbound network blocked
   makes no request and passes. Terrain readiness gate (0.7) still holds. Bench: no game-thread

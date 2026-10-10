@@ -238,8 +238,9 @@ Known limits found in acceptance (follow-ups, `ROADMAP.md`):
   (San Clemente pier, west edge). Follow-up: ignore thin features when measuring the distance to land.
 - A turquoise shallow shelf with a jagged hard outline against dark deep water shows in CamSim renders at the coast
   (`bbox_edge`, `ring_edge`; boat scenes). It is not imagery: it is in R0 too, from the seabed depth under the Single
-  Layer Water ocean. **Explained**: the shelf is 3DEP's hydro-flattened plate (Seabed section). The seabed (R1) is
-  expected to fix it; render results are in "Measured".
+  Layer Water ocean. **Explained**: the shelf is 3DEP's hydro-flattened plate (Seabed section). **Fixed (R1)**: the
+  seabed now sits below sea level. Offshore terrain is 0.0 % above sea - 0.5 m (was 65.6 %), and the median waterline
+  is 20 m from WorldCover's shoreline (was 140 m). See coast_check (a) and (c) in "Measured".
 
 ## NDVI (R1)
 
@@ -326,15 +327,15 @@ vertex heights.
 
 **Tile set.** A tile's depth is min(region limit, best covering source's limit). San Diego (z14) lies under 3DEP 1/3″
 (z14) and the CRM (z12) under the ring limit (z10), so the tile set should not change: the build is expected to
-match the pendleton-ndvi build (182,602 terrain tiles). The count is measured in "Measured".
+match the pendleton-ndvi build (182,602 terrain tiles). Measured: 182,794 (+192) in "Measured".
 
 **Older manifests.** A manifest without `tidal_mask` (R0, chunk 1, chunk 2) builds exactly as before. `build --replan`
-with the new priorities should rebuild only the terrain (the design intends imagery, land cover and NDVI to be
-skipped); the result is measured in "Measured".
+with the new priorities rebuilds only the terrain: imagery, land cover and NDVI are skipped (unchanged hashes), as
+measured in "Measured".
 
 **Known limits.** WorldCover's water edge (10 m pixels, 2021) is not the instantaneous waterline; the feather absorbs
 it. The CRM is accurate to about 1 m and is coarser than the ring's z10 samples (about 150 m). Piers and other thin
-features follow their source. The acceptance numbers are in "Measured".
+features follow their source. Acceptance: coast_check (a)-(c) in "Measured".
 
 ## Sea level (R1)
 
@@ -367,7 +368,8 @@ resolve error; no file means 0. See "Scene Package" in [`configuration.md`](conf
 stay EGM96 MSL by definition.
 
 **Limit.** One constant per package. Sea-surface topography varies over 100 km by centimetres to a decimetre; the
-constant is exact at the station and approximate elsewhere. The acceptance numbers are in "Measured".
+constant is exact at the station and approximate elsewhere. Acceptance: coast_check (d) and the sea rows of
+hot_check in "Measured".
 
 ## Sources
 
@@ -607,7 +609,7 @@ water gate, fit time and peak RSS from the water rebuild of `pendleton-r1` (step
 | Determinism | Rebuild; `verify --deep`; R0 manifest | **Pass.** Rebuild `hashes.txt` identical; `verify --deep` all `ok`; `pendleton-r1b`. The old R0 manifest rebuilds byte-identical to the original R0 package (measured at f43d96f) |
 | Build time | Imagery ms/tile vs the same-session R0 baseline | **Over the +10 % gate, accepted** (`pendleton-r1b`). 3.372 ms/tile (935.0 s / 277,286, uncontended) vs R0 2.790 ms/tile (708 s / 253,766) = **+20.9 %** (+9.8 % before the water mask: the per-leaf water test, not the clip, is the cost). Offline package build only; no simulator runtime effect. User accepted the cost 2026-10-09. Margin adds 23,520 imagery tiles (+9.3 %). Max RSS of any build process 4.05 GB (`pendleton-r1` water rebuild) |
 | Render | `render_check.py`: all 7 shots (incl. `bbox_edge`, `sea_offshore`) | **Pass.** All rendered; `sea_offshore` uniform Sentinel-2; land edge matched to NAIP brightness |
-| Review | Screenshots (visual gate 4) | **Pass** (reviewed by the user, 2026-10-09). Residuals are the known limits above (pier disc; shallow shelf from the ocean, present in R0) |
+| Review | Screenshots (visual gate 4) | **Pass** (reviewed by the user, 2026-10-09). Residuals are the known limits above (pier disc; shallow shelf from the ocean, present in R0; fixed in R1, see below) |
 
 The first R1 build (before the water mask) failed the visual gate over sea: raw NAIP quarter-quads over open water
 and a land-fitted match that darkened Sentinel-2 water ([64,85,90] -> [1,24,43]). That led to the water mask.
@@ -635,3 +637,42 @@ Follow-up: the `-j 1` build exits 2 with "peak worker RSS 4318 MB exceeds 2048 M
 `-j 1` the build runs in-process, so the main process's fit and index state counts as the worker's RSS (4318 MB for
 every layer); at `-j 6` the workers peak at 80-900 MB. The package is complete and byte-identical; the RSS accounting
 for in-process builds still needs fixing.
+
+### R1 completion (2026-10-10, macOS)
+
+Camp Pendleton `sim`, M1 Pro / Metal. Before is `pendleton-ndvi` (R1 chunk 2); after is `pendleton-r1c`, built with
+`--replan -j 6` from a copy of `pendleton-ndvi`. Linux items are not tested (see below).
+
+| Gate | Tool | Result | Before -> after |
+|---|---|---|---|
+| Build, replan skip | `build --replan -j 6` | **Pass.** Wall 904 s. Terrain 182,794 tiles built in 604 s, 979.8 MB, peak RSS 914 MB. Imagery 277,286, NDVI 7,043 and land cover 2,288 tiles skipped. Only `ATTRIBUTION.txt` changed outside terrain; `sea_level.json` added. Station NOAA 9410230 La Jolla: offset +0.110 m (NAVD88 0 at ellipsoid height -35.7764 m, EGM96 N -35.1124 m) | terrain 182,602 -> 182,794 (+192) |
+| Verify | `verify --deep` | **Pass.** Every check `ok`, including `sea_level` (239 s). Scene z9+ height error p50 0.001 m, p99 0.162 m, max 2.08 m over 346,640 vertices (z9 p99 0.436, z10 p99 0.231, z14 max 2.08 m) | p99 0.049 m -> 0.162 m |
+| coast_check (a) | `coast_check.py`: offshore terrain <= sea - 0.5 m for >= 99 % | **Pass.** Median depth 24.5 m below sea | 65.6 % failing -> 0.0 % |
+| coast_check (b) | steps <= 3 m per 30 m within 1 km of the dep3_13 edge | **Literal FAIL**, 4.146 m. The step is the natural continental slope on transect coast_00, about 6 km out at -137 to -157 m. It has the same gradient as the NOAA SD 1/3" source (about 4.3 m per 30 m), so it is not a seam. Follow-up: compare against the source's own gradient | 58.4 m cliff -> 4.146 m |
+| coast_check (c) | median waterline offset vs WorldCover shoreline <= 30 m | **Pass.** Median 20 m, max 80 m | 140 m / 4,270 m -> 20 m / 80 m |
+| coast_check (d) | `sea_level.json` offset vs an independent pyproj chain, within 1 cm | **Pass.** 0.110 m vs 0.107 m (3 mm) | none -> 3 mm |
+| HOT / HAT, land | `hot_check.py` | **Pass.** 7/7 frame-centre and 7/7 HOT. Same values as R0: 1 m points -0.10 to +0.20 m; 1/3" points -0.48 and -0.05 m | unchanged |
+| HOT, sea | `hot_check.py` | **Pass.** 3/3 equal EGM96 + 0.110 m exactly (-34.908 / -35.074 / -35.270 m) | new |
+| Render readiness | `render_check.py` | **Pass.** Every shot `terrain_ready`; no "terrain gate timed out" in any run (package, offline package, CWT, ndvi). New shots `coast_low` and `coast_waves` (Beaufort 5) | - |
+| Cold start | `render_check.py` | First ready at 17 s package, 32 s offline, 30 s CWT, 30 s ndvi | - |
+| Offline | `scene.offline: true` | **Pass.** No network request logged (macOS) | - |
+| Registration | vs CWT + Bing | **Pass.** <= 0.16 px on all 7 land shots; online and offline identical | unchanged |
+| Visual gate | before/after review | **Pass** (user, 2026-10-10). No turquoise shelf, no seabed through wave troughs, waterline at the beach | - |
+| Bench | `run_bench.py --site pendleton`, 2 runs each | **Pass.** Game-thread p50 of r1c <= ndvi and < CWT in every phase (table below). 30 fps and 0 dropped frames in every run and phase. Wall p95 for r1c 34.4-41.8 ms, within the ndvi range. `results.json` has no game-thread p95, so wall p95 is the tail check | see below |
+
+Game-thread p50, ms (range over 2 runs):
+
+| Phase | CWT + Bing | pendleton-ndvi | pendleton-r1c |
+|---|---|---|---|
+| orbit | 3.44-3.66 | 3.15-3.16 | 3.16 |
+| slew | 3.54-3.56 | 3.09-3.12 | 3.10-3.14 |
+| low_pass | 3.88-3.89 | 3.41-3.48 | 3.40-3.44 |
+| far_origin | 3.74-3.81 | 2.55-2.59 | 2.22-2.56 |
+| coast_pass | 4.21-4.43 | 3.65-3.70 | 3.41-3.67 |
+
+Still open (Linux not tested; the user chose Mac only for now): `file://` from a mounted volume in Docker, a
+`docker run --network none` offline run, and SquashFS vs plain-directory cold-start timing.
+
+Follow-ups: coast_check (b) should compare against the source gradient. Verify vertex error at tidal-mask edges (z14
+max 2.08 m: the mask flips between a vertex and a sample). `point_heights` no longer breaks early (it samples every
+group); the cost is only in verify and the hot tools.
