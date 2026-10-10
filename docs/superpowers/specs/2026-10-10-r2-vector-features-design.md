@@ -159,7 +159,7 @@ feature polygons in priority order (later wins), and rewrites the PNG:
 ### 5. Config
 
 ```toml
-[landcover.features]   # REALISM R2; all off by default (the package is then byte for byte R1's)
+[features]             # REALISM R2; all off by default (the package is then byte for byte R1's)
 roads = true           # OSM (sources.osm_geofabrik): needs allow = ["ODbL-1.0"]
 paved_areas = true     # OSM
 rail = true            # OSM
@@ -169,9 +169,13 @@ road_classes = ["motorway", "trunk", "primary", "secondary", "tertiary", "unclas
 
 - **Licence:** any OSM feature without `ODbL-1.0` in `allow` fails at `plan`, naming the key to add. `examples/pendleton.toml`
   turns everything on and allows ODbL.
-- **Licence register:** when OSM is in, the land-cover layer's licence set becomes {CC-BY-4.0, ODbL-1.0}. `attribution`
-  writes both into `ATTRIBUTION.txt`. A raster burned from OSM is treated as a derived database, so the package notice says
-  it is ODbL.
+- **Plumbing:** the feature sources form a fourth source layer, `features`. Their priorities are derived from the flags,
+  not set by hand. Discovery and the burn use the imagery margin area (bbox + `imagery_margin_km`, where NAIP is), not the
+  100 km land-cover ring: outside the margin, WorldCover is untouched. The settings go into the manifest as
+  `layers.landcover.features`, so with the features off the manifest and `landcover/` are unchanged.
+- **Licence register:** the existing per-source checks cover it. `check_allowed` already rejects ODbL without `allow`,
+  and `attribution` already lists every source. The land-cover `index.json` and `ATTRIBUTION.txt` gain the OSM and NHD
+  credits. A raster burned from OSM is treated as a derived database, so the notice says the layer is ODbL.
 
 ### 6. Runtime
 
@@ -191,22 +195,23 @@ published ballast surface-temperature data and sets them before the gate run.
   the point, or 0. A cache miss decodes one 600² PNG on the game thread (~1–2 ms, measured in the plan). Queries cluster
   near the platform, so misses are rare. The subsystem owns the lookup and configures it from `thermal.land_cover.dir` when
   `thermal.land_cover.enabled`; otherwise every query returns 0.
-- **HAT/HOT extended:**
-  - a sea-surface result (`R.bWater`) → 80 (WorldCover water);
-  - a terrain hit → `Code(HitLat, HitLon)`;
-  - invalid → 0, as today.
-- **LOS extended:**
-  - a terrain hit → `Code` at the hit point;
-  - an entity hit → 0, unchanged (an entity has no land-cover code; the response already carries the entity ID).
+- **Rule:** one pure function, `CamSimLandCover::QueryMaterialCode(bValid, bWater, bEntityHit, Lat, Lon, Lookup)`, so the
+  rule is unit-tested without a world:
+  - invalid → 0;
+  - a sea-surface result (HAT/HOT `R.bWater`) → 80 (WorldCover water);
+  - an entity hit (any `ACamSimEntity`, CIGI or DIS) → 0, since an entity has no land-cover code (the LOS response already
+    carries the entity ID);
+  - otherwise → `Code(Lat, Lon)` at the hit point.
+
+  HAT/HOT extended and LOS extended both use it.
 - **Docs:** `docs/terrain-feedback.md` gets the code table (WorldCover 10–100, R2 200–220, 0 = unknown) and its stale
   "extended is downgraded" text is fixed. ROADMAP 1.9's "material code is 0" note is closed.
 
 ### 7. Verify
 
-- `verify` checks that `index.json`'s `codes` legend covers every code the tiles contain. `--deep` re-reads one tile per
-  4 × 4 block of tiles.
-- `verify` checks that the attribution names every licence in the layer's set.
-- The existing hash check covers the rewritten PNGs.
+- `verify --deep` checks that `index.json`'s `codes` legend covers every code the tiles contain (WorldCover codes and 0
+  are implicit).
+- The existing hash and attribution checks cover the rest.
 
 ## Testing
 
@@ -251,12 +256,15 @@ tiny GPKG):
 3. **Thermal gate r (road vs verge)** in `scripts/thermal_check.py`, new run `roads` (`--scene <pkg>`):
    - Pose: nadir over a straight I-5 segment with the heading along the road, so the road is a vertical strip through the
      image centre. The pose is computed once from OSM and hard-coded with its source way id.
-   - Metric: mean apparent temperature of the centre strip (road width) minus the mean of two strips 25–45 m to either side.
-   - Rows: MWIR and LWIR at 12:00 and 02:00.
-   - Thresholds: noon ≥ +5 K; 02:00 ≥ +1 K (asphalt's higher inertia keeps it warmer than dry grass overnight).
-   - Before running, compute both thresholds from the closed-form model (`FThermalModel`, asphalt vs grassland at the
-     run's date), and check them against published asphalt-vs-grass contrasts (typically +10–20 K at summer noon). If the
-     model disagrees, it is the model to look at, not the gate.
+   - Metric: mean Y (display DN, white-hot, like gates i and j) of the carriageway minus mean Y of a verge strip on its
+     outer side (away from the other carriageway). Both are temporal means over 10 frames in the central 60 % of the
+     frame.
+   - Rows: MWIR and LWIR at 12:00 and 02:00 (`thermal_check`'s December times).
+   - Thresholds: noon ≥ +6 DN; 02:00 ≥ +2 DN (asphalt's higher inertia keeps it warmer than grass overnight). Gates
+     i and j use +3 and +2 DN for a weaker contrast.
+   - The closed-form temperatures (asphalt vs grassland, from the `camsim.Thermal.Log 1` class lines) are reported beside
+     each row as info, and checked against published asphalt-vs-grass contrasts (about +10–20 K at summer noon, less in
+     December). If they disagree, it is the model to look at, not the gate.
 4. **Unchanged:**
    - `thermal_check.py` gates a–q pass;
    - the bench ThermalCS time is within noise of R1's;
