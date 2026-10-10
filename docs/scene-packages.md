@@ -788,7 +788,7 @@ were skipped. Details: `.superpowers/sdd/2026-10-10-r2-vector-features/` (task 8
 | 3 Thermal gate (r) | `thermal_check.py --runs roads --scene pendleton-r2` | **FAIL** on the selected pose (MWIR night and noon, LWIR noon; table below). Thresholds unchanged. Open: needs a decision |
 | 4 Unchanged | `thermal_check.py` (a)–(q); UE tests; bench | **Pass.** Gates (a)–(q) all pass on the SF scene, MWIR and LWIR: (f) ThermalCS p95 0.421 ms at 1080p (4B: 0.408); (g) EO \|dY\| 0.013 DN. UE automation 494/494 (`-nullrhi`), `CamSim.GPU.*` 26/26 (Metal), scene tooling 444 passed / 2 skipped / 1 xfailed. Bench (`run_bench.py --site pendleton`, `.cache/bench-r2/`): ThermalCS identical to R1 in a same-session IR pair (table below); EO game-thread p50 and wall p95 within noise of R1, 30 fps and 0 dropped frames in every run and phase |
 | 5 CIGI | `send_cigi_test.py --hat-extended / --los-extended` | **Pass** (table below) |
-| 6 Visual review | MWIR/LWIR/EO noon frames, `.cache/r2/visual/` | **Pending** (human) |
+| 6 Visual review | MWIR/LWIR/EO noon frames, `.cache/r2/visual/` | **Signed off** by the user 2026-10-10 (runway and Oceanside grid read as warm lines; I-5 cooler than its verge, the gate (r) finding; dark IR patches absent from EO are a follow-up) |
 
 Gate (r): carriageway minus outer verge, mean Y over 10 frames (white-hot), nadir 300 m (GSD 0.083 m), 21 December.
 **Pose selection** (fix round 1; `scripts/scene/tools/select_road_pose.py` reproduces it, `ROAD_POSE` in `thermal_check.py` holds the criterion and the numbers; the rule was relaxed from width 10 m / length 200 m / vegetation 80 % to 8 m / 120 m / 60 %, both changes before any gate run): straight pieces

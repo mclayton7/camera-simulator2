@@ -353,7 +353,7 @@ anything new. Roads are one of the most visible features in LWIR and are 4B's ma
 4B's "roads layer is a non-goal".
 
 **Status (2026-10-10, macOS):** implemented; measured on Pendleton (`docs/scene-packages.md`, "Vector features" and
-"Measured"). Open: gate (r) fails (below), and the human visual review of the MWIR/LWIR frames.
+"Measured"). Open: gate (r) fails (below). Visual review of the MWIR/LWIR frames signed off by the user 2026-10-10.
 
 - ~~Rasterise OSM roads (buffered by lane count / road class), paved areas and rail, and 3DHP water
   bodies and flowlines (public domain; NHD retired in 2023, so static NHD HR is the fallback and

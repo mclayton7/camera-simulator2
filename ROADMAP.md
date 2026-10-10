@@ -1832,11 +1832,13 @@ UE 494/494, GPU 26/26. Open on Linux: not run (macOS only; nothing in `FOR_LINUX
 San Clemente, way 487165554): MWIR −1.2 / −25.3 DN and LWIR +13.3 / −10.8 DN at 02:00 / noon (dry verge refined to
 `bare_soil`, nearly as warm as asphalt, on a sunward bank). The first pose (I-5 SB, OSM asphalt but light NAIP pavement)
 fails at noon too (−40.1 / −19.4 DN; `k_fast` 0: +21.6 DN), and of two diagnostic poses CA 76 passes every row, Avenida
-Pico fails; needs a decision (`docs/scene-packages.md`, "Measured"; `docs/thermal.md`, "Limits (R2)"). **Human follow-up (no editor work):** visual
-review of the MWIR/LWIR noon frames in `.cache/r2/visual/` (I-5, Oceanside residential grid, MCAS Camp Pendleton runway):
-do roads read as continuous lines, is the 6 m warp wobble acceptable, is the brown-verge widening acceptable. Follow-ups:
-NDVI in `ThermalCS` (moved to its own spec), 3DHP when per-unit downloads exist, a finer road raster or a per-family warp
-switch if the review asks for it.
+Pico fails; needs a decision (`docs/scene-packages.md`, "Measured"; `docs/thermal.md`, "Limits (R2)"). Visual review of the MWIR/LWIR/EO noon frames in `.cache/r2/visual/` (I-5, Oceanside residential grid, MCAS Camp
+Pendleton runway) **signed off by the user 2026-10-10**: the runway and the Oceanside grid read as warm continuous lines; I-5
+reads cooler than its verge (the gate (r) finding); warp wobble and verge widening accepted. Follow-ups: gate (r) noon (give
+vector road codes their class albedo in the fast term instead of the imagery luminance, and stop dry verges refining to
+`bare_soil`; both are `ThermalCS` changes, so they belong with NDVI); large dark IR patches over I-5 and the runway grass
+that are absent from EO (cloud shadow through the solar term vs WorldCover tree cells: cause unverified); NDVI in
+`ThermalCS` (moved to its own spec), 3DHP when per-unit downloads exist.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer
