@@ -791,7 +791,7 @@ were skipped. Details: `.superpowers/sdd/2026-10-10-r2-vector-features/` (task 8
 | 6 Visual review | MWIR/LWIR/EO noon frames, `.cache/r2/visual/` | **Pending** (human) |
 
 Gate (r): carriageway minus outer verge, mean Y over 10 frames (white-hot), nadir 300 m (GSD 0.083 m), 21 December.
-**Pose selection** (fix round 1, `ROAD_POSE` in `thermal_check.py` holds the criterion and the numbers): straight pieces
+**Pose selection** (fix round 1; `scripts/scene/tools/select_road_pose.py` reproduces it, `ROAD_POSE` in `thermal_check.py` holds the criterion and the numbers; the rule was relaxed from width 10 m / length 200 m / vegetation 80 % to 8 m / 120 m / 60 %, both changes before any gate run): straight pieces
 (≥ 120 m, bearings within 1°) of OSM motorway…tertiary ways that burn to 200, ≥ 8 m wide, no crossing or bridge within
 60 m; carriageway strip ≥ 90 % code 200; verge strip (8–28 m beyond the edge, one side) free of road/water codes and
 ≥ 60 % vegetation/bare codes; and *dark pavement*: NAIP luma of the verge ≥ 15 DN above the carriageway. 282 pieces pass
@@ -822,7 +822,7 @@ CIGI extended responses (`send_cigi_test.py`, sensor 300–400 m above each poin
 
 | Point | Query | Material | HOT / hit |
 |---|---|---|---|
-| I-5 gate pose 33.299358, −117.465474 | HAT/HOT 103 | **200** | HOT −8.50 m (gate ground −8.23 m) |
+| I-5 SB, first gate (r) pose (`r_t9`) 33.299358, −117.465474 | HAT/HOT 103 | **200** | HOT −8.50 m (gate ground −8.23 m) |
 | same, LOS from 300 m above to −500 m | LOS 105 | **200** | hit −8.50 m, range 300.3 m, not visible |
 | Lake O'Neill, NHD water 33.3274, −117.3308 | HAT/HOT 103 | **220** | HOT −1.36 m (WorldCover calls this cell grassland, 30) |
 | Lake O'Neill per the plan, 33.3250, −117.3330 | HAT/HOT 103 | 10 | HOT −5.46 m: the plan's point is tree cover on the shore |
