@@ -238,8 +238,8 @@ Known limits found in acceptance (follow-ups, `ROADMAP.md`):
   (San Clemente pier, west edge). Follow-up: ignore thin features when measuring the distance to land.
 - A turquoise shallow shelf with a jagged hard outline against dark deep water shows in CamSim renders at the coast
   (`bbox_edge`, `ring_edge`; boat scenes). It is not imagery: it is in R0 too, from the seabed depth under the Single
-  Layer Water ocean. **Explained and fixed by the seabed (R1)**: the shelf is 3DEP's hydro-flattened plate (Seabed
-  section). Render results are in "Measured".
+  Layer Water ocean. **Explained**: the shelf is 3DEP's hydro-flattened plate (Seabed section). The seabed (R1) is
+  expected to fix it; render results are in "Measured".
 
 ## NDVI (R1)
 
@@ -325,10 +325,12 @@ the WorldCover hashes join the terrain tiles' inputs hash. `verify --deep` appli
 vertex heights.
 
 **Tile set.** A tile's depth is min(region limit, best covering source's limit). San Diego (z14) lies under 3DEP 1/3″
-(z14) and the CRM (z12) under the ring limit (z10), so the tile set does not change.
+(z14) and the CRM (z12) under the ring limit (z10), so the tile set should not change: the build is expected to
+match the pendleton-ndvi build (182,602 terrain tiles). The count is measured in "Measured".
 
 **Older manifests.** A manifest without `tidal_mask` (R0, chunk 1, chunk 2) builds exactly as before. `build --replan`
-with the new priorities rebuilds the terrain only; imagery, land cover and NDVI are skipped.
+with the new priorities should rebuild only the terrain (the design intends imagery, land cover and NDVI to be
+skipped); the result is measured in "Measured".
 
 **Known limits.** WorldCover's water edge (10 m pixels, 2021) is not the instantaneous waterline; the feather absorbs
 it. The CRM is accurate to about 1 m and is coarser than the ring's z10 samples (about 150 m). Piers and other thin
@@ -410,7 +412,7 @@ ETOPO and Blue Marble get a derived COG with overviews in `.cache/scene/derived/
 The global base (ETOPO, Blue Marble) is shared by every package that uses the same cache. `plan` prints the
 estimate for the scene at hand before anything is downloaded. Before `fetch` the tile counts in that line come from
 each source's discovery bounding box, so they are an upper-bound estimate (Pendleton `sim`: terrain 189,410, imagery
-277,514); the build uses the fetched footprints, which give the real counts (terrain 182,602).
+277,514); the build uses the fetched footprints, so its counts differ (the pendleton-ndvi build had 182,602 terrain tiles).
 
 **Sampling.** Terrain samples a 257 × 257 grid (plus a 32-sample margin) per tile; imagery warps sources to the
 256 px tile. Each source is read from the **coarsest average overview at or finer than the target sample
