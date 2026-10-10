@@ -436,6 +436,10 @@ struct FCamSimConfig
 
 		// Filled by CamSimScene::ResolvePackage at load (not config keys).
 		FString PackageName;
+		// From <dir>/sea_level.json (REALISM R1): local MSL - EGM96 at the package's NOAA tide station, added to
+		// the ocean's sea level under the CIGI tide. 0 without the file.
+		double SeaLevelOffsetM = 0.0;
+		FString SeaLevelStation;
 		TArray<FString> ResolveErrors;
 		TArray<FString> ResolveWarnings;
 	} Scene;

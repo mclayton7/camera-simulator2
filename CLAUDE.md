@@ -69,7 +69,7 @@ camsim/
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (487 tests across 82 files)
+      Tests/                       # UE5 Automation tests (490 tests across 82 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -113,7 +113,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (487 tests across 82 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (490 tests across 82 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
@@ -152,7 +152,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 - **macOS editor log**: `~/Library/Logs/CamSimTest/CamSimTest.log`, not `Saved/Logs/`. A cold `run.sh` start spends a few minutes compiling shaders before `LogCamSim` appears
 - **Headless tests on macOS**: add `-DisablePython` — Python's startup type generation deadlocks under `-nullrhi` on macOS. Xcode 27 needs `MaxVersion` raised in the engine's `Engine/Config/Apple/Apple_SDK.json`, and a real (non-nullrhi) run needs `xcodebuild -downloadComponent MetalToolchain`
 - **DIS vehicles sit on the rendered surface**: land (domain 1) and surface (domain 3) entities are clamped at every pose commit by traces against Cesium tiles (`Entity/SurfaceClamp.h`, `SurfaceProbe.h`); needs `create_physics_meshes`. The sender's altitude is ignored unless `dis.clamp_to_surface: false`. Guide: `docs/dis.md`
-- **Ocean** (ROADMAP 2.6, `ocean:`, on by default): sea level = EGM96 geoid + CIGI tide; `FOceanWaves` (Gerstner, sim time) is the single source for boat placement (`ClampWater`), HAT/HOT (max(Cesium hit, sea surface incl. waves)) and the drawn sea (`UProceduralMeshComponent` warped grid + `M_Ocean` WPO via `MPC_Ocean`; the CPU/GPU mirror is `Shaders/Private/CamSimOcean.ush`, held to 2 cm by `CamSim.GPU.Ocean.MatchesCpu`). `M_Ocean`/`MPC_Ocean` are generated — edit `scripts/ocean/make_ocean_material.py` (or the .ush) and rerun `scripts/ocean/make_ocean_material.sh`, never hand-edit the assets. Piers Cesium drapes below sea level flood (known)
+- **Ocean** (ROADMAP 2.6, `ocean:`, on by default): sea level = EGM96 geoid + scene package `sea_level.json` offset (local MSL, `FOceanSurface::SetDatumOffsetM`) + CIGI tide; `FOceanWaves` (Gerstner, sim time) is the single source for boat placement (`ClampWater`), HAT/HOT (max(Cesium hit, sea surface incl. waves)) and the drawn sea (`UProceduralMeshComponent` warped grid + `M_Ocean` WPO via `MPC_Ocean`; the CPU/GPU mirror is `Shaders/Private/CamSimOcean.ush`, held to 2 cm by `CamSim.GPU.Ocean.MatchesCpu`). `M_Ocean`/`MPC_Ocean` are generated — edit `scripts/ocean/make_ocean_material.py` (or the .ush) and rerun `scripts/ocean/make_ocean_material.sh`, never hand-edit the assets. Piers Cesium drapes below sea level flood (known)
 - **Ground-truth masks** (ROADMAP 2.7, guide `docs/ground-truth.md`): entities render custom depth with a stencil value 1..255 (`FStencilSlotAllocator`, reuse delayed 4 frames); `r.CustomDepth=3`; `InstanceIdCS` runs in the sensor graph only on annotated frames and shares `UndistortScale` with `SensorCS` — change both together; `FInstanceMaskAnalyzer` turns the readback into boxes/OBBs/visibility/RLE on the task thread; only meshes are tagged (never particles) and box3d is their union; the hidden silhouette below each entity's sea-surface plane (waves included, one plane per stencil) is cut as submerged hull; OBBs follow the projected box3d axis. `ml_training.depth_map` comes out of the same pass (`WRITE_DEPTH` permutation: linear view depth of the same source texel, read back per slot like the IDs); its PNGs are written by separate tasks (≤ 4 in flight) so they never hold `bSensorBusy`
 - **Altitudes are WGS-84 ellipsoid heights everywhere** (CIGI 3.3 defines its "MSL" as the ellipsoid, and Cesium uses HAE). Only KLV Tags 15/25 are true MSL, via the EGM96 grid in `Geospatial/Geoid.h` (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS — run `git lfs pull` if it's a pointer file)
 - **UE unit scale**: 1 UE unit = 1 cm — divide `FVector::Dist()` by 100 for metres

@@ -14,6 +14,9 @@ namespace CamSimScene
 	/** manifest.json schema_version this build reads. */
 	constexpr int32 SupportedSchemaVersion = 1;
 
+	/** Largest |sea_level.json offset_m| accepted (local MSL - EGM96 is within ~2 m on every US coast). */
+	constexpr double MaxSeaLevelOffsetM = 3.0;
+
 	/**
 	 * Absolute path -> file:/// URL. Backslashes become '/', and every byte outside
 	 * [A-Za-z0-9-._~/:] is percent-encoded (UTF-8), as Cesium's UnrealAssetAccessor decodes it.
@@ -29,7 +32,7 @@ namespace CamSimScene
 	/**
 	 * Apply scene.dir to Cfg: each layer the package has (terrain/layer.json,
 	 * imagery/tilemapresource.xml, landcover/index.json) replaces cesium.terrain, cesium.imagery
-	 * and thermal.land_cover.dir. Fills Cfg.Scene.PackageName / ResolveErrors / ResolveWarnings
+	 * and thermal.land_cover.dir; sea_level.json sets Cfg.Scene.SeaLevelOffsetM (the ocean datum). Fills Cfg.Scene.PackageName / ResolveErrors / ResolveWarnings
 	 * (Validate() and ValidateWarnings() report them). No-op when scene.dir is empty.
 	 */
 	void ResolvePackage(FCamSimConfig& Cfg);

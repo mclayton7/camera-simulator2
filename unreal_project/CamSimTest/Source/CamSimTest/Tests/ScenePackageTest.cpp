@@ -279,3 +279,38 @@ bool FSceneOfflineExitPolicyTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("offline, editor (PIE): never exit the editor"), ShouldExitOnConfigErrors(Cfg, true));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FScenePackageSeaLevelTest,
+	"CamSim.Scene.Package.SeaLevel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FScenePackageSeaLevelTest::RunTest(const FString& Parameters)
+{
+	{
+		const FString D = MakePackage(TEXT("SeaAbsent"), true, true, false);
+		const FCamSimConfig Cfg = ResolvedConfigFor(D);
+		TestEqual(TEXT("absent: no offset"), Cfg.Scene.SeaLevelOffsetM, 0.0);
+		TestEqual(TEXT("absent: no errors"), Cfg.Scene.ResolveErrors.Num(), 0);
+	}
+	{
+		const FString D = MakePackage(TEXT("SeaPresent"), true, true, false);
+		WriteFile(D / TEXT("sea_level.json"), TEXT("{\"offset_m\": 0.3912, \"station\": \"9410230\"}"));
+		const FCamSimConfig Cfg = ResolvedConfigFor(D);
+		TestEqual(TEXT("present: offset"), Cfg.Scene.SeaLevelOffsetM, 0.3912, 1e-12);
+		TestEqual(TEXT("present: station"), Cfg.Scene.SeaLevelStation, FString(TEXT("9410230")));
+		TestEqual(TEXT("present: no errors"), Cfg.Scene.ResolveErrors.Num(), 0);
+	}
+	const TCHAR* Bad[] = {
+		TEXT("{\"offset_m\": 3.5}"), TEXT("{\"offset_m\": -4}"), TEXT("{\"offset_m\": \"0.4\"}"),
+		TEXT("{\"station\": \"9410230\"}"), TEXT("not json")};
+	int32 I = 0;
+	for (const TCHAR* Text : Bad)
+	{
+		const FString D = MakePackage(*FString::Printf(TEXT("SeaBad%d"), I++), true, true, false);
+		WriteFile(D / TEXT("sea_level.json"), Text);
+		const FCamSimConfig Cfg = ResolvedConfigFor(D);
+		TestTrue(FString::Printf(TEXT("bad '%s' is a resolve error"), Text), Cfg.Scene.ResolveErrors.Num() > 0);
+		TestEqual(FString::Printf(TEXT("bad '%s' leaves the offset at 0"), Text), Cfg.Scene.SeaLevelOffsetM, 0.0);
+	}
+	return true;
+}

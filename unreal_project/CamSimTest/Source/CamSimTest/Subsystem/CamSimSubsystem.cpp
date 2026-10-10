@@ -751,6 +751,12 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		if (CamSim::Geospatial::GetGeoidUndulation(0.0, 0.0).IsSet())
 		{
 			Impl->Ocean = MakeUnique<FOceanSurface>();
+			Impl->Ocean->SetDatumOffsetM(Config.Scene.SeaLevelOffsetM);
+			if (Config.Scene.SeaLevelOffsetM != 0.0)
+			{
+				UE_LOG(LogCamSim, Log, TEXT("Scene package sea level: EGM96 %+.3f m (NOAA %s)"),
+					Config.Scene.SeaLevelOffsetM, *Config.Scene.SeaLevelStation);
+			}
 			ApplyOceanConfig(Config.Ocean);
 			// ROADMAP 4A: the thermal water class's temperature until CIGI Maritime Surface Conditions sets one
 			// (startup only, so it never overrides the host's value).

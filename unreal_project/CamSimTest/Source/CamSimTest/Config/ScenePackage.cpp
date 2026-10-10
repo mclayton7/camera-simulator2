@@ -88,6 +88,8 @@ void ResolvePackage(FCamSimConfig& Cfg)
 {
 	FCamSimConfig::FSceneConfig& Scene = Cfg.Scene;
 	Scene.PackageName.Reset();
+	Scene.SeaLevelOffsetM = 0.0;
+	Scene.SeaLevelStation.Reset();
 	Scene.ResolveErrors.Reset();
 	Scene.ResolveWarnings.Reset();
 
@@ -160,6 +162,31 @@ void ResolvePackage(FCamSimConfig& Cfg)
 				TEXT("scene.dir overrides thermal.land_cover.dir ('%s')"), *Cfg.Thermal.LandCover.Dir));
 		}
 		Cfg.Thermal.LandCover.Dir = Dir / TEXT("landcover");
+	}
+
+	const FString SeaFile = Dir / TEXT("sea_level.json");
+	if (FPaths::FileExists(SeaFile))
+	{
+		FString SeaText;
+		TSharedPtr<FJsonObject> Sea;
+		double Offset = 0.0;
+		if (!FFileHelper::LoadFileToString(SeaText, *SeaFile)
+			|| !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(SeaText), Sea) || !Sea.IsValid())
+		{
+			Scene.ResolveErrors.Add(FString::Printf(TEXT("scene.dir '%s': sea_level.json is not valid JSON"), *Dir));
+		}
+		else if (!Sea->HasTypedField<EJson::Number>(TEXT("offset_m"))
+			|| !Sea->TryGetNumberField(TEXT("offset_m"), Offset) || !FMath::IsFinite(Offset)
+			|| FMath::Abs(Offset) > MaxSeaLevelOffsetM)
+		{
+			Scene.ResolveErrors.Add(FString::Printf(
+				TEXT("scene.dir '%s': sea_level.json offset_m must be a number within +-%.0f m"), *Dir, MaxSeaLevelOffsetM));
+		}
+		else
+		{
+			Scene.SeaLevelOffsetM = Offset;
+			Sea->TryGetStringField(TEXT("station"), Scene.SeaLevelStation);
+		}
 	}
 }
 

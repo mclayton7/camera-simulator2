@@ -5,7 +5,7 @@
 #include "Ocean/OceanWaves.h"
 
 /**
- * The sea: EGM96 sea level (+ CIGI tide offset) plus the active wave set.
+ * The sea: EGM96 sea level (+ scene-package datum offset + CIGI tide offset) plus the active wave set.
  * Waves come from the config's Beaufort state, or — while any CIGI Wave
  * Control wave is enabled — from the host's waves (IDs 0..3, by ID).
  * Game thread only. Owned by UCamSimSubsystem; read by boat placement,
@@ -26,6 +26,9 @@ public:
 
 	void   SetTideOffsetM(double M) { TideOffsetM = FMath::IsFinite(M) ? M : 0.0; }
 	double GetTideOffsetM() const { return TideOffsetM; }
+	/** Local MSL - EGM96 from the scene package (REALISM R1); added under the tide. Non-finite -> 0. */
+	void   SetDatumOffsetM(double M) { DatumOffsetM = FMath::IsFinite(M) ? M : 0.0; }
+	double GetDatumOffsetM() const { return DatumOffsetM; }
 	void   SetClarity(double C) { Clarity = FMath::IsFinite(C) ? FMath::Clamp(C, 0.0, 1.0) : 1.0; }
 	double GetClarity() const { return Clarity; }
 	void   SetWaterTempC(double C) { if (FMath::IsFinite(C)) WaterTempC = C; }   // non-finite: ignored
@@ -46,5 +49,5 @@ private:
 	FOceanWaves Waves;
 	TSortedMap<int32, FOceanWave> HostWaves;
 	double Beaufort = 0.0, FromDeg = 270.0, Choppiness = 0.5;
-	double TideOffsetM = 0.0, Clarity = 1.0, WaterTempC = 15.0;
+	double DatumOffsetM = 0.0, TideOffsetM = 0.0, Clarity = 1.0, WaterTempC = 15.0;
 };

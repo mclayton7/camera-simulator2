@@ -42,7 +42,7 @@ TOptional<double> FOceanSurface::SeaLevelM(double Lat, double Lon) const
 {
 	const TOptional<double> G = Geoid(Lat, Lon);
 	if (!G.IsSet() || !FMath::IsFinite(*G)) return {};
-	return *G + TideOffsetM;
+	return *G + DatumOffsetM + TideOffsetM;
 }
 
 TOptional<double> FOceanSurface::SurfaceHeightM(double Lat, double Lon) const

@@ -37,6 +37,22 @@ bool FOceanSurfaceSeaLevelTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanSurfaceDatumOffsetTest, "CamSim.Ocean.Surface.DatumOffsetAddsUnderTide",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanSurfaceDatumOffsetTest::RunTest(const FString& Parameters)
+{
+	FOceanSurface S = MakeSurface(-35.0);
+	S.SetAnchor(33.2, -117.4);
+	S.SetDatumOffsetM(0.39);
+	TestEqual(TEXT("geoid + datum"), S.SeaLevelM(33.2, -117.4).Get(0.0), -34.61, 1e-12);
+	S.SetTideOffsetM(-0.5);
+	TestEqual(TEXT("geoid + datum + tide"), S.SeaLevelM(33.2, -117.4).Get(0.0), -35.11, 1e-12);
+	TestEqual(TEXT("calm surface follows"), S.SurfaceHeightM(33.2, -117.4).Get(0.0), -35.11, 1e-12);
+	S.SetDatumOffsetM(std::numeric_limits<double>::quiet_NaN());
+	TestEqual(TEXT("non-finite datum offset -> 0"), S.GetDatumOffsetM(), 0.0);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanSurfaceSourcesTest, "CamSim.Ocean.Surface.HostWavesReplaceBeaufort",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FOceanSurfaceSourcesTest::RunTest(const FString& Parameters)

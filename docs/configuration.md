@@ -282,6 +282,13 @@ scene:
 A layer the package lacks leaves its setting alone. Overriding a non-default `cesium.terrain.*`, `cesium.imagery.*` or
 `thermal.land_cover.dir` logs a config warning naming the key. `~` is expanded to the home directory.
 
+**Sea level (`sea_level.json`, REALISM R1).** A package built with a `[sea_level]` station carries `sea_level.json`
+(`offset_m` = local mean sea level minus EGM96 at the NOAA station, plus `station`, `name` and the terms it was
+computed from). The ocean's sea level is then EGM96 + `offset_m` + the CIGI tide offset (`FOceanSurface::SetDatumOffsetM`),
+so the drawn sea, HAT/HOT, the boat clamp and the wave queries all sit at local MSL. `offset_m` must be a JSON number
+within ±3 m; anything else (not a number, out of range, missing, unparseable file) is a config error. No file means 0,
+as before. The offset is logged at startup. KLV Tags 15 and 25 stay EGM96 MSL by definition.
+
 ### Cesium Tile Streaming
 
 | Field | Type | Default | Env var | Description |
