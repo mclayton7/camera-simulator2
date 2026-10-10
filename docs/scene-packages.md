@@ -519,3 +519,27 @@ water gate, fit time and peak RSS from the water rebuild of `pendleton-r1` (step
 
 The first R1 build (before the water mask) failed the visual gate over sea: raw NAIP quarter-quads over open water
 and a land-fitted match that darkened Sentinel-2 water ([64,85,90] -> [1,24,43]). That led to the water mask.
+
+### R1 chunk 2 (NDVI layer, gridded fit, sun metadata)
+
+Camp Pendleton `sim`, acceptance 2026-10-10 (M1 Pro / macOS native, `-j 6`). Run 1 (`pendleton-ndvi`, global fit
+only) failed the seam gate; the gridded offset was added (Task 9, 2026-10-10, user decision) and run 2 (final code,
+head d4b16b8) is the accepted run. Both start from a copy of the chunk-1 package `pendleton-r1b` made with
+`cp -cR` (APFS clone; `cp -a` ran at ~200 MB/h).
+
+| Gate | What | Result |
+|---|---|---|
+| Build | `--replan -j 6` on the chunk-1 copy: terrain, imagery and land cover untouched, NDVI built | **Pass** (run 2). Wall 277 s, peak RSS 4.0 GB (parent + pool). Terrain 182,602, imagery 277,286 and land cover 2,288 tiles all skipped. NDVI: 7,043 tiles / files, 264.1 MB (264,103,840 B), 75.8 s (~93 tiles/s), peak worker RSS 690 MB; fit 25.6 s. z15 4,972 tiles / 184.4 MB. Run 1 was the same (74.4 s, 264.1 MB, fit 24.7 s) |
+| Fit | Held-out NAIP vs Sentinel-2 NDVI: before, global, after the match; bias per date | **Pass** (run 2, `fit.json` format 2: gain 0.92666, offset 0.328702, 24x25 grid of 2 km cells, 168 of 432 filled, cell offset -0.1525 … +0.0833). Held-out MAE 0.3238 before, 0.0801 global, **0.0687** after (< global); bias 0.3297 -> **0.0006**. Per date: 2022-04-25 0.0000 (n 581,436), 05-12 -0.0022 (n 883,610), 05-30 +0.0010 (n 6,310,469); none beyond 0.03. Run 1 (global only): MAE 0.0801, bias 0.006, but 04-25 -0.0711 and 05-12 -0.0494 |
+| Sun | NAIP acquisition date and sun window per asset | **Pass.** 44 `naip_pc` assets on 2022-04-25 / 05-12 / 05-30; solar noon elevation 70.16-70.23 / 74.75-74.94 / 78.32-78.70 deg (azimuth 180); windows ~[93.3, 266.7] / [87, 273] / [82.2, 277.8] deg; `min_elevation_deg` 30. The plan expected 76-79 deg; actual is 70-79 (the April date is lower), same in both runs |
+| Seam | `ndvi_check.py`: mean NDVI difference across NAIP/Sentinel-2 seam pairs (limit 0.03) | **Run 1 fail, run 2 pass.** Run 1 +0.0472 (1,160 pairs of 1,292 candidates; unfitted -0.2797). Run 2 **0.0000** (global-fit-only comparison 0.0433). Cause of run 1: the global fit's residual near NAIP's footprint edge; all seam pairs lie on the outer envelope of the NAIP union, 5-7 km outside the bbox, and per-date fits would have given +0.032, still over. The gridded offset (Task 9) removes it |
+| Classes | NDVI per land-cover class (sanity ordering) | **Pass** (run 2). Median: tree 0.4961, shrub 0.3386, grass 0.3071, crop 0.2835, built 0.2441, bare 0.2677, water -0.1024, wetland 0.3543 (WorldCover 10/20/30/40/50/60/80/90; n 42,006 / 19,105 / 42,060 / 1,027 / 12,060 / 1,506 / 29,759 / 121). Zooms 0-15 present |
+| Review | NDVI overview `.cache/ndvi_check/pendleton.png` | **Pass** (reviewed by the user for both runs, accepted 2026-10-10) |
+| Verify | `verify --deep -j 6` | **Pass.** Every check `ok` (hashes, `ndvi_tilemapresource`, terrain, imagery decode); `ndvi_values` 6,368 px in 109 leaves, error steps p99 0 (NAIP 4,692 px, Sentinel-2 1,676 px). 233 s, RSS 1.84 GB |
+| Determinism | Rebuild with a different `-j`; second build over the same package | **Pass, with a ruling.** `-j 1` vs `-j 6` (the spec says `-j 16`; measured on this Mac): `hashes.txt` identical (469,227 lines each). `-j 1` build 7,847 s (2.2 h). A second `-j 6` build of `pendleton-ndvi` skipped everything (169 s; terrain 182,602, imagery 277,286, NDVI 7,043, land cover 2,288) |
+| Off switch | Layers other than `ndvi/` unchanged | **Pass, with a ruling.** Every non-`ndvi/` line of `hashes.txt` equals the chunk-1 package `pendleton-r1b`. Equivalent by construction to an `ndvi = false` build, which was not built separately |
+
+Follow-up: the `-j 1` build exits 2 with "peak worker RSS 4318 MB exceeds 2048 MB (the package is complete)". At
+`-j 1` the build runs in-process, so the main process's fit and index state counts as the worker's RSS (4318 MB for
+every layer); at `-j 6` the workers peak at 80-900 MB. The package is complete and byte-identical; the RSS accounting
+for in-process builds still needs fixing.

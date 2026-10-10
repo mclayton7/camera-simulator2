@@ -1812,7 +1812,10 @@ measuring the distance to land; (2) a turquoise shallow shelf with a jagged hard
 renders (present in R0; seabed depth under the Single Layer Water ocean, not imagery; affects boat scenes): separate
 terrain/ocean follow-up. **R1 chunk 2 (NDVI + NAIP sun metadata)** implemented 2026-10-09: an `ndvi/` PNG layer
 (NAIP fitted onto Sentinel-2, same merge as the imagery), NAIP acquisition date and sun window per asset
-(`docs/scene-packages.md`, "NDVI"); gates in `scripts/scene/tools/ndvi_check.py`; acceptance on Pendleton pending.
+(`docs/scene-packages.md`, "NDVI"); gates in `scripts/scene/tools/ndvi_check.py`; accepted on Pendleton 2026-10-10 (a global NDVI fit left a +0.0472 seam bias at NAIP's footprint edge, fixed by
+a gridded offset: seam 0.0000, held-out MAE 0.0687, `-j 1`/`-j 6` and off-switch checks identical). Follow-up: a
+`-j 1` build reports "peak worker RSS 4318 MB exceeds 2048 MB" (in-process builds count the main process's state as
+the worker's RSS) and exits 2 although the package is complete; fix the RSS accounting.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

@@ -21,7 +21,12 @@ including the offline profile. Left from R0: the offline run on Linux/Vulkan (`d
 a SquashFS vs plain-directory cold-start timing. **R1 chunk 1 (NAIP edge) accepted on Pendleton 2026-10-09**
 (`docs/scene-packages.md`, "Measured"): colour bias median 2/2/2 DN, open water within 1.10 DN of raw Sentinel-2,
 identical rebuild; imagery build +20.9 % per tile (over the +10 % spec gate, accepted). Known limits: a dark ~200 m
-NAIP disc around piers; the turquoise shelf outline (ocean, not imagery). Next: the rest of R1.
+NAIP disc around piers; the turquoise shelf outline (ocean, not imagery). **R1 chunk 2 (NDVI + sun metadata)
+accepted on Pendleton 2026-10-10** (`docs/scene-packages.md`, "Measured"): a 7,043-tile, 264 MB `ndvi/` layer whose
+global fit left a +0.0472 seam bias at NAIP's footprint edge, fixed by a gridded offset (seam 0.0000, held-out MAE
+0.0687, per-date bias within 0.003); sun elevation/window recorded per NAIP asset (70-79 deg at noon);
+`-j 1`/`-j 6` and off-switch checks identical. Next: the rest of R1 (coastline vs sea level, Linux/Docker `file://`,
+R1 gates).
 
 **Scope decisions (2026-10-07).**
 
@@ -315,9 +320,10 @@ is a checklist for this phase.
   per tile in the manifest: imagery shadows are baked in and only look right near that sun position
   (a known limit, documented, not fixed). NAIP edge: margin + Sentinel-2 colour match + feather (`docs/superpowers/specs/2026-10-09-naip-edge-design.md`;
   NAIP quarter-quads are bit-identical in their overlaps, so no per-file balancing; open water is one source: NAIP clipped to land plus 200 m, the colour match land-only).
-- NAIP also has a near-infrared band. Package it as an NDVI layer next to the RGB tiles: it is a far
+- ~~NAIP also has a near-infrared band. Package it as an NDVI layer next to the RGB tiles: it is a far
   better vegetation signal than 4B's GBuffer base-colour index (R2 decides whether `ThermalCS` uses
-  it).
+  it).~~ Done and accepted 2026-10-10 (`docs/scene-packages.md`, "NDVI" and "Measured"): `ndvi/` layer fitted onto
+  Sentinel-2 with a global fit plus a gridded offset; R2 still decides whether `ThermalCS` uses it.
 - ~~Offline: `Main.umap`'s own ion actors request ion endpoints at frame 0.~~ Solved without the editor
   (2026-10-09): CamSim configures or destroys them at world init, before they load. Stripping them from
   `Main.umap` is optional cleanup.
