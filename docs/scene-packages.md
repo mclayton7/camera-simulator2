@@ -785,29 +785,38 @@ were skipped. Details: `.superpowers/sdd/2026-10-10-r2-vector-features/` (task 8
 |---|---|---|
 | 1 Package | `build`, `verify --deep` | **Pass.** Burned texels: 200 = 511,761; 201 = 18,473; 210 = 12,828; 220 = 40,507. Land cover 2,288 tiles, 42.0 MB; build 136 s cold (incl. the OSM/NHD read), 62 s with the features cached, 55 s with features off; peak RSS 156 MB for the cut, 3,079 MB for the cold build's process tree (the OSM read). `verify --deep` all `ok`, including `landcover_codes`. Rebuild: `landcover/` identical. Features off: `landcover/` identical to `pendleton-r1c` (fresh cut) |
 | 2 Road registration | `tools/road_registration.py` (2-D windowed, "Vector features") | **Pass.** Median \|shift\| **2.0 m**, p90 9.99 m (gate 10 m); 54 of 60 windows used (excluded: 3 peak at the search edge, 2 low contrast, 1 not prominent); mean (dE, dN) = (−0.06, +0.65) m. The spec's dark-box profiles gave 14.5 m (and an edge-pair matcher 12.0 m), both measuring tree lines and shadows, not misregistration (crops in `.cache/r2/road_crops/`) |
-| 3 Thermal gate (r) | `thermal_check.py --runs roads --scene pendleton-r2` | **Night pass, noon FAIL** (table below). Thresholds unchanged |
+| 3 Thermal gate (r) | `thermal_check.py --runs roads --scene pendleton-r2` | **FAIL** on the selected pose (MWIR night and noon, LWIR noon; table below). Thresholds unchanged. Open: needs a decision |
 | 4 Unchanged | `thermal_check.py` (a)–(q); UE tests; bench | **Pass.** Gates (a)–(q) all pass on the SF scene, MWIR and LWIR: (f) ThermalCS p95 0.421 ms at 1080p (4B: 0.408); (g) EO \|dY\| 0.013 DN. UE automation 494/494 (`-nullrhi`), `CamSim.GPU.*` 26/26 (Metal), scene tooling 444 passed / 2 skipped / 1 xfailed. Bench (`run_bench.py --site pendleton`, `.cache/bench-r2/`): ThermalCS identical to R1 in a same-session IR pair (table below); EO game-thread p50 and wall p95 within noise of R1, 30 fps and 0 dropped frames in every run and phase |
 | 5 CIGI | `send_cigi_test.py --hat-extended / --los-extended` | **Pass** (table below) |
 | 6 Visual review | MWIR/LWIR/EO noon frames, `.cache/r2/visual/` | **Pending** (human) |
 
-Gate (r): carriageway minus outer verge, mean Y over 10 frames (white-hot), nadir 300 m over I-5 southbound (OSM way
-1009956653, heading 134.71°, GSD 0.083 m), 21 December. Class temperatures from `camsim.Thermal.Log`:
+Gate (r): carriageway minus outer verge, mean Y over 10 frames (white-hot), nadir 300 m (GSD 0.083 m), 21 December.
+**Pose selection** (fix round 1, `ROAD_POSE` in `thermal_check.py` holds the criterion and the numbers): straight pieces
+(≥ 120 m, bearings within 1°) of OSM motorway…tertiary ways that burn to 200, ≥ 8 m wide, no crossing or bridge within
+60 m; carriageway strip ≥ 90 % code 200; verge strip (8–28 m beyond the edge, one side) free of road/water codes and
+≥ 60 % vegetation/bare codes; and *dark pavement*: NAIP luma of the verge ≥ 15 DN above the carriageway. 282 pieces pass
+the land-cover tests and 30 the luma test; ranked by road class, then width, then the luma difference. Rank 1 is the
+gate pose: I-5 northbound in San Clemente, OSM way 487165554 (asphalt, 5 lanes, 20.5 m; luma 75.3 vs verge 97.9).
 
-| Band | Time | Value (DN) | Threshold | Result | asphalt / grassland (K) |
-|---|---|---|---|---|---|
-| MWIR | 02:00 | +38.25 | ≥ +2 | Pass | 285.9 / 282.4 (+3.5) |
-| MWIR | 12:00 | **−38.94** | ≥ +6 | **Fail** | 307.2 / 300.9 (+6.3) |
-| LWIR | 02:00 | +28.49 | ≥ +2 | Pass | 285.9 / 282.4 (+3.5) |
-| LWIR | 12:00 | **−19.10** | ≥ +6 | **Fail** | 307.2 / 300.9 (+6.3) |
+| Pose | Band | 02:00 (≥ +2) | 12:00 (≥ +6) | Class temperatures, asphalt / verge class (K), 02:00 · 12:00 |
+|---|---|---|---|---|
+| **Gate: rank 1**, I-5 NB San Clemente (way 487165554) | MWIR | **−1.15 Fail** | **−25.29 Fail** | 285.9 / 283.6 · 307.1 / 298.3 (`tree_canopy`; dry, so refined toward `bare_soil` 285.4 · 306.1) |
+| | LWIR | +13.32 Pass | **−10.83 Fail** | |
+| Rank 2 (diagnostic), CA 76 (way 215015826, 17 m, verge bare 60) | MWIR | +38.43 | +15.58 | 285.9 / 285.4 · 307.2 / 306.1 (`bare_soil`) |
+| | LWIR | +27.48 | +18.23 | |
+| Rank 3 (diagnostic), Avenida Pico (way 399485028, 13.5 m, verge 30/10) | MWIR | −9.57 | −6.48 | 285.9 / 282.4 · 307.2 / 300.9 (`grassland`) |
+| | LWIR | +7.90 | +2.52 | |
+| First pose (task 9; info row `r_t9`), I-5 SB (way 1009956653), OSM asphalt but light NAIP pavement | MWIR | +38.16 | −40.06 | 285.9 / 282.4 · 307.1 / 300.8 (`grassland`) |
+| | LWIR | +28.96 | −19.39 | |
 
-Why noon fails: the geometry is right (the EO frame at the same pose shows the carriageway mask on the southbound
-pavement and the verge mask on dry brown ground; the land-cover profile is 200 across the carriageway and 30/50 beside
-it). The closed-form classes agree in sign with published asphalt-vs-grass contrasts (+6.3 K in December, below the
-+10–20 K of summer noon). What flips the sign is the per-pixel fast term: it takes the albedo from the imagery, and this
-stretch of I-5 is light grey in NAIP (concrete-coloured, though OSM tags it asphalt), while the dark brown verge is
-grassland refined to `bare_soil` (306.1 K, `k_fast` 0.025). With `k_fast` 0 for every terrain class (diagnostic run,
-config override, MWIR): noon **+21.61 DN** (pass), night +38.26 DN, so the fast term is worth about −60 DN at noon here.
-A model decision, not a gate bug; options in the task 10 report.
+Ranks 2 and 3 were run as diagnostics after rank 1 failed, to see whether the result depends on the pose; the gate pose
+was not changed to the passing one (that would be choosing by outcome). On the first pose, `k_fast` 0 for every terrain
+class gave noon +21.61 DN MWIR (pass), so its failure is the fast term reading the light pavement. On rank 1 the pavement is
+dark, but the verge is dry scrub on a 9 m bank (ground 47.8 m at the road, 56.7 m mid-verge): dry vegetation refines to
+`bare_soil`, whose closed-form temperature is only 1.1 K below asphalt at noon and 0.5 K at 02:00, and the sunward bank
+and light dry ground add a positive fast term on the verge. The closed-form asphalt-vs-grass contrast (+6.3 K at noon in
+December, +3.5 K at 02:00) agrees in sign with published values (+10–20 K at summer noon); what the gate sees depends on
+the verge's imagery (green or dry) and the pavement's brightness. Overlays: `.cache/r2/thermal_roads_v2/overlays/`.
 
 CIGI extended responses (`send_cigi_test.py`, sensor 300–400 m above each point, noon):
 
@@ -821,7 +830,7 @@ CIGI extended responses (`send_cigi_test.py`, sensor 300–400 m above each poin
 | Open country 33.36, −117.40 | HAT/HOT 103 | **30** | HOT 62.57 m |
 
 Visual review frames (MWIR, LWIR and EO reference, noon 21 December): `.cache/r2/visual/{mwir,lwir,eo}_{i5_gate,i5_wide,
-oceanside_grid,runway}.png` (I-5 at the gate pose with 20° and 60° FOV; an Oceanside residential grid at 33.1985,
+oceanside_grid,runway}.png` (I-5 at the first gate (r) pose, OSM way 1009956653, with 20° and 60° FOV; an Oceanside residential grid at 33.1985,
 −117.3760, ~300 m up; the MCAS Camp Pendleton runway at 33.3017, −117.3550, ~600 m up). Questions (spec Acceptance 6):
 do roads read as continuous lines; is the 6 m warp's wobble on road edges acceptable; is the brown-verge widening
 acceptable.

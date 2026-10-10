@@ -109,9 +109,11 @@ row (a view with no frames, an absent run) fails:
       ceiling (Y 235), so p99 cannot show them cooling
   (q) entity, night, MWIR: destroyed truck box - ring >= +60 DN (burning)
   (r) roads (REALISM R2): carriageway - outer verge mean Y on the temporal-mean frame >= +6 DN at noon, >= +2 DN at
-      night. Carriageway = the 17 m road minus 2 m at each edge, verge = 8-28 m beyond the edge on the coast side
-      (right of travel = image right), both over the central 60 % rows, GSD from 300 m and 20 deg. r_info: asphalt
-      and grassland class temperatures from the camsim.Thermal.Log lines
+      night. Pose: I-5 northbound in San Clemente (OSM way 487165554, asphalt, dark in NAIP; selection criterion at
+      ROAD_POSE). Carriageway = the 20.5 m road minus 2 m at each edge, verge = 8-28 m beyond the edge on the outer
+      side (right of travel = image right), both over the central 60 % rows, GSD from 300 m and 20 deg. r_info:
+      asphalt and verge-class temperatures from the camsim.Thermal.Log lines. r_t9 (info, not gated): the same metric
+      at the first pose (I-5 SB, way 1009956653), where OSM says asphalt but NAIP shows light, concrete-like pavement
 """
 
 from __future__ import annotations
@@ -199,7 +201,35 @@ ENT_RUN_DN = 5.0  # (n) running - parked-cold contrast
 ENT_HOT_DN = {"mwir": 20.0, "lwir": 10.0}  # (o) running p99 - box median
 ENT_DEAD_DN = 60.0  # (q) destroyed box - ring (MWIR)
 
-# REALISM R2 gate (r): a road against its verge on the Camp Pendleton scene package (--scene). I-5 southbound, OSM way
+# REALISM R2 gate (r): a road against its verge on the Camp Pendleton scene package (--scene).
+# Pose selection (task 10 fix round 1, reproducible from the package; numbers measured on pendleton-r2):
+#   candidates = straight pieces of OSM ways (motorway..tertiary, no links) that burn to code 200 (surface=asphalt or
+#   none), consecutive vertices whose bearings stay within 1 deg of the piece's end-to-end bearing, >= 120 m long,
+#   width_m >= 8 m, centre inside the bbox; no other road/rail way crossing within 60 m of the centre and no bridge or
+#   tunnel within 60 m; land cover over +-18 m along: carriageway strip (|d| <= w/2 - 2 m) >= 90 % code 200, verge strip
+#   (w/2 + 8 .. w/2 + 28 m on one side) with no 200/201/210/220 and >= 60 % codes 10/20/30/40/60; imagery (z17 NAIP,
+#   sRGB luma 0-255 sampled at 2 m x 1 m over the same strips): verge mean - carriageway mean >= 15 DN ("dark
+#   pavement"). 282 pieces pass the land-cover tests, 30 of them the luma test; ranked by road class (motorway first),
+#   then width, then the luma difference. The first: I-5 northbound (San Diego Freeway) in San Clemente, OSM way
+#   487165554 (motorway, ref I 5, oneway, lanes 5, surface=asphalt -> code 200, width_m 20.5 m), a 139 m straight piece
+#   at bearing 337.74 deg; pose at its midpoint. Carriageway strip 98.8 % code 200; verge (right of travel, d 18.25 ..
+#   38.25 m: dry scrub with bushes on a rising bank) 389 tree cover (10) + 10 built-up (50) samples; luma carriageway
+#   75.3, verge 97.9 (+22.6 DN). Land cover across the profile, d = -60..+60 m in 4 m steps, along 0 m:
+#   50 50 50 50 50 50 50 200 200 200 200 50 50 | 200 200 200 200 | 50 50 10 10 10 10 10 10 10 10 10 10 10 10
+#   (d = -32..-20: the southbound carriageway). Ground 33.422644 N -117.607739 E: 47.76 m HAE (package terrain,
+#   point_heights z16); verge midpoint 56.74 m (the bank). Second-ranked was CA 76 (trunk, way 215015826, +27.5 DN).
+#   Candidate list: .cache/r2/gate_r_pose_candidates_loose.json, script .cache/r2/select_pose.py (args PKG OUT 8 120 0.6).
+ROAD_POSE = dict(  # I-5 NB, San Clemente
+    lat=33.422644,
+    lon=-117.607739,
+    ground_hae=47.76,
+    heading=337.74,
+    width_m=20.5,
+    outer_side=+1,
+    osm_way=487165554,
+    verge_class="tree_canopy",
+)
+# r_t9 (info only): the first gate (r) pose (task 9). I-5 southbound, OSM way
 # 1009956653 (motorway, ref I 5, oneway, lanes 4, no surface tag -> code 200; width_m 17.0 m), one 408 m segment at a
 # constant bearing of 134.71 deg inside a 1318 m run of chained southbound ways whose bearings stay within 0.55 deg; the
 # pose is 80 % along the way (326 m in, 82 m before its end). The whole southbound I-5 in the package's bbox is tagged
@@ -214,8 +244,17 @@ ENT_DEAD_DN = 60.0  # (q) destroyed box - ring (MWIR)
 # 364 grassland (30), 35 built-up, none 200/201/210. NAIP: travel lanes from d ~ -7.5 to +15 m, vegetated verge to the
 # ramp at d ~ +40 m. Ground 33.299358 N -117.465474 E: -8.23 m HAE (package terrain, point_heights z16; outer verge
 # mid -10.1 m). Picked with read_osm features (camsim_scene.pipeline._load_features) in a scratch script.
-ROAD_POSE = dict(  # I-5 SB, Pendleton
-    lat=33.299358, lon=-117.465474, ground_hae=-8.23, heading=134.71, width_m=17.0, outer_side=+1, osm_way=1009956653
+# NAIP shows this pavement light grey (concrete-like) although OSM tags it asphalt, so the per-pixel fast term reads it
+# as a high albedo: the OSM/imagery disagreement case, kept as an info row.
+ROAD_POSE_T9 = dict(  # I-5 SB, Pendleton
+    lat=33.299358,
+    lon=-117.465474,
+    ground_hae=-8.23,
+    heading=134.71,
+    width_m=17.0,
+    outer_side=+1,
+    osm_way=1009956653,
+    verge_class="grassland",
 )
 ROAD_UP_M = 300.0
 ROAD_FOV = 20.0
@@ -223,7 +262,7 @@ ROAD_NOON_DN = 6.0  # (r) noon: carriageway - outer verge >= +6 DN (white-hot)
 ROAD_NIGHT_DN = 2.0  # (r) night: >= +2 DN (asphalt keeps its heat)
 ROAD_VERGE_M = (8.0, 28.0)  # verge strip: this far beyond the carriageway edge
 ROAD_EDGE_INSET_M = 2.0  # road strip: carriageway minus this at each edge
-ROAD_CLASS_SLOTS = {"asphalt": 3, "grassland": 8}  # FThermalMaterialTable built-in indices (r_info)
+ROAD_CLASS_SLOTS = {"asphalt": 3, "tree_canopy": 6, "grassland": 8, "bare_soil": 11}  # FThermalMaterialTable indices (r_info)
 
 # Fixed-pose regions as fractions of the image height (coast) / rows (sky).
 COAST_R = (0.26, 0.40)  # radius band from the image centre
@@ -493,8 +532,8 @@ def road_row(band: str, tod: str, y: np.ndarray, masks: tuple[np.ndarray, np.nda
     }
 
 
-def road_class_temps(lines: list[str]) -> dict[str, tuple[float, float]]:
-    """(r_info) asphalt and grassland class temperatures (K) from the last camsim.Thermal.Log line of each time of day
+def road_class_temps(lines: list[str], verge: str = "grassland") -> dict[str, tuple[float, float]]:
+    """(r_info) asphalt and `verge` class temperatures (K) from the last camsim.Thermal.Log line of each time of day
     (sunLux > 0: noon, else night). A slot the line doesn't carry (a log from before every class was printed) is NaN."""
     out: dict[str, tuple[float, float]] = {}
     for ln in lines:
@@ -506,7 +545,7 @@ def road_class_temps(lines: list[str]) -> dict[str, tuple[float, float]]:
             lux = float(ln.split(" sunLux=", 1)[1].split()[0])
         except ValueError:
             continue
-        a, g = (vals[i] if i < len(vals) else float("nan") for i in ROAD_CLASS_SLOTS.values())
+        a, g = (vals[i] if i < len(vals) else float("nan") for i in (ROAD_CLASS_SLOTS["asphalt"], ROAD_CLASS_SLOTS[verge]))
         out["noon" if lux > 0 else "night"] = (a, g)
     return out
 
@@ -1049,17 +1088,21 @@ def _poses():
             gimbal_pitch=-90.0,
             fov_h=MIXED_FOV,
         ),
-        # REALISM R2 gate (r): nadir over I-5 on the Pendleton package, heading along the road (a vertical strip)
-        "road": static(
-            scenario.Pose(
-                ROAD_POSE["lat"],
-                ROAD_POSE["lon"],
-                ROAD_POSE["ground_hae"] + ROAD_UP_M,
-                yaw=ROAD_POSE["heading"],
-                gimbal_pitch=-90.0,
-                fov_h=ROAD_FOV,
+        # REALISM R2 gate (r): nadir over I-5 on the Pendleton package, heading along the road (a vertical strip);
+        # road_t9 is the info-only first pose (the OSM/imagery disagreement case)
+        **{
+            name: static(
+                scenario.Pose(
+                    rp["lat"],
+                    rp["lon"],
+                    rp["ground_hae"] + ROAD_UP_M,
+                    yaw=rp["heading"],
+                    gimbal_pitch=-90.0,
+                    fov_h=ROAD_FOV,
+                )
             )
-        ),
+            for name, rp in (("road", ROAD_POSE), ("road_t9", ROAD_POSE_T9))
+        },
         # ROADMAP 4C: the truck close up, moving (truck-park while driving) or where it stands still
         "ent_running": dvc.nadir_on(truck, ground + ENT_UP_M, ENT_FOV),
         "ent_stop": ent_static(ENT_DRIVE_S),
@@ -1192,7 +1235,7 @@ def build_runs(bands: list[str], wanted: set[str], scene: str | None = None) -> 
                     {"CAMSIM_IR_PRESET": BANDS[b], "CAMSIM_SCENE_DIR": scene or ""},
                     1,
                     ["night", "noon"],
-                    lambda tod: [View("road", p["road"], 10, None)],
+                    lambda tod: [View("road", p["road"], 10, None), View("road_t9", p["road_t9"], 10, None)],
                     ml=False,
                     exec_cmds=["camsim.Thermal.Log 1"],
                     dis_args=[],
@@ -1945,30 +1988,39 @@ def check_all(
             continue
         for rec in run["views"]:
             vd = load_view(out, run, rec)
-            if vd is None or rec["view"] != "road":
+            if vd is None or rec["view"] not in ("road", "road_t9"):
                 continue
+            rp = ROAD_POSE if rec["view"] == "road" else ROAD_POSE_T9
             shots.append(rec["shot"])
             y_mean = vd.y.astype(np.float32).mean(axis=0)
             gsd = nadir_gsd_m(ROAD_UP_M, ROAD_FOV, y_mean.shape[1])
-            masks = road_masks(y_mean.shape, gsd, ROAD_POSE["width_m"], ROAD_POSE["outer_side"])
+            masks = road_masks(y_mean.shape, gsd, rp["width_m"], rp["outer_side"])
             thr = ROAD_NOON_DN if rec["time"] == "noon" else ROAD_NIGHT_DN
             row = road_row(band, rec["time"], y_mean, masks, thr)
-            row["detail"] += f", GSD {gsd:.3f} m, {len(vd.y)} frames, OSM way {ROAD_POSE['osm_way']}"
-            checks.append(row)
+            row["detail"] += f", GSD {gsd:.3f} m, {len(vd.y)} frames, OSM way {rp['osm_way']}"
+            if rec["view"] == "road":
+                checks.append(row)
+            else:  # info only: the first pose, where OSM (asphalt) and NAIP (light pavement) disagree
+                row["check"] = "r_t9"
+                row["detail"] = "info, OSM/imagery disagreement case (threshold not applied): " + row["detail"]
+                info.append({k: row[k] for k in ("check", "band", "time", "value", "detail")})
             shots.append(overlay(out, vd, masks[0], masks[1], None, len(vd.y) // 2))
-        temps = road_class_temps(thermal_log_lines(out / run["label"] / "CamSimTest.log"))
-        for tod in ("night", "noon"):
-            a, g = temps.get(tod, (float("nan"), float("nan")))
-            info.append(
-                {
-                    "check": "r_info",
-                    "band": band,
-                    "time": tod,
-                    "value": a - g,
-                    "detail": f"class temperatures (camsim.Thermal.Log): asphalt {a:.1f} K, grassland {g:.1f} K"
-                    + (" (grassland not in the log line)" if math.isnan(g) else ""),
-                }
-            )
+        log = thermal_log_lines(out / run["label"] / "CamSimTest.log")
+        for rp, label in ((ROAD_POSE, "r_info"), (ROAD_POSE_T9, "r_t9_info")):
+            vc = rp["verge_class"]
+            temps = road_class_temps(log, vc)
+            for tod in ("night", "noon"):
+                a, g = temps.get(tod, (float("nan"), float("nan")))
+                info.append(
+                    {
+                        "check": label,
+                        "band": band,
+                        "time": tod,
+                        "value": a - g,
+                        "detail": f"class temperatures (camsim.Thermal.Log): asphalt {a:.1f} K, {vc} {g:.1f} K"
+                        + (f" ({vc} not in the log line)" if math.isnan(g) else ""),
+                    }
+                )
 
     # (l) no frame-time spike when the land-cover window re-centres during a 1 km/min pan (ruling S12): l1 the median
     # per-re-centre spike, l2 each re-centre against the land-cover-off control pan at the same view time.

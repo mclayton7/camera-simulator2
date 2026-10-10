@@ -265,9 +265,16 @@ Vector features (REALISM R2, codes 200-220; measurements in [`scene-packages.md`
 - **The fast term reads the imagery, not the OSM surface.** `S_abs,pix` uses the base colour's luminance as the albedo, while
   `S_abs,ref` uses the class albedo (asphalt 0.10). A road that is light grey in NAIP (aged asphalt, or concrete that OSM tags as
   asphalt) therefore reads several K below its class temperature at noon, and a dark brown dry verge (grassland refined to
-  `bare_soil`) above its own. On the gate (r) I-5 pose this flips the noon road-vs-verge contrast: -38.9 DN MWIR / -19.1 DN LWIR
-  with the fast term, +21.6 DN MWIR with `k_fast` 0 for every terrain class (2026-10-10); night is unaffected (+38 / +28 DN).
-- Most of I-5 in OSM at Pendleton is `surface=concrete` (code 201). On the gate (r) pose at noon, 21 December, the class
+  `bare_soil`) above its own. On the first gate (r) pose (I-5 southbound, OSM way 1009956653, now the info row `r_t9`: the
+  OSM/imagery disagreement case) this flips the noon road-vs-verge contrast: -40.1 DN MWIR / -19.4 DN LWIR with the fast
+  term, +21.6 DN MWIR with `k_fast` 0 for every terrain class (2026-10-10); night is unaffected (+38 / +29 DN).
+- **A dry verge is nearly as warm as asphalt.** Vegetation codes refine toward `bare_soil` where the imagery isn't green, and
+  `bare_soil` is only 1.1 K below `asphalt` at noon and 0.5 K at 02:00 (December, Pendleton). On the gate (r) pose (I-5
+  northbound in San Clemente, dark pavement, dry scrub verge on a sunward bank) the road reads -25.3 DN MWIR / -10.8 DN LWIR
+  against the verge at noon and -1.2 / +13.3 DN at 02:00 (gate (r) fails); on CA 76 with a bare verge it reads +15.6 / +18.2
+  at noon. Road-vs-verge contrast therefore depends on the verge's imagery as much as on the road class
+  ([`scene-packages.md`](scene-packages.md#r2-vector-features-2026-10-10-macos), gate (r) table).
+- Most of I-5 in OSM at Pendleton is `surface=concrete` (code 201). On the first gate (r) pose at noon, 21 December, the class
   temperatures are `asphalt` 307.2 K, `concrete` 300.5 K, `grassland` 300.9 K, `bare_soil` 306.1 K, `built_up` 304.3 K,
   `rail_ballast` 308.5 K (02:00: 285.9, 285.8, 282.4, 285.4, 286.0, 284.2 K), so concrete stretches show little road-vs-grass
   contrast at noon (a visual-review question).

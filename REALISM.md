@@ -353,7 +353,7 @@ anything new. Roads are one of the most visible features in LWIR and are 4B's ma
 4B's "roads layer is a non-goal".
 
 **Status (2026-10-10, macOS):** implemented; measured on Pendleton (`docs/scene-packages.md`, "Vector features" and
-"Measured"). Open: gate (r) at noon fails (below), and the human visual review of the MWIR/LWIR frames.
+"Measured"). Open: gate (r) fails (below), and the human visual review of the MWIR/LWIR frames.
 
 - ~~Rasterise OSM roads (buffered by lane count / road class), paved areas and rail, and 3DHP water
   bodies and flowlines (public domain; NHD retired in 2023, so static NHD HR is the fallback and
@@ -377,9 +377,10 @@ anything new. Roads are one of the most visible features in LWIR and are 4B's ma
 - **Gates:** ~~road centrelines vs imagery roads: median offset ≤ 1 window texel (10 m) on a sample
   set (if roads need to be sharper than that, a finer road raster is a follow-up).~~ Pass: median 2.0 m, p90 10.0 m
   (2-D windowed correlation; the profile method measured vegetation at Pendleton). `thermal_check.py` gains a
-  road-vs-verge contrast gate (noon LWIR/MWIR, sign and magnitude from published data, 4D): gate (r) added; **night
-  passes, noon fails** (the per-pixel fast term reads the light NAIP pavement as a high albedo; with it off noon passes),
-  see `docs/thermal.md`, "Limits (R2)". ~~`land_cover.enabled: false` is still bit for bit. ThermalCS cost is
+  road-vs-verge contrast gate (noon LWIR/MWIR, sign and magnitude from published data, 4D): gate (r) added; **fails on
+  the selected pose** (dark asphalt with a dry verge: the verge refines to `bare_soil`, nearly as warm as asphalt; the first,
+  light-pavement pose fails at noon through the per-pixel fast term), see `docs/scene-packages.md`, "Measured", and
+  `docs/thermal.md`, "Limits (R2)". ~~`land_cover.enabled: false` is still bit for bit. ThermalCS cost is
   unchanged (same lookup).~~ Held (tests; bench in "Measured").
 
 ### R3 Buildings and bridges (generated 3D Tiles)

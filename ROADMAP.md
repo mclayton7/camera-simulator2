@@ -1828,9 +1828,11 @@ or unknown, 201 concrete), rail (210) and NHD HR inland water (220) burned into 
 201 18,473 / 210 12,828 / 220 40,507, land cover 136 s cold; rebuild and features-off identical; `verify --deep` clean;
 road registration median 2.0 m, p90 10.0 m (2-D windowed correlation; the spec's profile method measured vegetation);
 CIGI 200 on I-5, 220 on Lake O'Neill, 80 offshore, 30 in open country; gates (a)–(q) pass, ThermalCS 0.421 ms at 1080p and unchanged in the bench (same-session IR pair r1c/r2, p95 within 0.002 ms);
-UE 494/494, GPU 26/26. **Open: gate (r) noon fails** (−38.9 DN MWIR, −19.1 DN LWIR; night +38.3 / +28.5 passes): the
-per-pixel fast term reads this stretch of I-5's light NAIP pavement as a high albedo against the dark brown verge
-(`k_fast` 0: +21.6 DN); a model decision (`docs/thermal.md`, "Limits (R2)"). **Human follow-up (no editor work):** visual
+UE 494/494, GPU 26/26. **Open: gate (r) fails** on the pose picked by a data rule (dark asphalt, fix round 1: I-5 NB in
+San Clemente, way 487165554): MWIR −1.2 / −25.3 DN and LWIR +13.3 / −10.8 DN at 02:00 / noon (dry verge refined to
+`bare_soil`, nearly as warm as asphalt, on a sunward bank). The first pose (I-5 SB, OSM asphalt but light NAIP pavement)
+fails at noon too (−40.1 / −19.4 DN; `k_fast` 0: +21.6 DN), and of two diagnostic poses CA 76 passes every row, Avenida
+Pico fails; needs a decision (`docs/scene-packages.md`, "Measured"; `docs/thermal.md`, "Limits (R2)"). **Human follow-up (no editor work):** visual
 review of the MWIR/LWIR noon frames in `.cache/r2/visual/` (I-5, Oceanside residential grid, MCAS Camp Pendleton runway):
 do roads read as continuous lines, is the 6 m warp wobble acceptable, is the brown-verge widening acceptable. Follow-ups:
 NDVI in `ThermalCS` (moved to its own spec), 3DHP when per-unit downloads exist, a finer road raster or a per-family warp
