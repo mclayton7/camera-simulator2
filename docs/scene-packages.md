@@ -28,7 +28,7 @@ Background: [`docs/realism/`](realism/) (data sources, Cesium findings, offline 
   ndvi/{z}/{x}/{y}.png          # 8-bit grayscale NDVI (0 nodata, 1..255 = -1..+1); tiles without data are absent
   sea_level.json                # local MSL offset from EGM96 (packages with a [sea_level] station)
   landcover/index.json
-  landcover/<lat>_<lon>.png     # the 4B thermal format (0.05° tiles, 600 × 600, 8-bit WorldCover codes)
+  landcover/<lat>_<lon>.png     # the 4B thermal format (0.05° tiles, 600 × 600, 8-bit WorldCover codes; + 200-220 with [features])
   .state/                       # resume markers and the build lock (not hashed, not packed)
 ```
 
@@ -133,7 +133,14 @@ balance = true                              # colour-match Sentinel-2 to NAIP an
 naip_water_buffer_m = 200                   # NAIP only this far beyond WorldCover water's edge: 0 (off) or [200, 5000] m (Imagery edge)
 ndvi = true                                 # NDVI layer (default true in sim, false in preview; NDVI section)
 ndvi_max_zoom = 15                          # [10, 17]: NDVI pyramid depth (z15 ~ 2.4 m)
-allow = []                                  # extra licence ids (SPDX, see licences.toml)
+allow = []                                  # extra licence ids (SPDX, see licences.toml); [features] OSM layers need "ODbL-1.0"
+
+[features]                                  # optional, all off by default: vector features burned into landcover/ (Vector features (R2))
+roads = true                                # OSM highway=* (road_classes) and runways/taxiways -> 200/201
+paved_areas = true                          # OSM area:highway, highway + area=yes, amenity=parking, aeroway=apron -> 200/201
+rail = true                                 # OSM railway=rail / light_rail -> 210
+water = true                                # USGS NHD HR perennial lakes, ponds, reservoirs, stream/river areas -> 220
+road_classes = ["motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential"]  # default; also service, track, living_street
 
 [priorities]                                # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"]
@@ -169,6 +176,8 @@ Unknown keys are errors. **Profiles** (Decision 3):
 | `dep3_1m.geoid_overrides` | `{ "<project>" = "GEOID18" }`: the project's geoid when the USGS WESM index doesn't give exactly one. If the WESM service is down, planning proceeds only when the overrides cover **every** project; otherwise it fails naming the uncovered ones |
 | `noaa_crm_socal.msl_above_navd88_m` | set by `plan` from `[sea_level] station` (don't set it directly). A package that uses `noaa_crm_socal` without a station is a config error |
 | `bmng.month` | set from `bmng_month` (don't set it directly) |
+| `osm_geofabrik.extract` | Geofabrik extract id (default: the smallest extract whose polygon contains the margin area; Pendleton: `socal`) |
+| `osm_geofabrik.date` | `YYYY-MM-DD` dated daily file to pin (default: the newest of today back 7 days that exists; a configured date must exist) |
 | `adapter` | any source: a built-in id or `"module:Class"` (an importable adapter class) |
 
 **`allow`** adds licence ids to the default allow-list (`LicenseRef-PublicDomain-USGov`, `CC-BY-4.0`); `--allow
@@ -339,6 +348,81 @@ because the tidal mask setting enters the tile hash; the output is identical.
 it. The CRM is accurate to about 1 m and is coarser than the ring's z10 samples (about 150 m). Piers and other thin
 features follow their source. Acceptance: coast_check (a)-(c) in "Measured".
 
+## Vector features (R2)
+
+**Why.** Roads are among the most visible features in LWIR and WorldCover has none (a motorway is `built_up` or whatever
+its verge is). R2 burns vector features into the package's existing `landcover/` tiles as codes above WorldCover's, so
+thermal IR draws them and CIGI reports them as material codes, with no new runtime geometry. Design:
+[`superpowers/specs/2026-10-10-r2-vector-features-design.md`](superpowers/specs/2026-10-10-r2-vector-features-design.md).
+
+| Code | Feature | Source | Thermal material (`docs/thermal.md`) |
+|---|---|---|---|
+| 200 | Paved road or area, asphalt or no/unknown `surface` | OSM | `asphalt` |
+| 201 | Paved, `surface=concrete`, `concrete:plates`, `concrete:lanes`; runways without a `surface` | OSM | `concrete` |
+| 210 | Rail bed (`railway=rail`, `light_rail`) | OSM | `rail_ballast` (new built-in) |
+| 220 | Inland water: perennial lake/pond (FType 390), reservoir (436), stream/river area (460) | NHD HR | `water` |
+
+**Rules** (`camsim_scene/features.py`, `RULES_VERSION` 1):
+
+- Lines are buffered to their width: `width=*` when tagged; runways 45 m, taxiways 23 m; otherwise lanes × 3.5 m plus
+  shoulders (3 m on motorways and trunks, 1 m otherwise; 2 lanes when untagged on motorways/trunks, 1 on one-way roads,
+  else 2); rail 4 m per track. Every line is at least 1.05 cells (9.74 m) wide, so it covers a cell centre in every
+  cross-section: a 7 m road is one texel wide. Polygons (water, paved areas) are burned as they are.
+- Cells are 1/12000° (9.28 m N–S), the WorldCover grid; a cell takes a feature when its centre is inside the polygon.
+- Priority, later wins: water < paved areas < rail < roads; within one priority, sorted by source id, so the output is
+  deterministic.
+- Skipped: `bridge`, `tunnel`, `covered=yes`, `location=underground`, negative `layer` (no deck geometry before R3),
+  unpaved `surface` values (`unpaved`, `gravel`, `dirt`, `ground`, `compacted`, `fine_gravel`, `sand`, `grass`, `earth`,
+  `mud`: left to WorldCover), road classes outside `road_classes`, intermittent/ephemeral water, the sea, estuaries and every
+  NHD flowline.
+- Features are read over the margin area (bbox + `imagery_margin_km`); tiles in the ring keep WorldCover only.
+
+**Licence.** OSM is ODbL 1.0 (share-alike, attribution "© OpenStreetMap contributors", added to `ATTRIBUTION.txt`).
+It isn't in `DEFAULT_ALLOW`: a package with any OSM flag on needs `allow = ["ODbL-1.0"]` (or `--allow ODbL-1.0`), a
+deliberate opt-in because the derived land-cover tiles then fall under the ODbL. NHD is public domain.
+
+**Sources.**
+
+- OSM comes from Geofabrik's dated daily extracts (`<extract>-<yymmdd>.osm.pbf`); the fetch cache stores the file by
+  sha256, so the downloaded extract *is* the snapshot and the manifest pins it. Dated files appear about two days late
+  (the current and previous day return 404), so `plan` probes back up to 7 days for the newest that exists. Reading the
+  `socal` extract (639 MB) takes ~68 s and peaks at ~3 GB RSS (pyosmium with node locations), in its own process; size
+  CI runners for it. The parsed features are cached per extract and settings, so a rebuild reads them in seconds.
+- USGS 3DHP (NHD's successor) has only a CONUS-wide annual file and an ArcGIS service whose bbox queries time out, and at
+  Pendleton it is cross-walked NHD anyway. **NHD HR** is retired (static since 2023), so it is reproducible as is; TNM
+  serves it per HU4 as GeoPackage (1807 covers Pendleton, 166 MB). `nhd_hr` is replaced by a 3DHP adapter when per-unit
+  downloads exist. NHD's NAD83 is taken as WGS 84 (about 1 m, under a texel).
+
+**Off switch.** `[features]` absent or all false: the land-cover layer is byte-identical to a package built before R2
+(checked on Pendleton against `pendleton-r1c`).
+
+**Road registration** (`scripts/scene/tools/road_registration.py`, gate 2). The spec's method (a dark box of the road's
+width matched along ±30 m perpendicular NAIP profiles) measured vegetation, not roads, at Pendleton: most asphalt there is
+*brighter* than its dry verges (84 of 200 centrelines darker than their surroundings), and a single profile locks onto
+tree lines and shadows. The gate is instead a **2-D windowed correlation**: the bbox is cut into 1 km windows; in each
+window with at least 1 km of paved motorway…residential road (up to 60, seeded), the OSM road-boundary template (edges
+of the buffered roads minus their interior) is slid over the smoothed NAIP luminance gradient magnitude by ±20 m at 1 m;
+the peak must have contrast ≥ 1.0 DN/m, not lie on the search border, and stand out from the rest of the surface. Gate:
+median |shift| ≤ 10 m over the windows used, with at least 20 used windows and half of those tried. Many roads per
+window average out tree and shadow edges that defeat single profiles. Limits: a window dominated by one road direction
+can slide along it, or onto a parallel carriageway (aperture problem: the p90 tail); a periodic street grid can match one
+block off (a strict `xfail` test documents it); the constants were tuned on Pendleton only.
+
+**Known limits** (also in `docs/thermal.md`, "Limits (R2)"):
+
+- Roads are at least one texel (~9 m) wide in IR wherever the verge isn't green. A dry verge inside a road texel is drawn
+  as asphalt.
+- The land-cover warp moves road edges by up to `warp_amplitude_m` (6 m), so long straight roads may wiggle slightly in IR.
+- Bridges and tunnels are not burned. A road on a bridge is drawn as whatever lies below the bridge until R3 adds decks.
+- Unpaved roads and tracks are left to WorldCover.
+- OSM completeness varies, and OSM inside military bases can be sparse. The registration report shows it.
+- Intermittent water is never water, even in a wet season.
+- The road codes follow OSM's `surface`, but thermal IR's fast term follows the imagery's brightness: a road that looks
+  light in NAIP reads cooler at noon than its class (`docs/thermal.md`, "Limits (R2)"). Most of I-5 at Pendleton is
+  `surface=concrete` in OSM (code 201).
+- `rail_ballast`'s properties come from material-property reasoning, not a published measurement.
+- Road registration: see its limits above.
+
 ## Sea level (R1)
 
 **Why.** CamSim's tide-0 sea is the EGM96 geoid. Local mean sea level at La Jolla is +0.774 m NAVD88 (NOAA CO-OPS
@@ -395,6 +479,8 @@ hot_check in "Measured".
 | `wc_s2` | ESA WorldCover 2021 Sentinel-2 RGBNIR composite (10 m, 1 × 1° COGs) | `CC-BY-4.0` (checked against each file's licence tag) | land (no open-ocean tiles) | z13 | WGS 84 / — |
 | `bmng` | NASA Blue Marble Next Generation, topography + bathymetry, 500 m (2004 monthly) | `LicenseRef-PublicDomain-USGov` | globe | z8 | WGS 84 / — |
 | `worldcover` | ESA WorldCover 10 m 2021 v200 land cover (3 × 3° COGs) | `CC-BY-4.0` | land | — (0.05° land-cover tiles over bbox + ring) | WGS 84 / — |
+| `osm_geofabrik` | OpenStreetMap, Geofabrik extract, one dated daily `.osm.pbf` (`[features]` roads / paved areas / rail) | `ODbL-1.0` (not in the default allow-list) | Geofabrik extract | — (burned over bbox + `imagery_margin_km`) | WGS 84 / — |
+| `nhd_hr` | USGS NHD High Resolution, HU4 GeoPackage from The National Map (`[features]` water) | `LicenseRef-PublicDomain-USGov` | US | — (as above) | NAD83 (EPSG:4269, taken as WGS 84: about 1 m) / — |
 
 **NOAA topobathy.** Both are single files from `ngdc.noaa.gov/thredds/fileServer/` (`regional/san_diego_13_navd88_2012.nc`,
 `crm/crm_socal_3as_vers2.nc`), unchanged since 2016 and 2018; they are pinned by URL and size, and `fetch` records the
@@ -687,3 +773,72 @@ Still open (Linux not tested; the user chose Mac only for now): `file://` from a
 Follow-ups: coast_check (b) should compare against the source gradient. Verify vertex error at tidal-mask edges (z14
 max 2.08 m: the mask flips between a vertex and a sample). `point_heights` no longer breaks early (it samples every
 group); the cost is only in verify and the hot tools.
+
+### R2 vector features (2026-10-10, macOS)
+
+Camp Pendleton `sim`, M1 Pro / Metal, native build. `pendleton-r2` is an APFS clone of `pendleton-r1c` planned with
+`examples/pendleton.toml` (`[features]` all on, `allow = ["ODbL-1.0"]`): OSM `socal-261008` (2026-10-08), NHD HR
+`NHD_H_1807_HU4_GPKG`. Only `layers.landcover` and the two new sources differ from r1c, so terrain, imagery and NDVI
+were skipped. Details: `.superpowers/sdd/2026-10-10-r2-vector-features/` (task 8–10 reports).
+
+| Gate | Tool | Result |
+|---|---|---|
+| 1 Package | `build`, `verify --deep` | **Pass.** Burned texels: 200 = 511,761; 201 = 18,473; 210 = 12,828; 220 = 40,507. Land cover 2,288 tiles, 42.0 MB; build 136 s cold (incl. the OSM/NHD read), 62 s with the features cached, 55 s with features off; peak RSS 156 MB for the cut, 3,079 MB for the cold build's process tree (the OSM read). `verify --deep` all `ok`, including `landcover_codes`. Rebuild: `landcover/` identical. Features off: `landcover/` identical to `pendleton-r1c` (fresh cut) |
+| 2 Road registration | `tools/road_registration.py` (2-D windowed, "Vector features") | **Pass.** Median \|shift\| **2.0 m**, p90 9.99 m (gate 10 m); 54 of 60 windows used (excluded: 3 peak at the search edge, 2 low contrast, 1 not prominent); mean (dE, dN) = (−0.06, +0.65) m. The spec's dark-box profiles gave 14.5 m (and an edge-pair matcher 12.0 m), both measuring tree lines and shadows, not misregistration (crops in `.cache/r2/road_crops/`) |
+| 3 Thermal gate (r) | `thermal_check.py --runs roads --scene pendleton-r2` | **Night pass, noon FAIL** (table below). Thresholds unchanged |
+| 4 Unchanged | `thermal_check.py` (a)–(q); UE tests; bench | **Pass.** Gates (a)–(q) all pass on the SF scene, MWIR and LWIR: (f) ThermalCS p95 0.421 ms at 1080p (4B: 0.408); (g) EO \|dY\| 0.013 DN. UE automation 494/494 (`-nullrhi`), `CamSim.GPU.*` 26/26 (Metal), scene tooling 444 passed / 2 skipped / 1 xfailed. Bench (`run_bench.py --site pendleton`, `.cache/bench-r2/`): ThermalCS identical to R1 in a same-session IR pair (table below); EO game-thread p50 and wall p95 within noise of R1, 30 fps and 0 dropped frames in every run and phase |
+| 5 CIGI | `send_cigi_test.py --hat-extended / --los-extended` | **Pass** (table below) |
+| 6 Visual review | MWIR/LWIR/EO noon frames, `.cache/r2/visual/` | **Pending** (human) |
+
+Gate (r): carriageway minus outer verge, mean Y over 10 frames (white-hot), nadir 300 m over I-5 southbound (OSM way
+1009956653, heading 134.71°, GSD 0.083 m), 21 December. Class temperatures from `camsim.Thermal.Log`:
+
+| Band | Time | Value (DN) | Threshold | Result | asphalt / grassland (K) |
+|---|---|---|---|---|---|
+| MWIR | 02:00 | +38.25 | ≥ +2 | Pass | 285.9 / 282.4 (+3.5) |
+| MWIR | 12:00 | **−38.94** | ≥ +6 | **Fail** | 307.2 / 300.9 (+6.3) |
+| LWIR | 02:00 | +28.49 | ≥ +2 | Pass | 285.9 / 282.4 (+3.5) |
+| LWIR | 12:00 | **−19.10** | ≥ +6 | **Fail** | 307.2 / 300.9 (+6.3) |
+
+Why noon fails: the geometry is right (the EO frame at the same pose shows the carriageway mask on the southbound
+pavement and the verge mask on dry brown ground; the land-cover profile is 200 across the carriageway and 30/50 beside
+it). The closed-form classes agree in sign with published asphalt-vs-grass contrasts (+6.3 K in December, below the
++10–20 K of summer noon). What flips the sign is the per-pixel fast term: it takes the albedo from the imagery, and this
+stretch of I-5 is light grey in NAIP (concrete-coloured, though OSM tags it asphalt), while the dark brown verge is
+grassland refined to `bare_soil` (306.1 K, `k_fast` 0.025). With `k_fast` 0 for every terrain class (diagnostic run,
+config override, MWIR): noon **+21.61 DN** (pass), night +38.26 DN, so the fast term is worth about −60 DN at noon here.
+A model decision, not a gate bug; options in the task 10 report.
+
+CIGI extended responses (`send_cigi_test.py`, sensor 300–400 m above each point, noon):
+
+| Point | Query | Material | HOT / hit |
+|---|---|---|---|
+| I-5 gate pose 33.299358, −117.465474 | HAT/HOT 103 | **200** | HOT −8.50 m (gate ground −8.23 m) |
+| same, LOS from 300 m above to −500 m | LOS 105 | **200** | hit −8.50 m, range 300.3 m, not visible |
+| Lake O'Neill, NHD water 33.3274, −117.3308 | HAT/HOT 103 | **220** | HOT −1.36 m (WorldCover calls this cell grassland, 30) |
+| Lake O'Neill per the plan, 33.3250, −117.3330 | HAT/HOT 103 | 10 | HOT −5.46 m: the plan's point is tree cover on the shore |
+| Offshore 33.25, −117.50 | HAT/HOT 103 | **80** | HOT −35.27 m (the sea surface) |
+| Open country 33.36, −117.40 | HAT/HOT 103 | **30** | HOT 62.57 m |
+
+Visual review frames (MWIR, LWIR and EO reference, noon 21 December): `.cache/r2/visual/{mwir,lwir,eo}_{i5_gate,i5_wide,
+oceanside_grid,runway}.png` (I-5 at the gate pose with 20° and 60° FOV; an Oceanside residential grid at 33.1985,
+−117.3760, ~300 m up; the MCAS Camp Pendleton runway at 33.3017, −117.3550, ~600 m up). Questions (spec Acceptance 6):
+do roads read as continuous lines; is the 6 m warp's wobble on road edges acceptable; is the brown-verge widening
+acceptable.
+
+Bench (`run_bench.py --site pendleton --env CAMSIM_SCENE_DIR=…`), 2026-10-10, M1 Pro. EO: two R2 runs against the R1 runs
+named above (`.cache/bench-r1/pendleton-r1c-{a,b}`, an earlier session). IR (`--sensor ir`): `pendleton-r1c` and
+`pendleton-r2` back to back in one session, the comparison that isolates R2 (ThermalCS from `thermal_gpu_ms` in
+`frames.jsonl`). Every run: 30 fps, 0 dropped frames.
+
+| Phase | EO game p50, ms: r1c (2 runs) / r2 (2 runs) | IR game p50: r1c / r2 | ThermalCS p50 / p95, ms: r1c | r2 |
+|---|---|---|---|---|
+| orbit | 3.16 / 2.81-2.82 | 2.82 / 2.84 | 0.367 / 0.416 | 0.369 / 0.416 |
+| slew | 3.10-3.14 / 2.96-2.99 | 3.02 / 3.03 | 0.353 / 0.416 | 0.354 / 0.417 |
+| low_pass | 3.40-3.44 / 3.18 | 3.21 / 3.22 | 0.399 / 0.413 | 0.401 / 0.414 |
+| far_origin | 2.22-2.56 / 2.22 | 2.23 / 2.24 | 0.159 / 0.165 | 0.159 / 0.167 |
+| coast_pass | 3.41-3.67 / 3.43-3.47 | 3.45 / 3.48 | 0.273 / 0.431 | 0.274 / 0.431 |
+
+The EO game-thread drop (~0.3 ms) is session-to-session: the same-session IR pair shows r1c and r2 equal. Wall p95 for r2
+33.8-41.0 ms (r1c 34.0-41.8). GPU frame p50 17.7-21.5 ms for r2 vs 16.1-21.5 ms for r1c (R1's coast_pass 16.1 ms in run a
+is the outlier; run b 21.5). Shot SSIM r1c-a vs r2-a 0.960-0.994 (EO is unchanged by R2; the differences are run to run).

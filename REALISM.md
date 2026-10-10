@@ -352,21 +352,35 @@ The cheapest big realism win, because it improves thermal IR and ground truth wi
 anything new. Roads are one of the most visible features in LWIR and are 4B's main gap. This lifts
 4B's "roads layer is a non-goal".
 
-- Rasterise OSM roads (buffered by lane count / road class), paved areas and rail, and 3DHP water
+**Status (2026-10-10, macOS):** implemented; measured on Pendleton (`docs/scene-packages.md`, "Vector features" and
+"Measured"). Open: gate (r) at noon fails (below), and the human visual review of the MWIR/LWIR frames.
+
+- ~~Rasterise OSM roads (buffered by lane count / road class), paved areas and rail, and 3DHP water
   bodies and flowlines (public domain; NHD retired in 2023, so static NHD HR is the fallback and
   OSM water a gap filler) into the
-  package's land-cover tiles as new codes above WorldCover's.
-- Evaluate NAIP NDVI (R1) in place of the GBuffer vegetation index in `ThermalCS`. It needs its own
-  camera-centred window at imagery resolution, so it is a measured trade (VRAM and ThermalCS time
-  vs gate (i)/(j) contrast), not a given.
-- New thermal classes: `road_asphalt`, `road_concrete`, `rail_ballast`, `inland_water` (and
-  `roof_*` if R3 needs them), from the free class slots.
-- Fill CIGI HAT/HOT and LOS extended-response material codes from the class under the hit (closes
-  the "material code is 0" note in ROADMAP 1.9). Document the code table in `docs/terrain-feedback.md`.
-- **Gates:** road centrelines vs imagery roads: median offset ≤ 1 window texel (10 m) on a sample
-  set (if roads need to be sharper than that, a finer road raster is a follow-up). `thermal_check.py` gains a road-vs-verge contrast gate (noon
-  LWIR/MWIR, sign and magnitude from published data, 4D). `land_cover.enabled: false` is still bit
-  for bit. ThermalCS cost is unchanged (same lookup).
+  package's land-cover tiles as new codes above WorldCover's.~~ Done: codes 200 (asphalt / unknown surface), 201
+  (concrete), 210 (rail), 220 (inland water), opt-in per package with `[features]` (OSM is ODbL: `allow = ["ODbL-1.0"]`).
+  **Water is NHD HR, not 3DHP:** 3DHP has only a CONUS-wide annual file and an ArcGIS service whose bbox queries time
+  out, and at Pendleton it is cross-walked NHD anyway; retired NHD HR is static (reproducible) and served per HU4. 3DHP is
+  deferred until per-unit downloads exist. Flowlines and intermittent water are not burned (a flowline has no width;
+  intermittent water is dry most of the year); OSM water as a gap filler was not needed.
+- Evaluate NAIP NDVI (R1) in place of the GBuffer vegetation index in `ThermalCS`. **Moved to a follow-up spec**: it
+  needs its own camera-centred window at imagery resolution, so it is a measured trade (VRAM and ThermalCS time vs gate
+  (i)/(j) contrast), separate from R2's land-cover codes.
+- ~~New thermal classes: `road_asphalt`, `road_concrete`, `rail_ballast`, `inland_water` (and
+  `roof_*` if R3 needs them), from the free class slots.~~ Done with one new class: the road codes map to the existing
+  `asphalt` and `concrete` materials and 220 to `water` (new classes would duplicate them); only `rail_ballast` is new.
+  17 class slots stay free.
+- ~~Fill CIGI HAT/HOT and LOS extended-response material codes from the class under the hit (closes
+  the "material code is 0" note in ROADMAP 1.9). Document the code table in `docs/terrain-feedback.md`.~~ Done: the
+  land-cover code under the hit (80 for the sea surface, 0 for no hit or an entity), `docs/terrain-feedback.md`.
+- **Gates:** ~~road centrelines vs imagery roads: median offset ≤ 1 window texel (10 m) on a sample
+  set (if roads need to be sharper than that, a finer road raster is a follow-up).~~ Pass: median 2.0 m, p90 10.0 m
+  (2-D windowed correlation; the profile method measured vegetation at Pendleton). `thermal_check.py` gains a
+  road-vs-verge contrast gate (noon LWIR/MWIR, sign and magnitude from published data, 4D): gate (r) added; **night
+  passes, noon fails** (the per-pixel fast term reads the light NAIP pavement as a high albedo; with it off noon passes),
+  see `docs/thermal.md`, "Limits (R2)". ~~`land_cover.enabled: false` is still bit for bit. ThermalCS cost is
+  unchanged (same lookup).~~ Held (tests; bench in "Measured").
 
 ### R3 Buildings and bridges (generated 3D Tiles)
 

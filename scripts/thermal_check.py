@@ -495,7 +495,7 @@ def road_row(band: str, tod: str, y: np.ndarray, masks: tuple[np.ndarray, np.nda
 
 def road_class_temps(lines: list[str]) -> dict[str, tuple[float, float]]:
     """(r_info) asphalt and grassland class temperatures (K) from the last camsim.Thermal.Log line of each time of day
-    (sunLux > 0: noon, else night). A slot the line doesn't carry (the log prints the first 8 classes) is NaN."""
+    (sunLux > 0: noon, else night). A slot the line doesn't carry (a log from before every class was printed) is NaN."""
     out: dict[str, tuple[float, float]] = {}
     for ln in lines:
         if "classes[K]" not in ln or " sunLux=" not in ln:
@@ -1966,7 +1966,7 @@ def check_all(
                     "time": tod,
                     "value": a - g,
                     "detail": f"class temperatures (camsim.Thermal.Log): asphalt {a:.1f} K, grassland {g:.1f} K"
-                    + (" (grassland not logged: the log prints classes 0-7)" if math.isnan(g) else ""),
+                    + (" (grassland not in the log line)" if math.isnan(g) else ""),
                 }
             )
 

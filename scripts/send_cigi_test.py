@@ -49,6 +49,12 @@ Options:
     --cloud-thickness METRES Cloud layer thickness in metres (default: 500)
     --time-sweep        Cycle time-of-day 0000→2400 (use with --tour)
     --time-sweep-period SEC  Seconds for one full day/night cycle (default: 120)
+    --hat-extended LAT,LON   Extended HAT/HOT request (repeatable); prints HAT, HOT and the
+                        material code (docs/terrain-feedback.md) from each 103 response
+    --los-extended LAT,LON[,ALT]  Extended LOS segment from the sensor to the point (ALT default
+                        -500 m, below the ground; repeatable); prints the hit and its material
+    --query-interval SEC     Resend period of the queries (default: 2)
+    --response-port PORT     Port CamSim sends responses to (default: 8889)
 
 Examples:
     # Hover over San Francisco airport at 500 m, looking down at -30°:
@@ -79,6 +85,10 @@ Examples:
     # Gimbal sign test (HITL.md phase 0): heading 0, level, camera yaw +90 pitch -45
     # -> the frame centre should be due east, about one altitude away:
     uv run scripts/send_cigi_test.py --yaw 0 --pitch 0 --gimbal 90 -45 0
+
+    # Material codes (REALISM R2) at a point on I-5, with an LOS from 300 m above it:
+    uv run scripts/send_cigi_test.py --lat 33.2994 --lon -117.4655 --alt 300 --pitch -90 \\
+        --hat-extended 33.299358,-117.465474 --los-extended 33.299358,-117.465474
 
     # Low stratus at 500 m base, 200 m thick:
     uv run scripts/send_cigi_test.py --weather --cloud-base 500 --cloud-thickness 200
@@ -678,6 +688,139 @@ def orbit_position(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Terrain queries (HAT/HOT, LOS) and their responses
+# ---------------------------------------------------------------------------
+
+
+def pack_hat_hot_request(
+    request_id: int, lat: float, lon: float, alt: float = 0.0, req_type: int = 2
+) -> bytes:
+    """HAT/HOT Request, opcode 24, 32 bytes (CIGI 3.3 ICD 4.1.24), geodetic, one shot.
+
+    0 ID, 1 size, 2-3 HAT/HOT ID, 4 Request Type (bits 0-1: 0 HAT, 1 HOT, 2 extended) |
+    Coordinate System (bit 2, 0 = geodetic), 5 Update Period (0 = one shot), 6-7 Entity ID,
+    8 Lat, 16 Lon, 24 Alt (doubles)."""
+    return struct.pack(
+        ">BBHBBHddd", 24, 32, request_id & 0xFFFF, req_type & 0x3, 0, 0, lat, lon, alt
+    )
+
+
+def pack_los_segment_request(
+    los_id: int,
+    src: tuple[float, float, float],
+    dst: tuple[float, float, float],
+    extended: bool = True,
+) -> bytes:
+    """LOS Segment Request, opcode 25, 64 bytes (CIGI 3.3 ICD 4.1.25), geodetic source and destination.
+
+    0 ID, 1 size, 2-3 LOS ID, 4 Request Type (bit 0, 1 = extended) | Source / Destination / Response
+    Coordinate System (bits 1-3, 0 = geodetic) | Destination Entity ID Valid (bit 4), 5 Alpha Threshold,
+    6-7 Entity ID, 8/16/24 source Lat/Lon/Alt, 32/40/48 destination Lat/Lon/Alt (doubles),
+    56 Material Mask (u32), 60 Update Period (0 = one shot), 61 reserved, 62-63 Destination Entity ID."""
+    return struct.pack(
+        ">BBHBBHddddddIBxH",
+        25,
+        64,
+        los_id & 0xFFFF,
+        1 if extended else 0,
+        0,
+        0,
+        *src,
+        *dst,
+        0xFFFFFFFF,
+        0,
+        0,
+    )
+
+
+def parse_query_responses(datagram: bytes) -> list[dict]:
+    """HAT/HOT Extended (103) and LOS Extended (105) responses in one IG -> host datagram.
+
+    CamSim packs in its native order; the Start of Frame's Byte Swap Magic (bytes 6-7) says which.
+      103, 40 B: 2-3 ID, 4 Valid (bit 0), 8 HAT, 16 HOT (f64), 24 Material (u32), 28 Normal Az, 32 Normal El (f32)
+      105, 56 B: 2-3 ID, 4 Valid (bit 0) | Entity ID Valid (1) | Range Valid (2) | Visible (3), 6-7 Entity ID,
+                 8 Range, 16 Lat, 24 Lon, 32 Alt (f64), 40-43 RGBA, 44 Material (u32), 48 Normal Az, 52 El (f32)"""
+    e = ">" if datagram[:1] == b"\x65" and datagram[6:8] == b"\x80\x00" else "<"
+    out: list[dict] = []
+    i, n = 0, len(datagram)
+    while i + 2 <= n:
+        op, size = datagram[i], datagram[i + 1]
+        if size < 2 or i + size > n:
+            break
+        p = datagram[i : i + size]
+        if op == 103 and size >= 40:
+            (rid,) = struct.unpack_from(e + "H", p, 2)
+            hat, hot, mat, az, el = struct.unpack_from(e + "ddIff", p, 8)
+            out.append(
+                {
+                    "op": 103,
+                    "id": rid,
+                    "valid": bool(p[4] & 1),
+                    "hat": hat,
+                    "hot": hot,
+                    "material": mat,
+                    "normal": (az, el),
+                }
+            )
+        elif op == 105 and size >= 56:
+            (rid,) = struct.unpack_from(e + "H", p, 2)
+            rng, lat, lon, alt = struct.unpack_from(e + "dddd", p, 8)
+            mat, az, el = struct.unpack_from(e + "Iff", p, 44)
+            out.append(
+                {
+                    "op": 105,
+                    "id": rid,
+                    "valid": bool(p[4] & 1),
+                    "visible": bool(p[4] & 8),
+                    "range": rng,
+                    "lat": lat,
+                    "lon": lon,
+                    "alt": alt,
+                    "material": mat,
+                    "normal": (az, el),
+                }
+            )
+        i += size
+    return out
+
+
+def parse_lat_lon(text: str) -> tuple[float, ...]:
+    """'LAT,LON' or 'LAT,LON,ALT' -> floats (argparse type)."""
+    try:
+        v = tuple(float(t) for t in text.split(","))
+    except ValueError:
+        v = ()
+    if len(v) not in (2, 3):
+        raise argparse.ArgumentTypeError(f"expected LAT,LON[,ALT], got {text!r}")
+    return v
+
+
+def print_query_responses(
+    sock: socket.socket, stop, names: dict[tuple[int, int], str]
+) -> None:
+    """Thread body: print every 103 / 105 response to the queries this run sent."""
+    while not stop.is_set():
+        try:
+            data, _ = sock.recvfrom(65535)
+        except (TimeoutError, OSError):
+            continue
+        for r in parse_query_responses(data):
+            name = names.get((r["op"], r["id"]))
+            if name is None:
+                continue
+            if r["op"] == 103:
+                print(
+                    f"  HAT/HOT ext {name}: valid={r['valid']} material={r['material']} "
+                    f"HAT={r['hat']:.2f} m HOT={r['hot']:.2f} m normal az/el={r['normal'][0]:.1f}/{r['normal'][1]:.1f}"
+                )
+            else:
+                print(
+                    f"  LOS ext {name}: valid={r['valid']} visible={r['visible']} material={r['material']} "
+                    f"hit=({r['lat']:.6f}, {r['lon']:.6f}, {r['alt']:.2f} m) range={r['range']:.1f} m"
+                )
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -782,9 +925,75 @@ def main():
         metavar="SEC",
         help="Seconds for one full day/night cycle (default: 120)",
     )
+    ap.add_argument(
+        "--hat-extended",
+        type=parse_lat_lon,
+        action="append",
+        default=[],
+        metavar="LAT,LON",
+        help="Send an extended HAT/HOT request (opcode 24) here every --query-interval and print the "
+        "response (103: HAT, HOT, material code); repeatable",
+    )
+    ap.add_argument(
+        "--los-extended",
+        type=parse_lat_lon,
+        action="append",
+        default=[],
+        metavar="LAT,LON[,ALT]",
+        help="Send an extended LOS segment request (opcode 25) from the sensor position to this point "
+        "(ALT ellipsoid metres, default -500: below the ground) every --query-interval and print the "
+        "response (105: hit point, material code); repeatable",
+    )
+    ap.add_argument(
+        "--query-interval",
+        type=float,
+        default=2.0,
+        metavar="SEC",
+        help="Query resend period",
+    )
+    ap.add_argument(
+        "--response-port",
+        type=int,
+        default=8889,
+        help="UDP port CamSim sends responses to",
+    )
     args = ap.parse_args()
 
     interval = 1.0 / args.rate
+    queries: list[
+        tuple[str, bytes]
+    ] = []  # (label, request) sent every --query-interval
+    query_names: dict[tuple[int, int], str] = {}
+    for k, ll in enumerate(args.hat_extended):
+        rid, label = 1000 + k, f"#{1000 + k} ({ll[0]:.6f}, {ll[1]:.6f})"
+        queries.append((label, pack_hat_hot_request(rid, ll[0], ll[1])))
+        query_names[(103, rid)] = label
+    for k, ll in enumerate(args.los_extended):
+        rid, dst = 2000 + k, (ll[0], ll[1], ll[2] if len(ll) == 3 else -500.0)
+        label = f"#{rid} sensor -> ({dst[0]:.6f}, {dst[1]:.6f}, {dst[2]:.0f} m)"
+        queries.append(
+            (label, pack_los_segment_request(rid, (args.lat, args.lon, args.alt), dst))
+        )
+        query_names[(105, rid)] = label
+    resp_stop = None
+    if queries:
+        import threading
+
+        resp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        resp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        resp_sock.bind(("0.0.0.0", args.response_port))
+        resp_sock.settimeout(0.5)
+        resp_stop = threading.Event()
+        threading.Thread(
+            target=print_query_responses,
+            args=(resp_sock, resp_stop, query_names),
+            daemon=True,
+        ).start()
+        print(
+            f"    Queries: {', '.join(q[0] for q in queries)} every {args.query_interval:g} s "
+            f"(responses on :{args.response_port})"
+        )
+    next_query = 0.0
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # Parse environment options
@@ -857,7 +1066,9 @@ def main():
     print(f"    Sensor: {sensor_label}  polarity: {pol_label}")
     if args.gimbal:
         gy, gp, gr = args.gimbal
-        print(f"    Gimbal (View Control): yaw={gy:.1f}° pitch={gp:.1f}° roll={gr:.1f}°")
+        print(
+            f"    Gimbal (View Control): yaw={gy:.1f}° pitch={gp:.1f}° roll={gr:.1f}°"
+        )
     print("    Press Ctrl-C to stop")
     print()
 
@@ -931,6 +1142,11 @@ def main():
                 weather=weather_base,
                 gimbal=tuple(args.gimbal) if args.gimbal else None,
             )
+            if queries and elapsed >= next_query:
+                pkt += b"".join(
+                    q[1] for q in queries
+                )  # after IG Control, in the same host frame
+                next_query = elapsed + args.query_interval
             sock.sendto(pkt, (args.host, args.port))
             frame_ctr += 1
             sent_count += 1
@@ -964,6 +1180,8 @@ def main():
         f"==> Sent {sent_count} frames in {elapsed:.1f}s ({actual_fps:.1f} fps actual)"
     )
     sock.close()
+    if resp_stop is not None:
+        resp_stop.set()
 
 
 if __name__ == "__main__":

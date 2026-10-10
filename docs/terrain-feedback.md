@@ -13,6 +13,7 @@ tick the IG also sends a mandatory Start-of-Frame (SOF) heartbeat to the host.
 - [LOS segment queries (opcode 25)](#los-segment-queries-opcode-25)
 - [LOS vector queries (opcode 26)](#los-vector-queries-opcode-26)
 - [Entity ID in LOS responses](#entity-id-in-los-responses)
+- [Material codes (REALISM R2)](#material-codes-realism-r2)
 - [Configuration](#configuration)
 - [Architecture](#architecture)
 - [Verification](#verification)
@@ -27,7 +28,7 @@ Host → IG  (opcode 24/25/26 requests)
            ↓ FCigiQueryHandler::Tick()
            ↓ World->LineTraceSingleByChannel()
            ↓ FCigiSender::Enqueue*Response()
-IG → Host  (opcode 101 SOF + 102 HAT/HOT resp + 104 LOS resp)
+IG → Host  (opcode 101 SOF + 102/103 HAT/HOT resp + 104/105 LOS resp)
            one UDP datagram per frame
 ```
 
@@ -54,7 +55,9 @@ staged responses into a single UDP datagram and sends it to the host.
 |--------|--------|-----------|
 | 101 | Start of Frame | `CigiSOFV3` |
 | 102 | HAT/HOT Response | `CigiHatHotRespV3` |
+| 103 | HAT/HOT Extended Response | `CigiHatHotXRespV3_2` |
 | 104 | LOS Response | `CigiLosRespV3` |
+| 105 | LOS Extended Response | `CigiLosXRespV3_2` |
 
 All outgoing packets are packed into one datagram per frame by `FCigiSender`.
 
@@ -93,7 +96,7 @@ If the trace finds no hit, `Valid = false` is returned.
 |-------|---------|-----------------|
 | 0 | HAT query | Returns both HAT and HOT; response `ReqType = 0` |
 | 1 | HOT query | Returns both HAT and HOT; response `ReqType = 1` |
-| 2 | Extended | Downgraded to basic response (returns HAT/HOT values; response tagged as HOT) |
+| 2 | Extended | HAT/HOT Extended Response (103, ICD 4.2.3): HAT, HOT, the [material code](#material-codes-realism-r2) and the surface normal azimuth/elevation (ROADMAP 1.9) |
 | >2 | Invalid | Returns `Valid = false` (request rejected) |
 
 ---
@@ -110,6 +113,11 @@ A LOS Segment Request specifies source and destination geodetic points. CamSim:
    - `Range` — distance from source to hit point in metres
    - `HitLat/Lon/Alt` — geodetic coordinates of the hit point
    - `EntityId` — CIGI entity ID if the hit actor is a `ACamSimEntity`
+
+Request Type 1 (extended) gets an LOS Extended Response (105, ICD 4.2.5): the same
+fields plus the surface normal and the [material code](#material-codes-realism-r2)
+of the hit. A clear segment reports its destination point with Range Valid off and
+material 0.
 
 > **Note on DestEntityId:** The CIGI 3.3 (v3) LOS Segment packet does not
 > include a DestEntityId field — that field was added in CIGI 3.2. CamSim
@@ -177,6 +185,59 @@ actor is terrain or any other non-entity actor, `EntityIDValid = false`.
 
 ---
 
+## Material codes (REALISM R2)
+
+HAT/HOT (103) and LOS (105) extended responses carry a 32-bit material code: the
+land-cover code of the cell under the hit, read from the same land-cover tiles
+thermal IR uses (`thermal.land_cover.dir`, which is the scene package's
+`landcover/` when `scene.dir` is set). The rule
+(`CamSimLandCover::QueryMaterialCode`):
+
+1. No hit (invalid response, or a clear LOS segment): **0**.
+2. The hit is an entity (`ACamSimEntity`): **0** (entities have no material yet).
+3. HAT/HOT answered by the sea surface (the ocean is above the terrain hit): **80**
+   (WorldCover water).
+4. Otherwise the land-cover code at the hit's latitude/longitude (HAT/HOT: the
+   request's point, since the trace is vertical), or **0** where there is no tile or
+   land cover is off (`thermal.land_cover.enabled: false`).
+
+| Code | Meaning | Source |
+|---|---|---|
+| 0 | no data (no hit, an entity, no tile, land cover off) | — |
+| 10 | tree cover | ESA WorldCover 2021 |
+| 20 | shrubland | ESA WorldCover 2021 |
+| 30 | grassland | ESA WorldCover 2021 |
+| 40 | cropland | ESA WorldCover 2021 |
+| 50 | built-up | ESA WorldCover 2021 |
+| 60 | bare / sparse vegetation | ESA WorldCover 2021 |
+| 70 | snow and ice | ESA WorldCover 2021 |
+| 80 | permanent water bodies (also: the sea surface, rule 3) | ESA WorldCover 2021 |
+| 90 | herbaceous wetland | ESA WorldCover 2021 |
+| 95 | mangroves | ESA WorldCover 2021 |
+| 100 | moss and lichen | ESA WorldCover 2021 |
+| 200 | paved road / area, asphalt or unknown surface | OSM (scene package `[features]`) |
+| 201 | paved road / area, concrete (`surface=concrete*`, runways without a surface tag) | OSM |
+| 210 | rail bed | OSM |
+| 220 | inland water (perennial lakes, ponds, reservoirs, stream/river areas) | USGS NHD HR |
+
+Codes 200–220 exist only in scene packages built with `[features]`
+(`docs/scene-packages.md`, "Vector features"); the committed San Francisco sample
+has WorldCover codes only. The codes are the same 10 m cells (~9.3 m) thermal IR
+draws, so a point within a cell of a road edge can report either side.
+
+Limits:
+
+- LOS over the sea reports the code of the seabed's or terrain's cell (the trace hits
+  the terrain under the water; only HAT/HOT checks the sea surface), which is 0
+  offshore where the package has no land-cover tile.
+- Entities report 0: they have no collision today, so neither query hits one, and a
+  hit on one would still report 0.
+- The lookup keeps up to 16 tiles; a miss decodes one PNG tile (600 × 600) on the game
+  thread, so the first query in a new 0.05° tile stalls that tick for the decode
+  (not measured; the cache bounds how often it happens).
+
+---
+
 ## Configuration
 
 | JSON field | Default | Env var | Description |
@@ -229,9 +290,13 @@ packet ID (`0x65` = 101) and packet size.
 
 ### HAT/HOT
 
-Extend `scripts/send_cigi_test.py` to send an opcode 24 request at a known
-lat/lon (e.g. a mountain peak visible in the Cesium scene). Capture the
-response and check that `HOT` matches the terrain elevation at that point.
+`scripts/send_cigi_test.py --hat-extended LAT,LON` (repeatable) sends an
+extended request every `--query-interval` seconds and prints each 103 response
+(HAT, HOT, material, normal). Check that `HOT` matches the terrain elevation at that
+point. `--los-extended LAT,LON[,ALT]` does the same for an LOS segment from the
+sensor's position (`--lat/--lon/--alt`) to the point (ALT default −500 m, below the
+ground). Measured responses on the Pendleton package: `docs/scene-packages.md`,
+"Measured".
 
 ### LOS segment
 
