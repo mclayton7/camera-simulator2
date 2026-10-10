@@ -16,6 +16,8 @@ from shapely.geometry import box
 
 from .sources.worldcover import CELLS_PER_DEG, TILE_DEG, TILE_PX
 
+# Bump on any change in features.py, osm_geofabrik.read_osm or nhd_hr.read_nhd: the derived-features cache key (pipeline.py)
+# covers this, not the reader code.
 RULES_VERSION = "1"
 M_PER_DEG_LAT = 111_320.0
 CELL_M = (

@@ -49,8 +49,8 @@ Launches (--runs):
                             the park run stops (same background), power plant off
          and mwir_ent_dead (truck-destroyed --hold-s 60: ent_dead, damage destroyed + flaming)
   roads  (REALISM R2, not in the default; needs --scene, the Camp Pendleton package, as CAMSIM_SCENE_DIR) per band,
-         night then noon, no DIS vehicles: road, nadir 300 m over southbound I-5 (OSM way 1009956653, code 200),
-         20 deg FOV, heading along the road (10 frames)
+         night then noon, no DIS vehicles: road, nadir 300 m over I-5 NB San Clemente (OSM way 487165554, code 200);
+         road_t9 (info), the same over I-5 SB (way 1009956653); 20 deg FOV, heading along the road (10 frames each)
 
 Each frame is a /snapshot PNG (the NV12 frame converted to RGB); Y is recovered exactly for
 IR (grey: U = V = 128) and as BT.709 luma for EO. The middle frame of each view is saved to
@@ -218,7 +218,9 @@ ENT_DEAD_DN = 60.0  # (q) destroyed box - ring (MWIR)
 #   50 50 50 50 50 50 50 200 200 200 200 50 50 | 200 200 200 200 | 50 50 10 10 10 10 10 10 10 10 10 10 10 10
 #   (d = -32..-20: the southbound carriageway). Ground 33.422644 N -117.607739 E: 47.76 m HAE (package terrain,
 #   point_heights z16); verge midpoint 56.74 m (the bank). Second-ranked was CA 76 (trunk, way 215015826, +27.5 DN).
-#   Candidate list: .cache/r2/gate_r_pose_candidates_loose.json, script .cache/r2/select_pose.py (args PKG OUT 8 120 0.6).
+#   Candidate list: .cache/r2/gate_r_pose_candidates_loose.json, script scripts/scene/tools/select_road_pose.py
+#   (args PKG OUT 8 120 0.6; its docstring records the rule and its relaxation, 10 m / 200 m / 80 % -> 8 m / 120 m / 60 %,
+#   both changes made before any gate run).
 ROAD_POSE = dict(  # I-5 NB, San Clemente
     lat=33.422644,
     lon=-117.607739,
