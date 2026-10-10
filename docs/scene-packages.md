@@ -217,9 +217,18 @@ Without `balance`, no `balance.json` is written. With no NAIP in the package, or
 remain on land (faint), and NAIP's sea glint and fill blocks within 200 m of the shore; open water is Sentinel-2 at
 10 m, with a Sentinel-2 to Blue Marble step where the composite stops at sea; leaves over clipped sea are still built
 at NAIP's zoom (they hold upsampled Sentinel-2); the fit is per package, not global.
-Acceptance on Pendleton pending. `scripts/scene/tools/edge_shots.py OUT PKG [--before OLD]` writes labelled crops of
-the bbox edges for review, `scripts/scene/tools/water_check.py PKG --cache DIR` gates the open water, and `render_check.py` has `bbox_edge` and
-`sea_offshore` shots.
+Acceptance on Pendleton passed 2026-10-09 (`docs/scene-packages.md`, "Measured", R1 chunk 1), with one accepted
+deviation: the imagery build costs +20.9 % per tile, over the +10 % gate. `scripts/scene/tools/edge_shots.py OUT PKG
+[--before OLD]` writes labelled crops of the bbox edges for review, `scripts/scene/tools/water_check.py PKG --cache DIR`
+gates the open water, and `render_check.py` has `bbox_edge` and `sea_offshore` shots.
+
+Known limits found in acceptance (follow-ups, `ROADMAP.md`):
+
+- Thin land features count as land for the 200 m NAIP buffer: a pier or jetty keeps a dark ~200 m NAIP disc around it
+  (San Clemente pier, west edge). Follow-up: ignore thin features when measuring the distance to land.
+- A turquoise shallow shelf with a jagged hard outline against dark deep water shows in CamSim renders at the coast
+  (`bbox_edge`, `ring_edge`; boat scenes). It is not imagery: it is in R0 too, from the seabed depth under the Single
+  Layer Water ocean. Separate terrain/ocean follow-up.
 
 ## Sources
 
@@ -427,3 +436,19 @@ Gate 5 tools: `scripts/scene/tools/` (`render_check.py`, `hot_check.py`, `regist
 - A dark, faintly banded strip ~450 m wide runs down the west edge of NAIP quarter-quad `ca_m_3311736_sw`
   (2022) over the sea: it is in the NAIP file (filled from another flight line, no sun glint), not a build
   artefact. It shows as a seam in `ring_edge`; flight-line colour balance is R1 work.
+
+### R1 chunk 1 (NAIP edge, with the water mask)
+
+Camp Pendleton `sim`, `pendleton-r1b`, acceptance 2026-10-09 (Linux reference box, `-j 6`).
+
+| Gate | What | Result |
+|---|---|---|
+| Colour | Sentinel-2 vs NAIP over the fit cells, before and after the match (R/G/B) | **Pass.** Cell bias median 37/30/29 DN before, **2/2/2** after (limit 5); cell p90 58/49/48 -> 7/5/6; MAE 36.72/29.98/29.48 -> 13.12/10.22/9.93; bias 35.84/29.14/28.76 -> 0.42/0.45/0.33. Fit 32.7 s, 7,775,508 samples, 421 cells fitted |
+| Water | `water_check.py`: open-water leaves against raw Sentinel-2, z10-z17 (all sampled) | **Pass** (exit 0, no fails). Pooled mean abs <= 1.10 DN (limit 1.5); tile p95 <= 2.09 DN (limit 3); G-std excess <= 0.07 (limit 1). 9,655 leaves changed (3.5 %); 0 changed without water |
+| Determinism | Rebuild; `verify --deep`; R0 manifest | **Pass.** Rebuild `hashes.txt` identical; `verify --deep` all `ok`; the old R0 manifest rebuilds byte-identical to the original R0 package |
+| Build time | Imagery ms/tile vs the same-session R0 baseline | **Over the +10 % gate, accepted.** 3.372 ms/tile (935.0 s / 277,286, uncontended) vs R0 2.790 ms/tile (708 s / 253,766) = **+20.9 %** (+9.8 % before the water mask: the per-leaf water test, not the clip, is the cost). Offline package build only; no simulator runtime effect. User accepted the cost 2026-10-09. Margin adds 23,520 imagery tiles (+9.3 %). Max RSS of any build process 4.05 GB |
+| Render | `render_check.py`: all 7 shots (incl. `bbox_edge`, `sea_offshore`) | **Pass.** All rendered; `sea_offshore` uniform Sentinel-2; land edge matched to NAIP brightness |
+| Review | Screenshots (visual gate 4) | **Pass** (reviewed by the user, 2026-10-09). Residuals are the known limits above (pier disc; shallow shelf from the ocean, present in R0) |
+
+The first R1 build (before the water mask) failed the visual gate over sea: raw NAIP quarter-quads over open water
+and a land-fitted match that darkened Sentinel-2 water ([64,85,90] -> [1,24,43]). That led to the water mask.

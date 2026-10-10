@@ -1803,8 +1803,14 @@ an offline package run send no request (`docs/scene-packages.md`, "Measured"). R
 Linux/Vulkan needs an egress-blocking equivalent of the macOS `--offline` sandbox (e.g. the packaged image with
 `docker run --network none` and the package mounted read-only). **R1 chunk 1 (NAIP edge)** implemented
 2026-10-09: `imagery_margin_km`, Sentinel-2 -> NAIP colour match, 200 m feather, water consistency (NAIP clipped 200 m off the
-WorldCover shore, land-only colour match) (`docs/scene-packages.md`, "Imagery edge"); acceptance on Pendleton
-pending.
+WorldCover shore, land-only colour match) (`docs/scene-packages.md`, "Imagery edge"); **acceptance on Pendleton
+passed 2026-10-09**: colour bias median 2/2/2 DN (was 37/30/29), open water within 1.10 DN of raw Sentinel-2 (z10-z17),
+rebuild identical, `verify --deep` clean, 7/7 render shots, screenshots reviewed; the imagery build is +20.9 % per tile
+over R0 (spec gate +10 %), accepted (offline build only). Follow-ups: (1) thin land features (piers, jetties) count as
+land for the 200 m NAIP buffer and leave a dark ~200 m NAIP disc (San Clemente pier): ignore thin features when
+measuring the distance to land; (2) a turquoise shallow shelf with a jagged hard outline against dark deep water in
+renders (present in R0; seabed depth under the Single Layer Water ocean, not imagery; affects boat scenes): separate
+terrain/ocean follow-up.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

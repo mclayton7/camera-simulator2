@@ -18,7 +18,10 @@ Camp Pendleton package (3DEP terrain + NAIP imagery) rendered from local files w
 blocked, registered to < 1 px against Cesium World Terrain + Bing, with CIGI frame-centre heights
 within 0.9 m of 3DEP truth. R0 done 2026-10-09 (`camsim-scene`, `docs/scene-packages.md`): gates 1–6 pass,
 including the offline profile. Left from R0: the offline run on Linux/Vulkan (`docker run --network none`) and
-a SquashFS vs plain-directory cold-start timing. Next: R1.
+a SquashFS vs plain-directory cold-start timing. **R1 chunk 1 (NAIP edge) accepted on Pendleton 2026-10-09**
+(`docs/scene-packages.md`, "Measured"): colour bias median 2/2/2 DN, open water within 1.10 DN of raw Sentinel-2,
+identical rebuild; imagery build +20.9 % per tile (over the +10 % spec gate, accepted). Known limits: a dark ~200 m
+NAIP disc around piers; the turquoise shelf outline (ocean, not imagery). Next: the rest of R1.
 
 **Scope decisions (2026-10-07).**
 
