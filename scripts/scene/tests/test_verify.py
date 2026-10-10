@@ -224,3 +224,51 @@ def test_nodata_holes_where_the_sources_have_data_fail(built_ndvi, tmp_path):
     )
     c = checks(verify(p, built_ndvi[1], deep=True, all_tiles=True))["ndvi_values"]
     assert not c["ok"] and "nodata where the sources have data" in c["detail"]
+
+
+def built_package_with_sea_level(tmp_path):
+    """A tiny synthetic scene planned with the La Jolla station; the PROJ grids come from local files."""
+    import io
+    from pathlib import Path
+
+    from fakes import coops_http
+    from fake_sources import synthetic_scene
+    from test_sea_level import GEOID18, egm96_grid
+
+    from camsim_scene import sea_level
+    from camsim_scene.cache import Cache
+    from camsim_scene.config import parse_scene
+    from camsim_scene.pipeline import build_scene, plan_scene
+
+    local = {"us_noaa_g2018u0.tif": GEOID18, sea_level.EGM96_GRID: egm96_grid(tmp_path)}
+
+    class GridCache(Cache):
+        def get(self, url, sha256=None, sign=None):
+            name = url.rsplit("/", 1)[-1]
+            if name in local:
+                return local[name], "0" * 64, local[name].stat().st_size
+            return super().get(url, sha256, sign)
+
+    scene = synthetic_scene(tmp_path / "src")
+    scene["sea_level"] = {"station": "9410230"}
+    pkg, cache = tmp_path / "pkg", GridCache(tmp_path / "cache")
+    plan_scene(parse_scene(scene), pkg, http=coops_http(), out=io.StringIO())
+    build_scene(pkg, cache, jobs=1)
+    return pkg, cache
+
+
+def test_verify_checks_sea_level(tmp_path):
+    pkg, cache = built_package_with_sea_level(tmp_path)
+    assert checks(verify(pkg, cache, deep=True))["sea_level"]["ok"]
+    p = pkg / "sea_level.json"
+    d = json.loads(p.read_text())
+    d["offset_m"] += 0.01
+    p.write_text(json.dumps(d))
+    assert not checks(verify(pkg, cache, deep=True))["sea_level"]["ok"]
+    p.unlink()
+    assert not checks(verify(pkg))["sea_level"]["ok"]
+    assert not checks(verify(pkg, cache, deep=True))["sea_level"]["ok"]
+
+
+def test_a_package_without_a_station_has_no_sea_level_file(built):
+    assert checks(verify(built[0]))["sea_level"]["ok"] and not (built[0] / "sea_level.json").exists()

@@ -4,6 +4,8 @@ sea_level.json (offset_m = local MSL - EGM96 at the station), which CamSim adds 
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .datum import GRID_URL
 
 COOPS = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/{station}"
@@ -40,3 +42,44 @@ def station_section(http, station: str) -> dict:
         "geoid": GEOID_DATUM,
         "egm96_grid": {"name": EGM96_GRID, "url": GRID_URL.format(name=EGM96_GRID), "sha256": None},
     }
+
+
+def compute(section: dict, grid_paths: dict) -> dict:
+    """offset_m = h_ell(NAVD88 0) + (MSL - NAVD88) - N_EGM96 at the station (PROJ network off, pinned grids).
+    N_EGM96 is bilinear on NGA's 15' grid, as CamSim's Geospatial/Geoid.cpp reads WW15MGH.DAC."""
+    import numpy as np
+
+    from .datum import DatumTransform, manifest_section
+    from .sources.base import SourceRaster
+
+    lon, lat = np.array([section["lon"]]), np.array([section["lat"]])
+    entry = manifest_section([section["geoid"]])["datums"][section["geoid"]]
+    dt = DatumTransform(entry, {k: Path(v) for k, v in grid_paths.items()})
+    h0 = float(dt.vertical_offset(*dt.to_source_geographic(lon, lat))[0])
+    egm = SourceRaster(path=Path(grid_paths[EGM96_GRID]), datum="wgs84", clamp_edges=True)
+    vals, ok = egm.sample(lon, lat, 0.0)
+    if not ok[0]:
+        raise SeaLevelError(f"EGM96 grid has no value at {section['lat']}, {section['lon']}")
+    n = float(vals[0][0])
+    return {
+        "station": section["station"],
+        "name": section.get("name", ""),
+        "msl_above_navd88_m": section["msl_above_navd88_m"],
+        "navd88_ellipsoid_m": round(h0, 4),
+        "egm96_n_m": round(n, 4),
+        "offset_m": round(h0 + section["msl_above_navd88_m"] - n, 4),
+    }
+
+
+def write(pkg: Path, m, grid_paths: dict) -> dict | None:
+    """Write <pkg>/sea_level.json when the manifest has a station; remove a stale one otherwise."""
+    from .fsutil import atomic_write
+    from .manifest import canonical_json
+
+    p = Path(pkg) / FILE
+    if not m.sea_level:
+        p.unlink(missing_ok=True)
+        return None
+    r = compute(m.sea_level, grid_paths)
+    atomic_write(p, canonical_json(r).encode())
+    return r

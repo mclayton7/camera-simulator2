@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from . import sea_level
 from .cache import CacheError
 from .config import TERRAIN_GRID as GRID
 from .fsutil import atomic_write, sha256_file
@@ -251,6 +252,20 @@ def _ndvi_values(pkg: Path, m: Manifest, st, rng: random.Random, all_tiles: bool
     return Check("ndvi_values", ok, detail), stats
 
 
+def _check_sea_level(pkg: Path, m: Manifest, grid_paths: dict | None) -> Check:
+    p = pkg / sea_level.FILE
+    if not m.sea_level:
+        return Check("sea_level", not p.exists(), "no station" if not p.exists() else "sea_level.json without a station")
+    if not p.exists():
+        return Check("sea_level", False, "sea_level.json missing")
+    have = json.loads(p.read_text(encoding="utf-8"))
+    if grid_paths is None:
+        return Check("sea_level", isinstance(have.get("offset_m"), (int, float)), f"offset {have.get('offset_m')} m")
+    want = sea_level.compute(m.sea_level, grid_paths)
+    ok = abs(have["offset_m"] - want["offset_m"]) <= 0.001
+    return Check("sea_level", ok, f"offset {have['offset_m']} m (recomputed {want['offset_m']} m)")
+
+
 def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[list[Check], dict, dict | None]:
     from .context import WorkerState
     from .layers import terrain
@@ -335,6 +350,7 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
         Check("imagery_decode", not bad_jpg, _summary(bad_jpg)),
     ]
     checks += ndvi_checks
+    checks.append(_guard("sea_level", _check_sea_level, pkg, m, {k: Path(v) for k, v in st.ctx.grid_paths.items()}))
     return checks, stats, ndvi_stats
 
 
@@ -350,6 +366,8 @@ def verify(
         _guard("licences", _check_licences, m),
         _guard("attribution", _check_attribution, pkg, m),
     ]
+    if not deep:
+        checks.append(_guard("sea_level", _check_sea_level, pkg, m, None))
     if {z: k for z, k in present_tiles(pkg, "ndvi", "png").items() if len(k)}:
         checks.append(_guard("ndvi_tilemapresource", _check_tms, pkg, "ndvi", "png", "ndvi_tilemapresource"))
     report: dict = {"package": str(pkg), "deep": deep}

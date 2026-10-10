@@ -111,6 +111,8 @@ def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bo
         raise PlanError(str(e)) from e
     check_allowed({sid: s.licence for sid, (_, s) in built.items()}, allow)
     records, datums = [], set()
+    if sea:
+        datums.add(sea["geoid"])  # the station's NAVD88 geoid grid is pinned and hashed with the rest
     for sid, (adapter, src) in built.items():
         assets = src.discover(Area(plan.area(src.area_kind)))
         if not assets:
@@ -699,6 +701,9 @@ def build_scene(
         stats["landcover"] = _build_landcover(pkg, m, ctx)
         atomic_write(pkg / "ATTRIBUTION.txt", attribution_text(m).encode())
         normalise_modes(pkg, skip=(STATE_DIR,))
+        sea = sea_level_mod.write(pkg, m, {k: Path(v) for k, v in ctx.grid_paths.items()})
+        if sea:
+            log.info("sea level: EGM96 %+.3f m (NOAA %s %s)", sea["offset_m"], sea["station"], sea["name"])
         m.hashes_sha256 = write_hashes(pkg, Markers(pkg).output_for_file)
         m.write(pkg / "manifest.json")
         info = {
