@@ -187,7 +187,7 @@ override with `k_fast` > 0 can.
 `classes.<code>`. `enabled: false` reproduces 4A's output bit for bit with 4A's default classes
 (`CamSim.Thermal.Reference.LandCoverOffIs4A`, `CamSim.Thermal.Builder.LandCoverDisabledIs4A`, the GPU "off" case); the 4A
 `vegetation` class itself was retuned (effective albedo, so it keeps the land-cover orderings), so an entity type configured to
-`vegetation` reads cooler than in 4A. The 8 new built-ins leave 18 of the 32 class slots for user materials.
+`vegetation` reads cooler than in 4A. The 8 new built-ins (plus R2's `rail_ballast`) leave 17 of the 32 class slots for user materials.
 
 **Another area.** Run `uv run scripts/landcover/fetch_worldcover.py --bbox W S E N --out DIR` (needs network and `rasterio`, which
 `uv run` fetches), point `thermal.land_cover.dir` at DIR (relative to the project directory). Open-ocean COGs that don't exist

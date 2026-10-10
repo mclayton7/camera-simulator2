@@ -86,7 +86,7 @@ cold-start timing.
    editor, and a cooked package works as is.
 2. **One class per feature, used by every channel.** A road polygon is `asphalt`. The land-cover
    window, `ThermalCS`, the COCO semantic class (4D) and CIGI HAT/HOT/LOS material codes (today 0,
-   ROADMAP 1.9) all read the same class. Classes extend the thermal class table (18 of 32 slots are
+   ROADMAP 1.9) all read the same class. Classes extend the thermal class table (17 of 32 slots are
    free after 4B).
 3. **Reproducible.** The manifest pins each source (dataset, release or snapshot date, URL, hash)
    and a seed. The same package, seed and CIGI recording give the same frames (checked in R6).

@@ -20,6 +20,10 @@ namespace CamSimLandCover
 		case 90:  return TEXT("wetland");
 		case 95:  return TEXT("wetland");
 		case 100: return TEXT("grassland");
+		case 200: return TEXT("asphalt");       // REALISM R2: paved, asphalt or unknown surface
+		case 201: return TEXT("concrete");      // paved, concrete
+		case 210: return TEXT("rail_ballast");  // rail bed
+		case 220: return TEXT("water");         // inland water (NHD)
 		default:  return TEXT("terrain_default");
 		}
 	}
@@ -30,7 +34,7 @@ namespace CamSimLandCover
 		{
 		case 10: case 20: case 30: case 40: case 90: case 95: case 100: return ELandCoverFamily::Vegetation;
 		case 50: return ELandCoverFamily::BuiltUp;
-		case 60: return ELandCoverFamily::Bare;
+		case 60: case 200: case 201: case 210: return ELandCoverFamily::Bare;
 		default: return ELandCoverFamily::None;
 		}
 	}

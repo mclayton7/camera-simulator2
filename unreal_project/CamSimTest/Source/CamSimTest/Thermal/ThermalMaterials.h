@@ -41,6 +41,7 @@ public:
 	static constexpr int32 BareSoil       = 11;
 	static constexpr int32 SnowIce        = 12;
 	static constexpr int32 Wetland        = 13;
+	static constexpr int32 RailBallast    = 14;
 
 	static const TArray<FThermalMaterial>& BuiltIns();
 	/** "model" / "water" / "snow" (case-insensitive). */
