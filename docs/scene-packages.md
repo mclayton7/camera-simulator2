@@ -682,7 +682,7 @@ Game-thread p50, ms (range over 2 runs):
 | coast_pass | 4.21-4.43 | 3.65-3.70 | 3.41-3.67 |
 
 Still open (Linux not tested; the user chose Mac only for now): `file://` from a mounted volume in Docker, a
-`docker run --network none` offline run, and SquashFS vs plain-directory cold-start timing.
+`docker run --network none` offline run, and SquashFS vs plain-directory cold-start timing. Steps: `FOR_LINUX.md` task 1.
 
 Follow-ups: coast_check (b) should compare against the source gradient. Verify vertex error at tidal-mask edges (z14
 max 2.08 m: the mask flips between a vertex and a sample). `point_heights` no longer breaks early (it samples every

@@ -768,8 +768,8 @@ Carry-overs:
 - Per-frame instance PNG (only RLE per annotation today).
 - Depth map and KLV frame corners are still pinhole (3B.3 "distortion-aware ground truth").
 - TSR jitter: up to ~0.5 render texel misregistration of mask edges (not corrected).
-- Linux/Vulkan unverified for `InstanceIdCS` (written portable: integer ops, no wave
-  intrinsics).
+- ~~Linux/Vulkan unverified for `InstanceIdCS`~~ **Verified 2026-10-01**: `CamSim.GPU.GroundTruth.*` 6/6 on
+  NVIDIA Vulkan (3B.2 below), then the full `CamSim.GPU` suite.
 - Deferred minors: no RLE fixture for the negative-delta path; `MinAreaRect` tolerances are
   absolute; a degenerate (zero-area) projected hull reports truncation 0; no
   `ProjectOrientedBox` test with distortion (yaw is covered by `Box3D.YawCornerOrder`); `ReuseDelayFrames` counts `GFrameCounter`
@@ -1817,7 +1817,7 @@ a gridded offset: seam 0.0000, held-out MAE 0.0687, `-j 1`/`-j 6` and off-switch
 `-j 1` build reports "peak worker RSS 4318 MB exceeds 2048 MB" (in-process builds count the main process's state as
 the worker's RSS) and exits 2 although the package is complete; fix the RSS accounting.
 
-**R1 completed on macOS 2026-10-10** (seabed under tidal water, local MSL sea level via `sea_level.json`, coast gates, bench unchanged or faster; coast_check (b) a literal fail, explained; `docs/scene-packages.md`, "Measured"). Open on Linux: `file://` from a mounted volume, `docker run --network none`, SquashFS cold-start timing. Follow-up: the sea-level offset is one constant at the La Jolla station (+0.110 m), but local
+**R1 completed on macOS 2026-10-10** (seabed under tidal water, local MSL sea level via `sea_level.json`, coast gates, bench unchanged or faster; coast_check (b) a literal fail, explained; `docs/scene-packages.md`, "Measured"). Open on Linux: `file://` from a mounted volume, `docker run --network none`, SquashFS cold-start timing. Hand-off for the Linux box: `FOR_LINUX.md`. Follow-up: the sea-level offset is one constant at the La Jolla station (+0.110 m), but local
 MSL needs +0.08 to +0.66 m along the Pendleton coast (EGM96 vs GEOID18 tilt): evaluate it at the package coast, or add a
 per-package NAVD88 + MSL - EGM96 correction grid read by `FOceanSurface`.
 
