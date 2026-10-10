@@ -11,7 +11,6 @@ import re
 from dataclasses import dataclass
 
 import numpy as np
-import shapely
 from shapely import affinity
 from shapely.geometry import box
 
@@ -19,8 +18,12 @@ from .sources.worldcover import CELLS_PER_DEG, TILE_DEG, TILE_PX
 
 RULES_VERSION = "1"
 M_PER_DEG_LAT = 111_320.0
-CELL_M = M_PER_DEG_LAT / CELLS_PER_DEG  # 9.2767 m: a cell's N-S side, its longer side at every latitude (E-W shrinks by cos lat)
-MIN_W_M = 1.05 * CELL_M  # minimum burned width: a strip this wide covers a cell centre in every cross-section, with margin
+CELL_M = (
+    M_PER_DEG_LAT / CELLS_PER_DEG
+)  # 9.2767 m: a cell's N-S side, its longer side at every latitude (E-W shrinks by cos lat)
+MIN_W_M = (
+    1.05 * CELL_M
+)  # minimum burned width: a strip this wide covers a cell centre in every cross-section, with margin
 CODES = {200: "paved_asphalt", 201: "paved_concrete", 210: "rail", 220: "inland_water"}
 PRIORITY = {"water": 0, "paved_area": 1, "rail": 2, "road": 3}
 LANE_M = 3.5
@@ -33,10 +36,10 @@ UNPAVED = {"unpaved", "gravel", "dirt", "ground", "compacted", "fine_gravel", "s
 
 @dataclass(frozen=True)
 class Feature:
-    kind: str
-    source_id: str
-    geom: object
-    tags: dict
+    kind: str  # "road" | "paved_area" | "rail" | "water"
+    source_id: str  # "osm:w123", "osm:a456", "nhd:<permanent id>"
+    geom: object  # shapely geometry in lon/lat (LineString / Polygon / MultiPolygon)
+    tags: dict  # the tags the rules read (str -> str)
 
 
 def _num(v: str | None) -> float | None:
@@ -117,23 +120,35 @@ def burn_tile(codes: np.ndarray, i: int, j: int, feats: list[Feature], area) -> 
     clip = local(tile.intersection(box(*area)))
     if clip.is_empty:
         return 0
-    pad = local(tile).buffer(100.0)  # features reaching into the tile from outside it
     kx = M_PER_DEG_LAT * math.cos(math.radians(lat0))
     cell_x, cell_y = kx / CELLS_PER_DEG, M_PER_DEG_LAT / CELLS_PER_DEG
     x0, y0 = (w - lon0) * kx, (s + TILE_DEG - lat0) * M_PER_DEG_LAT  # north-west corner, local metres
     transform = Affine(cell_x, 0, x0, 0, -cell_y, y0)
     before = codes.copy()
+    cw, cs, ce, cn = tile.intersection(box(*area)).bounds
+    shapes = []
     for f in sorted(feats, key=lambda f: (PRIORITY[f.kind], f.source_id)):
         code = code_for(f)
         if code is None:
             continue
+        # cheap early-out on raw lon/lat bounds, before any transform or buffer
+        reach = (max(width_m(f), MIN_W_M) / 2.0 if f.kind in ("road", "rail") else 0.0) + 1.0
+        fw, fs, fe, fn = f.geom.bounds
+        dlat, dlon = reach / M_PER_DEG_LAT, reach / kx
+        if fe + dlon < cw or fw - dlon > ce or fn + dlat < cs or fs - dlat > cn:
+            continue
         p = _polygon(f, local)
-        if p is None or p.is_empty or not p.intersects(pad):
+        if p is None or p.is_empty:
             continue
         p = p.intersection(clip)
         if p.is_empty:
             continue
-        m = rf.rasterize([(p, 1)], out_shape=(TILE_PX, TILE_PX), transform=transform, fill=0, all_touched=False,
-                         dtype="uint8").astype(bool)
-        codes[m] = code
+        shapes.append((p, code))
+    if shapes:
+        # one pass; later shapes (higher priority) overwrite earlier ones. Codes are >= 200, so 0 means untouched.
+        out = rf.rasterize(
+            shapes, out_shape=(TILE_PX, TILE_PX), transform=transform, fill=0, all_touched=False, dtype="uint8"
+        )
+        m = out > 0
+        codes[m] = out[m]
     return int((codes != before).sum())
