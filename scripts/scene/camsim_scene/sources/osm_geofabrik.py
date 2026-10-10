@@ -93,7 +93,9 @@ class OsmGeofabrik(SourceBase):
             if status == 200:
                 return d.isoformat(), url, size
         if configured:
-            raise ValueError(f"Geofabrik extract {ext!r} has no dated file for {configured} ({dated_url(latest_url, configured)})")
+            raise ValueError(
+                f"Geofabrik extract {ext!r} has no dated file for {configured} ({dated_url(latest_url, configured)})"
+            )
         raise ValueError(f"Geofabrik extract {ext!r} has no dated file in the last {MAX_LOOKBACK_DAYS} days")
 
     def prepare(self, path, asset, cache):
@@ -129,7 +131,7 @@ def read_osm(pbf: Path, bounds, settings: dict) -> list[Feature]:
     classes = set(settings["road_classes"]) | {c + "_link" for c in settings["road_classes"]}
     out: list[Feature] = []
     fp = (
-        osmium.FileProcessor(str(pbf))
+        osmium.FileProcessor(osmium.io.File(str(pbf), "pbf"))  # cache blobs have no extension to detect it by
         .with_locations()
         .with_areas()
         .with_filter(osmium.filter.KeyFilter("highway", "railway", "aeroway", "amenity", "area:highway"))

@@ -86,6 +86,16 @@ def test_read_osm_keeps_wanted_ways_in_area(tmp_path):
     assert all(isinstance(f, Feature) for f in feats)
 
 
+def test_read_osm_reads_a_cache_blob_without_extension(tmp_path):
+    """The fetch cache stores assets by hash, with no file extension: the format must not come from the name."""
+    pbf = tmp_path / "t.osm.pbf"
+    _write_pbf(pbf)
+    blob = tmp_path / "7b9074063b95f317"
+    pbf.rename(blob)
+    feats = read_osm(blob, (-117.6, 33.2, -117.3, 33.5), SETTINGS)
+    assert sorted(f.source_id for f in feats) == ["osm:w10", "osm:w11", "osm:w14"]
+
+
 def test_read_osm_paved_areas(tmp_path):
     pbf = tmp_path / "a.osm.pbf"
     w = osmium.SimpleWriter(str(pbf))
