@@ -255,7 +255,9 @@ def _ndvi_values(pkg: Path, m: Manifest, st, rng: random.Random, all_tiles: bool
 def _check_sea_level(pkg: Path, m: Manifest, grid_paths: dict | None) -> Check:
     p = pkg / sea_level.FILE
     if not m.sea_level:
-        return Check("sea_level", not p.exists(), "no station" if not p.exists() else "sea_level.json without a station")
+        return Check(
+            "sea_level", not p.exists(), "no station" if not p.exists() else "sea_level.json without a station"
+        )
     if not p.exists():
         return Check("sea_level", False, "sea_level.json missing")
     have = json.loads(p.read_text(encoding="utf-8"))
@@ -267,6 +269,25 @@ def _check_sea_level(pkg: Path, m: Manifest, grid_paths: dict | None) -> Check:
     want = sea_level.compute(m.sea_level, grid_paths)
     ok = abs(have["offset_m"] - want["offset_m"]) <= 0.001
     return Check("sea_level", ok, f"offset {have['offset_m']} m (recomputed {want['offset_m']} m)")
+
+
+WORLDCOVER_CODES = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100}
+
+
+def landcover_code_problems(lc: Path) -> list[str]:
+    """Codes in the land-cover tiles that neither WorldCover nor index.json's `codes` legend defines (REALISM R2)."""
+    index = json.loads((lc / "index.json").read_text(encoding="utf-8"))
+    allowed = WORLDCOVER_CODES | {int(k) for k in index.get("codes", {})}
+    out = []
+    for t in index["tiles"]:
+        found = set(np.unique(np.array(Image.open(lc / t["file"]))).tolist())
+        out += [f"landcover: code {c} not in index.json codes (tile {t['file']})" for c in sorted(found - allowed)]
+    return out
+
+
+def _check_landcover_codes(lc: Path) -> Check:
+    problems = landcover_code_problems(lc)
+    return Check("landcover_codes", not problems, _summary(problems))
 
 
 def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[list[Check], dict, dict | None]:
@@ -354,6 +375,8 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
     ]
     checks += ndvi_checks
     checks.append(_guard("sea_level", _check_sea_level, pkg, m, {k: Path(v) for k, v in st.ctx.grid_paths.items()}))
+    if (pkg / "landcover" / "index.json").exists():  # every tile: they are few (0.05 deg each) and small
+        checks.append(_guard("landcover_codes", _check_landcover_codes, pkg / "landcover"))
     return checks, stats, ndvi_stats
 
 

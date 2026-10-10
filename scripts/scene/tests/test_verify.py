@@ -8,7 +8,7 @@ from fake_sources import build_synthetic, fast_fits, ndvi_scene
 from camsim_scene import qmesh, tiling
 from camsim_scene.layers import imagery, ndvi
 from camsim_scene.manifest import Manifest, write_hashes
-from camsim_scene.verify import base_p99_limit, verify
+from camsim_scene.verify import base_p99_limit, landcover_code_problems, verify
 
 
 @pytest.fixture(scope="module")
@@ -275,3 +275,32 @@ def test_verify_checks_sea_level(tmp_path):
 
 def test_a_package_without_a_station_has_no_sea_level_file(built):
     assert checks(verify(built[0]))["sea_level"]["ok"] and not (built[0] / "sea_level.json").exists()
+
+
+def _lc_dir(tmp_path, codes_in_tile, legend):
+    from PIL import Image
+
+    d = tmp_path / "landcover"
+    d.mkdir()
+    a = np.full((600, 600), 30, np.uint8)
+    for k, c in enumerate(codes_in_tile):
+        a[k, 0] = c
+    Image.fromarray(a).save(d / "+10.00_+10.00.png")
+    idx = {"format": "camsim-landcover-1", "tiles": [{"file": "+10.00_+10.00.png", "lat_index": 200, "lon_index": 200}]}
+    if legend is not None:
+        idx["codes"] = legend
+    (d / "index.json").write_text(json.dumps(idx))
+    return d
+
+
+def test_legend_covers_tile_codes(tmp_path):
+    assert landcover_code_problems(_lc_dir(tmp_path, [200, 0, 80], {"200": "paved_asphalt"})) == []
+
+
+def test_code_missing_from_legend_is_reported(tmp_path):
+    [p] = landcover_code_problems(_lc_dir(tmp_path, [200, 210], {"200": "paved_asphalt"}))
+    assert "210" in p and "+10.00_+10.00.png" in p
+
+
+def test_pre_r2_tiles_need_no_legend(tmp_path):
+    assert landcover_code_problems(_lc_dir(tmp_path, [10, 95, 100], None)) == []

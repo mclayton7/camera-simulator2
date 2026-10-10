@@ -4,6 +4,8 @@ import json
 import numpy as np
 import pytest
 import shapely
+from PIL import Image
+from shapely.geometry import LineString
 from fake_sources import build_synthetic, source, synthetic_scene
 from fakes import FakeHttp, coops_http
 from rasters import write_geotiff
@@ -12,6 +14,7 @@ from camsim_scene import fsutil, pipeline, qmesh, tiling
 from camsim_scene.config import parse_scene
 from camsim_scene.context import coverage
 from camsim_scene.engine import BuildLock, BuildLocked
+from camsim_scene.features import Feature
 from camsim_scene.layers import terrain
 from camsim_scene.licences import LicenceError
 from camsim_scene.manifest import Manifest
@@ -333,3 +336,94 @@ def test_feature_sources_do_not_need_footprints():
     asset = AssetRecord(id="socal-261009", url="https://x/socal-261009.osm.pbf", group="osm_geofabrik")
     rec = SourceRecord("osm_geofabrik", "osm_geofabrik", "OSM", "2026-10-09", "ODbL-1.0", "", {}, [asset])
     assert not _needs_footprints(SimpleNamespace(sources=[rec]))
+
+
+FEATURES = {
+    "area": [10.0, 10.0, 10.1, 10.04],
+    "sources": ["osm_geofabrik"],
+    "roads": True,
+    "paved_areas": False,
+    "rail": False,
+    "water": False,
+    "road_classes": ["motorway"],
+    "rules": "1",
+}
+
+
+def _lc_setup(tmp_path, monkeypatch, features=None):
+    from camsim_scene import pipeline
+    from camsim_scene.context import BuildContext
+    from camsim_scene.manifest import SourceRecord
+
+    pkg, _, _ = build_synthetic(tmp_path)
+    m = Manifest.load(pkg / "manifest.json")
+    m.sources.append(SourceRecord("lc", "worldcover", "lc", "1", "CC-BY-4.0", "lc", {}, []))
+    m.layers["landcover"] = {"priorities": ["lc"], "bounds": [10.0, 10.0, 10.1, 10.04], "tile_deg": 0.05}
+    if features:
+        m.sources.append(SourceRecord("osm_geofabrik", "osm_geofabrik", "osm", "1", "ODbL-1.0", "© OSM", {}, []))
+        m.layers["landcover"]["features"] = dict(features)
+    monkeypatch.setattr(
+        pipeline.landcover, "local_reader", lambda paths: lambda url, r, c: np.full((600, 600), 30, np.uint8)
+    )
+    monkeypatch.setattr(pipeline, "_run_isolated", lambda fn, *a: fn(*a))
+    road = Feature("road", "osm:w1", LineString([(10.01, 10.02), (10.04, 10.02)]), {"highway": "motorway"})
+    monkeypatch.setattr(pipeline, "_load_features", lambda m, ctx: [road])
+    build = lambda: pipeline._build_landcover(pkg, m, BuildContext(str(pkg), m.to_dict(), {}, {}))  # noqa: E731
+    return pkg, m, build
+
+
+def test_pre_r2_manifest_builds_unchanged(tmp_path, monkeypatch):
+    pkg, _, build = _lc_setup(tmp_path, monkeypatch)
+    build()
+    index = json.loads((pkg / "landcover" / "index.json").read_text())
+    assert "codes" not in index and "credits" not in index
+    for t in index["tiles"]:
+        assert (np.array(Image.open(pkg / "landcover" / t["file"])) == 30).all()
+
+
+def test_features_burn_into_tiles_and_legend(tmp_path, monkeypatch):
+    pkg, _, build = _lc_setup(tmp_path, monkeypatch, FEATURES)
+    build()
+    index = json.loads((pkg / "landcover" / "index.json").read_text())
+    assert index["codes"] == {"200": "paved_asphalt"}
+    assert index["credits"] == ["© OSM"]
+    burned = sum(int((np.array(Image.open(pkg / "landcover" / t["file"])) == 200).sum()) for t in index["tiles"])
+    assert burned > 300  # ~3.3 km of road at ~1 texel per 7.8 m column
+    assert "© OSM" in (pkg / "landcover" / "ATTRIBUTION.txt").read_text()
+
+
+def test_features_settings_change_rebuilds_landcover(tmp_path, monkeypatch):
+    pkg, m, build = _lc_setup(tmp_path, monkeypatch, FEATURES)
+    assert build().built == 2
+    assert build().skipped == 2
+    m.layers["landcover"]["features"]["rail"] = True
+    assert build().built == 2
+
+
+def test_features_pickle_through_a_spawned_process():
+    road = Feature("road", "osm:w1", LineString([(10.01, 10.02), (10.04, 10.02)]), {"highway": "motorway"})
+    [back] = pipeline._run_isolated(list, [road])
+    assert back == road
+
+
+def test_load_features_caches_the_extract(tmp_path, monkeypatch):
+    from camsim_scene.context import BuildContext
+    from camsim_scene.manifest import AssetRecord, SourceRecord
+
+    asset = AssetRecord("socal", "https://x/socal.osm.pbf", "ab" * 32, 1)
+    m = Manifest.load(build_synthetic(tmp_path)[0] / "manifest.json")
+    m.sources.append(SourceRecord("osm_geofabrik", "osm_geofabrik", "osm", "1", "ODbL-1.0", "© OSM", {}, [asset]))
+    m.layers["landcover"]["features"] = dict(FEATURES)
+    road = Feature("road", "osm:w1", LineString([(10.01, 10.02), (10.04, 10.02)]), {"highway": "motorway"})
+    calls = []
+    monkeypatch.setattr(pipeline, "_run_isolated", lambda fn, *a: calls.append(a) or [road])
+    ctx = BuildContext("pkg", m.to_dict(), {"osm_geofabrik/socal": "/x/socal.osm.pbf"}, {}, str(tmp_path / "cache"))
+    assert pipeline._load_features(m, ctx) == [road]
+    assert pipeline._load_features(m, ctx) == [road] and len(calls) == 1  # the second read is the cached pickle
+    assert calls[0] == (FEATURES, [("osm_geofabrik", "/x/socal.osm.pbf")])
+    m.layers["landcover"]["features"]["rail"] = True
+    pipeline._load_features(m, ctx)
+    assert len(calls) == 2  # other settings: another extract
+    no_cache = BuildContext("pkg", m.to_dict(), ctx.asset_paths, {})
+    pipeline._load_features(m, no_cache)
+    assert len(calls) == 3

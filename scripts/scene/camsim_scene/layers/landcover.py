@@ -74,8 +74,16 @@ def write_tile(codes: np.ndarray, path: Path) -> None:
     Image.fromarray(codes).save(path, format="PNG", optimize=True)
 
 
-def build_index(bbox, written: list[tuple[int, int]], missing: list[tuple[int, int]]) -> dict:
-    return {
+def build_index(
+    bbox,
+    written: list[tuple[int, int]],
+    missing: list[tuple[int, int]],
+    codes: dict | None = None,
+    credits: list[str] | None = None,
+) -> dict:
+    """`codes` (the legend of codes beyond WorldCover's) and `credits` (the burned feature sources' attributions) are
+    REALISM R2 keys, written only when given: without them the index is byte-identical to before."""
+    index = {
         "format": FORMAT,
         "source": SOURCE,
         "source_url": COG_URL,
@@ -87,29 +95,45 @@ def build_index(bbox, written: list[tuple[int, int]], missing: list[tuple[int, i
         "tiles": [{"file": tile_filename(i, j), "lat_index": i, "lon_index": j} for i, j in written],
         "missing": [[i, j] for i, j in missing],
     }
+    if codes is not None:
+        index["codes"] = codes
+    if credits is not None:
+        index["credits"] = list(credits)
+    return index
+
+
+def write_index(index: dict, out: Path) -> None:
+    (out / "index.json").write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def fetch(
-    bbox, out: Path, reader: Reader = read_cog_window, cut_by: str = "scripts/landcover/fetch_worldcover.py"
+    bbox,
+    out: Path,
+    reader: Reader = read_cog_window,
+    cut_by: str = "scripts/landcover/fetch_worldcover.py",
+    codes: dict | None = None,
+    credits: list[str] | None = None,
 ) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     written: list[tuple[int, int]] = []
     missing: list[tuple[int, int]] = []
     for i, j in tiles_for_bbox(*bbox):
         row, col = cog_offset(i, j)
-        codes = reader(COG_URL.format(name=cog_name(i, j)), row, col)
-        if codes is None:
+        tile = reader(COG_URL.format(name=cog_name(i, j)), row, col)
+        if tile is None:
             missing.append((i, j))
             continue
-        write_tile(np.ascontiguousarray(codes, dtype=np.uint8), out / tile_filename(i, j))
+        write_tile(np.ascontiguousarray(tile, dtype=np.uint8), out / tile_filename(i, j))
         written.append((i, j))
-    index = build_index(bbox, written, missing)
-    (out / "index.json").write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    (out / "ATTRIBUTION.txt").write_text(
+    index = build_index(bbox, written, missing, codes=codes, credits=credits)
+    write_index(index, out)
+    text = (
         f"{SOURCE}\n{ATTRIBUTION}\nLicence: {LICENCE} (https://creativecommons.org/licenses/by/4.0/)\n"
-        f"Source: https://esa-worldcover.org (tiles cut by {cut_by})\n",
-        encoding="utf-8",
+        f"Source: https://esa-worldcover.org (tiles cut by {cut_by})\n"
     )
+    for credit in credits or ():
+        text += f"\n{credit}\n"
+    (out / "ATTRIBUTION.txt").write_text(text, encoding="utf-8")
     return index
 
 

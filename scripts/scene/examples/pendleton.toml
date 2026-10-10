@@ -6,6 +6,13 @@ seed = 0
 ring_km = 100
 bmng_month = 7
 jpeg_quality = 85
+allow = ["ODbL-1.0"]       # OSM roads (REALISM R2)
+
+[features]                 # REALISM R2: OSM roads / paved areas / rail + NHD water burned into land cover
+roads = true
+paved_areas = true
+rail = true
+water = true
 
 [sources.naip_pc]
 year = "2022"
