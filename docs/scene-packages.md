@@ -26,6 +26,7 @@ Background: [`docs/realism/`](realism/) (data sources, Cesium findings, offline 
   ndvi/tilemapresource.xml      # TMS 1.0, image/png (packages with an NDVI layer)
   ndvi/fit.json                 # NAIP -> Sentinel-2 NDVI fit (gain, offset, 2 km offset grid)
   ndvi/{z}/{x}/{y}.png          # 8-bit grayscale NDVI (0 nodata, 1..255 = -1..+1); tiles without data are absent
+  sea_level.json                # local MSL offset from EGM96 (packages with a [sea_level] station)
   landcover/index.json
   landcover/<lat>_<lon>.png     # the 4B thermal format (0.05° tiles, 600 × 600, 8-bit WorldCover codes)
   .state/                       # resume markers and the build lock (not hashed, not packed)
@@ -135,9 +136,12 @@ ndvi_max_zoom = 15                          # [10, 17]: NDVI pyramid depth (z15 
 allow = []                                  # extra licence ids (SPDX, see licences.toml)
 
 [priorities]                                # optional; defaults from the profile
-terrain = ["dep3_1m", "dep3_13", "etopo2022"]
+terrain = ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"]
 imagery = ["naip_pc", "wc_s2", "bmng"]
 landcover = ["worldcover"]
+
+[sea_level]                                 # optional: local mean sea level (Sea level section)
+station = "9410230"                         # NOAA CO-OPS station id with a NAVD88 datum tie; omit for an inland package
 
 [sources.naip_pc]                           # per-source options; `adapter` picks a non-default class ("module:Class")
 year = "2022"
@@ -151,8 +155,8 @@ Unknown keys are errors. **Profiles** (Decision 3):
 
 | Profile | Terrain priority | Imagery priority | Land cover | bbox zoom (terrain / imagery) |
 |---|---|---|---|---|
-| `preview` | `dep3_13` → `etopo2022` | `wc_s2` → `bmng` | `worldcover` | 14 / 13 |
-| `sim` | `dep3_1m` → `dep3_13` → `etopo2022` | `naip_pc` → `wc_s2` → `bmng` | `worldcover` | 16 / 17 |
+| `preview` | `dep3_13` → `noaa_sd13` → `noaa_crm_socal` → `etopo2022` | `wc_s2` → `bmng` | `worldcover` | 14 / 13 |
+| `sim` | `dep3_1m` → `dep3_13` → `noaa_sd13` → `noaa_crm_socal` → `etopo2022` | `naip_pc` → `wc_s2` → `bmng` | `worldcover` | 16 / 17 |
 
 `globe` is z8 and `ring` z10 for both layers in both profiles.
 
@@ -163,6 +167,7 @@ Unknown keys are errors. **Profiles** (Decision 3):
 | `naip_pc.year` | NAIP year on Planetary Computer (default `"2022"`, California's newest there) |
 | `dep3_13.as_of` | `YYYYMMDD`: use the newest dated `historical/` copy of each 1° cell on or before this date (default: the newest). A cell with no copy by then is skipped with a warning |
 | `dep3_1m.geoid_overrides` | `{ "<project>" = "GEOID18" }`: the project's geoid when the USGS WESM index doesn't give exactly one. If the WESM service is down, planning proceeds only when the overrides cover **every** project; otherwise it fails naming the uncovered ones |
+| `noaa_crm_socal.msl_above_navd88_m` | set by `plan` from `[sea_level] station` (don't set it directly). A package that uses `noaa_crm_socal` without a station is a config error |
 | `bmng.month` | set from `bmng_month` (don't set it directly) |
 | `adapter` | any source: a built-in id or `"module:Class"` (an importable adapter class) |
 
@@ -233,7 +238,8 @@ Known limits found in acceptance (follow-ups, `ROADMAP.md`):
   (San Clemente pier, west edge). Follow-up: ignore thin features when measuring the distance to land.
 - A turquoise shallow shelf with a jagged hard outline against dark deep water shows in CamSim renders at the coast
   (`bbox_edge`, `ring_edge`; boat scenes). It is not imagery: it is in R0 too, from the seabed depth under the Single
-  Layer Water ocean. Separate terrain/ocean follow-up.
+  Layer Water ocean. **Explained and fixed by the seabed (R1)**: the shelf is 3DEP's hydro-flattened plate (Seabed
+  section). Render results are in "Measured".
 
 ## NDVI (R1)
 
@@ -292,17 +298,98 @@ and dated (NAIP flies in the growing season; the composite is 2021). Outside NAI
 
 `scripts/scene/tools/ndvi_check.py PKG --cache DIR [--overview OUT.png]` computes the plausibility and seam gates.
 
+## Seabed (R1)
+
+**Why.** Probing four transects off the Pendleton coast found that 3DEP 1/3″ fills about 5 km of ocean with a
+hydro-flattened plate at about 0 NAVD88. That is 0.2 to 1.1 m below CamSim's tide-0 sea (EGM96); the gap grows
+offshore because GEOID18 and EGM96 tilt differently. At 3DEP's coverage edge the terrain drops in a cliff to ETOPO
+bathymetry (-8 to -150 m within 500 m). CamSim's ocean material reads the plate as shallow water: that is the
+turquoise shelf with the jagged outline (Imagery edge, known limits). With waves (Beaufort 3+) or a negative CIGI
+tide the plate can show through the troughs.
+
+**Sources.** `noaa_sd13` (10 m) and `noaa_crm_socal` (90 m) sit below 3DEP and above ETOPO in the terrain priority
+(Sources). Where 3DEP is masked, the next valid source takes over: San Diego where it covers, the CRM beyond, ETOPO
+past the CRM.
+
+**Tidal-water mask.** A 3DEP sample (`dep3_1m`, `dep3_13`) is invalid, and falls through as nodata does, where all
+three hold:
+
+1. WorldCover class 80 (permanent water) at the point, nearest neighbour at full resolution.
+2. The 3DEP source value (NAVD88, before the vertical offset) is at most **+1.5 m**. MHW at La Jolla is +1.34 m, so
+   1.5 m leaves a margin; lakes and reservoirs above it keep 3DEP's flattened surface.
+3. A topobathy source (`noaa_sd13` or `noaa_crm_socal`) is valid at the point.
+
+The existing 30 m feather then blends 3DEP into San Diego on the land side of the water edge. The rule is recorded in
+the manifest as `layers.terrain.tidal_mask` (`classes_source`, `class`, `max_navd88_m`, `sources`, `topobathy`), and
+the WorldCover hashes join the terrain tiles' inputs hash. `verify --deep` applies the same mask when it recomputes
+vertex heights.
+
+**Tile set.** A tile's depth is min(region limit, best covering source's limit). San Diego (z14) lies under 3DEP 1/3″
+(z14) and the CRM (z12) under the ring limit (z10), so the tile set does not change.
+
+**Older manifests.** A manifest without `tidal_mask` (R0, chunk 1, chunk 2) builds exactly as before. `build --replan`
+with the new priorities rebuilds the terrain only; imagery, land cover and NDVI are skipped.
+
+**Known limits.** WorldCover's water edge (10 m pixels, 2021) is not the instantaneous waterline; the feather absorbs
+it. The CRM is accurate to about 1 m and is coarser than the ring's z10 samples (about 150 m). Piers and other thin
+features follow their source. The acceptance numbers are in "Measured".
+
+## Sea level (R1)
+
+**Why.** CamSim's tide-0 sea is the EGM96 geoid. Local mean sea level at La Jolla is +0.774 m NAVD88 (NOAA CO-OPS
+9410230, 1983-2001 tidal epoch), about 0.4 m above EGM96 there. The drawn waterline sat 10 to 20 m seaward of local
+MSL on gentle beaches. (NOAA's CUSP shoreline is MHW, +1.344 m NAVD88, not MSL.)
+
+**`[sea_level] station`.** A CO-OPS station id with a NAVD88 datum. Pendleton uses La Jolla: Oceanside Harbor
+(9410396) is tidally identical but has no NAVD88 tie. A station without a NAVD88 datum is a `plan` error naming the
+problem. Inland packages leave the table out.
+
+**Manifest snapshot.** `plan` reads the station's `datums.json` and position from the CO-OPS API and stores them in
+`manifest.json` under `sea_level`: `station`, `name`, `lat`, `lon`, `epoch`, `msl_m`, `navd88_m`,
+`msl_above_navd88_m`, `geoid` and the EGM96 grid (`us_nga_egm96_15.tif`, also listed in `datum.grids`). The values are
+stored as published, so a later rebuild does not query the API. `noaa_crm_socal` takes `msl_above_navd88_m` from it.
+
+**`sea_level.json`.** The build writes, at the station's position (pinned grids, `PROJ_NETWORK=OFF`):
+
+```
+offset_m = h_ell(NAVD88 0, GEOID18 chain) + msl_above_navd88_m - N_EGM96
+```
+
+with `N_EGM96` bilinear on the 15′ NGA grid, the same data as CamSim's `WW15MGH.DAC`. The file holds `offset_m`,
+`station`, `msl_above_navd88_m`, `navd88_ellipsoid_m` and `egm96_n_m`, is listed in `hashes.txt`, and is rewritten on
+every build. `verify` (the `sea_level` check, deep) recomputes it and compares to within 1 mm.
+
+**In CamSim.** With a scene package, the sea level is EGM96 + `offset_m` + the CIGI tide: the ocean mesh, HAT/HOT, the
+boat clamp, the material parameters and wave queries all use it. `offset_m` outside [-3, 3] m, or not finite, is a
+resolve error; no file means 0. See "Scene Package" in [`configuration.md`](configuration.md). KLV Tags 15 and 25
+stay EGM96 MSL by definition.
+
+**Limit.** One constant per package. Sea-surface topography varies over 100 km by centimetres to a decimetre; the
+constant is exact at the station and approximate elsewhere. The acceptance numbers are in "Measured".
+
 ## Sources
 
 | Id | Dataset | Licence | Area | Zoom limit | Datum (horizontal / vertical) |
 |---|---|---|---|---|---|
 | `dep3_1m` | USGS 3DEP 1 m project DEMs (10 × 10 km UTM tiles, via The National Map) | `LicenseRef-PublicDomain-USGov` | US, where a 1 m project exists | z16 | project CRS (NAD83(2011)) / NAVD88 with the project's geoid (GEOID18 or GEOID12B) |
 | `dep3_13` | USGS 3DEP 1/3 arc-second DEM (1 × 1° GeoTIFFs, dated `historical/` URLs) | `LicenseRef-PublicDomain-USGov` | US | z14 | NAD83(2011) geographic / NAVD88, GEOID18 |
+| `noaa_sd13` | NOAA NGDC San Diego, CA 1/3 arc-second NAVD 88 tsunami-inundation DEM (2012), one netCDF, 445,596,180 B | `LicenseRef-PublicDomain-USGov` | lon -117.83 to -117.00, lat 32.45 to 33.60 | z14 | NAD83(2011) / NAVD88, GEOID18 (the file names no geoid; models differ by centimetres) |
+| `noaa_crm_socal` | NOAA NGDC U.S. Coastal Relief Model, Southern California v2, 3 arc-second (90 m), one netCDF, 524,449,536 B | `LicenseRef-PublicDomain-USGov` | lon -128 to -115, lat 30 to 37 | z12 | NAD83 / **MSL**; the package's station MSL - NAVD88 is added, then as NAVD88 with GEOID18 |
 | `etopo2022` | NOAA ETOPO 2022 30″ surface elevation (land + bathymetry) + its geoid-height grid | `LicenseRef-PublicDomain-USGov` | globe | z8 | WGS 84 / EGM2008 via ETOPO's own geoid grid |
 | `naip_pc` | USDA NAIP 0.6 m RGB(N) COGs, Microsoft Planetary Computer STAC | `LicenseRef-PublicDomain-USGov` | conterminous US (to a few km offshore) | z17 | NAD83 UTM (from the file) / — |
 | `wc_s2` | ESA WorldCover 2021 Sentinel-2 RGBNIR composite (10 m, 1 × 1° COGs) | `CC-BY-4.0` (checked against each file's licence tag) | land (no open-ocean tiles) | z13 | WGS 84 / — |
 | `bmng` | NASA Blue Marble Next Generation, topography + bathymetry, 500 m (2004 monthly) | `LicenseRef-PublicDomain-USGov` | globe | z8 | WGS 84 / — |
 | `worldcover` | ESA WorldCover 10 m 2021 v200 land cover (3 × 3° COGs) | `CC-BY-4.0` | land | — (0.05° land-cover tiles over bbox + ring) | WGS 84 / — |
+
+**NOAA topobathy.** Both are single files from `ngdc.noaa.gov/thredds/fileServer/` (`regional/san_diego_13_navd88_2012.nc`,
+`crm/crm_socal_3as_vers2.nc`), unchanged since 2016 and 2018; they are pinned by URL and size, and `fetch` records the
+sha256. NCEI's HEAD has no Content-Length, so `discover` takes the size from a 1-byte ranged GET. `discover` returns
+nothing when the area misses the product's extent. `prepare` converts each netCDF to a COG with overviews. Nodata is
+-99999 (San Diego) and the file's `_FillValue` (CRM). The CRM is 90 m with about 1 m vertical accuracy, and whole
+metres near shore; it is MSL-referenced, which is why a station is required. Both products are **not for
+navigation**. NOAA's CUDEM would be the first choice, but has no Southern California tiles (checked 2026-10-10: S3
+listings, both tile indexes, NCEI THREDDS), so there is no adapter. Attribution: NOAA National Geophysical Data
+Center (2012) for both; the CRM adds doi:10.7289/V5V985ZM.
 
 Assets are fetched whole into a content-addressed cache (`.cache/scene/blobs/sha256/…`), hashed, and reused
 across packages; a rebuild refetches on a miss and fails on a hash mismatch. Planetary Computer URLs are signed
@@ -317,10 +404,13 @@ ETOPO and Blue Marble get a derived COG with overviews in `.cache/scene/derived/
 | 3DEP elevation (1 m + 1/3″) | ≈ 3 GB |
 | ETOPO 2022 30″ surface + geoid | 1.6 GB + 1.5 GB |
 | Blue Marble NG, one month | 2.3 GB |
+| NOAA San Diego 1/3″ + CRM Southern California | 0.45 GB + 0.52 GB |
 | WC S2 composite | ≈ 0.5 GB per 1° cell; ≈ 9 cells for Pendleton + 100 km |
 
 The global base (ETOPO, Blue Marble) is shared by every package that uses the same cache. `plan` prints the
-estimate for the scene at hand before anything is downloaded.
+estimate for the scene at hand before anything is downloaded. Before `fetch` the tile counts in that line come from
+each source's discovery bounding box, so they are an upper-bound estimate (Pendleton `sim`: terrain 189,410, imagery
+277,514); the build uses the fetched footprints, which give the real counts (terrain 182,602).
 
 **Sampling.** Terrain samples a 257 × 257 grid (plus a 32-sample margin) per tile; imagery warps sources to the
 256 px tile. Each source is read from the **coarsest average overview at or finer than the target sample
