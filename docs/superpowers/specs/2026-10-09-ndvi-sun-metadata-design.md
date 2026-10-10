@@ -79,11 +79,16 @@ counts as four nodata pixels), re-encoded; nodata only if all four are nodata. M
 Written at `plan` into each NAIP asset's `metadata`:
 
 - `acquired`: `YYYY-MM-DD` from the STAC `datetime` (the time is dropped).
-- `sun_noon`: `{"elevation_deg": …, "azimuth_deg": …}` at local solar noon on that date at the footprint centroid,
-  NOAA solar position equations implemented in `camsim_scene/sun.py` (no dependency), rounded to 0.01°.
+- `sun_noon`: `{"elevation_deg": …, "azimuth_deg": …}` at local solar noon on that date at the centre of the STAC
+  item's bbox (footprints only exist after `fetch`), NOAA solar position equations implemented in
+  `camsim_scene/sun.py` (no dependency), geometric (no refraction), rounded to 0.01°.
+
+- `sun_window`: `{"min_elevation_deg": 30.0, "azimuth_deg": [morning, afternoon]}`: the sun's azimuths when it
+  crosses 30° elevation that day (NAIP's minimum sun angle), or absent when it never gets that high. At Pendleton on
+  2022-05-30: [82.2°, 277.8°], so the azimuth is nearly unconstrained in summer; on 2022-12-21: [158.2°, 201.8°].
 
 `wc_s2` assets get `composite: "2021"` and no sun. `docs/scene-packages.md` states the bound: elevation in
-[30°, `sun_noon.elevation_deg`], azimuth within about ±45° of `sun_noon.azimuth_deg` at Pendleton's latitude. Existing
+[30°, `sun_noon.elevation_deg`], azimuth within `sun_window.azimuth_deg`. Existing
 packages pick the metadata up with `build --replan`; no tile is rebuilt. Nothing reads it at runtime (a CamSim warning
 when the sim sun is far from the baked one is out of scope).
 
@@ -98,7 +103,8 @@ ndvi_max_zoom = 15     # [10, 17]; z15 ≈ 2.4 m
   imagery tile.
 - `ndvi = false`: no `ndvi/` directory, no `fit.json`; terrain, imagery, land cover and `hashes.txt` identical to a
   build without this change (the sun metadata changes `manifest.json` only).
-- `ndvi = true` with no `naip_pc` or `wc_s2` in the imagery priorities: plan error.
+- `ndvi = true` set explicitly with no `naip_pc` or `wc_s2` in the imagery priorities: config error. The `sim`
+  default (not set) silently turns the layer off for such priorities.
 
 ### 7. verify
 
@@ -111,7 +117,8 @@ ndvi_max_zoom = 15     # [10, 17]; z15 ≈ 2.4 m
 ## Testing (pytest, `scripts/scene/tests`, no network)
 
 - Encoding: round trip of codes 1..255; NDVI −1, 0, +1 and the nodata code.
-- `sun.py` against NOAA calculator reference values (three dates/locations, ≤ 0.05°).
+- `sun.py`: noon elevation against 90° − |latitude − declination| at the solstices (both hemispheres and the tropics,
+  ≤ 0.05°), and the 30° azimuth window (equinox at the equator: 90° / 270°).
 - Fit: quantisation, identical `fit.json` from shuffled samples, no-overlap path.
 - Leaf on synthetic NAIP + Sentinel-2 rasters: pure NAIP interior, Sentinel-2 only, feather midpoint, water clip.
 - Parents: all-valid, partial nodata, missing child tile, all-nodata (not written).
@@ -126,8 +133,9 @@ ndvi_max_zoom = 15     # [10, 17]; z15 ≈ 2.4 m
    reported (> 0.03 on any date → a follow-up item, not a failure).
 3. Plausibility: median NDVI per WorldCover class ordered tree cover (10) > grassland (30) / shrubland (20) >
    bare (60) / built-up (50); permanent water (80) < 0.
-4. Seam: along the NAIP edge, median |NDVI(inside the feather) − NDVI(outside)| ≤ 0.03, from a lattice of
-   pairs straddling the feather band.
+4. Seam: pairs of land points every 100 m along NAIP's footprint edge, 250 m inside (pure NAIP) and 50 m outside
+   (pure Sentinel-2): |median(inside − outside)| ≤ 0.03 (a signed median: a systematic step, not natural variation
+   over 300 m). The same statistic on unfitted NAIP NDVI is reported beside it.
 5. Determinism: `-j 1` and `-j 16` builds byte-identical; a rebuild skips every NDVI tile.
 6. Off switch: `ndvi = false` gives the chunk-1 package byte for byte (all files except `manifest.json`).
 7. Reported, not gated: NDVI build wall time, tile count and size per zoom in `build.json` and "Measured".
