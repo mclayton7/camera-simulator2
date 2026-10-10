@@ -348,7 +348,8 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 		{
 			const FThermalFrameParams& T = *ThermalParams;
 			FString Classes;
-			for (uint32 C = 0; C < T.NumClasses; ++C) { Classes += FString::Printf(TEXT(" %.1f"), T.ClassTempK[C]); }
+			const uint32 NumLogged = FMath::Min<uint32>(T.NumClasses, UE_ARRAY_COUNT(T.ClassTempK));
+			for (uint32 C = 0; C < NumLogged; ++C) { Classes += FString::Printf(TEXT(" %.1f"), T.ClassTempK[C]); }
 			UE_LOG(LogCamSim, Log, TEXT("Thermal: classes[K]%s terrain=%u water=%u Tair=%.1f K cloud=%.2f epsZ=%.3f KLum=%.1f "
 				"KFast=%.2f EClamp=%.0f signalScale=%.4g gainEv=%.2f sunLux=%.0f entities=%d landCover=%u warp=%.1f/%.0f m anchor=(%.0f, %.0f)"),
 				*Classes, T.TerrainClass, T.WaterClass, T.TairK, T.Cloud, T.SkyEpsZ, T.KLum, T.KFastScale, T.EClampWm2,
