@@ -54,9 +54,10 @@ def source_of(entry) -> str:
 
 
 def sample_entries(entries, lon: np.ndarray, lat: np.ndarray, target_m: float):
-    """Raw band values merged first-valid-wins in `entries` order: (values (3, ...) NaN where none, valid, index of
+    """Raw band values merged first-valid-wins in `entries` order: (values (bands, ...) NaN where none, valid, index of
     the entry each value came from (-1 none))."""
-    vals = np.full((3, *lon.shape), np.nan)
+    nb = len(entries[0].raster.bands) if entries else 3
+    vals = np.full((nb, *lon.shape), np.nan)
     ok = np.zeros(lon.shape, bool)
     which = np.full(lon.shape, -1, np.int32)
     for k, e in enumerate(entries):
@@ -67,7 +68,7 @@ def sample_entries(entries, lon: np.ndarray, lat: np.ndarray, target_m: float):
         v, good = e.raster.sample(px, py, target_m)
         take = good & ~ok
         if take.any():
-            vals[:, take] = v[:3][:, take]
+            vals[:, take] = v[:nb][:, take]
             which[take] = k
             ok |= take
     return vals, ok, which
@@ -169,29 +170,57 @@ def inside(interior, z: int, x: int, y: int) -> bool:
     return bool(shapely.contains(interior, shapely.box(*tile_bounds(z, x, y))))
 
 
+def split_reference(entries, reference: str):
+    """(the reference source's entries, the others), each in `entries` order."""
+    return [e for e in entries if source_of(e) == reference], [e for e in entries if source_of(e) != reference]
+
+
+def water_clip(z: int, x: int, y: int, water, feather_m: float):
+    """(land_distance on the feather lattice, or None; where the reference may be used on that lattice, or None
+    without a water mask, with a zero buffer or with no water near the tile)."""
+    dist = land_distance(z, x, y, water, feather_m) if water is not None else None
+    allow = (dist <= water.buffer_m) if dist is not None and water.buffer_m > 0 else None
+    return dist, allow
+
+
+def reference_only(z: int, x: int, y: int, rok: np.ndarray, interior, allow) -> bool:
+    """The reference is valid at every pixel, the tile is inside its interior and no pixel is beyond the buffer."""
+    return bool(rok.all()) and inside(interior, z, x, y) and (allow is None or bool(allow.all()))
+
+
+def reference_weight(z: int, x: int, y: int, ref, feather_m: float, allow, dpx, buffer_m: float) -> np.ndarray:
+    """Per pixel, the reference's share where it is valid: the feather ramp, 0 beyond the water buffer (`dpx`: metres
+    to land at the pixels, used when `allow` is given)."""
+    wt = feather_weight(z, x, y, ref, feather_m, allow) if ref else np.zeros((TILE_PX, TILE_PX))
+    if allow is not None:
+        wt = np.where(dpx <= buffer_m, wt, 0.0)  # beyond the water buffer: never the reference
+    return wt
+
+
+def merge_weight(wt: np.ndarray, rok: np.ndarray, sok: np.ndarray) -> np.ndarray:
+    """The reference's final share: all of it where nothing is behind it (never faded toward nodata), none where it is
+    invalid."""
+    return np.where(rok, np.where(sok, wt, 1.0), 0.0)
+
+
 def leaf_rgb(z: int, x: int, y: int, entries, balance=None, interior=None, water=None) -> np.ndarray:
     (lon, lat), d = pixel_grid(z, x, y)
     tm = d * M_PER_DEG
     if balance is None:
         vals, _, which = sample_entries(entries, lon, lat, tm)
         return decode_entries(entries, vals, which, lon, lat)
-    ref = [e for e in entries if source_of(e) == balance.reference]
-    rest = [e for e in entries if source_of(e) != balance.reference]
+    ref, rest = split_reference(entries, balance.reference)
     rv, rok, rw = sample_entries(ref, lon, lat, tm)
     ref_rgb = decode_entries(ref, rv, rw, lon, lat, balance)
-    dist = land_distance(z, x, y, water, balance.feather_m) if water is not None else None
-    allow = (dist <= water.buffer_m) if dist is not None and water.buffer_m > 0 else None
-    if rok.all() and inside(interior, z, x, y) and (allow is None or allow.all()):
+    dist, allow = water_clip(z, x, y, water, balance.feather_m)
+    if reference_only(z, x, y, rok, interior, allow):
         return ref_rgb
     dpx = None if dist is None else pixel_distance(z, x, y, dist, balance.feather_m)
-    wt = feather_weight(z, x, y, ref, balance.feather_m, allow) if ref else np.zeros(lon.shape)
-    if allow is not None:
-        wt = np.where(dpx <= water.buffer_m, wt, 0.0)  # beyond the water buffer: never the reference
+    wt = reference_weight(z, x, y, ref, balance.feather_m, allow, dpx, water.buffer_m if water is not None else 0.0)
     if (np.where(rok, wt, 0.0) >= 1.0).all():
         return ref_rgb
     sv, sok, sw = sample_entries(rest, lon, lat, tm)
-    wt = np.where(sok, wt, 1.0)  # nothing behind the reference here: keep it, never fade it toward black
-    wt = np.where(rok, wt, 0.0)
+    wt = merge_weight(wt, rok, sok)
     if (wt >= 1.0).all():
         return ref_rgb
     land = None if dpx is None else np.clip(1.0 - dpx / water.fade_m, 0.0, 1.0)

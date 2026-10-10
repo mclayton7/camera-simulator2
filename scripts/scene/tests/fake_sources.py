@@ -145,6 +145,23 @@ def raw_truth(lon, lat, band: int):
     return 1900.0 + 1500.0 * np.sin(np.asarray(lon) * 400.0 + band) * np.cos(np.asarray(lat) * 300.0)
 
 
+NAIP_NIR = 130  # synthetic NAIP near-infrared DN everywhere (ndvi scenes): red carries the NDVI, <= 255 down to -0.3
+
+
+def ndvi_truth(lon, lat):
+    """Smooth synthetic field in [0, 1] (period ~2 km)."""
+    return 0.5 + 0.5 * np.sin(np.asarray(lon) * 300.0) * np.cos(np.asarray(lat) * 250.0)
+
+
+def s2_ndvi_truth(lon, lat):
+    return 0.05 + 0.55 * ndvi_truth(lon, lat)
+
+
+def naip_ndvi_truth(lon, lat):
+    """NAIP's (DN) NDVI: the true NAIP -> Sentinel-2 fit is gain 0.9, offset 0.05."""
+    return (s2_ndvi_truth(lon, lat) - 0.05) / 0.9
+
+
 def _cell_centres(box, res):
     w, s, e, n = box
     nx, ny = round((e - w) / res), round((n - s) / res)
@@ -158,14 +175,21 @@ def naip_s2_scene(
     ref_box=(10.0, 10.0, 10.2, 10.2),
     s2_box=(9.8, 9.8, 10.4, 10.4),
     res=0.0005,
+    ndvi: bool = False,
 ) -> dict:
     """NAIP (`naip_pc`, uint8 = tone_truth(raw) + offset) over ref_box, Sentinel-2 (`wc_s2`, raw uint16 DN) over
     s2_box, global base RGB + DEM. glint_east: NAIP east of the ref box's middle is +60 DN (and a class raster,
-    classes.tif, marks it water: 80; west 10)."""
+    classes.tif, marks it water: 80; west 10). ndvi: 4-band files (band 4 NIR) with NDVI from `s2_ndvi_truth` /
+    `naip_ndvi_truth` (+ offset / 200 on NAIP), NAIP red derived from NIR so it stays in 1..255; the scene sets
+    `ndvi` and the sources' `ndvi_bands`."""
     base = synthetic_scene(root / "base")
     root.mkdir(parents=True, exist_ok=True)
     lon, lat = _cell_centres(s2_box, res)
     raw = np.stack([raw_truth(lon, lat, b) for b in range(3)]).round().astype(np.uint16)
+    if ndvi:
+        n = s2_ndvi_truth(lon, lat)
+        nir = np.rint(raw[0].astype(np.float64) * (1 + n) / (1 - n)).astype(np.uint16)
+        raw = np.concatenate([raw, nir[None]])
     write_geotiff(root / "s2.tif", raw, s2_box[0], s2_box[3], res, overviews=(2, 4))
     lon, lat = _cell_centres(ref_box, res)
     rawr = np.stack([raw_truth(lon, lat, b) for b in range(3)]).round()
@@ -173,9 +197,12 @@ def naip_s2_scene(
     mid = (ref_box[0] + ref_box[2]) / 2
     if glint_east:
         ref = np.where(lon >= mid, ref + 60.0, ref)
-    write_geotiff(
-        root / "naip.tif", np.clip(np.rint(ref), 1, 255).astype(np.uint8), ref_box[0], ref_box[3], res, overviews=(2, 4)
-    )
+    naip = np.clip(np.rint(ref), 1, 255).astype(np.uint8)
+    if ndvi:
+        n = naip_ndvi_truth(lon, lat) + offset(lon, lat) / 200.0
+        naip[0] = np.clip(np.rint(NAIP_NIR * (1 - n) / (1 + n)), 1, 255).astype(np.uint8)
+        naip = np.concatenate([naip, np.full((1, *lon.shape), NAIP_NIR, np.uint8)])
+    write_geotiff(root / "naip.tif", naip, ref_box[0], ref_box[3], res, overviews=(2, 4))
     classes = np.where(lon >= mid, 80, 10).astype(np.uint8)
     write_geotiff(root / "classes.tif", classes, ref_box[0], ref_box[3], res, overviews=(2, 4))
     s = base["sources"]
@@ -184,6 +211,7 @@ def naip_s2_scene(
         "bbox": list(ref_box),
         "ring_km": 30,
         "imagery_margin_km": 0,
+        "ndvi": ndvi,
         "priorities": {"terrain": ["base_dem"], "imagery": ["naip_pc", "wc_s2", "base_rgb"], "landcover": []},
         "zoom": {
             "globe": {"terrain": 2, "imagery": 2},
@@ -194,7 +222,13 @@ def naip_s2_scene(
             "base_dem": s["base_dem"],
             "base_rgb": s["base_rgb"],
             "naip_pc": source(
-                "imagery", root / "naip.tif", ref_box, max_zoom=15, bands=[1, 2, 3], nodata_rule="all_zero"
+                "imagery",
+                root / "naip.tif",
+                ref_box,
+                max_zoom=15,
+                bands=[1, 2, 3],
+                nodata_rule="all_zero",
+                **({"ndvi_bands": [1, 4]} if ndvi else {}),
             ),
             "wc_s2": source(
                 "imagery",
@@ -204,6 +238,7 @@ def naip_s2_scene(
                 bands=[1, 2, 3],
                 nodata_rule="all_zero",
                 decode="s2_reflectance",
+                **({"ndvi_bands": [1, 4]} if ndvi else {}),
             ),
         },
     }
@@ -275,11 +310,12 @@ LAKE = (10.0700, 10.0915, 10.0727, 10.0942)  # a 300 m lake inside the NAIP box 
 POND = (10.0450, 10.0740, 10.0477, 10.0767)  # a 300 m pond outside the NAIP box, inside Sentinel-2's
 
 
-def coast_scene(root: Path, shore: float = COAST, extra_water=None) -> dict:
+def coast_scene(root: Path, shore: float = COAST, extra_water=None, ndvi=False) -> dict:
     """naip_s2_scene at 11 m with a shoreline: NAIP over (10.06, 10.08, 10.14, 10.12), 60 DN darker east of COAST
     (sea fill), Sentinel-2 over (10.04, 10.07, 10.16, 10.13), and a land-cover source `worldcover` (worldcover.tif
     over the Sentinel-2 box, no overviews): 10 west of `shore`, 80 (water) east of it, in LAKE, and in `extra_water`
-    (a W S E N box) when given."""
+    (a W S E N box) when given. ndvi: as naip_s2_scene (NAIP NDVI 0.3 lower east of COAST, from the -60 DN
+    offset)."""
     box = (10.04, 10.07, 10.16, 10.13)
     scene = naip_s2_scene(
         root,
@@ -287,6 +323,7 @@ def coast_scene(root: Path, shore: float = COAST, extra_water=None) -> dict:
         ref_box=(10.06, 10.08, 10.14, 10.12),
         s2_box=box,
         res=0.0001,
+        ndvi=ndvi,
     )
     lon, lat = _cell_centres(box, 0.0001)
     codes = np.where(lon >= shore, 80, 10).astype(np.uint8)

@@ -1,7 +1,7 @@
-"""Per-process view of a fetched manifest: a SourceRaster and DatumTransform per data asset, ordered by layer
-priority, behind an STRtree of footprints, plus the package's imagery colour match (imagery/balance.json) when
-there is one. BuildContext (plain data) is what crosses the process boundary; each worker builds its WorkerState
-once."""
+"""Per-process view of a fetched manifest: a SourceRaster and DatumTransform per data asset (and a (red, NIR) raster
+for the NDVI layer), ordered by layer priority, behind an STRtree of footprints, plus the package's imagery colour
+match (imagery/balance.json) when there is one. BuildContext (plain data) is what crosses the process boundary; each
+worker builds its WorkerState once."""
 
 from __future__ import annotations
 
@@ -144,6 +144,8 @@ class WorkerState:
         self.settings = {layer: self.manifest.layer_settings_hash(layer) for layer in self.manifest.layers}
         self._transforms: dict[tuple, DatumTransform] = {}
         self.index = {layer: self._index(layer) for layer in ("terrain", "imagery")}
+        if self.manifest.layers.get("ndvi"):
+            self.index["ndvi"] = self._index("ndvi")
         self.balance: Balance | None = None
         self.balance_sha = ""
         self.ref_interior = None
@@ -190,7 +192,10 @@ class WorkerState:
                 if geom is None:
                     continue  # the asset holds no data
                 qid = f"{sid}/{a.id}"
-                raster = src.open(Path(self.ctx.asset_paths[qid]), to_asset(a))
+                opener = src.ndvi_raster if layer == "ndvi" else src.open
+                raster = opener(Path(self.ctx.asset_paths[qid]), to_asset(a))
+                if raster is None:
+                    continue  # no near-infrared band
                 order = (p, group_rank[a.group], a.group, a.rank, a.id)
                 entries.append(
                     Entry(
