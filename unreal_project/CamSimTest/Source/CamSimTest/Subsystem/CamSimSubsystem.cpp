@@ -27,6 +27,7 @@
 #include "Subsystem/EncoderWatchdog.h"
 #include "Time/SimClock.h"
 #include "Ocean/OceanSurface.h"         // FOceanSurface (ROADMAP 2.6)
+#include "Thermal/LandCoverLookup.h"   // FLandCoverCodeLookup (REALISM R2)
 #include "Geospatial/Geoid.h"           // CamSim::Geospatial::GetGeoidUndulation
 #include "SensorGraph.h"                // IsSensorGraphSupported (ROADMAP 3B)
 #include "InstanceIdPass.h"             // IsInstanceIdPassSupported (ROADMAP 2.7)
@@ -77,6 +78,9 @@ struct UCamSimSubsystem::FSubsystemImpl
 	// Ocean surface (ROADMAP 2.6); null when ocean.enabled is off or the EGM96 grid is missing.
 	TUniquePtr<FOceanSurface> Ocean;
 	FDelegateHandle OceanPreTickHandle;
+
+	// Land-cover codes at CIGI query points (REALISM R2); null when thermal.land_cover.enabled is off.
+	TUniquePtr<FLandCoverCodeLookup> LandCoverLookup;
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -232,6 +236,11 @@ FOceanSurface* UCamSimSubsystem::GetOceanSurface()
 const FOceanSurface* UCamSimSubsystem::GetOceanSurface() const
 {
 	return ImplGet(Impl, &FSubsystemImpl::Ocean);
+}
+
+FLandCoverCodeLookup* UCamSimSubsystem::GetLandCoverLookup()
+{
+	return Impl ? Impl->LandCoverLookup.Get() : nullptr;
 }
 
 void UCamSimSubsystem::ApplyOceanConfig(const FCamSimConfig::FOceanConfig& Cfg)
@@ -775,6 +784,18 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		else
 		{
 			UE_LOG(LogCamSim, Warning, TEXT("Ocean: disabled — EGM96 grid missing (Content/NonUFS/Geoid/WW15MGH.DAC; run git lfs pull)"));
+		}
+	}
+
+	// CIGI HAT/HOT and LOS extended material codes = the land-cover code at the hit (REALISM R2). The dir is already the
+	// scene package's landcover/ when scene.dir is set (FCamSimConfig::Load -> CamSimScene::ResolvePackage).
+	if (Config.Thermal.LandCover.bEnabled)
+	{
+		Impl->LandCoverLookup = MakeUnique<FLandCoverCodeLookup>();
+		Impl->LandCoverLookup->Configure(Config.Thermal.LandCover.Dir);
+		for (const FString& W : Impl->LandCoverLookup->TakeWarnings())
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("%s"), *W);
 		}
 	}
 
