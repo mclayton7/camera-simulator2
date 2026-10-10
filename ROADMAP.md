@@ -162,7 +162,8 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
 - *(2026-09-30)* First Linux workstation brought up: UE 5.8.3 at `/opt/UnrealEngine-5.8.3`
   (`/opt/UE` symlink), Cesium installed into the engine, ThirdParty rebuilt, headless suite and
   `ci_validate.sh --native` pass. Linux receivers need `net.core.rmem_max` raised (see 1.14);
-  persist it with a file in `/etc/sysctl.d/` on each Linux host.
+  persist it with a file in `/etc/sysctl.d/` on each Linux host. ~~Reference box~~ **Done 2026-10-10**:
+  `/etc/sysctl.d/90-camsim.conf` sets `net.core.rmem_max=26214400`, applied by `sysctl --system`.
 - Open `CamSimTest` once in the 5.8 editor and resave the maps, so assets stop loading through
   the 5.7 upgrade path.
 - VideoToolbox adds about 10 frames (~330 ms at 30 fps) of pipeline latency. FFmpeg exposes no
