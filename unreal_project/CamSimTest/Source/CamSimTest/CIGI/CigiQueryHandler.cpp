@@ -57,6 +57,20 @@ void FCigiQueryHandler::Tick(float DeltaTime)
 		{
 			UE_LOG(LogCamSim, Warning, TEXT("CIGI material codes: %s"), *W);
 		}
+
+		// Lookup cost, one line per StatsPeriodSec while queries arrive (a cache miss decodes a tile on this thread).
+		const double Now = FPlatformTime::Seconds();
+		if (Now - LastLookupStatsSec >= StatsPeriodSec)
+		{
+			LastLookupStatsSec = Now;
+			const FLandCoverLookupStats S = Lookup->TakeStats();
+			if (S.Calls > 0)
+			{
+				UE_LOG(LogCamSim, Log,
+					TEXT("CIGI material codes: %d lookups, %d tile loads, %.1f us mean, max %.1f us cached, max %.2f ms loading"),
+					S.Calls, S.Loads, 1e6 * S.TotalSec / S.Calls, 1e6 * S.MaxHitSec, 1e3 * S.MaxLoadSec);
+			}
+		}
 	}
 }
 

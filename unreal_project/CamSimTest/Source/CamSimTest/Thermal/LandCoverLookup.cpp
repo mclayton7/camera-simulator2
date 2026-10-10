@@ -27,12 +27,35 @@ bool FLandCoverCodeLookup::IsAvailable() const { return Cache.IsValid(); }
 uint8 FLandCoverCodeLookup::Code(double LatDeg, double LonDeg)
 {
 	if (!Cache.IsValid() || !FMath::IsFinite(LatDeg) || !FMath::IsFinite(LonDeg)) return 0;
+	const double T0 = FPlatformTime::Seconds();
+	const int32 Loads0 = Cache->NumLoads();
 	FIntPoint Tile, In;   // Tile = (LatIndex, LonIndex); In = (column, row), row 0 = north
 	CamSimLandCover::CellToTile(CamSimLandCover::GlobalCell(LatDeg, LonDeg), Tile, In);
 	const TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe> T = Cache->Get(Tile.X, Tile.Y);
 	Warnings.Append(Cache->TakeWarnings());
-	if (!T.IsValid()) return 0;
-	return T->Codes[In.Y * FLandCoverTileCache::TilePx + In.X];
+	const uint8 Result = T.IsValid() ? T->Codes[In.Y * FLandCoverTileCache::TilePx + In.X] : 0;
+
+	const double Dt = FPlatformTime::Seconds() - T0;
+	const bool bLoaded = Cache->NumLoads() != Loads0;
+	++Stats.Calls;
+	Stats.TotalSec += Dt;
+	if (bLoaded)
+	{
+		++Stats.Loads;
+		Stats.MaxLoadSec = FMath::Max(Stats.MaxLoadSec, Dt);
+	}
+	else
+	{
+		Stats.MaxHitSec = FMath::Max(Stats.MaxHitSec, Dt);
+	}
+	return Result;
+}
+
+FLandCoverLookupStats FLandCoverCodeLookup::TakeStats()
+{
+	const FLandCoverLookupStats Out = Stats;
+	Stats = FLandCoverLookupStats();
+	return Out;
 }
 
 TArray<FString> FLandCoverCodeLookup::TakeWarnings() { return MoveTemp(Warnings); }
