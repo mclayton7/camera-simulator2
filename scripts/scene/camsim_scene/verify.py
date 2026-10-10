@@ -2,7 +2,7 @@
 terrain tiles per zoom (--all: every tile), compares vertex heights with the sources resampled independently
 (highest-priority source, exact datum offsets, feather bands excluded; scene zooms and the global base have
 separate limits), checks shared edges, NaNs and normals,
-and decodes every JPEG. Writes <pkg>.verify.json beside the package; the package itself is never modified."""
+decodes every JPEG, and checks a sample of NDVI leaf pixels against the sources (`ndvi_values`). Writes <pkg>.verify.json beside the package; the package itself is never modified."""
 
 from __future__ import annotations
 
@@ -24,7 +24,8 @@ from .licences import LicenceError, attribution_text, check_allowed
 from .manifest import Manifest, package_files
 from .net import HttpError
 from .qmesh import QMAX, decode
-from .tiling import LayerPlan, available_keys, make_keys, tile_bounds
+from .sources.base import M_PER_DEG
+from .tiling import LayerPlan, available_keys, make_keys, split_keys, tile_bounds
 from .tms import parse_tilemapresource, plan_bounds
 
 P50_M, P99_M = 0.05, 0.5  # scene zooms (above the global base)
@@ -33,6 +34,8 @@ P50_M, P99_M = 0.05, 0.5  # scene zooms (above the global base)
 # the zoom's TIN tolerance (z8 0.75 m, z3 24 m), never tighter than P99_M. A mirrored or offset tile is far above it.
 BASE_TIN_FRACTION = 0.01
 SAMPLE = 0.02
+NDVI_PX = 64  # pixels checked per sampled NDVI leaf
+NDVI_P99_STEPS = 1
 
 
 def base_max_zoom(m: Manifest) -> int:
@@ -125,16 +128,16 @@ def _check_available(pkg: Path) -> Check:
     return Check("terrain_available", not bad, _summary(bad))
 
 
-def _check_tms(pkg: Path) -> Check:
-    levels, bounds = parse_tilemapresource((pkg / "imagery" / "tilemapresource.xml").read_text())
-    have = present_tiles(pkg, "imagery", "jpg")
+def _check_tms(pkg: Path, layer: str = "imagery", ext: str = "jpg", name: str = "tilemapresource") -> Check:
+    levels, bounds = parse_tilemapresource((pkg / layer / "tilemapresource.xml").read_text())
+    have = {z: k for z, k in present_tiles(pkg, layer, ext).items() if len(k)}
     problems = []
     if levels != list(range(max(have) + 1)):
         problems.append(f"levels {levels[:3]}..{levels[-1:]} but tiles to z{max(have)}")
     hb = plan_bounds(LayerPlan(have, {}))
     if any(abs(a - b) > 1e-9 for a, b in zip(bounds, hb)):
         problems.append(f"BoundingBox {bounds} != tiles {hb}")
-    return Check("tilemapresource", not problems, _summary(problems))
+    return Check(name, not problems, _summary(problems))
 
 
 def _check_licences(m: Manifest) -> Check:
@@ -171,7 +174,80 @@ def _jpeg_bad(paths: list[str]) -> list[str]:
     return bad
 
 
-def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[list[Check], dict]:
+def _ndvi_leaves(present: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
+    """NDVI tiles with no tile below them (a parent is written only where a child holds data)."""
+    out = {}
+    for z, keys in present.items():
+        kids = present.get(z + 1)
+        if kids is None or not len(kids):
+            out[z] = keys
+            continue
+        x, y = split_keys(kids)
+        out[z] = keys[~np.isin(keys, np.unique(make_keys(x >> 1, y >> 1)))]
+    return out
+
+
+def _ndvi_values(pkg: Path, m: Manifest, st, rng: random.Random, all_tiles: bool) -> tuple[Check, dict]:
+    """Sampled leaf pixels against NDVI recomputed from the sources at the pixel centre (the fit applied to the
+    reference): pixels that are purely the reference (feather weight 1, or nothing behind it: "naip") or purely
+    the rest ("s2"); feather pixels are left out. Each group must agree within NDVI_P99_STEPS at p99, and nodata
+    must be nodata."""
+    from .layers import imagery, ndvi
+
+    s = m.layers["ndvi"]
+    present = {z: k for z, k in present_tiles(pkg, "ndvi", "png").items() if len(k)}
+    errs: dict[str, list[np.ndarray]] = {"naip": [], "s2": []}
+    bad, leaves = [], 0
+    for z, keys in sorted(_ndvi_leaves(present).items()):
+        ks = keys.tolist()
+        if not ks:
+            continue
+        for k in sorted(ks if all_tiles else rng.sample(ks, max(1, math.ceil(SAMPLE * len(ks))))):
+            x, y = k >> 32, k & 0xFFFFFFFF
+            try:
+                code = ndvi.read_png((pkg / "ndvi" / str(z) / str(x) / f"{y}.png").read_bytes())
+            except Exception as e:  # noqa: BLE001 - any decode failure is a finding
+                bad.append(f"{z}/{x}/{y}: {e}")
+                continue
+            entries = st.index["ndvi"].query(imagery.query_bounds(z, x, y, s["feather_m"]))
+            ref = [e for e in entries if imagery.source_of(e) == s["reference"]]
+            rest = [e for e in entries if imagery.source_of(e) != s["reference"]]
+            allow, dpx = ndvi.water_allow(z, x, y, st.ndvi_water, s["feather_m"])
+            buffer_m = st.ndvi_water.buffer_m if st.ndvi_water is not None else 0.0
+            wt = ndvi.reference_weight(z, x, y, ref, s["feather_m"], allow, dpx, buffer_m).ravel()
+            (lon, lat), d = imagery.pixel_grid(z, x, y)
+            idx = np.array(sorted(rng.sample(range(lon.size), NDVI_PX)))
+            plon, plat, w, have = lon.ravel()[idx], lat.ravel()[idx], wt[idx], code.ravel()[idx]
+            rn, rok, _ = ndvi.sample_ndvi(ref, plon, plat, d * M_PER_DEG)
+            if st.ndvi_fit is not None:
+                rn = st.ndvi_fit.apply(rn)
+            sn, sok, _ = ndvi.sample_ndvi(rest, plon, plat, d * M_PER_DEG)
+            use_ref = rok & ((w >= 1.0) | ~sok)
+            use_rest = sok & (~rok | (w <= 0.0))
+            want = np.where(use_ref, rn, np.where(use_rest, sn, np.nan))
+            for name, pure in (("naip", use_ref), ("s2", use_rest)):
+                errs[name].append(np.abs(have[pure].astype(np.int64) - ndvi.encode(want[pure]).astype(np.int64)))
+            if (have[~(rok | sok)] != 0).any():
+                bad.append(f"{z}/{x}/{y}: data where the sources have none")
+            leaves += 1
+    parts = {k: np.concatenate(v).astype(np.float64) if v else np.zeros(0) for k, v in errs.items()}
+    stats = {**_error_stats(np.concatenate(list(parts.values()))), "leaves": leaves}
+    for k, e in parts.items():
+        stats[k] = {"n": int(e.size), "p99": _error_stats(e)["p99"]}
+    over = [f"{k} p99 {stats[k]['p99']:.1f} steps" for k in parts if stats[k]["p99"] > NDVI_P99_STEPS]
+    ok = not bad and not over
+    detail = (
+        f"{stats['n']} pixels in {leaves} leaves: p99 {stats['p99']:.1f} steps, max {stats['max']:.0f}"
+        f" (naip {stats['naip']['n']} px p99 {stats['naip']['p99']:.1f}, s2 {stats['s2']['n']} px p99 {stats['s2']['p99']:.1f})"
+    )
+    if over:
+        detail += "; over " + ", ".join(over)
+    if bad:
+        detail += "; " + _summary(bad)
+    return Check("ndvi_values", ok, detail), stats
+
+
+def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[list[Check], dict, dict | None]:
     from .context import WorkerState
     from .layers import terrain
     from .pipeline import make_context
@@ -238,6 +314,11 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
             bad_jpg = [b for part in ex.map(_jpeg_bad, chunks) for b in part]
     else:
         bad_jpg = [b for c in chunks for b in _jpeg_bad(c)]
+    ndvi_stats = None
+    ndvi_checks = []
+    if m.layers.get("ndvi"):
+        c, ndvi_stats = _ndvi_values(pkg, m, st, random.Random(m.seed + 1), all_tiles)
+        ndvi_checks.append(c)
     checks = [
         Check(
             "terrain_heights",
@@ -249,7 +330,8 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
         Check("terrain_edges", edges_bad == 0, f"{edges_bad} shared-edge vertices disagree" if edges_bad else ""),
         Check("imagery_decode", not bad_jpg, _summary(bad_jpg)),
     ]
-    return checks, stats
+    checks += ndvi_checks
+    return checks, stats, ndvi_stats
 
 
 def verify(
@@ -264,12 +346,16 @@ def verify(
         _guard("licences", _check_licences, m),
         _guard("attribution", _check_attribution, pkg, m),
     ]
+    if {z: k for z, k in present_tiles(pkg, "ndvi", "png").items() if len(k)}:
+        checks.append(_guard("ndvi_tilemapresource", _check_tms, pkg, "ndvi", "png", "ndvi_tilemapresource"))
     report: dict = {"package": str(pkg), "deep": deep}
     if deep:
         if cache is None:
             raise ValueError("verify --deep needs the fetch cache (the sources)")
         try:
-            deep_checks, report["terrain_error_m"] = _deep(pkg, m, cache, all_tiles, jobs)
+            deep_checks, report["terrain_error_m"], ndvi_stats = _deep(pkg, m, cache, all_tiles, jobs)
+            if ndvi_stats is not None:
+                report["ndvi_error_steps"] = ndvi_stats
         except (CacheError, HttpError):
             raise  # the sources aren't available: an environment error, not a finding about the package
         except Exception as e:  # noqa: BLE001 - e.g. a truncated tile: the deep checks fail, the report is written
