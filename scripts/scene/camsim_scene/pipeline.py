@@ -243,7 +243,7 @@ def _needs_footprints(m: Manifest) -> bool:
     """A non-global data asset of a terrain/imagery source without a footprint (fetch computes them)."""
     for rec in m.sources:
         src = make_source(rec.id, rec.adapter, rec.options)
-        if src.layer == Layer.LANDCOVER or src.global_coverage:
+        if src.layer in (Layer.LANDCOVER, Layer.FEATURES) or src.global_coverage:
             continue
         if any(a.role == "data" and "footprint" not in a.metadata for a in rec.assets):
             return True
@@ -266,7 +266,7 @@ def _fetch(pkg: Path, cache: Cache) -> Manifest:
         for src, a, path in _cached_assets(rec, cache):
             if (
                 a.role == "data"
-                and src.layer != Layer.LANDCOVER
+                and src.layer not in (Layer.LANDCOVER, Layer.FEATURES)
                 and not src.global_coverage
                 and "footprint" not in a.metadata
             ):

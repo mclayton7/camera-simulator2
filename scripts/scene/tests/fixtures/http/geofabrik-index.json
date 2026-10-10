@@ -1,0 +1,113 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "california",
+    "urls": {
+     "pbf": "https://download.geofabrik.de/north-america/us/california-latest.osm.pbf"
+    }
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -125,
+       32
+      ],
+      [
+       -114,
+       32
+      ],
+      [
+       -114,
+       42.1
+      ],
+      [
+       -125,
+       42.1
+      ],
+      [
+       -125,
+       32
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "socal",
+    "urls": {
+     "pbf": "https://download.geofabrik.de/north-america/us/california/socal-latest.osm.pbf"
+    }
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -121,
+       32.5
+      ],
+      [
+       -114,
+       32.5
+      ],
+      [
+       -114,
+       35.8
+      ],
+      [
+       -121,
+       35.8
+      ],
+      [
+       -121,
+       32.5
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "norcal",
+    "urls": {
+     "pbf": "https://download.geofabrik.de/north-america/us/california/norcal-latest.osm.pbf"
+    }
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -125,
+       35.8
+      ],
+      [
+       -117,
+       35.8
+      ],
+      [
+       -117,
+       42.1
+      ],
+      [
+       -125,
+       42.1
+      ],
+      [
+       -125,
+       35.8
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

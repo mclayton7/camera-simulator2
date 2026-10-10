@@ -322,3 +322,14 @@ def test_no_station_makes_no_coops_request_and_no_manifest_field(tmp_path):
     m = plan_scene(parse_scene(synthetic_scene(tmp_path / "src")), tmp_path / "pkg", http=http, out=io.StringIO())
     assert http.calls == [] and m.sea_level is None
     assert "sea_level" not in json.loads((tmp_path / "pkg" / "manifest.json").read_text())
+
+
+def test_feature_sources_do_not_need_footprints():
+    from types import SimpleNamespace
+
+    from camsim_scene.manifest import AssetRecord, SourceRecord
+    from camsim_scene.pipeline import _needs_footprints
+
+    asset = AssetRecord(id="socal-261009", url="https://x/socal-261009.osm.pbf", group="osm_geofabrik")
+    rec = SourceRecord("osm_geofabrik", "osm_geofabrik", "OSM", "2026-10-09", "ODbL-1.0", "", {}, [asset])
+    assert not _needs_footprints(SimpleNamespace(sources=[rec]))
