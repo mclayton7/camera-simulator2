@@ -3,6 +3,9 @@
 Phases fly around San Francisco (varied terrain, urban, water); far_origin jumps
 ~300 km east to exercise Cesium origin shift and lighting. Altitudes are WGS-84
 ellipsoid heights, as CIGI 3.3 defines them. Times are UTC (the sim clock is UTC).
+
+`site` moves the base: the default is San Francisco; "pendleton" (Camp Pendleton,
+California) also adds a measured low coastal pass.
 """
 
 from __future__ import annotations
@@ -41,6 +44,20 @@ class Pose:
 
 
 @dataclass(frozen=True)
+class Site:
+    name: str
+    lat: float
+    lon: float
+    coast: bool  # add the measured coastal pass
+
+
+SITES = {
+    "sf": Site("sf", BASE_LAT, BASE_LON, False),
+    "pendleton": Site("pendleton", 33.30, -117.45, True),
+}
+
+
+@dataclass(frozen=True)
 class Phase:
     name: str
     duration_s: float
@@ -74,11 +91,11 @@ def _orbit(
     return pose_at
 
 
-def _slew(t: float) -> Pose:
+def _slew(t: float, site: Site = SITES["sf"]) -> Pose:
     # Peak yaw rate = 90 * 2*pi/10 ~ 56.5 deg/s; pitch adds up to ~18 deg/s.
     return Pose(
-        BASE_LAT,
-        BASE_LON,
+        site.lat,
+        site.lon,
         3000.0,
         yaw=0.0,
         gimbal_yaw=90.0 * math.sin(2.0 * math.pi * t / 10.0),
@@ -86,46 +103,69 @@ def _slew(t: float) -> Pose:
     )
 
 
-def _low_pass(t: float) -> Pose:
+def _low_pass(t: float, site: Site = SITES["sf"]) -> Pose:
     # 100 m/s due east at 600 m HAE from the west side of the city across the bay.
-    start_lon = BASE_LON - 0.05
-    dlon = (100.0 * t) / (111_320.0 * math.cos(math.radians(BASE_LAT)))
-    return Pose(BASE_LAT, start_lon + dlon, 600.0, yaw=90.0, gimbal_pitch=-20.0)
+    start_lon = site.lon - 0.05
+    dlon = (100.0 * t) / (111_320.0 * math.cos(math.radians(site.lat)))
+    return Pose(site.lat, start_lon + dlon, 600.0, yaw=90.0, gimbal_pitch=-20.0)
 
 
-def build_phases(smoke: bool = False) -> list[Phase]:
+def _coast_pass(t: float) -> Pose:
+    # 100 m/s at 300 m along the Pendleton coast (bearing 138 deg, SE), gimbal right (toward the sea), 20 deg down
+    lat0, lon0, brg = 33.385, -117.585, math.radians(138.0)
+    d = 100.0 * t
+    lat = lat0 + d * math.cos(brg) / 111_320.0
+    lon = lon0 + d * math.sin(brg) / (111_320.0 * math.cos(math.radians(lat0)))
+    return Pose(lat, lon, 300.0, yaw=138.0, gimbal_yaw=90.0, gimbal_pitch=-20.0)
+
+
+def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:
+    orbit = _orbit(site.lat, site.lon, 3000.0, 2000.0, 120.0)
     if smoke:
-        return [Phase("orbit", 20.0, _orbit(BASE_LAT, BASE_LON, 3000.0, 2000.0, 120.0))]
-    orbit = _orbit(BASE_LAT, BASE_LON, 3000.0, 2000.0, 120.0)
-    far = _orbit(BASE_LAT, FAR_LON, 3000.0, 2000.0, 120.0)
+        return [Phase("orbit", 20.0, orbit)]
+    far = _orbit(site.lat, site.lon + 3.41, 3000.0, 2000.0, 120.0)
+
+    def low_pass(t: float) -> Pose:
+        return _low_pass(t, site)
+
+    def slew(t: float) -> Pose:
+        return _slew(t, site)
 
     def warmup(t: float) -> Pose:
         # Visit every measured area once so Cesium's disk cache is warm.
         if t < 60.0:
             return orbit(t * 2.0)
         if t < 90.0:
-            return _low_pass((t - 60.0) * 3.0)
+            return low_pass((t - 60.0) * 3.0)
+        if site.coast:
+            if t < 120.0:
+                return _coast_pass((t - 90.0) * 3.0)
+            return far(t - 120.0)
         return far(t - 90.0)
 
-    return [
-        Phase("warmup", 120.0, warmup, measured=False),
+    phases = [
+        Phase("warmup", 150.0 if site.coast else 120.0, warmup, measured=False),
         Phase("orbit", 120.0, orbit),
-        Phase("slew", 60.0, _slew),
-        Phase("low_pass", 90.0, _low_pass),
+        Phase("slew", 60.0, slew),
+        Phase("low_pass", 90.0, low_pass),
         Phase("far_origin", 90.0, far),
     ]
+    if site.coast:
+        phases.append(Phase("coast_pass", 90.0, _coast_pass))
+    return phases
 
 
-def build_shots(smoke: bool = False) -> list[Shot]:
-    nadir = Pose(BASE_LAT, BASE_LON, 3000.0, gimbal_pitch=-90.0)
+def build_shots(smoke: bool = False, site: Site = SITES["sf"]) -> list[Shot]:
+    far_lon = site.lon + 3.41
+    nadir = Pose(site.lat, site.lon, 3000.0, gimbal_pitch=-90.0)
     if smoke:
         return [Shot("nadir_3km", nadir)]
     slant = Pose(
-        BASE_LAT - 0.06, BASE_LON, 3000.0, yaw=0.0, gimbal_pitch=-17.0
+        site.lat - 0.06, site.lon, 3000.0, yaw=0.0, gimbal_pitch=-17.0
     )  # ~10 km slant
-    horizon = Pose(BASE_LAT, BASE_LON, 1500.0, yaw=270.0, gimbal_pitch=-2.0)
-    low_oblique = Pose(BASE_LAT, BASE_LON - 0.03, 400.0, yaw=90.0, gimbal_pitch=-12.0)
-    far_slant = replace(slant, lon=FAR_LON)
+    horizon = Pose(site.lat, site.lon, 1500.0, yaw=270.0, gimbal_pitch=-2.0)
+    low_oblique = Pose(site.lat, site.lon - 0.03, 400.0, yaw=90.0, gimbal_pitch=-12.0)
+    far_slant = replace(slant, lon=far_lon)
     night = replace(
         slant, utc_hour=4, utc_minute=40, day=22
     )  # ~21:40 PDT, sun ~10 deg below the horizon
@@ -139,7 +179,7 @@ def build_shots(smoke: bool = False) -> list[Shot]:
             "dusk_slant", replace(slant, utc_hour=3, utc_minute=15, day=22)
         ),  # ~20:15 PDT
         Shot("far_origin_slant", far_slant),
-        Shot("far_origin_nadir", replace(nadir, lon=FAR_LON)),
+        Shot("far_origin_nadir", replace(nadir, lon=far_lon)),
         Shot("night_slant", night),
     ]
     by_name = {s.name: s.pose for s in shots}

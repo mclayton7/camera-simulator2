@@ -50,9 +50,9 @@ DOCKER_VOLUMES = {
 class Host:
     """Sends one CIGI host frame at 30 Hz for whatever pose is current."""
 
-    def __init__(self) -> None:
+    def __init__(self, site: scenario.Site = scenario.SITES["sf"]) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.pose = scenario.build_phases()[1].pose_at(0.0)
+        self.pose = scenario.build_phases(site=site)[1].pose_at(0.0)
         self.frame = 0
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -247,6 +247,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--trace", action="store_true", help="also record an Unreal Insights trace"
     )
+    ap.add_argument(
+        "--site",
+        choices=sorted(scenario.SITES),
+        default="sf",
+        help="base of the flight: sf (default) or pendleton (adds a coastal low pass)",
+    )
     ap.add_argument("--skip-warmup", action="store_true")
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
@@ -290,6 +296,7 @@ def with_sensor(pose: scenario.Pose, sensor: str) -> scenario.Pose:
 
 def main() -> int:
     args = build_parser().parse_args()
+    site = scenario.SITES[args.site]
 
     # Absolute: CamSim resolves relative paths against its own working directory.
     out = (
@@ -318,7 +325,7 @@ def main() -> int:
     )
 
     wait_port_free(int(HEALTH.rsplit(":", 1)[1]))
-    host = Host()
+    host = Host(site)
     host.thread.start()  # /ready needs CIGI traffic
     if args.docker:
         subprocess.run(
@@ -368,7 +375,7 @@ def main() -> int:
             f"[bench] ready after {ready_s:.0f}s, sensor path: {sensor_path}",
             flush=True,
         )
-        for ph in scenario.build_phases(smoke=args.smoke):
+        for ph in scenario.build_phases(smoke=args.smoke, site=site):
             if ph.name == "warmup" and args.skip_warmup:
                 continue
             print(f"[bench] phase {ph.name} ({ph.duration_s:.0f}s)", flush=True)
@@ -414,7 +421,7 @@ def main() -> int:
         (out / "metrics.txt").write_text(metrics_end)
         latency = latency_from_metrics(metrics_end)
 
-        for shot in scenario.build_shots(smoke=args.smoke):
+        for shot in scenario.build_shots(smoke=args.smoke, site=site):
             host.pose = shot.pose
             time.sleep(1.0)  # let the pose arrive before checking the gate
             if not wait_terrain():
@@ -475,6 +482,7 @@ def main() -> int:
             "latency": latency,
             "warmup_ran": not args.skip_warmup,
             "smoke": args.smoke,
+            "site": args.site,
             "sensor": args.sensor,
             "config": str(args.config) if args.config else None,
         },

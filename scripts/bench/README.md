@@ -6,6 +6,10 @@ and records per-frame render stats plus lossless reference shots.
 Phases: `warmup` (unmeasured, fills Cesium's disk cache), `orbit` (3 km),
 `slew` (fast gimbal sweeps: pop-in and hitch stressor), `low_pass` (600 m at
 100 m/s), `far_origin` (jump ~300 km east: origin shift and lighting).
+`--site pendleton` moves the base to Camp Pendleton and appends a measured
+`coast_pass` (300 m, 100 m/s along the coast, gimbal toward the sea; the warmup
+grows to 150 s to fly it once). Results record `meta.site`; `compare.py` refuses
+to compare runs from different sites.
 Then 12 fixed shots via `GET /snapshot`: the 8 base
 poses, an EO `night_slant`, and an IR variant of `nadir_3km`, `dusk_slant`,
 `night_slant` (`Pose.sensor_id`: 0 EO, 1 IR, sent every frame via CIGI
@@ -23,7 +27,7 @@ uv run --with numpy --with pillow python scripts/bench/run_bench.py --label smok
 
 Flags: `--skip-warmup` (only when the cache is
 already warm), `--trace` (Unreal Insights `trace.utrace`), `--out DIR`,
-`--env KEY=VALUE` (extra CamSim environment, repeatable; e.g.
+`--site {sf,pendleton}` (default `sf`), `--env KEY=VALUE` (extra CamSim environment, repeatable; e.g.
 `CAMSIM_TRACK_PIPELINE_LATENCY=1` records the pipeline latency quantiles
 into `meta.latency`, `CAMSIM_ENCODER=libx264`).
 

@@ -91,6 +91,15 @@ def main() -> int:
     base_dir, cur_dir = Path(sys.argv[1]), Path(sys.argv[2])
     base = json.loads((base_dir / "results.json").read_text())
     cur = json.loads((cur_dir / "results.json").read_text())
+    # Runs from before --site existed were all San Francisco.
+    sites = [r.get("meta", {}).get("site", "sf") for r in (base, cur)]
+    if sites[0] != sites[1]:
+        print(
+            f"error: cannot compare runs from different sites "
+            f"(baseline: {sites[0]}, current: {sites[1]})",
+            file=sys.stderr,
+        )
+        return 2
     print(
         f"Baseline: {base.get('meta', {}).get('label')}  Current: {cur.get('meta', {}).get('label')}\n"
     )

@@ -86,3 +86,14 @@ def test_host_datagram_carries_the_sensor_id():
     dgram = scenario.host_datagram(1, pose)
     i = dgram.index(bytes([17, 24]))  # Sensor Control: packet id 17, size 24
     assert dgram[i + 4] == 2  # byte 4 = Sensor ID
+
+
+def test_pendleton_site_adds_a_measured_coast_pass():
+    site = scenario.SITES["pendleton"]
+    phases = scenario.build_phases(site=site)
+    coast = next(p for p in phases if p.name == "coast_pass")
+    assert coast.measured and coast.duration_s == 90.0
+    assert "coast_pass" not in [p.name for p in scenario.build_phases()]
+    orbit = next(p for p in phases if p.name == "orbit").pose_at(0.0)
+    assert abs(orbit.lat - (site.lat + 2000.0 / 111_320.0)) < 1e-9
+    assert len(scenario.build_shots(site=site)) == len(scenario.build_shots())
