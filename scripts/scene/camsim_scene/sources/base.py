@@ -27,6 +27,7 @@ class Layer(StrEnum):
     TERRAIN = "terrain"
     IMAGERY = "imagery"
     LANDCOVER = "landcover"
+    FEATURES = "features"
 
 
 @dataclass(frozen=True)

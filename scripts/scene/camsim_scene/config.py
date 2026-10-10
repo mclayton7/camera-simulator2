@@ -33,9 +33,13 @@ from pathlib import Path
 
 from .tiling import GLOBE, Bounds, Region
 
-LAYERS = ("terrain", "imagery", "landcover")
+LAYERS = ("terrain", "imagery", "landcover", "features")
 TILED_LAYERS = ("terrain", "imagery")
 KM_PER_DEG = 111.32
+ROAD_CLASSES = ("motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential")
+ROAD_CLASSES_ALLOWED = ROAD_CLASSES + ("service", "track", "living_street")
+FEATURE_FLAGS = ("roads", "paved_areas", "rail", "water")
+OSM_FLAGS = ("roads", "paved_areas", "rail")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 KEYS = {
     "name",
@@ -55,6 +59,7 @@ KEYS = {
     "ndvi",
     "ndvi_max_zoom",
     "sea_level",
+    "features",
 }
 
 PROFILES = {
@@ -63,6 +68,7 @@ PROFILES = {
             "terrain": ["dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"],
             "imagery": ["wc_s2", "bmng"],
             "landcover": ["worldcover"],
+            "features": [],
         },
         "bbox_zoom": {"terrain": 14, "imagery": 13},
         "ndvi": False,
@@ -72,6 +78,7 @@ PROFILES = {
             "terrain": ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"],
             "imagery": ["naip_pc", "wc_s2", "bmng"],
             "landcover": ["worldcover"],
+            "features": [],
         },
         "bbox_zoom": {"terrain": 16, "imagery": 17},
         "ndvi": True,
@@ -175,6 +182,7 @@ class ScenePlan:
     ndvi: bool = False
     ndvi_max_zoom: int = NDVI_MAX_ZOOM
     sea_level_station: str | None = None
+    features: dict = field(default_factory=dict)
 
     def ring_bounds(self) -> Bounds:
         return ring_bounds(self.bbox, self.ring_km)
@@ -208,6 +216,26 @@ def _int(data: dict, key: str, default: int, lo: int, hi: int) -> int:
     if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
         raise ConfigError(f"{key} must be an integer in [{lo}, {hi}], got {v!r}")
     return v
+
+
+def _parse_features(data) -> dict:
+    f = data.get("features", {})
+    if not isinstance(f, dict):
+        raise ConfigError("features must be a table")
+    unknown = set(f) - set(FEATURE_FLAGS) - {"road_classes"}
+    if unknown:
+        raise ConfigError(f"unknown key(s) in features: {sorted(unknown)}")
+    out = {}
+    for k in FEATURE_FLAGS:
+        v = f.get(k, False)
+        if not isinstance(v, bool):
+            raise ConfigError(f"features.{k} must be true or false, got {v!r}")
+        out[k] = v
+    rc = f.get("road_classes", list(ROAD_CLASSES))
+    if not isinstance(rc, list) or not rc or not all(c in ROAD_CLASSES_ALLOWED for c in rc):
+        raise ConfigError(f"features.road_classes must be a non-empty list from {ROAD_CLASSES_ALLOWED}")
+    out["road_classes"] = list(rc)
+    return out
 
 
 def parse_scene(data: dict) -> ScenePlan:
@@ -251,12 +279,18 @@ def parse_scene(data: dict) -> ScenePlan:
     quality = _int(data, "jpeg_quality", 85, 1, 95)
     seed = _int(data, "seed", 0, 0, 2**31 - 1)
     prio = {k: list(v) for k, v in PROFILES[profile]["priorities"].items()}
+    if "features" in data.get("priorities", {}):
+        raise ConfigError("priorities.features is derived from [features]; set the flags instead")
     for layer, ids in data.get("priorities", {}).items():
         if layer not in LAYERS:
             raise ConfigError(f"priorities.{layer}: unknown layer (one of {LAYERS})")
         if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
             raise ConfigError(f"priorities.{layer} must be a list of source ids")
         prio[layer] = list(ids)
+    features = _parse_features(data)
+    prio["features"] = (["nhd_hr"] if features["water"] else []) + (
+        ["osm_geofabrik"] if any(features[k] for k in OSM_FLAGS) else []
+    )
     if ndvi and ndvi_given and not any(s in prio["imagery"] for s in (NDVI_REFERENCE, NDVI_TARGET)):
         raise ConfigError("ndvi = true needs naip_pc or wc_s2 in priorities.imagery")
     options = {k: dict(v) for k, v in DEFAULT_SOURCE_OPTIONS.items()}
@@ -309,6 +343,7 @@ def parse_scene(data: dict) -> ScenePlan:
         ndvi=ndvi,
         ndvi_max_zoom=ndvi_max_zoom,
         sea_level_station=station,
+        features=features,
     )
 
 
@@ -351,6 +386,21 @@ def ndvi_settings(plan: ScenePlan) -> dict | None:
     }
 
 
+def features_settings(plan: ScenePlan) -> dict | None:
+    """The vector-feature burn's settings (REALISM R2), or None when every flag is off."""
+    from .features import RULES_VERSION
+
+    if not plan.priorities["features"]:
+        return None
+    return {
+        "area": list(plan.area("margin")),
+        "sources": list(plan.priorities["features"]),
+        **{k: plan.features[k] for k in FEATURE_FLAGS},
+        "road_classes": list(plan.features["road_classes"]),
+        "rules": RULES_VERSION,
+    }
+
+
 def layer_settings(plan: ScenePlan) -> dict:
     """The manifest's `layers` section: everything per layer that tiles depend on besides regions and data."""
     out = {
@@ -382,6 +432,9 @@ def layer_settings(plan: ScenePlan) -> dict:
     ndvi = ndvi_settings(plan)
     if ndvi is not None:
         out["ndvi"] = ndvi
+    fs = features_settings(plan)
+    if fs is not None:
+        out["landcover"]["features"] = fs
     return out
 
 

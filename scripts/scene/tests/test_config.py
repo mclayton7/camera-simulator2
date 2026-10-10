@@ -264,3 +264,39 @@ def test_every_example_with_a_crm_ring_has_a_station():
         w, s, e, n = plan.ring_bounds()
         if w < crm[2] and e > crm[0] and s < crm[3] and n > crm[1]:
             assert plan.sea_level_station, f"{f.name}: its ring meets the CRM, so it needs [sea_level] station"
+
+
+BASE = {"name": "t", "bbox": [-117.5, 33.2, -117.4, 33.3]}
+
+
+def test_features_default_off_keeps_layer_settings():
+    plan = parse_scene(dict(BASE))
+    assert plan.priorities["features"] == []
+    assert config.features_settings(plan) is None
+    assert "features" not in layer_settings(plan)["landcover"]
+
+
+def test_features_flags_set_priorities_and_settings():
+    plan = parse_scene({**BASE, "allow": ["ODbL-1.0"], "features": {"roads": True, "water": True}})
+    assert plan.priorities["features"] == ["nhd_hr", "osm_geofabrik"]
+    s = layer_settings(plan)["landcover"]["features"]
+    assert s["roads"] and s["water"] and not s["rail"] and not s["paved_areas"]
+    assert s["sources"] == ["nhd_hr", "osm_geofabrik"]
+    assert s["area"] == list(plan.area("margin"))
+    assert s["road_classes"][0] == "motorway"
+
+
+def test_water_only_needs_no_osm():
+    plan = parse_scene({**BASE, "features": {"water": True}})
+    assert plan.priorities["features"] == ["nhd_hr"]
+
+
+@pytest.mark.parametrize("bad", [{"roads": 1}, {"bogus": True}, {"road_classes": ["motorway", "footway"]}])
+def test_features_validation(bad):
+    with pytest.raises(ConfigError):
+        parse_scene({**BASE, "features": bad})
+
+
+def test_features_not_settable_through_priorities():
+    with pytest.raises(ConfigError):
+        parse_scene({**BASE, "priorities": {"features": ["osm_geofabrik"]}})
