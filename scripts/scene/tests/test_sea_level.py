@@ -69,14 +69,12 @@ def test_compute_rejects_a_non_finite_offset(tmp_path):
 def test_malformed_station_json_is_a_sea_level_error():
     from fakes import FakeHttp
 
-    http = coops_http()
     bad = FakeHttp(
         {
             sea_level.COOPS_DATUMS.format(station="9410230"): LA_JOLLA,
             sea_level.COOPS_STATION.format(station="9410230"): {"stations": [{"name": "La Jolla"}]},
         }
     )
-    assert http is not bad
     with pytest.raises(sea_level.SeaLevelError, match="9410230"):
         sea_level.station_section(bad, "9410230")
     worse = FakeHttp(
