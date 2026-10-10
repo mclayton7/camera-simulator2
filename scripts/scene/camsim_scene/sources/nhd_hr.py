@@ -16,7 +16,6 @@ Columns are matched case-insensitively."""
 from __future__ import annotations
 
 import sqlite3
-import struct
 import zipfile
 from pathlib import Path
 
@@ -63,8 +62,10 @@ def read_nhd(gpkg: Path, bounds) -> list[Feature]:
             if table not in geom_col:
                 continue
             cols = _cols(c, table)
-            q = (f'select "{cols["permanent_identifier"]}", "{cols["ftype"]}", "{cols["fcode"]}", "{geom_col[table]}" '
-                 f'from "{table}"')
+            q = (
+                f'select "{cols["permanent_identifier"]}", "{cols["ftype"]}", "{cols["fcode"]}", "{geom_col[table]}" '
+                f'from "{table}"'
+            )
             for pid, ftype, fcode, blob in c.execute(q):
                 if ftype not in ftypes or blob is None or not keep_fcode(ftype, desc.get(fcode, "")):
                     continue
@@ -87,11 +88,18 @@ class NhdHr(SourceBase):
     area_kind = "margin"
 
     def discover(self, area: Area) -> list[Asset]:
-        items = [i for i in tnm_products(self.http, area.bounds, DATASET)
-                 if "_HU4_" in i.get("downloadURL", "") and i.get("format", "GeoPackage").lower().startswith("geopackage")]
+        items = [
+            i
+            for i in tnm_products(self.http, area.bounds, DATASET)
+            if "_HU4_" in i.get("downloadURL", "") and i.get("format", "GeoPackage").lower().startswith("geopackage")
+        ]
         items.sort(key=lambda i: i["downloadURL"])
-        return [Asset(id=Path(i["downloadURL"]).stem, url=i["downloadURL"], size=i.get("sizeInBytes"),
-                      group=self.id, rank=n) for n, i in enumerate(items)]
+        return [
+            Asset(
+                id=Path(i["downloadURL"]).stem, url=i["downloadURL"], size=i.get("sizeInBytes"), group=self.id, rank=n
+            )
+            for n, i in enumerate(items)
+        ]
 
     def prepare(self, path: Path, asset: Asset, cache) -> Path:
         out = cache.derived_path(asset.sha256 or Path(path).stem, ".gpkg")

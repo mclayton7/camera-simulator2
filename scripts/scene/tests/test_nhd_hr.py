@@ -18,15 +18,20 @@ def _gpkg(path):
         c.execute(f"create table {t} (Permanent_Identifier text, FType int, FCode int, Shape blob)")
         c.execute("insert into gpkg_geometry_columns values (?, 'Shape', 'MULTIPOLYGON', 4326, 0, 0)", (t,))
     c.execute("create table NHDFCode (FCode int, Description text)")
-    c.executemany("insert into NHDFCode values (?, ?)", [
-        (39004, "Lake/Pond: Hydrographic Category = Perennial"),
-        (39001, "Lake/Pond: Hydrographic Category = Intermittent"),
-        (46006, "Stream/River: Hydrographic Category = Perennial"),
-        (44500, "Sea/Ocean"),
-    ])
+    c.executemany(
+        "insert into NHDFCode values (?, ?)",
+        [
+            (39004, "Lake/Pond: Hydrographic Category = Perennial"),
+            (39001, "Lake/Pond: Hydrographic Category = Intermittent"),
+            (46006, "Stream/River: Hydrographic Category = Perennial"),
+            (44500, "Sea/Ocean"),
+        ],
+    )
     sq = box(-117.45, 33.25, -117.44, 33.26)
-    c.executemany("insert into NHDWaterbody values (?, ?, ?, ?)", [
-        ("lake", 390, 39004, _blob(sq)), ("dry", 390, 39001, _blob(sq)), ("sea", 445, 44500, _blob(sq))])
+    c.executemany(
+        "insert into NHDWaterbody values (?, ?, ?, ?)",
+        [("lake", 390, 39004, _blob(sq)), ("dry", 390, 39001, _blob(sq)), ("sea", 445, 44500, _blob(sq))],
+    )
     c.execute("insert into NHDArea values ('river', 460, 46006, ?)", (_blob(sq),))
     c.commit()
     c.close()
@@ -66,9 +71,17 @@ def test_discover_keeps_hu4_geopackages(tmp_path):
 
     base = "https://prd-tnm.s3.amazonaws.com/StagedProducts/Hydrography/NHD/"
     items = [
-        {"title": "NHD for Hydrological Unit (HU) 4 - 1807", "format": "GeoPackage", "sizeInBytes": 5,
-         "downloadURL": base + "HU4/GPKG/NHD_H_1807_HU4_GPKG.zip"},
-        {"title": "NHD - California", "format": "GeoPackage", "downloadURL": base + "State/GPKG/NHD_H_California_State_GPKG.zip"},
+        {
+            "title": "NHD for Hydrological Unit (HU) 4 - 1807",
+            "format": "GeoPackage",
+            "sizeInBytes": 5,
+            "downloadURL": base + "HU4/GPKG/NHD_H_1807_HU4_GPKG.zip",
+        },
+        {
+            "title": "NHD - California",
+            "format": "GeoPackage",
+            "downloadURL": base + "State/GPKG/NHD_H_California_State_GPKG.zip",
+        },
         {"title": "NHD for HU 4 - 1807", "format": "FileGDB", "downloadURL": base + "HU4/GDB/NHD_H_1807_HU4_GDB.zip"},
     ]
     orig = nhd_hr.tnm_products
