@@ -39,12 +39,9 @@ STEP_MAX_M = 3.0
 EDGE_REACH_M = 1000.0
 WATERLINE_MEDIAN_M = 30.0
 OFFSET_TOL_M = 0.01
-RING_STARTS = {  # offshore-ish starts at the ends of the coast, outside the package bbox
-    "dana_point": (33.47, -117.70),
-    "laguna": (33.54, -117.79),
-    "carlsbad": (33.12, -117.33),
-    "encinitas": (33.04, -117.30),
-}
+COAST_LATS = tuple(np.linspace(33.20, 33.40, 12))
+RING_LATS = (33.47, 33.54, 33.12, 33.04)  # Dana Point, Laguna, Carlsbad, Encinitas (latitudes only)
+OFFSHORE_LON = -117.95  # marches start here, well out to sea
 LEVEL_PROBE_ZOOM = 17
 
 
@@ -124,17 +121,24 @@ def transect(lat0: float, lon0: float, bearing_deg: float, step_m: float, length
     return lon, lat
 
 
-def coast_starts(classes) -> dict[str, tuple[float, float]]:
-    """12 inland starts: for 12 latitudes in 33.20..33.40, march west from -117.30 until WorldCover reads water,
-    then step back INLAND_M."""
-    out = {}
-    for i, lat0 in enumerate(np.linspace(33.20, 33.40, 12)):
-        lon, lat = transect(lat0, -117.30, 270.0, STEP_M, 50_000.0)
-        wet = np.flatnonzero(class_codes(classes, lon, lat) == WATER)
-        if wet.size:
-            k = max(int(wet[0]) - int(INLAND_M / STEP_M), 0)
-            out[f"coast_{i:02d}"] = (float(lat[k]), float(lon[k]))
-    return out
+def coast_starts(classes) -> tuple[dict[str, dict], list[str]]:
+    """One start per latitude: march east at 10 m from well offshore along the latitude to the first WorldCover land
+    sample (not water, not no-data), then step INLAND_M back inland along the transect axis. Returns ({name: {lat, lon,
+    start_class}}, names of latitudes that found no land)."""
+    out, dropped = {}, []
+    lats = [(f"coast_{i:02d}", la) for i, la in enumerate(COAST_LATS)]
+    lats += [(f"ring_{i}", la) for i, la in enumerate(RING_LATS)]
+    for name, lat0 in lats:
+        lon, lat = transect(lat0, OFFSHORE_LON, 90.0, STEP_M, 100_000.0)
+        codes = class_codes(classes, lon, lat)
+        land = np.flatnonzero((codes != WATER) & (codes != 0))  # 0: outside the package's WorldCover, not land
+        if not land.size:
+            dropped.append(name)
+            continue
+        lo, la = transect(float(lat[land[0]]), float(lon[land[0]]), (BEARING + 180.0) % 360.0, STEP_M, INLAND_M)
+        code = class_codes(classes, lo[-1:], la[-1:])
+        out[name] = {"lat": float(la[-1]), "lon": float(lo[-1]), "start_class": int(code[0])}
+    return out, dropped
 
 
 # ---------------------------------------------------------------- gates (pure)
@@ -182,16 +186,25 @@ def gate_steps(h: np.ndarray, dist_edge_m: np.ndarray) -> dict:
     return {"pass": mx <= STEP_MAX_M, "n": int(near.sum()), "max": mx}
 
 
+def waterline(rel: np.ndarray, wet: np.ndarray, step_m: float) -> dict | None:
+    """(c) for one transect. The edge is the start of the water run connected to open sea (the one that reaches
+    100 m from land); the crossing is the terrain-below-MSL crossing nearest it, either side. None when the
+    transect has no open sea or no crossing."""
+    open_sea = np.flatnonzero(wet & (land_distance(wet, step_m) >= MIN_OFFSHORE_M))
+    cross = np.flatnonzero((rel[1:] < 0) & (rel[:-1] >= 0)) + 1
+    if not open_sea.size or not cross.size:
+        return None
+    edge = int(open_sea[0])
+    while edge > 0 and wet[edge - 1]:
+        edge -= 1
+    k = int(cross[np.argmin(np.abs(cross - edge))])
+    return {"edge_index": edge, "crossing_index": k, "offset_m": abs(k - edge) * step_m}
+
+
 def waterline_offsets(rels: list, wets: list, step_m: float) -> list[float]:
-    """(c) per transect |index of the first terrain-below-MSL crossing - index of the first WorldCover water| in
-    metres; transects missing either one are skipped."""
-    out = []
-    for rel, wet in zip(rels, wets):
-        cross = np.flatnonzero((rel[1:] < 0) & (rel[:-1] >= 0))
-        water = np.flatnonzero(wet)
-        if cross.size and water.size:
-            out.append(abs(int(cross[0]) + 1 - int(water[0])) * step_m)
-    return out
+    """Waterline offsets in metres over transects (those without an edge or crossing are skipped)."""
+    found = (waterline(r, w, step_m) for r, w in zip(rels, wets))
+    return [f["offset_m"] for f in found if f]
 
 
 def gate_waterline(offsets: list[float]) -> dict:
@@ -232,19 +245,18 @@ def sample(pkg: Path, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
     return h
 
 
-def evaluate(pkg: Path, cache: Cache, starts: dict) -> dict:
+def evaluate(pkg: Path, classes, starts: dict) -> dict:
     """Gates a-c for one package over the given transect starts."""
     m = Manifest.load(pkg / "manifest.json")
-    classes, _ = class_rasters(m, make_context(pkg, m, cache).asset_paths)
     off = offset_of(pkg) or 0.0
     rels, wets, rows = [], [], []
     all_rel, all_dist, steps = [], [], []
-    for name, (lat0, lon0) in starts.items():
-        lon, lat = transect(lat0, lon0, BEARING, STEP_M, LENGTH_M)
+    for name, st0 in starts.items():
+        lon, lat = transect(st0["lat"], st0["lon"], BEARING, STEP_M, LENGTH_M)
         h = sample(pkg, lon, lat)
         ok = np.isfinite(h)
         if not ok.any():
-            rows.append({"name": name, "covered": 0})
+            rows.append({"name": name, **st0, "covered": 0})
             continue
         sea = np.array([egm96(a, b) for a, b in zip(lat, lon)]) + off
         rel = h - sea
@@ -259,11 +271,11 @@ def evaluate(pkg: Path, cache: Cache, starts: dict) -> dict:
         all_dist.append(dist)
         steps.append(st)
         sel = dist >= MIN_OFFSHORE_M
-        row = {"name": name, "covered": int(ok.sum()), "max_step": st["max"]}
+        row = {"name": name, **st0, "covered": int(ok.sum()), "max_step": st["max"]}
         if sel.any():
             row.update(off_min=float(rel[sel].min()), off_median=float(np.median(rel[sel])), off_max=float(rel[sel].max()))
-        c = waterline_offsets([rels[-1]], [wet], STEP_M)
-        row["waterline_offset_m"] = c[0] if c else None
+        wl = waterline(rels[-1], wet, STEP_M)
+        row.update(wl or {"edge_index": None, "crossing_index": None, "offset_m": None})
         rows.append(row)
     a = gate_offshore(np.concatenate(all_rel), np.concatenate(all_dist)) if all_rel else {"pass": False, "n": 0}
     b = {"pass": all(s["pass"] for s in steps), "n": sum(s["n"] for s in steps), "max": max((s["max"] for s in steps), default=0.0)}
@@ -271,10 +283,20 @@ def evaluate(pkg: Path, cache: Cache, starts: dict) -> dict:
     return {"offset_m": off, "transects": rows, "a": a, "b": b, "c": c}
 
 
-def gate_offset(pkg: Path) -> dict:
-    """(d) sea_level.json offset_m vs an independent pyproj computation at the manifest's station."""
+def navd88_ellipsoid_height(lon: float, lat: float) -> float:
+    """ITRF2014 ellipsoid height (m, epoch 2010.0) of NAVD88 zero by pyproj. RuntimeError unless PROJ can apply
+    the GEOID18 grid (otherwise it silently falls back to a null vertical shift)."""
     import pyproj
 
+    pyproj.network.set_network_enabled(True)  # a tool, not a build: PROJ may fetch GEOID18
+    group = pyproj.transformer.TransformerGroup("EPSG:6318+5703", "EPSG:7912", always_xy=True)
+    if not group.best_available:
+        raise RuntimeError("GEOID18 unavailable: PROJ cannot apply the NAVD88 grid (network or PROJ_DATA)")
+    return float(group.transformers[0].transform(lon, lat, 0.0, 2010.0)[2])
+
+
+def gate_offset(pkg: Path) -> dict:
+    """(d) sea_level.json offset_m vs an independent pyproj computation at the manifest's station."""
     m = Manifest.load(pkg / "manifest.json")
     have = offset_of(pkg)
     if have is None:
@@ -282,9 +304,10 @@ def gate_offset(pkg: Path) -> dict:
     if not m.sea_level:
         return {"pass": False, "reason": "sea_level.json without a manifest sea_level section"}
     s = m.sea_level
-    pyproj.network.set_network_enabled(True)  # a tool, not a build: PROJ may fetch GEOID18
-    to_itrf = pyproj.Transformer.from_crs("EPSG:6318+5703", "EPSG:7912", always_xy=True)
-    _, _, h0 = to_itrf.transform(s["lon"], s["lat"], 0.0, 2010.0)
+    try:
+        h0 = navd88_ellipsoid_height(s["lon"], s["lat"])
+    except RuntimeError as e:
+        return {"pass": False, "reason": str(e)}
     want = float(h0) + s["msl_above_navd88_m"] - egm96(s["lat"], s["lon"])
     return {"pass": abs(want - have) <= OFFSET_TOL_M, "file_m": have, "independent_m": want, "diff_m": have - want}
 
@@ -298,14 +321,16 @@ def _fmt(g: dict) -> str:
 
 def print_report(title: str, r: dict) -> None:
     print(f"\n== {title}  (sea offset {r['offset_m']:+.3f} m)")
-    print(f"{'transect':<12}{'cover':>6}{'off min':>9}{'med':>8}{'max':>8}{'step':>7}{'wl dev m':>10}")
+    print(f"{'transect':<10}{'lat':>9}{'lon':>11}{'cls':>4}{'cover':>6}{'off min':>9}{'med':>8}{'max':>8}{'step':>6}"
+          f"{'edge':>6}{'xing':>6}{'dev m':>7}")
     for t in r["transects"]:
+        head = f"{t['name']:<10}{t['lat']:9.4f}{t['lon']:11.4f}{t['start_class']:4d}"
         if not t.get("covered"):
-            print(f"{t['name']:<12}{'-':>6}  no terrain")
+            print(head + "  no terrain")
             continue
         o = [f"{t[k]:+8.2f}" if k in t else f"{'-':>8}" for k in ("off_min", "off_median", "off_max")]
-        wl = t["waterline_offset_m"]
-        print(f"{t['name']:<12}{t['covered']:>6}{o[0]:>9}{o[1]}{o[2]}{t['max_step']:7.1f}{'-' if wl is None else f'{wl:.0f}':>10}")
+        e, c, d = (("-" if t[k] is None else f"{t[k]:.0f}") for k in ("edge_index", "crossing_index", "offset_m"))
+        print(f"{head}{t['covered']:>6}{o[0]:>9}{o[1]}{o[2]}{t['max_step']:6.1f}{e:>6}{c:>6}{d:>7}")
 
 
 def main() -> int:
@@ -318,12 +343,16 @@ def main() -> int:
     cache = Cache(a.cache)
     m = Manifest.load(a.pkg / "manifest.json")
     classes, _ = class_rasters(m, make_context(a.pkg, m, cache).asset_paths)
-    starts = {**coast_starts(classes), **RING_STARTS}
-    report = {"package": str(a.pkg), **evaluate(a.pkg, cache, starts)}
+    starts, dropped = coast_starts(classes)
+    if dropped:
+        print(f"no land found for: {', '.join(dropped)} (dropped)")
+    report = {"package": str(a.pkg), "dropped_starts": dropped, **evaluate(a.pkg, classes, starts)}
     report["d"] = gate_offset(a.pkg)
     print_report(str(a.pkg), report)
     if a.before:
-        report["before"] = {"package": str(a.before), **evaluate(a.before, cache, starts)}
+        mb = Manifest.load(a.before / "manifest.json")
+        cb, _ = class_rasters(mb, make_context(a.before, mb, cache).asset_paths)
+        report["before"] = {"package": str(a.before), **evaluate(a.before, cb, starts)}
         print_report(f"{a.before} (before)", report["before"])
     names = {"a": "offshore terrain below sea", "b": "no step at the old 3DEP edge", "c": "waterline vs WorldCover", "d": "sea_level.json offset"}
     print()
