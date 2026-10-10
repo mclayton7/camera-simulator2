@@ -207,13 +207,15 @@ def test_buffer_zero_keeps_naip_offshore(tmp_path):
     assert np.abs(built - naip).mean() <= 2.0
 
 
-def test_a_balance_without_water_settings_builds_as_before(tmp_path):
+def test_a_balance_without_water_settings_builds_as_before(tmp_path, caplog):
     pkg, cache, _ = build_synthetic(tmp_path, coast(tmp_path / "src"))
     m = json.loads((pkg / "manifest.json").read_text())
     for k in ("naip_water_buffer_m", "water_fade_m"):
         m["layers"]["imagery"]["balance"].pop(k)
     (pkg / "manifest.json").write_text(json.dumps(m))
-    build_scene(pkg, cache, jobs=1)
+    with caplog.at_level("WARNING"):
+        build_scene(pkg, cache, jobs=1)
+    assert any("no water settings" in r.getMessage() and "re-plan" in r.getMessage() for r in caplog.records)
     st, built, _, naip = sea(pkg, cache)
     assert st.water is None
     assert np.abs(built - naip).mean() <= 2.0  # NAIP over the sea again: the Task 6 behaviour

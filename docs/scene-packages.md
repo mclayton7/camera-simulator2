@@ -126,7 +126,7 @@ bmng_month = 7                              # [1, 12]: Blue Marble NG month (set
 jpeg_quality = 85                           # [1, 95]
 imagery_margin_km = 3                       # [0, 50], must be <= ring_km: NAIP is built this far beyond the bbox
 balance = true                              # colour-match Sentinel-2 to NAIP and feather NAIP's edge (Imagery edge)
-naip_water_buffer_m = 200                   # NAIP only this far beyond WorldCover water's edge (Imagery edge; 0 = off)
+naip_water_buffer_m = 200                   # NAIP only this far beyond WorldCover water's edge: 0 (off) or [200, 5000] m (Imagery edge)
 allow = []                                  # extra licence ids (SPDX, see licences.toml)
 
 [priorities]                                # optional; defaults from the profile
@@ -200,7 +200,7 @@ the bbox too. The colour match is land-only: it fades to the R0 Sentinel-2 decod
 within the buffer and keep NAIP. Distances use degrees of latitude on both axes, as the feather. Leaves with no
 water near them come out byte-identical to the no-mask path; the WorldCover hashes join the leaf inputs.
 `build.json`'s `balance.water_mask` says whether the mask was on. `naip_water_buffer_m = 0` keeps NAIP over water
-(the fade stays); values between 0 and 200 are rejected (the feather would fade NAIP on land). Without WorldCover
+(the fade stays); the range is 200 to 5000 m (0 = clip off); values between 0 and 200, or above 5000, are rejected (below 200 the feather would fade NAIP on land). Without WorldCover
 in the package the build warns and neither applies.
 
 **No overlap.** When NAIP and Sentinel-2 share no land there is no `balance.json` and no feather: the legacy hard edge.
@@ -439,14 +439,16 @@ Gate 5 tools: `scripts/scene/tools/` (`render_check.py`, `hot_check.py`, `regist
 
 ### R1 chunk 1 (NAIP edge, with the water mask)
 
-Camp Pendleton `sim`, `pendleton-r1b`, acceptance 2026-10-09 (Linux reference box, `-j 6`).
+Camp Pendleton `sim`, acceptance 2026-10-09 (Linux reference box, `-j 6`). Rows come from different builds: the
+water gate, fit time and peak RSS from the water rebuild of `pendleton-r1` (step 2); determinism and build time from
+`pendleton-r1b`; the R0-manifest check was measured at commit f43d96f (it holds by construction for later code).
 
 | Gate | What | Result |
 |---|---|---|
-| Colour | Sentinel-2 vs NAIP over the fit cells, before and after the match (R/G/B) | **Pass.** Cell bias median 37/30/29 DN before, **2/2/2** after (limit 5); cell p90 58/49/48 -> 7/5/6; MAE 36.72/29.98/29.48 -> 13.12/10.22/9.93; bias 35.84/29.14/28.76 -> 0.42/0.45/0.33. Fit 32.7 s, 7,775,508 samples, 421 cells fitted |
-| Water | `water_check.py`: open-water leaves against raw Sentinel-2, z10-z17 (all sampled) | **Pass** (exit 0, no fails). Pooled mean abs <= 1.10 DN (limit 1.5); tile p95 <= 2.09 DN (limit 3); G-std excess <= 0.07 (limit 1). 9,655 leaves changed (3.5 %); 0 changed without water |
-| Determinism | Rebuild; `verify --deep`; R0 manifest | **Pass.** Rebuild `hashes.txt` identical; `verify --deep` all `ok`; the old R0 manifest rebuilds byte-identical to the original R0 package |
-| Build time | Imagery ms/tile vs the same-session R0 baseline | **Over the +10 % gate, accepted.** 3.372 ms/tile (935.0 s / 277,286, uncontended) vs R0 2.790 ms/tile (708 s / 253,766) = **+20.9 %** (+9.8 % before the water mask: the per-leaf water test, not the clip, is the cost). Offline package build only; no simulator runtime effect. User accepted the cost 2026-10-09. Margin adds 23,520 imagery tiles (+9.3 %). Max RSS of any build process 4.05 GB |
+| Colour | Sentinel-2 vs NAIP over the fit cells, before and after the match (R/G/B) | **Pass.** Cell bias median 37/30/29 DN before, **2/2/2** after (limit 5); cell p90 58/49/48 -> 7/5/6; MAE 36.72/29.98/29.48 -> 13.12/10.22/9.93; bias 35.84/29.14/28.76 -> 0.42/0.45/0.33. Fit 32.7 s, 7,775,508 samples, 421 cells fitted (`pendleton-r1` water rebuild) |
+| Water | `water_check.py`: open-water leaves against raw Sentinel-2, z10-z17 (all sampled) | **Pass** (exit 0, no fails; `pendleton-r1` water rebuild). Pooled mean abs <= 1.10 DN (limit 1.5); tile p95 <= 2.09 DN (limit 3); G-std excess <= 0.07 (limit 1). 9,655 leaves changed (3.5 %); 0 changed without water |
+| Determinism | Rebuild; `verify --deep`; R0 manifest | **Pass.** Rebuild `hashes.txt` identical; `verify --deep` all `ok`; `pendleton-r1b`. The old R0 manifest rebuilds byte-identical to the original R0 package (measured at f43d96f) |
+| Build time | Imagery ms/tile vs the same-session R0 baseline | **Over the +10 % gate, accepted** (`pendleton-r1b`). 3.372 ms/tile (935.0 s / 277,286, uncontended) vs R0 2.790 ms/tile (708 s / 253,766) = **+20.9 %** (+9.8 % before the water mask: the per-leaf water test, not the clip, is the cost). Offline package build only; no simulator runtime effect. User accepted the cost 2026-10-09. Margin adds 23,520 imagery tiles (+9.3 %). Max RSS of any build process 4.05 GB (`pendleton-r1` water rebuild) |
 | Render | `render_check.py`: all 7 shots (incl. `bbox_edge`, `sea_offshore`) | **Pass.** All rendered; `sea_offshore` uniform Sentinel-2; land edge matched to NAIP brightness |
 | Review | Screenshots (visual gate 4) | **Pass** (reviewed by the user, 2026-10-09). Residuals are the known limits above (pier disc; shallow shelf from the ocean, present in R0) |
 

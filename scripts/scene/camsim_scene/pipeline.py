@@ -432,6 +432,11 @@ def _fit_balance(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
             "balance: no WorldCover in the package: NAIP is not clipped at the coast and the colour match also "
             "applies over water"
         )
+    elif "naip_water_buffer_m" not in s or "water_fade_m" not in s:
+        log.warning(
+            "balance: the manifest has no water settings (planned before the water mask): NAIP is not clipped at "
+            "the coast and the colour match applies over water; re-plan (build --replan) to enable the water mask"
+        )
     shas = sorted(a.sha256 for sid in (s["reference"], s["target"]) for a in m.source(sid).assets) + sorted(class_shas)
     inputs = inputs_hash(m.layer_settings_hash("imagery"), __version__, "balance", *shas)
     prev = json.loads(marker.read_text()) if marker.exists() else None
