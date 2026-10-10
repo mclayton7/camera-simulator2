@@ -8,8 +8,9 @@ Gate 3 (plausibility): median NDVI per WorldCover class on a lattice over the bb
 shrubland (20) and grassland (30), both above built-up (50) and bare (60), permanent water (80) below 0. Classes with
 fewer than MIN_N samples are reported and left out of the comparisons.
 Gate 4 (seam): land points every --step-m along NAIP's footprint edge, INSIDE_M inside (pure NAIP) and OUTSIDE_M
-outside (pure Sentinel-2): |median(inside - outside)| <= SEAM_MAX. The same median with NAIP NDVI
-inside unfitted (bias_unfitted) and with the global fit only, no cell offsets (bias_global), is reported beside it. Pairs whose inside point is less than 0.95 INSIDE_M from the edge (near corners) are dropped.
+outside (pure Sentinel-2): |median(inside - outside)| <= SEAM_MAX. The same median with NAIP NDVI inside unfitted
+(bias_unfitted) and with the global fit only, no cell offsets (bias_global), is reported beside it. Pairs whose
+inside point is less than 0.95 INSIDE_M from the edge (near corners) are dropped.
 The manifest's NAIP footprints are dilated by about one coarse overview pixel (~80 m), so a point INSIDE_M inside
 one can still be in the build's 200 m feather: only pairs whose inside point is pure NAIP (reference weight 1 at the
 deepest NDVI zoom, as the build computes it, water buffer included) are kept ("candidates" counts them before).

@@ -6,6 +6,7 @@ once."""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from .sources import make_source
 from .sources.base import M_PER_DEG, Asset, SourceRaster
 from .tiling import GLOBE, Bounds, Coverage
 from .water import Water
+
+log = logging.getLogger(__name__)
 
 GEOID_TARGET_M = 900.0  # ETOPO geoid grid resolution: read at full resolution, never finer
 
@@ -175,7 +178,10 @@ class WorkerState:
             path = self.pkg / "ndvi" / NDVI_FIT_FILE
             if path.exists():
                 data = path.read_bytes()
-                self.ndvi_fit, self.ndvi_fit_sha = NdviFit.from_json(data), sha256_bytes(data)
+                try:
+                    self.ndvi_fit, self.ndvi_fit_sha = NdviFit.from_json(data), sha256_bytes(data)
+                except ValueError as e:  # another format: _fit_ndvi refits it before any NDVI worker runs
+                    log.warning("ignoring %s: %s", path, e)
             if ns["reference"]:
                 fps = reference_footprints(self.manifest, ns["reference"])
                 if fps:

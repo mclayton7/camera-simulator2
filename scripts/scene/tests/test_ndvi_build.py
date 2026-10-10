@@ -127,6 +127,8 @@ def test_a_format_1_fit_is_refit(tmp_path):
     (pkg / "ndvi/fit.json").write_bytes(old)  # a Task 4 package: its marker's inputs predate the grid settings
     rec = json.loads(marker.read_text())
     marker.write_text(json.dumps({**rec, "inputs": "pre-grid"}))
+    bal = pkg / ".state/balance.json"  # the colour match refits too: its WorkerState must not choke on the old file
+    bal.write_text(json.dumps({**json.loads(bal.read_text()), "inputs": "stale"}))
     info = build_scene(pkg, cache, jobs=1)
     assert info["ndvi"]["skipped"] is False and json.loads((pkg / "ndvi/fit.json").read_text())["format"] == 2
     assert hashes(pkg) == before

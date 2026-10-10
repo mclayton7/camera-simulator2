@@ -287,8 +287,8 @@ doesn't feed tile hashes, so re-planning adds it without rebuilding tiles.
 
 **Known limits.** NAIP NDVI is from DN: the fit matches Sentinel-2 on average, not per pixel. One global gain:
 regional (per-quad, per-flight-date) differences are removed only as a smooth 2 km offset field, and
-coastal cells with little shared land are extrapolated, not fitted; per-date residuals are reported. NDVI is leaf-on and dated (NAIP flies in the growing
-season; the composite is 2021). Outside NAIP it is 10 m Sentinel-2.
+coastal cells with little shared land are extrapolated, not fitted; per-date residuals are reported. NDVI is leaf-on
+and dated (NAIP flies in the growing season; the composite is 2021). Outside NAIP it is 10 m Sentinel-2.
 
 `scripts/scene/tools/ndvi_check.py PKG --cache DIR [--overview OUT.png]` computes the plausibility and seam gates.
 
