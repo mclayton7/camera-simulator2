@@ -156,3 +156,89 @@ def test_antimeridian_tile_gives_the_lattice_contiguous_longitudes(tmp_path, mon
         assert np.ptp(lon) < 2 * tiling.tile_size_deg(z)  # unwrapped, not spanning -180..180
         assert lon.min() < -180.0 or lon.max() > 180.0
         assert terrain.sample_grid(z, x, 4000)[0].min() >= -180.0  # rasters still see wrapped longitudes
+
+
+def coast_scene(tmp_path, plate=0.0, topo_box=None, class_west=80):
+    """West half of the box is a 3DEP-like plate (`plate` m), east half +50 m land; a -10 m topobathy source covers
+    the box (or `topo_box`; False: not in the priorities); WorldCover says `class_west` west, land (10) east."""
+    src = tmp_path / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    res, west, north, n = 0.00005, 9.99, 10.04, 1000
+    dem = np.full((n, n), 50.0, np.float32)
+    dem[:, : n // 2] = plate
+    write_geotiff(src / "base.tif", np.zeros((180, 360), np.float32), -180.0, 90.0, 1.0)
+    write_geotiff(src / "dep.tif", dem, west, north, res, overviews=(2, 4, 8))
+    write_geotiff(src / "topo.tif", np.full((n, n), -10.0, np.float32), west, north, res, overviews=(2, 4, 8))
+    codes = np.full((n, n), 10, np.uint8)
+    codes[:, : n // 2] = class_west
+    write_geotiff(src / "wc.tif", codes, west, north, res, overviews=(2, 4, 8), resampling="nearest")
+    box = [west, north - n * res, west + n * res, north]
+    terrain_prio = ["dep3_13", "noaa_sd13", "base"] if topo_box is not False else ["dep3_13", "base"]
+    return {
+        "name": "t",
+        "bbox": box,
+        "priorities": {"terrain": terrain_prio, "imagery": [], "landcover": ["worldcover"]},
+        "sources": {
+            "base": source("terrain", src / "base.tif", GLOBE, **{"global": True}),
+            "dep3_13": source("terrain", src / "dep.tif", box, max_zoom=16),
+            "noaa_sd13": source("terrain", src / "topo.tif", topo_box or box, max_zoom=16),
+            "worldcover": source("landcover", src / "wc.tif", box),
+        },
+    }
+
+
+def mid_heights(tmp_path, scene, z=14):
+    st = WorkerState(fake_context(tmp_path, scene))
+    x, y = tile_at(z, 10.015, 10.015)
+    g = terrain.tile_grid(z, x, y, st.index["terrain"].query(terrain.query_bounds(z, x, y)), st.tidal)
+    west = g.h[:, :40]
+    east = g.h[:, -40:]
+    return st, west, east
+
+
+def test_plate_over_tidal_water_falls_through_to_topobathy(tmp_path):
+    st, west, east = mid_heights(tmp_path, coast_scene(tmp_path))
+    assert st.tidal is not None
+    np.testing.assert_allclose(west, -10.0, atol=1e-6)
+    np.testing.assert_allclose(east, 50.0, atol=1e-6)
+
+
+def test_lake_above_threshold_keeps_3dep(tmp_path):
+    _, west, _ = mid_heights(tmp_path, coast_scene(tmp_path, plate=2.0))
+    np.testing.assert_allclose(west, 2.0, atol=1e-6)
+
+
+def test_no_topobathy_coverage_keeps_3dep(tmp_path):
+    far = [20.0, 20.0, 20.1, 20.1]  # the topobathy source covers nowhere near the tile
+    _, west, _ = mid_heights(tmp_path, coast_scene(tmp_path, topo_box=far))
+    np.testing.assert_allclose(west, 0.0, atol=1e-6)
+
+
+def test_land_class_keeps_3dep(tmp_path):
+    _, west, _ = mid_heights(tmp_path, coast_scene(tmp_path, class_west=10))
+    np.testing.assert_allclose(west, 0.0, atol=1e-6)
+
+
+def test_scene_without_topobathy_has_no_mask_and_unchanged_inputs(tmp_path):
+    st = WorkerState(fake_context(tmp_path, coast_scene(tmp_path, topo_box=False)))
+    assert st.tidal is None
+    assert st.terrain_extra == []
+
+
+def test_mask_changes_the_tile(tmp_path):
+    st = WorkerState(fake_context(tmp_path, coast_scene(tmp_path)))
+    assert st.tidal is not None
+    assert st.terrain_extra  # the WorldCover sha256s join every terrain tile's inputs
+    z = 14
+    x, y = tile_at(z, 10.015, 10.015)
+    entries = st.index["terrain"].query(terrain.query_bounds(z, x, y))
+    assert terrain.build_tile(z, x, y, entries, st.tidal) != terrain.build_tile(z, x, y, entries)
+
+
+def test_point_heights_apply_the_mask(tmp_path):
+    st = WorkerState(fake_context(tmp_path, coast_scene(tmp_path)))
+    z = 14
+    lon, lat = np.array([10.0, 10.03]), np.array([10.015, 10.015])
+    entries = st.index["terrain"].query((9.99, 10.0, 10.04, 10.04))
+    np.testing.assert_allclose(terrain.point_heights(z, lon, lat, entries, st.tidal), [-10.0, 50.0], atol=1e-6)
+    np.testing.assert_allclose(terrain.point_heights(z, lon, lat, entries), [0.0, 50.0], atol=1e-6)

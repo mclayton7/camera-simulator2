@@ -18,7 +18,8 @@ from .balance import Balance
 from .datum import DatumTransform
 from .fsutil import sha256_bytes
 from .layers.imagery import ref_interior
-from .manifest import AssetRecord, Manifest
+from .layers.terrain import TidalMask
+from .manifest import AssetRecord, Manifest, canonical_json
 from .ndvi_fit import FILE as NDVI_FIT_FILE
 from .ndvi_fit import NdviFit
 from .sources import make_source
@@ -150,6 +151,17 @@ class WorkerState:
         self.settings = {layer: self.manifest.layer_settings_hash(layer) for layer in self.manifest.layers}
         self._transforms: dict[tuple, DatumTransform] = {}
         self.index = {layer: self._index(layer) for layer in ("terrain", "imagery")}
+        self.tidal: TidalMask | None = None
+        self.terrain_extra: list[str] = []  # hashes the mask and sea level add to every terrain tile's inputs
+        ts = self.manifest.layers["terrain"].get("tidal_mask")
+        if ts:
+            classes, shas = class_rasters(self.manifest, ctx.asset_paths)
+            if not classes:
+                raise ContextError("terrain tidal_mask needs the package's WorldCover (land cover) assets")
+            self.tidal = TidalMask.from_settings(ts, tuple(classes))
+            self.terrain_extra = sorted(shas)
+        if self.manifest.sea_level:
+            self.terrain_extra.append(sha256_bytes(canonical_json(self.manifest.sea_level).encode()))
         self.balance: Balance | None = None
         self.balance_sha = ""
         self.ref_interior = None

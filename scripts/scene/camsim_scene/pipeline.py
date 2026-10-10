@@ -307,9 +307,9 @@ def init_worker(ctx: BuildContext) -> None:
 def _terrain_tile(z: int, x: int, y: int):
     st = _STATE
     entries = st.index["terrain"].query(terrain.query_bounds(z, x, y))
-    inputs = inputs_hash(st.settings["terrain"], __version__, *sorted(e.sha256 for e in entries))
+    inputs = inputs_hash(st.settings["terrain"], __version__, *st.terrain_extra, *sorted(e.sha256 for e in entries))
     return run_tile(
-        st.pkg, _MARKERS, "terrain", "terrain", z, x, y, inputs, partial(terrain.build_tile, z, x, y, entries)
+        st.pkg, _MARKERS, "terrain", "terrain", z, x, y, inputs, partial(terrain.build_tile, z, x, y, entries, st.tidal)
     )
 
 

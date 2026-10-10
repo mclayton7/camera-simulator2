@@ -276,11 +276,11 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
             if n is None or not (np.isfinite(n).all() and np.allclose(np.linalg.norm(n, axis=1), 1.0, atol=1e-3)):
                 normals_bad.append(f"{z}/{x}/{y}")
             entries = st.index["terrain"].query(terrain.query_bounds(z, x, y))
-            seam = terrain.tile_grid(z, x, y, entries).seam
+            seam = terrain.tile_grid(z, x, y, entries, st.tidal).seam
             col = np.rint(q.u / QMAX * (GRID - 1)).astype(int)
             row = GRID - 1 - np.rint(q.v / QMAX * (GRID - 1)).astype(int)
             keep = ~seam[row, col]
-            errs.setdefault(z, []).append(np.abs(h - terrain.point_heights(z, lon, lat, entries))[keep])
+            errs.setdefault(z, []).append(np.abs(h - terrain.point_heights(z, lon, lat, entries, st.tidal))[keep])
             for nx, ny, east in ((x + 1, y, True), (x, y + 1, False)):
                 if not np.isin(make_keys(nx, ny), keys):
                     continue
