@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import shapely
 
-from . import __version__, datum, ndvi_fit
+from . import __version__, datum, ndvi_fit, sea_level as sea_level_mod
 from . import balance as colour_balance
 from .cache import Cache
 from .config import LAYERS, TILING, ScenePlan, layer_settings
@@ -105,12 +105,24 @@ def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bo
                 raise PlanError(f"source {sid} is a {src.layer} source but is listed under priorities.{layer}")
             built[sid] = (adapter, src)
     allow = sorted(set(DEFAULT_ALLOW) | set(plan.allow))
+    try:
+        sea = sea_level_mod.station_section(http, plan.sea_level_station) if plan.sea_level_station else None
+    except sea_level_mod.SeaLevelError as e:
+        raise PlanError(str(e)) from e
     check_allowed({sid: s.licence for sid, (_, s) in built.items()}, allow)
     records, datums = [], set()
     for sid, (adapter, src) in built.items():
         assets = src.discover(Area(plan.area(src.area_kind)))
         if not assets:
             log.warning("%s: no assets in %s", sid, plan.area(src.area_kind))
+        if assets and getattr(src, "vertical_from_msl", False):
+            if sea is None:
+                raise PlanError(
+                    f"{sid} heights are MSL: the scene needs a [sea_level] station (a NOAA CO-OPS id with a NAVD88 "
+                    'tie, e.g. station = "9410230") to convert them'
+                )
+            for a in assets:
+                a.metadata["msl_above_navd88_m"] = sea["msl_above_navd88_m"]
         for a in assets:
             if a.role == "data" and src.layer != Layer.LANDCOVER and (a.metadata.get("datum") or src.datum):
                 datums.add(a.metadata.get("datum") or src.datum)
@@ -137,6 +149,7 @@ def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bo
         sources=records,
         licence_allow=allow,
         tool=TOOL,
+        sea_level=sea,
     )
     with _lock(pkg, locked):
         m.write(Path(pkg) / "manifest.json")
@@ -209,6 +222,7 @@ def plan_differences(plan: ScenePlan, m: Manifest) -> list[str]:
         "layers": layer_settings(plan),
         "licence_allow": sorted(set(DEFAULT_ALLOW) | set(plan.allow)),
         "sources": {sid: source_options(sid) for sid in plan.source_ids()},
+        "sea_level_station": plan.sea_level_station,
     }
     have = {
         "name": m.name,
@@ -217,6 +231,7 @@ def plan_differences(plan: ScenePlan, m: Manifest) -> list[str]:
         "layers": m.layers,
         "licence_allow": m.licence_allow,
         "sources": {sid: manifest_options(sid) for sid in plan.source_ids()},
+        "sea_level_station": (m.sea_level or {}).get("station"),
     }
     return [k for k in want if norm(want[k]) != norm(have[k])]
 
@@ -260,6 +275,9 @@ def _fetch(pkg: Path, cache: Cache) -> Manifest:
         m.write(pkg / "manifest.json")  # an interrupted fetch keeps what it already hashed
     for g in m.datum["grids"].values():
         _, g["sha256"], _ = cache.get(g["url"], g.get("sha256"))
+    if m.sea_level:
+        g = m.sea_level["egm96_grid"]
+        _, g["sha256"], _ = cache.get(g["url"], g.get("sha256"))
     m.write(pkg / "manifest.json")
     return m
 
@@ -267,6 +285,9 @@ def _fetch(pkg: Path, cache: Cache) -> Manifest:
 def make_context(pkg: Path, m: Manifest, cache: Cache) -> BuildContext:
     paths = {f"{rec.id}/{a.id}": str(path) for rec in m.sources for _, a, path in _cached_assets(rec, cache)}
     grids = {name: str(cache.get(g["url"], g["sha256"])[0]) for name, g in m.datum["grids"].items()}
+    if m.sea_level:
+        g = m.sea_level["egm96_grid"]
+        grids[g["name"]] = str(cache.get(g["url"], g["sha256"])[0])
     return BuildContext(str(pkg), m.to_dict(), paths, grids)
 
 

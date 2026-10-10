@@ -94,3 +94,16 @@ def test_hashes_txt_is_sorted_and_excludes_state_and_meta(tmp_path):
     assert h["terrain/1/0/0.terrain"] == "00" * 32
     assert h["ATTRIBUTION.txt"] == fsutil.sha256_bytes(b"ATTRIBUTION.txt")
     assert "manifest.json" not in h and "hashes.txt" not in h
+
+
+def test_manifest_without_sea_level_round_trips_unchanged():
+    text = sample_manifest().dumps()
+    assert '"sea_level"' not in text
+    assert Manifest.from_dict(json.loads(text)).dumps() == text
+
+
+def test_manifest_with_sea_level_round_trips():
+    m = sample_manifest()
+    m.sea_level = {"station": "9410230", "msl_above_navd88_m": 0.774}
+    again = Manifest.from_dict(json.loads(m.dumps()))
+    assert again.sea_level == m.sea_level

@@ -2,7 +2,7 @@ import pytest
 import shapely
 
 from camsim_scene import config, tiling
-from camsim_scene.config import ConfigError, parse_scene
+from camsim_scene.config import ConfigError, layer_settings, parse_scene
 
 PENDLETON = [-117.62, 33.19, -117.24, 33.52]
 
@@ -10,7 +10,7 @@ PENDLETON = [-117.62, 33.19, -117.24, 33.52]
 def test_defaults_for_sim_profile():
     p = parse_scene({"name": "pendleton", "bbox": PENDLETON})
     assert p.profile == "sim" and p.ring_km == 100 and p.bmng_month == 7 and p.jpeg_quality == 85
-    assert p.priorities["terrain"] == ["dep3_1m", "dep3_13", "etopo2022"]
+    assert p.priorities["terrain"] == ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"]
     assert p.priorities["imagery"] == ["naip_pc", "wc_s2", "bmng"]
     assert p.priorities["landcover"] == ["worldcover"]
     assert p.source_options["bmng"]["month"] == 7 and p.source_options["naip_pc"]["year"] == "2022"
@@ -21,12 +21,22 @@ def test_defaults_for_sim_profile():
         {"terrain": 10, "imagery": 17},
         {"terrain": 16, "imagery": 17},
     ]
-    assert p.source_ids() == ["dep3_1m", "dep3_13", "etopo2022", "naip_pc", "wc_s2", "bmng", "worldcover"]
+    assert p.source_ids() == [
+        "dep3_1m",
+        "dep3_13",
+        "noaa_sd13",
+        "noaa_crm_socal",
+        "etopo2022",
+        "naip_pc",
+        "wc_s2",
+        "bmng",
+        "worldcover",
+    ]
 
 
 def test_preview_profile_has_no_naip_or_1m():
     p = parse_scene({"name": "pv", "bbox": PENDLETON, "profile": "preview"})
-    assert p.priorities["terrain"] == ["dep3_13", "etopo2022"] and p.priorities["imagery"] == ["wc_s2", "bmng"]
+    assert p.priorities["terrain"] == ["dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"] and p.priorities["imagery"] == ["wc_s2", "bmng"]
     assert p.regions()[3].max_zoom == {"terrain": 14, "imagery": 13}
 
 
@@ -204,3 +214,33 @@ def test_default_ndvi_is_off_without_ndvi_sources():
 def test_bad_ndvi(patch, match):
     with pytest.raises(ConfigError, match=match):
         parse_scene({"name": "t", "bbox": PENDLETON, **patch})
+
+
+def test_sea_level_station_parses():
+    p = parse_scene({"name": "x", "bbox": [-117.6, 33.2, -117.2, 33.5], "sea_level": {"station": "9410230"}})
+    assert p.sea_level_station == "9410230"
+
+
+@pytest.mark.parametrize("bad", [{"station": 9410230}, {"station": ""}, {"station": "x1"}, {"stn": "9410230"}])
+def test_sea_level_station_rejects_bad_values(bad):
+    with pytest.raises(ConfigError, match="sea_level"):
+        parse_scene({"name": "x", "bbox": [-117.6, 33.2, -117.2, 33.5], "sea_level": bad})
+
+
+def test_sim_terrain_priorities_and_tidal_mask():
+    p = parse_scene({"name": "x", "bbox": [-117.6, 33.2, -117.2, 33.5]})
+    assert p.priorities["terrain"] == ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"]
+    assert layer_settings(p)["terrain"]["tidal_mask"] == {
+        "classes_source": "worldcover",
+        "class": 80,
+        "max_navd88_m": 1.5,
+        "sources": ["dep3_1m", "dep3_13"],
+        "topobathy": ["noaa_sd13", "noaa_crm_socal"],
+    }
+
+
+def test_no_tidal_mask_without_topobathy():
+    p = parse_scene(
+        {"name": "x", "bbox": [-117.6, 33.2, -117.2, 33.5], "priorities": {"terrain": ["dep3_13", "etopo2022"]}}
+    )
+    assert "tidal_mask" not in layer_settings(p)["terrain"]

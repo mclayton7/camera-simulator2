@@ -14,7 +14,9 @@ ndvi = true                                # NDVI layer beside the imagery (sim 
 ndvi_max_zoom = 15                         # NDVI pyramid depth, [10, 17]
 allow = []                                 # extra licence ids (see licences.toml)
 [priorities]                               # optional; defaults from the profile
-terrain = ["dep3_1m", "dep3_13", "etopo2022"]
+terrain = ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"]
+[sea_level]                                # optional
+station = "9410230"                        # NOAA CO-OPS station with a NAVD88 tie (omit inland)
 [sources.naip_pc]                          # per-source options; `adapter` picks a non-default class
 year = "2022"
 [zoom.bbox]                                # optional zoom overrides per region
@@ -52,17 +54,22 @@ KEYS = {
     "zoom",
     "ndvi",
     "ndvi_max_zoom",
+    "sea_level",
 }
 
 PROFILES = {
     "preview": {
-        "priorities": {"terrain": ["dep3_13", "etopo2022"], "imagery": ["wc_s2", "bmng"], "landcover": ["worldcover"]},
+        "priorities": {
+            "terrain": ["dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"],
+            "imagery": ["wc_s2", "bmng"],
+            "landcover": ["worldcover"],
+        },
         "bbox_zoom": {"terrain": 14, "imagery": 13},
         "ndvi": False,
     },
     "sim": {
         "priorities": {
-            "terrain": ["dep3_1m", "dep3_13", "etopo2022"],
+            "terrain": ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"],
             "imagery": ["naip_pc", "wc_s2", "bmng"],
             "landcover": ["worldcover"],
         },
@@ -70,6 +77,14 @@ PROFILES = {
         "ndvi": True,
     },
 }
+TIDAL_MASK = {  # 3DEP's hydro-flattened plate over tidal water falls through to topobathy (layers/terrain.py)
+    "classes_source": "worldcover",
+    "class": 80,  # WorldCover 2021: permanent water bodies
+    "max_navd88_m": 1.5,  # just above MHW (+1.34 m NAVD88 at La Jolla): lakes above sea level keep 3DEP
+    "sources": ["dep3_1m", "dep3_13"],
+    "topobathy": ["noaa_sd13", "noaa_crm_socal"],
+}
+STATION_RE = re.compile(r"^\d{7}$")
 GLOBE_ZOOM = {"terrain": 8, "imagery": 8}
 RING_ZOOM = {"terrain": 10, "imagery": 10}
 DEFAULT_SOURCE_OPTIONS = {"naip_pc": {"year": "2022"}}
@@ -159,6 +174,7 @@ class ScenePlan:
     naip_water_buffer_m: float = NAIP_WATER_BUFFER_M
     ndvi: bool = False
     ndvi_max_zoom: int = NDVI_MAX_ZOOM
+    sea_level_station: str | None = None
 
     def ring_bounds(self) -> Bounds:
         return ring_bounds(self.bbox, self.ring_km)
@@ -264,6 +280,17 @@ def parse_scene(data: dict) -> ScenePlan:
     allow = data.get("allow", [])
     if not isinstance(allow, list) or not all(isinstance(a, str) for a in allow):
         raise ConfigError("allow must be a list of licence ids")
+    sl = data.get("sea_level")
+    station = None
+    if sl is not None:
+        if (
+            not isinstance(sl, dict)
+            or set(sl) != {"station"}
+            or not isinstance(sl["station"], str)
+            or not STATION_RE.match(sl["station"])
+        ):
+            raise ConfigError('sea_level must be a table with one key, station = "<7-digit NOAA CO-OPS id>"')
+        station = sl["station"]
     return ScenePlan(
         name,
         bbox,
@@ -281,6 +308,7 @@ def parse_scene(data: dict) -> ScenePlan:
         naip_water_buffer_m=float(buffer_m),
         ndvi=ndvi,
         ndvi_max_zoom=ndvi_max_zoom,
+        sea_level_station=station,
     )
 
 
@@ -346,6 +374,11 @@ def layer_settings(plan: ScenePlan) -> dict:
         },
         "landcover": {"priorities": plan.priorities["landcover"], "bounds": list(plan.ring_bounds()), "tile_deg": 0.05},
     }
+    t = plan.priorities["terrain"]
+    masked = [s for s in TIDAL_MASK["sources"] if s in t]
+    topo = [s for s in TIDAL_MASK["topobathy"] if s in t]
+    if masked and topo and TIDAL_MASK["classes_source"] in plan.priorities["landcover"]:
+        out["terrain"]["tidal_mask"] = {**TIDAL_MASK, "sources": masked, "topobathy": topo}
     ndvi = ndvi_settings(plan)
     if ndvi is not None:
         out["ndvi"] = ndvi

@@ -77,6 +77,12 @@ class FakeSource(SourceBase):
         )
 
 
+class FakeMslSource(FakeSource):
+    """A FakeSource whose heights are above local MSL (the NOAA CRM's case): plan needs a [sea_level] station."""
+
+    vertical_from_msl = True
+
+
 def source(layer, path, bbox, max_zoom=8, **kw) -> dict:
     return {
         "adapter": ADAPTER,

@@ -79,3 +79,28 @@ class StubCache:
 
     def derived_path(self, key, suffix):
         return self.root / "derived" / key[:2] / f"{key}{suffix}"
+
+
+LA_JOLLA = {  # CO-OPS datums for station 9410230 (La Jolla), metres
+    "datums": [
+        {"name": "MLLW", "value": 1.331},
+        {"name": "MSL", "value": 2.163},
+        {"name": "MHW", "value": 2.733},
+        {"name": "NAVD88", "value": 1.389},
+    ],
+    "epoch": "1983-2001",
+    "units": "meters",
+}
+
+
+def coops_http(datums=LA_JOLLA) -> FakeHttp:
+    from camsim_scene import sea_level
+
+    return FakeHttp(
+        {
+            sea_level.COOPS_DATUMS.format(station="9410230"): datums,
+            sea_level.COOPS_STATION.format(station="9410230"): {
+                "stations": [{"id": "9410230", "name": "La Jolla", "lat": 32.8669, "lng": -117.2571}]
+            },
+        }
+    )

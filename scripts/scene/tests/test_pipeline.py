@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import shapely
 from fake_sources import build_synthetic, source, synthetic_scene
-from fakes import FakeHttp
+from fakes import FakeHttp, coops_http
 from rasters import write_geotiff
 
 from camsim_scene import fsutil, pipeline, qmesh, tiling
@@ -292,3 +292,33 @@ def test_naip_discovery_receives_the_margin_area(tmp_path, monkeypatch):
     plan = parse_scene(scene)
     plan_scene(plan, tmp_path / "pkg", http=FakeHttp({}), out=io.StringIO())
     assert seen == [plan.area("margin")] and seen[0] != plan.bbox
+
+
+def _crm_scene(tmp_path):
+    scene = synthetic_scene(tmp_path / "src")
+    scene["priorities"]["terrain"].insert(1, "crm")
+    scene["sources"]["crm"] = source(
+        "terrain", tmp_path / "src" / "base_dem.tif", [-180, -90, 180, 90], adapter="fake_sources:FakeMslSource"
+    )
+    return scene
+
+
+def test_crm_assets_without_station_is_a_plan_error(tmp_path):
+    with pytest.raises(PlanError, match=r"\[sea_level\] station"):
+        plan_scene(parse_scene(_crm_scene(tmp_path)), tmp_path / "pkg", http=FakeHttp({}))
+
+
+def test_station_metadata_reaches_crm_assets(tmp_path):
+    scene = _crm_scene(tmp_path)
+    scene["sea_level"] = {"station": "9410230"}
+    m = plan_scene(parse_scene(scene), tmp_path / "pkg", http=coops_http(), out=io.StringIO())
+    assert m.sea_level["msl_above_navd88_m"] == pytest.approx(0.774)
+    assert all(a.metadata["msl_above_navd88_m"] == pytest.approx(0.774) for a in m.source("crm").assets)
+    assert not m.is_fetched() and m.sea_level["egm96_grid"]["sha256"] is None
+
+
+def test_no_station_makes_no_coops_request_and_no_manifest_field(tmp_path):
+    http = FakeHttp({})
+    m = plan_scene(parse_scene(synthetic_scene(tmp_path / "src")), tmp_path / "pkg", http=http, out=io.StringIO())
+    assert http.calls == [] and m.sea_level is None
+    assert "sea_level" not in json.loads((tmp_path / "pkg" / "manifest.json").read_text())

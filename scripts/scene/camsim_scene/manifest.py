@@ -60,9 +60,13 @@ class Manifest:
     tool: dict
     schema_version: int = SCHEMA_VERSION
     hashes_sha256: str | None = None
+    sea_level: dict | None = None  # NOAA CO-OPS station datums (sea_level.py); absent in packages without one
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if d["sea_level"] is None:
+            del d["sea_level"]  # packages planned without a station keep their exact manifest.json
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> Manifest:
@@ -94,7 +98,8 @@ class Manifest:
     def is_fetched(self) -> bool:
         assets_ok = all(a.sha256 for s in self.sources for a in s.assets)
         grids_ok = all(g.get("sha256") for g in self.datum.get("grids", {}).values())
-        return assets_ok and grids_ok
+        sea_ok = not self.sea_level or bool(self.sea_level["egm96_grid"].get("sha256"))
+        return assets_ok and grids_ok and sea_ok
 
     def layer_settings_hash(self, layer: str) -> str:
         """Everything (except asset bytes) that a tile of `layer` depends on."""
