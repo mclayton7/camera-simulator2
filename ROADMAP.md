@@ -1810,7 +1810,9 @@ over R0 (spec gate +10 %), accepted (offline build only). Follow-ups: (1) thin l
 land for the 200 m NAIP buffer and leave a dark ~200 m NAIP disc (San Clemente pier): ignore thin features when
 measuring the distance to land; (2) a turquoise shallow shelf with a jagged hard outline against dark deep water in
 renders (present in R0; seabed depth under the Single Layer Water ocean, not imagery; affects boat scenes): separate
-terrain/ocean follow-up.
+terrain/ocean follow-up. **R1 chunk 2 (NDVI + NAIP sun metadata)** implemented 2026-10-09: an `ndvi/` PNG layer
+(NAIP fitted onto Sentinel-2, same merge as the imagery), NAIP acquisition date and sun window per asset
+(`docs/scene-packages.md`, "NDVI"); gates in `scripts/scene/tools/ndvi_check.py`; acceptance on Pendleton pending.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

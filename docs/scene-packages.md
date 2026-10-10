@@ -23,6 +23,9 @@ Background: [`docs/realism/`](realism/) (data sources, Cesium findings, offline 
   terrain/{z}/{x}/{y}.terrain   # quantized-mesh-1.0, gzip, octvertexnormals
   imagery/tilemapresource.xml
   imagery/{z}/{x}/{y}.jpg       # geodetic TMS, 256 px, JPEG q85 4:2:0
+  ndvi/tilemapresource.xml      # TMS 1.0, image/png (packages with an NDVI layer)
+  ndvi/fit.json                 # NAIP -> Sentinel-2 NDVI fit
+  ndvi/{z}/{x}/{y}.png          # 8-bit grayscale NDVI (0 nodata, 1..255 = -1..+1); tiles without data are absent
   landcover/index.json
   landcover/<lat>_<lon>.png     # the 4B thermal format (0.05° tiles, 600 × 600, 8-bit WorldCover codes)
   .state/                       # resume markers and the build lock (not hashed, not packed)
@@ -71,7 +74,7 @@ no network at all and `layer.json`'s `available` is complete to z8.
 |---|---|
 | OGC TMS 2.0 `WorldCRS84Quad` (OGC 17-083r4) | the tile grid (TMS 1.0 addressing, `y` from the south) |
 | quantized-mesh-1.0 ([Cesium spec](https://github.com/CesiumGS/quantized-mesh)) | `terrain/**/*.terrain`, with the `octvertexnormals` extension; `layer.json` is TileJSON 2.1.0 |
-| TMS 1.0 (OSGeo Tile Map Service) `tilemapresource.xml` | `imagery/` (`SRS EPSG:4326`, `profile geodetic`) |
+| TMS 1.0 (OSGeo Tile Map Service) `tilemapresource.xml` | `imagery/` and `ndvi/` (`SRS EPSG:4326`, `profile geodetic`) |
 | Cloud Optimized GeoTIFF (OGC 21-026) | derived rasters in the fetch cache (`.cache/scene/derived/`) |
 | SPDX licence ids | `licence` fields, `--allow`, `manifest.licence_allow` (`LicenseRef-` for licences SPDX doesn't list) |
 
@@ -127,6 +130,8 @@ jpeg_quality = 85                           # [1, 95]
 imagery_margin_km = 3                       # [0, 50], must be <= ring_km: NAIP is built this far beyond the bbox
 balance = true                              # colour-match Sentinel-2 to NAIP and feather NAIP's edge (Imagery edge)
 naip_water_buffer_m = 200                   # NAIP only this far beyond WorldCover water's edge: 0 (off) or [200, 5000] m (Imagery edge)
+ndvi = true                                 # NDVI layer (default true in sim, false in preview; NDVI section)
+ndvi_max_zoom = 15                          # [10, 17]: NDVI pyramid depth (z15 ~ 2.4 m)
 allow = []                                  # extra licence ids (SPDX, see licences.toml)
 
 [priorities]                                # optional; defaults from the profile
@@ -229,6 +234,52 @@ Known limits found in acceptance (follow-ups, `ROADMAP.md`):
 - A turquoise shallow shelf with a jagged hard outline against dark deep water shows in CamSim renders at the coast
   (`bbox_edge`, `ring_edge`; boat scenes). It is not imagery: it is in R0 too, from the seabed depth under the Single
   Layer Water ocean. Separate terrain/ocean follow-up.
+
+## NDVI (R1)
+
+**Why.** A vegetation signal for thermal IR and vegetation placement that doesn't come from JPEG colour: R2 compares
+it with 4B's GBuffer ExG in `ThermalCS`, R4 places trees with it. Nothing in CamSim reads it yet.
+
+**Values.** `(NIR - red) / (NIR + red)` per pixel from each source's raw values: NAIP DN bands 4 and 1, Sentinel-2
+reflectance B08 and B04 (the composite's bands 4 and 1). 8-bit grayscale PNG: code 0 = nodata, codes 1-255 = NDVI
+-1 to +1 (`ndvi = (code - 1) / 127 - 1`, step ~0.0079).
+
+**Tiles.** The imagery's grid and addressing, from z0 to min(`ndvi_max_zoom`, the imagery tile's depth) (default
+z15, ~2.4 m), only where the tile overlaps the ring and NAIP or Sentinel-2 data (Blue Marble has no NIR). Tiles with
+no valid pixel are not written; `tilemapresource.xml` lists the zooms and bounds of the tiles present. Parents are the
+mean of the valid child pixels in each 2 x 2 block.
+
+**Merge.** As the imagery: NAIP first, Sentinel-2 behind it; NAIP feathers into Sentinel-2 over 200 m inside its
+valid-data edge and is used only within `naip_water_buffer_m` of WorldCover land. Open sea beyond the composite's land
+tiles is nodata.
+
+**Fit (`ndvi/fit.json`).** NAIP NDVI is computed from uncalibrated DN; one linear map, `gain x ndvi + offset` (then
+clamped to [-1, 1]), puts it on Sentinel-2's scale. Least squares on the colour match's 10 m land lattice
+(WorldCover 0 and 80 excluded, even nodes fitted, odd held out, >= 500 samples), stored in integer millionths,
+hashed, and joined to every NDVI leaf's inputs. `build.json` -> `ndvi`: samples, gain, offset, held-out MAE and median
+bias before/after, and the residual median bias per NAIP acquisition date. No shared land: no `fit.json`, NAIP NDVI
+unfitted (warning). A rebuild with unchanged inputs skips the fit.
+
+**Off switch.** `ndvi = false` (the `preview` default): no `ndvi/`; every other file is unchanged. Setting
+`ndvi = true` without `naip_pc` or `wc_s2` in the imagery priorities is an error; without NAIP the layer is
+Sentinel-2 alone and builds without a fit (a fallback, not a supported mode). A package planned before this layer has
+none until `build --replan`, which rebuilds only the NDVI tiles.
+
+**Acquisition date and sun.** Each NAIP asset in `manifest.json` records `acquired` (the date), `sun_noon`
+(`elevation_deg`, `azimuth_deg` at local solar noon) and `sun_window` (`min_elevation_deg` 30, `azimuth_deg`
+[morning, afternoon]: where the sun is when it crosses 30 degrees), at the centre of the quad's bbox, NOAA equations,
+no refraction. Planetary Computer's NAIP times are a placeholder (`T16:00:00Z` on every quad), so the true sun is
+unknown: NAIP flies with the sun at 30 degrees or more, so its elevation was between 30 degrees and
+`sun_noon.elevation_deg`, and its azimuth within `sun_window.azimuth_deg`. At Pendleton on 2022-05-30 that window is
+82-278 degrees, so in summer the azimuth is barely constrained. Imagery shadows are baked in for that sun (a known
+limit, not corrected). Sentinel-2 assets record `composite: "2021"` (a year's median: no single sun). Asset metadata
+doesn't feed tile hashes, so re-planning adds it without rebuilding tiles.
+
+**Known limits.** NAIP NDVI is from DN: the fit matches Sentinel-2 on average, not per pixel. One global fit:
+per-flight-date differences are reported, not corrected. NDVI is leaf-on and dated (NAIP flies in the growing
+season; the composite is 2021). Outside NAIP it is 10 m Sentinel-2.
+
+`scripts/scene/tools/ndvi_check.py PKG --cache DIR [--overview OUT.png]` computes the plausibility and seam gates.
 
 ## Sources
 
@@ -346,6 +397,7 @@ after `build`) and exits 1 when any check fails.
 | `hashes` | `hashes.txt` matches the files on disk and `manifest.hashes_sha256` |
 | `terrain_available` | `layer.json`'s `available` equals the terrain tiles present |
 | `tilemapresource` | `tilemapresource.xml` levels and BoundingBox equal the imagery present |
+| `ndvi_tilemapresource` | (packages with NDVI tiles) `ndvi/tilemapresource.xml` levels and BoundingBox equal the NDVI tiles present |
 | `licences` | every source's licence is on the manifest's allow-list |
 | `attribution` | `ATTRIBUTION.txt` equals the text generated from `manifest.json` |
 
@@ -358,12 +410,14 @@ after `build`) and exits 1 when any check fails.
 | `terrain_finite` | no NaN or infinite values |
 | `terrain_normals` | octahedral normals decode to unit length |
 | `imagery_decode` | every JPEG decodes at 256 × 256 |
+| `ndvi_values` | 64 pixels of each sampled NDVI leaf (same 2 % / `--all` sampling) against NDVI recomputed from the sources at the pixel centre (fit applied to NAIP); pixels purely NAIP or purely Sentinel-2 (feather pixels left out): p99 ≤ 1 code step in each group, and no data where the sources have none |
 
 `verify.json` records the height errors overall (`terrain_error_m`: `n`, `p50`, `p99`, `max`), over the scene zooms
 (`terrain_error_m.scene`, the gate numbers; `base_max_zoom` is where the base stops) and per zoom
 (`terrain_error_m.by_zoom`, with `p99_limit` on base zooms), and the `terrain_heights` line names the worst zoom. A check that can't run on
 a malformed package (a missing `layer.json`, an unparsable `hashes.txt` line, a corrupt tile) fails with the error
-as its detail instead of aborting `verify`.
+as its detail instead of aborting `verify`. `ndvi_error_steps` records the NDVI code errors (`n`, `p50`, `p99`,
+`max`, `leaves`, and `naip` / `s2`: `n` and `p99` per group).
 
 ## Packing and mounting
 
