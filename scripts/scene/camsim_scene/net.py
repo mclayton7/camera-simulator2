@@ -68,5 +68,12 @@ class Http:
         size = r.headers.get("Content-Length")
         return r.status_code, int(size) if size is not None else None
 
+    def total_size(self, url: str) -> int | None:
+        """The file's full size from a one-byte ranged GET (Content-Range), for servers whose HEAD omits Content-Length."""
+        r = self._request("GET", url, headers={"Range": "bytes=0-0"}, allow_redirects=True, stream=True)
+        r.close()
+        total = (r.headers.get("Content-Range") or "").rpartition("/")[2]
+        return int(total) if total.isdigit() else None
+
     def stream(self, url: str):
         return self._request("GET", url, stream=True)

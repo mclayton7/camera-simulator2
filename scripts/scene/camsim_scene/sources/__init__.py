@@ -13,6 +13,8 @@ BUILTIN = {
     "etopo2022": "camsim_scene.sources.etopo2022:Etopo2022",
     "bmng": "camsim_scene.sources.bmng:Bmng",
     "worldcover": "camsim_scene.sources.worldcover:WorldCover",
+    "noaa_sd13": "camsim_scene.sources.noaa_dem:NoaaSd13",
+    "noaa_crm_socal": "camsim_scene.sources.noaa_dem:NoaaCrmSocal",
 }
 
 
