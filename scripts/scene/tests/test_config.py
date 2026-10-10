@@ -162,3 +162,45 @@ def test_water_buffer_defaults_and_settings():
 def test_bad_water_buffer(bad):
     with pytest.raises(config.ConfigError):
         config.parse_scene({"name": "t", "bbox": PENDLETON, "naip_water_buffer_m": bad})
+
+
+def test_ndvi_defaults_per_profile():
+    sim = parse_scene({"name": "t", "bbox": PENDLETON})
+    assert sim.ndvi is True and sim.ndvi_max_zoom == 15
+    s = config.layer_settings(sim)["ndvi"]
+    assert s["priorities"] == ["naip_pc", "wc_s2"] and s["reference"] == "naip_pc" and s["target"] == "wc_s2"
+    assert s["max_zoom"] == 15 and s["feather_m"] == 200.0 and s["naip_water_buffer_m"] == 200.0
+    assert s["fit_step_m"] == 10.0 and s["min_samples"] == 500 and s["exclude_classes"] == [0, 80]
+    prev = parse_scene({"name": "t", "bbox": PENDLETON, "profile": "preview"})
+    assert prev.ndvi is False and "ndvi" not in config.layer_settings(prev)
+
+
+def test_ndvi_off_leaves_the_other_layers_unchanged():
+    on, off = (config.layer_settings(parse_scene({"name": "t", "bbox": PENDLETON, "ndvi": v})) for v in (True, False))
+    assert "ndvi" not in off and {k: v for k, v in on.items() if k != "ndvi"} == off
+
+
+def test_preview_can_turn_ndvi_on_with_sentinel2_only():
+    plan = parse_scene({"name": "t", "bbox": PENDLETON, "profile": "preview", "ndvi": True, "ndvi_max_zoom": 12})
+    s = config.layer_settings(plan)["ndvi"]
+    assert s["priorities"] == ["wc_s2"] and s["reference"] is None and s["target"] == "wc_s2" and s["max_zoom"] == 12
+
+
+def test_default_ndvi_is_off_without_ndvi_sources():
+    plan = parse_scene({"name": "t", "bbox": PENDLETON, "priorities": {"imagery": ["bmng"]}})
+    assert "ndvi" not in config.layer_settings(plan)
+
+
+@pytest.mark.parametrize(
+    "patch, match",
+    [
+        ({"ndvi": "yes"}, "ndvi must be true or false"),
+        ({"ndvi_max_zoom": 9}, "ndvi_max_zoom"),
+        ({"ndvi_max_zoom": 18}, "ndvi_max_zoom"),
+        ({"ndvi_max_zoom": 15.0}, "ndvi_max_zoom"),
+        ({"ndvi": True, "priorities": {"imagery": ["bmng"]}}, "needs naip_pc or wc_s2"),
+    ],
+)
+def test_bad_ndvi(patch, match):
+    with pytest.raises(ConfigError, match=match):
+        parse_scene({"name": "t", "bbox": PENDLETON, **patch})

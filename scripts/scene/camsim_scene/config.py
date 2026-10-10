@@ -10,6 +10,8 @@ jpeg_quality = 85
 imagery_margin_km = 3                      # NAIP fetched and built this far beyond the bbox (<= ring_km)
 balance = true                             # colour-match Sentinel-2 to NAIP and feather NAIP's edge (only where they share land)
 naip_water_buffer_m = 200                  # NAIP only this far beyond WorldCover water's edge (0 = off)
+ndvi = true                               # NDVI layer beside the imagery (sim default; preview false)
+ndvi_max_zoom = 15                        # NDVI pyramid depth, [10, 17]
 allow = []                                 # extra licence ids (see licences.toml)
 [priorities]                               # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "etopo2022"]
@@ -48,12 +50,15 @@ KEYS = {
     "priorities",
     "sources",
     "zoom",
+    "ndvi",
+    "ndvi_max_zoom",
 }
 
 PROFILES = {
     "preview": {
         "priorities": {"terrain": ["dep3_13", "etopo2022"], "imagery": ["wc_s2", "bmng"], "landcover": ["worldcover"]},
         "bbox_zoom": {"terrain": 14, "imagery": 13},
+        "ndvi": False,
     },
     "sim": {
         "priorities": {
@@ -62,6 +67,7 @@ PROFILES = {
             "landcover": ["worldcover"],
         },
         "bbox_zoom": {"terrain": 16, "imagery": 17},
+        "ndvi": True,
     },
 }
 GLOBE_ZOOM = {"terrain": 8, "imagery": 8}
@@ -83,6 +89,14 @@ BALANCE = {  # Sentinel-2 -> NAIP colour match and NAIP edge feather (balance.py
 }
 NAIP_WATER_BUFFER_M = 200.0  # default naip_water_buffer_m: NAIP kept within this distance of land
 MAX_WATER_BUFFER_M = 5000.0
+NDVI_REFERENCE, NDVI_TARGET = "naip_pc", "wc_s2"
+NDVI = {  # NDVI layer (layers/ndvi.py) and its NAIP -> Sentinel-2 fit (ndvi_fit.py)
+    "feather_m": BALANCE["feather_m"],
+    "fit_step_m": 10.0,
+    "min_samples": 500,
+    "exclude_classes": [0, 80],  # WorldCover no data, permanent water
+}
+NDVI_MAX_ZOOM = 15
 TILE_PX = 256
 TILING = {  # OGC TMS 2.0 WorldCRS84Quad, addressed TMS-style (y from the south) as Cesium expects
     "tile_matrix_set": "WorldCRS84Quad",
@@ -139,6 +153,8 @@ class ScenePlan:
     imagery_margin_km: float = 3.0
     balance: bool = True
     naip_water_buffer_m: float = NAIP_WATER_BUFFER_M
+    ndvi: bool = False
+    ndvi_max_zoom: int = NDVI_MAX_ZOOM
 
     def ring_bounds(self) -> Bounds:
         return ring_bounds(self.bbox, self.ring_km)
@@ -207,6 +223,11 @@ def parse_scene(data: dict) -> ScenePlan:
         raise ConfigError(
             f"naip_water_buffer_m must be 0 (off) or in [{lo:g}, {MAX_WATER_BUFFER_M:g}], got {buffer_m!r}"
         )
+    ndvi_given = "ndvi" in data
+    ndvi = data.get("ndvi", PROFILES[profile]["ndvi"])
+    if not isinstance(ndvi, bool):
+        raise ConfigError(f"ndvi must be true or false, got {ndvi!r}")
+    ndvi_max_zoom = _int(data, "ndvi_max_zoom", NDVI_MAX_ZOOM, 10, 17)
     quality = _int(data, "jpeg_quality", 85, 1, 95)
     seed = _int(data, "seed", 0, 0, 2**31 - 1)
     prio = {k: list(v) for k, v in PROFILES[profile]["priorities"].items()}
@@ -216,6 +237,8 @@ def parse_scene(data: dict) -> ScenePlan:
         if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
             raise ConfigError(f"priorities.{layer} must be a list of source ids")
         prio[layer] = list(ids)
+    if ndvi and ndvi_given and not any(s in prio["imagery"] for s in (NDVI_REFERENCE, NDVI_TARGET)):
+        raise ConfigError("ndvi = true needs naip_pc or wc_s2 in priorities.imagery")
     options = {k: dict(v) for k, v in DEFAULT_SOURCE_OPTIONS.items()}
     for sid, opts in data.get("sources", {}).items():
         if not isinstance(opts, dict):
@@ -252,6 +275,8 @@ def parse_scene(data: dict) -> ScenePlan:
         imagery_margin_km=margin_km,
         balance=balance,
         naip_water_buffer_m=float(buffer_m),
+        ndvi=ndvi,
+        ndvi_max_zoom=ndvi_max_zoom,
     )
 
 
@@ -276,9 +301,27 @@ def balance_settings(plan: ScenePlan) -> dict | None:
     }
 
 
+def ndvi_settings(plan: ScenePlan) -> dict | None:
+    """The NDVI layer's settings, or None when it is off or the imagery has neither NAIP nor Sentinel-2."""
+    prio = [s for s in plan.priorities["imagery"] if s in (NDVI_REFERENCE, NDVI_TARGET)]
+    if not plan.ndvi or not prio:
+        return None
+    return {
+        "priorities": prio,
+        "reference": NDVI_REFERENCE if NDVI_REFERENCE in prio else None,
+        "target": NDVI_TARGET if NDVI_TARGET in prio else None,
+        "max_zoom": plan.ndvi_max_zoom,
+        "tile_px": TILE_PX,
+        "format": "png",
+        "encoding": "L8: 0 nodata, 1 + floor((ndvi + 1) * 127 + 0.5)",
+        **NDVI,
+        "naip_water_buffer_m": plan.naip_water_buffer_m,
+    }
+
+
 def layer_settings(plan: ScenePlan) -> dict:
     """The manifest's `layers` section: everything per layer that tiles depend on besides regions and data."""
-    return {
+    out = {
         "terrain": {
             "priorities": plan.priorities["terrain"],
             "grid": TERRAIN_GRID,
@@ -299,6 +342,10 @@ def layer_settings(plan: ScenePlan) -> dict:
         },
         "landcover": {"priorities": plan.priorities["landcover"], "bounds": list(plan.ring_bounds()), "tile_deg": 0.05},
     }
+    ndvi = ndvi_settings(plan)
+    if ndvi is not None:
+        out["ndvi"] = ndvi
+    return out
 
 
 def default_scene_toml(name: str, bbox: Bounds, profile: str = "sim") -> str:
