@@ -1,6 +1,7 @@
 """USDA NAIP from Microsoft Planetary Computer (STAC `naip`; CA newest there is 2022, 0.6 m RGBN COGs in
 NAD83 UTM, nodata 0 in all bands). Manifest URLs are unsigned; fetch signs them with a SAS token and re-signs
-when a token is refused or about to expire."""
+when a token is refused or about to expire. Each asset records its acquisition date and sun bounds (sun.py) for the
+baked-shadow limit."""
 
 from __future__ import annotations
 
@@ -11,12 +12,29 @@ import urllib.parse
 from pathlib import Path
 
 from ..net import Http
+from ..sun import flight_window, solar_noon
 from .base import Area, Asset, Layer, SourceBase, SourceRaster
 
 log = logging.getLogger(__name__)
 STAC_SEARCH = "https://planetarycomputer.microsoft.com/api/stac/v1/search"
 SAS_TOKEN = "https://planetarycomputer.microsoft.com/api/sas/v1/token/{account}/{container}"
 REFRESH_BEFORE_S = 300
+
+
+def acquisition_metadata(item: dict) -> dict:
+    """`acquired` (the date; Planetary Computer's NAIP datetimes all carry a placeholder T16:00:00Z), the sun at local
+    solar noon, and its azimuths at NAIP's 30 degree minimum elevation, at the centre of the item's bbox."""
+    when = item["properties"].get("datetime")
+    if not when:
+        return {}
+    day = dt.date.fromisoformat(when[:10])
+    w, s, e, n = item["bbox"]
+    lon, lat = (w + e) / 2, (s + n) / 2
+    out = {"acquired": day.isoformat(), "sun_noon": solar_noon(day, lon, lat)}
+    window = flight_window(day, lon, lat)
+    if window is not None:
+        out["sun_window"] = window
+    return out
 
 
 class PcSigner:
@@ -47,6 +65,7 @@ class NaipPc(SourceBase):
     max_zoom = 17
     area_kind = "margin"
     datum = "nad83_2011"
+    ndvi_bands = (1, 4)  # red, near-infrared
 
     def __init__(self, options=None, http=None):
         super().__init__(options, http)
@@ -81,6 +100,7 @@ class NaipPc(SourceBase):
                     "bbox": i["bbox"],
                     "epsg": i["properties"].get("proj:epsg"),
                     "datetime": i["properties"].get("datetime"),
+                    **acquisition_metadata(i),
                 },
             )
             for r, i in enumerate(items)

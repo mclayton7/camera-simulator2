@@ -109,3 +109,29 @@ def test_wc_s2_refuses_a_file_without_cc_by(tmp_path):
     )
     with pytest.raises(LicenceError):
         src.prepare(bad, Asset("N33W118", "u", sha256="00" * 32), cache=None)
+
+
+def test_naip_records_the_acquisition_date_and_sun_bounds():
+    src = make_source(
+        "naip_pc", options={"year": "2022"}, http=FakeHttp({STAC_SEARCH: lambda body: fixture_json("stac_naip.json")})
+    )
+    (a,) = src.discover(AREA)
+    assert a.metadata["acquired"] == "2022-05-30"  # the T16:00:00Z placeholder is dropped
+    assert a.metadata["sun_noon"] == {"elevation_deg": 78.64, "azimuth_deg": 180.0}
+    assert a.metadata["sun_window"] == {"min_elevation_deg": 30.0, "azimuth_deg": [82.2, 277.8]}
+
+
+def test_naip_and_s2_feed_ndvi_from_red_and_nir():
+    from camsim_scene.sources.base import SourceBase
+
+    ras = make_source("naip_pc", http=FakeHttp({})).ndvi_raster("x.tif", Asset("a", "u"))
+    assert ras.bands == (1, 4) and ras.nodata_rule == "all_zero" and ras.datum == "nad83_2011"
+    s2 = make_source("wc_s2", http=FakeHttp({})).ndvi_raster("x.tif", Asset("a", "u"))
+    assert s2.bands == (1, 4) and s2.decode == "s2_reflectance"
+    assert SourceBase().ndvi_raster("x.tif", Asset("a", "u")) is None
+
+
+def test_wc_s2_assets_are_marked_as_a_composite():
+    routes = {("HEAD", URL.format(lat="N33", name="N33W118")): (200, 1)}
+    (a,) = make_source("wc_s2", http=FakeHttp(routes)).discover(Area((-117.9, 33.1, -117.5, 33.5)))
+    assert a.metadata["composite"] == "2021"

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -57,10 +57,12 @@ class Source(Protocol):
     global_coverage: bool
     area_kind: str  # "globe" | "ring" | "margin" | "bbox": where discovery looks
     datum: str | None
+    ndvi_bands: tuple[int, int] | None
 
     def options(self) -> dict: ...
     def discover(self, area: Area) -> list[Asset]: ...
     def open(self, path: Path, asset: Asset) -> SourceRaster: ...
+    def ndvi_raster(self, path: Path, asset: Asset) -> SourceRaster | None: ...
     def sign(self, url: str, force: bool = False) -> str: ...
     def prepare(self, path: Path, asset: Asset, cache) -> Path | None: ...
 
@@ -76,6 +78,7 @@ class SourceBase:
     global_coverage = False
     area_kind = "bbox"
     datum: str | None = None
+    ndvi_bands: tuple[int, int] | None = None  # (red, near-infrared) band numbers: the source feeds the NDVI layer
 
     def __init__(self, options: dict | None = None, http=None):
         self._options = dict(options or {})
@@ -89,6 +92,12 @@ class SourceBase:
 
     def open(self, path: Path, asset: Asset) -> SourceRaster:
         raise NotImplementedError
+
+    def ndvi_raster(self, path: Path, asset: Asset) -> SourceRaster | None:
+        """The raster as (red, near-infrared) for the NDVI layer, or None when the source has no NIR band."""
+        if self.ndvi_bands is None:
+            return None
+        return replace(self.open(path, asset), bands=self.ndvi_bands)
 
     def sign(self, url: str, force: bool = False) -> str:
         return url

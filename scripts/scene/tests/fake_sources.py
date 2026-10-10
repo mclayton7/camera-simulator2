@@ -27,6 +27,7 @@ class FakeSource(SourceBase):
         self.max_zoom = int(o["max_zoom"])
         self.global_coverage = bool(o.get("global", False))
         self.datum = o.get("datum", "wgs84")
+        self.ndvi_bands = tuple(o["ndvi_bands"]) if "ndvi_bands" in o else None
         self.licence = o.get("licence", "LicenseRef-PublicDomain-USGov")
         self.dataset, self.version, self.attribution, self.area_kind = (
             f"fake {o['layer']}",

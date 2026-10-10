@@ -32,6 +32,7 @@ class WcS2(SourceBase):
     max_zoom = 13
     area_kind = "ring"
     datum = "wgs84"
+    ndvi_bands = (1, 4)  # B04 red, B08 near-infrared
 
     def discover(self, area: Area) -> list[Asset]:
         w, s, e, n = area.bounds
@@ -52,7 +53,7 @@ class WcS2(SourceBase):
                         size=size,
                         group=self.id,
                         rank=len(assets),
-                        metadata={"bbox": [lon_i, lat_i, lon_i + 1, lat_i + 1]},
+                        metadata={"bbox": [lon_i, lat_i, lon_i + 1, lat_i + 1], "composite": "2021"},
                     )
                 )
         return assets
