@@ -2,10 +2,11 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "pillow"]
 # ///
-"""Thermal IR acceptance check (ROADMAP 4A, 4B gates i-m, 4C gates n-q): MWIR / LWIR at noon and 02:00 with the DIS truck + boat.
+"""Thermal IR acceptance check (ROADMAP 4A, 4B gates i-m, 4C gates n-q, REALISM R2 gate r): MWIR / LWIR at noon and
+02:00 with the DIS truck + boat.
 
 Usage: uv run scripts/thermal_check.py [--band mwir|lwir|both] [--out DIR]
-                                       [--runs bands,hd,eo,lcoff,pan,entity] [--check-only]
+                                       [--runs bands,hd,eo,lcoff,pan,entity,roads] [--scene PKG] [--check-only]
   caffeinate -ims uv run scripts/thermal_check.py --band both
   (caffeinate: a host that sleeps mid-run freezes CamSim and spoils the frame times)
 
@@ -47,6 +48,9 @@ Launches (--runs):
            <band>_ent_cold  truck-parked --hold-s 60: ent_parked, stationary since spawn on the spot where
                             the park run stops (same background), power plant off
          and mwir_ent_dead (truck-destroyed --hold-s 60: ent_dead, damage destroyed + flaming)
+  roads  (REALISM R2, not in the default; needs --scene, the Camp Pendleton package, as CAMSIM_SCENE_DIR) per band,
+         night then noon, no DIS vehicles: road, nadir 300 m over southbound I-5 (OSM way 1009956653, code 200),
+         20 deg FOV, heading along the road (10 frames)
 
 Each frame is a /snapshot PNG (the NV12 frame converted to RGB); Y is recovered exactly for
 IR (grey: U = V = 128) and as BT.709 luma for EO. The middle frame of each view is saved to
@@ -57,7 +61,7 @@ Checks (spec "Testing"). Exit 0 only when every expected (check, band, time) row
 passes: a, b, c, d, e, h, i, j per selected band when `bands` is in --runs, k per band when
 `bands` and `lcoff` are, l1 and l2 when `pan` is, f when `hd` is, g when `eo` is (so `--runs
 bands` alone can exit 0; f, g, k, l1, l2 are then not expected), n, o, p per band and q (MWIR)
-when `entity` is. A missing
+when `entity` is, r per band at noon and night when `roads` is. A missing
 row (a view with no frames, an absent run) fails:
   (a) night nadir_truck: mean Y in [60, 180] and < 5 % of pixels at Y <= 16
   (b) night nadir_truck: truck box mean Y >= ring (box dilated 2x minus the box) mean + 3 DN
@@ -104,6 +108,10 @@ row (a view with no frames, an absent run) fails:
       truck's (cooling, still warm). The mean, not p99: in MWIR the hot parts clip at the display
       ceiling (Y 235), so p99 cannot show them cooling
   (q) entity, night, MWIR: destroyed truck box - ring >= +60 DN (burning)
+  (r) roads (REALISM R2): carriageway - outer verge mean Y on the temporal-mean frame >= +6 DN at noon, >= +2 DN at
+      night. Carriageway = the 17 m road minus 2 m at each edge, verge = 8-28 m beyond the edge on the coast side
+      (right of travel = image right), both over the central 60 % rows, GSD from 300 m and 20 deg. r_info: asphalt
+      and grassland class temperatures from the camsim.Thermal.Log lines
 """
 
 from __future__ import annotations
@@ -190,6 +198,32 @@ ENT_DRIVE_S = 60.0  # truck-park: seconds of driving before it stops (power plan
 ENT_RUN_DN = 5.0  # (n) running - parked-cold contrast
 ENT_HOT_DN = {"mwir": 20.0, "lwir": 10.0}  # (o) running p99 - box median
 ENT_DEAD_DN = 60.0  # (q) destroyed box - ring (MWIR)
+
+# REALISM R2 gate (r): a road against its verge on the Camp Pendleton scene package (--scene). I-5 southbound, OSM way
+# 1009956653 (motorway, ref I 5, oneway, lanes 4, no surface tag -> code 200; width_m 17.0 m), one 408 m segment at a
+# constant bearing of 134.71 deg inside a 1318 m run of chained southbound ways whose bearings stay within 0.55 deg; the
+# pose is 80 % along the way (326 m in, 82 m before its end). The whole southbound I-5 in the package's bbox is tagged
+# surface=concrete (code 201) except this way. Outer side +1 (right of travel, the coast side, away from the median).
+# Package land cover (pendleton-r2, 10 m codes) across the profile, d = metres right of travel, -60..+60 in 4 m steps
+# (| | marks d = -4..+8):
+#   along -20 m: 30 30 30 30 30 50 201 201 201 201 201 50 50 50 | 200 200 200 200 | 30 30 30 30 50 50 50 200 200 200 50 50 50
+#   along   0 m: 30 30 30 60 60 50 50 201 201 201 201 50 50 200 | 200 200 50 50 | 50 30 30 30 30 30 30 30 50 200 200 200 50
+#   along +20 m: 30 30 60 60 60 50 50 50 201 201 201 201 50 200 | 200 200 200 200 | 50 50 50 30 30 30 30 30 30 50 200 200 200
+# (the 200 at d = +40..+56 is the next interchange's ramp diverging ahead). Over +-18 m along at 2 m x 1 m steps: road
+# strip (|d| <= 6.5 m) 236 texel samples 200, 30 built-up (50, 10 m texels at the edges); verge strip (d 16.5..36.5 m)
+# 364 grassland (30), 35 built-up, none 200/201/210. NAIP: travel lanes from d ~ -7.5 to +15 m, vegetated verge to the
+# ramp at d ~ +40 m. Ground 33.299358 N -117.465474 E: -8.23 m HAE (package terrain, point_heights z16; outer verge
+# mid -10.1 m). Picked with read_osm features (camsim_scene.pipeline._load_features) in a scratch script.
+ROAD_POSE = dict(  # I-5 SB, Pendleton
+    lat=33.299358, lon=-117.465474, ground_hae=-8.23, heading=134.71, width_m=17.0, outer_side=+1, osm_way=1009956653
+)
+ROAD_UP_M = 300.0
+ROAD_FOV = 20.0
+ROAD_NOON_DN = 6.0  # (r) noon: carriageway - outer verge >= +6 DN (white-hot)
+ROAD_NIGHT_DN = 2.0  # (r) night: >= +2 DN (asphalt keeps its heat)
+ROAD_VERGE_M = (8.0, 28.0)  # verge strip: this far beyond the carriageway edge
+ROAD_EDGE_INSET_M = 2.0  # road strip: carriageway minus this at each edge
+ROAD_CLASS_SLOTS = {"asphalt": 3, "grassland": 8}  # FThermalMaterialTable built-in indices (r_info)
 
 # Fixed-pose regions as fractions of the image height (coast) / rows (sky).
 COAST_R = (0.26, 0.40)  # radius band from the image centre
@@ -424,6 +458,59 @@ def central_mask(shape: tuple[int, int], frac: float = CENTRAL) -> np.ndarray:
     return m
 
 
+def road_masks(
+    shape: tuple[int, int], gsd_m: float, road_w_m: float, verge_side: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """(r) Nadir, heading along the road (the road a vertical strip through the image centre): the carriageway minus
+    ROAD_EDGE_INSET_M at each edge, exactly round((road_w - 2 inset) / gsd) columns centred on the image, and the verge
+    strip ROAD_VERGE_M beyond the edge on `verge_side` (+1 = right of travel = image right). Central 60 % rows only."""
+    h, w = shape
+    cx = (w - 1) / 2.0
+    x = (np.arange(w) - cx) * gsd_m
+    half = road_w_m / 2.0
+    n = max(0, round((road_w_m - 2.0 * ROAD_EDGE_INSET_M) / gsd_m))
+    c0 = math.floor(cx - (n - 1) / 2.0 + 0.5) if n else 0  # the n columns nearest the centre (ties to the right)
+    road_cols = np.zeros(w, bool)
+    road_cols[max(0, c0) : max(0, c0 + n)] = True
+    d = x * verge_side
+    verge_cols = (d >= half + ROAD_VERGE_M[0]) & (d <= half + ROAD_VERGE_M[1])
+    rows = central_mask(shape).any(axis=1)
+    return rows[:, None] & road_cols[None, :], rows[:, None] & verge_cols[None, :]
+
+
+def road_row(band: str, tod: str, y: np.ndarray, masks: tuple[np.ndarray, np.ndarray], threshold: float) -> dict:
+    """(r) carriageway - outer verge mean Y >= threshold (NaN, an empty region, fails)."""
+    road, verge = masks
+    v = region_mean(y, road) - region_mean(y, verge)
+    return {
+        "check": "r",
+        "band": band,
+        "time": tod,
+        "value": round(v, 2),
+        "threshold": threshold,
+        "pass": bool(v >= threshold),
+        "detail": f"carriageway - outer verge mean Y, {int(road.sum())}/{int(verge.sum())} px",
+    }
+
+
+def road_class_temps(lines: list[str]) -> dict[str, tuple[float, float]]:
+    """(r_info) asphalt and grassland class temperatures (K) from the last camsim.Thermal.Log line of each time of day
+    (sunLux > 0: noon, else night). A slot the line doesn't carry (the log prints the first 8 classes) is NaN."""
+    out: dict[str, tuple[float, float]] = {}
+    for ln in lines:
+        if "classes[K]" not in ln or " sunLux=" not in ln:
+            continue
+        temps = ln.split("classes[K]", 1)[1].split(" terrain=", 1)[0].split()
+        try:
+            vals = [float(t) for t in temps]
+            lux = float(ln.split(" sunLux=", 1)[1].split()[0])
+        except ValueError:
+            continue
+        a, g = (vals[i] if i < len(vals) else float("nan") for i in ROAD_CLASS_SLOTS.values())
+        out["noon" if lux > 0 else "night"] = (a, g)
+    return out
+
+
 def nadir_gsd_m(up_m: float, fov_deg: float, width_px: int) -> float:
     """Ground sample distance (m / px) of a nadir view at the image centre."""
     return 2.0 * up_m * math.tan(math.radians(fov_deg / 2.0)) / width_px
@@ -616,6 +703,8 @@ def run_group(label: str) -> str:
         return "eo"
     if label.endswith("_lcoff"):
         return "lcoff"
+    if label.endswith("_roads"):
+        return "roads"  # REALISM R2 gate (r)
     raise ValueError(label)
 
 
@@ -626,6 +715,8 @@ def run_band(label: str) -> str | None:
         return label.split("_ent_")[0]
     if label.endswith("_lcoff") and not label.startswith("mwir_pan"):
         return label[: -len("_lcoff")]
+    if label.endswith("_roads"):
+        return label[: -len("_roads")]
     return None
 
 
@@ -635,7 +726,7 @@ Row = tuple[str, str, str]  # (check, band, time)
 def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
     """Every gate row the selected bands and runs must produce. a-e, h, i, j come from the band runs; k needs the band runs
     and their land-cover-off twins (lcoff); l the pan run; f the hd run; g the eo runs. Each is expected only when its run
-    groups are selected (so `--runs bands` can pass on its own). (m) is info only, never expected."""
+    groups are selected (so `--runs bands` can pass on its own); r the roads runs. (m) is info only, never expected."""
     rows: list[Row] = []
     if "bands" in runs:
         for b in bands:
@@ -664,6 +755,8 @@ def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
             rows += [("n", b, "night"), ("o", b, "night"), ("p", b, "night")]
         if "mwir" in bands:
             rows.append(("q", "mwir", "night"))
+    if "roads" in runs:
+        rows += [("r", b, t) for b in bands for t in ("noon", "night")]
     return rows
 
 
@@ -872,7 +965,7 @@ class RunSpec:
     views: Callable[[str], list[View]]  # time label -> views
     ml: bool = True
     exec_cmds: list[str] = field(default_factory=list)
-    dis_args: list[str] = field(default_factory=lambda: ["both"])  # send_dis_test.py arguments
+    dis_args: list[str] = field(default_factory=lambda: ["both"])  # send_dis_test.py arguments; [] = no DIS sender
 
 
 def _poses():
@@ -956,6 +1049,17 @@ def _poses():
             gimbal_pitch=-90.0,
             fov_h=MIXED_FOV,
         ),
+        # REALISM R2 gate (r): nadir over I-5 on the Pendleton package, heading along the road (a vertical strip)
+        "road": static(
+            scenario.Pose(
+                ROAD_POSE["lat"],
+                ROAD_POSE["lon"],
+                ROAD_POSE["ground_hae"] + ROAD_UP_M,
+                yaw=ROAD_POSE["heading"],
+                gimbal_pitch=-90.0,
+                fov_h=ROAD_FOV,
+            )
+        ),
         # ROADMAP 4C: the truck close up, moving (truck-park while driving) or where it stands still
         "ent_running": dvc.nadir_on(truck, ground + ENT_UP_M, ENT_FOV),
         "ent_stop": ent_static(ENT_DRIVE_S),
@@ -967,7 +1071,7 @@ def _poses():
     }
 
 
-def build_runs(bands: list[str], wanted: set[str]) -> list[RunSpec]:
+def build_runs(bands: list[str], wanted: set[str], scene: str | None = None) -> list[RunSpec]:
     p = _poses()
     runs: list[RunSpec] = []
 
@@ -1078,6 +1182,20 @@ def build_runs(bands: list[str], wanted: set[str]) -> list[RunSpec]:
                     ["night"],
                     lambda tod: [View("ent_dead", p["ent_stop"], 10, "truck")],
                     dis_args=["truck-destroyed", "--hold-s", str(ENT_DRIVE_S)],
+                )
+            )
+    if "roads" in wanted:  # REALISM R2 gate (r) on the scene package (main() requires --scene to launch it)
+        for b in bands:
+            runs.append(
+                RunSpec(
+                    f"{b}_roads",
+                    {"CAMSIM_IR_PRESET": BANDS[b], "CAMSIM_SCENE_DIR": scene or ""},
+                    1,
+                    ["night", "noon"],
+                    lambda tod: [View("road", p["road"], 10, None)],
+                    ml=False,
+                    exec_cmds=["camsim.Thermal.Log 1"],
+                    dis_args=[],
                 )
             )
     if "eo" in wanted:
@@ -1216,10 +1334,11 @@ def run_once(spec: RunSpec, out: Path) -> dict:
         rb.wait_terrain(120)
         dvc.wait_tiles(stats)
         time.sleep(3.0)
-        sender = subprocess.Popen(
-            [sys.executable, str(REPO / "scripts" / "send_dis_test.py"), *spec.dis_args],
-            stdout=subprocess.DEVNULL,
-        )
+        if spec.dis_args:  # [] (roads): no vehicles; send_dis_test.py with no arguments would send `both`
+            sender = subprocess.Popen(
+                [sys.executable, str(REPO / "scripts" / "send_dis_test.py"), *spec.dis_args],
+                stdout=subprocess.DEVNULL,
+            )
         tracker = dvc.Tracker(host, time.monotonic())
         for tod_label in spec.times:
             tod = TIMES[tod_label]
@@ -1819,6 +1938,38 @@ def check_all(
                 )
             )
 
+    # (r) REALISM R2: road vs outer verge, nadir along I-5 on the Pendleton package, temporal mean of the view's frames.
+    for band in bands:
+        run = results.get(f"{band}_roads")
+        if not run:
+            continue
+        for rec in run["views"]:
+            vd = load_view(out, run, rec)
+            if vd is None or rec["view"] != "road":
+                continue
+            shots.append(rec["shot"])
+            y_mean = vd.y.astype(np.float32).mean(axis=0)
+            gsd = nadir_gsd_m(ROAD_UP_M, ROAD_FOV, y_mean.shape[1])
+            masks = road_masks(y_mean.shape, gsd, ROAD_POSE["width_m"], ROAD_POSE["outer_side"])
+            thr = ROAD_NOON_DN if rec["time"] == "noon" else ROAD_NIGHT_DN
+            row = road_row(band, rec["time"], y_mean, masks, thr)
+            row["detail"] += f", GSD {gsd:.3f} m, {len(vd.y)} frames, OSM way {ROAD_POSE['osm_way']}"
+            checks.append(row)
+            shots.append(overlay(out, vd, masks[0], masks[1], None, len(vd.y) // 2))
+        temps = road_class_temps(thermal_log_lines(out / run["label"] / "CamSimTest.log"))
+        for tod in ("night", "noon"):
+            a, g = temps.get(tod, (float("nan"), float("nan")))
+            info.append(
+                {
+                    "check": "r_info",
+                    "band": band,
+                    "time": tod,
+                    "value": a - g,
+                    "detail": f"class temperatures (camsim.Thermal.Log): asphalt {a:.1f} K, grassland {g:.1f} K"
+                    + (" (grassland not logged: the log prints classes 0-7)" if math.isnan(g) else ""),
+                }
+            )
+
     # (l) no frame-time spike when the land-cover window re-centres during a 1 km/min pan (ruling S12): l1 the median
     # per-re-centre spike, l2 each re-centre against the land-cover-off control pan at the same view time.
     run, ctrl = results.get("mwir_pan"), results.get("mwir_pan_lcoff")
@@ -1973,22 +2124,33 @@ def main() -> int:
     ap.add_argument(
         "--runs",
         default="bands,hd,eo,lcoff,pan,entity",
-        help="comma list of: bands, hd, eo, lcoff, pan, entity",
+        help="comma list of: bands, hd, eo, lcoff, pan, entity, roads (roads needs --scene; not in the default)",
+    )
+    ap.add_argument(
+        "--scene",
+        default=None,
+        help="absolute path of the Camp Pendleton scene package (CAMSIM_SCENE_DIR) for the roads run, gate (r)",
     )
     ap.add_argument(
         "--check-only", action="store_true", help="re-run the checks on --out"
     )
     a = ap.parse_args()
+    wanted = set(filter(None, a.runs.split(",")))
+    scene = str(Path(a.scene).expanduser().resolve()) if a.scene else None
+    if "roads" in wanted and not a.check_only:  # before any launch or output directory
+        if not scene:
+            ap.error("--runs roads needs --scene <Pendleton scene package>")
+        if not (Path(scene) / "manifest.json").is_file():
+            ap.error(f"--scene {scene}: no manifest.json")
     out = (
         a.out or REPO / ".cache" / "thermal_check" / time.strftime("%Y%m%d-%H%M%S")
     ).resolve()
     for d in ("shots", "overlays"):
         (out / d).mkdir(parents=True, exist_ok=True)
     bands = ["mwir", "lwir"] if a.band == "both" else [a.band]
-    wanted = set(filter(None, a.runs.split(",")))
 
     results: dict[str, dict] = {}
-    for spec in build_runs(bands, {"bands", "hd", "eo", "lcoff", "pan", "entity"}):
+    for spec in build_runs(bands, {"bands", "hd", "eo", "lcoff", "pan", "entity", "roads"}, scene):
         band = run_band(spec.label)
         if band is not None and band not in bands:
             continue
