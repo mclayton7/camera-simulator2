@@ -2,7 +2,8 @@
 terrain tiles per zoom (--all: every tile), compares vertex heights with the sources resampled independently
 (highest-priority source, exact datum offsets, feather bands excluded; scene zooms and the global base have
 separate limits), checks shared edges, NaNs and normals,
-decodes every JPEG, and checks a sample of NDVI leaf pixels against the sources (`ndvi_values`). Writes <pkg>.verify.json beside the package; the package itself is never modified."""
+decodes every JPEG, and checks a sample of NDVI leaf pixels against the sources (`ndvi_values`). Writes
+<pkg>.verify.json beside the package; the package itself is never modified."""
 
 from __future__ import annotations
 
@@ -229,6 +230,8 @@ def _ndvi_values(pkg: Path, m: Manifest, st, rng: random.Random, all_tiles: bool
                 errs[name].append(np.abs(have[pure].astype(np.int64) - ndvi.encode(want[pure]).astype(np.int64)))
             if (have[~(rok | sok)] != 0).any():
                 bad.append(f"{z}/{x}/{y}: data where the sources have none")
+            if (have[use_ref | use_rest] == 0).any():
+                bad.append(f"{z}/{x}/{y}: nodata where the sources have data")
             leaves += 1
     parts = {k: np.concatenate(v).astype(np.float64) if v else np.zeros(0) for k, v in errs.items()}
     stats = {**_error_stats(np.concatenate(list(parts.values()))), "leaves": leaves}
@@ -238,7 +241,8 @@ def _ndvi_values(pkg: Path, m: Manifest, st, rng: random.Random, all_tiles: bool
     ok = not bad and not over
     detail = (
         f"{stats['n']} pixels in {leaves} leaves: p99 {stats['p99']:.1f} steps, max {stats['max']:.0f}"
-        f" (naip {stats['naip']['n']} px p99 {stats['naip']['p99']:.1f}, s2 {stats['s2']['n']} px p99 {stats['s2']['p99']:.1f})"
+        f" (naip {stats['naip']['n']} px p99 {stats['naip']['p99']:.1f},"
+        f" s2 {stats['s2']['n']} px p99 {stats['s2']['p99']:.1f})"
     )
     if over:
         detail += "; over " + ", ".join(over)

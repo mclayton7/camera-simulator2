@@ -6,7 +6,7 @@ import pytest
 from fake_sources import build_synthetic, fast_fits, ndvi_scene
 
 from camsim_scene import qmesh, tiling
-from camsim_scene.layers import ndvi
+from camsim_scene.layers import imagery, ndvi
 from camsim_scene.manifest import Manifest, write_hashes
 from camsim_scene.verify import base_p99_limit, verify
 
@@ -147,6 +147,7 @@ def test_ndvi_package_passes_deep_verify(built_ndvi):
     assert c["ndvi_tilemapresource"]["ok"] and c["ndvi_values"]["ok"]
     e = r["ndvi_error_steps"]
     assert e["n"] > 0 and e["p99"] <= 1
+    assert e["naip"]["n"] > 0 and e["s2"]["n"] > 0
     assert e["naip"]["n"] + e["s2"]["n"] == e["n"] and e["naip"]["p99"] <= 1 and e["s2"]["p99"] <= 1
 
 
@@ -171,3 +172,55 @@ def test_a_missing_ndvi_level_fails_its_tilemapresource(built_ndvi, tmp_path):
 def test_a_package_without_ndvi_has_no_ndvi_checks(built):
     r = verify(built[0], built[1], deep=True)
     assert "ndvi_values" not in checks(r) and "ndvi_tilemapresource" not in checks(r) and "ndvi_error_steps" not in r
+
+
+REF_BOX = (10.0, 10.0, 10.2, 10.2)  # naip_s2_scene's NAIP footprint
+
+
+def corrupt_ndvi(pkg, where, delta=10, to_zero=False):
+    """Shift (or zero) the NDVI codes of the pixels `where(lon, lat)` selects, then rehash."""
+    for p in (pkg / "ndvi/10").rglob("*.png"):
+        x, y = int(p.parent.name), int(p.stem)
+        (lon, lat), _ = imagery.pixel_grid(10, x, y)
+        code = ndvi.read_png(p.read_bytes()).astype(int)
+        hit = (code > 0) & where(lon, lat)
+        code = np.where(hit, 0 if to_zero else np.clip(code + delta, 1, 255), code)
+        p.write_bytes(ndvi.png_bytes(code.astype(np.uint8)))
+    m = Manifest.load(pkg / "manifest.json")
+    m.hashes_sha256 = write_hashes(pkg)
+    m.write(pkg / "manifest.json")
+
+
+def inside(lon, lat, margin):
+    w, s, e, n = REF_BOX
+    return (lon > w + margin) & (lon < e - margin) & (lat > s + margin) & (lat < n - margin)
+
+
+def test_each_group_is_gated_on_its_own(built_ndvi, tmp_path):
+    pkg, cache, _ = built_ndvi
+    cases = {
+        "s2": lambda lon, lat: ~inside(lon, lat, -0.01),
+        "naip": lambda lon, lat: inside(lon, lat, 0.01),
+    }
+    for bad, where in cases.items():
+        p = copy_pkg(pkg, tmp_path / bad)
+        corrupt_ndvi(p, where)
+        e = verify(p, cache, deep=True, all_tiles=True)["ndvi_error_steps"]
+        other = "naip" if bad == "s2" else "s2"
+        assert e[bad]["p99"] > 1 and e[other]["p99"] <= 1, (bad, e)
+
+
+def test_feather_pixels_are_not_compared(built_ndvi, tmp_path):
+    p = copy_pkg(built_ndvi[0], tmp_path / "p")
+    corrupt_ndvi(p, lambda lon, lat: inside(lon, lat, -0.0005) & ~inside(lon, lat, 0.0005))  # a thin ring on the edge
+    r = verify(p, built_ndvi[1], deep=True, all_tiles=True)
+    assert checks(r)["ndvi_values"]["ok"], checks(r)["ndvi_values"]
+
+
+def test_nodata_holes_where_the_sources_have_data_fail(built_ndvi, tmp_path):
+    p = copy_pkg(built_ndvi[0], tmp_path / "p")
+    corrupt_ndvi(
+        p, lambda lon, lat: np.ones(lon.shape, bool) & (np.arange(lon.size).reshape(lon.shape) % 20 == 0), to_zero=True
+    )
+    c = checks(verify(p, built_ndvi[1], deep=True, all_tiles=True))["ndvi_values"]
+    assert not c["ok"] and "nodata where the sources have data" in c["detail"]
