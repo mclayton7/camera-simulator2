@@ -7,7 +7,7 @@ Phases: `warmup` (unmeasured, fills Cesium's disk cache), `orbit` (3 km),
 `slew` (fast gimbal sweeps: pop-in and hitch stressor), `low_pass` (600 m at
 100 m/s), `far_origin` (jump ~300 km east: origin shift and lighting).
 `--site pendleton` moves the base to Camp Pendleton and appends a measured
-`coast_pass` (300 m, 100 m/s along the coast, gimbal toward the sea; the warmup
+`coast_pass` (300 m, 100 m/s along the coast, gimbal toward the shore; the warmup
 grows to 150 s to fly it once). Results record `meta.site`; `compare.py` refuses
 to compare runs from different sites.
 Then 12 fixed shots via `GET /snapshot`: the 8 base

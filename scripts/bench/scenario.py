@@ -111,12 +111,12 @@ def _low_pass(t: float, site: Site = SITES["sf"]) -> Pose:
 
 
 def _coast_pass(t: float) -> Pose:
-    # 100 m/s at 300 m along the Pendleton coast (bearing 138 deg, SE), gimbal right (toward the sea), 20 deg down
+    # 100 m/s at 300 m along the Pendleton coast (bearing 138 deg, SE), gimbal left (toward the shore, NE), 20 deg down
     lat0, lon0, brg = 33.385, -117.585, math.radians(138.0)
     d = 100.0 * t
     lat = lat0 + d * math.cos(brg) / 111_320.0
     lon = lon0 + d * math.sin(brg) / (111_320.0 * math.cos(math.radians(lat0)))
-    return Pose(lat, lon, 300.0, yaw=138.0, gimbal_yaw=90.0, gimbal_pitch=-20.0)
+    return Pose(lat, lon, 300.0, yaw=138.0, gimbal_yaw=-90.0, gimbal_pitch=-20.0)
 
 
 def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:
