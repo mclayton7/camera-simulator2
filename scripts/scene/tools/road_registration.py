@@ -1,18 +1,27 @@
-"""REALISM R2 gate 2: OSM road centrelines vs NAIP roads. Samples N points (seeded) on motorway..tertiary centrelines at
-least 50 m from a junction or a skipped (bridge/tunnel) way, reads a +-30 m luminance profile across the road from the
-package imagery (z17 TMS, bilinear), and finds the offset of the best polarity-free edge pair the road's width apart
-(road_match: Pendleton asphalt is more often brighter than its verges than darker). Gate: median |offset| <= 10 m.
-Profiles without a clear edge pair (weaker edge < EDGE_MIN_DN_PER_M, or the best score < PEAK_RATIO x the median
-score) are excluded and counted; the report counts dark-road and bright-road matches.
+"""REALISM R2 gate 2: OSM road centrelines vs NAIP roads, as one 2-D shift per window.
 
-    uv run --project scripts/scene python scripts/scene/tools/road_registration.py PKG [--n 200] [--seed 0] \
-        [--json out.json] [--crops DIR] [--cache .cache/scene]
+    uv run --project scripts/scene python scripts/scene/tools/road_registration.py PKG [--windows 60] [--seed 0] \
+        [--json out.json] [--overlays DIR] [--cache .cache/scene]
 
-Only ways that burn as dark asphalt (code 200) are sampled: concrete is excluded by design, and `_link` ramps are left
-out (they curve and sit next to junctions). A junction is a node shared by two or more road ways of any class. The
-offset is signed along the left normal of the way's direction. `--crops DIR` writes a road-aligned luma crop (80 m
-along x 60 m across) of the worst profiles: centreline red, matched centre yellow, matched edges green. Exits 1 when
-the gate fails."""
+The package bbox (not the ring) is tiled into WIN_M x WIN_M windows. A window qualifies when it holds at least
+MIN_ROAD_M of motorway..residential centreline (links included) that burns as pavement (code 200 or 201), bridges and
+tunnels excluded; up to --windows of them are picked with Random(seed). In each window, on a RES_M local metric grid:
+  G = |gradient| (DN/m) of the package imagery luma (z17 TMS, bilinear), smoothed with a SMOOTH_SIGMA_M Gaussian
+      first, over the window plus SEARCH_M on every side;
+  B = the boundary of the OSM roads buffered to width_m / 2 (both edges of every road), rasterised BOUNDARY_W_M wide;
+  I = the road surface inset INTERIOR_INSET_M from that boundary.
+The zero-sum template B / |B| - I / |I| is correlated against G over integer shifts within +-SEARCH_M: each value is
+the mean G on the shifted road edges minus the mean G on the shifted road interior (DN/m). The interior term matters:
+house fronts and roof edges are stronger than kerbs and run parallel to the street, and B alone locks onto them; a
+road's surface is smooth, a yard or a roof is not. The peak (dE, dN) is where the imagery's roads sit relative to OSM.
+A window is used when peak >= MIN_CONTRAST_DN_PER_M (a featureless window has no edge-vs-interior contrast) and, with
+m = the median of the correlation surface and q95 = its 95th percentile outside PEAK_EXCL_M of the peak,
+(peak - m) >= PROMINENCE x (q95 - m) (an ambiguous, repetitive window); otherwise it is excluded and counted. The
+ratio alone can't reject noise (pure noise scores 1.6-2.1), hence the floor. Windows with more than MAX_NAN_FRAC of
+their imagery missing are excluded too.
+Gate: median |shift| (Euclidean) <= GATE_M. The report also gives p90 and the signed mean (dE, dN), where a systematic
+OSM offset would show. `--overlays DIR` writes G with B at zero shift (red) and at the found shift (green) for the
+windows with the largest and the smallest shifts. Exits 1 when the gate fails."""
 
 from __future__ import annotations
 
@@ -27,94 +36,27 @@ import numpy as np
 import shapely
 from PIL import Image
 
-SMOOTH_SIGMA_M = 1.25  # Gaussian smoothing of the profile before the gradient
-POOL_M = 1.0  # gradient max-pooled over +-POOL_M: tolerates +-2 m of width error
-EDGE_MIN_DN_PER_M = 4.0  # weaker edge of the pair; a 15 DN step smoothed at 1.25 m peaks at ~4.8 DN/m
-PEAK_RATIO = 1.5  # winning score vs the median score over all candidate centres
 GATE_M = 10.0
-HALF_M = 30.0
-STEP_M = 0.5
-CLEAR_M = 50.0  # from a junction, a skipped way and the margin edge
+WIN_M = 1000.0
+RES_M = 1.0
+SEARCH_M = 20.0
+SMOOTH_SIGMA_M = 1.0
+BOUNDARY_W_M = 1.5  # B is rasterised this wide: 1-2 px at RES_M
+MIN_ROAD_M = 1000.0
+MAX_WINDOWS = 60
+INTERIOR_INSET_M = 1.5  # the road interior I is the road surface this far inside its edges
+MIN_CONTRAST_DN_PER_M = 1.0  # peak: mean G on the edges minus mean G on the interior
+PROMINENCE = 1.25
+PEAK_EXCL_M = 5.0
+MAX_NAN_FRAC = 0.01
 ZOOM = 17
-CLASSES = ("motorway", "trunk", "primary", "secondary", "tertiary")
+CLASSES = ("motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential")
 M_PER_DEG_LAT = 111_320.0
-
-
-def road_match(profile, step_m, road_w_m) -> dict | None:
-    """Polarity-free edge-pair match of a road of width road_w_m across a luma profile (samples step_m apart, centred
-    on the OSM centreline). The profile is smoothed (Gaussian, SMOOTH_SIGMA_M), g = |d/dx| in DN/m, max-pooled over
-    +-POOL_M to tolerate width error; each candidate centre c scores S(c) = g(c - w/2) + g(c + w/2). The argmax wins
-    unless its weaker edge is below EDGE_MIN_DN_PER_M or S is below PEAK_RATIO x the median score (no clear pair):
-    then None. Returns {offset_m (signed, from the profile centre), weak_edge, score_ratio, polarity ("dark" when the
-    road is darker than the flanks just outside its edges, else "bright")}."""
-    from scipy.ndimage import gaussian_filter1d, maximum_filter1d
-
-    p = np.asarray(profile, np.float64)
-    n = p.size
-    hw = max(1, int(round(road_w_m / 2 / step_m)))
-    if n < 2 * hw + 1:
-        return None
-    raw = np.abs(np.gradient(gaussian_filter1d(p, SMOOTH_SIGMA_M / step_m, mode="nearest"), step_m))
-    g = maximum_filter1d(raw, size=2 * int(round(POOL_M / step_m)) + 1, mode="nearest")
-    c = np.arange(hw, n - hw)
-    left, right = g[c - hw], g[c + hw]
-    score = left + right
-    # Pooling makes the peak a plateau: break ties by the unpooled pair score, then take the middle of what's left
-    tied = np.flatnonzero(score >= score.max() * (1 - 1e-9))
-    rs = raw[c[tied] - hw] + raw[c[tied] + hw]
-    tied = tied[rs >= rs.max() * (1 - 1e-6)]
-    k = int(tied[len(tied) // 2])
-    med = float(np.median(score))
-    weak = float(min(left[k], right[k]))
-    ratio = float(score[k] / med) if med > 0 else float("inf")
-    if weak < EDGE_MIN_DN_PER_M or ratio < PEAK_RATIO:
-        return None
-    cc = int(c[k])
-    inside = p[cc - hw : cc + hw + 1].mean()
-    flanks = np.concatenate([p[max(0, cc - 2 * hw) : cc - hw], p[cc + hw + 1 : cc + 2 * hw + 1]])
-    return {
-        "offset_m": (cc - (n - 1) / 2) * step_m,
-        "weak_edge": round(weak, 2),
-        "score_ratio": round(ratio, 2),
-        "polarity": "dark" if flanks.size and inside < flanks.mean() else "bright",
-    }
-
-
-def road_offset(profile, step_m, road_w_m) -> float | None:
-    """The signed offset (m) of road_match, or None when the profile has no clear edge pair."""
-    r = road_match(profile, step_m, road_w_m)
-    return None if r is None else r["offset_m"]
-
-
-def split_ways(feats) -> tuple[list, list]:
-    """(sampled ways, skipped road/rail ways): main roads that burn as dark asphalt, and bridges/tunnels to keep clear of."""
-    from camsim_scene.features import _skipped, code_for
-
-    kept, skipped = [], []
-    for f in feats:
-        if f.kind not in ("road", "rail") or f.geom.geom_type != "LineString":
-            continue
-        if _skipped(f.tags):
-            skipped.append(f)
-        elif f.kind == "road" and f.tags.get("highway") in CLASSES and code_for(f) == 200:
-            kept.append(f)
-    return kept, skipped
-
-
-def junctions(feats) -> list[tuple[float, float]]:
-    """Nodes (rounded to 1e-7 deg) shared by two or more road ways, sorted."""
-    seen: dict[tuple[float, float], int] = {}
-    for f in feats:
-        if f.kind != "road" or f.geom.geom_type != "LineString":
-            continue
-        for p in {(round(x, 7), round(y, 7)) for x, y in f.geom.coords}:
-            seen[p] = seen.get(p, 0) + 1
-    return sorted(p for p, k in seen.items() if k >= 2)
 
 
 class TmsSampler:
     """Bilinear luma (Pillow 'L') from a geodetic TMS (origin -180/-90, y from the south, 256 px tiles); NaN where a
-    tile is missing."""
+    tile is missing. Each call mosaics the tiles its points need once, then indexes the mosaic."""
 
     def __init__(self, root: Path, z: int):
         self.root, self.z = Path(root), z
@@ -128,33 +70,31 @@ class TmsSampler:
             self._tiles[k] = np.asarray(Image.open(p).convert("L"), np.float64) if p.is_file() else None
         return self._tiles[k]
 
-    def _px(self, gx: np.ndarray, gy: np.ndarray) -> np.ndarray:
-        """Pixels by global column / row-from-the-south."""
-        out = np.full(gx.shape, np.nan)
-        tx, ty = gx // 256, gy // 256
-        for x, y in set(zip(tx.tolist(), ty.tolist())):
-            a = self._tile(x, y)
-            if a is None:
-                continue
-            m = (tx == x) & (ty == y)
-            out[m] = a[255 - gy[m] % 256, gx[m] % 256]
-        return out
-
     def luma(self, lon, lat) -> np.ndarray:
         fx = (np.asarray(lon, np.float64) + 180.0) / self.t * 256 - 0.5
         fy = (np.asarray(lat, np.float64) + 90.0) / self.t * 256 - 0.5
         x0, y0 = np.floor(fx).astype(np.int64), np.floor(fy).astype(np.int64)
         wx, wy = fx - x0, fy - y0
+        tx0, tx1 = int(x0.min()) // 256, int(x0.max() + 1) // 256
+        ty0, ty1 = int(y0.min()) // 256, int(y0.max() + 1) // 256
+        mos = np.full(((ty1 - ty0 + 1) * 256, (tx1 - tx0 + 1) * 256), np.nan)  # row = global row from the south
+        for ty in range(ty0, ty1 + 1):
+            for tx in range(tx0, tx1 + 1):
+                a = self._tile(tx, ty)
+                if a is not None:
+                    r, c = (ty - ty0) * 256, (tx - tx0) * 256
+                    mos[r : r + 256, c : c + 256] = a[::-1]
+        cx, cy = x0 - tx0 * 256, y0 - ty0 * 256
         return (
-            self._px(x0, y0) * (1 - wx) * (1 - wy)
-            + self._px(x0 + 1, y0) * wx * (1 - wy)
-            + self._px(x0, y0 + 1) * (1 - wx) * wy
-            + self._px(x0 + 1, y0 + 1) * wx * wy
+            mos[cy, cx] * (1 - wx) * (1 - wy)
+            + mos[cy, cx + 1] * wx * (1 - wy)
+            + mos[cy + 1, cx] * (1 - wx) * wy
+            + mos[cy + 1, cx + 1] * wx * wy
         )
 
 
 class Local:
-    """Equirectangular metres about (lon0, lat0); fine over a 40 km area for 50 m clearances."""
+    """Equirectangular metres about (lon0, lat0)."""
 
     def __init__(self, lon0: float, lat0: float):
         self.lon0, self.lat0 = lon0, lat0
@@ -169,76 +109,140 @@ class Local:
         return self.lon0 + np.asarray(x) / self.kx, self.lat0 + np.asarray(y) / M_PER_DEG_LAT
 
 
-def sample_points(kept, skipped, junction_pts, area, n: int, seed: int, accept, max_tries: int = 200):
-    """n points (lon, lat, unit tangent east/north in m, feature) drawn by cumulative length with Random(seed), each at
-    least CLEAR_M from a junction, a skipped way and the area edge, and passing accept(lon, lat, tx, ty)."""
-    w, s, e, nn = area
-    loc = Local((w + e) / 2, (s + nn) / 2)
-    lines = [loc.fwd(f.geom) for f in kept]
-    cum = np.cumsum([g.length for g in lines])
-    obstacles = [loc.fwd(shapely.Point(p)) for p in junction_pts] + [loc.fwd(f.geom) for f in skipped]
-    tree = shapely.STRtree(obstacles) if obstacles else None
-    inner = loc.fwd(shapely.box(w, s, e, nn)).buffer(-CLEAR_M)
-    rng = random.Random(seed)
-    out, tries = [], 0
-    while len(out) < n and tries < max_tries * n and cum.size:
-        tries += 1
-        d = rng.uniform(0.0, float(cum[-1]))
-        k = int(np.searchsorted(cum, d, side="right"))
-        k = min(k, len(lines) - 1)
-        g = lines[k]
-        dd = d - (cum[k - 1] if k else 0.0)
-        p = g.interpolate(dd)
-        if not inner.contains(p):
-            continue
-        if tree is not None and tree.query(p, predicate="dwithin", distance=CLEAR_M).size:
-            continue
-        a, b = g.interpolate(max(0.0, dd - 2.0)), g.interpolate(min(g.length, dd + 2.0))
-        tx, ty = b.x - a.x, b.y - a.y
-        norm = math.hypot(tx, ty)
-        if norm < 1e-6:
-            continue
-        lon, lat = loc.inv(p.x, p.y)
-        tx, ty = tx / norm, ty / norm
-        if not accept(float(lon), float(lat), tx, ty):
-            continue
-        out.append((float(lon), float(lat), tx, ty, kept[k]))
+def road_ways(feats) -> list:
+    """Motorway..residential ways (links included) that burn as pavement (200/201), bridges and tunnels excluded
+    (code_for returns None for them)."""
+    from camsim_scene.features import code_for
+
+    return [
+        f
+        for f in feats
+        if f.kind == "road"
+        and f.geom.geom_type == "LineString"
+        and f.tags.get("highway", "").removesuffix("_link") in CLASSES
+        and code_for(f) in (200, 201)
+    ]
+
+
+def qualifying_windows(roads, bbox, seed: int, max_n: int) -> list[dict]:
+    """Up to max_n WIN_M windows tiling bbox (W S E N) that hold >= MIN_ROAD_M of road centreline, picked with
+    Random(seed) from the qualifying ones in grid order. Each: {i, j, lon, lat (centre), road_m}."""
+    w, s, e, n = bbox
+    loc = Local((w + e) / 2, (s + n) / 2)
+    lines = [loc.fwd(f.geom) for f in roads]
+    tree = shapely.STRtree(lines) if lines else None
+    x0, y0 = loc.fwd(shapely.Point(w, s)).coords[0]
+    x1, y1 = loc.fwd(shapely.Point(e, n)).coords[0]
+    out = []
+    for i in range(int((y1 - y0) // WIN_M)):
+        for j in range(int((x1 - x0) // WIN_M)):
+            cell = shapely.box(x0 + j * WIN_M, y0 + i * WIN_M, x0 + (j + 1) * WIN_M, y0 + (i + 1) * WIN_M)
+            hits = tree.query(cell, predicate="intersects") if tree is not None else []
+            road_m = float(sum(lines[k].intersection(cell).length for k in hits))
+            if road_m >= MIN_ROAD_M:
+                c = cell.centroid
+                lon, lat = loc.inv(c.x, c.y)
+                out.append({"i": i, "j": j, "lon": float(lon), "lat": float(lat), "road_m": round(road_m, 1)})
+    if len(out) > max_n:
+        keep = sorted(random.Random(seed).sample(range(len(out)), max_n))
+        out = [out[k] for k in keep]
     return out
 
 
-def profile_at(sampler: TmsSampler, lon, lat, tx, ty, offsets_m) -> np.ndarray:
-    """Luma along the left normal (-ty, tx) at the given offsets."""
-    nx, ny = -ty, tx
-    kx = M_PER_DEG_LAT * math.cos(math.radians(lat))
-    return sampler.luma(lon + offsets_m * nx / kx, lat + offsets_m * ny / M_PER_DEG_LAT)
+def road_masks(roads_local, bounds, res: float) -> tuple[np.ndarray, np.ndarray]:
+    """(B, I): uint8 rasters (row 0 = north) over bounds (x0, y0, x1, y1, metres). B = the boundary of the union of the
+    roads buffered to width / 2 (flat caps, round joins), BOUNDARY_W_M wide; I = the road surface inset by
+    INTERIOR_INSET_M from that boundary (empty for roads narrower than twice the inset). roads_local: [(line, width)]."""
+    from rasterio import features as rf
+    from rasterio.transform import Affine
+
+    x0, y0, x1, y1 = bounds
+    shape = (int(round((y1 - y0) / res)), int(round((x1 - x0) / res)))
+    win = shapely.box(x0, y0, x1, y1)
+    tf = Affine(res, 0, x0, 0, -res, y1)
+    out = []
+    surface = shapely.union_all([g.buffer(w / 2.0, cap_style="flat", join_style="round") for g, w in roads_local])
+    for geom in (surface.boundary.buffer(BOUNDARY_W_M / 2.0), surface.buffer(-INTERIOR_INSET_M)):
+        geom = geom.intersection(win)
+        empty = geom.is_empty or geom.area == 0
+        out.append(np.zeros(shape, np.uint8) if empty else rf.rasterize([(geom, 1)], out_shape=shape, transform=tf))
+    return out[0], out[1]
 
 
-def save_crop(sampler: TmsSampler, r: dict, path: Path) -> None:
-    """Road-aligned crop: columns across the road (-HALF_M..HALF_M, left normal to the right), rows along it (80 m),
-    at STEP_M; the OSM centreline red, the matched centre yellow, the matched edges (road_w_m apart) green."""
-    across = np.arange(-HALF_M, HALF_M + 1e-9, STEP_M)
-    along = np.arange(40.0, -40.0 - 1e-9, -STEP_M)
-    tx, ty = r["tangent"]
-    nx, ny = -ty, tx
-    kx = M_PER_DEG_LAT * math.cos(math.radians(r["lat"]))
-    aa, cc = np.meshgrid(along, across, indexing="ij")
-    lon = r["lon"] + (aa * tx + cc * nx) / kx
-    lat = r["lat"] + (aa * ty + cc * ny) / M_PER_DEG_LAT
-    v = np.nan_to_num(sampler.luma(lon.ravel(), lat.ravel()).reshape(aa.shape))
-    rgb = np.repeat(np.clip(v, 0, 255).astype(np.uint8)[..., None], 3, axis=2)
-    mid = len(across) // 2
-    rgb[:, mid] = (255, 0, 0)
-    if r["offset_m"] is not None:
-        k, hw = int(round(r["offset_m"] / STEP_M)), max(1, int(round(r["width_m"] / 2 / STEP_M)))
-        for col, colour in ((k - hw, (0, 255, 0)), (k + hw, (0, 255, 0)), (k, (255, 255, 0))):
-            if 0 <= mid + col < len(across):
-                rgb[:, mid + col] = colour
-    Image.fromarray(rgb).resize((rgb.shape[1] * 4, rgb.shape[0] * 4), Image.NEAREST).save(path)
+def gradient_magnitude(luma: np.ndarray, res: float) -> np.ndarray:
+    from scipy.ndimage import gaussian_filter
+
+    gy, gx = np.gradient(gaussian_filter(luma, SMOOTH_SIGMA_M / res, mode="nearest"), res)
+    return np.hypot(gx, gy)
 
 
-def run(pkg: Path, cache_root: Path | None, n: int, seed: int, crops: Path | None, worst: int) -> dict:
-    from camsim_scene.cache import Cache, default_cache_root
+def window_shift(g_ext: np.ndarray, b: np.ndarray, interior: np.ndarray, res: float, search_m: float) -> dict:
+    """Correlate the zero-sum template T = B / |B| - I / |I| (the window) against G (the window plus search_m on every
+    side; both row 0 = north) over every integer shift: c = mean G on the shifted road edges - mean G on the shifted
+    road interior, in DN/m. Returns {dE, dN (m: where the imagery's roads sit relative to OSM), peak, median, q95,
+    used}; `used` is the prominence rule (module docstring)."""
+    from scipy.signal import correlate
+
+    m = int(round(search_m / res))
+    nb, ni = int(b.sum()), int(interior.sum())
+    if nb == 0:
+        return {"dE": 0.0, "dN": 0.0, "peak": 0.0, "median": 0.0, "q95": 0.0, "used": False}
+    t = b / nb - (interior / ni if ni else 0.0)
+    c = correlate(np.asarray(g_ext, np.float64), t, mode="valid", method="fft")  # c[i, j] = sum t * g[i:, j:]
+    i, j = np.unravel_index(int(np.argmax(c)), c.shape)
+    yy, xx = np.indices(c.shape)
+    outside = np.hypot(yy - i, xx - j) * res > PEAK_EXCL_M
+    peak, med = float(c[i, j]), float(np.median(c))
+    q95 = float(np.percentile(c[outside], 95)) if outside.any() else peak
+    used = bool(peak >= MIN_CONTRAST_DN_PER_M and peak - med >= PROMINENCE * (q95 - med))
+    return {"dE": (j - m) * res, "dN": -(i - m) * res, "peak": peak, "median": med, "q95": q95, "used": used}
+
+
+def measure_window(sampler: TmsSampler, roads, win: dict) -> dict:
+    """G and B for one window (a local frame about its centre) and their shift."""
     from camsim_scene.features import width_m
+
+    loc = Local(win["lon"], win["lat"])
+    h, ext = WIN_M / 2, WIN_M / 2 + SEARCH_M
+    near = shapely.box(*loc.inv(-ext, -ext), *loc.inv(ext, ext))
+    rl = [(loc.fwd(f.geom), width_m(f)) for f in roads if f.geom.intersects(near)]
+    b, interior = road_masks(rl, (-h, -h, h, h), RES_M)
+    n = int(round(2 * ext / RES_M))
+    xs = -ext + (np.arange(n) + 0.5) * RES_M
+    ys = ext - (np.arange(n) + 0.5) * RES_M
+    xx, yy = np.meshgrid(xs, ys)
+    lon, lat = loc.inv(xx.ravel(), yy.ravel())
+    luma = sampler.luma(lon, lat).reshape(n, n)
+    nan = float(np.isnan(luma).mean())
+    out = {**win, "nan_frac": round(nan, 4)}
+    if nan > MAX_NAN_FRAC:
+        return {**out, "used": False, "reason": "imagery missing"}
+    luma = np.where(np.isnan(luma), np.nanmean(luma), luma)
+    g = gradient_magnitude(luma, RES_M)
+    r = window_shift(g, b, interior, RES_M, SEARCH_M)
+    out.update({k: (round(v, 3) if isinstance(v, float) else v) for k, v in r.items()})
+    out["shift_m"] = round(math.hypot(r["dE"], r["dN"]), 3)
+    if not r["used"]:
+        out["reason"] = "not prominent"
+    out["_g"], out["_b"] = g, b
+    return out
+
+
+def save_overlay(w: dict, path: Path) -> None:
+    """G (grey, clipped at its 99th percentile) with B at zero shift in red and at the found shift in green."""
+    g, b = w["_g"], w["_b"]
+    m = int(round(SEARCH_M / RES_M))
+    v = np.clip(g / max(np.percentile(g, 99), 1e-9) * 255, 0, 255).astype(np.uint8)
+    rgb = np.repeat(v[..., None], 3, axis=2)
+    hh, ww = b.shape
+    rgb[m : m + hh, m : m + ww][b > 0] = (255, 0, 0)
+    di, dj = -int(round(w["dN"] / RES_M)), int(round(w["dE"] / RES_M))
+    rgb[m + di : m + di + hh, m + dj : m + dj + ww][b > 0] = (0, 255, 0)
+    Image.fromarray(rgb).save(path)
+
+
+def run(pkg: Path, cache_root: Path | None, n_windows: int, seed: int, overlays: Path | None) -> dict:
+    from camsim_scene.cache import Cache, default_cache_root
     from camsim_scene.manifest import Manifest
     from camsim_scene.pipeline import _load_features, make_context
 
@@ -247,78 +251,70 @@ def run(pkg: Path, cache_root: Path | None, n: int, seed: int, crops: Path | Non
     if not fs or "osm_geofabrik" not in fs["sources"]:
         raise SystemExit(f"{pkg}: the manifest has no OSM feature source")
     feats = _load_features(m, make_context(pkg, m, Cache(cache_root or default_cache_root())))
-    roads = [f for f in feats if f.kind == "road"]
-    kept, skipped = split_ways(feats)
-    jn = junctions(roads)
+    roads = road_ways(feats)
+    wins = qualifying_windows(roads, tuple(m.bbox), seed, n_windows)
     sampler = TmsSampler(pkg / "imagery", ZOOM)
-    offsets = np.arange(-HALF_M, HALF_M + 1e-9, STEP_M)
-
-    def has_imagery(lon, lat, tx, ty):
-        return bool(np.isfinite(profile_at(sampler, lon, lat, tx, ty, offsets)).all())
-
-    pts = sample_points(kept, skipped, jn, tuple(fs["area"]), n, seed, has_imagery)
     rows = []
-    for lon, lat, tx, ty, f in pts:
-        w = width_m(f)
-        mt = road_match(profile_at(sampler, lon, lat, tx, ty, offsets), STEP_M, w)
-        rows.append(
-            {
-                "lon": round(lon, 7),
-                "lat": round(lat, 7),
-                "tangent": [round(tx, 5), round(ty, 5)],
-                "way": f.source_id,
-                "highway": f.tags.get("highway"),
-                "width_m": w,
-                "offset_m": None if mt is None else mt["offset_m"],
-                "match": mt,
-            }
-        )
-    used = np.array([abs(r["offset_m"]) for r in rows if r["offset_m"] is not None])
-    med = float(np.median(used)) if used.size else None
-    p90 = float(np.percentile(used, 90)) if used.size else None
+    for win in wins:
+        rows.append(measure_window(sampler, roads, win))
+        sampler._tiles.clear()  # windows don't share many tiles; keep memory flat
+    used = [r for r in rows if r["used"]]
+    sh = np.array([r["shift_m"] for r in used])
+    med = float(np.median(sh)) if sh.size else None
     report = {
         "pkg": str(pkg),
-        "n_requested": n,
         "seed": seed,
-        "n_sampled": len(rows),
-        "n_used": int(used.size),
-        "n_excluded": len(rows) - int(used.size),
-        "median_abs_m": med,
-        "p90_abs_m": p90,
-        "within_5m": float((used <= 5.0).mean()) if used.size else None,
-        "polarity": {
-            pol: sum(1 for r in rows if r["match"] and r["match"]["polarity"] == pol) for pol in ("dark", "bright")
+        "method": "2-D windowed correlation of OSM road boundaries vs NAIP gradient magnitude",
+        "constants": {
+            "WIN_M": WIN_M,
+            "RES_M": RES_M,
+            "SEARCH_M": SEARCH_M,
+            "SMOOTH_SIGMA_M": SMOOTH_SIGMA_M,
+            "BOUNDARY_W_M": BOUNDARY_W_M,
+            "MIN_ROAD_M": MIN_ROAD_M,
+            "INTERIOR_INSET_M": INTERIOR_INSET_M,
+            "MIN_CONTRAST_DN_PER_M": MIN_CONTRAST_DN_PER_M,
+            "PROMINENCE": PROMINENCE,
+            "PEAK_EXCL_M": PEAK_EXCL_M,
         },
+        "n_windows": len(rows),
+        "n_used": len(used),
+        "n_excluded": len(rows) - len(used),
+        "median_shift_m": med,
+        "p90_shift_m": float(np.percentile(sh, 90)) if sh.size else None,
+        "mean_dE_m": float(np.mean([r["dE"] for r in used])) if used else None,
+        "mean_dN_m": float(np.mean([r["dN"] for r in used])) if used else None,
         "gate_m": GATE_M,
         "pass": med is not None and med <= GATE_M,
-        "ways": {"sampled_from": len(kept), "skipped": len(skipped), "junctions": len(jn)},
-        "samples": rows,
+        "roads": len(roads),
+        "windows": [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows],
     }
-    if crops:
-        crops.mkdir(parents=True, exist_ok=True)
-        ranked = sorted((r for r in rows if r["offset_m"] is not None), key=lambda r: -abs(r["offset_m"]))
-        for i, r in enumerate(ranked[:worst]):
-            save_crop(sampler, r, crops / f"worst{i:02d}_{abs(r['offset_m']):.1f}m_{r['way'].split(':')[1]}.png")
+    if overlays:
+        overlays.mkdir(parents=True, exist_ok=True)
+        ranked = sorted(used, key=lambda r: -r["shift_m"])
+        for r in ranked[:4] + ranked[-2:]:
+            save_overlay(r, overlays / f"win_{r['i']:02d}_{r['j']:02d}_{r['shift_m']:.1f}m.png")
     return report
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("pkg", type=Path)
-    ap.add_argument("--n", type=int, default=200)
+    ap.add_argument("--windows", type=int, default=MAX_WINDOWS)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--json", type=Path)
     ap.add_argument("--cache", type=Path, help="fetch cache (default .cache/scene or $CAMSIM_SCENE_CACHE)")
-    ap.add_argument("--crops", type=Path, help="write PNG crops of the worst profiles here")
-    ap.add_argument("--worst", type=int, default=6)
+    ap.add_argument("--overlays", type=Path, help="write per-window overlay PNGs here")
     a = ap.parse_args(argv)
-    r = run(a.pkg, a.cache, a.n, a.seed, a.crops, a.worst)
-    fmt = lambda v: "n/a" if v is None else f"{v:.2f} m"  # noqa: E731
+    r = run(a.pkg, a.cache, a.windows, a.seed, a.overlays)
+
+    def fmt(v):
+        return "n/a" if v is None else f"{v:.2f} m"
+
     print(
-        f"road registration: median |offset| {fmt(r['median_abs_m'])}, p90 {fmt(r['p90_abs_m'])}, "
-        f"n used {r['n_used']} (dark {r['polarity']['dark']}, bright {r['polarity']['bright']}), "
-        f"excluded {r['n_excluded']} (of {r['n_sampled']} sampled) -> "
-        f"{'PASS' if r['pass'] else 'FAIL'} (gate {GATE_M:.0f} m)"
+        f"road registration: median |shift| {fmt(r['median_shift_m'])}, p90 {fmt(r['p90_shift_m'])}, "
+        f"mean (dE, dN) ({fmt(r['mean_dE_m'])}, {fmt(r['mean_dN_m'])}), windows used {r['n_used']}, "
+        f"excluded {r['n_excluded']} -> {'PASS' if r['pass'] else 'FAIL'} (gate {GATE_M:.0f} m)"
     )
     if a.json:
         a.json.parent.mkdir(parents=True, exist_ok=True)
