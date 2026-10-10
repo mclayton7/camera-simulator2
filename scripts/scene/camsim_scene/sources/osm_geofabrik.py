@@ -6,6 +6,11 @@ Geofabrik layout (checked 2026-10-10): index-v1.json is a GeoJSON FeatureCollect
 properties.id and properties.urls.pbf = ".../<extract>-latest.osm.pbf" (socal: north-america/us/california/
 socal-latest.osm.pbf). Dated daily files sit beside it as "<extract>-<yymmdd>.osm.pbf" (socal-261008 returned 200;
 the current and previous day returned 404 until that day's build lands, so pin a date at least a couple of days old).
+
+Date pinning: with no `date` option, discover() HEAD-probes the dated file from today (UTC) back MAX_LOOKBACK_DAYS days
+and pins the newest that exists; a configured `date` must exist. Source ids: a way is "osm:w<id>"; a paved-area
+polygon is "osm:w<way id>" when pyosmium built it from a closed way and "osm:r<relation id>" when from a multipolygon
+relation (pyosmium's own area id, 2*id or 2*id+1, is not used), so every id is traceable on openstreetmap.org.
 """
 
 from __future__ import annotations
@@ -23,7 +28,12 @@ from .base import Area, Asset, Layer, SourceBase
 INDEX_URL = "https://download.geofabrik.de/index-v1.json"
 # pyosmium's WKBFactory returns hex strings; shapely.from_wkb reads them directly.
 _GEOM_ERRORS = (RuntimeError, ValueError, shapely.errors.ShapelyError)
+MAX_LOOKBACK_DAYS = 7
 AREA_TAGS = (("amenity", "parking"), ("aeroway", "apron"))
+
+
+def today_utc() -> dt.date:
+    return dt.datetime.now(dt.UTC).date()
 
 
 def dated_url(latest_url: str, date: str) -> str:
@@ -58,16 +68,33 @@ class OsmGeofabrik(SourceBase):
                 raise ValueError(f"Geofabrik extract {forced!r} does not contain {area.bounds}")
             raise ValueError(f"no Geofabrik extract contains {area.bounds}")
         _, ext, url = min(cands)
-        date = self._options.get("date") or dt.datetime.now(dt.UTC).date().isoformat()
+        date, dated, size = self._pin_date(ext, url)
         self.version = date
         return [
             Asset(
-                id=f"{ext}-{date}",
-                url=dated_url(url, date),
+                id=f"{ext}-{dt.date.fromisoformat(date):%y%m%d}",
+                url=dated,
+                size=size,
                 group=self.id,
                 metadata={"extract": ext, "date": date},
             )
         ]
+
+    def _pin_date(self, ext: str, latest_url: str) -> tuple[str, str, int | None]:
+        configured = self._options.get("date")
+        if configured:
+            days = [dt.date.fromisoformat(configured)]
+        else:
+            today = today_utc()
+            days = [today - dt.timedelta(days=i) for i in range(MAX_LOOKBACK_DAYS + 1)]
+        for d in days:
+            url = dated_url(latest_url, d.isoformat())
+            status, size = self.http.head(url)
+            if status == 200:
+                return d.isoformat(), url, size
+        if configured:
+            raise ValueError(f"Geofabrik extract {ext!r} has no dated file for {configured} ({dated_url(latest_url, configured)})")
+        raise ValueError(f"Geofabrik extract {ext!r} has no dated file in the last {MAX_LOOKBACK_DAYS} days")
 
     def prepare(self, path, asset, cache):
         return None
@@ -101,7 +128,12 @@ def read_osm(pbf: Path, bounds, settings: dict) -> list[Feature]:
     keep_roads, keep_rail, keep_areas = settings["roads"], settings["rail"], settings["paved_areas"]
     classes = set(settings["road_classes"]) | {c + "_link" for c in settings["road_classes"]}
     out: list[Feature] = []
-    fp = osmium.FileProcessor(str(pbf)).with_locations().with_areas()
+    fp = (
+        osmium.FileProcessor(str(pbf))
+        .with_locations()
+        .with_areas()
+        .with_filter(osmium.filter.KeyFilter("highway", "railway", "aeroway", "amenity", "area:highway"))
+    )
     for o in fp:
         if not (o.is_way() or o.is_area()):
             continue
@@ -128,6 +160,7 @@ def read_osm(pbf: Path, bounds, settings: dict) -> list[Feature]:
             except _GEOM_ERRORS:
                 continue
             if g.intersects(want):
-                out.append(Feature("paved_area", f"osm:a{o.id}", g, tags))
+                sid = f"osm:w{o.orig_id()}" if o.from_way() else f"osm:r{o.orig_id()}"
+                out.append(Feature("paved_area", sid, g, tags))
     out.sort(key=lambda f: f.source_id)
     return out
