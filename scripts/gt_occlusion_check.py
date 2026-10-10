@@ -65,7 +65,9 @@ from bench import run_bench as rb
 from bench import scenario
 
 TRUCK, BOAT = dvc.TRUCK, dvc.BOAT
-EDITOR_LOG = Path.home() / "Library/Logs/CamSimTest/CamSimTest.log"
+# UE on macOS logs to ~/Library/Logs/<Project>; elsewhere to the project Saved/Logs (scripts/run.sh)
+EDITOR_LOG = (Path.home() / "Library/Logs/CamSimTest/CamSimTest.log" if sys.platform == "darwin"
+              else REPO / "unreal_project/CamSimTest/Saved/Logs/CamSimTest.log")
 NADIR_UP_M = 330.0
 NADIR_FOV = 10.0
 

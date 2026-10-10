@@ -130,7 +130,9 @@ from PIL import Image, ImageDraw
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
-EDITOR_LOG = Path.home() / "Library/Logs/CamSimTest/CamSimTest.log"
+# UE on macOS logs to ~/Library/Logs/<Project>; elsewhere to the project Saved/Logs (scripts/run.sh)
+EDITOR_LOG = (Path.home() / "Library/Logs/CamSimTest/CamSimTest.log" if sys.platform == "darwin"
+              else REPO / "unreal_project/CamSimTest/Saved/Logs/CamSimTest.log")
 LAT_SF, LON_SF = 37.795, -122.460  # the truck loop (send_dis_test.py truck-loop)
 
 NIGHT = dict(utc_hour=10, utc_minute=10, month=12, day=21)  # 02:00 PST

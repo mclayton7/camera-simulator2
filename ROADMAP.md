@@ -1821,6 +1821,19 @@ the worker's RSS) and exits 2 although the package is complete; fix the RSS acco
 MSL needs +0.08 to +0.66 m along the Pendleton coast (EGM96 vs GEOID18 tilt): evaluate it at the package coast, or add a
 per-package NAVD88 + MSL - EGM96 correction grid read by `FOceanSurface`.
 
+Linux regression check of R1 (2026-10-10, reference box: Core Ultra 9 285K, RTX 5080, driver 595.99.02, Vulkan SM6,
+UE 5.8.3, head 1e0cdf4): **no regressions.** NullRHI automation 490/490 (409 + 81 with warnings, 0 failed; the editor
+exits 1 on one `LogClass: Error` from the engine's CesiumRuntime, `FCesiumMetadataPropertyStatisticValue::Semantic`
+not initialised — not CamSim, the JSON report is clean); `CamSim.GPU.*` 26/26 on Vulkan (so `InstanceIdCS` /
+`CamSim.GPU.GroundTruth.*` still holds, 2.7 stays closed); `ci_validate.sh --native` pass (ready 20 s, KLV conforms);
+scene tooling 367 passed, 2 skipped; `thermal_check.py --band both` 33/33 gates (incl. 4C entity n–q on Vulkan);
+`ocean_check.py --cigi` 28/28 (Beaufort 0/3/6 + CIGI Wave Control: boat − sea mean −0.15…0.00 m, HOT diff ≤ 0.38 m,
+frame median 33.3 ms, 0 frames > 66 ms). Found on the way: the host's driver had auto-updated to 595.99 without a
+reboot (NVML mismatch, Vulkan on llvmpipe until rebooted); a stale `.build_tmp/ccl_build` (non-PIC objects, ninja
+didn't rebuild them) broke the editor link with `R_X86_64_PC32 … recompile with -fPIC` (fix: delete `.build_tmp/ccl_build`
+and rerun `build_thirdparty.sh`); `thermal_check.py`, `ocean_check.py` and `gt_occlusion_check.py` read only the macOS
+log path, so on Linux the run log wasn't copied (now platform-dependent).
+
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer
 need it: CamSim configures or destroys them at world init, before they load.

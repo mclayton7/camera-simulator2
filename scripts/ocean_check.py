@@ -57,7 +57,9 @@ from bench import scenario
 
 BOAT = sd.PRESETS["boat-circle"]
 GEOID_DAC = REPO / "unreal_project/CamSimTest/Content/NonUFS/Geoid/WW15MGH.DAC"
-EDITOR_LOG = Path.home() / "Library/Logs/CamSimTest/CamSimTest.log"
+# UE on macOS logs to ~/Library/Logs/<Project>; elsewhere to the project Saved/Logs (scripts/run.sh)
+EDITOR_LOG = (Path.home() / "Library/Logs/CamSimTest/CamSimTest.log" if sys.platform == "darwin"
+              else REPO / "unreal_project/CamSimTest/Saved/Logs/CamSimTest.log")
 RESPONSE_PORT = int(os.environ.get("CAMSIM_CIGI_RESPONSE_PORT", "8889"))
 STREAM_PORT = int(os.environ.get("CAMSIM_MULTICAST_PORT", "5004"))
 
