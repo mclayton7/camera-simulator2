@@ -213,6 +213,42 @@ def land_mask(classes, lon, lat, target_m: float, exclude) -> np.ndarray:
     return ok & (np.abs(v - code) < 1e-6) & ~np.isin(code, list(exclude))
 
 
+@dataclass
+class LatticeBlock:
+    """One lattice block of shared land samples: the reference's and the target's values, where both are valid on
+    land (`keep`), which nodes are held out, and the reference entries with the winning one's index per node."""
+
+    lon: np.ndarray
+    lat: np.ndarray
+    held: np.ndarray
+    keep: np.ndarray
+    ref_entries: list
+    ref_values: np.ndarray
+    ref_which: np.ndarray
+    target_values: np.ndarray
+
+
+def shared_land_samples(index, classes, bounds, s: dict, sample):
+    """Lattice blocks over `bounds` at s["fit_step_m"] where the reference and the target both have data, sampled by
+    `sample(entries, lon, lat, target_m) -> (values, valid, winning entry index)`; blocks with no kept node are
+    skipped. Even (i + j) nodes fit, odd ones (`held`) are held out for the report."""
+    from .layers.imagery import source_of
+
+    step_m = s["fit_step_m"]
+    exclude = set(s["exclude_classes"])
+    for lon, lat, i, j in lattice_blocks(bounds, step_m / M_PER_DEG):
+        entries = index.query((float(lon.min()), float(lat.min()), float(lon.max()), float(lat.max())))
+        ref = [e for e in entries if source_of(e) == s["reference"]]
+        tgt = [e for e in entries if source_of(e) == s["target"]]
+        if not ref or not tgt:
+            continue
+        rv, rok, rw = sample(ref, lon, lat, step_m)
+        tv, tok, _ = sample(tgt, lon, lat, step_m)
+        keep = rok & tok & land_mask(classes, lon, lat, step_m, exclude)
+        if keep.any():
+            yield LatticeBlock(lon, lat, (i + j) % 2 == 1, keep, ref, rv, rw, tv)
+
+
 def grid_for(m, cell_km: float) -> Grid:
     ring = next(r for r in m.region_objs() if r.name == "ring")
     return Grid.covering(ring.geometry().bounds, cell_km, (m.bbox[1] + m.bbox[3]) / 2)
@@ -239,31 +275,20 @@ def fit_balance(index, classes, bounds: Bounds, grid: Grid, s: dict) -> Balance 
     """Fit the colour match on a lattice over `bounds` (the reference's footprints): nodes where the reference and
     the target are both valid and the land cover isn't excluded. Even (i + j) nodes fit, odd ones are held out for
     the report. None when there are too few shared land samples."""
-    from .layers.imagery import sample_entries, source_of
+    from .layers.imagery import sample_entries
     from .sources.base import DECODERS
 
-    step_m = s["fit_step_m"]
-    step = step_m / M_PER_DEG
-    exclude = set(s["exclude_classes"])
     parts = []
-    for lon, lat, i, j in lattice_blocks(bounds, step):
-        entries = index.query((float(lon.min()), float(lat.min()), float(lon.max()), float(lat.max())))
-        ref = [e for e in entries if source_of(e) == s["reference"]]
-        tgt = [e for e in entries if source_of(e) == s["target"]]
-        if not ref or not tgt:
-            continue
-        rv, rok, _ = sample_entries(ref, lon, lat, step_m)
-        tv, tok, _ = sample_entries(tgt, lon, lat, step_m)
-        keep = rok & tok & land_mask(classes, lon, lat, step_m, exclude)
-        if not keep.any():
-            continue
+    for b in shared_land_samples(index, classes, bounds, s, sample_entries):
+        keep, lon, lat = b.keep, b.lon, b.lat
+        rv, tv = b.ref_values, b.target_values
         ix, iy = grid.index(lon[keep], lat[keep])
         parts.append(
             (
                 np.clip(np.rint(rv[:, keep]), 0, 255).astype(np.uint8),
                 np.clip(np.rint(tv[:, keep]), 0, 65535).astype(np.uint16),
                 (iy * grid.nx + ix).astype(np.int32),
-                ((i + j) % 2 == 1)[keep],
+                b.held[keep],
                 lon[keep].astype(np.float32),
                 lat[keep].astype(np.float32),
             )
