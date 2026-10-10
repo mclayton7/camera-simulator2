@@ -2,11 +2,11 @@ import json
 
 import numpy as np
 import pytest
-from fake_sources import COAST, POND, build_synthetic, coast_scene, naip_s2_scene, synthetic_scene
+from fake_sources import COAST, POND, build_synthetic, coast_scene, fast_fits, naip_s2_scene, synthetic_scene
 from legacy_imagery import leaf_rgb as legacy_leaf_rgb
 from PIL import Image
 
-from camsim_scene import config, tiling
+from camsim_scene import tiling
 from camsim_scene.context import WorkerState, coverage
 from camsim_scene.layers import imagery
 from camsim_scene.manifest import Manifest
@@ -16,8 +16,7 @@ from camsim_scene.tiling import plan_tiles, split_keys
 
 @pytest.fixture(autouse=True)
 def fast_fit(monkeypatch):
-    monkeypatch.setitem(config.BALANCE, "fit_step_m", 200.0)
-    monkeypatch.setitem(config.BALANCE, "min_cell_samples", 20)
+    fast_fits(monkeypatch)
 
 
 def hashes(pkg):

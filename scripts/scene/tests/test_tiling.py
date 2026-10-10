@@ -102,3 +102,29 @@ def test_tilemapresource_xml_round_trip():
     assert [s.get("href") for s in sets] == ["0", "1", "2"]
     assert float(sets[2].get("units-per-pixel")) == 180.0 / 256 / 4
     assert tms.parse_tilemapresource(xml) == ([0, 1, 2], tiling.GLOBE)
+
+
+def test_ndvi_plan_caps_the_imagery_and_keeps_to_the_area():
+    regions = [
+        Region.from_bounds("globe", tiling.GLOBE, {"imagery": 2}),
+        Region.from_bounds("bbox", (10.0, 10.0, 10.5, 10.5), {"imagery": 9}),
+    ]
+    cov = Coverage()
+    cov.add(shapely.box(*tiling.GLOBE), 9)
+    ip = plan_tiles(regions, "imagery", cov)
+    area = shapely.box(10.0, 10.0, 10.2, 10.2)
+    p = tiling.ndvi_plan(ip, 7, area)
+    assert p.max_zoom == 7 and np.array_equal(p.leaves[7], p.tiles[7])
+    for z, keys in p.tiles.items():
+        assert shapely.intersects(tiling.tile_boxes(z, keys), area).all() and np.isin(keys, ip.tiles[z]).all()
+    assert len(p.tiles[7]) < len(ip.tiles[7])
+    far = tiling.ndvi_plan(ip, 7, shapely.box(50, 50, 51, 51))  # only the globe's z0-2 reach it
+    assert far.max_zoom == 2 and np.array_equal(far.leaves[2], far.tiles[2])
+    assert tiling.ndvi_plan(ip, 7, shapely.Polygon()).tiles == {}
+
+
+def test_tilemapresource_names_png_tiles():
+    xml = tms.tilemapresource_xml("t", 3, (0.0, 0.0, 1.0, 1.0), "image/png", "png")
+    tf = ET.fromstring(xml).find("TileFormat")
+    assert tf.get("mime-type") == "image/png" and tf.get("extension") == "png"
+    assert 'mime-type="image/jpeg"' in tms.tilemapresource_xml("t", 3, (0.0, 0.0, 1.0, 1.0))

@@ -23,7 +23,8 @@ from .fsutil import atomic_write, sha256_bytes, sha256_file
 from .manifest import STATE_DIR
 from .tiling import LayerPlan, make_keys
 
-TILE_RE = re.compile(r"^(?P<layer>terrain|imagery)/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.(terrain|jpg)$")
+TILE_RE = re.compile(r"^(?P<layer>terrain|imagery|ndvi)/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.(terrain|jpg|png)$")
+EMPTY = ""  # marker output of a tile whose producer returned None: no file (an NDVI tile without data)
 
 
 @dataclass
@@ -49,17 +50,26 @@ class LayerStats:
     bytes: int = 0
     seconds: float = 0.0
     peak_rss_mb: float = 0.0
+    per_zoom: dict | None = None  # {"<z>": {tiles, files, bytes}} when tracked (NDVI), else None (not reported)
 
     def add(self, r: TileResult) -> None:
         self.tiles += 1
-        self.files += 1
+        self.files += r.sha256 != EMPTY
         self.built += not r.skipped
         self.skipped += r.skipped
         self.bytes += r.size
         self.peak_rss_mb = max(self.peak_rss_mb, r.rss_mb)
+        if self.per_zoom is not None:
+            zs = self.per_zoom.setdefault(str(r.z), {"tiles": 0, "files": 0, "bytes": 0})
+            zs["tiles"] += 1
+            zs["files"] += r.sha256 != EMPTY
+            zs["bytes"] += r.size
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if d["per_zoom"] is None:
+            del d["per_zoom"]
+        return d
 
 
 def peak_rss_mb() -> float:
@@ -102,18 +112,33 @@ class Markers:
 
 
 def run_tile(
-    pkg: Path, markers: Markers, layer: str, ext: str, z: int, x: int, y: int, inputs: str, produce: Callable[[], bytes]
+    pkg: Path,
+    markers: Markers,
+    layer: str,
+    ext: str,
+    z: int,
+    x: int,
+    y: int,
+    inputs: str,
+    produce: Callable[[], bytes | None],
 ) -> TileResult:
     t0 = time.perf_counter()
     path = tile_path(pkg, layer, z, x, y, ext)
     rec = markers.read(layer, z, x, y)
-    if rec and rec["inputs"] == inputs and path.exists():
-        sha = sha256_file(path)
-        if sha == rec["output"]:
-            return TileResult(
-                layer, z, x, y, True, path.stat().st_size, sha, time.perf_counter() - t0, os.getpid(), peak_rss_mb()
-            )
+    if rec and rec["inputs"] == inputs:
+        if rec["output"] == EMPTY and not path.exists():
+            return TileResult(layer, z, x, y, True, 0, EMPTY, time.perf_counter() - t0, os.getpid(), peak_rss_mb())
+        if path.exists():
+            sha = sha256_file(path)
+            if sha == rec["output"]:
+                return TileResult(
+                    layer, z, x, y, True, path.stat().st_size, sha, time.perf_counter() - t0, os.getpid(), peak_rss_mb()
+                )
     data = produce()
+    if data is None:
+        path.unlink(missing_ok=True)
+        markers.write(layer, z, x, y, inputs, EMPTY)
+        return TileResult(layer, z, x, y, False, 0, EMPTY, time.perf_counter() - t0, os.getpid(), peak_rss_mb())
     atomic_write(path, data)
     sha = sha256_bytes(data)
     markers.write(layer, z, x, y, inputs, sha)

@@ -1,4 +1,4 @@
-"""TMS `tilemapresource.xml` (geodetic profile, EPSG:4326, origin -180/-90, 256 px JPEG tiles).
+"""TMS `tilemapresource.xml` (geodetic profile, EPSG:4326, origin -180/-90, 256 px JPEG or PNG tiles).
 For file:// URLs Cesium's TMS overlay must point at this file itself (it appends nothing)."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import numpy as np
 from .tiling import Bounds, LayerPlan, split_keys, tile_size_deg
 
 
-def tilemapresource_xml(title: str, max_zoom: int, bounds: Bounds) -> str:
+def tilemapresource_xml(title: str, max_zoom: int, bounds: Bounds, mime: str = "image/jpeg", ext: str = "jpg") -> str:
     sets = "".join(
         f'<TileSet href="{z}" units-per-pixel="{180.0 / 256 / (1 << z):.16g}" order="{z}"/>'
         for z in range(max_zoom + 1)
@@ -23,7 +23,7 @@ def tilemapresource_xml(title: str, max_zoom: int, bounds: Bounds) -> str:
         f"<Title>{escape(title)}</Title><Abstract/><SRS>EPSG:4326</SRS>"
         f'<BoundingBox minx="{w:.10f}" miny="{s:.10f}" maxx="{e:.10f}" maxy="{n:.10f}"/>'
         '<Origin x="-180" y="-90"/>'
-        '<TileFormat width="256" height="256" mime-type="image/jpeg" extension="jpg"/>'
+        f'<TileFormat width="256" height="256" mime-type="{mime}" extension="{ext}"/>'
         f'<TileSets profile="geodetic">{sets}</TileSets></TileMap>\n'
     )
 

@@ -1,7 +1,8 @@
 """Per-process view of a fetched manifest: a SourceRaster and DatumTransform per data asset (and a (red, NIR) raster
 for the NDVI layer), ordered by layer priority, behind an STRtree of footprints, plus the package's imagery colour
-match (imagery/balance.json) when there is one. BuildContext (plain data) is what crosses the process boundary; each
-worker builds its WorkerState once."""
+match (imagery/balance.json) when there is one, plus the package's NDVI fit (ndvi/fit.json) and water mask when it has
+an NDVI layer. BuildContext (plain data) is what crosses the process boundary; each worker builds its WorkerState
+once."""
 
 from __future__ import annotations
 
@@ -17,6 +18,8 @@ from .datum import DatumTransform
 from .fsutil import sha256_bytes
 from .layers.imagery import ref_interior
 from .manifest import AssetRecord, Manifest
+from .ndvi_fit import FILE as NDVI_FIT_FILE
+from .ndvi_fit import NdviFit
 from .sources import make_source
 from .sources.base import M_PER_DEG, Asset, SourceRaster
 from .tiling import GLOBE, Bounds, Coverage
@@ -144,8 +147,6 @@ class WorkerState:
         self.settings = {layer: self.manifest.layer_settings_hash(layer) for layer in self.manifest.layers}
         self._transforms: dict[tuple, DatumTransform] = {}
         self.index = {layer: self._index(layer) for layer in ("terrain", "imagery")}
-        if self.manifest.layers.get("ndvi"):
-            self.index["ndvi"] = self._index("ndvi")
         self.balance: Balance | None = None
         self.balance_sha = ""
         self.ref_interior = None
@@ -163,6 +164,27 @@ class WorkerState:
             if classes and s.get("water_fade_m"):  # a balance written before the water keys: no mask, as before
                 self.water = Water(tuple(classes), float(s.get("naip_water_buffer_m", 0.0)), float(s["water_fade_m"]))
                 self.water_shas = sorted(shas)
+        self.ndvi_fit: NdviFit | None = None
+        self.ndvi_fit_sha = ""
+        self.ndvi_interior = None
+        self.ndvi_water: Water | None = None  # None with a zero buffer: the leaves then skip the land distance
+        self.ndvi_water_shas: list[str] = []
+        ns = self.manifest.layers.get("ndvi")
+        if ns:
+            self.index["ndvi"] = self._index("ndvi")
+            path = self.pkg / "ndvi" / NDVI_FIT_FILE
+            if path.exists():
+                data = path.read_bytes()
+                self.ndvi_fit, self.ndvi_fit_sha = NdviFit.from_json(data), sha256_bytes(data)
+            if ns["reference"]:
+                fps = reference_footprints(self.manifest, ns["reference"])
+                if fps:
+                    self.ndvi_interior = ref_interior(fps, ns["feather_m"])
+            if ns["naip_water_buffer_m"] > 0:
+                classes, shas = class_rasters(self.manifest, ctx.asset_paths)
+                if classes:
+                    self.ndvi_water = Water(tuple(classes), float(ns["naip_water_buffer_m"]), 0.0)
+                    self.ndvi_water_shas = sorted(shas)
 
     def _transform(self, datum_id: str, vertical_asset: str | None) -> DatumTransform:
         key = (datum_id, vertical_asset)

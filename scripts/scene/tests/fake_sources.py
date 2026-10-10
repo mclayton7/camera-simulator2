@@ -9,7 +9,7 @@ import numpy as np
 import shapely
 from rasters import write_geotiff
 
-from camsim_scene import datum, fsutil
+from camsim_scene import config, datum, fsutil
 from camsim_scene.config import TILING, layer_settings, parse_scene
 from camsim_scene.context import BuildContext
 from camsim_scene.manifest import AssetRecord, Manifest, SourceRecord
@@ -242,6 +242,30 @@ def naip_s2_scene(
             ),
         },
     }
+
+
+NDVI_ZOOM = {  # NDVI builds: z11 imagery leaves under a z10 NDVI cap (ndvi_scene)
+    "globe": {"terrain": 2, "imagery": 2},
+    "ring": {"terrain": 3, "imagery": 3},
+    "bbox": {"terrain": 3, "imagery": 11},
+}
+
+
+def ndvi_scene(root: Path, **kw) -> dict:
+    """naip_s2_scene with the NDVI layer, NDVI_ZOOM and ndvi_max_zoom 10."""
+    return {**naip_s2_scene(root, ndvi=True, **kw), "zoom": NDVI_ZOOM, "ndvi_max_zoom": 10}
+
+
+def fast_fits(mp) -> None:
+    """Coarse lattices and low sample floors for the colour match and NDVI fits (a pytest MonkeyPatch): the
+    synthetic scenes are too small for the defaults."""
+    for d, k, v in (
+        (config.BALANCE, "fit_step_m", 200.0),
+        (config.BALANCE, "min_cell_samples", 20),
+        (config.NDVI, "fit_step_m", 200.0),
+        (config.NDVI, "min_samples", 20),
+    ):
+        mp.setitem(d, k, v)
 
 
 def fake_context(root: Path, scene: dict | None = None) -> BuildContext:

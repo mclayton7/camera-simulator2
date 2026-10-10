@@ -146,6 +146,22 @@ def plan_tiles(regions: list[Region], layer: str, coverage: Coverage) -> LayerPl
         z += 1
 
 
+def ndvi_plan(imagery: LayerPlan, max_zoom: int, area) -> LayerPlan:
+    """The NDVI pyramid: the imagery's tiles up to min(max_zoom, the imagery's depth) that overlap `area` (where the
+    NIR sources have data). Leaves are the tiles at the cap and the imagery's leaves below it. Empty without overlap."""
+    tiles: dict[int, np.ndarray] = {}
+    leaves: dict[int, np.ndarray] = {}
+    top = min(max_zoom, imagery.max_zoom)
+    for z in range(top + 1):
+        keys = imagery.tiles[z]
+        keys = keys[_overlaps(tile_boxes(z, keys), area)] if len(keys) else keys
+        if not len(keys):
+            break
+        tiles[z] = keys
+        leaves[z] = keys if z == top else keys[np.isin(keys, imagery.leaves[z])]
+    return LayerPlan(tiles, leaves)
+
+
 def available_ranges(plan: LayerPlan) -> list[list[dict]]:
     """layer.json `available`: per zoom, rectangles of tiles (runs along x, merged across consecutive rows)."""
     out = []

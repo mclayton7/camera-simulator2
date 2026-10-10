@@ -101,3 +101,28 @@ def test_layer_stats_and_progress_json():
     p.done()
     lines = [json.loads(line) for line in out.getvalue().splitlines()]
     assert lines[-1]["layer"] == "terrain" and lines[-1]["done"] == 1 and lines[-1]["total"] == 2
+
+
+def test_a_producer_returning_none_writes_no_file_and_is_skipped_next_time(tmp_path):
+    m = Markers(tmp_path)
+    r = engine.run_tile(tmp_path, m, "ndvi", "png", 3, 1, 2, "in", lambda: None)
+    assert not r.skipped and r.size == 0 and r.sha256 == engine.EMPTY
+    assert not (tmp_path / "ndvi/3/1/2.png").exists()
+    r = engine.run_tile(tmp_path, m, "ndvi", "png", 3, 1, 2, "in", lambda: pytest.fail("rebuilt"))
+    assert r.skipped
+    (tmp_path / "ndvi/3/1").mkdir(parents=True)
+    (tmp_path / "ndvi/3/1/2.png").write_bytes(b"stale")  # e.g. data that a source no longer has
+    r = engine.run_tile(tmp_path, m, "ndvi", "png", 3, 1, 2, "in", lambda: None)
+    assert not r.skipped and not (tmp_path / "ndvi/3/1/2.png").exists()
+
+
+def test_ndvi_files_resolve_to_their_markers(tmp_path):
+    m = Markers(tmp_path)
+    m.write("ndvi", 4, 5, 6, "i", "abc")
+    assert m.output_for_file("ndvi/4/5/6.png") == "abc"
+
+
+def test_stats_count_no_file_for_an_empty_tile():
+    st = LayerStats()
+    st.add(engine.TileResult("ndvi", 0, 0, 0, False, 0, engine.EMPTY, 0.0, 1, 1.0))
+    assert st.tiles == 1 and st.files == 0

@@ -2,8 +2,8 @@
 
 plan:  discover each source's assets for its area (globe / ring / bbox) and write manifest.json (unhashed).
 fetch: download whole assets into the cache, hash them, prepare derived files, compute footprints, hash grids.
-build: plan the pyramids, run the tile jobs (resumable), then write layer.json, tilemapresource.xml, land cover,
-       ATTRIBUTION.txt, hashes.txt, the final manifest.json and build.json."""
+build: plan the pyramids, run the tile jobs (resumable), then write layer.json, tilemapresource.xml (imagery, NDVI),
+       land cover, ATTRIBUTION.txt, hashes.txt, the final manifest.json and build.json."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import shapely
 
-from . import __version__, datum
+from . import __version__, datum, ndvi_fit
 from . import balance as colour_balance
 from .cache import Cache
 from .config import LAYERS, TILING, ScenePlan, layer_settings
@@ -43,19 +43,21 @@ from .engine import (
     tile_path,
 )
 from .fsutil import atomic_write, normalise_modes, sha256_file
-from .layers import imagery, landcover, terrain
+from .layers import imagery, landcover, ndvi, terrain
 from .licences import DEFAULT_ALLOW, attribution_text, check_allowed
 from .manifest import STATE_DIR, AssetRecord, Manifest, SourceRecord, canonical_json, write_hashes
 from .net import Http
 from .qmesh import layer_json
 from .sources import make_source
 from .sources.base import Area, Layer, footprint_lonlat
-from .tiling import LayerPlan, available_ranges, plan_tiles, split_keys
+from .tiling import LayerPlan, available_ranges, ndvi_plan, plan_tiles, split_keys
 from .tms import plan_bounds, tilemapresource_xml
+from .verify import present_tiles
 
 log = logging.getLogger("camsim_scene")
 TOOL = {"name": "camsim-scene", "version": __version__}
 CHUNK = 64
+EXT = {"terrain": "terrain", "imagery": "jpg", "ndvi": "png"}
 EST_KB = {"terrain": 7.5, "imagery": 16.0, "landcover": 15.0}  # per tile, from the R0 spike
 
 
@@ -322,6 +324,48 @@ def imagery_batch(items: list[tuple[int, int, int, bool]]) -> list:
     return [_imagery_tile(*it) for it in items]
 
 
+def _ndvi_parent_bytes(pkg: Path, z: int, x: int, y: int) -> bytes | None:
+    kids = {}
+    for dx in (0, 1):
+        for dy in (0, 1):
+            p = tile_path(pkg, "ndvi", z + 1, 2 * x + dx, 2 * y + dy, "png")
+            kids[(dx, dy)] = p.read_bytes() if p.exists() else None
+    return ndvi.parent_tile(kids)
+
+
+def _ndvi_tile(z: int, x: int, y: int, leaf: bool):
+    st = _STATE
+    s = st.manifest.layers["ndvi"]
+    if leaf:
+        entries = st.index["ndvi"].query(imagery.query_bounds(z, x, y, s["feather_m"]))
+        extra = ([st.ndvi_fit_sha] if st.ndvi_fit_sha else []) + st.ndvi_water_shas
+        inputs = inputs_hash(st.settings["ndvi"], __version__, "leaf", *extra, *sorted(e.sha256 for e in entries))
+        produce = partial(
+            ndvi.leaf_tile,
+            z,
+            x,
+            y,
+            entries,
+            st.ndvi_fit,
+            st.ndvi_interior,
+            st.ndvi_water,
+            s["reference"],
+            s["feather_m"],
+        )
+    else:
+        outs = []
+        for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            rec = _MARKERS.read("ndvi", z + 1, 2 * x + dx, 2 * y + dy)
+            outs.append(rec["output"] if rec else "absent")  # children outside the NDVI area are not planned
+        inputs = inputs_hash(st.settings["ndvi"], __version__, "parent", *outs)
+        produce = partial(_ndvi_parent_bytes, st.pkg, z, x, y)
+    return run_tile(st.pkg, _MARKERS, "ndvi", "png", z, x, y, inputs, produce)
+
+
+def ndvi_batch(items: list[tuple[int, int, int, bool]]) -> list:
+    return [_ndvi_tile(*it) for it in items]
+
+
 # ---------------------------------------------------------------- build
 
 
@@ -352,12 +396,13 @@ def _imagery_phases(plan: LayerPlan):
 
 
 def _run_layer(
-    ctx: BuildContext, layer: str, plan: LayerPlan, phases, fn, jobs: int, json_progress: bool
+    ctx: BuildContext, layer: str, plan: LayerPlan, phases, fn, jobs: int, json_progress: bool, per_zoom: bool = False
 ) -> LayerStats:
-    removed = remove_stale(Path(ctx.pkg), layer, "terrain" if layer == "terrain" else "jpg", plan)
+    removed = remove_stale(Path(ctx.pkg), layer, EXT[layer], plan)
     if removed:
         log.info("%s: removed %d tiles that left the plan", layer, removed)
-    stats, prog = LayerStats(), Progress(layer, plan.count(), json_lines=json_progress)
+    stats = LayerStats(per_zoom={} if per_zoom else None)
+    prog = Progress(layer, plan.count(), json_lines=json_progress)
     t0 = time.monotonic()
 
     def on_result(r):
@@ -439,6 +484,34 @@ def _fit_balance(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
         )
     shas = sorted(a.sha256 for sid in (s["reference"], s["target"]) for a in m.source(sid).assets) + sorted(class_shas)
     inputs = inputs_hash(m.layer_settings_hash("imagery"), __version__, "balance", *shas)
+
+    def fit():
+        fps = reference_footprints(m, s["reference"])
+        bal = None
+        if fps:
+            st = WorkerState(ctx)
+            bounds = shapely.union_all(fps).bounds
+            bal = colour_balance.fit_balance(
+                st.index["imagery"], classes, bounds, colour_balance.grid_for(m, s["cell_km"]), s
+            )
+        if bal is None:
+            return None, {"fitted": False, "water_mask": False}
+        return bal.to_json(), {
+            "fitted": True,
+            **bal.report,
+            "water_mask": bool(classes) and bool(s.get("water_fade_m")),
+        }
+
+    report = _cached_fit(out, marker, inputs, fit)
+    if not report["skipped"]:
+        log.info("balance: %s in %.1f s", "fitted" if report["fitted"] else "not fitted", report["seconds"])
+    return report
+
+
+def _cached_fit(out: Path, marker: Path, inputs: str, fit) -> dict:
+    """A fitted file (imagery/balance.json, ndvi/fit.json) and its .state marker: reused when the marker has the same
+    inputs and the file still matches its output; else both are dropped and fit() -> (file bytes or None, report) runs,
+    and the file (unless None) and the marker are written. Returns the report (+ "seconds", "skipped") for build.json."""
     prev = json.loads(marker.read_text()) if marker.exists() else None
     if prev and prev["inputs"] == inputs:
         have = sha256_file(out) if out.exists() else None
@@ -447,25 +520,72 @@ def _fit_balance(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
     t0 = time.monotonic()
     out.unlink(missing_ok=True)  # an old or unreadable file must never block the refit
     marker.unlink(missing_ok=True)
-    fps = reference_footprints(m, s["reference"])
-    bal = None
-    if fps:
-        st = WorkerState(ctx)
-        bounds = shapely.union_all(fps).bounds
-        bal = colour_balance.fit_balance(
-            st.index["imagery"], classes, bounds, colour_balance.grid_for(m, s["cell_km"]), s
-        )
-    if bal is None:
-        out.unlink(missing_ok=True)
-        output, report = None, {"fitted": False}
-    else:
-        atomic_write(out, bal.to_json())
-        output, report = sha256_file(out), {"fitted": True, **bal.report}
+    data, report = fit()
+    output = None
+    if data is not None:
+        atomic_write(out, data)
+        output = sha256_file(out)
     report["seconds"] = round(time.monotonic() - t0, 3)
-    report["water_mask"] = bal is not None and bool(classes) and bool(s.get("water_fade_m"))
     atomic_write(marker, json.dumps({"inputs": inputs, "output": output, "report": report}).encode())
-    log.info("balance: %s in %.1f s", "fitted" if bal else "not fitted", report["seconds"])
     return {**report, "skipped": False}
+
+
+def _fit_ndvi(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
+    """Fit (or reuse) ndvi/fit.json before the NDVI tiles; the report goes to build.json. None without an NDVI layer
+    that has both NAIP and Sentinel-2."""
+    s = m.layers.get("ndvi")
+    out = pkg / "ndvi" / ndvi_fit.FILE
+    marker = pkg / STATE_DIR / "ndvi_fit.json"
+    if not s or not s["reference"] or not s["target"]:
+        out.unlink(missing_ok=True)
+        marker.unlink(missing_ok=True)
+        return None
+    classes, class_shas = class_rasters(m, ctx.asset_paths)
+    shas = sorted(a.sha256 for sid in (s["reference"], s["target"]) for a in m.source(sid).assets) + sorted(class_shas)
+    inputs = inputs_hash(m.layer_settings_hash("ndvi"), __version__, "ndvi_fit", *shas)
+
+    def fit():
+        fps = reference_footprints(m, s["reference"])
+        f = None
+        if fps:
+            st = WorkerState(ctx)
+            dates = {
+                f"{s['reference']}/{a.id}": a.metadata.get("acquired", "") for a in m.source(s["reference"]).assets
+            }
+            f = ndvi_fit.fit_ndvi(st.index["ndvi"], classes, shapely.union_all(fps).bounds, s, dates)
+        if f is None:
+            log.warning("ndvi: no fit; NAIP NDVI stays on its own (DN) scale")
+            return None, {"fitted": False}
+        return f.to_json(), {"fitted": True, **f.report}
+
+    return _cached_fit(out, marker, inputs, fit)
+
+
+def _ndvi_area(m: Manifest):
+    """Where the NDVI layer is built: the ring, within the footprints of its sources' data."""
+    ring = next(r for r in m.region_objs() if r.name == "ring").geometry()
+    return shapely.intersection(ring, shapely.union_all(coverage(m, "ndvi").geoms))
+
+
+def _build_ndvi(pkg: Path, m: Manifest, ctx: BuildContext, iplan: LayerPlan, jobs: int, json_progress: bool):
+    """The NDVI tiles and their tilemapresource.xml (zooms and bounds of the tiles written); removes the layer when
+    the manifest has none. Returns its stats, or None."""
+    s = m.layers.get("ndvi")
+    if not s:
+        shutil.rmtree(pkg / "ndvi", ignore_errors=True)
+        shutil.rmtree(pkg / STATE_DIR / "ndvi", ignore_errors=True)
+        return None
+    plan = ndvi_plan(iplan, s["max_zoom"], _ndvi_area(m))
+    phases = _imagery_phases(plan) if plan.count() else []
+    stats = _run_layer(ctx, "ndvi", plan, phases, ndvi_batch, jobs, json_progress, per_zoom=True)
+    xml = pkg / "ndvi" / "tilemapresource.xml"
+    present = {z: k for z, k in present_tiles(pkg, "ndvi", "png").items() if len(k)}
+    if present:
+        bounds = plan_bounds(LayerPlan(present, {}))
+        atomic_write(xml, tilemapresource_xml(m.name, max(present), bounds, "image/png", "png").encode())
+    else:
+        xml.unlink(missing_ok=True)
+    return stats
 
 
 def _git_commit() -> str | None:
@@ -504,6 +624,7 @@ def build_scene(
         tplan = plan_tiles(m.region_objs(), "terrain", coverage(m, "terrain"))
         iplan = plan_tiles(m.region_objs(), "imagery", coverage(m, "imagery"))
         bal_report = _fit_balance(pkg, m, ctx)  # before any worker starts: they load balance.json
+        ndvi_report = _fit_ndvi(pkg, m, ctx)  # before any worker starts: they load fit.json
         stats = {
             "terrain": _run_layer(
                 ctx, "terrain", tplan, [_chunks(_terrain_items(tplan))], terrain_batch, jobs, json_progress
@@ -516,6 +637,9 @@ def build_scene(
             pkg / "imagery" / "tilemapresource.xml",
             tilemapresource_xml(m.name, iplan.max_zoom, plan_bounds(iplan)).encode(),
         )
+        ndvi_stats = _build_ndvi(pkg, m, ctx, iplan, jobs, json_progress)
+        if ndvi_stats is not None:
+            stats["ndvi"] = ndvi_stats
         stats["landcover"] = _build_landcover(pkg, m, ctx)
         atomic_write(pkg / "ATTRIBUTION.txt", attribution_text(m).encode())
         normalise_modes(pkg, skip=(STATE_DIR,))
@@ -534,6 +658,7 @@ def build_scene(
             "cpu_count": os.cpu_count(),
             "layers": {k: v.to_dict() for k, v in stats.items()},
             "balance": bal_report,
+            "ndvi": ndvi_report,
         }
         atomic_write(pkg / "build.json", (json.dumps(info, indent=2, sort_keys=True) + "\n").encode())
     peak = max(s.peak_rss_mb for s in stats.values())
