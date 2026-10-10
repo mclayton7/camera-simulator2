@@ -170,6 +170,7 @@ class SourceRaster:
     clamp_edges: bool = False  # extend edge pixels by up to one pixel (global rasters, tile seams)
     decode: str | None = None  # DECODERS key (imagery)
     vertical_asset: str | None = None  # "<source>/<asset>" of a geoid raster (raster_geoid datum)
+    add_m: float = 0.0  # added to every valid sample (a constant vertical datum shift, e.g. MSL -> NAVD88)
 
     def file_crs(self) -> str:
         return self.crs or _dataset(str(self.path), None).crs.to_wkt()
@@ -227,6 +228,8 @@ class SourceRaster:
         for b in range(nb):
             v = sum(wt * data[b][ii, jj] for wt, (ii, jj) in zip(wts, corners))
             out[b] = np.where(ok, v, np.nan)
+        if self.add_m:
+            out[:, ok] += self.add_m
         return out, ok
 
 

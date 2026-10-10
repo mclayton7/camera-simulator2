@@ -158,3 +158,16 @@ def test_prepare_requires_sha256_and_ignores_stale_part_files(tmp_path):
     with rasterio.open(out2) as ds:
         assert ds.width == 600
     assert stale.read_bytes() == b"truncated"
+
+
+def test_add_m_shifts_valid_samples_only(tmp_path):
+    data = np.array([[1.0, 2.0], [-9999.0, 4.0]], np.float32)
+    write_geotiff(tmp_path / "a.tif", data, 0.0, 2.0, 1.0, nodata=-9999.0, overviews=())
+    plain = SourceRaster(path=tmp_path / "a.tif", datum="wgs84", nodata=-9999.0)
+    shifted = SourceRaster(path=tmp_path / "a.tif", datum="wgs84", nodata=-9999.0, add_m=0.774)
+    x, y = np.array([0.5, 1.5, 0.5]), np.array([1.5, 1.5, 0.5])
+    v0, ok0 = plain.sample(x, y, 1.0)
+    v1, ok1 = shifted.sample(x, y, 1.0)
+    assert (ok0 == ok1).all()
+    np.testing.assert_allclose(v1[0][ok1], v0[0][ok0] + 0.774)
+    assert not ok1[2]

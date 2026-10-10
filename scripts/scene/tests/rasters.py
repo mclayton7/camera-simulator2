@@ -9,7 +9,8 @@ from rasterio.transform import from_origin
 
 
 def write_geotiff(
-    path: Path, data, west, north, res, crs="EPSG:4326", nodata=None, overviews=(2, 4), tiled=True, tags=None
+    path: Path, data, west, north, res, crs="EPSG:4326", nodata=None, overviews=(2, 4), tiled=True, tags=None,
+    resampling="average",
 ) -> Path:
     data = np.asarray(data)
     if data.ndim == 2:
@@ -32,5 +33,5 @@ def write_geotiff(
             ds.update_tags(**tags)
     if overviews:
         with rasterio.open(path, "r+") as ds:
-            ds.build_overviews(list(overviews), Resampling.average)
+            ds.build_overviews(list(overviews), Resampling[resampling])
     return Path(path)

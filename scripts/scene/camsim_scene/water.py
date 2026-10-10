@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .sources.base import _dataset, project
+from .sources.base import M_PER_DEG, _dataset, choose_overview, project
 from .tiling import Bounds
 
 WATER = 80  # WorldCover 2021: permanent water bodies
@@ -25,8 +25,8 @@ class Water:
         return max(self.buffer_m, self.fade_m)
 
 
-def _pixels(r, lon, lat):
-    ds = _dataset(str(r.path), None)
+def _pixels(r, lon, lat, level: int | None = None):
+    ds = _dataset(str(r.path), level)
     x, y = project(r, lon, lat)
     inv = ~ds.transform
     col = np.floor(inv.a * x + inv.b * y + inv.c).astype(np.int64)
@@ -34,9 +34,18 @@ def _pixels(r, lon, lat):
     return ds, col, row
 
 
-def class_codes(classes, lon, lat) -> np.ndarray:
-    """uint8 code of the pixel containing each point (full resolution, no interpolation); the first raster covering a
-    point wins; 0 where none does."""
+def _level(r, target_m: float | None) -> int | None:
+    """Overview level for a read at target_m (metres per sample), or None for full resolution."""
+    if target_m is None:
+        return None
+    ds = _dataset(str(r.path), None)
+    return choose_overview(abs(ds.transform.a) * M_PER_DEG, list(ds.overviews(r.bands[0])), target_m)
+
+
+def class_codes(classes, lon, lat, target_m: float | None = None) -> np.ndarray:
+    """uint8 code of the pixel containing each point (no interpolation); the first raster covering a point wins; 0
+    where none does. `target_m`: read the coarsest overview whose pixel is at most this size (coarse zooms); None:
+    full resolution."""
     from rasterio.windows import Window
 
     lon, lat = np.asarray(lon, np.float64), np.asarray(lat, np.float64)
@@ -45,7 +54,7 @@ def class_codes(classes, lon, lat) -> np.ndarray:
     for r in classes:
         if done.all():
             break
-        ds, col, row = _pixels(r, lon, lat)
+        ds, col, row = _pixels(r, lon, lat, _level(r, target_m))
         hit = ~done & (col >= 0) & (col < ds.width) & (row >= 0) & (row < ds.height)
         if not hit.any():
             continue

@@ -40,3 +40,15 @@ def test_any_water(tmp_path):
 def test_reach_is_the_larger_distance():
     assert water.Water((), 200.0, 100.0).reach_m == 200.0
     assert water.Water((), 0.0, 100.0).reach_m == 100.0
+
+
+def test_class_codes_with_target_m_reads_an_overview(tmp_path):
+    # 400 x 400 px at 0.0001 deg (~11 m): west half water (80), east half land (10); overviews 2, 4, 8
+    codes = np.full((400, 400), 10, np.uint8)
+    codes[:, :200] = 80
+    write_geotiff(tmp_path / "wc.tif", codes, 10.0, 10.04, 0.0001, overviews=(2, 4, 8), resampling="nearest")
+    r = SourceRaster(path=tmp_path / "wc.tif", datum="wgs84")
+    lon, lat = np.array([10.005, 10.035]), np.array([10.02, 10.02])
+    np.testing.assert_array_equal(water.class_codes((r,), lon, lat), [80, 10])
+    np.testing.assert_array_equal(water.class_codes((r,), lon, lat, target_m=90.0), [80, 10])
+    assert water.class_codes((r,), lon, lat, target_m=5.0).tolist() == [80, 10]  # finer than the data: full resolution
