@@ -1,6 +1,6 @@
 # NDVI layer and NAIP sun metadata (REALISM R1, chunk 2) — design
 
-2026-10-09. Scene tooling only (`scripts/scene`); no CamSim runtime change, no editor work.
+2026-10-09; amended 2026-10-10 (gridded NDVI offset, section 3). Scene tooling only (`scripts/scene`); no CamSim runtime change, no editor work.
 
 ## Goal
 
@@ -27,6 +27,12 @@ Success, on the Camp Pendleton `sim` package:
   at ≥ 30° elevation, so the actual elevation is between 30° and the solar-noon value.
 - **NAIP is one balanced state mosaic** (chunk 1: overlapping quads bit-identical), so one global NDVI fit is the
   starting point, with per-flight-day residuals reported rather than modelled.
+- **One global fit leaves a seam** (amendment 2026-10-10, after the first Pendleton acceptance run failed gate 4 at
+  +0.047): the step is the global fit's residual at the inside point (fitted NAIP − Sentinel-2 +0.048; Sentinel-2's own
+  gradient across the 300 m is −0.009). It is concentrated within 2 km of NAIP's footprint edge (held-out residual
+  −0.038 there, +0.012 beyond) and varies by quad and flight date (−0.06…+0.14 per quad). Per-date fits leave +0.032;
+  per-class offsets +0.024–0.032. A smooth per-cell offset on top of the global fit leaves −0.008…+0.016 for 2–5 km
+  cells and cuts the held-out MAE from 0.080 to 0.066–0.072.
 - Tile inputs hashes use asset sha256s, not asset metadata, so adding metadata rebuilds no tile.
 
 ## Design
@@ -60,12 +66,40 @@ ndvi/{z}/{x}/{y}.png            # 256 px, 8-bit grayscale
   into Sentinel-2 over `feather_m` (200 m) inward from its valid-data edge; with WorldCover present NAIP is used only
   within `naip_water_buffer_m` of land. The imagery leaf code is refactored so sampling, feather weights and the water
   distance are shared; imagery output bytes must not change (gate 6 covers it).
-- **Fit (`ndvi/fit.json`):** NAIP NDVI → Sentinel-2 scale, `ndvi_s2 ≈ gain * ndvi_naip + offset`, least squares on the
-  chunk-1 land lattice (10 m, WorldCover classes 0 and 80 excluded, even half fitted, odd half held out). Gain and
-  offset quantised to 1e-6, written as canonical JSON with a `format` field; workers read it back from the file. The
-  fit report (samples, held-out MAE, median bias before/after, residual median bias per NAIP acquisition date, fit
-  seconds) goes to the log and `build.json` under `ndvi`, never into `fit.json`. Applied to every NAIP NDVI sample,
-  then clamped to [−1, 1]. No NAIP/Sentinel-2 land overlap → no `fit.json`, NAIP NDVI unfitted, warning.
+- **Fit (`ndvi/fit.json`):** NAIP NDVI → Sentinel-2 scale in two stages, both on the chunk-1 land lattice (10 m,
+  WorldCover classes 0 and 80 excluded, even (i + j) nodes fitted, odd nodes held out; the held-out split is unchanged):
+  1. **Global:** `ndvi_s2 ≈ gain * ndvi_naip + offset`, least squares on the fit nodes (≥ `min_samples` 500).
+  2. **Cell offsets (gridded fit):** the residual `ndvi_s2 − (gain * ndvi_naip + offset)` (gain and offset already
+     quantised) of the fit nodes, binned into a grid covering the bounds of NAIP's footprints at `cell_km` = 2 km;
+     each cell with ≥ `min_cell_samples` = 500 fit nodes takes the median residual, then the cells are filtered and
+     filled exactly as the imagery colour match's offsets, with the same functions: `balance.cell_medians`, then
+     `balance.fill_offsets` (3 × 3 median over fitted cells, `median_filter` 3; every unfitted cell takes its nearest
+     fitted cell's value × exp(−d / `decay_km`), 10 km). Evaluated by `balance.offset_at` (bilinear between cell
+     centres, clamped at the edge cells; split out of `Balance.offset_at` so both use one function).
+
+  Applied to every NAIP NDVI sample: `clip(gain * n + offset + cell_offset(lon, lat), −1, 1)`. Settings: the colour
+  match's grid settings (`cell_km` 2, `min_cell_samples` 500, `median_filter` 3, `decay_km` 10), copied into
+  `layers.ndvi` so they join its settings hash. 2 km with the 3 × 3 median is the what-if's best seam (+0.000;
+  per date −0.024…+0.008) at a held-out MAE of 0.069, and is the colour match's own grid (one tuned setting, not two).
+  At 10 m a full 2 km cell has ~20 000 fit nodes, so 500 drops only cells under ~2.5 % shared land.
+- **Extrapolation:** cells without enough samples (mostly water, or slivers at the footprint edge) are filled by
+  `fill_offsets`, decaying towards the global fit 10 km away from fitted cells; points beyond the grid take the edge
+  cell (clamped). This matters only where NAIP has data but too little shared land (coastal cells): the fit applies to
+  NAIP samples only, so Sentinel-2-only areas are unchanged by the grid.
+- **`fit.json` format 2** (integers only, canonical JSON, byte-deterministic): `format` 2, `reference`, `target`,
+  `gain_e6`, `offset_e6` (millionths), `grid` {`west_e9`, `south_e9`, `cell_lon_e9`, `cell_lat_e9` (nanodegrees),
+  `nx`, `ny`}, `cell_offsets_e6`: `ny` rows of `nx` millionths, row-major, row 0 the southernmost (as `balance.Grid`).
+  Workers read it back from the file; the in-memory fit is built from the same integers, so build, `verify` and the
+  report evaluate the same offsets. Format 1 (gain and offset only) is refused when read; a format-1 file is never in
+  a package built after this change, because the fit's inputs hash includes the new grid settings (via the NDVI
+  settings hash) and the format number, so the marker mismatches and the fit reruns (the old file is deleted first).
+  A manifest planned before the grid keys has no `cell_km`: the build stops and asks for `--replan`.
+- **Report** (log and `build.json` `ndvi`, never `fit.json`): samples, gain, offset, `grid` {`nx`, `ny`, `cell_km`},
+  `cells` (fitted from samples), `cells_filled` (from `fill_offsets`), `cell_offset_min` / `cell_offset_max`;
+  held-out MAE before (unfitted), global only (`mae_global`) and after (global + cells), median bias before/after,
+  residual median bias per NAIP acquisition date (after), fit seconds. The cells are fitted on the even nodes only,
+  so the odd nodes stay a held-out check of the whole fit. No NAIP/Sentinel-2 land overlap → no `fit.json`, NAIP
+  NDVI unfitted, warning.
 - `fit.json`'s sha256 joins every NDVI leaf's inputs hash (as `balance.json` for imagery). A rebuild with unchanged
   inputs skips the fit.
 
@@ -119,7 +153,8 @@ ndvi_max_zoom = 15     # [10, 17]; z15 ≈ 2.4 m
 - Encoding: round trip of codes 1..255; NDVI −1, 0, +1 and the nodata code.
 - `sun.py`: noon elevation against 90° − |latitude − declination| at the solstices (both hemispheres and the tropics,
   ≤ 0.05°), and the 30° azimuth window (equinox at the equator: 90° / 270°).
-- Fit: quantisation, identical `fit.json` from shuffled samples, no-overlap path.
+- Fit: quantisation, identical `fit.json` from shuffled samples (grid included), no-overlap path, format-1 refusal,
+  a synthetic regional offset in NAIP removed by the grid but not by the global fit, filled cells.
 - Leaf on synthetic NAIP + Sentinel-2 rasters: pure NAIP interior, Sentinel-2 only, feather midpoint, water clip.
 - Parents: all-valid, partial nodata, missing child tile, all-nodata (not written).
 - Config: defaults per profile, ranges, the no-source plan error.
@@ -141,17 +176,22 @@ ndvi_max_zoom = 15     # [10, 17]; z15 ≈ 2.4 m
 7. Reported, not gated: NDVI build wall time, tile count and size per zoom in `build.json` and "Measured".
 
 A small tool `scripts/scene/tools/ndvi_check.py PKG --cache DIR` computes gates 3 and 4 and writes a false-colour
-overview PNG for human review.
+overview PNG for human review. Gate 4 also reports the step with the global fit only (`bias_global`), beside the
+unfitted one, so the grid's share is visible. Gate numbers are unchanged by the gridded fit.
 
 ## Known limits (go into `docs/scene-packages.md`)
 
 - NAIP NDVI is from uncalibrated DN; the fit puts it on Sentinel-2's scale on average, not per pixel.
-- One global fit; per-flight-day differences are reported, not corrected.
+- One global gain; regional (per-quad, per-flight-day) differences are absorbed only as a smooth 2 km offset field,
+  not per quad or per date (a quad boundary inside NAIP can still show a step of up to a cell's variation); per-date
+  residuals are reported.
+- Cells with too little shared land (coast) are extrapolated (filled with decay), not fitted.
 - NDVI is leaf-on (NAIP flies in the growing season) and dated; Sentinel-2's composite is 2021.
 - Sentinel-2 is 10 m outside NAIP; open sea beyond the composite is nodata.
 - Sun position is a bound (date known, time not).
 
 ## Out of scope
 
-Runtime use of NDVI (R2), a GPU NDVI window, a sun-mismatch warning in CamSim, per-date or gridded NDVI fits,
-Sentinel-2-only NDVI for `preview`, 16-bit NDVI.
+Runtime use of NDVI (R2), a GPU NDVI window, a sun-mismatch warning in CamSim, per-date NDVI fits (the what-if left
++0.032 at the seam: no better than the grid, and it fragments the samples), per-cell gains, Sentinel-2-only NDVI for
+`preview`, 16-bit NDVI. (The gridded offset, out of scope in the first version, moved into section 3 on 2026-10-10.)

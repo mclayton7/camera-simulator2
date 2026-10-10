@@ -12,7 +12,8 @@ sampling, feather and water-distance helpers, and parents by a nodata-aware 2 ×
 NAIP → Sentinel-2 once per build (`ndvi/fit.json`, like `imagery/balance.json`). The engine learns tiles that
 produce no file (all nodata). `sun.py` computes solar-noon elevation/azimuth and the azimuth window at 30°
 elevation for `naip_pc` assets at `plan`. `verify --deep` gains `ndvi_values`; `tools/ndvi_check.py` computes the
-plausibility and seam gates. Task 8 is the Pendleton acceptance.
+plausibility and seam gates. Task 8 is the Pendleton acceptance. Task 9 (added 2026-10-10, after Task 8's first run
+failed the seam gate) adds a 2 km per-cell offset on top of the global fit; Task 8 runs after it.
 
 **Tech Stack:** Python 3.12–3.13, numpy, scipy, shapely 2, rasterio, Pillow, pytest. No new dependencies.
 
@@ -38,7 +39,9 @@ plausibility and seam gates. Task 8 is the Pendleton acceptance.
   `fit_step_m` 10 m, WorldCover classes 0 and 80 excluded, even (i + j) nodes fit, odd held out, ≥ 500 fit samples
   (`min_samples`); stored as integers `gain_e6`, `offset_e6` (millionths) with `format: 1`; applied then clamped to
   [−1, 1]. Report (to `build.json` `ndvi` and the log, never into `fit.json`): samples, gain, offset, held-out MAE and
-  median bias before/after, median residual bias per NAIP acquisition date.
+  median bias before/after, median residual bias per NAIP acquisition date. Amended by Task 9: plus a per-cell
+  median residual offset (2 km cells, ≥ 500 samples, `balance.cell_medians` / `fill_offsets` / `offset_at`), applied
+  as `clip(gain · n + offset + cell_offset(lon, lat), −1, 1)`, `format: 2` with the grid in integers.
 - Tile set: the imagery plan's tiles at z ≤ min(`ndvi_max_zoom`, imagery depth) overlapping (ring ∩ union of the
   NDVI sources' footprints). Tiles with no valid pixel produce no file (marker output `""`).
 - Sun metadata on every `naip_pc` asset at `plan`: `acquired` (`YYYY-MM-DD`), `sun_noon`
@@ -2100,7 +2103,551 @@ Claude-Session: https://claude.ai/code/session_01EuqoXt1sAk5mjhhppnKP9D"
 
 ---
 
+### Task 9: Gridded NDVI offset
+
+Added 2026-10-10 after the first Task 8 run failed gate 4 (seam +0.0472; spec "Findings", amendment): one global
+gain/offset leaves a regional residual near NAIP's footprint edge. This task adds a smooth per-cell offset on top of
+the global fit, reusing the colour match's grid machinery. Task 8 is then re-run.
+
+**Files:**
+- Modify: `scripts/scene/camsim_scene/balance.py` (module-level `offset_at`; `Balance.offset_at` delegates)
+- Modify: `scripts/scene/camsim_scene/ndvi_fit.py` (format 2, grid, `apply(n, lon, lat)`, `fit_samples`)
+- Modify: `scripts/scene/camsim_scene/config.py` (`NDVI` grid keys)
+- Modify: `scripts/scene/camsim_scene/layers/ndvi.py`, `verify.py`, `pipeline.py`, `tools/ndvi_check.py` (callers)
+- Modify: `scripts/scene/tests/fake_sources.py`, `test_ndvi.py`, `test_ndvi_fit.py`, `test_ndvi_build.py`, `test_ndvi_check.py`
+- Modify: `docs/scene-packages.md`, `scripts/scene/tools/README.md`
+
+**Interfaces:**
+- Consumes: `balance.Grid` (`covering`, `index`), `balance.cell_medians`, `balance.fill_offsets`,
+  `balance.shared_land_samples` (its `LatticeBlock.lon` / `.lat`), `config.BALANCE` grid values.
+- Produces: `balance.offset_at(grid, offsets (bands, ny, nx), lon, lat) -> (bands, ...)`;
+  `ndvi_fit.FORMAT = 2`, `ndvi_fit.NANO`; `NdviFit(reference, target, gain_e6, offset_e6, grid_e9, nx, ny,
+  cell_offsets_e6, report)` with `make(reference, target, gain, offset, grid, cells=None)`, `.gain`, `.offset`,
+  `.grid`, `cell_offset(lon, lat)`, `apply_global(n)`, `apply(n, lon, lat)`, `to_json()`, `from_json()` (format 1
+  refused); `fit_samples(reference, target, x, y, lon, lat, grid, s) -> NdviFit` (report `cells`, `cells_filled`);
+  `fit_ndvi` (signature unchanged) adds report keys `grid` {`nx`, `ny`, `cell_km`}, `cells`, `cells_filled`,
+  `cell_offset_min`, `cell_offset_max`, `heldout.mae_global`. `layers.ndvi` gains `cell_km` 2.0,
+  `min_cell_samples` 500, `median_filter` 3, `decay_km` 10.0. `ndvi_check` seam report gains `bias_global`.
+- Stale files: a format-1 `fit.json` is never read by a build: the fit's inputs hash now includes the grid settings
+  (through `layer_settings_hash("ndvi")`) and `format2`, so `_cached_fit` sees a different marker, deletes the old
+  file and refits before any worker (or the fit's own `WorkerState`) loads it. A manifest planned before this task
+  (no `cell_km` in `layers.ndvi`) stops the build with `BuildError` asking for `--replan`; `verify`/`ndvi_check` on an
+  unrebuilt package fail loudly in `NdviFit.from_json` ("format 1 != 2: rebuild").
+
+- [ ] **Step 1: Write the failing tests**
+
+Replace `scripts/scene/tests/test_ndvi_fit.py` with:
+
+```python
+import json
+
+import numpy as np
+import pytest
+from fake_sources import coast_scene, fake_context, naip_ndvi_truth, naip_s2_scene, s2_ndvi_truth
+
+from camsim_scene import config
+from camsim_scene.balance import Grid
+from camsim_scene.context import WorkerState, class_rasters
+from camsim_scene.ndvi_fit import NdviFit, fit_ndvi, fit_samples, linear_fit
+
+S = {
+    **config.NDVI,
+    "reference": "naip_pc",
+    "target": "wc_s2",
+    "fit_step_m": 200.0,
+    "min_samples": 20,
+    "min_cell_samples": 20,
+}
+GRID = Grid(10.0, 10.0, 0.1, 0.1, 2, 2)  # 2 x 2 cells of 0.1 degree, centres 10.05 / 10.15
+
+
+def test_json_round_trip_is_integers_only():
+    f = NdviFit.make("naip_pc", "wc_s2", 0.9000004, 0.0499996, GRID, [[0.0100004, -0.02], [0.0, 0.03]])
+    assert (f.gain_e6, f.offset_e6) == (900000, 50000)
+    assert f.cell_offsets_e6 == ((10000, -20000), (0, 30000))
+    g = NdviFit.from_json(f.to_json())
+    assert g == f and g.to_json() == f.to_json() and g.grid == f.grid
+    d = json.loads(f.to_json())
+    assert d["format"] == 2 and d["grid"] == {
+        "west_e9": 10_000_000_000,
+        "south_e9": 10_000_000_000,
+        "cell_lon_e9": 100_000_000,
+        "cell_lat_e9": 100_000_000,
+        "nx": 2,
+        "ny": 2,
+    }
+    assert d["cell_offsets_e6"] == [[10000, -20000], [0, 30000]]  # row 0 is the southernmost
+
+
+def test_another_format_is_refused():
+    with pytest.raises(ValueError, match="format"):
+        NdviFit.from_json(b'{"format": 0}')
+    old = b'{"format": 1, "gain_e6": 900000, "offset_e6": 50000, "reference": "naip_pc", "target": "wc_s2"}'
+    with pytest.raises(ValueError, match="format 1"):  # Task 4's file: refit, never read as a zero grid
+        NdviFit.from_json(old)
+
+
+def test_apply_adds_the_cell_offset_clamps_and_keeps_nan():
+    f = NdviFit.make("a", "b", 2.0, 0.5, GRID, [[0.0, 0.1], [0.0, 0.1]])
+    lon, lat = np.array([10.05, 10.15, 10.10, 10.15, 10.05]), np.full(5, 10.05)
+    v = f.apply(np.array([0.0, 0.0, 0.0, 0.5, np.nan]), lon, lat)
+    assert v[:4].tolist() == pytest.approx([0.5, 0.6, 0.55, 1.0]) and np.isnan(v[4])  # bilinear between centres
+    assert f.apply(np.array([-1.0]), np.array([9.0]), np.array([9.0])).tolist() == [-1.0]  # clamped (edge cell)
+    assert f.apply_global(np.array([0.0, 0.5])).tolist() == [0.5, 1.0]
+
+
+def test_the_fit_is_the_same_for_shuffled_samples():
+    rng = np.random.default_rng(1)
+    x = rng.uniform(-0.2, 0.8, 5000)
+    lon, lat = rng.uniform(10.0, 10.2, 5000), rng.uniform(10.0, 10.2, 5000)
+    y = 0.9 * x + 0.05 + 0.03 * (lon > 10.1) + rng.normal(0, 0.02, 5000)
+    p = rng.permutation(5000)
+    a = NdviFit.make("r", "t", *linear_fit(x, y), GRID)
+    b = NdviFit.make("r", "t", *linear_fit(x[p], y[p]), GRID)
+    assert a.to_json() == b.to_json()
+    g = Grid.covering((10.0, 10.0, 10.2, 10.2), 2.0, 10.1)
+    s = {**S, "min_cell_samples": 10}
+    fa = fit_samples("r", "t", x, y, lon, lat, g, s)
+    fb = fit_samples("r", "t", x[p], y[p], lon[p], lat[p], g, s)
+    assert fa.to_json() == fb.to_json() and fa.report == fb.report and fa.report["cells"] > 0
+
+
+def test_fit_recovers_the_synthetic_gain_and_offset(tmp_path):
+    st = WorkerState(fake_context(tmp_path, naip_s2_scene(tmp_path / "src", ndvi=True)))
+    f = fit_ndvi(st.index["ndvi"], [], (10.0, 10.0, 10.2, 10.2), S, {"naip_pc/naip": "2022-05-30"})
+    assert f.gain == pytest.approx(0.9, abs=0.02) and f.offset == pytest.approx(0.05, abs=0.01)
+    r = f.report
+    assert r["samples_fit"] >= 20 and r["samples_heldout"] > 0
+    assert abs(r["heldout"]["bias_after"]) <= 0.005 and r["heldout"]["mae_after"] < r["heldout"]["mae_before"]
+    assert list(r["bias_after_by_date"]) == ["2022-05-30"] and r["bias_after_by_date"]["2022-05-30"]["n"] > 0
+    assert r["cells"] + r["cells_filled"] == f.nx * f.ny and r["cells"] >= 0.9 * f.nx * f.ny  # a thin north row
+    assert r["grid"] == {"nx": f.nx, "ny": f.ny, "cell_km": S["cell_km"]}
+    assert -0.01 <= r["cell_offset_min"] <= r["cell_offset_max"] <= 0.01  # nothing regional to remove
+
+
+def test_a_regional_offset_is_removed_by_the_grid_not_by_the_global_fit(tmp_path):
+    def ramp(lon, lat):  # NAIP DN offset west -> east: NAIP NDVI -0.1 at 10.0 E to +0.1 at 10.2 E (offset / 200)
+        return 20.0 * (np.asarray(lon) - 10.1) / 0.1
+
+    st = WorkerState(fake_context(tmp_path, naip_s2_scene(tmp_path / "src", offset=ramp, ndvi=True)))
+    f = fit_ndvi(st.index["ndvi"], [], (10.0, 10.0, 10.2, 10.2), S)
+    lat = np.linspace(10.02, 10.18, 400)
+    for lon0 in (10.03, 10.17):  # a west and an east strip
+        lon = np.full(lat.shape, lon0)
+        n, truth = naip_ndvi_truth(lon, lat) + ramp(lon, lat) / 200.0, s2_ndvi_truth(lon, lat)
+        assert abs(np.median(f.apply_global(n) - truth)) > 0.04
+        assert abs(np.median(f.apply(n, lon, lat) - truth)) <= 0.015
+    h = f.report["heldout"]
+    assert h["mae_after"] < h["mae_global"] and f.report["cell_offset_max"] - f.report["cell_offset_min"] > 0.1
+
+
+def test_cells_without_samples_are_filled_from_their_neighbours(tmp_path):
+    st = WorkerState(fake_context(tmp_path, naip_s2_scene(tmp_path / "src", ndvi=True)))
+    f = fit_ndvi(st.index["ndvi"], [], (10.0, 10.0, 10.4, 10.2), S)  # east half: no NAIP, no samples
+    assert f.report["cells"] > 0 and f.report["cells_filled"] > 0
+    assert f.report["cells"] + f.report["cells_filled"] == f.nx * f.ny
+
+
+def test_no_shared_samples_is_not_fitted(tmp_path):
+    scene = naip_s2_scene(tmp_path / "src", ndvi=True, s2_box=(11.0, 11.0, 11.2, 11.2))
+    st = WorkerState(fake_context(tmp_path, scene))
+    assert fit_ndvi(st.index["ndvi"], [], (10.0, 10.0, 10.2, 10.2), S) is None
+
+
+def test_water_is_left_out_of_the_fit(tmp_path):
+    ctx = fake_context(tmp_path, coast_scene(tmp_path / "src", ndvi=True))
+    st = WorkerState(ctx)
+    classes, _ = class_rasters(st.manifest, ctx.asset_paths)
+    f = fit_ndvi(st.index["ndvi"], classes, (10.06, 10.08, 10.14, 10.12), {**S, "fit_step_m": 50.0})
+    assert f.gain == pytest.approx(0.9, abs=0.03) and f.offset == pytest.approx(0.05, abs=0.015)  # not the sea's -0.3
+    assert list(f.report["bias_after_by_date"]) == ["unknown"]
+```
+
+In `scripts/scene/tests/test_ndvi.py`, the `Linear` stub takes the new arguments:
+
+```python
+    def apply(self, n, lon, lat):
+        return self.gain * np.asarray(n) + self.offset
+```
+
+In `scripts/scene/tests/fake_sources.py` `fast_fits`, after `(config.NDVI, "min_samples", 20),` add:
+
+```python
+        (config.NDVI, "min_cell_samples", 20),
+```
+
+In `scripts/scene/tests/test_ndvi_build.py`: import `BuildError` (`from camsim_scene.pipeline import BuildError,
+build_scene`); in `test_ndvi_layer_is_written_hashed_and_fitted`, after the `info["ndvi"]["fitted"]` assert, add:
+
+```python
+    fit = json.loads((pkg / "ndvi/fit.json").read_text())
+    assert fit["format"] == 2 and len(fit["cell_offsets_e6"]) == fit["grid"]["ny"] == info["ndvi"]["grid"]["ny"]
+    assert info["ndvi"]["cells"] > 0 and "cell_offset_max" in info["ndvi"]
+```
+
+and append:
+
+```python
+def test_a_format_1_fit_is_refit(tmp_path):
+    pkg, cache, _ = build_synthetic(tmp_path, ndvi_scene(tmp_path / "src"))
+    before = hashes(pkg)
+    marker = pkg / ".state/ndvi_fit.json"
+    old = b'{"format": 1, "gain_e6": 900000, "offset_e6": 50000, "reference": "naip_pc", "target": "wc_s2"}'
+    (pkg / "ndvi/fit.json").write_bytes(old)  # a Task 4 package: its marker's inputs predate the grid settings
+    rec = json.loads(marker.read_text())
+    marker.write_text(json.dumps({**rec, "inputs": "pre-grid"}))
+    info = build_scene(pkg, cache, jobs=1)
+    assert info["ndvi"]["skipped"] is False and json.loads((pkg / "ndvi/fit.json").read_text())["format"] == 2
+    assert hashes(pkg) == before
+
+
+def test_a_manifest_planned_before_the_grid_asks_for_a_replan(tmp_path):
+    pkg, cache, _ = build_synthetic(tmp_path, ndvi_scene(tmp_path / "src"))
+    m = json.loads((pkg / "manifest.json").read_text())
+    del m["layers"]["ndvi"]["cell_km"]
+    (pkg / "manifest.json").write_text(json.dumps(m))
+    with pytest.raises(BuildError, match="replan"):
+        build_scene(pkg, cache, jobs=1)
+```
+
+(`test_ndvi_build_is_independent_of_worker_count` already covers `-j 1` vs `-j 2` with the grid: the fit runs once
+in the parent and workers read `fit.json`.)
+
+In `scripts/scene/tests/test_ndvi_check.py` `test_cli_on_a_synthetic_package`, after the `seam["bias"]` assert, add:
+
+```python
+    assert seam["bias_global"] is not None and abs(seam["bias_global"]) <= ndvi_check.SEAM_MAX  # no regional offset
+```
+
+- [ ] **Step 2: Run them to make sure they fail**
+
+Run: `uv run --project scripts/scene --with pytest pytest scripts/scene/tests/test_ndvi_fit.py scripts/scene/tests/test_ndvi_build.py scripts/scene/tests/test_ndvi_check.py -q`
+Expected: FAIL (`ImportError: cannot import name 'fit_samples'`; the build and check tests on the missing
+`format` 2 / `bias_global` / `BuildError`).
+
+- [ ] **Step 3: Implement**
+
+`scripts/scene/camsim_scene/balance.py`: move the body of `Balance.offset_at` into a module-level function placed just
+before `@dataclass class Balance` (no copy of the logic; imagery bytes are unchanged, the arithmetic is identical):
+
+```python
+def offset_at(grid: Grid, offsets: np.ndarray, lon, lat) -> np.ndarray:
+    """offsets (bands, ny, nx) at (lon, lat): bilinear between cell centres, clamped at the grid's edge cells."""
+    g = grid
+    fx = np.clip((np.asarray(lon, np.float64) - g.west) / g.cell_lon - 0.5, 0.0, g.nx - 1.0)
+    fy = np.clip((np.asarray(lat, np.float64) - g.south) / g.cell_lat - 0.5, 0.0, g.ny - 1.0)
+    x0 = np.minimum(np.floor(fx).astype(np.int64), max(g.nx - 2, 0))
+    y0 = np.minimum(np.floor(fy).astype(np.int64), max(g.ny - 2, 0))
+    x1, y1 = np.minimum(x0 + 1, g.nx - 1), np.minimum(y0 + 1, g.ny - 1)
+    tx, ty = fx - x0, fy - y0
+    o = offsets
+    return (
+        o[:, y0, x0] * (1 - tx) * (1 - ty)
+        + o[:, y0, x1] * tx * (1 - ty)
+        + o[:, y1, x0] * (1 - tx) * ty
+        + o[:, y1, x1] * tx * ty
+    )
+```
+
+and make the method delegate:
+
+```python
+    def offset_at(self, lon, lat) -> np.ndarray:
+        return offset_at(self.grid, self.offsets, lon, lat)
+```
+
+`scripts/scene/camsim_scene/config.py`, in `NDVI` after `"exclude_classes"`:
+
+```python
+    "cell_km": BALANCE["cell_km"],  # residual offset cells (ndvi_fit.py): the colour match's grid settings
+    "min_cell_samples": BALANCE["min_cell_samples"],
+    "median_filter": BALANCE["median_filter"],
+    "decay_km": BALANCE["decay_km"],
+```
+
+(Copied values, not references at runtime: they are written into `layers.ndvi`, so they join the NDVI settings hash
+and a later colour-match retune doesn't silently move the NDVI fit of an existing manifest.)
+
+Replace `scripts/scene/camsim_scene/ndvi_fit.py` with:
+
+```python
+"""NAIP -> Sentinel-2 NDVI fit (REALISM R1 chunk 2; docs/superpowers/specs/2026-10-09-ndvi-sun-metadata-design.md).
+
+NAIP NDVI comes from uncalibrated DN. One linear map (gain, offset), least squares on the land lattice the colour
+match uses (balance.py), puts it on Sentinel-2's near-reflectance scale; a smooth per-cell offset on top (the median
+residual per cell, filtered and filled as the colour match's offsets) removes what one global map leaves near NAIP's
+edge, where flight days and quads differ. Stored as ndvi/fit.json in integers (millionths; the grid in
+nanodegrees), so float summation order can't change the file; workers read it back from the file."""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from .balance import Grid, cell_medians, fill_offsets, offset_at, shared_land_samples
+from .manifest import canonical_json
+from .tiling import Bounds
+
+log = logging.getLogger(__name__)
+FILE = "fit.json"
+FORMAT = 2
+MICRO = 1_000_000
+NANO = 1_000_000_000
+
+
+@dataclass
+class NdviFit:
+    """apply(n, lon, lat) = clip(gain * n + offset + cell_offset(lon, lat), -1, 1). cell_offsets_e6: rows south to
+    north (row 0 southernmost, as balance.Grid), each west to east."""
+
+    reference: str
+    target: str
+    gain_e6: int
+    offset_e6: int
+    grid_e9: tuple[int, int, int, int]  # west, south, cell_lon, cell_lat (degrees x 1e9)
+    nx: int
+    ny: int
+    cell_offsets_e6: tuple[tuple[int, ...], ...]
+    report: dict = field(default_factory=dict, compare=False)
+    _cells: np.ndarray = field(init=False, compare=False, repr=False)
+
+    def __post_init__(self):
+        cells = np.asarray(self.cell_offsets_e6, np.float64)
+        if cells.shape != (self.ny, self.nx):
+            raise ValueError(f"ndvi fit: cell offsets {cells.shape} != grid {(self.ny, self.nx)}")
+        self._cells = (cells / MICRO)[None]
+
+    @classmethod
+    def make(cls, reference: str, target: str, gain: float, offset: float, grid: Grid, cells=None) -> NdviFit:
+        """Quantise to the file's integers; cells (ny, nx) default to zero."""
+        c = np.zeros((grid.ny, grid.nx)) if cells is None else np.asarray(cells, np.float64)
+        e9 = tuple(round(v * NANO) for v in (grid.west, grid.south, grid.cell_lon, grid.cell_lat))
+        rows = tuple(tuple(r) for r in np.rint(c * MICRO).astype(np.int64).tolist())
+        return cls(reference, target, round(gain * MICRO), round(offset * MICRO), e9, grid.nx, grid.ny, rows)
+
+    @property
+    def gain(self) -> float:
+        return self.gain_e6 / MICRO
+
+    @property
+    def offset(self) -> float:
+        return self.offset_e6 / MICRO
+
+    @property
+    def grid(self) -> Grid:
+        return Grid(*(v / NANO for v in self.grid_e9), self.nx, self.ny)
+
+    def cell_offset(self, lon, lat) -> np.ndarray:
+        """The cell offsets at (lon, lat): bilinear between cell centres, clamped at the edge cells
+        (balance.offset_at)."""
+        return offset_at(self.grid, self._cells, lon, lat)[0]
+
+    def apply_global(self, n) -> np.ndarray:
+        """Gain and offset only (no cells), clamped to [-1, 1]; NaN stays NaN. For reports."""
+        return np.clip(self.gain * np.asarray(n, np.float64) + self.offset, -1.0, 1.0)
+
+    def apply(self, n, lon, lat) -> np.ndarray:
+        """Reference NDVI at (lon, lat) on the target's scale, clamped to [-1, 1]; NaN stays NaN."""
+        v = self.gain * np.asarray(n, np.float64) + self.offset + self.cell_offset(lon, lat)
+        return np.clip(v, -1.0, 1.0)
+
+    def to_json(self) -> bytes:
+        w, s, cl, ca = self.grid_e9
+        d = {
+            "format": FORMAT,
+            "reference": self.reference,
+            "target": self.target,
+            "gain_e6": self.gain_e6,
+            "offset_e6": self.offset_e6,
+            "grid": {"west_e9": w, "south_e9": s, "cell_lon_e9": cl, "cell_lat_e9": ca, "nx": self.nx, "ny": self.ny},
+            "cell_offsets_e6": [list(r) for r in self.cell_offsets_e6],
+        }
+        return canonical_json(d).encode()
+
+    @classmethod
+    def from_json(cls, data: bytes) -> NdviFit:
+        d = json.loads(data)
+        if d.get("format") != FORMAT:
+            raise ValueError(f"ndvi fit format {d.get('format')!r} != {FORMAT}: rebuild the package to refit it")
+        g = d["grid"]
+        e9 = (int(g["west_e9"]), int(g["south_e9"]), int(g["cell_lon_e9"]), int(g["cell_lat_e9"]))
+        rows = tuple(tuple(int(v) for v in r) for r in d["cell_offsets_e6"])
+        return cls(
+            d["reference"], d["target"], int(d["gain_e6"]), int(d["offset_e6"]), e9, int(g["nx"]), int(g["ny"]), rows
+        )
+
+
+def linear_fit(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    """Least-squares (gain, offset) for y ~ gain * x + offset."""
+    gain, offset = np.polyfit(np.asarray(x, np.float64), np.asarray(y, np.float64), 1)
+    return float(gain), float(offset)
+
+
+def fit_samples(reference: str, target: str, x, y, lon, lat, grid: Grid, s: dict) -> NdviFit:
+    """The fit from fit samples alone: gain and offset by least squares, then each cell's median residual
+    (target - fitted reference) where the cell has s["min_cell_samples"], median-filtered and filled outward with
+    decay as the colour match's offsets (balance.cell_medians, balance.fill_offsets). report: cells, cells_filled."""
+    x, y = np.asarray(x, np.float64), np.asarray(y, np.float64)
+    g = NdviFit.make(reference, target, *linear_fit(x, y), grid)
+    ix, iy = grid.index(lon, lat)
+    ncells = grid.nx * grid.ny
+    resid = y - (g.gain * x + g.offset)  # quantised gain and offset: the same residuals for any sample order
+    values = cell_medians(resid[None], iy * grid.nx + ix, ncells, s["min_cell_samples"]).reshape(1, grid.ny, grid.nx)
+    cells = fill_offsets(values, s["cell_km"], s["decay_km"], median_size=s["median_filter"])[0]
+    f = NdviFit.make(reference, target, g.gain, g.offset, grid, cells)
+    fitted = int(np.isfinite(values[0]).sum())
+    f.report = {"cells": fitted, "cells_filled": ncells - fitted}
+    return f
+
+
+def _r4(v) -> float | None:
+    return None if v is None or not np.isfinite(v) else round(float(v), 4)
+
+
+def fit_ndvi(index, classes, bounds: Bounds, s: dict, dates: dict | None = None) -> NdviFit | None:
+    """Fit on lattice nodes over `bounds` (the reference's footprints) where the reference and the target are both
+    valid and the land cover isn't excluded: even (i + j) nodes fit, odd ones are held out for the report, which gives
+    each reference acquisition date's residual bias (`dates`: reference qid -> date). The cell grid covers `bounds`
+    at s["cell_km"]. None with fewer than s["min_samples"] fit samples."""
+    from .layers.ndvi import sample_ndvi
+
+    dates = dates or {}
+    parts = []
+    for b in shared_land_samples(index, classes, bounds, s, sample_ndvi):
+        k = b.keep
+        day = np.array([dates.get(e.qid, "") for e in b.ref_entries], dtype=object)[b.ref_which[k]]
+        parts.append((b.ref_values[k], b.target_values[k], b.held[k], day, b.lon[k], b.lat[k]))
+    if not parts:
+        log.warning("ndvi fit: no shared land samples between %s and %s", s["reference"], s["target"])
+        return None
+    x, y, held, day, lon, lat = (np.concatenate([p[k] for p in parts]) for k in range(6))
+    fit = ~held
+    if fit.sum() < s["min_samples"]:
+        log.warning("ndvi fit: only %d shared land samples; not fitted", int(fit.sum()))
+        return None
+    grid = Grid.covering(bounds, s["cell_km"], (bounds[1] + bounds[3]) / 2)
+    f = fit_samples(s["reference"], s["target"], x[fit], y[fit], lon[fit], lat[fit], grid, s)
+    xh, yh = x[held], y[held]
+    before, glob, after = yh - xh, yh - f.apply_global(xh), yh - f.apply(xh, lon[held], lat[held])
+    by_date = {}
+    for d in sorted(set(day[held].tolist())):
+        m = day[held] == d
+        by_date[d or "unknown"] = {"n": int(m.sum()), "bias": _r4(np.median(after[m]))}
+    has = before.size > 0
+    cells = np.asarray(f.cell_offsets_e6) / MICRO
+    f.report = {
+        "samples_fit": int(fit.sum()),
+        "samples_heldout": int(held.sum()),
+        "gain": f.gain,
+        "offset": f.offset,
+        "grid": {"nx": f.nx, "ny": f.ny, "cell_km": s["cell_km"]},
+        **f.report,
+        "cell_offset_min": _r4(cells.min()),
+        "cell_offset_max": _r4(cells.max()),
+        "heldout": {
+            "mae_before": _r4(np.abs(before).mean()) if has else None,
+            "mae_global": _r4(np.abs(glob).mean()) if has else None,
+            "mae_after": _r4(np.abs(after).mean()) if has else None,
+            "bias_before": _r4(np.median(before)) if has else None,
+            "bias_after": _r4(np.median(after)) if has else None,
+        },
+        "bias_after_by_date": by_date,
+    }
+    log.info(
+        "ndvi fit: gain %.6f offset %.6f, %d cells (%d filled), held out %s",
+        f.gain,
+        f.offset,
+        f.report["cells"],
+        f.report["cells_filled"],
+        json.dumps(f.report["heldout"]),
+    )
+    return f
+```
+
+Callers of `apply`:
+
+- `scripts/scene/camsim_scene/layers/ndvi.py` `leaf_ndvi`: `rn = np.where(rok, fit.apply(rn, lon, lat), np.nan)`
+  (`lon`, `lat` are the pixel grid already computed there; `pipeline._ndvi_tile` passes `WorkerState.ndvi_fit`
+  unchanged, and `WorkerState` keeps loading it with `NdviFit.from_json`, so neither changes).
+- `scripts/scene/camsim_scene/verify.py` `_ndvi_values`: `rn = st.ndvi_fit.apply(rn, plon, plat)`.
+- `scripts/scene/tools/ndvi_check.py` (no `apply` call today; the seam report gains the global-only step): in
+  `main`, after `bias = ...`:
+
+  ```python
+        fit = st.ndvi_fit
+        glob = fit.apply_global(raw[kr]) - vo[kr] if fit is not None and kr.any() else None
+  ```
+
+  add `"bias_global": round(float(np.median(glob)), 4) if glob is not None else None,` before `"bias_unfitted"` in
+  `report["seam"]`, and `"bias_global": None` to the no-pairs report. Docstring: "The same median with NAIP NDVI
+  inside unfitted (bias_unfitted) and with the global fit only, no cell offsets (bias_global), is reported beside it."
+
+`scripts/scene/camsim_scene/pipeline.py` `_fit_ndvi`, after the early `return None`:
+
+```python
+    if "cell_km" not in s:
+        raise BuildError("ndvi: manifest.json was planned before the gridded NDVI fit; re-plan it (build --replan)")
+    classes, class_shas = class_rasters(m, ctx.asset_paths)
+    shas = sorted(a.sha256 for sid in (s["reference"], s["target"]) for a in m.source(sid).assets) + sorted(class_shas)
+    fmt = f"format{ndvi_fit.FORMAT}"  # a new file format refits even with unchanged settings
+    inputs = inputs_hash(m.layer_settings_hash("ndvi"), __version__, "ndvi_fit", fmt, *shas)
+```
+
+- [ ] **Step 4: Run the tests and lint**
+
+Run: `uv run --project scripts/scene --with pytest pytest scripts/scene/tests -q` → all pass (323 + 1 skipped with
+this task's tests); `uv run --project scripts/scene --with ruff ruff check scripts/scene` and
+`uv run --project scripts/scene --with ruff ruff format --check scripts/scene` → clean. The imagery legacy-leaf and
+balance tests must pass unchanged (the `offset_at` move).
+
+- [ ] **Step 5: Docs**
+
+`docs/scene-packages.md` "NDVI (R1)": replace the **Fit** paragraph with:
+
+```markdown
+**Fit (`ndvi/fit.json`).** NAIP NDVI is computed from uncalibrated DN. Two stages put it on Sentinel-2's scale, both on
+the colour match's 10 m land lattice (WorldCover 0 and 80 excluded, even nodes fitted, odd held out): one linear map,
+`gain x ndvi + offset` (least squares, >= 500 samples), then a smooth offset per 2 km cell: the median residual
+(Sentinel-2 minus fitted NAIP) of each cell with >= 500 samples, 3 x 3 median-filtered and filled outward with a
+10 km decay exactly as the colour match's offsets (`balance.cell_medians`, `fill_offsets`, `offset_at`). Applied to
+NAIP samples only: `clip(gain x ndvi + offset + cell_offset(lon, lat), -1, 1)`; Sentinel-2 is never changed. The
+offset removes the regional residual one global map leaves near NAIP's edge (Pendleton: a +0.047 step before it).
+`fit.json` (format 2) holds integers only: `gain_e6`, `offset_e6`, `grid` (`west_e9`, `south_e9`, `cell_lon_e9`,
+`cell_lat_e9` in nanodegrees, `nx`, `ny`) and `cell_offsets_e6` (`ny` rows of `nx` millionths, row 0 southernmost);
+it is hashed and joined to every NDVI leaf's inputs. `build.json` -> `ndvi`: samples, gain, offset, grid, `cells`
+(fitted) and `cells_filled`, the cell offset range, held-out MAE before / global only / after and median bias
+before/after, and the residual median bias per NAIP acquisition date. No shared land: no `fit.json`, NAIP NDVI
+unfitted (warning). A rebuild with unchanged inputs skips the fit; a package built before the grid refits (and
+rebuilds its NDVI tiles) after `build --replan`.
+```
+
+and in **Known limits** replace "One global fit: per-flight-date differences are reported, not corrected." with
+"One global gain: regional (per-quad, per-flight-date) differences are removed only as a smooth 2 km offset field, and
+coastal cells with little shared land are extrapolated, not fitted; per-date residuals are reported." In the layout
+block at the top, `ndvi/fit.json` comment: `# NAIP -> Sentinel-2 NDVI fit (gain, offset, 2 km offset grid)`.
+`scripts/scene/tools/README.md` `ndvi_check.py` row: "... the bias across NAIP's edge (seam; also with the global fit
+only and unfitted) ...".
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add scripts/scene/camsim_scene/balance.py scripts/scene/camsim_scene/ndvi_fit.py scripts/scene/camsim_scene/config.py \
+  scripts/scene/camsim_scene/layers/ndvi.py scripts/scene/camsim_scene/verify.py scripts/scene/camsim_scene/pipeline.py \
+  scripts/scene/tools/ndvi_check.py scripts/scene/tools/README.md scripts/scene/tests docs/scene-packages.md
+git commit -m "feat(scene): gridded NDVI offset on top of the global fit (fit.json format 2)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01EuqoXt1sAk5mjhhppnKP9D"
+```
+
+---
+
 ### Task 8: Acceptance on Camp Pendleton
+
+**Runs after Task 9** (the first run failed gate 4 at +0.0472; Task 9 adds the gridded offset).
 
 Long-running; runs on the Mac with the populated cache (`.cache/scene`; NAIP and Sentinel-2 COGs already fetched, so
 no new downloads are expected; re-planning re-runs discovery, which needs the network for STAC/HEAD requests). No
@@ -2118,14 +2665,21 @@ uv run --project scripts/scene camsim-scene --cache .cache/scene build .cache/sc
   --config scripts/scene/examples/pendleton.toml --replan -j 6 2>&1 | tail -20
 ```
 
+If `.cache/scene-packages/pendleton-ndvi` is left from the first run (format-1 fit, gate 4 failed), skip the `cp` and
+run the same `build … --replan` on it: the new grid keys change the NDVI settings hash, so the fit and every NDVI
+tile rebuild while terrain and imagery skip.
+
 Expected: completes; `build.json`: `layers.terrain.built` 0, `layers.imagery.built` 0, `ndvi.fitted` true,
-`layers.ndvi.files` > 0. Record wall time, NDVI tiles/files/bytes/seconds, peak RSS, fit seconds, gain, offset.
+`layers.ndvi.files` > 0; `ndvi/fit.json` has `"format": 2`. Record wall time, NDVI tiles/files/bytes/seconds, peak RSS,
+fit seconds, gain, offset, `grid` (nx × ny), `cells`, `cells_filled`, `cell_offset_min` / `cell_offset_max`.
 
 - [ ] **Step 2: Fit gate** (acceptance 2)
 
 Run: `python3 -c "import json; print(json.dumps(json.load(open('.cache/scene-packages/pendleton-ndvi/build.json'))['ndvi'], indent=1))"`
-Expected: `heldout.bias_after` within ±0.02; record MAE and bias before/after and `bias_after_by_date` for
-2022-04-25, 05-12 and 05-30. Any date with |bias| > 0.03 → note it as a follow-up (not a failure).
+Expected: `heldout.bias_after` within ±0.02; `heldout.mae_after` < `heldout.mae_global` (the what-if: 0.080 →
+~0.066–0.072); record MAE before / global / after, bias before/after, `cells` and `cells_filled`, and
+`bias_after_by_date` for 2022-04-25, 05-12 and 05-30. Any date with |bias| > 0.03 → note it as a follow-up (not a
+failure).
 
 - [ ] **Step 3: Sun metadata**
 
@@ -2140,7 +2694,9 @@ uv run --project scripts/scene python scripts/scene/tools/ndvi_check.py .cache/s
   --cache .cache/scene --overview .cache/ndvi_check/pendleton.png | tee .cache/ndvi_check/report.json
 ```
 
-Expected: exit 0, `fails: []`; record `class_median`, `class_n`, `seam` (bias and bias_unfitted, pairs).
+Expected: exit 0, `fails: []`, |`seam.bias`| ≤ 0.03 (the what-if predicts about 0.00 to +0.016; `bias_global`
+should reproduce the first run's ~+0.047); record `class_median`, `class_n`, `seam` (bias, bias_global,
+bias_unfitted, pairs). If the seam still fails, stop and report (don't tune `cell_km`).
 
 - [ ] **Step 5: verify and determinism** (acceptance 1, 5, 6)
 
@@ -2167,7 +2723,8 @@ skips every tile (`built` 0 in all layers); `OFF-SWITCH IDENTICAL` (all non-NDVI
   sea). Ask the user to look before marking this done.
 
 - [ ] **Step 7: Record and commit** — add an "R1 chunk 2 (NDVI and sun metadata)" table to `docs/scene-packages.md`
-  "Measured" (gates 1–7 with the numbers above, the build cost per NDVI tile and the layer size), update the
+  "Measured" (gates 1–7 with the numbers above, including the first run's +0.0472 seam and the grid's cells, the
+  build cost per NDVI tile and the layer size), update the
   `REALISM.md` status paragraph ("R1 chunk 2 (NDVI + sun metadata) accepted on Pendleton <date>: …; Next: the rest of
   R1 (coastline vs sea level, Linux/Docker `file://`, R1 gates)") and the R1 bullet "NAIP also has a near-infrared
   band…" (mark done, pointing at the NDVI section), and the `ROADMAP.md` realism paragraph (one sentence with the
