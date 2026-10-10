@@ -146,8 +146,8 @@ feature polygons in priority order (later wins), and rewrites the PNG:
 3. rail (210)
 4. roads (200/201)
 
-- **Raster rule:** `rasterio.features.rasterize` with the centre-sample rule (not `all_touched`), on polygons whose width
-  is first raised to at least the cell's longer side (9.28 m). A strip that wide covers at least one cell centre in every
+- **Raster rule:** `rasterio.features.rasterize` with the centre-sample rule (not `all_touched`), on line features whose width
+  is first raised to at least 1.05 × the cell's longer side (9.74 m; polygons are burned as they are). A strip that wide covers at least one cell centre in every
   cross-section at any orientation, so roads never break into dashes. The centre rule keeps them about one texel wide.
   `all_touched` would make them two.
 - **No-data texels:** 0 is burned like any other texel.
