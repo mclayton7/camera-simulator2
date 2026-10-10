@@ -123,6 +123,8 @@ def seam_pairs(footprints, step_m: float):
         sign = np.where(shapely.contains_xy(union, probe[:, 0], probe[:, 1]), 1.0, -1.0)[:, None]
         ins.append(p + sign * nrm * (INSIDE_M / M_PER_DEG))
         outs.append(p - sign * nrm * (OUTSIDE_M / M_PER_DEG))
+    if not ins:
+        return np.empty((2, 0)), np.empty((2, 0))
     a, b = np.concatenate(ins), np.concatenate(outs)
     edge = shapely.boundary(union)
     depth = shapely.distance(edge, shapely.points(a)) * M_PER_DEG
@@ -201,6 +203,11 @@ def main(argv: list[str] | None = None) -> int:
     if s["reference"]:
         fps = reference_footprints(m, s["reference"])
         ins, outs = seam_pairs(fps, a.step_m)
+        if not ins.shape[1]:
+            report["seam"] = {"candidates": 0, "pairs": 0, "bias": None, "bias_unfitted": None}
+            report["fails"].append("no seam pairs sampled")
+            ins = outs = None
+    if s["reference"] and ins is not None:
         keep = np.ones(ins.shape[1], bool)
         if classes:
             keep &= (class_codes(classes, *ins) != WATER) & (class_codes(classes, *outs) != WATER)

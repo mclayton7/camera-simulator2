@@ -58,7 +58,12 @@ log = logging.getLogger("camsim_scene")
 TOOL = {"name": "camsim-scene", "version": __version__}
 CHUNK = 64
 EXT = {"terrain": "terrain", "imagery": "jpg", "ndvi": "png"}
-EST_KB = {"terrain": 7.5, "imagery": 16.0, "landcover": 15.0}  # per tile, from the R0 spike
+EST_KB = {
+    "terrain": 7.5,
+    "imagery": 16.0,
+    "landcover": 15.0,  # per tile, from the R0 spike
+    "ndvi": 20.0,  # 256 px 8-bit grayscale PNG: conservative (smooth NDVI compresses well, noisy tiles reach ~40 KB)
+}
 
 
 class PlanError(Exception):
@@ -139,22 +144,25 @@ def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bo
     unknown = f" (+{est['unknown_sizes']} assets of unknown size)" if est["unknown_sizes"] else ""
     print(
         f"plan {m.name}: {sum(len(s.assets) for s in m.sources)} assets, cache {est['cache_bytes'] / 1e9:.1f} GB{unknown}; "
-        f"tiles terrain {est['tiles']['terrain']}, imagery {est['tiles']['imagery']}, land cover {est['tiles']['landcover']}; "
+        f"tiles terrain {est['tiles']['terrain']}, imagery {est['tiles']['imagery']}, land cover {est['tiles']['landcover']}, ndvi {est['tiles']['ndvi']}; "
         f"package ~{est['package_bytes'] / 1e9:.1f} GB",
         file=out,
     )
     return m
 
 
+LAYERS_EST = ("terrain", "imagery")
+
+
 def estimate(m: Manifest) -> dict:
     sizes = [a.size for s in m.sources for a in s.assets]
     use_bbox = not m.is_fetched()
-    tiles = {
-        layer: plan_tiles(m.region_objs(), layer, coverage(m, layer, use_bbox=use_bbox)).count()
-        for layer in ("terrain", "imagery")
-    }
+    plans = {layer: plan_tiles(m.region_objs(), layer, coverage(m, layer, use_bbox=use_bbox)) for layer in LAYERS_EST}
+    tiles = {layer: p.count() for layer, p in plans.items()}
     lc = m.layers["landcover"]
     tiles["landcover"] = len(landcover.tiles_for_bbox(*lc["bounds"])) if lc["priorities"] else 0
+    nd = m.layers.get("ndvi")
+    tiles["ndvi"] = ndvi_plan(plans["imagery"], nd["max_zoom"], _ndvi_area(m, use_bbox)).count() if nd else 0
     package = sum(tiles[k] * EST_KB[k] * 1024 for k in tiles)
     return {
         "cache_bytes": sum(v for v in sizes if v),
@@ -333,7 +341,22 @@ def _ndvi_parent_bytes(pkg: Path, z: int, x: int, y: int) -> bytes | None:
     return ndvi.parent_tile(kids)
 
 
-def _ndvi_tile(z: int, x: int, y: int, leaf: bool):
+NDVI_KIDS = ((0, 0), (1, 0), (0, 1), (1, 1))
+
+
+def _ndvi_child_outputs(read, z: int, x: int, y: int, planned: tuple[bool, ...]) -> list[str]:
+    """The four children's output hashes for a parent's inputs. A child outside the NDVI plan (beyond the NIR area)
+    hashes as "absent"; a planned child with no marker was never built, which is an error."""
+    outs = []
+    for (dx, dy), is_planned in zip(NDVI_KIDS, planned, strict=True):
+        rec = read("ndvi", z + 1, 2 * x + dx, 2 * y + dy)
+        if rec is None and is_planned:
+            raise BuildError(f"ndvi {z}/{x}/{y}: child {z + 1}/{2 * x + dx}/{2 * y + dy} was not built")
+        outs.append(rec["output"] if rec else "absent")
+    return outs
+
+
+def _ndvi_tile(z: int, x: int, y: int, leaf: bool, planned: tuple[bool, ...] = ()):
     st = _STATE
     s = st.manifest.layers["ndvi"]
     if leaf:
@@ -353,16 +376,13 @@ def _ndvi_tile(z: int, x: int, y: int, leaf: bool):
             s["feather_m"],
         )
     else:
-        outs = []
-        for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
-            rec = _MARKERS.read("ndvi", z + 1, 2 * x + dx, 2 * y + dy)
-            outs.append(rec["output"] if rec else "absent")  # children outside the NDVI area are not planned
+        outs = _ndvi_child_outputs(_MARKERS.read, z, x, y, planned)
         inputs = inputs_hash(st.settings["ndvi"], __version__, "parent", *outs)
         produce = partial(_ndvi_parent_bytes, st.pkg, z, x, y)
     return run_tile(st.pkg, _MARKERS, "ndvi", "png", z, x, y, inputs, produce)
 
 
-def ndvi_batch(items: list[tuple[int, int, int, bool]]) -> list:
+def ndvi_batch(items: list[tuple[int, int, int, bool, tuple[bool, ...]]]) -> list:
     return [_ndvi_tile(*it) for it in items]
 
 
@@ -393,6 +413,18 @@ def _imagery_phases(plan: LayerPlan):
         leaf = np.isin(keys, plan.leaves[z])
         x, y = split_keys(keys)
         yield _chunks((z, a, b, bool(lf)) for a, b, lf in zip(x.tolist(), y.tolist(), leaf.tolist()))
+
+
+def _ndvi_phases(plan: LayerPlan):
+    """_imagery_phases with each parent's planned-children flags (NDVI_KIDS order) as a fifth item field."""
+    for z in range(plan.max_zoom, -1, -1):
+        keys = plan.tiles[z]
+        leaf = np.isin(keys, plan.leaves[z])
+        x, y = split_keys(keys)
+        yield _chunks(
+            (z, a, b, bool(lf), () if lf else tuple(plan.has(z + 1, 2 * a + dx, 2 * b + dy) for dx, dy in NDVI_KIDS))
+            for a, b, lf in zip(x.tolist(), y.tolist(), leaf.tolist())
+        )
 
 
 def _run_layer(
@@ -561,10 +593,10 @@ def _fit_ndvi(pkg: Path, m: Manifest, ctx: BuildContext) -> dict | None:
     return _cached_fit(out, marker, inputs, fit)
 
 
-def _ndvi_area(m: Manifest):
+def _ndvi_area(m: Manifest, use_bbox: bool = False):
     """Where the NDVI layer is built: the ring, within the footprints of its sources' data."""
     ring = next(r for r in m.region_objs() if r.name == "ring").geometry()
-    return shapely.intersection(ring, shapely.union_all(coverage(m, "ndvi").geoms))
+    return shapely.intersection(ring, shapely.union_all(coverage(m, "ndvi", use_bbox=use_bbox).geoms))
 
 
 def _build_ndvi(pkg: Path, m: Manifest, ctx: BuildContext, iplan: LayerPlan, jobs: int, json_progress: bool):
@@ -576,7 +608,7 @@ def _build_ndvi(pkg: Path, m: Manifest, ctx: BuildContext, iplan: LayerPlan, job
         shutil.rmtree(pkg / STATE_DIR / "ndvi", ignore_errors=True)
         return None
     plan = ndvi_plan(iplan, s["max_zoom"], _ndvi_area(m))
-    phases = _imagery_phases(plan) if plan.count() else []
+    phases = _ndvi_phases(plan) if plan.count() else []
     stats = _run_layer(ctx, "ndvi", plan, phases, ndvi_batch, jobs, json_progress, per_zoom=True)
     xml = pkg / "ndvi" / "tilemapresource.xml"
     present = {z: k for z, k in present_tiles(pkg, "ndvi", "png").items() if len(k)}

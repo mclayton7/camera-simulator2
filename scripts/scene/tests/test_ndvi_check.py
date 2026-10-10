@@ -44,6 +44,11 @@ def test_seam_pairs_straddle_the_edge():
     assert np.allclose(d_in, ndvi_check.INSIDE_M, rtol=0.05)
 
 
+def test_seam_pairs_without_footprints_is_empty():
+    ins, outs = ndvi_check.seam_pairs([], 500.0)
+    assert ins.shape == (2, 0) and outs.shape == (2, 0)
+
+
 def test_colourise_marks_nodata():
     rgb = ndvi_check.colourise(np.array([[np.nan, -0.2, 0.8]]))
     assert rgb.shape == (1, 3, 3) and rgb[0, 0].tolist() == list(ndvi_check.NODATA_RGB)

@@ -263,7 +263,9 @@ unfitted (warning). A rebuild with unchanged inputs skips the fit.
 **Off switch.** `ndvi = false` (the `preview` default): no `ndvi/`; every other file is unchanged. Setting
 `ndvi = true` without `naip_pc` or `wc_s2` in the imagery priorities is an error; without NAIP the layer is
 Sentinel-2 alone and builds without a fit (a fallback, not a supported mode). A package planned before this layer has
-none until `build --replan`, which rebuilds only the NDVI tiles.
+none until `build --replan`, which rebuilds only the NDVI tiles. Since the `sim` default is `ndvi = true`, an existing
+`sim` package needs `--replan` (or `ndvi = false` in its scene.toml) before its next `build --config`; otherwise the
+build stops with "differs … in layers; pass --replan".
 
 **Acquisition date and sun.** Each NAIP asset in `manifest.json` records `acquired` (the date), `sun_noon`
 (`elevation_deg`, `azimuth_deg` at local solar noon) and `sun_window` (`min_elevation_deg` 30, `azimuth_deg`

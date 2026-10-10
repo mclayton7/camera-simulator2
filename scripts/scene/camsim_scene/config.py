@@ -10,8 +10,8 @@ jpeg_quality = 85
 imagery_margin_km = 3                      # NAIP fetched and built this far beyond the bbox (<= ring_km)
 balance = true                             # colour-match Sentinel-2 to NAIP and feather NAIP's edge (only where they share land)
 naip_water_buffer_m = 200                  # NAIP only this far beyond WorldCover water's edge (0 = off)
-ndvi = true                               # NDVI layer beside the imagery (sim default; preview false)
-ndvi_max_zoom = 15                        # NDVI pyramid depth, [10, 17]
+ndvi = true                                # NDVI layer beside the imagery (sim default; preview false)
+ndvi_max_zoom = 15                         # NDVI pyramid depth, [10, 17]
 allow = []                                 # extra licence ids (see licences.toml)
 [priorities]                               # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "etopo2022"]

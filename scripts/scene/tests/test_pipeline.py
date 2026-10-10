@@ -8,7 +8,7 @@ from fake_sources import build_synthetic, source, synthetic_scene
 from fakes import FakeHttp
 from rasters import write_geotiff
 
-from camsim_scene import fsutil, qmesh, tiling
+from camsim_scene import fsutil, pipeline, qmesh, tiling
 from camsim_scene.config import parse_scene
 from camsim_scene.context import coverage
 from camsim_scene.engine import BuildLock, BuildLocked
@@ -157,6 +157,28 @@ def test_estimate_before_fetch(tmp_path):
     m = plan_scene(parse_scene(synthetic_scene(tmp_path / "src")), tmp_path / "pkg", http=FakeHttp({}), out=out)
     est = estimate(m)
     assert est["tiles"]["terrain"] > 0 and est["package_bytes"] > 0 and "tiles" in out.getvalue()
+
+
+def test_estimate_counts_ndvi_tiles(tmp_path):
+    from fake_sources import ndvi_scene
+
+    out = io.StringIO()
+    m = plan_scene(parse_scene(ndvi_scene(tmp_path / "src")), tmp_path / "pkg", http=FakeHttp({}), out=out)
+    est = estimate(m)
+    assert 0 < est["tiles"]["ndvi"] <= est["tiles"]["imagery"]
+    assert f"ndvi {est['tiles']['ndvi']}" in out.getvalue()
+    base = sum(est["tiles"][k] * pipeline.EST_KB[k] * 1024 for k in ("terrain", "imagery", "landcover"))
+    assert est["package_bytes"] == int(base + est["tiles"]["ndvi"] * pipeline.EST_KB["ndvi"] * 1024)
+
+
+def test_ndvi_parent_errors_on_a_planned_child_that_was_not_built():
+    def read(layer, z, x, y):
+        return None if (x, y) == (3, 1) else {"output": f"h{x}{y}"}
+
+    with pytest.raises(BuildError, match="not built"):
+        pipeline._ndvi_child_outputs(read, 4, 1, 0, (True, True, True, True))
+    outs = pipeline._ndvi_child_outputs(read, 4, 1, 0, (True, True, True, False))  # child 3/1 unplanned: "absent"
+    assert outs[3] == "absent" and outs[:3] == ["h20", "h30", "h21"]
 
 
 def test_rss_bound_is_reported_after_a_complete_build(tmp_path):
