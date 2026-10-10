@@ -16,29 +16,44 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 rr = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(rr)
-best_offset = rr.best_offset
+road_offset = rr.road_offset
+X = np.arange(-30.0, 30.01, 0.5)
 
 
-def test_best_offset_finds_the_dark_band():
-    x = np.arange(-30.0, 30.01, 0.5)
-    prof = np.where(np.abs(x - 4.0) <= 5.0, 60.0, 160.0)
-    assert abs(best_offset(prof, 0.5, 10.0) - 4.0) <= 0.5
+def test_road_offset_finds_a_dark_band():
+    prof = np.where(np.abs(X - 4.0) <= 5.0, 60.0, 160.0)
+    assert abs(road_offset(prof, 0.5, 10.0) - 4.0) <= 0.5
+    assert rr.road_match(prof, 0.5, 10.0)["polarity"] == "dark"
 
 
-def test_best_offset_none_without_contrast():
-    assert best_offset(np.full(121, 120.0), 0.5, 10.0) is None
+def test_road_offset_finds_a_bright_band():
+    prof = np.where(np.abs(X + 6.0) <= 5.0, 200.0, 120.0)  # bright asphalt/concrete against dark chaparral
+    assert abs(road_offset(prof, 0.5, 10.0) + 6.0) <= 0.5
+    assert rr.road_match(prof, 0.5, 10.0)["polarity"] == "bright"
 
 
-def test_best_offset_bright_road_is_none():
-    x = np.arange(-30.0, 30.01, 0.5)
-    prof = np.where(np.abs(x) <= 5.0, 200.0, 120.0)  # bright concrete: not a dark band
-    assert best_offset(prof, 0.5, 10.0) is None
+def test_road_offset_none_on_a_flat_profile():
+    assert road_offset(np.full(121, 120.0), 0.5, 10.0) is None
 
 
-def test_best_offset_negative_side():
-    x = np.arange(-30.0, 30.01, 0.5)
-    prof = np.where(np.abs(x + 7.5) <= 4.0, 50.0, 150.0)
-    assert abs(best_offset(prof, 0.5, 8.0) + 7.5) <= 0.5
+def test_road_offset_none_on_a_single_edge():
+    assert road_offset(np.where(X < 3.0, 80.0, 160.0), 0.5, 10.0) is None  # one edge, no pair
+
+
+def test_road_offset_none_on_weak_edges():
+    assert road_offset(np.where(np.abs(X) <= 5.0, 117.0, 120.0), 0.5, 10.0) is None  # 3 DN: below EDGE_MIN
+
+
+def test_road_offset_tolerates_width_error():
+    prof = np.where(np.abs(X - 4.0) <= 5.0, 60.0, 160.0)  # a 10 m road
+    for w in (8.0, 12.0):
+        assert abs(road_offset(prof, 0.5, w) - 4.0) <= 1.0
+
+
+def test_road_offset_ignores_noise_on_a_clear_road():
+    rng = np.random.default_rng(0)
+    prof = np.where(np.abs(X - 2.0) <= 4.0, 180.0, 110.0) + rng.normal(0.0, 4.0, X.size)
+    assert abs(road_offset(prof, 0.5, 8.0) - 2.0) <= 1.0
 
 
 def _road(oid, coords, **tags):

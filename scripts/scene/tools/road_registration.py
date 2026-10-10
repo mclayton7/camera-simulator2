@@ -1,7 +1,9 @@
 """REALISM R2 gate 2: OSM road centrelines vs NAIP roads. Samples N points (seeded) on motorway..tertiary centrelines at
 least 50 m from a junction or a skipped (bridge/tunnel) way, reads a +-30 m luminance profile across the road from the
-package imagery (z17 TMS, bilinear), and finds the offset of the best match to a dark box of the road's width. Gate:
-median |offset| <= 10 m. Profiles without a dark band (concrete, shade, trees) are excluded and counted.
+package imagery (z17 TMS, bilinear), and finds the offset of the best polarity-free edge pair the road's width apart
+(road_match: Pendleton asphalt is more often brighter than its verges than darker). Gate: median |offset| <= 10 m.
+Profiles without a clear edge pair (weaker edge < EDGE_MIN_DN_PER_M, or the best score < PEAK_RATIO x the median
+score) are excluded and counted; the report counts dark-road and bright-road matches.
 
     uv run --project scripts/scene python scripts/scene/tools/road_registration.py PKG [--n 200] [--seed 0] \
         [--json out.json] [--crops DIR] [--cache .cache/scene]
@@ -9,7 +11,8 @@ median |offset| <= 10 m. Profiles without a dark band (concrete, shade, trees) a
 Only ways that burn as dark asphalt (code 200) are sampled: concrete is excluded by design, and `_link` ramps are left
 out (they curve and sit next to junctions). A junction is a node shared by two or more road ways of any class. The
 offset is signed along the left normal of the way's direction. `--crops DIR` writes a road-aligned luma crop (80 m
-along x 60 m across) of the worst profiles, centreline in red, best match in green. Exits 1 when the gate fails."""
+along x 60 m across) of the worst profiles: centreline red, matched centre yellow, matched edges green. Exits 1 when
+the gate fails."""
 
 from __future__ import annotations
 
@@ -24,7 +27,10 @@ import numpy as np
 import shapely
 from PIL import Image
 
-MIN_CONTRAST_DN = 15.0
+SMOOTH_SIGMA_M = 1.25  # Gaussian smoothing of the profile before the gradient
+POOL_M = 1.0  # gradient max-pooled over +-POOL_M: tolerates +-2 m of width error
+EDGE_MIN_DN_PER_M = 4.0  # weaker edge of the pair; a 15 DN step smoothed at 1.25 m peaks at ~4.8 DN/m
+PEAK_RATIO = 1.5  # winning score vs the median score over all candidate centres
 GATE_M = 10.0
 HALF_M = 30.0
 STEP_M = 0.5
@@ -34,24 +40,50 @@ CLASSES = ("motorway", "trunk", "primary", "secondary", "tertiary")
 M_PER_DEG_LAT = 111_320.0
 
 
-def best_offset(profile, step_m, road_w_m):
-    """Signed offset (m) from the profile centre of the best dark box of the road's width against its two flanks (out
-    to three half-widths from the box centre), or None when no box is MIN_CONTRAST_DN darker than BOTH flanks. Scoring
-    by the darker flank, not the whole ring, keeps the dark ground beside a bright (concrete) road from matching: its
-    ring holds the bright road on one side only. Each flank needs at least half a half-width of samples."""
-    n = len(profile)
-    half = max(1, int(round(road_w_m / 2 / step_m)))
-    min_flank = max(1, half // 2)
-    best, best_c = None, MIN_CONTRAST_DN
-    for c in range(half, n - half):
-        lo, hi = max(0, c - 3 * half), min(n, c + 3 * half + 1)
-        left, right = profile[lo : c - half], profile[c + half + 1 : hi]
-        if left.size < min_flank or right.size < min_flank:
-            continue
-        contrast = min(left.mean(), right.mean()) - profile[c - half : c + half + 1].mean()
-        if contrast > best_c:
-            best, best_c = c, contrast
-    return None if best is None else (best - (n - 1) / 2) * step_m
+def road_match(profile, step_m, road_w_m) -> dict | None:
+    """Polarity-free edge-pair match of a road of width road_w_m across a luma profile (samples step_m apart, centred
+    on the OSM centreline). The profile is smoothed (Gaussian, SMOOTH_SIGMA_M), g = |d/dx| in DN/m, max-pooled over
+    +-POOL_M to tolerate width error; each candidate centre c scores S(c) = g(c - w/2) + g(c + w/2). The argmax wins
+    unless its weaker edge is below EDGE_MIN_DN_PER_M or S is below PEAK_RATIO x the median score (no clear pair):
+    then None. Returns {offset_m (signed, from the profile centre), weak_edge, score_ratio, polarity ("dark" when the
+    road is darker than the flanks just outside its edges, else "bright")}."""
+    from scipy.ndimage import gaussian_filter1d, maximum_filter1d
+
+    p = np.asarray(profile, np.float64)
+    n = p.size
+    hw = max(1, int(round(road_w_m / 2 / step_m)))
+    if n < 2 * hw + 1:
+        return None
+    raw = np.abs(np.gradient(gaussian_filter1d(p, SMOOTH_SIGMA_M / step_m, mode="nearest"), step_m))
+    g = maximum_filter1d(raw, size=2 * int(round(POOL_M / step_m)) + 1, mode="nearest")
+    c = np.arange(hw, n - hw)
+    left, right = g[c - hw], g[c + hw]
+    score = left + right
+    # Pooling makes the peak a plateau: break ties by the unpooled pair score, then take the middle of what's left
+    tied = np.flatnonzero(score >= score.max() * (1 - 1e-9))
+    rs = raw[c[tied] - hw] + raw[c[tied] + hw]
+    tied = tied[rs >= rs.max() * (1 - 1e-6)]
+    k = int(tied[len(tied) // 2])
+    med = float(np.median(score))
+    weak = float(min(left[k], right[k]))
+    ratio = float(score[k] / med) if med > 0 else float("inf")
+    if weak < EDGE_MIN_DN_PER_M or ratio < PEAK_RATIO:
+        return None
+    cc = int(c[k])
+    inside = p[cc - hw : cc + hw + 1].mean()
+    flanks = np.concatenate([p[max(0, cc - 2 * hw) : cc - hw], p[cc + hw + 1 : cc + 2 * hw + 1]])
+    return {
+        "offset_m": (cc - (n - 1) / 2) * step_m,
+        "weak_edge": round(weak, 2),
+        "score_ratio": round(ratio, 2),
+        "polarity": "dark" if flanks.size and inside < flanks.mean() else "bright",
+    }
+
+
+def road_offset(profile, step_m, road_w_m) -> float | None:
+    """The signed offset (m) of road_match, or None when the profile has no clear edge pair."""
+    r = road_match(profile, step_m, road_w_m)
+    return None if r is None else r["offset_m"]
 
 
 def split_ways(feats) -> tuple[list, list]:
@@ -183,7 +215,7 @@ def profile_at(sampler: TmsSampler, lon, lat, tx, ty, offsets_m) -> np.ndarray:
 
 def save_crop(sampler: TmsSampler, r: dict, path: Path) -> None:
     """Road-aligned crop: columns across the road (-HALF_M..HALF_M, left normal to the right), rows along it (80 m),
-    at STEP_M; the centreline red, the match green."""
+    at STEP_M; the OSM centreline red, the matched centre yellow, the matched edges (road_w_m apart) green."""
     across = np.arange(-HALF_M, HALF_M + 1e-9, STEP_M)
     along = np.arange(40.0, -40.0 - 1e-9, -STEP_M)
     tx, ty = r["tangent"]
@@ -197,7 +229,10 @@ def save_crop(sampler: TmsSampler, r: dict, path: Path) -> None:
     mid = len(across) // 2
     rgb[:, mid] = (255, 0, 0)
     if r["offset_m"] is not None:
-        rgb[:, mid + int(round(r["offset_m"] / STEP_M))] = (0, 255, 0)
+        k, hw = int(round(r["offset_m"] / STEP_M)), max(1, int(round(r["width_m"] / 2 / STEP_M)))
+        for col, colour in ((k - hw, (0, 255, 0)), (k + hw, (0, 255, 0)), (k, (255, 255, 0))):
+            if 0 <= mid + col < len(across):
+                rgb[:, mid + col] = colour
     Image.fromarray(rgb).resize((rgb.shape[1] * 4, rgb.shape[0] * 4), Image.NEAREST).save(path)
 
 
@@ -225,7 +260,7 @@ def run(pkg: Path, cache_root: Path | None, n: int, seed: int, crops: Path | Non
     rows = []
     for lon, lat, tx, ty, f in pts:
         w = width_m(f)
-        off = best_offset(profile_at(sampler, lon, lat, tx, ty, offsets), STEP_M, w)
+        mt = road_match(profile_at(sampler, lon, lat, tx, ty, offsets), STEP_M, w)
         rows.append(
             {
                 "lon": round(lon, 7),
@@ -234,7 +269,8 @@ def run(pkg: Path, cache_root: Path | None, n: int, seed: int, crops: Path | Non
                 "way": f.source_id,
                 "highway": f.tags.get("highway"),
                 "width_m": w,
-                "offset_m": off,
+                "offset_m": None if mt is None else mt["offset_m"],
+                "match": mt,
             }
         )
     used = np.array([abs(r["offset_m"]) for r in rows if r["offset_m"] is not None])
@@ -250,6 +286,9 @@ def run(pkg: Path, cache_root: Path | None, n: int, seed: int, crops: Path | Non
         "median_abs_m": med,
         "p90_abs_m": p90,
         "within_5m": float((used <= 5.0).mean()) if used.size else None,
+        "polarity": {
+            pol: sum(1 for r in rows if r["match"] and r["match"]["polarity"] == pol) for pol in ("dark", "bright")
+        },
         "gate_m": GATE_M,
         "pass": med is not None and med <= GATE_M,
         "ways": {"sampled_from": len(kept), "skipped": len(skipped), "junctions": len(jn)},
@@ -277,7 +316,8 @@ def main(argv=None) -> int:
     fmt = lambda v: "n/a" if v is None else f"{v:.2f} m"  # noqa: E731
     print(
         f"road registration: median |offset| {fmt(r['median_abs_m'])}, p90 {fmt(r['p90_abs_m'])}, "
-        f"n used {r['n_used']}, excluded {r['n_excluded']} (of {r['n_sampled']} sampled) -> "
+        f"n used {r['n_used']} (dark {r['polarity']['dark']}, bright {r['polarity']['bright']}), "
+        f"excluded {r['n_excluded']} (of {r['n_sampled']} sampled) -> "
         f"{'PASS' if r['pass'] else 'FAIL'} (gate {GATE_M:.0f} m)"
     )
     if a.json:
