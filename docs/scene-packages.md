@@ -141,7 +141,7 @@ imagery = ["naip_pc", "wc_s2", "bmng"]
 landcover = ["worldcover"]
 
 [sea_level]                                 # optional: local mean sea level (Sea level section)
-station = "9410230"                         # NOAA CO-OPS station id with a NAVD88 datum tie; omit for an inland package
+station = "9410230"                         # NOAA CO-OPS station id with a NAVD88 datum tie; required when the bbox or ring meets the CRM
 
 [sources.naip_pc]                           # per-source options; `adapter` picks a non-default class ("module:Class")
 year = "2022"
@@ -327,11 +327,13 @@ vertex heights.
 
 **Tile set.** A tile's depth is min(region limit, best covering source's limit). San Diego (z14) lies under 3DEP 1/3″
 (z14) and the CRM (z12) under the ring limit (z10), so the tile set should not change: the build is expected to
-match the pendleton-ndvi build (182,602 terrain tiles). Measured: 182,794 (+192) in "Measured".
+match the pendleton-ndvi build. The pendleton-ndvi build had 182,602 terrain tiles; the R1 build has 182,794
+(+192), see "Measured".
 
 **Older manifests.** A manifest without `tidal_mask` (R0, chunk 1, chunk 2) builds exactly as before. `build --replan`
 with the new priorities rebuilds only the terrain: imagery, land cover and NDVI are skipped (unchanged hashes), as
-measured in "Measured".
+measured in "Measured". Replanning any package, also a non-SoCal one such as the SF sample, rebuilds its terrain once
+because the tidal mask setting enters the tile hash; the output is identical.
 
 **Known limits.** WorldCover's water edge (10 m pixels, 2021) is not the instantaneous waterline; the feather absorbs
 it. The CRM is accurate to about 1 m and is coarser than the ring's z10 samples (about 150 m). Piers and other thin
@@ -340,16 +342,20 @@ features follow their source. Acceptance: coast_check (a)-(c) in "Measured".
 ## Sea level (R1)
 
 **Why.** CamSim's tide-0 sea is the EGM96 geoid. Local mean sea level at La Jolla is +0.774 m NAVD88 (NOAA CO-OPS
-9410230, 1983-2001 tidal epoch), about 0.4 m above EGM96 there. The drawn waterline sat 10 to 20 m seaward of local
+9410230, 1983-2001 tidal epoch), which is only +0.110 m above EGM96 at La Jolla but 0.3 to 0.66 m above it along
+the Pendleton coast (see "Limit"). The drawn waterline sat 10 to 20 m seaward of local
 MSL on gentle beaches. (NOAA's CUSP shoreline is MHW, +1.344 m NAVD88, not MSL.)
 
 **`[sea_level] station`.** A CO-OPS station id with a NAVD88 datum. Pendleton uses La Jolla: Oceanside Harbor
 (9410396) is tidally identical but has no NAVD88 tie. A station without a NAVD88 datum is a `plan` error naming the
-problem. Inland packages leave the table out.
+problem. Any package whose bbox or 100 km ring meets the CRM (`noaa_crm_socal`, lon -128 to -115, lat 30 to 37, which
+includes land) needs a station, inland ones too: `plan` fails with a config error otherwise. Only a package with no
+`noaa_crm_socal` coverage (outside the CRM, or the source removed from the priorities) can leave the table out; a
+`--bbox` scene in Southern California needs the table added to its generated `<name>.scene.toml`.
 
 **Manifest snapshot.** `plan` reads the station's `datums.json` and position from the CO-OPS API and stores them in
 `manifest.json` under `sea_level`: `station`, `name`, `lat`, `lon`, `epoch`, `msl_m`, `navd88_m`,
-`msl_above_navd88_m`, `geoid` and the EGM96 grid (`us_nga_egm96_15.tif`, also listed in `datum.grids`). The values are
+`msl_above_navd88_m`, `geoid` and the EGM96 grid (`us_nga_egm96_15.tif`, stored under `sea_level.egm96_grid`, not in `datum.grids`). The values are
 stored as published, so a later rebuild does not query the API. `noaa_crm_socal` takes `msl_above_navd88_m` from it.
 
 **`sea_level.json`.** The build writes, at the station's position (pinned grids, `PROJ_NETWORK=OFF`):
@@ -367,8 +373,13 @@ boat clamp, the material parameters and wave queries all use it. `offset_m` outs
 resolve error; no file means 0. See "Scene Package" in [`configuration.md`](configuration.md). KLV Tags 15 and 25
 stay EGM96 MSL by definition.
 
-**Limit.** One constant per package. Sea-surface topography varies over 100 km by centimetres to a decimetre; the
-constant is exact at the station and approximate elsewhere. Acceptance: coast_check (d) and the sea rows of
+**Limit.** One constant per package, evaluated at the station. It is exact there and wrong along the coast: the offset
+local MSL needs (same MSL - NAVD88, GEOID18 and EGM96 evaluated at the point) runs from +0.08 m at Oceanside to +0.56 m
+at San Onofre and +0.66 m at the Dana Point end of the ring, against the +0.110 m shipped (La Jolla). The cause is
+EGM96's own tilt against an almost flat GEOID18 (N goes -34.83 to -35.35 m along 25 km), not sea-surface topography.
+So the north half of the Pendleton coast sits 0.3 to 0.47 m below local MSL. Follow-up (REALISM.md, ROADMAP.md):
+evaluate the offset at the package coast, or add a per-package NAVD88 + MSL - EGM96 correction grid read by
+`FOceanSurface`. Acceptance: coast_check (d) and the sea rows of
 hot_check in "Measured".
 
 ## Sources
@@ -645,7 +656,7 @@ Camp Pendleton `sim`, M1 Pro / Metal. Before is `pendleton-ndvi` (R1 chunk 2); a
 
 | Gate | Tool | Result | Before -> after |
 |---|---|---|---|
-| Build, replan skip | `build --replan -j 6` | **Pass.** Wall 904 s. Terrain 182,794 tiles built in 604 s, 979.8 MB, peak RSS 914 MB. Imagery 277,286, NDVI 7,043 and land cover 2,288 tiles skipped. Only `ATTRIBUTION.txt` changed outside terrain; `sea_level.json` added. Station NOAA 9410230 La Jolla: offset +0.110 m (NAVD88 0 at ellipsoid height -35.7764 m, EGM96 N -35.1124 m) | terrain 182,602 -> 182,794 (+192) |
+| Build, replan skip | `build --replan -j 6` | **Pass (+192 tiles from the new seabed coverage).** Wall 904 s. Terrain 182,794 tiles (vs 182,602: the extra tiles are the seabed sources' new coverage; the pre-fetch estimate uses discovery bboxes) built in 604 s, 979.8 MB, peak RSS 914 MB. Imagery 277,286, NDVI 7,043 and land cover 2,288 tiles skipped. Only `ATTRIBUTION.txt` changed outside terrain; `sea_level.json` added. Station NOAA 9410230 La Jolla: offset +0.110 m (NAVD88 0 at ellipsoid height -35.7764 m, EGM96 N -35.1124 m) | terrain 182,602 -> 182,794 (+192) |
 | Verify | `verify --deep` | **Pass.** Every check `ok`, including `sea_level` (239 s). Scene z9+ height error p50 0.001 m, p99 0.162 m, max 2.08 m over 346,640 vertices (z9 p99 0.436, z10 p99 0.231, z14 max 2.08 m) | p99 0.049 m -> 0.162 m |
 | coast_check (a) | `coast_check.py`: offshore terrain <= sea - 0.5 m for >= 99 % | **Pass.** Median depth 24.5 m below sea | 65.6 % failing -> 0.0 % |
 | coast_check (b) | steps <= 3 m per 30 m within 1 km of the dep3_13 edge | **Literal FAIL**, 4.146 m. The step is the natural continental slope on transect coast_00, about 6 km out at -137 to -157 m. It has the same gradient as the NOAA SD 1/3" source (about 4.3 m per 30 m), so it is not a seam. Follow-up: compare against the source's own gradient | 58.4 m cliff -> 4.146 m |
@@ -658,7 +669,7 @@ Camp Pendleton `sim`, M1 Pro / Metal. Before is `pendleton-ndvi` (R1 chunk 2); a
 | Offline | `scene.offline: true` | **Pass.** No network request logged (macOS) | - |
 | Registration | vs CWT + Bing | **Pass.** <= 0.16 px on all 7 land shots; online and offline identical | unchanged |
 | Visual gate | before/after review | **Pass** (user, 2026-10-10). No turquoise shelf, no seabed through wave troughs, waterline at the beach | - |
-| Bench | `run_bench.py --site pendleton`, 2 runs each | **Pass.** Game-thread p50 of r1c <= ndvi and < CWT in every phase (table below). 30 fps and 0 dropped frames in every run and phase. Wall p95 for r1c 34.4-41.8 ms, within the ndvi range. `results.json` has no game-thread p95, so wall p95 is the tail check | see below |
+| Bench | `run_bench.py --site pendleton`, 2 runs each | **Pass.** Game-thread p50 of r1c within noise of ndvi and below CWT in every phase (table below). 30 fps and 0 dropped frames in every run and phase. Wall p95 for r1c 34.4-41.8 ms, within the ndvi range. `results.json` has no game-thread p95, so wall p95 is the tail check | see below |
 
 Game-thread p50, ms (range over 2 runs):
 

@@ -3,3 +3,6 @@ name = "pendleton-preview-10k"
 bbox = [-117.97, 32.90, -116.90, 33.80]
 profile = "preview"
 ring_km = 100
+
+[sea_level]
+station = "9410230"  # NOAA CO-OPS La Jolla: the preview profile reads the CRM, whose MSL heights need a NAVD88 tie

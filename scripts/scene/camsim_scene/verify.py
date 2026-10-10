@@ -259,8 +259,11 @@ def _check_sea_level(pkg: Path, m: Manifest, grid_paths: dict | None) -> Check:
     if not p.exists():
         return Check("sea_level", False, "sea_level.json missing")
     have = json.loads(p.read_text(encoding="utf-8"))
+    off = have.get("offset_m")
+    if not isinstance(off, (int, float)) or isinstance(off, bool) or not abs(off) <= sea_level.MAX_OFFSET_M:
+        return Check("sea_level", False, f"offset {off!r} m is not a number within +/-{sea_level.MAX_OFFSET_M:g} m")
     if grid_paths is None:
-        return Check("sea_level", isinstance(have.get("offset_m"), (int, float)), f"offset {have.get('offset_m')} m")
+        return Check("sea_level", True, f"offset {off} m")
     want = sea_level.compute(m.sea_level, grid_paths)
     ok = abs(have["offset_m"] - want["offset_m"]) <= 0.001
     return Check("sea_level", ok, f"offset {have['offset_m']} m (recomputed {want['offset_m']} m)")

@@ -128,7 +128,7 @@ namespace CamSimSurface
 		// the geoid doesn't misclassify an open-sea boat as inland. A miss holds the last base
 		// height (tile eviction) instead of snapping to sea level — a lake boat shouldn't drop
 		// to sea level just because its tile went away.
-		// Lake only above max(Sea, geoid + LakeMarginM): Cesium's surface sits near the geoid and
+		// Lake only above max(Sea, geoid + package datum + margin): Cesium's surface sits near the geoid and
 		// doesn't move with the CIGI tide, so a low tide (-3 m) must not turn the open sea into a
 		// "lake", and a high tide (+3 m) must not either (the sea then covers the geoid + 2 m band).
 		// The boat itself floats at Sea (with tide).

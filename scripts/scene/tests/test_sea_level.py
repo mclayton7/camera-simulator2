@@ -3,10 +3,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 from fakes import LA_JOLLA, coops_http
+from rasters import write_geotiff
 
 from camsim_scene import sea_level
 from camsim_scene.manifest import Manifest
-from rasters import write_geotiff
 
 GEOID18 = Path(__file__).parent / "fixtures" / "grids" / "us_noaa_g2018u0.tif"
 
@@ -50,3 +50,42 @@ def test_write_removes_a_stale_file_when_there_is_no_station(tmp_path):
     m = Manifest.__new__(Manifest)
     m.sea_level = None
     assert sea_level.write(tmp_path, m, {}) is None and not (tmp_path / sea_level.FILE).exists()
+
+
+def test_compute_rejects_an_offset_beyond_three_metres(tmp_path):
+    s = sea_level.station_section(coops_http(), "9410230")
+    grids = {"us_noaa_g2018u0.tif": GEOID18, sea_level.EGM96_GRID: egm96_grid(tmp_path, value=-30.0)}
+    with pytest.raises(sea_level.SeaLevelError, match="9410230.*3 m"):
+        sea_level.compute(s, grids)
+
+
+def test_compute_rejects_a_non_finite_offset(tmp_path):
+    s = {**sea_level.station_section(coops_http(), "9410230"), "msl_above_navd88_m": float("nan")}
+    grids = {"us_noaa_g2018u0.tif": GEOID18, sea_level.EGM96_GRID: egm96_grid(tmp_path)}
+    with pytest.raises(sea_level.SeaLevelError, match="not finite"):
+        sea_level.compute(s, grids)
+
+
+def test_malformed_station_json_is_a_sea_level_error():
+    from fakes import FakeHttp
+
+    http = coops_http()
+    bad = FakeHttp(
+        {
+            sea_level.COOPS_DATUMS.format(station="9410230"): LA_JOLLA,
+            sea_level.COOPS_STATION.format(station="9410230"): {"stations": [{"name": "La Jolla"}]},
+        }
+    )
+    assert http is not bad
+    with pytest.raises(sea_level.SeaLevelError, match="9410230"):
+        sea_level.station_section(bad, "9410230")
+    worse = FakeHttp(
+        {
+            sea_level.COOPS_DATUMS.format(station="9410230"): {
+                "datums": [{"name": "MSL", "value": "x"}, {"name": "NAVD88", "value": 0}]
+            },
+            sea_level.COOPS_STATION.format(station="9410230"): {"stations": [{"lat": 1, "lng": 2}]},
+        }
+    )
+    with pytest.raises(sea_level.SeaLevelError, match="9410230"):
+        sea_level.station_section(worse, "9410230")

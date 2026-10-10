@@ -4,6 +4,7 @@ sea_level.json (offset_m = local MSL - EGM96 at the station), which CamSim adds 
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from .datum import GRID_URL
@@ -14,6 +15,7 @@ COOPS_STATION = COOPS + ".json"
 GEOID_DATUM = "nad83_2011_navd88_geoid18"
 EGM96_GRID = "us_nga_egm96_15.tif"
 FILE = "sea_level.json"
+MAX_OFFSET_M = 3.0  # CamSim's MaxSeaLevelOffsetM: a larger |offset| is a resolve error at launch
 
 
 class SeaLevelError(Exception):
@@ -22,6 +24,13 @@ class SeaLevelError(Exception):
 
 def station_section(http, station: str) -> dict:
     """The manifest's `sea_level` section from CO-OPS (values as published, metres, station datum)."""
+    try:
+        return _station_section(http, station)
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
+        raise SeaLevelError(f"CO-OPS station {station}: unexpected response ({type(e).__name__}: {e})") from e
+
+
+def _station_section(http, station: str) -> dict:
     d = http.get_json(COOPS_DATUMS.format(station=station))
     values = {x["name"]: x["value"] for x in d.get("datums") or [] if x.get("value") is not None}
     missing = [k for k in ("MSL", "NAVD88") if k not in values]
@@ -61,13 +70,19 @@ def compute(section: dict, grid_paths: dict) -> dict:
     if not ok[0]:
         raise SeaLevelError(f"EGM96 grid has no value at {section['lat']}, {section['lon']}")
     n = float(vals[0][0])
+    offset = round(h0 + section["msl_above_navd88_m"] - n, 4)
+    if not math.isfinite(offset) or abs(offset) > MAX_OFFSET_M:
+        raise SeaLevelError(
+            f"sea level offset {offset} m at station {section['station']} is not finite or outside "
+            f"+/-{MAX_OFFSET_M:g} m (CamSim rejects it): check the station's datums and the pinned grids"
+        )
     return {
         "station": section["station"],
         "name": section.get("name", ""),
         "msl_above_navd88_m": section["msl_above_navd88_m"],
         "navd88_ellipsoid_m": round(h0, 4),
         "egm96_n_m": round(n, 4),
-        "offset_m": round(h0 + section["msl_above_navd88_m"] - n, 4),
+        "offset_m": offset,
     }
 
 

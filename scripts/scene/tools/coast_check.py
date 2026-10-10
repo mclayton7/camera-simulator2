@@ -114,7 +114,7 @@ def terrain_height(pkg: Path, lon: float, lat: float) -> tuple[int, float]:
 
 def transect(lat0: float, lon0: float, bearing_deg: float, step_m: float, length_m: float):
     """(lon[], lat[]) of points every step_m from the start along a compass bearing, length_m long (flat earth)."""
-    d = np.arange(int(round(length_m / step_m)) + 1) * step_m
+    d = np.arange(round(length_m / step_m) + 1) * step_m
     b = np.radians(bearing_deg)
     lat = lat0 + d * np.cos(b) / M_PER_DEG
     lon = lon0 + d * np.sin(b) / (M_PER_DEG * np.cos(np.radians(lat0)))

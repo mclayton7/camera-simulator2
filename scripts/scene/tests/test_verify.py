@@ -229,10 +229,9 @@ def test_nodata_holes_where_the_sources_have_data_fail(built_ndvi, tmp_path):
 def built_package_with_sea_level(tmp_path):
     """A tiny synthetic scene planned with the La Jolla station; the PROJ grids come from local files."""
     import io
-    from pathlib import Path
 
-    from fakes import coops_http
     from fake_sources import synthetic_scene
+    from fakes import coops_http
     from test_sea_level import GEOID18, egm96_grid
 
     from camsim_scene import sea_level
@@ -265,6 +264,10 @@ def test_verify_checks_sea_level(tmp_path):
     d["offset_m"] += 0.01
     p.write_text(json.dumps(d))
     assert not checks(verify(pkg, cache, deep=True))["sea_level"]["ok"]
+    d["offset_m"] = 3.5
+    p.write_text(json.dumps(d))
+    c = checks(verify(pkg))["sea_level"]
+    assert not c["ok"] and "within" in c["detail"]
     p.unlink()
     assert not checks(verify(pkg))["sea_level"]["ok"]
     assert not checks(verify(pkg, cache, deep=True))["sea_level"]["ok"]

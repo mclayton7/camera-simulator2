@@ -25,8 +25,9 @@ from pathlib import Path
 import numpy as np
 import shapely
 
-from . import __version__, datum, ndvi_fit, sea_level as sea_level_mod
+from . import __version__, datum, ndvi_fit
 from . import balance as colour_balance
+from . import sea_level as sea_level_mod
 from .cache import Cache
 from .config import LAYERS, TILING, ScenePlan, layer_settings
 from .context import BuildContext, WorkerState, class_rasters, coverage, reference_footprints, to_asset

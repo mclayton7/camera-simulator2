@@ -21,7 +21,7 @@ including the offline profile. Left from R0: the offline run on Linux/Vulkan (`d
 a SquashFS vs plain-directory cold-start timing. **R1 chunk 1 (NAIP edge) accepted on Pendleton 2026-10-09**
 (`docs/scene-packages.md`, "Measured"): colour bias median 2/2/2 DN, open water within 1.10 DN of raw Sentinel-2,
 identical rebuild; imagery build +20.9 % per tile (over the +10 % spec gate, accepted). Known limits: a dark ~200 m
-NAIP disc around piers; the turquoise shelf outline (ocean, not imagery). **R1 chunk 2 (NDVI + sun metadata)
+NAIP disc around piers; ~~the turquoise shelf outline (ocean, not imagery)~~ (fixed in R1: seabed under tidal water). **R1 chunk 2 (NDVI + sun metadata)
 accepted on Pendleton 2026-10-10** (`docs/scene-packages.md`, "Measured"): a 7,043-tile, 264 MB `ndvi/` layer whose
 global fit left a +0.0472 seam bias at NAIP's footprint edge, fixed by a gridded offset (seam 0.0000, held-out MAE
 0.0687, per-date bias within 0.003); sun elevation/window recorded per NAIP asset (70-79 deg at noon);
@@ -334,14 +334,17 @@ is a checklist for this phase.
 - ~~Offline: `Main.umap`'s own ion actors request ion endpoints at frame 0.~~ Solved without the editor
   (2026-10-09): CamSim configures or destroys them at world init, before they load. Stripping them from
   `Main.umap` is optional cleanup.
-- Docker/Linux: confirm `file://` from a mounted volume (the spike ran on macOS/Metal). Open (R1 gates ran on macOS only), with `docker run --network none` and the SquashFS cold-start timing.
-- ~~**Gates**~~ Done on macOS 2026-10-10 (`docs/scene-packages.md`, "Measured"; Linux items above open). Follow-ups:
-  coast_check (b) should compare against the source gradient; verify vertex error at tidal-mask edges (z14 max 2.08 m);
-  `point_heights` no longer breaks early (cost only in verify and hot tools). Original text: decoded vertices vs source DEM (spike: median 2–3 cm, p99 0.31 m). CIGI frame-centre
+- Docker/Linux: confirm `file://` from a mounted volume (the spike ran on macOS/Metal). Open: R1 gates ran on macOS only; still to run on Linux are `file://` from a mounted volume, `docker run --network none` and the SquashFS cold-start timing.
+- **Gates:** ~~decoded vertices vs source DEM (spike: median 2–3 cm, p99 0.31 m). CIGI frame-centre
   and HAT/HOT heights vs 3DEP truth at surveyed points (spike: ≤ 0.22 m on 1 m data, ≤ 0.9 m on
   10 m). Geo-registration vs CWT + Bing < 1 px at 0.84 m GSD. A run with outbound network blocked
   makes no request and passes. Terrain readiness gate (0.7) still holds. Bench: no game-thread
-  regression beyond noise from the deeper local pyramid.
+  regression beyond noise from the deeper local pyramid.~~ Done on macOS 2026-10-10 (`docs/scene-packages.md`, "Measured"; Linux items above open). Follow-ups:
+  coast_check (b) should compare against the source gradient; verify vertex error at tidal-mask edges (z14 max 2.08 m);
+  `point_heights` no longer breaks early (cost only in verify and hot tools). Sea level: `sea_level.json` is one
+  constant evaluated at the station (+0.110 m at La Jolla), but local MSL needs +0.08 m (Oceanside) to +0.66 m (Dana
+  Point) along the package coast, EGM96's tilt against GEOID18; evaluate the offset at the package coast, or add a
+  per-package NAVD88 + MSL - EGM96 correction grid read by `FOceanSurface`.
 
 ### R2 Vector features into the land-cover window (no new geometry)
 

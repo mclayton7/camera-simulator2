@@ -36,7 +36,9 @@ def test_defaults_for_sim_profile():
 
 def test_preview_profile_has_no_naip_or_1m():
     p = parse_scene({"name": "pv", "bbox": PENDLETON, "profile": "preview"})
-    assert p.priorities["terrain"] == ["dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"] and p.priorities["imagery"] == ["wc_s2", "bmng"]
+    assert p.priorities["terrain"] == ["dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"] and p.priorities[
+        "imagery"
+    ] == ["wc_s2", "bmng"]
     assert p.regions()[3].max_zoom == {"terrain": 14, "imagery": 13}
 
 
@@ -244,3 +246,21 @@ def test_no_tidal_mask_without_topobathy():
         {"name": "x", "bbox": [-117.6, 33.2, -117.2, 33.5], "priorities": {"terrain": ["dep3_13", "etopo2022"]}}
     )
     assert "tidal_mask" not in layer_settings(p)["terrain"]
+
+
+def test_every_example_with_a_crm_ring_has_a_station():
+    # plan raises PlanError when noaa_crm_socal discovers assets and there is no [sea_level] station;
+    # the CRM covers lon -128..-115, lat 30..37 (docs/scene-packages.md), so an example whose bbox or ring meets
+    # it needs one. No network: only the parsed config is checked.
+    from pathlib import Path
+
+    crm = (-128.0, 30.0, -115.0, 37.0)
+    examples = sorted((Path(__file__).parent.parent / "examples").glob("*.toml"))
+    assert examples
+    for f in examples:
+        plan = config.load_scene(f)
+        if "noaa_crm_socal" not in plan.source_ids():
+            continue
+        w, s, e, n = plan.ring_bounds()
+        if w < crm[2] and e > crm[0] and s < crm[3] and n > crm[1]:
+            assert plan.sea_level_station, f"{f.name}: its ring meets the CRM, so it needs [sea_level] station"
