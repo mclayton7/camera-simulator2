@@ -73,7 +73,7 @@ camsim/
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
       Vegetation/                  # REALISM R4 slice: global cell grid, hash scatter on land-cover code 10, HISM cells, library.json
-      Tests/                       # UE5 Automation tests (538 tests across 92 files)
+      Tests/                       # UE5 Automation tests (543 tests across 92 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -117,7 +117,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (538 tests across 92 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`; counted as `IMPLEMENT_SIMPLE_AUTOMATION_TEST(` lines under `Source/CamSimTest/Tests/`, with `grep -rE 'IMPLEMENT_[A-Z_]*AUTOMATION_TEST\(' Tests | wc -l`, files by `grep -rl`, GPU by the `CamSim.GPU.` names)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (543 tests across 92 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`; counted as `IMPLEMENT_SIMPLE_AUTOMATION_TEST(` lines under `Source/CamSimTest/Tests/`, with `grep -rE 'IMPLEMENT_[A-Z_]*AUTOMATION_TEST\(' Tests | wc -l`, files by `grep -rl`, GPU by the `CamSim.GPU.` names)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
