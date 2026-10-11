@@ -11,8 +11,13 @@ namespace CamSimEntityPaths
 	// A packaged build carries it at <ProjectDir>/entities/
 	// (scripts/package_for_docker.sh stages it there); from the editor it is
 	// {repo_root}/entities/, ProjectDir being {repo_root}/unreal_project/CamSimTest/.
+	// An absolute path (e.g. a vegetation library model) is returned unchanged.
 	inline FString Resolve(const FString& RelPath)
 	{
+		if (!FPaths::IsRelative(RelPath))
+		{
+			return RelPath;
+		}
 		const FString Packaged = FPaths::Combine(FPaths::ProjectDir(), TEXT("entities/"));
 		const FString Base = FPaths::DirectoryExists(Packaged)
 			? Packaged

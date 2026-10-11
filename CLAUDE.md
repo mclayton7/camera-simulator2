@@ -30,6 +30,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/gt_occlusion_check.py` | Ground-truth acceptance (ROADMAP 2.7): nadir / edge / Beaufort 6 crest / terrain views, COCO checks, mask/box overlays, frame time ML on vs off |
 | `scripts/thermal_check.py` | Thermal IR acceptance (ROADMAP 4A/4B/4C): MWIR/LWIR at noon and 02:00 with the DIS truck + boat — night IR level, white-hot vehicle, water/land crossover, cool shadows, cold sky, land-cover contrast, structure and re-centre hitch, ThermalCS time, EO untouched; 4C (`--runs entity`): running vs parked-cold truck, hot parts, cool-down after parking, burning when destroyed |
 | `scripts/landcover/fetch_worldcover.py` | Cut ESA WorldCover 2021 COGs (HTTP range reads) into land-cover tiles for thermal IR (`--bbox W S E N`; SF sample committed) (wraps `camsim_scene`) |
+| `scripts/vegetation/prepare_tree.py` | Prepare a CC0 tree for the vegetation library (OBJ → glTF, simplify, mask leaves, scale; prints the `library.json` entry; `docs/vegetation.md`) |
 | `scripts/klv_conformance/check.js` | Check KLV against misb.js (packets.jsonl, .ts, or udp://) |
 | `scripts/test_video_output.sh` | ffprobe/ffplay stream validation                              |
 | `scripts/package_for_docker.sh` | BuildCookRun → `deploy/staged/Linux/` (+ `entities/`) for the Docker image |
@@ -69,7 +70,8 @@ camsim/
       Sensor/                      # Physical sensor model: presets, optics, AE/AGC controller, CPU reference (SensorReference)
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
-      Tests/                       # UE5 Automation tests (495 tests across 83 files)
+      Vegetation/                  # Trees (REALISM R4): vegetation cell actor (globe-anchored HISM), probe console command
+      Tests/                       # UE5 Automation tests (496 tests across 84 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -113,7 +115,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (495 tests across 83 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (496 tests across 84 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
