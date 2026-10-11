@@ -148,3 +148,48 @@ def test_read_snapshot_orders_and_dedups(tmp_path):
     fps = B.read_snapshot(out)
     assert [f.source_id for f in fps] == ["a", "b"]
     assert fps[0].num_floors == 2 and fps[1].height == 5.0 and fps[1].cls == "house" and fps[0].cls == ""
+
+
+def _tiles(blds):
+    by = {}
+    for b in blds:
+        by.setdefault(b.tile, []).append(b)
+    return {k: (v, B.tile_origin(*k, v)) for k, v in by.items()}
+
+
+def test_tileset_tree_tiers_errors_and_transforms():
+    big = B.Footprint("osm:big", box_lonlat(10.0, 10.0, 50, 50), 20.0, None, "")
+    small = B.Footprint("osm:small", box_lonlat(10.001, 10.001, 10, 10), 5.0, None, "")
+    blds, _ = B.plan_buildings([big, small], flat(0.0), 10.0)
+    doc = B.tileset_json(_tiles(blds))
+    assert doc["asset"]["version"] == "1.1" and doc["geometricError"] == 200.0
+    root = doc["root"]
+    assert root["refine"] == "ADD" and "content" not in root and root["geometricError"] == 200.0
+    [z13] = root["children"]
+    assert z13["geometricError"] == 60.0 and z13["content"]["uri"].startswith("13/")
+    [z14] = z13["children"]
+    assert z14["geometricError"] == 20.0 and "content" not in z14 and "transform" not in z14
+    [z15] = z14["children"]
+    assert z15["geometricError"] == 6.0 and z15["content"]["uri"].startswith("15/")
+    walked = dict(B.walk_tileset(doc))
+    for (z, x, y), (bl, origin) in _tiles(blds).items():
+        assert np.allclose(walked[f"{z}/{x}/{y}.glb"], geodesy.enu_to_ecef_matrix(*origin))
+
+
+def test_tile_region_contains_straddling_building():
+    from camsim_scene.tiling import tile_bounds
+
+    x, y = B.tile_of(10.0, 10.0, 15)
+    w, s, e, n = tile_bounds(15, x, y)
+    # centroid just inside the east edge, footprint 20 m across the edge
+    fp = B.Footprint("osm:edge", box_lonlat(e - 2e-5, (s + n) / 2, 20, 10), 5.0, None, "")
+    [b], _ = B.plan_buildings([fp], flat(0.0), 10.0)
+    assert b.tile == (15, x, y)
+    doc = B.tileset_json(_tiles([b]))
+    node = doc["root"]["children"][0]["children"][0]["children"][0]
+    rw, rs, re, rn, lo, hi = node["boundingVolume"]["region"]
+    bw, bs, be, bn = b.parts[0].bounds
+    assert rw <= np.radians(bw) and re >= np.radians(be) and lo <= b.base_m and hi >= b.roof_m
+    for parent in (doc["root"], doc["root"]["children"][0]):
+        pr = parent["boundingVolume"]["region"]
+        assert pr[0] <= rw and pr[2] >= re and pr[4] <= lo and pr[5] >= hi

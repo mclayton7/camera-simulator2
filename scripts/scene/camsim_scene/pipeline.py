@@ -45,6 +45,7 @@ from .engine import (
     tile_path,
 )
 from .fsutil import atomic_write, normalise_modes, sha256_file
+from .layers import buildings as buildings_layer
 from .layers import imagery, landcover, ndvi, terrain
 from .licences import DEFAULT_ALLOW, attribution_text, check_allowed, layer_credit
 from .manifest import STATE_DIR, AssetRecord, Manifest, SourceRecord, canonical_json, write_hashes
@@ -788,6 +789,9 @@ def build_scene(
         if ndvi_stats is not None:
             stats["ndvi"] = ndvi_stats
         stats["landcover"] = _build_landcover(pkg, m, ctx)
+        bstats = buildings_layer.build(pkg, m, ctx)
+        if m.layers.get("buildings"):
+            stats["buildings"] = bstats
         atomic_write(pkg / "ATTRIBUTION.txt", attribution_text(m).encode())
         normalise_modes(pkg, skip=(STATE_DIR,))
         sea = sea_level_mod.write(pkg, m, {k: Path(v) for k, v in ctx.grid_paths.items()})
@@ -810,6 +814,8 @@ def build_scene(
             "balance": bal_report,
             "ndvi": ndvi_report,
         }
+        if m.layers.get("buildings"):
+            info["buildings"] = buildings_layer.plan_stats(pkg)
         atomic_write(pkg / "build.json", (json.dumps(info, indent=2, sort_keys=True) + "\n").encode())
     peak = max(s.peak_rss_mb for s in stats.values())
     if peak > max_worker_rss_mb:

@@ -13,7 +13,7 @@ from shapely.geometry.polygon import orient
 
 from . import geodesy
 from .gltf import PropertyTable, TileMesh
-from .tiling import tile_size_deg
+from .tiling import tile_bounds, tile_size_deg
 
 BUILDINGS_RULES_VERSION = "1"  # bump when geometry/height/tier rules change (it is in the layer settings hash)
 DEFAULT_RELEASE = "2026-09-23.1"
@@ -242,3 +242,94 @@ def tile_mesh(buildings: list[Building], origin: tuple[float, float, float]) -> 
         np.asarray([b.height_source for b in bs], np.uint8),
     )
     return mesh, table
+
+
+def tile_origin(z: int, x: int, y: int, blds: list[Building]) -> tuple[float, float, float]:
+    w, s, e, n = tile_bounds(z, x, y)
+    lo = min(b.base_m for b in blds)
+    hi = max(b.roof_m for b in blds)
+    return (w + e) / 2.0, (s + n) / 2.0, round((lo + hi) / 2.0, 3)
+
+
+def _region(blds: list[Building]) -> list[float]:
+    w = min(p.bounds[0] for b in blds for p in b.parts)
+    s = min(p.bounds[1] for b in blds for p in b.parts)
+    e = max(p.bounds[2] for b in blds for p in b.parts)
+    n = max(p.bounds[3] for b in blds for p in b.parts)
+    lo = min(b.base_m for b in blds)
+    hi = max(b.roof_m for b in blds)
+    return [math.radians(w), math.radians(s), math.radians(e), math.radians(n), lo, hi]
+
+
+def _union(regions: list[list[float]]) -> list[float]:
+    r = np.asarray(regions)
+    return [
+        float(r[:, 0].min()),
+        float(r[:, 1].min()),
+        float(r[:, 2].max()),
+        float(r[:, 3].max()),
+        float(r[:, 4].min()),
+        float(r[:, 5].max()),
+    ]
+
+
+def tileset_json(tiles: dict) -> dict:
+    """tiles: (z, x, y) -> (buildings, ENU origin). Every ancestor of a content tile down from z13 exists in the tree
+    (content-less when it holds no building of its own tier)."""
+    from . import __version__
+
+    keys = set(tiles)
+    nodes = set()
+    for z, x, y in keys:
+        while z >= min(TIER_MIN_AREA_M2):
+            nodes.add((z, x, y))
+            z, x, y = z - 1, x // 2, y // 2
+
+    def children(z, x, y):
+        return sorted(k for k in nodes if k[0] == z + 1 and (k[1] // 2, k[2] // 2) == (x, y))
+
+    def node(key, parent_abs: np.ndarray) -> dict:
+        z, x, y = key
+        kids_abs = parent_abs
+        out: dict = {"geometricError": GEOMETRIC_ERROR[z]}
+        regions = []
+        if key in tiles:
+            blds, origin = tiles[key]
+            own = geodesy.enu_to_ecef_matrix(*origin)
+            out["transform"] = geodesy.matrix_to_column_major(np.linalg.inv(parent_abs) @ own)
+            out["content"] = {"uri": f"{z}/{x}/{y}.glb"}
+            kids_abs = own
+            regions.append(_region(blds))
+        kids = [node(k, kids_abs) for k in children(z, x, y)]
+        regions += [k["boundingVolume"]["region"] for k in kids]
+        out["boundingVolume"] = {"region": _union(regions)}
+        if kids:
+            out["children"] = kids
+        return out
+
+    top = [node(k, np.eye(4)) for k in sorted(k for k in nodes if k[0] == min(TIER_MIN_AREA_M2))]
+    root = {
+        "boundingVolume": {"region": _union([t["boundingVolume"]["region"] for t in top])},
+        "geometricError": GEOMETRIC_ERROR["root"],
+        "refine": "ADD",
+        "children": top,
+    }
+    return {
+        "asset": {"version": "1.1", "generator": f"camsim-scene {__version__}"},
+        "geometricError": GEOMETRIC_ERROR["root"],
+        "root": root,
+    }
+
+
+def walk_tileset(doc: dict) -> list[tuple[str, np.ndarray]]:
+    out = []
+
+    def visit(n: dict, parent: np.ndarray):
+        m = parent @ geodesy.column_major_to_matrix(n["transform"]) if "transform" in n else parent
+        if "content" in n:
+            out.append((n["content"]["uri"], m))
+        for c in n.get("children", []):
+            visit(c, m)
+
+    visit(doc["root"], np.eye(4))
+    return out
