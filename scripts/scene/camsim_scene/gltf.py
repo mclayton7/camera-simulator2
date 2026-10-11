@@ -84,8 +84,8 @@ class _Bin:
 
 def _strings(b: _Bin, values: list[str]) -> tuple[int, int]:
     enc = [v.encode("utf-8") for v in values]
+    joined = b"".join(enc)
     offsets = np.cumsum([0] + [len(e) for e in enc], dtype=np.uint64).astype("<u4")
-    joined = b"".join(enc) or b"\0"  # glTF forbids zero-length bufferViews; offsets stay 0 so strings decode as ""
     return b.add(joined), b.add(offsets.tobytes())
 
 
@@ -143,10 +143,17 @@ def write_glb(mesh: TileMesh, table: PropertyTable, copyright: str) -> bytes:
                 "extensions": features,
             }
         )
-    cls_v, cls_o = _strings(b, table.classes)
     sid_v, sid_o = _strings(b, table.source_ids)
     h_v = b.add(table.height_m.astype("<f4").tobytes())
     hs_v = b.add(table.height_source.astype("<u1").tobytes())
+    props = {
+        "height_m": {"values": h_v},
+        "height_source": {"values": hs_v},
+        "source_id": {"values": sid_v, "stringOffsets": sid_o, "stringOffsetType": "UINT32"},
+    }
+    if any(table.classes):  # glTF forbids zero-length bufferViews and the spec wants the byte count to match the
+        cls_v, cls_o = _strings(b, table.classes)  # offsets, so an all-empty column is left out (reads as "")
+        props["class"] = {"values": cls_v, "stringOffsets": cls_o, "stringOffsetType": "UINT32"}
     doc = {
         "asset": {"version": "2.0", "generator": "camsim-scene", "copyright": copyright},
         "extensionsUsed": ["EXT_mesh_features", "EXT_structural_metadata"],
@@ -157,12 +164,7 @@ def write_glb(mesh: TileMesh, table: PropertyTable, copyright: str) -> bytes:
                     {
                         "class": "building",
                         "count": len(table.source_ids),
-                        "properties": {
-                            "class": {"values": cls_v, "stringOffsets": cls_o, "stringOffsetType": "UINT32"},
-                            "height_m": {"values": h_v},
-                            "height_source": {"values": hs_v},
-                            "source_id": {"values": sid_v, "stringOffsets": sid_o, "stringOffsetType": "UINT32"},
-                        },
+                        "properties": props,
                     }
                 ],
             }
@@ -233,9 +235,10 @@ def decode_tile(data: bytes) -> DecodedTile:
     idx = {p["material"]: _accessor(doc, bin_, p["indices"]) for p in prims}
     empty = np.zeros(0, np.uint32)
     t = doc["extensions"]["EXT_structural_metadata"]["propertyTables"][0]["properties"]
+    t_ids = _decode_strings(doc, bin_, t["source_id"])
     table = PropertyTable(
-        _decode_strings(doc, bin_, t["source_id"]),
-        _decode_strings(doc, bin_, t["class"]),
+        t_ids,
+        _decode_strings(doc, bin_, t["class"]) if "class" in t else [""] * len(t_ids),
         np.frombuffer(_view(doc, bin_, t["height_m"]["values"]), np.float32).copy(),
         np.frombuffer(_view(doc, bin_, t["height_source"]["values"]), np.uint8).copy(),
     )
