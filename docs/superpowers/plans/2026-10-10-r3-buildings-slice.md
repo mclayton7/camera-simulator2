@@ -476,19 +476,17 @@ git commit -m "feat(scene): overture_buildings source, DuckDB snapshot in the fe
 Append to `scripts/scene/tests/test_config.py`:
 
 ```python
-from camsim_scene.config import ConfigError, layer_settings, parse_scene
-
-BASE = {"name": "t", "bbox": [10.0, 10.0, 10.1, 10.1]}
+BUILDINGS_TOML = {"name": "t", "bbox": [10.0, 10.0, 10.1, 10.1]}
 
 
 def test_no_buildings_section_leaves_layers_unchanged():
-    plan = parse_scene(dict(BASE))
+    plan = parse_scene(dict(BUILDINGS_TOML))
     assert plan.buildings == {} and plan.priorities["buildings"] == []
     assert "buildings" not in layer_settings(plan)
 
 
 def test_buildings_section_defaults_and_settings():
-    plan = parse_scene({**BASE, "allow": ["ODbL-1.0"], "buildings": {}})
+    plan = parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "buildings": {}})
     assert plan.buildings == {"enabled": True, "release": "2026-09-23.1", "min_area_m2": 10.0}
     assert plan.priorities["buildings"] == ["overture_buildings"]
     assert plan.source_options["overture_buildings"] == {"release": "2026-09-23.1"}
@@ -498,7 +496,7 @@ def test_buildings_section_defaults_and_settings():
 
 
 def test_buildings_disabled_is_no_layer():
-    plan = parse_scene({**BASE, "buildings": {"enabled": False}})
+    plan = parse_scene({**BUILDINGS_TOML, "buildings": {"enabled": False}})
     assert plan.priorities["buildings"] == [] and "buildings" not in layer_settings(plan)
 
 
@@ -508,15 +506,15 @@ def test_buildings_disabled_is_no_layer():
 )
 def test_buildings_section_rejects_bad_values(bad):
     with pytest.raises(ConfigError, match="buildings"):
-        parse_scene({**BASE, "buildings": bad})
+        parse_scene({**BUILDINGS_TOML, "buildings": bad})
 
 
 def test_priorities_buildings_cannot_be_set_directly():
     with pytest.raises(ConfigError, match="buildings"):
-        parse_scene({**BASE, "priorities": {"buildings": ["overture_buildings"]}})
+        parse_scene({**BUILDINGS_TOML, "priorities": {"buildings": ["overture_buildings"]}})
 ```
 
-(If `pytest` is not yet imported at the top of `test_config.py`, add `import pytest`.)
+(`test_config.py` already defines `BASE` (the Pendleton bbox) for the R2 `features` tests: do not touch it, which is why these tests use the new name `BUILDINGS_TOML`. Put any missing import (`ConfigError`, `layer_settings`, `parse_scene`, `pytest`) into the file's existing top import block, never mid-file: ruff E402.)
 
 Append to `scripts/scene/tests/test_pipeline.py`:
 
@@ -1221,7 +1219,7 @@ def test_read_snapshot_orders_and_dedups(tmp_path):
 Run: `uv run --project scripts/scene --with pytest pytest scripts/scene/tests/test_buildings.py -q`
 Expected: FAIL (`AttributeError: module 'camsim_scene.buildings' has no attribute 'building_height'`).
 
-- [ ] **Step 3: Implement** — append to `scripts/scene/camsim_scene/buildings.py` (keep the Task 2 constants at the top):
+- [ ] **Step 3: Implement** — in `scripts/scene/camsim_scene/buildings.py`, first put this import block directly under `from __future__ import annotations` (above the Task 2 constants; every import lives in the top block, ruff E402):
 
 ```python
 import math
@@ -1234,8 +1232,12 @@ from shapely.geometry.polygon import orient
 
 from . import geodesy
 from .gltf import PropertyTable, TileMesh
-from .tiling import tile_size_deg
+from .tiling import tile_bounds, tile_size_deg
+```
 
+then append the following below the Task 2 constants:
+
+```python
 M_PER_DEG = 111320.0
 FLOOR_M = 3.2
 DEFAULT_HEIGHT_M = 4.0
@@ -1468,8 +1470,9 @@ git commit -m "feat(scene): footprint cleaning, height fallbacks, ground base an
   - `buildings.tile_origin(z, x, y, blds) -> tuple[float, float, float]` (tile-bounds centre lon/lat; h = (min base + max roof) / 2)
   - `buildings.tileset_json(tiles: dict[tuple[int,int,int], tuple[list[Building], tuple[float,float,float]]]) -> dict` (explicit tree; content nodes carry `transform` = inv(parent abs) × own ENU→ECEF)
   - `buildings.walk_tileset(doc: dict) -> list[tuple[str, np.ndarray]]` (content uri, absolute 4×4 transform)
-  - `layers.buildings.build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats` writing `features/buildings/tileset.json`, `features/buildings/<z>/<x>/<y>.glb`; marker `.state/buildings.json`
+  - `layers.buildings.build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats` (the same return convention as `pipeline._build_landcover`; the plan stats travel in the marker, read back with `plan_stats`), writing `features/buildings/tileset.json`, `features/buildings/<z>/<x>/<y>.glb`; marker `.state/buildings.json`
   - `layers.buildings.heights_fn(st: WorkerState, m: Manifest)` returning the `heights_fn` for `plan_buildings`
+  - `layers.buildings.plan_stats(pkg: Path) -> dict | None` (the plan stats dict the build stored in its marker; None without a marker)
   - `build.json` `layers.buildings` = LayerStats, plus `buildings` = plan stats dict.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1598,12 +1601,9 @@ def test_no_buildings_section_has_no_features_dir(tmp_path):
 Run: `uv run --project scripts/scene --with pytest pytest scripts/scene/tests/test_buildings.py scripts/scene/tests/test_buildings_layer.py -q`
 Expected: FAIL (`tile_origin` / `tileset_json` missing; no `features/` written).
 
-- [ ] **Step 3: Implement the tileset** — append to `camsim_scene/buildings.py`:
+- [ ] **Step 3: Implement the tileset** — `tile_bounds` is already in the Task 4 top import block (`from .tiling import tile_bounds, tile_size_deg`); append to `camsim_scene/buildings.py`:
 
 ```python
-from .tiling import tile_bounds
-
-
 def tile_origin(z: int, x: int, y: int, blds: list[Building]) -> tuple[float, float, float]:
     w, s, e, n = tile_bounds(z, x, y)
     lo = min(b.base_m for b in blds)
@@ -1735,12 +1735,18 @@ def plan_from_manifest(m: Manifest, ctx: BuildContext, st: WorkerState | None = 
     return B.plan_buildings(B.read_snapshot(snapshot), heights_fn(st, m), float(s["min_area_m2"]))
 
 
-def build(pkg: Path, m: Manifest, ctx: BuildContext) -> tuple[LayerStats, dict | None]:
+def plan_stats(pkg: Path) -> dict | None:
+    marker = Path(pkg) / STATE_DIR / "buildings.json"
+    return json.loads(marker.read_text())["stats"] if marker.exists() else None
+
+
+def build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     st, out = LayerStats(), Path(pkg) / OUT
     s = m.layers.get("buildings")
     if not s:
         shutil.rmtree(Path(pkg) / "features", ignore_errors=True)
-        return st, None
+        (Path(pkg) / STATE_DIR / "buildings.json").unlink(missing_ok=True)
+        return st
     t0 = time.monotonic()
     rec = m.source(s["priorities"][0])
     terrain_shas = sorted(a.sha256 for sid in m.layers["terrain"]["priorities"] for a in m.source(sid).assets)
@@ -1755,9 +1761,9 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> tuple[LayerStats, dict |
             st.files = len(uris) + 1
             st.bytes = sum((out / u).stat().st_size for u in uris) + ts_path.stat().st_size
             st.seconds = round(time.monotonic() - t0, 3)
-            return st, prev["stats"]
+            return st
     shutil.rmtree(out, ignore_errors=True)
-    blds, plan_stats = plan_from_manifest(m, ctx)
+    blds, stats = plan_from_manifest(m, ctx)
     by: dict[tuple[int, int, int], list] = {}
     for b in blds:
         by.setdefault(b.tile, []).append(b)
@@ -1770,13 +1776,13 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> tuple[LayerStats, dict |
         p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(p, write_glb(mesh, table, credit.replace("\n", " ")))
     atomic_write(ts_path, canonical_json(B.tileset_json(tiles)).encode())
-    atomic_write(marker, json.dumps({"inputs": inputs, "output": sha256_file(ts_path), "stats": plan_stats}).encode())
+    atomic_write(marker, json.dumps({"inputs": inputs, "output": sha256_file(ts_path), "stats": stats}).encode())
     files = [p for p in out.rglob("*") if p.is_file()]
     st.tiles = st.built = len(tiles)
     st.files, st.bytes = len(files), sum(p.stat().st_size for p in files)
     st.peak_rss_mb = peak_rss_mb()
     st.seconds = round(time.monotonic() - t0, 3)
-    return st, plan_stats
+    return st
 ```
 
 `layer_credit` appends an ODbL notice that says "land-cover layer"; make it generic: in `camsim_scene/licences.py` change `layer_credit(attribution, licence_id)` to `layer_credit(attribution, licence_id, layer: str = "land-cover")` and the notice to `f"\nThis {layer} layer contains OSM-derived data and is made available under the ODbL."`; call it with `layer="buildings"` here. Run `test_features_burn_into_tiles_and_legend` afterwards — its assertion (`"OSM-derived" in attribution`) still holds.
@@ -1784,16 +1790,16 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> tuple[LayerStats, dict |
 In `camsim_scene/pipeline.py` `build_scene`, after `stats["landcover"] = _build_landcover(pkg, m, ctx)`:
 
 ```python
-        bstats, bplan = buildings_layer.build(pkg, m, ctx)
+        bstats = buildings_layer.build(pkg, m, ctx)
         if m.layers.get("buildings"):
             stats["buildings"] = bstats
 ```
 
-and add `"buildings": bplan,` to the `info` dict only when not None:
+and add the plan stats to the `info` dict only when the layer is on:
 
 ```python
-        if bplan is not None:
-            info["buildings"] = bplan
+        if m.layers.get("buildings"):
+            info["buildings"] = buildings_layer.plan_stats(pkg)
 ```
 
 (import: `from .layers import buildings as buildings_layer`). `normalise_modes` and `write_hashes` already run after this and cover `features/`.
@@ -2159,7 +2165,7 @@ In `ValidateSources`, before `return Errors;` at the end (offline branch):
 	}
 ```
 
-and at file end:
+and inside `namespace CamSimScene` (after `ShouldExitOnConfigErrors`, before the closing `} // namespace CamSimScene`; the file ends with that closing brace, so appending at the literal end of file would define a global function and `CamSimScene::ShouldSpawnBuildings` would fail to link):
 
 ```cpp
 bool ShouldSpawnBuildings(const FCamSimConfig& Cfg)
@@ -2843,7 +2849,7 @@ scripts/run_gpu_tests.sh
 ```
 Expected: all pass; update `CLAUDE.md`'s test counts ("N tests across M files") from the report.
 
-- [ ] **Step 8: Bench sweep** — per the bench plan (`scripts/bench/sweep.py --site pendleton --scene /path/to/pendleton-r3 --axis buildings=off,on --axis buildings_sse=8,16,32,64 --axis buildings_physics=on,off`). Pick `maximum_screen_space_error` with the user from `sweep.md` and the contact sheet; set it as the default in `CamSimConfig.h`, `deploy/camsim_config.yaml` and `docs/configuration.md`.
+- [ ] **Step 8: Bench sweep** — per the bench plan (`scripts/bench/sweep.py --site pendleton --scene /path/to/pendleton-r3 --axis buildings=off,on --axis buildings_sse=8,16,32,64 --axis buildings_physics=on,off --axis trees=off`; `--axis trees=off` is required: R4's trees default on by now, and without it the `buildings-off` row would be treated as the all-off baseline while still carrying trees). Pick `maximum_screen_space_error` with the user from `sweep.md` and the contact sheet. If the pick differs from 16, change the default everywhere in this step: `FSceneConfig::BuildingsMaximumScreenSpaceError` in `Config/CamSimConfig.h`, `deploy/camsim_config.yaml`, `docs/configuration.md`, and the `default sse` assertion in the Task 7 test `CamSim.Scene.Buildings.Config` (`Tests/ScenePackageTest.cpp`); rebuild and rerun `CamSim.Scene` so it passes.
 
 - [ ] **Step 9: Visual review** — send the user EO shots from `dense_pass` and a low oblique over Mainside; record sign-off (or the requested changes) in `docs/scene-packages.md`.
 
@@ -2854,7 +2860,8 @@ Expected: all pass; update `CLAUDE.md`'s test counts ("N tests across M files") 
 ```bash
 git add scripts/scene/tools/footprint_iou.py scripts/scene/tests/test_footprint_iou.py scripts/scene/tools/data \
   docs/scene-packages.md ROADMAP.md REALISM.md CLAUDE.md FOR_LINUX.md \
-  unreal_project/CamSimTest/Source/CamSimTest/Config/CamSimConfig.h deploy/camsim_config.yaml docs/configuration.md
+  unreal_project/CamSimTest/Source/CamSimTest/Config/CamSimConfig.h unreal_project/CamSimTest/Source/CamSimTest/Tests/ScenePackageTest.cpp \
+  deploy/camsim_config.yaml docs/configuration.md
 git commit -m "docs(realism): R3 buildings slice measured on Pendleton"
 ```
 
@@ -2866,7 +2873,7 @@ git commit -m "docs(realism): R3 buildings slice measured on Pendleton"
 
 **Placeholders.** Paths to the user's Pendleton packages and the snapshot blob are environment-specific and named as such; the validator version is chosen by a command in Task 6 Step 1 and pinned. The traced truth GeoJSON is human work (spec: "hand-checked").
 
-**Type consistency.** `Layer.BUILDINGS`, `snapshot_url`, `fetch_blob`, `Cache.put_file`/`lookup`, `Footprint`, `Building`, `plan_buildings(footprints, heights_fn, min_area_m2)`, `tile_mesh(buildings, origin)`, `tile_origin`, `tileset_json`, `walk_tileset`, `plan_from_manifest(m, ctx, st=None)`, `build(pkg, m, ctx) -> (LayerStats, dict | None)`, `QueryMaterialCode(bValid, bWater, bEntityHit, bBuildingHit, Lat, Lon, Lookup)`, `MakeProbeQueryParams`, `SpawnBuildingsTileset`, `FindBuildingsTileset`, `IsBuildingsActor`, `BuildingsTag`, `ShouldSpawnBuildings`, `TuneTileset` are used with the same names and signatures throughout.
+**Type consistency.** `Layer.BUILDINGS`, `snapshot_url`, `fetch_blob`, `Cache.put_file`/`lookup`, `Footprint`, `Building`, `plan_buildings(footprints, heights_fn, min_area_m2)`, `tile_mesh(buildings, origin)`, `tile_origin`, `tileset_json`, `walk_tileset`, `plan_from_manifest(m, ctx, st=None)`, `build(pkg, m, ctx) -> LayerStats`, `plan_stats(pkg) -> dict | None`, `QueryMaterialCode(bValid, bWater, bEntityHit, bBuildingHit, Lat, Lon, Lookup)`, `MakeProbeQueryParams`, `SpawnBuildingsTileset`, `FindBuildingsTileset`, `IsBuildingsActor`, `BuildingsTag`, `ShouldSpawnBuildings`, `TuneTileset` are used with the same names and signatures throughout.
 
 **Spec gaps / decisions taken here (for the reviewer):**
 1. Spec §6 names `UCamSimSubsystem::GetBuildingsTileset()`; the plan uses an actor tag with `IsBuildingsActor`/`FindBuildingsTileset` instead, because the surface probe holds only a `UWorld` and the query handler only needs the hit actor's identity.

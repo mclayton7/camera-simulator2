@@ -440,7 +440,7 @@ namespace
 		LogInstancedUsage(Mesh);
 		UCamSimSubsystem* Sub = World->GetGameInstance() ? World->GetGameInstance()->GetSubsystem<UCamSimSubsystem>() : nullptr;
 		ACamSimCamera* Cam = Sub ? Sub->GetCamera() : nullptr;
-		ACesium3DTileset* Terrain = (Sub && Sub->GetCachedTilesets().Num() > 0) ? Sub->GetCachedTilesets()[0].Get() : nullptr;
+		ACesium3DTileset* Terrain = (Sub && Sub->GetCachedTilesets().Num() > 0) ? Sub->GetCachedTilesets()[0].Get() : nullptr; // Task 9 replaces this with Sub->GetTerrainTileset()
 		if (!Cam || !Terrain) { UE_LOG(LogCamSim, Error, TEXT("Vegetation probe: no camera or terrain tileset")); return; }
 		const double Lat = Cam->GetTelemetry().Latitude, Lon = Cam->GetTelemetry().Longitude;
 		TWeakObjectPtr<UWorld> WeakWorld(World);
@@ -503,7 +503,7 @@ On macOS, if packaging the Linux target isn't available, run a Mac cook instead:
 
 Write the "Asset" section of `docs/vegetation.md`: candidate chosen, licence quote + URL, triangle count, sha256, probe screenshot path, the usage-flag results (editor and cooked). Outcomes:
 - **Pass:** keep the `.glb` and `library.json`; skip Task 2.
-- **Usage flag false in the cooked build** (glTFRuntime base material lacks instanced usage): record it in `ROADMAP.md` "Editor changes needed" as human work: duplicate glTFRuntime's opaque and masked base materials into `/Game/Vegetation/` with "Used with Instanced Static Meshes" ticked, add `+DirectoriesToAlwaysCook=(Path="/Game/Vegetation")`; then do Task 2 now so the slice isn't blocked, with the procedural tree as the shipped type until the human work lands.
+- **Usage flag false in the cooked build** (glTFRuntime base material lacks instanced usage): record it in `ROADMAP.md` under "Editor changes needed (human)" as human work (`ROADMAP.md` has no such section yet: create it as a new `## Editor changes needed (human)` section directly before `## Later / only when there's demand`, per `CLAUDE.md`, with one bullet per item, dated): duplicate glTFRuntime's opaque and masked base materials into `/Game/Vegetation/` with "Used with Instanced Static Meshes" ticked, add `+DirectoriesToAlwaysCook=(Path="/Game/Vegetation")`; then do Task 2 now so the slice isn't blocked, with the procedural tree as the shipped type until the human work lands.
 - **No candidate passes otherwise:** do Task 2 and ship the procedural type.
 
 - [ ] **Step 10: Commit**
@@ -511,7 +511,7 @@ Write the "Asset" section of `docs/vegetation.md`: candidate chosen, licence quo
 ```bash
 git add scripts/vegetation/prepare_tree.py unreal_project/CamSimTest/Content/NonUFS/Vegetation \
   unreal_project/CamSimTest/Source/CamSimTest/Vegetation/VegetationCellActor.* \
-  unreal_project/CamSimTest/Source/CamSimTest/Vegetation/VegetationProbe.cpp docs/vegetation.md
+  unreal_project/CamSimTest/Source/CamSimTest/Vegetation/VegetationProbe.cpp docs/vegetation.md ROADMAP.md
 git commit -m "feat(vegetation): CC0 tree asset, cell actor and probe command (REALISM R4 slice)"
 ```
 
@@ -1753,7 +1753,10 @@ namespace CamSimVegetation
 			{
 				OutError = FString::Printf(TEXT("type '%s': cannot read %s"), *T.Name, *T.GltfPath); return false;
 			}
-			if (Bytes.Num() < 200 && FString(UTF8_TO_TCHAR(reinterpret_cast<const ANSICHAR*>(Bytes.GetData()))).StartsWith(TEXT("version https://git-lfs")))
+			// A git LFS pointer is a short text file; compare the prefix within the bytes actually loaded (the buffer is not NUL-terminated).
+			static const ANSICHAR LfsPrefix[] = "version https://git-lfs";
+			constexpr int32 LfsPrefixLen = static_cast<int32>(sizeof(LfsPrefix) - 1);
+			if (Bytes.Num() < 200 && Bytes.Num() >= LfsPrefixLen && FMemory::Memcmp(Bytes.GetData(), LfsPrefix, LfsPrefixLen) == 0)
 			{
 				OutError = FString::Printf(TEXT("type '%s': %s is a git LFS pointer (run git lfs pull)"), *T.Name, *T.GltfPath); return false;
 			}
@@ -1766,13 +1769,6 @@ namespace CamSimVegetation
 		return true;
 	}
 }
-```
-
-Note: the LFS-pointer check must NUL-terminate before converting; replace the `UTF8_TO_TCHAR` line with:
-
-```cpp
-			TArray<uint8> Head(Bytes.GetData(), FMath::Min(Bytes.Num(), 64)); Head.Add(0);
-			if (Bytes.Num() < 200 && FString(UTF8_TO_TCHAR(reinterpret_cast<const ANSICHAR*>(Head.GetData()))).StartsWith(TEXT("version https://git-lfs")))
 ```
 
 (The bundled `libavutil/sha.h` declares `av_sha_update(struct AVSHA*, const uint8_t*, size_t)`, checked while writing the plan.)
@@ -2152,15 +2148,41 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegStreamTeleportTest, "CamSim.Vegetation.Stre
 bool FVegStreamTeleportTest::RunTest(const FString& Parameters)
 {
 	FVegetationStreaming S({});
-	const TSet<FVegCellId> Spawned = RunToSteadyState(S, 33.302, -117.355, 400);
-	// Leave some in flight at the old place.
-	S.Tick(33.302, -117.355);
-	const FVegetationStreaming::FActions A = S.Tick(37.7749, -122.4194);   // 600 km away
+	TSet<FVegCellId> Spawned = RunToSteadyState(S, 33.302, -117.355, 400);
+	TestTrue(TEXT("steady state spawned something"), Spawned.Num() > 100);
+	TestEqual(TEXT("steady state has nothing in flight"), S.NumInFlight(), 0);
+
+	// Leave work genuinely in flight at the old place: move 300 m north (new cells enter the ring), tick once, and do NOT deliver
+	// their results. One of them gets its generation result (so it sits in Sampling), the others stay Generating.
+	const double NorthLat = 33.302 + 300.0 / MetresPerDegLat;
+	const FVegetationStreaming::FActions Move = S.Tick(NorthLat, -117.355);
+	for (const FVegCellId& C : Move.ToDrop) Spawned.Remove(C);
+	for (const FVegCellId& C : Move.ToSpawn) Spawned.Add(C);
+	TestTrue(TEXT("new cells started and not flushed"), Move.ToGenerate.Num() > 0 && S.NumInFlight() == Move.ToGenerate.Num());
+	if (Move.ToGenerate.Num() == 0) return false;
+	S.OnGenerated(Move.ToGenerate[0], 5);
+	TestEqual(TEXT("one cell is Sampling"), static_cast<int32>(*S.GetState(Move.ToGenerate[0])), static_cast<int32>(EVegCellState::Sampling));
+	const TArray<FVegCellId> InFlightOld = Move.ToGenerate;
+
+	// Teleport 600 km away.
+	const FVegetationStreaming::FActions A = S.Tick(37.7749, -122.4194);
 	TestEqual(TEXT("every spawned cell dropped in one tick"), A.ToDrop.Num(), Spawned.Num());
-	for (const FVegCellId& C : Spawned) { S.OnGenerated(C, 5); S.OnHeightsSampled(C, 5); }
-	TestEqual(TEXT("stale results for old cells are ignored"), S.Tick(37.7749, -122.4194).ToSpawn.Num(), 0);
-	int32 OldTracked = 0;
-	for (const FVegCellId& C : Spawned) OldTracked += S.GetState(C).IsSet();
+	for (const FVegCellId& C : InFlightOld) TestFalse(TEXT("in-flight old cell is untracked after the teleport"), S.GetState(C).IsSet());
+	for (const FVegCellId& C : Spawned) TestFalse(TEXT("spawned old cell is untracked after the teleport"), S.GetState(C).IsSet());
+
+	// Results of the dropped work arrive late: they must change nothing.
+	for (const FVegCellId& C : InFlightOld) { S.OnGenerated(C, 5); S.OnHeightsSampled(C, 5); }
+	int32 OldSpawned = 0, OldTracked = 0;
+	TSet<FVegCellId> Old(InFlightOld);
+	Old.Append(Spawned);
+	for (int32 T = 0; T < 5; ++T)
+	{
+		const FVegetationStreaming::FActions B = S.Tick(37.7749, -122.4194);
+		for (const FVegCellId& C : B.ToSpawn) OldSpawned += Old.Contains(C);
+		for (const FVegCellId& C : B.ToGenerate) OldSpawned += Old.Contains(C);
+	}
+	for (const FVegCellId& C : Old) OldTracked += S.GetState(C).IsSet();
+	TestEqual(TEXT("no stale result spawns or restarts an old cell"), OldSpawned, 0);
 	TestEqual(TEXT("no old cell tracked"), OldTracked, 0);
 	return true;
 }
@@ -2330,6 +2352,7 @@ The scatter grounds trees on the **terrain** tileset. Once the buildings slice a
 **Files:**
 - Modify: `Geospatial/CamSimGeospatialProvider.h` (constant), `Geospatial/CamSimGeospatialProvider.cpp` (tag in `ApplyCesiumBackendConfig`)
 - Modify: `Subsystem/CamSimSubsystem.h/.cpp` (`GetTerrainTileset`)
+- Modify: `Vegetation/VegetationProbe.cpp` (Task 1's probe picks the terrain with `GetTerrainTileset()`)
 - Test: `Tests/CesiumBackendConfigTest.cpp` (append)
 
 **Interfaces:**
@@ -2411,6 +2434,14 @@ ACesium3DTileset* UCamSimSubsystem::GetTerrainTileset() const
 
 (include `Geospatial/CamSimGeospatialProvider.h` if not already.)
 
+In `Vegetation/VegetationProbe.cpp` (Task 1, and Task 2 Step 5's edit of it), replace the terrain pick `Sub->GetCachedTilesets()[0].Get()` with the accessor, since the buildings slice (R3 Task 8) caches a second tileset by now and index 0 may be the buildings:
+
+```cpp
+		ACesium3DTileset* Terrain = Sub ? Sub->GetTerrainTileset() : nullptr;
+```
+
+Then `grep -rn "GetCachedTilesets()\[0\]" unreal_project/CamSimTest/Source/CamSimTest/Vegetation` must print nothing: no vegetation code may take a terrain from the cache by index.
+
 - [ ] **Step 4: Run tests**
 
 Build; filter `CamSim.CesiumBackend`. Expected: PASS (existing tests too).
@@ -2420,6 +2451,7 @@ Build; filter `CamSim.CesiumBackend`. Expected: PASS (existing tests too).
 ```bash
 git add unreal_project/CamSimTest/Source/CamSimTest/Geospatial/CamSimGeospatialProvider.* \
   unreal_project/CamSimTest/Source/CamSimTest/Subsystem/CamSimSubsystem.* \
+  unreal_project/CamSimTest/Source/CamSimTest/Vegetation/VegetationProbe.cpp \
   unreal_project/CamSimTest/Source/CamSimTest/Tests/CesiumBackendConfigTest.cpp
 git commit -m "feat(geospatial): tag the terrain tileset; UCamSimSubsystem::GetTerrainTileset (REALISM R4 slice)"
 ```
@@ -2469,6 +2501,7 @@ namespace
 	{
 		TArray<TFunction<void()>> Pending;
 		TMap<FVegCellId, FVegCellSpawn> Live;
+		TArray<FVegCellId> SpawnLog;   // every Spawn call, in order
 		int32 Spawns = 0, Destroys = 0;
 		int32 TreesPerCell = 6;
 		bool bHeightsFail = false;
@@ -2496,7 +2529,7 @@ namespace
 					Done(MoveTemp(R));
 				});
 			};
-			H.Spawn = [this](FVegCellId Id, const FVegCellSpawn& S) { ++Spawns; Live.Add(Id, S); };
+			H.Spawn = [this](FVegCellId Id, const FVegCellSpawn& S) { ++Spawns; SpawnLog.Add(Id); Live.Add(Id, S); };
 			H.Destroy = [this](FVegCellId Id) { ++Destroys; Live.Remove(Id); };
 			return H;
 		}
@@ -2531,16 +2564,30 @@ bool FVegManagerStaleTest::RunTest(const FString& Parameters)
 	FFake F;
 	TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(FVegetationStreaming::FParams{}, F.Hooks());
 	for (int32 T = 0; T < 600; ++T) { M->Tick(33.302, -117.355); F.Flush(); }
-	const int32 Old = F.Live.Num();
-	M->Tick(33.302, -117.355);            // leaves 4 generations pending at the old place
-	M->Tick(37.7749, -122.4194);          // teleport: drops everything, starts new cells
-	TestEqual(TEXT("all old actors destroyed"), F.Destroys, Old);
-	F.Flush(); F.Flush();
-	M->Tick(37.7749, -122.4194); F.Flush();
-	for (const auto& Kv : F.Live)
+	TestTrue(TEXT("old place populated"), F.Live.Num() > 100);
+
+	// Move 300 m north and tick WITHOUT flushing: new cells start generating and their completions stay pending.
+	M->Tick(33.302 + 300.0 / MetresPerDegLat, -117.355);
+	const int32 PendingAtOldPlace = F.Pending.Num();
+	TestTrue(TEXT("generations are really pending at the old place"), PendingAtOldPlace > 0);
+	const int32 SpawnsBefore = F.Spawns;
+
+	// Teleport 600 km away: every actor goes, and the pending generations now belong to dropped cells.
+	M->Tick(37.7749, -122.4194);
+	TestEqual(TEXT("all old actors destroyed"), F.Live.Num(), 0);
+	TestTrue(TEXT("the stale completions are still queued"), F.Pending.Num() >= PendingAtOldPlace);
+
+	// Deliver the stale completions (generation, and any height request a wrong implementation would have made).
+	for (int32 K = 0; K < 3; ++K) F.Flush();
+	TestEqual(TEXT("a stale result spawned nothing"), F.Spawns, SpawnsBefore);
+
+	// Then let the new place fill in: only cells near the new place may ever spawn.
+	for (int32 T = 0; T < 600; ++T) { M->Tick(37.7749, -122.4194); F.Flush(); }
+	TestTrue(TEXT("the new place populated"), F.Live.Num() > 100);
+	for (int32 K = SpawnsBefore; K < F.SpawnLog.Num(); ++K)
 	{
-		double La, Lo; CellCentre(Kv.Key, 100.0, La, Lo);
-		if (GroundDistanceM(37.7749, -122.4194, La, Lo) > 1200.0) { AddError(TEXT("a cell spawned at the old place")); break; }
+		double La, Lo; CellCentre(F.SpawnLog[K], 100.0, La, Lo);
+		if (GroundDistanceM(37.7749, -122.4194, La, Lo) > 1200.0) { AddError(TEXT("a cell spawned at the old place after the teleport")); break; }
 	}
 	return true;
 }
@@ -2986,19 +3033,19 @@ git commit -m "feat(vegetation): streaming manager, live hooks and subsystem wir
 
 **Files:**
 - Create: `scripts/vegetation_check.py`
-- Modify: `docs/vegetation.md` (complete), `docs/configuration.md` (link), `ROADMAP.md` (Realism track: R4 slice status; editor-work note if Task 1 needed it), `REALISM.md` (R4 status line), `CLAUDE.md` (command row, Architecture `Vegetation/`, test counts, a Gotchas entry)
+- Modify: `docs/vegetation.md` (complete), `docs/configuration.md` (link), `ROADMAP.md` (Realism track: R4 slice status; the `Editor changes needed (human)` section that Task 1 Step 9 creates, if Task 1 needed it), `REALISM.md` (R4 status line), `CLAUDE.md` (command row, Architecture `Vegetation/`, test counts, a Gotchas entry)
 
 **Interfaces:**
-- Consumes: `scripts/bench/run_bench.py` (`Host`, `wait_ready`, `wait_terrain`, `wait_port_free`, `HEALTH`), `scripts/bench/scenario.Pose`, CVars `camsim.Vegetation.DumpPath`, `camsim.Vegetation.GroundCheck`, the land-cover tiles of `$PKG/landcover/`.
+- Consumes: `scripts/bench/run_bench.py` (`Host`, `wait_ready`, `wait_terrain`, `wait_port_free`, `HEALTH`), `scripts/bench/scenario.Pose`, `scripts/bench/compare.ssim` (8x8-block mean SSIM, the bench's metric), `scripts/bench/dense_path.LandCover` (bench plan Task 3: `LandCover(root).codes(lon, lat) -> uint8 array`, 0 where the tile is missing; `root` is the package's `landcover/` directory), CVars `camsim.Vegetation.DumpPath`, `camsim.Vegetation.GroundCheck`, the land-cover tiles of `$PKG/landcover/`.
 - Produces: `.cache/veg/check/<run>/report.json` with gates `placement`, `grounding`, `determinism`, `origin_shift`, `off_switch`, `gt` (pass/fail + numbers) and shots.
 
 Gates (spec "Acceptance"):
-1. **placement:** every dumped instance's (lat, lon) maps to code 10 in `$PKG/landcover` (same cell math as the runtime: `row = floor((90 - lat) * 12000 + 1e-6)`, `col = floor((lon + 180) * 12000 + 1e-6) % 4320000`, tile `(1799 - row // 600, col // 600 - 3600)`, in-tile `(col % 600, row % 600)`, file from `index.json` `tiles[]` by `lat_index`/`lon_index`).
+1. **placement:** every dumped instance's (lat, lon) maps to code 10 in `$PKG/landcover`, read with the bench's `dense_path.LandCover` (one decoder for tile naming and cell math; no second implementation here).
 2. **grounding:** `-ExecCmds=camsim.Vegetation.GroundCheck 1` at launch; `RunDebugHooks` waits until 200 instances are spawned, then traces them once → log line `max_dz_m < 0.5`, `n == 200`.
 3. **determinism:** two runs: approach the riparian pose from 3 km north and from 3 km south (host poses interpolated over 30 s), dump; for every cell present in both dumps, `hash` equal.
 4. **origin_shift:** at the riparian pose take `/snapshot` A, fly to the `far_origin` site (`lon + 3.41`) for 20 s, fly back, take `/snapshot` B; SSIM(A, B) ≥ the baseline run-to-run SSIM from Task 1 Step 0 minus 0.01, and the dump shows the same cell hashes.
 5. **off_switch:** `CAMSIM_VEGETATION_ENABLED=0` run of the bench smoke shots vs Task 1's baseline shots: SSIM ≥ the baseline's own pairwise SSIM minus 0.005 for every shot (live frames are not bit-identical run to run; this is the R2 practice, see spec gaps).
-6. **gt:** run `scripts/gt_occlusion_check.py` with vegetation on (default) → exit 0.
+6. **gt:** run `scripts/gt_occlusion_check.py OUTDIR` with vegetation on (default) → exit 0. It needs a required `OUTDIR` argument and `pycocotools`, so it runs as `uv run --with numpy --with pillow --with pycocotools python scripts/gt_occlusion_check.py <outdir>` (its documented command), not under `--project scripts/scene`; it launches its own CamSim runs, so none of this script's CamSims may be running.
 
 - [ ] **Step 1: Write `scripts/vegetation_check.py`**
 
@@ -3014,9 +3061,8 @@ approach paths, origin-shift stability, off switch vs the pre-slice baseline, gr
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
-import math
+import os
 import subprocess
 import sys
 import time
@@ -3028,40 +3074,21 @@ from PIL import Image
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
+from bench import dense_path as dp  # noqa: E402
 from bench import run_bench as rb  # noqa: E402
 from bench import scenario  # noqa: E402
+from bench.compare import ssim  # noqa: E402
 
+SHOT = "nadir_3km.png"  # the one --smoke shot; named explicitly, never by glob order (each shot is saved twice, with and without _sensor)
 EDITOR_LOG = Path.home() / "Library/Logs/CamSimTest/CamSimTest.log"
 RIPARIAN = (33.302, -117.355)  # Santa Margarita River riparian woodland (MCAS Camp Pendleton)
 ALT_M = 350.0
 PITCH = -20.0
 
 
-def land_cover_code(scene: Path, lat: float, lon: float, cache: dict) -> int:
-    row = math.floor((90.0 - lat) * 12000 + 1e-6)
-    col = math.floor((lon + 180.0) * 12000 + 1e-6) % 4_320_000
-    key = (1799 - row // 600, col // 600 - 3600)
-    if key not in cache:
-        index = json.loads((scene / "landcover" / "index.json").read_text())
-        files = {(t["lat_index"], t["lon_index"]): t["file"] for t in index["tiles"]}
-        cache[key] = np.asarray(Image.open(scene / "landcover" / files[key])) if key in files else None
-    tile = cache[key]
-    return 0 if tile is None else int(tile[row % 600, col % 600])
-
-
-def ssim(a: np.ndarray, b: np.ndarray) -> float:
-    """Global SSIM on luma (the bench's compare.py uses the same constants)."""
-    a = a.astype(np.float64); b = b.astype(np.float64)
-    c1, c2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
-    ma, mb = a.mean(), b.mean()
-    va, vb = a.var(), b.var()
-    cov = ((a - ma) * (b - mb)).mean()
-    return float(((2 * ma * mb + c1) * (2 * cov + c2)) / ((ma**2 + mb**2 + c1) * (va + vb + c2)))
-
-
-def luma(path: Path) -> np.ndarray:
-    rgb = np.asarray(Image.open(path).convert("RGB")).astype(np.float64)
-    return 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
+def load(path: Path) -> np.ndarray:
+    """A shot as an RGB array for compare.ssim (which takes the luma and averages 8x8 blocks itself)."""
+    return np.asarray(Image.open(path).convert("RGB"))
 
 
 def pose(lat: float, lon: float) -> scenario.Pose:
@@ -3069,7 +3096,6 @@ def pose(lat: float, lon: float) -> scenario.Pose:
 
 
 def launch(env_extra: dict, exec_cmds: list[str], host: rb.Host) -> None:
-    import os
     env = dict(os.environ, CAMSIM_MULTICAST_ADDR="127.0.0.1", CAMSIM_SNAPSHOT_ENDPOINT_ENABLED="1", **env_extra)
     rb.wait_port_free(int(rb.HEALTH.rsplit(":", 1)[1]))
     host.thread.start()
@@ -3143,10 +3169,10 @@ def main() -> int:
     south = run_approach("south", a.scene, a.out, -3000.0 / 111_320.0)
     dn, ds = read_dump(Path(north["dump"])), read_dump(Path(south["dump"]))
 
-    cache: dict = {}
-    wrong = sum(1 for d in list(dn.values()) + list(ds.values()) for i in d["instances"]
-                if land_cover_code(a.scene, i[0], i[1], cache) != 10)
-    total = sum(len(d["instances"]) for d in list(dn.values()) + list(ds.values()))
+    lc = dp.LandCover(a.scene / "landcover")
+    inst = [i for d in list(dn.values()) + list(ds.values()) for i in d["instances"]]  # each i = [lat, lon, ...]
+    codes = lc.codes(np.array([i[1] for i in inst], float), np.array([i[0] for i in inst], float)) if inst else np.zeros(0)
+    wrong, total = int((codes != 10).sum()), len(inst)
     report["placement"] = {"pass": total > 0 and wrong == 0, "instances": total, "not_on_code_10": wrong}
 
     def parse_ground(line: str | None) -> dict:
@@ -3161,22 +3187,23 @@ def main() -> int:
     mismatched = [k for k in common if dn[k]["hash"] != ds[k]["hash"]]
     report["determinism"] = {"pass": len(common) > 20 and not mismatched, "common_cells": len(common), "mismatched": len(mismatched)}
 
-    floor = ssim(luma(next((a.baseline / "a" / "shots").glob("*.png"))), luma(next((a.baseline / "b" / "shots").glob("*.png"))))
-    s_n = ssim(luma(a.out / "north/a.png"), luma(a.out / "north/b.png"))
+    floor = ssim(load(a.baseline / "a" / "shots" / SHOT), load(a.baseline / "b" / "shots" / SHOT))
+    s_n = ssim(load(a.out / "north/a.png"), load(a.out / "north/b.png"))
     report["origin_shift"] = {"pass": s_n >= floor - 0.01, "ssim": s_n, "baseline_floor": floor}
 
     off = a.out / "off"
     subprocess.run([sys.executable, str(REPO / "scripts/bench/run_bench.py"), "--label", "veg-off", "--site", "pendleton",
-                    "--smoke", "--out", str(off)], env={**__import__("os").environ, "CAMSIM_SCENE_DIR": str(a.scene),
+                    "--smoke", "--out", str(off)], env={**os.environ, "CAMSIM_SCENE_DIR": str(a.scene),
                                                         "CAMSIM_VEGETATION_ENABLED": "0"}, check=True)
     rows = []
-    for shot in sorted((a.baseline / "a" / "shots").glob("*.png")):
-        b_floor = ssim(luma(shot), luma(a.baseline / "b" / "shots" / shot.name))
-        s_off = ssim(luma(shot), luma(off / "shots" / shot.name))
+    for shot in sorted(p for p in (a.baseline / "a" / "shots").glob("*.png") if not p.stem.endswith("_sensor")):
+        b_floor = ssim(load(shot), load(a.baseline / "b" / "shots" / shot.name))
+        s_off = ssim(load(shot), load(off / "shots" / shot.name))
         rows.append({"shot": shot.name, "ssim_off": s_off, "baseline": b_floor, "pass": s_off >= b_floor - 0.005})
     report["off_switch"] = {"pass": bool(rows) and all(r["pass"] for r in rows), "shots": rows}
 
-    gt = subprocess.run([sys.executable, str(REPO / "scripts/gt_occlusion_check.py")], check=False)
+    gt = subprocess.run(["uv", "run", "--with", "numpy", "--with", "pillow", "--with", "pycocotools", "python",
+                         str(REPO / "scripts/gt_occlusion_check.py"), str(a.out / "gt")], check=False)
     report["gt"] = {"pass": gt.returncode == 0, "exit": gt.returncode}
 
     report["pass"] = all(v["pass"] for v in report.values() if isinstance(v, dict) and "pass" in v)
@@ -3205,12 +3232,12 @@ Run `send_dis_test.py truck-parked` relocated under trees at the riparian pose (
 
 - [ ] **Step 4: Bench sweep**
 
-Owned by the bench plan (`docs/superpowers/specs/2026-10-10-r3r4-realism-cost-bench-design.md`): run its `sweep.py` with the `trees*` axes once it exists; record the chosen defaults here and, if they differ from the starting values (radius 1000, density 1.0, shadows on), change the `FVegetationConfig` defaults, `deploy/camsim_config.yaml` and `docs/configuration.md` together and rerun `CamSim.Vegetation.Config` + `CamSim.Config`.
+Owned by the bench plan (`docs/superpowers/specs/2026-10-10-r3r4-realism-cost-bench-design.md`): run its `sweep.py` with the `trees*` axes, plus `--axis buildings=off` so the baseline is all-off even on a package with a buildings layer (R3 has landed and buildings default on): `uv run --with numpy --with pillow python scripts/bench/sweep.py --scene "$PKG" --out .cache/bench-r3r4/trees --axis buildings=off --axis trees=off,on --axis trees_radius=500,1000,2000 --axis trees_density=0.5,1.0 --axis trees_shadows=on,off --repeat 2`. Record the chosen defaults here. If they differ from the starting values (radius 1000, density 1.0, shadows on), change all of these together in this step: the `FVegetationConfig` defaults in `Config/CamSimConfig.h`, `deploy/camsim_config.yaml`, `docs/configuration.md`, and the `CamSim.Vegetation.Config.Defaults` assertions in `Tests/VegetationConfigTest.cpp` (Task 7); then rebuild and rerun `CamSim.Vegetation.Config` + `CamSim.Config` until green.
 
 - [ ] **Step 5: Docs**
 
 - `docs/vegetation.md`: purpose, how it works (grid, scatter, seed, heights, cells, budgets), config table, the library format and how to add a type (`prepare_tree.py`), CVars (`DumpPath`, `GroundCheck`, `Probe`), "Measured" (gates from `report.json`, truck-under-trees result, bench rows), "Known limits" exactly as the spec lists them (one species, binary density per 10 m texel, hard pop-in, no collision, `/ready` doesn't wait, leaf-on).
-- `ROADMAP.md` "Realism track": a dated R4-slice status line linking `docs/vegetation.md`; if Task 1 found the cooked usage-flag problem, the human editor task under the ROADMAP's editor-changes list (per `CLAUDE.md`).
+- `ROADMAP.md` "Realism track": a dated R4-slice status line linking `docs/vegetation.md`; if Task 1 found the cooked usage-flag problem, check that its human editor task is in the `## Editor changes needed (human)` section of `ROADMAP.md` (Task 1 Step 9 creates the section; if it is missing, create it now, per `CLAUDE.md`).
 - `REALISM.md` R4: "Slice implemented 2026-…" with the gate summary and what stays deferred.
 - `CLAUDE.md`: `scripts/vegetation_check.py` row in Commands; `Vegetation/` line in Architecture (`Vegetation/  # REALISM R4 slice: global cell grid, hash scatter on land-cover code 10, HISM cells, library.json`); test count (`N tests across M files`, from the automation report); a Gotchas bullet: "**Vegetation** (REALISM R4 slice, `docs/vegetation.md`): trees are scattered per 100 m global cell by `CamSimHash` (streams 80–82) on land-cover code 10, grounded with `SampleHeightMostDetailed` on the terrain tileset (tagged `CamSimTerrain`), one globe-anchored HISM actor per cell, ≤ 2 spawns/tick, ≤ 4 cells in flight; no collision (CIGI/DIS never see trees), `/ready` doesn't wait for them. The library (`Content/NonUFS/Vegetation`, git LFS) is sha256-checked; CC0 only."
 
@@ -3219,8 +3246,10 @@ Owned by the bench plan (`docs/superpowers/specs/2026-10-10-r3r4-realism-cost-be
 Run the full automation suite (filter `CamSim`), `scripts/run_gpu_tests.sh` (no vegetation GPU test, but confirm no regression), and the scene tooling tests are unaffected (no change there). Expected: all pass.
 
 ```bash
-git add scripts/vegetation_check.py docs/vegetation.md docs/configuration.md ROADMAP.md REALISM.md CLAUDE.md \
-  unreal_project/CamSimTest/Source/CamSimTest/Vegetation/VegetationManager.cpp
+git add scripts/vegetation_check.py docs/vegetation.md docs/configuration.md ROADMAP.md REALISM.md CLAUDE.md
+# only if Step 4 changed the defaults (nothing else in this task touches C++):
+git add deploy/camsim_config.yaml unreal_project/CamSimTest/Source/CamSimTest/Config/CamSimConfig.h \
+  unreal_project/CamSimTest/Source/CamSimTest/Tests/VegetationConfigTest.cpp
 git commit -m "docs(vegetation): acceptance on Pendleton, vegetation guide (REALISM R4 slice)"
 ```
 

@@ -128,14 +128,9 @@ git commit -m "feat(bench): game-thread p95 per phase (REALISM R3/R4 bench)"
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `scripts/tests/test_bench_run.py`:
+In `scripts/tests/test_bench_run.py`, change the existing import line `from bench import run_bench` to `from bench import run_bench, scenario` (the file already imports `os` and `pytest` at the top; every import stays in the top block, ruff E402), then append:
 
 ```python
-import pytest
-
-from bench import run_bench, scenario
-
-
 def test_filter_phases_keeps_warmup_and_named_measured_phases():
     phases = scenario.build_phases(site=scenario.SITES["pendleton"])
     out = run_bench.filter_phases(phases, ["coast_pass"], skip_warmup=False)
@@ -171,8 +166,6 @@ def test_phases_and_shots_flags_parse_as_lists():
     b = run_bench.build_parser().parse_args(["--label", "x"])
     assert b.phases is None and b.shots is None
 ```
-
-(If `test_bench_run.py` already imports `run_bench` under another form, keep the existing import and drop the duplicate.)
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -579,12 +572,9 @@ git commit -m "feat(bench): dense_pass path scoring from land cover (REALISM R3/
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `scripts/tests/test_bench_dense_path.py`:
+In `scripts/tests/test_bench_dense_path.py`, add `import pytest` to the top import block (stdlib/third-party group, before `import numpy as np`; ruff E402 forbids imports below code), then append:
 
 ```python
-import pytest
-
-
 def _qmesh_package(tmp_path, height):
     qmesh = pytest.importorskip("camsim_scene.qmesh")
     z, d = 12, 180.0 / 2**12
@@ -597,7 +587,7 @@ def _qmesh_package(tmp_path, height):
     raw = qmesh.encode(u, v, h, np.array([[0, 1, 2], [1, 3, 2]]), (w, s, w + d, s + d))
     p = tmp_path / "terrain" / str(z) / str(x)
     p.mkdir(parents=True)
-    qmesh.write_tile(p / f"{y}.terrain", qmesh.gzip_tile(raw))
+    qmesh.write_tile(p / f"{y}.terrain", raw)  # write_tile gzips; do not gzip_tile first (it would be gzipped twice)
     return tmp_path, lon, lat
 
 
@@ -617,7 +607,7 @@ def test_terrain_max_height_missing_tile_is_none(tmp_path):
     assert sdp.terrain_max_height(tmp_path, -117.45, 33.30) is None
 ```
 
-(`qmesh.encode` takes `(lon, lat, height, triangles, bounds)`; check the signature in `scripts/scene/camsim_scene/qmesh.py:161` and adapt the arguments if it has changed. `write_tile` and `gzip_tile` are at `:197-205`.)
+(`qmesh.encode` takes `(lon, lat, height, triangles, bounds)`; check the signature in `scripts/scene/camsim_scene/qmesh.py:161` and adapt the arguments if it has changed. `write_tile` (which gzips its argument itself) is at `:197-205`.)
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -780,12 +770,9 @@ In `scripts/tests/test_bench_scenario.py`, change the last line of `test_pendlet
     assert len(scenario.build_shots(site=site)) == len(scenario.build_shots()) + 1
 ```
 
-and append:
+add `import math` to the top import block of the file (next to `import struct`), and append:
 
 ```python
-import math
-
-
 def test_pendleton_adds_dense_pass_after_coast_and_warms_it():
     site = scenario.SITES["pendleton"]
     phases = scenario.build_phases(site=site)
@@ -933,12 +920,9 @@ Copy the header lines and the category rows (no paths or user names) into `scrip
 
 - [ ] **Step 2: Write the failing tests**
 
-Append to `scripts/tests/test_bench_run.py`:
+In `scripts/tests/test_bench_run.py`, add `from pathlib import Path` and `from types import SimpleNamespace` to the top import block (stdlib group, next to `import os`), then append:
 
 ```python
-from pathlib import Path
-from types import SimpleNamespace
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -1124,14 +1108,14 @@ Expected: PASS.
 
 - [ ] **Step 6: Live check**
 
-Run: `uv run --with numpy --with pillow python scripts/bench/run_bench.py --label memcheck --site pendleton --phases dense_pass --shots dense_oblique --gpu-mem --env CAMSIM_SCENE_DIR="$PWD/.cache/scene-packages/pendleton-r2" --out .cache/bench-r3r4/memcheck`
+Run: `uv run --with numpy --with pillow python scripts/bench/run_bench.py --label memcheck --site pendleton --phases dense_pass --shots dense_oblique --gpu-mem --env CAMSIM_SCENE_DIR="$PWD/.cache/scene-packages/pendleton-r2" --env CAMSIM_VEGETATION_ENABLED=0 --env CAMSIM_SCENE_BUILDINGS_ENABLED=0 --out .cache/bench-r3r4/memcheck`
 Expected:
 - `results.json` → `meta.gpu_mem_source == "footprint"` and `phases.dense_pass.gpu_mem_mib_max` a number (or `null` if Step 1 found no category);
 - `game_ms_p95` present;
 - `shots/dense_oblique.png` exists;
 - 30 fps, 0 dropped.
 
-This run is also the first both-off `dense_pass` reference. Write its numbers into the task report.
+This run is also the first both-off `dense_pass` reference. The two `--env` switches are explicit because trees (R4) and buildings (R3) default on once those slices land, and the reference must not include them. Write its numbers into the task report.
 
 - [ ] **Step 7: Commit**
 
@@ -1589,7 +1573,7 @@ and append ` (`--site pendleton` adds `dense_pass`; `--phases`, `--shots`, `--gp
 
 - [ ] **Step 3: Live end-to-end (one-row sweep, the both-off reference)**
 
-Run: `uv run --with numpy --with pillow python scripts/bench/sweep.py --scene "$PWD/.cache/scene-packages/pendleton-r2" --out .cache/bench-r3r4/reference --repeat 2`
+Run: `uv run --with numpy --with pillow python scripts/bench/sweep.py --scene "$PWD/.cache/scene-packages/pendleton-r2" --axis trees=off --axis buildings=off --out .cache/bench-r3r4/reference --repeat 2`
 Expected:
 - one `baseline` row, status `ok (2/2)`;
 - `sweep.md` lists game p50/p95, GPU p50, wall p95, dropped 0, fps ≈ 29.9 and GPU memory (or `n/a`);
@@ -1599,8 +1583,8 @@ Record the table in the task report: it is the R2 reference for `dense_pass` tha
 
 - [ ] **Step 4: Full Pendleton bench still works**
 
-Run: `uv run --with numpy --with pillow python scripts/bench/run_bench.py --label r3r4-bench-check --site pendleton --env CAMSIM_SCENE_DIR="$PWD/.cache/scene-packages/pendleton-r2" --out .cache/bench-r3r4/full-check`
-Expected: phases `orbit, slew, low_pass, far_origin, coast_pass, dense_pass` in `results.json`, all 30 fps / 0 dropped; game p50 of the five old phases within noise of the R2 table in `docs/scene-packages.md` ("R2 vector features", bench table); 13 shots (+ `_sensor` copies).
+Run: `uv run --with numpy --with pillow python scripts/bench/run_bench.py --label r3r4-bench-check --site pendleton --env CAMSIM_SCENE_DIR="$PWD/.cache/scene-packages/pendleton-r2" --env CAMSIM_VEGETATION_ENABLED=0 --env CAMSIM_SCENE_BUILDINGS_ENABLED=0 --out .cache/bench-r3r4/full-check`
+(`--env CAMSIM_VEGETATION_ENABLED=0 --env CAMSIM_SCENE_BUILDINGS_ENABLED=0` are explicit: both features default on by now, and this run is the R2 comparison.) Expected: phases `orbit, slew, low_pass, far_origin, coast_pass, dense_pass` in `results.json`, all 30 fps / 0 dropped; game p50 of the five old phases within noise of the R2 table in `docs/scene-packages.md` ("R2 vector features", bench table); 13 shots (+ `_sensor` copies).
 
 - [ ] **Step 5: Run the full unit suite**
 
