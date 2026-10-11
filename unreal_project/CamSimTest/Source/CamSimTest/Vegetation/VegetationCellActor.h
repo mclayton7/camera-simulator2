@@ -23,7 +23,8 @@ class CAMSIMTEST_API ACamSimVegetationCell : public AActor
 public:
 	ACamSimVegetationCell();
 
-	/** Game thread, once, right after SpawnActor. LocalInstances are in the cell's ESU frame (cm). */
+	/** Game thread, once, right after SpawnActor. LocalInstances are in the cell's ESU frame (cm). A null Mesh leaves the
+	 *  cell empty (logged once); CullDistanceM is clamped to what the int32 cm cull distance holds. */
 	void Init(double CentreLatDeg, double CentreLonDeg, double BaseHeightM, UStaticMesh* Mesh,
 		const TArray<FTransform>& LocalInstances, bool bCastShadows, float CullDistanceM);
 

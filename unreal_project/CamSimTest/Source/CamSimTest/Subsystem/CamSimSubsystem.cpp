@@ -28,6 +28,8 @@
 #include "Time/SimClock.h"
 #include "Ocean/OceanSurface.h"         // FOceanSurface (ROADMAP 2.6)
 #include "Thermal/LandCoverLookup.h"   // FLandCoverCodeLookup (REALISM R2)
+#include "Vegetation/VegetationManager.h"   // FVegetationManager (REALISM R4)
+#include "Entity/SurfaceProbe.h"        // FCesiumSurfaceProbe (vegetation ground check)
 #include "Geospatial/Geoid.h"           // CamSim::Geospatial::GetGeoidUndulation
 #include "SensorGraph.h"                // IsSensorGraphSupported (ROADMAP 3B)
 #include "InstanceIdPass.h"             // IsInstanceIdPassSupported (ROADMAP 2.7)
@@ -82,6 +84,11 @@ struct UCamSimSubsystem::FSubsystemImpl
 	// Land-cover codes at CIGI query points (REALISM R2); null when thermal.land_cover.enabled is off.
 	TUniquePtr<FLandCoverCodeLookup> LandCoverLookup;
 
+	// Vegetation scatter (REALISM R4 slice); created lazily once the world's terrain tileset exists, null when off.
+	TSharedPtr<FVegetationManager> Vegetation;
+	bool bVegetationTried = false;
+	TUniquePtr<FCesiumSurfaceProbe> VegetationProbe;   // ground check only
+
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
 	TStrongObjectPtr<UCesiumIonServer> CesiumIonServerOverride;
@@ -127,6 +134,8 @@ struct UCamSimSubsystem::FSubsystemImpl
 		HealthServer.Reset();
 		SnapshotService.Reset();  // after the server: no handler can reach it now
 		SensorSnapshotService.Reset();
+		Vegetation.Reset();   // destroys the cell actors
+		VegetationProbe.Reset();
 		CesiumIonServerOverride.Reset();
 		QueryHandler.Reset();
 		GeospatialProvider.Reset();
@@ -853,6 +862,7 @@ void UCamSimSubsystem::Deinitialize()
 	{
 		FWorldDelegates::OnWorldPreActorTick.Remove(Impl->OceanPreTickHandle);
 		Impl->Ocean.Reset();
+		Impl->Vegetation.Reset();
 	}
 
 	// Phase 13B: Pimpl destructor handles reverse-order teardown
@@ -1036,6 +1046,28 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			Impl->WatchdogLastSuccessFrame = Encoder->GetSuccessfulFrameCount();
 			Impl->WatchdogLastCapturedFrame = Cam ? Cam->GetFramesCaptured() : 0;
 			Impl->WatchdogLastCheckTick    = Impl->FrameCntr;
+		}
+	}
+
+	// Vegetation (REALISM R4 slice): around the camera's nadir; configured once the terrain tileset exists.
+	if (Config.Vegetation.bEnabled)
+	{
+		UWorld* World = GetWorld();
+		ACesium3DTileset* Terrain = GetTerrainTileset();
+		if (!Impl->bVegetationTried && World && Terrain && Camera_.IsValid())
+		{
+			Impl->bVegetationTried = true;
+			FString WhyNot;
+			Impl->Vegetation = CamSimVegetation::CreateLiveManager(World, Terrain, Config, WhyNot);
+			if (!Impl->Vegetation) UE_LOG(LogCamSim, Warning, TEXT("Vegetation: off (%s)"), *WhyNot);
+		}
+		if (Impl->Vegetation && Camera_.IsValid())
+		{
+			const FCamSimTelemetry& T = Camera_->GetTelemetry();
+			if (CamSimVegetation::IsLatAllowed(T.Latitude)) Impl->Vegetation->Tick(T.Latitude, T.Longitude);
+			if (!Impl->VegetationProbe)
+				Impl->VegetationProbe = MakeUnique<FCesiumSurfaceProbe>(World, GetGeospatialProvider(), Config.bCreatePhysicsMeshes);
+			CamSimVegetation::RunDebugHooks(*Impl->VegetationProbe, *Impl->Vegetation);
 		}
 	}
 
