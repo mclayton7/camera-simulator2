@@ -1,0 +1,18 @@
+{
+  "start_lat": 33.230424,
+  "start_lon": -117.357009,
+  "bearing_deg": 105.0,
+  "alt_hae_m": 357.7,
+  "length_m": 9000.0,
+  "speed_mps": 100.0,
+  "gimbal_pitch_deg": -20.0,
+  "selector": {
+    "package": "pendleton-r2",
+    "tree": 316.6,
+    "built": 1032.24,
+    "score": 1.2149,
+    "rank": 0,
+    "terrain_start_m": 57.7,
+    "terrain_max_m": 101.7
+  }
+}

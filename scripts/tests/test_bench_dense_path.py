@@ -1,5 +1,6 @@
 """dense_pass path selection: land-cover reading, strip scoring, ranking (REALISM R3/R4 bench)."""
 
+import pytest
 import numpy as np
 from PIL import Image
 
@@ -77,3 +78,35 @@ def test_xy_to_lonlat_round_trip_origin():
     assert (lon, lat) == (-117.5, 33.2)
     lon, lat = dp.xy_to_lonlat(g, 0.0, dp.M_PER_DEG)
     assert abs(lat - 34.2) < 1e-9
+
+
+def _qmesh_package(tmp_path, height):
+    qmesh = pytest.importorskip("camsim_scene.qmesh")
+    z, d = 12, 180.0 / 2**12
+    lon, lat = -117.45, 33.30
+    x, y = int((lon + 180.0) // d), int((lat + 90.0) // d)
+    w, s = -180.0 + x * d, -90.0 + y * d
+    u = np.array([w, w + d, w, w + d])
+    v = np.array([s, s, s + d, s + d])
+    h = np.full(4, height)
+    raw = qmesh.encode(u, v, h, np.array([[0, 1, 2], [1, 3, 2]]), (w, s, w + d, s + d))
+    p = tmp_path / "terrain" / str(z) / str(x)
+    p.mkdir(parents=True)
+    qmesh.write_tile(p / f"{y}.terrain", raw)  # write_tile gzips; do not gzip_tile first (it would be gzipped twice)
+    return tmp_path, lon, lat
+
+
+def test_terrain_max_height_reads_the_package_tile(tmp_path):
+    from bench import select_dense_path as sdp
+
+    pkg, lon, lat = _qmesh_package(tmp_path, 123.0)
+    # The tile is ~4.9 km wide, so a 250 m radius may contain no vertex: the reader falls back to the
+    # nearest vertex rather than answering None.
+    assert abs(sdp.terrain_max_height(pkg, lon, lat) - 123.0) < 0.5
+
+
+def test_terrain_max_height_missing_tile_is_none(tmp_path):
+    pytest.importorskip("camsim_scene.qmesh")
+    from bench import select_dense_path as sdp
+
+    assert sdp.terrain_max_height(tmp_path, -117.45, 33.30) is None
