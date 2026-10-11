@@ -1,7 +1,7 @@
 """Vector features burned into the land-cover tiles (REALISM R2, spec docs/superpowers/specs/2026-10-10-r2-vector-
 features-design.md, sections 1, 3, 4). Each feature becomes a polygon in a local metric frame per tile (equirectangular
 about the tile centre), at least one cell (9.2767 m) wide, rasterised with the centre-sample rule in priority order
-(water < paved areas < rail < roads; later wins) and sorted by source id within a priority, so output is deterministic.
+(water < paved areas < buildings (R3b, from the footprint raster) < rail < roads; later wins) and sorted by source id within a priority, so output is deterministic.
 Bridges, tunnels and underground features are skipped (no deck geometry before R3)."""
 
 from __future__ import annotations
@@ -26,8 +26,10 @@ CELL_M = (
 MIN_W_M = (
     1.05 * CELL_M
 )  # minimum burned width: a strip this wide covers a cell centre in every cross-section, with margin
-CODES = {200: "paved_asphalt", 201: "paved_concrete", 210: "rail", 220: "inland_water"}
-PRIORITY = {"water": 0, "paved_area": 1, "rail": 2, "road": 3}
+CODES = {200: "paved_asphalt", 201: "paved_concrete", 210: "rail", 220: "inland_water", 230: "building"}
+BUILDING_CODE = 230  # REALISM R3b: = the CIGI material code of a building hit (Thermal/LandCoverLookup.h)
+# Burn order, later wins. "building" is the R3b footprint burn (not a Feature kind); the feature kinds keep R2's order.
+PRIORITY = {"water": 0, "paved_area": 1, "building": 2, "rail": 3, "road": 4}
 LANE_M = 3.5
 SHOULDER_M = {"motorway": 3.0, "trunk": 3.0}
 RUNWAY_M = {"runway": 45.0, "taxiway": 23.0}
@@ -111,23 +113,28 @@ def _polygon(f: Feature, local) -> object:
     return None
 
 
-def burn_tile(codes: np.ndarray, i: int, j: int, feats: list[Feature], area) -> int:
-    from rasterio import features as rf
+def _tile_frame(i: int, j: int):
+    """The tile's local metric frame (equirectangular about its centre), metres per degree of longitude, and the
+    raster transform of its TILE_PX x TILE_PX cells (north-west corner, local metres)."""
     from rasterio.transform import Affine
 
     s, w = i * TILE_DEG, j * TILE_DEG
     lat0, lon0 = s + TILE_DEG / 2.0, w + TILE_DEG / 2.0
-    local = _to_local(lat0, lon0)
-    tile = box(w, s, w + TILE_DEG, s + TILE_DEG)
-    clip = local(tile.intersection(box(*area)))
-    if clip.is_empty:
-        return 0
     kx = M_PER_DEG_LAT * math.cos(math.radians(lat0))
     cell_x, cell_y = kx / CELLS_PER_DEG, M_PER_DEG_LAT / CELLS_PER_DEG
-    x0, y0 = (w - lon0) * kx, (s + TILE_DEG - lat0) * M_PER_DEG_LAT  # north-west corner, local metres
-    transform = Affine(cell_x, 0, x0, 0, -cell_y, y0)
-    before = codes.copy()
-    cw, cs, ce, cn = tile.intersection(box(*area)).bounds
+    x0, y0 = (w - lon0) * kx, (s + TILE_DEG - lat0) * M_PER_DEG_LAT
+    return _to_local(lat0, lon0), kx, Affine(cell_x, 0, x0, 0, -cell_y, y0)
+
+
+def _feature_shapes(i: int, j: int, feats: list[Feature], area, local, kx: float) -> list[tuple]:
+    """(local polygon, code, priority) of every feature burned in tile (i, j) within `area`, in burn order."""
+    s, w = i * TILE_DEG, j * TILE_DEG
+    tile = box(w, s, w + TILE_DEG, s + TILE_DEG)
+    inside = tile.intersection(box(*area))
+    clip = local(inside)
+    if clip.is_empty:
+        return []
+    cw, cs, ce, cn = inside.bounds
     shapes = []
     for f in sorted(feats, key=lambda f: (PRIORITY[f.kind], f.source_id)):
         code = code_for(f)
@@ -145,12 +152,36 @@ def burn_tile(codes: np.ndarray, i: int, j: int, feats: list[Feature], area) -> 
         p = p.intersection(clip)
         if p.is_empty:
             continue
-        shapes.append((p, code))
-    if shapes:
-        # one pass; later shapes (higher priority) overwrite earlier ones. Codes are >= 200, so 0 means untouched.
-        out = rf.rasterize(
-            shapes, out_shape=(TILE_PX, TILE_PX), transform=transform, fill=0, all_touched=False, dtype="uint8"
-        )
-        m = out > 0
-        codes[m] = out[m]
+        shapes.append((p, code, PRIORITY[f.kind]))
+    return shapes
+
+
+def _rasterise_into(codes: np.ndarray, shapes: list[tuple], transform) -> None:
+    """One rasterize pass; later shapes overwrite earlier ones. Codes are >= 200, so 0 means untouched."""
+    from rasterio import features as rf
+
+    if not shapes:
+        return
+    out = rf.rasterize(
+        [(p, c) for p, c, _ in shapes], out_shape=(TILE_PX, TILE_PX), transform=transform, fill=0,
+        all_touched=False, dtype="uint8",
+    )
+    m = out > 0
+    codes[m] = out[m]
+
+
+def burn_tile(codes: np.ndarray, i: int, j: int, feats: list[Feature], area, buildings: np.ndarray | None = None) -> int:
+    """Burn `feats` (within `area`) into tile (i, j)'s codes in priority order; with `buildings` (REALISM R3b, a
+    (TILE_PX, TILE_PX) bool from footprints.burn_cells) those cells become BUILDING_CODE after water and paved areas and
+    before rail and roads. buildings=None is R2's single pass, byte for byte. Returns the number of changed cells."""
+    local, kx, transform = _tile_frame(i, j)
+    before = codes.copy()
+    shapes = _feature_shapes(i, j, feats, area, local, kx) if feats and area is not None else []
+    if buildings is None:
+        _rasterise_into(codes, shapes, transform)
+    else:
+        b = PRIORITY["building"]
+        _rasterise_into(codes, [x for x in shapes if x[2] < b], transform)
+        codes[buildings] = BUILDING_CODE
+        _rasterise_into(codes, [x for x in shapes if x[2] > b], transform)
     return int((codes != before).sum())

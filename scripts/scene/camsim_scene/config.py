@@ -494,7 +494,16 @@ def layer_settings(plan: ScenePlan) -> dict:
         out["landcover"]["features"] = fs
     bs = buildings_settings(plan)
     if bs is not None:
+        from .footprints import BURN_MIN_CELLS, MASK_FACTOR, MASK_RULES_VERSION
+
         out["buildings"] = bs
+        out["landcover"]["buildings"] = {  # REALISM R3b: footprints burned as 230 (only with [buildings])
+            "code": 230,
+            "cell_factor": MASK_FACTOR,
+            "min_cells": BURN_MIN_CELLS,
+            "priority": ["worldcover", "water", "paved_area", "building", "rail", "road"],
+            "rules": MASK_RULES_VERSION,
+        }
     return out
 
 

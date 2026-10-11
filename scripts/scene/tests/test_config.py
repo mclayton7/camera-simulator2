@@ -338,3 +338,17 @@ def test_buildings_section_rejects_bad_values(bad):
 def test_priorities_buildings_cannot_be_set_directly():
     with pytest.raises(ConfigError, match="buildings"):
         parse_scene({**BUILDINGS_TOML, "priorities": {"buildings": ["overture_buildings"]}})
+
+
+def test_landcover_settings_without_buildings_are_r3s():
+    plan = parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "features": {"roads": True}})
+    lc = layer_settings(plan)["landcover"]
+    assert set(lc) == {"priorities", "bounds", "tile_deg", "features"}
+    assert lc["features"]["rules"] == "1"  # features.RULES_VERSION is not bumped: features-only packages stay R3's
+
+
+def test_landcover_settings_with_buildings_carry_the_burn_rule():
+    plan = parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "buildings": {}})
+    lb = layer_settings(plan)["landcover"]["buildings"]
+    assert lb["code"] == 230 and lb["cell_factor"] == 8 and lb["min_cells"] == 32 and lb["rules"] == "1"
+    assert lb["priority"] == ["worldcover", "water", "paved_area", "building", "rail", "road"]
