@@ -726,6 +726,15 @@ CAMSIM_OCEAN_MOTION_ENABLED=1
 CAMSIM_OCEAN_MOTION_SCALE=1.0
 CAMSIM_OCEAN_MAX_RADIUS_KM=400.0
 
+# Vegetation (REALISM R4 slice)
+CAMSIM_VEGETATION_ENABLED=1
+CAMSIM_VEGETATION_LIBRARY_DIR=
+CAMSIM_VEGETATION_RADIUS_M=1000.0
+CAMSIM_VEGETATION_DENSITY_SCALE=1.0
+CAMSIM_VEGETATION_CAST_SHADOWS=1
+CAMSIM_VEGETATION_CELL_SIZE_M=100.0
+CAMSIM_VEGETATION_SEED=0
+
 # Operational hardening (Phase 28)
 CAMSIM_STRUCTURED_LOG_PATH=
 CAMSIM_STRUCTURED_LOG_MAX_MB=100
@@ -914,6 +923,22 @@ ocean:
 | `ocean.max_radius_km` | `CAMSIM_OCEAN_MAX_RADIUS_KM` | `400.0` | Horizon cap for the ocean mesh; must be finite and > 0. |
 | `ocean.water_temperature_c` | `CAMSIM_OCEAN_WATER_TEMPERATURE_C` | `15.0` | Initial water temperature for the thermal water class (ROADMAP 4A); CIGI Maritime Surface Conditions overrides it. Startup only. `[-2, 40]`. |
 | `ocean.material` | *(none — set via YAML only)* | `/Game/Ocean/M_Ocean` | Ocean material asset path. **Startup only.** |
+
+## Vegetation (`vegetation:`)
+
+REALISM R4 slice (`docs/vegetation.md`): one CC0 tree type scattered around the camera where the land cover is tree
+cover (code 10), deterministic per grid cell. Acts only with land cover configured (`thermal.land_cover.dir` or a scene
+package) and a loadable library. All keys are **startup only**.
+
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `vegetation.enabled` | `CAMSIM_VEGETATION_ENABLED` | `true` | Master switch. Off, no manager is created and the frame matches the pre-slice build. |
+| `vegetation.library_dir` | `CAMSIM_VEGETATION_LIBRARY_DIR` | `""` | Directory holding `library.json`; empty = `Content/NonUFS/Vegetation` (git LFS). |
+| `vegetation.radius_m` | `CAMSIM_VEGETATION_RADIUS_M` | `1000.0` | Cells within this ground radius of the camera nadir; instances are hard-culled at this distance. `(0, 5000]`. |
+| `vegetation.density_scale` | `CAMSIM_VEGETATION_DENSITY_SCALE` | `1.0` | Multiplies the tree probability (0.15). `[0, 4]`. |
+| `vegetation.cast_shadows` | `CAMSIM_VEGETATION_CAST_SHADOWS` | `true` | Whether trees cast shadows. |
+| `vegetation.cell_size_m` | `CAMSIM_VEGETATION_CELL_SIZE_M` | `100.0` | Edge of the global geographic cell grid. `[25, 500]`. |
+| `vegetation.seed` | `CAMSIM_VEGETATION_SEED` | `0` | Scatter seed, used only without a scene package (otherwise the manifest `seed`). `>= 0`. |
 
 Removed: the old `phase19:` block (`ocean_enabled`, `beaufort_state`,
 `wave_amplitude_scale`, `wave_frequency_scale`, `wave_choppiness`,

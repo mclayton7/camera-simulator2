@@ -379,6 +379,19 @@ struct FCamSimConfig
 	};
 	FThermalConfig Thermal;
 
+	/** Vegetation scatter (REALISM R4 slice, docs/vegetation.md). */
+	struct FVegetationConfig
+	{
+		bool    bEnabled     = true;     // CAMSIM_VEGETATION_ENABLED; acts only with land cover and a loadable library
+		FString LibraryDir;              // CAMSIM_VEGETATION_LIBRARY_DIR; "" = Content/NonUFS/Vegetation
+		float   RadiusM      = 1000.0f;  // CAMSIM_VEGETATION_RADIUS_M; cells within this ground radius of the camera nadir
+		float   DensityScale = 1.0f;     // CAMSIM_VEGETATION_DENSITY_SCALE; x p_tree (0.15)
+		bool    bCastShadows = true;     // CAMSIM_VEGETATION_CAST_SHADOWS
+		float   CellSizeM    = 100.0f;   // CAMSIM_VEGETATION_CELL_SIZE_M
+		int32   Seed         = 0;        // CAMSIM_VEGETATION_SEED; used only without a scene package
+	};
+	FVegetationConfig Vegetation;
+
 	/** Cesium backend: ion server, terrain source, imagery overlay */
 	struct FCesiumBackendConfig
 	{
@@ -445,6 +458,9 @@ struct FCamSimConfig
 
 		// Filled by CamSimScene::ResolvePackage at load (not config keys).
 		FString PackageName;
+		// manifest.json "seed" (REALISM R4: the vegetation scatter's seed). bHasSeed false for manifests without one.
+		int64 Seed = 0;
+		bool  bHasSeed = false;
 		// From <dir>/sea_level.json (REALISM R1): local MSL - EGM96 at the package's NOAA tide station, added to
 		// the ocean's sea level under the CIGI tide. 0 without the file.
 		double SeaLevelOffsetM = 0.0;

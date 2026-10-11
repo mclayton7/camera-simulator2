@@ -679,6 +679,18 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlString(O, "material",            Cfg.Ocean.MaterialPath);
 		}
 
+		if (YamlHas(Root, "vegetation"))
+		{
+			ryml::ConstNodeRef V = Root["vegetation"];
+			YamlBool  (V, "enabled",       Cfg.Vegetation.bEnabled);
+			YamlString(V, "library_dir",   Cfg.Vegetation.LibraryDir);
+			YamlFloat (V, "radius_m",      Cfg.Vegetation.RadiusM);
+			YamlFloat (V, "density_scale", Cfg.Vegetation.DensityScale);
+			YamlBool  (V, "cast_shadows",  Cfg.Vegetation.bCastShadows);
+			YamlFloat (V, "cell_size_m",   Cfg.Vegetation.CellSizeM);
+			YamlInt   (V, "seed",          Cfg.Vegetation.Seed);
+		}
+
 				// Thermal radiance for IR (ROADMAP 4A)
 		if (YamlHas(Root, "thermal"))
 		{
@@ -1096,6 +1108,13 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.CaptureWidth  = GetEnvInt(TEXT("CAMSIM_CAPTURE_WIDTH"),  Cfg.CaptureWidth);
 	Cfg.CaptureHeight = GetEnvInt(TEXT("CAMSIM_CAPTURE_HEIGHT"), Cfg.CaptureHeight);
 	Cfg.Ocean.WaterTemperatureC = GetEnvFloat(TEXT("CAMSIM_OCEAN_WATER_TEMPERATURE_C"), Cfg.Ocean.WaterTemperatureC);
+	Cfg.Vegetation.bEnabled     = GetEnvBool (TEXT("CAMSIM_VEGETATION_ENABLED"),       Cfg.Vegetation.bEnabled);
+	Cfg.Vegetation.LibraryDir   = GetEnv     (TEXT("CAMSIM_VEGETATION_LIBRARY_DIR"),   Cfg.Vegetation.LibraryDir);
+	Cfg.Vegetation.RadiusM      = GetEnvFloat(TEXT("CAMSIM_VEGETATION_RADIUS_M"),      Cfg.Vegetation.RadiusM);
+	Cfg.Vegetation.DensityScale = GetEnvFloat(TEXT("CAMSIM_VEGETATION_DENSITY_SCALE"), Cfg.Vegetation.DensityScale);
+	Cfg.Vegetation.bCastShadows = GetEnvBool (TEXT("CAMSIM_VEGETATION_CAST_SHADOWS"),  Cfg.Vegetation.bCastShadows);
+	Cfg.Vegetation.CellSizeM    = GetEnvFloat(TEXT("CAMSIM_VEGETATION_CELL_SIZE_M"),   Cfg.Vegetation.CellSizeM);
+	Cfg.Vegetation.Seed         = GetEnvInt  (TEXT("CAMSIM_VEGETATION_SEED"),          Cfg.Vegetation.Seed);
 	{
 		const FString IrPreset = GetEnv(TEXT("CAMSIM_IR_PRESET"), FString());
 		FSensorModeConfig* IrM = Cfg.SensorModeConfigs.Find(ESensorMode::IR);
@@ -1517,6 +1536,16 @@ TArray<FString> FCamSimConfig::Validate() const
 	}
 	if (!(Ocean.WaterTemperatureC >= -2.0f && Ocean.WaterTemperatureC <= 40.0f))
 		Errors.Add(FString::Printf(TEXT("ocean.water_temperature_c=%.2f out of range [-2, 40]"), Ocean.WaterTemperatureC));
+
+	// Vegetation (REALISM R4 slice). Written !(x in range) so NaN is reported too.
+	if (!(Vegetation.RadiusM > 0.0f && Vegetation.RadiusM <= 5000.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.radius_m=%.1f must be in (0, 5000]"), Vegetation.RadiusM));
+	if (!(Vegetation.DensityScale >= 0.0f && Vegetation.DensityScale <= 4.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.density_scale=%.2f out of range [0, 4]"), Vegetation.DensityScale));
+	if (!(Vegetation.CellSizeM >= 25.0f && Vegetation.CellSizeM <= 500.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.cell_size_m=%.1f out of range [25, 500]"), Vegetation.CellSizeM));
+	if (Vegetation.Seed < 0)
+		Errors.Add(FString::Printf(TEXT("vegetation.seed=%d must be >= 0"), Vegetation.Seed));
 
 		// Thermal (ROADMAP 4A). Written !(x in range) so NaN is reported too.
 	if (!(Thermal.AirTemperatureC >= -80.0f && Thermal.AirTemperatureC <= 60.0f))

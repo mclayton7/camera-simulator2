@@ -88,6 +88,8 @@ void ResolvePackage(FCamSimConfig& Cfg)
 {
 	FCamSimConfig::FSceneConfig& Scene = Cfg.Scene;
 	Scene.PackageName.Reset();
+	Scene.Seed = 0;
+	Scene.bHasSeed = false;
 	Scene.SeaLevelOffsetM = 0.0;
 	Scene.SeaLevelStation.Reset();
 	Scene.BuildingsUrl.Reset();
@@ -127,6 +129,9 @@ void ResolvePackage(FCamSimConfig& Cfg)
 		return;
 	}
 	Manifest->TryGetStringField(TEXT("name"), Scene.PackageName);
+	double SeedNum = 0.0;
+	Scene.bHasSeed = Manifest->TryGetNumberField(TEXT("seed"), SeedNum) && FMath::IsFinite(SeedNum) && SeedNum >= 0.0;
+	Scene.Seed = Scene.bHasSeed ? static_cast<int64>(SeedNum) : 0;
 
 	const FCamSimConfig Defaults;
 	FCamSimConfig::FCesiumBackendConfig& Cs = Cfg.CesiumBackend;

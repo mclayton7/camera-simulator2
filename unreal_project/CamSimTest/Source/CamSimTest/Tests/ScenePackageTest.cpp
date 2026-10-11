@@ -406,3 +406,23 @@ bool FSceneOfflineBuildingsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("disabled: not checked"), CamSimScene::ValidateSources(Cfg).Num(), 0);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FScenePackageSeedTest,
+	"CamSim.Scene.Package.Seed",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FScenePackageSeedTest::RunTest(const FString& Parameters)
+{
+	{
+		const FCamSimConfig Cfg = ResolvedConfigFor(MakePackage(TEXT("SeedPresent"), true, false, false,
+			TEXT("{\"schema_version\": 1, \"name\": \"p\", \"seed\": 1234}")));
+		TestTrue(TEXT("has seed"), Cfg.Scene.bHasSeed);
+		TestEqual(TEXT("seed"), Cfg.Scene.Seed, int64(1234));
+	}
+	{
+		const FCamSimConfig Cfg = ResolvedConfigFor(MakePackage(TEXT("SeedAbsent"), true, false, false));
+		TestFalse(TEXT("no seed"), Cfg.Scene.bHasSeed);
+		TestEqual(TEXT("no errors"), Cfg.Scene.ResolveErrors.Num(), 0);
+	}
+	return true;
+}
