@@ -29,10 +29,13 @@ namespace CamSimScene
 	 */
 	bool FileUrlToPath(const FString& Url, FString& OutPath);
 
+	/** Whether SetUpCesiumWorld spawns the package's buildings tileset (REALISM R3). */
+	bool ShouldSpawnBuildings(const FCamSimConfig& Cfg);
+
 	/**
 	 * Apply scene.dir to Cfg: each layer the package has (terrain/layer.json,
 	 * imagery/tilemapresource.xml, landcover/index.json) replaces cesium.terrain, cesium.imagery
-	 * and thermal.land_cover.dir; sea_level.json sets Cfg.Scene.SeaLevelOffsetM (the ocean datum). Fills Cfg.Scene.PackageName / ResolveErrors / ResolveWarnings
+	 * and thermal.land_cover.dir; sea_level.json sets Cfg.Scene.SeaLevelOffsetM (the ocean datum); features/buildings/tileset.json sets Cfg.Scene.BuildingsUrl. Fills Cfg.Scene.PackageName / ResolveErrors / ResolveWarnings
 	 * (Validate() and ValidateWarnings() report them). No-op when scene.dir is empty.
 	 */
 	void ResolvePackage(FCamSimConfig& Cfg);

@@ -433,6 +433,15 @@ struct FCamSimConfig
 		// No network: terrain and imagery must be local file:/// sources, and any config error
 		// exits at startup instead of running on defaults. Env: CAMSIM_SCENE_OFFLINE
 		bool bOffline = false;
+		// REALISM R3: buildings from <dir>/features/buildings/tileset.json, one extra Cesium tileset spawned
+		// at world init. CIGI LOS/HAT/HOT hit it (material code 230); the DIS clamp ignores it.
+		// Env: CAMSIM_SCENE_BUILDINGS_ENABLED
+		bool   bBuildingsEnabled = true;
+		// Cesium MaximumScreenSpaceError of the buildings tileset (its own, not maximum_screen_space_error).
+		// Env: CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR
+		double BuildingsMaximumScreenSpaceError = 16.0;
+		// Collision for the buildings tileset (CIGI LOS/HAT/HOT). Env: CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES
+		bool   bBuildingsCreatePhysicsMeshes = true;
 
 		// Filled by CamSimScene::ResolvePackage at load (not config keys).
 		FString PackageName;
@@ -440,6 +449,8 @@ struct FCamSimConfig
 		// the ocean's sea level under the CIGI tide. 0 without the file.
 		double SeaLevelOffsetM = 0.0;
 		FString SeaLevelStation;
+		// file:/// URL of <dir>/features/buildings/tileset.json; empty when the package has none (ResolvePackage).
+		FString BuildingsUrl;
 		TArray<FString> ResolveErrors;
 		TArray<FString> ResolveWarnings;
 	} Scene;

@@ -90,6 +90,7 @@ void ResolvePackage(FCamSimConfig& Cfg)
 	Scene.PackageName.Reset();
 	Scene.SeaLevelOffsetM = 0.0;
 	Scene.SeaLevelStation.Reset();
+	Scene.BuildingsUrl.Reset();
 	Scene.ResolveErrors.Reset();
 	Scene.ResolveWarnings.Reset();
 
@@ -162,6 +163,12 @@ void ResolvePackage(FCamSimConfig& Cfg)
 				TEXT("scene.dir overrides thermal.land_cover.dir ('%s')"), *Cfg.Thermal.LandCover.Dir));
 		}
 		Cfg.Thermal.LandCover.Dir = Dir / TEXT("landcover");
+	}
+
+	const FString BuildingsFile = Dir / TEXT("features/buildings/tileset.json");
+	if (FPaths::FileExists(BuildingsFile))
+	{
+		Scene.BuildingsUrl = PathToFileUrl(BuildingsFile);
 	}
 
 	const FString SeaFile = Dir / TEXT("sea_level.json");
@@ -240,7 +247,17 @@ TArray<FString> ValidateSources(const FCamSimConfig& Cfg)
 			TEXT("scene.offline: cesium.imagery.source '%s' needs the network (use tms with a file:/// URL, or none)"),
 			*Cs.Imagery.Source));
 	}
+
+	if (ShouldSpawnBuildings(Cfg))
+	{
+		CheckLocal(TEXT("features/buildings/tileset.json"), Cfg.Scene.BuildingsUrl);
+	}
 	return Errors;
+}
+
+bool ShouldSpawnBuildings(const FCamSimConfig& Cfg)
+{
+	return Cfg.Scene.bBuildingsEnabled && !Cfg.Scene.BuildingsUrl.IsEmpty();
 }
 
 bool ShouldExitOnConfigErrors(const FCamSimConfig& Cfg, bool bIsEditor)

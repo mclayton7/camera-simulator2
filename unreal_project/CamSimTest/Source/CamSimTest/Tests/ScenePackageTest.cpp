@@ -4,6 +4,7 @@
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "HAL/FileManager.h"
 #include "Config/CamSimConfig.h"
 #include "Config/ScenePackage.h"
@@ -312,5 +313,96 @@ bool FScenePackageSeaLevelTest::RunTest(const FString& Parameters)
 		TestTrue(FString::Printf(TEXT("bad '%s' is a resolve error"), Text), Cfg.Scene.ResolveErrors.Num() > 0);
 		TestEqual(FString::Printf(TEXT("bad '%s' leaves the offset at 0"), Text), Cfg.Scene.SeaLevelOffsetM, 0.0);
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneResolveBuildingsTest,
+	"CamSim.Scene.Resolve.Buildings",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneResolveBuildingsTest::RunTest(const FString& Parameters)
+{
+	const FString D = MakePackage(TEXT("buildings"), true, true, false);
+	{
+		const FCamSimConfig Cfg = ResolvedConfigFor(D);
+		TestTrue(TEXT("no tileset: no url"), Cfg.Scene.BuildingsUrl.IsEmpty());
+		TestFalse(TEXT("no tileset: no spawn"), CamSimScene::ShouldSpawnBuildings(Cfg));
+	}
+	WriteFile(D / TEXT("features/buildings/tileset.json"), TEXT("{}"));
+	{
+		const FCamSimConfig Cfg = ResolvedConfigFor(D);
+		TestEqual(TEXT("url"), Cfg.Scene.BuildingsUrl, CamSimScene::PathToFileUrl(D / TEXT("features/buildings/tileset.json")));
+		TestTrue(TEXT("spawn"), CamSimScene::ShouldSpawnBuildings(Cfg));
+		FCamSimConfig Off = Cfg;
+		Off.Scene.bBuildingsEnabled = false;
+		TestFalse(TEXT("disabled: no spawn"), CamSimScene::ShouldSpawnBuildings(Off));
+	}
+	{
+		FCamSimConfig Cfg = ResolvedConfigFor(D);
+		Cfg.Scene.Dir.Reset();
+		CamSimScene::ResolvePackage(Cfg);
+		TestTrue(TEXT("cleared when scene.dir is unset"), Cfg.Scene.BuildingsUrl.IsEmpty());
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneBuildingsConfigTest,
+	"CamSim.Scene.Buildings.Config",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneBuildingsConfigTest::RunTest(const FString& Parameters)
+{
+	{
+		const FCamSimConfig Cfg;
+		TestTrue(TEXT("default enabled"), Cfg.Scene.bBuildingsEnabled);
+		TestEqual(TEXT("default sse"), Cfg.Scene.BuildingsMaximumScreenSpaceError, 16.0);
+		TestTrue(TEXT("default physics"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
+	}
+	{
+		const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT(
+			"scene:\n  buildings:\n    enabled: false\n    maximum_screen_space_error: 32\n    create_physics_meshes: false\n"));
+		TestFalse(TEXT("yaml enabled"), Cfg.Scene.bBuildingsEnabled);
+		TestEqual(TEXT("yaml sse"), Cfg.Scene.BuildingsMaximumScreenSpaceError, 32.0);
+		TestFalse(TEXT("yaml physics"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
+	}
+	{
+		ON_SCOPE_EXIT
+		{
+			FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_ENABLED"), TEXT(""));
+			FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR"), TEXT(""));
+			FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES"), TEXT(""));
+		};
+		FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_ENABLED"), TEXT("0"));
+		FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR"), TEXT("8"));
+		FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES"), TEXT("0"));
+		const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT("{}"));
+		TestFalse(TEXT("env enabled"), Cfg.Scene.bBuildingsEnabled);
+		TestEqual(TEXT("env sse"), Cfg.Scene.BuildingsMaximumScreenSpaceError, 8.0);
+		TestFalse(TEXT("env physics"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
+	}
+	{
+		FCamSimConfig Cfg;
+		Cfg.Scene.BuildingsMaximumScreenSpaceError = 0.0;
+		TestTrue(TEXT("sse 0 rejected"), Cfg.Validate().ContainsByPredicate(
+			[](const FString& E) { return E.Contains(TEXT("scene.buildings.maximum_screen_space_error")); }));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneOfflineBuildingsTest,
+	"CamSim.Scene.Offline.Buildings",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneOfflineBuildingsTest::RunTest(const FString& Parameters)
+{
+	const FString D = MakePackage(TEXT("offline_buildings"), true, true, false);
+	WriteFile(D / TEXT("features/buildings/tileset.json"), TEXT("{}"));
+	FCamSimConfig Cfg = ResolvedConfigFor(D);
+	Cfg.Scene.bOffline = true;
+	TestEqual(TEXT("package buildings: ok"), CamSimScene::ValidateSources(Cfg).Num(), 0);
+	Cfg.Scene.BuildingsUrl = TEXT("https://example.com/tileset.json");
+	TestEqual(TEXT("network buildings rejected"), CamSimScene::ValidateSources(Cfg).Num(), 1);
+	Cfg.Scene.bBuildingsEnabled = false;
+	TestEqual(TEXT("disabled: not checked"), CamSimScene::ValidateSources(Cfg).Num(), 0);
 	return true;
 }

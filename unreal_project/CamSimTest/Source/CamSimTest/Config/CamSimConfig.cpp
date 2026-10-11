@@ -823,6 +823,13 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			ryml::ConstNodeRef Sc = Root["scene"];
 			YamlString(Sc, "dir",     Cfg.Scene.Dir);
 			YamlBool  (Sc, "offline", Cfg.Scene.bOffline);
+			if (YamlHas(Sc, "buildings"))
+			{
+				ryml::ConstNodeRef Bd = Sc["buildings"];
+				YamlBool  (Bd, "enabled",                    Cfg.Scene.bBuildingsEnabled);
+				YamlDouble(Bd, "maximum_screen_space_error", Cfg.Scene.BuildingsMaximumScreenSpaceError);
+				YamlBool  (Bd, "create_physics_meshes",      Cfg.Scene.bBuildingsCreatePhysicsMeshes);
+			}
 		}
 
 		// Phase 21: DIS protocol config
@@ -1132,6 +1139,11 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.CesiumBackend.Imagery.Url        = GetEnv(TEXT("CAMSIM_CESIUM_IMAGERY_URL"), Cfg.CesiumBackend.Imagery.Url);
 	Cfg.Scene.Dir      = GetEnv    (TEXT("CAMSIM_SCENE_DIR"),     Cfg.Scene.Dir);
 	Cfg.Scene.bOffline = GetEnvBool(TEXT("CAMSIM_SCENE_OFFLINE"), Cfg.Scene.bOffline);
+	Cfg.Scene.bBuildingsEnabled = GetEnvBool(TEXT("CAMSIM_SCENE_BUILDINGS_ENABLED"), Cfg.Scene.bBuildingsEnabled);
+	Cfg.Scene.BuildingsMaximumScreenSpaceError = GetEnvDouble(
+		TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR"), Cfg.Scene.BuildingsMaximumScreenSpaceError);
+	Cfg.Scene.bBuildingsCreatePhysicsMeshes = GetEnvBool(
+		TEXT("CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
 	Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError      = GetEnvDouble(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_SSE"),      Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError);
 	Cfg.CesiumBackend.Imagery.MaximumTextureSize          = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE"), Cfg.CesiumBackend.Imagery.MaximumTextureSize);
 	Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS"),  Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads);
@@ -1570,6 +1582,10 @@ TArray<FString> FCamSimConfig::Validate() const
 	if (LC.bEnabled && LC.Dir.TrimStartAndEnd().IsEmpty())
 		Errors.Add(TEXT("thermal.land_cover.dir is empty (set it, or thermal.land_cover.enabled: false)"));
 	Errors.Append(CamSimLandCover::ValidateClassSpecs(LC.Classes));
+
+	if (!(Scene.BuildingsMaximumScreenSpaceError > 0.0 && Scene.BuildingsMaximumScreenSpaceError <= 1024.0))
+		Errors.Add(FString::Printf(TEXT("scene.buildings.maximum_screen_space_error=%.3f out of range (0, 1024]"),
+			Scene.BuildingsMaximumScreenSpaceError));
 
 	Errors.Append(Scene.ResolveErrors);
 	Errors.Append(CamSimScene::ValidateSources(*this));
