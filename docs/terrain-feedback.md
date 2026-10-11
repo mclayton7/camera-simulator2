@@ -227,14 +227,14 @@ Codes 200–220 exist only in scene packages built with `[features]`
 has WorldCover codes only. The codes are the same 10 m cells (~9.3 m) thermal IR
 draws, so a point within a cell of a road edge can report either side.
 
-Code 230 exists only with a package built with `[buildings]` and `scene.buildings.enabled`
-(`docs/scene-packages.md`, "Buildings (R3)"): a wall hit by an LOS and a roof hit by a HAT/HOT both report it, in
-place of the land-cover code under the building.
+Code 230 exists only with a package built with `[buildings]`. With `scene.buildings.enabled`
+(`docs/scene-packages.md`, "Buildings (R3)"), a wall hit by an LOS and a roof hit by a HAT/HOT both report it, in
+place of the land-cover code under the building; the land-cover burn below also yields it with the tileset off.
 
 Since REALISM R3b a package built with `[buildings]` also burns 230 into its land cover where a 10 m cell is at least half
 covered by footprints (`docs/scene-packages.md`, "Footprint mask, land-cover burn and roof atlas (R3b)"). A terrain hit
 in such a cell reports 230 by rule 5 (the stored land-cover byte), with or without the buildings tileset: with
-`scene.buildings.enabled: false`, a HAT/HOT inside a footprint reports 230 from the land cover. No CIGI code changed.
+`scene.buildings.enabled: false`, a HAT/HOT inside a footprint reports 230 from the land cover. No CIGI code changed. Ground within a burned cell (a cell at least 32/64 covered) next to a building also reads 230, the half-cover rule's halo of up to about half a 10 m cell.
 
 Limits:
 

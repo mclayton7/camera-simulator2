@@ -276,7 +276,7 @@ ROAD_CLASS_SLOTS = {"asphalt": 3, "tree_canopy": 6, "grassland": 8, "bare_soil":
 # while writing the R3b plan on pendleton-r3: within a 160 m square view, 34 % of the ground under Overture footprints and
 # 26 % WorldCover grassland (30), the best min(building, grass) of a 0.0025 deg scan over 33.28-33.33 N, 117.28-117.34 W.
 # Ground 74.88 m HAE (package terrain, layers.buildings.heights_fn at the centre).
-ROOF_POSE = dict(lat=33.3000, lon=-117.3175, ground_hae=74.88)
+ROOF_POSE = {"lat": 33.3000, "lon": -117.3175, "ground_hae": 74.88}
 ROOF_UP_M = 460.0  # 20 deg FOV: a 162 m wide view
 ROOF_FOV = 20.0
 ROOF_NOON_DN = 3.0  # (s) noon: roof - grass mean Y >= +3 DN (white-hot)

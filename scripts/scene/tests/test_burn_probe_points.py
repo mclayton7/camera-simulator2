@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import burn_probe_points as bp  # noqa: E402
+import burn_probe_points as bp
 
 from camsim_scene.layers.landcover import tile_filename
 

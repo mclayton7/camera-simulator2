@@ -1889,6 +1889,10 @@ and Linux/Vulkan. No editor work.
   predicate; the runtime check stays only for R3 packages. Measured: 0 trees on the mask, 0 trunks inside a
   footprint, and both features on at +1.39 ms game p95 (was +3.61 ms with the runtime check).
 
+**R3b user-visible changes:** the built-in thermal classes went 15 to 16 (`building_roof`), so user class slots went 17 to 16: a config that used all 17 now fails validation.
+
+- [ ] **Follow-up: profile/cap buildings-layer build RSS** (GDAL cache, plan and raster held together) before building the operational sites: the layer peaked at 1,988 MB of the 2,048 MB `--max-worker-rss-mb` limit on Pendleton at `roof_texel_m` 0.5 (1,588 MB at 1.0; R3 1,630), so a larger site may exceed it (raise the flag meanwhile).
+
 **R3b buildings look implemented and measured on macOS 2026-10-11** (`docs/scene-packages.md`, "Footprint mask,
 land-cover burn and roof atlas (R3b)" and "Measured", "R3b buildings look"; spec
 `docs/superpowers/specs/2026-10-11-r3b-buildings-look-design.md`): a fine footprint mask in the package

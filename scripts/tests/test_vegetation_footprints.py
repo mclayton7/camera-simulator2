@@ -68,3 +68,11 @@ def test_no_footprint_near_the_trees_fails_closed():
     far = [_pt(5000, 5000), _pt(5010, 5000)]  # nowhere near the building
     r = vc.footprint_gate(far, _Mask(), 2.0, [_square()])
     assert r["probe_hits"] == 0 and r["mask_cells_in_bbox"] == 0 and r["footprints_in_bbox"] == 0 and not r["pass"]
+
+
+def test_probe_offsets_use_wgs84_radii():
+    k_lat, k_lon = vc._deg_per_metre(np.array([0.0, 60.0]))
+    # metres per degree of latitude: 110,574 at the equator, 111,412 at 60 N; of longitude at the equator 111,319.5
+    assert abs(1 / k_lat[0] - 110_574) < 5
+    assert abs(1 / k_lat[1] - 111_412) < 5
+    assert abs(1 / k_lon[0] - 111_319.5) < 5

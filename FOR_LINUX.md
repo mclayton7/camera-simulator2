@@ -199,7 +199,8 @@ R3b (footprint mask, land-cover burn 230, roof atlases; Mac results in `docs/sce
 
 - **Package:** build `pendleton-r4` the same way from the R3 package (`--replan` rebuilds only land cover and buildings),
   or copy the Mac's. Expect 82,260 roofs textured at 0.5 m, 56 mask tiles, 307,606 cells burned to 230, a 368.2 MB
-  buildings layer and a peak buildings-worker RSS near 1,988 MB (limit 2,048 MB); `hashes.txt` should match the Mac's.
+  buildings layer and a peak buildings-worker RSS near 1,988 MB (limit 2,048 MB); compare `hashes.txt` with the Mac's: the mask, land-cover and non-atlas files should match; the GLBs (embedded JPEG atlases) match only between builds made in the pinned build container (`scripts/scene/build.sh`), because JPEG bytes depend on the Pillow/libjpeg build.
+  The buildings worker peaked at 1,988 MB of the 2,048 MB `--max-worker-rss-mb` limit on Pendleton at `roof_texel_m` 0.5 (1,588 MB at 1.0; R3 was 1,630): a larger site may exceed it, so pass a higher `--max-worker-rss-mb` to `camsim-scene build` (it is a per-worker limit in MB, default 2048).
 - **Infrared:** `thermal_check.py --band mwir --runs roofs,roads --scene <pendleton-r4>`: (s) roof − grass ≥ +3 DN at
   noon, (s_air) `building_roof` ≥ 0.5 K below air at 02:00 (Mac: +38.7 DN, 2.1 K).
 - **Combined sweep on Vulkan:** `sweep.py --scene <pendleton-r4> --axis buildings=off,on --axis trees=off,on --repeat 2`,

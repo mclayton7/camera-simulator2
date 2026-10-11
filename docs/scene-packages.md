@@ -578,6 +578,10 @@ corrected); roof texture is only as good as NAIP (0.6 m, one date, shadows baked
 "building" only when at least half covered, so small buildings keep their WorldCover class in IR; walls stay flat
 coloured and roofs flat (no pitch); no wall textures, no KTX2 / Basis compression.
 
+Build memory headroom (R3b): the buildings layer peaked at 1,988 MB of the 2,048 MB `--max-worker-rss-mb` limit on Pendleton at
+`roof_texel_m` 0.5 (1,588 MB at 1.0; R3 was 1,630). A larger site may exceed the limit; raise it with
+`camsim-scene build ... --max-worker-rss-mb N` (MB per worker, default 2048, `scripts/scene/camsim_scene/cli.py`) or lower `roof_texel_m`.
+
 ## Sea level (R1)
 
 **Why.** CamSim's tide-0 sea is the EGM96 geoid. Local mean sea level at La Jolla is +0.774 m NAVD88 (NOAA CO-OPS
@@ -1222,11 +1226,11 @@ All-off row: game 3.48 / 6.14–6.30 ms, GPU 19.37–19.58 ms, memory 8,890–8,
 
 | Buildings | Trees | Game p50 | Game p95 | GPU p50 | Memory, MiB | fps (runs) | Budget |
 |---|---|---|---|---|---|---|---|
-| off | on | +0.63 | +0.67 | +1.73 | +103 | 29.86 / 29.41 | pass (one run under 29.5 fps) |
-| on | off | +0.56 | +0.82 | +2.08 | +729 | 29.46 / 29.75 | pass (one run under 29.5 fps) |
+| off | on | +0.63 | +0.67 | +1.73 | +103 | 29.86 / 29.41 | n/a (not gated; one run 29.41 fps) |
+| on | off | +0.56 | +0.82 | +2.08 | +729 | 29.46 / 29.75 | n/a (not gated; one run 29.46 fps) |
 | **on** | **on** | **+1.16** | **+1.39** | **+3.04** | **+782** | 29.67 / 29.53 | **pass** |
 
-Against the R3/R4 combined sweep at the same settings (before R3b, with the runtime footprint check): both on was
+For comparison, the R3/R4 footprint-check A/B run above (before R3b; runtime check on, `run_bench.py --phases dense_pass`, against the combined sweep's all-off row) had both on at
 +1.40 / **+3.61** / +3.54 ms / +408 MiB. The mask takes the game p95 back inside the limit; the roof atlases add about
 +370–440 MiB in this 90 s window (buildings-on rows +729 vs +290 MiB). Two single-feature runs emitted 29.41 and 29.46
 fps (0 dropped); the gate's row, both on, stayed at 29.53 or above.

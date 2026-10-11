@@ -64,6 +64,17 @@ YAW = 45.0
 PITCH = -20.0
 FAR_DLON = 3.41  # the bench's far_origin trip: well past the origin-rebase distance
 M_PER_DEG = 111_320.0
+WGS84_A = 6_378_137.0
+WGS84_E2 = 0.00669437999014
+
+
+def _deg_per_metre(lat_deg):
+    """(deg lat, deg lon) per metre at lat: WGS-84 meridional and prime-vertical radii, as C++ IsClearOf does."""
+    lat = np.radians(np.asarray(lat_deg, float))
+    w2 = 1.0 - WGS84_E2 * np.sin(lat) ** 2
+    m = WGS84_A * (1.0 - WGS84_E2) / (w2 * np.sqrt(w2))
+    n = WGS84_A / np.sqrt(w2)
+    return np.degrees(1.0 / m), np.degrees(1.0 / (n * np.maximum(np.cos(lat), 1e-6)))
 STAGES = ["approach", "off", "gt", "truck", "oblique"]
 
 
@@ -180,8 +191,9 @@ def footprint_gate(trees: list[tuple[float, float]], mask, clearance_m: float, p
         out["reasons"] = ["no trees dumped"]
         return out
     reasons: list[str] = []
-    dlat = clearance_m / M_PER_DEG
-    dlon = clearance_m / (M_PER_DEG * np.cos(np.radians(lat)))
+    k_lat, k_lon = _deg_per_metre(lat)
+    dlat = clearance_m * k_lat
+    dlon = clearance_m * k_lon
     hit = mask.masked(lon, lat)
     for dx, dy in ((dlon, 0.0), (-dlon, 0.0), (0.0, dlat), (0.0, -dlat)):
         hit |= mask.masked(lon + dx, lat + dy)

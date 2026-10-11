@@ -331,6 +331,7 @@ k_fast 0.03 (a thin skin follows the sun: between asphalt and vehicle paint). Th
 Code 230 refines in the `Bare` family (toward `vegetation` by the base-colour vegetation index, else `building_roof`):
 the `BuiltUp` family would replace the class by the asphalt/concrete split. Code 50 (WorldCover built-up) keeps
 `built_up` for the ground between buildings. With 16 built-ins, 16 of the 32 class slots are left for `thermal.materials`.
+Ground within a burned land-cover cell (a cell at least 32/64 covered) next to a building also takes `building_roof`: the half-cover rule's halo, up to about half a 10 m cell.
 
 `rail_ballast` (porous crushed rock: low thermal inertia, unlike any other built-in) has values chosen from material properties
 (dark granite/basalt ballast, open voids), not fitted to a published measurement.

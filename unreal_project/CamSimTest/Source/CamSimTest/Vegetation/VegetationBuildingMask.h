@@ -11,8 +11,9 @@ class IImageWrapperModule;
  * Building footprint mask for the tree scatter (REALISM R3b, docs/vegetation.md): the scene package's
  * features/buildings/mask/ (camsim-buildings-mask-1: the land-cover tile grid at 8 x its resolution, 4800^2 1-bit PNGs,
  * row 0 = north, a cell set where its centre is inside a footprint). Tiles decode on the caller (the scatter worker) into
- * bitsets (~2.9 MB) held in a MaxTiles LRU (~23 MB), separate from the land-cover sampler. A tile missing from the index,
- * missing on disk or unreadable (a git LFS pointer) means "no buildings" there; each such tile logs one warning, once.
+ * bitsets (~2.9 MB) held in a MaxTiles LRU (~23 MB), separate from the land-cover sampler. A tile absent from the index
+ * is silently "no buildings"; a tile the index lists but that is missing on disk or unreadable (a git LFS pointer) is also
+ * "no buildings" and logs one warning, once.
  * IsMasked / IsClear are thread-safe. No network.
  */
 class CAMSIMTEST_API FVegetationBuildingMask
