@@ -69,6 +69,7 @@ namespace
 		Cfg.Scene.BuildingsUrl = Url;
 		Cfg.Scene.BuildingsMaximumScreenSpaceError = 24.0;
 		Cfg.Scene.bBuildingsCreatePhysicsMeshes = true;
+		Cfg.Scene.BuildingsMaximumCachedBytesMB = 300;
 		return Cfg;
 	}
 }
@@ -91,6 +92,7 @@ bool FSceneBuildingsSpawnTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("url"), B->GetUrl(), Cfg.Scene.BuildingsUrl);
 	TestEqual(TEXT("own sse"), B->MaximumScreenSpaceError, 24.0);
 	TestTrue(TEXT("physics"), B->GetCreatePhysicsMeshes());
+	TestEqual(TEXT("own cache cap, not the terrain's"), B->MaximumCachedBytes, int64(300) * 1024 * 1024);
 	TestEqual(TEXT("culled sse never finer than its own (terrain 16, buildings 24)"), B->CulledScreenSpaceError, 24.0);
 	TestTrue(TEXT("movable"), B->GetRootComponent()->Mobility == EComponentMobility::Movable);
 	TArray<UCesiumRasterOverlay*> Overlays;

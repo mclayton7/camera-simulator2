@@ -270,6 +270,7 @@ scene:
     enabled: true
     maximum_screen_space_error: 16
     create_physics_meshes: true
+    maximum_cached_bytes_mb: 512
 ```
 
 | Key | Environment Variable | Default | Description |
@@ -279,6 +280,7 @@ scene:
 | `scene.buildings.enabled` | `CAMSIM_SCENE_BUILDINGS_ENABLED` | `true` | Spawn the package's buildings tileset (REALISM R3). Acts only when the package has `features/buildings/tileset.json`; `false` is R2 bit for bit (no tileset spawned). |
 | `scene.buildings.maximum_screen_space_error` | `CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR` | `16` | The buildings tileset's Cesium screen-space error, in `(0, 1024]` (anything else is a config error). The streaming controller's FOV-scaled culled SSE never goes below it: culled SSE = max(terrain-derived, this). Set from the `dense_pass` sweep. |
 | `scene.buildings.create_physics_meshes` | `CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES` | `true` | Collision for the buildings tileset: CIGI LOS and HAT/HOT hit buildings (material code 230). The DIS surface clamp ignores the tileset either way. |
+| `scene.buildings.maximum_cached_bytes_mb` | `CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB` | `512` | The buildings tileset's own Cesium tile cache (`MaximumCachedBytes`), MB, in `[1, 65536]` (anything else is a config error). Applied after the terrain's tuning, which would otherwise give it a second `maximum_cached_bytes_mb` (2 GiB) cache that fills over a long flight across built-up areas. |
 
 | Package file | Replaces |
 |---|---|
@@ -287,7 +289,7 @@ scene:
 | `landcover/index.json` | `thermal.land_cover.dir: …/landcover` (thermal IR classes and CIGI material codes; packages built with `[features]` add codes 200–220, REALISM R2) |
 | `features/buildings/tileset.json` | one extra Cesium tileset spawned at world init (REALISM R3); `/ready` waits for it; CIGI LOS/HAT/HOT hit it (material 230); the DIS clamp ignores it |
 
-The buildings tileset is spawned in `SetUpCesiumWorld` right after `ApplyCesiumBackendConfig`'s destroy loop, as an `ACesium3DTileset` tagged `CamSimBuildings` (`Geospatial/SceneBuildings.h`), with the terrain's tuning and its own `scene.buildings.*` SSE and physics, and no raster overlays. It is in the tileset cache, so the terrain gate (`/ready`) waits for it and the FOV-scaled culled SSE covers it. Under `scene.offline` its URL must be an existing local `file:///` (a missing file is a config error). A layer the package lacks leaves its setting alone. Overriding a non-default `cesium.terrain.*`, `cesium.imagery.*` or
+The buildings tileset is spawned in `SetUpCesiumWorld` right after `ApplyCesiumBackendConfig`'s destroy loop, as an `ACesium3DTileset` tagged `CamSimBuildings` (`Geospatial/SceneBuildings.h`), with the terrain's tuning and its own `scene.buildings.*` SSE, physics and tile cache cap, and no raster overlays. It is in the tileset cache, so the terrain gate (`/ready`) waits for it and the FOV-scaled culled SSE covers it. Under `scene.offline` its URL must be an existing local `file:///` (a missing file is a config error). A layer the package lacks leaves its setting alone. Overriding a non-default `cesium.terrain.*`, `cesium.imagery.*` or
 `thermal.land_cover.dir` logs a config warning naming the key. `~` is expanded to the home directory.
 
 **Sea level (`sea_level.json`, REALISM R1).** A package built with a `[sea_level]` station carries `sea_level.json`
@@ -747,6 +749,7 @@ CAMSIM_VEGETATION_SEED=0
 CAMSIM_SCENE_BUILDINGS_ENABLED=1
 CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR=16
 CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES=1
+CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB=512
 
 # Operational hardening (Phase 28)
 CAMSIM_STRUCTURED_LOG_PATH=

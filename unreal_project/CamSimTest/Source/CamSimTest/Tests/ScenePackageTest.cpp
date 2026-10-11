@@ -357,11 +357,14 @@ bool FSceneBuildingsConfigTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("default enabled"), Cfg.Scene.bBuildingsEnabled);
 		TestEqual(TEXT("default sse"), Cfg.Scene.BuildingsMaximumScreenSpaceError, 16.0);
 		TestTrue(TEXT("default physics"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
+		TestEqual(TEXT("default cache MB"), Cfg.Scene.BuildingsMaximumCachedBytesMB, 512);
 	}
 	{
 		const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT(
-			"scene:\n  buildings:\n    enabled: false\n    maximum_screen_space_error: 32\n    create_physics_meshes: false\n"));
+			"scene:\n  buildings:\n    enabled: false\n    maximum_screen_space_error: 32\n    create_physics_meshes: false\n"
+			"    maximum_cached_bytes_mb: 300\n"));
 		TestFalse(TEXT("yaml enabled"), Cfg.Scene.bBuildingsEnabled);
+		TestEqual(TEXT("yaml cache MB"), Cfg.Scene.BuildingsMaximumCachedBytesMB, 300);
 		TestEqual(TEXT("yaml sse"), Cfg.Scene.BuildingsMaximumScreenSpaceError, 32.0);
 		TestFalse(TEXT("yaml physics"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
 	}
@@ -371,20 +374,36 @@ bool FSceneBuildingsConfigTest::RunTest(const FString& Parameters)
 			FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_ENABLED"), TEXT(""));
 			FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR"), TEXT(""));
 			FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES"), TEXT(""));
+			FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB"), TEXT(""));
 		};
 		FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_ENABLED"), TEXT("0"));
 		FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR"), TEXT("8"));
 		FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES"), TEXT("0"));
+		FPlatformMisc::SetEnvironmentVar(TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB"), TEXT("128"));
 		const FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(TEXT("{}"));
 		TestFalse(TEXT("env enabled"), Cfg.Scene.bBuildingsEnabled);
 		TestEqual(TEXT("env sse"), Cfg.Scene.BuildingsMaximumScreenSpaceError, 8.0);
 		TestFalse(TEXT("env physics"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
+		TestEqual(TEXT("env cache MB"), Cfg.Scene.BuildingsMaximumCachedBytesMB, 128);
 	}
 	{
 		FCamSimConfig Cfg;
 		Cfg.Scene.BuildingsMaximumScreenSpaceError = 0.0;
 		TestTrue(TEXT("sse 0 rejected"), Cfg.Validate().ContainsByPredicate(
 			[](const FString& E) { return E.Contains(TEXT("scene.buildings.maximum_screen_space_error")); }));
+	}
+	for (const int32 Mb : { 0, -1, 65537 })
+	{
+		FCamSimConfig Cfg;
+		Cfg.Scene.BuildingsMaximumCachedBytesMB = Mb;
+		TestTrue(FString::Printf(TEXT("cache %d MB rejected"), Mb), Cfg.Validate().ContainsByPredicate(
+			[](const FString& E) { return E.Contains(TEXT("scene.buildings.maximum_cached_bytes_mb")); }));
+	}
+	{
+		FCamSimConfig Cfg;
+		Cfg.Scene.BuildingsMaximumCachedBytesMB = 65536;
+		TestFalse(TEXT("cache 65536 MB accepted"), Cfg.Validate().ContainsByPredicate(
+			[](const FString& E) { return E.Contains(TEXT("scene.buildings.maximum_cached_bytes_mb")); }));
 	}
 	return true;
 }

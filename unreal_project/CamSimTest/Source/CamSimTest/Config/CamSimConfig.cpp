@@ -840,6 +840,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				ryml::ConstNodeRef Bd = Sc["buildings"];
 				YamlBool  (Bd, "enabled",                    Cfg.Scene.bBuildingsEnabled);
 				YamlDouble(Bd, "maximum_screen_space_error", Cfg.Scene.BuildingsMaximumScreenSpaceError);
+				YamlInt   (Bd, "maximum_cached_bytes_mb",    Cfg.Scene.BuildingsMaximumCachedBytesMB);
 				YamlBool  (Bd, "create_physics_meshes",      Cfg.Scene.bBuildingsCreatePhysicsMeshes);
 			}
 		}
@@ -1161,6 +1162,8 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Scene.bBuildingsEnabled = GetEnvBool(TEXT("CAMSIM_SCENE_BUILDINGS_ENABLED"), Cfg.Scene.bBuildingsEnabled);
 	Cfg.Scene.BuildingsMaximumScreenSpaceError = GetEnvDouble(
 		TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR"), Cfg.Scene.BuildingsMaximumScreenSpaceError);
+	Cfg.Scene.BuildingsMaximumCachedBytesMB = GetEnvInt(
+		TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB"), Cfg.Scene.BuildingsMaximumCachedBytesMB);
 	Cfg.Scene.bBuildingsCreatePhysicsMeshes = GetEnvBool(
 		TEXT("CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
 	Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError      = GetEnvDouble(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_SSE"),      Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError);
@@ -1615,6 +1618,9 @@ TArray<FString> FCamSimConfig::Validate() const
 	if (!(Scene.BuildingsMaximumScreenSpaceError > 0.0 && Scene.BuildingsMaximumScreenSpaceError <= 1024.0))
 		Errors.Add(FString::Printf(TEXT("scene.buildings.maximum_screen_space_error=%.3f out of range (0, 1024]"),
 			Scene.BuildingsMaximumScreenSpaceError));
+	if (!(Scene.BuildingsMaximumCachedBytesMB >= 1 && Scene.BuildingsMaximumCachedBytesMB <= 65536))
+		Errors.Add(FString::Printf(TEXT("scene.buildings.maximum_cached_bytes_mb=%d out of range [1, 65536]"),
+			Scene.BuildingsMaximumCachedBytesMB));
 
 	Errors.Append(Scene.ResolveErrors);
 	Errors.Append(CamSimScene::ValidateSources(*this));

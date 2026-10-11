@@ -694,6 +694,7 @@ scene:
     enabled: true                     # CAMSIM_SCENE_BUILDINGS_ENABLED
     maximum_screen_space_error: 16    # CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR (set from the dense_pass sweep)
     create_physics_meshes: true       # CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES (CIGI LOS/HAT/HOT hit buildings)
+    maximum_cached_bytes_mb: 512      # CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB, [1, 65536]: the buildings' own tile cache (the terrain keeps maximum_cached_bytes_mb)
 
 # --- Security Metadata (MISB ST 0102) ---
 # Embedded in every KLV packet as ST 0601 Tag 48.

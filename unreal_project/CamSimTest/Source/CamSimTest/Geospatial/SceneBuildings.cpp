@@ -45,6 +45,8 @@ ACesium3DTileset* SpawnBuildingsTileset(UWorld* World, const FCamSimConfig& Cfg)
 	T->SetUrl(Cfg.Scene.BuildingsUrl);
 	TuneTileset(*T, Cfg);
 	T->MaximumScreenSpaceError = Cfg.Scene.BuildingsMaximumScreenSpaceError;
+	// Its own cache cap: TuneTileset gave it the terrain's (2 GiB), a second full cache over a built-up flight.
+	T->MaximumCachedBytes = static_cast<int64>(Cfg.Scene.BuildingsMaximumCachedBytesMB) * 1024LL * 1024LL;
 	T->SetCreatePhysicsMeshes(Cfg.Scene.bBuildingsCreatePhysicsMeshes);
 	// The streaming controller re-applies this per frame as the FOV-scaled terrain value changes.
 	T->CulledScreenSpaceError = ResolveTilesetCulledScreenSpaceError(
@@ -57,7 +59,7 @@ ACesium3DTileset* SpawnBuildingsTileset(UWorld* World, const FCamSimConfig& Cfg)
 	UE_LOG(LogCamSim, Log,
 		TEXT("CamSim: buildings tileset '%s' %s (maxLoads=%d SSE=%.1f culledSSE=%.0f cacheMB=%d descLimit=%d frustumCull=%d lodBlend=%d logStats=%d physicsMeshes=%d)"),
 		*T->GetName(), *Cfg.Scene.BuildingsUrl, T->MaximumSimultaneousTileLoads, T->MaximumScreenSpaceError,
-		T->CulledScreenSpaceError, Cfg.MaximumCachedBytesMB, T->LoadingDescendantLimit, (int)T->EnableFrustumCulling,
+		T->CulledScreenSpaceError, Cfg.Scene.BuildingsMaximumCachedBytesMB, T->LoadingDescendantLimit, (int)T->EnableFrustumCulling,
 		(int)T->GetUseLodTransitions(), (int)T->LogSelectionStats, (int)T->GetCreatePhysicsMeshes());
 	return T;
 }
