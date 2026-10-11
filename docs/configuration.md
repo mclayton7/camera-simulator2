@@ -266,20 +266,28 @@ Runs CamSim on a scene package built by `camsim-scene` ([`docs/scene-packages.md
 scene:
   dir: ""          # absolute path to a package
   offline: false   # no network
+  buildings:       # REALISM R3: the package's features/buildings/ (no-op without one)
+    enabled: true
+    maximum_screen_space_error: 16
+    create_physics_meshes: true
 ```
 
 | Key | Environment Variable | Default | Description |
 |---|---|---|---|
 | `scene.dir` | `CAMSIM_SCENE_DIR` | *(empty)* | Absolute path to a scene package (`manifest.json`, `schema_version` 1). Each layer the package has replaces the matching setting, below. A relative path, a missing or invalid `manifest.json`, or another schema version is a config error. |
-| `scene.offline` | `CAMSIM_SCENE_OFFLINE` | `false` | No network: terrain must be `url` with an existing `file:///` target, or `flat`; imagery `tms` with an existing `file:///` target, or `none`. Any config error (these or others) is logged and CamSim exits with status 1 instead of running on defaults (which would be Cesium ion). |
+| `scene.offline` | `CAMSIM_SCENE_OFFLINE` | `false` | No network: terrain must be `url` with an existing `file:///` target, or `flat`; imagery `tms` with an existing `file:///` target, or `none`. Any config error (these or others) is logged and CamSim exits with status 1 instead of running on defaults (which would be Cesium ion). The buildings URL (below) must be an existing `file:///` too. |
+| `scene.buildings.enabled` | `CAMSIM_SCENE_BUILDINGS_ENABLED` | `true` | Spawn the package's buildings tileset (REALISM R3). Acts only when the package has `features/buildings/tileset.json`; `false` is R2 bit for bit (no tileset spawned). |
+| `scene.buildings.maximum_screen_space_error` | `CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR` | `16` | The buildings tileset's Cesium screen-space error, in `(0, 1024]` (anything else is a config error). The streaming controller's FOV-scaled culled SSE never goes below it: culled SSE = max(terrain-derived, this). Set from the `dense_pass` sweep. |
+| `scene.buildings.create_physics_meshes` | `CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES` | `true` | Collision for the buildings tileset: CIGI LOS and HAT/HOT hit buildings (material code 230). The DIS surface clamp ignores the tileset either way. |
 
 | Package file | Replaces |
 |---|---|
 | `terrain/layer.json` | `cesium.terrain.source: url`, `cesium.terrain.url: file:///…/terrain/layer.json` |
 | `imagery/tilemapresource.xml` | `cesium.imagery.source: tms`, `cesium.imagery.url: file:///…/imagery/tilemapresource.xml` |
 | `landcover/index.json` | `thermal.land_cover.dir: …/landcover` (thermal IR classes and CIGI material codes; packages built with `[features]` add codes 200–220, REALISM R2) |
+| `features/buildings/tileset.json` | one extra Cesium tileset spawned at world init (REALISM R3); `/ready` waits for it; CIGI LOS/HAT/HOT hit it (material 230); the DIS clamp ignores it |
 
-A layer the package lacks leaves its setting alone. Overriding a non-default `cesium.terrain.*`, `cesium.imagery.*` or
+The buildings tileset is spawned in `SetUpCesiumWorld` right after `ApplyCesiumBackendConfig`'s destroy loop, as an `ACesium3DTileset` tagged `CamSimBuildings` (`Geospatial/SceneBuildings.h`), with the terrain's tuning and its own `scene.buildings.*` SSE and physics, and no raster overlays. It is in the tileset cache, so the terrain gate (`/ready`) waits for it and the FOV-scaled culled SSE covers it. Under `scene.offline` its URL must be an existing local `file:///` (a missing file is a config error). A layer the package lacks leaves its setting alone. Overriding a non-default `cesium.terrain.*`, `cesium.imagery.*` or
 `thermal.land_cover.dir` logs a config warning naming the key. `~` is expanded to the home directory.
 
 **Sea level (`sea_level.json`, REALISM R1).** A package built with a `[sea_level]` station carries `sea_level.json`
@@ -734,6 +742,11 @@ CAMSIM_VEGETATION_DENSITY_SCALE=1.0
 CAMSIM_VEGETATION_CAST_SHADOWS=1
 CAMSIM_VEGETATION_CELL_SIZE_M=100.0
 CAMSIM_VEGETATION_SEED=0
+
+# Scene package buildings (REALISM R3)
+CAMSIM_SCENE_BUILDINGS_ENABLED=1
+CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR=16
+CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES=1
 
 # Operational hardening (Phase 28)
 CAMSIM_STRUCTURED_LOG_PATH=

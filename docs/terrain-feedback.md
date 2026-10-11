@@ -13,7 +13,7 @@ tick the IG also sends a mandatory Start-of-Frame (SOF) heartbeat to the host.
 - [LOS segment queries (opcode 25)](#los-segment-queries-opcode-25)
 - [LOS vector queries (opcode 26)](#los-vector-queries-opcode-26)
 - [Entity ID in LOS responses](#entity-id-in-los-responses)
-- [Material codes (REALISM R2)](#material-codes-realism-r2)
+- [Material codes (REALISM R2, R3)](#material-codes-realism-r2-r3)
 - [Configuration](#configuration)
 - [Architecture](#architecture)
 - [Verification](#verification)
@@ -96,7 +96,7 @@ If the trace finds no hit, `Valid = false` is returned.
 |-------|---------|-----------------|
 | 0 | HAT query | Returns both HAT and HOT; response `ReqType = 0` |
 | 1 | HOT query | Returns both HAT and HOT; response `ReqType = 1` |
-| 2 | Extended | HAT/HOT Extended Response (103, ICD 4.2.3): HAT, HOT, the [material code](#material-codes-realism-r2) and the surface normal azimuth/elevation (ROADMAP 1.9) |
+| 2 | Extended | HAT/HOT Extended Response (103, ICD 4.2.3): HAT, HOT, the [material code](#material-codes-realism-r2-r3) and the surface normal azimuth/elevation (ROADMAP 1.9) |
 | >2 | Invalid | Returns `Valid = false` (request rejected) |
 
 ---
@@ -115,7 +115,7 @@ A LOS Segment Request specifies source and destination geodetic points. CamSim:
    - `EntityId` — CIGI entity ID if the hit actor is a `ACamSimEntity`
 
 Request Type 1 (extended) gets an LOS Extended Response (105, ICD 4.2.5): the same
-fields plus the surface normal and the [material code](#material-codes-realism-r2)
+fields plus the surface normal and the [material code](#material-codes-realism-r2-r3)
 of the hit. A clear segment reports its destination point with Range Valid off and
 material 0.
 
@@ -185,7 +185,7 @@ actor is terrain or any other non-entity actor, `EntityIDValid = false`.
 
 ---
 
-## Material codes (REALISM R2)
+## Material codes (REALISM R2, R3)
 
 HAT/HOT (103) and LOS (105) extended responses carry a 32-bit material code: the
 land-cover code of the cell under the hit, read from the same land-cover tiles
@@ -197,7 +197,8 @@ thermal IR uses (`thermal.land_cover.dir`, which is the scene package's
 2. The hit is an entity (`ACamSimEntity`): **0** (entities have no material yet).
 3. HAT/HOT answered by the sea surface (the ocean is above the terrain hit): **80**
    (WorldCover water).
-4. Otherwise the land-cover code at the hit's latitude/longitude (HAT/HOT: the
+4. The hit is the scene package's buildings tileset (`scene.buildings`, identified by its actor): **230**.
+5. Otherwise the land-cover code at the hit's latitude/longitude (HAT/HOT: the
    request's point, since the trace is vertical), or **0** where there is no tile or
    land cover is off (`thermal.land_cover.enabled: false`).
 
@@ -219,14 +220,20 @@ thermal IR uses (`thermal.land_cover.dir`, which is the scene package's
 | 201 | paved road / area, concrete (`surface=concrete*`, runways without a surface tag) | OSM |
 | 210 | rail bed | OSM |
 | 220 | inland water (perennial lakes, ponds, reservoirs, stream/river areas) | USGS NHD HR |
+| 230 | building (scene package features/buildings, REALISM R3) | Overture Maps (scene package [buildings]) |
 
 Codes 200–220 exist only in scene packages built with `[features]`
 (`docs/scene-packages.md`, "Vector features"); the committed San Francisco sample
 has WorldCover codes only. The codes are the same 10 m cells (~9.3 m) thermal IR
 draws, so a point within a cell of a road edge can report either side.
 
+Code 230 exists only with a package built with `[buildings]` and `scene.buildings.enabled`
+(`docs/scene-packages.md`, "Buildings (R3)"): a wall hit by an LOS and a roof hit by a HAT/HOT both report it, in
+place of the land-cover code under the building.
+
 Limits:
 
+- A building in thermal IR still takes the land-cover class under it; only CIGI reports 230.
 - LOS over the sea reports the code of the seabed's or terrain's cell (the trace hits
   the terrain under the water; only HAT/HOT checks the sea surface), which is 0
   offshore where the package has no land-cover tile.

@@ -690,6 +690,10 @@ cesium:
 scene:
   dir: ""          # CAMSIM_SCENE_DIR — absolute path to a package; its terrain/imagery/landcover replace cesium.terrain, cesium.imagery, thermal.land_cover.dir
   offline: false   # CAMSIM_SCENE_OFFLINE — no network: terrain url/flat and imagery tms/none from file:///, and exit on any config error
+  buildings:                          # REALISM R3: the package's features/buildings/ (no-op without one)
+    enabled: true                     # CAMSIM_SCENE_BUILDINGS_ENABLED
+    maximum_screen_space_error: 16    # CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR (set from the dense_pass sweep)
+    create_physics_meshes: true       # CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES (CIGI LOS/HAT/HOT hit buildings)
 
 # --- Security Metadata (MISB ST 0102) ---
 # Embedded in every KLV packet as ST 0601 Tag 48.

@@ -29,6 +29,8 @@ Background: [`docs/realism/`](realism/) (data sources, Cesium findings, offline 
   sea_level.json                # local MSL offset from EGM96 (packages with a [sea_level] station)
   landcover/index.json
   landcover/<lat>_<lon>.png     # the 4B thermal format (0.05° tiles, 600 × 600, 8-bit WorldCover codes; + 200-220 with [features])
+  features/buildings/tileset.json   # 3D Tiles 1.1 (packages with [buildings] that keep at least one building; Buildings (R3))
+  features/buildings/{z}/{x}/{y}.glb  # z13-z15, one GLB per tile that holds buildings
   .state/                       # resume markers and the build lock (not hashed, not packed)
 ```
 
@@ -133,7 +135,7 @@ balance = true                              # colour-match Sentinel-2 to NAIP an
 naip_water_buffer_m = 200                   # NAIP only this far beyond WorldCover water's edge: 0 (off) or [200, 5000] m (Imagery edge)
 ndvi = true                                 # NDVI layer (default true in sim, false in preview; NDVI section)
 ndvi_max_zoom = 15                          # [10, 17]: NDVI pyramid depth (z15 ~ 2.4 m)
-allow = []                                  # extra licence ids (SPDX, see licences.toml); [features] OSM layers need "ODbL-1.0"
+allow = []                                  # extra licence ids (SPDX, see licences.toml); [features] OSM layers and [buildings] need "ODbL-1.0"
 
 [features]                                  # optional, all off by default: vector features burned into landcover/ (Vector features (R2))
 roads = true                                # OSM highway=* (road_classes) and runways/taxiways -> 200/201
@@ -141,6 +143,11 @@ paved_areas = true                          # OSM area:highway, highway + area=y
 rail = true                                 # OSM railway=rail / light_rail -> 210
 water = true                                # USGS NHD HR perennial lakes, ponds, reservoirs, stream/river areas -> 220
 road_classes = ["motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential"]  # default; also service, track, living_street
+
+[buildings]                                 # optional: Overture buildings -> features/buildings/ (Buildings (R3)); needs "ODbL-1.0" in allow
+enabled = true                              # false = as if the table were absent
+release = "2026-09-23.1"                    # Overture release id (YYYY-MM-DD.N), snapshotted on first fetch
+min_area_m2 = 10                            # [0, 10000]: drop footprints smaller than this
 
 [priorities]                                # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"]
@@ -423,6 +430,103 @@ block off (a strict `xfail` test documents it); the constants were tuned on Pend
 - `rail_ballast`'s properties come from material-property reasoning, not a published measurement.
 - Road registration: see its limits above.
 
+## Buildings (R3)
+
+**Why.** Buildings are the largest missing structure in the rendered scene and the thing CIGI hosts hit with LOS and
+HAT/HOT queries. This is a thin slice of REALISM R3: extruded footprints with flat roofs and one neutral material, so
+the realism/cost trade can be measured before investing in roofs, facades and bridges. Design:
+[`superpowers/specs/2026-10-10-r3-buildings-slice-design.md`](superpowers/specs/2026-10-10-r3-buildings-slice-design.md).
+
+**Config.** A `[buildings]` table (scene.toml reference) turns the layer on; without the table the package, and its
+`manifest.json`, are byte for byte what they were before R3.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | `false` is the same as no table |
+| `release` | `"2026-09-23.1"` | Overture release to read |
+| `min_area_m2` | `10` | footprints (parts of a multipolygon, after cleaning) below this are dropped |
+
+Overture's buildings theme is **ODbL-1.0**, which is not in the default allow-list: a package with `[buildings]` fails
+to plan without `allow = ["ODbL-1.0"]` (as with the R2 OSM features). `ATTRIBUTION.txt` carries Overture's credit and the
+derived-database notice. The layer is a derived database under the ODbL.
+
+**Snapshot.** Overture deletes releases after 60 days, so the first `fetch` runs one DuckDB query over the bbox against
+`s3://overturemaps-us-west-2/release/<release>/theme=buildings/type=building/*` (anonymous; columns `id`, `geometry`,
+`height`, `num_floors`, `class`, `subtype`, `sources`) and writes the result as GeoParquet in the fetch cache, keyed by
+(release, bbox). Its sha256 is in the manifest's `sources[]`. A build reads only the snapshot, never S3, so a rebuild
+needs no network; a missing snapshot with a deleted release fails naming the release.
+
+**Footprints to buildings.**
+
+- *Clean:* `make_valid`, parts smaller than `min_area_m2` dropped, duplicate Overture ids dropped; a multipolygon is one
+  building with several parts. A footprint with no bare-earth height under it is dropped (counted in the layer stats).
+- *Height:* Overture `height`, else `num_floors` × 3.2 m, else 4.0 m; clamped to [2.5, 150] m. `height_source` is
+  `overture_height`, `overture_floors` or `default`.
+- *Base:* the lowest bare-earth DEM height over the footprint's exterior vertices and its centroid, as a WGS-84 ellipsoid
+  height (through the terrain layer's own height sampler, so datums match the terrain tiles), minus 0.5 m so walls reach
+  the ground on slopes. Roof = base + 0.5 m + height.
+- *Mesh:* roof by constrained Delaunay triangulation (holes kept); walls one quad per ring edge with outward normals; flat
+  shading; no floor. Linear `baseColorFactor` roof (0.30, 0.30, 0.31), walls (0.42, 0.41, 0.40), metallic 0, roughness 0.9.
+
+**Tiers and geometric errors.** Tiles use the geographic scheme of the package's terrain (EPSG:4326, 2 × 1 roots,
+`tiling.tile_bounds`). A building lives in exactly one tile, chosen by footprint area: >= 2,000 m² at z13, >= 300 m² at
+z14, the rest at z15; the tile is the one containing the footprint centroid. Refinement is `ADD`, so large buildings
+stay visible from far away and small ones load close in. Empty tiles are omitted, and a content-less ancestor exists
+where a descendant has content. Geometric error: root 200 m, z13 60 m, z14 20 m, z15 6 m (z15 nodes have no children).
+They are starting values for the SSE sweep: changing them (or any rule above) is a package rebuild; changing
+`scene.buildings.maximum_screen_space_error` is not. Each tile's bounding volume is a `region` from its buildings' real
+extents.
+
+**GLB layout.** Per tile: positions float32 in a local ENU frame at the tile's centre, glTF y-up (the 3D Tiles
+y-up to z-up convention), so the tile's `transform` = inverse(parent's world transform) x ENU-to-ECEF at that centre
+(transforms compose down the tree). One feature id per building per vertex (`EXT_mesh_features`, `_FEATURE_ID_0`), and an
+`EXT_structural_metadata` property table `building` in the schema `camsim_buildings`: `class` (string), `height_m`
+(float32), `height_source` (enum `heightSource`), `source_id` (string, the Overture id). An Overture `class` column that
+is empty for every building of a tile is omitted from that tile's property table (glTF forbids zero-length buffer
+views), so a reader treats a missing `class` as `""`. The metadata is written so the thermal deepening pass needs no
+rebuild; the runtime does not read it yet. The writer is in-house (`camsim_scene/gltf.py`, numpy + struct) and
+deterministic: buildings sorted by Overture id, fixed JSON formatting, no timestamps, so rebuilds are byte-identical.
+
+**A bbox with no buildings.** If no building survives planning, the layer writes no tileset and no `features/buildings/`
+directory; `verify` accepts that, and the runtime treats the package as having no buildings layer.
+
+**verify.**
+
+| Check | Passes when |
+|---|---|
+| `buildings_tileset` | (quick, when `tileset.json` exists) every `.glb` it lists exists; their hashes are covered by `hashes` |
+| `buildings_heights` | (`--deep`, decodes every tile) the building ids and tile assignment match a recomputation from the snapshot and the package's terrain sources exactly, each roof's top is within 0.01 m of the recomputed roof (float32 positions relative to the tile centre), and no tile holds an unexpected or misses an expected building |
+
+The test suite also runs CesiumGS `3d-tiles-validator` 0.6.1 (Node, pinned in `scripts/scene/tests/validator/`) on a
+fixture tileset, and skips that test when `npx` is missing. The validator's `.npmrc` sets `ignore-scripts=true`
+(`better-sqlite3` does not compile on current Node), so the first run does `npm ci` and then
+`npm rebuild sharp --ignore-scripts=false`; run those two commands by hand to prepare it.
+
+**Runtime.** `CAMSIM_SCENE_DIR` pointing at a package with `features/buildings/tileset.json` sets the buildings URL
+(`file:///`); `scene.buildings.*` (`docs/configuration.md`, "Scene Package") tunes it.
+
+- One extra `ACesium3DTileset`, tagged `CamSimBuildings` and found by that tag, is spawned at world init in
+  `SetUpCesiumWorld` right after `ApplyCesiumBackendConfig`'s destroy loop (`Geospatial/SceneBuildings.h`): the same
+  tuning as the terrain, `scene.buildings.maximum_screen_space_error` and `create_physics_meshes`, no raster overlays.
+- It is in the tileset cache, so `/ready` waits for it (frames never ship without buildings) and the FOV-scaled culled
+  SSE covers it; the culled SSE is max(terrain-derived, the buildings' own SSE), never finer than configured. The
+  frame-stats `Sse` keeps reporting the terrain tileset.
+- CIGI LOS and HAT/HOT hit it (with physics meshes) and report material code **230** (`docs/terrain-feedback.md`).
+- The DIS surface clamp ignores it (`Entity/SurfaceProbe.cpp`): footprints are misregistered by a few metres in places and
+  a truck on a road beside a building must not climb onto the roof. Ground vehicles clamp to terrain.
+- Thermal IR is unchanged: building pixels take the land-cover class under them.
+- `scene.buildings.enabled: false`, or a package without the layer, is R2 bit for bit.
+
+**Known limits.**
+
+- Flat roofs, one neutral colour, no facades, no bridges.
+- Thermal IR: buildings take the land-cover class under them (WorldCover built-up becomes the `BuiltUp` family); only CIGI
+  reports 230.
+- Footprints and heights are only as good as Overture. At Pendleton, 73 % of the 81,825 buildings had a height (OSM-mapped
+  heights inside the base are dense) and the rest take the 4 m default.
+- Imagery shows roofs at their NAIP position; where Overture is offset, the roof texture and the building disagree.
+- Overture's ODbL terms apply to the layer and to anything derived from it.
+
 ## Sea level (R1)
 
 **Why.** CamSim's tide-0 sea is the EGM96 geoid. Local mean sea level at La Jolla is +0.774 m NAVD88 (NOAA CO-OPS
@@ -480,6 +584,7 @@ hot_check in "Measured".
 | `bmng` | NASA Blue Marble Next Generation, topography + bathymetry, 500 m (2004 monthly) | `LicenseRef-PublicDomain-USGov` | globe | z8 | WGS 84 / — |
 | `worldcover` | ESA WorldCover 10 m 2021 v200 land cover (3 × 3° COGs) | `CC-BY-4.0` | land | — (0.05° land-cover tiles over bbox + ring) | WGS 84 / — |
 | `osm_geofabrik` | OpenStreetMap, Geofabrik extract, one dated daily `.osm.pbf` (`[features]` roads / paved areas / rail) | `ODbL-1.0` (not in the default allow-list) | Geofabrik extract | — (burned over bbox + `imagery_margin_km`) | WGS 84 / — |
+| `overture_buildings` | Overture Maps buildings theme, pinned release, one bbox query snapshotted as GeoParquet (`[buildings]`) | `ODbL-1.0` (not in the default allow-list) | global | — (buildings over the bbox) | WGS 84 / — (heights are above ground; the base comes from the package's terrain) |
 | `nhd_hr` | USGS NHD High Resolution, HU4 GeoPackage from The National Map (`[features]` water) | `LicenseRef-PublicDomain-USGov` | US | — (as above) | NAD83 (EPSG:4269, taken as WGS 84: about 1 m) / — |
 
 **NOAA topobathy.** Both are single files from `ngdc.noaa.gov/thredds/fileServer/` (`regional/san_diego_13_navd88_2012.nc`,
@@ -653,9 +758,12 @@ CAMSIM_SCENE_DIR=/abs/path/to/pendleton CAMSIM_SCENE_OFFLINE=1 scripts/run.sh --
 
 - `scene.dir` (`CAMSIM_SCENE_DIR`, absolute) points terrain (`terrain/layer.json`), imagery
   (`imagery/tilemapresource.xml`, `cesium.imagery.source: tms`) and thermal land cover (`landcover/`) at the
-  package, as `file:///` URLs. Reference: `docs/configuration.md`, "Scene Package".
+  package, as `file:///` URLs. A package with `features/buildings/` also gets its buildings tileset (Buildings (R3),
+  `scene.buildings.*`; `CAMSIM_SCENE_BUILDINGS_ENABLED=0` leaves it out). Reference: `docs/configuration.md`, "Scene Package".
 - `scene.offline` (`CAMSIM_SCENE_OFFLINE`) refuses any network source and exits with status 1 on any config
   error, instead of falling back to Cesium ion.
+- The buildings tileset is spawned after that clean-up, in the same world-init step; under `scene.offline` it needs an
+  existing local `file:///`.
 - `Main.umap`'s ion actors (terrain ion 1 with Bing ion 2, OSM Buildings ion 96188) are reconfigured or destroyed
   when the world is initialised, before they load, so an offline run sends no request.
 

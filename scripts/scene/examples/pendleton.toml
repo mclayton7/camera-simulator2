@@ -6,13 +6,16 @@ seed = 0
 ring_km = 100
 bmng_month = 7
 jpeg_quality = 85
-allow = ["ODbL-1.0"]       # OSM roads (REALISM R2)
+allow = ["ODbL-1.0"]       # OSM roads (REALISM R2), Overture buildings (REALISM R3)
 
 [features]                 # REALISM R2: OSM roads / paved areas / rail + NHD water burned into land cover
 roads = true
 paved_areas = true
 rail = true
 water = true
+
+[buildings]                # REALISM R3: Overture footprints -> features/buildings/ (3D Tiles 1.1); ODbL, in allow above
+release = "2026-09-23.1"
 
 [sources.naip_pc]
 year = "2022"
