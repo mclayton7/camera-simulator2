@@ -431,6 +431,13 @@ truth.
 
 ### R4 Vegetation and clutter
 
+**Slice implemented 2026-10-11** (`docs/vegetation.md`): one CC0 broadleaf tree scattered per 100 m global cell on
+WorldCover code 10 with a deterministic hash, HISM cells, no collision. Acceptance on Pendleton passed: placement on code
+10, grounding (|dz| < 1 cm), determinism from two approach paths, origin shift, off switch, `gt_occlusion_check.py`; a
+truck under trees has visibility < 1 with a correct box; bench budget met at radius 1000 m (game +0.63 ms, +81 MiB).
+Still deferred (the rest of this section): canopy % and height rasters, species and shrubs, impostors and distance
+fade, mapped trees, poles/fences/clutter, per-instance thermal class, tree collision, the canopy-fraction gate.
+
 - Placement inputs, offline: density and type rasters per tile from land cover + canopy height
   (a 3DEP LiDAR canopy height model where LiDAR exists, otherwise Meta/WRI CHMv2, CC BY 4.0) +
   USFS Tree Canopy Cover v2025-6 % + Annual NLCD fractional impervious + NAIP NDVI. Explicit instances only for mapped

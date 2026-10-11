@@ -939,7 +939,7 @@ ocean:
 
 ## Vegetation (`vegetation:`)
 
-REALISM R4 slice (`docs/vegetation.md`): one CC0 tree type scattered around the camera where the land cover is tree
+REALISM R4 slice (guide: [`docs/vegetation.md`](vegetation.md)): one CC0 tree type scattered around the camera where the land cover is tree
 cover (code 10), deterministic per grid cell. Acts only with land cover configured (`thermal.land_cover.dir` or a scene
 package) and a loadable library. All keys are **startup only**.
 

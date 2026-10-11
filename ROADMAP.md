@@ -1857,8 +1857,23 @@ Open: footprint IoU (gate 2, needs ~30 human-traced NAIP outlines), the user's v
 task 5). One intermittent renderer crash (SIGSEGV in `FMeshDrawShaderBindings::SetOnCommandList` on a draw task, 5 s
 after a 215 m camera cut to ground level with buildings and trees on) in the first live session; not reproduced in 27
 later Pendleton sessions (3 targeted repeats incl. buildings off / trees off, 3 CIGI sessions, the DIS session, 18
-sweep runs, the 2 full benches); watch for it. No editor work for the slice; facade/roof materials remain the R3 deepening pass's human
+sweep runs, the 2 full benches), nor in the R4 trees acceptance (8 `vegetation_check.py` sessions, 4 `gt_occlusion_check.py` runs, 26 sweep runs, trees on, buildings off); watch for it. No editor work for the slice; facade/roof materials remain the R3 deepening pass's human
 editor work (`REALISM.md`, R3).
+
+**R4 trees thin slice implemented and measured on macOS 2026-10-11** ([`docs/vegetation.md`](docs/vegetation.md); spec
+`docs/superpowers/specs/2026-10-10-r4-trees-slice-design.md`): one CC0 broadleaf tree (Quaternius, 1,332 triangles, glTF
+library with sha256 check) scattered per 100 m global cell by `CamSimHash` on land-cover code 10, heights from
+`SampleHeightMostDetailed`, one globe-anchored HISM actor per cell, no collision, `vegetation.*` config. Acceptance
+(`scripts/vegetation_check.py`, Pendleton R2): placement 8,992 trees, 0 off code 10; ground check max |dz| 0.000 m (after a
+fix: the check now waits for a settled view; it first measured 2.1 m against still-refining tiles); determinism 113 common
+cells, 0 hash mismatches between a north and a south approach; origin shift SSIM 0.983 vs floor 0.970, 0 hash changes;
+off switch SSIM 0.97951 vs the baseline pair's 0.97957; `gt_occlusion_check.py` passes; a DIS truck under the canopy has
+visibility 0.15 (oblique) / 0.002 (nadir) with the amodal box on the truck; tree bases within 6 mm of the drawn surface out
+to 986 m. Bench sweep (`dense_pass`): 30 fps, 0 dropped in every row; at radius 1000 / density 1.0 / shadows on: game
++0.63 ms, GPU +1.13 ms, +81 MiB; radius 2000 at density 1.0 fails the game-thread budget (+1.64 ms). Proposed defaults:
+keep 1000 / 1.0 / on (pending the user's choice). UE 538/538, GPU 26/26. Open: the user's visual review (low obliques and
+the sweep's contact sheet), the combined buildings + trees bench row (waits for the buildings SSE default), Linux/Vulkan.
+No editor work.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer
