@@ -4,6 +4,8 @@ GEOID18). Pass: |error| <= 0.25 m where the 1 m DEM exists, <= 1.0 m on 1/3 arc-
     uv run --project scripts/scene python scripts/scene/tools/hot_check.py package PKG --third SRC --onem SRC
     uv run --project scripts/scene python scripts/scene/tools/hot_check.py cwt --third SRC --onem SRC
 
+--docker IMAGE runs CamSim from that image (host network, PKG bind-mounted read-only) instead of the native build.
+
 SRC is a URL or a local path (e.g. the cached blob of the asset named in PKG/manifest.json).
 """
 
@@ -99,6 +101,7 @@ def main() -> int:
     ap.add_argument("pkg", type=Path, nargs="?")
     ap.add_argument("--third", required=True)
     ap.add_argument("--onem", required=True)
+    ap.add_argument("--docker", metavar="IMAGE")
     a = ap.parse_args()
     if a.mode == "package" and not a.pkg:
         ap.error("package mode needs PKG")
@@ -109,7 +112,7 @@ def main() -> int:
     offset = sea_offset(a.pkg)
     rid = 100
     start = Pose(lat=POINTS[0][0], lon=POINTS[0][1], alt=1500, gimbal_pitch=-90, fov_h=20)
-    with camsim({**env_for(a.mode, a.pkg and a.pkg.resolve()), "CAMSIM_OCEAN_BEAUFORT": "0"}, start) as host:
+    with camsim({**env_for(a.mode, a.pkg and a.pkg.resolve()), "CAMSIM_OCEAN_BEAUFORT": "0"}, start, docker=a.docker) as host:
         for lat, lon in POINTS:
             host.pose = Pose(lat=lat, lon=lon, alt=1500, gimbal_pitch=-90, fov_h=20)
             time.sleep(1)

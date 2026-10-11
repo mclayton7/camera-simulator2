@@ -681,9 +681,51 @@ Game-thread p50, ms (range over 2 runs):
 | far_origin | 3.74-3.81 | 2.55-2.59 | 2.22-2.56 |
 | coast_pass | 4.21-4.43 | 3.65-3.70 | 3.41-3.67 |
 
-Still open (Linux not tested; the user chose Mac only for now): `file://` from a mounted volume in Docker, a
-`docker run --network none` offline run, and SquashFS vs plain-directory cold-start timing. Steps: `FOR_LINUX.md` task 1.
+The Linux items (`file://` from a mounted volume in Docker, a `docker run --network none` offline run, SquashFS vs
+plain-directory cold start) are in "R1 on Linux" below.
 
 Follow-ups: coast_check (b) should compare against the source gradient. Verify vertex error at tidal-mask edges (z14
 max 2.08 m: the mask flips between a vertex and a sample). `point_heights` no longer breaks early (it samples every
 group); the cost is only in verify and the hot tools.
+
+### R1 on Linux (2026-10-10)
+
+Reference box: Core Ultra 9 285K (24 cores), RTX 5080, driver 595.99.02, Vulkan SM6, UE 5.8.3, kernel 6.17. The box
+had no R1 packages (`pendleton-r1`, `pendleton-r1b`), so `pendleton-r1c` was built with `--replan -j 16` in the
+reference container from a copy of the R0 package `pendleton-b`: every layer is rebuilt, nothing is skipped. CamSim is
+the packaged Development image `camsim:linux-r1` (`package_for_docker.sh`, head `3a1d1e7`). The package goes in by
+bind mount, `-v /mnt/pendleton:/data/scene/pendleton:ro` (`.sqfs` loop-mounted read-only) with
+`CAMSIM_SCENE_DIR=/data/scene/pendleton`. `render_check.py` and `hot_check.py` take `--docker IMAGE` for this.
+
+| Gate | Tool | Result |
+|---|---|---|
+| Build | `build --replan -j 16` (from `pendleton-b`) | **Package complete; exit 2 is a false RSS fail.** Wall 27 min 40 s. Terrain 182,794 (473 s, 979.8 MB), imagery 277,286 (547 s, 2.17 GB), NDVI 7,043 (45 s), land cover 2,288 (91 s): the counts the Mac got. `sea_level.json` +0.110 m (NOAA 9410230 La Jolla). Exits 2 with "peak worker RSS 3249 MB exceeds 2048 MB": every layer reports the same 3249 MB, which is the main process's peak. On Linux a forked worker inherits the parent's `ru_maxrss`, so the known `-j 1` RSS follow-up also hits `-j 16` here. The log also has 2,966 bare "Error in sys.excepthook" lines (no traceback) near the end of the terrain layer, likely from worker pool teardown; the layer's tiles all verify |
+| Verify | `verify --deep -j 16` | **Pass.** Every check `ok`, incl. `sea_level` (0.11 m, recomputed 0.11 m) and `ndvi_values` (6,368 px, p99 0 steps). Scene z9+ height error p50 0.001 m, p99 0.162 m, max 2.08 m over 346,670 vertices: the Mac's values. 162 s |
+| Pack | `pack` | `.sqfs` 3.51 GB in 10 s, sha256 `8b8d92cc21606d30…` |
+| Image | `ci_validate.sh --docker camsim:linux-r1` | **Pass** (NVENC, `--gpus all`) |
+| Render readiness | `render_check.py … package /mnt/pendleton --docker camsim:linux-r1` | **Pass.** 11/11 shots `terrain_ready`, no "terrain gate timed out". Shots reviewed by the user (`nadir_2km`, `coast_low`, `coast_waves`, `slant_ne_ir`) |
+| HOT / HAT | `hot_check.py --docker` | **Pass.** Land 7/7 frame-centre and 7/7 HOT (1 m points -0.10 to +0.20 m, 1/3" points -0.48 and -0.05 m), sea 3/3 equal EGM96 + 0.110 m (-34.908 / -35.074 / -35.270 m): the Mac's values |
+| Registration | package vs a Linux CWT run (`render_check.py … cwt --docker`) | **Pass.** <= 0.15 px on all 7 land shots (limit 1 px) |
+| Offline | `render_check.py … --offline --docker` | **Pass.** The container runs with `--network none` and `CAMSIM_SCENE_OFFLINE=1`; the CIGI host and `/ready` reach it through a socat bridge (a sidecar in CamSim's network namespace, Unix sockets in a shared directory, host socat on 127.0.0.1:8080 and :8888). 11/11 shots ready, no `LogHttp` or `cesium.com` line, no exit 1 |
+| Offline, negative | same isolation, `CAMSIM_SCENE_DIR` unset | **Fails as it should.** 16 `LogHttp` and 6 `cesium.com` lines, the terrain gate times out, the tileset stays at 0 % (1 tile loaded) |
+| Cold start | `render_check.py --docker`, 3 runs each, page cache dropped before each cold run | **SquashFS = plain directory.** `/ready` at 6 s in all 12 runs (loop-mounted `.sqfs` vs the unpacked directory bind-mounted `:ro`, cold and warm). Every shot's terrain gate passed 0.0-0.1 s after its 1 s settle. `/ready` is polled every 2 s, so differences under 2 s don't show. The Mac (native, plain directory) took 17 s |
+| Bench | `run_bench.py --docker camsim:linux-r1 --site pendleton --volume /mnt/pendleton:/data/scene/pendleton:ro`, 2 runs each vs CWT + Bing | **Pass.** Game-thread p50 of the package below CWT in every phase (table below). 30 fps and 0 dropped frames in every run and phase; wall p95 33.6-38.2 ms (package) vs 33.8-38.2 ms (CWT). One CWT run is excluded and was rerun: ion's `layer.json` request timed out in the TLS handshake (30 s), Cesium did not retry, and the run drew no terrain (0 tiles; game thread a flat 0.87 ms) |
+
+Game-thread p50, ms (range over 2 runs), Linux / Vulkan / Docker:
+
+| Phase | CWT + Bing | pendleton-r1c (`.sqfs` mount) |
+|---|---|---|
+| orbit | 2.11 | 1.79-1.80 |
+| slew | 2.24-2.27 | 1.91-1.94 |
+| low_pass | 2.47-2.50 | 2.06-2.08 |
+| far_origin | 2.21-2.22 | 1.39 |
+| coast_pass | 2.91-2.93 | 2.23-2.24 |
+
+Cold start, a measurement trap: back-to-back sessions first read 63-65 s. Linux keeps the previous run's port 8080 in
+TIME_WAIT for 60 s and CamSim's health server retries the bind every 2 s ("port 8080 is busy"), so `/ready` was
+unreachable for a minute. `camsim_session.py` and `render_check.py` now wait the port out before launching (as
+`run_bench.py` already did), and `ready_s` starts after the wait.
+
+Follow-ups: fix the build's RSS accounting for forked workers (measure each worker's own peak, not `ru_maxrss`
+inherited from the parent), and find the source of the bare `sys.excepthook` errors at pool teardown.
+

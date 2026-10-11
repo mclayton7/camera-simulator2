@@ -3,9 +3,12 @@ over Camp Pendleton and save /snapshot PNGs + result.json.
 
     uv run --project scripts/scene python scripts/scene/tools/render_check.py OUT package PKG [--offline]
     uv run --project scripts/scene python scripts/scene/tools/render_check.py OUT cwt
+    ... render_check.py OUT package PKG --docker IMAGE [--offline]
 
---offline (macOS) runs CamSim under sandbox-exec with ports 80/443 blocked (tools/offline.sb) and
-CAMSIM_SCENE_OFFLINE=1, and fails if the log shows any outbound request.
+--docker IMAGE runs CamSim from that image instead of the native build, with PKG bind-mounted read-only
+(CAMSIM_DOCKER_GPU picks the GPU flag, as for ci_validate.sh). --offline sets CAMSIM_SCENE_OFFLINE=1 and fails if
+the log shows any outbound request; natively (macOS) CamSim runs under sandbox-exec with ports 80/443 blocked
+(tools/offline.sb), with --docker in a --network none container (CIGI and /ready through a socat bridge).
 """
 
 from __future__ import annotations
@@ -17,9 +20,7 @@ import time
 from pathlib import Path
 
 from camsim_session import Pose as P
-from camsim_session import camsim, env_for, rb
-
-LOG = Path.home() / "Library" / "Logs" / "CamSimTest" / "CamSimTest.log"  # macOS editor log (run.sh)
+from camsim_session import camsim, env_for, log_path, rb
 
 
 def network_lines(log: Path) -> list[str]:
@@ -78,30 +79,35 @@ def main() -> int:
     ap.add_argument("mode", choices=["package", "cwt"])
     ap.add_argument("pkg", type=Path, nargs="?")
     ap.add_argument("--offline", action="store_true")
+    ap.add_argument("--docker", metavar="IMAGE")
     a = ap.parse_args()
     if a.mode == "package" and not a.pkg:
         ap.error("package mode needs PKG")
     a.out.mkdir(parents=True, exist_ok=True)
-    res: dict = {"mode": a.mode, "offline": a.offline}
+    res: dict = {"mode": a.mode, "offline": a.offline, "docker": a.docker}
+    log = log_path(a.docker)
+    rb.wait_port_free(int(rb.HEALTH.rsplit(":", 1)[1]))  # camsim() waits too; ready_s must not count the wait
     t0 = time.time()
     env = env_for(a.mode, a.pkg and a.pkg.resolve())
     main_shots = {n: p for n, p in SHOTS.items() if n not in BEAUFORT_SHOTS}
     netlines: list[str] = []
     timeouts: list[str] = []
-    with camsim(env, SHOTS["nadir_2km"], a.offline) as host:
+    with camsim(env, SHOTS["nadir_2km"], a.offline, a.docker) as host:
         res["ready_s"] = round(time.time() - t0)
         fly(host, main_shots, a.out, res)
         metrics = (rb.http_text("/metrics") or "").splitlines()
         res["metrics"] = [m for m in metrics if "tile" in m.lower() or "terrain" in m.lower()][:20]
     # each session's launch replaces the log, so collect before the next one starts
-    netlines += network_lines(LOG)
-    timeouts += gate_timeout_lines(LOG)
+    netlines += network_lines(log)
+    timeouts += gate_timeout_lines(log)
     for beaufort in sorted(set(BEAUFORT_SHOTS.values())):
         shots = {n: SHOTS[n] for n, b in BEAUFORT_SHOTS.items() if b == beaufort}
-        with camsim(dict(env, CAMSIM_OCEAN_BEAUFORT=beaufort), next(iter(shots.values())), a.offline) as host:
+        with camsim(
+            dict(env, CAMSIM_OCEAN_BEAUFORT=beaufort), next(iter(shots.values())), a.offline, a.docker
+        ) as host:
             fly(host, shots, a.out, res)
-        netlines += network_lines(LOG)
-        timeouts += gate_timeout_lines(LOG)
+        netlines += network_lines(log)
+        timeouts += gate_timeout_lines(log)
     res["network_lines"] = netlines[:20]
     res["gate_timeouts"] = timeouts
     (a.out / "result.json").write_text(json.dumps(res, indent=1))

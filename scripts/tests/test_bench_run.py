@@ -69,6 +69,31 @@ def test_docker_run_cmd_mounts_out_and_passes_gpu_and_env(tmp_path):
     assert "--gpus" not in run_bench.docker_run_cmd("camsim:x", tmp_path, False, {}, [])
 
 
+def test_docker_run_cmd_takes_name_network_volumes_and_mounts(tmp_path):
+    cmd = run_bench.docker_run_cmd(
+        "img", None, True, {}, [], name="camsim-scene", network="none",
+        volumes={"v": "/var/lib/camsim"}, mounts=["/pkg:/data/scene/p:ro"],
+    )
+    assert cmd[cmd.index("--name") + 1] == "camsim-scene"
+    assert cmd[cmd.index("--network") + 1] == "none"
+    assert "v:/var/lib/camsim" in cmd and "/pkg:/data/scene/p:ro" in cmd
+    assert not any(c.endswith(":/bench") for c in cmd)
+    assert "camsim-bench-data:/var/lib/camsim" not in cmd
+
+
+def test_docker_gpu_flag_follows_camsim_docker_gpu(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAMSIM_DOCKER_GPU", "--device nvidia.com/gpu=all")
+    cmd = run_bench.docker_run_cmd("img", tmp_path, True, {}, [])
+    assert "--gpus" not in cmd
+    assert cmd[cmd.index("--device") + 1] == "nvidia.com/gpu=all"
+
+
+def test_volume_flag_parses():
+    args = run_bench.build_parser().parse_args(
+        ["--label", "x", "--docker", "img", "--volume", "/a:/b:ro"]
+    )
+    assert args.volume == ["/a:/b:ro"]
+
 def test_encoder_and_latency_are_parsed():
     log = "LogCamSim: FVideoEncoder: using encoder h264_nvenc\n"
     assert run_bench.encoder_from_log(log) == "h264_nvenc"

@@ -24,6 +24,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -116,25 +117,36 @@ def docker_alive(name: str = DOCKER_NAME) -> bool | None:
 
 def docker_run_cmd(
     image: str,
-    out: Path,
+    out: Path | None,
     gpu: bool,
     env: dict[str, str],
     ue_args: list[str],
     config: Path | None = None,
+    *,
+    name: str = DOCKER_NAME,
+    network: str = "host",
+    volumes: dict[str, str] = DOCKER_VOLUMES,
+    mounts: Sequence[str] = (),
 ) -> list[str]:
     """`docker run` for a bench container: host network (CIGI + unicast stream on
-    loopback), the output dir at /bench, cache volumes, the GPU unless --no-gpu."""
-    cmd = ["docker", "run", "-d", "--name", DOCKER_NAME, "--init"]
-    cmd += ["--network", "host", "--shm-size", "1g", "-v", f"{out}:/bench"]
-    for vol, mount in DOCKER_VOLUMES.items():
+    loopback), the output dir at /bench, cache volumes, the GPU unless --no-gpu.
+    The GPU flag is CAMSIM_DOCKER_GPU (default "--gpus all"; "--device
+    nvidia.com/gpu=all" for CDI, as ci_validate.sh). `mounts` are extra -v specs."""
+    cmd = ["docker", "run", "-d", "--name", name, "--init"]
+    cmd += ["--network", network, "--shm-size", "1g"]
+    if out:
+        cmd += ["-v", f"{out}:/bench"]
+    for vol, mount in volumes.items():
         cmd += ["-v", f"{vol}:{mount}"]
+    for spec in mounts:
+        cmd += ["-v", spec]
     if config:
         cmd += [
             "-v",
             f"{config.resolve()}:/opt/camsim/CamSimTest/camsim_config.yaml:ro",
         ]
     if gpu:
-        cmd += ["--gpus", "all"]
+        cmd += os.environ.get("CAMSIM_DOCKER_GPU", "--gpus all").split()
     for key, value in env.items():
         cmd += ["-e", f"{key}={value}"]
     return [*cmd, image, *ue_args]
@@ -286,6 +298,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="--docker: mount this camsim_config.yaml over the image's (e.g. 1080p)",
     )
+    ap.add_argument(
+        "--volume",
+        action="append",
+        default=[],
+        metavar="SRC:DST[:ro]",
+        help="--docker: extra bind mount, e.g. a scene package (repeatable)",
+    )
     return ap
 
 
@@ -307,8 +326,8 @@ def main() -> int:
     pid_file = REPO / ".cache" / "camsim.pid"
     if camsim_alive(pid_file):
         sys.exit("A CamSim instance is already running (scripts/stop.sh to stop it)")
-    if (args.no_gpu or args.config) and not args.docker:
-        sys.exit("--no-gpu and --config need --docker")
+    if (args.no_gpu or args.config or args.volume) and not args.docker:
+        sys.exit("--no-gpu, --config and --volume need --docker")
     extra_env = dict(kv.split("=", 1) for kv in args.env)
 
     # Paths as CamSim sees them: the container mounts `out` at /bench.
@@ -340,7 +359,13 @@ def main() -> int:
             ]
         subprocess.run(
             docker_run_cmd(
-                args.docker, out, not args.no_gpu, camsim_env, extra, args.config
+                args.docker,
+                out,
+                not args.no_gpu,
+                camsim_env,
+                extra,
+                args.config,
+                mounts=args.volume,
             ),
             check=True,
             stdout=subprocess.DEVNULL,

@@ -8,5 +8,5 @@
 | `coast_check.py` | R1 coast gate: package terrain along coast transects vs the drawn sea (EGM96 + `sea_level.json`): offshore below sea, no step at the old 3DEP edge, waterline vs WorldCover, offset vs pyproj; `--before PKG` compares |
 | `ndvi_check.py` | R1 chunk 2 NDVI gates: median NDVI per WorldCover class (plausibility), the bias across NAIP's edge (seam; also with the global fit only and unfitted), `--overview` false-colour PNG |
 | `registration.py` | Phase-correlation shift between a package shot and the CWT shot of the same pose (< 1 px passes) |
-| `camsim_session.py` | Shared by the two launchers: package/ion environment, `run.sh --detach` + CIGI host + `/ready`, `stop.sh` |
+| `camsim_session.py` | Shared by the two launchers: package/ion environment, `run.sh --detach` + CIGI host + `/ready`, `stop.sh`; or `--docker IMAGE`: the package bind-mounted read-only at `/data/scene/<name>`, the log from `docker logs` (`.cache/camsim-scene-docker.log`), and for `--offline` a `--network none` container reached through a socat bridge (sidecar `alpine/socat` in its network namespace, Unix sockets, host socat on 127.0.0.1:8080/8888) |
 | `offline.sb` | macOS `sandbox-exec` profile blocking ports 80/443 (`render_check.py --offline`, which also sets `CAMSIM_SCENE_OFFLINE=1` and fails on any logged request) |
