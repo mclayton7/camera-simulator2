@@ -26,6 +26,17 @@ def test_landcover_reads_codes_and_missing_tiles_are_zero(tmp_path):
     assert got.tolist() == [10, 0]
 
 
+def test_landcover_tile_edge_uses_the_rounded_tile_index(tmp_path):
+    # 33.3 / 0.05 = 665.9999999999999 in floats: without round(x, 9) the point on the tile's south edge would read the
+    # tile below (south-west 33.25), as the scene tooling's tile index rounds it into the tile above.
+    assert 33.3 / dp.TILE_DEG < 666
+    below = _tile(tmp_path, 665, -2349, 30)
+    above = _tile(tmp_path, 666, -2349, 10)
+    del below, above
+    got = dp.LandCover(tmp_path).codes(np.array([-117.44]), np.array([33.3]))
+    assert got.tolist() == [10]
+
+
 def test_class_grid_fractions(tmp_path):
     a = np.full((600, 600), 30, np.uint8)
     a[:, :300] = 10  # west half trees

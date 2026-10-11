@@ -105,6 +105,35 @@ def test_failed_rows_get_no_verdict_and_unknown_memory_is_not_a_pass(tmp_path):
     assert "failed" in md and "n/a" in md
 
 
+def test_unmeasured_memory_is_na_not_fail_and_the_footer_says_so(tmp_path):
+    rows = [{"trees": "off"}, {"trees": "on"}, {"trees": "on", "trees_radius": "2000"}]
+    off = [sweep.run_metrics(_results(tmp_path, "off", gpu_mem_mib_max=None))]
+    on = [sweep.run_metrics(_results(tmp_path, "on", gpu_mem_mib_max=None))]
+    slow = [sweep.run_metrics(_results(tmp_path, "slow", game_ms_p50=9.0, gpu_mem_mib_max=None))]
+    agg = sweep.aggregate(rows, {"trees-off": off, "trees-on": on, "trees-on_trees_radius-2000": slow})
+    assert agg[1]["budget"]["gpu_mem_mib_max"] is None and agg[1]["within_budget"] is None
+    assert agg[2]["within_budget"] is False
+    md = sweep.render_md(agg)
+    assert "| pass (memory n/a) |" in md
+    assert "FAIL: game_ms_p50 |" in md and "FAIL: gpu_mem" not in md
+    assert "not measurable on this host" in md
+
+
+def test_measured_memory_has_no_na_footer(tmp_path):
+    rows = [{"trees": "off"}, {"trees": "on"}]
+    off = [sweep.run_metrics(_results(tmp_path, "off", gpu_mem_mib_max=3000.0))]
+    on = [sweep.run_metrics(_results(tmp_path, "on", gpu_mem_mib_max=3100.0))]
+    md = sweep.render_md(sweep.aggregate(rows, {"trees-off": off, "trees-on": on}))
+    assert "| pass |" in md and "not measurable" not in md
+
+
+def test_sheet_cols_is_the_last_axis_cardinality():
+    assert sweep.sheet_cols([]) == 1
+    assert sweep.sheet_cols([("buildings", ["off", "on"]), ("buildings_sse", ["16", "64"]),
+                             ("trees", ["off", "on"])]) == 2
+    assert sweep.sheet_cols([("trees_radius", ["500", "1000", "2000"])]) == 3
+
+
 def test_contact_sheet_tiles_labelled_thumbnails(tmp_path):
     imgs = []
     for i in range(4):

@@ -94,10 +94,18 @@ def _median(runs: list[dict], m: str) -> float | None:
     return statistics.median(vals) if vals else None
 
 
-def budget_verdict(row: dict, base: dict) -> dict[str, bool]:
-    v = {}
+MEM = "gpu_mem_mib_max"
+
+
+def budget_verdict(row: dict, base: dict) -> dict[str, bool | None]:
+    """True / False per budget item. Memory that was not measured (no footprint / nvidia-smi on this host) is None,
+    reported n/a; any other unknown metric is not a pass."""
+    v: dict[str, bool | None] = {}
     for m, limit in BUDGET.items():
         a, b = base.get(f"{m}_median"), row.get(f"{m}_median")
+        if m == MEM and (a is None or b is None):
+            v[m] = None
+            continue
         v[m] = a is not None and b is not None and b - a <= limit  # unknown is not a pass
     v["dropped"] = row.get("dropped_median") == 0
     v["fps"] = (row.get("emitted_fps_median") or 0.0) >= MIN_FPS
@@ -124,7 +132,9 @@ def aggregate(rows: list[dict], runs: dict[str, list[dict]]) -> list[dict]:
     base = next((a for a in out if a["baseline"] and a["status"] == "ok"), None)
     for a in out:
         a["budget"] = budget_verdict(a, base) if base and a["status"] == "ok" and not a["baseline"] else {}
-        a["within_budget"] = all(a["budget"].values()) if a["budget"] else None
+        vals = list(a["budget"].values())
+        # None = no budget (baseline, failed row) or every measured item passes but memory is n/a.
+        a["within_budget"] = (False if False in vals else None if None in vals else True) if vals else None
     return out
 
 
@@ -139,16 +149,19 @@ def render_md(agg: list[dict]) -> str:
     head = ["row", "status", *METRICS, "budget"]
     lines = ["| " + " | ".join(head) + " |", "|" + " --- |" * len(head)]
     for a in agg:
+        failed = [k for k, ok in a["budget"].items() if ok is False]
         verdict = ("baseline" if a["baseline"] else
-                   "n/a" if a["within_budget"] is None else
+                   "FAIL: " + ", ".join(failed) if failed else
                    "pass" if a["within_budget"] else
-                   "FAIL: " + ", ".join(k for k, ok in a["budget"].items() if not ok))
+                   "pass (memory n/a)" if a["budget"] else
+                   "n/a")
         cells = [a["label"], f"{a['status']} ({a['ok_runs']}/{a['runs']})", *[_rng(a[m]) for m in METRICS], verdict]
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
+    mem_missing = any(a["status"] == "ok" and a.get(f"{MEM}_median") is None for a in agg)
     lines.append(f"Budget (spec section 4): increase of the row median over the all-off row: "
                  f"{', '.join(f'{k} <= {v}' for k, v in BUDGET.items())}; dropped 0; fps >= {MIN_FPS}. "
-                 f"Memory in MiB (n/a: not measurable on this host). Ranges are over repeats.")
+                 f"Memory in MiB{' (n/a: not measurable on this host)' if mem_missing else ''}. Ranges are over repeats.")
     return "\n".join(lines) + "\n"
 
 
@@ -159,6 +172,11 @@ def write_csv(path: Path, rows: list[dict], runs: dict[str, list[dict]]) -> None
         for row in rows:
             for i, r in enumerate(runs.get(row_label(row), [])):
                 w.writerow([row_label(row), i, r["status"], *[r.get(m, "") for m in METRICS]])
+
+
+def sheet_cols(axes: list[tuple[str, list[str]]]) -> int:
+    """Contact sheet width = the last axis's cardinality, so each sheet row is one setting of the other axes."""
+    return max(1, len(axes[-1][1])) if axes else 1
 
 
 def contact_sheet(images: list[tuple[str, Path]], out: Path, thumb_w: int = 640, cols: int = 3) -> None:
@@ -227,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         if src.exists():
             dst.write_bytes(src.read_bytes())
         sheet.append((label, dst))
-    contact_sheet(sheet, out / "sweep_sheet.png")
+    contact_sheet(sheet, out / "sweep_sheet.png", cols=sheet_cols(axes))
     print((out / "sweep.md").read_text())
     return 0
 

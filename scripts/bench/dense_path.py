@@ -42,16 +42,18 @@ class LandCover:
 
     def codes(self, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
         lon, lat = np.asarray(lon, float), np.asarray(lat, float)
-        ti = np.floor(lat / TILE_DEG).astype(np.int64)
-        tj = np.floor(lon / TILE_DEG).astype(np.int64)
+        # round(x, 9) before floor, as the scene tooling's tile index (layers/landcover.py): a point on a tile edge
+        # whose division lands a hair under the integer belongs to the tile above it, not the one below.
+        ti = np.floor(np.round(lat / TILE_DEG, 9)).astype(np.int64)
+        tj = np.floor(np.round(lon / TILE_DEG, 9)).astype(np.int64)
         out = np.zeros(lon.shape, np.uint8)
         for i, j in set(zip(ti.ravel().tolist(), tj.ravel().tolist())):
             a = self._tile(i, j)
             if a is None:
                 continue
             m = (ti == i) & (tj == j)
-            col = np.minimum(((lon[m] - j * TILE_DEG) / TILE_DEG * TILE_PX).astype(np.int64), TILE_PX - 1)
-            row = np.minimum((((i + 1) * TILE_DEG - lat[m]) / TILE_DEG * TILE_PX).astype(np.int64), TILE_PX - 1)
+            col = np.clip(np.floor((lon[m] - j * TILE_DEG) / TILE_DEG * TILE_PX).astype(np.int64), 0, TILE_PX - 1)
+            row = np.clip(np.floor(((i + 1) * TILE_DEG - lat[m]) / TILE_DEG * TILE_PX).astype(np.int64), 0, TILE_PX - 1)
             out[m] = a[row, col]
         return out
 
