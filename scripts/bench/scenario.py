@@ -5,14 +5,17 @@ Phases fly around San Francisco (varied terrain, urban, water); far_origin jumps
 ellipsoid heights, as CIGI 3.3 defines them. Times are UTC (the sim clock is UTC).
 
 `site` moves the base: the default is San Francisco; "pendleton" (Camp Pendleton,
-California) also adds a measured low coastal pass.
+California) also adds a measured low coastal pass and a measured `dense_pass` over
+buildings and trees (`dense_path.json`).
 """
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import send_cigi_test as sc
 
@@ -119,6 +122,27 @@ def _coast_pass(t: float) -> Pose:
     return Pose(lat, lon, 300.0, yaw=138.0, gimbal_yaw=-90.0, gimbal_pitch=-20.0)
 
 
+# Chosen by select_dense_path.py on the Pendleton package (REALISM R3/R4 bench): over built-up land and tree cover.
+DENSE = json.loads(Path(__file__).with_name("dense_path.json").read_text())
+
+
+def _dense_pass(t: float) -> Pose:
+    # 100 m/s along the selected path at a constant HAE (start terrain + 300 m), looking ahead 20 deg down
+    lat0, lon0 = DENSE["start_lat"], DENSE["start_lon"]
+    brg = math.radians(DENSE["bearing_deg"])
+    d = DENSE["speed_mps"] * t
+    lat = lat0 + d * math.cos(brg) / 111_320.0
+    lon = lon0 + d * math.sin(brg) / (111_320.0 * math.cos(math.radians(lat0)))
+    return Pose(
+        lat,
+        lon,
+        DENSE["alt_hae_m"],
+        yaw=DENSE["bearing_deg"],
+        gimbal_yaw=0.0,
+        gimbal_pitch=DENSE["gimbal_pitch_deg"],
+    )
+
+
 def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:
     orbit = _orbit(site.lat, site.lon, 3000.0, 2000.0, 120.0)
     if smoke:
@@ -140,11 +164,13 @@ def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:
         if site.coast:
             if t < 120.0:
                 return _coast_pass((t - 90.0) * 3.0)
-            return far(t - 120.0)
+            if t < 150.0:
+                return _dense_pass((t - 120.0) * 3.0)
+            return far(t - 150.0)
         return far(t - 90.0)
 
     phases = [
-        Phase("warmup", 150.0 if site.coast else 120.0, warmup, measured=False),
+        Phase("warmup", 180.0 if site.coast else 120.0, warmup, measured=False),
         Phase("orbit", 120.0, orbit),
         Phase("slew", 60.0, slew),
         Phase("low_pass", 90.0, low_pass),
@@ -152,6 +178,7 @@ def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:
     ]
     if site.coast:
         phases.append(Phase("coast_pass", 90.0, _coast_pass))
+        phases.append(Phase("dense_pass", 90.0, _dense_pass))
     return phases
 
 
@@ -182,6 +209,8 @@ def build_shots(smoke: bool = False, site: Site = SITES["sf"]) -> list[Shot]:
         Shot("far_origin_nadir", replace(nadir, lon=far_lon)),
         Shot("night_slant", night),
     ]
+    if site.coast:
+        shots.append(Shot("dense_oblique", _dense_pass(45.0)))
     by_name = {s.name: s.pose for s in shots}
     for base in ("nadir_3km", "dusk_slant", "night_slant"):
         shots.append(Shot(f"{base}_ir", replace(by_name[base], sensor_id=1)))
