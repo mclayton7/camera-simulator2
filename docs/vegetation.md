@@ -30,6 +30,19 @@ in the ground-truth masks, but CIGI and DIS never see them.
   `vegetation.seed` only when there is no package. Pendleton's package has manifest seed 0, which gives vegetation seed 186258786 (as `vegetation.seed: 0` does).
 - **Heights:** one `ACesium3DTileset::SampleHeightMostDetailed` batch per cell on the terrain tileset (the
   one tagged `CamSimTerrain`, never the buildings tileset). A failed sample drops that tree only.
+- **Trees inside building footprints are dropped when the package has buildings** (REALISM R3,
+  `features/buildings/`). Land cover alone would put ~10 % of footprint area under trees: WorldCover tags a
+  texel by its canopy, so tree cover runs over and between suburban houses (on Pendleton 10.4 % of the 23.0 km² of
+  footprints is code 10, about 10,400 trees at density 1), and a 7–11 m tree would poke its crown through a
+  3–8 m flat roof. When the buildings tileset (tag `CamSimBuildings`) exists, each cell's height stage runs a
+  second `SampleHeightMostDetailed` batch on it for the same points, beside the terrain batch; both must answer
+  (or the stage times out, as above) before the cell spawns. A tree whose buildings sample succeeds more than
+  0.5 m above its terrain height is dropped (`CamSimVegetation::KeepClearOfBuildings`); a failed buildings sample
+  is a miss (no building there) and keeps the tree. Without a buildings tileset (no layer, or
+  `scene.buildings.enabled: false`) there is no second batch and nothing changes. Nothing extra runs on the game
+  thread beyond the per-cell spawn. The dump line carries `in_buildings` (trees dropped in that cell), and each
+  time streaming settles with new drops one `Vegetation: settled, N cells spawned, M trees dropped inside building
+  footprints so far` line is logged.
 - **Cells** (`Vegetation/VegetationCellActor.h`): one actor per cell with a `UCesiumGlobeAnchorComponent` at
   the cell centre and one `UHierarchicalInstancedStaticMeshComponent`, instances in the cell's
   East-South-Up frame, so cells survive origin shifts. Collision off, `bCastShadow = cast_shadows`,
@@ -42,7 +55,7 @@ in the ground-truth masks, but CIGI and DIS never see them.
 - **Readiness:** `/ready` does not wait for trees; they fill in within seconds of the terrain.
 - Without land cover (no package, no `thermal.land_cover.dir`) or without a loadable library, vegetation stays
   off with one `Vegetation: off (...)` log line. `Vegetation: on (...)` logs the type, radius, density,
-  shadows, seed and land-cover directory.
+  shadows, seed, land-cover directory and whether the buildings check is on.
 
 ## Configuration
 
@@ -275,11 +288,17 @@ Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 
 - Contact sheet of the `dense_oblique` shot per row: `.cache/bench-r3r4/trees/sweep_sheet.png` (table:
   `sweep.md`, per run: `sweep.csv`). The `dense_pass` view is a residential area with few code-10 cells, so trees
   show along the drainage at the bottom of the frame only.
-- Not run yet: the spec's combined row (buildings and trees both on at their chosen defaults vs both off), which
-  waits for the buildings SSE default.
+- The spec's combined row (buildings and trees both on vs both off, `pendleton-r3`) was run in the combined sweep
+  (`scene-packages.md`, "R3/R4 bench check and combined cost"): at the chosen defaults (buildings SSE 64 with
+  physics, trees 1000 m / 1.0 / shadows on) game p50 +1.05 ms, p95 +1.09 ms, GPU +2.98 ms, memory +359 MiB: inside
+  the budget, memory within 22 MiB of its limit (a 90 s `dense_pass` figure). Trees alone on that package: +0.61 /
+  +0.58 / +1.12 ms, +52 MiB.
 
 ## Known limits
 
+- Without a buildings layer, trees stand inside building footprints wherever WorldCover calls the canopy tree
+  cover (~10 % of footprint area on Pendleton). With one, they are dropped (How it works); trees right beside a
+  wall can still lean their crowns over a roof, since only the trunk point is tested.
 - One species; density is tree / no tree per 10 m texel (no canopy %), so woodland edges follow the
   land-cover grid.
 - Hard pop-in at `radius_m`; no impostors beyond it, the imagery shows distant trees.

@@ -888,7 +888,7 @@ group); the cost is only in verify and the hot tools.
 Camp Pendleton `sim`, M1 Pro / Metal, native build. `pendleton-r2` is an APFS clone of `pendleton-r1c` planned with
 `examples/pendleton.toml` (`[features]` all on, `allow = ["ODbL-1.0"]`): OSM `socal-261008` (2026-10-08), NHD HR
 `NHD_H_1807_HU4_GPKG`. Only `layers.landcover` and the two new sources differ from r1c, so terrain, imagery and NDVI
-were skipped. Details: `.superpowers/sdd/2026-10-10-r2-vector-features/` (task 8–10 reports).
+were skipped. Details: the R2 task 8–10 reports in the (untracked) session notes.
 
 | Gate | Tool | Result |
 |---|---|---|
@@ -967,7 +967,7 @@ Camp Pendleton `sim`, M1 Pro / Metal, native build. `pendleton-r3` is an APFS cl
 `examples/pendleton.toml` (`[buildings]`, Overture release `2026-09-23.1`, `--replan -j 6`): terrain, imagery, NDVI and
 land cover were skipped and only the buildings layer was built. Spec acceptance:
 [`superpowers/specs/2026-10-10-r3-buildings-slice-design.md`](superpowers/specs/2026-10-10-r3-buildings-slice-design.md).
-Details: `.superpowers/sdd/2026-10-10-r3-buildings-slice/task-12-report.md`.
+Details: the R3 task 12 report in the (untracked) session notes.
 
 | Gate | Tool | Result |
 |---|---|---|
@@ -1003,8 +1003,8 @@ Bench sweep (`scripts/bench/sweep.py --site pendleton --axis buildings=off,on --
 buildings_physics=on,off --repeat 2`, `.cache/bench-r3r4/r3-buildings-sweep/`): only the dense_pass phase (300 m HAE,
 100 m/s, 20° down, over Oceanside housing and commerce), trees off in every row (the sweep always sends both master
 switches), 720p EO. Increase of each row's median over the all-off row (game 3.47–3.52 ms p50, GPU 19.4–20.5 ms,
-memory 8,904–8,911 MiB). Memory is the process's footprint (`footprint`, unified memory on the M1 Pro: CPU-side tile
-and physics data count too), not VRAM. Budget (bench spec §4): game p50 +1.5 ms, p95 +3.0 ms, GPU p50 +5.0 ms,
+memory 8,904–8,911 MiB). Memory is the graphics-attributed part of the macOS process footprint (`IOAccelerator*` +
+`(graphics)` rows of `footprint`; CPU heap excluded); unified memory, a VRAM proxy. Budget (bench spec §4): game p50 +1.5 ms, p95 +3.0 ms, GPU p50 +5.0 ms,
 memory +381 MiB (400 MB).
 
 | SSE | Physics | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
@@ -1048,8 +1048,10 @@ unknown; a crashed run leaves `CrashReportClient` holding port 8080, so the next
 ### R3/R4 bench check and combined cost (2026-10-11, macOS)
 
 Same machine and method as the R3 sweep above (M1 Pro / Metal, 720p EO, `dense_pass`, 2 repeats per row, medians). The
-runs after the bench docs landed (`scripts/bench/README.md`, "Realism vs cost sweep"). Memory is the process footprint
-(`--gpu-mem` on macOS: `IOAccelerator` rows plus every `(graphics)` row, unified memory, not VRAM). The older
+runs after the bench docs landed (`scripts/bench/README.md`, "Realism vs cost sweep"). Memory (`--gpu-mem`) is
+the graphics-attributed part of the macOS process footprint (`IOAccelerator*` + `(graphics)` rows; CPU heap excluded);
+unified memory, a VRAM proxy. The sweep's memory figures, and its budget verdicts, are each row's peak over one 90 s
+`dense_pass` after the warm-up, not over a whole run (the full bench below is). The older
 `memcheck` reference of 4,258 MiB was taken under the previous rule (IOAccelerator rows only) and is not comparable;
 under the current rule the all-off `dense_pass` reference is **8,889-8,901 MiB** (`.cache/bench-r3r4/reference/`).
 

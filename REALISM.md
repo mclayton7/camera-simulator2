@@ -436,6 +436,10 @@ truth.
 WorldCover code 10 with a deterministic hash, HISM cells, no collision. Acceptance on Pendleton passed: placement on code
 10, grounding (|dz| < 1 cm), determinism from two approach paths, origin shift, off switch, `gt_occlusion_check.py`; a
 truck under trees has visibility < 1 with a correct box; bench budget met at radius 1000 m (game +0.63 ms, +81 MiB).
+Defaults chosen 2026-10-11 (they were proposed until the combined sweep): radius 1000 m, density 1.0, shadows on.
+Combined with buildings at their chosen SSE 64: game +1.05 ms, GPU +2.98 ms, +359 MiB over both off, inside the budget
+(memory by 22 MiB, a 90 s `dense_pass` figure). Trees inside building footprints are dropped when the package has
+buildings (land cover alone would put ~10 % of footprint area under trees).
 Still deferred (the rest of this section): canopy % and height rasters, species and shrubs, impostors and distance
 fade, mapped trees, poles/fences/clutter, per-instance thermal class, tree collision, the canopy-fraction gate.
 

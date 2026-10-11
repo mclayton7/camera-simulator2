@@ -1851,7 +1851,7 @@ rebuild and no-`[buildings]` builds byte-identical; CIGI roof HOT within 0.01 m 
 230; DIS truck steps ≤ 0.085 m across footprints; `scene.buildings.enabled: false` = R2 (identical CIGI responses);
 `dis_vehicle_check.py` / `gt_occlusion_check.py` pass; UE 538/538, GPU 26/26, scene tooling 498 passed. Bench sweep: 30
 fps, 0 dropped frames, game thread +0.45–0.68 ms, but the 400 MB memory budget fails at SSE 16, the pre-sweep starting value (+588 MiB in the R3 sweep, +607 MiB in the combined sweep, `docs/scene-packages.md` "R3/R4 bench check and combined cost";
-graphics-attributed footprint on the M1 Pro) and passes at SSE 64 with physics meshes (+272 MiB): default 64, chosen 2026-10-11 from the combined sweep (the only both-on setting inside the budget). Full bench at SSE 16: every
+the graphics-attributed part of the macOS process footprint on the M1 Pro: `IOAccelerator*` + `(graphics)` rows, CPU heap excluded; unified memory, a VRAM proxy) and passes at SSE 64 with physics meshes (+272 MiB): default 64, chosen 2026-10-11 from the combined sweep (the only both-on setting inside the budget). Full bench at SSE 16: every
 existing phase 30 fps, 0 dropped, game p50 +0.02–0.70 ms, memory +0.6–1.1 GiB as the tile cache fills (one run each).
 Open: footprint IoU (gate 2, needs ~30 human-traced NAIP outlines), the user's visual review, Linux/Vulkan (`FOR_LINUX.md`
 task 5). One intermittent renderer crash (SIGSEGV in `FMeshDrawShaderBindings::SetOnCommandList` on a draw task, 5 s
@@ -1867,13 +1867,16 @@ library with sha256 check) scattered per 100 m global cell by `CamSimHash` on la
 (`scripts/vegetation_check.py`, Pendleton R2): placement 8,992 trees, 0 off code 10; ground check max |dz| 0.000 m (after a
 fix: the check now waits for a settled view; it first measured 2.1 m against still-refining tiles); determinism 113 common
 cells, 0 hash mismatches between a north and a south approach; origin shift SSIM 0.983 vs floor 0.970, 0 hash changes;
-off switch SSIM 0.97951 vs the baseline pair's 0.97957; `gt_occlusion_check.py` passes; a DIS truck under the canopy has
+off switch SSIM 0.97957 / 0.97997 vs the baseline pair's 0.97957; `gt_occlusion_check.py` passes; a DIS truck under the canopy has
 visibility 0.15 (oblique) / 0.002 (nadir) with the amodal box on the truck; tree bases within 6 mm of the drawn surface out
 to 986 m. Bench sweep (`dense_pass`): 30 fps, 0 dropped in every row; at radius 1000 / density 1.0 / shadows on: game
 +0.63 ms, GPU +1.13 ms, +81 MiB; radius 2000 at density 1.0 fails the game-thread budget (+1.64 ms). Defaults chosen 2026-10-11:
-keep 1000 / 1.0 / on. UE 538/538, GPU 26/26. Open: the user's visual review (low obliques and
-the sweep's contact sheet), the combined buildings + trees bench row (waits for the buildings SSE default), Linux/Vulkan.
-No editor work.
+keep 1000 / 1.0 / on. Combined with buildings (`pendleton-r3`, buildings SSE 64 with physics, the chosen default):
+game +1.05 ms, GPU +2.98 ms, +359 MiB over both off, inside the budget (memory by 22 MiB; a 90 s `dense_pass` figure,
+`docs/scene-packages.md` "R3/R4 bench check and combined cost"). Trees inside building footprints are dropped when the
+package has buildings (final review I1: a second `SampleHeightMostDetailed` batch per cell on the buildings tileset;
+land cover alone would put ~10 % of footprint area under trees). UE 538/538, GPU 26/26 at the slice. Open: the user's
+visual review (low obliques and the sweep's contact sheet), Linux/Vulkan. No editor work.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

@@ -15,7 +15,7 @@ to compare runs from different sites.
 warm-up grows to 180 s to fly it once, and the shots gain `dense_oblique` (the path's midpoint). The path comes from
 `select_dense_path.py PKG` (rule in its docstring; built-up land stands in for buildings, so it does not depend on the
 buildings layer): `uv run --project scripts/scene python scripts/bench/select_dense_path.py PKG`.
-Then 12 fixed shots via `GET /snapshot`: the 8 base
+Then 12 fixed shots (13 on Pendleton, with `dense_oblique`) via `GET /snapshot`: the 8 base
 poses, an EO `night_slant`, and an IR variant of `nadir_3km`, `dusk_slant`,
 `night_slant` (`Pose.sensor_id`: 0 EO, 1 IR, sent every frame via CIGI
 Sensor Control). Each shot is also fetched via `GET /snapshot/sensor`
@@ -96,8 +96,8 @@ Stored results: `baselines/<platform>-<gpu>-<label>.json` and
   sensor graph never ran (e.g. runs from before 3B, or no GPU timing).
 - `game_ms_p95`: game-thread p95 per phase (the budget's tail metric).
 - `gpu_mem_mib_max`: peak GPU memory in a phase, only with `--gpu-mem`. On Linux it is `nvidia-smi` whole-GPU
-  `memory.used`. On macOS (unified memory) it is the whole-process footprint, not VRAM: the `IOAccelerator` rows plus
-  every `(graphics)` row of `footprint`, so CPU-side tile and physics data count too.
+  `memory.used`. On macOS it is the graphics-attributed part of the macOS process footprint (`IOAccelerator*` + `(graphics)`
+  rows of `footprint`; CPU heap excluded); unified memory, a VRAM proxy.
 - SSIM per shot is information only; TSR jitter and streaming order vary.
 
 Needs a Cesium ion token (config) and network. Compare warm-cache runs only.
