@@ -98,6 +98,7 @@ Stored results: `baselines/<platform>-<gpu>-<label>.json` and
 - `gpu_mem_mib_max`: peak GPU memory in a phase, only with `--gpu-mem`. On Linux it is `nvidia-smi` whole-GPU
   `memory.used`. On macOS it is the graphics-attributed part of the macOS process footprint (`IOAccelerator*` + `(graphics)`
   rows of `footprint`; CPU heap excluded); unified memory, a VRAM proxy.
+  The bench budget for it is +1024 MiB over both-off, over a whole run as well as the sweep window (raised 2026-10-11 from 381 MiB; spec section 4).
 - SSIM per shot is information only; TSR jitter and streaming order vary.
 
 Needs a Cesium ion token (config) and network. Compare warm-cache runs only.

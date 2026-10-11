@@ -42,8 +42,10 @@ in the ground-truth masks, but CIGI and DIS never see them.
   `scene.buildings.enabled: false`, or `vegetation.drop_in_buildings: false`) there is no second batch and nothing
   changes. CamSim runs nothing extra on the game thread beyond the per-cell spawn, but Cesium loads the buildings'
   most detailed (z15) tiles under every tree point to answer the queries: in `dense_pass` the check costs about
-  +0.3 ms game p50, +2.5 ms game p95 and +34 MiB, enough to push the both-on defaults over the game p95 and memory
-  budgets (`scene-packages.md`, "R3/R4 bench check and combined cost"). The dump line carries `in_buildings` (trees
+  +0.3 ms game p50, +2.5 ms game p95 and +34 MiB, which puts buildings SSE 64 + trees at +3.61 ms game p95, over the 3.0 ms
+  limit. The user chose on 2026-10-11 to keep the check on by default and accept that overrun; a build-time footprint
+  exclusion in the scene package (no runtime sampling) is the tracked follow-up (`scene-packages.md`, "R3/R4 bench
+  check and combined cost"; ROADMAP Realism track). The dump line carries `in_buildings` (trees
   dropped in that cell), and when streaming settles with new drops a `Vegetation: settled, N cells spawned, M trees
   dropped inside building footprints so far` line is logged (at most once per 30 s).
 - **Cells** (`Vegetation/VegetationCellActor.h`): one actor per cell with a `UCesiumGlobeAnchorComponent` at
@@ -284,7 +286,7 @@ uv run --with numpy --with pillow python scripts/bench/sweep.py --scene "$PKG" -
 ```
 
 Increase of the row median over the trees-off row (game 3.50 / 6.53 ms p50 / p95, GPU 19.45 ms, footprint 8,894 MiB).
-Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 ≤ +3.0 ms, GPU ≤ +5.0 ms, memory ≤ +381 MiB.
+Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 ≤ +3.0 ms, GPU ≤ +5.0 ms, memory ≤ +1024 MiB (raised 2026-10-11 by the user from 381 MiB; every row below passes both).
 
 | radius m | density | shadows | game p50 | game p95 | GPU p50 | memory MiB | budget |
 |---|---|---|---|---|---|---|---|
@@ -313,8 +315,9 @@ Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 
 - The spec's combined row (buildings and trees both on vs both off, `pendleton-r3`) was run in the combined sweep
   (`scene-packages.md`, "R3/R4 bench check and combined cost"): at the chosen defaults (buildings SSE 64 with
   physics, trees 1000 m / 1.0 / shadows on) game p50 +1.05 ms, p95 +1.09 ms, GPU +2.98 ms, memory +359 MiB: inside
-  the budget, memory within 22 MiB of its limit (a 90 s `dense_pass` figure, before the footprint check existed;
-  with it on: +1.40 / +3.61 / +3.54 ms, +408 MiB, over the p95 and memory budgets). Trees alone on that package: +0.61 /
+  the budget (a 90 s `dense_pass` figure, before the footprint check existed; with it on: +1.40 / +3.61 / +3.54 ms,
+  +408 MiB: game p95 is over its 3.0 ms limit, which the user accepted on 2026-10-11 to keep the check on by default,
+  with a build-time footprint exclusion as the follow-up; memory passes the raised 1024 MiB budget). Trees alone on that package: +0.61 /
   +0.58 / +1.12 ms, +52 MiB.
 
 ## Known limits

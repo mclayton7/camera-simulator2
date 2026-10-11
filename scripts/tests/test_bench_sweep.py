@@ -91,7 +91,7 @@ def test_aggregate_ranges_and_budget_against_the_all_off_row(tmp_path):
     v = agg[1]["budget"]
     assert v["game_ms_p50"] is True  # +0.95 ms (median 4.0 vs 3.05) <= 1.5
     assert v["game_ms_p95"] is False  # +4.0 ms > 3.0
-    assert v["gpu_mem_mib_max"] is True  # +300 MiB <= 381
+    assert v["gpu_mem_mib_max"] is True  # +300 MiB <= 1024
     assert agg[1]["within_budget"] is False
 
 

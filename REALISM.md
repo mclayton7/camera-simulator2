@@ -393,9 +393,9 @@ clamp ignores it. Pendleton: 82,260 buildings in 1,765 tiles, 247.9 MB, layer bu
 validator clean; rebuild and no-`[buildings]` packages byte-identical; heights 73.2 % Overture / 0.5 % floors / 26.3 %
 default; CIGI roof HOT within 0.01 m with 230, LOS range within 0.03 m of the wall with 230; DIS truck steps ≤ 0.085 m
 crossing footprints; buildings off = R2 (identical CIGI responses, shots within run to run). Bench: 30 fps and 0
-dropped frames in every row; game thread +0.45–0.68 ms; the 400 MB memory budget fails at SSE 16, the pre-sweep starting value (+588 MiB,
-macOS graphics footprint) and passes at SSE 64 with physics (+272 MiB): **default 64, chosen 2026-10-11 from the combined
-sweep (the only both-on setting inside the budget)**. **Open:** footprint
+dropped frames in every row; game thread +0.45–0.68 ms; the original 400 MB (381 MiB) memory budget failed at SSE 16, the pre-sweep starting value (+588 MiB,
+macOS graphics footprint) and passed at SSE 64 with physics (+272 MiB): **default 64, chosen 2026-10-11 from the combined
+sweep (then the only both-on setting inside the budget)**. The user raised the memory budget to +1024 MiB (whole run) the same day; every sweep row passes it, and SSE 64 stays the default. With trees and the footprint check on, buildings SSE 64 is at +3.61 ms game p95 (limit 3.0), an overrun the user accepted. **Open:** footprint
 IoU (gate 2: needs ~30 human-traced NAIP outlines); visual review of the EO shots (pending the user); Linux/Vulkan
 (`FOR_LINUX.md`, task 5). **Deferred to the R3 deepening pass:** gabled/hipped roofs, facade/roof materials (human editor
 work, below), bridges, LiDAR nDSM heights, thermal class from the per-feature metadata, building semantic class in ground
@@ -438,10 +438,14 @@ WorldCover code 10 with a deterministic hash, HISM cells, no collision. Acceptan
 truck under trees has visibility < 1 with a correct box; bench budget met at radius 1000 m (game +0.63 ms, +81 MiB).
 Defaults chosen 2026-10-11 (they were proposed until the combined sweep): radius 1000 m, density 1.0, shadows on.
 Combined with buildings at their chosen SSE 64: game +1.05 ms, GPU +2.98 ms, +359 MiB over both off, inside the budget
-(memory by 22 MiB, a 90 s `dense_pass` figure). Trees inside building footprints are dropped when the package has
+(a 90 s `dense_pass` figure, before the footprint check). Trees inside building footprints are dropped when the package has
 buildings (land cover alone would put ~10 % of footprint area under trees); the check costs +0.3 ms game p50, +2.5 ms
-p95 and +34 MiB, which takes the both-on defaults over the game p95 and memory budgets, and a whole-run bench exceeds the
-memory budget in the built-up phases (`docs/scene-packages.md`, "R3/R4 bench check and combined cost"): still open.
+p95 and +34 MiB, which puts buildings SSE 64 + trees at +3.61 ms game p95, over the 3.0 ms limit. **User decision
+2026-10-11:** keep the check on by default and accept that p95 overrun (tracked); raise the memory budget to +1024 MiB
+over a whole run (a full both-on run peaks at +907 / +952 MiB in `coast_pass` / `dense_pass`, inside it). Next: mark
+building footprints in the scene package at build time so trees are excluded without runtime sampling, then remove the
+runtime check (ROADMAP Realism track; it touches the thermal class under buildings, so it needs its own design).
+See `docs/scene-packages.md`, "R3/R4 bench check and combined cost".
 Still deferred (the rest of this section): canopy % and height rasters, species and shrubs, impostors and distance
 fade, mapped trees, poles/fences/clutter, per-instance thermal class, tree collision, the canopy-fraction gate.
 

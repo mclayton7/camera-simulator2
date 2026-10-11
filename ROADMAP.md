@@ -1850,8 +1850,8 @@ surface clamp. Pendleton: 82,260 buildings, 1,765 tiles, 247.9 MB, 36 s; `verify
 rebuild and no-`[buildings]` builds byte-identical; CIGI roof HOT within 0.01 m and LOS within 0.03 m of the wall, both
 230; DIS truck steps ≤ 0.085 m across footprints; `scene.buildings.enabled: false` = R2 (identical CIGI responses);
 `dis_vehicle_check.py` / `gt_occlusion_check.py` pass; UE 538/538, GPU 26/26, scene tooling 498 passed. Bench sweep: 30
-fps, 0 dropped frames, game thread +0.45–0.68 ms, but the 400 MB memory budget fails at SSE 16, the pre-sweep starting value (+588 MiB in the R3 sweep, +607 MiB in the combined sweep, `docs/scene-packages.md` "R3/R4 bench check and combined cost";
-the graphics-attributed part of the macOS process footprint on the M1 Pro: `IOAccelerator*` + `(graphics)` rows, CPU heap excluded; unified memory, a VRAM proxy) and passes at SSE 64 with physics meshes (+272 MiB): default 64, chosen 2026-10-11 from the combined sweep (the only both-on setting inside the budget). Full bench at SSE 16: every
+fps, 0 dropped frames, game thread +0.45–0.68 ms, but the original 400 MB (381 MiB) memory budget failed at SSE 16, the pre-sweep starting value (+588 MiB in the R3 sweep, +607 MiB in the combined sweep, `docs/scene-packages.md` "R3/R4 bench check and combined cost";
+the graphics-attributed part of the macOS process footprint on the M1 Pro: `IOAccelerator*` + `(graphics)` rows, CPU heap excluded; unified memory, a VRAM proxy) and passed at SSE 64 with physics meshes (+272 MiB): default 64, chosen 2026-10-11 from the combined sweep (then the only both-on setting inside the budget). The user raised the memory budget to +1024 MiB (whole run) on 2026-10-11, under which every sweep row passes; SSE 64 stays the default. With trees and the footprint check on it is at +3.61 ms game p95 (limit 3.0), accepted by the user. Full bench at SSE 16: every
 existing phase 30 fps, 0 dropped, game p50 +0.02–0.70 ms, memory +0.6–1.1 GiB as the tile cache fills (one run each).
 Open: footprint IoU (gate 2, needs ~30 human-traced NAIP outlines), the user's visual review, Linux/Vulkan (`FOR_LINUX.md`
 task 5). One intermittent renderer crash (SIGSEGV in `FMeshDrawShaderBindings::SetOnCommandList` on a draw task, 5 s
@@ -1872,16 +1872,24 @@ visibility 0.15 (oblique) / 0.002 (nadir) with the amodal box on the truck; tree
 to 986 m. Bench sweep (`dense_pass`): 30 fps, 0 dropped in every row; at radius 1000 / density 1.0 / shadows on: game
 +0.63 ms, GPU +1.13 ms, +81 MiB; radius 2000 at density 1.0 fails the game-thread budget (+1.64 ms). Defaults chosen 2026-10-11:
 keep 1000 / 1.0 / on. Combined with buildings (`pendleton-r3`, buildings SSE 64 with physics, the chosen default):
-game +1.05 ms, GPU +2.98 ms, +359 MiB over both off, inside the budget (memory by 22 MiB; a 90 s `dense_pass` figure,
+game +1.05 ms, GPU +2.98 ms, +359 MiB over both off, inside the budget (a 90 s `dense_pass` figure before the footprint check,
 `docs/scene-packages.md` "R3/R4 bench check and combined cost"). Trees inside building footprints are dropped when the
 package has buildings (final review I1: a second `SampleHeightMostDetailed` batch per cell on the buildings tileset;
 land cover alone would put ~10 % of footprint area under trees; 373 of 6,892 trees, 5.4 %, dropped in a Mainside session;
 `vegetation.drop_in_buildings`). The check costs +0.3 ms game p50, +2.5 ms p95 and +34 MiB in `dense_pass`, which puts
-the both-on defaults over the game p95 and memory budgets; a whole-run bench at the defaults also exceeds the memory
-budget in `coast_pass` / `dense_pass` (+907 / +952 MiB) despite the new 512 MB buildings tile cache
-(`scene.buildings.maximum_cached_bytes_mb`; `far_origin` fell from +1,131 to +371 MiB). Open: decide between the check
-and the budget. UE 538/538, GPU 26/26 at the slice. Open: the user's
-visual review (low obliques and the sweep's contact sheet), Linux/Vulkan. No editor work.
+buildings SSE 64 + trees at +3.61 ms game p95, over the 3.0 ms limit. **User decisions 2026-10-11:** keep the check on by
+default and accept that p95 overrun (tracked; follow-up item below); raise the memory budget to +1024 MiB over a whole
+run. A whole-run bench at the defaults peaks at +907 / +952 MiB in `coast_pass` / `dense_pass`, inside it, with the
+new 512 MB buildings tile cache (`scene.buildings.maximum_cached_bytes_mb`; `far_origin` fell from +1,131 to +371
+MiB). UE 543/543, GPU 26/26 at the slice. Open: the user's visual review (low obliques and the sweep's contact sheet)
+and Linux/Vulkan. No editor work.
+
+- [ ] **Build-time building-footprint exclusion for trees** (follow-up to the 2026-10-11 decision to keep
+  `vegetation.drop_in_buildings` on): mark building footprints in the scene package (e.g. burn them into `landcover/`
+  or a dedicated raster) so trees are excluded without runtime `SampleHeightMostDetailed`; then remove the runtime
+  check and its +2.5 ms game p95 / +34 MiB (buildings SSE 64 + trees is +3.61 ms p95, over the 3.0 ms limit, accepted
+  until then). It touches the thermal class under buildings (today thermal IR uses the land-cover class under a
+  building), so it needs its own design before implementation.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

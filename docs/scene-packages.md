@@ -976,7 +976,7 @@ Details: the R3 task 12 report in the (untracked) session notes.
 | 3 Heights | `verify --deep` (`buildings_heights`) | **Pass.** Every roof within 0.01 m of the recomputation from the snapshot and the terrain sources. Height source: `overture_height` 60,207 (73.2 %), `overture_floors` 417 (0.5 %), `default` 21,636 (26.3 %) |
 | 4 CIGI | `send_cigi_test.py` packets (session script) | **Pass** (table below): roof HOT within 0.01 m of the built roof, code 230; 5 m outside = ground with the land-cover code; LOS hits 30.03 m along a 30.0 m path to the west wall, code 230 |
 | 5 DIS | `send_dis_test.py truck-loop --location 33.305,-117.314`; `dis_vehicle_check.py`; `gt_occlusion_check.py` | **Pass.** The re-centred loop crosses 12 Mainside footprints (231 of 1,942 annotated frames inside one). COCO `geo.alt_m` every frame (ML interval 1): largest frame-to-frame change **0.085 m** (p99 0.078 m); the truck stays on the terrain inside footprints (roof at least 3.3 m above it), truck minus DEM ground median −0.06 m, max \|·\| 1.20 m. `dis_vehicle_check.py` PASS (one stable id each for truck and boat); `gt_occlusion_check.py` PASS (both on the SF scene) |
-| 6 Bench | `bench/sweep.py` (dense_pass, repeat 2); `run_bench.py` all phases (1 run each) | **Chosen default SSE 64** (2026-10-11, from the combined sweep below: the only both-on setting inside the budget in the 90 s `dense_pass` window; over a whole run with trees on, and with the footprint check on, the memory and game p95 budgets are exceeded in the built-up phases: "Full bench, both on" below). 30 fps and 0 dropped frames in every sweep row and every phase. Game thread and GPU within budget in every row. Memory: +588 MiB at SSE 16 with physics, the pre-sweep starting value (budget +381); only SSE 32 without physics and SSE 64 pass. Existing phases at SSE 16: game p50 +0.02 to +0.70 ms (slew the most), not within noise but within budget; memory grows to +1.1 GiB over the full run as the tile cache fills (tables below) |
+| 6 Bench | `bench/sweep.py` (dense_pass, repeat 2); `run_bench.py` all phases (1 run each) | **Chosen default SSE 64** (2026-10-11, from the combined sweep below, when the memory budget was still +381 MiB and SSE 64 was the only both-on setting inside it; the user then raised the budget to +1024 MiB on 2026-10-11, under which SSE 16 passes the sweep too, and SSE 64 stays the default. With trees on and the footprint check on, the game p95 budget is exceeded in `dense_pass`, an overrun the user accepted: "Full bench, both on" below). 30 fps and 0 dropped frames in every sweep row and every phase. Game thread and GPU within budget in every row. Memory: +588 MiB at SSE 16 with physics, the pre-sweep starting value (it failed the original +381 MiB budget; every sweep row passes the current +1024 MiB budget). Existing phases at SSE 16: game p50 +0.02 to +0.70 ms (slew the most), not within noise but within budget; memory grows to +1.1 GiB over the full run as the tile cache fills (tables below) |
 | 7 Off switch | `CAMSIM_SCENE_BUILDINGS_ENABLED=0` on `pendleton-r3` vs `pendleton-r2` | **Pass.** All six HAT/HOT and both LOS responses identical (HOT, HAT, material code, normal, range). Shots SSIM 0.975 (Mainside nadir), 0.981 (Mainside low oblique), 0.992 (dense_oblique), within run to run (R2: 0.960–0.994) |
 | 8 Visual review | EO shots | **Pending user review.** dense_pass contact sheet `.cache/bench-r3r4/r3-buildings-sweep/sweep_sheet.png`; `.cache/r3/visual/`: `mainside_low_oblique_buildings_{on,off}.png`, `mainside_nadir_buildings_{on,off}.png`, `dense_oblique_buildings_{on,off}.png` (and `_r2`), `truck_side_*.png` (the DIS truck between buildings) |
 
@@ -1005,15 +1005,15 @@ buildings_physics=on,off --repeat 2`, `.cache/bench-r3r4/r3-buildings-sweep/`): 
 switches), 720p EO. Increase of each row's median over the all-off row (game 3.47–3.52 ms p50, GPU 19.4–20.5 ms,
 memory 8,904–8,911 MiB). Memory is the graphics-attributed part of the macOS process footprint (`IOAccelerator*` +
 `(graphics)` rows of `footprint`; CPU heap excluded); unified memory, a VRAM proxy. Budget (bench spec §4): game p50 +1.5 ms, p95 +3.0 ms, GPU p50 +5.0 ms,
-memory +381 MiB (400 MB).
+memory +1024 MiB (raised 2026-10-11 by the user from 381 MiB / 400 MB; the table's verdicts are against +1024).
 
 | SSE | Physics | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
 |---|---|---|---|---|---|---|
-| 8 | on | +0.68 | +0.64 | +3.29 | +764 | memory fails |
-| 8 | off | +0.57 | +0.51 | +3.29 | +557 | memory fails |
-| 16 (pre-sweep start) | on | +0.61 | +0.54 | +2.63 | +588 | memory fails |
-| 16 | off | +0.54 | +0.52 | +1.90 | +426 | memory fails |
-| 32 | on | +0.53 | +0.41 | +1.72 | +396 | memory fails (by 15) |
+| 8 | on | +0.68 | +0.64 | +3.29 | +764 | pass |
+| 8 | off | +0.57 | +0.51 | +3.29 | +557 | pass |
+| 16 (pre-sweep start) | on | +0.61 | +0.54 | +2.63 | +588 | pass |
+| 16 | off | +0.54 | +0.52 | +1.90 | +426 | pass |
+| 32 | on | +0.53 | +0.41 | +1.72 | +396 | pass |
 | 32 | off | +0.46 | +0.40 | +1.00 | +276 | pass |
 | **64 (default)** | **on** | +0.45 | +0.39 | +0.47 | **+272** | pass |
 | 64 | off | +0.44 | +0.59 | +0.48 | +198 | pass |
@@ -1082,15 +1082,15 @@ fps and 0 dropped frames. Increase of the row median over the all-off row:
 | Buildings SSE | Trees | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
 |---|---|---|---|---|---|---|
 | off | on | +0.61 | +0.58 | +1.12 | +52 | pass |
-| 16 | off | +0.63 | +0.76 | +2.41 | +607 | memory fails |
-| 16 | on | +1.24 | +1.24 | +4.34 | +674 | memory fails (GPU within 0.7 ms of its limit) |
+| 16 | off | +0.63 | +0.76 | +2.41 | +607 | pass |
+| 16 | on | +1.24 | +1.24 | +4.34 | +674 | pass (GPU within 0.7 ms of its limit) |
 | 64 | off | +0.45 | +0.49 | +1.00 | +290 | pass |
-| 64 | on | +1.05 | +1.09 | +2.98 | +359 | pass (memory within 22 MiB of its limit) |
+| 64 | on | +1.05 | +1.09 | +2.98 | +359 | pass |
 
-Game-thread and memory costs add (both-on = the two single-feature rows to within 0.1 ms / 17 MiB); GPU time is 0.8-0.9 ms above the sum. Of the both-on rows only SSE 64 fits the
-budget, and only just on memory. Contact sheet: `.cache/bench-r3r4/combined/sweep_sheet.png`. Defaults chosen 2026-10-11 from
-this sweep: buildings SSE 64 with physics meshes (the only both-on setting inside the budget; 16 was the pre-sweep
-starting value), trees unchanged at radius 1000 m, density 1.0, shadows on.
+Game-thread and memory costs add (both-on = the two single-feature rows to within 0.1 ms / 17 MiB); GPU time is 0.8-0.9 ms above the sum. Under the original +381 MiB memory budget only the SSE 64 both-on row fitted, by 22 MiB; under the current +1024 MiB budget every row passes
+(SSE 16 both-on: +674 MiB, GPU +4.34 ms of +5.0). Contact sheet: `.cache/bench-r3r4/combined/sweep_sheet.png`. Defaults chosen 2026-10-11 from
+this sweep: buildings SSE 64 with physics meshes (the only both-on setting inside the +381 MiB budget then in force; 16 was the pre-sweep
+starting value; it stays the default under the raised +1024 MiB budget), trees unchanged at radius 1000 m, density 1.0, shadows on.
 
 Full bench, both on at the defaults (2026-10-11, after the final review: buildings SSE 64 with physics and the new
 512 MB buildings tile cache, `scene.buildings.maximum_cached_bytes_mb`; trees 1000 m / 1.0 / shadows on with the
@@ -1109,12 +1109,12 @@ phase 29.8-30.0 fps and 0 dropped frames:
 
 - The buildings cache cap works where it can: `far_origin` (300 km east, no buildings in view) is +371 MiB, against
   +1,131 MiB in the R3 full bench at SSE 16 with the terrain's 2 GiB cache (trees off there).
-- Over the built-up phases the memory budget (+381 MiB) does not hold over a whole run: +907 MiB in `coast_pass` and
-  +952 MiB in `dense_pass`, against the sweep's +359 MiB for the same setting. Cesium's `MaximumCachedBytes` only
+- Over the built-up phases the memory grows over a whole run: +907 MiB in `coast_pass` and
+  +952 MiB in `dense_pass`, against the sweep's +359 MiB for the same setting. That broke the old +381 MiB budget; the user raised the budget to +1024 MiB over a whole run on 2026-10-11, and the peak is inside it. Cesium's `MaximumCachedBytes` only
   evicts tiles that are not in use, so tiles in view, their physics meshes and the trees are outside the cap. The
   sweep's 90 s `dense_pass` window, right after the warm-up, does not see this growth.
-- `dense_pass` game p50 +2.01 ms and p95 +3.18 ms are over the budget too (+1.5 / +3.0). One run each, and part of it
-  is the footprint check (next paragraph).
+- `dense_pass` game p50 +2.01 ms and p95 +3.18 ms are over the game budget (+1.5 / +3.0). One run each, and part of it
+  is the footprint check (next paragraph); the p95 overrun is accepted (decision below).
 
 Footprint check cost (`vegetation.drop_in_buildings`, A/B; `run_bench.py --phases dense_pass --shots dense_oblique`,
 both features on at the defaults, 2 repeats each, `.cache/bench-r3r4/i1-ab/`), increase over the combined sweep's
@@ -1122,13 +1122,15 @@ all-off row:
 
 | Footprint check | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
 |---|---|---|---|---|---|
-| off | +1.12 | +1.07 | +2.93 | +374 | pass (memory by 7 MiB) |
-| on (default) | +1.40 | +3.61 | +3.54 | +408 | FAIL: game p95, memory |
+| off | +1.12 | +1.07 | +2.93 | +374 | pass |
+| on (default) | +1.40 | +3.61 | +3.54 | +408 | FAIL: game p95 (accepted); memory passes |
 
 The off rows reproduce the combined sweep's SSE 64 both-on row (+1.05 / +1.09 / +2.98 / +359). The check costs about
 +0.3 ms game p50, +2.5 ms game p95 and +34 MiB: `SampleHeightMostDetailed` on the buildings tileset loads its most
 detailed (z15) tiles under every tree point out to 1 km, which SSE 64 would otherwise not load. It drops 5.4 % of the
-trees in a Mainside/Oceanside session (373 of 6,892, below). So with the check on, the chosen defaults no longer fit the
-`dense_pass` budget; `vegetation.drop_in_buildings: false` (trees in footprints, the review's finding I1) or burning the
-footprints into `landcover/` at build time (no runtime cost; changes the thermal class under buildings) are the
-options.
+trees in a Mainside/Oceanside session (373 of 6,892, below). So with the check on, buildings SSE 64 + trees is at +3.61 ms game p95, over the 3.0 ms limit.
+**Decision (user, 2026-10-11): keep the check on by default** (`vegetation.drop_in_buildings: true`) and accept the
+measured cost (+0.3 ms p50, +2.5 ms p95, +34 MiB); the p95 overrun is accepted and tracked. The next step is a
+build-time fix: mark building footprints in the scene package so trees are excluded without runtime sampling, then
+remove the runtime check (ROADMAP Realism track; it touches the thermal class under buildings, so it needs its own
+design). `vegetation.drop_in_buildings: false` stays available as a switch.

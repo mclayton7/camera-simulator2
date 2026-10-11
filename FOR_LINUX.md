@@ -193,7 +193,7 @@ R1/R2 package, then check the runtime and the cost on the 5080.
   off at N = 1, 2, 4 (`docs/capacity-linux-rtx5080.md`: 4 was comfortable before R3, VRAM-bound). Tooling gap: neither
   `scale_bench.py` nor `run_bench.py --docker` mounts a scene package, and `scale_bench.py` takes no `--env`; add both,
   as task 1f does for `run_bench.py`. Report game thread, GPU and VRAM per instance against the budget (+1.5 ms game
-  p50, +5 ms GPU p50, +400 MB), and the SSE the user picked on the Mac.
+  p50, +5 ms GPU p50, +1024 MiB memory over a whole run, raised from 400 MB on 2026-10-11), and the SSE the user picked on the Mac.
 
 Record the results in `docs/scene-packages.md` (an "R3 on Linux" table after "R3 buildings slice") and in `ROADMAP.md`'s
 Realism paragraph.

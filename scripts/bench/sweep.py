@@ -37,8 +37,8 @@ SWITCH = {"on": "1", "off": "0"}  # CamSim reads env bools as ints
 PHASE = "dense_pass"
 SHOT = "dense_oblique"
 METRICS = ["game_ms_p50", "game_ms_p95", "gpu_ms_p50", "wall_ms_p95", "dropped", "emitted_fps", "gpu_mem_mib_max"]
-# Spec section 4: increase of a row's median over the all-off row's median. 400 MB = 381 MiB.
-BUDGET = {"game_ms_p50": 1.5, "game_ms_p95": 3.0, "gpu_ms_p50": 5.0, "gpu_mem_mib_max": 381.0}
+# Spec section 4: increase of a row's median over the all-off row's median. Memory: 1 GiB (raised 2026-10-11 from 381 MiB).
+BUDGET = {"game_ms_p50": 1.5, "game_ms_p95": 3.0, "gpu_ms_p50": 5.0, "gpu_mem_mib_max": 1024.0}
 MIN_FPS = 29.5  # "30 fps": emitted_fps over a 90 s phase reads ~29.9
 
 

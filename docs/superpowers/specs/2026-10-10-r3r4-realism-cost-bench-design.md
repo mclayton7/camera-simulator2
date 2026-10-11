@@ -82,8 +82,10 @@ M1 Pro, 1080p, EO, `dense_pass`, buildings and trees both on at their defaults, 
 | Game-thread p50 | ≤ +1.5 ms combined |
 | Game-thread p95 | ≤ +3.0 ms combined |
 | GPU frame p50 | ≤ +5 ms |
-| VRAM | ≤ +400 MB (381 MiB as sampled) |
+| Memory | ≤ +1024 MiB, measured as the macOS graphics-attributed footprint (`IOAccelerator*` + `(graphics)` rows of `footprint`; CPU heap excluded; unified memory, a VRAM proxy; Linux: `nvidia-smi` whole-GPU `memory.used`). Applies to the whole Pendleton run (peak over every phase) as well as the sweep window |
 | Existing phases | within noise of R2 (game p50, wall p95) |
+
+Note (raised 2026-10-11 by the user from 381 MiB after a full run with both features on measured +907/+952 MiB in coast_pass/dense_pass): the memory budget was +400 MB (381 MiB as sampled). The game p95 budget stays +3.0 ms; the user accepted the tree footprint check's overrun of it (+3.61 ms, ROADMAP Realism track).
 
 Defaults are the most realistic row (largest radius / density, smallest SSE, shadows on) that fits the budget, chosen
 with the user from `sweep.md` and the contact sheet. Linux / RTX 5080 at 1, 2 and 4 instances joins the `FOR_LINUX.md`
