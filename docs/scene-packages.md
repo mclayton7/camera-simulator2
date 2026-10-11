@@ -1044,3 +1044,47 @@ Stability: the first live session crashed (SIGSEGV in `FMeshDrawShaderBindings::
 later Pendleton sessions, including the same pose sequence three times (buildings on, buildings off, trees off). Cause
 unknown; a crashed run leaves `CrashReportClient` holding port 8080, so the next launch can't bind its health port.
 
+
+### R3/R4 bench check and combined cost (2026-10-11, macOS)
+
+Same machine and method as the R3 sweep above (M1 Pro / Metal, 720p EO, `dense_pass`, 2 repeats per row, medians). The
+runs after the bench docs landed (`scripts/bench/README.md`, "Realism vs cost sweep"). Memory is the process footprint
+(`--gpu-mem` on macOS: `IOAccelerator` rows plus every `(graphics)` row, unified memory, not VRAM). The older
+`memcheck` reference of 4,258 MiB was taken under the previous rule (IOAccelerator rows only) and is not comparable;
+under the current rule the all-off `dense_pass` reference is **8,889-8,901 MiB** (`.cache/bench-r3r4/reference/`).
+
+R2 reference for `dense_pass` (`sweep.py --scene pendleton-r2 --axis trees=off --axis buildings=off --repeat 2`; the
+row is named `trees-off_buildings-off`, not `baseline`, because the row names both axes): `ok (2/2)`, game p50 3.42-3.47 /
+p95 5.99-6.20 ms, GPU p50 19.38-20.54 ms, wall p95 35.0-35.2 ms, 0 dropped, 29.89 fps, memory 8,889-8,901 MiB.
+
+Full bench (`run_bench.py --site pendleton --gpu-mem`, both features off, `pendleton-r2`, one run;
+`.cache/bench-r3r4/full-check/`): phases `orbit, slew, low_pass, far_origin, coast_pass, dense_pass`, every phase 29.9
+fps and 0 dropped; 13 shots plus 13 `_sensor` copies. Game p50 of the five old phases against the R2 table above:
+
+| Phase | This run, ms | R2 (2 runs), ms |
+|---|---|---|
+| orbit | 2.80 | 2.81-2.82 |
+| slew | 2.98 | 2.96-2.99 |
+| low_pass | 3.22 | 3.21-3.22 |
+| far_origin | 2.20 | 2.23-2.24 |
+| coast_pass | 3.52 | 3.45-3.48 |
+
+All within noise (coast_pass +0.04 ms over the top of R2's range). `dense_pass` 3.58 / p95 8.66 / GPU 19.30 ms; memory
+8,905-8,950 MiB across phases.
+
+Combined sweep (`sweep.py --scene pendleton-r3 --axis buildings=off,on --axis buildings_sse=16,64 --axis trees=off,on
+--repeat 2`, `.cache/bench-r3r4/combined/`; trees at their defaults: radius 1000 m, density 1.0, shadows on; buildings with
+physics meshes). All-off row: game 3.44-3.45 / 6.02-6.11 ms, GPU 19.30-19.53 ms, memory 8,887-8,913 MiB. Every run 29.7-30.0
+fps and 0 dropped frames. Increase of the row median over the all-off row:
+
+| Buildings SSE | Trees | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
+|---|---|---|---|---|---|---|
+| off | on | +0.61 | +0.58 | +1.12 | +52 | pass |
+| 16 | off | +0.64 | +0.76 | +2.41 | +607 | memory fails |
+| 16 | on | +1.24 | +1.24 | +4.34 | +674 | memory fails (GPU within 0.7 ms of its limit) |
+| 64 | off | +0.45 | +0.49 | +1.00 | +290 | pass |
+| 64 | on | +1.05 | +1.09 | +2.98 | +359 | pass (memory within 22 MiB of its limit) |
+
+Game-thread and memory costs add (both-on = the two single-feature rows to within 0.1 ms / 15 MiB); GPU time is 0.9-0.8 ms above the sum. Only SSE 64 with trees fits the
+budget, and only just on memory. Contact sheet: `.cache/bench-r3r4/combined/sweep_sheet.png`. The shipped defaults are
+unchanged; choosing them is the user's call.

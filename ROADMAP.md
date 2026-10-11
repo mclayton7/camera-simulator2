@@ -1857,7 +1857,7 @@ Open: footprint IoU (gate 2, needs ~30 human-traced NAIP outlines), the user's v
 task 5). One intermittent renderer crash (SIGSEGV in `FMeshDrawShaderBindings::SetOnCommandList` on a draw task, 5 s
 after a 215 m camera cut to ground level with buildings and trees on) in the first live session; not reproduced in 27
 later Pendleton sessions (3 targeted repeats incl. buildings off / trees off, 3 CIGI sessions, the DIS session, 18
-sweep runs, the 2 full benches), nor in the R4 trees acceptance (8 `vegetation_check.py` sessions, 4 `gt_occlusion_check.py` runs, 26 sweep runs, trees on, buildings off); watch for it. No editor work for the slice; facade/roof materials remain the R3 deepening pass's human
+sweep runs, the 2 full benches; and again not in the bench-check session: 2 reference, 12 combined sweep runs and a full bench), nor in the R4 trees acceptance (8 `vegetation_check.py` sessions, 4 `gt_occlusion_check.py` runs, 26 sweep runs, trees on, buildings off); watch for it. No editor work for the slice; facade/roof materials remain the R3 deepening pass's human
 editor work (`REALISM.md`, R3).
 
 **R4 trees thin slice implemented and measured on macOS 2026-10-11** ([`docs/vegetation.md`](docs/vegetation.md); spec

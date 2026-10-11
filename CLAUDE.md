@@ -37,7 +37,8 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/package_for_docker.sh` | BuildCookRun → `deploy/staged/Linux/` (+ `entities/`) for the Docker image |
 | `scripts/ci_validate.sh`       | Integration test: runs the image with `--gpus all` + CIGI host, `/ready`, video/KLV |
 | `scripts/ci_validate.sh --native` | Same, without Docker (macOS): launch headless + CIGI host + checks |
-| `scripts/bench/run_bench.py` | Render benchmark + reference shots (`--smoke`, `--trace`); `compare.py` diffs two runs |
+| `scripts/bench/run_bench.py` | Render benchmark + reference shots (`--smoke`, `--trace`; `--site pendleton` adds `dense_pass`; `--phases`, `--shots`, `--gpu-mem`); `compare.py` diffs two runs |
+| `scripts/bench/sweep.py --scene PKG --out DIR --axis NAME=V1,V2` | Realism-vs-cost sweep (REALISM R3/R4): one `dense_pass` bench per buildings/trees setting → `sweep.md` cost table vs the all-off row + `sweep_sheet.png` |
 | `scripts/bench/scale_bench.py IMAGE OUT N...` | Multi-instance capacity probe: N containers at once (`docs/capacity-linux-rtx5080.md`: 4 comfortable on the RTX 5080 box, VRAM-bound) |
 | `scripts/run_gpu_tests.sh`     | `CamSim.GPU.*` automation tests on the real RHI (Metal / Vulkan) |
 | `uv run --project hitl python -m camsim_hitl --config <file>.toml` | HITL IG host: X-Plane truth + PX4 gimbal/camera (MAVLink) → CIGI (`hitl/README.md`, design `HITL.md`) |
