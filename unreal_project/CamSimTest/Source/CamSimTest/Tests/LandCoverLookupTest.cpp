@@ -104,11 +104,15 @@ bool FLandCoverQueryMaterialTest::RunTest(const FString& Parameters)
 	FLandCoverCodeLookup L;
 	L.Configure(Dir);
 	using CamSimLandCover::QueryMaterialCode;
-	TestEqual(TEXT("invalid"), QueryMaterialCode(false, false, false, 33.32, -117.48, &L), 0u);
-	TestEqual(TEXT("sea surface"), QueryMaterialCode(true, true, false, 33.32, -117.48, &L), 80u);
-	TestEqual(TEXT("entity"), QueryMaterialCode(true, false, true, 33.32, -117.48, &L), 0u);
-	TestEqual(TEXT("terrain"), QueryMaterialCode(true, false, false, 33.32, -117.48, &L), 200u);
-	TestEqual(TEXT("no lookup"), QueryMaterialCode(true, false, false, 33.32, -117.48, nullptr), 0u);
-	TestEqual(TEXT("sea without lookup"), QueryMaterialCode(true, true, false, 33.32, -117.48, nullptr), 80u);
+	TestEqual(TEXT("invalid"), QueryMaterialCode(false, false, false, false, 33.32, -117.48, &L), 0u);
+	TestEqual(TEXT("sea surface"), QueryMaterialCode(true, true, false, false, 33.32, -117.48, &L), 80u);
+	TestEqual(TEXT("entity"), QueryMaterialCode(true, false, true, false, 33.32, -117.48, &L), 0u);
+	TestEqual(TEXT("terrain"), QueryMaterialCode(true, false, false, false, 33.32, -117.48, &L), 200u);
+	TestEqual(TEXT("no lookup"), QueryMaterialCode(true, false, false, false, 33.32, -117.48, nullptr), 0u);
+	TestEqual(TEXT("sea without lookup"), QueryMaterialCode(true, true, false, false, 33.32, -117.48, nullptr), 80u);
+	TestEqual(TEXT("building"), QueryMaterialCode(true, false, false, true, 33.32, -117.48, &L), 230u);
+	TestEqual(TEXT("building without lookup"), QueryMaterialCode(true, false, false, true, 33.32, -117.48, nullptr), 230u);
+	TestEqual(TEXT("sea above a roof wins"), QueryMaterialCode(true, true, false, true, 33.32, -117.48, &L), 80u);
+	TestEqual(TEXT("invalid building"), QueryMaterialCode(false, false, false, true, 33.32, -117.48, &L), 0u);
 	return true;
 }

@@ -9,6 +9,7 @@
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Ocean/OceanQueries.h"
 #include "Thermal/LandCoverLookup.h"
+#include "Geospatial/SceneBuildings.h"
 #include "CamSimTest.h"
 
 #include "Engine/World.h"
@@ -171,8 +172,9 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospa
 				SurfaceNormalAzEl(World, GeoProvider, HitResult, NormalAz, NormalEl);
 			}
 			// HAT/HOT is a vertical trace, so the request's lat/lon is the hit's cell.
+			const bool bBuildingHit = bHit && CamSim::Geospatial::IsBuildingsActor(HitResult.GetActor());
 			const uint32 Material = CamSimLandCover::QueryMaterialCode(bValid, R.bWater, /*bEntityHit=*/false,
-				Req.Lat, Req.Lon, Subsystem ? Subsystem->GetLandCoverLookup() : nullptr);   // REALISM R2
+				bBuildingHit, Req.Lat, Req.Lon, Subsystem ? Subsystem->GetLandCoverLookup() : nullptr);   // REALISM R2/R3
 			Sender->EnqueueHatHotExtendedResponse(Req.HatHotId, bValid, HAT, HOT, Material, NormalAz, NormalEl);
 		}
 		else
@@ -456,6 +458,8 @@ void FCigiQueryHandler::RespondLos(UWorld* World, const FCamSimGeospatialProvide
 	}
 	// A clear segment (Hit null) reports material 0.
 	Resp.Material = CamSimLandCover::QueryMaterialCode(Hit != nullptr, /*bWater=*/false,
-		Hit && Cast<ACamSimEntity>(Hit->GetActor()) != nullptr, Lat, Lon, Subsystem->GetLandCoverLookup());   // REALISM R2
+		Hit && Cast<ACamSimEntity>(Hit->GetActor()) != nullptr,
+		Hit && CamSim::Geospatial::IsBuildingsActor(Hit->GetActor()),
+		Lat, Lon, Subsystem->GetLandCoverLookup());   // REALISM R2/R3
 	Sender->EnqueueLosExtendedResponse(Resp);
 }

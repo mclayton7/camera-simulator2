@@ -70,10 +70,11 @@ FLandCoverLookupStats FLandCoverCodeLookup::TakeStats()
 
 TArray<FString> FLandCoverCodeLookup::TakeWarnings() { return MoveTemp(Warnings); }
 
-uint32 CamSimLandCover::QueryMaterialCode(bool bValid, bool bWater, bool bEntityHit, double LatDeg, double LonDeg,
-	FLandCoverCodeLookup* Lookup)
+uint32 CamSimLandCover::QueryMaterialCode(bool bValid, bool bWater, bool bEntityHit, bool bBuildingHit,
+	double LatDeg, double LonDeg, FLandCoverCodeLookup* Lookup)
 {
 	if (!bValid || bEntityHit) return 0;
 	if (bWater) return SeaSurfaceCode;
+	if (bBuildingHit) return BuildingCode;
 	return Lookup ? Lookup->Code(LatDeg, LonDeg) : 0;
 }

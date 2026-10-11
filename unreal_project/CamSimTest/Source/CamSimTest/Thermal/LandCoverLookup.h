@@ -58,7 +58,8 @@ private:
 namespace CamSimLandCover
 {
 	inline constexpr uint8 SeaSurfaceCode = 80;   // WorldCover water
-	/** REALISM R2 rule for CIGI HAT/HOT and LOS extended material codes. Lookup may be null (land cover off). */
-	CAMSIMTEST_API uint32 QueryMaterialCode(bool bValid, bool bWater, bool bEntityHit, double LatDeg, double LonDeg,
-		FLandCoverCodeLookup* Lookup);
+	inline constexpr uint8 BuildingCode = 230;    // REALISM R3: the scene package's buildings tileset
+	/** REALISM R2/R3 rule for CIGI HAT/HOT and LOS extended material codes. Lookup may be null (land cover off). */
+	CAMSIMTEST_API uint32 QueryMaterialCode(bool bValid, bool bWater, bool bEntityHit, bool bBuildingHit,
+		double LatDeg, double LonDeg, FLandCoverCodeLookup* Lookup);
 }
