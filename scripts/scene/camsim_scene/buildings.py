@@ -2,8 +2,243 @@
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import shapely
+import shapely.affinity
+from shapely.geometry.polygon import orient
+
+from . import geodesy
+from .gltf import PropertyTable, TileMesh
+from .tiling import tile_size_deg
+
 BUILDINGS_RULES_VERSION = "1"  # bump when geometry/height/tier rules change (it is in the layer settings hash)
 DEFAULT_RELEASE = "2026-09-23.1"
 TIER_MIN_AREA_M2 = {13: 2000.0, 14: 300.0}  # else LEAF_ZOOM
 LEAF_ZOOM = 15
 GEOMETRIC_ERROR = {"root": 200.0, 13: 60.0, 14: 20.0, 15: 6.0}
+
+M_PER_DEG = 111320.0
+FLOOR_M = 3.2
+DEFAULT_HEIGHT_M = 4.0
+MIN_HEIGHT_M, MAX_HEIGHT_M = 2.5, 150.0
+SINK_M = 0.5
+MIN_EDGE_M = 0.01
+
+
+@dataclass(frozen=True)
+class Footprint:
+    source_id: str
+    geometry: object  # shapely, lon/lat
+    height: float | None
+    num_floors: int | None
+    cls: str
+
+
+@dataclass
+class Building:
+    source_id: str
+    parts: list  # shapely Polygons, lon/lat, exterior CCW / holes CW
+    cls: str
+    height_m: float
+    height_source: int  # index into gltf.HEIGHT_SOURCES
+    base_m: float
+    roof_m: float
+    area_m2: float
+    tile: tuple[int, int, int]  # (z, x, y)
+
+
+def read_snapshot(path: Path) -> list[Footprint]:
+    from .sources.overture_buildings import connect
+
+    con = connect()
+    try:
+        rows = con.execute(
+            "SELECT id, geometry, height, num_floors, class FROM read_parquet(?) ORDER BY id", [str(path)]
+        ).fetchall()
+    finally:
+        con.close()
+    out, seen = [], set()
+    for sid, wkb, height, floors, cls in rows:
+        if sid in seen or wkb is None:
+            continue
+        seen.add(sid)
+        out.append(Footprint(sid, shapely.from_wkb(bytes(wkb)), height, floors, cls or ""))
+    return out
+
+
+def local_scale(lat0: float) -> tuple[float, float]:
+    return M_PER_DEG * math.cos(math.radians(lat0)), M_PER_DEG
+
+
+def _area_m2(poly, lat0: float) -> float:
+    sx, sy = local_scale(lat0)
+    return abs(poly.area) * sx * sy
+
+
+def clean(geom, min_area_m2: float) -> list:
+    if geom is None or geom.is_empty:
+        return []
+    g = shapely.make_valid(geom)
+    polys = [p for p in shapely.get_parts(g) if isinstance(p, shapely.Polygon)]
+    multi = [q for p in shapely.get_parts(g) if isinstance(p, shapely.MultiPolygon) for q in p.geoms]
+    lat0 = geom.centroid.y if not geom.centroid.is_empty else 0.0
+    out = []
+    for p in sorted(polys + multi, key=lambda p: (p.bounds, p.area)):
+        if not p.is_empty and _area_m2(p, lat0) >= min_area_m2:
+            out.append(orient(p, sign=1.0))
+    return out
+
+
+def building_height(height, num_floors) -> tuple[float, int]:
+    if height is not None and math.isfinite(height) and height > 0:
+        h, src = float(height), 0
+    elif num_floors is not None and num_floors > 0:
+        h, src = num_floors * FLOOR_M, 1
+    else:
+        h, src = DEFAULT_HEIGHT_M, 2
+    return min(MAX_HEIGHT_M, max(MIN_HEIGHT_M, h)), src
+
+
+def tier_zoom(area_m2: float) -> int:
+    for z in sorted(TIER_MIN_AREA_M2):
+        if area_m2 >= TIER_MIN_AREA_M2[z]:
+            return z
+    return LEAF_ZOOM
+
+
+def tile_of(lon: float, lat: float, z: int) -> tuple[int, int]:
+    s = tile_size_deg(z)
+    return math.floor((lon + 180.0) / s), math.floor((lat + 90.0) / s)
+
+
+def _ground_points(parts) -> np.ndarray:
+    pts = [np.asarray(p.exterior.coords) for p in parts]
+    pts.append(np.asarray([shapely.MultiPolygon(parts).centroid.coords[0]]))
+    return np.concatenate(pts)
+
+
+def plan_buildings(footprints, heights_fn, min_area_m2: float) -> tuple[list[Building], dict]:
+    stats = {"input": len(footprints), "kept": 0, "dropped_small": 0, "dropped_invalid": 0, "dropped_no_height": 0}
+    staged = []
+    for fp in footprints:
+        if (
+            fp.geometry is None
+            or fp.geometry.is_empty
+            or fp.geometry.geom_type not in ("Polygon", "MultiPolygon", "GeometryCollection")
+        ):
+            stats["dropped_invalid"] += 1
+            continue
+        parts = clean(fp.geometry, min_area_m2)
+        if not parts:
+            stats["dropped_small"] += 1
+            continue
+        c = shapely.MultiPolygon(parts).centroid
+        area = sum(_area_m2(p, c.y) for p in parts)
+        staged.append((fp, parts, c.x, c.y, area))
+    groups: dict[tuple[int, int], list] = {}
+    for item in staged:
+        groups.setdefault(tile_of(item[2], item[3], LEAF_ZOOM), []).append(item)
+    out = []
+    for key in sorted(groups):
+        items = groups[key]
+        pts = [_ground_points(it[1]) for it in items]
+        allp = np.concatenate(pts)
+        h = np.asarray(heights_fn(allp[:, 0], allp[:, 1]), np.float64)
+        i = 0
+        for (fp, parts, cx, cy, area), p in zip(items, pts):
+            g = h[i : i + len(p)]
+            i += len(p)
+            if not np.isfinite(g).all():
+                stats["dropped_no_height"] += 1
+                continue
+            height, src = building_height(fp.height, fp.num_floors)
+            base = float(g.min()) - SINK_M
+            z = tier_zoom(area)
+            out.append(
+                Building(
+                    fp.source_id,
+                    parts,
+                    fp.cls,
+                    height,
+                    src,
+                    base,
+                    base + SINK_M + height,
+                    area,
+                    (z, *tile_of(cx, cy, z)),
+                )
+            )
+    out.sort(key=lambda b: b.source_id)
+    stats["kept"] = len(out)
+    return out, stats
+
+
+def _cdt_triangles(poly) -> list[np.ndarray]:
+    """Roof triangles (3 x 2 lon/lat each, CCW), triangulated in a locally isotropic plane."""
+    sx, sy = local_scale(poly.centroid.y)
+    scaled = shapely.affinity.scale(poly, xfact=sx / sy, yfact=1.0, origin=(0, 0))
+    tris = []
+    for t in shapely.get_parts(shapely.constrained_delaunay_triangles(scaled)):
+        c = np.asarray(t.exterior.coords)[:3]
+        c[:, 0] *= sy / sx
+        a = (c[1, 0] - c[0, 0]) * (c[2, 1] - c[0, 1]) - (c[2, 0] - c[0, 0]) * (c[1, 1] - c[0, 1])
+        if a == 0:
+            continue
+        tris.append(c if a > 0 else c[::-1])
+    return tris
+
+
+def tile_mesh(buildings: list[Building], origin: tuple[float, float, float]) -> tuple[TileMesh, PropertyTable]:
+    m = geodesy.enu_to_ecef_matrix(*origin)
+    rot, o = m[:3, :3].T, m[:3, 3]  # ECEF -> ENU rotation, origin
+
+    def to_gl(lonlat: np.ndarray, h: float) -> np.ndarray:
+        e = geodesy.geodetic_to_ecef(lonlat[:, 0], lonlat[:, 1], np.full(len(lonlat), h))
+        enu = (rot @ (e - o).T).T
+        return np.stack([enu[:, 0], enu[:, 2], -enu[:, 1]], axis=1)
+
+    pos, fid, roof, wall = [], [], [], []
+    n = 0
+
+    def add(tri_gl: np.ndarray, out: list, f: int):
+        nonlocal n
+        pos.append(tri_gl)
+        fid.extend([f] * len(tri_gl))
+        out.extend(range(n, n + len(tri_gl)))
+        n += len(tri_gl)
+
+    bs = sorted(buildings, key=lambda b: b.source_id)
+    for f, b in enumerate(bs):
+        for part in b.parts:
+            for tri in _cdt_triangles(part):
+                add(to_gl(tri, b.roof_m), roof, f)
+            for ring in [part.exterior, *part.interiors]:
+                c = np.asarray(ring.coords)
+                bot, top = to_gl(c, b.base_m), to_gl(c, b.roof_m)
+                for k in range(len(c) - 1):
+                    if np.linalg.norm(bot[k + 1] - bot[k]) < MIN_EDGE_M:
+                        continue
+                    a0, b0, b1, a1 = bot[k], bot[k + 1], top[k + 1], top[k]
+                    add(np.stack([a0, b0, b1, a0, b1, a1]), wall, f)
+    p = np.concatenate(pos) if pos else np.zeros((0, 3))
+    tri = p.reshape(-1, 3, 3)
+    nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
+    normals = np.repeat(nrm, 3, axis=0)
+    mesh = TileMesh(
+        p.astype(np.float32),
+        normals.astype(np.float32),
+        np.asarray(fid, np.float32),
+        np.asarray(roof, np.uint32),
+        np.asarray(wall, np.uint32),
+    )
+    table = PropertyTable(
+        [b.source_id for b in bs],
+        [b.cls for b in bs],
+        np.asarray([b.height_m for b in bs], np.float32),
+        np.asarray([b.height_source for b in bs], np.uint8),
+    )
+    return mesh, table
