@@ -31,3 +31,7 @@ def test_ssim_identical_is_one_and_noise_is_lower():
     b = np.clip(a.astype(int) + rng.integers(-60, 60, a.shape), 0, 255).astype(np.uint8)
     assert compare.ssim(a, a) == 1.0
     assert 0.0 < compare.ssim(a, b) < 0.95
+
+
+def test_game_p95_is_compared():
+    assert compare.METRICS.index("game_ms_p95") == compare.METRICS.index("game_ms_p50") + 1

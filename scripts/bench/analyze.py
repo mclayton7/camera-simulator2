@@ -48,6 +48,7 @@ def summarize(rows: list[dict], phases: list[dict]) -> dict:
             "wall_ms_p95": _pct(wall, 95),
             "wall_ms_p99": _pct(wall, 99),
             "game_ms_p50": _pct([r["game_ms"] for r in sel], 50),
+            "game_ms_p95": _pct([r["game_ms"] for r in sel], 95),
             "render_ms_p50": _pct([r["render_ms"] for r in sel], 50),
             "rhi_ms_p50": _pct([r["rhi_ms"] for r in sel], 50),
             "gpu_ms_p50": _pct([r["gpu_ms"] for r in sel], 50),

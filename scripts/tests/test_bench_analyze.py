@@ -102,3 +102,11 @@ def test_sensor_gpu_ms_is_summarised_only_when_measured():
             legacy, [{"name": "orbit", "start": 0.0, "end": 10.0, "measured": True}]
         )["orbit"]
     )
+
+
+def test_game_thread_p95_is_reported_per_phase():
+    rows = [dict(_row(t, 33.0), game_ms=float(t)) for t in range(100)]
+    phases = [{"name": "orbit", "start": 0, "end": 100, "measured": True}]
+    out = analyze.summarize(rows, phases)["orbit"]
+    assert out["game_ms_p50"] == 50.0
+    assert out["game_ms_p95"] == 94.0
