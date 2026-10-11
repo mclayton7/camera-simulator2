@@ -50,6 +50,8 @@ class CAMSIMTEST_API FVegetationManager : public TSharedFromThis<FVegetationMana
 public:
 	/** Ticks a generation or height request may stay unanswered before its cell is reported empty (60 s at 30 fps). */
 	static constexpr int32 StuckTicks = 1800;
+	/** At most one "trees dropped inside building footprints" line per this many ticks (30 s at 30 fps). */
+	static constexpr int32 DropLogTicks = 900;
 
 	FVegetationManager(const FVegetationStreaming::FParams& Params, FVegetationHooks InHooks);
 	~FVegetationManager();
@@ -90,6 +92,7 @@ private:
 	int32  NumExpired = 0;
 	int64  DroppedInBuildings = 0;
 	int64  LoggedDroppedInBuildings = 0;
+	int64  LastDropLogTick = -DropLogTicks;
 	bool   bWasIdle = true;
 	TMap<CamSimVegetation::FVegCellId, FRequest> Requests;       // cells in Generating / Sampling
 	TMap<CamSimVegetation::FVegCellId, FVegCellSpawn> Ready;     // grounded, waiting for a spawn slot

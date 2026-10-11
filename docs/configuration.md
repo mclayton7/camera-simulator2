@@ -744,6 +744,7 @@ CAMSIM_VEGETATION_DENSITY_SCALE=1.0
 CAMSIM_VEGETATION_CAST_SHADOWS=1
 CAMSIM_VEGETATION_CELL_SIZE_M=100.0
 CAMSIM_VEGETATION_SEED=0
+CAMSIM_VEGETATION_DROP_IN_BUILDINGS=1
 
 # Scene package buildings (REALISM R3)
 CAMSIM_SCENE_BUILDINGS_ENABLED=1
@@ -955,6 +956,7 @@ package) and a loadable library. All keys are **startup only**.
 | `vegetation.cast_shadows` | `CAMSIM_VEGETATION_CAST_SHADOWS` | `true` | Whether trees cast shadows. |
 | `vegetation.cell_size_m` | `CAMSIM_VEGETATION_CELL_SIZE_M` | `100.0` | Edge of the global geographic cell grid. `[25, 500]`. |
 | `vegetation.seed` | `CAMSIM_VEGETATION_SEED` | `0` | Scatter seed, used only without a scene package (otherwise the manifest `seed`). `>= 0`. |
+| `vegetation.drop_in_buildings` | `CAMSIM_VEGETATION_DROP_IN_BUILDINGS` | `true` | Drop trees inside building footprints: a second height batch per cell on the buildings tileset, a hit more than 0.5 m above the terrain drops the tree ([`vegetation.md`](vegetation.md), "How it works"). Acts only when the buildings tileset exists. `false` skips the second batch (trees stand in footprints wherever land cover is code 10). |
 
 Removed: the old `phase19:` block (`ocean_enabled`, `beaufort_state`,
 `wave_amplitude_scale`, `wave_frequency_scale`, `wave_choppiness`,

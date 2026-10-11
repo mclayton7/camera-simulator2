@@ -689,6 +689,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlBool  (V, "cast_shadows",  Cfg.Vegetation.bCastShadows);
 			YamlFloat (V, "cell_size_m",   Cfg.Vegetation.CellSizeM);
 			YamlInt   (V, "seed",          Cfg.Vegetation.Seed);
+			YamlBool  (V, "drop_in_buildings", Cfg.Vegetation.bDropInBuildings);
 		}
 
 				// Thermal radiance for IR (ROADMAP 4A)
@@ -1116,6 +1117,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Vegetation.bCastShadows = GetEnvBool (TEXT("CAMSIM_VEGETATION_CAST_SHADOWS"),  Cfg.Vegetation.bCastShadows);
 	Cfg.Vegetation.CellSizeM    = GetEnvFloat(TEXT("CAMSIM_VEGETATION_CELL_SIZE_M"),   Cfg.Vegetation.CellSizeM);
 	Cfg.Vegetation.Seed         = GetEnvInt  (TEXT("CAMSIM_VEGETATION_SEED"),          Cfg.Vegetation.Seed);
+	Cfg.Vegetation.bDropInBuildings = GetEnvBool(TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), Cfg.Vegetation.bDropInBuildings);
 	{
 		const FString IrPreset = GetEnv(TEXT("CAMSIM_IR_PRESET"), FString());
 		FSensorModeConfig* IrM = Cfg.SensorModeConfigs.Find(ESensorMode::IR);

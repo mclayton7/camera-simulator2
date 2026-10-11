@@ -389,6 +389,7 @@ struct FCamSimConfig
 		bool    bCastShadows = true;     // CAMSIM_VEGETATION_CAST_SHADOWS
 		float   CellSizeM    = 100.0f;   // CAMSIM_VEGETATION_CELL_SIZE_M
 		int32   Seed         = 0;        // CAMSIM_VEGETATION_SEED; used only without a scene package
+		bool    bDropInBuildings = true; // CAMSIM_VEGETATION_DROP_IN_BUILDINGS; drop trees inside building footprints (acts only with a buildings tileset)
 	};
 	FVegetationConfig Vegetation;
 

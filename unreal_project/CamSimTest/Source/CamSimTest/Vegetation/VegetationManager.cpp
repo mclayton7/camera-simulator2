@@ -76,10 +76,12 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 			if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnGenerated(Id, Token, MoveTemp(T));
 		});
 	}
-	// One line each time streaming settles with new building drops (a few per flight, never per cell).
+	// When streaming settles with new building drops: at most one line per DropLogTicks (a moving camera settles
+	// and restarts many times a second).
 	const bool bIdle = IsIdle();
-	if (bIdle && !bWasIdle && DroppedInBuildings != LoggedDroppedInBuildings)
+	if (bIdle && !bWasIdle && DroppedInBuildings != LoggedDroppedInBuildings && TickCount - LastDropLogTick >= DropLogTicks)
 	{
+		LastDropLogTick = TickCount;
 		UE_LOG(LogCamSim, Log, TEXT("Vegetation: settled, %d cells spawned, %lld trees dropped inside building footprints so far"),
 			Spawned.Num(), DroppedInBuildings);
 		LoggedDroppedInBuildings = DroppedInBuildings;
@@ -304,7 +306,7 @@ namespace CamSimVegetation
 		H.SampleHeights = MakeSampler(WeakTerrain, TEXT("terrain"), /*bWarnOnFail=*/true);
 		// Trees inside building footprints (WorldCover tags canopy over roofs as tree cover): a second batch on the
 		// buildings tileset, where a miss is the normal answer, so its warnings stay quiet.
-		ACesium3DTileset* Buildings = CamSim::Geospatial::FindBuildingsTileset(World);
+		ACesium3DTileset* Buildings = V.bDropInBuildings ? CamSim::Geospatial::FindBuildingsTileset(World) : nullptr;
 		if (Buildings) H.SampleBuildingHeights = MakeSampler(TWeakObjectPtr<ACesium3DTileset>(Buildings), TEXT("buildings"), /*bWarnOnFail=*/false);
 		H.Spawn = [WeakWorld, KeepMesh, Actors, bShadows, CullM](FVegCellId Id, const FVegCellSpawn& S)
 		{
@@ -333,7 +335,7 @@ namespace CamSimVegetation
 		};
 		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (type '%s', radius %.0f m, density %.2f, shadows %d, seed %u, land cover %s, buildings %s)"),
 			*Type.Name, V.RadiusM, V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
-			Buildings ? TEXT("on: trees inside footprints dropped") : TEXT("none"));
+			Buildings ? TEXT("on: trees inside footprints dropped") : V.bDropInBuildings ? TEXT("none") : TEXT("check off (drop_in_buildings false)"));
 		return MakeShared<FVegetationManager>(SP, MoveTemp(H));
 	}
 

@@ -18,6 +18,7 @@ bool FVegConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("cast_shadows"), V.bCastShadows);
 	TestEqual(TEXT("cell_size_m"), V.CellSizeM, 100.0f);
 	TestEqual(TEXT("seed"), V.Seed, 0);
+	TestTrue (TEXT("drop_in_buildings"), V.bDropInBuildings);
 	return true;
 }
 
@@ -33,7 +34,8 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 		"  density_scale: 0.5\n"
 		"  cast_shadows: false\n"
 		"  cell_size_m: 50\n"
-		"  seed: 42\n");
+		"  seed: 42\n"
+		"  drop_in_buildings: false\n");
 	FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	TestTrue (TEXT("parsed"), Cfg.bLoadedSuccessfully);
 	TestFalse(TEXT("enabled"), Cfg.Vegetation.bEnabled);
@@ -43,12 +45,13 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("shadows"), Cfg.Vegetation.bCastShadows);
 	TestEqual(TEXT("cell"), Cfg.Vegetation.CellSizeM, 50.0f);
 	TestEqual(TEXT("seed"), Cfg.Vegetation.Seed, 42);
+	TestFalse(TEXT("drop_in_buildings"), Cfg.Vegetation.bDropInBuildings);
 
 	const TCHAR* Vars[][2] = {
 		{ TEXT("CAMSIM_VEGETATION_ENABLED"), TEXT("true") }, { TEXT("CAMSIM_VEGETATION_LIBRARY_DIR"), TEXT("/opt/veg") },
 		{ TEXT("CAMSIM_VEGETATION_RADIUS_M"), TEXT("500") }, { TEXT("CAMSIM_VEGETATION_DENSITY_SCALE"), TEXT("0.25") },
 		{ TEXT("CAMSIM_VEGETATION_CAST_SHADOWS"), TEXT("1") }, { TEXT("CAMSIM_VEGETATION_CELL_SIZE_M"), TEXT("200") },
-		{ TEXT("CAMSIM_VEGETATION_SEED"), TEXT("7") } };
+		{ TEXT("CAMSIM_VEGETATION_SEED"), TEXT("7") }, { TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), TEXT("1") } };
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], V[1]);
 	Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], TEXT(""));
@@ -59,6 +62,7 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("env shadows"), Cfg.Vegetation.bCastShadows);
 	TestEqual(TEXT("env cell"), Cfg.Vegetation.CellSizeM, 200.0f);
 	TestEqual(TEXT("env seed"), Cfg.Vegetation.Seed, 7);
+	TestTrue (TEXT("env drop_in_buildings"), Cfg.Vegetation.bDropInBuildings);
 	return true;
 }
 
