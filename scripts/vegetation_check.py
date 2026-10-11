@@ -15,7 +15,9 @@ Gates (report.json, exit 0 only when all pass):
   determinism   approach from 3 km north and 3 km south: every cell in both dumps has the same hash
   origin_shift  /snapshot at the riparian pose before and after a trip to lon + 3.41: SSIM >= baseline floor - 0.01,
                 and every cell spawned again after the trip has its first hash
-  off_switch    CAMSIM_VEGETATION_ENABLED=0 smoke shots vs the baseline: SSIM >= the baseline's own pair SSIM - 0.005
+  off_switch    CAMSIM_VEGETATION_ENABLED=0 smoke shots vs the baseline: SSIM >= the baseline's own pair SSIM - 0.005, and
+                the run's log has no vegetation line (a trees-on smoke is measured beside it: the one smoke shot, nadir
+                from 3 km, barely sees trees, so this gate has little power)
   gt            scripts/gt_occlusion_check.py exits 0 (vegetation on)
 Informational (not gated):
   surface_dz    CIGI HOT (traces against the rendered tiles) at dumped trees, by distance band from the camera, before
@@ -79,6 +81,7 @@ def launch(env_extra: dict, exec_cmds: list[str], host: rb.Host) -> None:
     rb.wait_port_free(int(rb.HEALTH.rsplit(":", 1)[1]))
     host.thread.start()
     extra = [f"-ExecCmds={','.join(exec_cmds)}"] if exec_cmds else []
+    host.launched = True  # from here on the CamSim is this script's: stop() may stop it even if run.sh failed midway
     subprocess.run([str(REPO / "scripts/run.sh"), "--headless", "--local", "--detach", *extra], env=env, check=True,
                    stdout=subprocess.DEVNULL)
     rb.wait_ready(pid_file)
@@ -86,7 +89,11 @@ def launch(env_extra: dict, exec_cmds: list[str], host: rb.Host) -> None:
 
 
 def stop(host: rb.Host, log_copy: Path | None = None) -> str:
+    """Stop the CamSim this script launched with `host`. If launch() exited before starting one (another instance
+    running, port busy), leave whatever is running alone and return no log."""
     host.stop.set()
+    if not getattr(host, "launched", False):
+        return ""
     subprocess.run([str(REPO / "scripts/stop.sh")], check=False, stdout=subprocess.DEVNULL)
     log = EDITOR_LOG.read_text(errors="replace") if EDITOR_LOG.exists() else ""
     if log_copy:
@@ -278,19 +285,40 @@ def approach_gates(a: argparse.Namespace, report: dict) -> None:
     report["veg_log"] = {"north": north["veg_log"], "south": south["veg_log"]}
 
 
+def smoke_run(label: str, out: Path, scene: Path, enabled: str) -> str:
+    """One run_bench.py --smoke at Pendleton with vegetation on or off; returns (and saves) that run's editor log."""
+    subprocess.run([sys.executable, str(REPO / "scripts/bench/run_bench.py"), "--label", label, "--site", "pendleton",
+                    "--smoke", "--out", str(out)], env={**os.environ, "CAMSIM_SCENE_DIR": str(scene),
+                                                        "CAMSIM_VEGETATION_ENABLED": enabled}, check=True)
+    log = EDITOR_LOG.read_text(errors="replace") if EDITOR_LOG.exists() else ""
+    (out / "CamSimTest.log").write_text(log)
+    return log
+
+
 def off_gate(a: argparse.Namespace, report: dict) -> None:
-    off = a.out / "off"
-    subprocess.run([sys.executable, str(REPO / "scripts/bench/run_bench.py"), "--label", "veg-off", "--site", "pendleton",
-                    "--smoke", "--out", str(off)], env={**os.environ, "CAMSIM_SCENE_DIR": str(a.scene),
-                                                        "CAMSIM_VEGETATION_ENABLED": "0"}, check=True)
+    """Off run vs the pre-slice baseline. Weak by construction: the smoke has one shot, nadir from 3 km, where trees are
+    a few pixels, so a trees-on run is measured beside it to show the margin the gate has."""
+    off, on = a.out / "off", a.out / "on_smoke"
+    log_off = smoke_run("veg-off", off, a.scene, "0")
+    # vegetation.enabled: false creates no manager and logs nothing about vegetation; on, it logs "Vegetation: on (...)"
+    # (or "Vegetation: off (why)"). The log must be this run's: it carries the startup diagnostics line.
+    if "CamSim startup diagnostics" not in log_off:
+        disabled = {"checked": False, "why": f"no CamSim startup line in {EDITOR_LOG}"}
+    else:
+        disabled = {"checked": True, "disabled": "Vegetation: on (" not in log_off and "Vegetation: off (" not in log_off}
+    smoke_run("veg-on", on, a.scene, "1")
     rows = []
     for shot in sorted(p for p in (a.baseline / "a" / "shots").glob("*.png") if not p.stem.endswith("_sensor")):
         b_floor = ssim(load(shot), load(a.baseline / "b" / "shots" / shot.name))
         s_off_a = ssim(load(shot), load(off / "shots" / shot.name))
         s_off_b = ssim(load(a.baseline / "b" / "shots" / shot.name), load(off / "shots" / shot.name))
+        s_on_a = ssim(load(shot), load(on / "shots" / shot.name))
+        s_on_b = ssim(load(a.baseline / "b" / "shots" / shot.name), load(on / "shots" / shot.name))
         rows.append({"shot": shot.name, "ssim_off_vs_a": s_off_a, "ssim_off_vs_b": s_off_b, "baseline": b_floor,
-                     "pass": s_off_a >= b_floor - 0.005})
-    report["off_switch"] = {"pass": bool(rows) and all(r["pass"] for r in rows), "shots": rows}
+                     "ssim_trees_on_vs_a": s_on_a, "ssim_trees_on_vs_b": s_on_b,
+                     "trees_on_would_pass": s_on_a >= b_floor - 0.005, "pass": s_off_a >= b_floor - 0.005})
+    report["off_switch"] = {"pass": bool(rows) and all(r["pass"] for r in rows) and disabled.get("disabled", True),
+                            "vegetation_disabled_in_log": disabled, "shots": rows}
 
 
 def gt_gate(a: argparse.Namespace, report: dict) -> None:

@@ -179,7 +179,7 @@ gate passes) and the shots. `--stages` reruns a subset and keeps the other gates
 | grounding | `camsim.Vegetation.GroundCheck`: n = 200 and max \|dz\| < 0.5 m, in both runs |
 | determinism | approach the riparian pose from 3 km north and from 3 km south (30 s): every cell in both dumps has the same hash |
 | origin_shift | `/snapshot` at the riparian pose, 20 s at lon + 3.41° (`far_origin`), back: SSIM ≥ the baseline pair's SSIM − 0.01, and every cell spawned again has its first hash |
-| off_switch | `CAMSIM_VEGETATION_ENABLED=0` smoke shot vs the baseline: SSIM ≥ the baseline pair's SSIM − 0.005 (live frames are not bit-identical run to run) |
+| off_switch | `CAMSIM_VEGETATION_ENABLED=0` smoke shot vs the baseline: SSIM ≥ the baseline pair's SSIM − 0.005 (live frames are not bit-identical run to run), and the off run's log has no vegetation line; a trees-on smoke is measured beside it to show the margin (little: see "Measured") |
 | gt | `scripts/gt_occlusion_check.py` exits 0 with vegetation on (its San Francisco default config, so trees from the committed SF land-cover sample, Presidio included) |
 
 Informational: `surface_dz` (CIGI HOT, a trace against the drawn tiles, at 25 dumped trees per distance
@@ -201,9 +201,16 @@ density 1.0, shadows on), commit `69b7e87`. All six gates pass (`.cache/veg/chec
 | grounding | north n=200 max_dz 0.000 m, south n=200 max_dz 0.000 m (traces and `SampleHeightMostDetailed` agree to the mm) |
 | determinism | 113 cells in both dumps, 0 hash mismatches (104 only north, 255 only south) |
 | origin_shift | SSIM 0.9834 (north) / 0.9832 (south) vs floor 0.9796 − 0.01; 113 cells spawned again after the trip in each run, 0 hash changes |
-| off_switch | `nadir_3km` SSIM 0.97951 vs baseline a, 0.97955 vs b; the baseline pair's own SSIM 0.97957 |
+| off_switch | log shows no vegetation line (disabled); `nadir_3km` SSIM 0.97957 vs baseline a, 0.97997 vs b; the baseline pair's own SSIM 0.97957 (first run: 0.97951 / 0.97955). **Weak, see below** |
 | gt | exit 0: nadir truck visibility median 0.958, boat 1.000, edge truncation, crest 58.3 % < 0.9, 9,801 masks decode, frame time diff −0.01 ms |
 
+- **The off-switch gate has little power.** It compares the one `--smoke` shot, `nadir_3km` (straight down from
+  3 km), where a tree is a few pixels, against a baseline whose own run-to-run SSIM is 0.97957. A trees-**on** smoke
+  run of the same shot measures SSIM 0.99801 vs baseline a and 0.97959 vs b: it would pass the gate too. Run-to-run
+  noise is larger than the trees' effect, so the gate catches only gross changes (a broken frame, a
+  different scene); the real evidence that `enabled: false` restores the pre-slice frame is the code path (no
+  manager is created) and the log check (no `Vegetation:` line in the off run, one `Vegetation: on (...)` in the on
+  run). A stronger gate needs a shot where trees fill the frame, captured before and after the slice.
 - **Ground check timing:** the first live run measured max_dz 2.133 m (p50 0.355 m) in the north run: the
   check fired 0.3 s before the terrain gate opened (load progress 99.4 %), against tiles still refining.
   It now also waits for the terrain gate to have been open for 2 s, and the script holds the start pose
