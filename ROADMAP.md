@@ -1850,7 +1850,7 @@ surface clamp. Pendleton: 82,260 buildings, 1,765 tiles, 247.9 MB, 36 s; `verify
 rebuild and no-`[buildings]` builds byte-identical; CIGI roof HOT within 0.01 m and LOS within 0.03 m of the wall, both
 230; DIS truck steps ≤ 0.085 m across footprints; `scene.buildings.enabled: false` = R2 (identical CIGI responses);
 `dis_vehicle_check.py` / `gt_occlusion_check.py` pass; UE 538/538, GPU 26/26, scene tooling 498 passed. Bench sweep: 30
-fps, 0 dropped frames, game thread +0.45–0.68 ms, but the 400 MB memory budget fails at the shipped SSE 16 (+588 MiB,
+fps, 0 dropped frames, game thread +0.45–0.68 ms, but the 400 MB memory budget fails at the shipped SSE 16 (+588 MiB in the R3 sweep, +607 MiB in the combined sweep, `docs/scene-packages.md` "R3/R4 bench check and combined cost";
 process footprint on the M1 Pro) and passes at SSE 64 with physics meshes (+272 MiB); the default SSE is the user's pick. Full bench at SSE 16: every
 existing phase 30 fps, 0 dropped, game p50 +0.02–0.70 ms, memory +0.6–1.1 GiB as the tile cache fills (one run each).
 Open: footprint IoU (gate 2, needs ~30 human-traced NAIP outlines), the user's visual review, Linux/Vulkan (`FOR_LINUX.md`

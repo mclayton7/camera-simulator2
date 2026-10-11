@@ -1061,15 +1061,15 @@ Full bench (`run_bench.py --site pendleton --gpu-mem`, both features off, `pendl
 `.cache/bench-r3r4/full-check/`): phases `orbit, slew, low_pass, far_origin, coast_pass, dense_pass`, every phase 29.9
 fps and 0 dropped; 13 shots plus 13 `_sensor` copies. Game p50 of the five old phases against the R2 table above:
 
-| Phase | This run, ms | R2 (2 runs), ms |
+| Phase | This run, ms | R2 EO (2 runs), ms |
 |---|---|---|
 | orbit | 2.80 | 2.81-2.82 |
 | slew | 2.98 | 2.96-2.99 |
-| low_pass | 3.22 | 3.21-3.22 |
-| far_origin | 2.20 | 2.23-2.24 |
-| coast_pass | 3.52 | 3.45-3.48 |
+| low_pass | 3.22 | 3.18 |
+| far_origin | 2.20 | 2.22 |
+| coast_pass | 3.52 | 3.43-3.47 |
 
-All within noise (coast_pass +0.04 ms over the top of R2's range). `dense_pass` 3.58 / p95 8.66 / GPU 19.30 ms; memory
+Differences from R2's EO values: orbit +0.0, slew +0.0, low_pass +0.04, far_origin -0.02, coast_pass +0.05 over the top of its range; all within noise. `dense_pass` 3.58 / p95 8.66 / GPU 19.30 ms; memory
 8,905-8,950 MiB across phases.
 
 Combined sweep (`sweep.py --scene pendleton-r3 --axis buildings=off,on --axis buildings_sse=16,64 --axis trees=off,on
@@ -1080,11 +1080,11 @@ fps and 0 dropped frames. Increase of the row median over the all-off row:
 | Buildings SSE | Trees | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
 |---|---|---|---|---|---|---|
 | off | on | +0.61 | +0.58 | +1.12 | +52 | pass |
-| 16 | off | +0.64 | +0.76 | +2.41 | +607 | memory fails |
+| 16 | off | +0.63 | +0.76 | +2.41 | +607 | memory fails |
 | 16 | on | +1.24 | +1.24 | +4.34 | +674 | memory fails (GPU within 0.7 ms of its limit) |
 | 64 | off | +0.45 | +0.49 | +1.00 | +290 | pass |
 | 64 | on | +1.05 | +1.09 | +2.98 | +359 | pass (memory within 22 MiB of its limit) |
 
-Game-thread and memory costs add (both-on = the two single-feature rows to within 0.1 ms / 15 MiB); GPU time is 0.9-0.8 ms above the sum. Only SSE 64 with trees fits the
+Game-thread and memory costs add (both-on = the two single-feature rows to within 0.1 ms / 17 MiB); GPU time is 0.8-0.9 ms above the sum. Of the both-on rows only SSE 64 fits the
 budget, and only just on memory. Contact sheet: `.cache/bench-r3r4/combined/sweep_sheet.png`. The shipped defaults are
 unchanged; choosing them is the user's call.
