@@ -5,6 +5,8 @@
 #include "Config/CamSimConfig.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Geospatial/CesiumWorldSetup.h"
+#include "Geospatial/SceneBuildings.h"
+#include "UObject/Package.h"
 #include "Cesium3DTileset.h"
 #include "CesiumGeoreference.h"
 #include "CesiumTileMapServiceRasterOverlay.h"
@@ -164,5 +166,39 @@ bool FCesiumBackendShouldSetUpWorldTest::RunTest(const FString& Parameters)
 	Game->SetGameInstance(Other);
 	TestFalse(TEXT("game world of another game instance"), ShouldSetUpCesiumWorld(Game, Ours));
 	Game->SetGameInstance(nullptr);
+	return true;
+}
+
+// PickTerrainTileset: the tagged tileset wins; a lone untagged one is the terrain; otherwise ambiguous
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPickTerrainTilesetTest, "CamSim.CesiumBackend.PickTerrainTileset",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FPickTerrainTilesetTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSim::Geospatial;
+	ACesium3DTileset* A = NewObject<ACesium3DTileset>(GetTransientPackage());
+	ACesium3DTileset* B = NewObject<ACesium3DTileset>(GetTransientPackage());
+	TestNull(TEXT("none"), PickTerrainTileset({}));
+	TestTrue(TEXT("single untagged"), PickTerrainTileset({ A }) == A);
+	TestNull(TEXT("two untagged: ambiguous"), PickTerrainTileset({ A, B }));
+	B->Tags.Add(TerrainTilesetTag);
+	TestTrue(TEXT("tagged wins"), PickTerrainTileset({ A, B }) == B);
+	return true;
+}
+
+// Terrain tagged + buildings tileset present: the terrain is picked in either order
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPickTerrainTilesetWithBuildingsTest, "CamSim.CesiumBackend.PickTerrainTilesetWithBuildings",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FPickTerrainTilesetWithBuildingsTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSim::Geospatial;
+	ACesium3DTileset* Terrain = NewObject<ACesium3DTileset>(GetTransientPackage());
+	ACesium3DTileset* Buildings = NewObject<ACesium3DTileset>(GetTransientPackage());
+	Terrain->Tags.Add(TerrainTilesetTag);
+	Buildings->Tags.Add(BuildingsTag);
+	TestTrue(TEXT("buildings first"), PickTerrainTileset({ Buildings, Terrain }) == Terrain);
+	TestTrue(TEXT("terrain first"), PickTerrainTileset({ Terrain, Buildings }) == Terrain);
+	TestNull(TEXT("buildings alone are not terrain"), PickTerrainTileset({ Buildings }));
+	ACesium3DTileset* Untagged = NewObject<ACesium3DTileset>(GetTransientPackage());
+	TestTrue(TEXT("buildings + untagged: the untagged"), PickTerrainTileset({ Buildings, Untagged }) == Untagged);
 	return true;
 }

@@ -13,6 +13,7 @@ import json
 import logging
 import multiprocessing
 import os
+import pickle
 import platform
 import shutil
 import subprocess
@@ -44,8 +45,9 @@ from .engine import (
     tile_path,
 )
 from .fsutil import atomic_write, normalise_modes, sha256_file
+from .layers import buildings as buildings_layer
 from .layers import imagery, landcover, ndvi, terrain
-from .licences import DEFAULT_ALLOW, attribution_text, check_allowed
+from .licences import DEFAULT_ALLOW, attribution_text, check_allowed, layer_credit
 from .manifest import STATE_DIR, AssetRecord, Manifest, SourceRecord, canonical_json, write_hashes
 from .net import Http
 from .qmesh import layer_json
@@ -196,8 +198,12 @@ def _cached_assets(rec: SourceRecord, cache: Cache):
     one (COG with overviews), else the cached blob. Downloads misses (signing through the adapter, so an expired
     token is re-signed), records sha256 and size, and fails on a pinned-hash mismatch."""
     src = make_source(rec.id, rec.adapter, rec.options, cache.http)
+    fetch_blob = getattr(src, "fetch_blob", None)
     for a in rec.assets:
-        blob, a.sha256, a.size = cache.get(a.url, a.sha256, sign=src.sign)
+        if fetch_blob is not None:
+            blob, a.sha256, a.size = fetch_blob(to_asset(a), cache)
+        else:
+            blob, a.sha256, a.size = cache.get(a.url, a.sha256, sign=src.sign)
         yield src, a, src.prepare(blob, to_asset(a), cache) or blob
 
 
@@ -243,7 +249,7 @@ def _needs_footprints(m: Manifest) -> bool:
     """A non-global data asset of a terrain/imagery source without a footprint (fetch computes them)."""
     for rec in m.sources:
         src = make_source(rec.id, rec.adapter, rec.options)
-        if src.layer == Layer.LANDCOVER or src.global_coverage:
+        if src.layer in (Layer.LANDCOVER, Layer.FEATURES, Layer.BUILDINGS) or src.global_coverage:
             continue
         if any(a.role == "data" and "footprint" not in a.metadata for a in rec.assets):
             return True
@@ -266,7 +272,7 @@ def _fetch(pkg: Path, cache: Cache) -> Manifest:
         for src, a, path in _cached_assets(rec, cache):
             if (
                 a.role == "data"
-                and src.layer != Layer.LANDCOVER
+                and src.layer not in (Layer.LANDCOVER, Layer.FEATURES, Layer.BUILDINGS)
                 and not src.global_coverage
                 and "footprint" not in a.metadata
             ):
@@ -291,7 +297,7 @@ def make_context(pkg: Path, m: Manifest, cache: Cache) -> BuildContext:
     if m.sea_level:
         g = m.sea_level["egm96_grid"]
         grids[g["name"]] = str(cache.get(g["url"], g["sha256"])[0])
-    return BuildContext(str(pkg), m.to_dict(), paths, grids)
+    return BuildContext(str(pkg), m.to_dict(), paths, grids, str(cache.root))
 
 
 # ---------------------------------------------------------------- workers
@@ -481,22 +487,100 @@ def _run_isolated(fn, *args):
         return ex.submit(fn, *args).result()
 
 
-def _cut_landcover(bounds: tuple, out: Path, paths: dict[str, Path]) -> tuple[dict, float]:
-    """Runs in its own process, so its peak RSS isn't the main process's lifetime peak (fetch, planning)."""
-    index = landcover.fetch(bounds, out, reader=landcover.local_reader(paths), cut_by="camsim-scene")
+def _cut_landcover(
+    bounds: tuple,
+    out: Path,
+    paths: dict[str, Path],
+    feats: list | None = None,
+    area: tuple | None = None,
+    credits: list[str] | None = None,
+) -> tuple[dict, float]:
+    """Runs in its own process, so its peak RSS isn't the main process's lifetime peak (fetch, planning). With `feats`
+    (REALISM R2), burns them into the tiles that meet `area` and writes the code legend and credits into index.json."""
+    if feats is None:
+        index = landcover.fetch(bounds, out, reader=landcover.local_reader(paths), cut_by="camsim-scene")
+        return index, peak_rss_mb()
+    from PIL import Image
+
+    from .features import CODES, burn_tile
+
+    index = landcover.fetch(
+        bounds, out, reader=landcover.local_reader(paths), cut_by="camsim-scene", codes={}, credits=credits
+    )
+    w, s, e, n = area
+    present: set[int] = set()
+    for t in index["tiles"]:
+        i, j = t["lat_index"], t["lon_index"]
+        tw, ts = j * landcover.TILE_DEG, i * landcover.TILE_DEG
+        if tw >= e or tw + landcover.TILE_DEG <= w or ts >= n or ts + landcover.TILE_DEG <= s:
+            continue
+        path = out / t["file"]
+        codes = np.array(Image.open(path), dtype=np.uint8)
+        if burn_tile(codes, i, j, feats, area):
+            landcover.write_tile(codes, path)
+        present |= set(np.unique(codes).tolist()) & CODES.keys()
+    index["codes"] = {str(c): CODES[c] for c in sorted(present)}
+    landcover.write_index(index, out)
     return index, peak_rss_mb()
+
+
+def _read_features(fs: dict, assets: list[tuple[str, str]]) -> list:
+    """Every feature record of (source id, local file) assets; runs isolated (the OSM read peaks at ~3 GB)."""
+    from .sources.nhd_hr import read_nhd
+    from .sources.osm_geofabrik import read_osm
+
+    area = tuple(fs["area"])
+    out = []
+    for sid, path in assets:
+        out += read_osm(Path(path), area, fs) if sid == "osm_geofabrik" else read_nhd(Path(path), area)
+    return out
+
+
+def _load_features(m: Manifest, ctx: BuildContext) -> list:
+    """Every feature record of the manifest's feature sources, from the cached extract when the context has a cache (a
+    derived file per asset hashes + rules version + feature settings: the 600 MB PBF is read once)."""
+    from .features import RULES_VERSION
+
+    fs = m.layers["landcover"]["features"]
+    assets, shas = [], []
+    for sid in fs["sources"]:
+        rec = m.source(sid)
+        for a in rec.assets:
+            assets.append((sid, ctx.asset_paths[f"{rec.id}/{a.id}"]))
+            shas.append(f"{sid}/{a.id}:{a.sha256}")
+    cached = None
+    if ctx.cache_root:
+        key = inputs_hash(__version__, RULES_VERSION, canonical_json(fs), *shas)
+        cached = Cache(Path(ctx.cache_root)).derived_path(key, ".features.pkl")
+        if cached.is_file():
+            try:
+                return pickle.loads(cached.read_bytes())
+            except Exception as e:  # a truncated or stale pickle: read the sources again
+                log.warning("ignoring %s: %s", cached, e)
+    feats = _run_isolated(_read_features, fs, assets)
+    if cached is not None:
+        atomic_write(cached, pickle.dumps(feats, protocol=pickle.HIGHEST_PROTOCOL))
+    return feats
 
 
 def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     st, out = LayerStats(), pkg / "landcover"
-    prio = m.layers["landcover"]["priorities"]
+    lc = m.layers["landcover"]
+    prio = lc["priorities"]
     if not prio:
         shutil.rmtree(out, ignore_errors=True)
         return st
     t0 = time.monotonic()
     rec = m.source(prio[0])
     paths = {a.url: Path(ctx.asset_paths[f"{rec.id}/{a.id}"]) for a in rec.assets}
-    inputs = inputs_hash(m.layer_settings_hash("landcover"), __version__, *sorted(a.sha256 for a in rec.assets))
+    shas = sorted(a.sha256 for a in rec.assets)
+    fs = lc.get("features")
+    credits = None
+    if fs:  # REALISM R2: the feature extracts are inputs too (their settings are in the layer settings hash)
+        shas += sorted(a.sha256 for sid in fs["sources"] for a in m.source(sid).assets)
+        credits = [layer_credit(m.source(sid).attribution, m.source(sid).licence) for sid in fs["sources"]]
+        shas += credits  # the layer's own notice is an output too
+    inputs = inputs_hash(m.layer_settings_hash("landcover"), __version__, *shas)
     marker, index_path = pkg / STATE_DIR / "landcover.json", out / "index.json"
     prev = json.loads(marker.read_text()) if marker.exists() else None
     index = None
@@ -508,7 +592,12 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         st.skipped = len(index["tiles"])
     else:
         shutil.rmtree(out, ignore_errors=True)
-        index, st.peak_rss_mb = _run_isolated(_cut_landcover, tuple(m.layers["landcover"]["bounds"]), out, paths)
+        bounds = tuple(lc["bounds"])
+        if fs:
+            feats = _load_features(m, ctx)  # in the main process: the cut's process needs no cache
+            index, st.peak_rss_mb = _run_isolated(_cut_landcover, bounds, out, paths, feats, tuple(fs["area"]), credits)
+        else:
+            index, st.peak_rss_mb = _run_isolated(_cut_landcover, bounds, out, paths)
         atomic_write(marker, json.dumps({"inputs": inputs, "output": sha256_file(index_path)}).encode())
         st.built = len(index["tiles"])
     st.tiles = len(index["tiles"])
@@ -700,6 +789,9 @@ def build_scene(
         if ndvi_stats is not None:
             stats["ndvi"] = ndvi_stats
         stats["landcover"] = _build_landcover(pkg, m, ctx)
+        bstats = buildings_layer.build(pkg, m, ctx)
+        if m.layers.get("buildings"):
+            stats["buildings"] = bstats
         atomic_write(pkg / "ATTRIBUTION.txt", attribution_text(m).encode())
         normalise_modes(pkg, skip=(STATE_DIR,))
         sea = sea_level_mod.write(pkg, m, {k: Path(v) for k, v in ctx.grid_paths.items()})
@@ -722,6 +814,8 @@ def build_scene(
             "balance": bal_report,
             "ndvi": ndvi_report,
         }
+        if m.layers.get("buildings"):
+            info["buildings"] = buildings_layer.plan_stats(pkg)
         atomic_write(pkg / "build.json", (json.dumps(info, indent=2, sort_keys=True) + "\n").encode())
     peak = max(s.peak_rss_mb for s in stats.values())
     if peak > max_worker_rss_mb:

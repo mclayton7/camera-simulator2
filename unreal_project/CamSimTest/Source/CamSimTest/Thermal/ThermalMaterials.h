@@ -26,7 +26,7 @@ class CAMSIMTEST_API FThermalMaterialTable
 {
 public:
 	static constexpr int32 MaxClasses     = 32;   // == FThermalFrameParams::MaxClasses (static_assert in ThermalFrameBuilder.cpp)
-	// Built-in indices (order fixed). 0-5 are ROADMAP 4A's; 6-13 are the land-cover classes (ROADMAP 4B).
+	// Built-in indices (order fixed). 0-5 are ROADMAP 4A's; 6-13 are the land-cover classes (ROADMAP 4B); 14 is rail_ballast (REALISM R2).
 	static constexpr int32 TerrainDefault = 0;
 	static constexpr int32 Water          = 1;
 	static constexpr int32 VehiclePaint   = 2;
@@ -41,6 +41,7 @@ public:
 	static constexpr int32 BareSoil       = 11;
 	static constexpr int32 SnowIce        = 12;
 	static constexpr int32 Wetland        = 13;
+	static constexpr int32 RailBallast    = 14;
 
 	static const TArray<FThermalMaterial>& BuiltIns();
 	/** "model" / "water" / "snow" (case-insensitive). */

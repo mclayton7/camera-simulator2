@@ -69,4 +69,7 @@ private:
 
 	UCamSimSubsystem* Subsystem = nullptr;
 	FCigiSender*      Sender    = nullptr;
+
+	static constexpr double StatsPeriodSec = 5.0;
+	double LastLookupStatsSec = 0.0;   // FPlatformTime::Seconds of the last material-code stats line
 };

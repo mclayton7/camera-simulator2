@@ -171,6 +171,33 @@ Can be done without the runner:
   non-same-size + bloom + blur partial thread groups). This is code work (TDD, both platforms), so ask before
   starting it.
 
+## 5. Realism R3 buildings on Linux/Vulkan
+
+Measured on the Mac only (`docs/scene-packages.md`, "R3 buildings slice"). Build the buildings layer onto the Linux
+R1/R2 package, then check the runtime and the cost on the 5080.
+
+- **Package:** `cp -a` the box's current Pendleton package, then `scripts/scene/build.sh build /out/<pkg>
+  --config scripts/scene/examples/pendleton.toml --replan -j 16` (needs `allow = ["ODbL-1.0"]`, already in the toml; the
+  first fetch reads Overture from S3) and `verify --deep`. Expect 82,260 buildings, 1,765 tiles (85 / 394 / 1,286 at
+  z13 / z14 / z15), 247.9 MB; `features/buildings/` should be byte-identical to the Mac's if the snapshot sha256 matches
+  (`3bdadde5…`; compare the `features/buildings/` lines of `hashes.txt`).
+- **Spawn:** CamSim on the package (native or the image with the package mounted, as task 1c): the log has `buildings
+  tileset 'CamSimBuildings' … SSE=… culledSSE=…` and `cached 2 tileset actor(s)`, and no `LogCesium` error.
+- **LOS / HAT:** the CIGI queries of the Mac table ("R3 buildings slice", CIGI): roof HOT within 0.5 m and code 230 at
+  the warehouse `010048df…` (33.3029558, −117.3144625; roof 94.67 m), the ground 5 m west, and an LOS from 30 m west of
+  the wall at 90.75 m hitting within 1 m of it with 230. The Mac's session script was a scratch file; the queries are
+  `send_cigi_test.py --hat-extended` / `--los-extended` with the sensor at the LOS start point.
+- **Bench at 1, 2 and 4 instances** (REALISM R3 gate): `scripts/bench/sweep.py --site pendleton --scene <pkg>
+  --axis buildings=off,on --axis buildings_sse=16,64 --axis buildings_physics=on` for one instance (VRAM from
+  `nvidia-smi` here, not the Mac's unified-memory footprint), then `scripts/bench/scale_bench.py` with buildings on vs
+  off at N = 1, 2, 4 (`docs/capacity-linux-rtx5080.md`: 4 was comfortable before R3, VRAM-bound). Tooling gap: neither
+  `scale_bench.py` nor `run_bench.py --docker` mounts a scene package, and `scale_bench.py` takes no `--env`; add both,
+  as task 1f does for `run_bench.py`. Report game thread, GPU and VRAM per instance against the budget (+1.5 ms game
+  p50, +5 ms GPU p50, +1024 MiB memory over a whole run, raised from 400 MB on 2026-10-11), and the SSE the user picked on the Mac.
+
+Record the results in `docs/scene-packages.md` (an "R3 on Linux" table after "R3 buildings slice") and in `ROADMAP.md`'s
+Realism paragraph.
+
 ## Not for this box
 
 - RTX 5090 reference benchmarks (3A/3B): deferred until that hardware exists.

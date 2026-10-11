@@ -5,6 +5,7 @@
 #include "Config/CamSimConfig.h"
 #include "Geospatial/CesiumTuning.h"
 #include "Geospatial/GroundSpeedEstimator.h"
+#include "Geospatial/SceneBuildings.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "GameFramework/Actor.h"
 
@@ -166,7 +167,9 @@ void FCamSimStreamingController::SetCulledScreenSpaceError(const FTilesets& Tile
 	{
 		if (ACesium3DTileset* T = Weak.Get())
 		{
-			T->CulledScreenSpaceError = Sse;
+			// The buildings tileset never refines off-screen tiles finer than its own SSE.
+			T->CulledScreenSpaceError = CamSim::Geospatial::ResolveTilesetCulledScreenSpaceError(
+				Sse, CamSim::Geospatial::IsBuildingsActor(T), T->MaximumScreenSpaceError);
 		}
 	}
 }

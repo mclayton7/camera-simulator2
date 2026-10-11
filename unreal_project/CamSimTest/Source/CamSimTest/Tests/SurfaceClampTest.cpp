@@ -569,3 +569,36 @@ bool FSurfaceClampMotionScaleTest::RunTest(const FString& Parameters)
 		FMath::IsNearlyEqual(HalfHeave, FullHeave * 0.5, 1e-9));
 	return true;
 }
+
+#include "Cesium3DTileset.h"
+#include "CesiumGeoreference.h"
+#include "Engine/Engine.h"
+#include "GameFramework/WorldSettings.h"
+#include "Geospatial/SceneBuildings.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceProbeIgnoresBuildingsTest,
+	"CamSim.Entity.SurfaceProbe.IgnoresBuildings",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSurfaceProbeIgnoresBuildingsTest::RunTest(const FString& Parameters)
+{
+	const FCollisionQueryParams None = CamSimSurface::MakeProbeQueryParams(nullptr);
+	TestTrue(TEXT("complex"), None.bTraceComplex);
+	TestEqual(TEXT("nothing ignored"), None.GetIgnoredSourceObjects().Num(), 0);
+
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	ON_SCOPE_EXIT { GEngine->DestroyWorldContext(World); World->DestroyWorld(false); };
+	AddExpectedMessage(TEXT("No game viewport was found"), EAutomationExpectedErrorFlags::Contains, 0);
+	World->GetWorldSettings()->bEnableWorldBoundsChecks = false;
+	World->SpawnActor<ACesiumGeoreference>();
+	ACesium3DTileset* B = World->SpawnActorDeferred<ACesium3DTileset>(ACesium3DTileset::StaticClass(), FTransform::Identity);
+	B->SetTilesetSource(ETilesetSource::FromEllipsoid);
+	B->Tags.Add(CamSim::Geospatial::BuildingsTag);
+	B->FinishSpawning(FTransform::Identity);
+
+	TestTrue(TEXT("found"), CamSim::Geospatial::FindBuildingsTileset(World) == B);
+	const FCollisionQueryParams P = CamSimSurface::MakeProbeQueryParams(B);
+	TestTrue(TEXT("buildings ignored"), P.GetIgnoredSourceObjects().Contains(B->GetUniqueID()));
+	return true;
+}

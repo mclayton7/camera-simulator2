@@ -34,7 +34,11 @@ def load_rows(path: Path) -> list[dict]:
     return rows
 
 
-def summarize(rows: list[dict], phases: list[dict]) -> dict:
+def summarize(
+    rows: list[dict],
+    phases: list[dict],
+    mem_samples: list[tuple[float, float | None]] | None = None,
+) -> dict:
     out: dict[str, dict] = {}
     for ph in phases:
         if not ph["measured"]:
@@ -48,6 +52,7 @@ def summarize(rows: list[dict], phases: list[dict]) -> dict:
             "wall_ms_p95": _pct(wall, 95),
             "wall_ms_p99": _pct(wall, 99),
             "game_ms_p50": _pct([r["game_ms"] for r in sel], 50),
+            "game_ms_p95": _pct([r["game_ms"] for r in sel], 95),
             "render_ms_p50": _pct([r["render_ms"] for r in sel], 50),
             "rhi_ms_p50": _pct([r["rhi_ms"] for r in sel], 50),
             "gpu_ms_p50": _pct([r["gpu_ms"] for r in sel], 50),
@@ -72,4 +77,11 @@ def summarize(rows: list[dict], phases: list[dict]) -> dict:
         if sensor:
             out[ph["name"]]["sensor_gpu_ms_p50"] = _pct(sensor, 50)
             out[ph["name"]]["sensor_gpu_ms_p95"] = _pct(sensor, 95)
+        if mem_samples is not None:
+            mem = [
+                v
+                for t, v in mem_samples
+                if ph["start"] <= t < ph["end"] and v is not None
+            ]
+            out[ph["name"]]["gpu_mem_mib_max"] = max(mem) if mem else None
     return out

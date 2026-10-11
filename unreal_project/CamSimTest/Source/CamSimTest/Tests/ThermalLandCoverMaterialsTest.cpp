@@ -23,7 +23,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalLandCoverBuiltInsTest, "CamSim.Thermal.
 bool FThermalLandCoverBuiltInsTest::RunTest(const FString& Parameters)
 {
 	const TArray<FThermalMaterial>& B = FThermalMaterialTable::BuiltIns();
-	TestEqual(TEXT("14 built-ins"), B.Num(), 14);
+	TestEqual(TEXT("15 built-ins"), B.Num(), 15);
 	struct FExpect { int32 Index; const TCHAR* Name; };
 	const FExpect Expected[] = {
 		{ FThermalMaterialTable::TerrainDefault, TEXT("terrain_default") }, { FThermalMaterialTable::Water, TEXT("water") },
@@ -33,6 +33,7 @@ bool FThermalLandCoverBuiltInsTest::RunTest(const FString& Parameters)
 		{ FThermalMaterialTable::Grassland, TEXT("grassland") }, { FThermalMaterialTable::Cropland, TEXT("cropland") },
 		{ FThermalMaterialTable::BuiltUp, TEXT("built_up") }, { FThermalMaterialTable::BareSoil, TEXT("bare_soil") },
 		{ FThermalMaterialTable::SnowIce, TEXT("snow_ice") }, { FThermalMaterialTable::Wetland, TEXT("wetland") },
+		{ FThermalMaterialTable::RailBallast, TEXT("rail_ballast") },
 	};
 	for (const FExpect& E : Expected)
 	{
@@ -120,6 +121,8 @@ bool FThermalLandCoverContrastTest::RunTest(const FString& Parameters)
 	{
 		TestTrue(*FString::Printf(TEXT("night: %s warmer than vegetation"), *Table.Get(Hot).Name), K(Hot, Night) - K(T::Vegetation, Night) >= 1.0);
 	}
+	TestTrue(TEXT("noon: rail ballast warmer than grassland by >= 1 K"), K(T::RailBallast, Noon) - K(T::Grassland, Noon) >= 1.0);
+	TestTrue(TEXT("night: rail ballast cooler than asphalt"), K(T::RailBallast, Night) < K(T::Asphalt, Night));
 	TestTrue(TEXT("night: tree canopy warmer than grassland by >= 0.5 K"), K(T::TreeCanopy, Night) - K(T::Grassland, Night) >= 0.5);
 	return true;
 }

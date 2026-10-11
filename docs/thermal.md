@@ -129,8 +129,8 @@ copies of roads, so the default is 2 m. The asphalt/concrete split and the fast 
 |---|---|
 | Vegetation (10, 20, 30, 40, 90, 95, 100) | v x own class + (1 - v) x `bare_soil` (trails, clearings) |
 | Built-up (50) | v x `vegetation` + (1 - v) x (`asphalt` below `asphalt_max_luma`, `concrete` above; 0.04 soft ramp) |
-| Bare (60) | v x `vegetation` + (1 - v) x own class |
-| None (0, 70, 80) | own class |
+| Bare (60; R2 roads and rail 200, 201, 210) | v x `vegetation` + (1 - v) x own class |
+| None (0, 70, 80; R2 inland water 220) | own class |
 
 The asphalt/concrete split applies in built-up only (bare ground keeps its own class: a dark/bright split there would turn bare
 soil into asphalt). Refinement is off when no base colour is bound (the 4A fallback); the WorldCover blend alone is used.
@@ -151,6 +151,16 @@ soil into asphalt). Refinement is off when no base colour is bound (the 4A fallb
 | Mangroves | 95 | `wetland` |
 | Moss and lichen | 100 | `grassland` |
 | No data / other | 0 | `terrain_default` |
+| Paved, asphalt or unknown surface (REALISM R2, OSM) | 200 | `asphalt` |
+| Paved, concrete (R2, OSM) | 201 | `concrete` |
+| Rail bed (R2, OSM) | 210 | `rail_ballast` |
+| Inland water (R2, NHD HR) | 220 | `water` |
+
+Codes 200-220 come only from scene packages built with `[features]` (REALISM R2, [`scene-packages.md`](scene-packages.md#vector-features-r2)):
+OSM roads, paved areas and rail and NHD HR water burned into the package's `landcover/` tiles over WorldCover. They are in the
+Bare family, so a green verge inside a road texel still refines toward `vegetation`, and the fast term reads the imagery's own
+brightness (see Limits (R2)). The road codes reuse the 4A `asphalt` and `concrete` materials instead of new `road_*` classes;
+override them with `classes.200` / `classes.201` (which drops the code's refinement, as above).
 
 A code remapped to a different material renders that material unrefined: it leaves its refinement family (the table above
 becomes None for it), so `{50: concrete}` gives concrete, not the asphalt/concrete split, and `{10: vegetation}` is not blended
@@ -187,7 +197,7 @@ override with `k_fast` > 0 can.
 `classes.<code>`. `enabled: false` reproduces 4A's output bit for bit with 4A's default classes
 (`CamSim.Thermal.Reference.LandCoverOffIs4A`, `CamSim.Thermal.Builder.LandCoverDisabledIs4A`, the GPU "off" case); the 4A
 `vegetation` class itself was retuned (effective albedo, so it keeps the land-cover orderings), so an entity type configured to
-`vegetation` reads cooler than in 4A. The 8 new built-ins leave 18 of the 32 class slots for user materials.
+`vegetation` reads cooler than in 4A. The 8 new built-ins (plus R2's `rail_ballast`) leave 17 of the 32 class slots for user materials.
 
 **Another area.** Run `uv run scripts/landcover/fetch_worldcover.py --bbox W S E N --out DIR` (needs network and `rasterio`, which
 `uv run` fetches), point `thermal.land_cover.dir` at DIR (relative to the project directory). Open-ocean COGs that don't exist
@@ -234,12 +244,41 @@ follow-ups: skip the vegetation taps for the None family and non-terrain pixels,
   range (1200 m at 40 degrees, 0.45 m/px). Boundaries that the imagery distinguishes (trees vs lawn vs road vs bare) follow the imagery.
 - Small-area mapping error grows with tan(latitude) and distance from the window centre: about one texel at the SF window corners,
   9 % at 89 degrees (hence the 1 degree pole cut-off).
-- No roads layer: asphalt versus concrete is a luminance split of the base colour inside built-up. Imagery shadows bias it (shaded
-  concrete reads asphalt).
+- Without a scene package built with `[features]` there is no roads layer: asphalt versus concrete is a luminance split of the base
+  colour inside built-up. Imagery shadows bias it (shaded concrete reads asphalt). R2's road codes: Limits (R2).
 - WorldCover 2021 is one epoch (no seasons, no change since); a CPU copy of the window is kept next to its texture.
 - The warp amplitude is not validated against `warp_cell_m / 3` (documented only).
 - A pre-existing engine hitch of about +7 ms every ~30 s is visible in frame times, with land cover on or off; it is not 4B.
 - Land cover is verified on Linux/Vulkan (NVIDIA, 2026-10-02), as is thermal.
+
+### Limits (R2)
+
+Vector features (REALISM R2, codes 200-220; measurements in [`scene-packages.md`](scene-packages.md#r2-vector-features-2026-10-10-macos)):
+
+- Roads are at least one texel (~9 m) wide in IR wherever the verge isn't green. A dry verge inside a road texel is drawn
+  as asphalt.
+- The land-cover warp moves road edges by up to `warp_amplitude_m` (6 m), so long straight roads may wiggle slightly in IR.
+- Bridges and tunnels are not burned. A road on a bridge is drawn as whatever lies below the bridge until R3 adds decks.
+- Unpaved roads and tracks are left to WorldCover.
+- OSM completeness varies, and OSM inside military bases can be sparse. The registration report shows it.
+- Intermittent water is never water, even in a wet season.
+- **The fast term reads the imagery, not the OSM surface.** `S_abs,pix` uses the base colour's luminance as the albedo, while
+  `S_abs,ref` uses the class albedo (asphalt 0.10). A road that is light grey in NAIP (aged asphalt, or concrete that OSM tags as
+  asphalt) therefore reads several K below its class temperature at noon, and a dark brown dry verge (grassland refined to
+  `bare_soil`) above its own. On the first gate (r) pose (I-5 southbound, OSM way 1009956653, now the info row `r_t9`: the
+  OSM/imagery disagreement case) this flips the noon road-vs-verge contrast: -40.1 DN MWIR / -19.4 DN LWIR with the fast
+  term, +21.6 DN MWIR with `k_fast` 0 for every terrain class (2026-10-10); night is unaffected (+38 / +29 DN).
+- **A dry verge is nearly as warm as asphalt.** Vegetation codes refine toward `bare_soil` where the imagery isn't green, and
+  `bare_soil` is only 1.1 K below `asphalt` at noon and 0.5 K at 02:00 (December, Pendleton). On the gate (r) pose (I-5
+  northbound in San Clemente, dark pavement, dry scrub verge on a sunward bank) the road reads -25.3 DN MWIR / -10.8 DN LWIR
+  against the verge at noon and -1.2 / +13.3 DN at 02:00 (gate (r) fails); on CA 76 with a bare verge it reads +15.6 / +18.2
+  at noon. Road-vs-verge contrast therefore depends on the verge's imagery as much as on the road class
+  ([`scene-packages.md`](scene-packages.md#r2-vector-features-2026-10-10-macos), gate (r) table).
+- Most of I-5 in OSM at Pendleton is `surface=concrete` (code 201). On the first gate (r) pose at noon, 21 December, the class
+  temperatures are `asphalt` 307.2 K, `concrete` 300.5 K, `grassland` 300.9 K, `bare_soil` 306.1 K, `built_up` 304.3 K,
+  `rail_ballast` 308.5 K (02:00: 285.9, 285.8, 282.4, 285.4, 286.0, 284.2 K), so concrete stretches show little road-vs-grass
+  contrast at noon (a visual-review question).
+- R2 does not use the R1 NDVI layer in `ThermalCS` (moved to a follow-up spec); refinement still uses the GBuffer ExG.
 
 Data attribution (CC BY 4.0): © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by
 ESA WorldCover consortium.
@@ -275,8 +314,12 @@ Built-in classes (index order fixed; 6-13 added by 4B land cover), overridable a
 | `bare_soil` | 0.25 | 0.93 | 1300 | 8 | 0.025 | model |
 | `snow_ice` | 0.75 | 0.99 | 600 | 10 | 0 | snow (model, capped at 273.15 K) |
 | `wetland` | 0.40\* | 0.98 | 2500 | 15 | 0.004 | model |
+| `rail_ballast` (R2) | 0.20 | 0.93 | 900 | 10 | 0.025 | model |
 
 \* Effective albedo: folds evapotranspiration into the absorbed solar (the model has no latent heat term).
+
+`rail_ballast` (porous crushed rock: low thermal inertia, unlike any other built-in) has values chosen from material properties
+(dark granite/basalt ballast, open voids), not fitted to a published measurement.
 
 Every key, range and env var is in [`configuration.md`](configuration.md#thermal-thermal):
 `thermal.enabled`, `air_temperature_c`, `air_diurnal_swing_k`, `extinction_per_km.{mwir,lwir}`,

@@ -10,12 +10,15 @@
  *  8 row FPN, 9 defects; photon-detector channel c adds c * 16. Fixed-pattern streams pass
  *  Frame = FixedFrame. Stream 64 (LandCoverWarpStream, ROADMAP 4B): the thermal land-cover warp lattice,
  *  Hash(i, j, FixedFrame, 0, 2 * 64) over ground cells (CamSimThermalRef::LandCoverWarpNoise).
+ *  Streams 80-82 (VegetationStream, REALISM R4): the vegetation scatter, Hash(col, row, candidate, seed, 160 + k),
+ *  k = 0 east jitter, 1 north jitter, 2 accept, 3 yaw, 4 scale (CPU only, no HLSL mirror).
  *  Namespace rule: stream s owns hash sub-streams 2s and 2s + 1. Gaussian(s) uses both; a raw
  *  uniform draw of stream s uses sub-stream 2s, e.g. defects: Uniform(Hash(x, y, FixedFrame, Seed, 2 * 9)). */
 namespace CamSimHash
 {
 	constexpr uint32 FixedFrame = 0xFFFFFFFFu;
 	constexpr uint32 LandCoverWarpStream = 64u;   // LANDCOVER_WARP_STREAM in CamSimThermalCommon.ush
+	constexpr uint32 VegetationStream = 80u;      // streams 80-82, sub-streams 160..164 (Vegetation/VegetationScatter.cpp)
 
 	/** PCG-RXS-M-XS 32-bit output permutation (Jarzynski & Olano 2020). */
 	inline uint32 Pcg(uint32 V)

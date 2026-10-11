@@ -28,7 +28,9 @@ Background: [`docs/realism/`](realism/) (data sources, Cesium findings, offline 
   ndvi/{z}/{x}/{y}.png          # 8-bit grayscale NDVI (0 nodata, 1..255 = -1..+1); tiles without data are absent
   sea_level.json                # local MSL offset from EGM96 (packages with a [sea_level] station)
   landcover/index.json
-  landcover/<lat>_<lon>.png     # the 4B thermal format (0.05° tiles, 600 × 600, 8-bit WorldCover codes)
+  landcover/<lat>_<lon>.png     # the 4B thermal format (0.05° tiles, 600 × 600, 8-bit WorldCover codes; + 200-220 with [features])
+  features/buildings/tileset.json   # 3D Tiles 1.1 (packages with [buildings] that keep at least one building; Buildings (R3))
+  features/buildings/{z}/{x}/{y}.glb  # z13-z15, one GLB per tile that holds buildings
   .state/                       # resume markers and the build lock (not hashed, not packed)
 ```
 
@@ -133,7 +135,19 @@ balance = true                              # colour-match Sentinel-2 to NAIP an
 naip_water_buffer_m = 200                   # NAIP only this far beyond WorldCover water's edge: 0 (off) or [200, 5000] m (Imagery edge)
 ndvi = true                                 # NDVI layer (default true in sim, false in preview; NDVI section)
 ndvi_max_zoom = 15                          # [10, 17]: NDVI pyramid depth (z15 ~ 2.4 m)
-allow = []                                  # extra licence ids (SPDX, see licences.toml)
+allow = []                                  # extra licence ids (SPDX, see licences.toml); [features] OSM layers and [buildings] need "ODbL-1.0"
+
+[features]                                  # optional, all off by default: vector features burned into landcover/ (Vector features (R2))
+roads = true                                # OSM highway=* (road_classes) and runways/taxiways -> 200/201
+paved_areas = true                          # OSM area:highway, highway + area=yes, amenity=parking, aeroway=apron -> 200/201
+rail = true                                 # OSM railway=rail / light_rail -> 210
+water = true                                # USGS NHD HR perennial lakes, ponds, reservoirs, stream/river areas -> 220
+road_classes = ["motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential"]  # default; also service, track, living_street
+
+[buildings]                                 # optional: Overture buildings -> features/buildings/ (Buildings (R3)); needs "ODbL-1.0" in allow
+enabled = true                              # false = as if the table were absent
+release = "2026-09-23.1"                    # Overture release id (YYYY-MM-DD.N), snapshotted on first fetch
+min_area_m2 = 10                            # [0, 10000]: drop footprints smaller than this
 
 [priorities]                                # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"]
@@ -169,6 +183,8 @@ Unknown keys are errors. **Profiles** (Decision 3):
 | `dep3_1m.geoid_overrides` | `{ "<project>" = "GEOID18" }`: the project's geoid when the USGS WESM index doesn't give exactly one. If the WESM service is down, planning proceeds only when the overrides cover **every** project; otherwise it fails naming the uncovered ones |
 | `noaa_crm_socal.msl_above_navd88_m` | set by `plan` from `[sea_level] station` (don't set it directly). A package that uses `noaa_crm_socal` without a station is a config error |
 | `bmng.month` | set from `bmng_month` (don't set it directly) |
+| `osm_geofabrik.extract` | Geofabrik extract id (default: the smallest extract whose polygon contains the margin area; Pendleton: `socal`) |
+| `osm_geofabrik.date` | `YYYY-MM-DD` dated daily file to pin (default: the newest of today back 7 days that exists; a configured date must exist) |
 | `adapter` | any source: a built-in id or `"module:Class"` (an importable adapter class) |
 
 **`allow`** adds licence ids to the default allow-list (`LicenseRef-PublicDomain-USGov`, `CC-BY-4.0`); `--allow
@@ -339,6 +355,179 @@ because the tidal mask setting enters the tile hash; the output is identical.
 it. The CRM is accurate to about 1 m and is coarser than the ring's z10 samples (about 150 m). Piers and other thin
 features follow their source. Acceptance: coast_check (a)-(c) in "Measured".
 
+## Vector features (R2)
+
+**Why.** Roads are among the most visible features in LWIR and WorldCover has none (a motorway is `built_up` or whatever
+its verge is). R2 burns vector features into the package's existing `landcover/` tiles as codes above WorldCover's, so
+thermal IR draws them and CIGI reports them as material codes, with no new runtime geometry. Design:
+[`superpowers/specs/2026-10-10-r2-vector-features-design.md`](superpowers/specs/2026-10-10-r2-vector-features-design.md).
+
+| Code | Feature | Source | Thermal material (`docs/thermal.md`) |
+|---|---|---|---|
+| 200 | Paved road or area, asphalt or no/unknown `surface` | OSM | `asphalt` |
+| 201 | Paved, `surface=concrete`, `concrete:plates`, `concrete:lanes`; runways without a `surface` | OSM | `concrete` |
+| 210 | Rail bed (`railway=rail`, `light_rail`) | OSM | `rail_ballast` (new built-in) |
+| 220 | Inland water: perennial lake/pond (FType 390), reservoir (436), stream/river area (460) | NHD HR | `water` |
+
+**Rules** (`camsim_scene/features.py`, `RULES_VERSION` 1):
+
+- Lines are buffered to their width: `width=*` when tagged; runways 45 m, taxiways 23 m; otherwise lanes × 3.5 m plus
+  shoulders (3 m on motorways and trunks, 1 m otherwise; 2 lanes when untagged on motorways/trunks, 1 on one-way roads,
+  else 2); rail 4 m per track. Every line is at least 1.05 cells (9.74 m) wide, so it covers a cell centre in every
+  cross-section: a 7 m road is one texel wide. Polygons (water, paved areas) are burned as they are.
+- Cells are 1/12000° (9.28 m N–S), the WorldCover grid; a cell takes a feature when its centre is inside the polygon.
+- Priority, later wins: water < paved areas < rail < roads; within one priority, sorted by source id, so the output is
+  deterministic.
+- Skipped: `bridge`, `tunnel`, `covered=yes`, `location=underground`, negative `layer` (no deck geometry before R3),
+  unpaved `surface` values (`unpaved`, `gravel`, `dirt`, `ground`, `compacted`, `fine_gravel`, `sand`, `grass`, `earth`,
+  `mud`: left to WorldCover), road classes outside `road_classes`, intermittent/ephemeral water, the sea, estuaries and every
+  NHD flowline.
+- Features are read over the margin area (bbox + `imagery_margin_km`); tiles in the ring keep WorldCover only.
+
+**Licence.** OSM is ODbL 1.0 (share-alike, attribution "© OpenStreetMap contributors", added to `ATTRIBUTION.txt`).
+It isn't in `DEFAULT_ALLOW`: a package with any OSM flag on needs `allow = ["ODbL-1.0"]` (or `--allow ODbL-1.0`), a
+deliberate opt-in because the derived land-cover tiles then fall under the ODbL. NHD is public domain.
+
+**Sources.**
+
+- OSM comes from Geofabrik's dated daily extracts (`<extract>-<yymmdd>.osm.pbf`); the fetch cache stores the file by
+  sha256, so the downloaded extract *is* the snapshot and the manifest pins it. Dated files appear about two days late
+  (the current and previous day return 404), so `plan` probes back up to 7 days for the newest that exists. Reading the
+  `socal` extract (639 MB) takes ~68 s and peaks at ~3 GB RSS (pyosmium with node locations), in its own process; size
+  CI runners for it. The parsed features are cached per extract and settings, so a rebuild reads them in seconds.
+- USGS 3DHP (NHD's successor) has only a CONUS-wide annual file and an ArcGIS service whose bbox queries time out, and at
+  Pendleton it is cross-walked NHD anyway. **NHD HR** is retired (static since 2023), so it is reproducible as is; TNM
+  serves it per HU4 as GeoPackage (1807 covers Pendleton, 166 MB). `nhd_hr` is replaced by a 3DHP adapter when per-unit
+  downloads exist. NHD's NAD83 is taken as WGS 84 (about 1 m, under a texel).
+
+**Off switch.** `[features]` absent or all false: the land-cover layer is byte-identical to a package built before R2
+(checked on Pendleton against `pendleton-r1c`).
+
+**Road registration** (`scripts/scene/tools/road_registration.py`, gate 2). The spec's method (a dark box of the road's
+width matched along ±30 m perpendicular NAIP profiles) measured vegetation, not roads, at Pendleton: most asphalt there is
+*brighter* than its dry verges (84 of 200 centrelines darker than their surroundings), and a single profile locks onto
+tree lines and shadows. The gate is instead a **2-D windowed correlation**: the bbox is cut into 1 km windows; in each
+window with at least 1 km of paved motorway…residential road (up to 60, seeded), the OSM road-boundary template (edges
+of the buffered roads minus their interior) is slid over the smoothed NAIP luminance gradient magnitude by ±20 m at 1 m;
+the peak must have contrast ≥ 1.0 DN/m, not lie on the search border, and stand out from the rest of the surface. Gate:
+median |shift| ≤ 10 m over the windows used, with at least 20 used windows and half of those tried. Many roads per
+window average out tree and shadow edges that defeat single profiles. Limits: a window dominated by one road direction
+can slide along it, or onto a parallel carriageway (aperture problem: the p90 tail); a periodic street grid can match one
+block off (a strict `xfail` test documents it); the constants were tuned on Pendleton only.
+
+**Known limits** (also in `docs/thermal.md`, "Limits (R2)"):
+
+- Roads are at least one texel (~9 m) wide in IR wherever the verge isn't green. A dry verge inside a road texel is drawn
+  as asphalt.
+- The land-cover warp moves road edges by up to `warp_amplitude_m` (6 m), so long straight roads may wiggle slightly in IR.
+- Bridges and tunnels are not burned. A road on a bridge is drawn as whatever lies below the bridge until R3 adds decks.
+- Unpaved roads and tracks are left to WorldCover.
+- OSM completeness varies, and OSM inside military bases can be sparse. The registration report shows it.
+- Intermittent water is never water, even in a wet season.
+- The road codes follow OSM's `surface`, but thermal IR's fast term follows the imagery's brightness: a road that looks
+  light in NAIP reads cooler at noon than its class (`docs/thermal.md`, "Limits (R2)"). Most of I-5 at Pendleton is
+  `surface=concrete` in OSM (code 201).
+- `rail_ballast`'s properties come from material-property reasoning, not a published measurement.
+- Road registration: see its limits above.
+
+## Buildings (R3)
+
+**Why.** Buildings are the largest missing structure in the rendered scene and the thing CIGI hosts hit with LOS and
+HAT/HOT queries. This is a thin slice of REALISM R3: extruded footprints with flat roofs and one neutral material, so
+the realism/cost trade can be measured before investing in roofs, facades and bridges. Design:
+[`superpowers/specs/2026-10-10-r3-buildings-slice-design.md`](superpowers/specs/2026-10-10-r3-buildings-slice-design.md).
+
+**Config.** A `[buildings]` table (scene.toml reference) turns the layer on; without the table the package, and its
+`manifest.json`, are byte for byte what they were before R3.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | `false` is the same as no table |
+| `release` | `"2026-09-23.1"` | Overture release to read |
+| `min_area_m2` | `10` | footprints (parts of a multipolygon, after cleaning) below this are dropped |
+
+Overture's buildings theme is **ODbL-1.0**, which is not in the default allow-list: a package with `[buildings]` fails
+to plan without `allow = ["ODbL-1.0"]` (as with the R2 OSM features). `ATTRIBUTION.txt` carries Overture's credit and the
+derived-database notice. The layer is a derived database under the ODbL.
+
+**Snapshot.** Overture deletes releases after 60 days, so the first `fetch` runs one DuckDB query over the bbox against
+`s3://overturemaps-us-west-2/release/<release>/theme=buildings/type=building/*` (anonymous; columns `id`, `geometry`,
+`height`, `num_floors`, `class`, `subtype`, `sources`) and writes the result as GeoParquet in the fetch cache, keyed by
+(release, bbox). Its sha256 is in the manifest's `sources[]`. A build reads only the snapshot, never S3, so a rebuild
+needs no network; a missing snapshot with a deleted release fails naming the release.
+
+**Footprints to buildings.**
+
+- *Clean:* `make_valid`, parts smaller than `min_area_m2` dropped, duplicate Overture ids dropped; a multipolygon is one
+  building with several parts. A footprint with no bare-earth height under it is dropped (counted in the layer stats).
+- *Height:* Overture `height`, else `num_floors` × 3.2 m, else 4.0 m; clamped to [2.5, 150] m. `height_source` is
+  `overture_height`, `overture_floors` or `default`.
+- *Base:* the lowest bare-earth DEM height over the footprint's exterior vertices and its centroid, as a WGS-84 ellipsoid
+  height (through the terrain layer's own height sampler, so datums match the terrain tiles), minus 0.5 m so walls reach
+  the ground on slopes. Roof = base + 0.5 m + height.
+- *Mesh:* roof by constrained Delaunay triangulation (holes kept); walls one quad per ring edge with outward normals; flat
+  shading; no floor. Linear `baseColorFactor` roof (0.30, 0.30, 0.31), walls (0.42, 0.41, 0.40), metallic 0, roughness 0.9.
+
+**Tiers and geometric errors.** Tiles use the geographic scheme of the package's terrain (EPSG:4326, 2 × 1 roots,
+`tiling.tile_bounds`). A building lives in exactly one tile, chosen by footprint area: >= 2,000 m² at z13, >= 300 m² at
+z14, the rest at z15; the tile is the one containing the footprint centroid. Refinement is `ADD`, so large buildings
+stay visible from far away and small ones load close in. Empty tiles are omitted, and a content-less ancestor exists
+where a descendant has content. Geometric error: root 200 m, z13 60 m, z14 20 m, z15 6 m (z15 nodes have no children).
+They are starting values for the SSE sweep: changing them (or any rule above) is a package rebuild; changing
+`scene.buildings.maximum_screen_space_error` is not. Each tile's bounding volume is a `region` from its buildings' real
+extents.
+
+**GLB layout.** Per tile: positions float32 in a local ENU frame at the tile's centre, glTF y-up (the 3D Tiles
+y-up to z-up convention), so the tile's `transform` = inverse(parent's world transform) x ENU-to-ECEF at that centre
+(transforms compose down the tree). One feature id per building per vertex (`EXT_mesh_features`, `_FEATURE_ID_0`), and an
+`EXT_structural_metadata` property table `building` in the schema `camsim_buildings`: `class` (string), `height_m`
+(float32), `height_source` (enum `heightSource`), `source_id` (string, the Overture id). An Overture `class` column that
+is empty for every building of a tile is omitted from that tile's property table (glTF forbids zero-length buffer
+views), so a reader treats a missing `class` as `""`. The metadata is written so the thermal deepening pass needs no
+rebuild; the runtime does not read it yet. The writer is in-house (`camsim_scene/gltf.py`, numpy + struct) and
+deterministic: buildings sorted by Overture id, fixed JSON formatting, no timestamps, so rebuilds are byte-identical.
+
+**A bbox with no buildings.** If no building survives planning, the layer writes no tileset and no `features/buildings/`
+directory; `verify` accepts that, and the runtime treats the package as having no buildings layer.
+
+**verify.**
+
+| Check | Passes when |
+|---|---|
+| `buildings_tileset` | (quick, when `tileset.json` exists) every `.glb` it lists exists; their hashes are covered by `hashes` |
+| `buildings_heights` | (`--deep`, decodes every tile) the building ids and tile assignment match a recomputation from the snapshot and the package's terrain sources exactly, each roof's top is within 0.01 m of the recomputed roof (float32 positions relative to the tile centre), and no tile holds an unexpected or misses an expected building |
+
+The test suite also runs CesiumGS `3d-tiles-validator` 0.6.1 (Node, pinned in `scripts/scene/tests/validator/`) on a
+fixture tileset, and skips that test when `npx` is missing. The validator's `.npmrc` sets `ignore-scripts=true`
+(`better-sqlite3` does not compile on current Node), so the first run does `npm ci` and then
+`npm rebuild sharp --ignore-scripts=false`; run those two commands by hand to prepare it.
+
+**Runtime.** `CAMSIM_SCENE_DIR` pointing at a package with `features/buildings/tileset.json` sets the buildings URL
+(`file:///`); `scene.buildings.*` (`docs/configuration.md`, "Scene Package") tunes it.
+
+- One extra `ACesium3DTileset`, tagged `CamSimBuildings` and found by that tag, is spawned at world init in
+  `SetUpCesiumWorld` right after `ApplyCesiumBackendConfig`'s destroy loop (`Geospatial/SceneBuildings.h`): the same
+  tuning as the terrain, `scene.buildings.maximum_screen_space_error` and `create_physics_meshes`, no raster overlays.
+- It is in the tileset cache, so `/ready` waits for it (frames never ship without buildings) and the FOV-scaled culled
+  SSE covers it; the culled SSE is max(terrain-derived, the buildings' own SSE), never finer than configured. The
+  frame-stats `Sse` keeps reporting the terrain tileset.
+- CIGI LOS and HAT/HOT hit it (with physics meshes) and report material code **230** (`docs/terrain-feedback.md`).
+- The DIS surface clamp ignores it (`Entity/SurfaceProbe.cpp`): footprints are misregistered by a few metres in places and
+  a truck on a road beside a building must not climb onto the roof. Ground vehicles clamp to terrain.
+- Thermal IR is unchanged: building pixels take the land-cover class under them.
+- `scene.buildings.enabled: false`, or a package without the layer, is R2 bit for bit.
+
+**Known limits.**
+
+- Flat roofs, one neutral colour, no facades, no bridges.
+- Thermal IR: buildings take the land-cover class under them (WorldCover built-up becomes the `BuiltUp` family); only CIGI
+  reports 230.
+- Footprints and heights are only as good as Overture. At Pendleton (release 2026-09-23.1), 73.2 % of the 82,260 kept
+  buildings have an Overture height (OSM-mapped heights inside the base are dense), 0.5 % a floor count, and 26.3 % take
+  the 4 m default.
+- Imagery shows roofs at their NAIP position; where Overture is offset, the roof texture and the building disagree.
+- Overture's ODbL terms apply to the layer and to anything derived from it.
+
 ## Sea level (R1)
 
 **Why.** CamSim's tide-0 sea is the EGM96 geoid. Local mean sea level at La Jolla is +0.774 m NAVD88 (NOAA CO-OPS
@@ -395,6 +584,9 @@ hot_check in "Measured".
 | `wc_s2` | ESA WorldCover 2021 Sentinel-2 RGBNIR composite (10 m, 1 × 1° COGs) | `CC-BY-4.0` (checked against each file's licence tag) | land (no open-ocean tiles) | z13 | WGS 84 / — |
 | `bmng` | NASA Blue Marble Next Generation, topography + bathymetry, 500 m (2004 monthly) | `LicenseRef-PublicDomain-USGov` | globe | z8 | WGS 84 / — |
 | `worldcover` | ESA WorldCover 10 m 2021 v200 land cover (3 × 3° COGs) | `CC-BY-4.0` | land | — (0.05° land-cover tiles over bbox + ring) | WGS 84 / — |
+| `osm_geofabrik` | OpenStreetMap, Geofabrik extract, one dated daily `.osm.pbf` (`[features]` roads / paved areas / rail) | `ODbL-1.0` (not in the default allow-list) | Geofabrik extract | — (burned over bbox + `imagery_margin_km`) | WGS 84 / — |
+| `overture_buildings` | Overture Maps buildings theme, pinned release, one bbox query snapshotted as GeoParquet (`[buildings]`) | `ODbL-1.0` (not in the default allow-list) | global | — (buildings over the bbox) | WGS 84 / — (heights are above ground; the base comes from the package's terrain) |
+| `nhd_hr` | USGS NHD High Resolution, HU4 GeoPackage from The National Map (`[features]` water) | `LicenseRef-PublicDomain-USGov` | US | — (as above) | NAD83 (EPSG:4269, taken as WGS 84: about 1 m) / — |
 
 **NOAA topobathy.** Both are single files from `ngdc.noaa.gov/thredds/fileServer/` (`regional/san_diego_13_navd88_2012.nc`,
 `crm/crm_socal_3as_vers2.nc`), unchanged since 2016 and 2018; they are pinned by URL and size, and `fetch` records the
@@ -567,9 +759,12 @@ CAMSIM_SCENE_DIR=/abs/path/to/pendleton CAMSIM_SCENE_OFFLINE=1 scripts/run.sh --
 
 - `scene.dir` (`CAMSIM_SCENE_DIR`, absolute) points terrain (`terrain/layer.json`), imagery
   (`imagery/tilemapresource.xml`, `cesium.imagery.source: tms`) and thermal land cover (`landcover/`) at the
-  package, as `file:///` URLs. Reference: `docs/configuration.md`, "Scene Package".
+  package, as `file:///` URLs. A package with `features/buildings/` also gets its buildings tileset (Buildings (R3),
+  `scene.buildings.*`; `CAMSIM_SCENE_BUILDINGS_ENABLED=0` leaves it out). Reference: `docs/configuration.md`, "Scene Package".
 - `scene.offline` (`CAMSIM_SCENE_OFFLINE`) refuses any network source and exits with status 1 on any config
   error, instead of falling back to Cesium ion.
+- The buildings tileset is spawned after that clean-up, in the same world-init step; under `scene.offline` it needs an
+  existing local `file:///`.
 - `Main.umap`'s ion actors (terrain ion 1 with Bing ion 2, OSM Buildings ion 96188) are reconfigured or destroyed
   when the world is initialised, before they load, so an offline run sends no request.
 
@@ -729,3 +924,254 @@ unreachable for a minute. `camsim_session.py` and `render_check.py` now wait the
 Follow-ups: fix the build's RSS accounting for forked workers (measure each worker's own peak, not `ru_maxrss`
 inherited from the parent), and find the source of the bare `sys.excepthook` errors at pool teardown.
 
+### R2 vector features (2026-10-10, macOS)
+
+Camp Pendleton `sim`, M1 Pro / Metal, native build. `pendleton-r2` is an APFS clone of `pendleton-r1c` planned with
+`examples/pendleton.toml` (`[features]` all on, `allow = ["ODbL-1.0"]`): OSM `socal-261008` (2026-10-08), NHD HR
+`NHD_H_1807_HU4_GPKG`. Only `layers.landcover` and the two new sources differ from r1c, so terrain, imagery and NDVI
+were skipped. Details: the R2 task 8–10 reports in the (untracked) session notes.
+
+| Gate | Tool | Result |
+|---|---|---|
+| 1 Package | `build`, `verify --deep` | **Pass.** Burned texels: 200 = 511,761; 201 = 18,473; 210 = 12,828; 220 = 40,507. Land cover 2,288 tiles, 42.0 MB; build 136 s cold (incl. the OSM/NHD read), 62 s with the features cached, 55 s with features off; peak RSS 156 MB for the cut, 3,079 MB for the cold build's process tree (the OSM read). `verify --deep` all `ok`, including `landcover_codes`. Rebuild: `landcover/` identical. Features off: `landcover/` identical to `pendleton-r1c` (fresh cut) |
+| 2 Road registration | `tools/road_registration.py` (2-D windowed, "Vector features") | **Pass.** Median \|shift\| **2.0 m**, p90 9.99 m (gate 10 m); 54 of 60 windows used (excluded: 3 peak at the search edge, 2 low contrast, 1 not prominent); mean (dE, dN) = (−0.06, +0.65) m. The spec's dark-box profiles gave 14.5 m (and an edge-pair matcher 12.0 m), both measuring tree lines and shadows, not misregistration (crops in `.cache/r2/road_crops/`) |
+| 3 Thermal gate (r) | `thermal_check.py --runs roads --scene pendleton-r2` | **FAIL** on the selected pose (MWIR night and noon, LWIR noon; table below). Thresholds unchanged. Open: needs a decision |
+| 4 Unchanged | `thermal_check.py` (a)–(q); UE tests; bench | **Pass.** Gates (a)–(q) all pass on the SF scene, MWIR and LWIR: (f) ThermalCS p95 0.421 ms at 1080p (4B: 0.408); (g) EO \|dY\| 0.013 DN. UE automation 494/494 (`-nullrhi`), `CamSim.GPU.*` 26/26 (Metal), scene tooling 444 passed / 2 skipped / 1 xfailed. Bench (`run_bench.py --site pendleton`, `.cache/bench-r2/`): ThermalCS identical to R1 in a same-session IR pair (table below); EO game-thread p50 and wall p95 within noise of R1, 30 fps and 0 dropped frames in every run and phase |
+| 5 CIGI | `send_cigi_test.py --hat-extended / --los-extended` | **Pass** (table below) |
+| 6 Visual review | MWIR/LWIR/EO noon frames, `.cache/r2/visual/` | **Signed off** by the user 2026-10-10 (runway and Oceanside grid read as warm lines; I-5 cooler than its verge, the gate (r) finding; dark IR patches absent from EO are a follow-up) |
+
+Gate (r): carriageway minus outer verge, mean Y over 10 frames (white-hot), nadir 300 m (GSD 0.083 m), 21 December.
+**Pose selection** (fix round 1; `scripts/scene/tools/select_road_pose.py` reproduces it, `ROAD_POSE` in `thermal_check.py` holds the criterion and the numbers; the rule was relaxed from width 10 m / length 200 m / vegetation 80 % to 8 m / 120 m / 60 %, both changes before any gate run): straight pieces
+(≥ 120 m, bearings within 1°) of OSM motorway…tertiary ways that burn to 200, ≥ 8 m wide, no crossing or bridge within
+60 m; carriageway strip ≥ 90 % code 200; verge strip (8–28 m beyond the edge, one side) free of road/water codes and
+≥ 60 % vegetation/bare codes; and *dark pavement*: NAIP luma of the verge ≥ 15 DN above the carriageway. 282 pieces pass
+the land-cover tests and 30 the luma test; ranked by road class, then width, then the luma difference. Rank 1 is the
+gate pose: I-5 northbound in San Clemente, OSM way 487165554 (asphalt, 5 lanes, 20.5 m; luma 75.3 vs verge 97.9).
+
+| Pose | Band | 02:00 (≥ +2) | 12:00 (≥ +6) | Class temperatures, asphalt / verge class (K), 02:00 · 12:00 |
+|---|---|---|---|---|
+| **Gate: rank 1**, I-5 NB San Clemente (way 487165554) | MWIR | **−1.15 Fail** | **−25.29 Fail** | 285.9 / 283.6 · 307.1 / 298.3 (`tree_canopy`; dry, so refined toward `bare_soil` 285.4 · 306.1) |
+| | LWIR | +13.32 Pass | **−10.83 Fail** | |
+| Rank 2 (diagnostic), CA 76 (way 215015826, 17 m, verge bare 60) | MWIR | +38.43 | +15.58 | 285.9 / 285.4 · 307.2 / 306.1 (`bare_soil`) |
+| | LWIR | +27.48 | +18.23 | |
+| Rank 3 (diagnostic), Avenida Pico (way 399485028, 13.5 m, verge 30/10) | MWIR | −9.57 | −6.48 | 285.9 / 282.4 · 307.2 / 300.9 (`grassland`) |
+| | LWIR | +7.90 | +2.52 | |
+| First pose (task 9; info row `r_t9`), I-5 SB (way 1009956653), OSM asphalt but light NAIP pavement | MWIR | +38.16 | −40.06 | 285.9 / 282.4 · 307.1 / 300.8 (`grassland`) |
+| | LWIR | +28.96 | −19.39 | |
+
+Ranks 2 and 3 were run as diagnostics after rank 1 failed, to see whether the result depends on the pose; the gate pose
+was not changed to the passing one (that would be choosing by outcome). On the first pose, `k_fast` 0 for every terrain
+class gave noon +21.61 DN MWIR (pass), so its failure is the fast term reading the light pavement. On rank 1 the pavement is
+dark, but the verge is dry scrub on a 9 m bank (ground 47.8 m at the road, 56.7 m mid-verge): dry vegetation refines to
+`bare_soil`, whose closed-form temperature is only 1.1 K below asphalt at noon and 0.5 K at 02:00, and the sunward bank
+and light dry ground add a positive fast term on the verge. The closed-form asphalt-vs-grass contrast (+6.3 K at noon in
+December, +3.5 K at 02:00) agrees in sign with published values (+10–20 K at summer noon); what the gate sees depends on
+the verge's imagery (green or dry) and the pavement's brightness. Overlays: `.cache/r2/thermal_roads_v2/overlays/`.
+
+CIGI extended responses (`send_cigi_test.py`, sensor 300–400 m above each point, noon):
+
+| Point | Query | Material | HOT / hit |
+|---|---|---|---|
+| I-5 SB, first gate (r) pose (`r_t9`) 33.299358, −117.465474 | HAT/HOT 103 | **200** | HOT −8.50 m (gate ground −8.23 m) |
+| same, LOS from 300 m above to −500 m | LOS 105 | **200** | hit −8.50 m, range 300.3 m, not visible |
+| Lake O'Neill, NHD water 33.3274, −117.3308 | HAT/HOT 103 | **220** | HOT −1.36 m (WorldCover calls this cell grassland, 30) |
+| Lake O'Neill per the plan, 33.3250, −117.3330 | HAT/HOT 103 | 10 | HOT −5.46 m: the plan's point is tree cover on the shore |
+| Offshore 33.25, −117.50 | HAT/HOT 103 | **80** | HOT −35.27 m (the sea surface) |
+| Open country 33.36, −117.40 | HAT/HOT 103 | **30** | HOT 62.57 m |
+
+Visual review frames (MWIR, LWIR and EO reference, noon 21 December): `.cache/r2/visual/{mwir,lwir,eo}_{i5_gate,i5_wide,
+oceanside_grid,runway}.png` (I-5 at the first gate (r) pose, OSM way 1009956653, with 20° and 60° FOV; an Oceanside residential grid at 33.1985,
+−117.3760, ~300 m up; the MCAS Camp Pendleton runway at 33.3017, −117.3550, ~600 m up). Questions (spec Acceptance 6):
+do roads read as continuous lines; is the 6 m warp's wobble on road edges acceptable; is the brown-verge widening
+acceptable.
+
+Bench (`run_bench.py --site pendleton --env CAMSIM_SCENE_DIR=…`), 2026-10-10, M1 Pro. EO: two R2 runs against the R1 runs
+named above (`.cache/bench-r1/pendleton-r1c-{a,b}`, an earlier session). IR (`--sensor ir`): `pendleton-r1c` and
+`pendleton-r2` back to back in one session, the comparison that isolates R2 (ThermalCS from `thermal_gpu_ms` in
+`frames.jsonl`). Every run: 30 fps, 0 dropped frames.
+
+| Phase | EO game p50, ms: r1c (2 runs) / r2 (2 runs) | IR game p50: r1c / r2 | ThermalCS p50 / p95, ms: r1c | r2 |
+|---|---|---|---|---|
+| orbit | 3.16 / 2.81-2.82 | 2.82 / 2.84 | 0.367 / 0.416 | 0.369 / 0.416 |
+| slew | 3.10-3.14 / 2.96-2.99 | 3.02 / 3.03 | 0.353 / 0.416 | 0.354 / 0.417 |
+| low_pass | 3.40-3.44 / 3.18 | 3.21 / 3.22 | 0.399 / 0.413 | 0.401 / 0.414 |
+| far_origin | 2.22-2.56 / 2.22 | 2.23 / 2.24 | 0.159 / 0.165 | 0.159 / 0.167 |
+| coast_pass | 3.41-3.67 / 3.43-3.47 | 3.45 / 3.48 | 0.273 / 0.431 | 0.274 / 0.431 |
+
+The EO game-thread drop (~0.3 ms) is session-to-session: the same-session IR pair shows r1c and r2 equal. Wall p95 for r2
+33.8-41.0 ms (r1c 34.0-41.8). GPU frame p50 17.7-21.5 ms for r2 vs 16.1-21.5 ms for r1c (R1's coast_pass 16.1 ms in run a
+is the outlier; run b 21.5). Shot SSIM r1c-a vs r2-a 0.960-0.994 (EO is unchanged by R2; the differences are run to run).
+
+### R3 buildings slice (2026-10-11, macOS)
+
+Camp Pendleton `sim`, M1 Pro / Metal, native build. `pendleton-r3` is an APFS clone of `pendleton-r2` built with
+`examples/pendleton.toml` (`[buildings]`, Overture release `2026-09-23.1`, `--replan -j 6`): terrain, imagery, NDVI and
+land cover were skipped and only the buildings layer was built. Spec acceptance:
+[`superpowers/specs/2026-10-10-r3-buildings-slice-design.md`](superpowers/specs/2026-10-10-r3-buildings-slice-design.md).
+Details: the R3 task 12 report in the (untracked) session notes.
+
+| Gate | Tool | Result |
+|---|---|---|
+| 1 Package | `build`, `verify --deep`, `3d-tiles-validator` 0.6.1 | **Pass.** Snapshot 82,283 footprints (14.8 MB GeoParquet, sha256 `3bdadde5…`); 82,260 buildings kept (23 dropped small, 0 invalid, 0 without a height). Tiers z13 780 / z14 16,430 / z15 65,050 buildings in **85 / 394 / 1,286 tiles** (1,765 GLBs + `tileset.json`, 4.9 / 70.9 / 167.7 MB); layer **247.9 MB**; layer build **36 s**, peak RSS 1,630 MB (whole `--replan` run 307 s including the snapshot fetch and the skip scans of the other layers). `verify --deep` all `ok` (318 s at `-j 6`), incl. `buildings_tileset` and `buildings_heights`. Validator: 0 errors, 0 warnings, 1,765 infos (`EXT_mesh_features` / `EXT_structural_metadata` not validated by 0.6.1; "may be unused" on the feature-id accessors). Rebuild into a second clone: `hashes.txt` identical (471,186 lines). The toml without `[buildings]` on a clone of `pendleton-r2`: no `features/`, `manifest.json` and `hashes.txt` byte-identical to `pendleton-r2`'s. `pendleton-r3` vs `pendleton-r2`: only `ATTRIBUTION.txt` and the 1,766 `features/buildings/` lines differ |
+| 2 Footprints vs imagery | `tools/footprint_iou.py` | **Open: needs the human-traced outlines** (`scripts/scene/tools/data/pendleton_building_truth.geojson`, ~30 buildings at Mainside, family housing and a hangar, traced in QGIS over the package's NAIP). The tool and its test are in place; run it with `--snapshot ~/…/.cache/scene/blobs/sha256/3b/3bdadde5565c9b96bb310133e8aba02c6d20f3e658830162ea83dfb87c01122b` |
+| 3 Heights | `verify --deep` (`buildings_heights`) | **Pass.** Every roof within 0.01 m of the recomputation from the snapshot and the terrain sources. Height source: `overture_height` 60,207 (73.2 %), `overture_floors` 417 (0.5 %), `default` 21,636 (26.3 %) |
+| 4 CIGI | `send_cigi_test.py` packets (session script) | **Pass** (table below): roof HOT within 0.01 m of the built roof, code 230; 5 m outside = ground with the land-cover code; LOS hits 30.03 m along a 30.0 m path to the west wall, code 230 |
+| 5 DIS | `send_dis_test.py truck-loop --location 33.305,-117.314`; `dis_vehicle_check.py`; `gt_occlusion_check.py` | **Pass.** The re-centred loop crosses 12 Mainside footprints (231 of 1,942 annotated frames inside one). COCO `geo.alt_m` every frame (ML interval 1): largest frame-to-frame change **0.085 m** (p99 0.078 m); the truck stays on the terrain inside footprints (roof at least 3.3 m above it), truck minus DEM ground median −0.06 m, max \|·\| 1.20 m. `dis_vehicle_check.py` PASS (one stable id each for truck and boat); `gt_occlusion_check.py` PASS (both on the SF scene) |
+| 6 Bench | `bench/sweep.py` (dense_pass, repeat 2); `run_bench.py` all phases (1 run each) | **Chosen default SSE 64** (2026-10-11, from the combined sweep below, when the memory budget was still +381 MiB and SSE 64 was the only both-on setting inside it; the user then raised the budget to +1024 MiB on 2026-10-11, under which SSE 16 passes the sweep too, and SSE 64 stays the default. With trees on and the footprint check on, the game p95 budget is exceeded in `dense_pass`, an overrun the user accepted: "Full bench, both on" below). 30 fps and 0 dropped frames in every sweep row and every phase. Game thread and GPU within budget in every row. Memory: +588 MiB at SSE 16 with physics, the pre-sweep starting value (it failed the original +381 MiB budget; every sweep row passes the current +1024 MiB budget). Existing phases at SSE 16: game p50 +0.02 to +0.70 ms (slew the most), not within noise but within budget; memory grows to +1.1 GiB over the full run as the tile cache fills (tables below) |
+| 7 Off switch | `CAMSIM_SCENE_BUILDINGS_ENABLED=0` on `pendleton-r3` vs `pendleton-r2` | **Pass.** All six HAT/HOT and both LOS responses identical (HOT, HAT, material code, normal, range). Shots SSIM 0.975 (Mainside nadir), 0.981 (Mainside low oblique), 0.992 (dense_oblique), within run to run (R2: 0.960–0.994) |
+| 8 Visual review | EO shots | **Pending user review.** dense_pass contact sheet `.cache/bench-r3r4/r3-buildings-sweep/sweep_sheet.png`; `.cache/r3/visual/`: `mainside_low_oblique_buildings_{on,off}.png`, `mainside_nadir_buildings_{on,off}.png`, `dense_oblique_buildings_{on,off}.png` (and `_r2`), `truck_side_*.png` (the DIS truck between buildings) |
+
+Live runtime checks (2026-10-11, `Main.umap`): the log shows `CamSim: buildings tileset 'CamSimBuildings' file:///…
+(maxLoads=20 SSE=16.0 culledSSE=16 … physicsMeshes=1)` and then `CamSimSubsystem: cached 2 tileset actor(s)`, so the
+world-init spawn survives `InitializeActorsForPlay`. 1,454 of the 1,765 tiles omit the all-empty `class` property; Cesium
+loaded them (260–369 buildings tiles resident during the runs) with no `LogCesium` warning or error.
+
+CIGI (`.cache/r3/live_on/result.json`; the sensor 300 m above the HAT points, beside the wall for LOS, noon):
+
+| Point | Query | Built (verify recompute) | Response |
+|---|---|---|---|
+| Warehouse `010048df-280f-483f-97a8-bddb71d1b61b` (z13, Overture height 6.42 m) roof, 33.3029558, −117.3144625 | HAT/HOT 103 | roof 94.67 m | **230**, HOT 94.665 m |
+| 5 m west of its wall, 33.3029558, −117.3147197 | HAT/HOT 103 | DEM 88.53 m | 50, HOT 88.465 m |
+| LOS from 30 m west of the wall at 90.75 m (base + 3) due east | LOS 105 | wall at 30.0 m | **230**, range 30.03 m, hit 90.75 m |
+| Commercial `9cc2e6cd-5694-4810-8df7-533da6a510b5` (z14, 7.54 m) roof, 33.3064210, −117.3139776 | HAT/HOT 103 | roof 91.28 m | **230**, HOT 91.276 m |
+| 5 m west of its wall, 33.3064210, −117.3144953 | HAT/HOT 103 | DEM 86.35 m | 50, HOT 86.120 m |
+| LOS from 30 m west at 90.0 m (the site slopes: 3 m above the ground at the sensor, not base + 3) | LOS 105 | wall at 30.0 m | **230**, range 30.03 m |
+
+With buildings off (and on `pendleton-r2`) the roof points answer the ground (88.65 m / 85.97 m, code 50) and both LOS
+segments run their full length without a hit.
+
+Bench sweep (`scripts/bench/sweep.py --site pendleton --axis buildings=off,on --axis buildings_sse=8,16,32,64 --axis
+buildings_physics=on,off --repeat 2`, `.cache/bench-r3r4/r3-buildings-sweep/`): only the dense_pass phase (300 m HAE,
+100 m/s, 20° down, over Oceanside housing and commerce), trees off in every row (the sweep always sends both master
+switches), 720p EO. Increase of each row's median over the all-off row (game 3.47–3.52 ms p50, GPU 19.4–20.5 ms,
+memory 8,904–8,911 MiB). Memory is the graphics-attributed part of the macOS process footprint (`IOAccelerator*` +
+`(graphics)` rows of `footprint`; CPU heap excluded); unified memory, a VRAM proxy. Budget (bench spec §4): game p50 +1.5 ms, p95 +3.0 ms, GPU p50 +5.0 ms,
+memory +1024 MiB (raised 2026-10-11 by the user from 381 MiB / 400 MB; the table's verdicts are against +1024).
+
+| SSE | Physics | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
+|---|---|---|---|---|---|---|
+| 8 | on | +0.68 | +0.64 | +3.29 | +764 | pass |
+| 8 | off | +0.57 | +0.51 | +3.29 | +557 | pass |
+| 16 (pre-sweep start) | on | +0.61 | +0.54 | +2.63 | +588 | pass |
+| 16 | off | +0.54 | +0.52 | +1.90 | +426 | pass |
+| 32 | on | +0.53 | +0.41 | +1.72 | +396 | pass |
+| 32 | off | +0.46 | +0.40 | +1.00 | +276 | pass |
+| **64 (default)** | **on** | +0.45 | +0.39 | +0.47 | **+272** | pass |
+| 64 | off | +0.44 | +0.59 | +0.48 | +198 | pass |
+
+Physics meshes cost 70–210 MiB and ~0.1 ms of game thread; without them CIGI LOS and HAT/HOT don't see buildings, so a
+physics-off default would give up gate 4. In the contact sheet, SSE 64 thins the far field (beyond ~2 km) but leaves
+the near field as at 16.
+
+Full bench (`run_bench.py --site pendleton --gpu-mem`, all phases, trees off, SSE 16 with physics vs buildings off, one
+run each, back to back; `.cache/bench-r3r4/r3-full-b{1,0}/`). Every phase 30 fps, 0 dropped frames:
+
+| Phase | Game p50, ms: on / off | Game p95 | GPU p50 | Wall p95 | Memory max, MiB |
+|---|---|---|---|---|---|
+| orbit | 3.19 / 2.78 | 5.14 / 4.51 | 19.07 / 19.10 | 35.0 / 34.6 | 9,445 / 8,853 |
+| slew | 3.70 / 3.00 | 12.24 / 11.02 | 19.33 / 19.30 | 41.1 / 40.9 | 9,475 / 8,881 |
+| low_pass | 3.67 / 3.20 | 8.51 / 7.41 | 19.36 / 18.90 | 37.0 / 36.9 | 9,501 / 8,921 |
+| far_origin | 2.20 / 2.18 | 3.46 / 2.99 | 17.03 / 16.99 | 33.9 / 33.9 | 10,011 / 8,880 |
+| coast_pass | 3.96 / 3.51 | 10.53 / 9.28 | 20.31 / 19.46 | 37.7 / 37.2 | 10,008 / 8,917 |
+| dense_pass | 4.29 / 3.59 | 11.04 / 9.21 | 21.98 / 15.43 | 37.9 / 37.3 | 10,070 / 8,968 |
+
+The memory keeps rising after the buildings leave the view (far_origin, 300 km east, is +1.1 GiB): loaded buildings
+tiles stay in Cesium's cache (`cacheMB=2048`, the terrain's tuning). The dense_pass GPU difference here (+6.6 ms) is larger
+than the sweep's (+2.6 ms at the same setting) because the off run's GPU p50 (15.4 ms) is low against the sweep's
+all-off rows (19.4–20.5 ms); one run each, so the sweep is the cost to quote.
+
+Stability: the first live session crashed (SIGSEGV in `FMeshDrawShaderBindings::SetOnCommandList` on a renderer draw task,
+5 s after a 215 m camera cut from 300 m nadir to a ground-level pose, buildings and trees on). It did not recur in 27
+later Pendleton sessions, including the same pose sequence three times (buildings on, buildings off, trees off). Cause
+unknown; a crashed run leaves `CrashReportClient` holding port 8080, so the next launch can't bind its health port.
+
+
+### R3/R4 bench check and combined cost (2026-10-11, macOS)
+
+Same machine and method as the R3 sweep above (M1 Pro / Metal, 720p EO, `dense_pass`, 2 repeats per row, medians). The
+runs after the bench docs landed (`scripts/bench/README.md`, "Realism vs cost sweep"). Memory (`--gpu-mem`) is
+the graphics-attributed part of the macOS process footprint (`IOAccelerator*` + `(graphics)` rows; CPU heap excluded);
+unified memory, a VRAM proxy. The sweep's memory figures, and its budget verdicts, are each row's peak over one 90 s
+`dense_pass` after the warm-up, not over a whole run (the full bench below is). The older
+`memcheck` reference of 4,258 MiB was taken under the previous rule (IOAccelerator rows only) and is not comparable;
+under the current rule the all-off `dense_pass` reference is **8,889-8,901 MiB** (`.cache/bench-r3r4/reference/`).
+
+R2 reference for `dense_pass` (`sweep.py --scene pendleton-r2 --axis trees=off --axis buildings=off --repeat 2`; the
+row is named `trees-off_buildings-off`, not `baseline`, because the row names both axes): `ok (2/2)`, game p50 3.42-3.47 /
+p95 5.99-6.20 ms, GPU p50 19.38-20.54 ms, wall p95 35.0-35.2 ms, 0 dropped, 29.89 fps, memory 8,889-8,901 MiB.
+
+Full bench (`run_bench.py --site pendleton --gpu-mem`, both features off, `pendleton-r2`, one run;
+`.cache/bench-r3r4/full-check/`): phases `orbit, slew, low_pass, far_origin, coast_pass, dense_pass`, every phase 29.9
+fps and 0 dropped; 13 shots plus 13 `_sensor` copies. Game p50 of the five old phases against the R2 table above:
+
+| Phase | This run, ms | R2 EO (2 runs), ms |
+|---|---|---|
+| orbit | 2.80 | 2.81-2.82 |
+| slew | 2.98 | 2.96-2.99 |
+| low_pass | 3.22 | 3.18 |
+| far_origin | 2.20 | 2.22 |
+| coast_pass | 3.52 | 3.43-3.47 |
+
+Differences from R2's EO values: orbit +0.0, slew +0.0, low_pass +0.04, far_origin -0.02, coast_pass +0.05 over the top of its range; all within noise. `dense_pass` 3.58 / p95 8.66 / GPU 19.30 ms; memory
+8,905-8,950 MiB across phases.
+
+Combined sweep (`sweep.py --scene pendleton-r3 --axis buildings=off,on --axis buildings_sse=16,64 --axis trees=off,on
+--repeat 2`, `.cache/bench-r3r4/combined/`; trees at their defaults: radius 1000 m, density 1.0, shadows on; buildings with
+physics meshes). All-off row: game 3.44-3.45 / 6.02-6.11 ms, GPU 19.30-19.53 ms, memory 8,887-8,913 MiB. Every run 29.7-30.0
+fps and 0 dropped frames. Increase of the row median over the all-off row:
+
+| Buildings SSE | Trees | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
+|---|---|---|---|---|---|---|
+| off | on | +0.61 | +0.58 | +1.12 | +52 | pass |
+| 16 | off | +0.63 | +0.76 | +2.41 | +607 | pass |
+| 16 | on | +1.24 | +1.24 | +4.34 | +674 | pass (GPU within 0.7 ms of its limit) |
+| 64 | off | +0.45 | +0.49 | +1.00 | +290 | pass |
+| 64 | on | +1.05 | +1.09 | +2.98 | +359 | pass |
+
+Game-thread and memory costs add (both-on = the two single-feature rows to within 0.1 ms / 17 MiB); GPU time is 0.8-0.9 ms above the sum. Under the original +381 MiB memory budget only the SSE 64 both-on row fitted, by 22 MiB; under the current +1024 MiB budget every row passes
+(SSE 16 both-on: +674 MiB, GPU +4.34 ms of +5.0). Contact sheet: `.cache/bench-r3r4/combined/sweep_sheet.png`. Defaults chosen 2026-10-11 from
+this sweep: buildings SSE 64 with physics meshes (the only both-on setting inside the +381 MiB budget then in force; 16 was the pre-sweep
+starting value; it stays the default under the raised +1024 MiB budget), trees unchanged at radius 1000 m, density 1.0, shadows on.
+
+Full bench, both on at the defaults (2026-10-11, after the final review: buildings SSE 64 with physics and the new
+512 MB buildings tile cache, `scene.buildings.maximum_cached_bytes_mb`; trees 1000 m / 1.0 / shadows on with the
+footprint check, `vegetation.drop_in_buildings`). `run_bench.py --site pendleton --gpu-mem` on `pendleton-r3`, one
+run (`.cache/bench-r3r4/full-both-sse64/`), against the both-off full bench above (`full-check`, `pendleton-r2`). Every
+phase 29.8-30.0 fps and 0 dropped frames:
+
+| Phase | Game p50, ms: on / off | Game p95 | GPU p50 | Memory max, MiB: on / off | Memory increase |
+|---|---|---|---|---|---|
+| orbit | 3.49 / 2.80 | 5.90 / 4.35 | 17.06 / 18.59 | 9,292 / 8,908 | +384 |
+| slew | 3.62 / 2.98 | 11.71 / 10.76 | 16.18 / 19.30 | 9,279 / 8,917 | +362 |
+| low_pass | 4.04 / 3.22 | 7.38 / 7.19 | 19.70 / 19.03 | 9,318 / 8,919 | +399 |
+| far_origin | 2.30 / 2.20 | 3.03 / 3.04 | 17.00 / 17.15 | 9,276 / 8,905 | +371 |
+| coast_pass | 4.12 / 3.52 | 10.10 / 8.65 | 20.36 / 18.98 | 9,822 / 8,915 | +907 |
+| dense_pass | 5.60 / 3.58 | 11.84 / 8.66 | 21.90 / 19.30 | 9,902 / 8,950 | +952 |
+
+- The buildings cache cap works where it can: `far_origin` (300 km east, no buildings in view) is +371 MiB, against
+  +1,131 MiB in the R3 full bench at SSE 16 with the terrain's 2 GiB cache (trees off there).
+- Over the built-up phases the memory grows over a whole run: +907 MiB in `coast_pass` and
+  +952 MiB in `dense_pass`, against the sweep's +359 MiB for the same setting. That broke the old +381 MiB budget; the user raised the budget to +1024 MiB over a whole run on 2026-10-11, and the peak is inside it. Cesium's `MaximumCachedBytes` only
+  evicts tiles that are not in use, so tiles in view, their physics meshes and the trees are outside the cap. The
+  sweep's 90 s `dense_pass` window, right after the warm-up, does not see this growth.
+- `dense_pass` game p50 +2.01 ms and p95 +3.18 ms are over the game budget (+1.5 / +3.0). One run each, and part of it
+  is the footprint check (next paragraph); the p95 overrun is accepted (decision below).
+
+Footprint check cost (`vegetation.drop_in_buildings`, A/B; `run_bench.py --phases dense_pass --shots dense_oblique`,
+both features on at the defaults, 2 repeats each, `.cache/bench-r3r4/i1-ab/`), increase over the combined sweep's
+all-off row:
+
+| Footprint check | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
+|---|---|---|---|---|---|
+| off | +1.12 | +1.07 | +2.93 | +374 | pass |
+| on (default) | +1.40 | +3.61 | +3.54 | +408 | FAIL: game p95 (accepted); memory passes |
+
+The off rows reproduce the combined sweep's SSE 64 both-on row (+1.05 / +1.09 / +2.98 / +359). The check costs about
++0.3 ms game p50, +2.5 ms game p95 and +34 MiB: `SampleHeightMostDetailed` on the buildings tileset loads its most
+detailed (z15) tiles under every tree point out to 1 km, which SSE 64 would otherwise not load. It drops 5.4 % of the
+trees in a Mainside/Oceanside session (373 of 6,892, below). So with the check on, buildings SSE 64 + trees is at +3.61 ms game p95, over the 3.0 ms limit.
+**Decision (user, 2026-10-11): keep the check on by default** (`vegetation.drop_in_buildings: true`) and accept the
+measured cost (+0.3 ms p50, +2.5 ms p95, +34 MiB); the p95 overrun is accepted and tracked. The next step is a
+build-time fix: mark building footprints in the scene package so trees are excluded without runtime sampling, then
+remove the runtime check (ROADMAP Realism track; it touches the thermal class under buildings, so it needs its own
+design). `vegetation.drop_in_buildings: false` stays available as a switch.

@@ -577,6 +577,19 @@ ocean:
   water_temperature_c: 15.0              # CAMSIM_OCEAN_WATER_TEMPERATURE_C — initial; CIGI Maritime Surface overrides
   material: "/Game/Ocean/M_Ocean"        # startup only
 
+# --- Vegetation scatter (REALISM R4 slice, docs/vegetation.md) ---
+# One CC0 tree type scattered where the land cover is tree cover (code 10), around the camera, deterministic per 100 m
+# cell. Needs land cover (thermal.land_cover.dir or a scene package) and Content/NonUFS/Vegetation (git lfs pull).
+vegetation:
+  enabled: true                          # CAMSIM_VEGETATION_ENABLED — startup only
+  library_dir: ""                        # CAMSIM_VEGETATION_LIBRARY_DIR — "" = Content/NonUFS/Vegetation
+  radius_m: 1000.0                       # CAMSIM_VEGETATION_RADIUS_M — (0, 5000]; hard cull at this distance
+  density_scale: 1.0                     # CAMSIM_VEGETATION_DENSITY_SCALE — [0, 4] x p_tree 0.15
+  cast_shadows: true                     # CAMSIM_VEGETATION_CAST_SHADOWS
+  cell_size_m: 100.0                     # CAMSIM_VEGETATION_CELL_SIZE_M — [25, 500]
+  seed: 0                                # CAMSIM_VEGETATION_SEED — only without a scene package (else manifest seed)
+  drop_in_buildings: true                # CAMSIM_VEGETATION_DROP_IN_BUILDINGS — drop trees inside building footprints (needs the package's buildings)
+
 # --- Thermal radiance for IR (ROADMAP 4A, docs/thermal.md) ---
 # IR mode renders in-band (MWIR/LWIR) radiance from per-pixel surface temperature and emissivity.
 # enabled: false restores the 3B.2 luminance proxy (startup only; restart to A/B compare).
@@ -678,6 +691,11 @@ cesium:
 scene:
   dir: ""          # CAMSIM_SCENE_DIR — absolute path to a package; its terrain/imagery/landcover replace cesium.terrain, cesium.imagery, thermal.land_cover.dir
   offline: false   # CAMSIM_SCENE_OFFLINE — no network: terrain url/flat and imagery tms/none from file:///, and exit on any config error
+  buildings:                          # REALISM R3: the package's features/buildings/ (no-op without one)
+    enabled: true                     # CAMSIM_SCENE_BUILDINGS_ENABLED
+    maximum_screen_space_error: 64    # CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR; chosen 2026-10-11 from the combined sweep (the only both-on setting inside the budget)
+    create_physics_meshes: true       # CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES (CIGI LOS/HAT/HOT hit buildings)
+    maximum_cached_bytes_mb: 512      # CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB, [1, 65536]: the buildings' own tile cache (the terrain keeps maximum_cached_bytes_mb)
 
 # --- Security Metadata (MISB ST 0102) ---
 # Embedded in every KLV packet as ST 0601 Tag 48.

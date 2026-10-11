@@ -679,6 +679,19 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlString(O, "material",            Cfg.Ocean.MaterialPath);
 		}
 
+		if (YamlHas(Root, "vegetation"))
+		{
+			ryml::ConstNodeRef V = Root["vegetation"];
+			YamlBool  (V, "enabled",       Cfg.Vegetation.bEnabled);
+			YamlString(V, "library_dir",   Cfg.Vegetation.LibraryDir);
+			YamlFloat (V, "radius_m",      Cfg.Vegetation.RadiusM);
+			YamlFloat (V, "density_scale", Cfg.Vegetation.DensityScale);
+			YamlBool  (V, "cast_shadows",  Cfg.Vegetation.bCastShadows);
+			YamlFloat (V, "cell_size_m",   Cfg.Vegetation.CellSizeM);
+			YamlInt   (V, "seed",          Cfg.Vegetation.Seed);
+			YamlBool  (V, "drop_in_buildings", Cfg.Vegetation.bDropInBuildings);
+		}
+
 				// Thermal radiance for IR (ROADMAP 4A)
 		if (YamlHas(Root, "thermal"))
 		{
@@ -823,6 +836,14 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			ryml::ConstNodeRef Sc = Root["scene"];
 			YamlString(Sc, "dir",     Cfg.Scene.Dir);
 			YamlBool  (Sc, "offline", Cfg.Scene.bOffline);
+			if (YamlHas(Sc, "buildings"))
+			{
+				ryml::ConstNodeRef Bd = Sc["buildings"];
+				YamlBool  (Bd, "enabled",                    Cfg.Scene.bBuildingsEnabled);
+				YamlDouble(Bd, "maximum_screen_space_error", Cfg.Scene.BuildingsMaximumScreenSpaceError);
+				YamlInt   (Bd, "maximum_cached_bytes_mb",    Cfg.Scene.BuildingsMaximumCachedBytesMB);
+				YamlBool  (Bd, "create_physics_meshes",      Cfg.Scene.bBuildingsCreatePhysicsMeshes);
+			}
 		}
 
 		// Phase 21: DIS protocol config
@@ -1089,6 +1110,14 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.CaptureWidth  = GetEnvInt(TEXT("CAMSIM_CAPTURE_WIDTH"),  Cfg.CaptureWidth);
 	Cfg.CaptureHeight = GetEnvInt(TEXT("CAMSIM_CAPTURE_HEIGHT"), Cfg.CaptureHeight);
 	Cfg.Ocean.WaterTemperatureC = GetEnvFloat(TEXT("CAMSIM_OCEAN_WATER_TEMPERATURE_C"), Cfg.Ocean.WaterTemperatureC);
+	Cfg.Vegetation.bEnabled     = GetEnvBool (TEXT("CAMSIM_VEGETATION_ENABLED"),       Cfg.Vegetation.bEnabled);
+	Cfg.Vegetation.LibraryDir   = GetEnv     (TEXT("CAMSIM_VEGETATION_LIBRARY_DIR"),   Cfg.Vegetation.LibraryDir);
+	Cfg.Vegetation.RadiusM      = GetEnvFloat(TEXT("CAMSIM_VEGETATION_RADIUS_M"),      Cfg.Vegetation.RadiusM);
+	Cfg.Vegetation.DensityScale = GetEnvFloat(TEXT("CAMSIM_VEGETATION_DENSITY_SCALE"), Cfg.Vegetation.DensityScale);
+	Cfg.Vegetation.bCastShadows = GetEnvBool (TEXT("CAMSIM_VEGETATION_CAST_SHADOWS"),  Cfg.Vegetation.bCastShadows);
+	Cfg.Vegetation.CellSizeM    = GetEnvFloat(TEXT("CAMSIM_VEGETATION_CELL_SIZE_M"),   Cfg.Vegetation.CellSizeM);
+	Cfg.Vegetation.Seed         = GetEnvInt  (TEXT("CAMSIM_VEGETATION_SEED"),          Cfg.Vegetation.Seed);
+	Cfg.Vegetation.bDropInBuildings = GetEnvBool(TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), Cfg.Vegetation.bDropInBuildings);
 	{
 		const FString IrPreset = GetEnv(TEXT("CAMSIM_IR_PRESET"), FString());
 		FSensorModeConfig* IrM = Cfg.SensorModeConfigs.Find(ESensorMode::IR);
@@ -1132,6 +1161,13 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.CesiumBackend.Imagery.Url        = GetEnv(TEXT("CAMSIM_CESIUM_IMAGERY_URL"), Cfg.CesiumBackend.Imagery.Url);
 	Cfg.Scene.Dir      = GetEnv    (TEXT("CAMSIM_SCENE_DIR"),     Cfg.Scene.Dir);
 	Cfg.Scene.bOffline = GetEnvBool(TEXT("CAMSIM_SCENE_OFFLINE"), Cfg.Scene.bOffline);
+	Cfg.Scene.bBuildingsEnabled = GetEnvBool(TEXT("CAMSIM_SCENE_BUILDINGS_ENABLED"), Cfg.Scene.bBuildingsEnabled);
+	Cfg.Scene.BuildingsMaximumScreenSpaceError = GetEnvDouble(
+		TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR"), Cfg.Scene.BuildingsMaximumScreenSpaceError);
+	Cfg.Scene.BuildingsMaximumCachedBytesMB = GetEnvInt(
+		TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB"), Cfg.Scene.BuildingsMaximumCachedBytesMB);
+	Cfg.Scene.bBuildingsCreatePhysicsMeshes = GetEnvBool(
+		TEXT("CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
 	Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError      = GetEnvDouble(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_SSE"),      Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError);
 	Cfg.CesiumBackend.Imagery.MaximumTextureSize          = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE"), Cfg.CesiumBackend.Imagery.MaximumTextureSize);
 	Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS"),  Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads);
@@ -1506,6 +1542,16 @@ TArray<FString> FCamSimConfig::Validate() const
 	if (!(Ocean.WaterTemperatureC >= -2.0f && Ocean.WaterTemperatureC <= 40.0f))
 		Errors.Add(FString::Printf(TEXT("ocean.water_temperature_c=%.2f out of range [-2, 40]"), Ocean.WaterTemperatureC));
 
+	// Vegetation (REALISM R4 slice). Written !(x in range) so NaN is reported too.
+	if (!(Vegetation.RadiusM > 0.0f && Vegetation.RadiusM <= 5000.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.radius_m=%.1f must be in (0, 5000]"), Vegetation.RadiusM));
+	if (!(Vegetation.DensityScale >= 0.0f && Vegetation.DensityScale <= 4.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.density_scale=%.2f out of range [0, 4]"), Vegetation.DensityScale));
+	if (!(Vegetation.CellSizeM >= 25.0f && Vegetation.CellSizeM <= 500.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.cell_size_m=%.1f out of range [25, 500]"), Vegetation.CellSizeM));
+	if (Vegetation.Seed < 0)
+		Errors.Add(FString::Printf(TEXT("vegetation.seed=%d must be >= 0"), Vegetation.Seed));
+
 		// Thermal (ROADMAP 4A). Written !(x in range) so NaN is reported too.
 	if (!(Thermal.AirTemperatureC >= -80.0f && Thermal.AirTemperatureC <= 60.0f))
 		Errors.Add(FString::Printf(TEXT("thermal.air_temperature_c=%.2f out of range [-80, 60]"), Thermal.AirTemperatureC));
@@ -1570,6 +1616,13 @@ TArray<FString> FCamSimConfig::Validate() const
 	if (LC.bEnabled && LC.Dir.TrimStartAndEnd().IsEmpty())
 		Errors.Add(TEXT("thermal.land_cover.dir is empty (set it, or thermal.land_cover.enabled: false)"));
 	Errors.Append(CamSimLandCover::ValidateClassSpecs(LC.Classes));
+
+	if (!(Scene.BuildingsMaximumScreenSpaceError > 0.0 && Scene.BuildingsMaximumScreenSpaceError <= 1024.0))
+		Errors.Add(FString::Printf(TEXT("scene.buildings.maximum_screen_space_error=%.3f out of range (0, 1024]"),
+			Scene.BuildingsMaximumScreenSpaceError));
+	if (!(Scene.BuildingsMaximumCachedBytesMB >= 1 && Scene.BuildingsMaximumCachedBytesMB <= 65536))
+		Errors.Add(FString::Printf(TEXT("scene.buildings.maximum_cached_bytes_mb=%d out of range [1, 65536]"),
+			Scene.BuildingsMaximumCachedBytesMB));
 
 	Errors.Append(Scene.ResolveErrors);
 	Errors.Append(CamSimScene::ValidateSources(*this));

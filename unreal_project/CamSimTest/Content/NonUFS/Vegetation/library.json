@@ -1,0 +1,14 @@
+{
+  "format": "camsim-vegetation-1",
+  "types": [
+    {
+      "name": "tree_broadleaf_a",
+      "gltf": "tree_broadleaf_a.glb",
+      "height_m": 9.0,
+      "thermal_class": "tree_canopy",
+      "licence": "CC0-1.0",
+      "source_url": "https://quaternius.itch.io/textured-lowpoly-trees",
+      "sha256": "f49350f8d9faff838d0520a3e1f0ac5b6841d9bb058f27301f70a50e5b9e7e0c"
+    }
+  ]
+}

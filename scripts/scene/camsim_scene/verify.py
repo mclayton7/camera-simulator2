@@ -38,6 +38,7 @@ BASE_TIN_FRACTION = 0.01
 SAMPLE = 0.02
 NDVI_PX = 64  # pixels checked per sampled NDVI leaf
 NDVI_P99_STEPS = 1
+ROOF_TOL_M = 0.01  # building roofs: float32 positions in the glb
 
 
 def base_max_zoom(m: Manifest) -> int:
@@ -255,7 +256,9 @@ def _ndvi_values(pkg: Path, m: Manifest, st, rng: random.Random, all_tiles: bool
 def _check_sea_level(pkg: Path, m: Manifest, grid_paths: dict | None) -> Check:
     p = pkg / sea_level.FILE
     if not m.sea_level:
-        return Check("sea_level", not p.exists(), "no station" if not p.exists() else "sea_level.json without a station")
+        return Check(
+            "sea_level", not p.exists(), "no station" if not p.exists() else "sea_level.json without a station"
+        )
     if not p.exists():
         return Check("sea_level", False, "sea_level.json missing")
     have = json.loads(p.read_text(encoding="utf-8"))
@@ -267,6 +270,64 @@ def _check_sea_level(pkg: Path, m: Manifest, grid_paths: dict | None) -> Check:
     want = sea_level.compute(m.sea_level, grid_paths)
     ok = abs(have["offset_m"] - want["offset_m"]) <= 0.001
     return Check("sea_level", ok, f"offset {have['offset_m']} m (recomputed {want['offset_m']} m)")
+
+
+WORLDCOVER_CODES = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100}
+
+
+def landcover_code_problems(lc: Path) -> list[str]:
+    """Codes in the land-cover tiles that neither WorldCover nor index.json's `codes` legend defines (REALISM R2)."""
+    index = json.loads((lc / "index.json").read_text(encoding="utf-8"))
+    allowed = WORLDCOVER_CODES | {int(k) for k in index.get("codes", {})}
+    out = []
+    for t in index["tiles"]:
+        found = set(np.unique(np.array(Image.open(lc / t["file"]))).tolist())
+        out += [f"landcover: code {c} not in index.json codes (tile {t['file']})" for c in sorted(found - allowed)]
+    return out
+
+
+def _check_landcover_codes(lc: Path) -> Check:
+    problems = landcover_code_problems(lc)
+    return Check("landcover_codes", not problems, _summary(problems))
+
+
+def _check_buildings_tileset(pkg: Path) -> Check:
+    from .buildings import walk_tileset
+
+    root = pkg / "features" / "buildings"
+    doc = json.loads((root / "tileset.json").read_text())
+    missing = [u for u, _ in walk_tileset(doc) if not (root / u).is_file()]
+    return Check("buildings_tileset", not missing, _summary([f"missing {u}" for u in missing]))
+
+
+def _check_buildings_heights(pkg: Path, m: Manifest, st) -> Check:
+    from . import geodesy
+    from .buildings import walk_tileset
+    from .gltf import decode_tile
+    from .layers.buildings import OUT, plan_from_manifest
+
+    want, _ = plan_from_manifest(m, st.ctx, st)
+    by_id = {b.source_id: b for b in want}
+    root = pkg / OUT
+    seen, problems = set(), []
+    for uri, mat in walk_tileset(json.loads((root / "tileset.json").read_text())):
+        z, x, y = (int(v) for v in uri[: -len(".glb")].split("/"))
+        t = decode_tile((root / uri).read_bytes())
+        enu = np.stack([t.positions[:, 0], -t.positions[:, 2], t.positions[:, 1]], axis=1).astype(np.float64)
+        _, _, h = geodesy.ecef_to_geodetic((mat[:3, :3] @ enu.T).T + mat[:3, 3])
+        for f, sid in enumerate(t.table.source_ids):
+            b = by_id.get(sid)
+            if b is None:
+                problems.append(f"{uri}: unexpected {sid}")
+                continue
+            seen.add(sid)
+            if b.tile != (z, x, y):
+                problems.append(f"{sid}: in {uri}, expected {b.tile}")
+            roof = float(h[t.feature_ids == f].max())
+            if abs(roof - b.roof_m) > ROOF_TOL_M:
+                problems.append(f"{sid}: roof {roof:.3f} m, expected {b.roof_m:.3f} m")
+    problems += [f"missing {sid}" for sid in sorted(set(by_id) - seen)]
+    return Check("buildings_heights", not problems, _summary(problems))
 
 
 def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[list[Check], dict, dict | None]:
@@ -354,6 +415,10 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
     ]
     checks += ndvi_checks
     checks.append(_guard("sea_level", _check_sea_level, pkg, m, {k: Path(v) for k, v in st.ctx.grid_paths.items()}))
+    if (pkg / "landcover" / "index.json").exists():  # every tile: they are few (0.05 deg each) and small
+        checks.append(_guard("landcover_codes", _check_landcover_codes, pkg / "landcover"))
+    if m.layers.get("buildings") and (pkg / "features" / "buildings" / "tileset.json").exists():
+        checks.append(_guard("buildings_heights", _check_buildings_heights, pkg, m, st))
     return checks, stats, ndvi_stats
 
 
@@ -369,6 +434,8 @@ def verify(
         _guard("licences", _check_licences, m),
         _guard("attribution", _check_attribution, pkg, m),
     ]
+    if (pkg / "features" / "buildings" / "tileset.json").exists():  # absent when no building was kept
+        checks.append(_guard("buildings_tileset", _check_buildings_tileset, pkg))
     if not deep:
         checks.append(_guard("sea_level", _check_sea_level, pkg, m, None))
     if {z: k for z, k in present_tiles(pkg, "ndvi", "png").items() if len(k)}:

@@ -9,6 +9,7 @@
 #include "Diagnostics/PipelineLatencyTracker.h"
 #include "Environment/CamSimEnvironment.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
+#include "Geospatial/SceneBuildings.h"
 #include "Subsystem/CamSimSubsystem.h"
 
 #include "Components/SceneCaptureComponent2D.h"
@@ -266,7 +267,10 @@ void ACamSimCamera::RecordFrameStats()
 		if (ACesium3DTileset* T = Weak.Get())
 		{
 			MinLoad = FMath::Min(MinLoad, T->GetLoadProgress());  // already 0-100
-			Sse = T->GetMaximumScreenSpaceError();
+			if (!CamSim::Geospatial::IsBuildingsActor(T))
+			{
+				Sse = T->GetMaximumScreenSpaceError();
+			}
 		}
 	}
 	S.MinLoadProgressPct = MinLoad;

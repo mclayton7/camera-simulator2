@@ -42,6 +42,7 @@ class BuildContext:
     manifest: dict
     asset_paths: dict  # "<source>/<asset>" -> local file (prepared file when there is one)
     grid_paths: dict  # PROJ grid name -> local file
+    cache_root: str = ""  # the fetch cache (derived files such as the feature extract); "" = none
 
 
 @dataclass

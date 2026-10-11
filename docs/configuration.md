@@ -266,20 +266,30 @@ Runs CamSim on a scene package built by `camsim-scene` ([`docs/scene-packages.md
 scene:
   dir: ""          # absolute path to a package
   offline: false   # no network
+  buildings:       # REALISM R3: the package's features/buildings/ (no-op without one)
+    enabled: true
+    maximum_screen_space_error: 64
+    create_physics_meshes: true
+    maximum_cached_bytes_mb: 512
 ```
 
 | Key | Environment Variable | Default | Description |
 |---|---|---|---|
 | `scene.dir` | `CAMSIM_SCENE_DIR` | *(empty)* | Absolute path to a scene package (`manifest.json`, `schema_version` 1). Each layer the package has replaces the matching setting, below. A relative path, a missing or invalid `manifest.json`, or another schema version is a config error. |
-| `scene.offline` | `CAMSIM_SCENE_OFFLINE` | `false` | No network: terrain must be `url` with an existing `file:///` target, or `flat`; imagery `tms` with an existing `file:///` target, or `none`. Any config error (these or others) is logged and CamSim exits with status 1 instead of running on defaults (which would be Cesium ion). |
+| `scene.offline` | `CAMSIM_SCENE_OFFLINE` | `false` | No network: terrain must be `url` with an existing `file:///` target, or `flat`; imagery `tms` with an existing `file:///` target, or `none`. Any config error (these or others) is logged and CamSim exits with status 1 instead of running on defaults (which would be Cesium ion). The buildings URL (below) must be an existing `file:///` too. |
+| `scene.buildings.enabled` | `CAMSIM_SCENE_BUILDINGS_ENABLED` | `true` | Spawn the package's buildings tileset (REALISM R3). Acts only when the package has `features/buildings/tileset.json`; `false` is R2 bit for bit (no tileset spawned). |
+| `scene.buildings.maximum_screen_space_error` | `CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR` | `64` | The buildings tileset's Cesium screen-space error, in `(0, 1024]` (anything else is a config error). The streaming controller's FOV-scaled culled SSE never goes below it: culled SSE = max(terrain-derived, this). Default 64, chosen 2026-10-11 from the combined sweep (the only both-on setting inside the budget; 16 was the pre-sweep starting value; [`scene-packages.md`](scene-packages.md) "R3/R4 bench check and combined cost"). |
+| `scene.buildings.create_physics_meshes` | `CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES` | `true` | Collision for the buildings tileset: CIGI LOS and HAT/HOT hit buildings (material code 230). The DIS surface clamp ignores the tileset either way. |
+| `scene.buildings.maximum_cached_bytes_mb` | `CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB` | `512` | The buildings tileset's own Cesium tile cache (`MaximumCachedBytes`), MB, in `[1, 65536]` (anything else is a config error). Applied after the terrain's tuning, which would otherwise give it a second `maximum_cached_bytes_mb` (2 GiB) cache that fills over a long flight across built-up areas. |
 
 | Package file | Replaces |
 |---|---|
 | `terrain/layer.json` | `cesium.terrain.source: url`, `cesium.terrain.url: file:///…/terrain/layer.json` |
 | `imagery/tilemapresource.xml` | `cesium.imagery.source: tms`, `cesium.imagery.url: file:///…/imagery/tilemapresource.xml` |
-| `landcover/index.json` | `thermal.land_cover.dir: …/landcover` |
+| `landcover/index.json` | `thermal.land_cover.dir: …/landcover` (thermal IR classes and CIGI material codes; packages built with `[features]` add codes 200–220, REALISM R2) |
+| `features/buildings/tileset.json` | one extra Cesium tileset spawned at world init (REALISM R3); `/ready` waits for it; CIGI LOS/HAT/HOT hit it (material 230); the DIS clamp ignores it |
 
-A layer the package lacks leaves its setting alone. Overriding a non-default `cesium.terrain.*`, `cesium.imagery.*` or
+The buildings tileset is spawned in `SetUpCesiumWorld` right after `ApplyCesiumBackendConfig`'s destroy loop, as an `ACesium3DTileset` tagged `CamSimBuildings` (`Geospatial/SceneBuildings.h`), with the terrain's tuning and its own `scene.buildings.*` SSE, physics and tile cache cap, and no raster overlays. It is in the tileset cache, so the terrain gate (`/ready`) waits for it and the FOV-scaled culled SSE covers it. Under `scene.offline` its URL must be an existing local `file:///` (a missing file is a config error). A layer the package lacks leaves its setting alone. Overriding a non-default `cesium.terrain.*`, `cesium.imagery.*` or
 `thermal.land_cover.dir` logs a config warning naming the key. `~` is expanded to the home directory.
 
 **Sea level (`sea_level.json`, REALISM R1).** A package built with a `[sea_level]` station carries `sea_level.json`
@@ -726,6 +736,22 @@ CAMSIM_OCEAN_MOTION_ENABLED=1
 CAMSIM_OCEAN_MOTION_SCALE=1.0
 CAMSIM_OCEAN_MAX_RADIUS_KM=400.0
 
+# Vegetation (REALISM R4 slice)
+CAMSIM_VEGETATION_ENABLED=1
+CAMSIM_VEGETATION_LIBRARY_DIR=
+CAMSIM_VEGETATION_RADIUS_M=1000.0
+CAMSIM_VEGETATION_DENSITY_SCALE=1.0
+CAMSIM_VEGETATION_CAST_SHADOWS=1
+CAMSIM_VEGETATION_CELL_SIZE_M=100.0
+CAMSIM_VEGETATION_SEED=0
+CAMSIM_VEGETATION_DROP_IN_BUILDINGS=1
+
+# Scene package buildings (REALISM R3)
+CAMSIM_SCENE_BUILDINGS_ENABLED=1
+CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR=64
+CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES=1
+CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB=512
+
 # Operational hardening (Phase 28)
 CAMSIM_STRUCTURED_LOG_PATH=
 CAMSIM_STRUCTURED_LOG_MAX_MB=100
@@ -915,6 +941,23 @@ ocean:
 | `ocean.water_temperature_c` | `CAMSIM_OCEAN_WATER_TEMPERATURE_C` | `15.0` | Initial water temperature for the thermal water class (ROADMAP 4A); CIGI Maritime Surface Conditions overrides it. Startup only. `[-2, 40]`. |
 | `ocean.material` | *(none — set via YAML only)* | `/Game/Ocean/M_Ocean` | Ocean material asset path. **Startup only.** |
 
+## Vegetation (`vegetation:`)
+
+REALISM R4 slice (guide: [`docs/vegetation.md`](vegetation.md)): one CC0 tree type scattered around the camera where the land cover is tree
+cover (code 10), deterministic per grid cell. Acts only with land cover configured (`thermal.land_cover.dir` or a scene
+package) and a loadable library. All keys are **startup only**.
+
+| Key | Env | Default | Description |
+|---|---|---|---|
+| `vegetation.enabled` | `CAMSIM_VEGETATION_ENABLED` | `true` | Master switch. Off, no manager is created and the frame matches the pre-slice build. |
+| `vegetation.library_dir` | `CAMSIM_VEGETATION_LIBRARY_DIR` | `""` | Directory holding `library.json`; empty = `Content/NonUFS/Vegetation` (git LFS). |
+| `vegetation.radius_m` | `CAMSIM_VEGETATION_RADIUS_M` | `1000.0` | Cells within this ground radius of the camera nadir; instances are hard-culled at this distance. `(0, 5000]`. |
+| `vegetation.density_scale` | `CAMSIM_VEGETATION_DENSITY_SCALE` | `1.0` | Multiplies the tree probability (0.15). `[0, 4]`. |
+| `vegetation.cast_shadows` | `CAMSIM_VEGETATION_CAST_SHADOWS` | `true` | Whether trees cast shadows. |
+| `vegetation.cell_size_m` | `CAMSIM_VEGETATION_CELL_SIZE_M` | `100.0` | Edge of the global geographic cell grid. `[25, 500]`. |
+| `vegetation.seed` | `CAMSIM_VEGETATION_SEED` | `0` | Scatter seed, used only without a scene package (otherwise the manifest `seed`). `>= 0`. |
+| `vegetation.drop_in_buildings` | `CAMSIM_VEGETATION_DROP_IN_BUILDINGS` | `true` | Drop trees inside building footprints: a second height batch per cell on the buildings tileset, a hit more than 0.5 m above the terrain drops the tree ([`vegetation.md`](vegetation.md), "How it works"). Acts only when the buildings tileset exists. `false` skips the second batch (trees stand in footprints wherever land cover is code 10). Kept on by the user's decision (2026-10-11) despite its cost of about +0.3 ms game p50, +2.5 ms p95 (both-on game p95 +3.61 ms, over the 3.0 ms bench limit, accepted) and +34 MiB; a build-time footprint exclusion will replace it. |
+
 Removed: the old `phase19:` block (`ocean_enabled`, `beaufort_state`,
 `wave_amplitude_scale`, `wave_frequency_scale`, `wave_choppiness`,
 `ocean_material_path`, `vessel_wakes_enabled`, `niagara_vessel_wake`,
@@ -957,9 +1000,9 @@ The `thermal.land_cover.*` keys below are described, with the data pipeline, in 
 | `thermal.air_diurnal_swing_k` | `CAMSIM_THERMAL_AIR_DIURNAL_SWING_K` | `8.0` | Peak-to-peak diurnal air swing, peak at 15:00 local solar; `[0, 30]`. |
 | `thermal.extinction_per_km.mwir` / `.lwir` | `CAMSIM_THERMAL_EXTINCTION_MWIR` / `_LWIR` | `0.15` / `0.10` | Band extinction β per km; the band is MWIR when the IR preset's band centre is below 6.5 µm. `[0, 10]`. |
 | `thermal.fog_ir_factor` | `CAMSIM_THERMAL_FOG_IR_FACTOR` | `0.4` | While CIGI Atmosphere Control has fog enabled, β += 3.912 / V_km × factor; `[0, 2]`. |
-| `thermal.materials.<name>` | *(yaml only)* | — | Overrides a built-in class (`terrain_default`, `water`, `vehicle_paint`, `asphalt`, `vegetation`, `concrete`, `tree_canopy`, `shrubland`, `grassland`, `cropland`, `built_up`, `bare_soil`, `snow_ice`, `wetland`) or adds one (unset fields copy `terrain_default`; ≤ 32 classes, so 18 slots are left for user materials after the 14 built-ins). Fields: `albedo` `[0,1)`, `emissivity` `(0,1]`, `thermal_inertia` J m⁻² K⁻¹ s⁻½ `[0,20000]`, `convection_w_m2k` `(0,200]`, `k_fast` K/(W m⁻²) `[0,0.2]`, `temperature` `model`\|`water`\|`snow`. Names: lower-case letters, digits, `_`. |
+| `thermal.materials.<name>` | *(yaml only)* | — | Overrides a built-in class (`terrain_default`, `water`, `vehicle_paint`, `asphalt`, `vegetation`, `concrete`, `tree_canopy`, `shrubland`, `grassland`, `cropland`, `built_up`, `bare_soil`, `snow_ice`, `wetland`, `rail_ballast`) or adds one (unset fields copy `terrain_default`; ≤ 32 classes, so 17 slots are left for user materials after the 15 built-ins). Fields: `albedo` `[0,1)`, `emissivity` `(0,1]`, `thermal_inertia` J m⁻² K⁻¹ s⁻½ `[0,20000]`, `convection_w_m2k` `(0,200]`, `k_fast` K/(W m⁻²) `[0,0.2]`, `temperature` `model`\|`water`\|`snow`. Names: lower-case letters, digits, `_`. |
 | `thermal.land_cover.enabled` | `CAMSIM_THERMAL_LAND_COVER_ENABLED` | `true` | ROADMAP 4B. Terrain pixels take their thermal class from land cover (ESA WorldCover). `false`: 4A output bit for bit with 4A's default classes (every terrain pixel `terrain_default`; the 4A `vegetation` class was retuned, so an entity type set to `vegetation` differs from 4A). |
-| `thermal.land_cover.dir` | `CAMSIM_THERMAL_LAND_COVER_DIR` | `Content/NonUFS/LandCover` | Directory with `index.json` and the tiles (`scripts/landcover/fetch_worldcover.py`); relative to the project directory (staged as loose files). Missing: one warning, land cover off. Must be non-empty when enabled. |
+| `thermal.land_cover.dir` | `CAMSIM_THERMAL_LAND_COVER_DIR` | `Content/NonUFS/LandCover` | Directory with `index.json` and the tiles (`scripts/landcover/fetch_worldcover.py`); relative to the project directory (staged as loose files). Missing: one warning, land cover off. Must be non-empty when enabled. Also the source of the CIGI HAT/HOT and LOS extended-response material codes (REALISM R2, `docs/terrain-feedback.md`, "Material codes"); with `enabled: false` those codes are 0. |
 | `thermal.land_cover.window_texels` | `CAMSIM_THERMAL_LAND_COVER_WINDOW_TEXELS` | `2048` | Side of the camera-centred window in 10 m texels (2048 = 20.48 km; 4 MB). Terrain outside it uses `terrain_default`. Even, `[256, 8192]`. 2048 is the recommended size; larger windows cost build time (task thread) and memory. |
 | `thermal.land_cover.recentre_fraction` | `CAMSIM_THERMAL_LAND_COVER_RECENTRE_FRACTION` | `0.25` | A new window is built (task thread) when the camera is this fraction of the window size from its centre, East or North. `[0.01, 0.45]`. |
 | `thermal.land_cover.veg_index_lo` / `veg_index_hi` | `CAMSIM_THERMAL_LAND_COVER_VEG_INDEX_LO` / `_HI` | `0.05` / `0.20` | Vegetation weight v = saturate((ExG − lo) / (hi − lo)), ExG = (2G − R − B) / (R + G + B) of the linear GBuffer base colour. `-1 <= lo < hi <= 2`. |

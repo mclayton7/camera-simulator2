@@ -14,7 +14,7 @@ namespace CamSim::Geospatial
 {
 	/**
 	 * Origin-shift mobility, tileset tuning and the Cesium backend (one terrain tileset,
-	 * every other tileset destroyed), in that order. Call before the world's actors begin
+	 * every other tileset destroyed), then the scene package's buildings tileset spawned, in that order. Call before the world's actors begin
 	 * play: ACesium3DTileset::BeginPlay calls LoadTileset, so Main.umap's ion actors would
 	 * otherwise request api.cesium.com before CamSim's config reaches them (REALISM R0).
 	 * Returns the ion server override, or nullptr (see ApplyCesiumBackendConfig).

@@ -379,6 +379,20 @@ struct FCamSimConfig
 	};
 	FThermalConfig Thermal;
 
+	/** Vegetation scatter (REALISM R4 slice, docs/vegetation.md). */
+	struct FVegetationConfig
+	{
+		bool    bEnabled     = true;     // CAMSIM_VEGETATION_ENABLED; acts only with land cover and a loadable library
+		FString LibraryDir;              // CAMSIM_VEGETATION_LIBRARY_DIR; "" = Content/NonUFS/Vegetation
+		float   RadiusM      = 1000.0f;  // CAMSIM_VEGETATION_RADIUS_M; cells within this ground radius of the camera nadir
+		float   DensityScale = 1.0f;     // CAMSIM_VEGETATION_DENSITY_SCALE; x p_tree (0.15)
+		bool    bCastShadows = true;     // CAMSIM_VEGETATION_CAST_SHADOWS
+		float   CellSizeM    = 100.0f;   // CAMSIM_VEGETATION_CELL_SIZE_M
+		int32   Seed         = 0;        // CAMSIM_VEGETATION_SEED; used only without a scene package
+		bool    bDropInBuildings = true; // CAMSIM_VEGETATION_DROP_IN_BUILDINGS; drop trees inside building footprints (acts only with a buildings tileset)
+	};
+	FVegetationConfig Vegetation;
+
 	/** Cesium backend: ion server, terrain source, imagery overlay */
 	struct FCesiumBackendConfig
 	{
@@ -433,13 +447,31 @@ struct FCamSimConfig
 		// No network: terrain and imagery must be local file:/// sources, and any config error
 		// exits at startup instead of running on defaults. Env: CAMSIM_SCENE_OFFLINE
 		bool bOffline = false;
+		// REALISM R3: buildings from <dir>/features/buildings/tileset.json, one extra Cesium tileset spawned
+		// at world init. CIGI LOS/HAT/HOT hit it (material code 230); the DIS clamp ignores it.
+		// Env: CAMSIM_SCENE_BUILDINGS_ENABLED
+		bool   bBuildingsEnabled = true;
+		// Cesium MaximumScreenSpaceError of the buildings tileset (its own, not maximum_screen_space_error).
+		// 64: chosen 2026-10-11 from the combined dense_pass sweep (the only both-on setting inside the budget).
+		// Env: CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR
+		double BuildingsMaximumScreenSpaceError = 64.0;
+		// Cesium MaximumCachedBytes of the buildings tileset, MB, in [1, 65536] (the terrain keeps maximum_cached_bytes_mb).
+		// Env: CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB
+		int32  BuildingsMaximumCachedBytesMB = 512;
+		// Collision for the buildings tileset (CIGI LOS/HAT/HOT). Env: CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES
+		bool   bBuildingsCreatePhysicsMeshes = true;
 
 		// Filled by CamSimScene::ResolvePackage at load (not config keys).
 		FString PackageName;
+		// manifest.json "seed" (REALISM R4: the vegetation scatter's seed). bHasSeed false for manifests without one.
+		int64 Seed = 0;
+		bool  bHasSeed = false;
 		// From <dir>/sea_level.json (REALISM R1): local MSL - EGM96 at the package's NOAA tide station, added to
 		// the ocean's sea level under the CIGI tide. 0 without the file.
 		double SeaLevelOffsetM = 0.0;
 		FString SeaLevelStation;
+		// file:/// URL of <dir>/features/buildings/tileset.json; empty when the package has none (ResolvePackage).
+		FString BuildingsUrl;
 		TArray<FString> ResolveErrors;
 		TArray<FString> ResolveWarnings;
 	} Scene;

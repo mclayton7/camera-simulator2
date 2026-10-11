@@ -183,7 +183,7 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
 | 1.6 | ~~Keep the gimbal slewing between host packets; don't abort `Tick()` on a hot-reload parse failure.~~ **Done 2026-09-26.** The ArtPart target persists and `TickGimbal` advances toward it on ticks without a packet (a host at 10 Hz previously got a third of the commanded slew at 30 fps); a ViewControl snap cancels it. Test: `Camera.Gimbal.ArtPart_SlewContinuesBetweenPackets`. Still open: `PollHotReloadConfig`'s async stat task captures a raw `this`, which can outlive the camera actor. |
 | 1.7 | Branch hygiene: delete the six merged `refactor/camsim-phase-*` branches on origin. (Stale local branches, including the abandoned ocean branch, were removed on 2026-09-26.) |
 | 1.8 | ~~LOS responses report `Valid = false` when the path is clear.~~ **Not a bug.** CIGI 3.3 §4.2.4 defines Valid as "whether the Range parameter is valid. The range will be invalid if no intersection occurs", so a clear segment is correctly `Valid = 0, Visible = 1`. Real follow-up: a segment whose destination lies on the terrain surface can hit the surface at the destination itself and report Occluded; consider treating a hit within a small tolerance of the destination as Visible. |
-| 1.9 | ~~Extended HAT/HOT and LOS responses aren't implemented.~~ **Done 2026-09-26.** HAT/HOT Request Type 2 gets a HAT/HOT Extended Response (103), and LOS Request Type 1 gets an LOS Extended Response (105), per ICD 4.2.3/4.2.5: surface normal azimuth/elevation from the trace hit, Range Valid, a clear segment reporting its destination point, and X/Y/Z offsets in the hit entity's body frame when the request's Response Coordinate System is Entity (`CamSimFrames::GeodeticToBodyOffset`). Material code is 0 (CamSim has no material data yet). Verified live against terrain with a scratch host (HOT ≈ −16 m HAE downtown San Francisco, a 60° LOS vector from 1,000 m hitting at 1,165 m). Tests: `CigiSender.ExtendedResponsesDecode` (decoded by a CCL 3.3 host), `CigiFrames.GeodeticInverse`. Found along the way: Cesium physics meshes were disabled, so no terrain query had ever hit (fixed, `create_physics_meshes`). Still open: queries only hit *loaded* tiles, so points outside the camera's view miss (a segment 2 km beyond the footprint reported visible) — HAT/HOT could use `ACesium3DTileset::SampleHeightMostDetailed`, which loads what it needs; periodic requests (Update Period > 0) and Host Frame Number LSN aren't implemented. |
+| 1.9 | ~~Extended HAT/HOT and LOS responses aren't implemented.~~ **Done 2026-09-26.** HAT/HOT Request Type 2 gets a HAT/HOT Extended Response (103), and LOS Request Type 1 gets an LOS Extended Response (105), per ICD 4.2.3/4.2.5: surface normal azimuth/elevation from the trace hit, Range Valid, a clear segment reporting its destination point, and X/Y/Z offsets in the hit entity's body frame when the request's Response Coordinate System is Entity (`CamSimFrames::GeodeticToBodyOffset`). ~~Material code is 0 (CamSim has no material data yet).~~ **Material codes done 2026-10-10 (REALISM R2):** the land-cover code under the hit (WorldCover, plus 200–220 roads/rail/inland water from a scene package built with `[features]`; 80 for the sea surface, 0 for no hit or an entity; table in `docs/terrain-feedback.md`); `send_cigi_test.py --hat-extended / --los-extended` prints them. Verified live against terrain with a scratch host (HOT ≈ −16 m HAE downtown San Francisco, a 60° LOS vector from 1,000 m hitting at 1,165 m). Tests: `CigiSender.ExtendedResponsesDecode` (decoded by a CCL 3.3 host), `CigiFrames.GeodeticInverse`. Found along the way: Cesium physics meshes were disabled, so no terrain query had ever hit (fixed, `create_physics_meshes`). Still open: queries only hit *loaded* tiles, so points outside the camera's view miss (a segment 2 km beyond the footprint reported visible) — HAT/HOT could use `ACesium3DTileset::SampleHeightMostDetailed`, which loads what it needs; periodic requests (Update Period > 0) and Host Frame Number LSN aren't implemented. |
 | 1.10 | ~~CCL packet processors `static_cast` to the wrong versioned class.~~ **Done 2026-09-26.** CCL builds a different class per host minor version (e.g. `CigiRateCtrlV3` for 3.0/3.1, `…V3_2` for 3.2+) and stamps the packet with it, and the accessors live on those classes rather than the `CigiBase*` class. `VisitVersioned` in `CigiReceiver.cpp` now casts to the class CCL actually built for Entity, Rate, Component, IG Control, HAT/HOT and both LOS requests (0.4's fixed V3_x casts were wrong for 3.0 hosts). This also found that **Rate Control's Coordinate System was ignored**: rates were always integrated as body-frame, but World/Parent (the 3.2+ default) means North/East/Down and heading/pitch/roll rates. `CamSimFrames::IntegrateRates` handles both, and dead reckoning now uses the WGS-84 radii instead of a flat 111,320 m/°. Tests: `CigiFrames.RateControlFrames`, `CigiEntityRelative.ReceiverCarriesFlags` (Entity ID + Rate Control coordinate system from a CCL 3.3 host). |
 | 1.11 | ~~KLV Tags 15/25 carry ellipsoid height but are defined as MSL.~~ **Done 2026-09-26.** `Geospatial/Geoid.h` samples NGA's 15′ EGM96 grid (`Content/NonUFS/Geoid/WW15MGH.DAC`, git LFS, staged as a loose file; regenerate with `scripts/make_egm96_dac.py`). Tags 15/25 are now MSL; ellipsoid heights go in new Tags 75/78. Without the grid, 15/25 are omitted rather than mislabelled. Cesium Native's `EarthGravitationalModel1996Grid` was not used: it clamps instead of wrapping at 360°→0°, so it is off within 0.25° west of the prime meridian (0.17 m at NGA's test point). `check.js` verifies 15/25/75/78 with its own geoid sampler. Tests: `Geoid.MatchesNgaReference` (NGA's reference points, ±0.1 m), KLV conformance packets. CIGI altitudes needed no change: CIGI 3.3 defines its "MSL" as the ellipsoid surface. |
 | 1.12 | ~~`camsim_health.json` field `dropped` reports watchdog reconnects.~~ **Done 2026-09-26.** `dropped` is now the encoder queue's real drop count (`ACamSimCamera::GetDroppedFrameCount`; the old `DroppedFrameCount` member was never incremented), and reconnects have their own `watchdog_reconnects` field. Editor runs now write the file to `Saved/` instead of the shared engine `Binaries/` directory. Still open: in the opt-in per-category `frame_drops` block, `encoder_busy` and `socket_error` are never incremented (only `readback_timeout` is). |
@@ -1834,6 +1834,76 @@ reboot (NVML mismatch, Vulkan on llvmpipe until rebooted); a stale `.build_tmp/c
 didn't rebuild them) broke the editor link with `R_X86_64_PC32 … recompile with -fPIC` (fix: delete `.build_tmp/ccl_build`
 and rerun `build_thirdparty.sh`); `thermal_check.py`, `ocean_check.py` and `gt_occlusion_check.py` read only the macOS
 log path, so on Linux the run log wasn't copied (now platform-dependent).
+
+**R2 (vector features) implemented and measured on macOS 2026-10-10** (`docs/scene-packages.md`, "Vector features" and
+"Measured"; spec `docs/superpowers/specs/2026-10-10-r2-vector-features-design.md`): OSM roads / paved areas (200 asphalt
+or unknown, 201 concrete), rail (210) and NHD HR inland water (220) burned into a package's `landcover/` with `[features]`
+(OSM is ODbL: opt-in via `allow`); new built-in `rail_ballast`; CIGI material codes (1.9). Pendleton: texels 200 511,761 /
+201 18,473 / 210 12,828 / 220 40,507, land cover 136 s cold; rebuild and features-off identical; `verify --deep` clean;
+road registration median 2.0 m, p90 10.0 m (2-D windowed correlation; the spec's profile method measured vegetation);
+CIGI 200 on I-5, 220 on Lake O'Neill, 80 offshore, 30 in open country; gates (a)–(q) pass, ThermalCS 0.421 ms at 1080p and unchanged in the bench (same-session IR pair r1c/r2, p95 within 0.002 ms);
+UE 494/494, GPU 26/26. Open on Linux: not run (macOS only; nothing in `FOR_LINUX.md` for R2 yet). **Open: gate (r) fails** on the pose picked by a data rule (dark asphalt, fix round 1: I-5 NB in
+San Clemente, way 487165554): MWIR −1.2 / −25.3 DN and LWIR +13.3 / −10.8 DN at 02:00 / noon (dry verge refined to
+`bare_soil`, nearly as warm as asphalt, on a sunward bank). The first pose (I-5 SB, OSM asphalt but light NAIP pavement)
+fails at noon too (−40.1 / −19.4 DN; `k_fast` 0: +21.6 DN), and of two diagnostic poses CA 76 passes every row, Avenida
+Pico fails; needs a decision (`docs/scene-packages.md`, "Measured"; `docs/thermal.md`, "Limits (R2)"). Visual review of the MWIR/LWIR/EO noon frames in `.cache/r2/visual/` (I-5, Oceanside residential grid, MCAS Camp
+Pendleton runway) **signed off by the user 2026-10-10**: the runway and the Oceanside grid read as warm continuous lines; I-5
+reads cooler than its verge (the gate (r) finding); warp wobble and verge widening accepted. Follow-ups: gate (r) noon (give
+vector road codes their class albedo in the fast term instead of the imagery luminance, and stop dry verges refining to
+`bare_soil`; both are `ThermalCS` changes, so they belong with NDVI); large dark IR patches over I-5 and the runway grass
+that are absent from EO (cloud shadow through the solar term vs WorldCover tree cells: cause unverified); NDVI in
+`ThermalCS` (moved to its own spec), 3DHP when per-unit downloads exist. **CIGI material-code lookup profiled** (2026-10-10, M1 Pro): cached lookups 0.3–0.6 µs; a tile miss decodes a PNG on the game thread
+(2–4 ms), and 900 queries/s scattered over ~33 km drove game-thread p99 to 55.9 ms (29.1 fps) with a 16-tile cache. Now 64 tiles
+and at most 2 loads per tick (a query past the budget answers 0 until its tile loads): p99 3.4 ms, 30 fps (`docs/terrain-feedback.md`).
+
+**R3 buildings thin slice implemented and measured on macOS 2026-10-11** (`docs/scene-packages.md`, "Buildings (R3)" and
+"Measured"; spec `docs/superpowers/specs/2026-10-10-r3-buildings-slice-design.md`): Overture footprints (ODbL, opt-in via
+`allow`, snapshotted) extruded into a package's `features/buildings/` (3D Tiles 1.1, flat roofs, one neutral material),
+spawned as one extra Cesium tileset at world init (`scene.buildings.*`), CIGI material code 230 (1.9), ignored by the DIS
+surface clamp. Pendleton: 82,260 buildings, 1,765 tiles, 247.9 MB, 36 s; `verify --deep` and the 3D Tiles validator clean;
+rebuild and no-`[buildings]` builds byte-identical; CIGI roof HOT within 0.01 m and LOS within 0.03 m of the wall, both
+230; DIS truck steps ≤ 0.085 m across footprints; `scene.buildings.enabled: false` = R2 (identical CIGI responses);
+`dis_vehicle_check.py` / `gt_occlusion_check.py` pass; UE 538/538, GPU 26/26, scene tooling 498 passed. Bench sweep: 30
+fps, 0 dropped frames, game thread +0.45–0.68 ms, but the original 400 MB (381 MiB) memory budget failed at SSE 16, the pre-sweep starting value (+588 MiB in the R3 sweep, +607 MiB in the combined sweep, `docs/scene-packages.md` "R3/R4 bench check and combined cost";
+the graphics-attributed part of the macOS process footprint on the M1 Pro: `IOAccelerator*` + `(graphics)` rows, CPU heap excluded; unified memory, a VRAM proxy) and passed at SSE 64 with physics meshes (+272 MiB): default 64, chosen 2026-10-11 from the combined sweep (then the only both-on setting inside the budget). The user raised the memory budget to +1024 MiB (whole run) on 2026-10-11, under which every sweep row passes; SSE 64 stays the default. With trees and the footprint check on it is at +3.61 ms game p95 (limit 3.0), accepted by the user. Full bench at SSE 16: every
+existing phase 30 fps, 0 dropped, game p50 +0.02–0.70 ms, memory +0.6–1.1 GiB as the tile cache fills (one run each).
+Open: footprint IoU (gate 2, needs ~30 human-traced NAIP outlines), the user's visual review, Linux/Vulkan (`FOR_LINUX.md`
+task 5). One intermittent renderer crash (SIGSEGV in `FMeshDrawShaderBindings::SetOnCommandList` on a draw task, 5 s
+after a 215 m camera cut to ground level with buildings and trees on) in the first live session; not reproduced in 27
+later Pendleton sessions (3 targeted repeats incl. buildings off / trees off, 3 CIGI sessions, the DIS session, 18
+sweep runs, the 2 full benches; and again not in the bench-check session: 2 reference, 12 combined sweep runs and a full bench), nor in the R4 trees acceptance (8 `vegetation_check.py` sessions, 4 `gt_occlusion_check.py` runs, 26 sweep runs, trees on, buildings off); watch for it. No editor work for the slice; facade/roof materials remain the R3 deepening pass's human
+editor work (`REALISM.md`, R3).
+
+**R4 trees thin slice implemented and measured on macOS 2026-10-11** ([`docs/vegetation.md`](docs/vegetation.md); spec
+`docs/superpowers/specs/2026-10-10-r4-trees-slice-design.md`): one CC0 broadleaf tree (Quaternius, 1,332 triangles, glTF
+library with sha256 check) scattered per 100 m global cell by `CamSimHash` on land-cover code 10, heights from
+`SampleHeightMostDetailed`, one globe-anchored HISM actor per cell, no collision, `vegetation.*` config. Acceptance
+(`scripts/vegetation_check.py`, Pendleton R2): placement 8,992 trees, 0 off code 10; ground check max |dz| 0.000 m (after a
+fix: the check now waits for a settled view; it first measured 2.1 m against still-refining tiles); determinism 113 common
+cells, 0 hash mismatches between a north and a south approach; origin shift SSIM 0.983 vs floor 0.970, 0 hash changes;
+off switch SSIM 0.97957 / 0.97997 vs the baseline pair's 0.97957; `gt_occlusion_check.py` passes; a DIS truck under the canopy has
+visibility 0.15 (oblique) / 0.002 (nadir) with the amodal box on the truck; tree bases within 6 mm of the drawn surface out
+to 986 m. Bench sweep (`dense_pass`): 30 fps, 0 dropped in every row; at radius 1000 / density 1.0 / shadows on: game
++0.63 ms, GPU +1.13 ms, +81 MiB; radius 2000 at density 1.0 fails the game-thread budget (+1.64 ms). Defaults chosen 2026-10-11:
+keep 1000 / 1.0 / on. Combined with buildings (`pendleton-r3`, buildings SSE 64 with physics, the chosen default):
+game +1.05 ms, GPU +2.98 ms, +359 MiB over both off, inside the budget (a 90 s `dense_pass` figure before the footprint check,
+`docs/scene-packages.md` "R3/R4 bench check and combined cost"). Trees inside building footprints are dropped when the
+package has buildings (final review I1: a second `SampleHeightMostDetailed` batch per cell on the buildings tileset;
+land cover alone would put ~10 % of footprint area under trees; 373 of 6,892 trees, 5.4 %, dropped in a Mainside session;
+`vegetation.drop_in_buildings`). The check costs +0.3 ms game p50, +2.5 ms p95 and +34 MiB in `dense_pass`, which puts
+buildings SSE 64 + trees at +3.61 ms game p95, over the 3.0 ms limit. **User decisions 2026-10-11:** keep the check on by
+default and accept that p95 overrun (tracked; follow-up item below); raise the memory budget to +1024 MiB over a whole
+run. A whole-run bench at the defaults peaks at +907 / +952 MiB in `coast_pass` / `dense_pass`, inside it, with the
+new 512 MB buildings tile cache (`scene.buildings.maximum_cached_bytes_mb`; `far_origin` fell from +1,131 to +371
+MiB). UE 543/543, GPU 26/26 at the slice. Open: the user's visual review (low obliques and the sweep's contact sheet)
+and Linux/Vulkan. No editor work.
+
+- [ ] **Build-time building-footprint exclusion for trees** (follow-up to the 2026-10-11 decision to keep
+  `vegetation.drop_in_buildings` on): mark building footprints in the scene package (e.g. burn them into `landcover/`
+  or a dedicated raster) so trees are excluded without runtime `SampleHeightMostDetailed`; then remove the runtime
+  check and its +2.5 ms game p95 / +34 MiB (buildings SSE 64 + trees is +3.61 ms p95, over the 3.0 ms limit, accepted
+  until then). It touches the thermal class under buildings (today thermal IR uses the land-cover class under a
+  building), so it needs its own design before implementation.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

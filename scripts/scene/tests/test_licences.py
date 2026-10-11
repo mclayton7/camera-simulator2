@@ -28,3 +28,13 @@ def test_attribution_text_is_sorted_and_complete():
     assert text.index("DS ab") < text.index("DS wc")
     assert "credit wc" in text and "https://creativecommons.org/licenses/by/4.0/" in text
     assert text == licences.attribution_text(m)
+
+
+def test_layer_credit_names_licence_and_odbl_notice():
+    from camsim_scene.licences import layer_credit
+
+    odbl = layer_credit("© OpenStreetMap contributors", "ODbL-1.0")
+    assert odbl.startswith("© OpenStreetMap contributors\nLicence: Open Database License")
+    assert "https://opendatacommons.org/licenses/odbl/1-0/" in odbl and "OSM-derived" in odbl
+    usgov = layer_credit("USGS", "LicenseRef-PublicDomain-USGov")
+    assert "Public domain" in usgov and "ODbL" not in usgov

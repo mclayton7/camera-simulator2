@@ -1,9 +1,12 @@
 """Launch helpers in run_bench.py: port and process checks."""
 
 import os
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from bench import run_bench
+from bench import run_bench, scenario
 
 NETSTAT = """Active Internet connections (including servers)
 Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)
@@ -129,3 +132,94 @@ def test_with_sensor_sets_the_waveband():
     pose = scenario.build_phases(smoke=True)[0].pose_at(0.0)
     assert run_bench.with_sensor(pose, "ir").sensor_id == 1
     assert run_bench.with_sensor(pose, "eo").sensor_id == 0
+
+
+def test_filter_phases_keeps_warmup_and_named_measured_phases():
+    phases = scenario.build_phases(site=scenario.SITES["pendleton"])
+    out = run_bench.filter_phases(phases, ["coast_pass"], skip_warmup=False)
+    assert [p.name for p in out] == ["warmup", "coast_pass"]
+
+
+def test_filter_phases_none_means_all_and_skip_warmup_drops_it():
+    phases = scenario.build_phases()
+    assert run_bench.filter_phases(phases, None, False) == phases
+    assert [p.name for p in run_bench.filter_phases(phases, None, True)] == [
+        "orbit", "slew", "low_pass", "far_origin"
+    ]
+
+
+def test_filter_phases_rejects_unknown_names_with_the_valid_list():
+    with pytest.raises(SystemExit, match="unknown phase 'dense_pas'.*orbit"):
+        run_bench.filter_phases(scenario.build_phases(), ["dense_pas"], False)
+
+
+def test_filter_shots_selects_and_rejects():
+    shots = scenario.build_shots()
+    assert [s.name for s in run_bench.filter_shots(shots, ["horizon"])] == ["horizon"]
+    assert run_bench.filter_shots(shots, None) == shots
+    with pytest.raises(SystemExit, match="unknown shot 'nope'"):
+        run_bench.filter_shots(shots, ["nope"])
+
+
+def test_phases_and_shots_flags_parse_as_lists():
+    a = run_bench.build_parser().parse_args(
+        ["--label", "x", "--phases", "orbit,slew", "--shots", "horizon"]
+    )
+    assert a.phases == ["orbit", "slew"] and a.shots == ["horizon"]
+    b = run_bench.build_parser().parse_args(["--label", "x"])
+    assert b.phases is None and b.shots is None
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _ran(stdout, rc=0):
+    return lambda *a, **k: SimpleNamespace(returncode=rc, stdout=stdout, stderr="")
+
+
+def test_nvidia_smi_sums_gpus_and_handles_absence():
+    assert run_bench.nvidia_smi_mib(_ran("1024\n2048\n")) == 3072.0
+    assert run_bench.nvidia_smi_mib(_ran("", rc=127)) is None
+
+    def boom(*a, **k):
+        raise FileNotFoundError("nvidia-smi")
+
+    assert run_bench.nvidia_smi_mib(boom) is None
+
+
+def test_footprint_parses_the_captured_camsim_output():
+    text = (FIXTURES / "footprint_camsim.txt").read_text()
+    # IOAccelerator 1694 + IOAccelerator (graphics) 1113 (once) + Owned physical footprint (unmapped) (graphics) 2570
+    assert run_bench.footprint_mib("123", _ran(text)) == 5377.0
+
+
+def test_footprint_units_and_failures():
+    table = (
+        "  Dirty      Clean  Reclaimable    Regions    Category\n"
+        "    ---        ---          ---        ---    ---\n"
+        f"1.5 GB        0 B          0 B         12    {run_bench.FOOTPRINT_CATEGORY_PREFIX}\n"
+    )
+    assert run_bench.footprint_mib("1", _ran(table)) == 1536.0
+    assert run_bench.footprint_mib("1", _ran("no such process", rc=1)) is None
+
+    def boom(*a, **k):
+        raise PermissionError("footprint")
+
+    assert run_bench.footprint_mib("1", boom) is None
+
+
+def test_footprint_pid_file_guard_and_timeouts(tmp_path):
+    empty = tmp_path / "pid"
+    empty.write_text("")
+    assert run_bench._footprint_of_pid_file(empty) is None
+    assert run_bench._footprint_of_pid_file(tmp_path / "missing") is None
+
+    def hung(*a, **k):
+        raise subprocess.TimeoutExpired("x", 10)
+
+    assert run_bench.footprint_mib("1", hung) is None
+    assert run_bench.nvidia_smi_mib(hung) is None
+
+
+def test_gpu_mem_flag_parses():
+    assert run_bench.build_parser().parse_args(["--label", "x", "--gpu-mem"]).gpu_mem

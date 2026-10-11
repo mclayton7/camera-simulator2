@@ -6,10 +6,21 @@
 #include "Engine/World.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Geospatial/Geoid.h"
+#include "Geospatial/SceneBuildings.h"
 
 FCesiumSurfaceProbe::FCesiumSurfaceProbe(UWorld* InWorld, const FCamSimGeospatialProvider* InGeo, bool bInPhysicsMeshes)
 	: World(InWorld), Geo(InGeo), bPhysicsMeshes(bInPhysicsMeshes)
 {
+}
+
+FCollisionQueryParams CamSimSurface::MakeProbeQueryParams(const AActor* IgnoredBuildings)
+{
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(CamSimSurfaceProbe), /*bTraceComplex=*/true);
+	if (IgnoredBuildings)
+	{
+		Params.AddIgnoredActor(IgnoredBuildings);
+	}
+	return Params;
 }
 
 TOptional<double> FCesiumSurfaceProbe::TraceHeight(double LatDeg, double LonDeg, double TopAltM, double BottomAltM) const
@@ -29,7 +40,12 @@ TOptional<double> FCesiumSurfaceProbe::TraceHeight(double LatDeg, double LonDeg,
 	}
 
 	FHitResult Hit;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(CamSimSurfaceProbe), /*bTraceComplex=*/true);
+	if (!bLookedUpBuildings || Buildings.IsStale())
+	{
+		Buildings = CamSim::Geospatial::FindBuildingsTileset(W);
+		bLookedUpBuildings = true;
+	}
+	const FCollisionQueryParams Params = CamSimSurface::MakeProbeQueryParams(Buildings.Get());
 	if (!W->LineTraceSingleByChannel(Hit, Top, Bottom, ECC_Visibility, Params)) return {};
 	if (!Hit.GetActor() || !Hit.GetActor()->IsA<ACesium3DTileset>()) return {};
 

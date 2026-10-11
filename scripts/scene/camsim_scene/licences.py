@@ -58,3 +58,13 @@ def attribution_text(manifest) -> str:
         lic_line = f"  Licence: {lic.name if lic else s.licence}" + (f" ({lic.url})" if lic and lic.url else "")
         lines += [f"{s.dataset} ({s.version})", f"  {s.attribution}", lic_line, f"  Source id: {s.id}", ""]
     return "\n".join(lines)
+
+
+def layer_credit(attribution: str, licence_id: str, layer: str = "land-cover") -> str:
+    """Credit for a source burned into a derived layer: attribution, licence from the register and, for share-alike
+    ODbL data, the notice that the layer is a derived database under the ODbL."""
+    lic = load_register().get(licence_id)
+    text = attribution + f"\nLicence: {lic.name if lic else licence_id}" + (f" ({lic.url})" if lic and lic.url else "")
+    if licence_id == "ODbL-1.0":
+        text += f"\nThis {layer} layer contains OSM-derived data and is made available under the ODbL."
+    return text

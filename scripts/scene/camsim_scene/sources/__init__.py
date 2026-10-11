@@ -15,6 +15,9 @@ BUILTIN = {
     "worldcover": "camsim_scene.sources.worldcover:WorldCover",
     "noaa_sd13": "camsim_scene.sources.noaa_dem:NoaaSd13",
     "noaa_crm_socal": "camsim_scene.sources.noaa_dem:NoaaCrmSocal",
+    "osm_geofabrik": "camsim_scene.sources.osm_geofabrik:OsmGeofabrik",
+    "nhd_hr": "camsim_scene.sources.nhd_hr:NhdHr",
+    "overture_buildings": "camsim_scene.sources.overture_buildings:OvertureBuildings",
 }
 
 

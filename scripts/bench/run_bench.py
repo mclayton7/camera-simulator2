@@ -17,6 +17,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -24,7 +25,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -252,6 +253,139 @@ def wait_port_free(port: int, timeout_s: float = 90.0) -> None:
     print(f"[bench] warning: port {port} still busy after {timeout_s:.0f}s")
 
 
+def _csv_list(text: str) -> list[str]:
+    return [s for s in (x.strip() for x in text.split(",")) if s]
+
+
+def filter_phases(
+    phases: list[scenario.Phase], names: list[str] | None, skip_warmup: bool
+) -> list[scenario.Phase]:
+    """The phases to fly: every phase, or the warm-up plus the named measured
+    phases, in scenario order. An unknown name ends the run before CamSim starts."""
+    valid = [p.name for p in phases if p.measured]
+    for n in names or []:
+        if n not in valid:
+            sys.exit(f"unknown phase '{n}' (valid: {', '.join(valid)})")
+    out = []
+    for p in phases:
+        if not p.measured:
+            if not skip_warmup:
+                out.append(p)
+        elif names is None or p.name in names:
+            out.append(p)
+    return out
+
+
+def filter_shots(
+    shots: list[scenario.Shot], names: list[str] | None
+) -> list[scenario.Shot]:
+    if names is None:
+        return shots
+    valid = [s.name for s in shots]
+    for n in names:
+        if n not in valid:
+            sys.exit(f"unknown shot '{n}' (valid: {', '.join(valid)})")
+    return [s for s in shots if s.name in names]
+
+
+# macOS GPU memory = Dirty size of every `footprint` row whose category starts with this prefix
+# or ends with FOOTPRINT_GRAPHICS_SUFFIX, each row once (scripts/tests/fixtures/footprint_camsim.txt).
+# "(graphics)" is footprint's disjoint ledger annotation, so it includes the largest row,
+# "Owned physical footprint (unmapped) (graphics)".
+FOOTPRINT_CATEGORY_PREFIX = "IOAccelerator"
+FOOTPRINT_GRAPHICS_SUFFIX = "(graphics)"
+TOOL_TIMEOUT_S = 10.0
+_UNITS = {"B": 1.0 / 2**20, "KB": 1.0 / 1024, "MB": 1.0, "GB": 1024.0}
+
+
+def nvidia_smi_mib(run=subprocess.run) -> float | None:
+    """memory.used summed over GPUs (whole-GPU, as scale_bench.py reads it); None without nvidia-smi."""
+    try:
+        r = run(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=TOOL_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 -- absent, hung or broken tool reads as "unknown"
+        return None
+    vals = [float(x) for x in r.stdout.split() if x.replace(".", "", 1).isdigit()]
+    return sum(vals) if r.returncode == 0 and vals else None
+
+
+def footprint_mib(pid: str, run=subprocess.run) -> float | None:
+    """GPU memory of `footprint -p PID` (macOS), MiB: Dirty sizes of the IOAccelerator rows plus every
+    "(graphics)" row, each row counted once; None when the tool fails or has no such row."""
+    try:
+        r = run(
+            ["footprint", "-p", pid],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=TOOL_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 -- absent, denied or hung tool reads as "unknown"
+        return None
+    if r.returncode != 0:
+        return None
+    pat = re.compile(
+        r"^\s*([\d.]+)\s*(B|KB|MB|GB)(?:\s+[\d.]+\s*[A-Z]+){2}\s+\d+\s+(.+?)\s*$",
+        re.IGNORECASE,
+    )
+    total = None
+    for line in r.stdout.splitlines():
+        m = pat.match(line)
+        if not m:
+            continue
+        cat = m.group(3).lower()
+        if cat.startswith(FOOTPRINT_CATEGORY_PREFIX.lower()) or cat.endswith(
+            FOOTPRINT_GRAPHICS_SUFFIX
+        ):
+            total = (total or 0.0) + float(m.group(1)) * _UNITS[m.group(2).upper()]
+    return total
+
+
+class MemSampler:
+    """Polls a GPU-memory reader every interval_s on a thread; samples are (unix time, MiB or None)."""
+
+    def __init__(self, read: Callable[[], float | None], interval_s: float = 5.0) -> None:
+        self.read, self.interval_s = read, interval_s
+        self.samples: list[tuple[float, float | None]] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self.samples.append((time.time(), self.read()))
+            self._stop.wait(self.interval_s)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=30)
+
+
+def _footprint_of_pid_file(pid_file: Path) -> float | None:
+    try:
+        pid = pid_file.read_text().split()[0]
+    except (OSError, IndexError):  # missing, empty or being rewritten
+        return None
+    return footprint_mib(pid)
+
+
+def gpu_mem_reader(
+    docker: bool, pid_file: Path
+) -> tuple[str | None, Callable[[], float | None] | None]:
+    if shutil.which("nvidia-smi"):
+        return "nvidia-smi", nvidia_smi_mib
+    if sys.platform == "darwin" and not docker and shutil.which("footprint"):
+        return "footprint", lambda: _footprint_of_pid_file(pid_file)
+    return None, None
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
@@ -266,6 +400,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="base of the flight: sf (default) or pendleton (adds a coastal low pass)",
     )
     ap.add_argument("--skip-warmup", action="store_true")
+    ap.add_argument(
+        "--gpu-mem",
+        action="store_true",
+        help="sample GPU memory during the run (nvidia-smi on Linux, footprint on macOS); off by default",
+    )
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
         "--docker",
@@ -305,6 +444,20 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SRC:DST[:ro]",
         help="--docker: extra bind mount, e.g. a scene package (repeatable)",
     )
+    ap.add_argument(
+        "--phases",
+        type=_csv_list,
+        default=None,
+        metavar="A,B",
+        help="measured phases to fly (comma list; the warm-up still runs). Default: all",
+    )
+    ap.add_argument(
+        "--shots",
+        type=_csv_list,
+        default=None,
+        metavar="A,B",
+        help="shots to take (comma list). Default: all",
+    )
     return ap
 
 
@@ -316,6 +469,10 @@ def with_sensor(pose: scenario.Pose, sensor: str) -> scenario.Pose:
 def main() -> int:
     args = build_parser().parse_args()
     site = scenario.SITES[args.site]
+    phases = filter_phases(
+        scenario.build_phases(smoke=args.smoke, site=site), args.phases, args.skip_warmup
+    )
+    shots = filter_shots(scenario.build_shots(smoke=args.smoke, site=site), args.shots)
 
     # Absolute: CamSim resolves relative paths against its own working directory.
     out = (
@@ -384,6 +541,8 @@ def main() -> int:
             stdout=subprocess.DEVNULL,
         )
     phases_log: list[dict] = []
+    sampler: MemSampler | None = None
+    mem_source: str | None = None
     sensor_path: str | None = None
     latency: dict = {}
     ready_s: float | None = None
@@ -394,15 +553,19 @@ def main() -> int:
         else:
             wait_ready(pid_file)
         ready_s = time.time() - t_launch
+        mem_source, mem_read = (
+            gpu_mem_reader(bool(args.docker), pid_file) if args.gpu_mem else (None, None)
+        )
+        sampler = MemSampler(mem_read) if mem_read else None
+        if sampler:
+            sampler.start()
         metrics = http_text("/metrics") or ""
         sensor_path = sensor_path_from_metrics(metrics)
         print(
             f"[bench] ready after {ready_s:.0f}s, sensor path: {sensor_path}",
             flush=True,
         )
-        for ph in scenario.build_phases(smoke=args.smoke, site=site):
-            if ph.name == "warmup" and args.skip_warmup:
-                continue
+        for ph in phases:
             print(f"[bench] phase {ph.name} ({ph.duration_s:.0f}s)", flush=True)
             host.pose = with_sensor(ph.pose_at(0.0), args.sensor)
             if ph.measured:
@@ -446,7 +609,7 @@ def main() -> int:
         (out / "metrics.txt").write_text(metrics_end)
         latency = latency_from_metrics(metrics_end)
 
-        for shot in scenario.build_shots(smoke=args.smoke, site=site):
+        for shot in shots:
             host.pose = shot.pose
             time.sleep(1.0)  # let the pose arrive before checking the gate
             if not wait_terrain():
@@ -457,6 +620,8 @@ def main() -> int:
                 out / "shots" / f"{shot.name}_sensor.png", route="/snapshot/sensor"
             )
     finally:
+        if sampler:
+            sampler.stop()
         host.stop.set()
         if args.docker:
             log = subprocess.run(
@@ -503,15 +668,22 @@ def main() -> int:
             if args.docker
             else None,
             "env": extra_env,
+            "gpu_mem_source": mem_source,
             "ready_s": round(ready_s, 1) if ready_s is not None else None,
             "latency": latency,
             "warmup_ran": not args.skip_warmup,
             "smoke": args.smoke,
+            "phases_filter": args.phases,
+            "shots_filter": args.shots,
             "site": args.site,
             "sensor": args.sensor,
             "config": str(args.config) if args.config else None,
         },
-        "phases": analyze.summarize(rows, phases_log),
+        "phases": analyze.summarize(
+            rows,
+            phases_log,
+            mem_samples=sampler.samples if sampler else ([] if args.gpu_mem else None),
+        ),
     }
     (out / "results.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results["phases"], indent=2))

@@ -1,0 +1,25 @@
+======================================================================
+UnrealEditor [63871]: 64-bit    Footprint: 5796 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+2570 MB        0 B          0 B         47    Owned physical footprint (unmapped) (graphics)
+1694 MB        0 B          0 B       1020    IOAccelerator
+1113 MB        0 B        52 MB       1624    IOAccelerator (graphics)
+ 179 MB        0 B          0 B         54    MALLOC_SMALL
+  56 MB        0 B          0 B        213    dyld private memory
+  38 MB        0 B          0 B         14    MALLOC_LARGE
+  35 MB      27 MB          0 B       1781    __DATA_CONST
+  25 MB      16 KB          0 B       1814    __DATA
+  20 MB        0 B      5120 KB        207    Owned physical footprint (unmapped)
+  20 MB        0 B          0 B         48    untagged (VM_ALLOCATE)
+  17 MB        0 B          0 B         18    app-specific tag 2
+  13 MB        0 B      4256 KB          8    IOSurface
+4256 KB        0 B       400 KB         31    CoreAnimation
+2996 KB        0 B          0 B          1    page table
+2896 KB        0 B        32 KB        140    stack
+2048 KB        0 B          0 B         15    MALLOC metadata
+1744 KB        0 B          0 B        873    __DATA_DIRTY
+1088 KB        0 B          0 B       1018    __AUTH_CONST
+ 496 KB        0 B          0 B       2531    unused dyld shared cache area

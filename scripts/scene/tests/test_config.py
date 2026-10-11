@@ -264,3 +264,77 @@ def test_every_example_with_a_crm_ring_has_a_station():
         w, s, e, n = plan.ring_bounds()
         if w < crm[2] and e > crm[0] and s < crm[3] and n > crm[1]:
             assert plan.sea_level_station, f"{f.name}: its ring meets the CRM, so it needs [sea_level] station"
+
+
+BASE = {"name": "t", "bbox": [-117.5, 33.2, -117.4, 33.3]}
+
+
+def test_features_default_off_keeps_layer_settings():
+    plan = parse_scene(dict(BASE))
+    assert plan.priorities["features"] == []
+    assert config.features_settings(plan) is None
+    assert "features" not in layer_settings(plan)["landcover"]
+
+
+def test_features_flags_set_priorities_and_settings():
+    plan = parse_scene({**BASE, "allow": ["ODbL-1.0"], "features": {"roads": True, "water": True}})
+    assert plan.priorities["features"] == ["nhd_hr", "osm_geofabrik"]
+    s = layer_settings(plan)["landcover"]["features"]
+    assert s["roads"] and s["water"] and not s["rail"] and not s["paved_areas"]
+    assert s["sources"] == ["nhd_hr", "osm_geofabrik"]
+    assert s["area"] == list(plan.area("margin"))
+    assert s["road_classes"][0] == "motorway"
+
+
+def test_water_only_needs_no_osm():
+    plan = parse_scene({**BASE, "features": {"water": True}})
+    assert plan.priorities["features"] == ["nhd_hr"]
+
+
+@pytest.mark.parametrize("bad", [{"roads": 1}, {"bogus": True}, {"road_classes": ["motorway", "footway"]}])
+def test_features_validation(bad):
+    with pytest.raises(ConfigError):
+        parse_scene({**BASE, "features": bad})
+
+
+def test_features_not_settable_through_priorities():
+    with pytest.raises(ConfigError):
+        parse_scene({**BASE, "priorities": {"features": ["osm_geofabrik"]}})
+
+
+BUILDINGS_TOML = {"name": "t", "bbox": [10.0, 10.0, 10.1, 10.1]}
+
+
+def test_no_buildings_section_leaves_layers_unchanged():
+    plan = parse_scene(dict(BUILDINGS_TOML))
+    assert plan.buildings == {} and plan.priorities["buildings"] == []
+    assert "buildings" not in layer_settings(plan)
+
+
+def test_buildings_section_defaults_and_settings():
+    plan = parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "buildings": {}})
+    assert plan.buildings == {"enabled": True, "release": "2026-09-23.1", "min_area_m2": 10.0}
+    assert plan.priorities["buildings"] == ["overture_buildings"]
+    assert plan.source_options["overture_buildings"] == {"release": "2026-09-23.1"}
+    s = layer_settings(plan)["buildings"]
+    assert s["tiers"] == {"13": 2000.0, "14": 300.0} and s["leaf_zoom"] == 15
+    assert s["geometric_error"] == {"root": 200.0, "13": 60.0, "14": 20.0, "15": 6.0}
+
+
+def test_buildings_disabled_is_no_layer():
+    plan = parse_scene({**BUILDINGS_TOML, "buildings": {"enabled": False}})
+    assert plan.priorities["buildings"] == [] and "buildings" not in layer_settings(plan)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"enabled": "yes"}, {"release": ""}, {"release": 5}, {"min_area_m2": -1}, {"min_area_m2": True}, {"colour": 1}],
+)
+def test_buildings_section_rejects_bad_values(bad):
+    with pytest.raises(ConfigError, match="buildings"):
+        parse_scene({**BUILDINGS_TOML, "buildings": bad})
+
+
+def test_priorities_buildings_cannot_be_set_directly():
+    with pytest.raises(ConfigError, match="buildings"):
+        parse_scene({**BUILDINGS_TOML, "priorities": {"buildings": ["overture_buildings"]}})

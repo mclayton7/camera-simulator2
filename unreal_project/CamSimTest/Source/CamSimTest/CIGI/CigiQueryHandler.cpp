@@ -8,6 +8,8 @@
 #include "Entity/CamSimEntity.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Ocean/OceanQueries.h"
+#include "Thermal/LandCoverLookup.h"
+#include "Geospatial/SceneBuildings.h"
 #include "CamSimTest.h"
 
 #include "Engine/World.h"
@@ -44,9 +46,34 @@ void FCigiQueryHandler::Tick(float DeltaTime)
 	const FCamSimGeospatialProvider* GeoProvider = Subsystem->GetGeospatialProvider();
 	if (!GeoProvider || !GeoProvider->IsAvailable(World)) return;
 
+	if (FLandCoverCodeLookup* Lookup = Subsystem->GetLandCoverLookup()) Lookup->BeginTick();
 	ProcessHatHotRequests(World, *GeoProvider);
 	ProcessLosSegRequests(World, *GeoProvider);
 	ProcessLosVectRequests(World, *GeoProvider);
+
+	// Tile-load failures from the material-code lookups above (REALISM R2). The tile cache counts each failed tile once,
+	// so this logs each failure at most once however many queries touch it.
+	if (FLandCoverCodeLookup* Lookup = Subsystem->GetLandCoverLookup())
+	{
+		for (const FString& W : Lookup->TakeWarnings())
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("CIGI material codes: %s"), *W);
+		}
+
+		// Lookup cost, one line per StatsPeriodSec while queries arrive (a cache miss decodes a tile on this thread).
+		const double Now = FPlatformTime::Seconds();
+		if (Now - LastLookupStatsSec >= StatsPeriodSec)
+		{
+			LastLookupStatsSec = Now;
+			const FLandCoverLookupStats S = Lookup->TakeStats();
+			if (S.Calls > 0)
+			{
+				UE_LOG(LogCamSim, Log,
+					TEXT("CIGI material codes: %d lookups, %d tile loads, %d deferred (answered 0), %.1f us mean, max %.1f us cached, max %.2f ms loading"),
+					S.Calls, S.Loads, S.Deferred, 1e6 * S.TotalSec / S.Calls, 1e6 * S.MaxHitSec, 1e3 * S.MaxLoadSec);
+			}
+		}
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -132,7 +159,6 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospa
 
 		if (bExtended)
 		{
-			// CamSim has no terrain material data yet: material code 0.
 			float NormalAz = 0.0f, NormalEl = 90.0f;
 			if (R.bWater)
 			{
@@ -145,7 +171,11 @@ void FCigiQueryHandler::ProcessHatHotRequests(UWorld* World, const FCamSimGeospa
 			{
 				SurfaceNormalAzEl(World, GeoProvider, HitResult, NormalAz, NormalEl);
 			}
-			Sender->EnqueueHatHotExtendedResponse(Req.HatHotId, bValid, HAT, HOT, 0, NormalAz, NormalEl);
+			// HAT/HOT is a vertical trace, so the request's lat/lon is the hit's cell.
+			const bool bBuildingHit = bHit && CamSim::Geospatial::IsBuildingsActor(HitResult.GetActor());
+			const uint32 Material = CamSimLandCover::QueryMaterialCode(bValid, R.bWater, /*bEntityHit=*/false,
+				bBuildingHit, Req.Lat, Req.Lon, Subsystem ? Subsystem->GetLandCoverLookup() : nullptr);   // REALISM R2/R3
+			Sender->EnqueueHatHotExtendedResponse(Req.HatHotId, bValid, HAT, HOT, Material, NormalAz, NormalEl);
 		}
 		else
 		{
@@ -426,5 +456,10 @@ void FCigiQueryHandler::RespondLos(UWorld* World, const FCamSimGeospatialProvide
 	{
 		SurfaceNormalAzEl(World, GeoProvider, *Hit, Resp.NormalAzDeg, Resp.NormalElDeg);
 	}
+	// A clear segment (Hit null) reports material 0.
+	Resp.Material = CamSimLandCover::QueryMaterialCode(Hit != nullptr, /*bWater=*/false,
+		Hit && Cast<ACamSimEntity>(Hit->GetActor()) != nullptr,
+		Hit && CamSim::Geospatial::IsBuildingsActor(Hit->GetActor()),
+		Lat, Lon, Subsystem->GetLandCoverLookup());   // REALISM R2/R3
 	Sender->EnqueueLosExtendedResponse(Resp);
 }

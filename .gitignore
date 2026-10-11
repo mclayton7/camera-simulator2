@@ -39,3 +39,5 @@ deploy/staged/
 .claude/
 # Local test reports and UE derived-data cache (scripts/run.sh, automation runs)
 .cache/
+
+scripts/scene/tests/validator/node_modules/

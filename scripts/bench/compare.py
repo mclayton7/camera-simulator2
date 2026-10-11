@@ -19,6 +19,7 @@ METRICS = [
     "gpu_ms_p50",
     "gpu_ms_p95",
     "game_ms_p50",
+    "game_ms_p95",
     "render_ms_p50",
     "hitches_66",
     "hitches_100",
@@ -26,6 +27,7 @@ METRICS = [
     "families_mean",
     "emitted_fps",
     "dropped",
+    "gpu_mem_mib_max",
 ]
 
 

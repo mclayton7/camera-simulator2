@@ -1,5 +1,6 @@
 """The bench scenario is deterministic and every phase produces valid CIGI datagrams."""
 
+import math
 import struct
 
 from bench import scenario
@@ -96,4 +97,40 @@ def test_pendleton_site_adds_a_measured_coast_pass():
     assert "coast_pass" not in [p.name for p in scenario.build_phases()]
     orbit = next(p for p in phases if p.name == "orbit").pose_at(0.0)
     assert abs(orbit.lat - (site.lat + 2000.0 / 111_320.0)) < 1e-9
-    assert len(scenario.build_shots(site=site)) == len(scenario.build_shots())
+    assert len(scenario.build_shots(site=site)) == len(scenario.build_shots()) + 1
+
+
+def test_pendleton_adds_dense_pass_after_coast_and_warms_it():
+    site = scenario.SITES["pendleton"]
+    phases = scenario.build_phases(site=site)
+    names = [p.name for p in phases]
+    assert names[-2:] == ["coast_pass", "dense_pass"]
+    dense = phases[-1]
+    assert dense.measured and dense.duration_s == 90.0
+    assert phases[0].duration_s == 180.0  # warm-up flies every measured area once
+    assert "dense_pass" not in [p.name for p in scenario.build_phases()]
+
+
+def test_dense_pass_flies_the_selected_path():
+    d = scenario.DENSE
+    p0, p90 = scenario._dense_pass(0.0), scenario._dense_pass(90.0)
+    assert (p0.lat, p0.lon) == (d["start_lat"], d["start_lon"])
+    assert p0.alt == p90.alt == d["alt_hae_m"]
+    assert p0.yaw == d["bearing_deg"] and p0.gimbal_pitch == -20.0 and p0.gimbal_yaw == 0.0
+    dn = (p90.lat - p0.lat) * 111_320.0
+    de = (p90.lon - p0.lon) * 111_320.0 * math.cos(math.radians(p0.lat))
+    assert abs(math.hypot(dn, de) - 9000.0) < 5.0
+
+
+def test_warmup_visits_the_dense_path():
+    site = scenario.SITES["pendleton"]
+    warm = scenario.build_phases(site=site)[0]
+    p = warm.pose_at(135.0)  # middle of the 120-150 s dense visit
+    assert p.alt == scenario.DENSE["alt_hae_m"]
+
+
+def test_dense_oblique_shot_is_pendleton_only():
+    site = scenario.SITES["pendleton"]
+    shots = {s.name: s for s in scenario.build_shots(site=site)}
+    assert shots["dense_oblique"].pose == scenario._dense_pass(45.0)
+    assert "dense_oblique" not in [s.name for s in scenario.build_shots()]

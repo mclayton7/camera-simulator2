@@ -23,6 +23,7 @@ class FCamSimSnapshotService;
 class FDisReceiver;
 class FDisEntityAdapter;
 class FOceanSurface;
+class FLandCoverCodeLookup;
 class ACamSimCamera;
 class ACesium3DTileset;
 class UCesiumIonServer;
@@ -92,6 +93,9 @@ public:
 	const FOceanSurface* GetOceanSurface() const;
 	/** Apply the configured waves (Beaufort, direction, choppiness). */
 	void ApplyOceanConfig(const FCamSimConfig::FOceanConfig& Cfg);
+
+	/** Land-cover codes for CIGI material codes (REALISM R2); nullptr when thermal.land_cover.enabled is off. Game thread. */
+	FLandCoverCodeLookup* GetLandCoverLookup();
 
 	/** Store the transient UCesiumIonServer created by ApplyCesiumBackendConfig.
 	 *  Passing nullptr clears the stored reference (no-op if already null).
@@ -167,6 +171,9 @@ public:
 
 	/** Force a refresh of the cached tileset list. Must be called on the game thread. */
 	void RefreshCachedTilesets();
+
+	/** The terrain tileset (tagged by ApplyCesiumBackendConfig), or nullptr. Game thread. */
+	ACesium3DTileset* GetTerrainTileset() const;
 
 private:
 	FCamSimConfig    Config;
