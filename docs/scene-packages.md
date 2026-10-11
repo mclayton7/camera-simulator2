@@ -31,6 +31,7 @@ Background: [`docs/realism/`](realism/) (data sources, Cesium findings, offline 
   landcover/<lat>_<lon>.png     # the 4B thermal format (0.05° tiles, 600 × 600, 8-bit WorldCover codes; + 200-220 with [features])
   features/buildings/tileset.json   # 3D Tiles 1.1 (packages with [buildings] that keep at least one building; Buildings (R3))
   features/buildings/{z}/{x}/{y}.glb  # z13-z15, one GLB per tile that holds buildings
+  features/buildings/mask/          # footprint mask: 0.05 deg 4800^2 1-bit PNGs + index.json (R3b; with [buildings])
   .state/                       # resume markers and the build lock (not hashed, not packed)
 ```
 
@@ -148,6 +149,9 @@ road_classes = ["motorway", "trunk", "primary", "secondary", "tertiary", "unclas
 enabled = true                              # false = as if the table were absent
 release = "2026-09-23.1"                    # Overture release id (YYYY-MM-DD.N), snapshotted on first fetch
 min_area_m2 = 10                            # [0, 10000]: drop footprints smaller than this
+roof_textures = true                        # REALISM R3b: per-tile roof atlas from the imagery sources; false = flat grey roofs
+roof_texel_m = 0.5                          # [0.25, 2.0]: atlas texel in metres; steps up 0.75 / 1.0 / 1.5 / 2.0 when a tile's roofs do not fit
+roof_texture_max_px = 2048                  # 256 .. 8192, a power of two: largest atlas side
 
 [priorities]                                # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"]
@@ -445,6 +449,9 @@ the realism/cost trade can be measured before investing in roofs, facades and br
 | `enabled` | `true` | `false` is the same as no table |
 | `release` | `"2026-09-23.1"` | Overture release to read |
 | `min_area_m2` | `10` | footprints (parts of a multipolygon, after cleaning) below this are dropped |
+| `roof_textures` | `true` | per-tile roof atlas from the imagery sources; `false` = R3's flat grey roofs |
+| `roof_texel_m` | `0.5` | atlas texel, m, [0.25, 2.0] |
+| `roof_texture_max_px` | `2048` | largest atlas side; 256 … 8192, a power of two |
 
 Overture's buildings theme is **ODbL-1.0**, which is not in the default allow-list: a package with `[buildings]` fails
 to plan without `allow = ["ODbL-1.0"]` (as with the R2 OSM features). `ATTRIBUTION.txt` carries Overture's credit and the
@@ -514,19 +521,62 @@ fixture tileset, and skips that test when `npx` is missing. The validator's `.np
 - CIGI LOS and HAT/HOT hit it (with physics meshes) and report material code **230** (`docs/terrain-feedback.md`).
 - The DIS surface clamp ignores it (`Entity/SurfaceProbe.cpp`): footprints are misregistered by a few metres in places and
   a truck on a road beside a building must not climb onto the roof. Ground vehicles clamp to terrain.
-- Thermal IR is unchanged: building pixels take the land-cover class under them.
+- Thermal IR: burned cells (code 230) take the `building_roof` class (R3b, below); a building over a cell less than half covered still takes that cell's class.
 - `scene.buildings.enabled: false`, or a package without the layer, is R2 bit for bit.
 
 **Known limits.**
 
-- Flat roofs, one neutral colour, no facades, no bridges.
-- Thermal IR: buildings take the land-cover class under them (WorldCover built-up becomes the `BuiltUp` family); only CIGI
-  reports 230.
+- Roofs are flat (no pitch), walls one neutral colour, no facades, no bridges; the R3b limits are at the end of the next
+  subsection.
 - Footprints and heights are only as good as Overture. At Pendleton (release 2026-09-23.1), 73.2 % of the 82,260 kept
   buildings have an Overture height (OSM-mapped heights inside the base are dense), 0.5 % a floor count, and 26.3 % take
   the 4 m default.
 - Imagery shows roofs at their NAIP position; where Overture is offset, the roof texture and the building disagree.
 - Overture's ODbL terms apply to the layer and to anything derived from it.
+
+### Footprint mask, land-cover burn and roof atlas (R3b)
+
+Design: [`superpowers/specs/2026-10-11-r3b-buildings-look-design.md`](superpowers/specs/2026-10-11-r3b-buildings-look-design.md).
+All three come from the buildings the layer keeps (same filter, same `source_id` order), planned once per build and
+cached under `.state/` (`buildings-plan.pkl`, `buildings-footprints.npz`, keyed by the snapshot, `min_area_m2`, the
+rules and the terrain).
+
+- **Footprint mask** (`features/buildings/mask/`, format `camsim-buildings-mask-1`): the land-cover tile grid at 8 x its
+  resolution, 0.05° tiles of 4800 x 4800 cells (~1.16 m x 0.97 m at 33° N) named by their SW corner, row 0 = north,
+  1-bit PNG. A cell is set when its centre is inside a footprint (holes excluded). Tiles without a set cell are not
+  written; `index.json` lists the others with `tile_px`, `cell_factor` and `rules`. CamSim's tree scatter reads it
+  (`docs/vegetation.md`).
+- **Land-cover burn**: a land-cover cell becomes **230** (`building`) when at least 32 of its 64 mask cells are set.
+  Order, later wins: WorldCover, water, paved areas, buildings, rail, roads (buildings overwrite parking lots and
+  structures; a road or rail burned over a misregistered footprint stays road or rail). `index.json` `codes` gains
+  `"230": "building"` and `credits` the Overture notice. CIGI terrain hits in those cells report 230, and thermal IR
+  gives them the `building_roof` class.
+- **Roof atlas**: each GLB carries one square power-of-two JPEG (quality 85, 4:2:0, ≤ `roof_texture_max_px`) of its roofs,
+  sampled from the imagery layer's sources and colour match (not from the built JPEGs) at `roof_texel_m` over each
+  roof's box in the tile's ENU frame, with a 2 px edge-extended gutter, packed by height then `source_id`. When the
+  rectangles do not fit, the tile's texel steps 0.5 → 0.75 → 1.0 → 1.5 → 2.0 m; the tile's root `extras.roof_texel_m`
+  records it (`null` when every roof is flat). A roof keeps the flat grey material when its best source (the one
+  under most of its triangles) is coarser than 2 m (no NAIP), or when it does not fit even at 2.0 m. Walls stay flat.
+  Roof vertices carry `TEXCOORD_0`; wall and flat-roof vertices (0, 0). Cesium's default material samples the texture;
+  nothing changes at runtime. `build.json` `buildings.roofs` counts textured and flat roofs and tiles per texel.
+- **Hashing and reproducibility**: the landcover layer's inputs gain the buildings snapshot, the buildings settings hash,
+  the buildings rules version and the footprint raster's key, and its settings a `buildings` entry, only with
+  `[buildings]`: packages without it are byte-identical to R3 (the landcover `RULES_VERSION` is not bumped). Because the
+  buildings settings hash includes the roof keys, a roof-only change (`roof_texel_m`, `roof_textures`,
+  `roof_texture_max_px`) re-cuts the land cover too, with byte-identical output, and rebuilds the GLBs but not the mask.
+  Roof textures add the imagery sources, settings and colour match to the buildings layer's inputs. The atlas JPEG bytes
+  are deterministic for a given Pillow / libjpeg build, so use the pinned build container (`scripts/scene/build.sh`)
+  when a byte-identical package matters. A bbox that keeps zero buildings writes no tileset and no mask, but still
+  credits Overture in `ATTRIBUTION.txt` and the land-cover `index.json`.
+- **verify**: the mask tiles are files of the package, so `hashes` covers them. `--deep` adds `buildings_mask` (every
+  land-cover cell against the mask: 230 exactly where ≥ 32 of 64 mask cells are set, unless a road or rail was burned
+  over it) and `buildings_roofs` (every tile's `roof_texel_m` is on the texel ladder, and its texture is a square
+  power-of-two JPEG within `roof_texture_max_px` with texcoords in [0, 1]).
+
+Known limits (R3b): NAIP is not a true orthophoto, so tall buildings' roofs carry their lean (fine for low-rise, not
+corrected); roof texture is only as good as NAIP (0.6 m, one date, shadows baked in); a 9 m land-cover cell is
+"building" only when at least half covered, so small buildings keep their WorldCover class in IR; walls stay flat
+coloured and roofs flat (no pitch); no wall textures, no KTX2 / Basis compression.
 
 ## Sea level (R1)
 

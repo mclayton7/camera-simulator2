@@ -155,6 +155,7 @@ soil into asphalt). Refinement is off when no base colour is bound (the 4A fallb
 | Paved, concrete (R2, OSM) | 201 | `concrete` |
 | Rail bed (R2, OSM) | 210 | `rail_ballast` |
 | Inland water (R2, NHD HR) | 220 | `water` |
+| Building footprint (REALISM R3b, Overture) | 230 | `building_roof` |
 
 Codes 200-220 come only from scene packages built with `[features]` (REALISM R2, [`scene-packages.md`](scene-packages.md#vector-features-r2)):
 OSM roads, paved areas and rail and NHD HR water burned into the package's `landcover/` tiles over WorldCover. They are in the
@@ -278,6 +279,7 @@ Vector features (REALISM R2, codes 200-220; measurements in [`scene-packages.md`
   temperatures are `asphalt` 307.2 K, `concrete` 300.5 K, `grassland` 300.9 K, `bare_soil` 306.1 K, `built_up` 304.3 K,
   `rail_ballast` 308.5 K (02:00: 285.9, 285.8, 282.4, 285.4, 286.0, 284.2 K), so concrete stretches show little road-vs-grass
   contrast at noon (a visual-review question).
+- Buildings (R3b): a building over cells less than half covered by its footprint takes those cells' land-cover class (the burn needs 32 of a cell's 64 mask cells); building geometry still carries no stencil, so pixels are classified by the 10 m cell under the hit.
 - R2 does not use the R1 NDVI layer in `ThermalCS` (moved to a follow-up spec); refinement still uses the GBuffer ExG.
 
 Data attribution (CC BY 4.0): © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by
@@ -295,7 +297,7 @@ extinction plus, with CIGI fog and visibility under 10 km, `3.912 / V_km * fog_i
 
 ## Classes and keys
 
-Built-in classes (index order fixed; 6-13 added by 4B land cover), overridable and extensible under `thermal.materials`
+Built-in classes (index order fixed; 6-13 added by 4B land cover, 14 by R2, 15 by R3b), overridable and extensible under `thermal.materials`
 (unset fields copy `terrain_default`, at most 32 classes):
 
 | Class | albedo | emissivity | inertia | h_c | k_fast | temperature |
@@ -315,8 +317,20 @@ Built-in classes (index order fixed; 6-13 added by 4B land cover), overridable a
 | `snow_ice` | 0.75 | 0.99 | 600 | 10 | 0 | snow (model, capped at 273.15 K) |
 | `wetland` | 0.40\* | 0.98 | 2500 | 15 | 0.004 | model |
 | `rail_ballast` (R2) | 0.20 | 0.93 | 900 | 10 | 0.025 | model |
+| `building_roof` (R3b) | 0.30 | 0.90 | 250 | 10 | 0.03 | model |
 
 \* Effective albedo: folds evapotranspiration into the absorbed solar (the model has no latent heat term).
+
+`building_roof` (REALISM R3b) is the class of land-cover code 230, the burned building footprints. A light, low-mass
+roof: albedo 0.30 (existing roofs are mostly 0.05–0.25 with a minority of aged cool roofs at 0.5–0.6; Akbari, Menon and
+Rosenfeld 2009, *Climatic Change* 94; LBNL Heat Island Group), emissivity 0.90 (non-metallic roofing 0.85–0.92; Cool Roof
+Rating Council directory, ASTM C1371), thermal inertia 250 (the thin top layer over insulation: between polyisocyanurate
+~35 and timber ~350–400, from k, ρ, c in Oke 1987 and Incropera), h_c 10 (McAdams' flat-plate fit at 2–3 m/s) and
+k_fast 0.03 (a thin skin follows the sun: between asphalt and vehicle paint). The model gives 310.8 K vs grassland
+300.6 K at noon and 282.2 K vs air 284.3 K at 02:00 at 33.3° N on 21 December (`CamSim.Thermal.Materials.BuildingRoofDiurnal`).
+Code 230 refines in the `Bare` family (toward `vegetation` by the base-colour vegetation index, else `building_roof`):
+the `BuiltUp` family would replace the class by the asphalt/concrete split. Code 50 (WorldCover built-up) keeps
+`built_up` for the ground between buildings. With 16 built-ins, 16 of the 32 class slots are left for `thermal.materials`.
 
 `rail_ballast` (porous crushed rock: low thermal inertia, unlike any other built-in) has values chosen from material properties
 (dark granite/basalt ballast, open voids), not fitted to a published measurement.

@@ -97,7 +97,7 @@ raster, so they cannot disagree.
 
 - Packages without `[buildings]` stay byte-identical to R3. The landcover layer reads buildings only when the
   buildings layer is configured.
-- `BUILDINGS_RULES_VERSION` and the landcover `RULES_VERSION` are bumped.
+- `BUILDINGS_RULES_VERSION` is bumped. The landcover `RULES_VERSION` is not (controller ruling): packages without `[buildings]` stay byte-identical, and the landcover inputs hash gains the buildings inputs only when buildings are configured.
 - The landcover inputs hash gains the buildings snapshot sha, the buildings layer settings hash and the buildings
   rules version.
 - The mask and burn are byte-identical across rebuilds: deterministic rasterisation, PNG `optimize=True`.

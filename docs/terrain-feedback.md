@@ -220,7 +220,7 @@ thermal IR uses (`thermal.land_cover.dir`, which is the scene package's
 | 201 | paved road / area, concrete (`surface=concrete*`, runways without a surface tag) | OSM |
 | 210 | rail bed | OSM |
 | 220 | inland water (perennial lakes, ponds, reservoirs, stream/river areas) | USGS NHD HR |
-| 230 | building (scene package features/buildings, REALISM R3) | Overture Maps (scene package [buildings]) |
+| 230 | building (scene package features/buildings, REALISM R3; burned land cover, R3b) | Overture Maps (scene package [buildings]) |
 
 Codes 200–220 exist only in scene packages built with `[features]`
 (`docs/scene-packages.md`, "Vector features"); the committed San Francisco sample
@@ -231,9 +231,14 @@ Code 230 exists only with a package built with `[buildings]` and `scene.building
 (`docs/scene-packages.md`, "Buildings (R3)"): a wall hit by an LOS and a roof hit by a HAT/HOT both report it, in
 place of the land-cover code under the building.
 
+Since REALISM R3b a package built with `[buildings]` also burns 230 into its land cover where a 10 m cell is at least half
+covered by footprints (`docs/scene-packages.md`, "Footprint mask, land-cover burn and roof atlas (R3b)"). A terrain hit
+in such a cell reports 230 by rule 5 (the stored land-cover byte), with or without the buildings tileset: with
+`scene.buildings.enabled: false`, a HAT/HOT inside a footprint reports 230 from the land cover. No CIGI code changed.
+
 Limits:
 
-- A building in thermal IR still takes the land-cover class under it; only CIGI reports 230.
+- Thermal IR gives burned cells (230) the `building_roof` class; a building over cells less than half covered takes those cells' class.
 - LOS over the sea reports the code of the seabed's or terrain's cell (the trace hits
   the terrain under the water; only HAT/HOT checks the sea surface), which is 0
   offshore where the package has no land-cover tile.
