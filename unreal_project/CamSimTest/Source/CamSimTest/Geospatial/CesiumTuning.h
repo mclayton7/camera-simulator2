@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 
+class ACesium3DTileset;
 class UWorld;
 struct FCamSimConfig;
 
@@ -16,6 +17,9 @@ namespace CamSim::Geospatial
 	 * Called from CamSim::Geospatial::SetUpCesiumWorld.
 	 */
 	void ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg);
+
+	/** The tuning ApplyCesiumTilesetTuning applies, for one tileset (the buildings tileset spawned later uses it). */
+	void TuneTileset(ACesium3DTileset& Tileset, const FCamSimConfig& Cfg);
 
 	/**
 	 * Cesium's dithered LOD crossfade: use_lod_transitions. It needs TSR (the

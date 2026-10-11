@@ -4,6 +4,7 @@
 #include "Config/CamSimConfig.h"
 #include "Geospatial/CamSimGeospatialProvider.h"
 #include "Geospatial/CesiumTuning.h"
+#include "Geospatial/SceneBuildings.h"
 
 #include "Cesium3DTileset.h"
 #include "Engine/GameInstance.h"
@@ -30,7 +31,9 @@ UCesiumIonServer* SetUpCesiumWorld(UWorld* World, const FCamSimConfig& Cfg)
 		}
 	}
 	ApplyCesiumTilesetTuning(World, Cfg);
-	return ::ApplyCesiumBackendConfig(World, Cfg.CesiumBackend);   // declared at global scope
+	UCesiumIonServer* Server = ::ApplyCesiumBackendConfig(World, Cfg.CesiumBackend);   // declared at global scope
+	SpawnBuildingsTileset(World, Cfg);   // after the destroy loop, which would remove it (REALISM R3)
+	return Server;
 }
 
 bool ShouldSetUpCesiumWorld(const UWorld* World, const UGameInstance* Ours)
