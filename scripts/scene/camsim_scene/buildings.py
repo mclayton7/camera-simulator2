@@ -15,7 +15,8 @@ from . import geodesy
 from .gltf import PropertyTable, TileMesh
 from .tiling import tile_bounds, tile_size_deg
 
-BUILDINGS_RULES_VERSION = "1"  # bump when geometry/height/tier rules change (it is in the layer settings hash)
+# bump when geometry/height/tier rules change (it is in the layer settings hash). 2: R3b footprint mask + roof atlas
+BUILDINGS_RULES_VERSION = "2"
 DEFAULT_RELEASE = "2026-09-23.1"
 TIER_MIN_AREA_M2 = {13: 2000.0, 14: 300.0}  # else LEAF_ZOOM
 LEAF_ZOOM = 15

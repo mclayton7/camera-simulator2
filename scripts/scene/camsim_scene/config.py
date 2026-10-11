@@ -251,6 +251,7 @@ def _parse_buildings(data) -> dict:
 def buildings_settings(plan: ScenePlan) -> dict | None:
     """The buildings layer's settings (REALISM R3), or None when the layer is off."""
     from .buildings import BUILDINGS_RULES_VERSION, GEOMETRIC_ERROR, LEAF_ZOOM, TIER_MIN_AREA_M2
+    from .footprints import MASK_FACTOR, MASK_PX, MASK_RULES_VERSION
 
     if not plan.priorities["buildings"]:
         return None
@@ -263,6 +264,7 @@ def buildings_settings(plan: ScenePlan) -> dict | None:
         "geometric_error": {str(k): v for k, v in GEOMETRIC_ERROR.items()},
         "rules": BUILDINGS_RULES_VERSION,
         "format": "3d-tiles-1.1",
+        "mask": {"tile_px": MASK_PX, "cell_factor": MASK_FACTOR, "rules": MASK_RULES_VERSION},  # REALISM R3b
     }
 
 
