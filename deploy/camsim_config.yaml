@@ -589,6 +589,7 @@ vegetation:
   cell_size_m: 100.0                     # CAMSIM_VEGETATION_CELL_SIZE_M — [25, 500]
   seed: 0                                # CAMSIM_VEGETATION_SEED — only without a scene package (else manifest seed)
   drop_in_buildings: true                # CAMSIM_VEGETATION_DROP_IN_BUILDINGS — drop trees inside building footprints (needs the package's buildings)
+  building_clearance_m: 2.0              # CAMSIM_VEGETATION_BUILDING_CLEARANCE_M — with the package's footprint mask, no tree within this of a footprint (0..10 m)
 
 # --- Thermal radiance for IR (ROADMAP 4A, docs/thermal.md) ---
 # IR mode renders in-band (MWIR/LWIR) radiance from per-pixel surface temperature and emissivity.

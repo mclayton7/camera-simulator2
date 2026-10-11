@@ -957,6 +957,7 @@ package) and a loadable library. All keys are **startup only**.
 | `vegetation.cell_size_m` | `CAMSIM_VEGETATION_CELL_SIZE_M` | `100.0` | Edge of the global geographic cell grid. `[25, 500]`. |
 | `vegetation.seed` | `CAMSIM_VEGETATION_SEED` | `0` | Scatter seed, used only without a scene package (otherwise the manifest `seed`). `>= 0`. |
 | `vegetation.drop_in_buildings` | `CAMSIM_VEGETATION_DROP_IN_BUILDINGS` | `true` | Drop trees inside building footprints: a second height batch per cell on the buildings tileset, a hit more than 0.5 m above the terrain drops the tree ([`vegetation.md`](vegetation.md), "How it works"). Acts only when the buildings tileset exists. `false` skips the second batch (trees stand in footprints wherever land cover is code 10). Kept on by the user's decision (2026-10-11) despite its cost of about +0.3 ms game p50, +2.5 ms p95 (both-on game p95 +3.61 ms, over the 3.0 ms bench limit, accepted) and +34 MiB; a build-time footprint exclusion will replace it. |
+| `vegetation.building_clearance_m` | `CAMSIM_VEGETATION_BUILDING_CLEARANCE_M` | `2.0` | With the scene package's footprint mask (`features/buildings/mask/`), no tree stands within this distance (metres, checked along E/W/N/S) of a footprint; range [0, 10]. Method order, gated by `drop_in_buildings`: mask, else the runtime check on the buildings tileset, else none (REALISM R3b). |
 
 Removed: the old `phase19:` block (`ocean_enabled`, `beaufort_state`,
 `wave_amplitude_scale`, `wave_frequency_scale`, `wave_choppiness`,

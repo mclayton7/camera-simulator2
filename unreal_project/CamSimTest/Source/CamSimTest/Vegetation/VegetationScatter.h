@@ -35,6 +35,8 @@ namespace CamSimVegetation
 	};
 
 	using FCodeSampler = TFunctionRef<uint8(double LatDeg, double LonDeg)>;
+	/** REALISM R3b: false = the candidate is too close to a building (FVegetationBuildingMask::IsClear). */
+	using FClearPredicate = TFunctionRef<bool(double LatDeg, double LonDeg)>;
 
 	CAMSIMTEST_API int32 CandidatesPerAxis(const FScatterParams& P);
 	/** Accepted trees per m^2 on all-tree land cover. */
@@ -42,6 +44,10 @@ namespace CamSimVegetation
 	/** The vegetation seed from a package / config seed (mixed with a constant so it differs from other users of the seed). */
 	CAMSIMTEST_API uint32 VegetationSeed(uint32 BaseSeed);
 	CAMSIMTEST_API TArray<FTreeInstance> GenerateCell(uint32 Seed, FVegCellId Cell, const FScatterParams& P, FCodeSampler Sampler);
+	/** GenerateCell with a building clearance test, applied after the land cover; the per-candidate hash draws are
+	 *  unchanged, so the trees it keeps are bit-identical to the 4-argument call's. */
+	CAMSIMTEST_API TArray<FTreeInstance> GenerateCell(uint32 Seed, FVegCellId Cell, const FScatterParams& P, FCodeSampler Sampler,
+		FClearPredicate IsClear);
 	/** Order-sensitive hash of the instances' bits (dumps, determinism checks). */
 	CAMSIMTEST_API uint32 HashInstances(const TArray<FTreeInstance>& Instances);
 }
