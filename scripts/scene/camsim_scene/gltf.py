@@ -84,11 +84,27 @@ class _Bin:
 
 def _strings(b: _Bin, values: list[str]) -> tuple[int, int]:
     enc = [v.encode("utf-8") for v in values]
-    offsets = np.cumsum([0] + [len(e) for e in enc], dtype=np.uint64).astype(np.uint32)
-    return b.add(b"".join(enc)), b.add(offsets.tobytes())
+    offsets = np.cumsum([0] + [len(e) for e in enc], dtype=np.uint64).astype("<u4")
+    joined = b"".join(enc) or b"\0"  # glTF forbids zero-length bufferViews; offsets stay 0 so strings decode as ""
+    return b.add(joined), b.add(offsets.tobytes())
+
+
+def _check(mesh: TileMesh, table: PropertyTable) -> None:
+    n = len(table.source_ids)
+    if not (len(table.classes) == len(table.height_m) == len(table.height_source) == n):
+        raise ValueError("property table columns differ in length from source_ids")
+    if len(mesh.positions) == 0:
+        raise ValueError("tile mesh has no vertices")
+    if len(mesh.roof_indices) == 0 and len(mesh.wall_indices) == 0:
+        raise ValueError("tile mesh has no roof or wall indices")
+    if len(mesh.feature_ids) != len(mesh.positions) or len(mesh.normals) != len(mesh.positions):
+        raise ValueError("positions, normals and feature_ids differ in length")
+    if np.any(np.asarray(mesh.feature_ids) >= n) or np.any(np.asarray(mesh.feature_ids) < 0):
+        raise ValueError("feature id outside the property table")
 
 
 def write_glb(mesh: TileMesh, table: PropertyTable, copyright: str) -> bytes:
+    _check(mesh, table)
     b = _Bin()
     acc: list[dict] = []
 
@@ -105,9 +121,9 @@ def write_glb(mesh: TileMesh, table: PropertyTable, copyright: str) -> bytes:
         acc.append(a)
         return len(acc) - 1
 
-    pos = accessor(mesh.positions.astype(np.float32), FLOAT, "VEC3", ARRAY_BUFFER, minmax=True)
-    nrm = accessor(mesh.normals.astype(np.float32), FLOAT, "VEC3", ARRAY_BUFFER)
-    fid = accessor(mesh.feature_ids.astype(np.float32), FLOAT, "SCALAR", ARRAY_BUFFER)
+    pos = accessor(mesh.positions.astype("<f4"), FLOAT, "VEC3", ARRAY_BUFFER, minmax=True)
+    nrm = accessor(mesh.normals.astype("<f4"), FLOAT, "VEC3", ARRAY_BUFFER)
+    fid = accessor(mesh.feature_ids.astype("<f4"), FLOAT, "SCALAR", ARRAY_BUFFER)
     features = {
         "EXT_mesh_features": {
             "featureIds": [{"featureCount": len(table.source_ids), "attribute": 0, "propertyTable": 0}]
@@ -117,7 +133,7 @@ def write_glb(mesh: TileMesh, table: PropertyTable, copyright: str) -> bytes:
     for mat, idx in ((0, mesh.roof_indices), (1, mesh.wall_indices)):
         if len(idx) == 0:
             continue
-        ia = accessor(idx.astype(np.uint32), UINT, "SCALAR", ELEMENT_ARRAY_BUFFER)
+        ia = accessor(idx.astype("<u4"), UINT, "SCALAR", ELEMENT_ARRAY_BUFFER)
         prims.append(
             {
                 "attributes": {"POSITION": pos, "NORMAL": nrm, "_FEATURE_ID_0": fid},
@@ -129,8 +145,8 @@ def write_glb(mesh: TileMesh, table: PropertyTable, copyright: str) -> bytes:
         )
     cls_v, cls_o = _strings(b, table.classes)
     sid_v, sid_o = _strings(b, table.source_ids)
-    h_v = b.add(table.height_m.astype(np.float32).tobytes())
-    hs_v = b.add(table.height_source.astype(np.uint8).tobytes())
+    h_v = b.add(table.height_m.astype("<f4").tobytes())
+    hs_v = b.add(table.height_source.astype("<u1").tobytes())
     doc = {
         "asset": {"version": "2.0", "generator": "camsim-scene", "copyright": copyright},
         "extensionsUsed": ["EXT_mesh_features", "EXT_structural_metadata"],
@@ -198,7 +214,7 @@ def _view(doc: dict, bin_: bytes, i: int) -> bytes:
 
 def _accessor(doc: dict, bin_: bytes, i: int) -> np.ndarray:
     a = doc["accessors"][i]
-    dt = {FLOAT: np.float32, UINT: np.uint32, UBYTE: np.uint8}[a["componentType"]]
+    dt = {FLOAT: "<f4", UINT: "<u4", UBYTE: "<u1"}[a["componentType"]]
     n = {"SCALAR": 1, "VEC3": 3}[a["type"]]
     arr = np.frombuffer(_view(doc, bin_, a["bufferView"]), dt, count=a["count"] * n)
     return arr.reshape(-1, 3) if n == 3 else arr
@@ -206,7 +222,7 @@ def _accessor(doc: dict, bin_: bytes, i: int) -> np.ndarray:
 
 def _decode_strings(doc: dict, bin_: bytes, prop: dict) -> list[str]:
     raw = _view(doc, bin_, prop["values"])
-    off = np.frombuffer(_view(doc, bin_, prop["stringOffsets"]), np.uint32)
+    off = np.frombuffer(_view(doc, bin_, prop["stringOffsets"]), "<u4")
     return [raw[off[i] : off[i + 1]].decode("utf-8") for i in range(len(off) - 1)]
 
 

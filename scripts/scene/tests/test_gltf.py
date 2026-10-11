@@ -45,3 +45,26 @@ def test_glb_round_trip():
 
 def test_glb_is_deterministic():
     assert gltf.write_glb(_mesh(), _table(), "x") == gltf.write_glb(_mesh(), _table(), "x")
+
+
+def test_all_empty_classes_keep_bufferviews_non_empty():
+    table = gltf.PropertyTable(["a", "b"], ["", ""], np.array([7.5, 4.0], np.float32), np.array([0, 2], np.uint8))
+    data = gltf.write_glb(_mesh(), table, "x")
+    doc, _ = gltf.read_glb(data)
+    assert all(bv["byteLength"] >= 1 for bv in doc["bufferViews"])
+    assert gltf.decode_tile(data).table.classes == ["", ""]
+
+
+def test_write_glb_rejects_bad_input():
+    import pytest
+
+    bad = gltf.PropertyTable(["a"], ["x"], np.array([1.0], np.float32), np.array([0], np.uint8))
+    with pytest.raises(ValueError):
+        gltf.write_glb(_mesh(), bad, "x")  # feature id 1 >= count 1
+    short = gltf.PropertyTable(["a", "b"], ["x"], np.array([1.0, 2.0], np.float32), np.array([0, 0], np.uint8))
+    with pytest.raises(ValueError):
+        gltf.write_glb(_mesh(), short, "x")
+    m = _mesh()
+    m.roof_indices = m.wall_indices = np.zeros(0, np.uint32)
+    with pytest.raises(ValueError):
+        gltf.write_glb(m, _table(), "x")
