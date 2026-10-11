@@ -522,8 +522,9 @@ fixture tileset, and skips that test when `npx` is missing. The validator's `.np
 - Flat roofs, one neutral colour, no facades, no bridges.
 - Thermal IR: buildings take the land-cover class under them (WorldCover built-up becomes the `BuiltUp` family); only CIGI
   reports 230.
-- Footprints and heights are only as good as Overture. At Pendleton, 73 % of the 81,825 buildings had a height (OSM-mapped
-  heights inside the base are dense) and the rest take the 4 m default.
+- Footprints and heights are only as good as Overture. At Pendleton (release 2026-09-23.1), 73.2 % of the 82,260 kept
+  buildings have an Overture height (OSM-mapped heights inside the base are dense), 0.5 % a floor count, and 26.3 % take
+  the 4 m default.
 - Imagery shows roofs at their NAIP position; where Overture is offset, the roof texture and the building disagree.
 - Overture's ODbL terms apply to the layer and to anything derived from it.
 
@@ -959,3 +960,87 @@ named above (`.cache/bench-r1/pendleton-r1c-{a,b}`, an earlier session). IR (`--
 The EO game-thread drop (~0.3 ms) is session-to-session: the same-session IR pair shows r1c and r2 equal. Wall p95 for r2
 33.8-41.0 ms (r1c 34.0-41.8). GPU frame p50 17.7-21.5 ms for r2 vs 16.1-21.5 ms for r1c (R1's coast_pass 16.1 ms in run a
 is the outlier; run b 21.5). Shot SSIM r1c-a vs r2-a 0.960-0.994 (EO is unchanged by R2; the differences are run to run).
+
+### R3 buildings slice (2026-10-11, macOS)
+
+Camp Pendleton `sim`, M1 Pro / Metal, native build. `pendleton-r3` is an APFS clone of `pendleton-r2` built with
+`examples/pendleton.toml` (`[buildings]`, Overture release `2026-09-23.1`, `--replan -j 6`): terrain, imagery, NDVI and
+land cover were skipped and only the buildings layer was built. Spec acceptance:
+[`superpowers/specs/2026-10-10-r3-buildings-slice-design.md`](superpowers/specs/2026-10-10-r3-buildings-slice-design.md).
+Details: `.superpowers/sdd/2026-10-10-r3-buildings-slice/task-12-report.md`.
+
+| Gate | Tool | Result |
+|---|---|---|
+| 1 Package | `build`, `verify --deep`, `3d-tiles-validator` 0.6.1 | **Pass.** Snapshot 82,283 footprints (14.8 MB GeoParquet, sha256 `3bdadde5…`); 82,260 buildings kept (23 dropped small, 0 invalid, 0 without a height). Tiers z13 780 / z14 16,430 / z15 65,050 buildings in **85 / 394 / 1,286 tiles** (1,765 GLBs + `tileset.json`, 4.9 / 70.9 / 167.7 MB); layer **247.9 MB**; layer build **36 s**, peak RSS 1,630 MB (whole `--replan` run 307 s including the snapshot fetch and the skip scans of the other layers). `verify --deep` all `ok` (318 s at `-j 6`), incl. `buildings_tileset` and `buildings_heights`. Validator: 0 errors, 0 warnings, 1,765 infos (`EXT_mesh_features` / `EXT_structural_metadata` not validated by 0.6.1; "may be unused" on the feature-id accessors). Rebuild into a second clone: `hashes.txt` identical (471,186 lines). The toml without `[buildings]` on a clone of `pendleton-r2`: no `features/`, `manifest.json` and `hashes.txt` byte-identical to `pendleton-r2`'s. `pendleton-r3` vs `pendleton-r2`: only `ATTRIBUTION.txt` and the 1,766 `features/buildings/` lines differ |
+| 2 Footprints vs imagery | `tools/footprint_iou.py` | **Open: needs the human-traced outlines** (`scripts/scene/tools/data/pendleton_building_truth.geojson`, ~30 buildings at Mainside, family housing and a hangar, traced in QGIS over the package's NAIP). The tool and its test are in place; run it with `--snapshot ~/…/.cache/scene/blobs/sha256/3b/3bdadde5565c9b96bb310133e8aba02c6d20f3e658830162ea83dfb87c01122b` |
+| 3 Heights | `verify --deep` (`buildings_heights`) | **Pass.** Every roof within 0.01 m of the recomputation from the snapshot and the terrain sources. Height source: `overture_height` 60,207 (73.2 %), `overture_floors` 417 (0.5 %), `default` 21,636 (26.3 %) |
+| 4 CIGI | `send_cigi_test.py` packets (session script) | **Pass** (table below): roof HOT within 0.01 m of the built roof, code 230; 5 m outside = ground with the land-cover code; LOS hits 30.03 m along a 30.0 m path to the west wall, code 230 |
+| 5 DIS | `send_dis_test.py truck-loop --location 33.305,-117.314`; `dis_vehicle_check.py`; `gt_occlusion_check.py` | **Pass.** The re-centred loop crosses 12 Mainside footprints (231 of 1,942 annotated frames inside one). COCO `geo.alt_m` every frame (ML interval 1): largest frame-to-frame change **0.085 m** (p99 0.078 m); the truck stays on the terrain inside footprints (roof at least 3.3 m above it), truck minus DEM ground median −0.06 m, max \|·\| 1.20 m. `dis_vehicle_check.py` PASS (one stable id each for truck and boat); `gt_occlusion_check.py` PASS (both on the SF scene) |
+| 6 Bench | `bench/sweep.py` (dense_pass, repeat 2); `run_bench.py` all phases (1 run each) | **Memory fails at the shipped default; the user picks the default.** 30 fps and 0 dropped frames in every sweep row and every phase. Game thread and GPU within budget in every row. Memory: +588 MiB at the shipped SSE 16 with physics (budget +381); only SSE 32 without physics and SSE 64 pass. Existing phases at SSE 16: game p50 +0.02 to +0.70 ms (slew the most), not within noise but within budget; memory grows to +1.1 GiB over the full run as the tile cache fills (tables below) |
+| 7 Off switch | `CAMSIM_SCENE_BUILDINGS_ENABLED=0` on `pendleton-r3` vs `pendleton-r2` | **Pass.** All six HAT/HOT and both LOS responses identical (HOT, HAT, material code, normal, range). Shots SSIM 0.975 (Mainside nadir), 0.981 (Mainside low oblique), 0.992 (dense_oblique), within run to run (R2: 0.960–0.994) |
+| 8 Visual review | EO shots | **Pending user review.** dense_pass contact sheet `.cache/bench-r3r4/r3-buildings-sweep/sweep_sheet.png`; `.cache/r3/visual/`: `mainside_low_oblique_buildings_{on,off}.png`, `mainside_nadir_buildings_{on,off}.png`, `dense_oblique_buildings_{on,off}.png` (and `_r2`), `truck_side_*.png` (the DIS truck between buildings) |
+
+Live runtime checks (2026-10-11, `Main.umap`): the log shows `CamSim: buildings tileset 'CamSimBuildings' file:///…
+(maxLoads=20 SSE=16.0 culledSSE=16 … physicsMeshes=1)` and then `CamSimSubsystem: cached 2 tileset actor(s)`, so the
+world-init spawn survives `InitializeActorsForPlay`. 1,454 of the 1,765 tiles omit the all-empty `class` property; Cesium
+loaded them (260–369 buildings tiles resident during the runs) with no `LogCesium` warning or error.
+
+CIGI (`.cache/r3/live_on/result.json`; the sensor 300 m above the HAT points, beside the wall for LOS, noon):
+
+| Point | Query | Built (verify recompute) | Response |
+|---|---|---|---|
+| Warehouse `010048df-280f-483f-97a8-bddb71d1b61b` (z13, Overture height 6.42 m) roof, 33.3029558, −117.3144625 | HAT/HOT 103 | roof 94.67 m | **230**, HOT 94.665 m |
+| 5 m west of its wall, 33.3029558, −117.3147197 | HAT/HOT 103 | DEM 88.53 m | 50, HOT 88.465 m |
+| LOS from 30 m west of the wall at 90.75 m (base + 3) due east | LOS 105 | wall at 30.0 m | **230**, range 30.03 m, hit 90.75 m |
+| Commercial `9cc2e6cd-5694-4810-8df7-533da6a510b5` (z14, 7.54 m) roof, 33.3064210, −117.3139776 | HAT/HOT 103 | roof 91.28 m | **230**, HOT 91.276 m |
+| 5 m west of its wall, 33.3064210, −117.3144953 | HAT/HOT 103 | DEM 86.35 m | 50, HOT 86.120 m |
+| LOS from 30 m west at 90.0 m (the site slopes: 3 m above the ground at the sensor, not base + 3) | LOS 105 | wall at 30.0 m | **230**, range 30.03 m |
+
+With buildings off (and on `pendleton-r2`) the roof points answer the ground (88.65 m / 85.97 m, code 50) and both LOS
+segments run their full length without a hit.
+
+Bench sweep (`scripts/bench/sweep.py --site pendleton --axis buildings=off,on --axis buildings_sse=8,16,32,64 --axis
+buildings_physics=on,off --repeat 2`, `.cache/bench-r3r4/r3-buildings-sweep/`): only the dense_pass phase (300 m HAE,
+100 m/s, 20° down, over Oceanside housing and commerce), trees off in every row (the sweep always sends both master
+switches), 720p EO. Increase of each row's median over the all-off row (game 3.47–3.52 ms p50, GPU 19.4–20.5 ms,
+memory 8,904–8,911 MiB). Memory is the process's footprint (`footprint`, unified memory on the M1 Pro: CPU-side tile
+and physics data count too), not VRAM. Budget (bench spec §4): game p50 +1.5 ms, p95 +3.0 ms, GPU p50 +5.0 ms,
+memory +381 MiB (400 MB).
+
+| SSE | Physics | Game p50 | Game p95 | GPU p50 | Memory, MiB | Budget |
+|---|---|---|---|---|---|---|
+| 8 | on | +0.68 | +0.64 | +3.29 | +764 | memory fails |
+| 8 | off | +0.57 | +0.51 | +3.29 | +557 | memory fails |
+| **16 (shipped)** | **on** | +0.61 | +0.54 | +2.63 | **+588** | memory fails |
+| 16 | off | +0.54 | +0.52 | +1.90 | +426 | memory fails |
+| 32 | on | +0.53 | +0.41 | +1.72 | +396 | memory fails (by 15) |
+| 32 | off | +0.46 | +0.40 | +1.00 | +276 | pass |
+| 64 | on | +0.45 | +0.39 | +0.47 | +272 | pass |
+| 64 | off | +0.44 | +0.59 | +0.48 | +198 | pass |
+
+Physics meshes cost 70–210 MiB and ~0.1 ms of game thread; without them CIGI LOS and HAT/HOT don't see buildings, so a
+physics-off default would give up gate 4. In the contact sheet, SSE 64 thins the far field (beyond ~2 km) but leaves
+the near field as at 16.
+
+Full bench (`run_bench.py --site pendleton --gpu-mem`, all phases, trees off, SSE 16 with physics vs buildings off, one
+run each, back to back; `.cache/bench-r3r4/r3-full-b{1,0}/`). Every phase 30 fps, 0 dropped frames:
+
+| Phase | Game p50, ms: on / off | Game p95 | GPU p50 | Wall p95 | Memory max, MiB |
+|---|---|---|---|---|---|
+| orbit | 3.19 / 2.78 | 5.14 / 4.51 | 19.07 / 19.10 | 35.0 / 34.6 | 9,445 / 8,853 |
+| slew | 3.70 / 3.00 | 12.24 / 11.02 | 19.33 / 19.30 | 41.1 / 40.9 | 9,475 / 8,881 |
+| low_pass | 3.67 / 3.20 | 8.51 / 7.41 | 19.36 / 18.90 | 37.0 / 36.9 | 9,501 / 8,921 |
+| far_origin | 2.20 / 2.18 | 3.46 / 2.99 | 17.03 / 16.99 | 33.9 / 33.9 | 10,011 / 8,880 |
+| coast_pass | 3.96 / 3.51 | 10.53 / 9.28 | 20.31 / 19.46 | 37.7 / 37.2 | 10,008 / 8,917 |
+| dense_pass | 4.29 / 3.59 | 11.04 / 9.21 | 21.98 / 15.43 | 37.9 / 37.3 | 10,070 / 8,968 |
+
+The memory keeps rising after the buildings leave the view (far_origin, 300 km east, is +1.1 GiB): loaded buildings
+tiles stay in Cesium's cache (`cacheMB=2048`, the terrain's tuning). The dense_pass GPU difference here (+6.6 ms) is larger
+than the sweep's (+2.6 ms at the same setting) because the off run's GPU p50 (15.4 ms) is low against the sweep's
+all-off rows (19.4–20.5 ms); one run each, so the sweep is the cost to quote.
+
+Stability: the first live session crashed (SIGSEGV in `FMeshDrawShaderBindings::SetOnCommandList` on a renderer draw task,
+5 s after a 215 m camera cut from 300 m nadir to a ground-level pose, buildings and trees on). It did not recur in 27
+later Pendleton sessions, including the same pose sequence three times (buildings on, buildings off, trees off). Cause
+unknown; a crashed run leaves `CrashReportClient` holding port 8080, so the next launch can't bind its health port.
+

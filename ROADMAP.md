@@ -1842,6 +1842,24 @@ that are absent from EO (cloud shadow through the solar term vs WorldCover tree 
 (2–4 ms), and 900 queries/s scattered over ~33 km drove game-thread p99 to 55.9 ms (29.1 fps) with a 16-tile cache. Now 64 tiles
 and at most 2 loads per tick (a query past the budget answers 0 until its tile loads): p99 3.4 ms, 30 fps (`docs/terrain-feedback.md`).
 
+**R3 buildings thin slice implemented and measured on macOS 2026-10-11** (`docs/scene-packages.md`, "Buildings (R3)" and
+"Measured"; spec `docs/superpowers/specs/2026-10-10-r3-buildings-slice-design.md`): Overture footprints (ODbL, opt-in via
+`allow`, snapshotted) extruded into a package's `features/buildings/` (3D Tiles 1.1, flat roofs, one neutral material),
+spawned as one extra Cesium tileset at world init (`scene.buildings.*`), CIGI material code 230 (1.9), ignored by the DIS
+surface clamp. Pendleton: 82,260 buildings, 1,765 tiles, 247.9 MB, 36 s; `verify --deep` and the 3D Tiles validator clean;
+rebuild and no-`[buildings]` builds byte-identical; CIGI roof HOT within 0.01 m and LOS within 0.03 m of the wall, both
+230; DIS truck steps ≤ 0.085 m across footprints; `scene.buildings.enabled: false` = R2 (identical CIGI responses);
+`dis_vehicle_check.py` / `gt_occlusion_check.py` pass; UE 538/538, GPU 26/26, scene tooling 498 passed. Bench sweep: 30
+fps, 0 dropped frames, game thread +0.45–0.68 ms, but the 400 MB memory budget fails at the shipped SSE 16 (+588 MiB,
+process footprint on the M1 Pro) and passes at SSE 64 with physics meshes (+272 MiB); the default SSE is the user's pick. Full bench at SSE 16: every
+existing phase 30 fps, 0 dropped, game p50 +0.02–0.70 ms, memory +0.6–1.1 GiB as the tile cache fills (one run each).
+Open: footprint IoU (gate 2, needs ~30 human-traced NAIP outlines), the user's visual review, Linux/Vulkan (`FOR_LINUX.md`
+task 5). One intermittent renderer crash (SIGSEGV in `FMeshDrawShaderBindings::SetOnCommandList` on a draw task, 5 s
+after a 215 m camera cut to ground level with buildings and trees on) in the first live session; not reproduced in 27
+later Pendleton sessions (3 targeted repeats incl. buildings off / trees off, 3 CIGI sessions, the DIS session, 18
+sweep runs, the 2 full benches); watch for it. No editor work for the slice; facade/roof materials remain the R3 deepening pass's human
+editor work (`REALISM.md`, R3).
+
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer
 need it: CamSim configures or destroys them at world init, before they load.

@@ -385,6 +385,21 @@ anything new. Roads are one of the most visible features in LWIR and are 4B's ma
 
 ### R3 Buildings and bridges (generated 3D Tiles)
 
+**Status (2026-10-11, macOS): thin slice implemented and measured on Pendleton** (`docs/scene-packages.md`, "Buildings
+(R3)" and "Measured"; spec `docs/superpowers/specs/2026-10-10-r3-buildings-slice-design.md`). Overture footprints
+(release 2026-09-23.1, snapshotted) extruded with flat roofs and one neutral material into `features/buildings/` (3D
+Tiles 1.1, ADD refinement, z13/z14/z15 tiers by area); one extra Cesium tileset at runtime, CIGI material code 230, the DIS
+clamp ignores it. Pendleton: 82,260 buildings in 1,765 tiles, 247.9 MB, layer build 36 s; `verify --deep` and the
+validator clean; rebuild and no-`[buildings]` packages byte-identical; heights 73.2 % Overture / 0.5 % floors / 26.3 %
+default; CIGI roof HOT within 0.01 m with 230, LOS range within 0.03 m of the wall with 230; DIS truck steps ≤ 0.085 m
+crossing footprints; buildings off = R2 (identical CIGI responses, shots within run to run). Bench: 30 fps and 0
+dropped frames in every row; game thread +0.45–0.68 ms; the 400 MB memory budget fails at the shipped SSE 16 (+588 MiB,
+macOS footprint) and passes at SSE 64 with physics (+272 MiB): **default SSE to be picked by the user**. **Open:** footprint
+IoU (gate 2: needs ~30 human-traced NAIP outlines); visual review of the EO shots (pending the user); Linux/Vulkan
+(`FOR_LINUX.md`, task 5). **Deferred to the R3 deepening pass:** gabled/hipped roofs, facade/roof materials (human editor
+work, below), bridges, LiDAR nDSM heights, thermal class from the per-feature metadata, building semantic class in ground
+truth.
+
 - Footprints: Overture (OSM + Microsoft footprints merged, ODbL; snapshot it, releases are deleted
   after 60 days), or Microsoft's Global ML footprints directly (CDLA Permissive 2.0, some with
   heights). Heights: in order of preference, 3DEP LiDAR nDSM, Overture `height`/`num_floors`, then
