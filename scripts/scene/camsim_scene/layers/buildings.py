@@ -91,7 +91,7 @@ def plan_cached(pkg: Path, m: Manifest, ctx: BuildContext, wst: WorkerState | No
     if hit is not None:
         try:
             return pickle.loads(hit.read_bytes())
-        except Exception as e:  # a truncated or stale pickle: plan again
+        except Exception as e:  # noqa: BLE001 - a truncated or stale pickle: plan again
             log.warning("ignoring %s: %s", hit, e)
     out = plan_from_manifest(m, ctx, wst)
     atomic_write(Path(pkg) / STATE_DIR / PLAN_FILE, pickle.dumps(out, protocol=pickle.HIGHEST_PROTOCOL))
