@@ -243,3 +243,110 @@ bool FVegManagerSeedTest::RunTest(const FString& Parameters)
 	TestNotEqual(TEXT("high bits matter"), ResolveSeed(true, (int64(1) << 32) | 7, 0), ResolveSeed(true, 7, 0));
 	return true;
 }
+
+// Trees inside building footprints (final review I1): KeepClearOfBuildings, the pure drop rule.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegBuildingsNoneTest, "CamSim.Vegetation.Buildings.NoBuildingsKeepsAll",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegBuildingsNoneTest::RunTest(const FString& Parameters)
+{
+	const TArray<TOptional<double>> T = { 10.0, 11.0, TOptional<double>(), 12.0 };
+	int32 In = -1;
+	const TArray<int32> Keep = KeepClearOfBuildings(T, nullptr, &In);
+	TestEqual(TEXT("every tree with a terrain height kept"), Keep, TArray<int32>({ 0, 1, 3 }));
+	TestEqual(TEXT("none dropped for buildings"), In, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegBuildingsAboveTest, "CamSim.Vegetation.Buildings.BuildingAboveDrops",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegBuildingsAboveTest::RunTest(const FString& Parameters)
+{
+	const TArray<TOptional<double>> T = { 10.0, 10.0, 10.0 };
+	const TArray<TOptional<double>> B = { 16.0, 10.51, 10.0 + BuildingClearanceM };   // roof, just over, exactly at the limit
+	int32 In = -1;
+	const TArray<int32> Keep = KeepClearOfBuildings(T, &B, &In);
+	TestEqual(TEXT("only the tree at the limit stays"), Keep, TArray<int32>({ 2 }));
+	TestEqual(TEXT("two dropped for buildings"), In, 2);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegBuildingsGroundTest, "CamSim.Vegetation.Buildings.GroundLevelHitKeeps",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegBuildingsGroundTest::RunTest(const FString& Parameters)
+{
+	// A buildings hit within 0.5 m of the terrain (a plaza, a footprint's skirt, a building base below the terrain).
+	const TArray<TOptional<double>> T = { 10.0, 10.0, 10.0 };
+	const TArray<TOptional<double>> B = { 10.3, 9.0, 10.49 };
+	int32 In = -1;
+	TestEqual(TEXT("all kept"), KeepClearOfBuildings(T, &B, &In), TArray<int32>({ 0, 1, 2 }));
+	TestEqual(TEXT("none dropped"), In, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegBuildingsFailedTest, "CamSim.Vegetation.Buildings.FailedSampleKeeps",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegBuildingsFailedTest::RunTest(const FString& Parameters)
+{
+	// A failed buildings sample is a miss: no building there. A failed terrain sample still drops the tree, and a short
+	// or non-finite buildings answer never drops one.
+	const TArray<TOptional<double>> T = { 10.0, TOptional<double>(), 10.0, 10.0 };
+	const TArray<TOptional<double>> B = { TOptional<double>(), 50.0, std::numeric_limits<double>::quiet_NaN() };
+	int32 In = -1;
+	TestEqual(TEXT("missed, NaN and missing buildings samples keep their trees"), KeepClearOfBuildings(T, &B, &In), TArray<int32>({ 0, 2, 3 }));
+	TestEqual(TEXT("none dropped for buildings"), In, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegBuildingsManagerTest, "CamSim.Vegetation.Buildings.ManagerWaitsForBothBatches",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegBuildingsManagerTest::RunTest(const FString& Parameters)
+{
+	AddExpectedMessagePlain(TEXT("left empty (logged once)"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+	// Buildings over instances 0 and 2 of every cell (terrain 100 + K): those two go, the other four stay.
+	{
+		FFake F;
+		int32 BuildingCalls = 0;
+		FVegetationHooks H = F.Hooks();
+		H.SampleBuildingHeights = [&F, &BuildingCalls](const TArray<FVector>& P, TFunction<void(TArray<TOptional<double>>)> Done)
+		{
+			++BuildingCalls;
+			const int32 N = P.Num();
+			F.Pending.Add([N, Done]()
+			{
+				TArray<TOptional<double>> R;
+				R.SetNum(N);
+				R[0] = 108.0;
+				if (N > 2) R[2] = 109.0;
+				if (N > 3) R[3] = 103.2;   // within 0.5 m of instance 3's terrain (103): kept
+				Done(MoveTemp(R));
+			});
+		};
+		TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(FVegetationStreaming::FParams{}, H);
+		for (int32 T = 0; T < 600; ++T) { M->Tick(33.302, -117.355); F.Flush(); }
+		TestEqual(TEXT("one buildings batch per terrain batch"), BuildingCalls, F.HeightCalls);
+		const FVegCellSpawn* S = F.Live.Find(CellOf(33.302, -117.355, 100.0));
+		TestNotNull(TEXT("camera cell spawned"), S);
+		if (S)
+		{
+			TestEqual(TEXT("four trees left"), S->Instances.Num(), 4);
+			TestEqual(TEXT("two dropped in this cell"), S->NumInBuildings, 2);
+			TestEqual(TEXT("first kept tree is instance 1 (base height)"), S->BaseHeightM, 101.0);
+		}
+		TestEqual(TEXT("dropped total = 2 per spawned cell"), M->NumDroppedInBuildings(), int64(2) * F.Live.Num());
+	}
+	// Terrain answers, buildings never do: the cell waits, then times out empty instead of spawning without the check.
+	{
+		FFake F;
+		FVegetationHooks H = F.Hooks();
+		H.SampleBuildingHeights = [](const TArray<FVector>&, TFunction<void(TArray<TOptional<double>>)>) {};
+		TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(FVegetationStreaming::FParams{}, H);
+		for (int32 T = 0; T < 10; ++T) { M->Tick(33.302, -117.355); F.Flush(); }
+		TestEqual(TEXT("nothing spawns on terrain heights alone"), F.Spawns, 0);
+		TestEqual(TEXT("budget held by the waiting cells"), M->GetStreaming().NumInFlight(), 4);
+		for (int32 T = 0; T < FVegetationManager::StuckTicks + 2; ++T) { M->Tick(33.302, -117.355); F.Flush(); }
+		TestEqual(TEXT("timed-out cell is empty"), M->GetStreaming().GetState(CellOf(33.302, -117.355, 100.0)),
+			TOptional<EVegCellState>(EVegCellState::Empty));
+		TestEqual(TEXT("still nothing spawned"), F.Spawns, 0);
+	}
+	return true;
+}

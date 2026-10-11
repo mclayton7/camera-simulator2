@@ -10,6 +10,7 @@
 #include "Engine/World.h"
 #include "Entity/EntityMeshLoader.h"
 #include "Entity/SurfaceProbe.h"
+#include "Geospatial/SceneBuildings.h"
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/FileHelper.h"
@@ -75,6 +76,15 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 			if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnGenerated(Id, Token, MoveTemp(T));
 		});
 	}
+	// One line each time streaming settles with new building drops (a few per flight, never per cell).
+	const bool bIdle = IsIdle();
+	if (bIdle && !bWasIdle && DroppedInBuildings != LoggedDroppedInBuildings)
+	{
+		UE_LOG(LogCamSim, Log, TEXT("Vegetation: settled, %d cells spawned, %lld trees dropped inside building footprints so far"),
+			Spawned.Num(), DroppedInBuildings);
+		LoggedDroppedInBuildings = DroppedInBuildings;
+	}
+	bWasIdle = bIdle;
 }
 
 void FVegetationManager::ExpireStuckRequests()
@@ -109,28 +119,57 @@ void FVegetationManager::OnGenerated(FVegCellId Id, uint32 Token, TArray<FTreeIn
 		Requests.Remove(Id);
 		return;
 	}
-	Requests[Id].StartTick = TickCount;   // the height stage gets its own StuckTicks
 	TArray<FVector> LonLatH;
 	LonLatH.Reserve(Instances.Num());
 	for (const FTreeInstance& T : Instances) LonLatH.Add(FVector(T.LonDeg, T.LatDeg, 0.0));
-	TWeakPtr<FVegetationManager> Weak = AsWeak();
-	Hooks.SampleHeights(LonLatH, [Weak, Id, Token, Instances = MoveTemp(Instances)](TArray<TOptional<double>> H) mutable
+	const bool bWantBuildings = static_cast<bool>(Hooks.SampleBuildingHeights);
 	{
-		if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnHeights(Id, Token, MoveTemp(Instances), MoveTemp(H));
+		FRequest& R = Requests[Id];
+		R.StartTick = TickCount;   // the height stage gets its own StuckTicks, shared by both batches
+		R.Instances = MoveTemp(Instances);
+		R.TerrainH.Reset();
+		R.BuildingsH.Reset();
+		R.bWantBuildings = bWantBuildings;
+	}
+	// A hook may answer synchronously (and finish the cell), so no reference into Requests is held across the calls.
+	TWeakPtr<FVegetationManager> Weak = AsWeak();
+	Hooks.SampleHeights(LonLatH, [Weak, Id, Token](TArray<TOptional<double>> H)
+	{
+		if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnHeights(Id, Token, /*bBuildings=*/false, MoveTemp(H));
 	});
+	if (bWantBuildings && IsCurrent(Id, Token, EVegCellState::Sampling))
+	{
+		Hooks.SampleBuildingHeights(LonLatH, [Weak, Id, Token](TArray<TOptional<double>> H)
+		{
+			if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnHeights(Id, Token, /*bBuildings=*/true, MoveTemp(H));
+		});
+	}
 }
 
-void FVegetationManager::OnHeights(FVegCellId Id, uint32 Token, TArray<FTreeInstance> Instances, TArray<TOptional<double>> Heights)
+void FVegetationManager::OnHeights(FVegCellId Id, uint32 Token, bool bBuildings, TArray<TOptional<double>> Heights)
 {
 	if (!IsCurrent(Id, Token, EVegCellState::Sampling)) return;
-	Requests.Remove(Id);
+	FRequest& R = Requests[Id];
+	(bBuildings ? R.BuildingsH : R.TerrainH) = MoveTemp(Heights);
+	if (!R.TerrainH.IsSet() || (R.bWantBuildings && !R.BuildingsH.IsSet())) return;   // wait for the other batch
+	FinishHeights(Id);
+}
+
+void FVegetationManager::FinishHeights(FVegCellId Id)
+{
+	FRequest R;
+	Requests.RemoveAndCopyValue(Id, R);
+	int32 InBuildings = 0;
+	const TArray<int32> Keep = KeepClearOfBuildings(R.TerrainH.GetValue(), R.bWantBuildings ? &R.BuildingsH.GetValue() : nullptr, &InBuildings);
+	DroppedInBuildings += InBuildings;
 	FVegCellSpawn S;
 	CellCentre(Id, CellSizeM, S.CentreLatDeg, S.CentreLonDeg);
-	for (int32 K = 0; K < Instances.Num() && K < Heights.Num(); ++K)
+	S.NumInBuildings = InBuildings;
+	for (const int32 K : Keep)
 	{
-		if (!Heights[K].IsSet() || !FMath::IsFinite(Heights[K].GetValue())) continue;
-		S.Instances.Add(Instances[K]);
-		S.HeightsM.Add(Heights[K].GetValue());
+		if (K >= R.Instances.Num()) break;
+		S.Instances.Add(R.Instances[K]);
+		S.HeightsM.Add(R.TerrainH.GetValue()[K].GetValue());
 	}
 	Streaming.OnHeightsSampled(Id, S.Instances.Num());
 	if (S.Instances.Num() == 0) return;
@@ -141,6 +180,30 @@ void FVegetationManager::OnHeights(FVegCellId Id, uint32 Token, TArray<FTreeInst
 
 namespace CamSimVegetation
 {
+	TArray<int32> KeepClearOfBuildings(const TArray<TOptional<double>>& TerrainM, const TArray<TOptional<double>>* BuildingsM,
+		int32* OutNumInBuildings)
+	{
+		TArray<int32> Keep;
+		Keep.Reserve(TerrainM.Num());
+		int32 InBuildings = 0;
+		for (int32 K = 0; K < TerrainM.Num(); ++K)
+		{
+			if (!TerrainM[K].IsSet() || !FMath::IsFinite(TerrainM[K].GetValue())) continue;
+			if (BuildingsM && BuildingsM->IsValidIndex(K) && (*BuildingsM)[K].IsSet())
+			{
+				const double B = (*BuildingsM)[K].GetValue();
+				if (FMath::IsFinite(B) && B > TerrainM[K].GetValue() + BuildingClearanceM)
+				{
+					++InBuildings;
+					continue;
+				}
+			}
+			Keep.Add(K);
+		}
+		if (OutNumInBuildings) *OutNumInBuildings = InBuildings;
+		return Keep;
+	}
+
 	TArray<FTransform> ToCellLocal(double CentreLatDeg, double CentreLonDeg, double BaseHeightM,
 		const TArray<FTreeInstance>& Instances, const TArray<double>& HeightsM)
 	{
@@ -212,29 +275,37 @@ namespace CamSimVegetation
 		// Answers with all-unset heights when the tileset is gone or the result count is off. If the tileset actor is
 		// destroyed with a request outstanding, Cesium never calls back (Cesium3DTileset.cpp: `if (!IsValid(this)) return;`):
 		// the manager's StuckTicks reports the cell empty.
-		H.SampleHeights = [WeakTerrain](const TArray<FVector>& LonLatH, TFunction<void(TArray<TOptional<double>>)> Done)
+		auto MakeSampler = [](TWeakObjectPtr<ACesium3DTileset> WeakTileset, const TCHAR* What, bool bWarnOnFail)
 		{
-			const int32 N = LonLatH.Num();
-			ACesium3DTileset* T = WeakTerrain.Get();
-			if (!T) { TArray<TOptional<double>> None; None.SetNum(N); Done(MoveTemp(None)); return; }
-			T->SampleHeightMostDetailed(LonLatH, FCesiumSampleHeightMostDetailedCallback::CreateLambda(
-				[N, Done = MoveTemp(Done)](ACesium3DTileset*, const TArray<FCesiumSampleHeightResult>& R, const TArray<FString>& Warnings) mutable
-				{
-					static bool bWarned = false;
-					if (Warnings.Num() > 0 && !bWarned)
+			return [WeakTileset, What, bWarnOnFail](const TArray<FVector>& LonLatH, TFunction<void(TArray<TOptional<double>>)> Done)
+			{
+				const int32 N = LonLatH.Num();
+				ACesium3DTileset* T = WeakTileset.Get();
+				if (!T) { TArray<TOptional<double>> None; None.SetNum(N); Done(MoveTemp(None)); return; }
+				T->SampleHeightMostDetailed(LonLatH, FCesiumSampleHeightMostDetailedCallback::CreateLambda(
+					[N, What, bWarnOnFail, Done = MoveTemp(Done)](ACesium3DTileset*, const TArray<FCesiumSampleHeightResult>& R, const TArray<FString>& Warnings) mutable
 					{
-						bWarned = true;
-						UE_LOG(LogCamSim, Warning, TEXT("Vegetation: height sampling warning (failed samples drop their trees; logged once): %s"), *Warnings[0]);
-					}
-					TArray<TOptional<double>> Out;
-					Out.SetNum(N);   // unset = failed
-					if (R.Num() == N)
-						for (int32 K = 0; K < N; ++K)
-							if (R[K].SampleSuccess) Out[K] = R[K].LongitudeLatitudeHeight.Z;
-					if (IsInGameThread()) { Done(MoveTemp(Out)); return; }
-					AsyncTask(ENamedThreads::GameThread, [Done = MoveTemp(Done), Out = MoveTemp(Out)]() mutable { Done(MoveTemp(Out)); });
-				}));
+						static bool bWarned = false;
+						if (bWarnOnFail && Warnings.Num() > 0 && !bWarned)
+						{
+							bWarned = true;
+							UE_LOG(LogCamSim, Warning, TEXT("Vegetation: %s height sampling warning (failed samples drop their trees; logged once): %s"), What, *Warnings[0]);
+						}
+						TArray<TOptional<double>> Out;
+						Out.SetNum(N);   // unset = failed (on the buildings tileset: no building there)
+						if (R.Num() == N)
+							for (int32 K = 0; K < N; ++K)
+								if (R[K].SampleSuccess) Out[K] = R[K].LongitudeLatitudeHeight.Z;
+						if (IsInGameThread()) { Done(MoveTemp(Out)); return; }
+						AsyncTask(ENamedThreads::GameThread, [Done = MoveTemp(Done), Out = MoveTemp(Out)]() mutable { Done(MoveTemp(Out)); });
+					}));
+			};
 		};
+		H.SampleHeights = MakeSampler(WeakTerrain, TEXT("terrain"), /*bWarnOnFail=*/true);
+		// Trees inside building footprints (WorldCover tags canopy over roofs as tree cover): a second batch on the
+		// buildings tileset, where a miss is the normal answer, so its warnings stay quiet.
+		ACesium3DTileset* Buildings = CamSim::Geospatial::FindBuildingsTileset(World);
+		if (Buildings) H.SampleBuildingHeights = MakeSampler(TWeakObjectPtr<ACesium3DTileset>(Buildings), TEXT("buildings"), /*bWarnOnFail=*/false);
 		H.Spawn = [WeakWorld, KeepMesh, Actors, bShadows, CullM](FVegCellId Id, const FVegCellSpawn& S)
 		{
 			UWorld* W = WeakWorld.Get();
@@ -246,7 +317,8 @@ namespace CamSimVegetation
 			const FString Dump = CVarVegDumpPath.GetValueOnGameThread();
 			if (!Dump.IsEmpty())
 			{
-				FString Line = FString::Printf(TEXT("{\"row\":%d,\"col\":%d,\"hash\":%u,\"instances\":["), Id.Row, Id.Col, HashInstances(S.Instances));
+				FString Line = FString::Printf(TEXT("{\"row\":%d,\"col\":%d,\"hash\":%u,\"in_buildings\":%d,\"instances\":["), Id.Row, Id.Col,
+					HashInstances(S.Instances), S.NumInBuildings);
 				for (int32 K = 0; K < S.Instances.Num(); ++K)
 					Line += FString::Printf(TEXT("%s[%.9f,%.9f,%.3f,%.4f,%.4f]"), K ? TEXT(",") : TEXT(""), S.Instances[K].LatDeg,
 						S.Instances[K].LonDeg, S.HeightsM[K], S.Instances[K].YawDeg, S.Instances[K].Scale);
@@ -259,8 +331,9 @@ namespace CamSimVegetation
 			TWeakObjectPtr<ACamSimVegetationCell> A;
 			if (Actors->RemoveAndCopyValue(Id, A) && A.IsValid()) A->Destroy();
 		};
-		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (type '%s', radius %.0f m, density %.2f, shadows %d, seed %u, land cover %s)"),
-			*Type.Name, V.RadiusM, V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir);
+		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (type '%s', radius %.0f m, density %.2f, shadows %d, seed %u, land cover %s, buildings %s)"),
+			*Type.Name, V.RadiusM, V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
+			Buildings ? TEXT("on: trees inside footprints dropped") : TEXT("none"));
 		return MakeShared<FVegetationManager>(SP, MoveTemp(H));
 	}
 
