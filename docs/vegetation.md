@@ -39,10 +39,13 @@ in the ground-truth masks, but CIGI and DIS never see them.
   (or the stage times out, as above) before the cell spawns. A tree whose buildings sample succeeds more than
   0.5 m above its terrain height is dropped (`CamSimVegetation::KeepClearOfBuildings`); a failed buildings sample
   is a miss (no building there) and keeps the tree. Without a buildings tileset (no layer, or
-  `scene.buildings.enabled: false`) there is no second batch and nothing changes. Nothing extra runs on the game
-  thread beyond the per-cell spawn. The dump line carries `in_buildings` (trees dropped in that cell), and each
-  time streaming settles with new drops one `Vegetation: settled, N cells spawned, M trees dropped inside building
-  footprints so far` line is logged.
+  `scene.buildings.enabled: false`, or `vegetation.drop_in_buildings: false`) there is no second batch and nothing
+  changes. CamSim runs nothing extra on the game thread beyond the per-cell spawn, but Cesium loads the buildings'
+  most detailed (z15) tiles under every tree point to answer the queries: in `dense_pass` the check costs about
+  +0.3 ms game p50, +2.5 ms game p95 and +34 MiB, enough to push the both-on defaults over the game p95 and memory
+  budgets (`scene-packages.md`, "R3/R4 bench check and combined cost"). The dump line carries `in_buildings` (trees
+  dropped in that cell), and when streaming settles with new drops a `Vegetation: settled, N cells spawned, M trees
+  dropped inside building footprints so far` line is logged (at most once per 30 s).
 - **Cells** (`Vegetation/VegetationCellActor.h`): one actor per cell with a `UCesiumGlobeAnchorComponent` at
   the cell centre and one `UHierarchicalInstancedStaticMeshComponent`, instances in the cell's
   East-South-Up frame, so cells survive origin shifts. Collision off, `bCastShadow = cast_shadows`,
@@ -249,6 +252,25 @@ Shots for the visual review (pending the user): `.cache/veg/check/oblique/low_ob
 `dense_pass` contact sheet below. Seen so far: the 1 km hard cut is visible where woodland continues beyond
 it, and the low-poly crowns are a brighter, yellower green than the NAIP woodland around them.
 
+### Trees vs building footprints (`pendleton-r3`)
+
+2026-10-11, after the final review's I1 fix, defaults, buildings on (SSE 64). One session each with
+`vegetation.drop_in_buildings` on and off: the `dense_pass` midpoint (33.2200, −117.3103, 357.7 m HAE, heading 105°),
+then Mainside (33.305, −117.314, 350 m, north, −30°), then a low oblique 120 m south of the cell with the most drops
+(row 137255, col 58330, 60 m above its trees, looking north, 50° FOV). Results in `.cache/veg/i1-footprints{,-off}/`.
+
+- Check on: 6,519 trees in 489 dumped cells; check off: 6,892 in 491. **373 trees dropped (5.4 %)**, and 2 cells
+  lost all their trees. The dumped `in_buildings` counts add up to 371 (the two emptied cells are never dumped).
+  The cell with the most drops kept 27 of 43.
+- Shots: `close_oblique.png` in each directory. With the check off, crowns stand on the flat roofs of the Mainside
+  barracks; with it on, no crown shows through a roof, and trees stand between the buildings. Trees right beside a
+  wall can still lean their crowns over its edge (only the trunk point is tested).
+- `pendleton-r2` (no buildings layer) is unchanged: `vegetation_check.py --stages approach` rerun after the fix
+  (`.cache/veg/check-i1-r2/`) passes placement (8,992 trees in 472 cells, 0 off code 10), grounding (max |dz| 0.000 m
+  both runs), determinism (113 common cells, 0 mismatches) and origin shift (SSIM 0.9834 / 0.9834), and every one of
+  the 217 north and 368 south cells has the same hash as in the run above (`in_buildings` 0 everywhere; the log says
+  `buildings none`).
+
 ### Bench
 
 `scripts/bench/sweep.py` (bench spec `superpowers/specs/2026-10-10-r3r4-realism-cost-bench-design.md`), 2026-10-11,
@@ -291,7 +313,8 @@ Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 
 - The spec's combined row (buildings and trees both on vs both off, `pendleton-r3`) was run in the combined sweep
   (`scene-packages.md`, "R3/R4 bench check and combined cost"): at the chosen defaults (buildings SSE 64 with
   physics, trees 1000 m / 1.0 / shadows on) game p50 +1.05 ms, p95 +1.09 ms, GPU +2.98 ms, memory +359 MiB: inside
-  the budget, memory within 22 MiB of its limit (a 90 s `dense_pass` figure). Trees alone on that package: +0.61 /
+  the budget, memory within 22 MiB of its limit (a 90 s `dense_pass` figure, before the footprint check existed;
+  with it on: +1.40 / +3.61 / +3.54 ms, +408 MiB, over the p95 and memory budgets). Trees alone on that package: +0.61 /
   +0.58 / +1.12 ms, +52 MiB.
 
 ## Known limits

@@ -1875,7 +1875,12 @@ keep 1000 / 1.0 / on. Combined with buildings (`pendleton-r3`, buildings SSE 64 
 game +1.05 ms, GPU +2.98 ms, +359 MiB over both off, inside the budget (memory by 22 MiB; a 90 s `dense_pass` figure,
 `docs/scene-packages.md` "R3/R4 bench check and combined cost"). Trees inside building footprints are dropped when the
 package has buildings (final review I1: a second `SampleHeightMostDetailed` batch per cell on the buildings tileset;
-land cover alone would put ~10 % of footprint area under trees). UE 538/538, GPU 26/26 at the slice. Open: the user's
+land cover alone would put ~10 % of footprint area under trees; 373 of 6,892 trees, 5.4 %, dropped in a Mainside session;
+`vegetation.drop_in_buildings`). The check costs +0.3 ms game p50, +2.5 ms p95 and +34 MiB in `dense_pass`, which puts
+the both-on defaults over the game p95 and memory budgets; a whole-run bench at the defaults also exceeds the memory
+budget in `coast_pass` / `dense_pass` (+907 / +952 MiB) despite the new 512 MB buildings tile cache
+(`scene.buildings.maximum_cached_bytes_mb`; `far_origin` fell from +1,131 to +371 MiB). Open: decide between the check
+and the budget. UE 538/538, GPU 26/26 at the slice. Open: the user's
 visual review (low obliques and the sweep's contact sheet), Linux/Vulkan. No editor work.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
