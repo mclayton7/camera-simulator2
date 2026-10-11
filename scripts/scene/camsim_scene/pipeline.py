@@ -197,8 +197,12 @@ def _cached_assets(rec: SourceRecord, cache: Cache):
     one (COG with overviews), else the cached blob. Downloads misses (signing through the adapter, so an expired
     token is re-signed), records sha256 and size, and fails on a pinned-hash mismatch."""
     src = make_source(rec.id, rec.adapter, rec.options, cache.http)
+    fetch_blob = getattr(src, "fetch_blob", None)
     for a in rec.assets:
-        blob, a.sha256, a.size = cache.get(a.url, a.sha256, sign=src.sign)
+        if fetch_blob is not None:
+            blob, a.sha256, a.size = fetch_blob(to_asset(a), cache)
+        else:
+            blob, a.sha256, a.size = cache.get(a.url, a.sha256, sign=src.sign)
         yield src, a, src.prepare(blob, to_asset(a), cache) or blob
 
 

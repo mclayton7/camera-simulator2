@@ -78,6 +78,33 @@ class Cache:
             raise CacheError(f"{redact(url)}: downloaded sha256 {got} but the manifest pins {sha256}")
         return path, got, size
 
+    def lookup(self, url: str, sha256: str | None = None) -> tuple[Path, str, int] | None:
+        """The cached bytes `url` last resolved to (matching `sha256` when given), or None. Never downloads."""
+        idx = self._index_path(url)
+        if not idx.exists():
+            return None
+        known = json.loads(idx.read_text())
+        p = self.blob_path(known["sha256"])
+        if p.exists() and sha256 in (None, known["sha256"]):
+            return p, known["sha256"], known["size"]
+        return None
+
+    def put_file(self, url: str, path: Path) -> tuple[Path, str, int]:
+        """Adopt a locally produced file (a query snapshot, not a download) as `url`'s bytes: hash it, move it into
+        blobs/ and index the URL, exactly as a finished download is."""
+        h = hashlib.sha256()
+        size = 0
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(CHUNK), b""):
+                h.update(chunk)
+                size += len(chunk)
+        sha = h.hexdigest()
+        dst = self.blob_path(sha)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(path, dst)
+        atomic_write(self._index_path(url), json.dumps({"url": url, "sha256": sha, "size": size}).encode())
+        return dst, sha, size
+
     def _download(self, url: str, sign: Signer | None) -> tuple[Path, str, int]:
         tmpdir = self.root / "tmp"
         tmpdir.mkdir(parents=True, exist_ok=True)
