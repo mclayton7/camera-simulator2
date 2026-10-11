@@ -1,6 +1,9 @@
+import io
 import struct
 
 import numpy as np
+import pytest
+from PIL import Image
 
 from camsim_scene import gltf
 
@@ -68,3 +71,54 @@ def test_write_glb_rejects_bad_input():
     m.roof_indices = m.wall_indices = np.zeros(0, np.uint32)
     with pytest.raises(ValueError):
         gltf.write_glb(m, _table(), "x")
+
+
+def _jpeg() -> bytes:
+    buf = io.BytesIO()
+    Image.fromarray(np.full((4, 4, 3), 90, np.uint8)).save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+def _textured():
+    m = _mesh()
+    uv = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], np.float32)
+    return gltf.TileMesh(m.positions, m.normals, m.feature_ids, np.zeros(0, np.uint32), m.wall_indices,
+                         textured_indices=m.roof_indices, texcoords=uv, texture_jpeg=_jpeg(),
+                         extras={"roof_texel_m": 0.5})
+
+
+def test_textured_tile_layout_and_round_trip():
+    m = _textured()
+    data = gltf.write_glb(m, _table(), "© test")
+    doc, _ = gltf.read_glb(data)
+    assert doc["samplers"] == [{"magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 33071}]
+    assert doc["images"][0]["mimeType"] == "image/jpeg" and doc["textures"] == [{"sampler": 0, "source": 0}]
+    pbr = doc["materials"][2]["pbrMetallicRoughness"]
+    assert pbr["baseColorTexture"] == {"index": 0} and pbr["baseColorFactor"] == [1.0, 1.0, 1.0, 1.0]
+    prims = doc["meshes"][0]["primitives"]
+    assert sorted(p["material"] for p in prims) == [1, 2]
+    assert all("TEXCOORD_0" in p["attributes"] for p in prims)  # shared arrays: walls carry (0, 0) texcoords too
+    assert doc["extras"] == {"roof_texel_m": 0.5}
+    for bv in doc["bufferViews"]:
+        assert bv["byteOffset"] % 8 == 0
+    t = gltf.decode_tile(data)
+    assert t.texture == m.texture_jpeg and t.extras == {"roof_texel_m": 0.5} and len(t.roof_indices) == 0
+    assert np.array_equal(t.textured_indices, m.textured_indices) and np.array_equal(t.texcoords, m.texcoords)
+
+
+def test_untextured_tile_keeps_the_r3_layout():
+    doc, _ = gltf.read_glb(gltf.write_glb(_mesh(), _table(), "© test"))
+    assert not {"images", "textures", "samplers", "extras"} & set(doc) and len(doc["materials"]) == 2
+    t = gltf.decode_tile(gltf.write_glb(_mesh(), _table(), "© test"))
+    assert t.texture is None and t.texcoords is None and t.extras is None and len(t.textured_indices) == 0
+
+
+def test_textured_tile_needs_texcoords_and_texture():
+    m = _textured()
+    m.texcoords = None
+    with pytest.raises(ValueError, match="texcoords"):
+        gltf.write_glb(m, _table(), "c")
+    m = _textured()
+    m.texture_jpeg = None
+    with pytest.raises(ValueError, match="texture"):
+        gltf.write_glb(m, _table(), "c")

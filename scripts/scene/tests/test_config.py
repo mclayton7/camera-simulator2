@@ -313,12 +313,24 @@ def test_no_buildings_section_leaves_layers_unchanged():
 
 def test_buildings_section_defaults_and_settings():
     plan = parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "buildings": {}})
-    assert plan.buildings == {"enabled": True, "release": "2026-09-23.1", "min_area_m2": 10.0}
+    assert plan.buildings == {"enabled": True, "release": "2026-09-23.1", "min_area_m2": 10.0,
+                              "roof_textures": True, "roof_texel_m": 0.5, "roof_texture_max_px": 2048}
     assert plan.priorities["buildings"] == ["overture_buildings"]
     assert plan.source_options["overture_buildings"] == {"release": "2026-09-23.1"}
     s = layer_settings(plan)["buildings"]
     assert s["tiers"] == {"13": 2000.0, "14": 300.0} and s["leaf_zoom"] == 15
     assert s["geometric_error"] == {"root": 200.0, "13": 60.0, "14": 20.0, "15": 6.0}
+    assert s["roof_textures"] is True and s["roof_texel_m"] == 0.5 and s["roof_texture_max_px"] == 2048
+    assert s["roof"]["texel_steps_m"] == [0.5, 0.75, 1.0, 1.5, 2.0] and s["roof"]["gutter_px"] == 2
+    assert s["roof"]["max_source_m"] == 2.0 and s["roof"]["jpeg_quality"] == 85
+
+
+def test_roof_keys_change_the_buildings_settings_hash():
+    a = layer_settings(parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "buildings": {}}))["buildings"]
+    b = layer_settings(parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "buildings": {"roof_texel_m": 1.0}}))[
+        "buildings"
+    ]
+    assert a != b and b["roof_texel_m"] == 1.0
 
 
 def test_buildings_disabled_is_no_layer():
@@ -328,7 +340,9 @@ def test_buildings_disabled_is_no_layer():
 
 @pytest.mark.parametrize(
     "bad",
-    [{"enabled": "yes"}, {"release": ""}, {"release": 5}, {"min_area_m2": -1}, {"min_area_m2": True}, {"colour": 1}],
+    [{"enabled": "yes"}, {"release": ""}, {"release": 5}, {"min_area_m2": -1}, {"min_area_m2": True}, {"colour": 1},
+     {"roof_textures": "yes"}, {"roof_texel_m": 0.1}, {"roof_texel_m": 3.0}, {"roof_texel_m": True},
+     {"roof_texture_max_px": 3000}, {"roof_texture_max_px": 128}, {"roof_texture_max_px": 2048.0}],
 )
 def test_buildings_section_rejects_bad_values(bad):
     with pytest.raises(ConfigError, match="buildings"):

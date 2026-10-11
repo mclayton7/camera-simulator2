@@ -24,7 +24,9 @@ from ..fsutil import atomic_write, sha256_file
 from ..gltf import write_glb
 from ..licences import layer_credit
 from ..manifest import STATE_DIR, Manifest, canonical_json
-from . import terrain
+from ..roofs import RoofOptions
+from ..sources.base import native_res_m
+from . import imagery, terrain
 from .landcover import tile_filename
 
 log = logging.getLogger(__name__)
@@ -54,6 +56,36 @@ def heights_fn(st: WorkerState, m: Manifest):
         return terrain.point_heights(z, lon, lat, entries, st.tidal)
 
     return fn
+
+
+class ImageryRoofSampler:
+    """Roof pixels from the imagery layer's own sources (REALISM R3b): first valid in priority order, the colour match
+    (imagery/balance.json) applied to its target source, as leaf tiles do. NAIP's edge feather and the water fade are
+    leaf-tile blends and are not applied: a roof is textured only where a <= 2 m source (NAIP) supplies it."""
+
+    def __init__(self, st: WorkerState):
+        self.st = st
+        self._res: dict[str, float] = {}
+
+    def _native(self, entry) -> float:
+        if entry.qid not in self._res:
+            self._res[entry.qid] = native_res_m(entry.raster)
+        return self._res[entry.qid]
+
+    def sample(self, lon, lat, target_m):
+        lon, lat = np.asarray(lon, np.float64), np.asarray(lat, np.float64)
+        bounds = (float(lon.min()), float(lat.min()), float(lon.max()), float(lat.max()))
+        entries = self.st.index["imagery"].query(bounds)
+        if not entries:
+            return np.zeros((3, *lon.shape), np.uint8), np.zeros(lon.shape, bool), np.full(lon.shape, np.inf)
+        vals, ok, which = imagery.sample_entries(entries, lon, lat, target_m)
+        rgb = imagery.decode_entries(entries, vals, which, lon, lat, self.st.balance)
+        res = np.full(lon.shape, np.inf)
+        for k, e in enumerate(entries):
+            m = which == k
+            if m.any():
+                res[m] = self._native(e)
+        return rgb, ok, res
 
 
 def plan_from_manifest(m: Manifest, ctx: BuildContext, st: WorkerState | None = None):
@@ -151,6 +183,10 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     credit = layer_credit(rec.attribution, rec.licence, layer="buildings")
     inputs = inputs_hash(m.layer_settings_hash("buildings"), __version__, rec.assets[0].sha256, credit,
                          footprint_inputs(m, wst))
+    roof = RoofOptions.from_settings(s) if s.get("roof_textures") else None
+    if roof is not None:  # roof pixels come from the imagery sources and the colour match: both are inputs
+        img_shas = [a.sha256 for sid in m.layers["imagery"]["priorities"] for a in m.source(sid).assets]
+        inputs = inputs_hash(inputs, m.layer_settings_hash("imagery"), wst.balance_sha, *img_shas)
     marker, ts_path = Path(pkg) / STATE_DIR / MARKER, out / "tileset.json"
     prev = json.loads(marker.read_text()) if marker.exists() else None
     if prev and prev["inputs"] == inputs and not prev["output"] and not out.exists():
@@ -174,11 +210,16 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         by.setdefault(b.tile, []).append(b)
     # tiles only exist for keys with at least one building: write_glb rejects empty meshes
     tiles = {k: (v, B.tile_origin(*k, v)) for k, v in sorted(by.items())}
+    sampler = ImageryRoofSampler(wst) if roof is not None else None
+    roof_stats: dict = {}
     for (z, x, y), (bl, origin) in tiles.items():
-        mesh, table = B.tile_mesh(bl, origin)
+        mesh, table = B.tile_mesh(bl, origin, roof, sampler, roof_stats)
         p = out / str(z) / str(x) / f"{y}.glb"
         p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(p, write_glb(mesh, table, credit.replace("\n", " ")))
+    if roof is not None:  # stats is the cached plan's dict: copy it, never mutate it
+        stats = {**stats, "roofs": {"textured": 0, "flat_coarse": 0, "flat_overflow": 0, "tiles_by_texel_m": {},
+                                    **roof_stats}}
     output = mask_sha = ""  # no tileset and no mask when nothing survived planning
     if tiles:
         out.mkdir(parents=True, exist_ok=True)

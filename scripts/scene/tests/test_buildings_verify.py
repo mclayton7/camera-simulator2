@@ -42,13 +42,16 @@ def test_quick_catches_a_missing_tile(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("npx") is None, reason="needs Node")
-def test_3d_tiles_validator_is_clean(tmp_path):
+@pytest.mark.parametrize("textured", [False, True])
+def test_3d_tiles_validator_is_clean(tmp_path, textured):
     if not (VALIDATOR / "node_modules").exists():
         subprocess.run(["npm", "ci"], cwd=VALIDATOR, check=True, capture_output=True)
         # .npmrc skips install scripts (better-sqlite3 does not compile on current Node); sharp needs its binary
         subprocess.run(["npm", "rebuild", "sharp", "--ignore-scripts=false"], cwd=VALIDATOR, check=True,
                        capture_output=True)
-    pkg, _, _ = build_synthetic(tmp_path, _scene(tmp_path, ROWS))
+    from test_buildings_layer import _roof_scene
+
+    pkg, _, _ = build_synthetic(tmp_path, _roof_scene(tmp_path) if textured else _scene(tmp_path, ROWS))
     out = tmp_path / "report.json"
     subprocess.run(["npx", "3d-tiles-validator", "--tilesetFile", str(pkg / "features/buildings/tileset.json"),
                     "--reportFile", str(out)], cwd=VALIDATOR, check=False, capture_output=True)
