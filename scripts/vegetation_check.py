@@ -158,6 +158,7 @@ def dist_m(a: tuple[float, float], b: tuple[float, float]) -> float:
     return math.hypot(dn, de)
 
 
+BBOX_PAD_M = 20.0  # the trees' bounding box is padded by this when looking for footprints
 MASK_HALF_DIAG_M = 0.76  # half the diagonal of a mask cell (1.16 m x 0.97 m at 33 N): the raster's own position error
 FOOTPRINT_POSES = [  # docs/vegetation.md "Trees vs building footprints": the dense_pass midpoint, then Mainside
     (33.2200, -117.3103, 357.7, 105.0, -30.0),
@@ -174,34 +175,55 @@ def footprint_gate(trees: list[tuple[float, float]], mask, clearance_m: float, p
     lon = np.array([t[1] for t in trees], float)
     out: dict = {"trees": len(trees)}
     if not trees:
-        out["probe_hits"] = 0
-        if polygons is not None:
-            out.update(trunks_inside_footprints=0, within_clearance=0)
+        out.update(probe_hits=0, trunks_inside_footprints=0, within_clearance=0, mask_cells_in_bbox=0)
         out["pass"] = False  # no trees dumped: the gate has nothing to measure
+        out["reasons"] = ["no trees dumped"]
         return out
+    reasons: list[str] = []
     dlat = clearance_m / M_PER_DEG
     dlon = clearance_m / (M_PER_DEG * np.cos(np.radians(lat)))
     hit = mask.masked(lon, lat)
     for dx, dy in ((dlon, 0.0), (-dlon, 0.0), (0.0, dlat), (0.0, -dlat)):
         hit |= mask.masked(lon + dx, lat + dy)
     out["probe_hits"] = int(hit.sum())
-    ok = out["probe_hits"] == 0
-    if polygons is not None:
+    if out["probe_hits"]:
+        reasons.append(f"{out['probe_hits']} trees with a masked trunk or clearance probe")
+    # Fail closed: a mask that is absent or does not reach the trees reads "no buildings" everywhere, so the probes alone
+    # would pass. Require mask cells set within the trees' bounding box (padded by BBOX_PAD_M).
+    pad_lat = BBOX_PAD_M / M_PER_DEG
+    pad_lon = BBOX_PAD_M / (M_PER_DEG * math.cos(math.radians(float(lat.mean()))))
+    w, e = float(lon.min()) - pad_lon, float(lon.max()) + pad_lon
+    south, n = float(lat.min()) - pad_lat, float(lat.max()) + pad_lat
+    nx = min(2000, max(2, int((e - w) * M_PER_DEG * math.cos(math.radians(float(lat.mean()))))))
+    ny = min(2000, max(2, int((n - south) * M_PER_DEG)))
+    gx, gy = np.meshgrid(np.linspace(w, e, nx), np.linspace(south, n, ny))
+    out["mask_cells_in_bbox"] = int(np.count_nonzero(mask.masked(gx, gy)))
+    if out["mask_cells_in_bbox"] == 0:
+        reasons.append("the mask has no footprint within the dumped trees' bounding box (wrong or empty mask)")
+    if not polygons:
+        reasons.append("no footprint polygons (buildings layer or Overture snapshot unavailable): "
+                       "trunks inside footprints not checked")
+    else:
         import shapely
         from shapely import affinity
 
         k = M_PER_DEG * math.cos(math.radians(float(lat.mean())))
         polys = [affinity.affine_transform(p, [k, 0.0, 0.0, M_PER_DEG, 0.0, 0.0]) for p in polygons]
         pts = shapely.points(lon * k, lat * M_PER_DEG)
+        box = shapely.box(w * k, south * M_PER_DEG, e * k, n * M_PER_DEG)
+        out["footprints_in_bbox"] = len(shapely.STRtree(polys).query(box, predicate="intersects"))
+        if out["footprints_in_bbox"] == 0:
+            reasons.append("no footprint polygon within the dumped trees' bounding box")
         deep = [g for g in (p.buffer(-MASK_HALF_DIAG_M) for p in polys) if not g.is_empty]
         inside = shapely.STRtree(deep).query(pts, predicate="within")[0] if deep else np.zeros(0, int)
-        near = np.zeros(0, int)
-        if polys:
-            near = shapely.STRtree(polys).query(pts, predicate="dwithin", distance=clearance_m)[0]
+        near = shapely.STRtree(polys).query(pts, predicate="dwithin", distance=clearance_m)[0]
         out["trunks_inside_footprints"] = len(np.unique(inside))
         out["within_clearance"] = len(np.unique(near))
-        ok = ok and out["trunks_inside_footprints"] == 0
-    out["pass"] = ok
+        if out["trunks_inside_footprints"]:
+            reasons.append(f"{out['trunks_inside_footprints']} trunks inside a footprint")
+    out["pass"] = not reasons
+    if reasons:
+        out["reasons"] = reasons
     return out
 
 
@@ -241,9 +263,12 @@ def footprints_gate(a: argparse.Namespace, report: dict) -> None:
         log = stop(host, run / "CamSimTest.log")
     cells = read_dump(dump)
     trees = [(i[0], i[1]) for d in cells.values() for i in d["instances"]]
+    mask_dir = a.scene / "features" / "buildings" / "mask"
     clearance = float(os.environ.get("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M", "2.0"))
-    res = footprint_gate(trees, dp.BuildingMask(a.scene / "features" / "buildings" / "mask"), clearance,
-                         load_footprints(a.scene))
+    res = footprint_gate(trees, dp.BuildingMask(mask_dir), clearance, load_footprints(a.scene))
+    if not (mask_dir / "index.json").is_file() or not any(mask_dir.glob("*.png")):  # fail closed: no mask to test against
+        res["pass"] = False
+        res.setdefault("reasons", []).append(f"{mask_dir} has no index.json or no tile")
     line = next((x for x in log.splitlines() if "Vegetation: on (" in x), "")
     res["log_line"] = line.split("LogCamSim: ", 1)[-1]
     res["cells"] = len(cells)

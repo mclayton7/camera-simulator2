@@ -27,7 +27,7 @@ def test_probe_hits_count_trunks_and_axis_probes():
     trees = [_pt(10, 10), _pt(10, -1.5), _pt(10, -5.0), _pt(-1.0, -1.0)]  # inside, 1.5 m west, 5 m west, diagonal
     r = vc.footprint_gate(trees, _Mask(), 2.0)
     assert r["trees"] == 4 and r["probe_hits"] == 2 and not r["pass"]
-    assert vc.footprint_gate([_pt(10, -5.0), _pt(-1.0, -1.0)], _Mask(), 2.0)["pass"]
+    assert vc.footprint_gate([_pt(10, -5.0), _pt(-1.0, -1.0)], _Mask(), 2.0)["probe_hits"] == 0
 
 
 def test_polygon_counts_deep_trunks_and_reports_the_buffer():
@@ -37,3 +37,34 @@ def test_polygon_counts_deep_trunks_and_reports_the_buffer():
     r = vc.footprint_gate(trees, _Mask(), 2.0, [sq])
     assert r["trunks_inside_footprints"] == 1  # the wall tree is within the mask's half-cell diagonal of the edge
     assert r["within_clearance"] == 3  # info: inside, at the wall, the corner tree (the axis probes miss corners)
+
+
+def _square():
+    shapely = pytest.importorskip("shapely")
+    return shapely.box(LON0, LAT0, LON0 + 20 / KX, LAT0 + 20 / 111_320.0)
+
+
+def test_clean_trees_pass_with_polygons():
+    r = vc.footprint_gate([_pt(10, -5.0), _pt(-1.0, -1.0)], _Mask(), 2.0, [_square()])
+    assert r["pass"] and r["mask_cells_in_bbox"] > 0 and r["footprints_in_bbox"] == 1
+
+
+@pytest.mark.parametrize("polygons", [None, []])
+def test_missing_or_empty_polygons_fail_closed(polygons):
+    r = vc.footprint_gate([_pt(10, -5.0), _pt(-1.0, -1.0)], _Mask(), 2.0, polygons)
+    assert r["probe_hits"] == 0 and not r["pass"] and any("polygons" in x for x in r["reasons"])
+
+
+def test_empty_mask_fails_closed():
+    class Empty:
+        def masked(self, lon, lat):
+            return np.zeros(np.shape(lon), bool)
+
+    r = vc.footprint_gate([_pt(10, -5.0), _pt(-1.0, -1.0)], Empty(), 2.0, [_square()])
+    assert r["probe_hits"] == 0 and r["mask_cells_in_bbox"] == 0 and not r["pass"]
+
+
+def test_no_footprint_near_the_trees_fails_closed():
+    far = [_pt(5000, 5000), _pt(5010, 5000)]  # nowhere near the building
+    r = vc.footprint_gate(far, _Mask(), 2.0, [_square()])
+    assert r["probe_hits"] == 0 and r["mask_cells_in_bbox"] == 0 and r["footprints_in_bbox"] == 0 and not r["pass"]
