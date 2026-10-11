@@ -894,7 +894,7 @@ bind mount, `-v /mnt/pendleton:/data/scene/pendleton:ro` (`.sqfs` loop-mounted r
 
 | Gate | Tool | Result |
 |---|---|---|
-| Build | `build --replan -j 16` (from `pendleton-b`) | **Package complete; exit 2 is a false RSS fail.** Wall 27 min 40 s. Terrain 182,794 (473 s, 979.8 MB), imagery 277,286 (547 s, 2.17 GB), NDVI 7,043 (45 s), land cover 2,288 (91 s): the counts the Mac got. `sea_level.json` +0.110 m (NOAA 9410230 La Jolla). Exits 2 with "peak worker RSS 3249 MB exceeds 2048 MB": every layer reports the same 3249 MB, which is the main process's peak. On Linux a forked worker inherits the parent's `ru_maxrss`, so the known `-j 1` RSS follow-up also hits `-j 16` here. The log also has 2,966 bare "Error in sys.excepthook" lines (no traceback) near the end of the terrain layer, likely from worker pool teardown; the layer's tiles all verify |
+| Build | `build --replan -j 16` (from `pendleton-b`) | **Package complete; exit 2 is a false RSS fail.** Wall 27 min 40 s. Terrain 182,794 (473 s, 979.8 MB), imagery 277,286 (547 s, 2.17 GB), NDVI 7,043 (45 s), land cover 2,288 (91 s): the counts the Mac got. `sea_level.json` +0.110 m (NOAA 9410230 La Jolla). Exits 2 with "peak worker RSS 3249 MB exceeds 2048 MB": every layer reports the same 3249 MB, which is the main process's peak. On Linux a forked worker inherits the parent's `ru_maxrss`, so the known `-j 1` RSS follow-up also hits `-j 16` here. The log also has 2,966 bare "Error in sys.excepthook" lines (no traceback) near the end of the terrain layer, from worker teardown (cached datasets, since fixed: see below); the layer's tiles all verify |
 | Verify | `verify --deep -j 16` | **Pass.** Every check `ok`, incl. `sea_level` (0.11 m, recomputed 0.11 m) and `ndvi_values` (6,368 px, p99 0 steps). Scene z9+ height error p50 0.001 m, p99 0.162 m, max 2.08 m over 346,670 vertices: the Mac's values. 162 s |
 | Pack | `pack` | `.sqfs` 3.51 GB in 10 s, sha256 `8b8d92cc21606d30…` |
 | Image | `ci_validate.sh --docker camsim:linux-r1` | **Pass** (NVENC, `--gpus all`) |
@@ -921,8 +921,10 @@ TIME_WAIT for 60 s and CamSim's health server retries the bind every 2 s ("port 
 unreachable for a minute. `camsim_session.py` and `render_check.py` now wait the port out before launching (as
 `run_bench.py` already did), and `ready_s` starts after the wait.
 
-Follow-ups: fix the build's RSS accounting for forked workers (measure each worker's own peak, not `ru_maxrss`
-inherited from the parent), and find the source of the bare `sys.excepthook` errors at pool teardown.
+Follow-up: fix the build's RSS accounting for forked workers (measure each worker's own peak, not `ru_maxrss`
+inherited from the parent). The bare `sys.excepthook` lines are found and fixed (2026-10-11): `sources/base.py` caches
+open rasterio datasets (`_dataset`, `lru_cache`), which were freed only at interpreter teardown, one error per cached
+dataset per worker. They were read-only, so no tile was affected; an `atexit` handler now clears the cache.
 
 ### R2 vector features (2026-10-10, macOS)
 
