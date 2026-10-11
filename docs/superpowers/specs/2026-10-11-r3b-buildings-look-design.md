@@ -173,7 +173,7 @@ raster, so they cannot disagree.
 
 - New built-in thermal class `building_roof`, the 16th, leaving 16 of 32 free.
   - `DefaultMaterialName[230] = "building_roof"`.
-  - `FamilyForCode(230)` = BuiltUp.
+  - `FamilyForCode(230)` = Bare. BuiltUp would replace the class with the asphalt/concrete refinement and hide `building_roof`; Bare keeps the roof class and only blends toward vegetation on green pixels (corrected while planning).
   - Parameters: a light, low-mass roof, hot at midday and below air temperature at night. The values are chosen in
     the plan with cited sources.
 - It is class-table data only, with no shader change. `CamSim.GPU.Thermal.LandCoverMatchesCpu` and `MatchesCpu`
@@ -219,11 +219,11 @@ The following are updated:
   - the 5-point clearance rule;
   - no mask means unchanged cell hashes;
   - config parsing and validation;
-  - 230 → `building_roof` / BuiltUp;
+  - 230 → `building_roof` / Bare;
   - class count 16;
   - existing thermal and vegetation tests pass.
 - **Live acceptance** on a rebuilt `pendleton-r4`:
-  1. **Trees:** the vegetation dump against the footprints shows 0 trees inside a footprint buffered by the clearance.
+  1. **Trees:** the vegetation dump against the footprints shows 0 trees whose trunk or any of its 4 clearance points is masked, and 0 trunks inside a footprint shrunk by 0.76 m (half a mask cell diagonal); the count inside the clearance-buffered footprint is reported, not gated (5 probes cannot see footprint corners).
      `vegetation_check.py` placement, determinism and off-switch gates pass.
   2. **Roofs:** close obliques at Mainside and on the Oceanside dense path, with textures on and with
      `roof_textures = false`. Low-rise roof texture is aligned with the ground imagery within 1–2 m, judged from the
