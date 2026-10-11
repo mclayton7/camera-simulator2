@@ -6,6 +6,7 @@
 #include "Config/CamSimConfig.h"
 
 class UWorld;
+class ACesium3DTileset;
 class UCesiumIonServer;
 
 struct FCamSimGeospatialCapabilities
@@ -49,6 +50,11 @@ namespace CamSim::Geospatial
 	 * ID, -1 for non-ion sources. INDEX_NONE when there are none.
 	 */
 	int32 SelectTerrainTileset(TConstArrayView<int64> IonAssetIds);
+
+	/** Actor tag ApplyCesiumBackendConfig puts on the terrain tileset (REALISM R4: vegetation grounds on it). */
+	extern CAMSIMTEST_API const FName TerrainTilesetTag;
+	/** The tileset tagged TerrainTilesetTag; else the only one; else nullptr. */
+	CAMSIMTEST_API ACesium3DTileset* PickTerrainTileset(TConstArrayView<ACesium3DTileset*> Tilesets);
 }
 
 /**

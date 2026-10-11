@@ -25,6 +25,20 @@ int32 SelectTerrainTileset(TConstArrayView<int64> IonAssetIds)
 	}
 	return IonAssetIds.IsEmpty() ? INDEX_NONE : 0;
 }
+
+const FName TerrainTilesetTag(TEXT("CamSimTerrain"));
+
+ACesium3DTileset* PickTerrainTileset(TConstArrayView<ACesium3DTileset*> Tilesets)
+{
+	for (ACesium3DTileset* T : Tilesets)
+	{
+		if (T && T->Tags.Contains(TerrainTilesetTag))
+		{
+			return T;
+		}
+	}
+	return Tilesets.Num() == 1 ? Tilesets[0] : nullptr;
+}
 } // namespace CamSim::Geospatial
 
 namespace
@@ -152,6 +166,8 @@ UCesiumIonServer* ApplyCesiumBackendConfig(
 
 	if (ACesium3DTileset* Tileset = Tilesets.IsValidIndex(TerrainIndex) ? Tilesets[TerrainIndex] : nullptr)
 	{
+		Tileset->Tags.AddUnique(CamSim::Geospatial::TerrainTilesetTag);
+
 		// Apply custom ion server to this tileset
 		if (CustomServer)
 		{

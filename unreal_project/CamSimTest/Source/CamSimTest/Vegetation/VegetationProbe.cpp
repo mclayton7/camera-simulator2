@@ -38,7 +38,7 @@ namespace
 		LogInstancedUsage(Mesh);
 		UCamSimSubsystem* Sub = World->GetGameInstance() ? World->GetGameInstance()->GetSubsystem<UCamSimSubsystem>() : nullptr;
 		ACamSimCamera* Cam = Sub ? Sub->GetCamera() : nullptr;
-		ACesium3DTileset* Terrain = (Sub && Sub->GetCachedTilesets().Num() > 0) ? Sub->GetCachedTilesets()[0].Get() : nullptr; // Task 9 replaces this with Sub->GetTerrainTileset()
+		ACesium3DTileset* Terrain = Sub ? Sub->GetTerrainTileset() : nullptr;
 		if (!Cam || !Terrain) { UE_LOG(LogCamSim, Error, TEXT("Vegetation probe: no camera or terrain tileset")); return; }
 		const double Lat = Cam->GetTelemetry().Latitude, Lon = Cam->GetTelemetry().Longitude;
 		TWeakObjectPtr<UWorld> WeakWorld(World);

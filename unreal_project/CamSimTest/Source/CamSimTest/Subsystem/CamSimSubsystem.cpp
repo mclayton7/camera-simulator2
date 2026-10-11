@@ -287,6 +287,19 @@ void UCamSimSubsystem::RefreshCachedTilesets()
 	UE_LOG(LogCamSim, Log, TEXT("CamSimSubsystem: cached %d tileset actor(s)"), CachedTilesets_.Num());
 }
 
+ACesium3DTileset* UCamSimSubsystem::GetTerrainTileset() const
+{
+	TArray<ACesium3DTileset*> Live;
+	for (const TWeakObjectPtr<ACesium3DTileset>& W : GetCachedTilesets())
+	{
+		if (ACesium3DTileset* T = W.Get())
+		{
+			Live.Add(T);
+		}
+	}
+	return CamSim::Geospatial::PickTerrainTileset(Live);
+}
+
 const TArray<TWeakObjectPtr<ACesium3DTileset>>& UCamSimSubsystem::GetCachedTilesets() const
 {
 	if (!bCachedTilesetsInitialized_)

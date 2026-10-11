@@ -172,6 +172,9 @@ public:
 	/** Force a refresh of the cached tileset list. Must be called on the game thread. */
 	void RefreshCachedTilesets();
 
+	/** The terrain tileset (tagged by ApplyCesiumBackendConfig), or nullptr. Game thread. */
+	ACesium3DTileset* GetTerrainTileset() const;
+
 private:
 	FCamSimConfig    Config;
 	bool             bSensorGraphAvailable = false;
