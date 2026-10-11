@@ -27,6 +27,7 @@ METRICS = [
     "families_mean",
     "emitted_fps",
     "dropped",
+    "gpu_mem_mib_max",
 ]
 
 

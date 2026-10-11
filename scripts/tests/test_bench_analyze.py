@@ -110,3 +110,16 @@ def test_game_thread_p95_is_reported_per_phase():
     out = analyze.summarize(rows, phases)["orbit"]
     assert out["game_ms_p50"] == 50.0
     assert out["game_ms_p95"] == 94.0
+
+
+def test_gpu_memory_max_per_phase_and_unknown_is_none():
+    rows = [_row(t, 33.0) for t in range(20)]
+    phases = [
+        {"name": "orbit", "start": 0, "end": 10, "measured": True},
+        {"name": "slew", "start": 10, "end": 20, "measured": True},
+    ]
+    samples = [(1.0, 900.0), (5.0, 1200.0), (12.0, None)]
+    out = analyze.summarize(rows, phases, mem_samples=samples)
+    assert out["orbit"]["gpu_mem_mib_max"] == 1200.0
+    assert out["slew"]["gpu_mem_mib_max"] is None
+    assert "gpu_mem_mib_max" not in analyze.summarize(rows, phases)["orbit"]

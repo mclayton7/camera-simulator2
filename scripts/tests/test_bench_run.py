@@ -1,6 +1,8 @@
 """Launch helpers in run_bench.py: port and process checks."""
 
 import os
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from bench import run_bench, scenario
@@ -140,3 +142,48 @@ def test_phases_and_shots_flags_parse_as_lists():
     assert a.phases == ["orbit", "slew"] and a.shots == ["horizon"]
     b = run_bench.build_parser().parse_args(["--label", "x"])
     assert b.phases is None and b.shots is None
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _ran(stdout, rc=0):
+    return lambda *a, **k: SimpleNamespace(returncode=rc, stdout=stdout, stderr="")
+
+
+def test_nvidia_smi_sums_gpus_and_handles_absence():
+    assert run_bench.nvidia_smi_mib(_ran("1024\n2048\n")) == 3072.0
+    assert run_bench.nvidia_smi_mib(_ran("", rc=127)) is None
+
+    def boom(*a, **k):
+        raise FileNotFoundError("nvidia-smi")
+
+    assert run_bench.nvidia_smi_mib(boom) is None
+
+
+def test_footprint_parses_the_captured_camsim_output():
+    text = (FIXTURES / "footprint_camsim.txt").read_text()
+    got = run_bench.footprint_mib("123", _ran(text))
+    if run_bench.FOOTPRINT_CATEGORY.lower() in text.lower():
+        assert got is not None and got > 100.0  # CamSim holds well over 100 MiB of GPU memory
+    else:
+        assert got is None
+
+
+def test_footprint_units_and_failures():
+    table = (
+        "  Dirty      Clean  Reclaimable    Regions    Category\n"
+        "    ---        ---          ---        ---    ---\n"
+        f"1.5 GB        0 B          0 B         12    {run_bench.FOOTPRINT_CATEGORY}\n"
+    )
+    assert run_bench.footprint_mib("1", _ran(table)) == 1536.0
+    assert run_bench.footprint_mib("1", _ran("no such process", rc=1)) is None
+
+    def boom(*a, **k):
+        raise PermissionError("footprint")
+
+    assert run_bench.footprint_mib("1", boom) is None
+
+
+def test_gpu_mem_flag_parses():
+    assert run_bench.build_parser().parse_args(["--label", "x", "--gpu-mem"]).gpu_mem

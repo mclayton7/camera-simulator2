@@ -17,6 +17,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -24,6 +25,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -275,6 +277,79 @@ def filter_shots(
     return [s for s in shots if s.name in names]
 
 
+FOOTPRINT_CATEGORY = "IOAccelerator"  # Step 1 capture: rows "IOAccelerator" and "IOAccelerator (graphics)" are summed
+_UNITS = {"B": 1.0 / 2**20, "KB": 1.0 / 1024, "MB": 1.0, "GB": 1024.0}
+
+
+def nvidia_smi_mib(run=subprocess.run) -> float | None:
+    """memory.used summed over GPUs (whole-GPU, as scale_bench.py reads it); None without nvidia-smi."""
+    try:
+        r = run(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001 -- absent or broken tool reads as "unknown"
+        return None
+    vals = [float(x) for x in r.stdout.split() if x.replace(".", "", 1).isdigit()]
+    return sum(vals) if r.returncode == 0 and vals else None
+
+
+def footprint_mib(pid: str, run=subprocess.run) -> float | None:
+    """Dirty size of the FOOTPRINT_CATEGORY rows of `footprint -p PID` (macOS; Apple Silicon GPU allocations)."""
+    try:
+        r = run(["footprint", "-p", pid], capture_output=True, text=True, check=False)
+    except Exception:  # noqa: BLE001 -- absent or denied tool reads as "unknown"
+        return None
+    if r.returncode != 0:
+        return None
+    pat = re.compile(
+        r"^\s*([\d.]+)\s*(B|KB|MB|GB)\s+.*" + re.escape(FOOTPRINT_CATEGORY),
+        re.IGNORECASE,
+    )
+    total = None
+    for line in r.stdout.splitlines():
+        m = pat.match(line)
+        if m:
+            total = (total or 0.0) + float(m.group(1)) * _UNITS[m.group(2).upper()]
+    return total
+
+
+class MemSampler:
+    """Polls a GPU-memory reader every interval_s on a thread; samples are (unix time, MiB or None)."""
+
+    def __init__(self, read: Callable[[], float | None], interval_s: float = 5.0) -> None:
+        self.read, self.interval_s = read, interval_s
+        self.samples: list[tuple[float, float | None]] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self.samples.append((time.time(), self.read()))
+            self._stop.wait(self.interval_s)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=30)
+
+
+def gpu_mem_reader(
+    docker: bool, pid_file: Path
+) -> tuple[str | None, Callable[[], float | None] | None]:
+    if shutil.which("nvidia-smi"):
+        return "nvidia-smi", nvidia_smi_mib
+    if sys.platform == "darwin" and not docker and shutil.which("footprint"):
+        return "footprint", lambda: footprint_mib(
+            pid_file.read_text().split()[0]
+        ) if pid_file.exists() else None
+    return None, None
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
@@ -289,6 +364,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="base of the flight: sf (default) or pendleton (adds a coastal low pass)",
     )
     ap.add_argument("--skip-warmup", action="store_true")
+    ap.add_argument(
+        "--gpu-mem",
+        action="store_true",
+        help="sample GPU memory during the run (nvidia-smi on Linux, footprint on macOS); off by default",
+    )
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
         "--docker",
@@ -412,6 +492,8 @@ def main() -> int:
             stdout=subprocess.DEVNULL,
         )
     phases_log: list[dict] = []
+    sampler: MemSampler | None = None
+    mem_source: str | None = None
     sensor_path: str | None = None
     latency: dict = {}
     ready_s: float | None = None
@@ -422,6 +504,12 @@ def main() -> int:
         else:
             wait_ready(pid_file)
         ready_s = time.time() - t_launch
+        mem_source, mem_read = (
+            gpu_mem_reader(bool(args.docker), pid_file) if args.gpu_mem else (None, None)
+        )
+        sampler = MemSampler(mem_read) if mem_read else None
+        if sampler:
+            sampler.start()
         metrics = http_text("/metrics") or ""
         sensor_path = sensor_path_from_metrics(metrics)
         print(
@@ -483,6 +571,8 @@ def main() -> int:
                 out / "shots" / f"{shot.name}_sensor.png", route="/snapshot/sensor"
             )
     finally:
+        if sampler:
+            sampler.stop()
         host.stop.set()
         if args.docker:
             log = subprocess.run(
@@ -529,6 +619,7 @@ def main() -> int:
             if args.docker
             else None,
             "env": extra_env,
+            "gpu_mem_source": mem_source,
             "ready_s": round(ready_s, 1) if ready_s is not None else None,
             "latency": latency,
             "warmup_ran": not args.skip_warmup,
@@ -539,7 +630,11 @@ def main() -> int:
             "sensor": args.sensor,
             "config": str(args.config) if args.config else None,
         },
-        "phases": analyze.summarize(rows, phases_log),
+        "phases": analyze.summarize(
+            rows,
+            phases_log,
+            mem_samples=sampler.samples if sampler else ([] if args.gpu_mem else None),
+        ),
     }
     (out / "results.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results["phases"], indent=2))
