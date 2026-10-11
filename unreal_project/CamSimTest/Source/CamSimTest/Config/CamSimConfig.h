@@ -472,6 +472,8 @@ struct FCamSimConfig
 		FString SeaLevelStation;
 		// file:/// URL of <dir>/features/buildings/tileset.json; empty when the package has none (ResolvePackage).
 		FString BuildingsUrl;
+		// Absolute features/buildings/mask/ of the package when it has index.json (REALISM R3b; the tree scatter reads it).
+		FString BuildingsMaskDir;
 		TArray<FString> ResolveErrors;
 		TArray<FString> ResolveWarnings;
 	} Scene;

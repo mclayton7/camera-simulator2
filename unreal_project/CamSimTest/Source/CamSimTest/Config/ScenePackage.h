@@ -35,7 +35,7 @@ namespace CamSimScene
 	/**
 	 * Apply scene.dir to Cfg: each layer the package has (terrain/layer.json,
 	 * imagery/tilemapresource.xml, landcover/index.json) replaces cesium.terrain, cesium.imagery
-	 * and thermal.land_cover.dir; sea_level.json sets Cfg.Scene.SeaLevelOffsetM (the ocean datum); features/buildings/tileset.json sets Cfg.Scene.BuildingsUrl. Fills Cfg.Scene.PackageName / ResolveErrors / ResolveWarnings
+	 * and thermal.land_cover.dir; sea_level.json sets Cfg.Scene.SeaLevelOffsetM (the ocean datum); features/buildings/tileset.json sets Cfg.Scene.BuildingsUrl and features/buildings/mask/index.json Cfg.Scene.BuildingsMaskDir (REALISM R3b). Fills Cfg.Scene.PackageName / ResolveErrors / ResolveWarnings
 	 * (Validate() and ValidateWarnings() report them). No-op when scene.dir is empty.
 	 */
 	void ResolvePackage(FCamSimConfig& Cfg);

@@ -93,6 +93,7 @@ void ResolvePackage(FCamSimConfig& Cfg)
 	Scene.SeaLevelOffsetM = 0.0;
 	Scene.SeaLevelStation.Reset();
 	Scene.BuildingsUrl.Reset();
+	Scene.BuildingsMaskDir.Reset();
 	Scene.ResolveErrors.Reset();
 	Scene.ResolveWarnings.Reset();
 
@@ -174,6 +175,10 @@ void ResolvePackage(FCamSimConfig& Cfg)
 	if (FPaths::FileExists(BuildingsFile))
 	{
 		Scene.BuildingsUrl = PathToFileUrl(BuildingsFile);
+	}
+	if (FPaths::FileExists(Dir / TEXT("features/buildings/mask/index.json")))
+	{
+		Scene.BuildingsMaskDir = Dir / TEXT("features/buildings/mask");
 	}
 
 	const FString SeaFile = Dir / TEXT("sea_level.json");
