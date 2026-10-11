@@ -197,6 +197,8 @@ bool FPickTerrainTilesetWithBuildingsTest::RunTest(const FString& Parameters)
 	Buildings->Tags.Add(BuildingsTag);
 	TestTrue(TEXT("buildings first"), PickTerrainTileset({ Buildings, Terrain }) == Terrain);
 	TestTrue(TEXT("terrain first"), PickTerrainTileset({ Terrain, Buildings }) == Terrain);
-	TestNull(TEXT("buildings alone are not terrain"), PickTerrainTileset({ Buildings, Buildings }));
+	TestNull(TEXT("buildings alone are not terrain"), PickTerrainTileset({ Buildings }));
+	ACesium3DTileset* Untagged = NewObject<ACesium3DTileset>(GetTransientPackage());
+	TestTrue(TEXT("buildings + untagged: the untagged"), PickTerrainTileset({ Buildings, Untagged }) == Untagged);
 	return true;
 }
