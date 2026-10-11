@@ -1,6 +1,7 @@
 """Launch helpers in run_bench.py: port and process checks."""
 
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -163,18 +164,15 @@ def test_nvidia_smi_sums_gpus_and_handles_absence():
 
 def test_footprint_parses_the_captured_camsim_output():
     text = (FIXTURES / "footprint_camsim.txt").read_text()
-    got = run_bench.footprint_mib("123", _ran(text))
-    if run_bench.FOOTPRINT_CATEGORY.lower() in text.lower():
-        assert got is not None and got > 100.0  # CamSim holds well over 100 MiB of GPU memory
-    else:
-        assert got is None
+    # IOAccelerator 1694 + IOAccelerator (graphics) 1113 (once) + Owned physical footprint (unmapped) (graphics) 2570
+    assert run_bench.footprint_mib("123", _ran(text)) == 5377.0
 
 
 def test_footprint_units_and_failures():
     table = (
         "  Dirty      Clean  Reclaimable    Regions    Category\n"
         "    ---        ---          ---        ---    ---\n"
-        f"1.5 GB        0 B          0 B         12    {run_bench.FOOTPRINT_CATEGORY}\n"
+        f"1.5 GB        0 B          0 B         12    {run_bench.FOOTPRINT_CATEGORY_PREFIX}\n"
     )
     assert run_bench.footprint_mib("1", _ran(table)) == 1536.0
     assert run_bench.footprint_mib("1", _ran("no such process", rc=1)) is None
@@ -183,6 +181,19 @@ def test_footprint_units_and_failures():
         raise PermissionError("footprint")
 
     assert run_bench.footprint_mib("1", boom) is None
+
+
+def test_footprint_pid_file_guard_and_timeouts(tmp_path):
+    empty = tmp_path / "pid"
+    empty.write_text("")
+    assert run_bench._footprint_of_pid_file(empty) is None
+    assert run_bench._footprint_of_pid_file(tmp_path / "missing") is None
+
+    def hung(*a, **k):
+        raise subprocess.TimeoutExpired("x", 10)
+
+    assert run_bench.footprint_mib("1", hung) is None
+    assert run_bench.nvidia_smi_mib(hung) is None
 
 
 def test_gpu_mem_flag_parses():

@@ -98,3 +98,10 @@ uv run --with pillow python scripts/bench/snap_test.py FRAMES_JSONL OUT
 Against a running CamSim with frame stats and `/snapshot` on: settles over SF, snaps the gimbal
 90° (both ways) and saves snapshots at +0.3/1/3 s with their sharpness. Used to choose
 `frustum_culling` / `maximum_screen_space_error` (`docs/configuration.md`, Cesium Tile Streaming).
+
+## GPU memory (`--gpu-mem`)
+
+Opt-in. Linux samples `nvidia-smi memory.used` (whole GPU, sum over GPUs). macOS samples
+`footprint -p PID` every 5 s and sums the Dirty size of every `IOAccelerator*` row plus every
+row whose category ends in `(graphics)`, each row once (footprint's `(graphics)` annotation is
+disjoint from the other rows). Each phase reports `gpu_mem_mib_max`; `null` when unavailable.

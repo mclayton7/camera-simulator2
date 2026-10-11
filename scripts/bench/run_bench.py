@@ -277,7 +277,13 @@ def filter_shots(
     return [s for s in shots if s.name in names]
 
 
-FOOTPRINT_CATEGORY = "IOAccelerator"  # Step 1 capture: rows "IOAccelerator" and "IOAccelerator (graphics)" are summed
+# macOS GPU memory = Dirty size of every `footprint` row whose category starts with this prefix
+# or ends with FOOTPRINT_GRAPHICS_SUFFIX, each row once (scripts/tests/fixtures/footprint_camsim.txt).
+# "(graphics)" is footprint's disjoint ledger annotation, so it includes the largest row,
+# "Owned physical footprint (unmapped) (graphics)".
+FOOTPRINT_CATEGORY_PREFIX = "IOAccelerator"
+FOOTPRINT_GRAPHICS_SUFFIX = "(graphics)"
+TOOL_TIMEOUT_S = 10.0
 _UNITS = {"B": 1.0 / 2**20, "KB": 1.0 / 1024, "MB": 1.0, "GB": 1024.0}
 
 
@@ -289,29 +295,42 @@ def nvidia_smi_mib(run=subprocess.run) -> float | None:
             capture_output=True,
             text=True,
             check=False,
+            timeout=TOOL_TIMEOUT_S,
         )
-    except Exception:  # noqa: BLE001 -- absent or broken tool reads as "unknown"
+    except Exception:  # noqa: BLE001 -- absent, hung or broken tool reads as "unknown"
         return None
     vals = [float(x) for x in r.stdout.split() if x.replace(".", "", 1).isdigit()]
     return sum(vals) if r.returncode == 0 and vals else None
 
 
 def footprint_mib(pid: str, run=subprocess.run) -> float | None:
-    """Dirty size of the FOOTPRINT_CATEGORY rows of `footprint -p PID` (macOS; Apple Silicon GPU allocations)."""
+    """GPU memory of `footprint -p PID` (macOS), MiB: Dirty sizes of the IOAccelerator rows plus every
+    "(graphics)" row, each row counted once; None when the tool fails or has no such row."""
     try:
-        r = run(["footprint", "-p", pid], capture_output=True, text=True, check=False)
-    except Exception:  # noqa: BLE001 -- absent or denied tool reads as "unknown"
+        r = run(
+            ["footprint", "-p", pid],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=TOOL_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 -- absent, denied or hung tool reads as "unknown"
         return None
     if r.returncode != 0:
         return None
     pat = re.compile(
-        r"^\s*([\d.]+)\s*(B|KB|MB|GB)\s+.*" + re.escape(FOOTPRINT_CATEGORY),
+        r"^\s*([\d.]+)\s*(B|KB|MB|GB)(?:\s+[\d.]+\s*[A-Z]+){2}\s+\d+\s+(.+?)\s*$",
         re.IGNORECASE,
     )
     total = None
     for line in r.stdout.splitlines():
         m = pat.match(line)
-        if m:
+        if not m:
+            continue
+        cat = m.group(3).lower()
+        if cat.startswith(FOOTPRINT_CATEGORY_PREFIX.lower()) or cat.endswith(
+            FOOTPRINT_GRAPHICS_SUFFIX
+        ):
             total = (total or 0.0) + float(m.group(1)) * _UNITS[m.group(2).upper()]
     return total
 
@@ -338,15 +357,21 @@ class MemSampler:
         self._thread.join(timeout=30)
 
 
+def _footprint_of_pid_file(pid_file: Path) -> float | None:
+    try:
+        pid = pid_file.read_text().split()[0]
+    except (OSError, IndexError):  # missing, empty or being rewritten
+        return None
+    return footprint_mib(pid)
+
+
 def gpu_mem_reader(
     docker: bool, pid_file: Path
 ) -> tuple[str | None, Callable[[], float | None] | None]:
     if shutil.which("nvidia-smi"):
         return "nvidia-smi", nvidia_smi_mib
     if sys.platform == "darwin" and not docker and shutil.which("footprint"):
-        return "footprint", lambda: footprint_mib(
-            pid_file.read_text().split()[0]
-        ) if pid_file.exists() else None
+        return "footprint", lambda: _footprint_of_pid_file(pid_file)
     return None, None
 
 
