@@ -300,3 +300,41 @@ def test_features_validation(bad):
 def test_features_not_settable_through_priorities():
     with pytest.raises(ConfigError):
         parse_scene({**BASE, "priorities": {"features": ["osm_geofabrik"]}})
+
+
+BUILDINGS_TOML = {"name": "t", "bbox": [10.0, 10.0, 10.1, 10.1]}
+
+
+def test_no_buildings_section_leaves_layers_unchanged():
+    plan = parse_scene(dict(BUILDINGS_TOML))
+    assert plan.buildings == {} and plan.priorities["buildings"] == []
+    assert "buildings" not in layer_settings(plan)
+
+
+def test_buildings_section_defaults_and_settings():
+    plan = parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "buildings": {}})
+    assert plan.buildings == {"enabled": True, "release": "2026-09-23.1", "min_area_m2": 10.0}
+    assert plan.priorities["buildings"] == ["overture_buildings"]
+    assert plan.source_options["overture_buildings"] == {"release": "2026-09-23.1"}
+    s = layer_settings(plan)["buildings"]
+    assert s["tiers"] == {"13": 2000.0, "14": 300.0} and s["leaf_zoom"] == 15
+    assert s["geometric_error"] == {"root": 200.0, "13": 60.0, "14": 20.0, "15": 6.0}
+
+
+def test_buildings_disabled_is_no_layer():
+    plan = parse_scene({**BUILDINGS_TOML, "buildings": {"enabled": False}})
+    assert plan.priorities["buildings"] == [] and "buildings" not in layer_settings(plan)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"enabled": "yes"}, {"release": ""}, {"release": 5}, {"min_area_m2": -1}, {"min_area_m2": True}, {"colour": 1}],
+)
+def test_buildings_section_rejects_bad_values(bad):
+    with pytest.raises(ConfigError, match="buildings"):
+        parse_scene({**BUILDINGS_TOML, "buildings": bad})
+
+
+def test_priorities_buildings_cannot_be_set_directly():
+    with pytest.raises(ConfigError, match="buildings"):
+        parse_scene({**BUILDINGS_TOML, "priorities": {"buildings": ["overture_buildings"]}})

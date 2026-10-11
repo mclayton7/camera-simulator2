@@ -429,3 +429,21 @@ def test_load_features_caches_the_extract(tmp_path, monkeypatch):
     no_cache = BuildContext("pkg", m.to_dict(), ctx.asset_paths, {})
     pipeline._load_features(m, no_cache)
     assert len(calls) == 3
+
+
+def test_buildings_need_odbl_on_the_allow_list(tmp_path):
+    scene = synthetic_scene(tmp_path / "src")
+    scene["buildings"] = {}
+    with pytest.raises(LicenceError, match="ODbL-1.0"):
+        plan_scene(parse_scene(scene), tmp_path / "pkg", http=FakeHttp({}), out=io.StringIO())
+
+
+def test_buildings_source_needs_no_footprint():
+    from types import SimpleNamespace
+
+    from camsim_scene.manifest import AssetRecord, SourceRecord
+    from camsim_scene.pipeline import _needs_footprints
+
+    asset = AssetRecord(id="buildings-x", url="overture://x", group="overture_buildings")
+    rec = SourceRecord("overture_buildings", "overture_buildings", "O", "x", "ODbL-1.0", "", {"release": "x"}, [asset])
+    assert not _needs_footprints(SimpleNamespace(sources=[rec]))

@@ -33,7 +33,7 @@ from pathlib import Path
 
 from .tiling import GLOBE, Bounds, Region
 
-LAYERS = ("terrain", "imagery", "landcover", "features")
+LAYERS = ("terrain", "imagery", "landcover", "features", "buildings")
 TILED_LAYERS = ("terrain", "imagery")
 KM_PER_DEG = 111.32
 ROAD_CLASSES = ("motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential")
@@ -60,6 +60,7 @@ KEYS = {
     "ndvi_max_zoom",
     "sea_level",
     "features",
+    "buildings",
 }
 
 PROFILES = {
@@ -69,6 +70,7 @@ PROFILES = {
             "imagery": ["wc_s2", "bmng"],
             "landcover": ["worldcover"],
             "features": [],
+            "buildings": [],
         },
         "bbox_zoom": {"terrain": 14, "imagery": 13},
         "ndvi": False,
@@ -79,6 +81,7 @@ PROFILES = {
             "imagery": ["naip_pc", "wc_s2", "bmng"],
             "landcover": ["worldcover"],
             "features": [],
+            "buildings": [],
         },
         "bbox_zoom": {"terrain": 16, "imagery": 17},
         "ndvi": True,
@@ -183,6 +186,7 @@ class ScenePlan:
     ndvi_max_zoom: int = NDVI_MAX_ZOOM
     sea_level_station: str | None = None
     features: dict = field(default_factory=dict)
+    buildings: dict = field(default_factory=dict)
 
     def ring_bounds(self) -> Bounds:
         return ring_bounds(self.bbox, self.ring_km)
@@ -216,6 +220,50 @@ def _int(data: dict, key: str, default: int, lo: int, hi: int) -> int:
     if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
         raise ConfigError(f"{key} must be an integer in [{lo}, {hi}], got {v!r}")
     return v
+
+
+BUILDINGS_KEYS = ("enabled", "release", "min_area_m2")
+
+
+def _parse_buildings(data) -> dict:
+    from .buildings import DEFAULT_RELEASE
+
+    if "buildings" not in data:
+        return {}
+    b = data["buildings"]
+    if not isinstance(b, dict):
+        raise ConfigError("buildings must be a table")
+    unknown = set(b) - set(BUILDINGS_KEYS)
+    if unknown:
+        raise ConfigError(f"unknown key(s) in buildings: {sorted(unknown)}")
+    enabled = b.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"buildings.enabled must be true or false, got {enabled!r}")
+    release = b.get("release", DEFAULT_RELEASE)
+    if not isinstance(release, str) or not release:
+        raise ConfigError(f"buildings.release must be an Overture release id, got {release!r}")
+    area = b.get("min_area_m2", 10.0)
+    if isinstance(area, bool) or not isinstance(area, (int, float)) or not 0.0 <= area <= 10000.0:
+        raise ConfigError(f"buildings.min_area_m2 must be a number in [0, 10000], got {area!r}")
+    return {"enabled": enabled, "release": release, "min_area_m2": float(area)}
+
+
+def buildings_settings(plan: ScenePlan) -> dict | None:
+    """The buildings layer's settings (REALISM R3), or None when the layer is off."""
+    from .buildings import BUILDINGS_RULES_VERSION, GEOMETRIC_ERROR, LEAF_ZOOM, TIER_MIN_AREA_M2
+
+    if not plan.priorities["buildings"]:
+        return None
+    return {
+        "priorities": list(plan.priorities["buildings"]),
+        "release": plan.buildings["release"],
+        "min_area_m2": plan.buildings["min_area_m2"],
+        "tiers": {str(z): a for z, a in TIER_MIN_AREA_M2.items()},
+        "leaf_zoom": LEAF_ZOOM,
+        "geometric_error": {str(k): v for k, v in GEOMETRIC_ERROR.items()},
+        "rules": BUILDINGS_RULES_VERSION,
+        "format": "3d-tiles-1.1",
+    }
 
 
 def _parse_features(data) -> dict:
@@ -281,6 +329,8 @@ def parse_scene(data: dict) -> ScenePlan:
     prio = {k: list(v) for k, v in PROFILES[profile]["priorities"].items()}
     if "features" in data.get("priorities", {}):
         raise ConfigError("priorities.features is derived from [features]; set the flags instead")
+    if "buildings" in data.get("priorities", {}):
+        raise ConfigError("priorities.buildings is derived from [buildings]; set the table instead")
     for layer, ids in data.get("priorities", {}).items():
         if layer not in LAYERS:
             raise ConfigError(f"priorities.{layer}: unknown layer (one of {LAYERS})")
@@ -291,6 +341,8 @@ def parse_scene(data: dict) -> ScenePlan:
     prio["features"] = (["nhd_hr"] if features["water"] else []) + (
         ["osm_geofabrik"] if any(features[k] for k in OSM_FLAGS) else []
     )
+    buildings = _parse_buildings(data)
+    prio["buildings"] = ["overture_buildings"] if buildings.get("enabled") else []
     if ndvi and ndvi_given and not any(s in prio["imagery"] for s in (NDVI_REFERENCE, NDVI_TARGET)):
         raise ConfigError("ndvi = true needs naip_pc or wc_s2 in priorities.imagery")
     options = {k: dict(v) for k, v in DEFAULT_SOURCE_OPTIONS.items()}
@@ -299,6 +351,8 @@ def parse_scene(data: dict) -> ScenePlan:
             raise ConfigError(f"sources.{sid} must be a table")
         options.setdefault(sid, {}).update(opts)
     options.setdefault("bmng", {})["month"] = month
+    if buildings.get("enabled"):
+        options.setdefault("overture_buildings", {})["release"] = buildings["release"]
     zoom = {
         "globe": dict(GLOBE_ZOOM),
         "ring": dict(RING_ZOOM),
@@ -344,6 +398,7 @@ def parse_scene(data: dict) -> ScenePlan:
         ndvi_max_zoom=ndvi_max_zoom,
         sea_level_station=station,
         features=features,
+        buildings=buildings,
     )
 
 
@@ -435,6 +490,9 @@ def layer_settings(plan: ScenePlan) -> dict:
     fs = features_settings(plan)
     if fs is not None:
         out["landcover"]["features"] = fs
+    bs = buildings_settings(plan)
+    if bs is not None:
+        out["buildings"] = bs
     return out
 
 
