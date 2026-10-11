@@ -27,7 +27,6 @@
 - `scene.buildings.enabled: false` must be R2 bit for bit (no tileset spawned, no code path changed).
 - Code style: UE naming, `// Copyright CamSim Contributors. All Rights Reserved.`, `CoreMinimal.h` first; Python ruff line length 120.
 - Never stage into `Saved/StagedBuilds/` (CLAUDE.md). Never put Cesium in the project's Plugins.
-- Do not commit; leave commits to the coordinating agent unless told otherwise. (The commit steps below show the intended message for each task.)
 
 ## Review Focus
 
