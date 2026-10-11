@@ -37,9 +37,25 @@ def test_env_mapping_uses_ints_for_switches():
     env = sweep.row_env({"buildings": "on", "trees_shadows": "off", "trees_radius": "1000"})
     assert env == {
         "CAMSIM_SCENE_BUILDINGS_ENABLED": "1",
+        "CAMSIM_VEGETATION_ENABLED": "0",
         "CAMSIM_VEGETATION_CAST_SHADOWS": "0",
         "CAMSIM_VEGETATION_RADIUS_M": "1000",
     }
+
+
+def test_masters_are_always_sent_and_unnamed_features_are_off():
+    env = sweep.row_env({"trees": "on"})
+    assert env["CAMSIM_SCENE_BUILDINGS_ENABLED"] == "0" and env["CAMSIM_VEGETATION_ENABLED"] == "1"
+    assert sweep.row_env({}) == {"CAMSIM_SCENE_BUILDINGS_ENABLED": "0", "CAMSIM_VEGETATION_ENABLED": "0"}
+
+
+def test_baseline_is_every_master_off_or_unnamed():
+    assert sweep._is_baseline({"trees": "off"}) and sweep._is_baseline({})
+    assert not sweep._is_baseline({"buildings": "on"})
+
+
+def test_dependent_axes_of_an_unnamed_feature_collapse():
+    assert sweep.build_rows([("trees_density", ["0.5", "1"]), ("buildings", ["on"])]) == [{"buildings": "on"}]
 
 
 def test_row_label_is_filesystem_safe_and_ordered():

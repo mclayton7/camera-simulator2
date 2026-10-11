@@ -53,12 +53,12 @@ def parse_axis(text: str) -> tuple[str, list[str]]:
 
 
 def build_rows(axes: list[tuple[str, list[str]]]) -> list[dict[str, str]]:
-    """Cartesian product in axis order; a dependent axis is dropped from rows where its master is off, and the
+    """Cartesian product in axis order; a dependent axis is dropped from rows where its master is off or unnamed, and the
     duplicates that leaves are removed (first occurrence kept)."""
     rows: list[dict[str, str]] = []
     for combo in itertools.product(*[v for _, v in axes]) if axes else [()]:
         row = dict(zip([n for n, _ in axes], combo))
-        row = {k: v for k, v in row.items() if not (AXES[k][1] and row.get(AXES[k][1]) == "off")}
+        row = {k: v for k, v in row.items() if not (AXES[k][1] and row.get(AXES[k][1]) != "on")}
         if row not in rows:
             rows.append(row)
     return rows
@@ -68,8 +68,15 @@ def row_label(row: dict[str, str]) -> str:
     return "_".join(f"{k}-{v}" for k, v in row.items()) or "baseline"
 
 
+MASTERS = [k for k, (_, master) in AXES.items() if master is None]
+
+
 def row_env(row: dict[str, str]) -> dict[str, str]:
-    return {AXES[k][0]: SWITCH.get(v, v) for k, v in row.items()}
+    """Both master switches are always sent: the runtime defaults are ON, so a feature the row does not switch on
+    must be forced off or the all-off baseline would silently have it."""
+    env = {AXES[m][0]: SWITCH["on" if row.get(m) == "on" else "off"] for m in MASTERS}
+    env.update({AXES[k][0]: SWITCH.get(v, v) for k, v in row.items()})
+    return env
 
 
 def run_metrics(results_path: Path) -> dict:
@@ -98,9 +105,8 @@ def budget_verdict(row: dict, base: dict) -> dict[str, bool]:
 
 
 def _is_baseline(row: dict[str, str]) -> bool:
-    """The all-off row: it names at least one feature switch and every switch it names is off."""
-    ms = [k for k in row if AXES[k][1] is None]
-    return bool(ms) and all(row[k] == "off" for k in ms)
+    """The all-off row: every master switch is off or unnamed (unnamed ones are forced off by row_env)."""
+    return all(row.get(m) != "on" for m in MASTERS)
 
 
 def aggregate(rows: list[dict], runs: dict[str, list[dict]]) -> list[dict]:
@@ -217,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
         label = row_label(row)
         src = out / "rows" / label / "r0" / "shots" / f"{SHOT}.png"
         dst = out / "shots" / f"{label}.png"
+        dst.unlink(missing_ok=True)  # a failed r0 must not show an old shot
         if src.exists():
             dst.write_bytes(src.read_bytes())
         sheet.append((label, dst))
