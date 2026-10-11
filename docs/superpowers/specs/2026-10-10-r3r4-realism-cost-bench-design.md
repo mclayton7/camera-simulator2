@@ -29,11 +29,12 @@ A new measured phase, appended after `coast_pass` when `site.coast` (Pendleton) 
 over Mainside / Area 22 (buildings) and then up the Santa Margarita River riparian corridor (WorldCover tree cover).
 90 s, like the other phases.
 
-The exact path is chosen from data by a committed selector (`scripts/bench/select_dense_path.py`, the gate (r) pattern):
-candidate straight segments of 9 km are scored by the number of package buildings plus WorldCover code-10 texels inside
-the camera footprint along the segment (footprint from the pose and FOV over the package DEM); the best segment's start,
-bearing and altitude are written into `scenario.py` as constants with a comment naming the selector run. The selector
-reads only the package (`features/buildings/` once R3 exists; before that, land cover and Overture's snapshot).
+Gimbal yaw 0 (looking along the track). The exact path is chosen from data by a committed selector (`scripts/bench/select_dense_path.py`, the gate (r) pattern):
+candidate straight segments of 9 km are scored on the package's land cover inside the strip the camera footprint sweeps:
+T = tree-cover (code 10) fraction, B = built-up (code 50) fraction, score = T/Tmax + B/Bmax over the candidates, both
+required > 0. Built-up stands in for buildings so the path can be chosen before R3 exists. Segments whose terrain rises
+more than 150 m above the start are rejected (AGL never below 150 m). The result (start, bearing, altitude, the selector
+run) is committed as `scripts/bench/dense_path.json`, which `scenario.py` reads.
 
 ### 2. Game-thread p95
 
@@ -52,10 +53,9 @@ uv run scripts/bench/sweep.py --site pendleton --scene <package> --out .cache/be
   buildings off).
 - Each axis maps to a `CAMSIM_*` env var (table below); the mapping lives in `sweep.py` so new knobs are one line.
 - Output: `sweep.csv` / `sweep.md` with one row per setting: game p50, game p95, GPU p50, wall p95, dropped frames, fps,
-  peak GPU memory (new: on Linux `nvidia-smi memory.used` polled as `scale_bench.py` does; on macOS the process's Metal
-  allocation from a console memory dump issued by the bench at the end of the phase and parsed from the log (`rhi.DumpMemory`
-  or `memreport`; the plan's first bench task confirms which one reports Metal allocations);
-  `run_bench.py` records neither today), plus a reference shot per
+  peak GPU memory (new, opt-in `run_bench.py --gpu-mem`: on Linux `nvidia-smi memory.used` polled as `scale_bench.py`
+  does; on macOS the process footprint sampled externally with `/usr/bin/footprint -p PID`, since CamSim has no runtime
+  console channel; `n/a` when unavailable, which never counts as within budget), plus a reference shot per
   row from a fixed `dense_pass` pose (`shots/<row>.png`) and a contact sheet (`sweep_sheet.png`) for the visual side.
 - `--repeat N` (default 2) runs each row N times and reports the range, as the R1/R2 tables do.
 
@@ -82,7 +82,7 @@ M1 Pro, 1080p, EO, `dense_pass`, buildings and trees both on at their defaults, 
 | Game-thread p50 | ≤ +1.5 ms combined |
 | Game-thread p95 | ≤ +3.0 ms combined |
 | GPU frame p50 | ≤ +5 ms |
-| VRAM | ≤ +400 MB |
+| VRAM | ≤ +400 MB (381 MiB as sampled) |
 | Existing phases | within noise of R2 (game p50, wall p95) |
 
 Defaults are the most realistic row (largest radius / density, smallest SSE, shadows on) that fits the budget, chosen

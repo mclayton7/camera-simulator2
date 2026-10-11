@@ -94,7 +94,8 @@ Per building, in a local metric frame:
 - **Geometric error** per level: z13 = 60 m, z14 = 20 m, z15 = 6 m, leaves 0; root = 200 m. These are starting values the
   SSE sweep evaluates; changing them is a package rebuild, changing `maximum_screen_space_error` is not.
 - **GLB per tile:** positions in a local ENU frame at the tile centre (Y-up glTF, the 3D Tiles y-up → z-up convention),
-  the tile's `transform` = ENU→ECEF at that centre. Positions float32 relative to the centre (sub-mm at 1 km).
+  the tile's `transform` = inv(parent's world transform) × ENU→ECEF at that centre (3D Tiles transforms compose down
+  the tree; tiles without content have none). Positions float32 relative to the centre (sub-mm at 1 km).
 - **Metadata:** `EXT_mesh_features` (one feature id per building, per vertex) + `EXT_structural_metadata` property table
   `building` {`class` string, `height_m` float32, `height_source` enum, `source_id` string}. Written now so the thermal
   deepening pass needs no rebuild; not read at runtime in this slice.
@@ -104,8 +105,8 @@ Per building, in a local metric frame:
 ### 5. Verify
 
 - `verify` (default): every `.glb` listed in `tileset.json` exists and hashes match the manifest.
-- `verify --deep`: decode every tile; building count, ids and per-building roof heights match a recomputation from the
-  snapshot (exact); bounding regions contain their content.
+- `verify --deep`: decode every tile; building count and ids match a recomputation from the snapshot exactly, roof heights within
+  0.01 m (float32 positions relative to the tile centre); bounding regions contain their content.
 - Tests run CesiumGS `3d-tiles-validator` (pinned npm package, Node is already used for `check.js`) on a small fixture
   tileset; skipped if Node is missing.
 
@@ -121,13 +122,14 @@ Per building, in a local metric frame:
   | `maximum_screen_space_error` | `CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR` | from the sweep (start 16) |
   | `create_physics_meshes` | `CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES` | `true` |
 
-- **Spawn:** `ApplyCesiumBackendConfig` (world init, `PrepareCesiumWorld`) spawns one `ACesium3DTileset` named
-  `CamSimBuildings` *after* the destroy loop: source `FromUrl`, the buildings URL, the level's georeference, the
+- **Spawn:** at world init (`PrepareCesiumWorld` → `SetUpCesiumWorld`), right after `ApplyCesiumBackendConfig`'s
+  destroy loop, one `ACesium3DTileset` tagged `CamSimBuildings` is spawned: source `FromUrl`, the buildings URL, the level's georeference, the
   config's SSE and physics, the same tuning (`ApplyCesiumTilesetTuning`) and mobility as the terrain, no raster overlays,
   then `RefreshCachedTilesets()`. So `/ready` waits for buildings too (ATR frames never ship without them) and the
   culled-SSE scaling applies. `ValidateSources` accepts it under `scene.offline` (local `file:///` that exists).
   `SelectTerrainTileset` is unaffected: the buildings tileset is spawned after selection and is not an ion asset.
-- **Lookup:** `UCamSimSubsystem::GetBuildingsTileset()` (weak pointer) for the two consumers below.
+- **Lookup:** by actor tag (`CamSim::Geospatial::BuildingsTag`), since the surface probe holds only a `UWorld` and the CIGI
+  handler only needs to classify a hit actor. The frame-stats `Sse` keeps reporting the terrain tileset.
 - **CIGI material code:** in `QueryMaterialCode`'s caller, a hit whose actor is the buildings tileset reports **230 =
   building** instead of the land-cover code under the roof. `docs/terrain-feedback.md` code table gains the row.
 - **DIS clamp:** `FCesiumSurfaceProbe::TraceHeight` adds the buildings tileset to `FCollisionQueryParams` ignored actors.
