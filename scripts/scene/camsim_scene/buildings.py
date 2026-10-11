@@ -273,6 +273,14 @@ def _union(regions: list[list[float]]) -> list[float]:
     ]
 
 
+def _rigid_inverse(m: np.ndarray) -> np.ndarray:
+    """Exact inverse of a rotation + translation matrix: [R^T | -R^T t] (no LAPACK, so byte-identical everywhere)."""
+    out = np.eye(4)
+    out[:3, :3] = m[:3, :3].T
+    out[:3, 3] = -(m[:3, :3].T @ m[:3, 3])
+    return out
+
+
 def tileset_json(tiles: dict) -> dict:
     """tiles: (z, x, y) -> (buildings, ENU origin). Every ancestor of a content tile down from z13 exists in the tree
     (content-less when it holds no building of its own tier)."""
@@ -296,7 +304,7 @@ def tileset_json(tiles: dict) -> dict:
         if key in tiles:
             blds, origin = tiles[key]
             own = geodesy.enu_to_ecef_matrix(*origin)
-            out["transform"] = geodesy.matrix_to_column_major(np.linalg.inv(parent_abs) @ own)
+            out["transform"] = geodesy.matrix_to_column_major(_rigid_inverse(parent_abs) @ own)
             out["content"] = {"uri": f"{z}/{x}/{y}.glb"}
             kids_abs = own
             regions.append(_region(blds))

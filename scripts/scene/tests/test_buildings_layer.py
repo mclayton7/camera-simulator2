@@ -61,3 +61,24 @@ def test_rebuild_from_manifest_after_release_is_gone(tmp_path):
 def test_no_buildings_section_has_no_features_dir(tmp_path):
     pkg, _, info = build_synthetic(tmp_path)
     assert not (pkg / "features").exists() and "buildings" not in info["layers"]
+
+
+def test_zero_kept_buildings_writes_no_tileset_and_skips(tmp_path):
+    rows = [{"id": "tiny", "geom": box_lonlat(10.2, 10.2, 1, 1)}]
+    pkg, cache, info = build_synthetic(tmp_path, _scene(tmp_path, rows))
+    assert not (pkg / "features").exists()
+    assert info["layers"]["buildings"]["tiles"] == 0 and info["buildings"]["kept"] == 0
+    again = build_scene(pkg, cache, jobs=1)
+    assert again["layers"]["buildings"]["tiles"] == 0 and again["buildings"]["kept"] == 0
+
+
+def test_terrain_setting_change_forces_rebuild(tmp_path):
+    from camsim_scene.layers import buildings as layer
+    from camsim_scene.pipeline import make_context
+
+    pkg, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, ROWS))
+    m = Manifest.load(pkg / "manifest.json")
+    assert layer.build(pkg, m, make_context(pkg, m, cache)).skipped > 0
+    m.layers["terrain"]["probe"] = 1
+    st = layer.build(pkg, m, make_context(pkg, m, cache))
+    assert st.built > 0 and st.skipped == 0

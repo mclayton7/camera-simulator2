@@ -66,12 +66,19 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         return st
     t0 = time.monotonic()
     rec = m.source(s["priorities"][0])
-    terrain_shas = sorted(a.sha256 for sid in m.layers["terrain"]["priorities"] for a in m.source(sid).assets)
+    wst = WorkerState(ctx)
+    terrain_shas = [a.sha256 for sid in m.layers["terrain"]["priorities"] for a in m.source(sid).assets]  # in order
     credit = layer_credit(rec.attribution, rec.licence, layer="buildings")
-    inputs = inputs_hash(m.layer_settings_hash("buildings"), __version__, rec.assets[0].sha256, credit, *terrain_shas)
+    inputs = inputs_hash(
+        m.layer_settings_hash("buildings"), __version__, rec.assets[0].sha256, credit,
+        m.layer_settings_hash("terrain"), *wst.terrain_extra, *terrain_shas,
+    )
     marker, ts_path = Path(pkg) / STATE_DIR / "buildings.json", out / "tileset.json"
     prev = json.loads(marker.read_text()) if marker.exists() else None
-    if prev and prev["inputs"] == inputs and ts_path.exists() and sha256_file(ts_path) == prev["output"]:
+    if prev and prev["inputs"] == inputs and not prev["output"] and not out.exists():
+        st.seconds = round(time.monotonic() - t0, 3)  # no building survived planning: nothing on disk
+        return st
+    if prev and prev["inputs"] == inputs and prev["output"] and ts_path.exists() and sha256_file(ts_path) == prev["output"]:
         uris = [u for u, _ in B.walk_tileset(json.loads(ts_path.read_text()))]
         if all((out / u).is_file() for u in uris):
             st.tiles = st.skipped = len(uris)
@@ -80,7 +87,7 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
             st.seconds = round(time.monotonic() - t0, 3)
             return st
     shutil.rmtree(out, ignore_errors=True)
-    blds, stats = plan_from_manifest(m, ctx)
+    blds, stats = plan_from_manifest(m, ctx, wst)
     by: dict[tuple[int, int, int], list] = {}
     for b in blds:
         by.setdefault(b.tile, []).append(b)
@@ -91,9 +98,12 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         p = out / str(z) / str(x) / f"{y}.glb"
         p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(p, write_glb(mesh, table, credit.replace("\n", " ")))
-    out.mkdir(parents=True, exist_ok=True)
-    atomic_write(ts_path, canonical_json(B.tileset_json(tiles)).encode())
-    atomic_write(marker, json.dumps({"inputs": inputs, "output": sha256_file(ts_path), "stats": stats}).encode())
+    output = ""  # no tileset when nothing survived planning
+    if tiles:
+        out.mkdir(parents=True, exist_ok=True)
+        atomic_write(ts_path, canonical_json(B.tileset_json(tiles)).encode())
+        output = sha256_file(ts_path)
+    atomic_write(marker, json.dumps({"inputs": inputs, "output": output, "stats": stats}).encode())
     files = [p for p in out.rglob("*") if p.is_file()]
     st.tiles = st.built = len(tiles)
     st.files, st.bytes = len(files), sum(p.stat().st_size for p in files)

@@ -173,7 +173,7 @@ def test_tileset_tree_tiers_errors_and_transforms():
     assert z15["geometricError"] == 6.0 and z15["content"]["uri"].startswith("15/")
     walked = dict(B.walk_tileset(doc))
     for (z, x, y), (bl, origin) in _tiles(blds).items():
-        assert np.allclose(walked[f"{z}/{x}/{y}.glb"], geodesy.enu_to_ecef_matrix(*origin))
+        assert np.allclose(walked[f"{z}/{x}/{y}.glb"], geodesy.enu_to_ecef_matrix(*origin), atol=1e-3, rtol=0)
 
 
 def test_tile_region_contains_straddling_building():
