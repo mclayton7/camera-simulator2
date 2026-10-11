@@ -24,6 +24,7 @@ namespace CamSimLandCover
 		case 201: return TEXT("concrete");      // paved, concrete
 		case 210: return TEXT("rail_ballast");  // rail bed
 		case 220: return TEXT("water");         // inland water (NHD)
+		case 230: return TEXT("building_roof");  // REALISM R3b: burned building footprints
 		default:  return TEXT("terrain_default");
 		}
 	}
@@ -34,7 +35,7 @@ namespace CamSimLandCover
 		{
 		case 10: case 20: case 30: case 40: case 90: case 95: case 100: return ELandCoverFamily::Vegetation;
 		case 50: return ELandCoverFamily::BuiltUp;
-		case 60: case 200: case 201: case 210: return ELandCoverFamily::Bare;
+		case 60: case 200: case 201: case 210: case 230: return ELandCoverFamily::Bare;
 		default: return ELandCoverFamily::None;
 		}
 	}

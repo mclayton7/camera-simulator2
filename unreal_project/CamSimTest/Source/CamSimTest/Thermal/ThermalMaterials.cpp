@@ -76,6 +76,10 @@ const TArray<FThermalMaterial>& FThermalMaterialTable::BuiltIns()
 		MakeMaterial(TEXT("wetland"),         0.40f, 0.98f, 2500.0f, 15.0f, 0.004f),
 		// REALISM R2: railway ballast (dark, porous crushed rock: low thermal inertia, hot by day, cool at night).
 		MakeMaterial(TEXT("rail_ballast"),    0.20f, 0.93f,  900.0f, 10.0f, 0.025f),
+		// REALISM R3b: a light, low-mass roof (land-cover code 230, the burned footprints): the thin top layer over
+		// insulation gives a low effective inertia, so it is hot at midday and below air temperature on a clear night.
+		// Values and sources: docs/thermal.md "Classes and keys".
+		MakeMaterial(TEXT("building_roof"),   0.30f, 0.90f,  250.0f, 10.0f, 0.030f),
 	};
 	return B;
 }

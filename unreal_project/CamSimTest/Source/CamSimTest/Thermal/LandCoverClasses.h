@@ -14,7 +14,7 @@ enum class ELandCoverFamily : uint8
 	None       = 0,   // 0 no data, 70 snow and ice, 80 water: no refinement
 	Vegetation = 1,   // 10 tree, 20 shrub, 30 grass, 40 crop, 90/95 wetland/mangrove, 100 moss: blend toward bare_soil by (1 - v)
 	BuiltUp    = 2,   // 50: blend toward vegetation by v; the rest splits asphalt / concrete by base luminance
-	Bare       = 3,   // 60: blend toward vegetation by v
+	Bare       = 3,   // 60, 200/201/210 (R2), 230 (R3b): blend toward vegetation by v, else the code's own class
 };
 
 namespace CamSimLandCover

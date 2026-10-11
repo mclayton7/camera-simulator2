@@ -177,7 +177,7 @@ bool FThermalLandCoverClassTableTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("defaults: no warnings"), Table.Build({}, Materials).Num(), 0);
 	const int32 Expected[][2] = { { 0, T::TerrainDefault }, { 10, T::TreeCanopy }, { 20, T::Shrubland }, { 30, T::Grassland },
 		{ 40, T::Cropland }, { 50, T::BuiltUp }, { 60, T::BareSoil }, { 70, T::SnowIce }, { 80, T::Water }, { 90, T::Wetland },
-		{ 95, T::Wetland }, { 100, T::Grassland }, { 200, T::Asphalt }, { 201, T::Concrete }, { 210, T::RailBallast }, { 220, T::Water }, { 230, T::TerrainDefault } };
+		{ 95, T::Wetland }, { 100, T::Grassland }, { 200, T::Asphalt }, { 201, T::Concrete }, { 210, T::RailBallast }, { 220, T::Water }, { 230, T::BuildingRoof } };
 	for (const auto& E : Expected) TestEqual(*FString::Printf(TEXT("code %d"), E[0]), static_cast<int32>(Table.Class[E[0]]), E[1]);
 	TestEqual(TEXT("10 is vegetation family"), Table.Family[10], static_cast<uint8>(ELandCoverFamily::Vegetation));
 	TestEqual(TEXT("95 is vegetation family"), Table.Family[95], static_cast<uint8>(ELandCoverFamily::Vegetation));
@@ -186,6 +186,7 @@ bool FThermalLandCoverClassTableTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("200 is bare family"), Table.Family[200], static_cast<uint8>(ELandCoverFamily::Bare));
 	TestEqual(TEXT("201 is bare family"), Table.Family[201], static_cast<uint8>(ELandCoverFamily::Bare));
 	TestEqual(TEXT("210 is bare family"), Table.Family[210], static_cast<uint8>(ELandCoverFamily::Bare));
+	TestEqual(TEXT("230 is bare family (keeps building_roof, blends to vegetation)"), Table.Family[230], static_cast<uint8>(ELandCoverFamily::Bare));
 	TestEqual(TEXT("220 has no refinement"), Table.Family[220], static_cast<uint8>(ELandCoverFamily::None));
 	TestEqual(TEXT("80 has no refinement"), Table.Family[80], static_cast<uint8>(ELandCoverFamily::None));
 	TestEqual(TEXT("0 has no refinement"), Table.Family[0], static_cast<uint8>(ELandCoverFamily::None));
