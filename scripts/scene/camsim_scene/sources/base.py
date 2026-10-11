@@ -6,6 +6,7 @@ numpy: the land-cover wrapper imports sources.worldcover in a minimal environmen
 
 from __future__ import annotations
 
+import atexit
 import os
 import uuid
 from dataclasses import dataclass, field, replace
@@ -129,6 +130,13 @@ def _dataset(path: str, level: int | None):
     import rasterio
 
     return rasterio.open(path) if level is None else rasterio.open(path, overview_level=level)
+
+
+@atexit.register
+def _close_datasets() -> None:
+    """Close the cached datasets before interpreter teardown: freed later, each prints a bare "Error in
+    sys.excepthook" (one per dataset, per worker process: ~3,000 lines at the end of an R1 terrain build)."""
+    _dataset.cache_clear()
 
 
 @lru_cache(maxsize=64)
