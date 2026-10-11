@@ -54,7 +54,7 @@ def test_buildings_and_features_share_the_legend(tmp_path, monkeypatch):
 
 
 def test_buildings_inputs_rebuild_and_skip(tmp_path, monkeypatch):
-    pkg, m, build, state = _with_buildings(tmp_path, monkeypatch)
+    _, _, build, state = _with_buildings(tmp_path, monkeypatch)
     assert build().built == 2
     assert build().skipped == 2
     state["key"] = "k2"  # the kept buildings changed (snapshot, terrain, rules)
@@ -64,7 +64,7 @@ def test_buildings_inputs_rebuild_and_skip(tmp_path, monkeypatch):
 
 
 def test_no_buildings_never_reads_footprints(tmp_path, monkeypatch):
-    pkg, m, build = _lc_setup(tmp_path, monkeypatch, FEATURES)
+    _, _, build = _lc_setup(tmp_path, monkeypatch, FEATURES)
 
     def boom(*a, **k):
         raise AssertionError("footprint_raster called without [buildings]")
