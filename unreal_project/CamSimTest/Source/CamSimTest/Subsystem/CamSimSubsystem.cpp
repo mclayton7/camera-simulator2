@@ -88,6 +88,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TSharedPtr<FVegetationManager> Vegetation;
 	bool bVegetationTried = false;
 	TUniquePtr<FCesiumSurfaceProbe> VegetationProbe;   // ground check only
+	int32 VegetationSettledTicks = 0;                  // consecutive ticks with the terrain gate open (ground check)
 
 	// Transient UCesiumIonServer created when CesiumBackend config overrides defaults.
 	// TStrongObjectPtr prevents GC of this UDataAsset-derived object from a plain C++ struct.
@@ -1067,7 +1068,8 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			if (CamSimVegetation::IsLatAllowed(T.Latitude)) Impl->Vegetation->Tick(T.Latitude, T.Longitude);
 			if (!Impl->VegetationProbe)
 				Impl->VegetationProbe = MakeUnique<FCesiumSurfaceProbe>(World, GetGeospatialProvider(), Config.bCreatePhysicsMeshes);
-			CamSimVegetation::RunDebugHooks(*Impl->VegetationProbe, *Impl->Vegetation);
+			Impl->VegetationSettledTicks = Camera_->IsTerrainReady() ? Impl->VegetationSettledTicks + 1 : 0;
+			CamSimVegetation::RunDebugHooks(*Impl->VegetationProbe, *Impl->Vegetation, Impl->VegetationSettledTicks >= 60);  // 2 s
 		}
 	}
 

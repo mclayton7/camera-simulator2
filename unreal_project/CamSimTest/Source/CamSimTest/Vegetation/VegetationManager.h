@@ -95,8 +95,8 @@ namespace CamSimVegetation
 	CAMSIMTEST_API TSharedPtr<FVegetationManager> CreateLiveManager(UWorld* World, ACesium3DTileset* Terrain,
 		const FCamSimConfig& Cfg, FString& OutWhyNot);
 
-	/** Game thread, once per tick after Tick(): camsim.Vegetation.GroundCheck. Waits until streaming is idle and 200
-	 *  spawned tree bases hit the terrain when traced with Probe (the DIS clamp's complex trace, buildings ignored),
-	 *  logs |dz|, resets the CVar. */
-	CAMSIMTEST_API void RunDebugHooks(const FCesiumSurfaceProbe& Probe, FVegetationManager& Manager);
+	/** Game thread, once per tick after Tick(): camsim.Vegetation.GroundCheck. Waits until the view has settled
+	 *  (bViewSettled: the caller's terrain gate open for a while), streaming is idle and 200 spawned tree bases hit the
+	 *  terrain when traced with Probe (the DIS clamp's complex trace, buildings ignored), logs |dz|, resets the CVar. */
+	CAMSIMTEST_API void RunDebugHooks(const FCesiumSurfaceProbe& Probe, FVegetationManager& Manager, bool bViewSettled);
 }

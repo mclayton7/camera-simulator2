@@ -264,9 +264,12 @@ namespace CamSimVegetation
 		return MakeShared<FVegetationManager>(SP, MoveTemp(H));
 	}
 
-	void RunDebugHooks(const FCesiumSurfaceProbe& Probe, FVegetationManager& Manager)
+	void RunDebugHooks(const FCesiumSurfaceProbe& Probe, FVegetationManager& Manager, bool bViewSettled)
 	{
 		if (CVarVegGroundCheck.GetValueOnGameThread() == 0) return;
+		// Streaming can go idle before the terrain has refined (the first live acceptance run measured 2.1 m against
+		// tiles still loading, 0.3 s before the terrain gate opened), so also wait for the caller's settled view.
+		if (!bViewSettled) return;
 		// Only once every cell is settled: right after startup the rendered tiles are still coarse (tens of metres off the
 		// most-detailed heights for the first second or two), which would measure tile loading, not placement.
 		if (!Manager.IsIdle()) return;
