@@ -3,7 +3,7 @@
 import os
 
 import pytest
-from bench import run_bench
+from bench import run_bench, scenario
 
 NETSTAT = """Active Internet connections (including servers)
 Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)
@@ -104,3 +104,39 @@ def test_with_sensor_sets_the_waveband():
     pose = scenario.build_phases(smoke=True)[0].pose_at(0.0)
     assert run_bench.with_sensor(pose, "ir").sensor_id == 1
     assert run_bench.with_sensor(pose, "eo").sensor_id == 0
+
+
+def test_filter_phases_keeps_warmup_and_named_measured_phases():
+    phases = scenario.build_phases(site=scenario.SITES["pendleton"])
+    out = run_bench.filter_phases(phases, ["coast_pass"], skip_warmup=False)
+    assert [p.name for p in out] == ["warmup", "coast_pass"]
+
+
+def test_filter_phases_none_means_all_and_skip_warmup_drops_it():
+    phases = scenario.build_phases()
+    assert run_bench.filter_phases(phases, None, False) == phases
+    assert [p.name for p in run_bench.filter_phases(phases, None, True)] == [
+        "orbit", "slew", "low_pass", "far_origin"
+    ]
+
+
+def test_filter_phases_rejects_unknown_names_with_the_valid_list():
+    with pytest.raises(SystemExit, match="unknown phase 'dense_pas'.*orbit"):
+        run_bench.filter_phases(scenario.build_phases(), ["dense_pas"], False)
+
+
+def test_filter_shots_selects_and_rejects():
+    shots = scenario.build_shots()
+    assert [s.name for s in run_bench.filter_shots(shots, ["horizon"])] == ["horizon"]
+    assert run_bench.filter_shots(shots, None) == shots
+    with pytest.raises(SystemExit, match="unknown shot 'nope'"):
+        run_bench.filter_shots(shots, ["nope"])
+
+
+def test_phases_and_shots_flags_parse_as_lists():
+    a = run_bench.build_parser().parse_args(
+        ["--label", "x", "--phases", "orbit,slew", "--shots", "horizon"]
+    )
+    assert a.phases == ["orbit", "slew"] and a.shots == ["horizon"]
+    b = run_bench.build_parser().parse_args(["--label", "x"])
+    assert b.phases is None and b.shots is None

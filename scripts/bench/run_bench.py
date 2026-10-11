@@ -240,6 +240,41 @@ def wait_port_free(port: int, timeout_s: float = 90.0) -> None:
     print(f"[bench] warning: port {port} still busy after {timeout_s:.0f}s")
 
 
+def _csv_list(text: str) -> list[str]:
+    return [s for s in (x.strip() for x in text.split(",")) if s]
+
+
+def filter_phases(
+    phases: list[scenario.Phase], names: list[str] | None, skip_warmup: bool
+) -> list[scenario.Phase]:
+    """The phases to fly: every phase, or the warm-up plus the named measured
+    phases, in scenario order. An unknown name ends the run before CamSim starts."""
+    valid = [p.name for p in phases if p.measured]
+    for n in names or []:
+        if n not in valid:
+            sys.exit(f"unknown phase '{n}' (valid: {', '.join(valid)})")
+    out = []
+    for p in phases:
+        if not p.measured:
+            if not skip_warmup:
+                out.append(p)
+        elif names is None or p.name in names:
+            out.append(p)
+    return out
+
+
+def filter_shots(
+    shots: list[scenario.Shot], names: list[str] | None
+) -> list[scenario.Shot]:
+    if names is None:
+        return shots
+    valid = [s.name for s in shots]
+    for n in names:
+        if n not in valid:
+            sys.exit(f"unknown shot '{n}' (valid: {', '.join(valid)})")
+    return [s for s in shots if s.name in names]
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
@@ -286,6 +321,20 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="--docker: mount this camsim_config.yaml over the image's (e.g. 1080p)",
     )
+    ap.add_argument(
+        "--phases",
+        type=_csv_list,
+        default=None,
+        metavar="A,B",
+        help="measured phases to fly (comma list; the warm-up still runs). Default: all",
+    )
+    ap.add_argument(
+        "--shots",
+        type=_csv_list,
+        default=None,
+        metavar="A,B",
+        help="shots to take (comma list). Default: all",
+    )
     return ap
 
 
@@ -297,6 +346,10 @@ def with_sensor(pose: scenario.Pose, sensor: str) -> scenario.Pose:
 def main() -> int:
     args = build_parser().parse_args()
     site = scenario.SITES[args.site]
+    phases = filter_phases(
+        scenario.build_phases(smoke=args.smoke, site=site), args.phases, args.skip_warmup
+    )
+    shots = filter_shots(scenario.build_shots(smoke=args.smoke, site=site), args.shots)
 
     # Absolute: CamSim resolves relative paths against its own working directory.
     out = (
@@ -375,9 +428,7 @@ def main() -> int:
             f"[bench] ready after {ready_s:.0f}s, sensor path: {sensor_path}",
             flush=True,
         )
-        for ph in scenario.build_phases(smoke=args.smoke, site=site):
-            if ph.name == "warmup" and args.skip_warmup:
-                continue
+        for ph in phases:
             print(f"[bench] phase {ph.name} ({ph.duration_s:.0f}s)", flush=True)
             host.pose = with_sensor(ph.pose_at(0.0), args.sensor)
             if ph.measured:
@@ -421,7 +472,7 @@ def main() -> int:
         (out / "metrics.txt").write_text(metrics_end)
         latency = latency_from_metrics(metrics_end)
 
-        for shot in scenario.build_shots(smoke=args.smoke, site=site):
+        for shot in shots:
             host.pose = shot.pose
             time.sleep(1.0)  # let the pose arrive before checking the gate
             if not wait_terrain():
@@ -482,6 +533,8 @@ def main() -> int:
             "latency": latency,
             "warmup_ran": not args.skip_warmup,
             "smoke": args.smoke,
+            "phases_filter": args.phases,
+            "shots_filter": args.shots,
             "site": args.site,
             "sensor": args.sensor,
             "config": str(args.config) if args.config else None,
