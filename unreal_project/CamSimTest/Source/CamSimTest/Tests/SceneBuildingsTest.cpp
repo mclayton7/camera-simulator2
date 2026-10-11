@@ -7,6 +7,7 @@
 #include "HAL/FileManager.h"
 #include "Config/CamSimConfig.h"
 #include "Config/ScenePackage.h"
+#include "Geospatial/CesiumTuning.h"
 #include "Geospatial/CesiumWorldSetup.h"
 #include "Geospatial/SceneBuildings.h"
 #include "Cesium3DTileset.h"
@@ -90,6 +91,7 @@ bool FSceneBuildingsSpawnTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("url"), B->GetUrl(), Cfg.Scene.BuildingsUrl);
 	TestEqual(TEXT("own sse"), B->MaximumScreenSpaceError, 24.0);
 	TestTrue(TEXT("physics"), B->GetCreatePhysicsMeshes());
+	TestEqual(TEXT("culled sse never finer than its own (terrain 16, buildings 24)"), B->CulledScreenSpaceError, 24.0);
 	TestTrue(TEXT("movable"), B->GetRootComponent()->Mobility == EComponentMobility::Movable);
 	TArray<UCesiumRasterOverlay*> Overlays;
 	B->GetComponents<UCesiumRasterOverlay>(Overlays);
@@ -127,5 +129,22 @@ bool FSceneBuildingsDisabledTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("terrain only"), W.CountTilesets(), 1);
 	TestNull(TEXT("none found"), CamSim::Geospatial::FindBuildingsTileset(W.World));
 	TestFalse(TEXT("null actor is not buildings"), CamSim::Geospatial::IsBuildingsActor(nullptr));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneBuildingsCulledSseTest,
+	"CamSim.Scene.Buildings.CulledSse",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneBuildingsCulledSseTest::RunTest(const FString& Parameters)
+{
+	using CamSim::Geospatial::ResolveTilesetCulledScreenSpaceError;
+	TestEqual(TEXT("terrain keeps the terrain value"), ResolveTilesetCulledScreenSpaceError(16.0, false, 2.0), 16.0);
+	TestEqual(TEXT("terrain keeps it even when coarser than its max"),
+		ResolveTilesetCulledScreenSpaceError(4.0, false, 16.0), 4.0);
+	TestEqual(TEXT("buildings coarser than terrain use their own SSE"),
+		ResolveTilesetCulledScreenSpaceError(16.0, true, 24.0), 24.0);
+	TestEqual(TEXT("buildings finer than the (FOV-scaled) terrain value follow the terrain"),
+		ResolveTilesetCulledScreenSpaceError(48.0, true, 24.0), 48.0);
 	return true;
 }

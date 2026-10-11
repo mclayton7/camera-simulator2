@@ -24,6 +24,11 @@ namespace CamSim::Geospatial
 		return CulledSse * FMath::Max(Scale, 1.0);
 	}
 
+	double ResolveTilesetCulledScreenSpaceError(double TerrainCulledSse, bool bIsBuildings, double TilesetMaximumSse)
+	{
+		return bIsBuildings ? FMath::Max(TerrainCulledSse, TilesetMaximumSse) : TerrainCulledSse;
+	}
+
 	bool UseLodTransitions(const FCamSimConfig& Cfg)
 	{
 		return Cfg.bUseLodTransitions;
@@ -63,22 +68,22 @@ namespace CamSim::Geospatial
 		T.SetUseLodTransitions(UseLodTransitions(Cfg));
 		T.LodTransitionLength = Cfg.LodTransitionLength;
 		T.LogSelectionStats   = Cfg.bLogTileSelectionStats;
-
-		UE_LOG(LogCamSim, Log,
-			TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f cacheMB=%d descLimit=%d frustumCull=%d lodBlend=%d logStats=%d physicsMeshes=%d)"),
-			*T.GetName(), Cfg.MaxSimultaneousTileLoads,
-			Cfg.MaximumScreenSpaceError, CulledSSE,
-			Cfg.MaximumCachedBytesMB, Cfg.LoadingDescendantLimit,
-			(int)Cfg.bFrustumCulling, (int)UseLodTransitions(Cfg), (int)Cfg.bLogTileSelectionStats, (int)Cfg.bCreatePhysicsMeshes);
 	}
 
 	void ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg)
 	{
 		if (!World) return;
 
+		const double CulledSSE = ResolveCulledScreenSpaceError(Cfg);
 		for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
 		{
 			TuneTileset(**It, Cfg);
+			UE_LOG(LogCamSim, Log,
+				TEXT("CamSim: tuned tileset '%s' (maxLoads=%d SSE=%.1f culledSSE=%.0f cacheMB=%d descLimit=%d frustumCull=%d lodBlend=%d logStats=%d physicsMeshes=%d)"),
+				*It->GetName(), Cfg.MaxSimultaneousTileLoads,
+				Cfg.MaximumScreenSpaceError, CulledSSE,
+				Cfg.MaximumCachedBytesMB, Cfg.LoadingDescendantLimit,
+				(int)Cfg.bFrustumCulling, (int)UseLodTransitions(Cfg), (int)Cfg.bLogTileSelectionStats, (int)Cfg.bCreatePhysicsMeshes);
 		}
 	}
 }

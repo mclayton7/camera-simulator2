@@ -18,7 +18,10 @@ namespace CamSim::Geospatial
 	 */
 	void ApplyCesiumTilesetTuning(UWorld* World, const FCamSimConfig& Cfg);
 
-	/** The tuning ApplyCesiumTilesetTuning applies, for one tileset (the buildings tileset spawned later uses it). */
+	/**
+	 * The tuning ApplyCesiumTilesetTuning applies, for one tileset (the buildings tileset spawned later uses it).
+	 * Silent: ApplyCesiumTilesetTuning logs the terrain values, the buildings spawn logs its final ones.
+	 */
 	void TuneTileset(ACesium3DTileset& Tileset, const FCamSimConfig& Cfg);
 
 	/**
@@ -46,4 +49,12 @@ namespace CamSim::Geospatial
 	 * CulledSse, so wide views keep full off-screen detail.
 	 */
 	double ScaleCulledScreenSpaceErrorForFov(double CulledSse, double HFovDeg);
+
+	/**
+	 * Culled SSE for one tileset given the terrain's (resolved, FOV-scaled) value. The terrain uses it as is; the
+	 * scene buildings tileset never refines off-screen tiles finer than its own maximum SSE, so it takes
+	 * max(TerrainCulledSse, TilesetMaximumSse) (with frustum culling off, a finer culled SSE would load off-screen
+	 * buildings at more detail than on-screen ones).
+	 */
+	double ResolveTilesetCulledScreenSpaceError(double TerrainCulledSse, bool bIsBuildings, double TilesetMaximumSse);
 }
