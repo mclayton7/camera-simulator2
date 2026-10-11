@@ -58,6 +58,39 @@ class LandCover:
         return out
 
 
+MASK_PX = 4800  # camsim-buildings-mask-1 (REALISM R3b): the land-cover grid at 8 x
+
+
+class BuildingMask:
+    """The scene package's building footprint mask (features/buildings/mask/, REALISM R3b) at points; a tile that is not
+    there reads as no building. Same cell rule as LandCover (and the runtime FVegetationBuildingMask)."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self._tiles: dict[tuple[int, int], np.ndarray | None] = {}
+
+    def _tile(self, i: int, j: int) -> np.ndarray | None:
+        if (i, j) not in self._tiles:
+            p = self.root / lc_tile_filename(i, j)
+            self._tiles[(i, j)] = np.asarray(Image.open(p)).astype(bool) if p.exists() else None
+        return self._tiles[(i, j)]
+
+    def masked(self, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
+        lon, lat = np.asarray(lon, float), np.asarray(lat, float)
+        ti = np.floor(np.round(lat / TILE_DEG, 9)).astype(np.int64)
+        tj = np.floor(np.round(lon / TILE_DEG, 9)).astype(np.int64)
+        out = np.zeros(lon.shape, bool)
+        for i, j in set(zip(ti.ravel().tolist(), tj.ravel().tolist())):
+            a = self._tile(i, j)
+            if a is None:
+                continue
+            m = (ti == i) & (tj == j)
+            col = np.clip(np.floor((lon[m] - j * TILE_DEG) / TILE_DEG * MASK_PX).astype(np.int64), 0, MASK_PX - 1)
+            row = np.clip(np.floor(((i + 1) * TILE_DEG - lat[m]) / TILE_DEG * MASK_PX).astype(np.int64), 0, MASK_PX - 1)
+            out[m] = a[row, col]
+        return out
+
+
 @dataclass
 class Grid:
     origin_lon: float  # south-west corner
