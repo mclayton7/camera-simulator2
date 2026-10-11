@@ -976,7 +976,7 @@ Details: `.superpowers/sdd/2026-10-10-r3-buildings-slice/task-12-report.md`.
 | 3 Heights | `verify --deep` (`buildings_heights`) | **Pass.** Every roof within 0.01 m of the recomputation from the snapshot and the terrain sources. Height source: `overture_height` 60,207 (73.2 %), `overture_floors` 417 (0.5 %), `default` 21,636 (26.3 %) |
 | 4 CIGI | `send_cigi_test.py` packets (session script) | **Pass** (table below): roof HOT within 0.01 m of the built roof, code 230; 5 m outside = ground with the land-cover code; LOS hits 30.03 m along a 30.0 m path to the west wall, code 230 |
 | 5 DIS | `send_dis_test.py truck-loop --location 33.305,-117.314`; `dis_vehicle_check.py`; `gt_occlusion_check.py` | **Pass.** The re-centred loop crosses 12 Mainside footprints (231 of 1,942 annotated frames inside one). COCO `geo.alt_m` every frame (ML interval 1): largest frame-to-frame change **0.085 m** (p99 0.078 m); the truck stays on the terrain inside footprints (roof at least 3.3 m above it), truck minus DEM ground median −0.06 m, max \|·\| 1.20 m. `dis_vehicle_check.py` PASS (one stable id each for truck and boat); `gt_occlusion_check.py` PASS (both on the SF scene) |
-| 6 Bench | `bench/sweep.py` (dense_pass, repeat 2); `run_bench.py` all phases (1 run each) | **Memory fails at the shipped default; the user picks the default.** 30 fps and 0 dropped frames in every sweep row and every phase. Game thread and GPU within budget in every row. Memory: +588 MiB at the shipped SSE 16 with physics (budget +381); only SSE 32 without physics and SSE 64 pass. Existing phases at SSE 16: game p50 +0.02 to +0.70 ms (slew the most), not within noise but within budget; memory grows to +1.1 GiB over the full run as the tile cache fills (tables below) |
+| 6 Bench | `bench/sweep.py` (dense_pass, repeat 2); `run_bench.py` all phases (1 run each) | **Pass at the chosen default, SSE 64** (chosen 2026-10-11 from the combined sweep below: the only both-on setting inside the budget). 30 fps and 0 dropped frames in every sweep row and every phase. Game thread and GPU within budget in every row. Memory: +588 MiB at SSE 16 with physics, the pre-sweep starting value (budget +381); only SSE 32 without physics and SSE 64 pass. Existing phases at SSE 16: game p50 +0.02 to +0.70 ms (slew the most), not within noise but within budget; memory grows to +1.1 GiB over the full run as the tile cache fills (tables below) |
 | 7 Off switch | `CAMSIM_SCENE_BUILDINGS_ENABLED=0` on `pendleton-r3` vs `pendleton-r2` | **Pass.** All six HAT/HOT and both LOS responses identical (HOT, HAT, material code, normal, range). Shots SSIM 0.975 (Mainside nadir), 0.981 (Mainside low oblique), 0.992 (dense_oblique), within run to run (R2: 0.960–0.994) |
 | 8 Visual review | EO shots | **Pending user review.** dense_pass contact sheet `.cache/bench-r3r4/r3-buildings-sweep/sweep_sheet.png`; `.cache/r3/visual/`: `mainside_low_oblique_buildings_{on,off}.png`, `mainside_nadir_buildings_{on,off}.png`, `dense_oblique_buildings_{on,off}.png` (and `_r2`), `truck_side_*.png` (the DIS truck between buildings) |
 
@@ -1011,11 +1011,11 @@ memory +381 MiB (400 MB).
 |---|---|---|---|---|---|---|
 | 8 | on | +0.68 | +0.64 | +3.29 | +764 | memory fails |
 | 8 | off | +0.57 | +0.51 | +3.29 | +557 | memory fails |
-| **16 (shipped)** | **on** | +0.61 | +0.54 | +2.63 | **+588** | memory fails |
+| 16 (pre-sweep start) | on | +0.61 | +0.54 | +2.63 | +588 | memory fails |
 | 16 | off | +0.54 | +0.52 | +1.90 | +426 | memory fails |
 | 32 | on | +0.53 | +0.41 | +1.72 | +396 | memory fails (by 15) |
 | 32 | off | +0.46 | +0.40 | +1.00 | +276 | pass |
-| 64 | on | +0.45 | +0.39 | +0.47 | +272 | pass |
+| **64 (default)** | **on** | +0.45 | +0.39 | +0.47 | **+272** | pass |
 | 64 | off | +0.44 | +0.59 | +0.48 | +198 | pass |
 
 Physics meshes cost 70–210 MiB and ~0.1 ms of game thread; without them CIGI LOS and HAT/HOT don't see buildings, so a
@@ -1086,5 +1086,6 @@ fps and 0 dropped frames. Increase of the row median over the all-off row:
 | 64 | on | +1.05 | +1.09 | +2.98 | +359 | pass (memory within 22 MiB of its limit) |
 
 Game-thread and memory costs add (both-on = the two single-feature rows to within 0.1 ms / 17 MiB); GPU time is 0.8-0.9 ms above the sum. Of the both-on rows only SSE 64 fits the
-budget, and only just on memory. Contact sheet: `.cache/bench-r3r4/combined/sweep_sheet.png`. The shipped defaults are
-unchanged; choosing them is the user's call.
+budget, and only just on memory. Contact sheet: `.cache/bench-r3r4/combined/sweep_sheet.png`. Defaults chosen 2026-10-11 from
+this sweep: buildings SSE 64 with physics meshes (the only both-on setting inside the budget; 16 was the pre-sweep
+starting value), trees unchanged at radius 1000 m, density 1.0, shadows on.

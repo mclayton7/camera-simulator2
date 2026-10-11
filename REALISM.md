@@ -393,8 +393,9 @@ clamp ignores it. Pendleton: 82,260 buildings in 1,765 tiles, 247.9 MB, layer bu
 validator clean; rebuild and no-`[buildings]` packages byte-identical; heights 73.2 % Overture / 0.5 % floors / 26.3 %
 default; CIGI roof HOT within 0.01 m with 230, LOS range within 0.03 m of the wall with 230; DIS truck steps ≤ 0.085 m
 crossing footprints; buildings off = R2 (identical CIGI responses, shots within run to run). Bench: 30 fps and 0
-dropped frames in every row; game thread +0.45–0.68 ms; the 400 MB memory budget fails at the shipped SSE 16 (+588 MiB,
-macOS footprint) and passes at SSE 64 with physics (+272 MiB): **default SSE to be picked by the user**. **Open:** footprint
+dropped frames in every row; game thread +0.45–0.68 ms; the 400 MB memory budget fails at SSE 16, the pre-sweep starting value (+588 MiB,
+macOS graphics footprint) and passes at SSE 64 with physics (+272 MiB): **default 64, chosen 2026-10-11 from the combined
+sweep (the only both-on setting inside the budget)**. **Open:** footprint
 IoU (gate 2: needs ~30 human-traced NAIP outlines); visual review of the EO shots (pending the user); Linux/Vulkan
 (`FOR_LINUX.md`, task 5). **Deferred to the R3 deepening pass:** gabled/hipped roofs, facade/roof materials (human editor
 work, below), bridges, LiDAR nDSM heights, thermal class from the per-feature metadata, building semantic class in ground

@@ -269,7 +269,7 @@ Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 
 - The radius drives the cost: game-thread p50 grows +0.2–0.3, +0.6, +1.5–1.6 ms at 500, 1000, 2000 m (the cell
   count grows with the area: ~80, ~315, ~1,260 cells). Density and shadows move nothing beyond the run-to-run
   noise (GPU p50 varies ±1 ms between repeats of one row).
-- **Proposed defaults (pending the user's choice):** keep the starting values, radius 1000 m, density 1.0, shadows on
+- **Defaults chosen 2026-10-11:** keep the starting values, radius 1000 m, density 1.0, shadows on
   (bold row: inside every budget with margin). Radius 2000 m fits only at density 0.5 and with no game-thread
   margin left; 500 m saves ~0.35 ms but the hard cut moves into the middle distance of an oblique view.
 - Contact sheet of the `dense_oblique` shot per row: `.cache/bench-r3r4/trees/sweep_sheet.png` (table:

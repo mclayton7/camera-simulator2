@@ -451,8 +451,9 @@ struct FCamSimConfig
 		// Env: CAMSIM_SCENE_BUILDINGS_ENABLED
 		bool   bBuildingsEnabled = true;
 		// Cesium MaximumScreenSpaceError of the buildings tileset (its own, not maximum_screen_space_error).
+		// 64: chosen 2026-10-11 from the combined dense_pass sweep (the only both-on setting inside the budget).
 		// Env: CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR
-		double BuildingsMaximumScreenSpaceError = 16.0;
+		double BuildingsMaximumScreenSpaceError = 64.0;
 		// Cesium MaximumCachedBytes of the buildings tileset, MB, in [1, 65536] (the terrain keeps maximum_cached_bytes_mb).
 		// Env: CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB
 		int32  BuildingsMaximumCachedBytesMB = 512;

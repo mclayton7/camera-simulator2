@@ -268,7 +268,7 @@ scene:
   offline: false   # no network
   buildings:       # REALISM R3: the package's features/buildings/ (no-op without one)
     enabled: true
-    maximum_screen_space_error: 16
+    maximum_screen_space_error: 64
     create_physics_meshes: true
     maximum_cached_bytes_mb: 512
 ```
@@ -278,7 +278,7 @@ scene:
 | `scene.dir` | `CAMSIM_SCENE_DIR` | *(empty)* | Absolute path to a scene package (`manifest.json`, `schema_version` 1). Each layer the package has replaces the matching setting, below. A relative path, a missing or invalid `manifest.json`, or another schema version is a config error. |
 | `scene.offline` | `CAMSIM_SCENE_OFFLINE` | `false` | No network: terrain must be `url` with an existing `file:///` target, or `flat`; imagery `tms` with an existing `file:///` target, or `none`. Any config error (these or others) is logged and CamSim exits with status 1 instead of running on defaults (which would be Cesium ion). The buildings URL (below) must be an existing `file:///` too. |
 | `scene.buildings.enabled` | `CAMSIM_SCENE_BUILDINGS_ENABLED` | `true` | Spawn the package's buildings tileset (REALISM R3). Acts only when the package has `features/buildings/tileset.json`; `false` is R2 bit for bit (no tileset spawned). |
-| `scene.buildings.maximum_screen_space_error` | `CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR` | `16` | The buildings tileset's Cesium screen-space error, in `(0, 1024]` (anything else is a config error). The streaming controller's FOV-scaled culled SSE never goes below it: culled SSE = max(terrain-derived, this). Set from the `dense_pass` sweep. |
+| `scene.buildings.maximum_screen_space_error` | `CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR` | `64` | The buildings tileset's Cesium screen-space error, in `(0, 1024]` (anything else is a config error). The streaming controller's FOV-scaled culled SSE never goes below it: culled SSE = max(terrain-derived, this). Default 64, chosen 2026-10-11 from the combined sweep (the only both-on setting inside the budget; 16 was the pre-sweep starting value; [`scene-packages.md`](scene-packages.md) "R3/R4 bench check and combined cost"). |
 | `scene.buildings.create_physics_meshes` | `CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES` | `true` | Collision for the buildings tileset: CIGI LOS and HAT/HOT hit buildings (material code 230). The DIS surface clamp ignores the tileset either way. |
 | `scene.buildings.maximum_cached_bytes_mb` | `CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB` | `512` | The buildings tileset's own Cesium tile cache (`MaximumCachedBytes`), MB, in `[1, 65536]` (anything else is a config error). Applied after the terrain's tuning, which would otherwise give it a second `maximum_cached_bytes_mb` (2 GiB) cache that fills over a long flight across built-up areas. |
 
@@ -747,7 +747,7 @@ CAMSIM_VEGETATION_SEED=0
 
 # Scene package buildings (REALISM R3)
 CAMSIM_SCENE_BUILDINGS_ENABLED=1
-CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR=16
+CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR=64
 CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES=1
 CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB=512
 

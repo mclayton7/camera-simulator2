@@ -355,7 +355,7 @@ bool FSceneBuildingsConfigTest::RunTest(const FString& Parameters)
 	{
 		const FCamSimConfig Cfg;
 		TestTrue(TEXT("default enabled"), Cfg.Scene.bBuildingsEnabled);
-		TestEqual(TEXT("default sse"), Cfg.Scene.BuildingsMaximumScreenSpaceError, 16.0);
+		TestEqual(TEXT("default sse"), Cfg.Scene.BuildingsMaximumScreenSpaceError, 64.0);
 		TestTrue(TEXT("default physics"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
 		TestEqual(TEXT("default cache MB"), Cfg.Scene.BuildingsMaximumCachedBytesMB, 512);
 	}
