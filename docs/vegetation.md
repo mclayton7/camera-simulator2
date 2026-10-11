@@ -287,6 +287,31 @@ then Mainside (33.305, −117.314, 350 m, north, −30°), then a low oblique 12
   the 217 north and 368 south cells has the same hash as in the run above (`in_buildings` 0 everywhere; the log said
   `buildings none`, R4's wording; now `buildings: none`).
 
+### Trees vs building footprints (R3b mask)
+
+2026-10-11, M1 Pro / Metal, `pendleton-r4` (`pendleton-r3` rebuilt with the footprint mask, `features/buildings/mask/`),
+defaults (`vegetation.building_clearance_m` 2.0). `scripts/vegetation_check.py --stages footprints,approach,off`
+(`.cache/r3b/veg/report.json`):
+
+- **Footprints gate: pass.** 4,895 trees dumped in 399 cells around the two poses (the `dense_pass` midpoint and
+  Mainside); **0 probe hits** (trunk and 4 probes against the package's mask, the runtime rule), **0 trunks inside a
+  footprint** (10,031 footprints in the bbox, polygons shrunk by 0.76 m); 36 trees within the 2 m buffered footprints
+  (information: the 5-point rule cannot see a corner diagonally). Log line ends `buildings: mask (clearance 2.0 m))`.
+  The same counts on the flat-roof package (`.cache/r3b/veg-flat/`, same mask).
+- Placement 8,987 trees in 472 cells, 0 off code 10; grounding max |dz| 0.000 m both runs; determinism 113 common cells,
+  0 mismatches; origin shift SSIM 0.9835 / 0.9834, 0 hash changes; off switch passes (log disabled, `nadir_3km` SSIM
+  0.97848 vs a, 0.97857 vs b; the weak gate described above).
+- **Without a mask nothing changed:** `--stages approach` on `pendleton-r2` (`.cache/r3b/veg-r2/`) against the R4 run
+  on disk (`.cache/veg/check-i1-r2/`): 217 north and 368 south common cells, **0 hash mismatches**; the log ends
+  `buildings: none`.
+- **Cost** (`.cache/bench-r3b/combined/`, `dense_pass`, 2 repeats, medians): trees on with buildings on vs buildings on
+  alone: game p50 +0.60 ms, p95 +0.57 ms, +53 MiB; the R3/R4 combined sweep without any footprint check had +0.60 /
+  +0.60 ms / +69 MiB for the same pair. The mask costs nothing measurable, against R4's runtime check (+0.3 ms p50,
+  **+2.5 ms p95**, +34 MiB). Both features on now measure +1.39 ms game p95 over all-off (R4 with the runtime check:
+  +3.61 ms, over the 3.0 ms limit).
+- The runtime check (`SampleHeightMostDetailed` on the buildings tileset) remains only for packages with buildings and
+  no mask (R3 packages).
+
 ### Bench
 
 `scripts/bench/sweep.py` (bench spec `superpowers/specs/2026-10-10-r3r4-realism-cost-bench-design.md`), 2026-10-11,

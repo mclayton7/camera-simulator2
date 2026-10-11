@@ -1884,12 +1884,28 @@ new 512 MB buildings tile cache (`scene.buildings.maximum_cached_bytes_mb`; `far
 MiB). UE 543/543, GPU 26/26 at the slice. Open: the user's visual review (low obliques and the sweep's contact sheet)
 and Linux/Vulkan. No editor work.
 
-- [ ] **Build-time building-footprint exclusion for trees** (follow-up to the 2026-10-11 decision to keep
-  `vegetation.drop_in_buildings` on): mark building footprints in the scene package (e.g. burn them into `landcover/`
-  or a dedicated raster) so trees are excluded without runtime `SampleHeightMostDetailed`; then remove the runtime
-  check and its +2.5 ms game p95 / +34 MiB (buildings SSE 64 + trees is +3.61 ms p95, over the 3.0 ms limit, accepted
-  until then). It touches the thermal class under buildings (today thermal IR uses the land-cover class under a
-  building), so it needs its own design before implementation.
+- [x] **Build-time building-footprint exclusion for trees** (follow-up to the 2026-10-11 decision to keep
+  `vegetation.drop_in_buildings` on): done in R3b (2026-10-11): `features/buildings/mask/` + `GenerateCell` clearance
+  predicate; the runtime check stays only for R3 packages. Measured: 0 trees on the mask, 0 trunks inside a
+  footprint, and both features on at +1.39 ms game p95 (was +3.61 ms with the runtime check).
+
+**R3b buildings look implemented and measured on macOS 2026-10-11** (`docs/scene-packages.md`, "Footprint mask,
+land-cover burn and roof atlas (R3b)" and "Measured", "R3b buildings look"; spec
+`docs/superpowers/specs/2026-10-11-r3b-buildings-look-design.md`): a fine footprint mask in the package
+(`features/buildings/mask/`, 56 tiles, 3.1 MB on Pendleton) keeps trees out of buildings with a 2 m clearance
+(`vegetation.building_clearance_m`), no runtime sampling; footprints burned into land cover as code 230 (307,606 cells),
+which gives roofs the new `building_roof` thermal class and lets CIGI report 230 on the terrain with buildings off;
+per-tile roof atlases from NAIP (`roof_textures`, `roof_texel_m` 0.5, `roof_texture_max_px` 2048; 82,260 roofs
+textured, buildings layer 247.9 → 368.2 MB, peak build RSS 1,988 MB of the 2,048 MB limit). Gates on `pendleton-r4`:
+`verify --deep` and the validator clean; rebuild and no-`[buildings]` builds byte-identical; trees 0 probe hits / 0 trunks
+inside footprints, r2 cell hashes unchanged; MWIR roof − grass +38.7 DN at noon, roof 2.1 K below air at 02:00;
+`thermal_check.py` a–q pass; CIGI 230 on burned terrain (buildings off) and on roofs (on); UE 555/555 (93 files), GPU
+26/26, scene tooling 558 passed. Bench, both on vs both off: sweep +1.16 ms game p50, +1.39 ms p95, +3.04 ms GPU,
++782 MiB, pass; full run game p95 ≤ +1.57 ms, 30 fps, 0 dropped, but **memory +1,243 MiB over the whole run, over the
++1,024 MiB budget** at `roof_texel_m` 0.5 (the atlases add +383 MiB in `dense_pass`); the contingency rebuild at
+1.0 m peaks at +971 MiB (one run each; the texel choice is open for the user). Open: that choice, the user's visual
+review (roof fit, NAIP lean), Linux/Vulkan (`FOR_LINUX.md` §5). No editor work: Cesium's default material samples the
+embedded roof texture.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

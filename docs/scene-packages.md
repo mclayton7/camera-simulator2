@@ -1184,3 +1184,88 @@ measured cost (+0.3 ms p50, +2.5 ms p95, +34 MiB); the p95 overrun is accepted a
 build-time fix: mark building footprints in the scene package so trees are excluded without runtime sampling, then
 remove the runtime check (ROADMAP Realism track; it touches the thermal class under buildings, so it needs its own
 design). `vegetation.drop_in_buildings: false` stays available as a switch.
+
+### R3b buildings look (2026-10-11, macOS)
+
+Camp Pendleton `sim`, M1 Pro / Metal, native build, commit `826c967`. `pendleton-r4` is an APFS clone of `pendleton-r3`
+built with `examples/pendleton.toml` (`--replan -j 6`; roof keys at their defaults: `roof_textures = true`,
+`roof_texel_m = 0.5`, `roof_texture_max_px = 2048`): terrain, imagery and NDVI were skipped; land cover (the 230 burn)
+and buildings (mask and roof atlases) were built. Spec:
+[`superpowers/specs/2026-10-11-r3b-buildings-look-design.md`](superpowers/specs/2026-10-11-r3b-buildings-look-design.md).
+Outputs under `.cache/r3b/` and `.cache/bench-r3b/` (untracked).
+
+| Gate | Tool | Result |
+|---|---|---|
+| 1 Package | `build`, `verify --deep`, `3d-tiles-validator` 0.6.1 | **Pass.** 82,260 buildings kept (82,283 in, 23 dropped small; unchanged from R3). Roofs: **82,260 textured**, 0 `flat_coarse`, 0 `flat_overflow`; all 1,765 tiles at `roof_texel_m` 0.5. Mask: 56 tiles + `index.json`, 3.1 MB (3,081,704 bytes). Land cover: **307,606 cells burned to 230** in 54 tiles; `index.json` `codes` lists 230 `building`. Buildings layer **368.2 MB** (R3: 247.9 MB, +120.3 MB for the atlases); layer build 184 s (R3: 36 s), land cover 71 s; whole `--replan` run 446 s; peak RSS **1,988 MB** (buildings worker; the limit is 2,048 MB). `verify --deep` all `ok`, incl. `buildings_tileset`, `buildings_heights`, `buildings_roofs`, `buildings_mask`, `landcover_codes`. Validator: 0 errors, 0 warnings, 1,765 infos (as R3) |
+| 2 Determinism | second clone rebuilt; toml without `[buildings]` on a clone of `pendleton-r2` | **Pass.** Rebuild: `hashes.txt` identical (471,243 lines). Without `[buildings]`: `hashes.txt` and `manifest.json` byte-identical to `pendleton-r2`, no `features/`. `pendleton-r4` vs `pendleton-r3` by hash: 1,765 GLBs changed, 57 `features/buildings/mask/` files added, 54 `landcover/` tiles changed (exactly the tiles with 230), `landcover/index.json` and `landcover/ATTRIBUTION.txt` changed; nothing else (the root `ATTRIBUTION.txt` is unchanged). By path only, 57 lines differ (the new mask files) |
+| 3 Trees | `vegetation_check.py --stages footprints,approach,off` | **Pass.** 4,895 trees, 0 probe hits, 0 trunks inside a footprint, 36 within the 2 m clearance (info); log `buildings: mask (clearance 2.0 m)`; placement, determinism, off switch pass. `pendleton-r2` approach vs the R4 run: 217 + 368 common cells, 0 hash mismatches, `buildings: none`. Details: `vegetation.md`, "Trees vs building footprints (R3b mask)" |
+| 4 Roofs | `vegetation_check.py --stages footprints` (pose shots), bench `dense_oblique` | **Pending the user's visual review** (row 8). Textured vs flat (`pendleton-r4-flat`, `roof_textures = false`, layer 251.0 MB): `.cache/r3b/veg/footprints/pose{0,1}.png` vs `.cache/r3b/veg-flat/footprints/pose{0,1}.png`, `.cache/bench-r3b/{textured,flat}-dense/shots/dense_oblique.png`. Observed (not a judgement of the 1–2 m fit): the textured roofs carry the NAIP roof colours (terracotta housing roofs, white commercial roofs, dark solar arrays) where the flat package is uniform grey; on Mainside (pose1) a red patch of imagery shows on the ground beside the large building at the bottom centre in both packages (the imagery's roof drawn on the terrain) |
+| 5 Infrared | `thermal_check.py --band mwir --runs roofs,roads --scene pendleton-r4`; default `--band both` | **Pass.** (s) noon roof − grass **+38.74 DN** (≥ +3); (s_air) 02:00 `building_roof` 282.1 K vs air 284.2 K, **2.1 K** below (≥ 0.5); (r) night +10.54, noon +35.95 DN. The default San Francisco run passes every gate a–q. Details: `thermal.md`, "Acceptance" |
+| 6 CIGI | `burn_probe_points.py --near 33.3000,-117.3175`; `send_cigi_test.py --hat-extended` | **Pass** (table below): with buildings off, the burned terrain point answers **230** and the point outside answers its land-cover code (30); with buildings on, the R3 warehouse roof answers 230 with HOT 94.67 m, as in R3 |
+| 7 Bench | `bench/sweep.py` (`dense_pass`, repeat 2); `run_bench.py` all phases (1 run each) | Sweep: **pass** (both on +1.16 ms game p50, +1.39 ms p95, +3.04 ms GPU, +782 MiB). Full runs at the defaults: game p95 ≤ +1.57 ms, every phase 29.8–30.0 fps and 0 dropped, but **memory FAIL: +1,243 MiB** (`coast_pass`; +1,196 MiB in `dense_pass`) over the +1,024 MiB budget. Contingency rebuild at `roof_texel_m = 1.0`: **+971 MiB** at most, inside the budget. Tables below; the choice of `roof_texel_m` is the user's |
+| 8 Visual review | EO and MWIR shots | **Pending the user** (shots listed below) |
+
+CIGI (`.cache/r3b/cigi.txt`, `cigi-on.txt`; the sensor at 400 m HAE above the point, looking down, noon):
+
+| Point | Buildings | Response |
+|---|---|---|
+| Burned cell centre 33.3000417, −117.3177917 (`probe.json` `inside`) | off | **230**, HOT 77.12 m (terrain) |
+| 0.0001492° east of it, 33.3000417, −117.3176425 (`outside`, `outside_code` 30) | off | **30**, HOT 75.02 m |
+| Warehouse `010048df…` roof, 33.3029558, −117.3144625 (R3's roof 94.67 m) | on | **230**, HOT 94.67 m |
+| The burned cell centre again | on | **230**, HOT 85.77 m (its roof, 8.65 m above the terrain) |
+| The outside point again | on | 30, HOT 75.02 m |
+
+Bench sweep (`sweep.py --scene pendleton-r4 --axis buildings=off,on --axis trees=off,on --repeat 2`,
+`.cache/bench-r3b/combined/`; buildings SSE 64 with physics, trees 1000 m / 1.0 / shadows, both at the defaults; 720p EO).
+All-off row: game 3.48 / 6.14–6.30 ms, GPU 19.37–19.58 ms, memory 8,890–8,900 MiB. Increase of the row median over it;
+0 dropped frames in every run:
+
+| Buildings | Trees | Game p50 | Game p95 | GPU p50 | Memory, MiB | fps (runs) | Budget |
+|---|---|---|---|---|---|---|---|
+| off | on | +0.63 | +0.67 | +1.73 | +103 | 29.86 / 29.41 | pass (one run under 29.5 fps) |
+| on | off | +0.56 | +0.82 | +2.08 | +729 | 29.46 / 29.75 | pass (one run under 29.5 fps) |
+| **on** | **on** | **+1.16** | **+1.39** | **+3.04** | **+782** | 29.67 / 29.53 | **pass** |
+
+Against the R3/R4 combined sweep at the same settings (before R3b, with the runtime footprint check): both on was
++1.40 / **+3.61** / +3.54 ms / +408 MiB. The mask takes the game p95 back inside the limit; the roof atlases add about
++370–440 MiB in this 90 s window (buildings-on rows +729 vs +290 MiB). Two single-feature runs emitted 29.41 and 29.46
+fps (0 dropped); the gate's row, both on, stayed at 29.53 or above.
+
+Atlas cost alone (`run_bench.py --phases dense_pass --shots dense_oblique`, both features on, one run each,
+`.cache/bench-r3b/{textured,flat}-dense/`): textured minus flat: game p50 +0.00 ms, p95 +0.23 ms, GPU p50 −1.35 ms
+(run-to-run noise), memory **+383 MiB** (9,669 vs 9,286).
+
+Full bench (`run_bench.py --site pendleton --gpu-mem`, all phases, one run each; `.cache/bench-r3b/full-{off,on}/`,
+`compare.py`), both features on at the defaults vs both off on `pendleton-r4`, and the contingency package at
+`roof_texel_m = 1.0` (`pendleton-r4-t1`, `.cache/bench-r3b/full-on-t1/`; its mask and land cover are byte-identical
+to `pendleton-r4`'s; buildings layer 335.5 MB, all 1,765 tiles at 1.0 m, peak RSS 1,588 MB). Every phase 29.8–30.0
+fps and 0 dropped frames in all three runs:
+
+| Phase | Game p50, ms: on / off | Game p95: on / off | GPU p50: on / off | Memory max, MiB: on / off | Memory increase: 0.5 m / 1.0 m | Game p95 increase at 1.0 m |
+|---|---|---|---|---|---|---|
+| orbit | 3.55 / 2.81 | 5.58 / 4.41 | 19.73 / 19.46 | 9,598 / 8,879 | +719 / +928 | +1.29 |
+| slew | 3.66 / 2.97 | 11.53 / 10.77 | 19.56 / 19.75 | 9,631 / 8,885 | +746 / +937 | +0.89 |
+| low_pass | 4.11 / 3.25 | 7.69 / 7.32 | 19.79 / 18.99 | 9,636 / 8,937 | +699 / +891 | +0.32 |
+| far_origin | 2.32 / 2.21 | 3.38 / 3.10 | 17.07 / 17.01 | 9,618 / 8,911 | +707 / +877 | +0.08 |
+| coast_pass | 4.17 / 3.54 | 10.04 / 8.79 | 20.46 / 20.13 | 10,156 / 8,913 | **+1,243** / +971 | +1.01 |
+| dense_pass | 4.98 / 3.60 | 10.34 / 8.78 | 23.25 / 20.94 | 10,196 / 9,000 | **+1,196** / +852 | +1.41 |
+
+- Game p95 passes in every phase at both texels (largest +1.57 ms, `dense_pass` at 0.5 m).
+- **Memory at 0.5 m fails the whole-run budget** in `coast_pass` (+1,243 MiB) and `dense_pass` (+1,196 MiB); the peak
+  of the run is 10,196 MiB against 9,000 MiB off (+1,196). The R3/R4 full bench at the same settings, before R3b,
+  peaked at +907 / +952 MiB in those phases, so the atlases add ~250–340 MiB over a whole run. At 1.0 m the largest
+  increase is +971 MiB (`coast_pass`; the run's peak 9,884 MiB, +884), inside the budget.
+- One run each, and memory moves between runs: the 1.0 m run is *higher* than the 0.5 m run in the first four phases
+  (+877 to +937 against +699 to +746 MiB) and lower only in the two built-up phases. A repeat of each would separate the
+  texel's effect from run-to-run variation; the default (`roof_texel_m = 0.5`) is unchanged pending the user's choice.
+
+Shots for the visual review (pending the user):
+
+- Roof close-ups, textured vs flat: `.cache/r3b/veg/footprints/pose0.png` (the `dense_pass` midpoint, 357.7 m HAE,
+  heading 105°, −30°) and `pose1.png` (Mainside, 350 m, north, −30°) vs `.cache/r3b/veg-flat/footprints/pose{0,1}.png`.
+- `dense_oblique`: `.cache/bench-r3b/textured-dense/shots/dense_oblique.png` vs `.cache/bench-r3b/flat-dense/shots/dense_oblique.png`;
+  the sweep's contact sheet `.cache/bench-r3b/combined/sweep_sheet.png`.
+- Trees near buildings before (runtime check, R3/R4: `.cache/veg/i1-footprints/close_oblique.png`) and after (mask:
+  `.cache/r3b/veg/footprints/pose1.png`).
+- MWIR day and night roofs: `.cache/r3b/thermal-pendleton/shots/mwir_roofs_{noon,night}_roof.png` and the masks in
+  `.cache/r3b/thermal-pendleton/overlays/mwir_roofs_{noon,night}_roof.png`.

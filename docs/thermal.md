@@ -503,6 +503,20 @@ destroyed-truck run; MWIR + LWIR, 21 Dec noon and 02:00, DIS truck and boat) gat
 | p | parked after driving: box − ring at +600 s below +5 s and above the parked-cold truck (box mean: MWIR hot parts clip at the display ceiling, so p99 cannot fall) |
 | q | MWIR: destroyed truck (DIS damage 3 + flaming) box − ring >= +60 DN |
 
+Building roofs (REALISM R3b, `--runs roofs --scene <pkg>`, a package built with `[buildings]` so land cover has code
+230; Camp Pendleton roof pose 33.3000, −117.3175, 21 Dec):
+
+| Gate | Check |
+|---|---|
+| s | noon, nadir 460 m, 20 deg FOV: roof minus grass mean Y >= +3 DN (roof = the package's footprint mask, eroded; grass = land-cover 30 clear of footprints; central 60 %) |
+| s_air | night: `building_roof` class temperature <= air − 0.5 K (from the `camsim.Thermal.Log` line; the display is AGC-relative) |
+
+Measured 2026-10-11 on `pendleton-r4` (M1 Pro / Metal, MWIR; `.cache/r3b/thermal-pendleton/`): **(s) PASS +38.74 DN**
+(85,176 roof px vs 46,381 grass px, GSD 0.127 m, 10 frames); **(s_air) PASS 2.1 K** below air (`building_roof` 282.1 K,
+air 284.2 K, grassland 282.4 K at 02:00); R2's road gate (r) on the same package still passes (night +10.54 DN, noon
++35.95 DN, carriageway minus outer verge). The default run (`--band both`, San Francisco, no package) passes every gate
+a–q as before R3b (`.cache/r3b/thermal-default/report.md`; e.g. (f) 0.423 ms p95 at 1080p, (g) |ΔY| 0.002 DN).
+
 Gate (h)'s floor is the 8-bit snapshot's own rounding noise, 1/sqrt(12) DN (ruling R13). The run
 writes `report.md`/`report.json`, shots and mask overlays under the output directory
 (default `.cache/thermal_check/`). Latest results are in ROADMAP.md, 4A, 4B and 4C.
