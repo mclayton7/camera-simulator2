@@ -212,6 +212,26 @@ R3b (footprint mask, land-cover burn 230, roof atlases; Mac results in `docs/sce
 Record the results in `docs/scene-packages.md` (an "R3 on Linux" table after "R3 buildings slice") and in `ROADMAP.md`'s
 Realism paragraph.
 
+## 6. Realism R4 vegetation (species, shrubs, canopy, far tier) on Linux/Vulkan
+
+Measured on the Mac only (`docs/vegetation.md`, "Measured" and "Bench"). Nothing in it is platform-specific, but the far
+tier adds ~60k low-poly instances and the shrubs ~60k more: the cost to check is the 5080's.
+
+- **Package:** build `pendleton-r5veg` from the box's `pendleton-r4` with `--replan` and a scene file that adds
+  `[canopy] enabled = true` and the Pendleton `[vegetation]` table (`docs/vegetation.md`, "Site mixes"); the canopy
+  layer downloads 4 CHMv2 tiles (422 MB) on the first fetch. `verify`: `canopy` and `vegetation_mix` ok. Compare
+  `canopy/**` and `vegetation/mix.json` lines of `hashes.txt` with the Mac's: they should match (PNG bytes from Pillow,
+  same as land cover).
+- **Assets:** `git lfs pull`; `CamSim.Vegetation.Library.ShippedMeshesLoad` passes (every near and far mesh loads).
+- **Acceptance:** `vegetation_check.py --scene <pendleton-r5veg> --stages approach,off,gt,truck,oblique,footprints,
+  r4_identity,long_range` (needs `--r4-scene` / `--r4-baseline` for `r4_identity`: an R4 run on `pendleton-r2`); every
+  gate passes; the cell hashes in the dumps match the Mac's (the scatter is pure and integer-hashed).
+- **Bench on Vulkan:** the three sweeps of the Mac run (`docs/vegetation.md`, "Bench"), `--phase long_range` for the far
+  tier and `dense_pass` for shrubs, then `scale_bench.py` at N = 1, 2, 4 with the chosen defaults (VRAM from
+  `nvidia-smi`).
+
+Record the results in `docs/vegetation.md` (an "R4 on Linux" table) and `ROADMAP.md`'s Realism paragraph.
+
 ## Not for this box
 
 - RTX 5090 reference benchmarks (3A/3B): deferred until that hardware exists.
