@@ -13,6 +13,7 @@
 #include "Vegetation/VegetationStreaming.h"
 
 class ACesium3DTileset;
+class FCamSimGeospatialProvider;
 class FCesiumSurfaceProbe;
 class UWorld;
 struct FCamSimConfig;
@@ -197,13 +198,18 @@ namespace CamSimVegetation
 	CAMSIMTEST_API TSharedPtr<FVegetationMix, ESPMode::ThreadSafe> ResolveMix(const FCamSimConfig& Cfg, const FVegetationLibrary& Library,
 		FString& OutSource, FString& OutWhyNot, bool& bOutFatal);
 
-	/** Real hooks: UE tasks + FVegetationLandCover, SampleHeightMostDetailed on Terrain; trees are kept out of buildings by
+	/** Far-tier height traces span this ellipsoid height range (rendered terrain; Geo maps lat/lon/height to the world). */
+	constexpr double FarTraceTopM = 9000.0;
+	constexpr double FarTraceBottomM = -1000.0;
+
+	/** Real hooks: UE tasks + FVegetationLandCover, SampleHeightMostDetailed on Terrain (near trees, shrub grids) and
+	 *  traces on the rendered terrain through Geo for far blocks (FRetryingTraceSampler; with create_physics_meshes); trees are kept out of buildings by
 	 *  the package's footprint mask (FVegetationBuildingMask, on the scatter worker) or, without one, by a second batch
 	 *  on the buildings tileset (tag CamSimBuildings), per ChooseBuildingExclusion; ACamSimVegetationCell. Game thread.
 	 *  Null (with OutWhyNot) when vegetation is off, land cover is missing or the library doesn't load; bOutFatal also set
 	 *  when scene.offline is on and the species mix is unusable (unknown types, unparsable file): the caller exits. */
 	CAMSIMTEST_API TSharedPtr<FVegetationManager> CreateLiveManager(UWorld* World, ACesium3DTileset* Terrain,
-		const FCamSimConfig& Cfg, FString& OutWhyNot, bool& bOutFatal);
+		const FCamSimGeospatialProvider* Geo, const FCamSimConfig& Cfg, FString& OutWhyNot, bool& bOutFatal);
 
 	/** Game thread, once per tick after Tick(): camsim.Vegetation.GroundCheck. Waits until the view has settled
 	 *  (bViewSettled: the caller's terrain gate open for a while), streaming is idle and 200 spawned tree bases hit the

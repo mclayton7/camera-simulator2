@@ -97,3 +97,48 @@ bool FVegFarBucketCullTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("one bucket"), BucketCullM(4000.0f, 0, 1), 4000.0f);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegTraceSamplerTest, "CamSim.Vegetation.Far.TraceSamplerRetries",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegTraceSamplerTest::RunTest(const FString& Parameters)
+{
+	// Far heights from the rendered terrain: a trace per point, misses retried (tiles still loading), then unset.
+	TSet<int32> Missing;   // points (by lon * 10) the "terrain" hasn't loaded
+	int32 Traces = 0;
+	auto Trace = [&Missing, &Traces](double Lat, double Lon) -> TOptional<double>
+	{
+		++Traces;
+		if (Missing.Contains(FMath::RoundToInt32(Lon * 10.0))) return {};
+		return 100.0 + Lat;
+	};
+	TSharedRef<FRetryingTraceSampler> S = MakeShared<FRetryingTraceSampler>(Trace, /*RetryTicks=*/3, /*MaxRetries=*/2);
+	const TArray<FVector> Points = { FVector(1.0, 10.0, 0.0), FVector(2.0, 20.0, 0.0), FVector(3.0, 30.0, 0.0) };
+	TOptional<TArray<TOptional<double>>> Got;
+	auto Done = [&Got](TArray<TOptional<double>> H) { Got = MoveTemp(H); };
+	S->Sample(Points, Done);
+	if (TestTrue(TEXT("all hit: answered at once"), Got.IsSet()))
+		TestTrue(TEXT("values"), (*Got)[0] == TOptional<double>(110.0) && (*Got)[2] == TOptional<double>(130.0));
+	TestEqual(TEXT("one trace per point"), Traces, 3);
+
+	Got.Reset(); Traces = 0;
+	Missing.Add(20);
+	S->Sample(Points, Done);
+	TestFalse(TEXT("a miss: no answer yet"), Got.IsSet());
+	TestEqual(TEXT("pending"), S->NumPending(), 1);
+	S->Tick(); S->Tick();
+	TestEqual(TEXT("no retry before RetryTicks"), Traces, 3);
+	Missing.Reset();
+	S->Tick();
+	if (TestTrue(TEXT("retried and answered once the tile loaded"), Got.IsSet()))
+		TestTrue(TEXT("the missed point filled"), (*Got)[1] == TOptional<double>(120.0) && (*Got)[0] == TOptional<double>(110.0));
+	TestEqual(TEXT("only the missed point traced again"), Traces, 4);
+
+	Got.Reset();
+	Missing.Add(30);
+	S->Sample(Points, Done);
+	for (int32 I = 0; I < 6; ++I) S->Tick();
+	if (TestTrue(TEXT("persistent miss: answered after MaxRetries"), Got.IsSet()))
+		TestTrue(TEXT("the miss unset, the rest set"), !(*Got)[2].IsSet() && (*Got)[0].IsSet() && (*Got)[1].IsSet());
+	TestEqual(TEXT("nothing pending"), S->NumPending(), 0);
+	return true;
+}

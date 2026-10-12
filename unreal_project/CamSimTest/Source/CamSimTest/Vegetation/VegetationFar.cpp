@@ -95,4 +95,47 @@ namespace CamSimVegetation
 		const double U = Fx - I, V = Fy - J;
 		return (1.0 - V) * ((1.0 - U) * *A + U * *B) + V * ((1.0 - U) * *C + U * *D);
 	}
+
+	bool FRetryingTraceSampler::TraceMissing(FBatch& B) const
+	{
+		bool bAll = true;
+		for (int32 K = 0; K < B.Points.Num(); ++K)
+		{
+			if (B.H[K].IsSet()) continue;
+			const TOptional<double> T = Trace(B.Points[K].Y, B.Points[K].X);
+			if (T.IsSet() && FMath::IsFinite(*T)) B.H[K] = T;
+			else bAll = false;
+		}
+		return bAll;
+	}
+
+	void FRetryingTraceSampler::Sample(const TArray<FVector>& LonLatH, TFunction<void(TArray<TOptional<double>>)> Done)
+	{
+		FBatch B;
+		B.Points = LonLatH;
+		B.H.SetNum(LonLatH.Num());
+		B.Done = MoveTemp(Done);
+		B.TicksLeft = RetryTicks;
+		if (TraceMissing(B) || MaxRetries <= 0) { B.Done(MoveTemp(B.H)); return; }
+		Pending.Add(MoveTemp(B));
+	}
+
+	void FRetryingTraceSampler::Tick()
+	{
+		TArray<FBatch> Finished;
+		for (int32 I = Pending.Num() - 1; I >= 0; --I)
+		{
+			FBatch& B = Pending[I];
+			if (--B.TicksLeft > 0) continue;
+			B.TicksLeft = RetryTicks;
+			const bool bAll = TraceMissing(B);
+			if (bAll || ++B.Retries >= MaxRetries)
+			{
+				Finished.Add(MoveTemp(B));
+				Pending.RemoveAt(I);
+			}
+		}
+		// After the loop: a Done may start a new batch.
+		for (FBatch& B : Finished) B.Done(MoveTemp(B.H));
+	}
 }

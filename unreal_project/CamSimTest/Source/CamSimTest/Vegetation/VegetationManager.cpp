@@ -23,6 +23,7 @@
 #include "Vegetation/VegetationLibrary.h"
 #include "Vegetation/VegetationMix.h"
 #include "Vegetation/VegetationFar.h"
+#include "Containers/Ticker.h"
 #include "CamSimTest.h"
 
 // Task 2 (procedural tree fallback) was skipped: the CC0 asset passed its checks.
@@ -479,8 +480,8 @@ namespace CamSimVegetation
 		return Out;
 	}
 
-	TSharedPtr<FVegetationManager> CreateLiveManager(UWorld* World, ACesium3DTileset* Terrain, const FCamSimConfig& Cfg, FString& OutWhyNot,
-		bool& bOutFatal)
+	TSharedPtr<FVegetationManager> CreateLiveManager(UWorld* World, ACesium3DTileset* Terrain, const FCamSimGeospatialProvider* Geo,
+		const FCamSimConfig& Cfg, FString& OutWhyNot, bool& bOutFatal)
 	{
 		bOutFatal = false;
 		const FCamSimConfig::FVegetationConfig& V = Cfg.Vegetation;
@@ -695,7 +696,32 @@ namespace CamSimVegetation
 				AsyncTask(ENamedThreads::GameThread, [Done = MoveTemp(Done), Trees = MoveTemp(Trees)]() mutable { Done(MoveTemp(Trees)); });
 			});
 		};
-		FH.SampleHeights = H.SampleHeights;
+		// Far heights from the rendered terrain (traces on the drawn tiles' collision): SampleHeightMostDetailed on every far
+		// block's grid loaded the finest terrain tiles over the whole far disk (after a low pass over woodland the next pass
+		// ran +0.3 ms game p50, +2.5 ms p95, +500 MiB). Needs physics meshes; without them the far tier samples like the near one.
+		FString FarHeights = TEXT("most-detailed");
+		if (Cfg.bCreatePhysicsMeshes && Geo)
+		{
+			TSharedRef<FCesiumSurfaceProbe> Probe = MakeShared<FCesiumSurfaceProbe>(World, Geo, true);
+			TSharedRef<FRetryingTraceSampler> Sampler = MakeShared<FRetryingTraceSampler>(
+				[Probe](double La, double Lo) { return Probe->TraceHeight(La, Lo, FarTraceTopM, FarTraceBottomM); });
+			TWeakPtr<FRetryingTraceSampler> WeakSampler = Sampler;
+			FTSTicker::GetCoreTicker().AddTicker(TEXT("CamSimVegetationFarHeights"), 0.0f, [WeakSampler](float)
+			{
+				TSharedPtr<FRetryingTraceSampler> S = WeakSampler.Pin();
+				if (S) S->Tick();
+				return S.IsValid();   // removed once the manager (which owns the sampler) is gone
+			});
+			FH.SampleHeights = [Sampler](const TArray<FVector>& LonLatH, TFunction<void(TArray<TOptional<double>>)> Done)
+			{
+				Sampler->Sample(LonLatH, MoveTemp(Done));
+			};
+			FarHeights = TEXT("rendered");
+		}
+		else
+		{
+			FH.SampleHeights = H.SampleHeights;
+		}
 		TSharedRef<TMap<FVegBlockId, TWeakObjectPtr<ACamSimVegetationCell>>> FarActors = MakeShared<TMap<FVegBlockId, TWeakObjectPtr<ACamSimVegetationCell>>>();
 		const float FarM = V.FarRadiusM;
 		FH.Spawn = [WeakWorld, FarMeshes, FarActors, FarM, FarP](FVegBlockId B, const FVegFarSpawn& S)
@@ -753,7 +779,7 @@ namespace CamSimVegetation
 			TEXT("density %.2f, shadows %d, seed %u, land cover %s, buildings: %s)"),
 			NumTrees + NumShrubs, NumTrees, NumShrubs, *MixSource, *CanopyState,
 			bShrubRing ? *FString::Printf(TEXT("%.0f m"), V.ShrubRadiusM) : TEXT("off"), V.RadiusM,
-			V.FarRadiusM > 0.0f ? *FString::Printf(TEXT("%.0f m (keep %.2f, blocks %d)"), V.FarRadiusM, V.FarKeep, V.FarBlockCells) : TEXT("off"),
+			V.FarRadiusM > 0.0f ? *FString::Printf(TEXT("%.0f m (keep %.2f, blocks %d, heights %s)"), V.FarRadiusM, V.FarKeep, V.FarBlockCells, *FarHeights) : TEXT("off"),
 			V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
 			*DescribeBuildingExclusion(Exclusion, V.BuildingClearanceM));
 		// The shrub ring: shrub-only cells within shrub_radius_m (same land cover, mask, heights), their own actors, no

@@ -53,4 +53,38 @@ namespace CamSimVegetation
 		/** Unset outside the grid or when any corner of the point's quad is unset. */
 		TOptional<double> Sample(double LatDeg, double LonDeg) const;
 	};
+
+	/**
+	 * Far-tier heights from the rendered terrain (REALISM R4): one Trace (a line trace on the drawn tiles' collision) per
+	 * point, so no tile is loaded for them. SampleHeightMostDetailed on a 100 m grid per far block loaded the finest
+	 * terrain tiles over the whole 4 km disk; after a low pass over woodland the next pass ran +0.3 ms game p50, +2.5 ms
+	 * p95 and +500 MiB (more tile loads and physics cooking; measured 2026-10-12). Points
+	 * that miss (tiles not loaded yet, e.g. after a cut) are traced again every RetryTicks Tick() calls; after MaxRetries
+	 * the batch answers with them unset. Game thread.
+	 */
+	class CAMSIMTEST_API FRetryingTraceSampler : public TSharedFromThis<FRetryingTraceSampler>
+	{
+	public:
+		FRetryingTraceSampler(TFunction<TOptional<double>(double LatDeg, double LonDeg)> InTrace, int32 InRetryTicks = 30, int32 InMaxRetries = 20)
+			: Trace(MoveTemp(InTrace)), RetryTicks(InRetryTicks), MaxRetries(InMaxRetries) {}
+		/** LonLatH as SampleHeightMostDetailed takes it (X lon, Y lat). Done runs now when every point hits. */
+		void Sample(const TArray<FVector>& LonLatH, TFunction<void(TArray<TOptional<double>>)> Done);
+		void Tick();
+		int32 NumPending() const { return Pending.Num(); }
+	private:
+		struct FBatch
+		{
+			TArray<FVector> Points;
+			TArray<TOptional<double>> H;
+			TFunction<void(TArray<TOptional<double>>)> Done;
+			int32 TicksLeft = 0;
+			int32 Retries = 0;
+		};
+		/** Traces the unset points; true when none is left unset. */
+		bool TraceMissing(FBatch& B) const;
+		TFunction<TOptional<double>(double, double)> Trace;
+		int32 RetryTicks;
+		int32 MaxRetries;
+		TArray<FBatch> Pending;
+	};
 }

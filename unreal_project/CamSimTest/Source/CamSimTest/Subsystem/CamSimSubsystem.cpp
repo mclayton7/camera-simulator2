@@ -1062,7 +1062,7 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			Impl->bVegetationTried = true;
 			FString WhyNot;
 			bool bFatal = false;
-			Impl->Vegetation = CamSimVegetation::CreateLiveManager(World, Terrain, Config, WhyNot, bFatal);
+			Impl->Vegetation = CamSimVegetation::CreateLiveManager(World, Terrain, GetGeospatialProvider(), Config, WhyNot, bFatal);
 			if (bFatal)
 			{
 				UE_LOG(LogCamSim, Error, TEXT("Vegetation: off (%s)"), *WhyNot);

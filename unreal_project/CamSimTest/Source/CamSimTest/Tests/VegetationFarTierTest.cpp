@@ -23,6 +23,7 @@ namespace
 		int32 FarTreesPerBlock = 3;
 		TSet<FVegBlockId> EmptyFarBlocks;
 		int32 FailGridPoint = -1;
+		bool bSyncFarHeights = false;   // the live trace sampler answers inside SampleHeights
 		TArray<FString> Events;
 
 		FVegetationHooks NearHooks()
@@ -69,12 +70,13 @@ namespace
 				++FarHeightCalls;
 				LastGridPoints = P.Num();
 				const int32 N = P.Num(), Fail = FailGridPoint;
-				Pending.Add([N, Fail, Done]()
+				auto Answer = [N, Fail, Done]()
 				{
 					TArray<TOptional<double>> R;
 					for (int32 K = 0; K < N; ++K) R.Add(K == Fail ? TOptional<double>() : TOptional<double>(100.0));
 					Done(MoveTemp(R));
-				});
+				};
+				if (bSyncFarHeights) Answer(); else Pending.Add(Answer);
 			};
 			H.Spawn = [this](FVegBlockId B, const FVegFarSpawn& S) { ++FarSpawns; FarLive.Add(B, S); };
 			H.Destroy = [this](FVegBlockId B) { ++FarDestroys; FarLive.Remove(B); };
@@ -319,5 +321,19 @@ bool FVegShrubRingBudgetTest::RunTest(const FString& Parameters)
 	TestTrue(*FString::Printf(TEXT("at most 4 in flight across near, ring and far (%d)"), MaxInFlight), MaxInFlight <= 4 && MaxInFlight > 0);
 	TestTrue(*FString::Printf(TEXT("at most 2 spawns per tick across near, ring and far (%d)"), MaxSpawns), MaxSpawns <= 2 && MaxSpawns > 0);
 	TestFalse(TEXT("not idle while the ring is busy"), bIdleWhileRingBusy);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegFarTierSyncHeightsTest, "CamSim.Vegetation.FarTier.SynchronousHeights",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegFarTierSyncHeightsTest::RunTest(const FString& Parameters)
+{
+	FTwoTierFake F;
+	F.bSyncFarHeights = true;
+	TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(Tiers(), F.NearHooks(), F.FarHooks());
+	for (int32 I = 0; I < 400; ++I) { M->Tick(33.3, -117.4); F.Flush(); }
+	TestTrue(TEXT("far blocks spawn when heights answer inside the hook"), F.FarLive.Num() > 0);
+	TestEqual(TEXT("one grid batch per far block"), F.FarHeightCalls, F.FarSpawns);
+	TestTrue(TEXT("idle"), M->IsIdle());
 	return true;
 }
