@@ -407,7 +407,7 @@ atlas from NAIP (`docs/scene-packages.md`, "R3b buildings look"). Measured on `p
 byte-identical; trees 0 on the mask and 0 trunks inside footprints, with both features on back to +1.39 ms game p95
 (was +3.61 ms with the runtime check); MWIR roof − grass +38.7 DN at noon, roof 2.1 K below air at 02:00; CIGI 230 on
 burned terrain and on roofs. Memory over a whole run is +1,243 MiB at 0.5 m, over the +1,024 MiB budget; +971 MiB at
-`roof_texel_m = 1.0` (one run each; the choice is open for the user). Open: that choice, visual review, Linux/Vulkan.
+`roof_texel_m = 1.0` (one run each). **User decision 2026-10-11:** keep 0.5 m (realism first) and accept the memory overrun; for multi-instance runs, roll features back per package (build a variant with `roof_texel_m = 1.0` or `roof_textures = false`; only the buildings tiles change). Open: visual review, Linux/Vulkan.
 Deferred: lean correction, wall textures, pitched roofs, KTX2.
 
 - Footprints: Overture (OSM + Microsoft footprints merged, ODbL; snapshot it, releases are deleted

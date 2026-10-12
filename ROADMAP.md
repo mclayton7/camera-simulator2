@@ -1921,7 +1921,7 @@ inside footprints, r2 cell hashes unchanged; MWIR roof − grass +38.7 DN at noo
 26/26, scene tooling 558 passed. Bench, both on vs both off: sweep +1.16 ms game p50, +1.39 ms p95, +3.04 ms GPU,
 +782 MiB, pass; full run game p95 ≤ +1.57 ms, 30 fps, 0 dropped, but **memory +1,243 MiB over the whole run, over the
 +1,024 MiB budget** at `roof_texel_m` 0.5 (the atlases add +383 MiB in `dense_pass`); the contingency rebuild at
-1.0 m peaks at +971 MiB (one run each; the texel choice is open for the user). Open: that choice, the user's visual
+1.0 m peaks at +971 MiB (one run each). **User decision 2026-10-11:** keep 0.5 m (realism first) and accept the memory overrun; for multi-instance runs, roll features back per package (build a variant with `roof_texel_m = 1.0` or `roof_textures = false`; only the buildings tiles change). Open: the user's visual
 review (roof fit, NAIP lean), Linux/Vulkan (`FOR_LINUX.md` §5). No editor work: Cesium's default material samples the
 embedded roof texture.
 
