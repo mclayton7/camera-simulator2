@@ -7,6 +7,7 @@
 #include "Templates/SharedPointer.h"
 #include "Vegetation/VegetationGrid.h"
 #include "Vegetation/VegetationScatter.h"
+#include "Vegetation/VegetationCanopy.h"
 #include "Vegetation/VegetationStreaming.h"
 
 class ACesium3DTileset;
@@ -39,6 +40,8 @@ struct FVegetationHooks
 	TFunction<void(const TArray<FVector>& LonLatH, TFunction<void(TArray<TOptional<double>>)>)> SampleBuildingHeights;
 	TFunction<void(CamSimVegetation::FVegCellId, const FVegCellSpawn&)> Spawn;
 	TFunction<void(CamSimVegetation::FVegCellId)> Destroy;
+	/** Optional: the scatter's tile caches' summary warnings (land cover, canopy), drained every WarningTicks. */
+	TFunction<TArray<FString>()> TakeWarnings;
 };
 
 /**
@@ -56,6 +59,8 @@ public:
 	static constexpr int32 StuckTicks = 1800;
 	/** At most one "trees dropped inside building footprints" line per this many ticks (30 s at 30 fps). */
 	static constexpr int32 DropLogTicks = 900;
+	/** Tile-cache warnings are drained to the log this often (1 s at 30 fps). */
+	static constexpr int32 WarningTicks = 30;
 
 	FVegetationManager(const FVegetationStreaming::FParams& Params, FVegetationHooks InHooks);
 	~FVegetationManager();
@@ -132,6 +137,10 @@ namespace CamSimVegetation
 	/** The scatter seed: VegetationSeed of the package seed when the manifest has one (int64 folded to 32 bits as
 	 *  low ^ high, so manifests' 0..2^31-1 seeds pass unchanged), else of vegetation.seed's 32 bits. */
 	CAMSIMTEST_API uint32 ResolveSeed(bool bHasSceneSeed, int64 SceneSeed, int32 ConfigSeed);
+
+	/** The scatter's view of a point (REALISM R4): the land-cover code, plus the canopy where the layer covers it (unset
+	 *  Canopy = outside the canopy layer, so the scatter uses the land-cover rule there). */
+	CAMSIMTEST_API FVegPoint CombinePoint(uint8 Code, const TOptional<FCanopySample>& Canopy);
 
 	/** The species mix: the package's vegetation/mix.json, else vegetation.mix_file (OutSource "package" / "file"), else
 	 *  DefaultMix ("default"). Unknown type names or an unreadable/unparsable file: a warning (the names dropped, or the

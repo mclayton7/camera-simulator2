@@ -95,6 +95,7 @@ void ResolvePackage(FCamSimConfig& Cfg)
 	Scene.BuildingsUrl.Reset();
 	Scene.BuildingsMaskDir.Reset();
 	Scene.VegetationMixPath.Reset();
+	Scene.CanopyDir.Reset();
 	Scene.ResolveErrors.Reset();
 	Scene.ResolveWarnings.Reset();
 
@@ -184,6 +185,10 @@ void ResolvePackage(FCamSimConfig& Cfg)
 	if (FPaths::FileExists(Dir / TEXT("vegetation/mix.json")))
 	{
 		Scene.VegetationMixPath = Dir / TEXT("vegetation/mix.json");
+	}
+	if (FPaths::FileExists(Dir / TEXT("canopy/cover/index.json")) && FPaths::FileExists(Dir / TEXT("canopy/height/index.json")))
+	{
+		Scene.CanopyDir = Dir / TEXT("canopy");
 	}
 
 	const FString SeaFile = Dir / TEXT("sea_level.json");

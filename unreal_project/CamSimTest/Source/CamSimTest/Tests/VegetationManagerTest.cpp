@@ -411,3 +411,19 @@ bool FVegManagerShrubsOnlyTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegManagerWarningsTest, "CamSim.Vegetation.Manager.DrainsTileWarnings",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegManagerWarningsTest::RunTest(const FString& Parameters)
+{
+	FFake F;
+	FVegetationHooks H = F.Hooks();
+	int32 Calls = 0;
+	H.TakeWarnings = [&Calls]() { return ++Calls == 1 ? TArray<FString>{ TEXT("canopy tile t_1_2.png unreadable (test)") } : TArray<FString>(); };
+	AddExpectedMessagePlain(TEXT("canopy tile t_1_2.png unreadable (test)"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+	FVegetationStreaming::FParams SP; SP.RadiusM = 60.0;
+	TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(SP, MoveTemp(H));
+	for (int32 I = 0; I < 61; ++I) M->Tick(33.3, -117.4);
+	TestEqual(TEXT("drained at ticks 30 and 60"), Calls, 2);
+	return true;
+}

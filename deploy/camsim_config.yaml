@@ -591,6 +591,7 @@ vegetation:
   drop_in_buildings: true                # CAMSIM_VEGETATION_DROP_IN_BUILDINGS — keep trees out of buildings (package mask, else runtime check)
   building_clearance_m: 2.0              # CAMSIM_VEGETATION_BUILDING_CLEARANCE_M — with the package's footprint mask, no tree within this of a footprint (0..10 m)
   mix_file: ""                           # CAMSIM_VEGETATION_MIX_FILE — absolute species mix (camsim-vegmix-1) used when the package has none
+  canopy_enabled: true                   # CAMSIM_VEGETATION_CANOPY_ENABLED — tree density/size from the package's CHMv2 canopy layer
   shrubs_enabled: true                   # CAMSIM_VEGETATION_SHRUBS_ENABLED — shrubs on codes whose mix lists them
   shrub_radius_m: 500.0                  # CAMSIM_VEGETATION_SHRUB_RADIUS_M — [0, radius_m]; shrubs culled beyond this
   shrub_spacing_m: 3.0                   # CAMSIM_VEGETATION_SHRUB_SPACING_M — [1, 10]; nominal shrub candidate spacing

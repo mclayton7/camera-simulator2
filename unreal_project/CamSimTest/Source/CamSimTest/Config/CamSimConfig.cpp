@@ -692,6 +692,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlBool  (V, "drop_in_buildings", Cfg.Vegetation.bDropInBuildings);
 			YamlFloat (V, "building_clearance_m", Cfg.Vegetation.BuildingClearanceM);
 			YamlString(V, "mix_file",      Cfg.Vegetation.MixFile);
+			YamlBool  (V, "canopy_enabled",  Cfg.Vegetation.bCanopyEnabled);
 			YamlBool  (V, "shrubs_enabled",  Cfg.Vegetation.bShrubsEnabled);
 			YamlFloat (V, "shrub_radius_m",  Cfg.Vegetation.ShrubRadiusM);
 			YamlFloat (V, "shrub_spacing_m", Cfg.Vegetation.ShrubSpacingM);
@@ -1125,6 +1126,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Vegetation.bDropInBuildings = GetEnvBool(TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), Cfg.Vegetation.bDropInBuildings);
 	Cfg.Vegetation.BuildingClearanceM = GetEnvFloat(TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), Cfg.Vegetation.BuildingClearanceM);
 	Cfg.Vegetation.MixFile      = GetEnv     (TEXT("CAMSIM_VEGETATION_MIX_FILE"),      Cfg.Vegetation.MixFile);
+	Cfg.Vegetation.bCanopyEnabled = GetEnvBool (TEXT("CAMSIM_VEGETATION_CANOPY_ENABLED"),  Cfg.Vegetation.bCanopyEnabled);
 	Cfg.Vegetation.bShrubsEnabled = GetEnvBool (TEXT("CAMSIM_VEGETATION_SHRUBS_ENABLED"),  Cfg.Vegetation.bShrubsEnabled);
 	Cfg.Vegetation.ShrubRadiusM   = GetEnvFloat(TEXT("CAMSIM_VEGETATION_SHRUB_RADIUS_M"),  Cfg.Vegetation.ShrubRadiusM);
 	Cfg.Vegetation.ShrubSpacingM  = GetEnvFloat(TEXT("CAMSIM_VEGETATION_SHRUB_SPACING_M"), Cfg.Vegetation.ShrubSpacingM);

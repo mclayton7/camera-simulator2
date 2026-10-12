@@ -24,6 +24,7 @@ bool FVegConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("shrubs_enabled"), V.bShrubsEnabled);
 	TestEqual(TEXT("shrub_radius_m"), V.ShrubRadiusM, 500.0f);
 	TestEqual(TEXT("shrub_spacing_m"), V.ShrubSpacingM, 3.0f);
+	TestTrue (TEXT("canopy_enabled"), V.bCanopyEnabled);
 	return true;
 }
 
@@ -45,7 +46,8 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 		"  mix_file: \"/m/mix.json\"\n"
 		"  shrubs_enabled: false\n"
 		"  shrub_radius_m: 300\n"
-		"  shrub_spacing_m: 4\n");
+		"  shrub_spacing_m: 4\n"
+		"  canopy_enabled: false\n");
 	FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	TestTrue (TEXT("parsed"), Cfg.bLoadedSuccessfully);
 	TestFalse(TEXT("enabled"), Cfg.Vegetation.bEnabled);
@@ -61,6 +63,7 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("shrubs_enabled"), Cfg.Vegetation.bShrubsEnabled);
 	TestEqual(TEXT("shrub_radius_m"), Cfg.Vegetation.ShrubRadiusM, 300.0f);
 	TestEqual(TEXT("shrub_spacing_m"), Cfg.Vegetation.ShrubSpacingM, 4.0f);
+	TestFalse(TEXT("canopy_enabled"), Cfg.Vegetation.bCanopyEnabled);
 
 	const TCHAR* Vars[][2] = {
 		{ TEXT("CAMSIM_VEGETATION_ENABLED"), TEXT("true") }, { TEXT("CAMSIM_VEGETATION_LIBRARY_DIR"), TEXT("/opt/veg") },
@@ -69,7 +72,7 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 		{ TEXT("CAMSIM_VEGETATION_SEED"), TEXT("7") }, { TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), TEXT("1") },
 		{ TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), TEXT("4") }, { TEXT("CAMSIM_VEGETATION_MIX_FILE"), TEXT("/e/mix.json") },
 		{ TEXT("CAMSIM_VEGETATION_SHRUBS_ENABLED"), TEXT("1") }, { TEXT("CAMSIM_VEGETATION_SHRUB_RADIUS_M"), TEXT("250") },
-		{ TEXT("CAMSIM_VEGETATION_SHRUB_SPACING_M"), TEXT("5") } };
+		{ TEXT("CAMSIM_VEGETATION_SHRUB_SPACING_M"), TEXT("5") }, { TEXT("CAMSIM_VEGETATION_CANOPY_ENABLED"), TEXT("1") } };
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], V[1]);
 	Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], TEXT(""));
@@ -86,6 +89,7 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("env shrubs_enabled"), Cfg.Vegetation.bShrubsEnabled);
 	TestEqual(TEXT("env shrub_radius_m"), Cfg.Vegetation.ShrubRadiusM, 250.0f);
 	TestEqual(TEXT("env shrub_spacing_m"), Cfg.Vegetation.ShrubSpacingM, 5.0f);
+	TestTrue (TEXT("env canopy_enabled"), Cfg.Vegetation.bCanopyEnabled);
 	return true;
 }
 

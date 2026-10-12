@@ -390,6 +390,7 @@ struct FCamSimConfig
 		float   CellSizeM    = 100.0f;   // CAMSIM_VEGETATION_CELL_SIZE_M
 		int32   Seed         = 0;        // CAMSIM_VEGETATION_SEED; used only without a scene package
 		float   BuildingClearanceM = 2.0f; // CAMSIM_VEGETATION_BUILDING_CLEARANCE_M; with the package's footprint mask, no tree within this of a footprint along E/W/N/S (REALISM R3b)
+		bool    bCanopyEnabled = true;   // CAMSIM_VEGETATION_CANOPY_ENABLED; tree density/height from the package's canopy/ (REALISM R4)
 		bool    bShrubsEnabled = true;   // CAMSIM_VEGETATION_SHRUBS_ENABLED; shrubs on codes whose mix lists them (REALISM R4)
 		float   ShrubRadiusM = 500.0f;   // CAMSIM_VEGETATION_SHRUB_RADIUS_M; [0, radius_m]; shrubs culled beyond this
 		float   ShrubSpacingM = 3.0f;    // CAMSIM_VEGETATION_SHRUB_SPACING_M; [1, 10]; nominal shrub candidate spacing
@@ -481,6 +482,8 @@ struct FCamSimConfig
 		FString BuildingsMaskDir;
 		// <dir>/vegetation/mix.json when the package has one (REALISM R4: the species mix per land-cover code).
 		FString VegetationMixPath;
+		// <dir>/canopy when the package has canopy/cover and canopy/height (REALISM R4: CHMv2 canopy cover and height).
+		FString CanopyDir;
 		TArray<FString> ResolveErrors;
 		TArray<FString> ResolveWarnings;
 	} Scene;

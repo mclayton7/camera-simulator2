@@ -69,8 +69,8 @@ namespace CamSimLandCoverTest
 
 	inline FString TileFile(int32 LatIndex, int32 LonIndex) { return FString::Printf(TEXT("t_%d_%d.png"), LatIndex, LonIndex); }
 
-	/** PNGs + index.json (format camsim-landcover-1) in Dir. */
-	inline void WriteTileDir(const FString& Dir, const TArray<FTestTile>& Tiles)
+	/** PNGs + index.json (format camsim-landcover-1 unless given: REALISM R4 canopy sets use camsim-canopy-1) in Dir. */
+	inline void WriteTileDir(const FString& Dir, const TArray<FTestTile>& Tiles, const TCHAR* Format = TEXT("camsim-landcover-1"))
 	{
 		FString Entries;
 		for (const FTestTile& T : Tiles)
@@ -81,7 +81,7 @@ namespace CamSimLandCoverTest
 				Entries.IsEmpty() ? TEXT("") : TEXT(","), *File, T.LatIndex, T.LonIndex);
 		}
 		FFileHelper::SaveStringToFile(FString::Printf(
-			TEXT("{\"format\":\"camsim-landcover-1\",\"tile_deg\":0.05,\"tile_px\":600,\"licence\":\"CC BY 4.0\",")
-			TEXT("\"attribution\":\"test tiles\",\"tiles\":[%s]}"), *Entries), *FPaths::Combine(Dir, TEXT("index.json")));
+			TEXT("{\"format\":\"%s\",\"tile_deg\":0.05,\"tile_px\":600,\"licence\":\"CC BY 4.0\",")
+			TEXT("\"attribution\":\"test tiles\",\"tiles\":[%s]}"), Format, *Entries), *FPaths::Combine(Dir, TEXT("index.json")));
 	}
 }

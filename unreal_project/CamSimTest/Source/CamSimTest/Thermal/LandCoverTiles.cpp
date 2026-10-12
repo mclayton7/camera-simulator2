@@ -14,7 +14,7 @@
 
 namespace
 {
-	const TCHAR* IndexFormat = TEXT("camsim-landcover-1");
+	const TCHAR* LandCoverIndexFormat = TEXT("camsim-landcover-1");
 
 	bool GetIndexField(const FJsonObject& O, const TCHAR* Key, int32 Lo, int32 Hi, int32& Out)
 	{
@@ -33,6 +33,11 @@ FString FLandCoverTileCache::ResolveDir(const FString& InDir)
 }
 
 bool FLandCoverTileCache::ParseIndex(const FString& Json, FLandCoverIndex& Out, FString& OutError)
+{
+	return ParseIndex(Json, Out, OutError, LandCoverIndexFormat);
+}
+
+bool FLandCoverTileCache::ParseIndex(const FString& Json, FLandCoverIndex& Out, FString& OutError, const TCHAR* IndexFormat)
 {
 	Out = FLandCoverIndex();
 	TSharedPtr<FJsonObject> Root;
@@ -108,7 +113,7 @@ bool FLandCoverTileCache::DecodeTilePng(IImageWrapperModule& Module, TConstArray
 
 std::atomic<double> FLandCoverTileCache::TestLoadDelaySeconds{ 0.0 };
 
-FLandCoverTileCache::FLandCoverTileCache(const FString& InDir, int32 InMaxTiles)
+FLandCoverTileCache::FLandCoverTileCache(const FString& InDir, int32 InMaxTiles, const TCHAR* ExpectedFormat)
 	: Dir(ResolveDir(InDir))
 	, MaxTiles(FMath::Max(InMaxTiles, 4))
 {
@@ -122,7 +127,7 @@ FLandCoverTileCache::FLandCoverTileCache(const FString& InDir, int32 InMaxTiles)
 		return;
 	}
 	FString ParseError;
-	if (!ParseIndex(Json, Index, ParseError))
+	if (!ParseIndex(Json, Index, ParseError, ExpectedFormat))
 	{
 		Error = IndexPath + TEXT(": ") + ParseError;
 		return;

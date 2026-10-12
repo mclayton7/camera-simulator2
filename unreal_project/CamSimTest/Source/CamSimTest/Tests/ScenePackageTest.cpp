@@ -480,3 +480,22 @@ bool FSceneResolveVegetationMixTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("cleared when scene.dir is unset"), Off.Scene.VegetationMixPath.IsEmpty());
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneResolveCanopyTest,
+	"CamSim.Scene.Resolve.Canopy",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneResolveCanopyTest::RunTest(const FString& Parameters)
+{
+	const FString D = MakePackage(TEXT("canopy"), true, true, true);
+	TestTrue(TEXT("no canopy: empty"), ResolvedConfigFor(D).Scene.CanopyDir.IsEmpty());
+	WriteFile(D / TEXT("canopy/cover/index.json"), TEXT("{}"));
+	TestTrue(TEXT("cover only: empty"), ResolvedConfigFor(D).Scene.CanopyDir.IsEmpty());
+	WriteFile(D / TEXT("canopy/height/index.json"), TEXT("{}"));
+	TestEqual(TEXT("both: canopy dir"), ResolvedConfigFor(D).Scene.CanopyDir, D / TEXT("canopy"));
+	FCamSimConfig Off = ResolvedConfigFor(D);
+	Off.Scene.Dir.Reset();
+	CamSimScene::ResolvePackage(Off);
+	TestTrue(TEXT("cleared when scene.dir is unset"), Off.Scene.CanopyDir.IsEmpty());
+	return true;
+}

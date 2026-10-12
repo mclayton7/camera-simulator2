@@ -40,13 +40,16 @@ public:
 
 	/** Parses index.json text. Wrong format / tile_deg / tile_px or a malformed entry fails with OutError. */
 	static bool ParseIndex(const FString& Json, FLandCoverIndex& Out, FString& OutError);
+	/** As above, with the index format to expect (REALISM R4: "camsim-canopy-1" for the canopy tile sets). */
+	static bool ParseIndex(const FString& Json, FLandCoverIndex& Out, FString& OutError, const TCHAR* ExpectedFormat);
 	/** Decodes a PNG into TilePx^2 codes; false (with OutError) unless it is an 8-bit greyscale PNG of that size. */
 	static bool DecodeTilePng(IImageWrapperModule& Module, TConstArrayView<uint8> Png, TArray<uint8>& OutCodes, FString& OutError);
 	/** Absolute paths are kept; relative ones are taken from the project directory (Content/NonUFS/... stages as loose files). */
 	static FString ResolveDir(const FString& Dir);
 
-	/** Game thread (loads the ImageWrapper module). An unreadable or invalid index leaves the cache invalid (GetError). */
-	explicit FLandCoverTileCache(const FString& Dir, int32 MaxTiles = 64);
+	/** Game thread (loads the ImageWrapper module). An unreadable or invalid index leaves the cache invalid (GetError).
+	 *  ExpectedFormat: the index.json format (REALISM R4 canopy tile sets reuse this cache with "camsim-canopy-1"). */
+	explicit FLandCoverTileCache(const FString& Dir, int32 MaxTiles = 64, const TCHAR* ExpectedFormat = TEXT("camsim-landcover-1"));
 
 	bool IsValid() const { return bValid; }
 	const FString& GetDir() const { return Dir; }

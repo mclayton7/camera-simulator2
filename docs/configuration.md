@@ -747,6 +747,7 @@ CAMSIM_VEGETATION_SEED=0
 CAMSIM_VEGETATION_DROP_IN_BUILDINGS=1
 CAMSIM_VEGETATION_BUILDING_CLEARANCE_M=2.0
 CAMSIM_VEGETATION_MIX_FILE=
+CAMSIM_VEGETATION_CANOPY_ENABLED=1
 CAMSIM_VEGETATION_SHRUBS_ENABLED=1
 CAMSIM_VEGETATION_SHRUB_RADIUS_M=500.0
 CAMSIM_VEGETATION_SHRUB_SPACING_M=3.0
@@ -964,6 +965,7 @@ package) and a loadable library. All keys are **startup only**.
 | `vegetation.drop_in_buildings` | `CAMSIM_VEGETATION_DROP_IN_BUILDINGS` | `true` | Keep trees out of building footprints; gates both methods, in order: the scene package's footprint mask (R3b, `features/buildings/mask/`; the scatter tests it on its worker, no runtime cost, trunk plus the 4 clearance points), else, for an R3 package (buildings tileset, no mask), a second height batch per cell on the buildings tileset (about +0.3 ms game p50, +2.5 ms p95, +34 MiB; a hit more than 0.5 m above the terrain drops the tree), else nothing. `false` turns all of it off (trees stand in footprints wherever land cover is code 10). The `Vegetation: on (...)` log line names the method used ([`vegetation.md`](vegetation.md), "How it works"). |
 | `vegetation.building_clearance_m` | `CAMSIM_VEGETATION_BUILDING_CLEARANCE_M` | `2.0` | With the scene package's footprint mask (`features/buildings/mask/`), no tree stands within this distance (metres, checked along E/W/N/S) of a footprint; range [0, 10]. Method order, gated by `drop_in_buildings`: mask, else the runtime check on the buildings tileset, else none (REALISM R3b). |
 | `vegetation.mix_file` | `CAMSIM_VEGETATION_MIX_FILE` | `""` | Absolute path of a species mix (`camsim-vegmix-1`, the scene package's `vegetation/mix.json` format: library types and weights per land-cover code, shrubs per 100 m²). Used only when the scene package has no `vegetation/mix.json`; without either, the built-in default (10: `tree_broadleaf_a`; 20/30: `shrub_chaparral` at 6 / 1 per 100 m²). See [`vegetation.md`](vegetation.md) (REALISM R4). |
+| `vegetation.canopy_enabled` | `CAMSIM_VEGETATION_CANOPY_ENABLED` | `true` | Use the scene package's CHMv2 canopy layer (`canopy/`) for tree density and size where it covers (the package bbox); elsewhere, or with `false`, trees follow the land-cover rule (REALISM R4). |
 | `vegetation.shrubs_enabled` | `CAMSIM_VEGETATION_SHRUBS_ENABLED` | `true` | Shrubs on land-cover codes whose species mix lists shrub types (REALISM R4). |
 | `vegetation.shrub_radius_m` | `CAMSIM_VEGETATION_SHRUB_RADIUS_M` | `500` | Shrubs are culled beyond this ground distance (metres; [0, `radius_m`], 0 = no shrubs). |
 | `vegetation.shrub_spacing_m` | `CAMSIM_VEGETATION_SHRUB_SPACING_M` | `3.0` | Nominal shrub candidate spacing (metres, [1, 10]); the real spacing is `cell_size_m` / round(`cell_size_m` / spacing). Caps shrub density at one per candidate. |

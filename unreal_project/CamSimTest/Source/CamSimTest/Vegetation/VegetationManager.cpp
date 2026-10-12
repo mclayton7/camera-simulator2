@@ -47,6 +47,8 @@ FVegetationManager::~FVegetationManager()
 void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 {
 	++TickCount;
+	if (Hooks.TakeWarnings && TickCount % WarningTicks == 0)
+		for (const FString& W : Hooks.TakeWarnings()) UE_LOG(LogCamSim, Warning, TEXT("Vegetation: %s"), *W);
 	ExpireStuckRequests();   // first, so the freed slots are refilled this tick
 
 	const FVegetationStreaming::FActions A = Streaming.Tick(CamLatDeg, CamLonDeg);
@@ -263,6 +265,19 @@ namespace CamSimVegetation
 		return VegetationSeed(Base);
 	}
 
+	FVegPoint CombinePoint(uint8 Code, const TOptional<FCanopySample>& Canopy)
+	{
+		FVegPoint P;
+		P.Code = Code;
+		if (Canopy.IsSet())
+		{
+			P.bHasCanopy = true;
+			P.CoverFrac = Canopy->CoverFrac;
+			P.HeightM = Canopy->HeightM;
+		}
+		return P;
+	}
+
 	TSharedPtr<FVegetationMix, ESPMode::ThreadSafe> ResolveMix(const FCamSimConfig& Cfg, const FVegetationLibrary& Library,
 		FString& OutSource, FString& OutWhyNot, bool& bOutFatal)
 	{
@@ -387,17 +402,36 @@ namespace CamSimVegetation
 				Mask.Reset();
 			}
 		}
+		// Canopy cover and height (REALISM R4): the package's canopy/ layer; without it (or off) the land-cover rule.
+		TSharedPtr<FVegetationCanopy, ESPMode::ThreadSafe> Canopy;
+		FString CanopyState = V.bCanopyEnabled ? TEXT("none") : TEXT("off");
+		if (V.bCanopyEnabled && !Cfg.Scene.CanopyDir.IsEmpty())
+		{
+			Canopy = MakeShared<FVegetationCanopy, ESPMode::ThreadSafe>(Cfg.Scene.CanopyDir);
+			if (!Canopy->IsValid())
+			{
+				UE_LOG(LogCamSim, Warning, TEXT("Vegetation: canopy layer unusable (%s); using the land-cover rule"), *Canopy->GetError());
+				Canopy.Reset();
+			}
+			else
+			{
+				CanopyState = TEXT("chmv2");
+			}
+		}
 		ACesium3DTileset* Buildings = CamSim::Geospatial::FindBuildingsTileset(World);
 		const EBuildingExclusion Exclusion = ChooseBuildingExclusion(V.bDropInBuildings, Mask.IsValid(), Buildings != nullptr);
 		const double ClearanceM = V.BuildingClearanceM;
 
 		FVegetationHooks H;
 		// Always answers (an empty land cover lookup yields no trees); the manager's weak pointer drops it after teardown.
-		H.Generate = [LandCover, Mask, Mix, P, Seed, ClearanceM](FVegCellId Id, TFunction<void(FCellContent)> Done)
+		H.Generate = [LandCover, Canopy, Mask, Mix, P, Seed, ClearanceM](FVegCellId Id, TFunction<void(FCellContent)> Done)
 		{
-			UE::Tasks::Launch(UE_SOURCE_LOCATION, [LandCover, Mask, Mix, P, Seed, ClearanceM, Id, Done = MoveTemp(Done)]() mutable
+			UE::Tasks::Launch(UE_SOURCE_LOCATION, [LandCover, Canopy, Mask, Mix, P, Seed, ClearanceM, Id, Done = MoveTemp(Done)]() mutable
 			{
-				auto Sample = [&LandCover](double La, double Lo) { FVegPoint Pt; Pt.Code = LandCover->Code(La, Lo); return Pt; };
+				auto Sample = [&LandCover, &Canopy](double La, double Lo)
+				{
+					return CombinePoint(LandCover->Code(La, Lo), Canopy.IsValid() ? Canopy->Sample(La, Lo) : TOptional<FCanopySample>());
+				};
 				auto ClearFn = [&Mask, ClearanceM](double La, double Lo) { return Mask->IsClear(La, Lo, ClearanceM); };
 				const FClearPredicate Clear = ClearFn;
 				FCellContent C = GenerateCellContent(Seed, Id, P, *Mix, Sample, Mask.IsValid() ? &Clear : nullptr);
@@ -458,14 +492,20 @@ namespace CamSimVegetation
 				FFileHelper::SaveStringToFile(Line, *Dump, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append);
 			}
 		};
+		H.TakeWarnings = [LandCover, Canopy]()
+		{
+			TArray<FString> W = LandCover->TakeWarnings();
+			if (Canopy.IsValid()) W.Append(Canopy->TakeWarnings());
+			return W;
+		};
 		H.Destroy = [Actors](FVegCellId Id)
 		{
 			TWeakObjectPtr<ACamSimVegetationCell> A;
 			if (Actors->RemoveAndCopyValue(Id, A) && A.IsValid()) A->Destroy();
 		};
-		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (types %d (trees %d, shrubs %d), mix %s, shrubs %s, radius %.0f m, density %.2f, ")
-			TEXT("shadows %d, seed %u, land cover %s, buildings: %s)"),
-			NumTrees + NumShrubs, NumTrees, NumShrubs, *MixSource,
+		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (types %d (trees %d, shrubs %d), mix %s, canopy %s, shrubs %s, radius %.0f m, ")
+			TEXT("density %.2f, shadows %d, seed %u, land cover %s, buildings: %s)"),
+			NumTrees + NumShrubs, NumTrees, NumShrubs, *MixSource, *CanopyState,
 			P.bShrubs ? *FString::Printf(TEXT("%.0f m"), V.ShrubRadiusM) : TEXT("off"),
 			V.RadiusM, V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
 			*DescribeBuildingExclusion(Exclusion, V.BuildingClearanceM));
