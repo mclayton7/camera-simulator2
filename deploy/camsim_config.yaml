@@ -593,7 +593,7 @@ vegetation:
   mix_file: ""                           # CAMSIM_VEGETATION_MIX_FILE — absolute species mix (camsim-vegmix-1) used when the package has none
   canopy_enabled: true                   # CAMSIM_VEGETATION_CANOPY_ENABLED — tree density/size from the package's CHMv2 canopy layer
   shrubs_enabled: true                   # CAMSIM_VEGETATION_SHRUBS_ENABLED — shrubs on codes whose mix lists them
-  shrub_radius_m: 500.0                  # CAMSIM_VEGETATION_SHRUB_RADIUS_M — [0, radius_m]; shrubs culled beyond this
+  shrub_radius_m: 500.0                  # CAMSIM_VEGETATION_SHRUB_RADIUS_M — [0, radius_m]; shrub ring: shrubs generated and drawn within this
   shrub_spacing_m: 3.0                   # CAMSIM_VEGETATION_SHRUB_SPACING_M — [1, 10]; nominal shrub candidate spacing
   far_radius_m: 4000.0                   # CAMSIM_VEGETATION_FAR_RADIUS_M — far tier (low-poly, thinned) to here; 0 = off, else [1.5 x radius_m, 10000]
   far_block_cells: 4                     # CAMSIM_VEGETATION_FAR_BLOCK_CELLS — [2, 8]; blocks of N x N cells switch near/far as a whole

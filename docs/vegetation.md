@@ -36,8 +36,8 @@ geometry only: visible in EO and IR (in IR the pixel takes the land cover's clas
     (one tree per 231 m² of mix code) and scale 0.8–1.2.
 - **Shrubs**: their own grid of `round(cell / shrub_spacing_m)` = 33 per axis (3.03 m), sub-streams 166–171 (jitter,
   accept, yaw, scale, species): accepted with p = shrubs per 100 m² / 100 × 9.18 m² × density on codes whose mix lists
-  shrubs, scale 0.7–1.3. Shrubs ignore the canopy (CHMv2 doesn't resolve them) and may stand under trees. Only in the
-  near tier, culled at `shrub_radius_m`.
+  shrubs, scale 0.7–1.3. Shrubs ignore the canopy (CHMv2 doesn't resolve them) and may stand under trees. They come
+  from the **shrub ring** (below), never from the near cells or the far tier.
 - **Land cover and canopy at points** (`VegetationLandCover.h`, `VegetationCanopy.h`): the scatter reads the package's
   `landcover/` and `canopy/{cover,height}/` tiles itself, on a worker, each through its own 16-tile LRU of
   `FLandCoverTileCache` (never the CIGI lookup's game-thread budget). A bad tile reads as no data there; the caches'
@@ -79,13 +79,21 @@ geometry only: visible in EO and IR (in IR the pixel takes the land cover's clas
   camera moved 25 m.
 - **Near tier** (`Vegetation/VegetationCellActor.h`, `VegetationManager.h`): one actor per cell, globe-anchored at the
   cell centre in its East-South-Up frame (survives origin shifts), one HISM per type: trees with `cast_shadows`, culled
-  at 1.2 × `radius_m` + a block diagonal (blocks are whole); shrubs culled at `shrub_radius_m`. Collision off, no
-  custom depth or stencil.
+  at 1.2 × `radius_m` + a block diagonal (blocks are whole). Collision off, no custom depth or stencil. Trees take
+  exact per-tree heights (one `SampleHeightMostDetailed` batch per cell).
+- **Shrub ring**: the cells whose centre is within `shrub_radius_m` + half a cell diagonal (every cell overlapping
+  the circle; kept to 1.2 × that) get a second, shrub-only actor (`GenerateCellContent` with trees off), one HISM per
+  shrub type culled at `shrub_radius_m`, shadows as the trees. Heights come from a 20 m grid per cell (36 points,
+  bilinear, sunk 0.15 m): Cesium answers every height point on the game thread, and ~1,000 shrubs per cell sampled one
+  by one cost +8 ms game p95. Ring cells share the in-flight and spawn budgets (near cells first, then the ring, then
+  far blocks). Earlier the near cells carried their shrubs out to `radius_m` and `shrub_radius_m` only culled them,
+  which cost +1.9 ms game p50 in the dense pass whatever the shrub radius ("Bench").
 - **Far tier** (`Vegetation/VegetationFar.h`, `VegetationFarTier.h`): one actor per far block. Its trees are the same
   `GenerateCellContent` trees of the block's cells (shrubs off), kept when `Uniform(Hash(col, row, k, seed, 172))` <
   `far_keep` (0.35) and enlarged by `far_scale` (1.3), drawn with the type's `far_gltf` (a procedural 108-triangle lathe
-  crown + trunk, untextured), no shadows. Heights come from one `SampleHeightMostDetailed` batch per block on a 25 m
-  grid (bilinear; trees sunk 0.3 m; a tree whose grid quad has a failed point is dropped). Trees are split by
+  crown + trunk, untextured), no shadows. Heights come from one `SampleHeightMostDetailed` batch per block on a 100 m
+  grid (bilinear; trees sunk 0.5 m; a tree whose grid quad has a failed point is dropped): a 25 m grid out to 4 km
+  cost several ms of game time in `Cesium::loadTiles`. Trees are split by
   `Hash(..., 173)` into 4 HISMs culled at 0.7 / 0.8 / 0.9 / 1.0 × `far_radius_m`: the outer 30 % thins in four steps
   instead of ending in a hard line.
 - **No gap at a switch:** a block switching tier keeps its old actors until the new tier has settled (its far actor
