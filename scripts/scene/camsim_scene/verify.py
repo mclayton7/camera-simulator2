@@ -292,6 +292,37 @@ def _check_landcover_codes(lc: Path) -> Check:
     return Check("landcover_codes", not problems, _summary(problems))
 
 
+def _check_canopy(pkg: Path) -> Check:
+    """canopy/{cover,height}/ (REALISM R4): both indexes parse with the same tiles, every tile is a 600x600 8-bit
+    greyscale PNG, cover <= 100."""
+    from .layers.canopy import BANDS, FORMAT
+
+    problems, files = [], {}
+    for band in BANDS:
+        p = pkg / "canopy" / band / "index.json"
+        try:
+            idx = json.loads(p.read_text())
+        except (OSError, ValueError) as e:
+            problems.append(f"{band}/index.json: {e}")
+            continue
+        if idx.get("format") != FORMAT or idx.get("band") != band:
+            problems.append(f"{band}/index.json: format/band {idx.get('format')}/{idx.get('band')}")
+        files[band] = [t["file"] for t in idx.get("tiles", [])]
+        for name in files[band]:
+            try:
+                with Image.open(pkg / "canopy" / band / name) as im:
+                    a = np.asarray(im)
+                    if im.mode != "L" or a.shape != (600, 600):
+                        problems.append(f"{band}/{name}: mode {im.mode} shape {a.shape}")
+                    elif band == "cover" and a.max() > 100:
+                        problems.append(f"cover/{name}: cover {int(a.max())} > 100")
+            except OSError as e:
+                problems.append(f"{band}/{name}: {e}")
+    if len(files) == 2 and files["cover"] != files["height"]:
+        problems.append("cover and height list different tiles")
+    return Check("canopy", not problems, _summary(problems))
+
+
 def _check_vegetation_mix(pkg: Path, m: Manifest) -> Check:
     """vegetation/mix.json (REALISM R4) is exactly the manifest's [vegetation] settings."""
     from . import vegmix
@@ -523,6 +554,8 @@ def verify(
     ]
     if m.layers.get("vegetation"):
         checks.append(_guard("vegetation_mix", _check_vegetation_mix, pkg, m))
+    if m.layers.get("canopy"):
+        checks.append(_guard("canopy", _check_canopy, pkg))
     if (pkg / "features" / "buildings" / "tileset.json").exists():  # absent when no building was kept
         checks.append(_guard("buildings_tileset", _check_buildings_tileset, pkg))
     if not deep:

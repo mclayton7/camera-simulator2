@@ -47,6 +47,7 @@ from .engine import (
 )
 from .fsutil import atomic_write, normalise_modes, sha256_file
 from .layers import buildings as buildings_layer
+from .layers import canopy as canopy_layer
 from .layers import imagery, landcover, ndvi, terrain
 from .licences import DEFAULT_ALLOW, attribution_text, check_allowed, layer_credit
 from .manifest import STATE_DIR, AssetRecord, Manifest, SourceRecord, canonical_json, write_hashes
@@ -130,7 +131,7 @@ def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bo
             for a in assets:
                 a.metadata["msl_above_navd88_m"] = sea["msl_above_navd88_m"]
         for a in assets:
-            if a.role == "data" and src.layer != Layer.LANDCOVER and (a.metadata.get("datum") or src.datum):
+            if a.role == "data" and src.layer not in (Layer.LANDCOVER, Layer.CANOPY) and (a.metadata.get("datum") or src.datum):
                 datums.add(a.metadata.get("datum") or src.datum)
         records.append(
             SourceRecord(
@@ -250,7 +251,7 @@ def _needs_footprints(m: Manifest) -> bool:
     """A non-global data asset of a terrain/imagery source without a footprint (fetch computes them)."""
     for rec in m.sources:
         src = make_source(rec.id, rec.adapter, rec.options)
-        if src.layer in (Layer.LANDCOVER, Layer.FEATURES, Layer.BUILDINGS) or src.global_coverage:
+        if src.layer in (Layer.LANDCOVER, Layer.FEATURES, Layer.BUILDINGS, Layer.CANOPY) or src.global_coverage:
             continue
         if any(a.role == "data" and "footprint" not in a.metadata for a in rec.assets):
             return True
@@ -273,7 +274,7 @@ def _fetch(pkg: Path, cache: Cache) -> Manifest:
         for src, a, path in _cached_assets(rec, cache):
             if (
                 a.role == "data"
-                and src.layer not in (Layer.LANDCOVER, Layer.FEATURES, Layer.BUILDINGS)
+                and src.layer not in (Layer.LANDCOVER, Layer.FEATURES, Layer.BUILDINGS, Layer.CANOPY)
                 and not src.global_coverage
                 and "footprint" not in a.metadata
             ):
@@ -807,6 +808,9 @@ def build_scene(
         if ndvi_stats is not None:
             stats["ndvi"] = ndvi_stats
         stats["landcover"] = _build_landcover(pkg, m, ctx)
+        cstats = canopy_layer.build(pkg, m, ctx, jobs)
+        if m.layers.get("canopy"):
+            stats["canopy"] = cstats
         bstats = buildings_layer.build(pkg, m, ctx)
         if m.layers.get("buildings"):
             stats["buildings"] = bstats

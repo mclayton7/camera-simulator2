@@ -33,7 +33,7 @@ from pathlib import Path
 
 from .tiling import GLOBE, Bounds, Region
 
-LAYERS = ("terrain", "imagery", "landcover", "features", "buildings")
+LAYERS = ("terrain", "imagery", "landcover", "features", "buildings", "canopy")
 TILED_LAYERS = ("terrain", "imagery")
 KM_PER_DEG = 111.32
 ROAD_CLASSES = ("motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential")
@@ -62,6 +62,7 @@ KEYS = {
     "features",
     "buildings",
     "vegetation",
+    "canopy",
 }
 
 PROFILES = {
@@ -72,6 +73,7 @@ PROFILES = {
             "landcover": ["worldcover"],
             "features": [],
             "buildings": [],
+            "canopy": [],
         },
         "bbox_zoom": {"terrain": 14, "imagery": 13},
         "ndvi": False,
@@ -83,6 +85,7 @@ PROFILES = {
             "landcover": ["worldcover"],
             "features": [],
             "buildings": [],
+            "canopy": [],
         },
         "bbox_zoom": {"terrain": 16, "imagery": 17},
         "ndvi": True,
@@ -315,6 +318,41 @@ def _parse_vegetation(data) -> dict:
     return out
 
 
+CANOPY_KEYS = ("enabled",)
+
+
+def _parse_canopy(data) -> bool:
+    """[canopy] enabled = true (REALISM R4): CHMv2 cover / height tiles over the package bbox."""
+    if "canopy" not in data:
+        return False
+    c = data["canopy"]
+    if not isinstance(c, dict):
+        raise ConfigError("canopy must be a table")
+    unknown = set(c) - set(CANOPY_KEYS)
+    if unknown:
+        raise ConfigError(f"unknown key(s) in canopy: {sorted(unknown)}")
+    enabled = c.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"canopy.enabled must be true or false, got {enabled!r}")
+    return enabled
+
+
+def canopy_settings(plan: ScenePlan) -> dict | None:
+    """The canopy layer's settings (REALISM R4), or None when it is off."""
+    from .layers.canopy import FORMAT, MIN_HEIGHT_M
+
+    if not plan.priorities.get("canopy"):
+        return None
+    return {
+        "priorities": list(plan.priorities["canopy"]),
+        "bounds": list(plan.bbox),
+        "tile_deg": 0.05,
+        "min_height_m": MIN_HEIGHT_M,
+        "height_stat": "p90 nearest-rank",
+        "format": FORMAT,
+    }
+
+
 def vegetation_settings(plan: ScenePlan) -> dict | None:
     """The species mix written to vegetation/mix.json (REALISM R4), or None without a [vegetation] table."""
     return dict(plan.vegetation) if plan.vegetation else None
@@ -417,6 +455,8 @@ def parse_scene(data: dict) -> ScenePlan:
         raise ConfigError("priorities.features is derived from [features]; set the flags instead")
     if "buildings" in data.get("priorities", {}):
         raise ConfigError("priorities.buildings is derived from [buildings]; set the table instead")
+    if "canopy" in data.get("priorities", {}):
+        raise ConfigError("priorities.canopy is derived from [canopy]; set the table instead")
     for layer, ids in data.get("priorities", {}).items():
         if layer not in LAYERS:
             raise ConfigError(f"priorities.{layer}: unknown layer (one of {LAYERS})")
@@ -429,6 +469,7 @@ def parse_scene(data: dict) -> ScenePlan:
     )
     buildings = _parse_buildings(data)
     vegetation = _parse_vegetation(data)
+    prio["canopy"] = ["chmv2"] if _parse_canopy(data) else []
     prio["buildings"] = ["overture_buildings"] if buildings.get("enabled") else []
     if ndvi and ndvi_given and not any(s in prio["imagery"] for s in (NDVI_REFERENCE, NDVI_TARGET)):
         raise ConfigError("ndvi = true needs naip_pc or wc_s2 in priorities.imagery")
@@ -581,6 +622,9 @@ def layer_settings(plan: ScenePlan) -> dict:
     vs = vegetation_settings(plan)
     if vs is not None:
         out["vegetation"] = vs
+    cs = canopy_settings(plan)
+    if cs is not None:
+        out["canopy"] = cs
     bs = buildings_settings(plan)
     if bs is not None:
         from .footprints import BURN_MIN_CELLS, MASK_FACTOR, MASK_RULES_VERSION

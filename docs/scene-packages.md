@@ -582,6 +582,35 @@ Build memory headroom (R3b): the buildings layer peaked at 1,988 MB of the 2,048
 `roof_texel_m` 0.5 (1,588 MB at 1.0; R3 was 1,630). A larger site may exceed the limit; raise it with
 `camsim-scene build ... --max-worker-rss-mb N` (MB per worker, default 2048, `scripts/scene/camsim_scene/cli.py`) or lower `roof_texel_m`.
 
+## Canopy (R4)
+
+`[canopy] enabled = true` adds `canopy/`: canopy cover and canopy height from Meta/WRI **CHMv2** (source id `chmv2`,
+CC BY 4.0, on the default allow-list), which CamSim's vegetation scatter turns into tree density and size
+([`vegetation.md`](vegetation.md)).
+
+```toml
+[canopy]
+enabled = true
+```
+
+- **Source.** One GeoTIFF per level-10 web-mercator quadkey
+  (`https://dataforgood-fb-data.s3.amazonaws.com/forests/v2/global/dinov3_global_chm_v2_ml3/chm/<quadkey>.tif`): uint8
+  metres, EPSG:3857 at 1.194 m (≈ 1.0 m on the ground at 33° N), 512² tiles, deflate, ≈ 141 MB each. `plan` HEADs every
+  quadkey over the package `bbox` (a missing key, e.g. open ocean, is skipped) and records each tile's acquisition date
+  range from `metadata/<quadkey>.geojson` (`acq_date`); `fetch` downloads whole files into the cache.
+- **Layer** (`camsim-canopy-1`): two tile sets on the land-cover grid (0.05° tiles, 600 × 600 8-bit greyscale PNG, row
+  0 north, the same file names): `canopy/cover/` (percent of the CHM pixels ≥ 3 m whose centres fall in the texel) and
+  `canopy/height/` (the nearest-rank p90, `sorted[floor(0.9 (n − 1))]`, of those pixels, metres), each with an
+  `index.json` (`format`, `band`, `units`, `tile_deg`, `tile_px`, `bbox`, `tiles`, `acquired`, licence and attribution),
+  plus `canopy/ATTRIBUTION.txt`. Tiles cover the package `bbox` only (not the 100 km land-cover ring): outside it CamSim
+  falls back to the land-cover rule. A texel no CHM file covers is 0 / 0.
+- **Rebuild:** skipped when the settings, the CHM files and the credit are unchanged (`.state/canopy.json`); tiles run
+  on `-j` worker processes (a tile reads ≈ 26 M CHM pixels).
+- **verify** (`canopy`): both indexes parse with the same tile list, every tile is a 600 × 600 mode-L PNG, cover ≤ 100.
+- Attribution: "Meta and World Resources Institute (WRI), 2026. Version 2 High Resolution Canopy Height Maps (CHMv2),
+  https://registry.opendata.aws/dataforgood-fb-forestsv2. Source imagery for CHM © 2016 Vantor" (the registry's "How
+  to Cite").
+
 ## Vegetation mix (R4)
 
 An optional `[vegetation]` table chooses which vegetation library types stand on each land-cover code, and how many

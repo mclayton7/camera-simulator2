@@ -30,6 +30,7 @@ class Layer(StrEnum):
     LANDCOVER = "landcover"
     FEATURES = "features"
     BUILDINGS = "buildings"
+    CANOPY = "canopy"
 
 
 @dataclass(frozen=True)

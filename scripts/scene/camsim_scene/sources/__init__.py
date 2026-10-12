@@ -18,6 +18,7 @@ BUILTIN = {
     "osm_geofabrik": "camsim_scene.sources.osm_geofabrik:OsmGeofabrik",
     "nhd_hr": "camsim_scene.sources.nhd_hr:NhdHr",
     "overture_buildings": "camsim_scene.sources.overture_buildings:OvertureBuildings",
+    "chmv2": "camsim_scene.sources.chmv2:Chmv2",
 }
 
 

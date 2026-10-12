@@ -262,6 +262,12 @@ Decision: source NAIP 2024 from the USDA image service or EarthExplorer. PC and 
 | **Annual NLCD Collection 1.2** (USGS/MRLC) | MRLC viewer/downloads, ScienceBase, web services, **`s3://usgs-landcover/annual-nlcd/c1/v0/...` requester-pays** (us-west-2) | 30 m, CONUS Albers; products LndCov, LndChg, LndCnf, **FctImp (fractional impervious %)**, ImpDsc, SpcChg | No use restrictions (USGS; citation requested) | C1.2 published 2026-06-10, covers 1985–**2025** |
 | **NLCD Tree Canopy Cover v2025-6** (USFS) | `https://data.fs.usda.gov/geodata/rastergateway/treecanopycover/`, USFS ImageServers, GEE `projects/gtac-data-publish/assets/TCC_Product_Version_2025-6` | 30 m %, 1985–2025; "Science" (raw + SE) vs "NLCD" (post-processed) versions | US Gov funded, usable without permission/fees | Current |
 
+CHMv2 checked 2026-10-11 (REALISM R4, `camsim-scene` source `chmv2`): one GeoTIFF per level-10 quadkey under
+`chm/`, uint8 metres, EPSG:3857 at 1.194 m, 512² tiles, deflate, overviews 2–64, no nodata value, ≈ 141 MB
+(`0230132032`, Camp Pendleton); `metadata/<quadkey>.geojson` holds polygons with `acq_date` (Pendleton: 2020-01-05);
+`tiles.geojson` (59 MB) indexes the tiles. Public over HTTPS without credentials. R4 uses it for both cover and height
+(the user's choice, 2026-10-11), not TCC.
+
 Recommendation for R4: CHMv2 (CC BY 4.0) as the canopy-height prior everywhere (it's the only
 fine-scale option inside the base), NLCD TCC v2025-6 (NLCD version) for canopy %, and Annual NLCD
 C1.2 FctImp for impervious %. REALISM's "NLCD tree canopy cover %" should name **USFS TCC
