@@ -143,6 +143,20 @@ def _dense_pass(t: float) -> Pose:
     )
 
 
+# REALISM R4 long-range check: 5 km HAE, 100 m/s north-east from 5 km south-west of the Santa Margarita riparian woodland
+# (33.307, -117.354), 15 deg down with a 30 deg FOV: the view spans the vegetation far tier (to 4 km) and beyond.
+LONG_RANGE_START = (33.307 - 3536.0 / 111_320.0, -117.354 - 3536.0 / (111_320.0 * math.cos(math.radians(33.307))))
+
+
+def _long_range(t: float) -> Pose:
+    lat0, lon0 = LONG_RANGE_START
+    d = 100.0 * t
+    brg = math.radians(45.0)
+    lat = lat0 + d * math.cos(brg) / 111_320.0
+    lon = lon0 + d * math.sin(brg) / (111_320.0 * math.cos(math.radians(lat0)))
+    return Pose(lat, lon, 5000.0, yaw=45.0, gimbal_pitch=-15.0, fov_h=30.0)
+
+
 def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:
     orbit = _orbit(site.lat, site.lon, 3000.0, 2000.0, 120.0)
     if smoke:
@@ -166,11 +180,13 @@ def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:
                 return _coast_pass((t - 90.0) * 3.0)
             if t < 150.0:
                 return _dense_pass((t - 120.0) * 3.0)
-            return far(t - 150.0)
+            if t < 180.0:
+                return _long_range((t - 150.0) * 3.0)
+            return far(t - 180.0)
         return far(t - 90.0)
 
     phases = [
-        Phase("warmup", 180.0 if site.coast else 120.0, warmup, measured=False),
+        Phase("warmup", 210.0 if site.coast else 120.0, warmup, measured=False),
         Phase("orbit", 120.0, orbit),
         Phase("slew", 60.0, slew),
         Phase("low_pass", 90.0, low_pass),
@@ -179,6 +195,7 @@ def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:
     if site.coast:
         phases.append(Phase("coast_pass", 90.0, _coast_pass))
         phases.append(Phase("dense_pass", 90.0, _dense_pass))
+        phases.append(Phase("long_range", 90.0, _long_range))
     return phases
 
 

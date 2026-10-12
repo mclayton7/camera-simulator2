@@ -10,7 +10,15 @@ PKG is the scene package the baseline was captured with (Pendleton R2: .cache/sc
 The baseline is the pre-slice `run_bench.py --smoke --site pendleton` pair (a/, b/ with shots/).
 
 Gates (report.json, exit 0 only when all pass):
-  placement     every dumped tree's (lat, lon) is land-cover code 10 (read with bench/dense_path.LandCover)
+  placement     every dumped tree stands on a code whose species mix lists trees (and, inside the package's canopy layer,
+                on a texel with cover > 0 and height >= 3 m); every shrub on a code whose mix lists shrubs
+  species       per code, the dumped type counts vs the mix weights: chi-square p > 0.001 (REALISM R4)
+  canopy        (packages with canopy/) per 100 m cell with mean CHMv2 cover in [0.1, 0.5]: crown fraction vs cover,
+                median |error| <= 10 pp over >= 50 cells
+  far_determinism  far blocks from the two approach runs have the same hashes; far trees are near trees of their cell
+  handoff       events: no near/far switch leaves a block without actors (a destroy only after the other tier settled)
+  long_range    (`--stages long_range`) the bench's long_range phase: 0 dropped frames, game p95 <= +3 ms over off
+  r4_identity   (`--stages r4_identity`) --r4-scene with shrubs and far off: every cell has the --r4-baseline hash
   grounding     camsim.Vegetation.GroundCheck: n == 200 and max_dz_m < 0.5, both runs
   determinism   approach from 3 km north and 3 km south: every cell in both dumps has the same hash
   origin_shift  /snapshot at the riparian pose before and after a trip to lon + 3.41: SSIM >= baseline floor - 0.01,
@@ -76,6 +84,223 @@ def _deg_per_metre(lat_deg):
     n = WGS84_A / np.sqrt(w2)
     return np.degrees(1.0 / m), np.degrees(1.0 / (n * np.maximum(np.cos(lat), 1e-6)))
 STAGES = ["approach", "off", "gt", "truck", "oblique"]
+
+
+# ---------------------------------------------------------------- REALISM R4 "deeper" gates (pure)
+
+CELL_M = 100.0
+DEFAULT_SHRUB = "shrub_chaparral"  # VegetationMix.cpp DefaultMix
+DEFAULT_SHRUB_DENSITY = {20: 6.0, 30: 1.0}
+MIN_CANOPY_HEIGHT_M = 3.0
+
+
+def mix_roles(mix: dict | None, library: dict) -> dict[int, dict[str, dict[int, float]]]:
+    """Per land-cover code: {"trees": {library index: weight}, "shrubs": {...}}, each list normalised, as CamSim splits a
+    camsim-vegmix-1 mix by the library's roles (VegetationMix.cpp ParseMix); None = the built-in default mix."""
+    types = library["types"]
+    index = {t["name"]: k for k, t in enumerate(types)}
+    role = {k: t.get("role", "tree") for k, t in enumerate(types)}
+    out: dict[int, dict[str, dict[int, float]]] = {}
+    if mix is None:
+        if types and role[0] == "tree":
+            out[10] = {"trees": {0: 1.0}, "shrubs": {}}
+        if DEFAULT_SHRUB in index and role[index[DEFAULT_SHRUB]] == "shrub":
+            for code in DEFAULT_SHRUB_DENSITY:
+                out[code] = {"trees": {}, "shrubs": {index[DEFAULT_SHRUB]: 1.0}}
+        return out
+    for code, names in mix.get("mix", {}).items():
+        split: dict[str, dict[int, float]] = {"trees": {}, "shrubs": {}}
+        for name, w in names.items():
+            if name in index:
+                split["shrubs" if role[index[name]] == "shrub" else "trees"][index[name]] = float(w)
+        for key in split:
+            total = sum(split[key].values())
+            split[key] = {k: v / total for k, v in sorted(split[key].items())} if total > 0 else {}
+        if split["trees"] or split["shrubs"]:
+            out[int(code)] = split
+    return out
+
+
+def _gammaincc(a: float, x: float) -> float:
+    """Regularised upper incomplete gamma Q(a, x) (series below a + 1, continued fraction above; Numerical Recipes)."""
+    if x <= 0.0:
+        return 1.0
+    gln = math.lgamma(a)
+    if x < a + 1.0:
+        ap, total, term = a, 1.0 / a, 1.0 / a
+        for _ in range(500):
+            ap += 1.0
+            term *= x / ap
+            total += term
+            if abs(term) < abs(total) * 1e-15:
+                break
+        return max(0.0, 1.0 - total * math.exp(-x + a * math.log(x) - gln))
+    b, c, d = x + 1.0 - a, 1e300, 1.0 / (x + 1.0 - a)
+    h = d
+    for i in range(1, 500):
+        an = -i * (i - a)
+        b += 2.0
+        d = an * d + b
+        d = 1e-300 if abs(d) < 1e-300 else d
+        c = b + an / c
+        c = 1e-300 if abs(c) < 1e-300 else c
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 1e-15:
+            break
+    return math.exp(-x + a * math.log(x) - gln) * h
+
+
+def chi2_p(stat: float, dof: int) -> float:
+    """P(chi-square with dof degrees of freedom >= stat)."""
+    return _gammaincc(dof / 2.0, stat / 2.0)
+
+
+def _instances(cells: dict, key: str) -> list:
+    return [i for c in cells.values() for i in c.get(key, [])]
+
+
+def placement_gate(cells: dict, roles: dict, code_at, canopy_at=None) -> dict:
+    """Trees only on codes whose mix lists trees and, where the canopy layer covers (canopy_at -> (cover, height_m,
+    present)), only on texels with cover > 0 and height >= 3 m; shrubs only on codes whose mix lists shrubs."""
+    trees, shrubs = _instances(cells, "instances"), _instances(cells, "shrubs")
+    tree_codes = {c for c, r in roles.items() if r["trees"]}
+    shrub_codes = {c for c, r in roles.items() if r["shrubs"]}
+    tc = code_at([i[1] for i in trees], [i[0] for i in trees]) if trees else []
+    sc = code_at([i[1] for i in shrubs], [i[0] for i in shrubs]) if shrubs else []
+    off_trees = sum(1 for c in tc if int(c) not in tree_codes)
+    off_shrubs = sum(1 for c in sc if int(c) not in shrub_codes)
+    bare = 0
+    if canopy_at is not None and trees:
+        for cover, height, present in canopy_at([i[1] for i in trees], [i[0] for i in trees]):
+            bare += present and not (cover > 0.0 and height >= MIN_CANOPY_HEIGHT_M)
+    return {"pass": bool(trees or shrubs) and off_trees == 0 and off_shrubs == 0 and bare == 0,
+            "trees": len(trees), "shrubs": len(shrubs), "trees_off_mix": off_trees, "shrubs_off_mix": off_shrubs,
+            "trees_without_canopy": bare}
+
+
+def species_gate(cells: dict, roles: dict, code_at, min_n: int = 50) -> dict:
+    """Per code and role, type counts vs the mix weights: chi-square p > 0.001 (codes with >= min_n instances and two
+    or more types); a type the code's mix doesn't list fails outright."""
+    out: dict = {"codes": {}}
+    ok = True
+    for key, role in (("instances", "trees"), ("shrubs", "shrubs")):
+        inst = _instances(cells, key)
+        if not inst:
+            continue
+        codes = code_at([i[1] for i in inst], [i[0] for i in inst])
+        by_code: dict[int, dict[int, int]] = {}
+        for i, c in zip(inst, codes):
+            by_code.setdefault(int(c), {}).setdefault(int(i[5]), 0)
+            by_code[int(c)][int(i[5])] += 1
+        for code, counts in sorted(by_code.items()):
+            want = roles.get(code, {}).get(role, {})
+            n = sum(counts.values())
+            stray = sum(v for t, v in counts.items() if t not in want)
+            res = {"n": n, "counts": {str(t): v for t, v in sorted(counts.items())}, "stray": stray}
+            if stray:
+                res["p"] = 0.0
+            elif n >= min_n and len(want) >= 2:
+                stat = sum((counts.get(t, 0) - w * n) ** 2 / (w * n) for t, w in want.items())
+                res["p"] = chi2_p(stat, len(want) - 1)
+            res["pass"] = res.get("p", 1.0) > 0.001
+            ok &= res["pass"]
+            out["codes"].setdefault(str(code), {})[role] = res
+    out["pass"] = ok and bool(out["codes"])
+    return out
+
+
+def cell_of(lat: float, lon: float, cell_m: float = CELL_M) -> tuple[int, int]:
+    """VegetationGrid.cpp CellOf."""
+    dlat = cell_m / M_PER_DEG
+    row = math.floor((lat + 90.0) / dlat)
+    dlon = cell_m / (M_PER_DEG * max(math.cos(math.radians(-90.0 + (row + 0.5) * dlat)), 0.01))
+    cols = math.ceil(360.0 / dlon)
+    return row, min(math.floor(((lon + 180.0) % 360.0) / dlon), cols - 1)
+
+
+def cell_bounds(row: int, col: int, cell_m: float = CELL_M) -> tuple[float, float, float, float]:
+    """(south, north, west, east) degrees, VegetationGrid.cpp CellBounds."""
+    dlat = cell_m / M_PER_DEG
+    dlon = cell_m / (M_PER_DEG * max(math.cos(math.radians(-90.0 + (row + 0.5) * dlat)), 0.01))
+    s, w = -90.0 + row * dlat, -180.0 + col * dlon
+    return s, s + dlat, w, min(w + dlon, 180.0)
+
+
+def cell_area_m2(row: int, col: int, cell_m: float = CELL_M) -> float:
+    s, n, w, e = cell_bounds(row, col, cell_m)
+    return (n - s) * M_PER_DEG * (e - w) * M_PER_DEG * math.cos(math.radians(0.5 * (s + n)))
+
+
+def canopy_gate(cells: dict, cover_of, crowns: dict[int, float], lo: float = 0.1, hi: float = 0.5,
+                min_cells: int = 50, tol: float = 0.10) -> dict:
+    """Per 100 m cell whose mean canopy cover (cover_of(row, col), 0..1) is in [lo, hi]: crown fraction
+    sum(pi (r_type x scale)^2) / cell area vs that cover; median |error| <= tol over >= min_cells cells. Above hi one
+    tree per candidate saturates (pi r^2 / 34.6 m^2), so those cells are not compared."""
+    errs = []
+    for (row, col), c in cells.items():
+        cover = cover_of(row, col)
+        if not lo <= cover <= hi:
+            continue
+        crown = sum(math.pi * (crowns.get(int(i[5]), 0.0) * i[4]) ** 2 for i in c["instances"])
+        errs.append(crown / cell_area_m2(row, col) - cover)
+    errs.sort(key=abs)
+    med = abs(errs[len(errs) // 2]) if errs else None
+    return {"pass": len(errs) >= min_cells and med is not None and med <= tol, "cells": len(errs),
+            "median_abs_err": med, "mean_err": (sum(errs) / len(errs)) if errs else None, "range": [lo, hi]}
+
+
+def far_determinism_gate(far_a: dict, far_b: dict, near: dict, min_common: int = 20) -> dict:
+    """Far blocks dumped by two runs: the same hash on every common block; and every far tree whose cell was dumped near
+    (in either run) is one of that cell's near trees (same position and type)."""
+    common = set(far_a) & set(far_b)
+    mismatched = sorted(k for k in common if far_a[k]["hash"] != far_b[k]["hash"])
+    near_pts = {}
+    for (row, col), c in near.items():
+        near_pts[(row, col)] = {(round(i[0], 9), round(i[1], 9), int(i[5])) for i in c["instances"]}
+    checked = missing = 0
+    for blocks in (far_a, far_b):
+        for b in blocks.values():
+            for i in b["instances"]:
+                key = cell_of(i[0], i[1])
+                if key not in near_pts:
+                    continue
+                checked += 1
+                missing += (round(i[0], 9), round(i[1], 9), int(i[5])) not in near_pts[key]
+    return {"pass": len(common) >= min_common and not mismatched and missing == 0, "common_blocks": len(common),
+            "mismatched": len(mismatched), "far_trees_checked": checked, "not_in_near": missing}
+
+
+def handoff_gate(events: list[dict]) -> dict:
+    """No gap when a block switches tier: a destroy of one tier's actor while the block's current tier is the other one
+    must come after that tier settled (a spawn or an empty) for the block since its latest tier change. A block whose
+    tier is none (left both) may drop at once."""
+    tier: dict = {}
+    settled: dict = {}
+    gaps, destroys = 0, 0
+    for e in sorted(events, key=lambda x: x["tick"]):
+        b = (e["block_row"], e["block_col"])
+        if e["ev"] == "tier":
+            tier[b] = e["tier"]
+            settled[b] = set()
+        elif e["ev"] in ("spawn", "empty"):
+            settled.setdefault(b, set()).add(e["tier"])
+        elif e["ev"] == "destroy":
+            destroys += 1
+            now = tier.get(b, "none")
+            if now not in ("none", e["tier"]) and now not in settled.get(b, set()):
+                gaps += 1
+    return {"pass": gaps == 0 and bool(events), "gaps": gaps, "destroys": destroys, "events": len(events)}
+
+
+def r4_identity_gate(cells: dict, r4_cells: dict, min_common: int = 20) -> dict:
+    """Every cell both runs dumped has R4's tree hash ("hash" covers the trees only)."""
+    common = set(cells) & set(r4_cells)
+    mismatched = sorted(k for k in common if cells[k]["hash"] != r4_cells[k]["hash"])
+    return {"pass": len(common) >= min_common and not mismatched, "common_cells": len(common),
+            "mismatched": len(mismatched), "mismatched_cells": [list(k) for k in mismatched[:10]]}
+
 
 
 def load(path: Path) -> np.ndarray:
@@ -328,17 +553,19 @@ def surface_dz(host: rb.Host, cells: dict, centre: tuple[float, float], per_band
     return out
 
 
-def run_approach(label: str, scene: Path, out: Path, d_lat: float) -> dict:
+def run_approach(label: str, scene: Path, out: Path, d_lat: float, env_extra: dict | None = None) -> dict:
     run = out / label
-    dump = run / "cells.jsonl"
+    dump, far_dump, events = run / "cells.jsonl", run / "far.jsonl", run / "events.jsonl"
     run.mkdir(parents=True, exist_ok=True)
-    dump.unlink(missing_ok=True)
+    for f in (dump, far_dump, events):
+        f.unlink(missing_ok=True)
     host = rb.Host(scenario.SITES["pendleton"])
     host.pose = pose(RIPARIAN[0] + d_lat, RIPARIAN[1])
-    res: dict = {"dump": str(dump)}
+    res: dict = {"dump": str(dump), "far_dump": str(far_dump), "events": str(events)}
     try:
-        launch({"CAMSIM_SCENE_DIR": str(scene)},
-               [f"camsim.Vegetation.DumpPath {dump}", "camsim.Vegetation.GroundCheck 1"], host)
+        launch({"CAMSIM_SCENE_DIR": str(scene), **(env_extra or {})},
+               [f"camsim.Vegetation.DumpPath {dump}", f"camsim.Vegetation.FarDumpPath {far_dump}",
+                f"camsim.Vegetation.EventsPath {events}", "camsim.Vegetation.GroundCheck 1"], host)
         # The ground check measures a settled view: hold the start pose until it has logged.
         deadline = time.monotonic() + 120.0
         while time.monotonic() < deadline and "Vegetation: ground check" not in EDITOR_LOG.read_text(errors="replace"):
@@ -379,11 +606,26 @@ def approach_gates(a: argparse.Namespace, report: dict) -> None:
     dn, ds = read_dump(Path(north["dump"])), read_dump(Path(south["dump"]))
 
     lc = dp.LandCover(a.scene / "landcover")
-    inst = [i for d in list(dn.values()) + list(ds.values()) for i in d["instances"]]  # each i = [lat, lon, h, yaw, s]
-    codes = lc.codes(np.array([i[1] for i in inst], float), np.array([i[0] for i in inst], float)) if inst else np.zeros(0)
-    wrong, total = int((codes != 10).sum()), len(inst)
-    report["placement"] = {"pass": total > 0 and wrong == 0, "instances": total, "not_on_code_10": wrong,
-                           "cells": len(set(dn) | set(ds))}
+
+    def code_at(lon, lat):
+        return lc.codes(np.array(lon, float), np.array(lat, float)).tolist()
+
+    roles = mix_roles(read_mix(a.scene), read_library())
+    canopy = Canopy(a.scene) if (a.scene / "canopy" / "cover" / "index.json").exists() else None
+    both = {**dn, **ds}
+    report["placement"] = placement_gate(both, roles, code_at, canopy.at if canopy else None) | {"cells": len(both)}
+    report["species"] = species_gate(both, roles, code_at)
+    if canopy:
+        lib = read_library()["types"]
+        crowns = {k: float(t.get("crown_radius_m", 0.3 * t["height_m"])) for k, t in enumerate(lib)}
+        report["canopy"] = canopy_gate(both, canopy.cell_cover, crowns)
+    far_n, far_s = read_far_dump(Path(north["far_dump"])), read_far_dump(Path(south["far_dump"]))
+    if far_n or far_s:
+        report["far_determinism"] = far_determinism_gate(far_n, far_s, both)
+    events = [json.loads(x) for r in (north, south) for x in Path(r["events"]).read_text().splitlines()
+              if Path(r["events"]).exists()]
+    if events:
+        report["handoff"] = handoff_gate(events)
 
     report["grounding"] = {"north": parse_ground(north["ground"]), "south": parse_ground(south["ground"])}
     report["grounding"]["pass"] = report["grounding"]["north"]["pass"] and report["grounding"]["south"]["pass"]
@@ -417,6 +659,74 @@ def approach_gates(a: argparse.Namespace, report: dict) -> None:
                                     "settle_s": r["settle_s"], "resettle_s": r["resettle_s"]}
                             for label, r in (("north", north), ("south", south))}
     report["veg_log"] = {"north": north["veg_log"], "south": south["veg_log"]}
+
+
+LIBRARY = REPO / "unreal_project" / "CamSimTest" / "Content" / "NonUFS" / "Vegetation" / "library.json"
+BUDGET_GAME_P95_MS = 3.0
+
+
+def read_library() -> dict:
+    return json.loads(LIBRARY.read_text())
+
+
+def read_mix(scene: Path) -> dict | None:
+    p = scene / "vegetation" / "mix.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def read_far_dump(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    out = {}
+    for x in path.read_text().splitlines():
+        d = json.loads(x)
+        out.setdefault((d["block_row"], d["block_col"]), d)
+    return out
+
+
+class Canopy:
+    """The package's canopy tile sets: (cover 0..1, height m, present) at points; mean cover of a 100 m cell."""
+
+    def __init__(self, scene: Path) -> None:
+        self.cover = dp.LandCover(scene / "canopy" / "cover")
+        self.height = dp.LandCover(scene / "canopy" / "height")
+
+    def at(self, lon, lat) -> list:
+        lon, lat = np.array(lon, float), np.array(lat, float)
+        ti = np.floor(np.round(lat / dp.TILE_DEG, 9)).astype(np.int64)
+        tj = np.floor(np.round(lon / dp.TILE_DEG, 9)).astype(np.int64)
+        present = [self.cover._tile(int(i), int(j)) is not None for i, j in zip(ti, tj)]
+        c, h = self.cover.codes(lon, lat), self.height.codes(lon, lat)
+        return [(min(int(cv), 100) / 100.0, float(hv), p) for cv, hv, p in zip(c, h, present)]
+
+    def cell_cover(self, row: int, col: int) -> float:
+        s, n, w, e = cell_bounds(row, col)
+        g = (np.arange(10) + 0.5) / 10.0
+        lat, lon = np.meshgrid(s + g * (n - s), w + g * (e - w))
+        return float(np.minimum(self.cover.codes(lon.ravel(), lat.ravel()), 100).mean() / 100.0)
+
+
+def long_range_gate(a: argparse.Namespace, report: dict) -> None:
+    """The bench's long_range phase (5 km HAE oblique) with vegetation on and off: 0 dropped frames with it on, and
+    game p95 within BUDGET_GAME_P95_MS of off."""
+    res = {}
+    for label, on in (("on", "1"), ("off", "0")):
+        out = a.out / "long_range" / label
+        subprocess.run([sys.executable, str(REPO / "scripts/bench/run_bench.py"), "--label", f"veg_long_{label}",
+                        "--site", "pendleton", "--phases", "long_range", "--out", str(out)],
+                       env={**os.environ, "CAMSIM_SCENE_DIR": str(a.scene), "CAMSIM_VEGETATION_ENABLED": on}, check=True)
+        res[label] = json.loads((out / "results.json").read_text())["phases"]["long_range"]
+    d95 = res["on"]["game_ms_p95"] - res["off"]["game_ms_p95"]
+    report["long_range"] = {"pass": res["on"]["dropped"] == 0 and d95 <= BUDGET_GAME_P95_MS, "game_p95_delta_ms": d95,
+                            "dropped_on": res["on"]["dropped"],
+                            **{f"{k}_{lbl}": res[lbl][k] for lbl in res for k in ("game_ms_p50", "game_ms_p95", "gpu_ms_p50")}}
+
+
+def r4_identity_stage(a: argparse.Namespace, report: dict) -> None:
+    """A package without canopy or mix (R4's), shrubs and the far tier off: every cell has the R4 run's tree hash."""
+    run = run_approach("r4_identity", a.r4_scene, a.out, +3000.0 / M_PER_DEG,
+                       {"CAMSIM_VEGETATION_SHRUBS_ENABLED": "0", "CAMSIM_VEGETATION_FAR_RADIUS_M": "0"})
+    report["r4_identity"] = r4_identity_gate(read_dump(Path(run["dump"])), read_dump(a.r4_baseline / "north" / "cells.jsonl"))
 
 
 def smoke_run(label: str, out: Path, scene: Path, enabled: str) -> str:
@@ -557,23 +867,30 @@ def main() -> int:
     ap.add_argument("--scene", type=Path, required=True)
     ap.add_argument("--baseline", type=Path, required=True, help="Task 1 Step 0 runs (a/, b/ with shots/)")
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--stages", default=",".join(STAGES), help=f"comma list of {','.join(STAGES)}, footprints (R3b, not in the default)")
+    ap.add_argument("--stages", default=",".join(STAGES),
+                    help=f"comma list of {','.join(STAGES)}, footprints (R3b), long_range, r4_identity (R4; not in the default)")
+    ap.add_argument("--r4-scene", type=Path, default=REPO / ".cache" / "scene-packages" / "pendleton-r2",
+                    help="r4_identity: a package without canopy or mix")
+    ap.add_argument("--r4-baseline", type=Path, default=REPO / ".cache" / "veg" / "check-i1-r2",
+                    help="r4_identity: an R4 run of vegetation_check.py on --r4-scene (north/cells.jsonl)")
     a = ap.parse_args()
     a.scene, a.baseline, a.out = a.scene.resolve(), a.baseline.resolve(), a.out.resolve()
+    a.r4_scene, a.r4_baseline = a.r4_scene.resolve(), a.r4_baseline.resolve()
     a.out.mkdir(parents=True, exist_ok=True)
     report_path = a.out / "report.json"
     report: dict = json.loads(report_path.read_text()) if report_path.exists() else {}
     report.pop("pass", None)
     stages = [s for s in a.stages.split(",") if s]
     run = {"approach": approach_gates, "off": off_gate, "gt": gt_gate, "truck": truck_info, "oblique": oblique_shots,
-           "footprints": footprints_gate}
+           "footprints": footprints_gate, "long_range": long_range_gate, "r4_identity": r4_identity_stage}
     for s in stages:
         print(f"[veg] stage {s}", flush=True)
         run[s](a, report)
         report_path.write_text(json.dumps(report, indent=2))
 
     gates = ["placement", "grounding", "determinism", "origin_shift", "off_switch", "gt"]
-    gates += ["footprints"] if "footprints" in report else []
+    gates += [g for g in ("footprints", "species", "canopy", "far_determinism", "handoff", "long_range", "r4_identity")
+              if g in report]
     report["pass"] = all(report.get(g, {}).get("pass", False) for g in gates)
     report_path.write_text(json.dumps(report, indent=2))
     print(json.dumps({g: report.get(g, {}).get("pass") for g in gates} | {"pass": report["pass"]}, indent=2))

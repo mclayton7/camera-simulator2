@@ -32,6 +32,10 @@ AXES: dict[str, tuple[str, str | None]] = {
     "trees_radius": ("CAMSIM_VEGETATION_RADIUS_M", "trees"),
     "trees_density": ("CAMSIM_VEGETATION_DENSITY_SCALE", "trees"),
     "trees_shadows": ("CAMSIM_VEGETATION_CAST_SHADOWS", "trees"),
+    "far_radius": ("CAMSIM_VEGETATION_FAR_RADIUS_M", "trees"),
+    "far_keep": ("CAMSIM_VEGETATION_FAR_KEEP", "trees"),
+    "shrubs": ("CAMSIM_VEGETATION_SHRUBS_ENABLED", "trees"),
+    "shrub_radius": ("CAMSIM_VEGETATION_SHRUB_RADIUS_M", "trees"),
 }
 SWITCH = {"on": "1", "off": "0"}  # CamSim reads env bools as ints
 PHASE = "dense_pass"

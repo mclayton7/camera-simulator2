@@ -104,10 +104,10 @@ def test_pendleton_adds_dense_pass_after_coast_and_warms_it():
     site = scenario.SITES["pendleton"]
     phases = scenario.build_phases(site=site)
     names = [p.name for p in phases]
-    assert names[-2:] == ["coast_pass", "dense_pass"]
-    dense = phases[-1]
+    assert names[-3:] == ["coast_pass", "dense_pass", "long_range"]
+    dense = phases[-2]
     assert dense.measured and dense.duration_s == 90.0
-    assert phases[0].duration_s == 180.0  # warm-up flies every measured area once
+    assert phases[0].duration_s == 210.0  # warm-up flies every measured area once
     assert "dense_pass" not in [p.name for p in scenario.build_phases()]
 
 
@@ -134,3 +134,19 @@ def test_dense_oblique_shot_is_pendleton_only():
     shots = {s.name: s for s in scenario.build_shots(site=site)}
     assert shots["dense_oblique"].pose == scenario._dense_pass(45.0)
     assert "dense_oblique" not in [s.name for s in scenario.build_shots()]
+
+
+def test_pendleton_adds_a_long_range_pass_last_and_warms_it():
+    site = scenario.SITES["pendleton"]
+    phases = scenario.build_phases(site=site)
+    names = [p.name for p in phases]
+    assert names[-1] == "long_range"
+    lr = phases[-1]
+    p0, p90 = lr.pose_at(0.0), lr.pose_at(90.0)
+    assert p0.alt == p90.alt == 5000.0 and p0.gimbal_pitch == -15.0 and p0.fov_h == 30.0
+    dn = (p90.lat - p0.lat) * 111_320.0
+    de = (p90.lon - p0.lon) * 111_320.0 * math.cos(math.radians(p0.lat))
+    assert abs(math.hypot(dn, de) - 9000.0) < 5.0
+    warm = phases[0]
+    assert any(warm.pose_at(t).alt == 5000.0 for t in range(int(warm.duration_s)))
+    assert "long_range" not in [p.name for p in scenario.build_phases()]

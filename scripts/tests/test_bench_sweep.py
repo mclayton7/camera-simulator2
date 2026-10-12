@@ -146,3 +146,9 @@ def test_contact_sheet_tiles_labelled_thumbnails(tmp_path):
     sheet = Image.open(out)
     assert sheet.width == 3 * 320
     assert sheet.height >= 2 * 180  # two rows of 16:9 thumbnails plus labels
+
+
+def test_vegetation_deeper_axes_map_to_env():
+    env = sweep.row_env({"trees": "on", "far_radius": "2000", "far_keep": "0.5", "shrubs": "off", "shrub_radius": "300"})
+    assert env["CAMSIM_VEGETATION_FAR_RADIUS_M"] == "2000" and env["CAMSIM_VEGETATION_FAR_KEEP"] == "0.5"
+    assert env["CAMSIM_VEGETATION_SHRUBS_ENABLED"] == "0" and env["CAMSIM_VEGETATION_SHRUB_RADIUS_M"] == "300"
