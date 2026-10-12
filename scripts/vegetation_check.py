@@ -258,6 +258,8 @@ def far_determinism_gate(far_a: dict, far_b: dict, near: dict, min_common: int =
     mismatched = sorted(k for k in common if far_a[k]["hash"] != far_b[k]["hash"])
     near_pts = {}
     for (row, col), c in near.items():
+        if not c.get("trees_dumped", True):
+            continue  # only the shrub ring dumped it: its trees are unknown
         near_pts[(row, col)] = {(round(i[0], 9), round(i[1], 9), int(i[5])) for i in c["instances"]}
     checked = missing = 0
     for blocks in (far_a, far_b):
@@ -369,8 +371,34 @@ def dump_lines(path: Path) -> list[dict]:
 
 
 def read_dump(path: Path) -> dict[tuple[int, int], dict]:
-    """Last spawn of every cell."""
-    return {(d["row"], d["col"]): d for d in dump_lines(path)}
+    """Last spawn of every cell, its tree line (near tier) and its shrub-ring line ("layer": "shrubs") merged. A cell only
+    the shrub ring dumped has hash None, no instances and trees_dumped False."""
+    cells: dict[tuple[int, int], dict] = {}
+    for d in dump_lines(path):
+        c = cells.setdefault((d["row"], d["col"]), {"row": d["row"], "col": d["col"], "hash": None, "shrub_hash": None,
+                                                    "in_buildings": 0, "instances": [], "shrubs": [], "trees_dumped": False})
+        if d.get("layer") == "shrubs":
+            c["shrubs"], c["shrub_hash"] = d["shrubs"], d["shrub_hash"]
+        else:
+            c.update({k: v for k, v in d.items() if k not in ("shrubs", "shrub_hash") or v})
+            c["trees_dumped"] = True
+    return cells
+
+
+def respawn_changes(lines: list[dict]) -> tuple[int, int]:
+    """(respawned, changed): lines whose (layer, cell) was dumped before, and those whose hash differs from the first."""
+    first: dict = {}
+    respawned = changed = 0
+    for d in lines:
+        layer = d.get("layer", "trees")
+        key = (layer, d["row"], d["col"])
+        h = d["shrub_hash"] if layer == "shrubs" else d["hash"]
+        if key in first:
+            respawned += 1
+            changed += first[key] != h
+        else:
+            first[key] = h
+    return respawned, changed
 
 
 def wait_settled(dump: Path, quiet_s: float = 6.0, timeout_s: float = 120.0) -> float:
@@ -639,16 +667,7 @@ def approach_gates(a: argparse.Namespace, report: dict) -> None:
     floor = ssim(load(a.baseline / "a" / "shots" / SHOT), load(a.baseline / "b" / "shots" / SHOT))
     shift = {}
     for label, res in (("north", north), ("south", south)):
-        lines = dump_lines(Path(res["dump"]))
-        first: dict = {}
-        respawned = changed = 0
-        for k, d in enumerate(lines):
-            key = (d["row"], d["col"])
-            if key in first:
-                respawned += 1
-                changed += first[key] != d["hash"]
-            else:
-                first[key] = d["hash"]
+        respawned, changed = respawn_changes(dump_lines(Path(res["dump"])))
         s = ssim(load(a.out / label / "a.png"), load(a.out / label / "b.png"))
         shift[label] = {"ssim": s, "respawned_cells": respawned, "hash_changed": changed,
                         "pass": s >= floor - 0.01 and respawned > 0 and changed == 0}

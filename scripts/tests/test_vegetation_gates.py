@@ -1,5 +1,6 @@
 """Unit tests for the REALISM R4 'vegetation deeper' gates in scripts/vegetation_check.py (pure functions)."""
 
+import json
 import math
 
 import pytest
@@ -136,3 +137,36 @@ def test_r4_identity_gate():
     g = vc.r4_identity_gate(now, r4)
     assert not g["pass"] and g["mismatched"] == 1
     assert not vc.r4_identity_gate({}, r4)["pass"]
+
+
+def test_read_dump_merges_the_shrub_ring_lines(tmp_path):
+    p = tmp_path / "cells.jsonl"
+    lines = [
+        {"row": 1, "col": 2, "hash": 7, "shrub_hash": 0, "in_buildings": 0, "instances": [[1, 2, 3, 0, 1, 0]], "shrubs": []},
+        {"layer": "shrubs", "row": 1, "col": 2, "shrub_hash": 9, "shrubs": [[1, 2, 3, 0, 1, 3]]},
+        {"layer": "shrubs", "row": 5, "col": 5, "shrub_hash": 4, "shrubs": [[5, 5, 3, 0, 1, 4]]},
+    ]
+    p.write_text("".join(json.dumps(x) + "\n" for x in lines) + '{"row": 9')  # a half-written last line
+    cells = vc.read_dump(p)
+    assert cells[(1, 2)]["hash"] == 7 and cells[(1, 2)]["shrub_hash"] == 9
+    assert cells[(1, 2)]["instances"] == [[1, 2, 3, 0, 1, 0]] and cells[(1, 2)]["shrubs"] == [[1, 2, 3, 0, 1, 3]]
+    assert cells[(5, 5)]["hash"] is None and cells[(5, 5)]["instances"] == [] and cells[(5, 5)]["trees_dumped"] is False
+    assert cells[(1, 2)]["trees_dumped"] is True
+
+
+def test_far_gate_ignores_cells_dumped_only_by_the_shrub_ring():
+    near = {vc.cell_of(33.3, -117.3): {"instances": [], "trees_dumped": False}}
+    far = {(1, 1): {"hash": 1, "instances": [[33.3, -117.3, 1.0, 0.0, 1.3, 0, 0]]}}
+    r = vc.far_determinism_gate(far, far, near, min_common=1)
+    assert r["not_in_near"] == 0 and r["far_trees_checked"] == 0
+
+
+def test_respawn_hashes_key_by_layer():
+    lines = [
+        {"row": 1, "col": 2, "hash": 7},
+        {"layer": "shrubs", "row": 1, "col": 2, "shrub_hash": 9},
+        {"row": 1, "col": 2, "hash": 7},
+        {"layer": "shrubs", "row": 1, "col": 2, "shrub_hash": 9},
+    ]
+    assert vc.respawn_changes(lines) == (2, 0)
+    assert vc.respawn_changes(lines + [{"layer": "shrubs", "row": 1, "col": 2, "shrub_hash": 8}]) == (3, 1)

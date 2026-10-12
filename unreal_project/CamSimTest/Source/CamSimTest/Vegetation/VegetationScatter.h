@@ -25,6 +25,7 @@ namespace CamSimVegetation
 		uint8  TreeCode = 10;       // WorldCover tree cover (the R4 GenerateCell wrappers)
 		// REALISM R4 scatter v2 (GenerateCellContent):
 		float  MinCanopyHeightM = 3.0f;   // no tree on a canopy texel lower than this
+		bool   bTrees = true;             // false: shrubs only (the shrub ring's cells)
 		bool   bShrubs = true;
 		float  ShrubSpacingM = 3.0f;      // nominal; the real spacing is CellSizeM / ShrubCandidatesPerAxis
 		float  ShrubScaleMin = 0.7f;

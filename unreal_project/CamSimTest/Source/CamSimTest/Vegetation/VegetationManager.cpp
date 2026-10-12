@@ -45,7 +45,8 @@ FVegetationManager::FVegetationManager(const FVegetationStreaming::FParams& Para
 {
 }
 
-FVegetationManager::FVegetationManager(const FVegetationTierPlanner::FParams& Tiers, FVegetationHooks InHooks, FVegetationFarHooks FarHooks)
+FVegetationManager::FVegetationManager(const FVegetationTierPlanner::FParams& Tiers, FVegetationHooks InHooks, FVegetationFarHooks FarHooks,
+	TOptional<FVegetationShrubRing> ShrubRing)
 	: Streaming(FVegetationStreaming::FParams{ Tiers.NearM, Tiers.CellSizeM }), Hooks(MoveTemp(InHooks)), Planner(Tiers), bBlocks(true),
 	  CellSizeM(Tiers.CellSizeM)
 {
@@ -56,6 +57,13 @@ FVegetationManager::FVegetationManager(const FVegetationTierPlanner::FParams& Ti
 	{
 		Far = MakeShared<FVegetationFarTier>(Tiers.BlockCells, Tiers.CellSizeM, MoveTemp(FarHooks),
 			[this](const TCHAR* Ev, FVegBlockId B) { EmitBlock(Ev, TEXT("far"), B); });
+	}
+	if (ShrubRing.IsSet() && ShrubRing->RadiusM > 0.0)
+	{
+		// Every cell overlapping the circle: centres within RadiusM plus half a cell diagonal.
+		const double ReachM = ShrubRing->RadiusM + 0.5 * Tiers.CellSizeM * UE_SQRT_2;
+		Ring = MakeShared<FVegetationManager>(FVegetationStreaming::FParams{ ReachM, Tiers.CellSizeM }, MoveTemp(ShrubRing->Hooks));
+		Ring->RingRadiusM = ReachM;
 	}
 }
 
@@ -74,7 +82,7 @@ void FVegetationManager::EmitBlock(const TCHAR* Ev, const TCHAR* Tier, FVegBlock
 		TickCount, Ev, Tier, B.Row, B.Col));
 }
 
-FVegetationStreaming::FActions FVegetationManager::TickBlocks(double CamLatDeg, double CamLonDeg)
+FVegetationStreaming::FActions FVegetationManager::TickBlocks(double CamLatDeg, double CamLonDeg, int32 InFlightCap)
 {
 	for (const FVegetationTierPlanner::FChange& C : Planner.Update(CamLatDeg, CamLonDeg))
 		EmitBlock(TEXT("tier"), !C.To.IsSet() ? TEXT("none") : (*C.To == EVegTier::Near ? TEXT("near") : TEXT("far")), C.Block);
@@ -85,10 +93,10 @@ FVegetationStreaming::FActions FVegetationManager::TickBlocks(double CamLatDeg, 
 		const FVegBlockId B = BlockOf(Cell, N, CellSizeM);
 		return !(Far && Planner.GetTier(B) == TOptional<EVegTier>(EVegTier::Far)) || Far->IsSettled(B);
 	};
-	return Streaming.TickWanted(Planner.GetNearCells(), NearMayDrop, MaxInFlight - (Far ? Far->NumInFlight() : 0), MaxSpawnsPerTick);
+	return Streaming.TickWanted(Planner.GetNearCells(), NearMayDrop, InFlightCap, MaxSpawnsPerTick);
 }
 
-void FVegetationManager::TickFar(int32 NearSpawns)
+void FVegetationManager::TickFar(int32 Spawns)
 {
 	if (!Far) return;
 	const int32 N = Planner.GetParams().BlockCells;
@@ -100,7 +108,8 @@ void FVegetationManager::TickFar(int32 NearSpawns)
 			if (!Streaming.IsSettled(C)) return false;
 		return true;
 	};
-	Far->Tick(Planner.GetFarBlocks(), FarMayDrop, MaxInFlight - Streaming.NumInFlight(), MaxSpawnsPerTick - NearSpawns, TickCount);
+	const int32 RingInFlight = Ring ? Ring->Streaming.NumInFlight() : 0;
+	Far->Tick(Planner.GetFarBlocks(), FarMayDrop, MaxInFlight - Streaming.NumInFlight() - RingInFlight, MaxSpawnsPerTick - Spawns, TickCount);
 }
 
 FVegetationManager::~FVegetationManager()
@@ -115,7 +124,53 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 		for (const FString& W : Hooks.TakeWarnings()) UE_LOG(LogCamSim, Warning, TEXT("Vegetation: %s"), *W);
 	ExpireStuckRequests();   // first, so the freed slots are refilled this tick
 
-	const FVegetationStreaming::FActions A = bBlocks ? TickBlocks(CamLatDeg, CamLonDeg) : Streaming.Tick(CamLatDeg, CamLonDeg);
+	if (!bBlocks)
+	{
+		Apply(Streaming.Tick(CamLatDeg, CamLonDeg));
+	}
+	else
+	{
+		// Budgets shared near first, then the shrub ring, then far.
+		const int32 RingInFlight = Ring ? Ring->Streaming.NumInFlight() : 0;
+		const FVegetationStreaming::FActions A = TickBlocks(CamLatDeg, CamLonDeg, MaxInFlight - (Far ? Far->NumInFlight() : 0) - RingInFlight);
+		Apply(A);
+		int32 Spawns = A.ToSpawn.Num();
+		if (Ring)
+			Spawns += Ring->TickRing(CamLatDeg, CamLonDeg, MaxInFlight - Streaming.NumInFlight() - (Far ? Far->NumInFlight() : 0),
+				MaxSpawnsPerTick - Spawns);
+		TickFar(Spawns);
+	}
+	// When streaming settles with new building drops: at most one line per DropLogTicks (a moving camera settles
+	// and restarts many times a second).
+	const bool bIdle = IsIdle();
+	if (bIdle && !bWasIdle && DroppedInBuildings != LoggedDroppedInBuildings && TickCount - LastDropLogTick >= DropLogTicks)
+	{
+		LastDropLogTick = TickCount;
+		UE_LOG(LogCamSim, Log, TEXT("Vegetation: settled, %d cells spawned, %lld trees dropped inside building footprints so far"),
+			Spawned.Num(), DroppedInBuildings);
+		LoggedDroppedInBuildings = DroppedInBuildings;
+	}
+	bWasIdle = bIdle;
+}
+
+int32 FVegetationManager::TickRing(double CamLatDeg, double CamLonDeg, int32 InFlightCap, int32 SpawnCap)
+{
+	++TickCount;
+	ExpireStuckRequests();
+	const double DropM = RingRadiusM * FVegetationStreaming::FParams().DropFactor;
+	auto MayDrop = [this, CamLatDeg, CamLonDeg, DropM](FVegCellId Id)
+	{
+		double La, Lo; CellCentre(Id, CellSizeM, La, Lo);
+		return GroundDistanceM(CamLatDeg, CamLonDeg, La, Lo) > DropM;
+	};
+	const FVegetationStreaming::FActions A = Streaming.TickWanted(CellsWithin(CamLatDeg, CamLonDeg, RingRadiusM, CellSizeM), MayDrop,
+		InFlightCap, SpawnCap);
+	Apply(A);
+	return A.ToSpawn.Num();
+}
+
+void FVegetationManager::Apply(const FVegetationStreaming::FActions& A)
+{
 	for (const FVegCellId& Id : A.ToDrop)
 	{
 		Spawned.Remove(Id);
@@ -146,18 +201,6 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 			if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnGenerated(Id, Token, MoveTemp(C));
 		});
 	}
-	TickFar(A.ToSpawn.Num());
-	// When streaming settles with new building drops: at most one line per DropLogTicks (a moving camera settles
-	// and restarts many times a second).
-	const bool bIdle = IsIdle();
-	if (bIdle && !bWasIdle && DroppedInBuildings != LoggedDroppedInBuildings && TickCount - LastDropLogTick >= DropLogTicks)
-	{
-		LastDropLogTick = TickCount;
-		UE_LOG(LogCamSim, Log, TEXT("Vegetation: settled, %d cells spawned, %lld trees dropped inside building footprints so far"),
-			Spawned.Num(), DroppedInBuildings);
-		LoggedDroppedInBuildings = DroppedInBuildings;
-	}
-	bWasIdle = bIdle;
 }
 
 void FVegetationManager::ExpireStuckRequests()
@@ -469,8 +512,16 @@ namespace CamSimVegetation
 		FScatterParams P;
 		P.CellSizeM = V.CellSizeM;
 		P.DensityScale = V.DensityScale;
-		P.bShrubs = V.bShrubsEnabled && V.ShrubRadiusM > 0.0f;
 		P.ShrubSpacingM = V.ShrubSpacingM;
+		// Shrubs come from the shrub ring (cells within shrub_radius_m only), never from the near cells: ~1,000 per
+		// cell generated out to the near radius cost +1.9 ms game p50 in the dense pass whatever the shrub cull.
+		bool bAnyShrubCode = false;
+		for (const auto& Kv : Mix->Codes) bAnyShrubCode |= Kv.Value.Shrubs.Num() > 0;
+		const bool bShrubRing = V.bShrubsEnabled && V.ShrubRadiusM > 0.0f && NumShrubs > 0 && bAnyShrubCode;
+		P.bShrubs = false;
+		FScatterParams ShrubP = P;
+		ShrubP.bTrees = false;
+		ShrubP.bShrubs = true;
 		const uint32 Seed = ResolveSeed(Cfg.Scene.bHasSeed, Cfg.Scene.Seed, V.Seed);
 		TWeakObjectPtr<UWorld> WeakWorld(World);
 		TWeakObjectPtr<ACesium3DTileset> WeakTerrain(Terrain);
@@ -514,7 +565,9 @@ namespace CamSimVegetation
 
 		FVegetationHooks H;
 		// Always answers (an empty land cover lookup yields no trees); the manager's weak pointer drops it after teardown.
-		H.Generate = [LandCover, Canopy, Mask, Mix, P, Seed, ClearanceM](FVegCellId Id, TFunction<void(FCellContent)> Done)
+		auto MakeGenerate = [LandCover, Canopy, Mask, Mix, Seed, ClearanceM](const FScatterParams& P)
+		{
+		return [LandCover, Canopy, Mask, Mix, P, Seed, ClearanceM](FVegCellId Id, TFunction<void(FCellContent)> Done)
 		{
 			UE::Tasks::Launch(UE_SOURCE_LOCATION, [LandCover, Canopy, Mask, Mix, P, Seed, ClearanceM, Id, Done = MoveTemp(Done)]() mutable
 			{
@@ -528,6 +581,8 @@ namespace CamSimVegetation
 				AsyncTask(ENamedThreads::GameThread, [Done = MoveTemp(Done), C = MoveTemp(C)]() mutable { Done(MoveTemp(C)); });
 			});
 		};
+		};
+		H.Generate = MakeGenerate(P);
 		// Answers with all-unset heights when the tileset is gone or the result count is off. If the tileset actor is
 		// destroyed with a request outstanding, Cesium never calls back (Cesium3DTileset.cpp: `if (!IsValid(this)) return;`):
 		// the manager's StuckTicks reports the cell empty.
@@ -561,38 +616,49 @@ namespace CamSimVegetation
 		// Trees inside building footprints (WorldCover tags canopy over roofs as tree cover): a second batch on the
 		// buildings tileset, where a miss is the normal answer, so its warnings stay quiet.
 		if (Exclusion == EBuildingExclusion::RuntimeCheck) H.SampleBuildingHeights = MakeSampler(TWeakObjectPtr<ACesium3DTileset>(Buildings), TEXT("buildings"), /*bWarnOnFail=*/false);
-		H.Spawn = [WeakWorld, NearMeshes, Actors, bShadows, CullM, ShrubCullM](FVegCellId Id, const FVegCellSpawn& S)
+		// Near cells (trees) and shrub-ring cells (shrubs) each have their own actor per cell.
+		auto MakeSpawn = [WeakWorld, NearMeshes, bShadows, CullM, ShrubCullM](TSharedRef<TMap<FVegCellId, TWeakObjectPtr<ACamSimVegetationCell>>> CellActors, bool bRing)
 		{
-			UWorld* W = WeakWorld.Get();
-			if (!W) return;
-			ACamSimVegetationCell* Cell = W->SpawnActor<ACamSimVegetationCell>();
-			if (!Cell) return;
-			TArray<FVegHismBatch> Batches;
-			AddTypeBatches(Batches, NearMeshes, S.Instances, S.LocalInstances, bShadows, CullM);
-			AddTypeBatches(Batches, NearMeshes, S.Shrubs, S.ShrubLocal, bShadows, ShrubCullM);
-			Cell->Init(S.CentreLatDeg, S.CentreLonDeg, S.BaseHeightM, Batches);
-			Actors->Add(Id, Cell);
-			const FString Dump = CVarVegDumpPath.GetValueOnGameThread();
-			if (!Dump.IsEmpty())
+			return [WeakWorld, NearMeshes, CellActors, bShadows, CullM, ShrubCullM, bRing](FVegCellId Id, const FVegCellSpawn& S)
 			{
-				// "hash" covers the trees only (R4's value for R4's cells); "shrub_hash" the shrubs. Instances end with the type.
-				const FString Line = FString::Printf(TEXT("{\"row\":%d,\"col\":%d,\"hash\":%u,\"shrub_hash\":%u,\"in_buildings\":%d,")
-					TEXT("\"instances\":[%s],\"shrubs\":[%s]}\n"), Id.Row, Id.Col, HashInstances(S.Instances), HashInstances(S.Shrubs),
-					S.NumInBuildings, *DumpInstances(S.Instances, S.HeightsM), *DumpInstances(S.Shrubs, S.ShrubHeightsM));
+				UWorld* W = WeakWorld.Get();
+				if (!W) return;
+				ACamSimVegetationCell* Cell = W->SpawnActor<ACamSimVegetationCell>();
+				if (!Cell) return;
+				TArray<FVegHismBatch> Batches;
+				AddTypeBatches(Batches, NearMeshes, S.Instances, S.LocalInstances, bShadows, CullM);
+				AddTypeBatches(Batches, NearMeshes, S.Shrubs, S.ShrubLocal, bShadows, ShrubCullM);
+				Cell->Init(S.CentreLatDeg, S.CentreLonDeg, S.BaseHeightM, Batches);
+				CellActors->Add(Id, Cell);
+				const FString Dump = CVarVegDumpPath.GetValueOnGameThread();
+				if (Dump.IsEmpty()) return;
+				// "hash" covers the trees only (R4's value for R4's cells); "shrub_hash" the shrubs, on the shrub ring's own
+				// line ("layer":"shrubs"). Instances end with the type.
+				const FString Line = bRing
+					? FString::Printf(TEXT("{\"layer\":\"shrubs\",\"row\":%d,\"col\":%d,\"shrub_hash\":%u,\"shrubs\":[%s]}\n"),
+						Id.Row, Id.Col, HashInstances(S.Shrubs), *DumpInstances(S.Shrubs, S.ShrubHeightsM))
+					: FString::Printf(TEXT("{\"row\":%d,\"col\":%d,\"hash\":%u,\"shrub_hash\":%u,\"in_buildings\":%d,")
+						TEXT("\"instances\":[%s],\"shrubs\":[%s]}\n"), Id.Row, Id.Col, HashInstances(S.Instances), HashInstances(S.Shrubs),
+						S.NumInBuildings, *DumpInstances(S.Instances, S.HeightsM), *DumpInstances(S.Shrubs, S.ShrubHeightsM));
 				FFileHelper::SaveStringToFile(Line, *Dump, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append);
-			}
+			};
 		};
+		auto MakeDestroy = [](TSharedRef<TMap<FVegCellId, TWeakObjectPtr<ACamSimVegetationCell>>> CellActors)
+		{
+			return [CellActors](FVegCellId Id)
+			{
+				TWeakObjectPtr<ACamSimVegetationCell> A;
+				if (CellActors->RemoveAndCopyValue(Id, A) && A.IsValid()) A->Destroy();
+			};
+		};
+		H.Spawn = MakeSpawn(Actors, /*bRing=*/false);
 		H.TakeWarnings = [LandCover, Canopy]()
 		{
 			TArray<FString> W = LandCover->TakeWarnings();
 			if (Canopy.IsValid()) W.Append(Canopy->TakeWarnings());
 			return W;
 		};
-		H.Destroy = [Actors](FVegCellId Id)
-		{
-			TWeakObjectPtr<ACamSimVegetationCell> A;
-			if (Actors->RemoveAndCopyValue(Id, A) && A.IsValid()) A->Destroy();
-		};
+		H.Destroy = MakeDestroy(Actors);
 		H.OnEvent = [](const FString& Line)
 		{
 			const FString Path = CVarVegEventsPath.GetValueOnGameThread();
@@ -606,8 +672,7 @@ namespace CamSimVegetation
 		FarP.Keep = V.FarKeep;
 		FarP.Scale = V.FarScale;
 		for (const TStrongObjectPtr<UStaticMesh>& M : FarMeshes) FarP.TypeHasFar.Add(M.IsValid());
-		FScatterParams FarScatter = P;
-		FarScatter.bShrubs = false;
+		FScatterParams FarScatter = P;   // trees only
 		const int32 BlockCells = V.FarBlockCells;
 		const double CellM = V.CellSizeM;
 		FH.Generate = [LandCover, Canopy, Mask, Mix, FarScatter, FarP, Seed, ClearanceM, BlockCells, CellM](FVegBlockId B, TFunction<void(TArray<FFarTree>)> Done)
@@ -683,11 +748,25 @@ namespace CamSimVegetation
 		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (types %d (trees %d, shrubs %d), mix %s, canopy %s, shrubs %s, radius %.0f m, far %s, ")
 			TEXT("density %.2f, shadows %d, seed %u, land cover %s, buildings: %s)"),
 			NumTrees + NumShrubs, NumTrees, NumShrubs, *MixSource, *CanopyState,
-			P.bShrubs ? *FString::Printf(TEXT("%.0f m"), V.ShrubRadiusM) : TEXT("off"), V.RadiusM,
+			bShrubRing ? *FString::Printf(TEXT("%.0f m"), V.ShrubRadiusM) : TEXT("off"), V.RadiusM,
 			V.FarRadiusM > 0.0f ? *FString::Printf(TEXT("%.0f m (keep %.2f, blocks %d)"), V.FarRadiusM, V.FarKeep, V.FarBlockCells) : TEXT("off"),
 			V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
 			*DescribeBuildingExclusion(Exclusion, V.BuildingClearanceM));
-		return MakeShared<FVegetationManager>(Tiers, MoveTemp(H), MoveTemp(FH));
+		// The shrub ring: shrub-only cells within shrub_radius_m (same land cover, mask, heights), their own actors, no
+		// building runtime check (shrubs never had one: the R3b mask covers them), no events (the handoff gate is near/far).
+		TOptional<FVegetationShrubRing> Ring;
+		if (bShrubRing)
+		{
+			FVegetationShrubRing R;
+			R.RadiusM = V.ShrubRadiusM;
+			R.Hooks.Generate = MakeGenerate(ShrubP);
+			R.Hooks.SampleHeights = H.SampleHeights;
+			TSharedRef<TMap<FVegCellId, TWeakObjectPtr<ACamSimVegetationCell>>> ShrubActors = MakeShared<TMap<FVegCellId, TWeakObjectPtr<ACamSimVegetationCell>>>();
+			R.Hooks.Spawn = MakeSpawn(ShrubActors, /*bRing=*/true);
+			R.Hooks.Destroy = MakeDestroy(ShrubActors);
+			Ring = MoveTemp(R);
+		}
+		return MakeShared<FVegetationManager>(Tiers, MoveTemp(H), MoveTemp(FH), MoveTemp(Ring));
 	}
 
 	void RunDebugHooks(const FCesiumSurfaceProbe& Probe, FVegetationManager& Manager, bool bViewSettled)

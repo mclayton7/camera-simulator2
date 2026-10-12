@@ -61,7 +61,7 @@ namespace CamSimVegetation
 
 		// Trees: R4's grid and expressions, so a no-canopy one-type mix reproduces R4's instances bit for bit.
 		const float R4Accept = FMath::Clamp(P.DensityScale * P.PTree, 0.0f, 1.0f);
-		const int32 N = CandidatesPerAxis(P);
+		const int32 N = P.bTrees ? CandidatesPerAxis(P) : 0;
 		for (int32 J = 0; J < N; ++J)
 			for (int32 I = 0; I < N; ++I)
 			{

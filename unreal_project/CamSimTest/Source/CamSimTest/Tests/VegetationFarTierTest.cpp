@@ -81,6 +81,28 @@ namespace
 			return H;
 		}
 
+		/** The shrub ring: shrub-only cells (2 shrubs each), their own actors. */
+		TMap<FVegCellId, FVegCellSpawn> ShrubLive;
+		int32 ShrubSpawns = 0;
+		FVegetationHooks ShrubHooks()
+		{
+			FVegetationHooks H = NearHooks();
+			H.Generate = [this](FVegCellId Id, TFunction<void(FCellContent)> Done)
+			{
+				Pending.Add([Id, Done]()
+				{
+					FCellContent C;
+					double La, Lo; CellCentre(Id, CellM, La, Lo);
+					for (int32 K = 0; K < 2; ++K) C.Shrubs.Add({ La - K * 1e-5, Lo, 5.0f * K, 1.0f, 1 });
+					Done(MoveTemp(C));
+				});
+			};
+			H.Spawn = [this](FVegCellId Id, const FVegCellSpawn& S) { ++ShrubSpawns; ShrubLive.Add(Id, S); };
+			H.Destroy = [this](FVegCellId Id) { ShrubLive.Remove(Id); };
+			H.OnEvent = nullptr;
+			return H;
+		}
+
 		void Flush() { TArray<TFunction<void()>> P = MoveTemp(Pending); for (auto& F : P) F(); }
 
 		bool HasActor(FVegBlockId B) const
@@ -234,5 +256,64 @@ bool FVegFarTierGridTest::RunTest(const FString& Parameters)
 	TestTrue(*FString::Printf(TEXT("a coarse grid: %d points for a 200 m block"), F.LastGridPoints), F.LastGridPoints <= 49);
 	for (const double H : Any.Value.HeightsM) TestEqual(TEXT("height = grid - 0.3 m"), H, 100.0 - FVegetationFarTier::SinkM, 1e-9);
 	TestEqual(TEXT("local transforms"), Any.Value.Local.Num(), Any.Value.Trees.Num());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegShrubRingRadiusTest, "CamSim.Vegetation.ShrubRing.OnlyWithinRadius",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegShrubRingRadiusTest::RunTest(const FString& Parameters)
+{
+	FTwoTierFake F;
+	FVegetationShrubRing Ring; Ring.RadiusM = 150.0; Ring.Hooks = F.ShrubHooks();
+	TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(Tiers(), F.NearHooks(), F.FarHooks(), MoveTemp(Ring));
+	if (!TestNotNull(TEXT("ring exists"), M->GetShrubRing())) return true;
+	for (int32 I = 0; I < 400; ++I) { M->Tick(33.3, -117.4); F.Flush(); }
+	TestTrue(TEXT("idle"), M->IsIdle());
+	TestTrue(TEXT("shrub cells spawned"), F.ShrubLive.Num() > 0);
+	const double ReachM = 150.0 + 0.5 * CellM * UE_SQRT_2 + 1.0;
+	int32 Beyond = 0;
+	for (const auto& Kv : F.ShrubLive)
+	{
+		double La, Lo; CellCentre(Kv.Key, CellM, La, Lo);
+		Beyond += GroundDistanceM(33.3, -117.4, La, Lo) > ReachM;
+		TestEqual(TEXT("shrub cell: no trees"), Kv.Value.Instances.Num(), 0);
+		TestEqual(TEXT("shrub cell: its shrubs"), Kv.Value.Shrubs.Num(), 2);
+	}
+	TestEqual(TEXT("no shrub cell beyond the ring"), Beyond, 0);
+	TestTrue(*FString::Printf(TEXT("tree cells reach further (%d) than shrub cells (%d)"), F.NearLive.Num(), F.ShrubLive.Num()),
+		F.NearLive.Num() > F.ShrubLive.Num());
+	for (const FVegCellId& C : CellsWithin(33.3, -117.4, 150.0, CellM))
+		TestTrue(TEXT("every cell within the radius has shrubs"), F.ShrubLive.Contains(C));
+	for (int32 I = 0; I < 3; ++I) { M->Tick(33.3 + 50000.0 * DLat, -117.4); F.Flush(); }
+	int32 Left = 0;
+	for (const auto& Kv : F.ShrubLive) { double La, Lo; CellCentre(Kv.Key, CellM, La, Lo); Left += GroundDistanceM(33.3, -117.4, La, Lo) < 1000.0; }
+	TestEqual(TEXT("teleport drops the old ring"), Left, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegShrubRingBudgetTest, "CamSim.Vegetation.ShrubRing.BudgetsShared",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegShrubRingBudgetTest::RunTest(const FString& Parameters)
+{
+	FTwoTierFake F;
+	FVegetationShrubRing Ring; Ring.RadiusM = 250.0; Ring.Hooks = F.ShrubHooks();
+	TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(Tiers(), F.NearHooks(), F.FarHooks(), MoveTemp(Ring));
+	if (!TestNotNull(TEXT("ring exists"), M->GetShrubRing())) return true;
+	int32 MaxInFlight = 0, MaxSpawns = 0;
+	bool bIdleWhileRingBusy = false;
+	for (int32 I = 0; I < 300; ++I)
+	{
+		const int32 Before = F.NearSpawns + F.FarSpawns + F.ShrubSpawns;
+		M->Tick(33.3, -117.4);
+		MaxSpawns = FMath::Max(MaxSpawns, F.NearSpawns + F.FarSpawns + F.ShrubSpawns - Before);
+		const int32 RingInFlight = M->GetShrubRing()->GetStreaming().NumInFlight();
+		MaxInFlight = FMath::Max(MaxInFlight, M->GetStreaming().NumInFlight() + M->GetFarTier()->NumInFlight() + RingInFlight);
+		bIdleWhileRingBusy |= M->IsIdle() && RingInFlight > 0;
+		F.Flush();
+	}
+	TestTrue(TEXT("the ring spawned"), F.ShrubSpawns > 0);
+	TestTrue(*FString::Printf(TEXT("at most 4 in flight across near, ring and far (%d)"), MaxInFlight), MaxInFlight <= 4 && MaxInFlight > 0);
+	TestTrue(*FString::Printf(TEXT("at most 2 spawns per tick across near, ring and far (%d)"), MaxSpawns), MaxSpawns <= 2 && MaxSpawns > 0);
+	TestFalse(TEXT("not idle while the ring is busy"), bIdleWhileRingBusy);
 	return true;
 }

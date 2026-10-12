@@ -48,6 +48,14 @@ struct FVegetationHooks
 	TFunction<void(const FString&)> OnEvent;
 };
 
+/** The shrub ring (REALISM R4): the cells within RadiusM (plus half a cell diagonal, so every cell overlapping the
+ *  circle) get a shrub-only actor through Hooks; the near cells then carry trees only. */
+struct FVegetationShrubRing
+{
+	double RadiusM = 500.0;
+	FVegetationHooks Hooks;
+};
+
 /**
  * Vegetation streaming around the camera (REALISM R4 slice, docs/vegetation.md): FVegetationStreaming decides, the hooks
  * act. Game thread. Every started cell gets its OnGenerated / OnHeightsSampled report: a failure reports 0, and a stage
@@ -76,7 +84,8 @@ public:
 	/** Blocks (REALISM R4): near blocks' cells through InHooks, far blocks through FarHooks (Tiers.FarM 0 = none). The
 	 *  in-flight (4) and spawn (2) budgets are shared, near first; a block switching tier keeps its old actors until the
 	 *  new tier has settled (spawned, or empty). */
-	FVegetationManager(const FVegetationTierPlanner::FParams& Tiers, FVegetationHooks InHooks, FVegetationFarHooks FarHooks);
+	FVegetationManager(const FVegetationTierPlanner::FParams& Tiers, FVegetationHooks InHooks, FVegetationFarHooks FarHooks,
+		TOptional<FVegetationShrubRing> ShrubRing = {});
 	~FVegetationManager();
 
 	void Tick(double CamLatDeg, double CamLonDeg);
@@ -86,11 +95,17 @@ public:
 	const TMap<CamSimVegetation::FVegCellId, FVegCellSpawn>& GetSpawned() const { return Spawned; }
 	/** Trees dropped inside building footprints so far (all cells, including ones that ended up empty). */
 	int64 NumDroppedInBuildings() const { return DroppedInBuildings; }
-	/** Every cell within the radius is settled (none in flight, none waiting for a spawn slot), far blocks too. */
-	bool IsIdle() const { return Streaming.NumInFlight() == 0 && Ready.Num() == 0 && (!Far || Far->NumInFlight() == 0); }
+	/** Every cell within the radius is settled (none in flight, none waiting for a spawn slot), far blocks and the shrub
+	 *  ring too. */
+	bool IsIdle() const
+	{
+		return Streaming.NumInFlight() == 0 && Ready.Num() == 0 && (!Far || Far->NumInFlight() == 0) && (!Ring || Ring->IsIdle());
+	}
 	/** The far tier, or null (R4 constructor, or FarM 0). */
 	FVegetationFarTier* GetFarTier() const { return Far.Get(); }
 	const FVegetationTierPlanner& GetPlanner() const { return Planner; }
+	/** The shrub ring's own manager (radius streaming, shrub-only cells), or null. */
+	FVegetationManager* GetShrubRing() const { return Ring.Get(); }
 
 private:
 	struct FRequest
@@ -111,8 +126,12 @@ private:
 	void OnGenerated(CamSimVegetation::FVegCellId Id, uint32 Token, CamSimVegetation::FCellContent Content);
 	void OnHeights(CamSimVegetation::FVegCellId Id, uint32 Token, bool bBuildings, TArray<TOptional<double>> Heights);
 	void FinishHeights(CamSimVegetation::FVegCellId Id);
-	FVegetationStreaming::FActions TickBlocks(double CamLatDeg, double CamLonDeg);
-	void TickFar(int32 NearSpawns);
+	FVegetationStreaming::FActions TickBlocks(double CamLatDeg, double CamLonDeg, int32 InFlightCap);
+	void TickFar(int32 Spawns);
+	/** The shrub ring's tick (on the ring's manager): the cells within RingRadiusM, budgets from the owner; returns its spawns. */
+	int32 TickRing(double CamLatDeg, double CamLonDeg, int32 InFlightCap, int32 SpawnCap);
+	/** Drops, forgets, spawns and starts generating as A says. */
+	void Apply(const FVegetationStreaming::FActions& A);
 	void EmitCell(const TCHAR* Ev, CamSimVegetation::FVegCellId Id) const;
 	void EmitBlock(const TCHAR* Ev, const TCHAR* Tier, CamSimVegetation::FVegBlockId B) const;
 
@@ -123,6 +142,8 @@ private:
 	int32 MaxInFlight = 4;
 	int32 MaxSpawnsPerTick = 2;
 	TSharedPtr<FVegetationFarTier> Far;
+	TSharedPtr<FVegetationManager> Ring;
+	double RingRadiusM = 0.0;   // on the ring's manager: cells whose centre is within it are wanted
 	double CellSizeM = 100.0;
 	int64  TickCount = 0;
 	uint32 NextToken = 1;

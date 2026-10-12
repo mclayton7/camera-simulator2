@@ -284,5 +284,14 @@ bool FVegScatterShrubsTest::RunTest(const FString& Parameters)
 	const FCellContent A = GenerateCellContent(VegetationSeed(5u), O, P, Mix, HalfHalf);
 	const FCellContent B = GenerateCellContent(VegetationSeed(5u), O, P, Mix, HalfHalf);
 	TestTrue(TEXT("shrubs deterministic"), A.Shrubs == B.Shrubs);
+	// The shrub ring generates shrubs only (bTrees false): no trees, and the shrubs a full generation gives.
+	FVegetationMix Both = Mix;
+	Both.Codes[20].Trees = { { 0, 1.0f } };
+	FScatterParams NoTrees = P; NoTrees.bTrees = false;
+	const FCellContent Full = GenerateCellContent(VegetationSeed(5u), O, P, Both, HalfHalf);
+	const FCellContent ShrubOnly = GenerateCellContent(VegetationSeed(5u), O, NoTrees, Both, HalfHalf);
+	TestTrue(TEXT("the mix gives trees"), Full.Trees.Num() > 0);
+	TestEqual(TEXT("bTrees false: no trees"), ShrubOnly.Trees.Num(), 0);
+	TestTrue(TEXT("bTrees false: the same shrubs"), ShrubOnly.Shrubs == Full.Shrubs && Full.Shrubs.Num() > 0);
 	return true;
 }
