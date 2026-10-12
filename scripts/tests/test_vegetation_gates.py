@@ -170,3 +170,38 @@ def test_respawn_hashes_key_by_layer():
     ]
     assert vc.respawn_changes(lines) == (2, 0)
     assert vc.respawn_changes(lines + [{"layer": "shrubs", "row": 1, "col": 2, "shrub_hash": 8}]) == (3, 1)
+
+
+def _far_tree(lat0, lon0, dist_m, brg_deg, h=50.0, bucket=3):
+    dn, de = dist_m * math.cos(math.radians(brg_deg)), dist_m * math.sin(math.radians(brg_deg))
+    return [lat0 + dn / 111_320.0, lon0 + de / (111_320.0 * math.cos(math.radians(lat0))), h, 0.0, 1.3, 0, bucket]
+
+
+def test_far_view_gate_counts_trees_in_view_and_within_their_cull():
+    cam = (33.3, -117.4, 650.0)
+    inside = [_far_tree(33.3, -117.4, 2500.0, 45.0 + k % 20 - 10) for k in range(300)]
+    behind = [_far_tree(33.3, -117.4, 2500.0, 225.0) for _ in range(500)]
+    culled = [_far_tree(33.3, -117.4, 2900.0, 45.0, bucket=0) for _ in range(500)]   # 0.7 x 4000 = 2800 m < 2.9 km
+    far = {(1, 1): {"hash": 1, "instances": inside + behind + culled}}
+    g = vc.far_view_gate(far, cam, yaw_deg=45.0, half_fov_deg=15.0, far_m=4000.0, min_trees=200)
+    assert g["pass"] and g["in_view"] == 300 and g["in_view_culled"] == 500
+    assert not vc.far_view_gate(far, cam, yaw_deg=45.0, half_fov_deg=15.0, far_m=4000.0, min_trees=301)["pass"]
+    high = (33.3, -117.4, 5000.0)                     # every tree > 4 km away in 3D: nothing drawn
+    assert vc.far_view_gate(far, high, yaw_deg=45.0, half_fov_deg=15.0, far_m=4000.0)["in_view"] == 0
+
+
+def test_canopy_reader_treats_255_as_no_data(tmp_path):
+    import numpy as np
+    from PIL import Image
+    for band, v in (("cover", 255), ("height", 0)):
+        d = tmp_path / "canopy" / band
+        d.mkdir(parents=True)
+        a = np.full((600, 600), v, np.uint8)
+        a[:, :300] = 40 if band == "cover" else 12
+        Image.fromarray(a).save(d / "+33.30_-117.40.png")
+        (d / "index.json").write_text(json.dumps({"format": "camsim-canopy-1", "tile_deg": 0.05, "bounds": [-117.4, 33.3, -117.35, 33.35],
+                                                  "tiles": [{"file": "+33.30_-117.40.png", "lat": 33.3, "lon": -117.4}], "missing": []}))
+    c = vc.Canopy(tmp_path)
+    (cw, hw, pw), (ce, he, pe) = c.at([-117.39, -117.36], [33.32, 33.32])
+    assert pw and cw == 0.4 and hw == 12.0
+    assert not pe                                     # no-data texel: outside the layer (the R4 rule)

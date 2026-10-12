@@ -76,7 +76,7 @@ def test_texel_stats_cover_and_p90():
     cover, height = canopy.texel_stats(lon, lat, np.arange(10, dtype=np.uint8), i, j)
     assert cover.shape == (600, 600) and cover.dtype == np.uint8
     assert cover[0, 0] == 70 and height[0, 0] == 8
-    assert cover[0, 1] == 0 and height[0, 1] == 0           # no pixels
+    assert cover[0, 1] == canopy.NO_DATA and height[0, 1] == 0   # no pixel centre in texel (0, 1): no data
 
 
 def test_texel_stats_ignores_pixels_outside_the_tile():
@@ -84,7 +84,7 @@ def test_texel_stats_ignores_pixels_outside_the_tile():
     lon = np.array([j * 0.05 - 1e-6])
     lat = np.array([(i + 0.5) * 0.05])
     cover, _ = canopy.texel_stats(lon, lat, np.array([20], np.uint8), i, j)
-    assert cover.sum() == 0
+    assert cover.min() == canopy.NO_DATA
 
 
 def test_tile_from_synthetic_chm(tmp_path):
@@ -99,12 +99,19 @@ def test_tile_from_synthetic_chm(tmp_path):
     assert np.array_equal(again[0], cover) and np.array_equal(again[1], height)
 
 
-def test_texel_with_no_chm_is_zero(tmp_path):
+def test_texel_with_no_chm_is_no_data(tmp_path):
     cover, height = canopy.tile_from_chm(666, -2348, [])
-    assert cover.max() == 0 and height.max() == 0
+    assert cover.min() == canopy.NO_DATA and height.max() == 0
     far = write_chm(tmp_path / "far.tif", 10.0, 10.0, 10.01, 10.01, lambda lon: np.full(lon.shape, 9))
     cover, _ = canopy.tile_from_chm(666, -2348, [far])     # a CHM file elsewhere is skipped
-    assert cover.max() == 0
+    assert cover.min() == canopy.NO_DATA
+
+
+def test_discovery_covers_the_tile_aligned_bounds():
+    # Tiles run out to the 0.05-degree grid around the bbox: CHM is discovered over those bounds, not the bbox alone.
+    assert chmv2.tile_aligned((-117.37, 33.27, -117.33, 33.31)) == pytest.approx((-117.40, 33.25, -117.30, 33.35))
+    qks = chmv2.quadkeys_for_bbox(*chmv2.tile_aligned((-117.37, 33.27, -117.33, 33.31)))
+    assert set(chmv2.quadkeys_for_bbox(-117.40, 33.25, -117.30, 33.35)) == set(qks)
 
 
 def test_canopy_table():
@@ -138,7 +145,8 @@ def test_build_writes_both_tile_sets_and_skips_on_rebuild(tmp_path):
     cov = np.array(Image.open(pkg / "canopy" / "cover" / "+10.00_+10.00.png"))
     hgt = np.array(Image.open(pkg / "canopy" / "height" / "+10.00_+10.00.png"))
     assert cov.shape == (600, 600) and cov[-100:, :150].min() == 100 and hgt[-100:, :150].min() == 12
-    assert cov[:, 400:].max() == 0
+    assert cov[:, 400:].min() == 255 and hgt[:, 400:].max() == 0      # no CHM pixel east of 10.03: no data
+    assert cov[-100:, 200:340].max() == 0                               # CHM there, all below 3 m: cover 0
     assert "synthetic test data" in (pkg / "canopy" / "ATTRIBUTION.txt").read_text()
     assert "canopy/cover/index.json" in (pkg / "hashes.txt").read_text()
     assert info["layers"]["canopy"]["built"] == 2

@@ -284,6 +284,10 @@ bool FVegShrubRingRadiusTest::RunTest(const FString& Parameters)
 		F.NearLive.Num() > F.ShrubLive.Num());
 	for (const FVegCellId& C : CellsWithin(33.3, -117.4, 150.0, CellM))
 		TestTrue(TEXT("every cell within the radius has shrubs"), F.ShrubLive.Contains(C));
+	// 400 m up the ring (150 m + half a diagonal = 221 m in 3D) is out of reach: its cells drop.
+	for (int32 I = 0; I < 3; ++I) { M->Tick(33.3, -117.4, 400.0); F.Flush(); }
+	TestEqual(TEXT("400 m above: no shrub cells"), F.ShrubLive.Num(), 0);
+	for (int32 I = 0; I < 400; ++I) { M->Tick(33.3, -117.4); F.Flush(); }
 	for (int32 I = 0; I < 3; ++I) { M->Tick(33.3 + 50000.0 * DLat, -117.4); F.Flush(); }
 	int32 Left = 0;
 	for (const auto& Kv : F.ShrubLive) { double La, Lo; CellCentre(Kv.Key, CellM, La, Lo); Left += GroundDistanceM(33.3, -117.4, La, Lo) < 1000.0; }

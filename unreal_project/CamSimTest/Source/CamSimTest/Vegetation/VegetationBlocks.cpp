@@ -99,24 +99,42 @@ namespace CamSimVegetation
 	}
 }
 
+namespace CamSimVegetation
+{
+	double HeightAboveGround(double CamAltM, const TOptional<double>& NadirGroundM, const TOptional<double>& FrameCentreGroundM,
+		double& InOutGroundM)
+	{
+		if (NadirGroundM.IsSet() && FMath::IsFinite(*NadirGroundM)) InOutGroundM = *NadirGroundM;
+		else if (FrameCentreGroundM.IsSet() && FMath::IsFinite(*FrameCentreGroundM)) InOutGroundM = *FrameCentreGroundM;
+		return FMath::Max(0.0, CamAltM - InOutGroundM);
+	}
+}
+
 using namespace CamSimVegetation;
 
-TArray<FVegetationTierPlanner::FChange> FVegetationTierPlanner::Update(double CamLatDeg, double CamLonDeg)
+TArray<FVegetationTierPlanner::FChange> FVegetationTierPlanner::Update(double CamLatDeg, double CamLonDeg, double HeightM)
 {
 	TArray<FChange> Changes;
-	if (bPlanned && GroundDistanceM(LastLat, LastLon, CamLatDeg, CamLonDeg) < Params.MoveM) return Changes;
+	const double H = FMath::IsFinite(HeightM) ? FMath::Max(0.0, HeightM) : 0.0;
+	if (bPlanned && GroundDistanceM(LastLat, LastLon, CamLatDeg, CamLonDeg) < Params.MoveM && FMath::Abs(H - LastH) < Params.MoveM)
+		return Changes;
 	bPlanned = true;
 	LastLat = CamLatDeg;
 	LastLon = CamLonDeg;
+	LastH = H;
 	const int32 N = Params.BlockCells;
 	const bool bFar = Params.FarM > 0.0;
+	// Distances are 3D (ground distance and the camera's height): HISM cull distances are 3D, so a block planned by
+	// ground distance under a high camera would be culled (no near trees below ~1.2 km up, an empty ring above it).
+	auto Slant = [H](double GroundM) { return FMath::Sqrt(GroundM * GroundM + H * H); };
 	const double Reach = FMath::Max(Params.NearM * Params.NearDropFactor, bFar ? Params.FarM * Params.FarDropFactor : 0.0);
+	const double GroundReach = Reach > H ? FMath::Sqrt(Reach * Reach - H * H) : -1.0;
 	TMap<FVegBlockId, EVegTier> Next;
 	TArray<TPair<double, FVegCellId>> Near, Far;
-	for (const FVegBlockId& B : BlocksWithin(CamLatDeg, CamLonDeg, Reach, Params.CellSizeM, N))
+	for (const FVegBlockId& B : GroundReach >= 0.0 ? BlocksWithin(CamLatDeg, CamLonDeg, GroundReach, Params.CellSizeM, N) : TArray<FVegBlockId>())
 	{
 		double A, O; BlockCentre(B, N, Params.CellSizeM, A, O);
-		const double D = GroundDistanceM(CamLatDeg, CamLonDeg, A, O);
+		const double D = Slant(GroundDistanceM(CamLatDeg, CamLonDeg, A, O));
 		const EVegTier* Prev = Tiers.Find(B);
 		TOptional<EVegTier> T;
 		if (D < Params.NearM) T = EVegTier::Near;
@@ -129,7 +147,7 @@ TArray<FVegetationTierPlanner::FChange> FVegetationTierPlanner::Update(double Ca
 		else for (const FVegCellId& C : CellsOfBlock(B, N, Params.CellSizeM))
 		{
 			double CA, CO; CellCentre(C, Params.CellSizeM, CA, CO);
-			Near.Emplace(GroundDistanceM(CamLatDeg, CamLonDeg, CA, CO), C);
+			Near.Emplace(Slant(GroundDistanceM(CamLatDeg, CamLonDeg, CA, CO)), C);
 		}
 	}
 	for (const auto& Kv : Tiers)

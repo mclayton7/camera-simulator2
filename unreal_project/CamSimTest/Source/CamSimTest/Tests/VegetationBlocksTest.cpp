@@ -109,3 +109,47 @@ bool FVegTierThrottleTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("a 2 km move replans"), P.GetNearCells().Num() > 0 && !P.GetNearCells().Contains(CellOf(33.3, -117.4, 100.0)));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegTierSlantTest, "CamSim.Vegetation.Blocks.SlantDistance",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegTierSlantTest::RunTest(const FString& Parameters)
+{
+	// Tiers by 3D distance from a camera HeightM above the ground: what is planned is within its cull distance.
+	const FVegBlockId Home = BlockOf(CellOf(33.3, -117.4, 100.0), 4, 100.0);
+	double La, Lo; BlockCentre(Home, 4, 100.0, La, Lo);
+	const double DLat = 1.0 / MetresPerDegLat;
+	FVegetationTierPlanner Low({});
+	Low.Update(La, Lo, 0.0);
+	TestTrue(TEXT("on the ground: near"), Low.GetTier(Home) == TOptional<EVegTier>(EVegTier::Near));
+	FVegetationTierPlanner High({});
+	High.Update(La, Lo, 1500.0);
+	TestTrue(TEXT("1.5 km above: the block below is far, not near"), High.GetTier(Home) == TOptional<EVegTier>(EVegTier::Far));
+	TestEqual(TEXT("1.5 km above: no near cells"), High.GetNearCells().Num(), 0);
+	int32 TooFar = 0;
+	for (const FVegBlockId& B : High.GetFarBlocks())
+	{
+		double A, O; BlockCentre(B, 4, 100.0, A, O);
+		TooFar += FMath::Sqrt(FMath::Square(GroundDistanceM(La, Lo, A, O)) + FMath::Square(1500.0)) >= 4000.0;
+	}
+	TestEqual(TEXT("every far block within 4 km in 3D"), TooFar, 0);
+	FVegetationTierPlanner Mid({});
+	Mid.Update(La + 900.0 * DLat, Lo, 600.0);   // 900 m ground, 1082 m slant
+	TestTrue(TEXT("900 m away 600 m up: far"), Mid.GetTier(Home) == TOptional<EVegTier>(EVegTier::Far));
+	TestEqual(TEXT("a height change alone replans"), High.Update(La, Lo, 5000.0).Num() > 0, true);
+	TestFalse(TEXT("5 km above: beyond the far tier"), High.GetTier(Home).IsSet());
+	TestEqual(TEXT("5 km above: nothing planned"), High.GetFarBlocks().Num() + High.GetNearCells().Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegHeightAboveGroundTest, "CamSim.Vegetation.Blocks.HeightAboveGround",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegHeightAboveGroundTest::RunTest(const FString& Parameters)
+{
+	double Ground = 0.0;
+	TestEqual(TEXT("nadir hit"), HeightAboveGround(1000.0, 120.0, {}, Ground), 880.0);
+	TestEqual(TEXT("remembered"), Ground, 120.0);
+	TestEqual(TEXT("no nadir: frame centre"), HeightAboveGround(1000.0, {}, 200.0, Ground), 800.0);
+	TestEqual(TEXT("neither: the last ground"), HeightAboveGround(1000.0, {}, {}, Ground), 800.0);
+	TestEqual(TEXT("below the ground reads 0"), HeightAboveGround(150.0, 300.0, {}, Ground), 0.0);
+	return true;
+}

@@ -88,7 +88,8 @@ public:
 		TOptional<FVegetationShrubRing> ShrubRing = {});
 	~FVegetationManager();
 
-	void Tick(double CamLatDeg, double CamLonDeg);
+	/** HeightM: the camera's height above the ground; blocks and the shrub ring are planned by 3D distance. */
+	void Tick(double CamLatDeg, double CamLonDeg, double HeightM = 0.0);
 	int32 NumSpawned() const { return Spawned.Num(); }
 	FVegetationStreaming& GetStreaming() { return Streaming; }
 	/** Spawned cells (for the ground check and dumps). */
@@ -126,10 +127,10 @@ private:
 	void OnGenerated(CamSimVegetation::FVegCellId Id, uint32 Token, CamSimVegetation::FCellContent Content);
 	void OnHeights(CamSimVegetation::FVegCellId Id, uint32 Token, bool bBuildings, TArray<TOptional<double>> Heights);
 	void FinishHeights(CamSimVegetation::FVegCellId Id);
-	FVegetationStreaming::FActions TickBlocks(double CamLatDeg, double CamLonDeg, int32 InFlightCap);
+	FVegetationStreaming::FActions TickBlocks(double CamLatDeg, double CamLonDeg, double HeightM, int32 InFlightCap);
 	void TickFar(int32 Spawns);
 	/** The shrub ring's tick (on the ring's manager): the cells within RingRadiusM, budgets from the owner; returns its spawns. */
-	int32 TickRing(double CamLatDeg, double CamLonDeg, int32 InFlightCap, int32 SpawnCap);
+	int32 TickRing(double CamLatDeg, double CamLonDeg, double HeightM, int32 InFlightCap, int32 SpawnCap);
 	/** Drops, forgets, spawns and starts generating as A says. */
 	void Apply(const FVegetationStreaming::FActions& A);
 	void EmitCell(const TCHAR* Ev, CamSimVegetation::FVegCellId Id) const;
@@ -143,7 +144,7 @@ private:
 	int32 MaxSpawnsPerTick = 2;
 	TSharedPtr<FVegetationFarTier> Far;
 	TSharedPtr<FVegetationManager> Ring;
-	double RingRadiusM = 0.0;   // on the ring's manager: cells whose centre is within it are wanted
+	double RingRadiusM = 0.0;   // on the ring's manager: cells whose centre is within it (3D) are wanted
 	double CellSizeM = 100.0;
 	int64  TickCount = 0;
 	uint32 NextToken = 1;

@@ -1,8 +1,9 @@
 """Canopy cover and height tiles (REALISM R4, camsim-canopy-1) from CHMv2: two tile sets on the land-cover grid (0.05
 degree, 600 x 600 8-bit greyscale PNG, row 0 north, same file names), canopy/cover/ (percent of CHM pixels >= 3 m) and
 canopy/height/ (nearest-rank p90 of those pixels, metres), each with an index.json, over the package bbox. Per texel,
-every CHM pixel whose centre falls in it counts (pixel centres reprojected EPSG:3857 -> lon/lat). A texel no CHM file
-covers is 0 / 0. Skipped when its inputs are unchanged (.state/canopy.json)."""
+every CHM pixel whose centre falls in it counts (pixel centres reprojected EPSG:3857 -> lon/lat). A texel no CHM pixel
+covers is no data: cover NO_DATA (255), height 0 (CamSim then uses the land-cover rule there, as outside the layer).
+Skipped when its inputs are unchanged (.state/canopy.json)."""
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from . import landcover
 FORMAT = "camsim-canopy-1"
 BANDS = {"cover": "percent", "height": "m"}
 MIN_HEIGHT_M = 3
+NO_DATA = 255  # cover value of a texel no CHM pixel covers
 P90 = 0.9
 R = 6378137.0
 MARKER = "canopy.json"
@@ -45,6 +47,7 @@ def _stats(idx: np.ndarray, h: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     pct = np.zeros(n, np.float64)
     np.divide(100.0 * ntall, total, out=pct, where=total > 0)
     cover = np.floor(pct + 0.5).astype(np.uint8)
+    cover[total == 0] = NO_DATA
     height = np.zeros(n, np.uint8)
     if ti.size:
         key = np.sort(ti.astype(np.int64) * 256 + h[tall].astype(np.int64))   # by texel, then height
@@ -100,8 +103,7 @@ def tile_from_chm(i: int, j: int, chm_paths) -> tuple[np.ndarray, np.ndarray]:
         idx_parts.append(idx)
         h_parts.append(a[np.ix_(rok, cok)].ravel())
     if not idx_parts:
-        z = np.zeros((TILE_PX, TILE_PX), np.uint8)
-        return z, z.copy()
+        return np.full((TILE_PX, TILE_PX), NO_DATA, np.uint8), np.zeros((TILE_PX, TILE_PX), np.uint8)
     return _stats(np.concatenate(idx_parts), np.concatenate(h_parts))
 
 

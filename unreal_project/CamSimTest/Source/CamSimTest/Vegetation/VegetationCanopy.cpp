@@ -30,6 +30,7 @@ TOptional<FCanopySample> FVegetationCanopy::Sample(double LatDeg, double LonDeg)
 	const TSharedPtr<const FLandCoverTile, ESPMode::ThreadSafe> H = C.IsValid() ? Height->Get(Tile.X, Tile.Y) : nullptr;
 	if (!C.IsValid() || !H.IsValid()) return {};
 	const int32 K = In.Y * FLandCoverTileCache::TilePx + In.X;
+	if (C->Codes[K] == NoDataCover) return {};   // no CHM pixel there: the land-cover rule, as outside the layer
 	FCanopySample S;
 	S.CoverFrac = FMath::Min<int32>(C->Codes[K], 100) / 100.0f;
 	S.HeightM = static_cast<float>(H->Codes[K]);

@@ -82,9 +82,9 @@ void FVegetationManager::EmitBlock(const TCHAR* Ev, const TCHAR* Tier, FVegBlock
 		TickCount, Ev, Tier, B.Row, B.Col));
 }
 
-FVegetationStreaming::FActions FVegetationManager::TickBlocks(double CamLatDeg, double CamLonDeg, int32 InFlightCap)
+FVegetationStreaming::FActions FVegetationManager::TickBlocks(double CamLatDeg, double CamLonDeg, double HeightM, int32 InFlightCap)
 {
-	for (const FVegetationTierPlanner::FChange& C : Planner.Update(CamLatDeg, CamLonDeg))
+	for (const FVegetationTierPlanner::FChange& C : Planner.Update(CamLatDeg, CamLonDeg, HeightM))
 		EmitBlock(TEXT("tier"), !C.To.IsSet() ? TEXT("none") : (*C.To == EVegTier::Near ? TEXT("near") : TEXT("far")), C.Block);
 	const int32 N = Planner.GetParams().BlockCells;
 	// A near cell whose block went far stays until the far actor has settled (no gap); a block that left both tiers drops.
@@ -117,7 +117,7 @@ FVegetationManager::~FVegetationManager()
 	for (const auto& Kv : Spawned) if (Hooks.Destroy) Hooks.Destroy(Kv.Key);
 }
 
-void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
+void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg, double HeightM)
 {
 	++TickCount;
 	if (Hooks.TakeWarnings && TickCount % WarningTicks == 0)
@@ -132,11 +132,11 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 	{
 		// Budgets shared near first, then the shrub ring, then far.
 		const int32 RingInFlight = Ring ? Ring->Streaming.NumInFlight() : 0;
-		const FVegetationStreaming::FActions A = TickBlocks(CamLatDeg, CamLonDeg, MaxInFlight - (Far ? Far->NumInFlight() : 0) - RingInFlight);
+		const FVegetationStreaming::FActions A = TickBlocks(CamLatDeg, CamLonDeg, HeightM, MaxInFlight - (Far ? Far->NumInFlight() : 0) - RingInFlight);
 		Apply(A);
 		int32 Spawns = A.ToSpawn.Num();
 		if (Ring)
-			Spawns += Ring->TickRing(CamLatDeg, CamLonDeg, MaxInFlight - Streaming.NumInFlight() - (Far ? Far->NumInFlight() : 0),
+			Spawns += Ring->TickRing(CamLatDeg, CamLonDeg, HeightM, MaxInFlight - Streaming.NumInFlight() - (Far ? Far->NumInFlight() : 0),
 				MaxSpawnsPerTick - Spawns);
 		TickFar(Spawns);
 	}
@@ -153,18 +153,22 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 	bWasIdle = bIdle;
 }
 
-int32 FVegetationManager::TickRing(double CamLatDeg, double CamLonDeg, int32 InFlightCap, int32 SpawnCap)
+int32 FVegetationManager::TickRing(double CamLatDeg, double CamLonDeg, double HeightM, int32 InFlightCap, int32 SpawnCap)
 {
 	++TickCount;
 	ExpireStuckRequests();
+	// 3D, as the tiers: shrubs are culled at shrub_radius_m from the view, so a camera higher than that wants none.
+	const double H = FMath::IsFinite(HeightM) ? FMath::Max(0.0, HeightM) : 0.0;
 	const double DropM = RingRadiusM * FVegetationStreaming::FParams().DropFactor;
-	auto MayDrop = [this, CamLatDeg, CamLonDeg, DropM](FVegCellId Id)
+	auto MayDrop = [this, CamLatDeg, CamLonDeg, DropM, H](FVegCellId Id)
 	{
 		double La, Lo; CellCentre(Id, CellSizeM, La, Lo);
-		return GroundDistanceM(CamLatDeg, CamLonDeg, La, Lo) > DropM;
+		const double G = GroundDistanceM(CamLatDeg, CamLonDeg, La, Lo);
+		return G * G + H * H > DropM * DropM;
 	};
-	const FVegetationStreaming::FActions A = Streaming.TickWanted(CellsWithin(CamLatDeg, CamLonDeg, RingRadiusM, CellSizeM), MayDrop,
-		InFlightCap, SpawnCap);
+	const TArray<FVegCellId> Wanted = RingRadiusM > H
+		? CellsWithin(CamLatDeg, CamLonDeg, FMath::Sqrt(RingRadiusM * RingRadiusM - H * H), CellSizeM) : TArray<FVegCellId>();
+	const FVegetationStreaming::FActions A = Streaming.TickWanted(Wanted, MayDrop, InFlightCap, SpawnCap);
 	Apply(A);
 	return A.ToSpawn.Num();
 }

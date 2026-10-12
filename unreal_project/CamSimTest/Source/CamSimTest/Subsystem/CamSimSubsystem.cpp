@@ -86,6 +86,8 @@ struct UCamSimSubsystem::FSubsystemImpl
 
 	// Vegetation scatter (REALISM R4 slice); created lazily once the world's terrain tileset exists, null when off.
 	TSharedPtr<FVegetationManager> Vegetation;
+	double VegetationGroundM = 0.0;          // terrain height under the camera, last known (REALISM R4 tiers)
+	bool   bVegetationNadirKnown = false;
 	bool bVegetationTried = false;
 	TUniquePtr<FCesiumSurfaceProbe> VegetationProbe;   // ground check only
 	int32 VegetationSettledTicks = 0;                  // consecutive ticks with the terrain gate open (ground check)
@@ -1080,9 +1082,16 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		if (Impl->Vegetation && Camera_.IsValid())
 		{
 			const FCamSimTelemetry& T = Camera_->GetTelemetry();
-			if (CamSimVegetation::IsLatAllowed(T.Latitude)) Impl->Vegetation->Tick(T.Latitude, T.Longitude);
 			if (!Impl->VegetationProbe)
 				Impl->VegetationProbe = MakeUnique<FCesiumSurfaceProbe>(World, GetGeospatialProvider(), Config.bCreatePhysicsMeshes);
+			// Tiers are planned by 3D distance (HISM culls are 3D): the camera's height above the terrain below it (one
+			// trace every 15 ticks; the last hit is kept), the terrain under the frame centre until a trace has hit.
+			TOptional<double> Nadir;
+			if (Impl->FrameCntr % 15 == 0) Nadir = Impl->VegetationProbe->TraceHeight(T.Latitude, T.Longitude, T.Altitude + 10.0, T.Altitude - 20000.0);
+			Impl->bVegetationNadirKnown |= Nadir.IsSet();
+			const TOptional<double> Centre = (!Impl->bVegetationNadirKnown && T.SlantRangeM > 0.0) ? TOptional<double>(T.FrameCenterElev) : TOptional<double>();
+			const double HeightM = CamSimVegetation::HeightAboveGround(T.Altitude, Nadir, Centre, Impl->VegetationGroundM);
+			if (CamSimVegetation::IsLatAllowed(T.Latitude)) Impl->Vegetation->Tick(T.Latitude, T.Longitude, HeightM);
 			Impl->VegetationSettledTicks = Camera_->IsTerrainReady() ? Impl->VegetationSettledTicks + 1 : 0;
 			CamSimVegetation::RunDebugHooks(*Impl->VegetationProbe, *Impl->Vegetation, Impl->VegetationSettledTicks >= 60);  // 2 s
 		}

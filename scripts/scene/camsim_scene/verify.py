@@ -294,8 +294,8 @@ def _check_landcover_codes(lc: Path) -> Check:
 
 def _check_canopy(pkg: Path) -> Check:
     """canopy/{cover,height}/ (REALISM R4): both indexes parse with the same tiles, every tile is a 600x600 8-bit
-    greyscale PNG, cover <= 100."""
-    from .layers.canopy import BANDS, FORMAT
+    greyscale PNG, cover <= 100 or NO_DATA (255)."""
+    from .layers.canopy import BANDS, FORMAT, NO_DATA
 
     problems, files = [], {}
     for band in BANDS:
@@ -314,8 +314,8 @@ def _check_canopy(pkg: Path) -> Check:
                     a = np.asarray(im)
                     if im.mode != "L" or a.shape != (600, 600):
                         problems.append(f"{band}/{name}: mode {im.mode} shape {a.shape}")
-                    elif band == "cover" and a.max() > 100:
-                        problems.append(f"cover/{name}: cover {int(a.max())} > 100")
+                    elif band == "cover" and (bad := a[(a > 100) & (a != NO_DATA)]).size:
+                        problems.append(f"cover/{name}: cover {int(bad.max())} > 100")
             except OSError as e:
                 problems.append(f"{band}/{name}: {e}")
     if len(files) == 2 and files["cover"] != files["height"]:

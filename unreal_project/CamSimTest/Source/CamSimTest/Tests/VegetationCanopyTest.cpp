@@ -18,6 +18,7 @@ namespace
 		FTestTile Cover = Uniform(666, -2350, 40), Height = Uniform(666, -2350, 12);
 		Cover.Codes[0] = 100;
 		Height.Codes[0] = 255;
+		Cover.Codes[1] = 255;   // texel (0, 1): no CHM pixel (no data)
 		IFileManager::Get().MakeDirectory(*(Dir / TEXT("cover")), true);
 		IFileManager::Get().MakeDirectory(*(Dir / TEXT("height")), true);
 		WriteTileDir(Dir / TEXT("cover"), { Cover }, Format);
@@ -46,6 +47,7 @@ bool FVegCanopySampleTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("height 12"), In->HeightM, 12.0f);
 	}
 	TestFalse(TEXT("neighbouring tile (not in the layer): unset"), C.Sample(33.32, -117.42).IsSet());
+	TestFalse(TEXT("no-data texel (cover 255): unset, so the R4 rule applies"), C.Sample(33.35 - Half, -117.50 + 3.0 * Half).IsSet());
 	TestFalse(TEXT("NaN: unset"), C.Sample(std::numeric_limits<double>::quiet_NaN(), -117.47).IsSet());
 	return true;
 }

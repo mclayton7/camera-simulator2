@@ -26,10 +26,15 @@ namespace CamSimVegetation
 	CAMSIMTEST_API void BlockCentre(FVegBlockId Block, int32 BlockCells, double CellM, double& OutLatDeg, double& OutLonDeg);
 	/** Blocks whose centre is within RadiusM, nearest first (ties Row, then Col). Empty past MaxLatDeg. */
 	CAMSIMTEST_API TArray<FVegBlockId> BlocksWithin(double LatDeg, double LonDeg, double RadiusM, double CellM, int32 BlockCells);
+	/** The camera's height above the ground: CamAltM minus the terrain under it (NadirGroundM), else under the frame
+	 *  centre, else the last one known (InOutGroundM, updated); never negative. */
+	CAMSIMTEST_API double HeightAboveGround(double CamAltM, const TOptional<double>& NadirGroundM,
+		const TOptional<double>& FrameCentreGroundM, double& InOutGroundM);
 }
 
 /**
- * Which blocks are near and which far around the camera (REALISM R4): a block becomes near inside NearM, far inside FarM
+ * Which blocks are near and which far around the camera (REALISM R4), by 3D distance from the block centre to the camera
+ * (ground distance and its height above the ground): a block becomes near inside NearM, far inside FarM
  * (FarM 0 = no far tier); a near block stays near up to NearM * NearDropFactor, a far block stays far up to
  * FarM * FarDropFactor, and a far block turns near only inside NearM. Replans only after the camera moved MoveM.
  */
@@ -55,8 +60,9 @@ public:
 
 	explicit FVegetationTierPlanner(const FParams& P) : Params(P) {}
 
-	/** Recomputes the tiers when the camera moved at least MoveM since the last plan; returns the changed blocks. */
-	TArray<FChange> Update(double CamLatDeg, double CamLonDeg);
+	/** Recomputes the tiers when the camera moved at least MoveM (along the ground or in height) since the last plan;
+	 *  returns the changed blocks. Distances are 3D from a camera HeightM above the ground (HISM culls are 3D). */
+	TArray<FChange> Update(double CamLatDeg, double CamLonDeg, double HeightM = 0.0);
 	TOptional<CamSimVegetation::EVegTier> GetTier(CamSimVegetation::FVegBlockId B) const;
 	/** Cells of the near blocks / the far blocks, each nearest first from the last plan's camera position. */
 	const TArray<CamSimVegetation::FVegCellId>& GetNearCells() const { return NearCells; }
@@ -69,5 +75,5 @@ private:
 	TArray<CamSimVegetation::FVegCellId> NearCells;
 	TArray<CamSimVegetation::FVegBlockId> FarBlocks;
 	bool bPlanned = false;
-	double LastLat = 0.0, LastLon = 0.0;
+	double LastLat = 0.0, LastLon = 0.0, LastH = 0.0;
 };

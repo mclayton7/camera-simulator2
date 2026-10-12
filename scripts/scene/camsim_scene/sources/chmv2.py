@@ -47,6 +47,14 @@ def quadkeys_for_bbox(w: float, s: float, e: float, n: float, z: int = LEVEL) ->
     return sorted(quadkey(x, y, z) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1))
 
 
+def tile_aligned(bounds: tuple[float, float, float, float], tile_deg: float = 0.05) -> tuple[float, float, float, float]:
+    """The bbox grown to the 0.05-degree land-cover grid: the canopy tiles cover these bounds, so CHM is discovered over
+    them (a quadkey edge between the bbox and the tile edge would otherwise leave a no-data band)."""
+    w, s, e, n = bounds
+    snap = lambda v, f: f(round(v / tile_deg, 9)) * tile_deg  # noqa: E731
+    return snap(w, math.floor), snap(s, math.floor), snap(e, math.ceil), snap(n, math.ceil)
+
+
 def quadkey_bounds_3857(qk: str) -> tuple[float, float, float, float]:
     x, y = quadkey_xy(qk)
     size = 2 * math.pi * R / 2 ** len(qk)
@@ -69,7 +77,7 @@ class Chmv2(SourceBase):
         from ..net import HttpError  # requests-backed: imported lazily so the module stays import-light
 
         assets = []
-        for qk in quadkeys_for_bbox(*area.bounds):
+        for qk in quadkeys_for_bbox(*tile_aligned(area.bounds)):
             url = CHM_URL.format(qk=qk)
             status, size = self.http.head(url)
             if status in (403, 404):  # S3 answers 403 for a missing key without list permission

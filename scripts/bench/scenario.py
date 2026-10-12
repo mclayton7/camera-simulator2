@@ -143,8 +143,11 @@ def _dense_pass(t: float) -> Pose:
     )
 
 
-# REALISM R4 long-range check: 5 km HAE, 100 m/s north-east from 5 km south-west of the Santa Margarita riparian woodland
-# (33.307, -117.354), 15 deg down with a 30 deg FOV: the view spans the vegetation far tier (to 4 km) and beyond.
+# REALISM R4 long-range check: 650 m HAE (~600 m above the valley), 100 m/s north-east from 5 km south-west of the Santa
+# Margarita riparian woodland (33.307, -117.354), 12 deg down with a 30 deg FOV: the frame meets the ground from ~1.6 km
+# (the near/far boundary) to the horizon, its centre ~2.8 km out, so it spans the vegetation far tier (to 4 km in 3D).
+# (A 5 km HAE view put every far tree beyond its 4 km cull and showed none.)
+LONG_RANGE_ALT_M = 650.0
 LONG_RANGE_START = (33.307 - 3536.0 / 111_320.0, -117.354 - 3536.0 / (111_320.0 * math.cos(math.radians(33.307))))
 
 
@@ -154,7 +157,7 @@ def _long_range(t: float) -> Pose:
     brg = math.radians(45.0)
     lat = lat0 + d * math.cos(brg) / 111_320.0
     lon = lon0 + d * math.sin(brg) / (111_320.0 * math.cos(math.radians(lat0)))
-    return Pose(lat, lon, 5000.0, yaw=45.0, gimbal_pitch=-15.0, fov_h=30.0)
+    return Pose(lat, lon, LONG_RANGE_ALT_M, yaw=45.0, gimbal_pitch=-12.0, fov_h=30.0)
 
 
 def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:

@@ -143,10 +143,17 @@ def test_pendleton_adds_a_long_range_pass_last_and_warms_it():
     assert names[-1] == "long_range"
     lr = phases[-1]
     p0, p90 = lr.pose_at(0.0), lr.pose_at(90.0)
-    assert p0.alt == p90.alt == 5000.0 and p0.gimbal_pitch == -15.0 and p0.fov_h == 30.0
+    assert p0.alt == p90.alt == scenario.LONG_RANGE_ALT_M and p0.gimbal_pitch == -12.0 and p0.fov_h == 30.0
+    # ~600 m above the valley: the frame's bottom edge meets the ground inside 2.5 km and its centre inside the 4 km far
+    # tier, so the view spans the near/far boundary out to the far tier's end (a 5 km HAE view saw no tree at all).
+    agl = scenario.LONG_RANGE_ALT_M - 50.0
+    vfov = math.degrees(2 * math.atan(math.tan(math.radians(15.0)) * 9 / 16))
+    bottom = agl / math.tan(math.radians(12.0 + vfov / 2))
+    centre = agl / math.tan(math.radians(12.0))
+    assert 1000.0 < bottom < 2500.0 and centre < 4000.0
     dn = (p90.lat - p0.lat) * 111_320.0
     de = (p90.lon - p0.lon) * 111_320.0 * math.cos(math.radians(p0.lat))
     assert abs(math.hypot(dn, de) - 9000.0) < 5.0
     warm = phases[0]
-    assert any(warm.pose_at(t).alt == 5000.0 for t in range(int(warm.duration_s)))
+    assert any(warm.pose_at(t).alt == scenario.LONG_RANGE_ALT_M for t in range(int(warm.duration_s)))
     assert "long_range" not in [p.name for p in scenario.build_phases()]

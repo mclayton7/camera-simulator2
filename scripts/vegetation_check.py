@@ -17,7 +17,8 @@ Gates (report.json, exit 0 only when all pass):
                 median |error| <= 10 pp over >= 50 cells
   far_determinism  far blocks from the two approach runs have the same hashes; far trees are near trees of their cell
   handoff       events: no near/far switch leaves a block without actors (a destroy only after the other tier settled)
-  long_range    (`--stages long_range`) the bench's long_range phase: 0 dropped frames, game p95 <= +3 ms over off
+  long_range    (`--stages long_range`) the bench's long_range phase: 0 dropped frames, game p95 <= +3 ms over off,
+                and >= 200 far trees drawn in its view (3D distance within their dissolve bucket's cull)
   r4_identity   (`--stages r4_identity`) --r4-scene with shrubs and far off: every cell has the --r4-baseline hash
   grounding     camsim.Vegetation.GroundCheck: n == 200 and max_dz_m < 0.5, both runs
   determinism   approach from 3 km north and 3 km south: every cell in both dumps has the same hash
@@ -272,6 +273,28 @@ def far_determinism_gate(far_a: dict, far_b: dict, near: dict, min_common: int =
                 missing += (round(i[0], 9), round(i[1], 9), int(i[5])) not in near_pts[key]
     return {"pass": len(common) >= min_common and not mismatched and missing == 0, "common_blocks": len(common),
             "mismatched": len(mismatched), "far_trees_checked": checked, "not_in_near": missing}
+
+
+def far_view_gate(far: dict, cam: tuple[float, float, float], yaw_deg: float, half_fov_deg: float, far_m: float,
+                  buckets: int = 4, min_trees: int = 200) -> dict:
+    """Far trees the camera (lat, lon, HAE m) draws: within half_fov_deg of yaw_deg in bearing and closer in 3D than
+    their dissolve bucket's cull (0.7..1.0 x far_m, as BucketCullM). in_view_culled counts the ones in the bearing wedge
+    past their cull. Passes with >= min_trees drawn: the far tier really reaches into the view."""
+    lat0, lon0, alt = cam
+    drawn = culled = 0
+    for b in far.values():
+        for i in b["instances"]:
+            dn = (i[0] - lat0) * M_PER_DEG
+            de = (i[1] - lon0) * M_PER_DEG * math.cos(math.radians(lat0))
+            off = (math.degrees(math.atan2(de, dn)) - yaw_deg + 180.0) % 360.0 - 180.0
+            if abs(off) > half_fov_deg:
+                continue
+            cull = far_m * (0.7 + 0.3 * int(i[6]) / (buckets - 1)) if buckets > 1 else far_m
+            if math.sqrt(dn * dn + de * de + (alt - i[2]) ** 2) < cull:
+                drawn += 1
+            else:
+                culled += 1
+    return {"pass": drawn >= min_trees, "in_view": drawn, "in_view_culled": culled}
 
 
 def handoff_gate(events: list[dict]) -> dict:
@@ -703,6 +726,9 @@ def read_far_dump(path: Path) -> dict:
     return out
 
 
+CANOPY_NO_DATA = 255
+
+
 class Canopy:
     """The package's canopy tile sets: (cover 0..1, height m, present) at points; mean cover of a 100 m cell."""
 
@@ -716,18 +742,21 @@ class Canopy:
         tj = np.floor(np.round(lon / dp.TILE_DEG, 9)).astype(np.int64)
         present = [self.cover._tile(int(i), int(j)) is not None for i, j in zip(ti, tj)]
         c, h = self.cover.codes(lon, lat), self.height.codes(lon, lat)
-        return [(min(int(cv), 100) / 100.0, float(hv), p) for cv, hv, p in zip(c, h, present)]
+        # cover 255 = no CHM pixel there: CamSim uses the land-cover rule, as outside the layer
+        return [(min(int(cv), 100) / 100.0, float(hv), p and int(cv) != CANOPY_NO_DATA) for cv, hv, p in zip(c, h, present)]
 
     def cell_cover(self, row: int, col: int) -> float:
         s, n, w, e = cell_bounds(row, col)
         g = (np.arange(10) + 0.5) / 10.0
         lat, lon = np.meshgrid(s + g * (n - s), w + g * (e - w))
-        return float(np.minimum(self.cover.codes(lon.ravel(), lat.ravel()), 100).mean() / 100.0)
+        c = self.cover.codes(lon.ravel(), lat.ravel())
+        c = c[c != CANOPY_NO_DATA]
+        return float(np.minimum(c, 100).mean() / 100.0) if c.size else -1.0   # -1: no data, never in a gate's range
 
 
 def long_range_gate(a: argparse.Namespace, report: dict) -> None:
-    """The bench's long_range phase (5 km HAE oblique) with vegetation on and off: 0 dropped frames with it on, and
-    game p95 within BUDGET_GAME_P95_MS of off."""
+    """The bench's long_range phase (650 m HAE oblique over the far tier) with vegetation on and off: 0 dropped frames
+    with it on, game p95 within BUDGET_GAME_P95_MS of off, and far trees drawn in the view (long_range_view)."""
     res = {}
     for label, on in (("on", "1"), ("off", "0")):
         out = a.out / "long_range" / label
@@ -736,9 +765,34 @@ def long_range_gate(a: argparse.Namespace, report: dict) -> None:
                        env={**os.environ, "CAMSIM_SCENE_DIR": str(a.scene), "CAMSIM_VEGETATION_ENABLED": on}, check=True)
         res[label] = json.loads((out / "results.json").read_text())["phases"]["long_range"]
     d95 = res["on"]["game_ms_p95"] - res["off"]["game_ms_p95"]
-    report["long_range"] = {"pass": res["on"]["dropped"] == 0 and d95 <= BUDGET_GAME_P95_MS, "game_p95_delta_ms": d95,
-                            "dropped_on": res["on"]["dropped"],
+    view = long_range_view(a)
+    report["long_range"] = {"pass": res["on"]["dropped"] == 0 and d95 <= BUDGET_GAME_P95_MS and view["pass"],
+                            "game_p95_delta_ms": d95, "dropped_on": res["on"]["dropped"], "far_view": view,
                             **{f"{k}_{lbl}": res[lbl][k] for lbl in res for k in ("game_ms_p50", "game_ms_p95", "gpu_ms_p50")}}
+
+
+LONG_RANGE_FAR_M = 4000.0  # vegetation.far_radius_m default
+
+
+def long_range_view(a: argparse.Namespace) -> dict:
+    """Hold the long_range phase's mid pose with the far dump on until it settles: far trees drawn in the view
+    (far_view_gate), and a shot for the visual review."""
+    run = a.out / "long_range" / "view"
+    run.mkdir(parents=True, exist_ok=True)
+    far_dump = run / "far.jsonl"
+    far_dump.unlink(missing_ok=True)
+    phase = next(p for p in scenario.build_phases(site=scenario.SITES["pendleton"]) if p.name == "long_range")
+    p = phase.pose_at(phase.duration_s / 2)
+    host = rb.Host(scenario.SITES["pendleton"])
+    host.pose = p
+    try:
+        launch({"CAMSIM_SCENE_DIR": str(a.scene)}, [f"camsim.Vegetation.FarDumpPath {far_dump}"], host)
+        wait_settled(far_dump, quiet_s=10.0, timeout_s=180.0)
+        snapshot(run / "long_range_view.png")
+    finally:
+        stop(host, run / "CamSimTest.log")
+    return far_view_gate(read_far_dump(far_dump), (p.lat, p.lon, p.alt), yaw_deg=p.yaw + p.gimbal_yaw,
+                         half_fov_deg=p.fov_h / 2, far_m=LONG_RANGE_FAR_M) | {"pose": [p.lat, p.lon, p.alt]}
 
 
 def r4_identity_stage(a: argparse.Namespace, report: dict) -> None:

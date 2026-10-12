@@ -31,8 +31,10 @@ public:
 
 	bool IsValid() const;
 	const FString& GetError() const;
-	/** Unset where either set has no tile for the point (outside the package bbox), a tile is unreadable, or the point is
-	 *  not finite. Any thread. */
+	/** Cover value of a texel no CHM pixel covers (camsim-canopy-1). */
+	static constexpr uint8 NoDataCover = 255;
+	/** Unset where either set has no tile for the point (outside the package bbox), the cover texel is NoDataCover, a
+	 *  tile is unreadable, or the point is not finite. Any thread. */
 	TOptional<FCanopySample> Sample(double LatDeg, double LonDeg);
 	/** Both caches' summary warnings since the last call. Any thread. */
 	TArray<FString> TakeWarnings();
