@@ -292,6 +292,17 @@ def _check_landcover_codes(lc: Path) -> Check:
     return Check("landcover_codes", not problems, _summary(problems))
 
 
+def _check_vegetation_mix(pkg: Path, m: Manifest) -> Check:
+    """vegetation/mix.json (REALISM R4) is exactly the manifest's [vegetation] settings."""
+    from . import vegmix
+
+    path = pkg / vegmix.FILE
+    if not path.is_file():
+        return Check("vegetation_mix", False, f"missing {vegmix.FILE}")
+    ok = path.read_bytes() == vegmix.mix_json(m.layers["vegetation"])
+    return Check("vegetation_mix", ok, "" if ok else f"{vegmix.FILE} differs from the manifest's vegetation settings")
+
+
 def _check_buildings_tileset(pkg: Path) -> Check:
     from .buildings import walk_tileset
 
@@ -510,6 +521,8 @@ def verify(
         _guard("licences", _check_licences, m),
         _guard("attribution", _check_attribution, pkg, m),
     ]
+    if m.layers.get("vegetation"):
+        checks.append(_guard("vegetation_mix", _check_vegetation_mix, pkg, m))
     if (pkg / "features" / "buildings" / "tileset.json").exists():  # absent when no building was kept
         checks.append(_guard("buildings_tileset", _check_buildings_tileset, pkg))
     if not deep:

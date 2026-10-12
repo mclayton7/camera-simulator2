@@ -582,6 +582,32 @@ Build memory headroom (R3b): the buildings layer peaked at 1,988 MB of the 2,048
 `roof_texel_m` 0.5 (1,588 MB at 1.0; R3 was 1,630). A larger site may exceed the limit; raise it with
 `camsim-scene build ... --max-worker-rss-mb N` (MB per worker, default 2048, `scripts/scene/camsim_scene/cli.py`) or lower `roof_texel_m`.
 
+## Vegetation mix (R4)
+
+An optional `[vegetation]` table chooses which vegetation library types stand on each land-cover code, and how many
+shrubs per 100 m² (guide: [`vegetation.md`](vegetation.md)):
+
+```toml
+[vegetation]
+mix.10 = { tree_broadleaf_a = 1.0 }                          # code = { library type = weight, ... }
+mix.20 = { shrub_chaparral = 0.8, shrub_desert = 0.2 }
+mix.30 = { shrub_chaparral = 0.5, shrub_desert = 0.5, tree_broadleaf_a = 0.05 }
+shrub_density.20 = 8.0                                        # shrubs per 100 m^2 of that code, [0, 100]
+shrub_density.30 = 1.0
+```
+
+- Codes are land-cover codes 1..255 (WorldCover's and the burned R2/R3b codes); type names match `[a-z0-9_]+`, weights
+  are > 0. A code may list trees and shrubs: CamSim splits them by the library's roles and normalises each list. A
+  code with shrubs but no `shrub_density` gets 5 per 100 m².
+- `build` writes it, codes sorted numerically and names alphabetically, to `vegetation/mix.json`
+  (`{"format": "camsim-vegmix-1", "mix": ..., "shrub_density": ...}`), listed in `hashes.txt`; without the table no
+  file is written (and a stale one is removed). `verify` checks the file equals the manifest's settings
+  (`vegetation_mix`).
+- The tooling doesn't know the library: a type name CamSim's library lacks is a runtime warning (the type dropped, the
+  code renormalised), and with `scene.offline: true` CamSim exits 1.
+- Without a mix, CamSim's built-in default applies: code 10 → `tree_broadleaf_a` (R4's trees bit for bit), 20 and 30 →
+  `shrub_chaparral` at 6 and 1 per 100 m².
+
 ## Sea level (R1)
 
 **Why.** CamSim's tide-0 sea is the EGM96 geoid. Local mean sea level at La Jolla is +0.774 m NAVD88 (NOAA CO-OPS

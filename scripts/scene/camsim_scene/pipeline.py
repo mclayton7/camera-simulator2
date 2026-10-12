@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import shapely
 
-from . import __version__, datum, ndvi_fit
+from . import __version__, datum, ndvi_fit, vegmix
 from . import balance as colour_balance
 from . import sea_level as sea_level_mod
 from .buildings import BUILDINGS_RULES_VERSION
@@ -810,6 +810,7 @@ def build_scene(
         bstats = buildings_layer.build(pkg, m, ctx)
         if m.layers.get("buildings"):
             stats["buildings"] = bstats
+        vegmix.write(pkg, m)  # REALISM R4: the species mix (or a stale one removed)
         atomic_write(pkg / "ATTRIBUTION.txt", attribution_text(m).encode())
         normalise_modes(pkg, skip=(STATE_DIR,))
         sea = sea_level_mod.write(pkg, m, {k: Path(v) for k, v in ctx.grid_paths.items()})

@@ -61,6 +61,7 @@ KEYS = {
     "sea_level",
     "features",
     "buildings",
+    "vegetation",
 }
 
 PROFILES = {
@@ -187,6 +188,7 @@ class ScenePlan:
     sea_level_station: str | None = None
     features: dict = field(default_factory=dict)
     buildings: dict = field(default_factory=dict)
+    vegetation: dict = field(default_factory=dict)
 
     def ring_bounds(self) -> Bounds:
         return ring_bounds(self.bbox, self.ring_km)
@@ -257,6 +259,65 @@ def _parse_buildings(data) -> dict:
         raise ConfigError(f"buildings.roof_texture_max_px must be one of {list(ROOF_MAX_PX)}, got {max_px!r}")
     return {"enabled": enabled, "release": release, "min_area_m2": float(area), "roof_textures": tex,
             "roof_texel_m": float(texel), "roof_texture_max_px": max_px}
+
+
+VEGETATION_KEYS = ("mix", "shrub_density")
+TYPE_NAME_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+def _veg_code(table: str, key) -> str:
+    if not isinstance(key, str) or not key.isdigit() or str(int(key)) != key or not 1 <= int(key) <= 255:
+        raise ConfigError(f"vegetation.{table}: code {key!r} must be a land-cover code 1..255")
+    return key
+
+
+def _parse_vegetation(data) -> dict:
+    """[vegetation] (REALISM R4): mix.<code> = {type = weight, ...}, shrub_density.<code> = shrubs per 100 m^2. Codes
+    sorted numerically and names alphabetically, so the written mix.json doesn't depend on the TOML's order."""
+    if "vegetation" not in data:
+        return {}
+    v = data["vegetation"]
+    if not isinstance(v, dict):
+        raise ConfigError("vegetation must be a table")
+    unknown = set(v) - set(VEGETATION_KEYS)
+    if unknown:
+        raise ConfigError(f"unknown key(s) in vegetation: {sorted(unknown)}")
+    out: dict = {}
+    mix = v.get("mix", {})
+    if not isinstance(mix, dict):
+        raise ConfigError("vegetation.mix must be a table of codes")
+    out_mix = {}
+    for code in sorted(mix, key=lambda k: int(k) if isinstance(k, str) and k.isdigit() else -1):
+        _veg_code("mix", code)
+        types = mix[code]
+        if not isinstance(types, dict) or not types:
+            raise ConfigError(f"vegetation.mix.{code} must be a non-empty table of type = weight")
+        for name, w in types.items():
+            if not TYPE_NAME_RE.match(name):
+                raise ConfigError(f"vegetation.mix.{code}: type name {name!r} must match [a-z0-9_]+")
+            if isinstance(w, bool) or not isinstance(w, (int, float)) or not 0.0 < w < float("inf"):
+                raise ConfigError(f"vegetation.mix.{code}.{name}: weight must be a number > 0, got {w!r}")
+        out_mix[code] = {name: float(types[name]) for name in sorted(types)}
+    if out_mix:
+        out["mix"] = out_mix
+    dens = v.get("shrub_density", {})
+    if not isinstance(dens, dict):
+        raise ConfigError("vegetation.shrub_density must be a table of codes")
+    out_dens = {}
+    for code in sorted(dens, key=lambda k: int(k) if isinstance(k, str) and k.isdigit() else -1):
+        _veg_code("shrub_density", code)
+        n = dens[code]
+        if isinstance(n, bool) or not isinstance(n, (int, float)) or not 0.0 <= n <= 100.0:
+            raise ConfigError(f"vegetation.shrub_density.{code} must be a number in [0, 100], got {n!r}")
+        out_dens[code] = float(n)
+    if out_dens:
+        out["shrub_density"] = out_dens
+    return out
+
+
+def vegetation_settings(plan: ScenePlan) -> dict | None:
+    """The species mix written to vegetation/mix.json (REALISM R4), or None without a [vegetation] table."""
+    return dict(plan.vegetation) if plan.vegetation else None
 
 
 def buildings_settings(plan: ScenePlan) -> dict | None:
@@ -367,6 +428,7 @@ def parse_scene(data: dict) -> ScenePlan:
         ["osm_geofabrik"] if any(features[k] for k in OSM_FLAGS) else []
     )
     buildings = _parse_buildings(data)
+    vegetation = _parse_vegetation(data)
     prio["buildings"] = ["overture_buildings"] if buildings.get("enabled") else []
     if ndvi and ndvi_given and not any(s in prio["imagery"] for s in (NDVI_REFERENCE, NDVI_TARGET)):
         raise ConfigError("ndvi = true needs naip_pc or wc_s2 in priorities.imagery")
@@ -424,6 +486,7 @@ def parse_scene(data: dict) -> ScenePlan:
         sea_level_station=station,
         features=features,
         buildings=buildings,
+        vegetation=vegetation,
     )
 
 
@@ -515,6 +578,9 @@ def layer_settings(plan: ScenePlan) -> dict:
     fs = features_settings(plan)
     if fs is not None:
         out["landcover"]["features"] = fs
+    vs = vegetation_settings(plan)
+    if vs is not None:
+        out["vegetation"] = vs
     bs = buildings_settings(plan)
     if bs is not None:
         from .footprints import BURN_MIN_CELLS, MASK_FACTOR, MASK_RULES_VERSION
