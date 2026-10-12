@@ -123,36 +123,52 @@ Both CVars work from `-ExecCmds=` at launch (as `vegetation_check.py` sets them)
 
 ## Asset
 
-The library ships one tree type, `tree_broadleaf_a`, in
-`unreal_project/CamSimTest/Content/NonUFS/Vegetation/` (`library.json` + `tree_broadleaf_a.glb`,
-git LFS).
+The library (`unreal_project/CamSimTest/Content/NonUFS/Vegetation/`, `library.json` `camsim-vegetation-2` + the `.glb`s,
+git LFS) ships six types; `tree_broadleaf_a` stays first (index 0), so packages without a mix keep R4's trees bit for bit.
 
-| | |
+| Type | Role | Source model | Height m | Crown radius m | Triangles near / far | sha256 |
+|---|---|---|---|---|---|---|
+| `tree_broadleaf_a` | tree | Quaternius Textured LowPoly Trees, `OBJ/Tree_7.obj` | 9 | 2.7 | 1,332 / 108 | `f49350f8d9fa…` |
+| `tree_pine_a` | tree | Quaternius, `OBJ/Pine_4.obj` (crown base at 46 % of the height: the pack's only high-crowned pine) | 22 | 6.78 | 460 / 108 | `b71028685c37…` |
+| `tree_pine_b` | tree | Quaternius, `OBJ/Pine_5.obj` (slender, crown to the ground) | 16 | 4.04 | 664 / 108 | `2a28cc567588…` |
+| `shrub_chaparral` | shrub | Kenney Nature Kit 2.1, `plant_bushLarge.obj`, base colour 0.061, 0.080, 0.026 (linear; dark olive) | 2 | 1 | 60 / – | `18ccac5e1014…` |
+| `shrub_desert` | shrub | Kenney, `plant_bush.obj`, base colour 0.155, 0.162, 0.080 (grey olive) | 1.4 | 0.7 | 32 / – | `21e82385fffa…` |
+| `cactus_a` | shrub | Kenney, `cactus_tall.obj`, base colour 0.090, 0.141, 0.045 | 2.5 | 1.25 | 122 / – | `336b736fc6d1…` |
+
+Crown radius is measured from the foliage (p90 horizontal extent) by `prepare_tree.py`, except `tree_broadleaf_a`, kept
+at R4's 2.7 m; it turns canopy cover into a tree density. Kenney shrubs have no alpha-masked foliage, so theirs is the
+0.5 × height default (shrub density comes from the mix, not the canopy).
+
+| Source | Licence (checked 2026-10-11) |
 |---|---|
-| Model | Quaternius "Textured LowPoly Trees" (May 2020 pack), `OBJ/Tree_7.obj`: round broadleaf crown, bark + leaf-card textures (`Textures/Tree_Bark.jpg`, `Textures/Tree_Leaves.png`) |
-| Source | https://quaternius.itch.io/textured-lowpoly-trees |
-| Licence | CC0 1.0. Source page (checked 2026-10-10): "Free for everyone to use in any project, even comercially! (CC0)", asset licence "Creative Commons Zero v1.0 Universal". The pack's `License.txt`: "CC0 1.0 Universal (CC0 1.0) Public Domain Dedication https://creativecommons.org/publicdomain/zero/1.0/" |
-| Triangles | 1,332 (budget 10,000; no simplification needed) |
-| Height | 9.0 m (scaled by the `camsim_scale` root node; base at y = 0) |
-| Materials | `Bark` opaque; `Tree_Leaves` alpha MASK (cutoff 0.5), double-sided |
-| sha256 | `f49350f8d9faff838d0520a3e1f0ac5b6841d9bb058f27301f70a50e5b9e7e0c` |
+| Quaternius "Textured LowPoly Trees" (May 2020), https://quaternius.itch.io/textured-lowpoly-trees | CC0 1.0. Page: "Free for everyone to use in any project, even comercially! (CC0)"; the pack's `License.txt`: "CC0 1.0 Universal (CC0 1.0) Public Domain Dedication" |
+| Kenney "Nature Kit" 2.1, https://kenney.nl/assets/nature-kit | CC0 1.0. The kit's `License.txt`: "License: (Creative Commons Zero, CC0) http://creativecommons.org/publicdomain/zero/1.0/ … This content is free to use in personal, educational and commercial projects." |
 
-Other candidates: Poly Haven has no tree under 10k triangles (smallest `quiver_tree_02` 153,887 polys),
-so it was not tried; the QGIS hub model was not needed.
+- **Far meshes** (`*_far.glb`, trees only) are procedural (`prepare_tree.py` `far_mesh`): a lathe crown whose six ring
+  radii follow the foliage's height profile (round for the broadleaf, conical for the pines) plus a hexagonal trunk,
+  untextured, coloured with the model's mean leaf and bark colours: 108 triangles. Leaf-card trees don't simplify below
+  ~600 triangles with gltfpack (each card is its own island), and at 1–4 km a tree is a few pixels.
+- **Shrubs are stylised.** Kenney's bushes are low-poly leaf fans recoloured to chaparral / desert greys; they read as
+  green clumps from the sensor's usual 100+ m but not up close. Better CC0 candidates: Quaternius "Ultimate Nature Pack"
+  (`Bush_1`, `Bush_2`, `Cactus_1`–`5`; Google Drive folder linked from https://quaternius.com/packs/ultimatenature.html,
+  rate-limited when fetched by script on 2026-10-11) and the free tier of the "Stylized Nature MegaKit" (itch.io).
+  Swap one in with `prepare_tree.py --role shrub` and the same `name`.
+- Poly Haven has no tree under 10k triangles (smallest `quiver_tree_02` 153,887 polys).
 
 ### Preparing a model
 
-`scripts/vegetation/prepare_tree.py` (stdlib; needs `npx`) converts OBJ with `obj2gltf`
+`scripts/vegetation/prepare_tree.py` (`uv run --with pillow`; needs `npx`) converts OBJ with `obj2gltf`
 (`--checkTransparency`), simplifies to `--max-tris` with `gltfpack -si` (no quantisation or
 compression, which glTFRuntime may not decode), turns alpha-blended materials into double-sided MASK,
-scales the model to `--height-m`, writes `<name>.glb` and prints the `library.json` entry. It refuses
-anything but `CC0-1.0`. The output is byte-for-byte reproducible from the same inputs. The Quaternius
+scales the model to `--height-m`, writes `<name>.glb` (and, for `--role tree`, the far mesh `<name>_far.glb`, within
+`--far-tris`, default 150) and prints the `camsim-vegetation-2` entry (`--role`, measured or `--crown-radius-m`;
+`--base-color MATERIAL=R,G,B` overrides a stylised MTL colour, linear). It refuses anything but `CC0-1.0`. The output is byte-for-byte reproducible from the same inputs. The Quaternius
 MTLs name no textures, so `--texture MATERIAL=PATH` binds them:
 
 ```bash
 Q=".cache/veg/src/quaternius/Textured Stylized Trees - May 2020"   # the unzipped pack
-python3 scripts/vegetation/prepare_tree.py "$Q/OBJ/Tree_7.obj" \
-  --name tree_broadleaf_a --height-m 9.0 --max-tris 10000 --licence CC0-1.0 \
+uv run --with pillow python scripts/vegetation/prepare_tree.py "$Q/OBJ/Tree_7.obj" \
+  --name tree_broadleaf_a --height-m 9.0 --crown-radius-m 2.7 --max-tris 10000 --licence CC0-1.0 \
   --source-url https://quaternius.itch.io/textured-lowpoly-trees \
   --out unreal_project/CamSimTest/Content/NonUFS/Vegetation \
   --texture "Bark=$Q/Textures/Tree_Bark.jpg" --texture "Tree_Leaves=$Q/Textures/Tree_Leaves.png"

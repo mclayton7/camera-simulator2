@@ -1,14 +1,77 @@
 {
-  "format": "camsim-vegetation-1",
+  "format": "camsim-vegetation-2",
   "types": [
     {
       "name": "tree_broadleaf_a",
+      "role": "tree",
       "gltf": "tree_broadleaf_a.glb",
+      "sha256": "f49350f8d9faff838d0520a3e1f0ac5b6841d9bb058f27301f70a50e5b9e7e0c",
       "height_m": 9.0,
+      "crown_radius_m": 2.7,
       "thermal_class": "tree_canopy",
       "licence": "CC0-1.0",
       "source_url": "https://quaternius.itch.io/textured-lowpoly-trees",
-      "sha256": "f49350f8d9faff838d0520a3e1f0ac5b6841d9bb058f27301f70a50e5b9e7e0c"
+      "far_gltf": "tree_broadleaf_a_far.glb",
+      "far_sha256": "f22bb071f58efa30eef8e1eb51bacf9c62c33af764f273f737617f7b0560ef7f"
+    },
+    {
+      "name": "tree_pine_a",
+      "role": "tree",
+      "gltf": "tree_pine_a.glb",
+      "sha256": "b71028685c372c9857dc9caa000ec5bf0e77094ef8c4d1f76b31dad12769cd49",
+      "height_m": 22.0,
+      "crown_radius_m": 6.78,
+      "thermal_class": "tree_canopy",
+      "licence": "CC0-1.0",
+      "source_url": "https://quaternius.itch.io/textured-lowpoly-trees",
+      "far_gltf": "tree_pine_a_far.glb",
+      "far_sha256": "08155bba65261b4007e11501e896a6567843048303b1f0288ce8783906e4e74c"
+    },
+    {
+      "name": "tree_pine_b",
+      "role": "tree",
+      "gltf": "tree_pine_b.glb",
+      "sha256": "2a28cc5675887dd14b56ce3c711c5986fa7e217cbc23eb0b3d5c8d0e8d11b307",
+      "height_m": 16.0,
+      "crown_radius_m": 4.04,
+      "thermal_class": "tree_canopy",
+      "licence": "CC0-1.0",
+      "source_url": "https://quaternius.itch.io/textured-lowpoly-trees",
+      "far_gltf": "tree_pine_b_far.glb",
+      "far_sha256": "aeec2e2501954616db466bdec8e364e3f87a12edbd90f7db535a35338a7d4105"
+    },
+    {
+      "name": "shrub_chaparral",
+      "role": "shrub",
+      "gltf": "shrub_chaparral.glb",
+      "sha256": "18ccac5e1014d839b81f85902200f0cee42ba50bd9ebbacaf0f233e8372d9223",
+      "height_m": 2.0,
+      "crown_radius_m": 1.0,
+      "thermal_class": "shrubland",
+      "licence": "CC0-1.0",
+      "source_url": "https://kenney.nl/assets/nature-kit"
+    },
+    {
+      "name": "shrub_desert",
+      "role": "shrub",
+      "gltf": "shrub_desert.glb",
+      "sha256": "21e82385fffa1d0ba2cbacbe8161eaeb37ba8844e726151110cfd10f86e031e1",
+      "height_m": 1.4,
+      "crown_radius_m": 0.7,
+      "thermal_class": "shrubland",
+      "licence": "CC0-1.0",
+      "source_url": "https://kenney.nl/assets/nature-kit"
+    },
+    {
+      "name": "cactus_a",
+      "role": "shrub",
+      "gltf": "cactus_a.glb",
+      "sha256": "336b736fc6d18f7e2c4117f9633e5b8322f594d31bfea9c3fe0a9e2b7d02e912",
+      "height_m": 2.5,
+      "crown_radius_m": 1.25,
+      "thermal_class": "shrubland",
+      "licence": "CC0-1.0",
+      "source_url": "https://kenney.nl/assets/nature-kit"
     }
   ]
 }

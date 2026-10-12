@@ -5,6 +5,8 @@
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Engine/StaticMesh.h"
+#include "Entity/EntityMeshLoader.h"
 #include "Vegetation/VegetationLibrary.h"
 
 using namespace CamSimVegetation;
@@ -185,5 +187,29 @@ bool FVegLibFarShaTest::RunTest(const FString& Parameters)
 	FFileHelper::SaveStringToFile(Good.Replace(*Sha256Hex(FarB), *FString::ChrN(64, 'c')), *FPaths::Combine(Dir, TEXT("library.json")));
 	TestFalse(TEXT("far sha mismatch refused"), LoadLibrary(Dir, L, Err));
 	TestTrue(TEXT("message names the far file"), Err.Contains(TEXT("p_far.glb")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegLibShippedMeshesTest, "CamSim.Vegetation.Library.ShippedMeshesLoad",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegLibShippedMeshesTest::RunTest(const FString& Parameters)
+{
+	FVegetationLibrary L; FString Err;
+	if (!TestTrue(FString::Printf(TEXT("library loads (%s)"), *Err), LoadLibrary(ResolveLibraryDir(TEXT("")), L, Err))) return true;
+	TestEqual(TEXT("tree_broadleaf_a is index 0 (R4 identity)"), FindType(L, TEXT("tree_broadleaf_a")), 0);
+	for (const FVegetationType& T : L.Types)
+	{
+		for (const FString& Path : { T.GltfPath, T.FarGltfPath })
+		{
+			if (Path.IsEmpty()) continue;
+			UStaticMesh* Mesh = CamSimMeshLoader::LoadStaticMesh(Path);
+			if (!TestNotNull(*FString::Printf(TEXT("%s loads"), *Path), Mesh)) continue;
+			const FBox B = Mesh->GetBoundingBox();
+			const double HeightM = (B.Max.Z - B.Min.Z) / 100.0;
+			TestTrue(*FString::Printf(TEXT("%s height %.2f m vs %.2f m (2%%)"), *Path, HeightM, T.HeightM),
+				FMath::Abs(HeightM - T.HeightM) <= 0.02 * T.HeightM);
+			TestTrue(*FString::Printf(TEXT("%s base at 0 (%.3f m)"), *Path, B.Min.Z / 100.0), FMath::Abs(B.Min.Z) <= 0.02 * T.HeightM * 100.0);
+		}
+	}
 	return true;
 }
