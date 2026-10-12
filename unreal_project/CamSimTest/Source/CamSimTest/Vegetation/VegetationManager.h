@@ -61,6 +61,11 @@ class CAMSIMTEST_API FVegetationManager : public TSharedFromThis<FVegetationMana
 public:
 	/** Ticks a generation or height request may stay unanswered before its cell is reported empty (60 s at 30 fps). */
 	static constexpr int32 StuckTicks = 1800;
+	/** Shrub heights come from a grid of this spacing per cell (6 x 6 at 100 m cells), bilinear, sunk ShrubSinkM: Cesium
+	 *  answers every height point on the game thread (Tileset::loadTiles); ~1,000 shrubs per cell sampled one by one cost
+	 *  +8 ms game p95 in the long_range bench, a 10 m grid still +4 ms. Trees keep exact per-tree samples. */
+	static constexpr double ShrubGridSpacingM = 20.0;
+	static constexpr double ShrubSinkM = 0.15;
 	/** At most one "trees dropped inside building footprints" line per this many ticks (30 s at 30 fps). */
 	static constexpr int32 DropLogTicks = 900;
 	/** Tile-cache warnings are drained to the log this often (1 s at 30 fps). */
@@ -95,6 +100,7 @@ private:
 		// Height stage: the generated candidates (trees, then shrubs, in one batch) and each batch's answer.
 		TArray<CamSimVegetation::FTreeInstance> Instances;
 		TArray<CamSimVegetation::FTreeInstance> Shrubs;
+		CamSimVegetation::FFarHeightGrid ShrubGrid;   // its points follow the trees' in the height batch
 		TOptional<TArray<TOptional<double>>> TerrainH;
 		TOptional<TArray<TOptional<double>>> BuildingsH;
 		bool bWantBuildings = false;

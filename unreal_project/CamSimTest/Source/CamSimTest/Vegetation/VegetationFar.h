@@ -46,6 +46,8 @@ namespace CamSimVegetation
 
 		/** Covers the block's cells' bounds with points about SpacingM apart (N = round(extent / spacing) + 1, >= 2). */
 		static FFarHeightGrid ForBlock(FVegBlockId Block, int32 BlockCells, double CellM, double SpacingM);
+		/** Covers a lat/lon box (a cell's bounds: the near tier's shrub heights) the same way. */
+		static FFarHeightGrid ForBounds(double SouthDeg, double NorthDeg, double WestDeg, double EastDeg, double SpacingM);
 		/** (lon, lat, 0) per point in H's order. */
 		TArray<FVector> LonLatPoints() const;
 		/** Unset outside the grid or when any corner of the point's quad is unset. */

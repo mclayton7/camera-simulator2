@@ -19,6 +19,8 @@ namespace
 		int32 Spawns = 0, Destroys = 0;
 		int32 TreesPerCell = 6;
 		int32 ShrubsPerCell = 0;
+		bool bPlaneHeights = false;   // height = 100 + 1e4 * (lat - 33) + 2e3 * (lon + 117): bilinear-exact
+		int32 LastPoints = 0;
 		bool bHeightsFail = false;
 		bool bLoseGenerations = false;   // Done never runs (a task lost at shutdown)
 		bool bLoseHeights = false;       // Done never runs (Cesium drops the callback when the tileset actor is destroyed)
@@ -35,19 +37,21 @@ namespace
 					FCellContent C;
 					double La, Lo; CellCentre(Id, 100.0, La, Lo);
 					for (int32 K = 0; K < TreesPerCell; ++K) C.Trees.Add({ La + K * 1e-5, Lo, 10.0f * K, 1.0f, 0 });
-					for (int32 K = 0; K < ShrubsPerCell; ++K) C.Shrubs.Add({ La - K * 1e-5, Lo, 5.0f * K, 1.0f, 1 });
+					for (int32 K = 0; K < ShrubsPerCell; ++K) C.Shrubs.Add({ La - (K % 40) * 1e-5, Lo + (K / 40) * 1e-5, 5.0f * K, 1.0f, 1 });   // inside the cell
 					Done(MoveTemp(C));
 				});
 			};
 			H.SampleHeights = [this](const TArray<FVector>& P, TFunction<void(TArray<TOptional<double>>)> Done)
 			{
 				++HeightCalls;
+				LastPoints = P.Num();
 				if (bLoseHeights) return;
-				const int32 N = P.Num();
-				Pending.Add([this, N, Done]()
+				Pending.Add([this, P, Done]()
 				{
 					TArray<TOptional<double>> R;
-					for (int32 K = 0; K < N; ++K) R.Add(bHeightsFail ? TOptional<double>() : TOptional<double>(100.0 + K));
+					for (int32 K = 0; K < P.Num(); ++K)
+						R.Add(bHeightsFail ? TOptional<double>()
+							: TOptional<double>(bPlaneHeights ? Plane(P[K].Y, P[K].X) : 100.0 + K));
 					Done(MoveTemp(R));
 				});
 			};
@@ -55,6 +59,7 @@ namespace
 			H.Destroy = [this](FVegCellId Id) { ++Destroys; Live.Remove(Id); };
 			return H;
 		}
+		static double Plane(double Lat, double Lon) { return 100.0 + 1e4 * (Lat - 33.0) + 2e3 * (Lon + 117.0); }
 		void Flush() { TArray<TFunction<void()>> P = MoveTemp(Pending); for (auto& F : P) F(); }
 	};
 }
@@ -373,23 +378,30 @@ bool FVegBuildingsMethodTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegManagerShrubsTest, "CamSim.Vegetation.Manager.TreesAndShrubsOneHeightBatch",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegManagerShrubsTest, "CamSim.Vegetation.Manager.ShrubsFromAHeightGrid",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FVegManagerShrubsTest::RunTest(const FString& Parameters)
 {
-	FFake F; F.TreesPerCell = 3; F.ShrubsPerCell = 5;
+	FFake F; F.TreesPerCell = 3; F.ShrubsPerCell = 500; F.bPlaneHeights = true;
 	FVegetationStreaming::FParams SP; SP.RadiusM = 60.0;
 	TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(SP, F.Hooks());
 	for (int32 I = 0; I < 6; ++I) { M->Tick(33.3, -117.4); F.Flush(); }
 	TestTrue(TEXT("spawned"), F.Live.Num() > 0);
 	TestEqual(TEXT("one height batch per cell"), F.HeightCalls, F.Spawns);
+	const int32 GridN = FMath::RoundToInt32(100.0 / FVegetationManager::ShrubGridSpacingM) + 1;
+	TestEqual(TEXT("points = trees + the shrub grid, not one per shrub"), F.LastPoints, 3 + GridN * GridN);
 	for (const auto& Kv : F.Live)
 	{
 		TestEqual(TEXT("trees"), Kv.Value.Instances.Num(), 3);
-		TestEqual(TEXT("shrubs"), Kv.Value.Shrubs.Num(), 5);
-		TestEqual(TEXT("shrub heights split back (fake height = 100 + batch index)"), Kv.Value.ShrubHeightsM.Num() == 5 ? Kv.Value.ShrubHeightsM[0] : 0.0, 103.0);
-		TestEqual(TEXT("shrub local transforms"), Kv.Value.ShrubLocal.Num(), 5);
-		TestEqual(TEXT("tree local transforms"), Kv.Value.LocalInstances.Num(), 3);
+		TestEqual(TEXT("shrubs"), Kv.Value.Shrubs.Num(), 500);
+		for (int32 K = 0; K < Kv.Value.Instances.Num(); ++K)
+			TestEqual(TEXT("trees exact"), Kv.Value.HeightsM[K], FFake::Plane(Kv.Value.Instances[K].LatDeg, Kv.Value.Instances[K].LonDeg), 1e-6);
+		double MaxErr = 0.0;
+		for (int32 K = 0; K < Kv.Value.Shrubs.Num(); ++K)
+			MaxErr = FMath::Max(MaxErr, FMath::Abs(Kv.Value.ShrubHeightsM[K]
+				- (FFake::Plane(Kv.Value.Shrubs[K].LatDeg, Kv.Value.Shrubs[K].LonDeg) - FVegetationManager::ShrubSinkM)));
+		TestTrue(*FString::Printf(TEXT("shrubs bilinear from the grid, sunk (max err %.6f m)"), MaxErr), MaxErr < 1e-4);
+		TestEqual(TEXT("shrub local transforms"), Kv.Value.ShrubLocal.Num(), 500);
 	}
 	return true;
 }
@@ -398,7 +410,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegManagerShrubsOnlyTest, "CamSim.Vegetation.M
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FVegManagerShrubsOnlyTest::RunTest(const FString& Parameters)
 {
-	FFake F; F.TreesPerCell = 0; F.ShrubsPerCell = 2;
+	FFake F; F.TreesPerCell = 0; F.ShrubsPerCell = 2; F.bPlaneHeights = true;
 	FVegetationStreaming::FParams SP; SP.RadiusM = 60.0;
 	TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(SP, F.Hooks());
 	for (int32 I = 0; I < 6; ++I) { M->Tick(33.3, -117.4); F.Flush(); }
@@ -406,9 +418,14 @@ bool FVegManagerShrubsOnlyTest::RunTest(const FString& Parameters)
 	for (const auto& Kv : F.Live)
 	{
 		TestEqual(TEXT("no trees"), Kv.Value.Instances.Num(), 0);
-		TestEqual(TEXT("base height from the first shrub"), Kv.Value.BaseHeightM, 100.0);
+		TestEqual(TEXT("base height from the first shrub"), Kv.Value.BaseHeightM, Kv.Value.ShrubHeightsM[0]);
 		TestEqual(TEXT("first shrub at relative height 0"), Kv.Value.ShrubLocal[0].GetTranslation().Z, 0.0, 1e-6);
 	}
+	F.bHeightsFail = true;
+	TSharedRef<FVegetationManager> M2 = MakeShared<FVegetationManager>(SP, F.Hooks());
+	const int32 Before = F.Spawns;
+	for (int32 I = 0; I < 6; ++I) { M2->Tick(34.3, -117.4); F.Flush(); }
+	TestEqual(TEXT("a failed grid drops the shrubs (no spawn)"), F.Spawns, Before);
 	return true;
 }
 

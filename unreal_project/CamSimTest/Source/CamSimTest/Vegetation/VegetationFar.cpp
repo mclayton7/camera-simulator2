@@ -49,7 +49,6 @@ namespace CamSimVegetation
 
 	FFarHeightGrid FFarHeightGrid::ForBlock(FVegBlockId Block, int32 BlockCells, double CellM, double SpacingM)
 	{
-		FFarHeightGrid G;
 		double S = 90.0, N = -90.0, W = 360.0, E = -360.0;
 		for (const FVegCellId& C : CellsOfBlock(Block, BlockCells, CellM))
 		{
@@ -57,6 +56,12 @@ namespace CamSimVegetation
 			S = FMath::Min(S, B.SouthDeg); N = FMath::Max(N, B.NorthDeg);
 			W = FMath::Min(W, B.WestDeg);  E = FMath::Max(E, B.EastDeg);
 		}
+		return ForBounds(S, N, W, E, SpacingM);
+	}
+
+	FFarHeightGrid FFarHeightGrid::ForBounds(double S, double N, double W, double E, double SpacingM)
+	{
+		FFarHeightGrid G;
 		if (!(N > S && E > W)) return G;
 		const double HeightM = (N - S) * MetresPerDegLat;
 		const double WidthM = GroundDistanceM(0.5 * (S + N), W, 0.5 * (S + N), E);

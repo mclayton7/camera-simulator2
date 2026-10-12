@@ -194,16 +194,25 @@ void FVegetationManager::OnGenerated(FVegCellId Id, uint32 Token, FCellContent C
 		EmitCell(TEXT("empty"), Id);
 		return;
 	}
-	TArray<FVector> LonLatH;   // trees, then shrubs: one batch per cell
-	LonLatH.Reserve(Count);
-	for (const FTreeInstance& T : Content.Trees) LonLatH.Add(FVector(T.LonDeg, T.LatDeg, 0.0));
-	for (const FTreeInstance& T : Content.Shrubs) LonLatH.Add(FVector(T.LonDeg, T.LatDeg, 0.0));
+	// One batch per cell: each tree exactly, then a ShrubGridSpacingM grid over the cell for the shrubs.
+	FFarHeightGrid ShrubGrid;
+	if (Content.Shrubs.Num() > 0)
+	{
+		const FVegCellBounds CB = CellBounds(Id, CellSizeM);
+		ShrubGrid = FFarHeightGrid::ForBounds(CB.SouthDeg, CB.NorthDeg, CB.WestDeg, CB.EastDeg, ShrubGridSpacingM);
+	}
+	TArray<FVector> TreePoints;
+	TreePoints.Reserve(Content.Trees.Num());
+	for (const FTreeInstance& T : Content.Trees) TreePoints.Add(FVector(T.LonDeg, T.LatDeg, 0.0));
+	TArray<FVector> LonLatH = TreePoints;
+	LonLatH.Append(ShrubGrid.LonLatPoints());
 	const bool bWantBuildings = static_cast<bool>(Hooks.SampleBuildingHeights);
 	{
 		FRequest& R = Requests[Id];
 		R.StartTick = TickCount;   // the height stage gets its own StuckTicks, shared by both batches
 		R.Instances = MoveTemp(Content.Trees);
 		R.Shrubs = MoveTemp(Content.Shrubs);
+		R.ShrubGrid = MoveTemp(ShrubGrid);
 		R.TerrainH.Reset();
 		R.BuildingsH.Reset();
 		R.bWantBuildings = bWantBuildings;
@@ -216,7 +225,7 @@ void FVegetationManager::OnGenerated(FVegCellId Id, uint32 Token, FCellContent C
 	});
 	if (bWantBuildings && IsCurrent(Id, Token, EVegCellState::Sampling))
 	{
-		Hooks.SampleBuildingHeights(LonLatH, [Weak, Id, Token](TArray<TOptional<double>> H)
+		Hooks.SampleBuildingHeights(TreePoints, [Weak, Id, Token](TArray<TOptional<double>> H)
 		{
 			if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnHeights(Id, Token, /*bBuildings=*/true, MoveTemp(H));
 		});
@@ -236,24 +245,32 @@ void FVegetationManager::FinishHeights(FVegCellId Id)
 {
 	FRequest R;
 	Requests.RemoveAndCopyValue(Id, R);
+	const int32 NumTrees = R.Instances.Num();
+	const TArray<TOptional<double>>& All = R.TerrainH.GetValue();
+	TArray<TOptional<double>> TreeH;
+	for (int32 K = 0; K < NumTrees && K < All.Num(); ++K) TreeH.Add(All[K]);
+	TreeH.SetNum(NumTrees);
+	// The R3 runtime check (no mask) samples the buildings tileset at the trees only; shrubs need the R3b mask.
 	int32 InBuildings = 0;
-	const TArray<int32> Keep = KeepClearOfBuildings(R.TerrainH.GetValue(), R.bWantBuildings ? &R.BuildingsH.GetValue() : nullptr, &InBuildings);
+	const TArray<int32> Keep = KeepClearOfBuildings(TreeH, R.bWantBuildings ? &R.BuildingsH.GetValue() : nullptr, &InBuildings);
 	DroppedInBuildings += InBuildings;
 	FVegCellSpawn S;
 	CellCentre(Id, CellSizeM, S.CentreLatDeg, S.CentreLonDeg);
 	S.NumInBuildings = InBuildings;
-	const int32 NumTrees = R.Instances.Num();
 	for (const int32 K : Keep)
 	{
-		if (K < NumTrees)
+		S.Instances.Add(R.Instances[K]);
+		S.HeightsM.Add(TreeH[K].GetValue());
+	}
+	if (R.Shrubs.Num() > 0)
+	{
+		for (int32 K = NumTrees; K < All.Num(); ++K) R.ShrubGrid.H.Add(All[K]);
+		for (const FTreeInstance& Sh : R.Shrubs)
 		{
-			S.Instances.Add(R.Instances[K]);
-			S.HeightsM.Add(R.TerrainH.GetValue()[K].GetValue());
-		}
-		else if (K - NumTrees < R.Shrubs.Num())
-		{
-			S.Shrubs.Add(R.Shrubs[K - NumTrees]);
-			S.ShrubHeightsM.Add(R.TerrainH.GetValue()[K].GetValue());
+			const TOptional<double> H = R.ShrubGrid.Sample(Sh.LatDeg, Sh.LonDeg);
+			if (!H.IsSet()) continue;
+			S.Shrubs.Add(Sh);
+			S.ShrubHeightsM.Add(*H - ShrubSinkM);
 		}
 	}
 	Streaming.OnHeightsSampled(Id, S.Instances.Num() + S.Shrubs.Num());

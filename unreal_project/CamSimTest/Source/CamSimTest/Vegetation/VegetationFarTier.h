@@ -37,8 +37,10 @@ struct FVegetationFarHooks
 class CAMSIMTEST_API FVegetationFarTier : public TSharedFromThis<FVegetationFarTier>
 {
 public:
-	static constexpr double SinkM = 0.3;
-	static constexpr double GridSpacingM = 25.0;
+	static constexpr double SinkM = 0.5;
+	/** Cesium answers each height point on the game thread (inside Tileset::loadTiles), so far grids stay coarse (25 m
+	 *  grids cost ~+3 ms game p95 in the long_range bench); at 1-4 km a pixel is 1-3 m, and trees are sunk SinkM. */
+	static constexpr double GridSpacingM = 100.0;
 	static constexpr int32 StuckTicks = 1800;
 
 	/** Notify(event, block): "spawn", "destroy" or "empty" (the events dump). */

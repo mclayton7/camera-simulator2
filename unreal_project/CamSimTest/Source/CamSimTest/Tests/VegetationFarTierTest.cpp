@@ -231,6 +231,7 @@ bool FVegFarTierGridTest::RunTest(const FString& Parameters)
 	const auto& Any = *F.FarLive.CreateConstIterator();
 	const FFarHeightGrid G = FFarHeightGrid::ForBlock(Any.Key, BlockN, CellM, FVegetationFarTier::GridSpacingM);
 	TestEqual(TEXT("grid points per far block"), F.LastGridPoints, G.N * G.N);
+	TestTrue(*FString::Printf(TEXT("a coarse grid: %d points for a 200 m block"), F.LastGridPoints), F.LastGridPoints <= 49);
 	for (const double H : Any.Value.HeightsM) TestEqual(TEXT("height = grid - 0.3 m"), H, 100.0 - FVegetationFarTier::SinkM, 1e-9);
 	TestEqual(TEXT("local transforms"), Any.Value.Local.Num(), Any.Value.Trees.Num());
 	return true;
