@@ -83,9 +83,9 @@ def row_env(row: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def run_metrics(results_path: Path) -> dict:
+def run_metrics(results_path: Path, phase: str = PHASE) -> dict:
     try:
-        ph = json.loads(results_path.read_text())["phases"][PHASE]
+        ph = json.loads(results_path.read_text())["phases"][phase]
     except Exception:  # noqa: BLE001 -- a crashed run leaves no (or a partial) results.json
         return {"status": "failed"}
     if not ph.get("frames"):
@@ -213,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--site", default="pendleton")
     ap.add_argument("--sensor", choices=["eo", "ir"], default="eo")
     ap.add_argument("--dry-run", action="store_true", help="print the rows and commands, run nothing")
+    ap.add_argument("--phase", default=PHASE, help=f"the measured bench phase (default {PHASE}; long_range for the far tier)")
     a = ap.parse_args(argv)
     axes = [parse_axis(t) for t in a.axis]
     rows = build_rows(axes)
@@ -225,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             run_dir = out / "rows" / label / f"r{k}"
             cmd = [sys.executable, str(REPO / "scripts" / "bench" / "run_bench.py"),
                    "--label", f"{label}-r{k}", "--site", a.site, "--out", str(run_dir),
-                   "--phases", PHASE, "--shots", SHOT, "--gpu-mem", "--sensor", a.sensor,
+                   "--phases", a.phase, "--shots", SHOT, "--gpu-mem", "--sensor", a.sensor,
                    "--env", f"CAMSIM_SCENE_DIR={a.scene.resolve()}"]
             for key, val in row_env(row).items():
                 cmd += ["--env", f"{key}={val}"]
@@ -233,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
             if a.dry_run:
                 continue
             subprocess.run(cmd, check=False)  # a failed run is recorded as failed, the sweep goes on
-            runs.setdefault(label, []).append(run_metrics(run_dir / "results.json"))
+            runs.setdefault(label, []).append(run_metrics(run_dir / "results.json", a.phase))
     if a.dry_run:
         return 0
     agg = aggregate(rows, runs)

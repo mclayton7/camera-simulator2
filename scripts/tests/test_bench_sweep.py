@@ -152,3 +152,12 @@ def test_vegetation_deeper_axes_map_to_env():
     env = sweep.row_env({"trees": "on", "far_radius": "2000", "far_keep": "0.5", "shrubs": "off", "shrub_radius": "300"})
     assert env["CAMSIM_VEGETATION_FAR_RADIUS_M"] == "2000" and env["CAMSIM_VEGETATION_FAR_KEEP"] == "0.5"
     assert env["CAMSIM_VEGETATION_SHRUBS_ENABLED"] == "0" and env["CAMSIM_VEGETATION_SHRUB_RADIUS_M"] == "300"
+
+
+def test_run_metrics_reads_the_chosen_phase(tmp_path):
+    p = tmp_path / "lr" / "results.json"
+    p.parent.mkdir(parents=True)
+    ph = {"frames": 100, "game_ms_p50": 1.0, "game_ms_p95": 2.0}
+    p.write_text(json.dumps({"phases": {"long_range": ph}}))
+    assert sweep.run_metrics(p)["status"] == "failed"                       # default phase dense_pass absent
+    assert sweep.run_metrics(p, "long_range")["game_ms_p95"] == 2.0
