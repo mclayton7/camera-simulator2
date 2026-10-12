@@ -15,13 +15,6 @@ ACamSimVegetationCell::ACamSimVegetationCell()
 	Root->SetMobility(EComponentMobility::Movable);   // the globe anchor moves it on origin shifts
 	SetRootComponent(Root);
 	GlobeAnchor = CreateDefaultSubobject<UCesiumGlobeAnchorComponent>(TEXT("GlobeAnchor"));
-	Trees = CreateDefaultSubobject<UHierarchicalInstancedStaticMeshComponent>(TEXT("Trees"));
-	Trees->SetupAttachment(Root);
-	Trees->SetMobility(EComponentMobility::Movable);
-	Trees->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Trees->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
-	Trees->SetCanEverAffectNavigation(false);
-	Trees->SetRenderCustomDepth(false);
 }
 
 void ACamSimVegetationCell::Init(double CentreLatDeg, double CentreLonDeg, double BaseHeightM, UStaticMesh* Mesh,
@@ -37,18 +30,43 @@ void ACamSimVegetationCell::Init(double CentreLatDeg, double CentreLonDeg, doubl
 		}
 		return;
 	}
+	FVegHismBatch B;
+	B.Mesh = Mesh;
+	B.Instances = LocalInstances;
+	B.bCastShadows = bCastShadows;
+	B.CullDistanceM = CullDistanceM;
+	Init(CentreLatDeg, CentreLonDeg, BaseHeightM, TArray<FVegHismBatch>{ MoveTemp(B) });
+}
+
+void ACamSimVegetationCell::Init(double CentreLatDeg, double CentreLonDeg, double BaseHeightM, const TArray<FVegHismBatch>& InBatches)
+{
 	GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(CentreLonDeg, CentreLatDeg, BaseHeightM));
 	GlobeAnchor->SetEastSouthUpRotation(FQuat::Identity);
-	Trees->SetCastShadow(bCastShadows);
-	// Clamped in double before the int32 conversion (radius_m comes from config); non-finite = no cut.
-	const double CullCmD = FMath::IsFinite(CullDistanceM) ? FMath::Clamp(static_cast<double>(CullDistanceM) * 100.0, 1.0, static_cast<double>(MAX_int32)) : static_cast<double>(MAX_int32);
-	const int32 CullCm = static_cast<int32>(CullCmD);
-	Trees->SetCullDistances(0, CullCm);
-	Trees->SetStaticMesh(Mesh);
-	Trees->AddInstances(LocalInstances, /*bShouldReturnIndices=*/false, /*bWorldSpace=*/false, /*bUpdateNavigation=*/false);
+	for (const FVegHismBatch& B : InBatches)
+	{
+		if (!B.Mesh || B.Instances.Num() == 0) continue;
+		UHierarchicalInstancedStaticMeshComponent* H = NewObject<UHierarchicalInstancedStaticMeshComponent>(this);
+		H->SetupAttachment(Root);
+		H->SetMobility(EComponentMobility::Movable);
+		H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		H->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
+		H->SetCanEverAffectNavigation(false);
+		H->SetRenderCustomDepth(false);
+		H->SetCastShadow(B.bCastShadows);
+		// Clamped in double before the int32 conversion (cull distances come from config); <= 0 or non-finite = no cut.
+		const double CullCmD = FMath::IsFinite(B.CullDistanceM) && B.CullDistanceM > 0.0f
+			? FMath::Clamp(static_cast<double>(B.CullDistanceM) * 100.0, 1.0, static_cast<double>(MAX_int32)) : static_cast<double>(MAX_int32);
+		H->SetCullDistances(0, static_cast<int32>(CullCmD));
+		H->SetStaticMesh(B.Mesh);
+		H->RegisterComponent();
+		H->AddInstances(B.Instances, /*bShouldReturnIndices=*/false, /*bWorldSpace=*/false, /*bUpdateNavigation=*/false);
+		Batches.Add(H);
+	}
 }
 
 int32 ACamSimVegetationCell::GetInstanceCount() const
 {
-	return Trees ? Trees->GetInstanceCount() : 0;
+	int32 N = 0;
+	for (const TObjectPtr<UHierarchicalInstancedStaticMeshComponent>& H : Batches) if (H) N += H->GetInstanceCount();
+	return N;
 }

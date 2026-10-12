@@ -21,6 +21,9 @@ bool FVegConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("drop_in_buildings"), V.bDropInBuildings);
 	TestEqual(TEXT("building_clearance_m"), V.BuildingClearanceM, 2.0f);
 	TestEqual(TEXT("mix_file"), V.MixFile, FString());
+	TestTrue (TEXT("shrubs_enabled"), V.bShrubsEnabled);
+	TestEqual(TEXT("shrub_radius_m"), V.ShrubRadiusM, 500.0f);
+	TestEqual(TEXT("shrub_spacing_m"), V.ShrubSpacingM, 3.0f);
 	return true;
 }
 
@@ -39,7 +42,10 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 		"  seed: 42\n"
 		"  drop_in_buildings: false\n"
 		"  building_clearance_m: 3.5\n"
-		"  mix_file: \"/m/mix.json\"\n");
+		"  mix_file: \"/m/mix.json\"\n"
+		"  shrubs_enabled: false\n"
+		"  shrub_radius_m: 300\n"
+		"  shrub_spacing_m: 4\n");
 	FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	TestTrue (TEXT("parsed"), Cfg.bLoadedSuccessfully);
 	TestFalse(TEXT("enabled"), Cfg.Vegetation.bEnabled);
@@ -52,13 +58,18 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("drop_in_buildings"), Cfg.Vegetation.bDropInBuildings);
 	TestEqual(TEXT("clearance"), Cfg.Vegetation.BuildingClearanceM, 3.5f);
 	TestEqual(TEXT("mix_file"), Cfg.Vegetation.MixFile, FString(TEXT("/m/mix.json")));
+	TestFalse(TEXT("shrubs_enabled"), Cfg.Vegetation.bShrubsEnabled);
+	TestEqual(TEXT("shrub_radius_m"), Cfg.Vegetation.ShrubRadiusM, 300.0f);
+	TestEqual(TEXT("shrub_spacing_m"), Cfg.Vegetation.ShrubSpacingM, 4.0f);
 
 	const TCHAR* Vars[][2] = {
 		{ TEXT("CAMSIM_VEGETATION_ENABLED"), TEXT("true") }, { TEXT("CAMSIM_VEGETATION_LIBRARY_DIR"), TEXT("/opt/veg") },
 		{ TEXT("CAMSIM_VEGETATION_RADIUS_M"), TEXT("500") }, { TEXT("CAMSIM_VEGETATION_DENSITY_SCALE"), TEXT("0.25") },
 		{ TEXT("CAMSIM_VEGETATION_CAST_SHADOWS"), TEXT("1") }, { TEXT("CAMSIM_VEGETATION_CELL_SIZE_M"), TEXT("200") },
 		{ TEXT("CAMSIM_VEGETATION_SEED"), TEXT("7") }, { TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), TEXT("1") },
-		{ TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), TEXT("4") }, { TEXT("CAMSIM_VEGETATION_MIX_FILE"), TEXT("/e/mix.json") } };
+		{ TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), TEXT("4") }, { TEXT("CAMSIM_VEGETATION_MIX_FILE"), TEXT("/e/mix.json") },
+		{ TEXT("CAMSIM_VEGETATION_SHRUBS_ENABLED"), TEXT("1") }, { TEXT("CAMSIM_VEGETATION_SHRUB_RADIUS_M"), TEXT("250") },
+		{ TEXT("CAMSIM_VEGETATION_SHRUB_SPACING_M"), TEXT("5") } };
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], V[1]);
 	Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], TEXT(""));
@@ -72,6 +83,9 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("env drop_in_buildings"), Cfg.Vegetation.bDropInBuildings);
 	TestEqual(TEXT("env clearance"), Cfg.Vegetation.BuildingClearanceM, 4.0f);
 	TestEqual(TEXT("env mix_file"), Cfg.Vegetation.MixFile, FString(TEXT("/e/mix.json")));
+	TestTrue (TEXT("env shrubs_enabled"), Cfg.Vegetation.bShrubsEnabled);
+	TestEqual(TEXT("env shrub_radius_m"), Cfg.Vegetation.ShrubRadiusM, 250.0f);
+	TestEqual(TEXT("env shrub_spacing_m"), Cfg.Vegetation.ShrubSpacingM, 5.0f);
 	return true;
 }
 
@@ -100,5 +114,10 @@ bool FVegConfigValidateTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("clearance 10"),   Has(With([](auto& V) { V.BuildingClearanceM = 10.0f; }), TEXT("vegetation.building_clearance_m")));
 	TestTrue (TEXT("relative mix_file"), Has(With([](auto& V) { V.MixFile = TEXT("mix.json"); }), TEXT("vegetation.mix_file")));
 	TestFalse(TEXT("absolute mix_file"), Has(With([](auto& V) { V.MixFile = TEXT("/m/mix.json"); }), TEXT("vegetation.mix_file")));
+	TestTrue (TEXT("shrub radius > radius"), Has(With([](auto& V) { V.ShrubRadiusM = 1500.0f; }), TEXT("vegetation.shrub_radius_m")));
+	TestTrue (TEXT("shrub radius -1"), Has(With([](auto& V) { V.ShrubRadiusM = -1.0f; }), TEXT("vegetation.shrub_radius_m")));
+	TestFalse(TEXT("shrub radius 0"), Has(With([](auto& V) { V.ShrubRadiusM = 0.0f; }), TEXT("vegetation.shrub_radius_m")));
+	TestTrue (TEXT("shrub spacing 0.5"), Has(With([](auto& V) { V.ShrubSpacingM = 0.5f; }), TEXT("vegetation.shrub_spacing_m")));
+	TestTrue (TEXT("shrub spacing 11"), Has(With([](auto& V) { V.ShrubSpacingM = 11.0f; }), TEXT("vegetation.shrub_spacing_m")));
 	return true;
 }

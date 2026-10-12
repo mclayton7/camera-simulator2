@@ -18,6 +18,7 @@ namespace
 		TArray<FVegCellId> SpawnLog;   // every Spawn call, in order
 		int32 Spawns = 0, Destroys = 0;
 		int32 TreesPerCell = 6;
+		int32 ShrubsPerCell = 0;
 		bool bHeightsFail = false;
 		bool bLoseGenerations = false;   // Done never runs (a task lost at shutdown)
 		bool bLoseHeights = false;       // Done never runs (Cesium drops the callback when the tileset actor is destroyed)
@@ -26,15 +27,16 @@ namespace
 		FVegetationHooks Hooks()
 		{
 			FVegetationHooks H;
-			H.Generate = [this](FVegCellId Id, TFunction<void(TArray<FTreeInstance>)> Done)
+			H.Generate = [this](FVegCellId Id, TFunction<void(FCellContent)> Done)
 			{
 				if (bLoseGenerations) return;
 				Pending.Add([this, Id, Done]()
 				{
-					TArray<FTreeInstance> T;
+					FCellContent C;
 					double La, Lo; CellCentre(Id, 100.0, La, Lo);
-					for (int32 K = 0; K < TreesPerCell; ++K) T.Add({ La + K * 1e-5, Lo, 10.0f * K, 1.0f, 0 });
-					Done(MoveTemp(T));
+					for (int32 K = 0; K < TreesPerCell; ++K) C.Trees.Add({ La + K * 1e-5, Lo, 10.0f * K, 1.0f, 0 });
+					for (int32 K = 0; K < ShrubsPerCell; ++K) C.Shrubs.Add({ La - K * 1e-5, Lo, 5.0f * K, 1.0f, 1 });
+					Done(MoveTemp(C));
 				});
 			};
 			H.SampleHeights = [this](const TArray<FVector>& P, TFunction<void(TArray<TOptional<double>>)> Done)
@@ -368,5 +370,44 @@ bool FVegBuildingsMethodTest::RunTest(const FString& Parameters)
 		FString(TEXT("runtime check (buildings tileset, no mask)")));
 	TestEqual(TEXT("none text"), CamSimVegetation::DescribeBuildingExclusion(E::None, 2.0f), FString(TEXT("none")));
 	TestEqual(TEXT("off text"), CamSimVegetation::DescribeBuildingExclusion(E::Off, 2.0f), FString(TEXT("off (drop_in_buildings false)")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegManagerShrubsTest, "CamSim.Vegetation.Manager.TreesAndShrubsOneHeightBatch",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegManagerShrubsTest::RunTest(const FString& Parameters)
+{
+	FFake F; F.TreesPerCell = 3; F.ShrubsPerCell = 5;
+	FVegetationStreaming::FParams SP; SP.RadiusM = 60.0;
+	TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(SP, F.Hooks());
+	for (int32 I = 0; I < 6; ++I) { M->Tick(33.3, -117.4); F.Flush(); }
+	TestTrue(TEXT("spawned"), F.Live.Num() > 0);
+	TestEqual(TEXT("one height batch per cell"), F.HeightCalls, F.Spawns);
+	for (const auto& Kv : F.Live)
+	{
+		TestEqual(TEXT("trees"), Kv.Value.Instances.Num(), 3);
+		TestEqual(TEXT("shrubs"), Kv.Value.Shrubs.Num(), 5);
+		TestEqual(TEXT("shrub heights split back (fake height = 100 + batch index)"), Kv.Value.ShrubHeightsM.Num() == 5 ? Kv.Value.ShrubHeightsM[0] : 0.0, 103.0);
+		TestEqual(TEXT("shrub local transforms"), Kv.Value.ShrubLocal.Num(), 5);
+		TestEqual(TEXT("tree local transforms"), Kv.Value.LocalInstances.Num(), 3);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegManagerShrubsOnlyTest, "CamSim.Vegetation.Manager.ShrubsOnlyCellSpawns",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegManagerShrubsOnlyTest::RunTest(const FString& Parameters)
+{
+	FFake F; F.TreesPerCell = 0; F.ShrubsPerCell = 2;
+	FVegetationStreaming::FParams SP; SP.RadiusM = 60.0;
+	TSharedRef<FVegetationManager> M = MakeShared<FVegetationManager>(SP, F.Hooks());
+	for (int32 I = 0; I < 6; ++I) { M->Tick(33.3, -117.4); F.Flush(); }
+	TestTrue(TEXT("shrub-only cells spawn"), F.Live.Num() > 0);
+	for (const auto& Kv : F.Live)
+	{
+		TestEqual(TEXT("no trees"), Kv.Value.Instances.Num(), 0);
+		TestEqual(TEXT("base height from the first shrub"), Kv.Value.BaseHeightM, 100.0);
+		TestEqual(TEXT("first shrub at relative height 0"), Kv.Value.ShrubLocal[0].GetTranslation().Z, 0.0, 1e-6);
+	}
 	return true;
 }

@@ -21,6 +21,7 @@
 #include "Vegetation/VegetationCellActor.h"
 #include "Vegetation/VegetationLandCover.h"
 #include "Vegetation/VegetationLibrary.h"
+#include "Vegetation/VegetationMix.h"
 #include "CamSimTest.h"
 
 // Task 2 (procedural tree fallback) was skipped: the CC0 asset passed its checks.
@@ -72,9 +73,9 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 		const uint32 Token = NextToken++;
 		Requests.Add(Id, FRequest{ Token, TickCount });
 		TWeakPtr<FVegetationManager> Weak = AsWeak();
-		Hooks.Generate(Id, [Weak, Id, Token](TArray<FTreeInstance> T)
+		Hooks.Generate(Id, [Weak, Id, Token](FCellContent C)
 		{
-			if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnGenerated(Id, Token, MoveTemp(T));
+			if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnGenerated(Id, Token, MoveTemp(C));
 		});
 	}
 	// When streaming settles with new building drops: at most one line per DropLogTicks (a moving camera settles
@@ -113,23 +114,26 @@ bool FVegetationManager::IsCurrent(FVegCellId Id, uint32 Token, EVegCellState St
 	return R && R->Token == Token && Streaming.GetState(Id) == TOptional<EVegCellState>(Stage);
 }
 
-void FVegetationManager::OnGenerated(FVegCellId Id, uint32 Token, TArray<FTreeInstance> Instances)
+void FVegetationManager::OnGenerated(FVegCellId Id, uint32 Token, FCellContent Content)
 {
 	if (!IsCurrent(Id, Token, EVegCellState::Generating)) return;
-	Streaming.OnGenerated(Id, Instances.Num());
-	if (Instances.Num() == 0)
+	const int32 Count = Content.Trees.Num() + Content.Shrubs.Num();
+	Streaming.OnGenerated(Id, Count);
+	if (Count == 0)
 	{
 		Requests.Remove(Id);
 		return;
 	}
-	TArray<FVector> LonLatH;
-	LonLatH.Reserve(Instances.Num());
-	for (const FTreeInstance& T : Instances) LonLatH.Add(FVector(T.LonDeg, T.LatDeg, 0.0));
+	TArray<FVector> LonLatH;   // trees, then shrubs: one batch per cell
+	LonLatH.Reserve(Count);
+	for (const FTreeInstance& T : Content.Trees) LonLatH.Add(FVector(T.LonDeg, T.LatDeg, 0.0));
+	for (const FTreeInstance& T : Content.Shrubs) LonLatH.Add(FVector(T.LonDeg, T.LatDeg, 0.0));
 	const bool bWantBuildings = static_cast<bool>(Hooks.SampleBuildingHeights);
 	{
 		FRequest& R = Requests[Id];
 		R.StartTick = TickCount;   // the height stage gets its own StuckTicks, shared by both batches
-		R.Instances = MoveTemp(Instances);
+		R.Instances = MoveTemp(Content.Trees);
+		R.Shrubs = MoveTemp(Content.Shrubs);
 		R.TerrainH.Reset();
 		R.BuildingsH.Reset();
 		R.bWantBuildings = bWantBuildings;
@@ -168,16 +172,25 @@ void FVegetationManager::FinishHeights(FVegCellId Id)
 	FVegCellSpawn S;
 	CellCentre(Id, CellSizeM, S.CentreLatDeg, S.CentreLonDeg);
 	S.NumInBuildings = InBuildings;
+	const int32 NumTrees = R.Instances.Num();
 	for (const int32 K : Keep)
 	{
-		if (K >= R.Instances.Num()) break;
-		S.Instances.Add(R.Instances[K]);
-		S.HeightsM.Add(R.TerrainH.GetValue()[K].GetValue());
+		if (K < NumTrees)
+		{
+			S.Instances.Add(R.Instances[K]);
+			S.HeightsM.Add(R.TerrainH.GetValue()[K].GetValue());
+		}
+		else if (K - NumTrees < R.Shrubs.Num())
+		{
+			S.Shrubs.Add(R.Shrubs[K - NumTrees]);
+			S.ShrubHeightsM.Add(R.TerrainH.GetValue()[K].GetValue());
+		}
 	}
-	Streaming.OnHeightsSampled(Id, S.Instances.Num());
-	if (S.Instances.Num() == 0) return;
-	S.BaseHeightM = S.HeightsM[0];
+	Streaming.OnHeightsSampled(Id, S.Instances.Num() + S.Shrubs.Num());
+	if (S.Instances.Num() + S.Shrubs.Num() == 0) return;
+	S.BaseHeightM = S.HeightsM.Num() > 0 ? S.HeightsM[0] : S.ShrubHeightsM[0];
 	S.LocalInstances = ToCellLocal(S.CentreLatDeg, S.CentreLonDeg, S.BaseHeightM, S.Instances, S.HeightsM);
+	S.ShrubLocal = ToCellLocal(S.CentreLatDeg, S.CentreLonDeg, S.BaseHeightM, S.Shrubs, S.ShrubHeightsM);
 	Ready.Add(Id, MoveTemp(S));
 }
 
@@ -250,8 +263,75 @@ namespace CamSimVegetation
 		return VegetationSeed(Base);
 	}
 
-	TSharedPtr<FVegetationManager> CreateLiveManager(UWorld* World, ACesium3DTileset* Terrain, const FCamSimConfig& Cfg, FString& OutWhyNot)
+	TSharedPtr<FVegetationMix, ESPMode::ThreadSafe> ResolveMix(const FCamSimConfig& Cfg, const FVegetationLibrary& Library,
+		FString& OutSource, FString& OutWhyNot, bool& bOutFatal)
 	{
+		const FString Path = !Cfg.Scene.VegetationMixPath.IsEmpty() ? Cfg.Scene.VegetationMixPath : Cfg.Vegetation.MixFile;
+		OutSource = !Cfg.Scene.VegetationMixPath.IsEmpty() ? TEXT("package") : (Path.IsEmpty() ? TEXT("default") : TEXT("file"));
+		TSharedPtr<FVegetationMix, ESPMode::ThreadSafe> Mix = MakeShared<FVegetationMix, ESPMode::ThreadSafe>();
+		if (Path.IsEmpty())
+		{
+			*Mix = DefaultMix(Library);
+			return Mix;
+		}
+		FString Json, Error;
+		TArray<FString> Unknown;
+		const bool bRead = FFileHelper::LoadFileToString(Json, *Path);
+		if (!bRead || !ParseMix(Json, Library, *Mix, Unknown, Error))
+		{
+			const FString Why = FString::Printf(TEXT("species mix %s unusable (%s)"), *Path, bRead ? *Error : TEXT("cannot read it"));
+			if (Cfg.Scene.bOffline) { bOutFatal = true; OutWhyNot = Why; return nullptr; }
+			UE_LOG(LogCamSim, Warning, TEXT("Vegetation: %s; using the built-in default mix"), *Why);
+			*Mix = DefaultMix(Library);
+			OutSource = TEXT("default");
+			return Mix;
+		}
+		for (const FString& Name : Unknown)
+			UE_LOG(LogCamSim, Warning, TEXT("Vegetation: mix names unknown type '%s' (not in the library); dropped"), *Name);
+		if (Unknown.Num() > 0 && Cfg.Scene.bOffline)
+		{
+			bOutFatal = true;
+			OutWhyNot = FString::Printf(TEXT("species mix %s names types the library lacks: %s"), *Path, *FString::Join(Unknown, TEXT(", ")));
+			return nullptr;
+		}
+		return Mix;
+	}
+
+	/** One batch per type present in Instances (near meshes; Shadows / CullM per call). */
+	static void AddTypeBatches(TArray<FVegHismBatch>& Out, const TArray<TStrongObjectPtr<UStaticMesh>>& Meshes,
+		const TArray<FTreeInstance>& Instances, const TArray<FTransform>& Local, bool bShadows, float CullM)
+	{
+		TMap<int32, int32> BatchOf;
+		for (int32 K = 0; K < Instances.Num() && K < Local.Num(); ++K)
+		{
+			const int32 T = Instances[K].Type;
+			if (!Meshes.IsValidIndex(T) || !Meshes[T].IsValid()) continue;
+			int32* B = BatchOf.Find(T);
+			if (!B)
+			{
+				FVegHismBatch NewB;
+				NewB.Mesh = Meshes[T].Get();
+				NewB.bCastShadows = bShadows;
+				NewB.CullDistanceM = CullM;
+				B = &BatchOf.Add(T, Out.Add(MoveTemp(NewB)));
+			}
+			Out[*B].Instances.Add(Local[K]);
+		}
+	}
+
+	static FString DumpInstances(const TArray<FTreeInstance>& I, const TArray<double>& H)
+	{
+		FString Out;
+		for (int32 K = 0; K < I.Num(); ++K)
+			Out += FString::Printf(TEXT("%s[%.9f,%.9f,%.3f,%.4f,%.4f,%d]"), K ? TEXT(",") : TEXT(""), I[K].LatDeg, I[K].LonDeg, H[K],
+				I[K].YawDeg, I[K].Scale, int32(I[K].Type));
+		return Out;
+	}
+
+	TSharedPtr<FVegetationManager> CreateLiveManager(UWorld* World, ACesium3DTileset* Terrain, const FCamSimConfig& Cfg, FString& OutWhyNot,
+		bool& bOutFatal)
+	{
+		bOutFatal = false;
 		const FCamSimConfig::FVegetationConfig& V = Cfg.Vegetation;
 		if (!V.bEnabled) { OutWhyNot = TEXT("vegetation.enabled is false"); return nullptr; }
 		if (!World || !Terrain) { OutWhyNot = TEXT("no world or terrain tileset"); return nullptr; }
@@ -260,28 +340,40 @@ namespace CamSimVegetation
 		FVegetationLibrary Library; FString LibError;
 		if (!LoadLibrary(ResolveLibraryDir(V.LibraryDir), Library, LibError)) { OutWhyNot = LibError; return nullptr; }
 		if (Library.Types.Num() == 0) { OutWhyNot = TEXT("the vegetation library has no types"); return nullptr; }
-		const FVegetationType& Type = Library.Types[0];
-		UStaticMesh* Mesh = nullptr;
+		FString MixSource;
+		const TSharedPtr<FVegetationMix, ESPMode::ThreadSafe> Mix = ResolveMix(Cfg, Library, MixSource, OutWhyNot, bOutFatal);
+		if (!Mix) return nullptr;
+		TArray<TStrongObjectPtr<UStaticMesh>> NearMeshes;
+		int32 NumTrees = 0, NumShrubs = 0;
+		for (const FVegetationType& Type : Library.Types)
+		{
+			UStaticMesh* Mesh = nullptr;
 #if CAMSIM_VEGETATION_PROCEDURAL
-		if (Type.bProcedural) Mesh = CreateProceduralTreeMesh(Type.HeightM);
+			if (Type.bProcedural) Mesh = CreateProceduralTreeMesh(Type.HeightM);
 #endif
-		if (!Type.bProcedural) Mesh = CamSimMeshLoader::LoadStaticMesh(Type.GltfPath);
-		if (!Mesh) { OutWhyNot = FString::Printf(TEXT("could not load tree type '%s'"), *Type.Name); return nullptr; }
+			if (!Type.bProcedural) Mesh = CamSimMeshLoader::LoadStaticMesh(Type.GltfPath);
+			if (!Mesh) UE_LOG(LogCamSim, Warning, TEXT("Vegetation: could not load type '%s'; it is not drawn"), *Type.Name);
+			NearMeshes.Emplace(Mesh);
+			(Type.Role == EVegRole::Shrub ? NumShrubs : NumTrees) += Mesh ? 1 : 0;
+		}
+		if (NumTrees + NumShrubs == 0) { OutWhyNot = TEXT("no vegetation type loaded"); return nullptr; }
 
 		FScatterParams P;
 		P.CellSizeM = V.CellSizeM;
 		P.DensityScale = V.DensityScale;
+		P.bShrubs = V.bShrubsEnabled && V.ShrubRadiusM > 0.0f;
+		P.ShrubSpacingM = V.ShrubSpacingM;
 		const uint32 Seed = ResolveSeed(Cfg.Scene.bHasSeed, Cfg.Scene.Seed, V.Seed);
 		FVegetationStreaming::FParams SP;
 		SP.RadiusM = V.RadiusM;
 		SP.CellSizeM = V.CellSizeM;
 
-		TStrongObjectPtr<UStaticMesh> KeepMesh(Mesh);
 		TWeakObjectPtr<UWorld> WeakWorld(World);
 		TWeakObjectPtr<ACesium3DTileset> WeakTerrain(Terrain);
 		TSharedRef<TMap<FVegCellId, TWeakObjectPtr<ACamSimVegetationCell>>> Actors = MakeShared<TMap<FVegCellId, TWeakObjectPtr<ACamSimVegetationCell>>>();
 		const bool bShadows = V.bCastShadows;
 		const float CullM = V.RadiusM;
+		const float ShrubCullM = V.ShrubRadiusM;
 
 		// Trees inside building footprints (REALISM R3b): the package's mask on the scatter worker when it has one (no
 		// runtime sampling); else, for an R3 package, the runtime check (a second height batch on the buildings tileset).
@@ -301,15 +393,15 @@ namespace CamSimVegetation
 
 		FVegetationHooks H;
 		// Always answers (an empty land cover lookup yields no trees); the manager's weak pointer drops it after teardown.
-		H.Generate = [LandCover, Mask, P, Seed, ClearanceM](FVegCellId Id, TFunction<void(TArray<FTreeInstance>)> Done)
+		H.Generate = [LandCover, Mask, Mix, P, Seed, ClearanceM](FVegCellId Id, TFunction<void(FCellContent)> Done)
 		{
-			UE::Tasks::Launch(UE_SOURCE_LOCATION, [LandCover, Mask, P, Seed, ClearanceM, Id, Done = MoveTemp(Done)]() mutable
+			UE::Tasks::Launch(UE_SOURCE_LOCATION, [LandCover, Mask, Mix, P, Seed, ClearanceM, Id, Done = MoveTemp(Done)]() mutable
 			{
-				auto Code = [&LandCover](double La, double Lo) { return LandCover->Code(La, Lo); };
-				TArray<FTreeInstance> T = Mask.IsValid()
-					? GenerateCell(Seed, Id, P, Code, [&Mask, ClearanceM](double La, double Lo) { return Mask->IsClear(La, Lo, ClearanceM); })
-					: GenerateCell(Seed, Id, P, Code);
-				AsyncTask(ENamedThreads::GameThread, [Done = MoveTemp(Done), T = MoveTemp(T)]() mutable { Done(MoveTemp(T)); });
+				auto Sample = [&LandCover](double La, double Lo) { FVegPoint Pt; Pt.Code = LandCover->Code(La, Lo); return Pt; };
+				auto ClearFn = [&Mask, ClearanceM](double La, double Lo) { return Mask->IsClear(La, Lo, ClearanceM); };
+				const FClearPredicate Clear = ClearFn;
+				FCellContent C = GenerateCellContent(Seed, Id, P, *Mix, Sample, Mask.IsValid() ? &Clear : nullptr);
+				AsyncTask(ENamedThreads::GameThread, [Done = MoveTemp(Done), C = MoveTemp(C)]() mutable { Done(MoveTemp(C)); });
 			});
 		};
 		// Answers with all-unset heights when the tileset is gone or the result count is off. If the tileset actor is
@@ -345,23 +437,24 @@ namespace CamSimVegetation
 		// Trees inside building footprints (WorldCover tags canopy over roofs as tree cover): a second batch on the
 		// buildings tileset, where a miss is the normal answer, so its warnings stay quiet.
 		if (Exclusion == EBuildingExclusion::RuntimeCheck) H.SampleBuildingHeights = MakeSampler(TWeakObjectPtr<ACesium3DTileset>(Buildings), TEXT("buildings"), /*bWarnOnFail=*/false);
-		H.Spawn = [WeakWorld, KeepMesh, Actors, bShadows, CullM](FVegCellId Id, const FVegCellSpawn& S)
+		H.Spawn = [WeakWorld, NearMeshes, Actors, bShadows, CullM, ShrubCullM](FVegCellId Id, const FVegCellSpawn& S)
 		{
 			UWorld* W = WeakWorld.Get();
 			if (!W) return;
 			ACamSimVegetationCell* Cell = W->SpawnActor<ACamSimVegetationCell>();
 			if (!Cell) return;
-			Cell->Init(S.CentreLatDeg, S.CentreLonDeg, S.BaseHeightM, KeepMesh.Get(), S.LocalInstances, bShadows, CullM);
+			TArray<FVegHismBatch> Batches;
+			AddTypeBatches(Batches, NearMeshes, S.Instances, S.LocalInstances, bShadows, CullM);
+			AddTypeBatches(Batches, NearMeshes, S.Shrubs, S.ShrubLocal, bShadows, ShrubCullM);
+			Cell->Init(S.CentreLatDeg, S.CentreLonDeg, S.BaseHeightM, Batches);
 			Actors->Add(Id, Cell);
 			const FString Dump = CVarVegDumpPath.GetValueOnGameThread();
 			if (!Dump.IsEmpty())
 			{
-				FString Line = FString::Printf(TEXT("{\"row\":%d,\"col\":%d,\"hash\":%u,\"in_buildings\":%d,\"instances\":["), Id.Row, Id.Col,
-					HashInstances(S.Instances), S.NumInBuildings);
-				for (int32 K = 0; K < S.Instances.Num(); ++K)
-					Line += FString::Printf(TEXT("%s[%.9f,%.9f,%.3f,%.4f,%.4f]"), K ? TEXT(",") : TEXT(""), S.Instances[K].LatDeg,
-						S.Instances[K].LonDeg, S.HeightsM[K], S.Instances[K].YawDeg, S.Instances[K].Scale);
-				Line += TEXT("]}\n");
+				// "hash" covers the trees only (R4's value for R4's cells); "shrub_hash" the shrubs. Instances end with the type.
+				const FString Line = FString::Printf(TEXT("{\"row\":%d,\"col\":%d,\"hash\":%u,\"shrub_hash\":%u,\"in_buildings\":%d,")
+					TEXT("\"instances\":[%s],\"shrubs\":[%s]}\n"), Id.Row, Id.Col, HashInstances(S.Instances), HashInstances(S.Shrubs),
+					S.NumInBuildings, *DumpInstances(S.Instances, S.HeightsM), *DumpInstances(S.Shrubs, S.ShrubHeightsM));
 				FFileHelper::SaveStringToFile(Line, *Dump, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append);
 			}
 		};
@@ -370,8 +463,11 @@ namespace CamSimVegetation
 			TWeakObjectPtr<ACamSimVegetationCell> A;
 			if (Actors->RemoveAndCopyValue(Id, A) && A.IsValid()) A->Destroy();
 		};
-		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (type '%s', radius %.0f m, density %.2f, shadows %d, seed %u, land cover %s, buildings: %s)"),
-			*Type.Name, V.RadiusM, V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
+		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (types %d (trees %d, shrubs %d), mix %s, shrubs %s, radius %.0f m, density %.2f, ")
+			TEXT("shadows %d, seed %u, land cover %s, buildings: %s)"),
+			NumTrees + NumShrubs, NumTrees, NumShrubs, *MixSource,
+			P.bShrubs ? *FString::Printf(TEXT("%.0f m"), V.ShrubRadiusM) : TEXT("off"),
+			V.RadiusM, V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
 			*DescribeBuildingExclusion(Exclusion, V.BuildingClearanceM));
 		return MakeShared<FVegetationManager>(SP, MoveTemp(H));
 	}

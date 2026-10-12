@@ -692,6 +692,9 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlBool  (V, "drop_in_buildings", Cfg.Vegetation.bDropInBuildings);
 			YamlFloat (V, "building_clearance_m", Cfg.Vegetation.BuildingClearanceM);
 			YamlString(V, "mix_file",      Cfg.Vegetation.MixFile);
+			YamlBool  (V, "shrubs_enabled",  Cfg.Vegetation.bShrubsEnabled);
+			YamlFloat (V, "shrub_radius_m",  Cfg.Vegetation.ShrubRadiusM);
+			YamlFloat (V, "shrub_spacing_m", Cfg.Vegetation.ShrubSpacingM);
 		}
 
 				// Thermal radiance for IR (ROADMAP 4A)
@@ -1122,6 +1125,9 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Vegetation.bDropInBuildings = GetEnvBool(TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), Cfg.Vegetation.bDropInBuildings);
 	Cfg.Vegetation.BuildingClearanceM = GetEnvFloat(TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), Cfg.Vegetation.BuildingClearanceM);
 	Cfg.Vegetation.MixFile      = GetEnv     (TEXT("CAMSIM_VEGETATION_MIX_FILE"),      Cfg.Vegetation.MixFile);
+	Cfg.Vegetation.bShrubsEnabled = GetEnvBool (TEXT("CAMSIM_VEGETATION_SHRUBS_ENABLED"),  Cfg.Vegetation.bShrubsEnabled);
+	Cfg.Vegetation.ShrubRadiusM   = GetEnvFloat(TEXT("CAMSIM_VEGETATION_SHRUB_RADIUS_M"),  Cfg.Vegetation.ShrubRadiusM);
+	Cfg.Vegetation.ShrubSpacingM  = GetEnvFloat(TEXT("CAMSIM_VEGETATION_SHRUB_SPACING_M"), Cfg.Vegetation.ShrubSpacingM);
 	{
 		const FString IrPreset = GetEnv(TEXT("CAMSIM_IR_PRESET"), FString());
 		FSensorModeConfig* IrM = Cfg.SensorModeConfigs.Find(ESensorMode::IR);
@@ -1559,6 +1565,10 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(FString::Printf(TEXT("vegetation.building_clearance_m=%.2f out of range [0, 10]"), Vegetation.BuildingClearanceM));
 	if (!Vegetation.MixFile.IsEmpty() && FPaths::IsRelative(Vegetation.MixFile))
 		Errors.Add(FString::Printf(TEXT("vegetation.mix_file '%s' must be an absolute path"), *Vegetation.MixFile));
+	if (!(Vegetation.ShrubRadiusM >= 0.0f && Vegetation.ShrubRadiusM <= Vegetation.RadiusM))
+		Errors.Add(FString::Printf(TEXT("vegetation.shrub_radius_m=%.1f out of range [0, radius_m %.1f]"), Vegetation.ShrubRadiusM, Vegetation.RadiusM));
+	if (!(Vegetation.ShrubSpacingM >= 1.0f && Vegetation.ShrubSpacingM <= 10.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.shrub_spacing_m=%.2f out of range [1, 10]"), Vegetation.ShrubSpacingM));
 
 		// Thermal (ROADMAP 4A). Written !(x in range) so NaN is reported too.
 	if (!(Thermal.AirTemperatureC >= -80.0f && Thermal.AirTemperatureC <= 60.0f))

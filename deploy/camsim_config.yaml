@@ -578,8 +578,8 @@ ocean:
   material: "/Game/Ocean/M_Ocean"        # startup only
 
 # --- Vegetation scatter (REALISM R4 slice, docs/vegetation.md) ---
-# One CC0 tree type scattered where the land cover is tree cover (code 10), around the camera, deterministic per 100 m
-# cell. Needs land cover (thermal.land_cover.dir or a scene package) and Content/NonUFS/Vegetation (git lfs pull).
+# CC0 trees and shrubs scattered around the camera from the land cover and the package's species mix, deterministic per
+# 100 m cell (docs/vegetation.md). Needs land cover (thermal.land_cover.dir or a scene package) and Content/NonUFS/Vegetation (git lfs pull).
 vegetation:
   enabled: true                          # CAMSIM_VEGETATION_ENABLED — startup only
   library_dir: ""                        # CAMSIM_VEGETATION_LIBRARY_DIR — "" = Content/NonUFS/Vegetation
@@ -591,6 +591,9 @@ vegetation:
   drop_in_buildings: true                # CAMSIM_VEGETATION_DROP_IN_BUILDINGS — keep trees out of buildings (package mask, else runtime check)
   building_clearance_m: 2.0              # CAMSIM_VEGETATION_BUILDING_CLEARANCE_M — with the package's footprint mask, no tree within this of a footprint (0..10 m)
   mix_file: ""                           # CAMSIM_VEGETATION_MIX_FILE — absolute species mix (camsim-vegmix-1) used when the package has none
+  shrubs_enabled: true                   # CAMSIM_VEGETATION_SHRUBS_ENABLED — shrubs on codes whose mix lists them
+  shrub_radius_m: 500.0                  # CAMSIM_VEGETATION_SHRUB_RADIUS_M — [0, radius_m]; shrubs culled beyond this
+  shrub_spacing_m: 3.0                   # CAMSIM_VEGETATION_SHRUB_SPACING_M — [1, 10]; nominal shrub candidate spacing
 
 # --- Thermal radiance for IR (ROADMAP 4A, docs/thermal.md) ---
 # IR mode renders in-band (MWIR/LWIR) radiance from per-pixel surface temperature and emissivity.

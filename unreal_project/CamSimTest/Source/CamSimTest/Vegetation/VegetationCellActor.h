@@ -10,10 +10,19 @@ class UCesiumGlobeAnchorComponent;
 class UHierarchicalInstancedStaticMeshComponent;
 class UStaticMesh;
 
+/** One HISM of a vegetation actor (REALISM R4): one mesh, its instances (actor-local ESU, cm), shadows and cull. */
+struct FVegHismBatch
+{
+	UStaticMesh* Mesh = nullptr;
+	TArray<FTransform> Instances;
+	bool  bCastShadows = true;
+	float CullDistanceM = 0.0f;   // InstanceEndCullDistance; <= 0 or non-finite = no cut
+};
+
 /**
- * One vegetation cell (REALISM R4 slice, docs/vegetation.md): a globe anchor at the cell centre, oriented East-South-Up,
- * so the actor's local frame is X = East, Y = South, Z = Up in cm and survives origin shifts; one HISM of trees in that
- * frame. No collision (CIGI and the DIS clamp never see trees), no custom depth.
+ * One vegetation cell or far block (REALISM R4, docs/vegetation.md): a globe anchor at the centre, oriented East-South-Up,
+ * so the actor's local frame is X = East, Y = South, Z = Up in cm and survives origin shifts; one HISM per batch (a mesh
+ * with its shadows and cull distance) in that frame. No collision (CIGI and the DIS clamp never see trees), no custom depth.
  */
 UCLASS(NotPlaceable, Transient)
 class CAMSIMTEST_API ACamSimVegetationCell : public AActor
@@ -23,8 +32,10 @@ class CAMSIMTEST_API ACamSimVegetationCell : public AActor
 public:
 	ACamSimVegetationCell();
 
-	/** Game thread, once, right after SpawnActor. LocalInstances are in the cell's ESU frame (cm). A null Mesh leaves the
-	 *  cell empty (logged once); CullDistanceM is clamped to what the int32 cm cull distance holds. */
+	/** Game thread, once, right after SpawnActor. Batches with a null mesh or no instances are skipped; cull distances
+	 *  are clamped to what the int32 cm cull distance holds. */
+	void Init(double CentreLatDeg, double CentreLonDeg, double BaseHeightM, const TArray<FVegHismBatch>& Batches);
+	/** One batch (the R4 slice's form; the probe). A null Mesh leaves the cell empty (logged once). */
 	void Init(double CentreLatDeg, double CentreLonDeg, double BaseHeightM, UStaticMesh* Mesh,
 		const TArray<FTransform>& LocalInstances, bool bCastShadows, float CullDistanceM);
 
@@ -38,5 +49,5 @@ private:
 	TObjectPtr<UCesiumGlobeAnchorComponent> GlobeAnchor;
 
 	UPROPERTY()
-	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> Trees;
+	TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> Batches;
 };

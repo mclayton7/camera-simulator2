@@ -1059,8 +1059,23 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 		{
 			Impl->bVegetationTried = true;
 			FString WhyNot;
-			Impl->Vegetation = CamSimVegetation::CreateLiveManager(World, Terrain, Config, WhyNot);
-			if (!Impl->Vegetation) UE_LOG(LogCamSim, Warning, TEXT("Vegetation: off (%s)"), *WhyNot);
+			bool bFatal = false;
+			Impl->Vegetation = CamSimVegetation::CreateLiveManager(World, Terrain, Config, WhyNot, bFatal);
+			if (bFatal)
+			{
+				UE_LOG(LogCamSim, Error, TEXT("Vegetation: off (%s)"), *WhyNot);
+			}
+			else if (!Impl->Vegetation)
+			{
+				UE_LOG(LogCamSim, Warning, TEXT("Vegetation: off (%s)"), *WhyNot);
+			}
+			if (bFatal && CamSimScene::ShouldExitOnConfigErrors(Config, GIsEditor))
+			{
+				// REALISM R4: an offline run must not silently drop species the scene package asks for.
+				UE_LOG(LogCamSim, Error, TEXT("Vegetation: scene.offline is set — exiting on a species mix error"));
+				GLog->Flush();
+				std::_Exit(1);
+			}
 		}
 		if (Impl->Vegetation && Camera_.IsValid())
 		{

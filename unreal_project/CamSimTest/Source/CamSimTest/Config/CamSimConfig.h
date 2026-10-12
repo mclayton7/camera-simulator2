@@ -390,6 +390,9 @@ struct FCamSimConfig
 		float   CellSizeM    = 100.0f;   // CAMSIM_VEGETATION_CELL_SIZE_M
 		int32   Seed         = 0;        // CAMSIM_VEGETATION_SEED; used only without a scene package
 		float   BuildingClearanceM = 2.0f; // CAMSIM_VEGETATION_BUILDING_CLEARANCE_M; with the package's footprint mask, no tree within this of a footprint along E/W/N/S (REALISM R3b)
+		bool    bShrubsEnabled = true;   // CAMSIM_VEGETATION_SHRUBS_ENABLED; shrubs on codes whose mix lists them (REALISM R4)
+		float   ShrubRadiusM = 500.0f;   // CAMSIM_VEGETATION_SHRUB_RADIUS_M; [0, radius_m]; shrubs culled beyond this
+		float   ShrubSpacingM = 3.0f;    // CAMSIM_VEGETATION_SHRUB_SPACING_M; [1, 10]; nominal shrub candidate spacing
 		FString MixFile;                 // CAMSIM_VEGETATION_MIX_FILE; absolute; species mix (camsim-vegmix-1) when the scene package has none (REALISM R4)
 		bool    bDropInBuildings = true; // CAMSIM_VEGETATION_DROP_IN_BUILDINGS; gates both tree-vs-building methods, in order: the package's footprint mask, else the runtime buildings-tileset check, else none
 	};

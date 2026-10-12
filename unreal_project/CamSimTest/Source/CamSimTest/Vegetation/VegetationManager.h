@@ -13,23 +13,27 @@ class ACesium3DTileset;
 class FCesiumSurfaceProbe;
 class UWorld;
 struct FCamSimConfig;
+struct FVegetationLibrary;
 
-/** Everything a cell actor needs (REALISM R4 slice). LocalInstances are in the cell's ESU frame, cm. */
+/** Everything a cell actor needs (REALISM R4). LocalInstances / ShrubLocal are in the cell's ESU frame, cm. */
 struct FVegCellSpawn
 {
 	double CentreLatDeg = 0.0;
 	double CentreLonDeg = 0.0;
-	double BaseHeightM = 0.0;
-	TArray<FTransform> LocalInstances;
-	TArray<CamSimVegetation::FTreeInstance> Instances;   // the grounded ones, same order
+	double BaseHeightM = 0.0;                             // the first grounded tree's, else the first shrub's
+	TArray<FTransform> LocalInstances;                    // trees
+	TArray<CamSimVegetation::FTreeInstance> Instances;   // the grounded trees, same order
 	TArray<double> HeightsM;                              // ellipsoid heights, same order
+	TArray<FTransform> ShrubLocal;
+	TArray<CamSimVegetation::FTreeInstance> Shrubs;      // the grounded shrubs, same order
+	TArray<double> ShrubHeightsM;
 	int32 NumInBuildings = 0;                             // candidates dropped inside building footprints
 };
 
 /** The manager's side effects; real ones from CreateLiveManager, fakes in tests. Done callbacks run on the game thread. */
 struct FVegetationHooks
 {
-	TFunction<void(CamSimVegetation::FVegCellId, TFunction<void(TArray<CamSimVegetation::FTreeInstance>)>)> Generate;
+	TFunction<void(CamSimVegetation::FVegCellId, TFunction<void(CamSimVegetation::FCellContent)>)> Generate;
 	TFunction<void(const TArray<FVector>& LonLatH, TFunction<void(TArray<TOptional<double>>)>)> SampleHeights;
 	/** Optional: heights on the package's buildings tileset (unset = no building there). Unbound = no buildings. */
 	TFunction<void(const TArray<FVector>& LonLatH, TFunction<void(TArray<TOptional<double>>)>)> SampleBuildingHeights;
@@ -71,8 +75,9 @@ private:
 	{
 		uint32 Token = 0;
 		int64  StartTick = 0;   // of the current stage
-		// Height stage: the generated candidates and each batch's answer, once it has arrived.
+		// Height stage: the generated candidates (trees, then shrubs, in one batch) and each batch's answer.
 		TArray<CamSimVegetation::FTreeInstance> Instances;
+		TArray<CamSimVegetation::FTreeInstance> Shrubs;
 		TOptional<TArray<TOptional<double>>> TerrainH;
 		TOptional<TArray<TOptional<double>>> BuildingsH;
 		bool bWantBuildings = false;
@@ -80,7 +85,7 @@ private:
 
 	void ExpireStuckRequests();
 	bool IsCurrent(CamSimVegetation::FVegCellId Id, uint32 Token, EVegCellState Stage) const;
-	void OnGenerated(CamSimVegetation::FVegCellId Id, uint32 Token, TArray<CamSimVegetation::FTreeInstance> Instances);
+	void OnGenerated(CamSimVegetation::FVegCellId Id, uint32 Token, CamSimVegetation::FCellContent Content);
 	void OnHeights(CamSimVegetation::FVegCellId Id, uint32 Token, bool bBuildings, TArray<TOptional<double>> Heights);
 	void FinishHeights(CamSimVegetation::FVegCellId Id);
 
@@ -128,12 +133,19 @@ namespace CamSimVegetation
 	 *  low ^ high, so manifests' 0..2^31-1 seeds pass unchanged), else of vegetation.seed's 32 bits. */
 	CAMSIMTEST_API uint32 ResolveSeed(bool bHasSceneSeed, int64 SceneSeed, int32 ConfigSeed);
 
+	/** The species mix: the package's vegetation/mix.json, else vegetation.mix_file (OutSource "package" / "file"), else
+	 *  DefaultMix ("default"). Unknown type names or an unreadable/unparsable file: a warning (the names dropped, or the
+	 *  default mix), or with scene.offline null + bOutFatal + OutWhyNot. Game thread (logs). */
+	CAMSIMTEST_API TSharedPtr<FVegetationMix, ESPMode::ThreadSafe> ResolveMix(const FCamSimConfig& Cfg, const FVegetationLibrary& Library,
+		FString& OutSource, FString& OutWhyNot, bool& bOutFatal);
+
 	/** Real hooks: UE tasks + FVegetationLandCover, SampleHeightMostDetailed on Terrain; trees are kept out of buildings by
 	 *  the package's footprint mask (FVegetationBuildingMask, on the scatter worker) or, without one, by a second batch
 	 *  on the buildings tileset (tag CamSimBuildings), per ChooseBuildingExclusion; ACamSimVegetationCell. Game thread.
-	 *  Null (with OutWhyNot) when vegetation is off, land cover is missing or the library doesn't load. */
+	 *  Null (with OutWhyNot) when vegetation is off, land cover is missing or the library doesn't load; bOutFatal also set
+	 *  when scene.offline is on and the species mix is unusable (unknown types, unparsable file): the caller exits. */
 	CAMSIMTEST_API TSharedPtr<FVegetationManager> CreateLiveManager(UWorld* World, ACesium3DTileset* Terrain,
-		const FCamSimConfig& Cfg, FString& OutWhyNot);
+		const FCamSimConfig& Cfg, FString& OutWhyNot, bool& bOutFatal);
 
 	/** Game thread, once per tick after Tick(): camsim.Vegetation.GroundCheck. Waits until the view has settled
 	 *  (bViewSettled: the caller's terrain gate open for a while), streaming is idle and 200 spawned tree bases hit the

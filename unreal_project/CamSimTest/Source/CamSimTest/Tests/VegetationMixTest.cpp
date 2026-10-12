@@ -96,3 +96,44 @@ bool FVegMixDefaultTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("single: height"), S.TypeHeightM.Num() == 1 ? S.TypeHeightM[0] : 0.0f, 9.0f);
 	return true;
 }
+
+#include "Config/CamSimConfig.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Vegetation/VegetationManager.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegMixResolveTest, "CamSim.Vegetation.Mix.ResolveOfflineIsFatal",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegMixResolveTest::RunTest(const FString& Parameters)
+{
+	const FString Dir = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Automation"), TEXT("Vegetation"), TEXT("MixResolve")));
+	IFileManager::Get().MakeDirectory(*Dir, true);
+	const FString Path = Dir / TEXT("mix.json");
+	FFileHelper::SaveStringToFile(TEXT("{\"format\":\"camsim-vegmix-1\",\"mix\":{\"10\":{\"tree_pine_a\":1,\"tree_pine_z\":1}}}"), *Path);
+	AddExpectedMessagePlain(TEXT("mix names unknown type 'tree_pine_z'"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 2);
+	AddExpectedMessagePlain(TEXT("missing.json unusable"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+	FCamSimConfig Cfg;
+	Cfg.Scene.VegetationMixPath = Path;
+	FString Source, Why; bool bFatal = false;
+	TSharedPtr<FVegetationMix, ESPMode::ThreadSafe> M = ResolveMix(Cfg, MixLib(), Source, Why, bFatal);
+	TestTrue(TEXT("online: a mix"), M.IsValid());
+	TestFalse(TEXT("online: not fatal"), bFatal);
+	TestEqual(TEXT("source package"), Source, FString(TEXT("package")));
+	TestEqual(TEXT("known type kept alone"), M.IsValid() && M->Find(10) ? M->Find(10)->Trees.Num() : -1, 1);
+	Cfg.Scene.bOffline = true;
+	M = ResolveMix(Cfg, MixLib(), Source, Why, bFatal);
+	TestFalse(TEXT("offline: no mix"), M.IsValid());
+	TestTrue(TEXT("offline: fatal"), bFatal);
+	TestTrue(TEXT("names the type"), Why.Contains(TEXT("tree_pine_z")));
+	Cfg.Scene.bOffline = false; bFatal = false;
+	Cfg.Scene.VegetationMixPath.Reset();
+	Cfg.Vegetation.MixFile = Dir / TEXT("missing.json");
+	M = ResolveMix(Cfg, MixLib(), Source, Why, bFatal);
+	TestTrue(TEXT("unreadable file online: default mix"), M.IsValid() && M->Find(10) != nullptr);
+	TestEqual(TEXT("source default"), Source, FString(TEXT("default")));
+	Cfg.Vegetation.MixFile.Reset();
+	M = ResolveMix(Cfg, MixLib(), Source, Why, bFatal);
+	TestEqual(TEXT("no mix anywhere: default"), Source, FString(TEXT("default")));
+	return true;
+}
