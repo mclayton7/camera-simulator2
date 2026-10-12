@@ -1,78 +1,103 @@
-# Vegetation (trees)
+# Vegetation (trees and shrubs)
 
-REALISM R4 slice. Instanced trees scattered around the camera from land cover, loaded at runtime
-from a mounted vegetation library (glTF through glTFRuntime) into one HISM per cell. Spec:
-[`superpowers/specs/2026-10-10-r4-trees-slice-design.md`](superpowers/specs/2026-10-10-r4-trees-slice-design.md),
-plan: [`superpowers/plans/2026-10-10-r4-trees-slice.md`](superpowers/plans/2026-10-10-r4-trees-slice.md).
+REALISM R4. Instanced trees and shrubs scattered around the camera from land cover, a per-package species mix and, where
+the scene package has it, CHMv2 canopy cover and height; loaded at runtime from a mounted vegetation library (glTF through
+glTFRuntime) into HISMs. A near tier (full meshes, shadows) out to `radius_m` and a far tier (low-poly, thinned) out to
+`far_radius_m`. Specs: the slice
+[`superpowers/specs/2026-10-10-r4-trees-slice-design.md`](superpowers/specs/2026-10-10-r4-trees-slice-design.md) and
+"deeper" [`superpowers/specs/2026-10-11-r4-vegetation-deeper-design.md`](superpowers/specs/2026-10-11-r4-vegetation-deeper-design.md)
+(plans beside them in `superpowers/plans/`).
 
-Trees stand wherever the land cover is WorldCover tree cover (code 10) and nowhere else. The same 100 m
-cell always holds the same trees, whichever way the camera got there. They are scene geometry only:
-visible in EO and IR (in IR the pixel takes the land cover's `tree_canopy` class) and occluding entities
-in the ground-truth masks, but CIGI and DIS never see them.
+The same 100 m cell always holds the same trees and shrubs, whichever way the camera got there. Vegetation is scene
+geometry only: visible in EO and IR (in IR the pixel takes the land cover's class: `tree_canopy` on 10, `shrubland` on
+20, `grassland` on 30) and occluding entities in the ground-truth masks, but CIGI and DIS never see it.
 
 ## How it works
 
 - **Grid** (`Vegetation/VegetationGrid.h`): a global geographic grid of `cell_size_m` cells (100 m),
   defined in angle so a cell id `(row, col)` never depends on the camera: Δlat = cell / 111,320 m, Δlon
   per latitude row = cell / (111,320 m · cos(row centre latitude)). No vegetation above 85° latitude.
-- **Scatter** (`Vegetation/VegetationScatter.h`, pure): each cell is a jittered grid of
-  `round(cell / 6 m)` = 17 candidates per axis, so the **real candidate spacing is 5.88 m**, not the nominal
-  6 m. Candidate *i* draws from `CamSimHash::Hash(col, row, i, seed, stream)` (the PCG hash of the sensor
-  noise, never a live RNG; vegetation owns streams 80–82, sub-streams 160–164) for its jitter (inside its
-  own sub-cell, so trees never cross cell edges), acceptance, yaw (0–360°) and scale (0.8–1.2). It is
-  accepted when the land cover under it is code 10 and `u < density_scale × 0.15`. At density 1 that is
-  0.15 × 17² / 100² = one tree per 231 m² of tree cover, **about 4 % above the nominal one per 240 m²**
-  (0.15 / 6²) the spec quotes.
-- **Land cover** (`Vegetation/VegetationLandCover.h`): the scatter reads the package's `landcover/` tiles
-  (or `thermal.land_cover.dir`) itself, on a worker, with its own 16-tile LRU; it never shares the CIGI
-  material-code lookup's game-thread budget. Density is binary per 10 m texel.
+- **Species mix** (`Vegetation/VegetationMix.h`): per land-cover code, the library types that stand there and their
+  weights, trees and shrubs separately, plus shrubs per 100 m². From the package's `vegetation/mix.json` (its
+  `[vegetation]` table, [`scene-packages.md`](scene-packages.md#vegetation-mix-r4)), else `vegetation.mix_file`, else the
+  built-in default: 10 → `tree_broadleaf_a` (R4's trees bit for bit), 20 → `shrub_chaparral` at 6 / 100 m², 30 → at
+  1 / 100 m². A type the library lacks is dropped with one warning (the code renormalised); with `scene.offline: true`
+  CamSim exits 1. Names are taken in alphabetical order, so the JSON key order never matters.
+- **Trees** (`Vegetation/VegetationScatter.h`, pure, `GenerateCellContent`): each cell is a jittered grid of
+  `round(cell / 6 m)` = 17 candidates per axis (**real spacing 5.88 m**). Candidate *i* draws from
+  `CamSimHash::Hash(col, row, i, seed, 160 + k)` (the PCG hash of the sensor noise, never a live RNG): jitter E/N inside
+  its own sub-cell (so trees never cross cell edges), species (165, from the code's mix), acceptance, yaw, scale.
+  - **With canopy** (the package's `canopy/` covers the point): no tree below 3 m canopy height or at no cover; else
+    scale base s = clamp(height / type height, 0.5, 2) and p = clamp(cover × 34.6 m² / (π (r_crown s)²) × density, 0, 1),
+    so the expected crown area per candidate equals the canopy cover. It **saturates** at one crown per 34.6 m²:
+    π r² / 34.6 ≈ 0.66 cover for the 2.7 m broadleaf crown (≈ 290 trees/ha); closed forest above that is drawn at the
+    cap. Scale s × (0.9–1.1). Trees stand on every code whose mix lists trees (oaks on grassland, street trees on 50).
+  - **Without canopy** (no layer, `canopy_enabled: false`, or outside the package bbox): R4's rule, p = 0.15 × density
+    (one tree per 231 m² of mix code) and scale 0.8–1.2.
+- **Shrubs**: their own grid of `round(cell / shrub_spacing_m)` = 33 per axis (3.03 m), sub-streams 166–171 (jitter,
+  accept, yaw, scale, species): accepted with p = shrubs per 100 m² / 100 × 9.18 m² × density on codes whose mix lists
+  shrubs, scale 0.7–1.3. Shrubs ignore the canopy (CHMv2 doesn't resolve them) and may stand under trees. Only in the
+  near tier, culled at `shrub_radius_m`.
+- **Land cover and canopy at points** (`VegetationLandCover.h`, `VegetationCanopy.h`): the scatter reads the package's
+  `landcover/` and `canopy/{cover,height}/` tiles itself, on a worker, each through its own 16-tile LRU of
+  `FLandCoverTileCache` (never the CIGI lookup's game-thread budget). A bad tile reads as no data there; the caches'
+  summary warnings reach the log once a second.
 - **Seed:** the scene package manifest's `seed` mixed with a vegetation constant (`VegetationSeed`);
-  `vegetation.seed` only when there is no package. Pendleton's package has manifest seed 0, which gives vegetation seed 186258786 (as `vegetation.seed: 0` does).
-- **Heights:** one `ACesium3DTileset::SampleHeightMostDetailed` batch per cell on the terrain tileset (the
-  one tagged `CamSimTerrain`, never the buildings tileset). A failed sample drops that tree only.
-- **Trees stay out of buildings** (REALISM R3 / R3b; `vegetation.drop_in_buildings`, default true, gates all of it).
+  `vegetation.seed` only when there is no package. Pendleton's package has manifest seed 0, which gives vegetation seed
+  186258786 (as `vegetation.seed: 0` does).
+- **Heights (near):** one `ACesium3DTileset::SampleHeightMostDetailed` batch per cell (trees then shrubs) on the terrain
+  tileset (the one tagged `CamSimTerrain`, never the buildings tileset). A failed sample drops that plant only.
+- **Plants stay out of buildings** (REALISM R3 / R3b; `vegetation.drop_in_buildings`, default true, gates all of it).
   Land cover alone would put ~10 % of footprint area under trees (WorldCover tags canopy over roofs as code 10: on
   Pendleton 10.4 % of the 23.0 km² of footprints, about 10,400 trees at density 1, and a 7–11 m tree would poke its
   crown through a 3–8 m flat roof). In order of preference:
   1. **Footprint mask** (a package built with R3b: `features/buildings/mask/index.json` exists):
      `FVegetationBuildingMask` decodes the 1-bit mask tiles on the scatter worker into bitsets (8-tile LRU, ~23 MB,
-     separate from the land-cover sampler). `GenerateCell` drops a candidate whose trunk, or any of 4 points
+     separate from the land-cover sampler). `GenerateCellContent` drops a tree or shrub whose trunk, or any of 4 points
      `vegetation.building_clearance_m` (2 m) east, west, north and south of it, is masked (the 5-point rule). No
-     runtime sampling; the hash draws are unchanged, so without a mask every cell is bit-identical to R4's. The probes
+     runtime sampling; the hash draws are unchanged, so without a mask every cell is bit-identical. The probes
      are axis-aligned: a footprint corner diagonally within the clearance is not seen. It applies whether or not the
      buildings tileset is drawn (`scene.buildings.enabled`), since the roofs are in the imagery either way. A mask
      whose `index.json` is unusable logs one `Vegetation: building mask unusable (...); falling back` warning and the
      next method is used.
   2. **Runtime check** (an R3 package: buildings tileset, no mask): each cell's height stage runs a second
      `SampleHeightMostDetailed` batch on the tileset tagged `CamSimBuildings` for the same points, beside the terrain
-     batch; both must answer (or the stage times out, as above) before the cell spawns. A tree whose buildings sample
+     batch; both must answer (or the stage times out, as above) before the cell spawns. A plant whose buildings sample
      succeeds more than 0.5 m above its terrain height is dropped (`CamSimVegetation::KeepClearOfBuildings`); a failed
-     sample is a miss and keeps the tree. Cesium loads the buildings' most detailed (z15) tiles under every tree point
-     to answer it: in `dense_pass` it costs about +0.3 ms game p50, +2.5 ms game p95 and +34 MiB, which put buildings
-     SSE 64 + trees at +3.61 ms game p95, over the 3.0 ms limit (kept on by the user's decision of 2026-10-11).
+     sample is a miss and keeps it. Cesium loads the buildings' most detailed (z15) tiles under every point
+     to answer it: in `dense_pass` it costs about +0.3 ms game p50, +2.5 ms game p95 and +34 MiB.
   3. Neither (no mask, no buildings tileset): no exclusion.
-  The `Vegetation: on (...)` line ends with `buildings: mask (clearance 2.0 m)`, `buildings: runtime check (buildings
-  tileset, no mask)`, `buildings: none` or `buildings: off (drop_in_buildings false)`. The dump line carries
-  `in_buildings` (trees dropped in that cell by the runtime check only; the mask drops are not counted), and when
-  streaming settles with new runtime-check drops a `Vegetation: settled, N cells spawned, M trees dropped inside
-  building footprints so far` line is logged (at most once per 30 s).
 - **Bad mask tiles:** a tile that is listed but unreadable (a git LFS pointer, the wrong size, truncated, missing)
   reads as "no buildings" there and logs one `Vegetation: building mask tile ... unreadable (...); treated as no
-  buildings` warning per tile. A failed tile is remembered and not retried, so restart after `git lfs pull`. The other
-  tiles keep answering.
-- **Cells** (`Vegetation/VegetationCellActor.h`): one actor per cell with a `UCesiumGlobeAnchorComponent` at
-  the cell centre and one `UHierarchicalInstancedStaticMeshComponent`, instances in the cell's
-  East-South-Up frame, so cells survive origin shifts. Collision off, `bCastShadow = cast_shadows`,
-  `InstanceEndCullDistance = radius_m` (hard cut, no fade), no custom depth or stencil.
-- **Streaming** (`Vegetation/VegetationStreaming.h`, `VegetationManager.h`): every tick the cells whose centre
-  is within `radius_m` of the camera's ground point are wanted, nearest first; cells beyond 1.2 × `radius_m`
-  are dropped. At most 4 cells are in the generate/height stages at once and at most 2 cell actors are
-  spawned per tick. A stage that never answers (Cesium drops the callback when a tileset is destroyed)
-  times out after 1800 ticks (60 s) and leaves that cell empty.
-- **Readiness:** `/ready` does not wait for trees; they fill in within seconds of the terrain.
+  buildings` warning per tile. A failed tile is remembered and not retried, so restart after `git lfs pull`.
+- **Blocks and tiers** (`Vegetation/VegetationBlocks.h`): streaming works in blocks of `far_block_cells` × cell size
+  (400 m). A cell belongs to the block holding its centre, with block columns `far_block_cells` × the block row's
+  middle-row column width (the grid's column widths differ per row, so cells drift row to row; this keeps blocks square
+  anywhere): usually 4 × 4 cells, give or take a column. `FVegetationTierPlanner` makes a block **near** within
+  `radius_m` of the camera's ground point (it stays near to 1.2 × `radius_m`), **far** within `far_radius_m` (it
+  stays far to 1.1 × `far_radius_m`, and turns near again only inside `radius_m`), else drops it; it replans after the
+  camera moved 25 m.
+- **Near tier** (`Vegetation/VegetationCellActor.h`, `VegetationManager.h`): one actor per cell, globe-anchored at the
+  cell centre in its East-South-Up frame (survives origin shifts), one HISM per type: trees with `cast_shadows`, culled
+  at 1.2 × `radius_m` + a block diagonal (blocks are whole); shrubs culled at `shrub_radius_m`. Collision off, no
+  custom depth or stencil.
+- **Far tier** (`Vegetation/VegetationFar.h`, `VegetationFarTier.h`): one actor per far block. Its trees are the same
+  `GenerateCellContent` trees of the block's cells (shrubs off), kept when `Uniform(Hash(col, row, k, seed, 172))` <
+  `far_keep` (0.35) and enlarged by `far_scale` (1.3), drawn with the type's `far_gltf` (a procedural 108-triangle lathe
+  crown + trunk, untextured), no shadows. Heights come from one `SampleHeightMostDetailed` batch per block on a 25 m
+  grid (bilinear; trees sunk 0.3 m; a tree whose grid quad has a failed point is dropped). Trees are split by
+  `Hash(..., 173)` into 4 HISMs culled at 0.7 / 0.8 / 0.9 / 1.0 × `far_radius_m`: the outer 30 % thins in four steps
+  instead of ending in a hard line.
+- **No gap at a switch:** a block switching tier keeps its old actors until the new tier has settled (its far actor
+  spawned or found empty; all its near cells spawned or empty). A block that left both tiers drops at once.
+- **Budgets:** at most 4 cells/blocks in their generate or height stage, and 2 actor spawns per tick, shared by both
+  tiers, near first. A stage that never answers (Cesium drops the callback when a tileset is destroyed) times out after
+  1800 ticks (60 s) and leaves that cell or block empty.
+- **Readiness:** `/ready` does not wait for vegetation; it fills in within seconds of the terrain.
 - Without land cover (no package, no `thermal.land_cover.dir`) or without a loadable library, vegetation stays
-  off with one `Vegetation: off (...)` log line. `Vegetation: on (...)` logs the type, radius, density,
-  shadows, seed, land-cover directory and the building exclusion method (above).
+  off with one `Vegetation: off (...)` log line. `Vegetation: on (...)` logs the types (trees, shrubs), the mix source
+  (`package` / `file` / `default`), `canopy chmv2|none|off`, the shrub radius, radius, the far tier (`far 4000 m (keep
+  0.35, blocks 4)` or `off`), density, shadows, seed, land-cover directory and the building exclusion method.
 
 ## Configuration
 
@@ -83,16 +108,64 @@ in the ground-truth masks, but CIGI and DIS never see them.
 |---|---|---|
 | `enabled` | `CAMSIM_VEGETATION_ENABLED` | `true` |
 | `library_dir` | `CAMSIM_VEGETATION_LIBRARY_DIR` | `""` (`Content/NonUFS/Vegetation`) |
-| `radius_m` | `CAMSIM_VEGETATION_RADIUS_M` | `1000` |
-| `density_scale` | `CAMSIM_VEGETATION_DENSITY_SCALE` | `1.0` |
-| `cast_shadows` | `CAMSIM_VEGETATION_CAST_SHADOWS` | `true` |
+| `radius_m` | `CAMSIM_VEGETATION_RADIUS_M` | `1000` (near tier) |
+| `density_scale` | `CAMSIM_VEGETATION_DENSITY_SCALE` | `1.0` (trees and shrubs) |
+| `cast_shadows` | `CAMSIM_VEGETATION_CAST_SHADOWS` | `true` (near tier) |
 | `cell_size_m` | `CAMSIM_VEGETATION_CELL_SIZE_M` | `100` |
 | `seed` | `CAMSIM_VEGETATION_SEED` | `0` (used only without a package) |
 | `drop_in_buildings` | `CAMSIM_VEGETATION_DROP_IN_BUILDINGS` | `true` |
-| `building_clearance_m` | `CAMSIM_VEGETATION_BUILDING_CLEARANCE_M` | `2.0` (`[0, 10]`; with the package's footprint mask, no tree within this distance of a footprint along east, west, north and south) |
+| `building_clearance_m` | `CAMSIM_VEGETATION_BUILDING_CLEARANCE_M` | `2.0` (`[0, 10]`) |
+| `mix_file` | `CAMSIM_VEGETATION_MIX_FILE` | `""` (absolute; used only without a package mix) |
+| `canopy_enabled` | `CAMSIM_VEGETATION_CANOPY_ENABLED` | `true` |
+| `shrubs_enabled` | `CAMSIM_VEGETATION_SHRUBS_ENABLED` | `true` |
+| `shrub_radius_m` | `CAMSIM_VEGETATION_SHRUB_RADIUS_M` | `500` (`[0, radius_m]`) |
+| `shrub_spacing_m` | `CAMSIM_VEGETATION_SHRUB_SPACING_M` | `3.0` (`[1, 10]`) |
+| `far_radius_m` | `CAMSIM_VEGETATION_FAR_RADIUS_M` | `4000` (0 = off, else `[1.5 × radius_m, 10000]`) |
+| `far_block_cells` | `CAMSIM_VEGETATION_FAR_BLOCK_CELLS` | `4` (`[2, 8]`) |
+| `far_keep` | `CAMSIM_VEGETATION_FAR_KEEP` | `0.35` (`(0, 1]`) |
+| `far_scale` | `CAMSIM_VEGETATION_FAR_SCALE` | `1.3` (`[1, 2]`) |
 
-The radius / density / shadows defaults are the spec's starting values. The bench sweep ("Measured",
-"Bench") proposes keeping them; the final choice is the user's.
+The defaults of the R4 "deeper" keys are starting values until the bench sweep ("Bench") and the user's choice.
+
+## Site mixes
+
+Example `[vegetation]` tables for the operational sites (put them in the site's scene file; see
+[`scene-packages.md`](scene-packages.md#vegetation-mix-r4)). Weights are relative within a code; codes are WorldCover's.
+
+```toml
+# Camp Pendleton (coastal sage scrub, chaparral, oak/sycamore riparian woodland). CHMv2 puts little >= 3 m canopy on
+# much of WorldCover's tree cover here, so code 10 also gets scrub.
+[vegetation]
+mix.10 = { tree_broadleaf_a = 1.0, shrub_chaparral = 1.0 }
+mix.20 = { shrub_chaparral = 0.8, shrub_desert = 0.2 }
+mix.30 = { shrub_chaparral = 0.5, shrub_desert = 0.5, tree_broadleaf_a = 0.05 }
+shrub_density.10 = 4.0
+shrub_density.20 = 8.0
+shrub_density.30 = 1.0
+
+# Eglin AFB (longleaf pine sandhills, wiregrass understory)
+[vegetation]
+mix.10 = { tree_pine_a = 0.5, tree_pine_b = 0.35, tree_broadleaf_a = 0.15 }
+mix.30 = { shrub_chaparral = 1.0 }
+mix.90 = { shrub_chaparral = 1.0, tree_broadleaf_a = 0.2 }
+shrub_density.30 = 2.0
+shrub_density.90 = 6.0
+
+# NAS Patuxent River (mixed hardwood / loblolly pine, tidal marsh)
+[vegetation]
+mix.10 = { tree_broadleaf_a = 0.6, tree_pine_a = 0.25, tree_pine_b = 0.15 }
+mix.90 = { shrub_chaparral = 1.0 }
+shrub_density.90 = 8.0
+
+# Yuma Proving Ground (creosote-bursage desert scrub, washes)
+[vegetation]
+mix.20 = { shrub_desert = 0.85, cactus_a = 0.15 }
+mix.30 = { shrub_desert = 1.0 }
+mix.60 = { shrub_desert = 1.0 }
+shrub_density.20 = 1.5
+shrub_density.30 = 0.8
+shrub_density.60 = 0.3
+```
 
 ## Library format
 
@@ -100,26 +173,33 @@ A library is a directory with `library.json` and the glTF files it names (`veget
 absolute, to mount your own):
 
 ```json
-{"format": "camsim-vegetation-1",
- "types": [{"name": "tree_broadleaf_a", "gltf": "tree_broadleaf_a.glb", "height_m": 9.0,
-            "thermal_class": "tree_canopy", "licence": "CC0-1.0",
-            "source_url": "https://quaternius.itch.io/textured-lowpoly-trees", "sha256": "f493…7e0c"}]}
+{"format": "camsim-vegetation-2",
+ "types": [{"name": "tree_pine_a", "role": "tree", "gltf": "tree_pine_a.glb", "sha256": "b710…cd49",
+            "far_gltf": "tree_pine_a_far.glb", "far_sha256": "0815…e74c",
+            "height_m": 22.0, "crown_radius_m": 6.78, "thermal_class": "tree_canopy",
+            "licence": "CC0-1.0", "source_url": "https://quaternius.itch.io/textured-lowpoly-trees"}]}
 ```
 
-`height_m` is the model's real height. The loader refuses any other `format`, a missing file and a sha256
-mismatch (lowercase hex). The slice uses the first type only. To add or replace a type: prepare the
-model with `scripts/vegetation/prepare_tree.py` (below; CC0 only), paste the entry it prints, and check it
-live with `camsim.Vegetation.Probe`.
+`role` is `tree` (default) or `shrub`; `crown_radius_m` (default 0.3 × height for trees, 0.5 × for shrubs) turns canopy
+cover into a tree density; `far_gltf` + `far_sha256` (trees only, optional: a tree without one is not drawn far).
+`height_m` is the model's real height. The loader refuses any other `format` (`camsim-vegetation-1` is still read: every
+type a tree, no far mesh), duplicate names, an unknown role, a shrub with a far mesh, a missing file and a sha256
+mismatch (lowercase hex). Library index 0 must stay `tree_broadleaf_a` for R4's bit-identity (the default mix uses
+index 0). To add or replace a type: prepare the model with `scripts/vegetation/prepare_tree.py` (below; CC0 only),
+paste the entry it prints, and check it with `CamSim.Vegetation.Library.ShippedMeshesLoad` and live with
+`camsim.Vegetation.Probe`.
 
 ## Console variables and commands
 
 | Name | Use |
 |---|---|
-| `camsim.Vegetation.DumpPath <abs file>` | Append one JSON line per spawned cell: `{"row", "col", "hash", "instances": [[lat, lon, height_m, yaw_deg, scale], ...]}`. `hash` is `HashInstances` over the instances' bits (lat, lon, yaw, scale, type; not heights). A cell spawned again (after a drop) gets a new line. |
+| `camsim.Vegetation.DumpPath <abs file>` | Append one JSON line per spawned near cell: `{"row", "col", "hash", "shrub_hash", "in_buildings", "instances": [[lat, lon, height_m, yaw_deg, scale, type], ...], "shrubs": [...]}`. `hash` is `HashInstances` over the trees' bits (lat, lon, yaw, scale, type; not heights), R4's value for R4's cells; `shrub_hash` the shrubs'. A cell spawned again (after a drop) gets a new line. |
+| `camsim.Vegetation.FarDumpPath <abs file>` | Append one JSON line per spawned far block: `{"block_row", "block_col", "hash", "instances": [[lat, lon, height_m, yaw_deg, scale, type, bucket], ...]}`. |
+| `camsim.Vegetation.EventsPath <abs file>` | Append one JSON line per tier change (`{"tick", "ev": "tier", "tier": "near"\|"far"\|"none", "block_row", "block_col"}`), spawn, destroy and empty settle (`"tier": "near"` lines also carry the cell's `row`, `col`): the handoff gate reads it. |
 | `camsim.Vegetation.GroundCheck 1` | Once the view has settled (terrain gate open for 2 s) and streaming is idle, traces 200 spawned tree bases against the terrain (the DIS clamp's complex trace) and logs `Vegetation: ground check n=200 max_dz_m=… p50_dz_m=…`, then resets itself. |
 | `camsim.Vegetation.Probe <abs .glb>` | Debug: load a model, log its materials' instanced-usage flags, spawn a 10 × 10 grid at the camera nadir (below). |
 
-Both CVars work from `-ExecCmds=` at launch (as `vegetation_check.py` sets them).
+All work from `-ExecCmds=` at launch (as `vegetation_check.py` sets them).
 
 ## Asset
 
@@ -211,9 +291,10 @@ cooks SM6 only, and an M1 has no SM6: the packaged game exits with "SF_METAL_SM5
 ## Acceptance (`scripts/vegetation_check.py`)
 
 ```bash
-PKG="$PWD/.cache/scene-packages/pendleton-r2"   # the package the pre-slice baseline was captured with
+PKG="$PWD/.cache/scene-packages/pendleton-r5veg"   # pendleton-r4 + [canopy] + the Pendleton [vegetation] mix
 caffeinate -ims uv run --project scripts/scene --with pycocotools python scripts/vegetation_check.py \
-    --scene "$PKG" --baseline .cache/veg/baseline --out .cache/veg/check [--stages approach,off,gt,truck,oblique]
+    --scene "$PKG" --baseline .cache/veg/baseline --out .cache/veg/check-r5 \
+    [--stages approach,off,gt,truck,oblique,footprints,r4_identity,long_range]
 ```
 
 macOS, local build, one CamSim at a time (it launches about nine). The baseline is two pre-slice
@@ -223,12 +304,19 @@ gate passes) and the shots. `--stages` reruns a subset and keeps the other gates
 
 | Gate | What |
 |---|---|
-| placement | every dumped tree's (lat, lon) is code 10 in `$PKG/landcover` (read with `bench/dense_path.LandCover`) |
+| placement | every dumped tree stands on a code whose mix lists trees (and, inside the package's canopy layer, on a texel with cover > 0 and height ≥ 3 m); every shrub on a code whose mix lists shrubs (land cover read with `bench/dense_path.LandCover`) |
+| species | per code and role, the dumped type counts vs the mix weights: χ² p > 0.001 (codes with ≥ 50 plants and ≥ 2 types); a type the code's mix doesn't list fails |
+| canopy | (packages with `canopy/`) per 100 m cell with mean CHMv2 cover in [0.1, 0.5] (≥ 50 such cells): crown fraction Σ π (r × scale)² / cell area vs cover, median \|error\| ≤ 10 pp. Above 0.5 one crown per candidate saturates (see "How it works") |
+| far_determinism | the far blocks dumped by the two approach runs have the same hashes, and every far tree whose cell was dumped near is one of that cell's near trees |
+| handoff | from the events dumps: no destroy of one tier's actor while the block's current tier hasn't settled since its latest tier change |
 | grounding | `camsim.Vegetation.GroundCheck`: n = 200 and max \|dz\| < 0.5 m, in both runs |
 | determinism | approach the riparian pose from 3 km north and from 3 km south (30 s): every cell in both dumps has the same hash |
 | origin_shift | `/snapshot` at the riparian pose, 20 s at lon + 3.41° (`far_origin`), back: SSIM ≥ the baseline pair's SSIM − 0.01, and every cell spawned again has its first hash |
 | off_switch | `CAMSIM_VEGETATION_ENABLED=0` smoke shot vs the baseline: SSIM ≥ the baseline pair's SSIM − 0.005 (live frames are not bit-identical run to run), and the off run's log has no vegetation line; a trees-on smoke is measured beside it to show the margin (little: see "Measured") |
 | gt | `scripts/gt_occlusion_check.py` exits 0 with vegetation on (its San Francisco default config, so trees from the committed SF land-cover sample, Presidio included) |
+| footprints | (`--stages footprints`, R3b) no tree or shrub within the building clearance of the package's mask |
+| r4_identity | (`--stages r4_identity`) `--r4-scene` (default `pendleton-r2`: no canopy, no mix) with shrubs and the far tier off: every cell has the `--r4-baseline` (R4) run's tree hash |
+| long_range | (`--stages long_range`) the bench's `long_range` phase (5 km HAE, 15° down, 30° FOV, 9 km at 100 m/s toward the riparian woodland) with vegetation on and off: 0 dropped frames, game p95 ≤ +3.0 ms |
 
 Informational: `surface_dz` (CIGI HOT, a trace against the drawn tiles, at 25 dumped trees per distance
 band, before and after the far trip), `truck` (a DIS truck parked 2 m from the trunk of the tree with the
@@ -381,9 +469,14 @@ Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 
   cover (~10 % of footprint area on Pendleton). With a mask (R3b) or the runtime check they are dropped (How it
   works). Building clearance is tested at 4 axis points; a crown can still overhang a footprint corner or, with a
   clearance below the crown radius, a wall. The runtime check tests only the trunk point.
-- One species; density is tree / no tree per 10 m texel (no canopy %), so woodland edges follow the
-  land-cover grid.
-- Hard pop-in at `radius_m`; no impostors beyond it, the imagery shows distant trees.
-- Trees have no collision: CIGI LOS passes through them, DIS ignores them.
-- `/ready` does not wait for trees.
-- Leaf-on all year (NAIP is leaf-on too).
+- Species come from a per-code mix the scene file sets: there is no species map (LANDFIRE EVT was out of scope), so a
+  code is one blend everywhere in the package.
+- Canopy is CHMv2, a model estimate from 2016–2020 imagery: the canopy gate measures agreement with CHMv2, not with
+  truth. Only inside the package bbox; outside it (and without `canopy/`) density is tree / no tree per 10 m texel.
+- Crown cover saturates at ≈ 0.57–0.66 (one tree per 34.6 m² candidate); closed forest above that is drawn at the cap.
+- Trees placed by canopy on non-tree codes take that code's thermal class in IR (per-instance thermal class deferred).
+- The near/far switch is a model swap at block granularity (400 m), not a fade; far meshes are untextured blobs.
+- Shrubs end at `shrub_radius_m` with a hard cut, and Kenney's shrubs are stylised leaf fans (see "Asset").
+- Vegetation has no collision: CIGI LOS passes through it, DIS ignores it.
+- `/ready` does not wait for vegetation.
+- Leaf-on all year (NAIP is leaf-on too); no grass.

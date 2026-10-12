@@ -32,6 +32,8 @@ Background: [`docs/realism/`](realism/) (data sources, Cesium findings, offline 
   features/buildings/tileset.json   # 3D Tiles 1.1 (packages with [buildings] that keep at least one building; Buildings (R3))
   features/buildings/{z}/{x}/{y}.glb  # z13-z15, one GLB per tile that holds buildings
   features/buildings/mask/          # footprint mask: 0.05 deg 4800^2 1-bit PNGs + index.json (R3b; with [buildings])
+  canopy/cover/, canopy/height/     # CHMv2 canopy cover % and p90 height, land-cover grid (R4; with [canopy])
+  vegetation/mix.json               # species mix per land-cover code (R4; with [vegetation])
   .state/                       # resume markers and the build lock (not hashed, not packed)
 ```
 
@@ -869,7 +871,9 @@ CAMSIM_SCENE_DIR=/abs/path/to/pendleton CAMSIM_SCENE_OFFLINE=1 scripts/run.sh --
 - `scene.dir` (`CAMSIM_SCENE_DIR`, absolute) points terrain (`terrain/layer.json`), imagery
   (`imagery/tilemapresource.xml`, `cesium.imagery.source: tms`) and thermal land cover (`landcover/`) at the
   package, as `file:///` URLs. A package with `features/buildings/` also gets its buildings tileset (Buildings (R3),
-  `scene.buildings.*`; `CAMSIM_SCENE_BUILDINGS_ENABLED=0` leaves it out). Reference: `docs/configuration.md`, "Scene Package".
+  `scene.buildings.*`; `CAMSIM_SCENE_BUILDINGS_ENABLED=0` leaves it out). The vegetation scatter reads
+  `vegetation/mix.json` (species per code) and `canopy/` (tree density and size; `vegetation.canopy_enabled`) when
+  present (R4, [`vegetation.md`](vegetation.md)). Reference: `docs/configuration.md`, "Scene Package".
 - `scene.offline` (`CAMSIM_SCENE_OFFLINE`) refuses any network source and exits with status 1 on any config
   error, instead of falling back to Cesium ion.
 - The buildings tileset is spawned after that clean-up, in the same world-init step; under `scene.offline` it needs an
