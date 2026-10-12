@@ -47,6 +47,42 @@ FVegetationStreaming::FActions FVegetationStreaming::Tick(double CamLatDeg, doub
 	return A;
 }
 
+FVegetationStreaming::FActions FVegetationStreaming::TickWanted(TConstArrayView<FVegCellId> Wanted, TFunctionRef<bool(FVegCellId)> MayDrop,
+	int32 InFlightCap, int32 SpawnCap)
+{
+	FActions A;
+	const TSet<FVegCellId> WantedSet(Wanted);
+	for (auto It = Cells.CreateIterator(); It; ++It)
+	{
+		if (WantedSet.Contains(It.Key()) || !MayDrop(It.Key())) continue;
+		if (It.Value() == EVegCellState::Spawned) A.ToDrop.Add(It.Key());
+		It.RemoveCurrent();
+	}
+	int32 InFlight = NumInFlight();
+	for (const FVegCellId& Id : Wanted)
+	{
+		EVegCellState* S = Cells.Find(Id);
+		if (S && *S == EVegCellState::ReadyToSpawn && A.ToSpawn.Num() < SpawnCap)
+		{
+			*S = EVegCellState::Spawned;
+			A.ToSpawn.Add(Id);
+		}
+		else if (!S && InFlight < InFlightCap)
+		{
+			Cells.Add(Id, EVegCellState::Generating);
+			A.ToGenerate.Add(Id);
+			++InFlight;
+		}
+	}
+	return A;
+}
+
+bool FVegetationStreaming::IsSettled(FVegCellId Id) const
+{
+	const EVegCellState* S = Cells.Find(Id);
+	return S && (*S == EVegCellState::Spawned || *S == EVegCellState::Empty);
+}
+
 void FVegetationStreaming::OnGenerated(FVegCellId Id, int32 NumInstances)
 {
 	EVegCellState* S = Cells.Find(Id);

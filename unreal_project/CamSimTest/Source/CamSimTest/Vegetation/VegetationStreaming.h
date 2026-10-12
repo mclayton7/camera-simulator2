@@ -42,6 +42,15 @@ public:
 	explicit FVegetationStreaming(const FParams& InParams) : Params(InParams) {}
 
 	FActions Tick(double CamLatDeg, double CamLonDeg);
+	/**
+	 * The caller picks the cells (REALISM R4 blocks and tiers): tracked ids not in Wanted are dropped when MayDrop(id) (else
+	 * kept as they are, never spawned); ReadyToSpawn ids in Wanted spawn in Wanted's order, at most SpawnCap; untracked
+	 * Wanted ids start generating while this streaming's in-flight count is below InFlightCap. Wanted is nearest first.
+	 */
+	FActions TickWanted(TConstArrayView<CamSimVegetation::FVegCellId> Wanted,
+		TFunctionRef<bool(CamSimVegetation::FVegCellId)> MayDrop, int32 InFlightCap, int32 SpawnCap);
+	/** Spawned or Empty: nothing more will happen to it while tracked. */
+	bool IsSettled(CamSimVegetation::FVegCellId Id) const;
 	void OnGenerated(CamSimVegetation::FVegCellId Id, int32 NumInstances);
 	void OnHeightsSampled(CamSimVegetation::FVegCellId Id, int32 NumGrounded);
 	TOptional<EVegCellState> GetState(CamSimVegetation::FVegCellId Id) const;

@@ -145,3 +145,41 @@ bool FVegStreamTeleportTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("no old cell tracked"), OldTracked, 0);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegStreamingTickWantedTest, "CamSim.Vegetation.Streaming.TickWanted",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegStreamingTickWantedTest::RunTest(const FString& Parameters)
+{
+	using namespace CamSimVegetation;
+	FVegetationStreaming S({});
+	TArray<FVegCellId> Wanted;
+	for (int32 K = 0; K < 6; ++K) Wanted.Add({ 100, K });
+	auto Always = [](FVegCellId) { return true; };
+	auto Never = [](FVegCellId) { return false; };
+
+	FVegetationStreaming::FActions A = S.TickWanted(Wanted, Always, 4, 2);
+	TestEqual(TEXT("in-flight cap 4"), A.ToGenerate.Num(), 4);
+	TestTrue(TEXT("in Wanted's order"), A.ToGenerate.Num() == 4 && A.ToGenerate[0] == Wanted[0] && A.ToGenerate[3] == Wanted[3]);
+	for (const FVegCellId& C : A.ToGenerate) { S.OnGenerated(C, 5); S.OnHeightsSampled(C, 5); }
+	A = S.TickWanted(Wanted, Always, 4, 2);
+	TestEqual(TEXT("spawn cap 2"), A.ToSpawn.Num(), 2);
+	TestTrue(TEXT("spawns in Wanted's order"), A.ToSpawn.Num() == 2 && A.ToSpawn[0] == Wanted[0] && A.ToSpawn[1] == Wanted[1]);
+	TestEqual(TEXT("remaining two start"), A.ToGenerate.Num(), 2);
+	TestTrue(TEXT("spawned settled"), S.IsSettled(Wanted[0]));
+	TestFalse(TEXT("ready not settled"), S.IsSettled(Wanted[2]));
+	TestFalse(TEXT("generating not settled"), S.IsSettled(Wanted[4]));
+	TestFalse(TEXT("untracked not settled"), S.IsSettled({ 1, 1 }));
+	S.OnGenerated(Wanted[5], 0);
+	TestTrue(TEXT("empty settled"), S.IsSettled(Wanted[5]));
+
+	const TArray<FVegCellId> Fewer = { Wanted[2], Wanted[3], Wanted[4], Wanted[5] };
+	A = S.TickWanted(Fewer, Never, 4, 2);
+	TestEqual(TEXT("MayDrop false: nothing dropped"), A.ToDrop.Num(), 0);
+	TestTrue(TEXT("still tracked"), S.GetState(Wanted[0]).IsSet());
+	TestFalse(TEXT("a kept, unwanted cell is never re-spawned"), A.ToSpawn.Contains(Wanted[0]) || A.ToSpawn.Contains(Wanted[1]));
+	A = S.TickWanted(Fewer, Always, 4, 2);
+	TestEqual(TEXT("both spawned cells dropped"), A.ToDrop.Num(), 2);
+	TestFalse(TEXT("untracked after drop"), S.GetState(Wanted[0]).IsSet());
+	TestEqual(TEXT("a zero cap starts nothing"), S.TickWanted({ FVegCellId{ 7, 7 } }, Always, 0, 0).ToGenerate.Num(), 0);
+	return true;
+}
