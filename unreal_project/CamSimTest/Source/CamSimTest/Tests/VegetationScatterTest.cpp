@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Vegetation/VegetationGrid.h"
+#include "Vegetation/VegetationLibrary.h"
+#include "Vegetation/VegetationMix.h"
 #include "Vegetation/VegetationScatter.h"
 
 using namespace CamSimVegetation;
@@ -155,5 +157,132 @@ bool FVegScatterR4IdentityTest::RunTest(const FString& Parameters)
 	FVegCellId Cells[3]; GoldenCells(Cells);
 	for (int32 K = 0; K < 3; ++K)
 		TestEqual(*FString::Printf(TEXT("cell %d legacy == golden"), K), HashInstances(GenerateCell(VegetationSeed(GoldenSeed), Cells[K], P, AllTrees)), GoldenHash[K]);
+	// Scatter v2 with the built-in default mix (tree_broadleaf_a at index 0), no canopy, shrubs off: R4's trees.
+	FVegetationLibrary L;
+	FVegetationType T; T.Name = TEXT("tree_broadleaf_a"); T.Role = EVegRole::Tree; T.HeightM = 9.0f; T.CrownRadiusM = 2.7f;
+	L.Types.Add(T);
+	const FVegetationMix Mix = DefaultMix(L);
+	FScatterParams NoShrubs = P; NoShrubs.bShrubs = false;
+	auto NoCanopy = [](double, double) { FVegPoint V; V.Code = 10; return V; };
+	for (int32 K = 0; K < 3; ++K)
+		TestEqual(*FString::Printf(TEXT("cell %d v2 == golden"), K),
+			HashInstances(GenerateCellContent(VegetationSeed(GoldenSeed), Cells[K], NoShrubs, Mix, NoCanopy).Trees), GoldenHash[K]);
+	return true;
+}
+
+namespace
+{
+	FVegPoint TreesNoCanopy(double, double) { FVegPoint V; V.Code = 10; return V; }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegScatterSpeciesTest, "CamSim.Vegetation.Scatter.SpeciesFollowMix",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegScatterSpeciesTest::RunTest(const FString& Parameters)
+{
+	FScatterParams P; P.bShrubs = false;
+	FVegetationMix Mix = SingleTypeMix(10, 0, 9.0f, 2.7f);
+	Mix.Codes[10].Trees = { { 0, 0.25f }, { 1, 1.0f } };
+	Mix.TypeHeightM = { 9.0f, 16.0f }; Mix.TypeCrownRadiusM = { 2.7f, 2.5f };
+	int64 N[2] = { 0, 0 };
+	const FVegCellId O = CellOf(30.5, -86.5, P.CellSizeM);
+	for (int32 K = 0; K < 400; ++K)
+		for (const FTreeInstance& T : GenerateCellContent(VegetationSeed(3u), { O.Row + K / 20, O.Col + K % 20 }, P, Mix, TreesNoCanopy).Trees) ++N[T.Type];
+	const double Total = double(N[0] + N[1]);
+	const double Chi2 = FMath::Square(N[0] - 0.25 * Total) / (0.25 * Total) + FMath::Square(N[1] - 0.75 * Total) / (0.75 * Total);
+	TestTrue(*FString::Printf(TEXT("chi2 %.2f < 10.83 (1 dof, p 0.001), n=%.0f"), Chi2, Total), Chi2 < 10.83);
+	TestTrue(TEXT("enough trees to test"), Total > 10000.0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegScatterCanopyTest, "CamSim.Vegetation.Scatter.CanopyCoverMatches",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegScatterCanopyTest::RunTest(const FString& Parameters)
+{
+	FScatterParams P; P.bShrubs = false;
+	const FVegetationMix Mix = SingleTypeMix(10, 0, 9.0f, 2.7f);
+	// Below saturation only: one crown per 34.6 m^2 candidate caps crown cover at pi r^2 / 34.6 (0.66 at r 2.7 m).
+	for (const float Cover : { 0.1f, 0.3f, 0.5f })
+	{
+		auto Sample = [Cover](double, double) { FVegPoint V; V.Code = 10; V.bHasCanopy = true; V.CoverFrac = Cover; V.HeightM = 9.0f; return V; };
+		double CrownM2 = 0.0, AreaM2 = 0.0;
+		const FVegCellId O = CellOf(38.3, -76.4, P.CellSizeM);
+		for (int32 K = 0; K < 10000; ++K)
+		{
+			const FVegCellId C{ O.Row + K / 100, O.Col + K % 100 };
+			const FVegCellBounds B = CellBounds(C, P.CellSizeM);
+			const double LatC = 0.5 * (B.SouthDeg + B.NorthDeg);
+			AreaM2 += GroundDistanceM(B.SouthDeg, B.WestDeg, B.NorthDeg, B.WestDeg) * GroundDistanceM(LatC, B.WestDeg, LatC, B.EastDeg);
+			for (const FTreeInstance& T : GenerateCellContent(VegetationSeed(9u), C, P, Mix, Sample).Trees)
+				CrownM2 += PI * FMath::Square(2.7 * T.Scale);
+		}
+		TestTrue(*FString::Printf(TEXT("cover %.1f: crown fraction %.3f within 0.02"), Cover, CrownM2 / AreaM2), FMath::Abs(CrownM2 / AreaM2 - Cover) <= 0.02);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegScatterCanopyEdgesTest, "CamSim.Vegetation.Scatter.CanopyEdgeCases",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegScatterCanopyEdgesTest::RunTest(const FString& Parameters)
+{
+	FScatterParams P; float S = 0.0f;
+	TestEqual(TEXT("below 3 m: none"), CanopyAccept(P, 0.8f, 2.9f, 9.0f, 2.7f, S), 0.0f);
+	TestEqual(TEXT("no cover: none"), CanopyAccept(P, 0.0f, 12.0f, 9.0f, 2.7f, S), 0.0f);
+	TestEqual(TEXT("full cover at the type's height: 34.6 / 22.9 m^2 clamps to 1"), CanopyAccept(P, 1.0f, 9.0f, 9.0f, 2.7f, S), 1.0f);
+	TestEqual(TEXT("cover above 1 clamps too"), CanopyAccept(P, 1.5f, 9.0f, 9.0f, 2.7f, S), 1.0f);
+	const float A255 = CanopyAccept(P, 1.0f, 255.0f, 9.0f, 2.7f, S);
+	TestEqual(TEXT("scale clamp high"), S, 2.0f);
+	TestTrue(TEXT("255 m: the crown at scale 2 lowers p (34.6 / 91.6)"), FMath::Abs(A255 - 0.3777f) < 0.001f);
+	CanopyAccept(P, 0.5f, 3.0f, 16.0f, 2.5f, S);
+	TestEqual(TEXT("scale clamp low"), S, 0.5f);
+	const FVegCellId C = CellOf(30.5, -86.5, 100.0);
+	auto Tall = [](double, double) { FVegPoint V; V.Code = 10; V.bHasCanopy = true; V.CoverFrac = 1.0f; V.HeightM = 255.0f; return V; };
+	const TArray<FTreeInstance> TallTrees = GenerateCellContent(VegetationSeed(1u), C, P, SingleTypeMix(10, 0, 9.0f, 2.7f), Tall).Trees;
+	TestTrue(TEXT("tall canopy: trees"), TallTrees.Num() > 0);
+	for (const FTreeInstance& T : TallTrees)
+		TestTrue(TEXT("scale in [2*0.9, 2*1.1]"), T.Scale >= 1.8f - 1e-5f && T.Scale <= 2.2f + 1e-5f);
+	auto Short = [](double, double) { FVegPoint V; V.Code = 10; V.bHasCanopy = true; V.CoverFrac = 0.9f; V.HeightM = 1.0f; return V; };
+	TestEqual(TEXT("short canopy: no trees"), GenerateCellContent(VegetationSeed(1u), C, P, SingleTypeMix(10, 0, 9.0f, 2.7f), Short).Trees.Num(), 0);
+	auto Bare = [](double, double) { FVegPoint V; V.Code = 10; V.bHasCanopy = true; V.CoverFrac = 0.0f; V.HeightM = 12.0f; return V; };
+	TestEqual(TEXT("no cover: no trees"), GenerateCellContent(VegetationSeed(1u), C, P, SingleTypeMix(10, 0, 9.0f, 2.7f), Bare).Trees.Num(), 0);
+	auto OtherCode = [](double, double) { FVegPoint V; V.Code = 50; V.bHasCanopy = true; V.CoverFrac = 0.5f; V.HeightM = 12.0f; return V; };
+	TestEqual(TEXT("canopy on a code without trees in the mix: none"), GenerateCellContent(VegetationSeed(1u), C, P, SingleTypeMix(10, 0, 9.0f, 2.7f), OtherCode).Trees.Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegScatterShrubsTest, "CamSim.Vegetation.Scatter.Shrubs",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegScatterShrubsTest::RunTest(const FString& Parameters)
+{
+	FScatterParams P;
+	FVegetationMix Mix;
+	Mix.TypeHeightM = { 9.0f, 1.8f }; Mix.TypeCrownRadiusM = { 2.7f, 0.9f };
+	FCodeMix Scrub; Scrub.Shrubs = { { 1, 1.0f } }; Scrub.ShrubsPer100M2 = 8.0f;
+	Mix.Codes.Add(20, Scrub);
+	auto HalfHalf = [](double, double Lon) { FVegPoint V; V.Code = FMath::Frac(Lon * 1000.0) < 0.5 ? 20 : 30; return V; };
+	int64 On20 = 0, On30 = 0, Trees = 0;
+	const FVegCellId O = CellOf(32.7, -114.6, P.CellSizeM);
+	for (int32 K = 0; K < 100; ++K)
+	{
+		const FCellContent C = GenerateCellContent(VegetationSeed(5u), { O.Row + K / 10, O.Col + K % 10 }, P, Mix, HalfHalf);
+		Trees += C.Trees.Num();
+		for (const FTreeInstance& S : C.Shrubs)
+		{
+			(FMath::Frac(S.LonDeg * 1000.0) < 0.5 ? On20 : On30)++;
+			if (!(S.Scale >= 0.7f && S.Scale <= 1.3f)) AddError(TEXT("shrub scale out of range"));
+			if (S.Type != 1) AddError(TEXT("shrub type"));
+		}
+	}
+	TestEqual(TEXT("no trees (no tree list)"), Trees, int64(0));
+	TestEqual(TEXT("none on 30"), On30, int64(0));
+	const double Expected = 8.0 / 100.0 * 0.5 * 100 * 100.0 * 100.0;   // per m^2 x half of 100 cells of ~1 ha
+	TestTrue(*FString::Printf(TEXT("%lld shrubs vs ~%.0f (+-10%%)"), On20, Expected), FMath::Abs(On20 - Expected) <= 0.10 * Expected);
+	FScatterParams Off = P; Off.bShrubs = false;
+	TestEqual(TEXT("bShrubs false"), GenerateCellContent(VegetationSeed(5u), O, Off, Mix, HalfHalf).Shrubs.Num(), 0);
+	auto NeverFn = [](double, double) { return false; };
+	FClearPredicate Never = NeverFn;
+	TestEqual(TEXT("mask drops shrubs"), GenerateCellContent(VegetationSeed(5u), O, P, Mix, HalfHalf, &Never).Shrubs.Num(), 0);
+	const FCellContent A = GenerateCellContent(VegetationSeed(5u), O, P, Mix, HalfHalf);
+	const FCellContent B = GenerateCellContent(VegetationSeed(5u), O, P, Mix, HalfHalf);
+	TestTrue(TEXT("shrubs deterministic"), A.Shrubs == B.Shrubs);
 	return true;
 }

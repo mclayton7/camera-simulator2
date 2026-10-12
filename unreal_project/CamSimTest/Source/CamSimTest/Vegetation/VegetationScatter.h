@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Vegetation/VegetationGrid.h"
+#include "Vegetation/VegetationMix.h"
 
 /**
  * Deterministic tree scatter in one cell (REALISM R4 slice, docs/vegetation.md). A CandidatesPerAxis^2 jittered grid;
@@ -21,7 +22,13 @@ namespace CamSimVegetation
 		float  DensityScale = 1.0f;
 		float  ScaleMin = 0.8f;
 		float  ScaleMax = 1.2f;
-		uint8  TreeCode = 10;       // WorldCover tree cover
+		uint8  TreeCode = 10;       // WorldCover tree cover (the R4 GenerateCell wrappers)
+		// REALISM R4 scatter v2 (GenerateCellContent):
+		float  MinCanopyHeightM = 3.0f;   // no tree on a canopy texel lower than this
+		bool   bShrubs = true;
+		float  ShrubSpacingM = 3.0f;      // nominal; the real spacing is CellSizeM / ShrubCandidatesPerAxis
+		float  ShrubScaleMin = 0.7f;
+		float  ShrubScaleMax = 1.3f;
 	};
 
 	struct FTreeInstance
@@ -35,6 +42,23 @@ namespace CamSimVegetation
 	};
 
 	using FCodeSampler = TFunctionRef<uint8(double LatDeg, double LonDeg)>;
+
+	/** What the scatter needs to know about a point (REALISM R4): its land-cover code and, where the package's canopy
+	 *  layer covers it, the canopy cover and height there. */
+	struct FVegPoint
+	{
+		uint8 Code = 0;
+		bool  bHasCanopy = false;   // the canopy layer covers this point (else the R4 rule)
+		float CoverFrac = 0.0f;     // 0..1
+		float HeightM = 0.0f;
+	};
+	using FPointSampler = TFunctionRef<FVegPoint(double LatDeg, double LonDeg)>;
+
+	struct FCellContent
+	{
+		TArray<FTreeInstance> Trees;
+		TArray<FTreeInstance> Shrubs;
+	};
 	/** REALISM R3b: false = the candidate is too close to a building (FVegetationBuildingMask::IsClear). */
 	using FClearPredicate = TFunctionRef<bool(double LatDeg, double LonDeg)>;
 
@@ -48,6 +72,19 @@ namespace CamSimVegetation
 	 *  unchanged, so the trees it keeps are bit-identical to the 4-argument call's. */
 	CAMSIMTEST_API TArray<FTreeInstance> GenerateCell(uint32 Seed, FVegCellId Cell, const FScatterParams& P, FCodeSampler Sampler,
 		FClearPredicate IsClear);
+	CAMSIMTEST_API int32 ShrubCandidatesPerAxis(const FScatterParams& P);
+	/** Tree acceptance on a canopy texel: the expected crown area per candidate equals the cover until it saturates at 1;
+	 *  0 below MinCanopyHeightM or at no cover. OutScaleBase = clamp(HeightM / TypeHeightM, 0.5, 2). */
+	CAMSIMTEST_API float CanopyAccept(const FScatterParams& P, float CoverFrac, float HeightM, float TypeHeightM,
+		float CrownRadiusM, float& OutScaleBase);
+	/**
+	 * Scatter v2 (REALISM R4): trees on R4's grid (sub-streams 160-164 unchanged, species 165) where the code's mix lists
+	 * trees, accepted by the canopy rule where Sample reports canopy and by R4's p = 0.15 x density elsewhere; shrubs on
+	 * their own grid (166-171) where the code's mix lists shrubs, at its shrub density. IsClear (null = none) drops both.
+	 * With no canopy and a one-tree mix of library index 0 on the tree code, Trees equal R4's bit for bit.
+	 */
+	CAMSIMTEST_API FCellContent GenerateCellContent(uint32 Seed, FVegCellId Cell, const FScatterParams& P,
+		const FVegetationMix& Mix, FPointSampler Sample, const FClearPredicate* IsClear = nullptr);
 	/** Order-sensitive hash of the instances' bits (dumps, determinism checks). */
 	CAMSIMTEST_API uint32 HashInstances(const TArray<FTreeInstance>& Instances);
 }
