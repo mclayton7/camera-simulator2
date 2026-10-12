@@ -471,6 +471,76 @@ Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 
   with a build-time footprint exclusion as the follow-up; memory passes the raised 1024 MiB budget). Trees alone on that package: +0.61 /
   +0.58 / +1.12 ms, +52 MiB.
 
+## Measured: species, canopy, shrubs, far tier (R4 deeper)
+
+2026-10-12, M1 Pro, Metal, `pendleton-r5veg` (the R4 package plus `[canopy]` CHMv2 and the Pendleton mix, buildings
+with the R3b mask), defaults (radius 1000 m, shrubs 500 m, far 4000 m, keep 0.35, blocks 4), commit `ec818a0`. Every
+gate passes (`scripts/vegetation_check.py --stages approach,off,gt,truck,oblique,footprints,r4_identity,long_range`,
+`.cache/veg/check-r5/report.json`):
+
+| Gate | Result |
+|---|---|
+| placement | 20,078 trees and 91,191 shrubs in 1,040 cells; 0 trees or shrubs off their mix's codes, 0 trees on canopy texels with no cover or < 3 m |
+| species | χ² per code and role, p > 0.001: code 30 shrubs 25,342 / 25,596 (`shrub_chaparral` / `shrub_desert`, p 0.26), code 20 11,324 / 2,776 (p 0.35); single-type lists (10 and 30 trees, 10 shrubs) 0 strays |
+| canopy | 123 cells with CHMv2 cover in [0.1, 0.5]: median \|drawn crown cover − CHMv2 cover\| 8.1 pp (mean −9.9 pp: the crowns' saturation) |
+| far_determinism | 271 far blocks in both runs, 0 hash mismatches; 14,174 far trees checked against their near cells, 0 missing |
+| handoff | 9,988 tier/spawn/destroy events, 1,595 destroys, 0 gaps |
+| grounding | north and south n=200, max dz 0.000 m |
+| determinism | 179 cells in both dumps, 0 hash mismatches |
+| origin_shift | SSIM 0.972 / 0.985 vs floor 0.980 − 0.01; 230 cells spawned again after the trip in each run, 0 hash changes |
+| off_switch | no `Vegetation:` line in the off run; `nadir_3km` SSIM 0.9956 / 0.9784 vs the baseline pair's 0.9796 (weak gate, as in the slice) |
+| gt | `gt_occlusion_check.py` exit 0 |
+| footprints | 14,809 trees, 0 trunks inside a footprint, 0 probe hits |
+| r4_identity | 198 cells against the R4 baseline (no mix, no canopy, shrubs and far off): 0 tree-hash mismatches |
+| long_range | 5 km HAE, 15° down: game p50 +1.27 ms, p95 +2.02 ms (budget 3.0), GPU −0.04 ms, 0 dropped |
+
+Truck under trees (reported): 374 annotations, visibility median 0.18, min 0.013.
+
+**Height sampling was the cost.** The first acceptance run failed `long_range` at game p95 +11.2 ms. An Unreal Insights
+trace put it in `Cesium::loadTiles` (35.9 s over the run vs 0.28 s with vegetation off): cesium-native answers every
+`SampleHeightMostDetailed` point on the game thread, and the run asked for one point per shrub (~1,000 per cell) and a
+25 m grid per far block out to 4 km. Shrubs now take a 20 m grid per cell and far blocks a 100 m grid (p95 +2.8 ms),
+trees keep their exact per-tree heights. The dense-pass sweep then still showed shrubs at +1.9 ms game p50 and +3.8 ms
+p95 at any `shrub_radius_m`: near cells generated shrubs out to `radius_m` and the shrub radius only culled them. A
+second trace (dense pass, shrubs on vs off) put the extra time in `Cesium::loadTiles` (+2.9 s) and world tick and
+visibility on the extra actors; the **shrub ring** (only cells within `shrub_radius_m` get shrubs) cut it to the
+figures below.
+
+### Bench (R4 deeper)
+
+`scripts/bench/sweep.py`, 2026-10-12, M1 Pro, `pendleton-r5veg`, EO, 2 repeats per row, buildings on (SSE 64) in every
+row, increase of the row median over the buildings-on / trees-off row. Every row: 0 dropped, ≥ 29.6 fps. Budget: game
+p50 ≤ +1.5 ms, p95 ≤ +3.0 ms, GPU ≤ +5.0 ms, memory ≤ +1024 MiB.
+
+Far tier, `long_range` phase (`--axis far_radius=0,2000,4000,6000 --phase long_range`; trees-off row 3.56 / 5.04 ms):
+
+| far_radius_m | game p50 | game p95 | GPU p50 | memory MiB | budget |
+|---|---|---|---|---|---|
+| 0 (off) | +0.53 | +1.93 | +0.53 | +264 | pass |
+| 2000 | +0.81 | +1.98 | +0.60 | +370 | pass |
+| **4000** | **+1.17** | **+2.44** | **+0.26** | **+482** | **pass** |
+| 6000 | +1.70 | +3.32 | +1.19 | +538 | FAIL: game p50, p95 |
+
+`far_keep` 0.25 / 0.35 / 0.5 at 4000 m (`long_range`): game p50 +1.16 / +1.19 / +1.25, p95 +2.38 / +2.59 / +2.62, all
+pass: the kept share barely moves the cost (the block count does).
+
+Shrubs, `dense_pass` phase, with the shrub ring (`--axis shrubs=off,on --axis shrub_radius=300,500,1000`; trees-off row
+3.99 / 6.76 ms):
+
+| shrubs | shrub_radius_m | game p50 | game p95 | GPU p50 | memory MiB | budget |
+|---|---|---|---|---|---|---|
+| off | (any) | +1.46 – +1.56 | +2.26 – +3.21 | +2.2 – +3.2 | +333 – +341 | pass (p95 noise at 1000) |
+| on | 300 | +1.64 | +2.20 | +0.62 | +293 | FAIL: game p50 |
+| **on** | **500** | **+1.75** | **+2.17** | **+1.19** | **+337** | **FAIL: game p50 (accepted)** |
+| on | 1000 | +2.22 | +2.71 | +2.76 | +311 | FAIL: game p50 |
+
+Before the ring, shrubs on at 500 m measured +1.90 / +3.83 ms. Trees alone (near + far) already use +1.47 ms of the
+1.5 ms game p50 budget in the dense pass; shrubs add ~0.3 ms.
+
+**Defaults chosen 2026-10-12 (user):** shrubs on at 500 m, far tier 4000 m, keep 0.35, blocks 4. The dense pass is
++0.25 ms over the game p50 budget with these (p95, GPU and memory pass; `long_range` passes everything); accepted as a
+known cost, like the R4 footprint check's p95 overrun. Contact sheets: `.cache/bench-r5veg/{far,shrubs,keep}/sweep_sheet.png`.
+
 ## Known limits
 
 - Without a buildings layer, trees stand inside building footprints wherever WorldCover calls the canopy tree
@@ -485,6 +555,11 @@ Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 
 - Trees placed by canopy on non-tree codes take that code's thermal class in IR (per-instance thermal class deferred).
 - The near/far switch is a model swap at block granularity (400 m), not a fade; far meshes are untextured blobs.
 - Shrubs end at `shrub_radius_m` with a hard cut, and Kenney's shrubs are stylised leaf fans (see "Asset").
+- Shrub heights are bilinear on a 20 m grid and far-tree heights on a 100 m grid: on rough ground a shrub can sit up
+  to ~0.5–1 m off the surface (sunk 0.15 m to hide most of it), a far tree a few metres (seen from ≥ 1 km).
+- At the defaults the dense pass is +1.75 ms game p50 over vegetation off, 0.25 ms over the budget (accepted
+  2026-10-12, "Bench (R4 deeper)").
+- Visual review items (open): far-tier trees render darker than near ones, `shrub_chaparral` looks very dark.
 - Vegetation has no collision: CIGI LOS passes through it, DIS ignores it.
 - `/ready` does not wait for vegetation.
 - Leaf-on all year (NAIP is leaf-on too); no grass.

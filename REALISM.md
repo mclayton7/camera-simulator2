@@ -455,8 +455,19 @@ over a whole run (a full both-on run peaks at +907 / +952 MiB in `coast_pass` / 
 building footprints in the scene package at build time so trees are excluded without runtime sampling, then remove the
 runtime check (ROADMAP Realism track; it touches the thermal class under buildings, so it needs its own design).
 See `docs/scene-packages.md`, "R3/R4 bench check and combined cost".
-Still deferred (the rest of this section): canopy % and height rasters, species and shrubs, impostors and distance
-fade, mapped trees, poles/fences/clutter, per-instance thermal class, tree collision, the canopy-fraction gate.
+**Deeper pass implemented 2026-10-12** (`docs/vegetation.md`; spec
+`docs/superpowers/specs/2026-10-11-r4-vegetation-deeper-design.md`): a per-code species mix in the scene package
+(`vegetation/mix.json`, built from `[vegetation]`; library v2 with tree/shrub roles: broadleaf, two pines, chaparral,
+desert scrub, cactus, all CC0); CHMv2 canopy cover and height (`canopy/`, built from `[canopy]`) driving tree density
+and size; shrubs on scrub and grassland in a ring within `shrub_radius_m`; a far tier of thinned, enlarged low-poly
+trees in 400 m blocks out to `far_radius_m` (4 km) with a no-gap near/far handoff and a 4-step dissolve. Packages without
+a mix or canopy keep R4's trees bit for bit. Acceptance on Pendleton passes every gate (placement, species χ², canopy
+cover within 8.1 pp of CHMv2, far determinism, handoff, grounding, determinism, origin shift, off switch, gt, footprints,
+R4 identity, long range at +2.0 ms game p95). Defaults (user, 2026-10-12): shrubs 500 m, far 4000 m, keep 0.35; the
+dense pass is +0.25 ms over the game p50 budget with them (accepted).
+Still deferred (the rest of this section): a species map (LANDFIRE EVT or similar) instead of one mix per code,
+textured impostors and a real cross-fade, mapped trees, poles/fences/clutter, per-instance thermal class, tree
+collision.
 
 - Placement inputs, offline: density and type rasters per tile from land cover + canopy height
   (a 3DEP LiDAR canopy height model where LiDAR exists, otherwise Meta/WRI CHMv2, CC BY 4.0) +
