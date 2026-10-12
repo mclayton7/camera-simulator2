@@ -40,9 +40,10 @@ Success, on Camp Pendleton (M1 Pro / Metal), package `pendleton-r5veg` (= `pendl
   (`chm/<quadkey>.tif`, e.g. Pendleton `0230132032`) plus `tiles.geojson` (59 MB index) and `metadata/`. Checked on
   `0230132032`: 32768² **uint8 metres**, EPSG:3857, 1.194 m pixels (≈ 1.0 m on the ground at 33° N), 512² tiles,
   deflate, overviews 2–64, no nodata value; **141 MB**. Downsampled percentiles over the tile: p50 0 m, p90 3 m, p99 10 m.
-- **Package bbox size.** `pendleton-r4`'s bbox is 2.56° × 2.13° (≈ 240 × 236 km, much of it ocean). Full resolution over
-  all of it is ≈ 64 quadkey tiles × 141 MB ≈ 9 GB, downloaded once into the fetch cache. Cover needs the full resolution
-  (the share of 1 m pixels over 3 m); the overviews' resampling isn't documented.
+- **Download size.** Canopy is built over the package `bbox` (scene.toml), not the land-cover ring: Pendleton's bbox
+  [-117.62, 33.19, -117.24, 33.52] (0.38° × 0.33°, ≈ 35 × 37 km) touches 2–4 level-10 quadkeys ≈ 0.3–0.6 GB, downloaded
+  once into the fetch cache. Cover needs the full resolution (the share of 1 m pixels over 3 m); the overviews'
+  resampling isn't documented. Outside the bbox the runtime uses the no-canopy rule (below).
 - **Land-cover grid** (`camsim-landcover-1`): 0.05° tiles, 600 × 600 PNG, row 0 north, named by the south-west corner;
   9.3 m × 7.8 m texels at 33° N. The canopy layer reuses the grid exactly, so a texel of canopy and of land cover are
   the same ground.
@@ -131,7 +132,9 @@ is the library index. The candidate draws are stateless hashes, so adding draws 
   - no canopy layer: p = 0.15 × `density_scale` (R4);
   - canopy layer: if height < 3 m or cover = 0, no tree; else s = clamp(height / type.height_m, 0.5, 2.0) and
     p = clamp(cover × A_cand / (π (r_crown s)²) × `density_scale`, 0, 1), A_cand = (cell / N)². The expected crown
-    area per candidate then equals the cover until p saturates (cover ≳ 0.8 at r 2.5–3 m).
+    area per candidate then equals the cover until p saturates: one crown per 34.6 m² candidate caps crown cover at
+    π r² / 34.6 m², ≈ 0.57 for a 2.5 m pine crown and 0.66 for the 2.7 m broadleaf (≈ 290 trees/ha, a dense stand).
+    Denser canopy is drawn at that cap (a known limit).
   Scale: canopy layer: s × (0.9 + 0.2 u_scale); none: R4's 0.8–1.2. Then the building mask (R3b, unchanged).
   **With no canopy, a mix of `10 → [one type]` and that type at index 0, the trees are R4's bit for bit** (the species
   draw doesn't change the others; type 0 hashes as R4's).
@@ -144,17 +147,19 @@ is the library index. The candidate draws are stateless hashes, so adding draws 
 
 ### B1. Canopy layer (`camsim-scene`)
 
-- **Source** `sources/chmv2.py`: the quadkeys at level 10 covering the canopy bbox (`[canopy] bbox`, default the
-  package bbox); each `chm/<qk>.tif` downloaded whole into the fetch cache (resumable, size + ETag checked, as other
+- **Source** `sources/chmv2.py`: the quadkeys at level 10 covering the package bbox; each `chm/<qk>.tif` downloaded whole into the fetch cache (resumable, size + ETag checked, as other
   sources). A key the bucket doesn't have (ocean) is "missing" → no canopy there. The acquisition dates come from
   `metadata/` (or `tiles.geojson`) for the tiles used, recorded in the manifest. Licence `CC-BY-4.0` (already on the
   default allow-list); attribution: "Canopy height: Meta and World Resources Institute (WRI), CHMv2 (2025), CC BY 4.0".
   The exact attribution text is taken from the registry page in the plan task.
-- **Layer** `layers/canopy.py`, format `camsim-canopy-1`: the land-cover grid (0.05° tiles, 600 × 600, row 0 north,
-  same names) as **8-bit LA PNG**: L = cover in % (0–100), A = canopy height in m (0–255). Per texel, from every CHM
-  pixel whose centre falls in it (pixel centres reprojected 3857 → lat/lon): cover = share of pixels ≥ 3 m; height =
-  p90 of those pixels (0 if none). `index.json` like land cover's (format, source, licence, attribution, tile list,
-  missing). `[canopy] enabled = true` turns it on (default off, so existing package configs are unchanged).
+- **Layer** `layers/canopy.py`, format `camsim-canopy-1`: two tile sets on the land-cover grid (0.05° tiles,
+  600 × 600 8-bit greyscale PNG, row 0 north, same names), `canopy/cover/` (cover in %, 0–100) and `canopy/height/`
+  (canopy height in m, 0–255), each with its own `index.json` (land cover's keys, `"format": "camsim-canopy-1"`,
+  `"band": "cover"|"height"`), so the runtime reuses `FLandCoverTileCache`. Tiles cover the package bbox. Per texel,
+  from every CHM pixel whose centre falls in it (pixel centres reprojected 3857 → lat/lon): cover = share of pixels
+  ≥ 3 m; height = the nearest-rank p90 (sorted[floor(0.9 (n − 1))]) of those pixels (0 if none). A texel no CHM tile
+  covers (a quadkey the bucket lacks, i.e. ocean) is cover 0, height 0. `[canopy] enabled = true` turns it on (default
+  off, so existing package configs are unchanged).
 - **verify:** index parses, every listed tile exists with the right size and mode, cover ≤ 100, hashes match.
   **Tests** (no network): a synthetic 3857 CHM fixture → known cover/height per texel, edge texels, a missing quadkey,
   determinism (same bytes twice).
@@ -162,9 +167,11 @@ is the library index. The candidate draws are stateless hashes, so adding draws 
 
 ### B2. Canopy at runtime (`Vegetation/VegetationCanopy`)
 
-`FVegetationCanopy`, like `FVegetationLandCover`: its own 16-tile LRU of decoded LA tiles (2 bytes/texel, ~11.5 MB),
-`Sample(Lat, Lon) → {CoverFrac, HeightM}` thread-safe, misses decode on the caller (the scatter worker). Found at
-`<scene.dir>/canopy/index.json`; `vegetation.canopy_enabled: false` ignores it. An unusable index logs one warning and
+`FVegetationCanopy`, like `FVegetationLandCover`: two `FLandCoverTileCache`s (cover, height; 16 tiles each, ~11.5 MB
+together; the cache takes the expected index format), `Sample(Lat, Lon) → TOptional<{CoverFrac, HeightM}>` thread-safe,
+misses decode on the caller (the scatter worker); unset where the canopy layer has no tile (outside the package bbox),
+and there the scatter uses the no-canopy rule. Found at `<scene.dir>/canopy/cover/index.json` +
+`canopy/height/index.json`; `vegetation.canopy_enabled: false` ignores it. An unusable index logs one warning and
 falls back to the no-canopy rule; a bad tile reads as no canopy there (one warning per tile, not retried), as the mask.
 The `Vegetation: on (...)` line gains `canopy: chmv2|none|off`, `mix: package|file|default`, `shrubs`, `far`.
 
@@ -216,13 +223,13 @@ Defaults are starting values; the bench sweep (below) proposes the final ones an
   default with a library lacking shrubs = R4.
 - Scatter: **R4 bit-identity** (no canopy, default mix, shrubs off: same instances and hash as the slice's golden cells);
   species frequencies vs weights (χ² over many cells); canopy acceptance (expected crown fraction vs cover for cover
-  0.1–0.7, within 2 pp over 10⁴ cells); height → scale and clamps; no tree below 3 m; shrubs only on codes with shrubs;
+  0.1–0.5, within 2 pp over 10⁴ cells); height → scale and clamps; no tree below 3 m; shrubs only on codes with shrubs;
   shrub density; the mask applies to both; cell edges respected.
 - Far tier: the far set is a subset of the near set (positions and types), keep fraction, dissolve buckets, the 25 m grid
   interpolation, block ↔ cell ids.
 - Streaming: block states with hysteresis, no gap during a switch (old actors kept until the new ones spawn), far off =
   only near blocks, budgets.
-- Canopy runtime: LA tile decode, sampling at tile edges, bad tile / bad index fallbacks.
+- Canopy runtime: both tile sets, sampling at tile edges, unset outside the layer, bad tile / bad index fallbacks.
 - Scene tooling (`scripts/scene/tests`): the canopy layer fixtures (B1), the mix TOML → `mix.json`, verify.
 
 ## Acceptance (`scripts/vegetation_check.py`, Pendleton `pendleton-r5veg`, macOS/Metal; Linux joins `FOR_LINUX.md`)
@@ -234,7 +241,7 @@ on a code whose mix lists shrubs. New gates:
 | Gate | What |
 |---|---|
 | species | per code, dumped type counts vs the mix: χ² p > 0.001 |
-| canopy | per 100 m cell with mean CHMv2 cover in [0.1, 0.7] (≥ 50 such cells): crown fraction Σ π (r s)² / cell area vs mean cover; median abs error ≤ 10 pp |
+| canopy | per 100 m cell with mean CHMv2 cover in [0.1, 0.5] (≥ 50 such cells; above that the candidate grid saturates): crown fraction Σ π (r s)² / cell area vs mean cover; median abs error ≤ 10 pp |
 | far_determinism | far blocks dumped from the two approach paths: same hashes; every far tree is in the near dump of its cell |
 | handoff | a 60 s straight run at 120 m HAE: no block is ever without actors between its first spawn and its drop (log check) |
 | long_range | a 5 km-altitude oblique pass (EO): 0 dropped frames and game p95 within the budget below |
@@ -259,6 +266,7 @@ No human editor work.
 
 - Trees placed by canopy on non-tree codes take that code's thermal class (per-instance thermal class deferred).
 - CHMv2 is a model estimate from imagery of uneven date; the canopy gate measures agreement with CHMv2, not with truth.
+- Crown cover saturates at ≈ 0.57–0.66 (one tree per 34.6 m² candidate); closed forest above that is drawn at the cap.
 - The near/far switch is an LOD pop at block granularity (400 m), not a fade.
 - Shrubs end at `shrub_radius_m` with a hard cut (they are small at that range; the bench shots judge it).
 - Still no collision (CIGI LOS and DIS ignore vegetation), no grass, leaf-on all year.
