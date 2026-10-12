@@ -463,8 +463,9 @@ and size; shrubs on scrub and grassland in a ring within `shrub_radius_m`; a far
 trees in 400 m blocks out to `far_radius_m` (4 km) with a no-gap near/far handoff and a 4-step dissolve. Packages without
 a mix or canopy keep R4's trees bit for bit. Acceptance on Pendleton passes every gate (placement, species χ², canopy
 cover within 8.1 pp of CHMv2, far determinism, handoff, grounding, determinism, origin shift, off switch, gt, footprints,
-R4 identity, long range at +2.0 ms game p95). Defaults (user, 2026-10-12): shrubs 500 m, far 4000 m, keep 0.35; the
-dense pass is +0.25 ms over the game p50 budget with them (accepted).
+R4 identity, a 650 m HAE long-range view drawing 5,549 far trees at +1.06 ms game p95). Tiers are planned by 3D distance
+from the camera; far trees stand on the rendered terrain (traced). Defaults (user, 2026-10-12): shrubs 500 m, far
+4000 m, keep 0.35; the dense pass is +1.63 ms game p50, 0.13 ms over the budget with them (accepted).
 Still deferred (the rest of this section): a species map (LANDFIRE EVT or similar) instead of one mix per code,
 textured impostors and a real cross-fade, mapped trees, poles/fences/clutter, per-instance thermal class, tree
 collision.

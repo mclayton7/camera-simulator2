@@ -74,15 +74,18 @@ geometry only: visible in EO and IR (in IR the pixel takes the land cover's clas
   (400 m). A cell belongs to the block holding its centre, with block columns `far_block_cells` × the block row's
   middle-row column width (the grid's column widths differ per row, so cells drift row to row; this keeps blocks square
   anywhere): usually 4 × 4 cells, give or take a column. `FVegetationTierPlanner` makes a block **near** within
-  `radius_m` of the camera's ground point (it stays near to 1.2 × `radius_m`), **far** within `far_radius_m` (it
-  stays far to 1.1 × `far_radius_m`, and turns near again only inside `radius_m`), else drops it; it replans after the
-  camera moved 25 m.
+  `radius_m` of the camera (it stays near to 1.2 × `radius_m`), **far** within `far_radius_m` (it stays far to 1.1 ×
+  `far_radius_m`, and turns near again only inside `radius_m`), else drops it; it replans after the camera moved 25 m
+  along the ground or in height. Distances are **3D**, from the block centre to the camera at its height above the
+  terrain (a nadir trace every 15 ticks, the frame centre's terrain until one hits), because HISM cull distances are
+  3D: planned by ground distance, a camera 2 km up drew no near tree at all. So from 1.5 km up there are no near cells,
+  and from 4.4 km up nothing is planned.
 - **Near tier** (`Vegetation/VegetationCellActor.h`, `VegetationManager.h`): one actor per cell, globe-anchored at the
   cell centre in its East-South-Up frame (survives origin shifts), one HISM per type: trees with `cast_shadows`, culled
   at 1.2 × `radius_m` + a block diagonal (blocks are whole). Collision off, no custom depth or stencil. Trees take
   exact per-tree heights (one `SampleHeightMostDetailed` batch per cell).
 - **Shrub ring**: the cells whose centre is within `shrub_radius_m` + half a cell diagonal (every cell overlapping
-  the circle; kept to 1.2 × that) get a second, shrub-only actor (`GenerateCellContent` with trees off), one HISM per
+  the circle, in 3D like the tiers; kept to 1.2 × that) get a second, shrub-only actor (`GenerateCellContent` with trees off), one HISM per
   shrub type culled at `shrub_radius_m`, shadows as the trees. Heights come from a 20 m grid per cell (36 points,
   bilinear, sunk 0.15 m): Cesium answers every height point on the game thread, and ~1,000 shrubs per cell sampled one
   by one cost +8 ms game p95. Ring cells share the in-flight and spawn budgets (near cells first, then the ring, then
@@ -91,9 +94,11 @@ geometry only: visible in EO and IR (in IR the pixel takes the land cover's clas
 - **Far tier** (`Vegetation/VegetationFar.h`, `VegetationFarTier.h`): one actor per far block. Its trees are the same
   `GenerateCellContent` trees of the block's cells (shrubs off), kept when `Uniform(Hash(col, row, k, seed, 172))` <
   `far_keep` (0.35) and enlarged by `far_scale` (1.3), drawn with the type's `far_gltf` (a procedural 108-triangle lathe
-  crown + trunk, untextured), no shadows. Heights come from one `SampleHeightMostDetailed` batch per block on a 100 m
-  grid (bilinear; trees sunk 0.5 m; a tree whose grid quad has a failed point is dropped): a 25 m grid out to 4 km
-  cost several ms of game time in `Cesium::loadTiles`. Trees are split by
+  crown + trunk, untextured), no shadows. Heights come from a 100 m grid per block traced on the **rendered** terrain's
+  collision (`FRetryingTraceSampler`: no tile loading; misses retried every 30 ticks, 20 times; bilinear, trees sunk
+  0.5 m; a tree whose grid quad has a failed point is dropped). `SampleHeightMostDetailed` there loaded the finest
+  terrain tiles over the whole far disk (a 25 m grid cost several ms in `Cesium::loadTiles`, and even a 100 m grid
+  slowed later passes, "Measured"); without `create_physics_meshes` the far tier still uses it. Trees are split by
   `Hash(..., 173)` into 4 HISMs culled at 0.7 / 0.8 / 0.9 / 1.0 × `far_radius_m`: the outer 30 % thins in four steps
   instead of ending in a hard line.
 - **No gap at a switch:** a block switching tier keeps its old actors until the new tier has settled (its far actor
@@ -474,72 +479,80 @@ Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 
 ## Measured: species, canopy, shrubs, far tier (R4 deeper)
 
 2026-10-12, M1 Pro, Metal, `pendleton-r5veg` (the R4 package plus `[canopy]` CHMv2 and the Pendleton mix, buildings
-with the R3b mask), defaults (radius 1000 m, shrubs 500 m, far 4000 m, keep 0.35, blocks 4), commit `ec818a0`. Every
+with the R3b mask), defaults (radius 1000 m, shrubs 500 m, far 4000 m, keep 0.35, blocks 4), commit `63d589f`. Every
 gate passes (`scripts/vegetation_check.py --stages approach,off,gt,truck,oblique,footprints,r4_identity,long_range`,
-`.cache/veg/check-r5/report.json`):
+`.cache/veg/check-r7/report.json`):
 
 | Gate | Result |
 |---|---|
-| placement | 20,078 trees and 91,191 shrubs in 1,040 cells; 0 trees or shrubs off their mix's codes, 0 trees on canopy texels with no cover or < 3 m |
-| species | χ² per code and role, p > 0.001: code 30 shrubs 25,342 / 25,596 (`shrub_chaparral` / `shrub_desert`, p 0.26), code 20 11,324 / 2,776 (p 0.35); single-type lists (10 and 30 trees, 10 shrubs) 0 strays |
-| canopy | 123 cells with CHMv2 cover in [0.1, 0.5]: median \|drawn crown cover − CHMv2 cover\| 8.1 pp (mean −9.9 pp: the crowns' saturation) |
-| far_determinism | 271 far blocks in both runs, 0 hash mismatches; 14,174 far trees checked against their near cells, 0 missing |
-| handoff | 9,988 tier/spawn/destroy events, 1,595 destroys, 0 gaps |
+| placement | 18,290 trees and 70,478 shrubs in 920 cells; 0 trees or shrubs off their mix's codes, 0 trees on canopy texels with no cover or < 3 m |
+| species | χ² per code and role, p > 0.001: code 30 shrubs 19,962 / 20,219 (`shrub_chaparral` / `shrub_desert`, p 0.20), code 20 9,289 / 2,276 (p 0.39); single-type lists (10 and 30 trees, 10 shrubs) 0 strays |
+| canopy | 104 cells with CHMv2 cover in [0.1, 0.5]: median \|drawn crown cover − CHMv2 cover\| 7.9 pp (mean −9.3 pp: the crowns' saturation) |
+| far_determinism | 269 far blocks in both runs, 0 hash mismatches; 12,832 far trees checked against their near cells, 0 missing |
+| handoff | 9,942 tier/spawn/destroy events, 1,587 destroys, 0 gaps |
 | grounding | north and south n=200, max dz 0.000 m |
-| determinism | 179 cells in both dumps, 0 hash mismatches |
-| origin_shift | SSIM 0.972 / 0.985 vs floor 0.980 − 0.01; 230 cells spawned again after the trip in each run, 0 hash changes |
-| off_switch | no `Vegetation:` line in the off run; `nadir_3km` SSIM 0.9956 / 0.9784 vs the baseline pair's 0.9796 (weak gate, as in the slice) |
+| determinism | 158 cells in both dumps, 0 hash mismatches |
+| origin_shift | SSIM 0.971 / 0.985 vs floor 0.980 − 0.01; 191 / 202 cells spawned again after the trip, 0 hash changes |
+| off_switch | no `Vegetation:` line in the off run; `nadir_3km` SSIM 0.9785 / 0.9786 vs the baseline pair's 0.9796 (weak gate, as in the slice) |
 | gt | `gt_occlusion_check.py` exit 0 |
-| footprints | 14,809 trees, 0 trunks inside a footprint, 0 probe hits |
+| footprints | 12,803 trees, 0 trunks inside a footprint, 0 probe hits |
 | r4_identity | 198 cells against the R4 baseline (no mix, no canopy, shrubs and far off): 0 tree-hash mismatches |
-| long_range | 5 km HAE, 15° down: game p50 +1.27 ms, p95 +2.02 ms (budget 3.0), GPU −0.04 ms, 0 dropped |
+| long_range | 650 m HAE, 12° down, 30° FOV over the riparian woodland: game p95 +1.06 ms (budget 3.0), 0 dropped; 5,549 far trees drawn in the view (in bearing and inside their bucket's 3D cull), 1,686 in the wedge past it |
 
-Truck under trees (reported): 374 annotations, visibility median 0.18, min 0.013.
+Truck under trees (reported): visibility median 0.18. Shot of the long-range view: `.cache/veg/check-r7/long_range/view/long_range_view.png`.
 
-**Height sampling was the cost.** The first acceptance run failed `long_range` at game p95 +11.2 ms. An Unreal Insights
-trace put it in `Cesium::loadTiles` (35.9 s over the run vs 0.28 s with vegetation off): cesium-native answers every
-`SampleHeightMostDetailed` point on the game thread, and the run asked for one point per shrub (~1,000 per cell) and a
-25 m grid per far block out to 4 km. Shrubs now take a 20 m grid per cell and far blocks a 100 m grid (p95 +2.8 ms),
-trees keep their exact per-tree heights. The dense-pass sweep then still showed shrubs at +1.9 ms game p50 and +3.8 ms
-p95 at any `shrub_radius_m`: near cells generated shrubs out to `radius_m` and the shrub radius only culled them. A
-second trace (dense pass, shrubs on vs off) put the extra time in `Cesium::loadTiles` (+2.9 s) and world tick and
-visibility on the extra actors; the **shrub ring** (only cells within `shrub_radius_m` get shrubs) cut it to the
-figures below.
+**What the measurements found on the way** (each is fixed and covered by a test):
+
+- **Height sampling on the game thread.** The first acceptance run failed `long_range` at game p95 +11.2 ms: Insights put
+  it in `Cesium::loadTiles` (35.9 s over the run vs 0.28 s with vegetation off), because cesium-native answers every
+  `SampleHeightMostDetailed` point on the game thread and the run asked one point per shrub and a 25 m grid per far
+  block. Shrubs moved to a 20 m grid per cell and far blocks to a 100 m grid; trees keep exact heights.
+- **Shrubs generated out to the near radius.** Near cells carried ~1,000 shrubs each out to `radius_m`, and
+  `shrub_radius_m` only culled them: +1.9 ms game p50, +3.8 ms p95 in the dense pass at any shrub radius. The shrub ring
+  generates them only within `shrub_radius_m`.
+- **Tiers by ground distance** (final review). HISM culls are 3D, so above ~1.2 km no near tree was drawn, and the old
+  5 km HAE `long_range` view had every far tree past its cull: it measured invisible trees. Tiers and the ring are now
+  planned by 3D distance from the camera's height above the terrain, and `long_range` flies low enough to see the far
+  tier, with a gate on far trees drawn.
+- **Far heights loaded the finest terrain everywhere.** `SampleHeightMostDetailed` on every far block's grid loaded the
+  finest 3DEP tiles over the whole 4.4 km far disk; after the low long-range pass the next pass ran +0.3 ms p50,
+  +2.5 ms p95 and +500 MiB. Far blocks now trace the rendered terrain (`FRetryingTraceSampler`).
+- **Canopy no-data** (final review). Texels no CHMv2 pixel covers were written 0 % cover (no trees); they are now
+  no data (255) and get the land-cover rule.
 
 ### Bench (R4 deeper)
 
-`scripts/bench/sweep.py`, 2026-10-12, M1 Pro, `pendleton-r5veg`, EO, 2 repeats per row, buildings on (SSE 64) in every
-row, increase of the row median over the buildings-on / trees-off row. Every row: 0 dropped, ≥ 29.6 fps. Budget: game
-p50 ≤ +1.5 ms, p95 ≤ +3.0 ms, GPU ≤ +5.0 ms, memory ≤ +1024 MiB.
+`scripts/bench/sweep.py`, 2026-10-12, M1 Pro, `pendleton-r5veg`, EO, commit `63d589f`, 2 repeats per row, buildings on
+(SSE 64) in every row, increase of the row median over the buildings-on / trees-off row. Every row: 0 dropped,
+≥ 29.6 fps. Budget: game p50 ≤ +1.5 ms, p95 ≤ +3.0 ms, GPU ≤ +5.0 ms, memory ≤ +1024 MiB.
 
-Far tier, `long_range` phase (`--axis far_radius=0,2000,4000,6000 --phase long_range`; trees-off row 3.56 / 5.04 ms):
+Far tier, `long_range` phase (`--axis far_radius=0,2000,4000,6000 --phase long_range`; trees-off row 4.17 / 6.94 ms,
+GPU 18.2 ms):
 
 | far_radius_m | game p50 | game p95 | GPU p50 | memory MiB | budget |
 |---|---|---|---|---|---|
-| 0 (off) | +0.53 | +1.93 | +0.53 | +264 | pass |
-| 2000 | +0.81 | +1.98 | +0.60 | +370 | pass |
-| **4000** | **+1.17** | **+2.44** | **+0.26** | **+482** | **pass** |
-| 6000 | +1.70 | +3.32 | +1.19 | +538 | FAIL: game p50, p95 |
+| 0 (off) | +0.38 | +0.51 | +1.37 | +114 | pass |
+| 2000 | +0.58 | +0.75 | −1.44 | +124 | pass |
+| **4000** | **+0.91** | **+1.60** | **+2.24** | **+202** | **pass** |
+| 6000 | +1.43 | +2.06 | −0.07 | +228 | pass (marginal p50) |
 
-`far_keep` 0.25 / 0.35 / 0.5 at 4000 m (`long_range`): game p50 +1.16 / +1.19 / +1.25, p95 +2.38 / +2.59 / +2.62, all
-pass: the kept share barely moves the cost (the block count does).
+GPU p50 varies ±1.5 ms between repeats of one row here. `far_keep` 0.25 / 0.35 / 0.5 (measured on the earlier 5 km view)
+moved game p50 by < 0.1 ms: the block count drives the cost, not the kept share.
 
-Shrubs, `dense_pass` phase, with the shrub ring (`--axis shrubs=off,on --axis shrub_radius=300,500,1000`; trees-off row
-3.99 / 6.76 ms):
+Dense pass at the defaults (`--axis shrubs=off,on --axis shrub_radius=500 --phase dense_pass`; trees-off row 4.00 /
+6.82 ms):
 
-| shrubs | shrub_radius_m | game p50 | game p95 | GPU p50 | memory MiB | budget |
-|---|---|---|---|---|---|---|
-| off | (any) | +1.46 – +1.56 | +2.26 – +3.21 | +2.2 – +3.2 | +333 – +341 | pass (p95 noise at 1000) |
-| on | 300 | +1.64 | +2.20 | +0.62 | +293 | FAIL: game p50 |
-| **on** | **500** | **+1.75** | **+2.17** | **+1.19** | **+337** | **FAIL: game p50 (accepted)** |
-| on | 1000 | +2.22 | +2.71 | +2.76 | +311 | FAIL: game p50 |
+| shrubs | game p50 | game p95 | GPU p50 | memory MiB | budget |
+|---|---|---|---|---|---|
+| off | +1.21 | +1.68 | +3.73 | +189 | pass |
+| **on (500 m)** | **+1.63** | **+2.22** | **+3.64** | **+201** | **FAIL: game p50 by 0.13 ms (accepted)** |
 
-Before the ring, shrubs on at 500 m measured +1.90 / +3.83 ms. Trees alone (near + far) already use +1.47 ms of the
-1.5 ms game p50 budget in the dense pass; shrubs add ~0.3 ms.
+The shrub-radius sweep (300 / 500 / 1000 m, with the ring, before the last two fixes) measured shrubs on at +1.64 /
++1.75 / +2.22 ms game p50: the radius sets the ring's cell count and with it the cost.
 
 **Defaults chosen 2026-10-12 (user):** shrubs on at 500 m, far tier 4000 m, keep 0.35, blocks 4. The dense pass is
-+0.25 ms over the game p50 budget with these (p95, GPU and memory pass; `long_range` passes everything); accepted as a
-known cost, like the R4 footprint check's p95 overrun. Contact sheets: `.cache/bench-r5veg/{far,shrubs,keep}/sweep_sheet.png`.
++0.13 ms over the game p50 budget with them (p95, GPU and memory pass; `long_range` passes everything); accepted as a
+known cost, like the R4 footprint check's p95 overrun. Contact sheets: `.cache/bench-r7veg/{far,dense}/sweep_sheet.png`.
 
 ## Known limits
 
@@ -555,9 +568,13 @@ known cost, like the R4 footprint check's p95 overrun. Contact sheets: `.cache/b
 - Trees placed by canopy on non-tree codes take that code's thermal class in IR (per-instance thermal class deferred).
 - The near/far switch is a model swap at block granularity (400 m), not a fade; far meshes are untextured blobs.
 - Shrubs end at `shrub_radius_m` with a hard cut, and Kenney's shrubs are stylised leaf fans (see "Asset").
-- Shrub heights are bilinear on a 20 m grid and far-tree heights on a 100 m grid: on rough ground a shrub can sit up
-  to ~0.5–1 m off the surface (sunk 0.15 m to hide most of it), a far tree a few metres (seen from ≥ 1 km).
-- At the defaults the dense pass is +1.75 ms game p50 over vegetation off, 0.25 ms over the budget (accepted
+- Shrub heights are bilinear on a 20 m grid per cell: on rough ground a shrub can sit up to ~0.5–1 m off the surface
+  (sunk 0.15 m to hide most of it). Far trees stand on the rendered terrain where their block was traced (100 m grid);
+  as tiles refine on approach they can float or sink a few metres until the near tier takes over at ~1 km.
+- Far blocks whose terrain isn't loaded when traced (e.g. right after a cut) retry for ~20 s; points still missing
+  then drop their trees until the block is generated again. Without `create_physics_meshes` far blocks sample
+  `SampleHeightMostDetailed` (finest tiles over the whole far disk: slow after low passes).
+- At the defaults the dense pass is +1.63 ms game p50 over vegetation off, 0.13 ms over the budget (accepted
   2026-10-12, "Bench (R4 deeper)").
 - Visual review items (open): far-tier trees render darker than near ones, `shrub_chaparral` looks very dark.
 - Vegetation has no collision: CIGI LOS passes through it, DIS ignores it.

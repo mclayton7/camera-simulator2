@@ -1907,17 +1907,24 @@ shrub ring within `shrub_radius_m`, and a far tier (400 m blocks, procedural 108
 4 dissolve buckets) to `far_radius_m` 4000 with a no-gap handoff. New config: `vegetation.mix_file`, `canopy_enabled`,
 `shrubs_enabled`, `shrub_radius_m`, `shrub_spacing_m`, `far_radius_m`, `far_block_cells`, `far_keep`, `far_scale`.
 Acceptance (`vegetation_check.py`, `pendleton-r5veg`) passes every gate, including R4 bit-for-bit identity (198 cells)
-and long range (+2.0 ms game p95). Two performance fixes on the way: Cesium answers each height point on the game
-thread, so shrubs and far blocks take coarse height grids (20 m / 100 m; per-point sampling was +11 ms p95), and shrubs
-are generated only in the ring (generating them out to the near radius was +1.9 ms p50). **User decision 2026-10-12:**
-defaults shrubs 500 m, far 4000 m, keep 0.35; the dense pass is +1.75 ms game p50, 0.25 ms over budget (accepted). UE
-593/593 (GPU 26 skipped under NullRHI). No editor work.
+and long range (650 m HAE over the far tier: 5,549 far trees drawn, +1.06 ms game p95). Fixes the measurements forced:
+Cesium answers each height point on the game thread, so shrubs take a 20 m grid per cell (per-shrub sampling was +11 ms
+p95); shrubs are generated only in the ring (out to the near radius was +1.9 ms p50); tiers are planned by 3D distance
+from the camera (final review: by ground distance nothing near was drawn above ~1.2 km and the old 5 km long-range view
+saw no far tree); far blocks trace the rendered terrain (`SampleHeightMostDetailed` loaded the finest tiles over the
+whole far disk: +2.5 ms p95, +500 MiB in later passes); canopy texels without CHMv2 are no data. **User decision
+2026-10-12:** defaults shrubs 500 m, far 4000 m, keep 0.35; the dense pass is +1.63 ms game p50, 0.13 ms over budget
+(accepted). UE 597 (GPU 26 skipped under NullRHI). No editor work.
 
 - [ ] **Follow-up: R4 visual review** (user): far-tier trees render darker than near ones; `shrub_chaparral` looks very
   dark; the 500 m shrub edge is visible. Shots: `.cache/veg/check-r5/oblique/`, `.cache/bench-r5veg/*/sweep_sheet.png`.
 - [ ] **Follow-up: R4 deeper on Linux/Vulkan** (`FOR_LINUX.md` section 6) and on the operational sites' packages
   (Eglin, Pax River, Yuma mixes in `docs/vegetation.md` "Site mixes").
-- [ ] **Follow-up: dense-pass game p50** at the R4 deeper defaults is +0.25 ms over budget (trees alone +1.47 ms).
+- [ ] **Follow-up: dense-pass game p50** at the R4 deeper defaults is +0.13 ms over budget (trees alone +1.21 ms).
+- [ ] **Follow-up: R4 deeper minors from the final review:** reserve an in-flight slot for far blocks that hold near cells
+  (starvation in low fast flight); skip the far tier when the library has no far meshes; a mix code whose names are all
+  unknown falls back to the default mix instead of going bare; far trees on R3 packages (runtime building check) ignore
+  buildings; tests for a cut during a switch with the ring.
 
 - [x] **Build-time building-footprint exclusion for trees** (follow-up to the 2026-10-11 decision to keep
   `vegetation.drop_in_buildings` on): done in R3b (2026-10-11): `features/buildings/mask/` + `GenerateCell` clearance
