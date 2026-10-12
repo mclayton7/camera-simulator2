@@ -7,9 +7,11 @@
 #include "Vegetation/VegetationGrid.h"
 
 /**
- * Vegetation blocks and tiers (REALISM R4, docs/vegetation.md): a block is BlockCells x BlockCells grid cells (rows
- * [Row*N, Row*N+N), cols [Col*N, Col*N+N), so a cell's content never depends on its block). Streaming decides per block
- * whether it is near (its cells at full detail) or far (one low-poly actor). Pure; game thread for the planner.
+ * Vegetation blocks and tiers (REALISM R4, docs/vegetation.md): a block row is BlockCells cell rows; along it, blocks are
+ * BlockCells x the middle row's column width wide, and a cell belongs to the block holding its centre (the grid's column
+ * widths differ per row, so cell columns drift row to row; this keeps blocks ~square anywhere). Usually N x N cells, give or
+ * take a column. A cell's content never depends on its block. Streaming decides per block whether it is near (its cells at
+ * full detail) or far (one low-poly actor). Pure; game thread for the planner.
  */
 namespace CamSimVegetation
 {
@@ -17,7 +19,8 @@ namespace CamSimVegetation
 
 	enum class EVegTier : uint8 { Near, Far };
 
-	CAMSIMTEST_API FVegBlockId BlockOf(FVegCellId Cell, int32 BlockCells);
+	/** The block holding the cell's centre. */
+	CAMSIMTEST_API FVegBlockId BlockOf(FVegCellId Cell, int32 BlockCells, double CellM);
 	/** The block's cells, rows south to north, cols west to east (cols past a row's NumCols and rows past MaxLatDeg left out). */
 	CAMSIMTEST_API TArray<FVegCellId> CellsOfBlock(FVegBlockId Block, int32 BlockCells, double CellM);
 	CAMSIMTEST_API void BlockCentre(FVegBlockId Block, int32 BlockCells, double CellM, double& OutLatDeg, double& OutLonDeg);

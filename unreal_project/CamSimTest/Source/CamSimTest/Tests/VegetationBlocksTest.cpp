@@ -11,13 +11,29 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegBlocksGeometryTest, "CamSim.Vegetation.Bloc
 bool FVegBlocksGeometryTest::RunTest(const FString& Parameters)
 {
 	const FVegCellId C = CellOf(33.3, -117.4, 100.0);
-	const FVegBlockId B = BlockOf(C, 4);
+	const FVegBlockId B = BlockOf(C, 4, 100.0);
 	const TArray<FVegCellId> Cells = CellsOfBlock(B, 4, 100.0);
-	TestEqual(TEXT("16 cells"), Cells.Num(), 16);
+	TestTrue(*FString::Printf(TEXT("about 16 cells (%d)"), Cells.Num()), Cells.Num() >= 12 && Cells.Num() <= 20);
 	TestTrue(TEXT("contains its cell"), Cells.Contains(C));
-	for (const FVegCellId& X : Cells) TestTrue(TEXT("every cell maps back"), BlockOf(X, 4) == B);
-	TestTrue(TEXT("negative rows floor"), BlockOf({ -1, -1 }, 4) == FVegBlockId{ -1, -1 });
-	TestTrue(TEXT("row 4 -> block 1"), BlockOf({ 4, 3 }, 4) == FVegBlockId{ 1, 0 });
+	for (const FVegCellId& X : Cells) TestTrue(TEXT("every cell maps back"), BlockOf(X, 4, 100.0) == B);
+	TestEqual(TEXT("negative rows floor"), BlockOf({ -1, 0 }, 4, 100.0).Row, -1);
+	TestTrue(TEXT("row 4, col 3 -> block (1, 0)"), BlockOf({ 4, 3 }, 4, 100.0) == FVegBlockId{ 1, 0 });
+	// Blocks stay compact far from 180 W (the grid's columns shift row to row): every cell centre within ~0.75 block of
+	// its block centre, at Pendleton and east of Greenwich.
+	for (const double Lon : { -117.4, 120.0 })
+	{
+		const FVegBlockId X = BlockOf(CellOf(33.3, Lon, 100.0), 4, 100.0);
+		double BLa, BLo; BlockCentre(X, 4, 100.0, BLa, BLo);
+		double Worst = 0.0;
+		int32 Count = 0;
+		for (const FVegCellId& Cc : CellsOfBlock(X, 4, 100.0))
+		{
+			double CLa, CLo; CellCentre(Cc, 100.0, CLa, CLo);
+			Worst = FMath::Max(Worst, GroundDistanceM(BLa, BLo, CLa, CLo));
+			++Count;
+		}
+		TestTrue(*FString::Printf(TEXT("lon %.1f: compact block (%d cells, worst %.0f m)"), Lon, Count, Worst), Worst < 300.0 && Count >= 12);
+	}
 	double La, Lo; BlockCentre(B, 4, 100.0, La, Lo);
 	TestTrue(TEXT("centre within 300 m of the cell"), GroundDistanceM(La, Lo, 33.3, -117.4) < 300.0);
 	const TArray<FVegBlockId> W = BlocksWithin(33.3, -117.4, 4000.0, 100.0, 4);
@@ -47,7 +63,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegTierHysteresisTest, "CamSim.Vegetation.Bloc
 bool FVegTierHysteresisTest::RunTest(const FString& Parameters)
 {
 	FVegetationTierPlanner P({});
-	const FVegBlockId Home = BlockOf(CellOf(33.3, -117.4, 100.0), 4);
+	const FVegBlockId Home = BlockOf(CellOf(33.3, -117.4, 100.0), 4, 100.0);
 	double La, Lo; BlockCentre(Home, 4, 100.0, La, Lo);
 	P.Update(La, Lo);
 	TestTrue(TEXT("home near"), P.GetTier(Home) == TOptional<EVegTier>(EVegTier::Near));
@@ -76,7 +92,7 @@ bool FVegTierHysteresisTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("no far tier: dropped"), Q.GetTier(Home).IsSet());
 	TestEqual(TEXT("no far blocks"), Q.GetFarBlocks().Num(), 0);
 	Q.Update(La + 50000.0 * DLat, Lo);   // a 50 km cut
-	TestFalse(TEXT("nothing near the old place"), Q.GetNearCells().ContainsByPredicate([&](const FVegCellId& C) { return BlockOf(C, 4) == Home; }));
+	TestFalse(TEXT("nothing near the old place"), Q.GetNearCells().ContainsByPredicate([&](const FVegCellId& C) { return BlockOf(C, 4, 100.0) == Home; }));
 	return true;
 }
 

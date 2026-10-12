@@ -8,10 +8,19 @@ namespace CamSimVegetation
 	{
 		int32 FloorDiv(int32 A, int32 N) { return A >= 0 ? A / N : -((-A + N - 1) / N); }
 
-		/** The row whose column width a block uses for its centre (its middle row). */
-		int32 MidRow(FVegBlockId B, int32 N) { return B.Row * N + N / 2; }
+		/** The row whose column width sets a block row's block width (its middle row). */
+		int32 MidRow(int32 BlockRow, int32 N) { return BlockRow * N + N / 2; }
 
-		int32 NumBlockCols(int32 Row, double CellM, int32 N) { return (NumCols(Row, CellM) + N - 1) / N; }
+		/** Width of a block in degrees of longitude in block row BlockRow: N cells of its middle row. */
+		double BlockDLonDeg(int32 BlockRow, double CellM, int32 N) { return N * CellDLonDeg(MidRow(BlockRow, N), CellM); }
+
+		int32 NumBlockCols(int32 BlockRow, double CellM, int32 N)
+		{
+			return FMath::Max(1, FMath::CeilToInt32(360.0 / BlockDLonDeg(BlockRow, CellM, N)));
+		}
+
+		/** A cell's centre longitude measured from 180 W, unclamped (the last column of a row is narrower). */
+		double CellCentreFromWest(FVegCellId C, double CellM) { return (C.Col + 0.5) * CellDLonDeg(C.Row, CellM); }
 
 		bool ByDistance(const TPair<double, FVegCellId>& A, const TPair<double, FVegCellId>& B)
 		{
@@ -20,47 +29,44 @@ namespace CamSimVegetation
 		}
 	}
 
-	FVegBlockId BlockOf(FVegCellId Cell, int32 BlockCells)
+	FVegBlockId BlockOf(FVegCellId Cell, int32 BlockCells, double CellM)
 	{
-		return { FloorDiv(Cell.Row, BlockCells), FloorDiv(Cell.Col, BlockCells) };
+		// Not Col / N: column widths differ per row, so equal column indices drift apart row to row (tens to hundreds of
+		// metres per row away from 180 W). A cell belongs to the block holding its centre, so blocks stay ~square.
+		const int32 BR = FloorDiv(Cell.Row, BlockCells);
+		const int32 BC = FMath::FloorToInt32(CellCentreFromWest(Cell, CellM) / BlockDLonDeg(BR, CellM, BlockCells));
+		return { BR, FMath::Clamp(BC, 0, NumBlockCols(BR, CellM, BlockCells) - 1) };
 	}
 
 	TArray<FVegCellId> CellsOfBlock(FVegBlockId Block, int32 BlockCells, double CellM)
 	{
 		TArray<FVegCellId> Out;
+		const double W = Block.Col * BlockDLonDeg(Block.Row, CellM, BlockCells);
+		const double E = W + BlockDLonDeg(Block.Row, CellM, BlockCells);
 		for (int32 R = Block.Row * BlockCells; R < (Block.Row + 1) * BlockCells; ++R)
 		{
 			double La, Lo; CellCentre({ R, 0 }, CellM, La, Lo);
 			if (!IsLatAllowed(La)) continue;
+			const double DLon = CellDLonDeg(R, CellM);
 			const int32 Cols = NumCols(R, CellM);
-			for (int32 C = Block.Col * BlockCells; C < (Block.Col + 1) * BlockCells; ++C)
-				if (C >= 0 && C < Cols) Out.Add({ R, C });
+			const int32 C0 = FMath::Max(0, FMath::FloorToInt32(W / DLon) - 1);
+			const int32 C1 = FMath::Min(Cols - 1, FMath::CeilToInt32(E / DLon) + 1);
+			for (int32 C = C0; C <= C1; ++C)
+				if (BlockOf({ R, C }, BlockCells, CellM) == Block) Out.Add({ R, C });   // the same predicate as BlockOf
 		}
 		return Out;
 	}
 
 	void BlockCentre(FVegBlockId Block, int32 BlockCells, double CellM, double& OutLatDeg, double& OutLonDeg)
 	{
-		// The mean of the corner cells' centres: column widths differ per row, so a block's rows are offset from each other
-		// (tens of metres per row far from 180 W) and its middle row alone would misplace the centre.
-		const int32 R0 = Block.Row * BlockCells, R1 = R0 + BlockCells - 1;
-		const int32 C0 = Block.Col * BlockCells, C1 = C0 + BlockCells - 1;
-		double Lat = 0.0, Lon = 0.0;
-		for (const FVegCellId C : { FVegCellId{ R0, C0 }, FVegCellId{ R0, C1 }, FVegCellId{ R1, C0 }, FVegCellId{ R1, C1 } })
-		{
-			const FVegCellBounds B = CellBounds(C, CellM);   // unclamped column (CellCentre would clamp the east edge)
-			Lat += 0.25 * 0.5 * (B.SouthDeg + B.NorthDeg);
-			Lon += 0.25 * (-180.0 + (C.Col + 0.5) * CellDLonDeg(C.Row, CellM));
-		}
-		OutLatDeg = Lat;
-		OutLonDeg = FMath::Min(Lon, 180.0);
+		OutLatDeg = -90.0 + (Block.Row + 0.5) * BlockCells * CellDLatDeg(CellM);
+		OutLonDeg = FMath::Min(-180.0 + (Block.Col + 0.5) * BlockDLonDeg(Block.Row, CellM, BlockCells), 180.0);
 	}
 
 	TArray<FVegBlockId> BlocksWithin(double LatDeg, double LonDeg, double RadiusM, double CellM, int32 BlockCells)
 	{
 		TArray<FVegBlockId> Out;
 		if (!IsLatAllowed(LatDeg) || !(RadiusM > 0.0) || !(CellM > 0.0) || BlockCells < 1) return Out;
-		const double BlockM = CellM * BlockCells;
 		const double DLatR = RadiusM / MetresPerDegLat;
 		const int32 Row0 = FloorDiv(CellOf(LatDeg - DLatR, LonDeg, CellM).Row, BlockCells);
 		const int32 Row1 = FloorDiv(CellOf(LatDeg + DLatR, LonDeg, CellM).Row, BlockCells);
@@ -70,10 +76,9 @@ namespace CamSimVegetation
 		{
 			double CLat, Unused; BlockCentre({ BR, 0 }, BlockCells, CellM, CLat, Unused);
 			if (!IsLatAllowed(CLat)) continue;
-			const int32 Row = MidRow({ BR, 0 }, BlockCells);
-			const double DLon = CellDLonDeg(Row, CellM) * BlockCells;
-			const int32 Cols = NumBlockCols(Row, CellM, BlockCells);
-			const double SpanDeg = (RadiusM + BlockM) / (MetresPerDegLat * FMath::Max(FMath::Cos(FMath::DegreesToRadians(CLat)), 0.01));
+			const double DLon = BlockDLonDeg(BR, CellM, BlockCells);
+			const int32 Cols = NumBlockCols(BR, CellM, BlockCells);
+			const double SpanDeg = RadiusM / (MetresPerDegLat * FMath::Max(FMath::Cos(FMath::DegreesToRadians(CLat)), 0.01)) + DLon;
 			double W = FMath::Fmod(LonDeg - SpanDeg + 180.0, 360.0);
 			if (W < 0.0) W += 360.0;
 			const int32 C0 = FMath::FloorToInt32(W / DLon);
