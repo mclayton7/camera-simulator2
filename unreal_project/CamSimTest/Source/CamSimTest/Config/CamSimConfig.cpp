@@ -693,6 +693,10 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlFloat (V, "building_clearance_m", Cfg.Vegetation.BuildingClearanceM);
 			YamlString(V, "mix_file",      Cfg.Vegetation.MixFile);
 			YamlBool  (V, "canopy_enabled",  Cfg.Vegetation.bCanopyEnabled);
+			YamlFloat (V, "far_radius_m",    Cfg.Vegetation.FarRadiusM);
+			YamlInt   (V, "far_block_cells", Cfg.Vegetation.FarBlockCells);
+			YamlFloat (V, "far_keep",        Cfg.Vegetation.FarKeep);
+			YamlFloat (V, "far_scale",       Cfg.Vegetation.FarScale);
 			YamlBool  (V, "shrubs_enabled",  Cfg.Vegetation.bShrubsEnabled);
 			YamlFloat (V, "shrub_radius_m",  Cfg.Vegetation.ShrubRadiusM);
 			YamlFloat (V, "shrub_spacing_m", Cfg.Vegetation.ShrubSpacingM);
@@ -1127,6 +1131,10 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Vegetation.BuildingClearanceM = GetEnvFloat(TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), Cfg.Vegetation.BuildingClearanceM);
 	Cfg.Vegetation.MixFile      = GetEnv     (TEXT("CAMSIM_VEGETATION_MIX_FILE"),      Cfg.Vegetation.MixFile);
 	Cfg.Vegetation.bCanopyEnabled = GetEnvBool (TEXT("CAMSIM_VEGETATION_CANOPY_ENABLED"),  Cfg.Vegetation.bCanopyEnabled);
+	Cfg.Vegetation.FarRadiusM     = GetEnvFloat(TEXT("CAMSIM_VEGETATION_FAR_RADIUS_M"),    Cfg.Vegetation.FarRadiusM);
+	Cfg.Vegetation.FarBlockCells  = GetEnvInt  (TEXT("CAMSIM_VEGETATION_FAR_BLOCK_CELLS"), Cfg.Vegetation.FarBlockCells);
+	Cfg.Vegetation.FarKeep        = GetEnvFloat(TEXT("CAMSIM_VEGETATION_FAR_KEEP"),        Cfg.Vegetation.FarKeep);
+	Cfg.Vegetation.FarScale       = GetEnvFloat(TEXT("CAMSIM_VEGETATION_FAR_SCALE"),       Cfg.Vegetation.FarScale);
 	Cfg.Vegetation.bShrubsEnabled = GetEnvBool (TEXT("CAMSIM_VEGETATION_SHRUBS_ENABLED"),  Cfg.Vegetation.bShrubsEnabled);
 	Cfg.Vegetation.ShrubRadiusM   = GetEnvFloat(TEXT("CAMSIM_VEGETATION_SHRUB_RADIUS_M"),  Cfg.Vegetation.ShrubRadiusM);
 	Cfg.Vegetation.ShrubSpacingM  = GetEnvFloat(TEXT("CAMSIM_VEGETATION_SHRUB_SPACING_M"), Cfg.Vegetation.ShrubSpacingM);
@@ -1569,6 +1577,15 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(FString::Printf(TEXT("vegetation.mix_file '%s' must be an absolute path"), *Vegetation.MixFile));
 	if (!(Vegetation.ShrubRadiusM >= 0.0f && Vegetation.ShrubRadiusM <= Vegetation.RadiusM))
 		Errors.Add(FString::Printf(TEXT("vegetation.shrub_radius_m=%.1f out of range [0, radius_m %.1f]"), Vegetation.ShrubRadiusM, Vegetation.RadiusM));
+	if (!(Vegetation.FarRadiusM == 0.0f || (Vegetation.FarRadiusM >= 1.5f * Vegetation.RadiusM && Vegetation.FarRadiusM <= 10000.0f)))
+		Errors.Add(FString::Printf(TEXT("vegetation.far_radius_m=%.1f must be 0 (off) or in [1.5 x radius_m = %.1f, 10000]"),
+			Vegetation.FarRadiusM, 1.5f * Vegetation.RadiusM));
+	if (Vegetation.FarBlockCells < 2 || Vegetation.FarBlockCells > 8)
+		Errors.Add(FString::Printf(TEXT("vegetation.far_block_cells=%d out of range [2, 8]"), Vegetation.FarBlockCells));
+	if (!(Vegetation.FarKeep > 0.0f && Vegetation.FarKeep <= 1.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.far_keep=%.3f out of range (0, 1]"), Vegetation.FarKeep));
+	if (!(Vegetation.FarScale >= 1.0f && Vegetation.FarScale <= 2.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.far_scale=%.2f out of range [1, 2]"), Vegetation.FarScale));
 	if (!(Vegetation.ShrubSpacingM >= 1.0f && Vegetation.ShrubSpacingM <= 10.0f))
 		Errors.Add(FString::Printf(TEXT("vegetation.shrub_spacing_m=%.2f out of range [1, 10]"), Vegetation.ShrubSpacingM));
 

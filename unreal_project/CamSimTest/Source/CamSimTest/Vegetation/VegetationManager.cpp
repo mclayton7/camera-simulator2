@@ -22,6 +22,7 @@
 #include "Vegetation/VegetationLandCover.h"
 #include "Vegetation/VegetationLibrary.h"
 #include "Vegetation/VegetationMix.h"
+#include "Vegetation/VegetationFar.h"
 #include "CamSimTest.h"
 
 // Task 2 (procedural tree fallback) was skipped: the CC0 asset passed its checks.
@@ -31,12 +32,75 @@ using namespace CamSimVegetation;
 
 static TAutoConsoleVariable<FString> CVarVegDumpPath(TEXT("camsim.Vegetation.DumpPath"), TEXT(""),
 	TEXT("When set, append one JSON line per spawned vegetation cell (row, col, hash, instances) to this file (REALISM R4)."));
+static TAutoConsoleVariable<FString> CVarVegFarDumpPath(TEXT("camsim.Vegetation.FarDumpPath"), TEXT(""),
+	TEXT("When set, append one JSON line per spawned far block (block_row, block_col, hash, instances) to this file (REALISM R4)."));
+static TAutoConsoleVariable<FString> CVarVegEventsPath(TEXT("camsim.Vegetation.EventsPath"), TEXT(""),
+	TEXT("When set, append one JSON line per vegetation tier change, spawn, destroy and empty settle to this file (REALISM R4)."));
 static TAutoConsoleVariable<int32> CVarVegGroundCheck(TEXT("camsim.Vegetation.GroundCheck"), 0,
 	TEXT("1: trace 200 spawned tree bases against the terrain once and log the height error (REALISM R4)."));
 
 FVegetationManager::FVegetationManager(const FVegetationStreaming::FParams& Params, FVegetationHooks InHooks)
-	: Streaming(Params), Hooks(MoveTemp(InHooks)), CellSizeM(Params.CellSizeM)
+	: Streaming(Params), Hooks(MoveTemp(InHooks)), Planner(FVegetationTierPlanner::FParams()), MaxInFlight(Params.MaxCellsInFlight),
+	  MaxSpawnsPerTick(Params.MaxSpawnsPerTick), CellSizeM(Params.CellSizeM)
 {
+}
+
+FVegetationManager::FVegetationManager(const FVegetationTierPlanner::FParams& Tiers, FVegetationHooks InHooks, FVegetationFarHooks FarHooks)
+	: Streaming(FVegetationStreaming::FParams{ Tiers.NearM, Tiers.CellSizeM }), Hooks(MoveTemp(InHooks)), Planner(Tiers), bBlocks(true),
+	  CellSizeM(Tiers.CellSizeM)
+{
+	const FVegetationStreaming::FParams Defaults;
+	MaxInFlight = Defaults.MaxCellsInFlight;
+	MaxSpawnsPerTick = Defaults.MaxSpawnsPerTick;
+	if (Tiers.FarM > 0.0)
+	{
+		Far = MakeShared<FVegetationFarTier>(Tiers.BlockCells, Tiers.CellSizeM, MoveTemp(FarHooks),
+			[this](const TCHAR* Ev, FVegBlockId B) { EmitBlock(Ev, TEXT("far"), B); });
+	}
+}
+
+void FVegetationManager::EmitCell(const TCHAR* Ev, FVegCellId Id) const
+{
+	if (!Hooks.OnEvent) return;
+	const FVegBlockId B = BlockOf(Id, Planner.GetParams().BlockCells, CellSizeM);
+	Hooks.OnEvent(FString::Printf(TEXT("{\"tick\":%lld,\"ev\":\"%s\",\"tier\":\"near\",\"row\":%d,\"col\":%d,\"block_row\":%d,\"block_col\":%d}"),
+		TickCount, Ev, Id.Row, Id.Col, B.Row, B.Col));
+}
+
+void FVegetationManager::EmitBlock(const TCHAR* Ev, const TCHAR* Tier, FVegBlockId B) const
+{
+	if (!Hooks.OnEvent) return;
+	Hooks.OnEvent(FString::Printf(TEXT("{\"tick\":%lld,\"ev\":\"%s\",\"tier\":\"%s\",\"block_row\":%d,\"block_col\":%d}"),
+		TickCount, Ev, Tier, B.Row, B.Col));
+}
+
+FVegetationStreaming::FActions FVegetationManager::TickBlocks(double CamLatDeg, double CamLonDeg)
+{
+	for (const FVegetationTierPlanner::FChange& C : Planner.Update(CamLatDeg, CamLonDeg))
+		EmitBlock(TEXT("tier"), !C.To.IsSet() ? TEXT("none") : (*C.To == EVegTier::Near ? TEXT("near") : TEXT("far")), C.Block);
+	const int32 N = Planner.GetParams().BlockCells;
+	// A near cell whose block went far stays until the far actor has settled (no gap); a block that left both tiers drops.
+	auto NearMayDrop = [this, N](FVegCellId Cell)
+	{
+		const FVegBlockId B = BlockOf(Cell, N, CellSizeM);
+		return !(Far && Planner.GetTier(B) == TOptional<EVegTier>(EVegTier::Far)) || Far->IsSettled(B);
+	};
+	return Streaming.TickWanted(Planner.GetNearCells(), NearMayDrop, MaxInFlight - (Far ? Far->NumInFlight() : 0), MaxSpawnsPerTick);
+}
+
+void FVegetationManager::TickFar(int32 NearSpawns)
+{
+	if (!Far) return;
+	const int32 N = Planner.GetParams().BlockCells;
+	// A far block whose block went near stays until every one of its cells has settled near.
+	auto FarMayDrop = [this, N](FVegBlockId B)
+	{
+		if (Planner.GetTier(B) != TOptional<EVegTier>(EVegTier::Near)) return true;
+		for (const FVegCellId& C : CellsOfBlock(B, N, CellSizeM))
+			if (!Streaming.IsSettled(C)) return false;
+		return true;
+	};
+	Far->Tick(Planner.GetFarBlocks(), FarMayDrop, MaxInFlight - Streaming.NumInFlight(), MaxSpawnsPerTick - NearSpawns, TickCount);
 }
 
 FVegetationManager::~FVegetationManager()
@@ -51,11 +115,12 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 		for (const FString& W : Hooks.TakeWarnings()) UE_LOG(LogCamSim, Warning, TEXT("Vegetation: %s"), *W);
 	ExpireStuckRequests();   // first, so the freed slots are refilled this tick
 
-	const FVegetationStreaming::FActions A = Streaming.Tick(CamLatDeg, CamLonDeg);
+	const FVegetationStreaming::FActions A = bBlocks ? TickBlocks(CamLatDeg, CamLonDeg) : Streaming.Tick(CamLatDeg, CamLonDeg);
 	for (const FVegCellId& Id : A.ToDrop)
 	{
 		Spawned.Remove(Id);
 		Hooks.Destroy(Id);
+		EmitCell(TEXT("destroy"), Id);
 	}
 	// Payloads of cells the planner no longer tracks (dropped while ready or in flight): forget them too. A late result
 	// for a forgotten request finds no matching token and is ignored, even if the cell is requested again meanwhile.
@@ -68,6 +133,7 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 		{
 			Hooks.Spawn(Id, S);
 			Spawned.Add(Id, MoveTemp(S));
+			EmitCell(TEXT("spawn"), Id);
 		}
 	}
 	for (const FVegCellId& Id : A.ToGenerate)
@@ -80,6 +146,7 @@ void FVegetationManager::Tick(double CamLatDeg, double CamLonDeg)
 			if (TSharedPtr<FVegetationManager> M = Weak.Pin()) M->OnGenerated(Id, Token, MoveTemp(C));
 		});
 	}
+	TickFar(A.ToSpawn.Num());
 	// When streaming settles with new building drops: at most one line per DropLogTicks (a moving camera settles
 	// and restarts many times a second).
 	const bool bIdle = IsIdle();
@@ -124,6 +191,7 @@ void FVegetationManager::OnGenerated(FVegCellId Id, uint32 Token, FCellContent C
 	if (Count == 0)
 	{
 		Requests.Remove(Id);
+		EmitCell(TEXT("empty"), Id);
 		return;
 	}
 	TArray<FVector> LonLatH;   // trees, then shrubs: one batch per cell
@@ -189,7 +257,11 @@ void FVegetationManager::FinishHeights(FVegCellId Id)
 		}
 	}
 	Streaming.OnHeightsSampled(Id, S.Instances.Num() + S.Shrubs.Num());
-	if (S.Instances.Num() + S.Shrubs.Num() == 0) return;
+	if (S.Instances.Num() + S.Shrubs.Num() == 0)
+	{
+		EmitCell(TEXT("empty"), Id);
+		return;
+	}
 	S.BaseHeightM = S.HeightsM.Num() > 0 ? S.HeightsM[0] : S.ShrubHeightsM[0];
 	S.LocalInstances = ToCellLocal(S.CentreLatDeg, S.CentreLonDeg, S.BaseHeightM, S.Instances, S.HeightsM);
 	S.ShrubLocal = ToCellLocal(S.CentreLatDeg, S.CentreLonDeg, S.BaseHeightM, S.Shrubs, S.ShrubHeightsM);
@@ -358,7 +430,7 @@ namespace CamSimVegetation
 		FString MixSource;
 		const TSharedPtr<FVegetationMix, ESPMode::ThreadSafe> Mix = ResolveMix(Cfg, Library, MixSource, OutWhyNot, bOutFatal);
 		if (!Mix) return nullptr;
-		TArray<TStrongObjectPtr<UStaticMesh>> NearMeshes;
+		TArray<TStrongObjectPtr<UStaticMesh>> NearMeshes, FarMeshes;
 		int32 NumTrees = 0, NumShrubs = 0;
 		for (const FVegetationType& Type : Library.Types)
 		{
@@ -369,6 +441,10 @@ namespace CamSimVegetation
 			if (!Type.bProcedural) Mesh = CamSimMeshLoader::LoadStaticMesh(Type.GltfPath);
 			if (!Mesh) UE_LOG(LogCamSim, Warning, TEXT("Vegetation: could not load type '%s'; it is not drawn"), *Type.Name);
 			NearMeshes.Emplace(Mesh);
+			UStaticMesh* FarMesh = (V.FarRadiusM > 0.0f && Type.HasFarMesh()) ? CamSimMeshLoader::LoadStaticMesh(Type.FarGltfPath) : nullptr;
+			if (V.FarRadiusM > 0.0f && Type.Role == EVegRole::Tree && !FarMesh)
+				UE_LOG(LogCamSim, Log, TEXT("Vegetation: type '%s' has no far mesh; it is not drawn in the far tier"), *Type.Name);
+			FarMeshes.Emplace(FarMesh);
 			(Type.Role == EVegRole::Shrub ? NumShrubs : NumTrees) += Mesh ? 1 : 0;
 		}
 		if (NumTrees + NumShrubs == 0) { OutWhyNot = TEXT("no vegetation type loaded"); return nullptr; }
@@ -379,15 +455,12 @@ namespace CamSimVegetation
 		P.bShrubs = V.bShrubsEnabled && V.ShrubRadiusM > 0.0f;
 		P.ShrubSpacingM = V.ShrubSpacingM;
 		const uint32 Seed = ResolveSeed(Cfg.Scene.bHasSeed, Cfg.Scene.Seed, V.Seed);
-		FVegetationStreaming::FParams SP;
-		SP.RadiusM = V.RadiusM;
-		SP.CellSizeM = V.CellSizeM;
-
 		TWeakObjectPtr<UWorld> WeakWorld(World);
 		TWeakObjectPtr<ACesium3DTileset> WeakTerrain(Terrain);
 		TSharedRef<TMap<FVegCellId, TWeakObjectPtr<ACamSimVegetationCell>>> Actors = MakeShared<TMap<FVegCellId, TWeakObjectPtr<ACamSimVegetationCell>>>();
 		const bool bShadows = V.bCastShadows;
-		const float CullM = V.RadiusM;
+		// Near blocks are whole: a block within RadiusM keeps its cells up to RadiusM * 1.2 plus a block diagonal away.
+		const float CullM = V.RadiusM * 1.2f + V.FarBlockCells * V.CellSizeM * 1.4142f;
 		const float ShrubCullM = V.ShrubRadiusM;
 
 		// Trees inside building footprints (REALISM R3b): the package's mask on the scatter worker when it has one (no
@@ -503,13 +576,101 @@ namespace CamSimVegetation
 			TWeakObjectPtr<ACamSimVegetationCell> A;
 			if (Actors->RemoveAndCopyValue(Id, A) && A.IsValid()) A->Destroy();
 		};
-		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (types %d (trees %d, shrubs %d), mix %s, canopy %s, shrubs %s, radius %.0f m, ")
+		H.OnEvent = [](const FString& Line)
+		{
+			const FString Path = CVarVegEventsPath.GetValueOnGameThread();
+			if (!Path.IsEmpty())
+				FFileHelper::SaveStringToFile(Line + TEXT("\n"), *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append);
+		};
+
+		// Far tier (REALISM R4): the same trees (shrubs off), thinned and enlarged, far meshes, no shadows, 4 dissolve buckets.
+		FVegetationFarHooks FH;
+		FFarParams FarP;
+		FarP.Keep = V.FarKeep;
+		FarP.Scale = V.FarScale;
+		for (const TStrongObjectPtr<UStaticMesh>& M : FarMeshes) FarP.TypeHasFar.Add(M.IsValid());
+		FScatterParams FarScatter = P;
+		FarScatter.bShrubs = false;
+		const int32 BlockCells = V.FarBlockCells;
+		const double CellM = V.CellSizeM;
+		FH.Generate = [LandCover, Canopy, Mask, Mix, FarScatter, FarP, Seed, ClearanceM, BlockCells, CellM](FVegBlockId B, TFunction<void(TArray<FFarTree>)> Done)
+		{
+			UE::Tasks::Launch(UE_SOURCE_LOCATION, [LandCover, Canopy, Mask, Mix, FarScatter, FarP, Seed, ClearanceM, BlockCells, CellM, B, Done = MoveTemp(Done)]() mutable
+			{
+				auto Sample = [&LandCover, &Canopy](double La, double Lo)
+				{
+					return CombinePoint(LandCover->Code(La, Lo), Canopy.IsValid() ? Canopy->Sample(La, Lo) : TOptional<FCanopySample>());
+				};
+				auto ClearFn = [&Mask, ClearanceM](double La, double Lo) { return Mask->IsClear(La, Lo, ClearanceM); };
+				const FClearPredicate Clear = ClearFn;
+				TArray<FFarTree> Trees;
+				for (const FVegCellId& C : CellsOfBlock(B, BlockCells, CellM))
+					Trees.Append(FarFilter(Seed, C, GenerateCellContent(Seed, C, FarScatter, *Mix, Sample, Mask.IsValid() ? &Clear : nullptr).Trees, FarP));
+				AsyncTask(ENamedThreads::GameThread, [Done = MoveTemp(Done), Trees = MoveTemp(Trees)]() mutable { Done(MoveTemp(Trees)); });
+			});
+		};
+		FH.SampleHeights = H.SampleHeights;
+		TSharedRef<TMap<FVegBlockId, TWeakObjectPtr<ACamSimVegetationCell>>> FarActors = MakeShared<TMap<FVegBlockId, TWeakObjectPtr<ACamSimVegetationCell>>>();
+		const float FarM = V.FarRadiusM;
+		FH.Spawn = [WeakWorld, FarMeshes, FarActors, FarM, FarP](FVegBlockId B, const FVegFarSpawn& S)
+		{
+			UWorld* W = WeakWorld.Get();
+			if (!W) return;
+			ACamSimVegetationCell* Cell = W->SpawnActor<ACamSimVegetationCell>();
+			if (!Cell) return;
+			TMap<int32, int32> BatchOf;   // type * Buckets + bucket -> batch
+			TArray<FVegHismBatch> Batches;
+			for (int32 K = 0; K < S.Trees.Num() && K < S.Local.Num(); ++K)
+			{
+				const FFarTree& T = S.Trees[K];
+				if (!FarMeshes.IsValidIndex(T.Tree.Type) || !FarMeshes[T.Tree.Type].IsValid()) continue;
+				const int32 Key = int32(T.Tree.Type) * FarP.Buckets + T.Bucket;
+				int32* Bi = BatchOf.Find(Key);
+				if (!Bi)
+				{
+					FVegHismBatch NewB;
+					NewB.Mesh = FarMeshes[T.Tree.Type].Get();
+					NewB.bCastShadows = false;
+					NewB.CullDistanceM = BucketCullM(FarM, T.Bucket, FarP.Buckets);
+					Bi = &BatchOf.Add(Key, Batches.Add(MoveTemp(NewB)));
+				}
+				Batches[*Bi].Instances.Add(S.Local[K]);
+			}
+			Cell->Init(S.CentreLatDeg, S.CentreLonDeg, S.BaseHeightM, Batches);
+			FarActors->Add(B, Cell);
+			const FString Dump = CVarVegFarDumpPath.GetValueOnGameThread();
+			if (!Dump.IsEmpty())
+			{
+				FString Inst;
+				for (int32 K = 0; K < S.Trees.Num(); ++K)
+				{
+					const FTreeInstance& T = S.Trees[K].Tree;
+					Inst += FString::Printf(TEXT("%s[%.9f,%.9f,%.3f,%.4f,%.4f,%d,%d]"), K ? TEXT(",") : TEXT(""), T.LatDeg, T.LonDeg, S.HeightsM[K],
+						T.YawDeg, T.Scale, int32(T.Type), int32(S.Trees[K].Bucket));
+				}
+				FFileHelper::SaveStringToFile(FString::Printf(TEXT("{\"block_row\":%d,\"block_col\":%d,\"hash\":%u,\"instances\":[%s]}\n"),
+					B.Row, B.Col, HashFarTrees(S.Trees), *Inst), *Dump, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append);
+			}
+		};
+		FH.Destroy = [FarActors](FVegBlockId B)
+		{
+			TWeakObjectPtr<ACamSimVegetationCell> A;
+			if (FarActors->RemoveAndCopyValue(B, A) && A.IsValid()) A->Destroy();
+		};
+
+		FVegetationTierPlanner::FParams Tiers;
+		Tiers.NearM = V.RadiusM;
+		Tiers.FarM = V.FarRadiusM;
+		Tiers.CellSizeM = V.CellSizeM;
+		Tiers.BlockCells = V.FarBlockCells;
+		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (types %d (trees %d, shrubs %d), mix %s, canopy %s, shrubs %s, radius %.0f m, far %s, ")
 			TEXT("density %.2f, shadows %d, seed %u, land cover %s, buildings: %s)"),
 			NumTrees + NumShrubs, NumTrees, NumShrubs, *MixSource, *CanopyState,
-			P.bShrubs ? *FString::Printf(TEXT("%.0f m"), V.ShrubRadiusM) : TEXT("off"),
-			V.RadiusM, V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
+			P.bShrubs ? *FString::Printf(TEXT("%.0f m"), V.ShrubRadiusM) : TEXT("off"), V.RadiusM,
+			V.FarRadiusM > 0.0f ? *FString::Printf(TEXT("%.0f m (keep %.2f, blocks %d)"), V.FarRadiusM, V.FarKeep, V.FarBlockCells) : TEXT("off"),
+			V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
 			*DescribeBuildingExclusion(Exclusion, V.BuildingClearanceM));
-		return MakeShared<FVegetationManager>(SP, MoveTemp(H));
+		return MakeShared<FVegetationManager>(Tiers, MoveTemp(H), MoveTemp(FH));
 	}
 
 	void RunDebugHooks(const FCesiumSurfaceProbe& Probe, FVegetationManager& Manager, bool bViewSettled)

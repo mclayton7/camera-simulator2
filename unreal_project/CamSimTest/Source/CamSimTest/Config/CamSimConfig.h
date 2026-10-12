@@ -394,6 +394,10 @@ struct FCamSimConfig
 		bool    bShrubsEnabled = true;   // CAMSIM_VEGETATION_SHRUBS_ENABLED; shrubs on codes whose mix lists them (REALISM R4)
 		float   ShrubRadiusM = 500.0f;   // CAMSIM_VEGETATION_SHRUB_RADIUS_M; [0, radius_m]; shrubs culled beyond this
 		float   ShrubSpacingM = 3.0f;    // CAMSIM_VEGETATION_SHRUB_SPACING_M; [1, 10]; nominal shrub candidate spacing
+		float   FarRadiusM = 4000.0f;    // CAMSIM_VEGETATION_FAR_RADIUS_M; far tier to this ground distance; 0 = off, else [1.5 x radius_m, 10000] (REALISM R4)
+		int32   FarBlockCells = 4;       // CAMSIM_VEGETATION_FAR_BLOCK_CELLS; [2, 8]; a block is N x N cells, near or far as a whole
+		float   FarKeep = 0.35f;         // CAMSIM_VEGETATION_FAR_KEEP; (0, 1]; share of the trees drawn in the far tier
+		float   FarScale = 1.3f;         // CAMSIM_VEGETATION_FAR_SCALE; [1, 2]; far trees are enlarged by this
 		FString MixFile;                 // CAMSIM_VEGETATION_MIX_FILE; absolute; species mix (camsim-vegmix-1) when the scene package has none (REALISM R4)
 		bool    bDropInBuildings = true; // CAMSIM_VEGETATION_DROP_IN_BUILDINGS; gates both tree-vs-building methods, in order: the package's footprint mask, else the runtime buildings-tileset check, else none
 	};

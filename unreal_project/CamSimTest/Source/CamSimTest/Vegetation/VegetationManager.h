@@ -7,7 +7,9 @@
 #include "Templates/SharedPointer.h"
 #include "Vegetation/VegetationGrid.h"
 #include "Vegetation/VegetationScatter.h"
+#include "Vegetation/VegetationBlocks.h"
 #include "Vegetation/VegetationCanopy.h"
+#include "Vegetation/VegetationFarTier.h"
 #include "Vegetation/VegetationStreaming.h"
 
 class ACesium3DTileset;
@@ -42,6 +44,8 @@ struct FVegetationHooks
 	TFunction<void(CamSimVegetation::FVegCellId)> Destroy;
 	/** Optional: the scatter's tile caches' summary warnings (land cover, canopy), drained every WarningTicks. */
 	TFunction<TArray<FString>()> TakeWarnings;
+	/** Optional: one JSON line per tier change, spawn, destroy and empty settle (camsim.Vegetation.EventsPath). */
+	TFunction<void(const FString&)> OnEvent;
 };
 
 /**
@@ -62,7 +66,12 @@ public:
 	/** Tile-cache warnings are drained to the log this often (1 s at 30 fps). */
 	static constexpr int32 WarningTicks = 30;
 
+	/** R4 slice streaming: the cells within Params.RadiusM (no blocks, no far tier). */
 	FVegetationManager(const FVegetationStreaming::FParams& Params, FVegetationHooks InHooks);
+	/** Blocks (REALISM R4): near blocks' cells through InHooks, far blocks through FarHooks (Tiers.FarM 0 = none). The
+	 *  in-flight (4) and spawn (2) budgets are shared, near first; a block switching tier keeps its old actors until the
+	 *  new tier has settled (spawned, or empty). */
+	FVegetationManager(const FVegetationTierPlanner::FParams& Tiers, FVegetationHooks InHooks, FVegetationFarHooks FarHooks);
 	~FVegetationManager();
 
 	void Tick(double CamLatDeg, double CamLonDeg);
@@ -72,8 +81,11 @@ public:
 	const TMap<CamSimVegetation::FVegCellId, FVegCellSpawn>& GetSpawned() const { return Spawned; }
 	/** Trees dropped inside building footprints so far (all cells, including ones that ended up empty). */
 	int64 NumDroppedInBuildings() const { return DroppedInBuildings; }
-	/** Every cell within the radius is settled (none in flight, none waiting for a spawn slot). */
-	bool IsIdle() const { return Streaming.NumInFlight() == 0 && Ready.Num() == 0; }
+	/** Every cell within the radius is settled (none in flight, none waiting for a spawn slot), far blocks too. */
+	bool IsIdle() const { return Streaming.NumInFlight() == 0 && Ready.Num() == 0 && (!Far || Far->NumInFlight() == 0); }
+	/** The far tier, or null (R4 constructor, or FarM 0). */
+	FVegetationFarTier* GetFarTier() const { return Far.Get(); }
+	const FVegetationTierPlanner& GetPlanner() const { return Planner; }
 
 private:
 	struct FRequest
@@ -93,9 +105,18 @@ private:
 	void OnGenerated(CamSimVegetation::FVegCellId Id, uint32 Token, CamSimVegetation::FCellContent Content);
 	void OnHeights(CamSimVegetation::FVegCellId Id, uint32 Token, bool bBuildings, TArray<TOptional<double>> Heights);
 	void FinishHeights(CamSimVegetation::FVegCellId Id);
+	FVegetationStreaming::FActions TickBlocks(double CamLatDeg, double CamLonDeg);
+	void TickFar(int32 NearSpawns);
+	void EmitCell(const TCHAR* Ev, CamSimVegetation::FVegCellId Id) const;
+	void EmitBlock(const TCHAR* Ev, const TCHAR* Tier, CamSimVegetation::FVegBlockId B) const;
 
 	FVegetationStreaming Streaming;
 	FVegetationHooks Hooks;
+	FVegetationTierPlanner Planner;
+	bool bBlocks = false;
+	int32 MaxInFlight = 4;
+	int32 MaxSpawnsPerTick = 2;
+	TSharedPtr<FVegetationFarTier> Far;
 	double CellSizeM = 100.0;
 	int64  TickCount = 0;
 	uint32 NextToken = 1;

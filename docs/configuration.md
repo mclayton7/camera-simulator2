@@ -751,6 +751,10 @@ CAMSIM_VEGETATION_CANOPY_ENABLED=1
 CAMSIM_VEGETATION_SHRUBS_ENABLED=1
 CAMSIM_VEGETATION_SHRUB_RADIUS_M=500.0
 CAMSIM_VEGETATION_SHRUB_SPACING_M=3.0
+CAMSIM_VEGETATION_FAR_RADIUS_M=4000.0
+CAMSIM_VEGETATION_FAR_BLOCK_CELLS=4
+CAMSIM_VEGETATION_FAR_KEEP=0.35
+CAMSIM_VEGETATION_FAR_SCALE=1.3
 
 # Scene package buildings (REALISM R3)
 CAMSIM_SCENE_BUILDINGS_ENABLED=1
@@ -957,7 +961,7 @@ package) and a loadable library. All keys are **startup only**.
 |---|---|---|---|
 | `vegetation.enabled` | `CAMSIM_VEGETATION_ENABLED` | `true` | Master switch. Off, no manager is created and the frame matches the pre-slice build. |
 | `vegetation.library_dir` | `CAMSIM_VEGETATION_LIBRARY_DIR` | `""` | Directory holding `library.json`; empty = `Content/NonUFS/Vegetation` (git LFS). |
-| `vegetation.radius_m` | `CAMSIM_VEGETATION_RADIUS_M` | `1000.0` | Cells within this ground radius of the camera nadir; instances are hard-culled at this distance. `(0, 5000]`. |
+| `vegetation.radius_m` | `CAMSIM_VEGETATION_RADIUS_M` | `1000.0` | Near tier: blocks whose centre is within this ground radius of the camera nadir draw their cells at full detail (they stay near up to 1.2 × this; trees are culled at 1.2 × this plus a block diagonal). `(0, 5000]`. |
 | `vegetation.density_scale` | `CAMSIM_VEGETATION_DENSITY_SCALE` | `1.0` | Multiplies the tree probability (0.15). `[0, 4]`. |
 | `vegetation.cast_shadows` | `CAMSIM_VEGETATION_CAST_SHADOWS` | `true` | Whether trees cast shadows. |
 | `vegetation.cell_size_m` | `CAMSIM_VEGETATION_CELL_SIZE_M` | `100.0` | Edge of the global geographic cell grid. `[25, 500]`. |
@@ -969,6 +973,10 @@ package) and a loadable library. All keys are **startup only**.
 | `vegetation.shrubs_enabled` | `CAMSIM_VEGETATION_SHRUBS_ENABLED` | `true` | Shrubs on land-cover codes whose species mix lists shrub types (REALISM R4). |
 | `vegetation.shrub_radius_m` | `CAMSIM_VEGETATION_SHRUB_RADIUS_M` | `500` | Shrubs are culled beyond this ground distance (metres; [0, `radius_m`], 0 = no shrubs). |
 | `vegetation.shrub_spacing_m` | `CAMSIM_VEGETATION_SHRUB_SPACING_M` | `3.0` | Nominal shrub candidate spacing (metres, [1, 10]); the real spacing is `cell_size_m` / round(`cell_size_m` / spacing). Caps shrub density at one per candidate. |
+| `vegetation.far_radius_m` | `CAMSIM_VEGETATION_FAR_RADIUS_M` | `4000` | Far tier (REALISM R4): beyond the near radius, blocks out to this ground distance get one low-poly, shadowless actor with a thinned, enlarged subset of the same trees; the outer 30 % dissolves in four steps (cull at 0.7 / 0.8 / 0.9 / 1.0 × this). `0` = off; else [1.5 × `radius_m`, 10000]. |
+| `vegetation.far_block_cells` | `CAMSIM_VEGETATION_FAR_BLOCK_CELLS` | `4` | Block size in cells ([2, 8]; 4 × 100 m = 400 m): a block is near or far as a whole, and near/far switches happen per block, with no gap (the old actors stay until the new ones are in). |
+| `vegetation.far_keep` | `CAMSIM_VEGETATION_FAR_KEEP` | `0.35` | Share of the trees drawn in the far tier, (0, 1] (deterministic per tree). |
+| `vegetation.far_scale` | `CAMSIM_VEGETATION_FAR_SCALE` | `1.3` | Far trees are enlarged by this, [1, 2], to keep the canopy's mass with fewer trees (1/√keep would oversize crowns). |
 
 Removed: the old `phase19:` block (`ocean_enabled`, `beaufort_state`,
 `wave_amplitude_scale`, `wave_frequency_scale`, `wave_choppiness`,

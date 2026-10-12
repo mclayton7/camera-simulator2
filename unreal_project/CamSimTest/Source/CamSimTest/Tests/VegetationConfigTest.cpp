@@ -25,6 +25,10 @@ bool FVegConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("shrub_radius_m"), V.ShrubRadiusM, 500.0f);
 	TestEqual(TEXT("shrub_spacing_m"), V.ShrubSpacingM, 3.0f);
 	TestTrue (TEXT("canopy_enabled"), V.bCanopyEnabled);
+	TestEqual(TEXT("far_radius_m"), V.FarRadiusM, 4000.0f);
+	TestEqual(TEXT("far_block_cells"), V.FarBlockCells, 4);
+	TestEqual(TEXT("far_keep"), V.FarKeep, 0.35f);
+	TestEqual(TEXT("far_scale"), V.FarScale, 1.3f);
 	return true;
 }
 
@@ -47,7 +51,11 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 		"  shrubs_enabled: false\n"
 		"  shrub_radius_m: 300\n"
 		"  shrub_spacing_m: 4\n"
-		"  canopy_enabled: false\n");
+		"  canopy_enabled: false\n"
+		"  far_radius_m: 3000\n"
+		"  far_block_cells: 5\n"
+		"  far_keep: 0.5\n"
+		"  far_scale: 1.2\n");
 	FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	TestTrue (TEXT("parsed"), Cfg.bLoadedSuccessfully);
 	TestFalse(TEXT("enabled"), Cfg.Vegetation.bEnabled);
@@ -64,6 +72,10 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("shrub_radius_m"), Cfg.Vegetation.ShrubRadiusM, 300.0f);
 	TestEqual(TEXT("shrub_spacing_m"), Cfg.Vegetation.ShrubSpacingM, 4.0f);
 	TestFalse(TEXT("canopy_enabled"), Cfg.Vegetation.bCanopyEnabled);
+	TestEqual(TEXT("far_radius_m"), Cfg.Vegetation.FarRadiusM, 3000.0f);
+	TestEqual(TEXT("far_block_cells"), Cfg.Vegetation.FarBlockCells, 5);
+	TestEqual(TEXT("far_keep"), Cfg.Vegetation.FarKeep, 0.5f);
+	TestEqual(TEXT("far_scale"), Cfg.Vegetation.FarScale, 1.2f);
 
 	const TCHAR* Vars[][2] = {
 		{ TEXT("CAMSIM_VEGETATION_ENABLED"), TEXT("true") }, { TEXT("CAMSIM_VEGETATION_LIBRARY_DIR"), TEXT("/opt/veg") },
@@ -72,7 +84,9 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 		{ TEXT("CAMSIM_VEGETATION_SEED"), TEXT("7") }, { TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), TEXT("1") },
 		{ TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), TEXT("4") }, { TEXT("CAMSIM_VEGETATION_MIX_FILE"), TEXT("/e/mix.json") },
 		{ TEXT("CAMSIM_VEGETATION_SHRUBS_ENABLED"), TEXT("1") }, { TEXT("CAMSIM_VEGETATION_SHRUB_RADIUS_M"), TEXT("250") },
-		{ TEXT("CAMSIM_VEGETATION_SHRUB_SPACING_M"), TEXT("5") }, { TEXT("CAMSIM_VEGETATION_CANOPY_ENABLED"), TEXT("1") } };
+		{ TEXT("CAMSIM_VEGETATION_SHRUB_SPACING_M"), TEXT("5") }, { TEXT("CAMSIM_VEGETATION_CANOPY_ENABLED"), TEXT("1") },
+		{ TEXT("CAMSIM_VEGETATION_FAR_RADIUS_M"), TEXT("0") }, { TEXT("CAMSIM_VEGETATION_FAR_BLOCK_CELLS"), TEXT("3") },
+		{ TEXT("CAMSIM_VEGETATION_FAR_KEEP"), TEXT("0.25") }, { TEXT("CAMSIM_VEGETATION_FAR_SCALE"), TEXT("1.5") } };
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], V[1]);
 	Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], TEXT(""));
@@ -90,6 +104,10 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("env shrub_radius_m"), Cfg.Vegetation.ShrubRadiusM, 250.0f);
 	TestEqual(TEXT("env shrub_spacing_m"), Cfg.Vegetation.ShrubSpacingM, 5.0f);
 	TestTrue (TEXT("env canopy_enabled"), Cfg.Vegetation.bCanopyEnabled);
+	TestEqual(TEXT("env far_radius_m"), Cfg.Vegetation.FarRadiusM, 0.0f);
+	TestEqual(TEXT("env far_block_cells"), Cfg.Vegetation.FarBlockCells, 3);
+	TestEqual(TEXT("env far_keep"), Cfg.Vegetation.FarKeep, 0.25f);
+	TestEqual(TEXT("env far_scale"), Cfg.Vegetation.FarScale, 1.5f);
 	return true;
 }
 
@@ -123,5 +141,16 @@ bool FVegConfigValidateTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("shrub radius 0"), Has(With([](auto& V) { V.ShrubRadiusM = 0.0f; }), TEXT("vegetation.shrub_radius_m")));
 	TestTrue (TEXT("shrub spacing 0.5"), Has(With([](auto& V) { V.ShrubSpacingM = 0.5f; }), TEXT("vegetation.shrub_spacing_m")));
 	TestTrue (TEXT("shrub spacing 11"), Has(With([](auto& V) { V.ShrubSpacingM = 11.0f; }), TEXT("vegetation.shrub_spacing_m")));
+	TestFalse(TEXT("far 0 (off)"), Has(With([](auto& V) { V.FarRadiusM = 0.0f; }), TEXT("vegetation.far_radius_m")));
+	TestTrue (TEXT("far 1400 < 1.5 radius"), Has(With([](auto& V) { V.FarRadiusM = 1400.0f; }), TEXT("vegetation.far_radius_m")));
+	TestFalse(TEXT("far 1500"), Has(With([](auto& V) { V.FarRadiusM = 1500.0f; }), TEXT("vegetation.far_radius_m")));
+	TestTrue (TEXT("far 10001"), Has(With([](auto& V) { V.FarRadiusM = 10001.0f; }), TEXT("vegetation.far_radius_m")));
+	TestTrue (TEXT("far NaN"), Has(With([NaN](auto& V) { V.FarRadiusM = NaN; }), TEXT("vegetation.far_radius_m")));
+	TestTrue (TEXT("block cells 1"), Has(With([](auto& V) { V.FarBlockCells = 1; }), TEXT("vegetation.far_block_cells")));
+	TestTrue (TEXT("block cells 9"), Has(With([](auto& V) { V.FarBlockCells = 9; }), TEXT("vegetation.far_block_cells")));
+	TestTrue (TEXT("keep 0"), Has(With([](auto& V) { V.FarKeep = 0.0f; }), TEXT("vegetation.far_keep")));
+	TestFalse(TEXT("keep 1"), Has(With([](auto& V) { V.FarKeep = 1.0f; }), TEXT("vegetation.far_keep")));
+	TestTrue (TEXT("scale 0.9"), Has(With([](auto& V) { V.FarScale = 0.9f; }), TEXT("vegetation.far_scale")));
+	TestTrue (TEXT("scale 2.1"), Has(With([](auto& V) { V.FarScale = 2.1f; }), TEXT("vegetation.far_scale")));
 	return true;
 }
