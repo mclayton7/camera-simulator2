@@ -94,6 +94,7 @@ void ResolvePackage(FCamSimConfig& Cfg)
 	Scene.SeaLevelStation.Reset();
 	Scene.BuildingsUrl.Reset();
 	Scene.BuildingsMaskDir.Reset();
+	Scene.VegetationMixPath.Reset();
 	Scene.ResolveErrors.Reset();
 	Scene.ResolveWarnings.Reset();
 
@@ -179,6 +180,10 @@ void ResolvePackage(FCamSimConfig& Cfg)
 	if (FPaths::FileExists(Dir / TEXT("features/buildings/mask/index.json")))
 	{
 		Scene.BuildingsMaskDir = Dir / TEXT("features/buildings/mask");
+	}
+	if (FPaths::FileExists(Dir / TEXT("vegetation/mix.json")))
+	{
+		Scene.VegetationMixPath = Dir / TEXT("vegetation/mix.json");
 	}
 
 	const FString SeaFile = Dir / TEXT("sea_level.json");

@@ -691,6 +691,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlInt   (V, "seed",          Cfg.Vegetation.Seed);
 			YamlBool  (V, "drop_in_buildings", Cfg.Vegetation.bDropInBuildings);
 			YamlFloat (V, "building_clearance_m", Cfg.Vegetation.BuildingClearanceM);
+			YamlString(V, "mix_file",      Cfg.Vegetation.MixFile);
 		}
 
 				// Thermal radiance for IR (ROADMAP 4A)
@@ -1120,6 +1121,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Vegetation.Seed         = GetEnvInt  (TEXT("CAMSIM_VEGETATION_SEED"),          Cfg.Vegetation.Seed);
 	Cfg.Vegetation.bDropInBuildings = GetEnvBool(TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), Cfg.Vegetation.bDropInBuildings);
 	Cfg.Vegetation.BuildingClearanceM = GetEnvFloat(TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), Cfg.Vegetation.BuildingClearanceM);
+	Cfg.Vegetation.MixFile      = GetEnv     (TEXT("CAMSIM_VEGETATION_MIX_FILE"),      Cfg.Vegetation.MixFile);
 	{
 		const FString IrPreset = GetEnv(TEXT("CAMSIM_IR_PRESET"), FString());
 		FSensorModeConfig* IrM = Cfg.SensorModeConfigs.Find(ESensorMode::IR);
@@ -1555,6 +1557,8 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(FString::Printf(TEXT("vegetation.seed=%d must be >= 0"), Vegetation.Seed));
 	if (!(Vegetation.BuildingClearanceM >= 0.0f && Vegetation.BuildingClearanceM <= 10.0f))
 		Errors.Add(FString::Printf(TEXT("vegetation.building_clearance_m=%.2f out of range [0, 10]"), Vegetation.BuildingClearanceM));
+	if (!Vegetation.MixFile.IsEmpty() && FPaths::IsRelative(Vegetation.MixFile))
+		Errors.Add(FString::Printf(TEXT("vegetation.mix_file '%s' must be an absolute path"), *Vegetation.MixFile));
 
 		// Thermal (ROADMAP 4A). Written !(x in range) so NaN is reported too.
 	if (!(Thermal.AirTemperatureC >= -80.0f && Thermal.AirTemperatureC <= 60.0f))

@@ -463,3 +463,20 @@ bool FSceneResolveBuildingsMaskTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("cleared when scene.dir is unset"), Off.Scene.BuildingsMaskDir.IsEmpty());
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneResolveVegetationMixTest,
+	"CamSim.Scene.Resolve.VegetationMix",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneResolveVegetationMixTest::RunTest(const FString& Parameters)
+{
+	const FString D = MakePackage(TEXT("vegetation_mix"), true, true, true);
+	TestTrue(TEXT("no mix: empty"), ResolvedConfigFor(D).Scene.VegetationMixPath.IsEmpty());
+	WriteFile(D / TEXT("vegetation/mix.json"), TEXT("{}"));
+	TestEqual(TEXT("mix path"), ResolvedConfigFor(D).Scene.VegetationMixPath, D / TEXT("vegetation/mix.json"));
+	FCamSimConfig Off = ResolvedConfigFor(D);
+	Off.Scene.Dir.Reset();
+	CamSimScene::ResolvePackage(Off);
+	TestTrue(TEXT("cleared when scene.dir is unset"), Off.Scene.VegetationMixPath.IsEmpty());
+	return true;
+}

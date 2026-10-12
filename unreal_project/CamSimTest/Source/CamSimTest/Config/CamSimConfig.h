@@ -390,6 +390,7 @@ struct FCamSimConfig
 		float   CellSizeM    = 100.0f;   // CAMSIM_VEGETATION_CELL_SIZE_M
 		int32   Seed         = 0;        // CAMSIM_VEGETATION_SEED; used only without a scene package
 		float   BuildingClearanceM = 2.0f; // CAMSIM_VEGETATION_BUILDING_CLEARANCE_M; with the package's footprint mask, no tree within this of a footprint along E/W/N/S (REALISM R3b)
+		FString MixFile;                 // CAMSIM_VEGETATION_MIX_FILE; absolute; species mix (camsim-vegmix-1) when the scene package has none (REALISM R4)
 		bool    bDropInBuildings = true; // CAMSIM_VEGETATION_DROP_IN_BUILDINGS; gates both tree-vs-building methods, in order: the package's footprint mask, else the runtime buildings-tileset check, else none
 	};
 	FVegetationConfig Vegetation;
@@ -475,6 +476,8 @@ struct FCamSimConfig
 		FString BuildingsUrl;
 		// Absolute features/buildings/mask/ of the package when it has index.json (REALISM R3b; the tree scatter reads it).
 		FString BuildingsMaskDir;
+		// <dir>/vegetation/mix.json when the package has one (REALISM R4: the species mix per land-cover code).
+		FString VegetationMixPath;
 		TArray<FString> ResolveErrors;
 		TArray<FString> ResolveWarnings;
 	} Scene;
