@@ -27,6 +27,32 @@ namespace CamSimVegetation
 		}
 	}
 
+	namespace
+	{
+		/** The file exists, is not a git LFS pointer and has the given sha256. */
+		bool CheckFile(const FString& Name, const FString& Path, const FString& Sha, FString& OutError)
+		{
+			TArray<uint8> Bytes;
+			if (!FPaths::FileExists(Path) || !FFileHelper::LoadFileToArray(Bytes, *Path))
+			{
+				OutError = FString::Printf(TEXT("type '%s': cannot read %s"), *Name, *Path); return false;
+			}
+			// A git LFS pointer is a short text file; compare the prefix within the bytes actually loaded (the buffer is not NUL-terminated).
+			static const ANSICHAR LfsPrefix[] = "version https://git-lfs";
+			constexpr int32 LfsPrefixLen = static_cast<int32>(sizeof(LfsPrefix) - 1);
+			if (Bytes.Num() < 200 && Bytes.Num() >= LfsPrefixLen && FMemory::Memcmp(Bytes.GetData(), LfsPrefix, LfsPrefixLen) == 0)
+			{
+				OutError = FString::Printf(TEXT("type '%s': %s is a git LFS pointer (run git lfs pull)"), *Name, *Path); return false;
+			}
+			const FString Got = Sha256Hex(Bytes);
+			if (Got != Sha)
+			{
+				OutError = FString::Printf(TEXT("type '%s': %s sha256 %s != library.json %s"), *Name, *Path, *Got, *Sha); return false;
+			}
+			return true;
+		}
+	}
+
 	FString Sha256Hex(TConstArrayView<uint8> Bytes)
 	{
 		AVSHA* Ctx = av_sha_alloc();
@@ -47,9 +73,11 @@ namespace CamSimVegetation
 			OutError = TEXT("library.json is not valid JSON"); return false;
 		}
 		FString Format;
-		if (!Root->TryGetStringField(TEXT("format"), Format) || Format != TEXT("camsim-vegetation-1"))
+		Root->TryGetStringField(TEXT("format"), Format);
+		const bool bV2 = Format == TEXT("camsim-vegetation-2");
+		if (!bV2 && Format != TEXT("camsim-vegetation-1"))
 		{
-			OutError = FString::Printf(TEXT("library.json format '%s' is not camsim-vegetation-1"), *Format); return false;
+			OutError = FString::Printf(TEXT("library.json format '%s' is not camsim-vegetation-1 or -2"), *Format); return false;
 		}
 		const TArray<TSharedPtr<FJsonValue>>* Types = nullptr;
 		if (!Root->TryGetArrayField(TEXT("types"), Types) || Types->Num() == 0)
@@ -70,6 +98,13 @@ namespace CamSimVegetation
 			if (!(*O)->TryGetStringField(TEXT("thermal_class"), T.ThermalClass)) T.ThermalClass = TEXT("tree_canopy");
 			T.HeightM = static_cast<float>(H);
 			if (T.Name.IsEmpty()) { OutError = FString::Printf(TEXT("types[%d]: name missing"), I); return false; }
+			if (FindType(Out, T.Name) != INDEX_NONE) { OutError = FString::Printf(TEXT("duplicate type name '%s'"), *T.Name); return false; }
+			FString Role;
+			if (bV2 && (*O)->TryGetStringField(TEXT("role"), Role) && Role != TEXT("tree"))
+			{
+				if (Role != TEXT("shrub")) { OutError = FString::Printf(TEXT("type '%s': role '%s' is not tree or shrub"), *T.Name, *Role); return false; }
+				T.Role = EVegRole::Shrub;
+			}
 			if (!(H > 0.5 && H <= 80.0)) { OutError = FString::Printf(TEXT("type '%s': height_m %g not in (0.5, 80]"), *T.Name, H); return false; }
 			if (T.Licence.IsEmpty()) { OutError = FString::Printf(TEXT("type '%s': licence missing"), *T.Name); return false; }
 			if (!T.bProcedural)
@@ -82,9 +117,34 @@ namespace CamSimVegetation
 				}
 				T.GltfPath = FPaths::IsRelative(Gltf) ? FPaths::Combine(Dir, Gltf) : Gltf;
 			}
+			double Crown = 0.0;
+			if (bV2 && (*O)->TryGetNumberField(TEXT("crown_radius_m"), Crown))
+			{
+				if (!(Crown > 0.0 && Crown <= 30.0)) { OutError = FString::Printf(TEXT("type '%s': crown_radius_m %g not in (0, 30]"), *T.Name, Crown); return false; }
+				T.CrownRadiusM = static_cast<float>(Crown);
+			}
+			else
+			{
+				T.CrownRadiusM = (T.Role == EVegRole::Shrub ? 0.5f : 0.3f) * T.HeightM;
+			}
+			FString FarGltf;
+			if (bV2 && (*O)->TryGetStringField(TEXT("far_gltf"), FarGltf) && !FarGltf.IsEmpty())
+			{
+				if (T.Role == EVegRole::Shrub) { OutError = FString::Printf(TEXT("type '%s': shrubs have no far mesh"), *T.Name); return false; }
+				if (!(*O)->TryGetStringField(TEXT("far_sha256"), T.FarSha256) || !IsHex64(T.FarSha256))
+				{
+					OutError = FString::Printf(TEXT("type '%s': far_gltf needs far_sha256 (64 lowercase hex digits)"), *T.Name); return false;
+				}
+				T.FarGltfPath = FPaths::IsRelative(FarGltf) ? FPaths::Combine(Dir, FarGltf) : FarGltf;
+			}
 			Out.Types.Add(MoveTemp(T));
 		}
 		return true;
+	}
+
+	int32 FindType(const FVegetationLibrary& Library, const FString& Name)
+	{
+		return Library.Types.IndexOfByPredicate([&Name](const FVegetationType& T) { return T.Name == Name; });
 	}
 
 	FString ResolveLibraryDir(const FString& ConfigDir)
@@ -103,23 +163,8 @@ namespace CamSimVegetation
 		for (const FVegetationType& T : Out.Types)
 		{
 			if (T.bProcedural) continue;
-			TArray<uint8> Bytes;
-			if (!FPaths::FileExists(T.GltfPath) || !FFileHelper::LoadFileToArray(Bytes, *T.GltfPath))
-			{
-				OutError = FString::Printf(TEXT("type '%s': cannot read %s"), *T.Name, *T.GltfPath); return false;
-			}
-			// A git LFS pointer is a short text file; compare the prefix within the bytes actually loaded (the buffer is not NUL-terminated).
-			static const ANSICHAR LfsPrefix[] = "version https://git-lfs";
-			constexpr int32 LfsPrefixLen = static_cast<int32>(sizeof(LfsPrefix) - 1);
-			if (Bytes.Num() < 200 && Bytes.Num() >= LfsPrefixLen && FMemory::Memcmp(Bytes.GetData(), LfsPrefix, LfsPrefixLen) == 0)
-			{
-				OutError = FString::Printf(TEXT("type '%s': %s is a git LFS pointer (run git lfs pull)"), *T.Name, *T.GltfPath); return false;
-			}
-			const FString Got = Sha256Hex(Bytes);
-			if (Got != T.Sha256)
-			{
-				OutError = FString::Printf(TEXT("type '%s': %s sha256 %s != library.json %s"), *T.Name, *T.GltfPath, *Got, *T.Sha256); return false;
-			}
+			if (!CheckFile(T.Name, T.GltfPath, T.Sha256, OutError)) return false;
+			if (T.HasFarMesh() && !CheckFile(T.Name, T.FarGltfPath, T.FarSha256, OutError)) return false;
 		}
 		return true;
 	}

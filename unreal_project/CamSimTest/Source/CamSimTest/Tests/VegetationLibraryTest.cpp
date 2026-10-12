@@ -114,3 +114,76 @@ bool FVegLibShippedTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("at least one type"), L.Types.Num() >= 1);
 	return true;
 }
+
+namespace
+{
+	FString V2(const FString& TypesJson) { return TEXT("{\"format\":\"camsim-vegetation-2\",\"types\":[") + TypesJson + TEXT("]}"); }
+	FString TypeJson(const TCHAR* Name, const TCHAR* Role, const FString& Extra = FString())
+	{
+		return FString::Printf(TEXT("{\"name\":\"%s\",\"role\":\"%s\",\"gltf\":\"%s.glb\",\"sha256\":\"%s\",\"height_m\":10.0,")
+			TEXT("\"licence\":\"CC0-1.0\",\"source_url\":\"u\"%s}"), Name, Role, Name, *FString::ChrN(64, 'a'), *Extra);
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegLibV2Test, "CamSim.Vegetation.Library.V2",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegLibV2Test::RunTest(const FString& Parameters)
+{
+	FVegetationLibrary L; FString Err;
+	const FString Far = FString::Printf(TEXT(",\"far_gltf\":\"p_far.glb\",\"far_sha256\":\"%s\",\"crown_radius_m\":2.5"), *FString::ChrN(64, 'b'));
+	TestTrue(TEXT("v2 parses"), ParseLibrary(V2(TypeJson(TEXT("p"), TEXT("tree"), Far) + TEXT(",") + TypeJson(TEXT("s"), TEXT("shrub"))), TEXT("/lib"), L, Err));
+	if (TestEqual(TEXT("two types"), L.Types.Num(), 2))
+	{
+		TestTrue(TEXT("tree role"), L.Types[0].Role == EVegRole::Tree);
+		TestEqual(TEXT("crown given"), L.Types[0].CrownRadiusM, 2.5f);
+		TestEqual(TEXT("far path"), L.Types[0].FarGltfPath, FString(TEXT("/lib/p_far.glb")));
+		TestTrue(TEXT("has far"), L.Types[0].HasFarMesh());
+		TestTrue(TEXT("shrub role"), L.Types[1].Role == EVegRole::Shrub);
+		TestEqual(TEXT("shrub crown default 0.5 h"), L.Types[1].CrownRadiusM, 5.0f);
+		TestFalse(TEXT("shrub no far"), L.Types[1].HasFarMesh());
+		TestEqual(TEXT("find"), FindType(L, TEXT("s")), 1);
+		TestEqual(TEXT("find missing"), FindType(L, TEXT("x")), -1);
+	}
+	TestFalse(TEXT("unknown role"), ParseLibrary(V2(TypeJson(TEXT("p"), TEXT("grass"))), TEXT("/lib"), L, Err));
+	TestTrue(TEXT("unknown role message"), Err.Contains(TEXT("role")));
+	TestFalse(TEXT("duplicate name"), ParseLibrary(V2(TypeJson(TEXT("p"), TEXT("tree")) + TEXT(",") + TypeJson(TEXT("p"), TEXT("shrub"))), TEXT("/lib"), L, Err));
+	TestFalse(TEXT("shrub with far mesh"), ParseLibrary(V2(TypeJson(TEXT("s"), TEXT("shrub"), Far)), TEXT("/lib"), L, Err));
+	TestFalse(TEXT("far without sha"), ParseLibrary(V2(TypeJson(TEXT("p"), TEXT("tree"), TEXT(",\"far_gltf\":\"p_far.glb\""))), TEXT("/lib"), L, Err));
+	TestFalse(TEXT("crown out of range"), ParseLibrary(V2(TypeJson(TEXT("p"), TEXT("tree"), TEXT(",\"crown_radius_m\":0"))), TEXT("/lib"), L, Err));
+	TestFalse(TEXT("unknown format"), ParseLibrary(TEXT("{\"format\":\"camsim-vegetation-3\",\"types\":[]}"), TEXT("/lib"), L, Err));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegLibV1CompatTest, "CamSim.Vegetation.Library.V1Compat",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegLibV1CompatTest::RunTest(const FString& Parameters)
+{
+	FVegetationLibrary L; FString Err;
+	TestTrue(TEXT("v1 parses"), ParseLibrary(Entry(FString::ChrN(64, 'a')), TEXT("/lib"), L, Err));
+	if (TestEqual(TEXT("one"), L.Types.Num(), 1))
+	{
+		TestTrue(TEXT("v1 = tree"), L.Types[0].Role == EVegRole::Tree);
+		TestEqual(TEXT("v1 crown default 0.3 h"), L.Types[0].CrownRadiusM, 2.7f);
+		TestFalse(TEXT("v1 no far"), L.Types[0].HasFarMesh());
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegLibFarShaTest, "CamSim.Vegetation.Library.FarMeshSha",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegLibFarShaTest::RunTest(const FString& Parameters)
+{
+	const FString Dir = LibTempDir(TEXT("FarSha"));
+	const TArray<uint8> Near = { 1, 2, 3 }, FarB = { 4, 5 };
+	FFileHelper::SaveArrayToFile(Near, *FPaths::Combine(Dir, TEXT("p.glb")));
+	FFileHelper::SaveArrayToFile(FarB, *FPaths::Combine(Dir, TEXT("p_far.glb")));
+	const FString Good = FString::Printf(TEXT("{\"format\":\"camsim-vegetation-2\",\"types\":[{\"name\":\"p\",\"role\":\"tree\",\"gltf\":\"p.glb\",\"sha256\":\"%s\",")
+		TEXT("\"far_gltf\":\"p_far.glb\",\"far_sha256\":\"%s\",\"height_m\":10,\"licence\":\"CC0-1.0\"}]}"), *Sha256Hex(Near), *Sha256Hex(FarB));
+	FFileHelper::SaveStringToFile(Good, *FPaths::Combine(Dir, TEXT("library.json")));
+	FVegetationLibrary L; FString Err;
+	TestTrue(*FString::Printf(TEXT("both shas match (%s)"), *Err), LoadLibrary(Dir, L, Err));
+	FFileHelper::SaveStringToFile(Good.Replace(*Sha256Hex(FarB), *FString::ChrN(64, 'c')), *FPaths::Combine(Dir, TEXT("library.json")));
+	TestFalse(TEXT("far sha mismatch refused"), LoadLibrary(Dir, L, Err));
+	TestTrue(TEXT("message names the far file"), Err.Contains(TEXT("p_far.glb")));
+	return true;
+}
