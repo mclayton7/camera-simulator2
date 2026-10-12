@@ -134,3 +134,26 @@ bool FVegScatterPredicateTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("reject all"), GenerateCell(Seed, C, P, AllTrees, [](double, double) { return false; }).Num(), 0);
 	return true;
 }
+
+namespace
+{
+	// R4's cell hashes (captured 2026-10-11 from the R4 slice's scatter, before scatter v2): REALISM R4 bit-identity.
+	constexpr uint32 GoldenSeed = 0x5EEDu;
+	constexpr uint32 GoldenHash[3] = { 1394846886u, 504439746u, 3376489160u };
+	void GoldenCells(FVegCellId (&Out)[3])
+	{
+		const FVegCellId C0 = CellOf(33.307, -117.354, 100.0);
+		Out[0] = C0; Out[1] = { C0.Row + 1, C0.Col }; Out[2] = { C0.Row, C0.Col + 7 };
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegScatterR4IdentityTest, "CamSim.Vegetation.Scatter.R4Identity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegScatterR4IdentityTest::RunTest(const FString& Parameters)
+{
+	FScatterParams P;
+	FVegCellId Cells[3]; GoldenCells(Cells);
+	for (int32 K = 0; K < 3; ++K)
+		TestEqual(*FString::Printf(TEXT("cell %d legacy == golden"), K), HashInstances(GenerateCell(VegetationSeed(GoldenSeed), Cells[K], P, AllTrees)), GoldenHash[K]);
+	return true;
+}
