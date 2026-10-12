@@ -140,6 +140,29 @@ def synthetic_scene(root: Path, bbox=(10.0, 10.0, 10.5, 10.5)) -> dict:
     }
 
 
+FINE_BOX = (10.195, 10.195, 10.225, 10.215)  # around test_buildings_layer.ROWS
+FINE_RES = 0.00001  # ~1.1 m: a roof source finer than roofs.MAX_SOURCE_M
+
+
+def fine_truth(lon, lat) -> np.ndarray:
+    """uint8 (3, ...): smooth ramps of period 0.004 deg (~440 m), never all zero."""
+    lon, lat = np.asarray(lon, np.float64), np.asarray(lat, np.float64)
+    r = 128.0 + 100.0 * np.sin((lon - FINE_BOX[0]) * 2.0 * np.pi / 0.004)
+    g = 128.0 + 100.0 * np.sin((lat - FINE_BOX[1]) * 2.0 * np.pi / 0.004)
+    return np.rint(np.stack([r, g, np.full(lon.shape, 60.0)])).astype(np.uint8)
+
+
+def fine_roof_scene(root: Path) -> dict:
+    """synthetic_scene plus `fine_rgb` (first in imagery priority): FINE_RES pixels of fine_truth over FINE_BOX."""
+    scene = synthetic_scene(root)
+    lon, lat = _cell_centres(FINE_BOX, FINE_RES)
+    write_geotiff(root / "fine_rgb.tif", fine_truth(lon, lat), FINE_BOX[0], FINE_BOX[3], FINE_RES, overviews=(2, 4))
+    scene["priorities"]["imagery"] = ["fine_rgb", *scene["priorities"]["imagery"]]
+    scene["sources"]["fine_rgb"] = source("imagery", root / "fine_rgb.tif", FINE_BOX, max_zoom=17, bands=[1, 2, 3],
+                                          nodata_rule="all_zero")
+    return scene
+
+
 def tone_truth(raw):
     """The synthetic 'true' Sentinel-2 -> NAIP map (deliberately not today's decoder)."""
     return 255.0 * (np.asarray(raw, np.float64) / 4000.0) ** (1.0 / 2.2) - 30.0

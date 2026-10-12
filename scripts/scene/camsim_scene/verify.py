@@ -2,7 +2,8 @@
 terrain tiles per zoom (--all: every tile), compares vertex heights with the sources resampled independently
 (highest-priority source, exact datum offsets, feather bands excluded; scene zooms and the global base have
 separate limits), checks shared edges, NaNs and normals,
-decodes every JPEG, and checks a sample of NDVI leaf pixels against the sources (`ndvi_values`). Writes
+decodes every JPEG, and checks a sample of NDVI leaf pixels against the sources (`ndvi_values`), and for buildings:
+roof heights, the mask against the land-cover burn and the roof atlases (REALISM R3b). Writes
 <pkg>.verify.json beside the package; the package itself is never modified."""
 
 from __future__ import annotations
@@ -297,6 +298,10 @@ def _check_buildings_tileset(pkg: Path) -> Check:
     root = pkg / "features" / "buildings"
     doc = json.loads((root / "tileset.json").read_text())
     missing = [u for u, _ in walk_tileset(doc) if not (root / u).is_file()]
+    mask = root / "mask" / "index.json"
+    if mask.exists():  # REALISM R3b footprint mask
+        index = json.loads(mask.read_text())
+        missing += [f"mask/{t['file']}" for t in index["tiles"] if not (mask.parent / t["file"]).is_file()]
     return Check("buildings_tileset", not missing, _summary([f"missing {u}" for u in missing]))
 
 
@@ -328,6 +333,72 @@ def _check_buildings_heights(pkg: Path, m: Manifest, st) -> Check:
                 problems.append(f"{sid}: roof {roof:.3f} m, expected {b.roof_m:.3f} m")
     problems += [f"missing {sid}" for sid in sorted(set(by_id) - seen)]
     return Check("buildings_heights", not problems, _summary(problems))
+
+
+def _check_buildings_mask(pkg: Path) -> Check:
+    """Mask <-> burn (REALISM R3b): a land-cover cell is 230 only where >= 32 of its 64 mask cells are set, and such a
+    cell is 230 unless a road or rail (200, 201, 210) was burned over it."""
+    from .features import BUILDING_CODE
+    from .footprints import burn_cells
+
+    root = pkg / "features" / "buildings" / "mask"
+    masks = {(t["lat_index"], t["lon_index"]): root / t["file"]
+             for t in json.loads((root / "index.json").read_text())["tiles"]}
+    lc = pkg / "landcover"
+    problems = []
+    for t in json.loads((lc / "index.json").read_text())["tiles"]:
+        codes = np.array(Image.open(lc / t["file"]))
+        key = (t["lat_index"], t["lon_index"])
+        if key in masks:
+            burned = burn_cells(np.array(Image.open(masks[key])).astype(bool))
+        else:
+            burned = np.zeros(codes.shape, bool)
+        stray = int(((codes == BUILDING_CODE) & ~burned).sum())
+        lost = int((burned & ~np.isin(codes, (BUILDING_CODE, 200, 201, 210))).sum())
+        if stray:
+            problems.append(f"{t['file']}: {stray} cells are 230 without >= 32 of 64 mask cells")
+        if lost:
+            problems.append(f"{t['file']}: {lost} cells with >= 32 of 64 mask cells are not 230 (nor road or rail)")
+    return Check("buildings_mask", not problems, _summary(problems))
+
+
+def _check_buildings_roofs(pkg: Path, m: Manifest) -> Check:
+    """Roof atlases (REALISM R3b): roof_texel_m present per tile and consistent with the texture."""
+    from .buildings import walk_tileset
+    from .gltf import decode_tile
+    from .roofatlas import texel_ladder
+
+    s = m.layers["buildings"]
+    want = bool(s.get("roof_textures", False))
+    ladder = texel_ladder(float(s["roof_texel_m"])) if want else ()
+    root = pkg / "features" / "buildings"
+    problems = []
+    for uri, _ in walk_tileset(json.loads((root / "tileset.json").read_text())):
+        t = decode_tile((root / uri).read_bytes())
+        has = t.extras is not None and "roof_texel_m" in t.extras
+        if not want:
+            if has or t.texture is not None:
+                problems.append(f"{uri}: roof texture or roof_texel_m with roof_textures off")
+            continue
+        if not has:
+            problems.append(f"{uri}: no roof_texel_m")
+            continue
+        texel = t.extras["roof_texel_m"]
+        if (texel is None) != (t.texture is None):
+            problems.append(f"{uri}: roof_texel_m {texel} but texture {'absent' if t.texture is None else 'present'}")
+            continue
+        if texel is None:
+            continue
+        if not any(abs(texel - x) < 1e-9 for x in ladder):
+            problems.append(f"{uri}: roof_texel_m {texel} not in {ladder}")
+        img = Image.open(io.BytesIO(t.texture))
+        w, h = img.size
+        if img.format != "JPEG" or w != h or w & (w - 1) or w > int(s["roof_texture_max_px"]):
+            problems.append(f"{uri}: roof atlas {img.format} {w}x{h}")
+        uv = t.texcoords[t.textured_indices] if t.texcoords is not None else np.zeros((0, 2))
+        if len(uv) == 0 or uv.min() < 0.0 or uv.max() > 1.0:
+            problems.append(f"{uri}: roof texcoords outside [0, 1]")
+    return Check("buildings_roofs", not problems, _summary(problems))
 
 
 def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[list[Check], dict, dict | None]:
@@ -419,6 +490,11 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
         checks.append(_guard("landcover_codes", _check_landcover_codes, pkg / "landcover"))
     if m.layers.get("buildings") and (pkg / "features" / "buildings" / "tileset.json").exists():
         checks.append(_guard("buildings_heights", _check_buildings_heights, pkg, m, st))
+        checks.append(_guard("buildings_roofs", _check_buildings_roofs, pkg, m))
+    mask_index = pkg / "features" / "buildings" / "mask" / "index.json"
+    if (m.layers.get("buildings") and m.layers["landcover"].get("buildings") and mask_index.exists()
+            and (pkg / "landcover" / "index.json").exists()):
+        checks.append(_guard("buildings_mask", _check_buildings_mask, pkg))
     return checks, stats, ndvi_stats
 
 

@@ -350,3 +350,23 @@ bool FVegBuildingsManagerTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVegBuildingsMethodTest, "CamSim.Vegetation.Buildings.MethodSelection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FVegBuildingsMethodTest::RunTest(const FString& Parameters)
+{
+	using E = CamSimVegetation::EBuildingExclusion;
+	using CamSimVegetation::ChooseBuildingExclusion;
+	TestTrue(TEXT("mask wins over the tileset"), ChooseBuildingExclusion(true, true, true) == E::Mask);
+	TestTrue(TEXT("mask without a tileset (buildings disabled)"), ChooseBuildingExclusion(true, true, false) == E::Mask);
+	TestTrue(TEXT("R3 package: runtime check"), ChooseBuildingExclusion(true, false, true) == E::RuntimeCheck);
+	TestTrue(TEXT("neither: none"), ChooseBuildingExclusion(true, false, false) == E::None);
+	TestTrue(TEXT("drop_in_buildings false gates the mask"), ChooseBuildingExclusion(false, true, true) == E::Off);
+	TestTrue(TEXT("drop_in_buildings false gates the runtime check"), ChooseBuildingExclusion(false, false, true) == E::Off);
+	TestEqual(TEXT("mask text"), CamSimVegetation::DescribeBuildingExclusion(E::Mask, 2.0f), FString(TEXT("mask (clearance 2.0 m)")));
+	TestEqual(TEXT("runtime text"), CamSimVegetation::DescribeBuildingExclusion(E::RuntimeCheck, 2.0f),
+		FString(TEXT("runtime check (buildings tileset, no mask)")));
+	TestEqual(TEXT("none text"), CamSimVegetation::DescribeBuildingExclusion(E::None, 2.0f), FString(TEXT("none")));
+	TestEqual(TEXT("off text"), CamSimVegetation::DescribeBuildingExclusion(E::Off, 2.0f), FString(TEXT("off (drop_in_buildings false)")));
+	return true;
+}

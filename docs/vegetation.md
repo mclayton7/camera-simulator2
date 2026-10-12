@@ -30,24 +30,36 @@ in the ground-truth masks, but CIGI and DIS never see them.
   `vegetation.seed` only when there is no package. Pendleton's package has manifest seed 0, which gives vegetation seed 186258786 (as `vegetation.seed: 0` does).
 - **Heights:** one `ACesium3DTileset::SampleHeightMostDetailed` batch per cell on the terrain tileset (the
   one tagged `CamSimTerrain`, never the buildings tileset). A failed sample drops that tree only.
-- **Trees inside building footprints are dropped when the package has buildings** (REALISM R3,
-  `features/buildings/`). Land cover alone would put ~10 % of footprint area under trees: WorldCover tags a
-  texel by its canopy, so tree cover runs over and between suburban houses (on Pendleton 10.4 % of the 23.0 km² of
-  footprints is code 10, about 10,400 trees at density 1), and a 7–11 m tree would poke its crown through a
-  3–8 m flat roof. When the buildings tileset (tag `CamSimBuildings`) exists, each cell's height stage runs a
-  second `SampleHeightMostDetailed` batch on it for the same points, beside the terrain batch; both must answer
-  (or the stage times out, as above) before the cell spawns. A tree whose buildings sample succeeds more than
-  0.5 m above its terrain height is dropped (`CamSimVegetation::KeepClearOfBuildings`); a failed buildings sample
-  is a miss (no building there) and keeps the tree. Without a buildings tileset (no layer, or
-  `scene.buildings.enabled: false`, or `vegetation.drop_in_buildings: false`) there is no second batch and nothing
-  changes. CamSim runs nothing extra on the game thread beyond the per-cell spawn, but Cesium loads the buildings'
-  most detailed (z15) tiles under every tree point to answer the queries: in `dense_pass` the check costs about
-  +0.3 ms game p50, +2.5 ms game p95 and +34 MiB, which puts buildings SSE 64 + trees at +3.61 ms game p95, over the 3.0 ms
-  limit. The user chose on 2026-10-11 to keep the check on by default and accept that overrun; a build-time footprint
-  exclusion in the scene package (no runtime sampling) is the tracked follow-up (`scene-packages.md`, "R3/R4 bench
-  check and combined cost"; ROADMAP Realism track). The dump line carries `in_buildings` (trees
-  dropped in that cell), and when streaming settles with new drops a `Vegetation: settled, N cells spawned, M trees
-  dropped inside building footprints so far` line is logged (at most once per 30 s).
+- **Trees stay out of buildings** (REALISM R3 / R3b; `vegetation.drop_in_buildings`, default true, gates all of it).
+  Land cover alone would put ~10 % of footprint area under trees (WorldCover tags canopy over roofs as code 10: on
+  Pendleton 10.4 % of the 23.0 km² of footprints, about 10,400 trees at density 1, and a 7–11 m tree would poke its
+  crown through a 3–8 m flat roof). In order of preference:
+  1. **Footprint mask** (a package built with R3b: `features/buildings/mask/index.json` exists):
+     `FVegetationBuildingMask` decodes the 1-bit mask tiles on the scatter worker into bitsets (8-tile LRU, ~23 MB,
+     separate from the land-cover sampler). `GenerateCell` drops a candidate whose trunk, or any of 4 points
+     `vegetation.building_clearance_m` (2 m) east, west, north and south of it, is masked (the 5-point rule). No
+     runtime sampling; the hash draws are unchanged, so without a mask every cell is bit-identical to R4's. The probes
+     are axis-aligned: a footprint corner diagonally within the clearance is not seen. It applies whether or not the
+     buildings tileset is drawn (`scene.buildings.enabled`), since the roofs are in the imagery either way. A mask
+     whose `index.json` is unusable logs one `Vegetation: building mask unusable (...); falling back` warning and the
+     next method is used.
+  2. **Runtime check** (an R3 package: buildings tileset, no mask): each cell's height stage runs a second
+     `SampleHeightMostDetailed` batch on the tileset tagged `CamSimBuildings` for the same points, beside the terrain
+     batch; both must answer (or the stage times out, as above) before the cell spawns. A tree whose buildings sample
+     succeeds more than 0.5 m above its terrain height is dropped (`CamSimVegetation::KeepClearOfBuildings`); a failed
+     sample is a miss and keeps the tree. Cesium loads the buildings' most detailed (z15) tiles under every tree point
+     to answer it: in `dense_pass` it costs about +0.3 ms game p50, +2.5 ms game p95 and +34 MiB, which put buildings
+     SSE 64 + trees at +3.61 ms game p95, over the 3.0 ms limit (kept on by the user's decision of 2026-10-11).
+  3. Neither (no mask, no buildings tileset): no exclusion.
+  The `Vegetation: on (...)` line ends with `buildings: mask (clearance 2.0 m)`, `buildings: runtime check (buildings
+  tileset, no mask)`, `buildings: none` or `buildings: off (drop_in_buildings false)`. The dump line carries
+  `in_buildings` (trees dropped in that cell by the runtime check only; the mask drops are not counted), and when
+  streaming settles with new runtime-check drops a `Vegetation: settled, N cells spawned, M trees dropped inside
+  building footprints so far` line is logged (at most once per 30 s).
+- **Bad mask tiles:** a tile that is listed but unreadable (a git LFS pointer, the wrong size, truncated, missing)
+  reads as "no buildings" there and logs one `Vegetation: building mask tile ... unreadable (...); treated as no
+  buildings` warning per tile. A failed tile is remembered and not retried, so restart after `git lfs pull`. The other
+  tiles keep answering.
 - **Cells** (`Vegetation/VegetationCellActor.h`): one actor per cell with a `UCesiumGlobeAnchorComponent` at
   the cell centre and one `UHierarchicalInstancedStaticMeshComponent`, instances in the cell's
   East-South-Up frame, so cells survive origin shifts. Collision off, `bCastShadow = cast_shadows`,
@@ -60,7 +72,7 @@ in the ground-truth masks, but CIGI and DIS never see them.
 - **Readiness:** `/ready` does not wait for trees; they fill in within seconds of the terrain.
 - Without land cover (no package, no `thermal.land_cover.dir`) or without a loadable library, vegetation stays
   off with one `Vegetation: off (...)` log line. `Vegetation: on (...)` logs the type, radius, density,
-  shadows, seed, land-cover directory and whether the buildings check is on.
+  shadows, seed, land-cover directory and the building exclusion method (above).
 
 ## Configuration
 
@@ -76,6 +88,8 @@ in the ground-truth masks, but CIGI and DIS never see them.
 | `cast_shadows` | `CAMSIM_VEGETATION_CAST_SHADOWS` | `true` |
 | `cell_size_m` | `CAMSIM_VEGETATION_CELL_SIZE_M` | `100` |
 | `seed` | `CAMSIM_VEGETATION_SEED` | `0` (used only without a package) |
+| `drop_in_buildings` | `CAMSIM_VEGETATION_DROP_IN_BUILDINGS` | `true` |
+| `building_clearance_m` | `CAMSIM_VEGETATION_BUILDING_CLEARANCE_M` | `2.0` (`[0, 10]`; with the package's footprint mask, no tree within this distance of a footprint along east, west, north and south) |
 
 The radius / density / shadows defaults are the spec's starting values. The bench sweep ("Measured",
 "Bench") proposes keeping them; the final choice is the user's.
@@ -270,8 +284,33 @@ then Mainside (33.305, −117.314, 350 m, north, −30°), then a low oblique 12
 - `pendleton-r2` (no buildings layer) is unchanged: `vegetation_check.py --stages approach` rerun after the fix
   (`.cache/veg/check-i1-r2/`) passes placement (8,992 trees in 472 cells, 0 off code 10), grounding (max |dz| 0.000 m
   both runs), determinism (113 common cells, 0 mismatches) and origin shift (SSIM 0.9834 / 0.9834), and every one of
-  the 217 north and 368 south cells has the same hash as in the run above (`in_buildings` 0 everywhere; the log says
-  `buildings none`).
+  the 217 north and 368 south cells has the same hash as in the run above (`in_buildings` 0 everywhere; the log said
+  `buildings none`, R4's wording; now `buildings: none`).
+
+### Trees vs building footprints (R3b mask)
+
+2026-10-11, M1 Pro / Metal, `pendleton-r4` (`pendleton-r3` rebuilt with the footprint mask, `features/buildings/mask/`),
+defaults (`vegetation.building_clearance_m` 2.0). `scripts/vegetation_check.py --stages footprints,approach,off`
+(`.cache/r3b/veg/report.json`):
+
+- **Footprints gate: pass.** 4,895 trees dumped in 399 cells around the two poses (the `dense_pass` midpoint and
+  Mainside); **0 probe hits** (trunk and 4 probes against the package's mask, the runtime rule), **0 trunks inside a
+  footprint** (10,031 footprints in the bbox, polygons shrunk by 0.76 m); 36 trees within the 2 m buffered footprints
+  (information: the 5-point rule cannot see a corner diagonally). Log line ends `buildings: mask (clearance 2.0 m))`.
+  The same counts on the flat-roof package (`.cache/r3b/veg-flat/`, same mask).
+- Placement 8,987 trees in 472 cells, 0 off code 10; grounding max |dz| 0.000 m both runs; determinism 113 common cells,
+  0 mismatches; origin shift SSIM 0.9835 / 0.9834, 0 hash changes; off switch passes (log disabled, `nadir_3km` SSIM
+  0.97848 vs a, 0.97857 vs b; the weak gate described above).
+- **Without a mask nothing changed:** `--stages approach` on `pendleton-r2` (`.cache/r3b/veg-r2/`) against the R4 run
+  on disk (`.cache/veg/check-i1-r2/`): 217 north and 368 south common cells, **0 hash mismatches**; the log ends
+  `buildings: none`.
+- **Cost** (`.cache/bench-r3b/combined/`, `dense_pass`, 2 repeats, medians): trees on with buildings on vs buildings on
+  alone: game p50 +0.60 ms, p95 +0.57 ms, +53 MiB; the R3/R4 combined sweep without any footprint check had +0.60 /
+  +0.60 ms / +69 MiB for the same pair. The mask costs nothing measurable, against R4's runtime check (+0.3 ms p50,
+  **+2.5 ms p95**, +34 MiB). Both features on now measure +1.39 ms game p95 over all-off (R4 with the runtime check:
+  +3.61 ms, over the 3.0 ms limit).
+- The runtime check (`SampleHeightMostDetailed` on the buildings tileset) remains only for packages with buildings and
+  no mask (R3 packages).
 
 ### Bench
 
@@ -323,8 +362,9 @@ Every row: 0 dropped frames, 29.6–29.9 fps. Budget: game p50 ≤ +1.5 ms, p95 
 ## Known limits
 
 - Without a buildings layer, trees stand inside building footprints wherever WorldCover calls the canopy tree
-  cover (~10 % of footprint area on Pendleton). With one, they are dropped (How it works); trees right beside a
-  wall can still lean their crowns over a roof, since only the trunk point is tested.
+  cover (~10 % of footprint area on Pendleton). With a mask (R3b) or the runtime check they are dropped (How it
+  works). Building clearance is tested at 4 axis points; a crown can still overhang a footprint corner or, with a
+  clearance below the crown radius, a wall. The runtime check tests only the trunk point.
 - One species; density is tree / no tree per 10 m texel (no canopy %), so woodland edges follow the
   land-cover grid.
 - Hard pop-in at `radius_m`; no impostors beyond it, the imagery shows distant trees.

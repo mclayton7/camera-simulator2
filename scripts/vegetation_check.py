@@ -19,13 +19,17 @@ Gates (report.json, exit 0 only when all pass):
                 the run's log has no vegetation line (a trees-on smoke is measured beside it: the one smoke shot, nadir
                 from 3 km, barely sees trees, so this gate has little power)
   gt            scripts/gt_occlusion_check.py exits 0 (vegetation on)
+  footprints    (`--stages footprints`, REALISM R3b; needs a package with `features/buildings/mask/`) every dumped tree's
+                trunk and its 4 probes at `building_clearance_m` (E/W/N/S) are off the package's mask, no trunk lies
+                inside a footprint polygon shrunk by half a mask cell's diagonal, and the log names the mask method;
+                trees within the clearance of a footprint polygon are counted (info: the axis probes do not see corners)
 Informational (not gated):
   surface_dz    CIGI HOT (traces against the rendered tiles) at dumped trees, by distance band from the camera, before
                 and after the far trip: the tree base height (SampleHeightMostDetailed) minus the rendered surface
   truck         a DIS truck parked among the trees (send_dis_test.py truck-parked --location): COCO visibility and box
   shots         low oblique over the woodland, trees on and off (visual review)
 
---stages picks a subset (approach,off,gt,truck,oblique); the gates of stages not run are read back from an existing
+--stages picks a subset (approach,off,gt,truck,oblique,footprints); the gates of stages not run are read back from an existing
 report.json in --out, so a single failing stage can be rerun.
 """
 
@@ -60,6 +64,17 @@ YAW = 45.0
 PITCH = -20.0
 FAR_DLON = 3.41  # the bench's far_origin trip: well past the origin-rebase distance
 M_PER_DEG = 111_320.0
+WGS84_A = 6_378_137.0
+WGS84_E2 = 0.00669437999014
+
+
+def _deg_per_metre(lat_deg):
+    """(deg lat, deg lon) per metre at lat: WGS-84 meridional and prime-vertical radii, as C++ IsClearOf does."""
+    lat = np.radians(np.asarray(lat_deg, float))
+    w2 = 1.0 - WGS84_E2 * np.sin(lat) ** 2
+    m = WGS84_A * (1.0 - WGS84_E2) / (w2 * np.sqrt(w2))
+    n = WGS84_A / np.sqrt(w2)
+    return np.degrees(1.0 / m), np.degrees(1.0 / (n * np.maximum(np.cos(lat), 1e-6)))
 STAGES = ["approach", "off", "gt", "truck", "oblique"]
 
 
@@ -152,6 +167,125 @@ def dist_m(a: tuple[float, float], b: tuple[float, float]) -> float:
     dn = (b[0] - a[0]) * M_PER_DEG
     de = (b[1] - a[1]) * M_PER_DEG * math.cos(math.radians(a[0]))
     return math.hypot(dn, de)
+
+
+BBOX_PAD_M = 20.0  # the trees' bounding box is padded by this when looking for footprints
+MASK_HALF_DIAG_M = 0.76  # half the diagonal of a mask cell (1.16 m x 0.97 m at 33 N): the raster's own position error
+FOOTPRINT_POSES = [  # docs/vegetation.md "Trees vs building footprints": the dense_pass midpoint, then Mainside
+    (33.2200, -117.3103, 357.7, 105.0, -30.0),
+    (33.3050, -117.3140, 350.0, 0.0, -30.0),
+]
+
+
+def footprint_gate(trees: list[tuple[float, float]], mask, clearance_m: float, polygons: list | None = None) -> dict:
+    """REALISM R3b. trees: (lat, lon). mask: .masked(lon, lat) (bench.dense_path.BuildingMask). The runtime rule exactly:
+    a tree whose trunk or any of the 4 points clearance_m east, west, north or south of it is masked is a probe hit. With
+    the footprint polygons (lon/lat): trunks inside a polygon shrunk by MASK_HALF_DIAG_M (gated) and trees within
+    clearance_m of a polygon (info: axis probes do not see a corner diagonally within the clearance)."""
+    lat = np.array([t[0] for t in trees], float)
+    lon = np.array([t[1] for t in trees], float)
+    out: dict = {"trees": len(trees)}
+    if not trees:
+        out.update(probe_hits=0, trunks_inside_footprints=0, within_clearance=0, mask_cells_in_bbox=0)
+        out["pass"] = False  # no trees dumped: the gate has nothing to measure
+        out["reasons"] = ["no trees dumped"]
+        return out
+    reasons: list[str] = []
+    k_lat, k_lon = _deg_per_metre(lat)
+    dlat = clearance_m * k_lat
+    dlon = clearance_m * k_lon
+    hit = mask.masked(lon, lat)
+    for dx, dy in ((dlon, 0.0), (-dlon, 0.0), (0.0, dlat), (0.0, -dlat)):
+        hit |= mask.masked(lon + dx, lat + dy)
+    out["probe_hits"] = int(hit.sum())
+    if out["probe_hits"]:
+        reasons.append(f"{out['probe_hits']} trees with a masked trunk or clearance probe")
+    # Fail closed: a mask that is absent or does not reach the trees reads "no buildings" everywhere, so the probes alone
+    # would pass. Require mask cells set within the trees' bounding box (padded by BBOX_PAD_M).
+    pad_lat = BBOX_PAD_M / M_PER_DEG
+    pad_lon = BBOX_PAD_M / (M_PER_DEG * math.cos(math.radians(float(lat.mean()))))
+    w, e = float(lon.min()) - pad_lon, float(lon.max()) + pad_lon
+    south, n = float(lat.min()) - pad_lat, float(lat.max()) + pad_lat
+    nx = min(2000, max(2, int((e - w) * M_PER_DEG * math.cos(math.radians(float(lat.mean()))))))
+    ny = min(2000, max(2, int((n - south) * M_PER_DEG)))
+    gx, gy = np.meshgrid(np.linspace(w, e, nx), np.linspace(south, n, ny))
+    out["mask_cells_in_bbox"] = int(np.count_nonzero(mask.masked(gx, gy)))
+    if out["mask_cells_in_bbox"] == 0:
+        reasons.append("the mask has no footprint within the dumped trees' bounding box (wrong or empty mask)")
+    if not polygons:
+        reasons.append("no footprint polygons (buildings layer or Overture snapshot unavailable): "
+                       "trunks inside footprints not checked")
+    else:
+        import shapely
+        from shapely import affinity
+
+        k = M_PER_DEG * math.cos(math.radians(float(lat.mean())))
+        polys = [affinity.affine_transform(p, [k, 0.0, 0.0, M_PER_DEG, 0.0, 0.0]) for p in polygons]
+        pts = shapely.points(lon * k, lat * M_PER_DEG)
+        box = shapely.box(w * k, south * M_PER_DEG, e * k, n * M_PER_DEG)
+        out["footprints_in_bbox"] = len(shapely.STRtree(polys).query(box, predicate="intersects"))
+        if out["footprints_in_bbox"] == 0:
+            reasons.append("no footprint polygon within the dumped trees' bounding box")
+        deep = [g for g in (p.buffer(-MASK_HALF_DIAG_M) for p in polys) if not g.is_empty]
+        inside = shapely.STRtree(deep).query(pts, predicate="within")[0] if deep else np.zeros(0, int)
+        near = shapely.STRtree(polys).query(pts, predicate="dwithin", distance=clearance_m)[0]
+        out["trunks_inside_footprints"] = len(np.unique(inside))
+        out["within_clearance"] = len(np.unique(near))
+        if out["trunks_inside_footprints"]:
+            reasons.append(f"{out['trunks_inside_footprints']} trunks inside a footprint")
+    out["pass"] = not reasons
+    if reasons:
+        out["reasons"] = reasons
+    return out
+
+
+def load_footprints(scene: Path) -> list | None:
+    """The package's kept footprint polygons (lon/lat) from its cached Overture snapshot (same filter as the buildings
+    layer, minus the terrain-height drop, which keeps all at Pendleton); None when the snapshot is not in the cache."""
+    from camsim_scene import buildings as B
+    from camsim_scene.cache import Cache, default_cache_root
+    from camsim_scene.manifest import Manifest
+
+    m = Manifest.load(scene / "manifest.json")
+    if not m.layers.get("buildings"):
+        return None
+    a = m.source(m.layers["buildings"]["priorities"][0]).assets[0]
+    hit = Cache(default_cache_root()).lookup(a.url, a.sha256)
+    if hit is None:
+        return None
+    area = float(m.layers["buildings"]["min_area_m2"])
+    return [p for fp in B.read_snapshot(hit[0]) for p in B.clean(fp.geometry, area)]
+
+
+def footprints_gate(a: argparse.Namespace, report: dict) -> None:
+    run = a.out / "footprints"
+    dump = run / "cells.jsonl"
+    run.mkdir(parents=True, exist_ok=True)
+    dump.unlink(missing_ok=True)
+    host = rb.Host(scenario.SITES["pendleton"])
+    host.pose = pose(*FOOTPRINT_POSES[0])
+    try:
+        launch({"CAMSIM_SCENE_DIR": str(a.scene)}, [f"camsim.Vegetation.DumpPath {dump}"], host)
+        for k, p in enumerate(FOOTPRINT_POSES):
+            host.pose = pose(*p)
+            time.sleep(5.0)
+            wait_settled(dump)
+            snapshot(run / f"pose{k}.png")
+    finally:
+        log = stop(host, run / "CamSimTest.log")
+    cells = read_dump(dump)
+    trees = [(i[0], i[1]) for d in cells.values() for i in d["instances"]]
+    mask_dir = a.scene / "features" / "buildings" / "mask"
+    clearance = float(os.environ.get("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M", "2.0"))
+    res = footprint_gate(trees, dp.BuildingMask(mask_dir), clearance, load_footprints(a.scene))
+    if not (mask_dir / "index.json").is_file() or not any(mask_dir.glob("*.png")):  # fail closed: no mask to test against
+        res["pass"] = False
+        res.setdefault("reasons", []).append(f"{mask_dir} has no index.json or no tile")
+    line = next((x for x in log.splitlines() if "Vegetation: on (" in x), "")
+    res["log_line"] = line.split("LogCamSim: ", 1)[-1]
+    res["cells"] = len(cells)
+    res["pass"] = res["pass"] and "buildings: mask" in line
+    report["footprints"] = res
 
 
 def surface_dz(host: rb.Host, cells: dict, centre: tuple[float, float], per_band: int = 25) -> dict:
@@ -423,7 +557,7 @@ def main() -> int:
     ap.add_argument("--scene", type=Path, required=True)
     ap.add_argument("--baseline", type=Path, required=True, help="Task 1 Step 0 runs (a/, b/ with shots/)")
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--stages", default=",".join(STAGES), help=f"comma list of {','.join(STAGES)}")
+    ap.add_argument("--stages", default=",".join(STAGES), help=f"comma list of {','.join(STAGES)}, footprints (R3b, not in the default)")
     a = ap.parse_args()
     a.scene, a.baseline, a.out = a.scene.resolve(), a.baseline.resolve(), a.out.resolve()
     a.out.mkdir(parents=True, exist_ok=True)
@@ -431,13 +565,15 @@ def main() -> int:
     report: dict = json.loads(report_path.read_text()) if report_path.exists() else {}
     report.pop("pass", None)
     stages = [s for s in a.stages.split(",") if s]
-    run = {"approach": approach_gates, "off": off_gate, "gt": gt_gate, "truck": truck_info, "oblique": oblique_shots}
+    run = {"approach": approach_gates, "off": off_gate, "gt": gt_gate, "truck": truck_info, "oblique": oblique_shots,
+           "footprints": footprints_gate}
     for s in stages:
         print(f"[veg] stage {s}", flush=True)
         run[s](a, report)
         report_path.write_text(json.dumps(report, indent=2))
 
     gates = ["placement", "grounding", "determinism", "origin_shift", "off_switch", "gt"]
+    gates += ["footprints"] if "footprints" in report else []
     report["pass"] = all(report.get(g, {}).get("pass", False) for g in gates)
     report_path.write_text(json.dumps(report, indent=2))
     print(json.dumps({g: report.get(g, {}).get("pass") for g in gates} | {"pass": report["pass"]}, indent=2))

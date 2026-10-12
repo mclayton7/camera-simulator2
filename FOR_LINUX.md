@@ -195,6 +195,20 @@ R1/R2 package, then check the runtime and the cost on the 5080.
   as task 1f does for `run_bench.py`. Report game thread, GPU and VRAM per instance against the budget (+1.5 ms game
   p50, +5 ms GPU p50, +1024 MiB memory over a whole run, raised from 400 MB on 2026-10-11), and the SSE the user picked on the Mac.
 
+R3b (footprint mask, land-cover burn 230, roof atlases; Mac results in `docs/scene-packages.md`, "R3b buildings look"):
+
+- **Package:** build `pendleton-r4` the same way from the R3 package (`--replan` rebuilds only land cover and buildings),
+  or copy the Mac's. Expect 82,260 roofs textured at 0.5 m, 56 mask tiles, 307,606 cells burned to 230, a 368.2 MB
+  buildings layer and a peak buildings-worker RSS near 1,988 MB (limit 2,048 MB); compare `hashes.txt` with the Mac's: the mask, land-cover and non-atlas files should match; the GLBs (embedded JPEG atlases) match only between builds made in the pinned build container (`scripts/scene/build.sh`), because JPEG bytes depend on the Pillow/libjpeg build.
+  The buildings worker peaked at 1,988 MB of the 2,048 MB `--max-worker-rss-mb` limit on Pendleton at `roof_texel_m` 0.5 (1,588 MB at 1.0; R3 was 1,630): a larger site may exceed it, so pass a higher `--max-worker-rss-mb` to `camsim-scene build` (it is a per-worker limit in MB, default 2048).
+- **Infrared:** `thermal_check.py --band mwir --runs roofs,roads --scene <pendleton-r4>`: (s) roof − grass ≥ +3 DN at
+  noon, (s_air) `building_roof` ≥ 0.5 K below air at 02:00 (Mac: +38.7 DN, 2.1 K).
+- **Combined sweep on Vulkan:** `sweep.py --scene <pendleton-r4> --axis buildings=off,on --axis trees=off,on --repeat 2`,
+  and a full `run_bench.py --gpu-mem` both on vs both off (Mac: memory +1,243 MiB over the whole run at
+  `roof_texel_m` 0.5, over the +1,024 MiB budget; +971 MiB at 1.0).
+- **Atlas texture memory on the RTX 5080 at 1, 2 and 4 instances** (`scale_bench.py`, VRAM from `nvidia-smi`), with
+  roof textures on vs off (`roof_textures = false` package), so the texel choice can be made on the Linux box as well.
+
 Record the results in `docs/scene-packages.md` (an "R3 on Linux" table after "R3 buildings slice") and in `ROADMAP.md`'s
 Realism paragraph.
 

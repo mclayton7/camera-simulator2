@@ -401,6 +401,15 @@ IoU (gate 2: needs ~30 human-traced NAIP outlines); visual review of the EO shot
 work, below), bridges, LiDAR nDSM heights, thermal class from the per-feature metadata, building semantic class in ground
 truth.
 
+**R3b (2026-10-11, macOS):** footprint mask (trees), land-cover burn 230 (`building_roof` in IR, CIGI terrain), roof
+atlas from NAIP (`docs/scene-packages.md`, "R3b buildings look"). Measured on `pendleton-r4`: 82,260 roofs textured at
+0.5 m (buildings layer 368.2 MB, was 247.9), 307,606 land-cover cells burned; rebuilds and no-`[buildings]` packages
+byte-identical; trees 0 on the mask and 0 trunks inside footprints, with both features on back to +1.39 ms game p95
+(was +3.61 ms with the runtime check); MWIR roof − grass +38.7 DN at noon, roof 2.1 K below air at 02:00; CIGI 230 on
+burned terrain and on roofs. Memory over a whole run is +1,243 MiB at 0.5 m, over the +1,024 MiB budget; +971 MiB at
+`roof_texel_m = 1.0` (one run each; the choice is open for the user). Open: that choice, visual review, Linux/Vulkan.
+Deferred: lean correction, wall textures, pitched roofs, KTX2.
+
 - Footprints: Overture (OSM + Microsoft footprints merged, ODbL; snapshot it, releases are deleted
   after 60 days), or Microsoft's Global ML footprints directly (CDLA Permissive 2.0, some with
   heights). Heights: in order of preference, 3DEP LiDAR nDSM, Overture `height`/`num_floors`, then

@@ -389,7 +389,8 @@ struct FCamSimConfig
 		bool    bCastShadows = true;     // CAMSIM_VEGETATION_CAST_SHADOWS
 		float   CellSizeM    = 100.0f;   // CAMSIM_VEGETATION_CELL_SIZE_M
 		int32   Seed         = 0;        // CAMSIM_VEGETATION_SEED; used only without a scene package
-		bool    bDropInBuildings = true; // CAMSIM_VEGETATION_DROP_IN_BUILDINGS; drop trees inside building footprints (acts only with a buildings tileset)
+		float   BuildingClearanceM = 2.0f; // CAMSIM_VEGETATION_BUILDING_CLEARANCE_M; with the package's footprint mask, no tree within this of a footprint along E/W/N/S (REALISM R3b)
+		bool    bDropInBuildings = true; // CAMSIM_VEGETATION_DROP_IN_BUILDINGS; gates both tree-vs-building methods, in order: the package's footprint mask, else the runtime buildings-tileset check, else none
 	};
 	FVegetationConfig Vegetation;
 
@@ -472,6 +473,8 @@ struct FCamSimConfig
 		FString SeaLevelStation;
 		// file:/// URL of <dir>/features/buildings/tileset.json; empty when the package has none (ResolvePackage).
 		FString BuildingsUrl;
+		// Absolute features/buildings/mask/ of the package when it has index.json (REALISM R3b; the tree scatter reads it).
+		FString BuildingsMaskDir;
 		TArray<FString> ResolveErrors;
 		TArray<FString> ResolveWarnings;
 	} Scene;

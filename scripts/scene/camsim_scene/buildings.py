@@ -13,9 +13,11 @@ from shapely.geometry.polygon import orient
 
 from . import geodesy
 from .gltf import PropertyTable, TileMesh
+from .roofs import RoofOptions, RoofSampler, roof_texture
 from .tiling import tile_bounds, tile_size_deg
 
-BUILDINGS_RULES_VERSION = "1"  # bump when geometry/height/tier rules change (it is in the layer settings hash)
+# bump when geometry/height/tier rules change (it is in the layer settings hash). 2: R3b footprint mask + roof atlas
+BUILDINGS_RULES_VERSION = "2"
 DEFAULT_RELEASE = "2026-09-23.1"
 TIER_MIN_AREA_M2 = {13: 2000.0, 14: 300.0}  # else LEAF_ZOOM
 LEAF_ZOOM = 15
@@ -49,6 +51,17 @@ class Building:
     roof_m: float
     area_m2: float
     tile: tuple[int, int, int]  # (z, x, y)
+
+
+@dataclass
+class TileGeometry:
+    positions: np.ndarray  # (n, 3) float32: east, up, -north (m) from the tile's ENU origin
+    normals: np.ndarray  # (n, 3) float32
+    feature_ids: np.ndarray  # (n,) float32
+    roof: dict  # feature index -> its roof vertex indices (uint32, ascending; consecutive triples are triangles)
+    wall_indices: np.ndarray  # uint32
+    table: PropertyTable
+    matrix: np.ndarray  # 4 x 4 ENU -> ECEF of the tile origin
 
 
 def read_snapshot(path: Path) -> list[Footprint]:
@@ -191,7 +204,7 @@ def _cdt_triangles(poly) -> list[np.ndarray]:
     return tris
 
 
-def tile_mesh(buildings: list[Building], origin: tuple[float, float, float]) -> tuple[TileMesh, PropertyTable]:
+def tile_geometry(buildings: list[Building], origin: tuple[float, float, float]) -> TileGeometry:
     m = geodesy.enu_to_ecef_matrix(*origin)
     rot, o = m[:3, :3].T, m[:3, 3]  # ECEF -> ENU rotation, origin
 
@@ -200,7 +213,8 @@ def tile_mesh(buildings: list[Building], origin: tuple[float, float, float]) -> 
         enu = (rot @ (e - o).T).T
         return np.stack([enu[:, 0], enu[:, 2], -enu[:, 1]], axis=1)
 
-    pos, fid, roof, wall = [], [], [], []
+    pos, fid, wall = [], [], []
+    roof: dict[int, list[int]] = {}
     n = 0
 
     def add(tri_gl: np.ndarray, out: list, f: int):
@@ -214,7 +228,7 @@ def tile_mesh(buildings: list[Building], origin: tuple[float, float, float]) -> 
     for f, b in enumerate(bs):
         for part in b.parts:
             for tri in _cdt_triangles(part):
-                add(to_gl(tri, b.roof_m), roof, f)
+                add(to_gl(tri, b.roof_m), roof.setdefault(f, []), f)
             for ring in [part.exterior, *part.interiors]:
                 c = np.asarray(ring.coords)
                 bot, top = to_gl(c, b.base_m), to_gl(c, b.roof_m)
@@ -227,21 +241,54 @@ def tile_mesh(buildings: list[Building], origin: tuple[float, float, float]) -> 
     tri = p.reshape(-1, 3, 3)
     nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
     nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
-    normals = np.repeat(nrm, 3, axis=0)
-    mesh = TileMesh(
-        p.astype(np.float32),
-        normals.astype(np.float32),
-        np.asarray(fid, np.float32),
-        np.asarray(roof, np.uint32),
-        np.asarray(wall, np.uint32),
-    )
     table = PropertyTable(
         [b.source_id for b in bs],
         [b.cls for b in bs],
         np.asarray([b.height_m for b in bs], np.float32),
         np.asarray([b.height_source for b in bs], np.uint8),
     )
-    return mesh, table
+    return TileGeometry(
+        p.astype(np.float32),
+        np.repeat(nrm, 3, axis=0).astype(np.float32),
+        np.asarray(fid, np.float32),
+        {f: np.asarray(v, np.uint32) for f, v in roof.items()},
+        np.asarray(wall, np.uint32),
+        table,
+        m,
+    )
+
+
+def tile_mesh(
+    buildings: list[Building],
+    origin: tuple[float, float, float],
+    roof: RoofOptions | None = None,
+    sampler: RoofSampler | None = None,
+    stats: dict | None = None,
+) -> tuple[TileMesh, PropertyTable]:
+    """The tile's mesh. Without `roof` and `sampler` it has R3's layout (flat roofs, no texcoords, no extras); with
+    them each roof is drawn from the tile's atlas or, when roofs.roof_texture leaves it out, kept flat. `stats`
+    accumulates textured / flat_coarse / flat_overflow roof counts and tiles_by_texel_m."""
+    g = tile_geometry(buildings, origin)
+
+    def cat(fs) -> np.ndarray:
+        return np.concatenate([g.roof[f] for f in fs]).astype(np.uint32) if fs else np.zeros(0, np.uint32)
+
+    if roof is None or sampler is None:
+        return TileMesh(g.positions, g.normals, g.feature_ids, cat(sorted(g.roof)), g.wall_indices), g.table
+    tex = roof_texture(g.positions, g.roof, g.table.source_ids, g.matrix, sampler, roof)
+    textured, flat = sorted(tex.textured), sorted(set(g.roof) - tex.textured)
+    if stats is not None:
+        for k, v in (("textured", len(textured)), ("flat_coarse", tex.n_coarse), ("flat_overflow", tex.n_overflow)):
+            stats[k] = stats.get(k, 0) + v
+        by = stats.setdefault("tiles_by_texel_m", {})
+        if tex.texel_m is not None:
+            by[f"{tex.texel_m:g}"] = by.get(f"{tex.texel_m:g}", 0) + 1
+    mesh = TileMesh(
+        g.positions, g.normals, g.feature_ids, cat(flat), g.wall_indices,
+        textured_indices=cat(textured), texcoords=tex.texcoords if textured else None, texture_jpeg=tex.jpeg,
+        extras={"roof_texel_m": tex.texel_m},
+    )
+    return mesh, g.table
 
 
 def tile_origin(z: int, x: int, y: int, blds: list[Building]) -> tuple[float, float, float]:

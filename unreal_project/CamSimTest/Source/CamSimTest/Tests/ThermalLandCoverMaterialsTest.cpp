@@ -2,8 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
+#include "Thermal/LandCoverClasses.h"
 #include "Thermal/ThermalMaterials.h"
 #include "Thermal/ThermalModel.h"
+#include "Thermal/ThermalReference.h"
+#include "ThermalFrameParams.h"
 
 // CamSim.Thermal.Materials.*: the land-cover classes (ROADMAP 4B) and their diurnal contrasts at San Francisco.
 
@@ -23,7 +26,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalLandCoverBuiltInsTest, "CamSim.Thermal.
 bool FThermalLandCoverBuiltInsTest::RunTest(const FString& Parameters)
 {
 	const TArray<FThermalMaterial>& B = FThermalMaterialTable::BuiltIns();
-	TestEqual(TEXT("15 built-ins"), B.Num(), 15);
+	TestEqual(TEXT("16 built-ins"), B.Num(), 16);
 	struct FExpect { int32 Index; const TCHAR* Name; };
 	const FExpect Expected[] = {
 		{ FThermalMaterialTable::TerrainDefault, TEXT("terrain_default") }, { FThermalMaterialTable::Water, TEXT("water") },
@@ -34,6 +37,7 @@ bool FThermalLandCoverBuiltInsTest::RunTest(const FString& Parameters)
 		{ FThermalMaterialTable::BuiltUp, TEXT("built_up") }, { FThermalMaterialTable::BareSoil, TEXT("bare_soil") },
 		{ FThermalMaterialTable::SnowIce, TEXT("snow_ice") }, { FThermalMaterialTable::Wetland, TEXT("wetland") },
 		{ FThermalMaterialTable::RailBallast, TEXT("rail_ballast") },
+		{ FThermalMaterialTable::BuildingRoof, TEXT("building_roof") },
 	};
 	for (const FExpect& E : Expected)
 	{
@@ -124,5 +128,54 @@ bool FThermalLandCoverContrastTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("noon: rail ballast warmer than grassland by >= 1 K"), K(T::RailBallast, Noon) - K(T::Grassland, Noon) >= 1.0);
 	TestTrue(TEXT("night: rail ballast cooler than asphalt"), K(T::RailBallast, Night) < K(T::Asphalt, Night));
 	TestTrue(TEXT("night: tree canopy warmer than grassland by >= 0.5 K"), K(T::TreeCanopy, Night) - K(T::Grassland, Night) >= 0.5);
+	return true;
+}
+
+// REALISM R3b: a light, low-mass roof is hotter than grass at noon and below air temperature at night, at Camp Pendleton
+// (33.3 N) on both solstices, clear sky, air 15 C mean / 8 K swing (thermal_check's defaults).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalBuildingRoofTest, "CamSim.Thermal.Materials.BuildingRoofDiurnal",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalBuildingRoofTest::RunTest(const FString& Parameters)
+{
+	using T = FThermalMaterialTable;
+	const T Table;
+	for (const int32 Day : { 355, 172 })
+	{
+		FThermalSite S;
+		S.Year = 2026; S.DayOfYear = Day; S.LatDeg = 33.3; S.LonDeg = -117.3;
+		S.TairMeanK = 288.15; S.AirSwingK = 8.0; S.Cloud = 0.0;
+		FThermalModel M;
+		M.Update(S, Table);
+		const double RoofNoon = M.TemperatureK(T::BuildingRoof, 12.0 * 3600.0, 288.15);
+		const double GrassNoon = M.TemperatureK(T::Grassland, 12.0 * 3600.0, 288.15);
+		const double RoofNight = M.TemperatureK(T::BuildingRoof, 2.0 * 3600.0, 288.15);
+		const double AirNight = FThermalModel::AirTemperatureK(S, 2.0);
+		AddInfo(FString::Printf(TEXT("day %d: roof %.1f / grass %.1f K at noon, roof %.1f / air %.1f K at 02:00"),
+			Day, RoofNoon, GrassNoon, RoofNight, AirNight));
+		TestTrue(*FString::Printf(TEXT("day %d: roof >= grass + 3 K at noon"), Day), RoofNoon - GrassNoon >= 3.0);
+		TestTrue(*FString::Printf(TEXT("day %d: roof <= air - 0.5 K at 02:00"), Day), AirNight - RoofNight >= 0.5);
+		TestTrue(*FString::Printf(TEXT("day %d: roof colder than built-up ground at night"), Day),
+			RoofNight < M.TemperatureK(T::BuiltUp, 2.0 * 3600.0, 288.15));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThermalBuildingRoofRefineTest, "CamSim.Thermal.Materials.BuildingRoofKeepsItsClass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FThermalBuildingRoofRefineTest::RunTest(const FString& Parameters)
+{
+	using T = FThermalMaterialTable;
+	const T Materials;
+	FLandCoverClassTable Classes;
+	Classes.Build({}, Materials);
+	FThermalFrameParams P;
+	P.NumClasses = static_cast<uint32>(Materials.Num());
+	for (uint32 C = 0; C < P.NumClasses; ++C) { P.ClassTempK[C] = 280.0f + C; P.ClassEmissivity[C] = 0.9f; }
+	FMemory::Memcpy(P.LandCoverClass, Classes.Class, sizeof(P.LandCoverClass));
+	FMemory::Memcpy(P.LandCoverFamily, Classes.Family, sizeof(P.LandCoverFamily));
+	const FVector4f Grey = CamSimThermalRef::RefinedClassData(P, 230, FVector2f(0.0f, 0.7f), true);   // no vegetation
+	TestEqual(TEXT("a grey roof keeps building_roof"), Grey.X, 280.0f + T::BuildingRoof);
+	const FVector4f Green = CamSimThermalRef::RefinedClassData(P, 230, FVector2f(1.0f, 0.7f), true);  // canopy over it
+	TestEqual(TEXT("a green pixel blends to vegetation"), Green.X, 280.0f + T::Vegetation);
 	return true;
 }

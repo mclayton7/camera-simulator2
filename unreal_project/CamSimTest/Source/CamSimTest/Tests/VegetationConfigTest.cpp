@@ -19,6 +19,7 @@ bool FVegConfigDefaultsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("cell_size_m"), V.CellSizeM, 100.0f);
 	TestEqual(TEXT("seed"), V.Seed, 0);
 	TestTrue (TEXT("drop_in_buildings"), V.bDropInBuildings);
+	TestEqual(TEXT("building_clearance_m"), V.BuildingClearanceM, 2.0f);
 	return true;
 }
 
@@ -35,7 +36,8 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 		"  cast_shadows: false\n"
 		"  cell_size_m: 50\n"
 		"  seed: 42\n"
-		"  drop_in_buildings: false\n");
+		"  drop_in_buildings: false\n"
+		"  building_clearance_m: 3.5\n");
 	FCamSimConfig Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	TestTrue (TEXT("parsed"), Cfg.bLoadedSuccessfully);
 	TestFalse(TEXT("enabled"), Cfg.Vegetation.bEnabled);
@@ -46,12 +48,14 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("cell"), Cfg.Vegetation.CellSizeM, 50.0f);
 	TestEqual(TEXT("seed"), Cfg.Vegetation.Seed, 42);
 	TestFalse(TEXT("drop_in_buildings"), Cfg.Vegetation.bDropInBuildings);
+	TestEqual(TEXT("clearance"), Cfg.Vegetation.BuildingClearanceM, 3.5f);
 
 	const TCHAR* Vars[][2] = {
 		{ TEXT("CAMSIM_VEGETATION_ENABLED"), TEXT("true") }, { TEXT("CAMSIM_VEGETATION_LIBRARY_DIR"), TEXT("/opt/veg") },
 		{ TEXT("CAMSIM_VEGETATION_RADIUS_M"), TEXT("500") }, { TEXT("CAMSIM_VEGETATION_DENSITY_SCALE"), TEXT("0.25") },
 		{ TEXT("CAMSIM_VEGETATION_CAST_SHADOWS"), TEXT("1") }, { TEXT("CAMSIM_VEGETATION_CELL_SIZE_M"), TEXT("200") },
-		{ TEXT("CAMSIM_VEGETATION_SEED"), TEXT("7") }, { TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), TEXT("1") } };
+		{ TEXT("CAMSIM_VEGETATION_SEED"), TEXT("7") }, { TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), TEXT("1") },
+		{ TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), TEXT("4") } };
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], V[1]);
 	Cfg = FCamSimConfig::LoadFromYamlString(Yaml);
 	for (const auto& V : Vars) FPlatformMisc::SetEnvironmentVar(V[0], TEXT(""));
@@ -63,6 +67,7 @@ bool FVegConfigYamlEnvTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("env cell"), Cfg.Vegetation.CellSizeM, 200.0f);
 	TestEqual(TEXT("env seed"), Cfg.Vegetation.Seed, 7);
 	TestTrue (TEXT("env drop_in_buildings"), Cfg.Vegetation.bDropInBuildings);
+	TestEqual(TEXT("env clearance"), Cfg.Vegetation.BuildingClearanceM, 4.0f);
 	return true;
 }
 
@@ -84,5 +89,10 @@ bool FVegConfigValidateTest::RunTest(const FString& Parameters)
 	TestTrue (TEXT("cell 10"),      Has(With([](auto& V) { V.CellSizeM = 10.0f; }), TEXT("vegetation.cell_size_m")));
 	TestTrue (TEXT("cell 600"),     Has(With([](auto& V) { V.CellSizeM = 600.0f; }), TEXT("vegetation.cell_size_m")));
 	TestTrue (TEXT("seed -1"),      Has(With([](auto& V) { V.Seed = -1; }), TEXT("vegetation.seed")));
+	TestTrue (TEXT("clearance -0.5"), Has(With([](auto& V) { V.BuildingClearanceM = -0.5f; }), TEXT("vegetation.building_clearance_m")));
+	TestTrue (TEXT("clearance 10.5"), Has(With([](auto& V) { V.BuildingClearanceM = 10.5f; }), TEXT("vegetation.building_clearance_m")));
+	TestTrue (TEXT("clearance NaN"),  Has(With([NaN](auto& V) { V.BuildingClearanceM = NaN; }), TEXT("vegetation.building_clearance_m")));
+	TestFalse(TEXT("clearance 0"),    Has(With([](auto& V) { V.BuildingClearanceM = 0.0f; }), TEXT("vegetation.building_clearance_m")));
+	TestFalse(TEXT("clearance 10"),   Has(With([](auto& V) { V.BuildingClearanceM = 10.0f; }), TEXT("vegetation.building_clearance_m")));
 	return true;
 }

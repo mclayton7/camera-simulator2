@@ -445,3 +445,21 @@ bool FScenePackageSeedTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSceneResolveBuildingsMaskTest,
+	"CamSim.Scene.Resolve.BuildingsMask",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSceneResolveBuildingsMaskTest::RunTest(const FString& Parameters)
+{
+	const FString D = MakePackage(TEXT("buildings_mask"), true, true, true);
+	WriteFile(D / TEXT("features/buildings/tileset.json"), TEXT("{}"));
+	TestTrue(TEXT("no mask index: empty"), ResolvedConfigFor(D).Scene.BuildingsMaskDir.IsEmpty());
+	WriteFile(D / TEXT("features/buildings/mask/index.json"), TEXT("{}"));
+	TestEqual(TEXT("mask dir"), ResolvedConfigFor(D).Scene.BuildingsMaskDir, D / TEXT("features/buildings/mask"));
+	FCamSimConfig Off = ResolvedConfigFor(D);
+	Off.Scene.Dir.Reset();
+	CamSimScene::ResolvePackage(Off);
+	TestTrue(TEXT("cleared when scene.dir is unset"), Off.Scene.BuildingsMaskDir.IsEmpty());
+	return true;
+}

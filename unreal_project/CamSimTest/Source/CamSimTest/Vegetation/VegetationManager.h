@@ -113,6 +113,14 @@ namespace CamSimVegetation
 	CAMSIMTEST_API TArray<int32> KeepClearOfBuildings(const TArray<TOptional<double>>& TerrainM,
 		const TArray<TOptional<double>>* BuildingsM, int32* OutNumInBuildings = nullptr);
 
+	/** How trees are kept out of buildings (REALISM R3b): the package's footprint mask, else (an R3 package) the runtime
+	 *  height check on the buildings tileset, else nothing. vegetation.drop_in_buildings false turns both off. */
+	enum class EBuildingExclusion : uint8 { Off, None, Mask, RuntimeCheck };
+
+	CAMSIMTEST_API EBuildingExclusion ChooseBuildingExclusion(bool bDropInBuildings, bool bHasMask, bool bHasBuildingsTileset);
+	/** The `buildings:` part of the "Vegetation: on (...)" log line. */
+	CAMSIMTEST_API FString DescribeBuildingExclusion(EBuildingExclusion E, float ClearanceM);
+
 	CAMSIMTEST_API TArray<FTransform> ToCellLocal(double CentreLatDeg, double CentreLonDeg, double BaseHeightM,
 		const TArray<FTreeInstance>& Instances, const TArray<double>& HeightsM);
 
@@ -120,8 +128,9 @@ namespace CamSimVegetation
 	 *  low ^ high, so manifests' 0..2^31-1 seeds pass unchanged), else of vegetation.seed's 32 bits. */
 	CAMSIMTEST_API uint32 ResolveSeed(bool bHasSceneSeed, int64 SceneSeed, int32 ConfigSeed);
 
-	/** Real hooks: UE tasks + FVegetationLandCover, SampleHeightMostDetailed on Terrain (and on the buildings tileset,
-	 *  tag CamSimBuildings, when the world has one), ACamSimVegetationCell. Game thread.
+	/** Real hooks: UE tasks + FVegetationLandCover, SampleHeightMostDetailed on Terrain; trees are kept out of buildings by
+	 *  the package's footprint mask (FVegetationBuildingMask, on the scatter worker) or, without one, by a second batch
+	 *  on the buildings tileset (tag CamSimBuildings), per ChooseBuildingExclusion; ACamSimVegetationCell. Game thread.
 	 *  Null (with OutWhyNot) when vegetation is off, land cover is missing or the library doesn't load. */
 	CAMSIMTEST_API TSharedPtr<FVegetationManager> CreateLiveManager(UWorld* World, ACesium3DTileset* Terrain,
 		const FCamSimConfig& Cfg, FString& OutWhyNot);

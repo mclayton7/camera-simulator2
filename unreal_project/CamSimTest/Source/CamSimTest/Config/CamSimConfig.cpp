@@ -690,6 +690,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlFloat (V, "cell_size_m",   Cfg.Vegetation.CellSizeM);
 			YamlInt   (V, "seed",          Cfg.Vegetation.Seed);
 			YamlBool  (V, "drop_in_buildings", Cfg.Vegetation.bDropInBuildings);
+			YamlFloat (V, "building_clearance_m", Cfg.Vegetation.BuildingClearanceM);
 		}
 
 				// Thermal radiance for IR (ROADMAP 4A)
@@ -1118,6 +1119,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Vegetation.CellSizeM    = GetEnvFloat(TEXT("CAMSIM_VEGETATION_CELL_SIZE_M"),   Cfg.Vegetation.CellSizeM);
 	Cfg.Vegetation.Seed         = GetEnvInt  (TEXT("CAMSIM_VEGETATION_SEED"),          Cfg.Vegetation.Seed);
 	Cfg.Vegetation.bDropInBuildings = GetEnvBool(TEXT("CAMSIM_VEGETATION_DROP_IN_BUILDINGS"), Cfg.Vegetation.bDropInBuildings);
+	Cfg.Vegetation.BuildingClearanceM = GetEnvFloat(TEXT("CAMSIM_VEGETATION_BUILDING_CLEARANCE_M"), Cfg.Vegetation.BuildingClearanceM);
 	{
 		const FString IrPreset = GetEnv(TEXT("CAMSIM_IR_PRESET"), FString());
 		FSensorModeConfig* IrM = Cfg.SensorModeConfigs.Find(ESensorMode::IR);
@@ -1551,6 +1553,8 @@ TArray<FString> FCamSimConfig::Validate() const
 		Errors.Add(FString::Printf(TEXT("vegetation.cell_size_m=%.1f out of range [25, 500]"), Vegetation.CellSizeM));
 	if (Vegetation.Seed < 0)
 		Errors.Add(FString::Printf(TEXT("vegetation.seed=%d must be >= 0"), Vegetation.Seed));
+	if (!(Vegetation.BuildingClearanceM >= 0.0f && Vegetation.BuildingClearanceM <= 10.0f))
+		Errors.Add(FString::Printf(TEXT("vegetation.building_clearance_m=%.2f out of range [0, 10]"), Vegetation.BuildingClearanceM));
 
 		// Thermal (ROADMAP 4A). Written !(x in range) so NaN is reported too.
 	if (!(Thermal.AirTemperatureC >= -80.0f && Thermal.AirTemperatureC <= 60.0f))

@@ -17,6 +17,7 @@
 #include "Tasks/Task.h"
 #include "Thermal/LandCoverGeometry.h"
 #include "UObject/StrongObjectPtr.h"
+#include "Vegetation/VegetationBuildingMask.h"
 #include "Vegetation/VegetationCellActor.h"
 #include "Vegetation/VegetationLandCover.h"
 #include "Vegetation/VegetationLibrary.h"
@@ -206,6 +207,24 @@ namespace CamSimVegetation
 		return Keep;
 	}
 
+	EBuildingExclusion ChooseBuildingExclusion(bool bDropInBuildings, bool bHasMask, bool bHasBuildingsTileset)
+	{
+		if (!bDropInBuildings) return EBuildingExclusion::Off;
+		if (bHasMask) return EBuildingExclusion::Mask;
+		return bHasBuildingsTileset ? EBuildingExclusion::RuntimeCheck : EBuildingExclusion::None;
+	}
+
+	FString DescribeBuildingExclusion(EBuildingExclusion E, float ClearanceM)
+	{
+		switch (E)
+		{
+		case EBuildingExclusion::Mask:         return FString::Printf(TEXT("mask (clearance %.1f m)"), ClearanceM);
+		case EBuildingExclusion::RuntimeCheck: return TEXT("runtime check (buildings tileset, no mask)");
+		case EBuildingExclusion::None:         return TEXT("none");
+		default:                               return TEXT("off (drop_in_buildings false)");
+		}
+	}
+
 	TArray<FTransform> ToCellLocal(double CentreLatDeg, double CentreLonDeg, double BaseHeightM,
 		const TArray<FTreeInstance>& Instances, const TArray<double>& HeightsM)
 	{
@@ -264,13 +283,32 @@ namespace CamSimVegetation
 		const bool bShadows = V.bCastShadows;
 		const float CullM = V.RadiusM;
 
+		// Trees inside building footprints (REALISM R3b): the package's mask on the scatter worker when it has one (no
+		// runtime sampling); else, for an R3 package, the runtime check (a second height batch on the buildings tileset).
+		TSharedPtr<FVegetationBuildingMask, ESPMode::ThreadSafe> Mask;
+		if (V.bDropInBuildings && !Cfg.Scene.BuildingsMaskDir.IsEmpty())
+		{
+			Mask = MakeShared<FVegetationBuildingMask, ESPMode::ThreadSafe>(Cfg.Scene.BuildingsMaskDir);
+			if (!Mask->IsValid())
+			{
+				UE_LOG(LogCamSim, Warning, TEXT("Vegetation: building mask unusable (%s); falling back"), *Mask->GetError());
+				Mask.Reset();
+			}
+		}
+		ACesium3DTileset* Buildings = CamSim::Geospatial::FindBuildingsTileset(World);
+		const EBuildingExclusion Exclusion = ChooseBuildingExclusion(V.bDropInBuildings, Mask.IsValid(), Buildings != nullptr);
+		const double ClearanceM = V.BuildingClearanceM;
+
 		FVegetationHooks H;
 		// Always answers (an empty land cover lookup yields no trees); the manager's weak pointer drops it after teardown.
-		H.Generate = [LandCover, P, Seed](FVegCellId Id, TFunction<void(TArray<FTreeInstance>)> Done)
+		H.Generate = [LandCover, Mask, P, Seed, ClearanceM](FVegCellId Id, TFunction<void(TArray<FTreeInstance>)> Done)
 		{
-			UE::Tasks::Launch(UE_SOURCE_LOCATION, [LandCover, P, Seed, Id, Done = MoveTemp(Done)]() mutable
+			UE::Tasks::Launch(UE_SOURCE_LOCATION, [LandCover, Mask, P, Seed, ClearanceM, Id, Done = MoveTemp(Done)]() mutable
 			{
-				TArray<FTreeInstance> T = GenerateCell(Seed, Id, P, [&LandCover](double La, double Lo) { return LandCover->Code(La, Lo); });
+				auto Code = [&LandCover](double La, double Lo) { return LandCover->Code(La, Lo); };
+				TArray<FTreeInstance> T = Mask.IsValid()
+					? GenerateCell(Seed, Id, P, Code, [&Mask, ClearanceM](double La, double Lo) { return Mask->IsClear(La, Lo, ClearanceM); })
+					: GenerateCell(Seed, Id, P, Code);
 				AsyncTask(ENamedThreads::GameThread, [Done = MoveTemp(Done), T = MoveTemp(T)]() mutable { Done(MoveTemp(T)); });
 			});
 		};
@@ -306,8 +344,7 @@ namespace CamSimVegetation
 		H.SampleHeights = MakeSampler(WeakTerrain, TEXT("terrain"), /*bWarnOnFail=*/true);
 		// Trees inside building footprints (WorldCover tags canopy over roofs as tree cover): a second batch on the
 		// buildings tileset, where a miss is the normal answer, so its warnings stay quiet.
-		ACesium3DTileset* Buildings = V.bDropInBuildings ? CamSim::Geospatial::FindBuildingsTileset(World) : nullptr;
-		if (Buildings) H.SampleBuildingHeights = MakeSampler(TWeakObjectPtr<ACesium3DTileset>(Buildings), TEXT("buildings"), /*bWarnOnFail=*/false);
+		if (Exclusion == EBuildingExclusion::RuntimeCheck) H.SampleBuildingHeights = MakeSampler(TWeakObjectPtr<ACesium3DTileset>(Buildings), TEXT("buildings"), /*bWarnOnFail=*/false);
 		H.Spawn = [WeakWorld, KeepMesh, Actors, bShadows, CullM](FVegCellId Id, const FVegCellSpawn& S)
 		{
 			UWorld* W = WeakWorld.Get();
@@ -333,9 +370,9 @@ namespace CamSimVegetation
 			TWeakObjectPtr<ACamSimVegetationCell> A;
 			if (Actors->RemoveAndCopyValue(Id, A) && A.IsValid()) A->Destroy();
 		};
-		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (type '%s', radius %.0f m, density %.2f, shadows %d, seed %u, land cover %s, buildings %s)"),
+		UE_LOG(LogCamSim, Log, TEXT("Vegetation: on (type '%s', radius %.0f m, density %.2f, shadows %d, seed %u, land cover %s, buildings: %s)"),
 			*Type.Name, V.RadiusM, V.DensityScale, bShadows ? 1 : 0, Seed, *Cfg.Thermal.LandCover.Dir,
-			Buildings ? TEXT("on: trees inside footprints dropped") : V.bDropInBuildings ? TEXT("none") : TEXT("check off (drop_in_buildings false)"));
+			*DescribeBuildingExclusion(Exclusion, V.BuildingClearanceM));
 		return MakeShared<FVegetationManager>(SP, MoveTemp(H));
 	}
 

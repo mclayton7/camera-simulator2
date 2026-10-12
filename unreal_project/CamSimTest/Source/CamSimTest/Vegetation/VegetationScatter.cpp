@@ -29,31 +29,46 @@ namespace CamSimVegetation
 
 	uint32 VegetationSeed(uint32 BaseSeed) { return CamSimHash::Pcg(BaseSeed ^ SeedMix); }
 
+	namespace
+	{
+		TArray<FTreeInstance> GenerateCellImpl(uint32 Seed, FVegCellId Cell, const FScatterParams& P, FCodeSampler Sampler,
+			const FClearPredicate* IsClear)
+		{
+			TArray<FTreeInstance> Out;
+			const float Accept = FMath::Clamp(P.DensityScale * P.PTree, 0.0f, 1.0f);
+			if (Accept <= 0.0f) return Out;
+			const FVegCellBounds B = CellBounds(Cell, P.CellSizeM);
+			const int32 N = CandidatesPerAxis(P);
+			const uint32 X = static_cast<uint32>(Cell.Col), Y = static_cast<uint32>(Cell.Row);
+			for (int32 J = 0; J < N; ++J)
+				for (int32 I = 0; I < N; ++I)
+				{
+					const uint32 K = static_cast<uint32>(J * N + I);
+					if (CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubAccept)) >= Accept) continue;
+					const double Fx = (I + CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubJitterE))) / N;
+					const double Fy = (J + CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubJitterN))) / N;
+					FTreeInstance T;
+					T.LatDeg = B.SouthDeg + Fy * (B.NorthDeg - B.SouthDeg);
+					T.LonDeg = B.WestDeg + Fx * (B.EastDeg - B.WestDeg);
+					if (Sampler(T.LatDeg, T.LonDeg) != P.TreeCode) continue;
+					if (IsClear && !(*IsClear)(T.LatDeg, T.LonDeg)) continue;   // REALISM R3b: inside a footprint + clearance
+					T.YawDeg = 360.0f * CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubYaw));
+					if (T.YawDeg >= 360.0f) T.YawDeg = 0.0f;
+					T.Scale = P.ScaleMin + (P.ScaleMax - P.ScaleMin) * CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubScale));
+					Out.Add(T);
+				}
+			return Out;
+		}
+	}
+
 	TArray<FTreeInstance> GenerateCell(uint32 Seed, FVegCellId Cell, const FScatterParams& P, FCodeSampler Sampler)
 	{
-		TArray<FTreeInstance> Out;
-		const float Accept = FMath::Clamp(P.DensityScale * P.PTree, 0.0f, 1.0f);
-		if (Accept <= 0.0f) return Out;
-		const FVegCellBounds B = CellBounds(Cell, P.CellSizeM);
-		const int32 N = CandidatesPerAxis(P);
-		const uint32 X = static_cast<uint32>(Cell.Col), Y = static_cast<uint32>(Cell.Row);
-		for (int32 J = 0; J < N; ++J)
-			for (int32 I = 0; I < N; ++I)
-			{
-				const uint32 K = static_cast<uint32>(J * N + I);
-				if (CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubAccept)) >= Accept) continue;
-				const double Fx = (I + CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubJitterE))) / N;
-				const double Fy = (J + CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubJitterN))) / N;
-				FTreeInstance T;
-				T.LatDeg = B.SouthDeg + Fy * (B.NorthDeg - B.SouthDeg);
-				T.LonDeg = B.WestDeg + Fx * (B.EastDeg - B.WestDeg);
-				if (Sampler(T.LatDeg, T.LonDeg) != P.TreeCode) continue;
-				T.YawDeg = 360.0f * CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubYaw));
-				if (T.YawDeg >= 360.0f) T.YawDeg = 0.0f;
-				T.Scale = P.ScaleMin + (P.ScaleMax - P.ScaleMin) * CamSimHash::Uniform(CamSimHash::Hash(X, Y, K, Seed, SubScale));
-				Out.Add(T);
-			}
-		return Out;
+		return GenerateCellImpl(Seed, Cell, P, Sampler, nullptr);
+	}
+
+	TArray<FTreeInstance> GenerateCell(uint32 Seed, FVegCellId Cell, const FScatterParams& P, FCodeSampler Sampler, FClearPredicate IsClear)
+	{
+		return GenerateCellImpl(Seed, Cell, P, Sampler, &IsClear);
 	}
 
 	uint32 HashInstances(const TArray<FTreeInstance>& Instances)

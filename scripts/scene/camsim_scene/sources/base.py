@@ -203,8 +203,7 @@ class SourceRaster:
         out = np.full((nb, *shape), np.nan)
         valid = np.zeros(shape, bool)
         ds0 = _dataset(str(self.path), None)
-        res = abs(ds0.transform.a)
-        res_m = res * M_PER_DEG if ds0.crs is None or ds0.crs.is_geographic else res
+        res_m = native_res_m(self)
         # Approximation of the spec's area-average down: the coarsest average overview not coarser than target, then bilinear.
         level = choose_overview(res_m, ds0.overviews(self.bands[0]), target_m)
         ds = ds0 if level is None else _dataset(str(self.path), level)
@@ -241,6 +240,14 @@ class SourceRaster:
         if self.add_m:
             out[:, ok] += self.add_m
         return out, ok
+
+
+def native_res_m(raster: SourceRaster) -> float:
+    """The raster's full-resolution pixel size in metres (degrees x M_PER_DEG for geographic CRSs), as sample()
+    computes it to pick an overview."""
+    ds = _dataset(str(raster.path), None)
+    res = abs(ds.transform.a)
+    return res * M_PER_DEG if ds.crs is None or ds.crs.is_geographic else res
 
 
 def project(raster: SourceRaster, slon, slat) -> tuple[np.ndarray, np.ndarray]:

@@ -222,7 +222,8 @@ def _int(data: dict, key: str, default: int, lo: int, hi: int) -> int:
     return v
 
 
-BUILDINGS_KEYS = ("enabled", "release", "min_area_m2")
+BUILDINGS_KEYS = ("enabled", "release", "min_area_m2", "roof_textures", "roof_texel_m", "roof_texture_max_px")
+ROOF_MAX_PX = (256, 512, 1024, 2048, 4096, 8192)
 
 
 def _parse_buildings(data) -> dict:
@@ -245,12 +246,25 @@ def _parse_buildings(data) -> dict:
     area = b.get("min_area_m2", 10.0)
     if isinstance(area, bool) or not isinstance(area, (int, float)) or not 0.0 <= area <= 10000.0:
         raise ConfigError(f"buildings.min_area_m2 must be a number in [0, 10000], got {area!r}")
-    return {"enabled": enabled, "release": release, "min_area_m2": float(area)}
+    tex = b.get("roof_textures", True)
+    if not isinstance(tex, bool):
+        raise ConfigError(f"buildings.roof_textures must be true or false, got {tex!r}")
+    texel = b.get("roof_texel_m", 0.5)
+    if isinstance(texel, bool) or not isinstance(texel, (int, float)) or not 0.25 <= texel <= 2.0:
+        raise ConfigError(f"buildings.roof_texel_m must be a number in [0.25, 2.0], got {texel!r}")
+    max_px = b.get("roof_texture_max_px", 2048)
+    if isinstance(max_px, bool) or not isinstance(max_px, int) or max_px not in ROOF_MAX_PX:
+        raise ConfigError(f"buildings.roof_texture_max_px must be one of {list(ROOF_MAX_PX)}, got {max_px!r}")
+    return {"enabled": enabled, "release": release, "min_area_m2": float(area), "roof_textures": tex,
+            "roof_texel_m": float(texel), "roof_texture_max_px": max_px}
 
 
 def buildings_settings(plan: ScenePlan) -> dict | None:
     """The buildings layer's settings (REALISM R3), or None when the layer is off."""
     from .buildings import BUILDINGS_RULES_VERSION, GEOMETRIC_ERROR, LEAF_ZOOM, TIER_MIN_AREA_M2
+    from .footprints import MASK_FACTOR, MASK_PX, MASK_RULES_VERSION
+    from .roofatlas import GUTTER_PX, TEXEL_STEPS_M
+    from .roofs import MAX_SOURCE_M, ROOF_JPEG_QUALITY
 
     if not plan.priorities["buildings"]:
         return None
@@ -263,6 +277,17 @@ def buildings_settings(plan: ScenePlan) -> dict | None:
         "geometric_error": {str(k): v for k, v in GEOMETRIC_ERROR.items()},
         "rules": BUILDINGS_RULES_VERSION,
         "format": "3d-tiles-1.1",
+        "mask": {"tile_px": MASK_PX, "cell_factor": MASK_FACTOR, "rules": MASK_RULES_VERSION},  # REALISM R3b
+        "roof_textures": plan.buildings["roof_textures"],
+        "roof_texel_m": plan.buildings["roof_texel_m"],
+        "roof_texture_max_px": plan.buildings["roof_texture_max_px"],
+        "roof": {
+            "texel_steps_m": list(TEXEL_STEPS_M),
+            "gutter_px": GUTTER_PX,
+            "max_source_m": MAX_SOURCE_M,
+            "jpeg_quality": ROOF_JPEG_QUALITY,
+            "sampler": "imagery sources in priority order + colour match; no NAIP feather or water fade",
+        },
     }
 
 
@@ -492,7 +517,16 @@ def layer_settings(plan: ScenePlan) -> dict:
         out["landcover"]["features"] = fs
     bs = buildings_settings(plan)
     if bs is not None:
+        from .footprints import BURN_MIN_CELLS, MASK_FACTOR, MASK_RULES_VERSION
+
         out["buildings"] = bs
+        out["landcover"]["buildings"] = {  # REALISM R3b: footprints burned as 230 (only with [buildings])
+            "code": 230,
+            "cell_factor": MASK_FACTOR,
+            "min_cells": BURN_MIN_CELLS,
+            "priority": ["worldcover", "water", "paved_area", "building", "rail", "road"],
+            "rules": MASK_RULES_VERSION,
+        }
     return out
 
 

@@ -51,6 +51,8 @@ Launches (--runs):
   roads  (REALISM R2, not in the default; needs --scene, the Camp Pendleton package, as CAMSIM_SCENE_DIR) per band,
          night then noon, no DIS vehicles: road, nadir 300 m over I-5 NB San Clemente (OSM way 487165554, code 200);
          road_t9 (info), the same over I-5 SB (way 1009956653); 20 deg FOV, heading along the road (10 frames each)
+  roofs  (REALISM R3b, not in the default; needs --scene, the Pendleton package built with R3b) MWIR, night then
+         noon, no DIS vehicles: roof, nadir 460 m over Camp Pendleton Mainside (ROOF_POSE), 20 deg FOV (10 frames)
 
 Each frame is a /snapshot PNG (the NV12 frame converted to RGB); Y is recovered exactly for
 IR (grey: U = V = 128) and as BT.709 luma for EO. The middle frame of each view is saved to
@@ -61,7 +63,7 @@ Checks (spec "Testing"). Exit 0 only when every expected (check, band, time) row
 passes: a, b, c, d, e, h, i, j per selected band when `bands` is in --runs, k per band when
 `bands` and `lcoff` are, l1 and l2 when `pan` is, f when `hd` is, g when `eo` is (so `--runs
 bands` alone can exit 0; f, g, k, l1, l2 are then not expected), n, o, p per band and q (MWIR)
-when `entity` is, r per band at noon and night when `roads` is. A missing
+when `entity` is, r per band at noon and night when `roads` is, s (noon) and s_air (night) for MWIR when `roofs` is. A missing
 row (a view with no frames, an absent run) fails:
   (a) night nadir_truck: mean Y in [60, 180] and < 5 % of pixels at Y <= 16
   (b) night nadir_truck: truck box mean Y >= ring (box dilated 2x minus the box) mean + 3 DN
@@ -114,6 +116,10 @@ row (a view with no frames, an absent run) fails:
       side (right of travel = image right), both over the central 60 % rows, GSD from 300 m and 20 deg. r_info:
       asphalt and verge-class temperatures from the camsim.Thermal.Log lines. r_t9 (info, not gated): the same metric
       at the first pose (I-5 SB, way 1009956653), where OSM says asphalt but NAIP shows light, concrete-like pavement
+  (s) roofs (REALISM R3b): building roofs - grassland mean Y on the temporal-mean frame >= +3 DN at noon (night value
+      info, s_night). Roof = the package's footprint mask eroded 1.5 m; grass = land-cover 30 at least 10 m from any
+      footprint; central 60 %, each region >= 2 % of it. (s_air) night: the building_roof class temperature
+      (camsim.Thermal.Log) <= T_air - 0.5 K
 """
 
 from __future__ import annotations
@@ -267,6 +273,21 @@ ROAD_NIGHT_DN = 2.0  # (r) night: >= +2 DN (asphalt keeps its heat)
 ROAD_VERGE_M = (8.0, 28.0)  # verge strip: this far beyond the carriageway edge
 ROAD_EDGE_INSET_M = 2.0  # road strip: carriageway minus this at each edge
 ROAD_CLASS_SLOTS = {"asphalt": 3, "tree_canopy": 6, "grassland": 8, "bare_soil": 11}  # FThermalMaterialTable indices (r_info)
+
+# (s) REALISM R3b: roofs vs grass at noon (image) and the building_roof class vs air at 02:00 (class model). Pose picked
+# while writing the R3b plan on pendleton-r3: within a 160 m square view, 34 % of the ground under Overture footprints and
+# 26 % WorldCover grassland (30), the best min(building, grass) of a 0.0025 deg scan over 33.28-33.33 N, 117.28-117.34 W.
+# Ground 74.88 m HAE (package terrain, layers.buildings.heights_fn at the centre).
+ROOF_POSE = {"lat": 33.3000, "lon": -117.3175, "ground_hae": 74.88}
+ROOF_UP_M = 460.0  # 20 deg FOV: a 162 m wide view
+ROOF_FOV = 20.0
+ROOF_NOON_DN = 3.0  # (s) noon: roof - grass mean Y >= +3 DN (white-hot)
+ROOF_AIR_K = 0.5  # (s_air) 02:00: T_air - T(building_roof) >= 0.5 K
+ROOF_ERODE_M = 1.5  # roof pixels this far inside a footprint (mask registration, PSF)
+ROOF_GRASS_CLEAR_M = 10.0  # grass pixels this far from any footprint
+ROOF_MIN_FRAC = 0.02  # each region >= 2 % of the central 60 %
+ROOF_CLASS_SLOTS = {"building_roof": 15, "grassland": 8}  # FThermalMaterialTable indices
+ROOF_M_PER_DEG = 111_320.0
 
 # Fixed-pose regions as fractions of the image height (coast) / rows (sky).
 COAST_R = (0.26, 0.40)  # radius band from the image centre
@@ -536,22 +557,91 @@ def road_row(band: str, tod: str, y: np.ndarray, masks: tuple[np.ndarray, np.nda
     }
 
 
+def _thermal_log_classes(ln: str) -> tuple[list[float], str, float] | None:
+    """One camsim.Thermal.Log line -> (class temperatures K by slot, "noon" if sunLux > 0 else "night", T_air K; NaN when
+    the line has no Tair). None when it is not a class line or does not parse."""
+    if "classes[K]" not in ln or " sunLux=" not in ln:
+        return None
+    try:
+        vals = [float(t) for t in ln.split("classes[K]", 1)[1].split(" terrain=", 1)[0].split()]
+        lux = float(ln.split(" sunLux=", 1)[1].split()[0])
+        tair = float(ln.split(" Tair=", 1)[1].split()[0]) if " Tair=" in ln else float("nan")
+    except ValueError:
+        return None
+    return vals, "noon" if lux > 0 else "night", tair
+
+
+def _class_k(vals: list[float], slot: int) -> float:
+    """A class temperature by slot; NaN when the line doesn't carry it (a log from before every class was printed)."""
+    return vals[slot] if slot < len(vals) else float("nan")
+
+
 def road_class_temps(lines: list[str], verge: str = "grassland") -> dict[str, tuple[float, float]]:
     """(r_info) asphalt and `verge` class temperatures (K) from the last camsim.Thermal.Log line of each time of day
     (sunLux > 0: noon, else night). A slot the line doesn't carry (a log from before every class was printed) is NaN."""
     out: dict[str, tuple[float, float]] = {}
     for ln in lines:
-        if "classes[K]" not in ln or " sunLux=" not in ln:
-            continue
-        temps = ln.split("classes[K]", 1)[1].split(" terrain=", 1)[0].split()
-        try:
-            vals = [float(t) for t in temps]
-            lux = float(ln.split(" sunLux=", 1)[1].split()[0])
-        except ValueError:
-            continue
-        a, g = (vals[i] if i < len(vals) else float("nan") for i in (ROAD_CLASS_SLOTS["asphalt"], ROAD_CLASS_SLOTS[verge]))
-        out["noon" if lux > 0 else "night"] = (a, g)
+        parsed = _thermal_log_classes(ln)
+        if parsed is not None:
+            vals, tod, _ = parsed
+            out[tod] = (_class_k(vals, ROAD_CLASS_SLOTS["asphalt"]), _class_k(vals, ROAD_CLASS_SLOTS[verge]))
     return out
+
+
+def roof_air_temps(lines: list[str]) -> dict[str, tuple[float, float, float]]:
+    """(s_air) (building_roof K, grassland K, T_air K) from the last camsim.Thermal.Log line of each time of day."""
+    out: dict[str, tuple[float, float, float]] = {}
+    for ln in lines:
+        parsed = _thermal_log_classes(ln)
+        if parsed is not None and not math.isnan(parsed[2]):
+            vals, tod, tair = parsed
+            roof, grass = (_class_k(vals, ROOF_CLASS_SLOTS[c]) for c in ("building_roof", "grassland"))
+            out[tod] = (roof, grass, tair)
+    return out
+
+
+def _dilate(m: np.ndarray, r: int) -> np.ndarray:
+    """Square binary dilation by r pixels."""
+    if r <= 0:
+        return m.copy()
+    p = np.pad(m, r)
+    rows = np.lib.stride_tricks.sliding_window_view(p, 2 * r + 1, axis=0).any(axis=-1)
+    return np.lib.stride_tricks.sliding_window_view(rows, 2 * r + 1, axis=1).any(axis=-1)
+
+
+def roof_masks(
+    shape: tuple[int, int], gsd_m: float, lat0: float, lon0: float, masked, codes
+) -> tuple[np.ndarray, np.ndarray]:
+    """(s) Nadir, heading 0 (image up = north, right = east): roof = the footprint mask eroded by ROOF_ERODE_M; grass =
+    land-cover 30 at least ROOF_GRASS_CLEAR_M from any footprint; both within the central 60 %. masked(lon, lat) and
+    codes(lon, lat) read the package (bench.dense_path.BuildingMask / LandCover)."""
+    h, w = shape
+    e, n = np.meshgrid((np.arange(w) - (w - 1) / 2.0) * gsd_m, ((h - 1) / 2.0 - np.arange(h)) * gsd_m)
+    lat = lat0 + n / ROOF_M_PER_DEG
+    lon = lon0 + e / (ROOF_M_PER_DEG * math.cos(math.radians(lat0)))
+    b = np.asarray(masked(lon, lat), bool)
+    centre = central_mask(shape)
+    roof = ~_dilate(~b, max(1, round(ROOF_ERODE_M / gsd_m))) & centre
+    grass = (np.asarray(codes(lon, lat)) == 30) & ~_dilate(b, max(1, round(ROOF_GRASS_CLEAR_M / gsd_m))) & centre
+    return roof, grass
+
+
+def roof_row(band: str, tod: str, y: np.ndarray, masks: tuple[np.ndarray, np.ndarray], threshold: float) -> dict:
+    """(s) roof - grass mean Y >= threshold, with each region >= ROOF_MIN_FRAC of the central 60 % (else it fails)."""
+    roof, grass = masks
+    n_min = ROOF_MIN_FRAC * central_mask(y.shape).sum()
+    v = region_mean(y, roof) - region_mean(y, grass)
+    enough = roof.sum() >= n_min and grass.sum() >= n_min
+    return {
+        "check": "s",
+        "band": band,
+        "time": tod,
+        "value": round(v, 2),
+        "threshold": threshold,
+        "pass": bool(enough and v >= threshold),
+        "detail": f"roof - grass mean Y, {int(roof.sum())}/{int(grass.sum())} px"
+        + ("" if enough else f" (a region under {ROOF_MIN_FRAC:.0%} of the view: pick another ROOF_POSE)"),
+    }
 
 
 def nadir_gsd_m(up_m: float, fov_deg: float, width_px: int) -> float:
@@ -748,6 +838,8 @@ def run_group(label: str) -> str:
         return "lcoff"
     if label.endswith("_roads"):
         return "roads"  # REALISM R2 gate (r)
+    if label.endswith("_roofs"):
+        return "roofs"  # REALISM R3b gates (s, s_air)
     raise ValueError(label)
 
 
@@ -760,6 +852,8 @@ def run_band(label: str) -> str | None:
         return label[: -len("_lcoff")]
     if label.endswith("_roads"):
         return label[: -len("_roads")]
+    if label.endswith("_roofs"):
+        return label[: -len("_roofs")]
     return None
 
 
@@ -800,6 +894,8 @@ def expected_rows(bands: list[str], runs: set[str]) -> list[Row]:
             rows.append(("q", "mwir", "night"))
     if "roads" in runs:
         rows += [("r", b, t) for b in bands for t in ("noon", "night")]
+    if "roofs" in runs and "mwir" in bands:
+        rows += [("s", "mwir", "noon"), ("s_air", "mwir", "night")]
     return rows
 
 
@@ -1107,6 +1203,10 @@ def _poses():
             )
             for name, rp in (("road", ROAD_POSE), ("road_t9", ROAD_POSE_T9))
         },
+        "roof": static(
+            scenario.Pose(ROOF_POSE["lat"], ROOF_POSE["lon"], ROOF_POSE["ground_hae"] + ROOF_UP_M, yaw=0.0,
+                          gimbal_pitch=-90.0, fov_h=ROOF_FOV)
+        ),
         # ROADMAP 4C: the truck close up, moving (truck-park while driving) or where it stands still
         "ent_running": dvc.nadir_on(truck, ground + ENT_UP_M, ENT_FOV),
         "ent_stop": ent_static(ENT_DRIVE_S),
@@ -1245,6 +1345,19 @@ def build_runs(bands: list[str], wanted: set[str], scene: str | None = None) -> 
                     dis_args=[],
                 )
             )
+    if "roofs" in wanted and "mwir" in bands:  # REALISM R3b gates (s, s_air) on the scene package (main() requires --scene)
+        runs.append(
+            RunSpec(
+                "mwir_roofs",
+                {"CAMSIM_IR_PRESET": BANDS["mwir"], "CAMSIM_SCENE_DIR": scene or ""},
+                1,
+                ["night", "noon"],
+                lambda tod: [View("roof", p["roof"], 10, None)],
+                ml=False,
+                exec_cmds=["camsim.Thermal.Log 1"],
+                dis_args=[],
+            )
+        )
     if "eo" in wanted:
         for label, env in (
             ("eo_thermal_on", {}),
@@ -1880,7 +1993,7 @@ def thermal_log_lines(log: Path) -> list[str]:
 
 
 def check_all(
-    out: Path, results: dict[str, dict], bands: list[str]
+    out: Path, results: dict[str, dict], bands: list[str], scene: str | None = None
 ) -> tuple[list, list, list]:
     checks: list[dict] = []
     info: list[dict] = []
@@ -2025,6 +2138,50 @@ def check_all(
                         + (f" ({vc} not in the log line)" if math.isnan(g) else ""),
                     }
                 )
+
+    # (s) REALISM R3b: roofs vs grass at noon (image; night as info) and the building_roof class vs air at 02:00 (log).
+    run = results.get("mwir_roofs")
+    if run:
+        if not scene:
+            raise SystemExit("gates (s, s_air) need --scene: the package's footprint mask and land cover")
+        from bench import dense_path as dp
+
+        bmask = dp.BuildingMask(Path(scene) / "features" / "buildings" / "mask")
+        lcov = dp.LandCover(Path(scene) / "landcover")
+        for rec in run["views"]:
+            vd = load_view(out, run, rec)
+            if vd is None or rec["view"] != "roof":
+                continue
+            shots.append(rec["shot"])
+            y_mean = vd.y.astype(np.float32).mean(axis=0)
+            gsd = nadir_gsd_m(ROOF_UP_M, ROOF_FOV, y_mean.shape[1])
+            masks = roof_masks(y_mean.shape, gsd, ROOF_POSE["lat"], ROOF_POSE["lon"], bmask.masked, lcov.codes)
+            row = roof_row("mwir", rec["time"], y_mean, masks, ROOF_NOON_DN)
+            row["detail"] += f", GSD {gsd:.3f} m, {len(vd.y)} frames"
+            if rec["time"] == "noon":
+                checks.append(row)
+            else:
+                row["check"] = "s_night"
+                info.append({k: row[k] for k in ("check", "band", "time", "value", "detail")})
+            shots.append(overlay(out, vd, masks[0], masks[1], None, len(vd.y) // 2))
+        temps = roof_air_temps(thermal_log_lines(out / run["label"] / "CamSimTest.log"))
+        nan3 = (float("nan"),) * 3
+        r, g, tair = temps.get("night", nan3)
+        checks.append(
+            {
+                "check": "s_air",
+                "band": "mwir",
+                "time": "night",
+                "value": round(tair - r, 2),
+                "threshold": ROOF_AIR_K,
+                "pass": bool(tair - r >= ROOF_AIR_K),
+                "detail": f"class temperatures (camsim.Thermal.Log): building_roof {r:.1f} K, air {tair:.1f} K, "
+                f"grassland {g:.1f} K",
+            }
+        )
+        r, g, tair = temps.get("noon", nan3)
+        info.append({"check": "s_air_noon", "band": "mwir", "time": "noon", "value": round(r - g, 2),
+                     "detail": f"building_roof {r:.1f} K, grassland {g:.1f} K, air {tair:.1f} K"})
 
     # (l) no frame-time spike when the land-cover window re-centres during a 1 km/min pan (ruling S12): l1 the median
     # per-re-centre spike, l2 each re-centre against the land-cover-off control pan at the same view time.
@@ -2180,12 +2337,12 @@ def main() -> int:
     ap.add_argument(
         "--runs",
         default="bands,hd,eo,lcoff,pan,entity",
-        help="comma list of: bands, hd, eo, lcoff, pan, entity, roads (roads needs --scene; not in the default)",
+        help="comma list of: bands, hd, eo, lcoff, pan, entity, roads, roofs (roads and roofs need --scene; not in the default)",
     )
     ap.add_argument(
         "--scene",
         default=None,
-        help="absolute path of the Camp Pendleton scene package (CAMSIM_SCENE_DIR) for the roads run, gate (r)",
+        help="absolute path of the Camp Pendleton scene package (CAMSIM_SCENE_DIR) for the roads and roofs runs, gates (r) and (s)",
     )
     ap.add_argument(
         "--check-only", action="store_true", help="re-run the checks on --out"
@@ -2193,9 +2350,9 @@ def main() -> int:
     a = ap.parse_args()
     wanted = set(filter(None, a.runs.split(",")))
     scene = str(Path(a.scene).expanduser().resolve()) if a.scene else None
-    if "roads" in wanted and not a.check_only:  # before any launch or output directory
+    if ({"roads", "roofs"} & wanted) and not a.check_only:  # before any launch or output directory
         if not scene:
-            ap.error("--runs roads needs --scene <Pendleton scene package>")
+            ap.error("--runs roads/roofs needs --scene <Pendleton scene package>")
         if not (Path(scene) / "manifest.json").is_file():
             ap.error(f"--scene {scene}: no manifest.json")
     out = (
@@ -2206,7 +2363,7 @@ def main() -> int:
     bands = ["mwir", "lwir"] if a.band == "both" else [a.band]
 
     results: dict[str, dict] = {}
-    for spec in build_runs(bands, {"bands", "hd", "eo", "lcoff", "pan", "entity", "roads"}, scene):
+    for spec in build_runs(bands, {"bands", "hd", "eo", "lcoff", "pan", "entity", "roads", "roofs"}, scene):
         band = run_band(spec.label)
         if band is not None and band not in bands:
             continue
@@ -2216,7 +2373,7 @@ def main() -> int:
         elif (out / spec.label / "run.json").exists():
             results[spec.label] = json.loads((out / spec.label / "run.json").read_text())
 
-    checks, info, shots = check_all(out, results, bands)
+    checks, info, shots = check_all(out, results, bands, scene)
     sha = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"],
         capture_output=True,

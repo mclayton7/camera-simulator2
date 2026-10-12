@@ -121,3 +121,15 @@ def test_terrain_max_height_missing_tile_is_none(tmp_path):
     from bench import select_dense_path as sdp
 
     assert sdp.terrain_max_height(tmp_path, -117.45, 33.30) is None
+
+
+def test_building_mask_reads_cells(tmp_path):
+    m = np.zeros((dp.MASK_PX, dp.MASK_PX), bool)
+    m[10, 20] = True
+    Image.frombytes("1", (dp.MASK_PX, dp.MASK_PX), np.packbits(m, axis=1).tobytes()).save(tmp_path / "+33.30_-117.50.png")
+    bm = dp.BuildingMask(tmp_path)
+    d = dp.TILE_DEG / dp.MASK_PX
+    lat = (666 + 1) * dp.TILE_DEG - 10.5 * d  # row 10 centre
+    lon = -2350 * dp.TILE_DEG + 20.5 * d  # column 20 centre
+    got = bm.masked(np.array([lon, lon + d, lon]), np.array([lat, lat, 10.0]))
+    assert got.tolist() == [True, False, False]  # the cell, its east neighbour, a tile that is not there

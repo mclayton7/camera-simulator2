@@ -164,3 +164,44 @@ def test_far_feature_is_skipped_without_buffering(monkeypatch):
     codes = np.zeros((600, 600), np.uint8)
     burn_tile(codes, TI, TJ, [far, near], AREA)
     assert [f.source_id for f in calls] == ["osm:near"]
+
+
+def _rail_at_col(col, sid="osm:w9"):
+    x = W0 + (col + 0.5) / 12000.0
+    return Feature("rail", sid, LineString([(x, S0 + 0.005), (x, S0 + 0.045)]), {"railway": "rail"})
+
+
+def test_buildings_burn_between_paved_areas_and_rail():
+    from camsim_scene.features import BUILDING_CODE
+
+    paved = Feature("paved_area", "osm:a1", box(W0 + 0.005, S0 + 0.01, W0 + 0.02, S0 + 0.04), {"amenity": "parking"})
+    over = road({}, sid="osm:w2")  # E-W along row 300
+    rail = _rail_at_col(400)
+    bmask = np.zeros((600, 600), bool)
+    bmask[100:500, 100:500] = True
+    codes = np.full((600, 600), 30, np.uint8)
+    burn_tile(codes, TI, TJ, [rail, over, paved], AREA, bmask)
+    assert BUILDING_CODE == 230
+    assert codes[200, 150] == 230  # a paved area under a building becomes building (parking structures)
+    assert codes[200, 70] == 200  # the paved area outside the building stays paved
+    assert codes[300, 150] == 200  # the road over the building wins
+    assert codes[200, 400] == 210  # the rail over the building wins
+    assert codes[200, 450] == 230 and codes[50, 50] == 30 and codes[200, 550] == 30
+    assert PRIORITY["paved_area"] < PRIORITY["building"] < PRIORITY["rail"] < PRIORITY["road"]
+
+
+def test_buildings_none_or_empty_burns_features_exactly_as_before():
+    feats = [road({}, sid="osm:w2"), _rail_at_col(400), Feature("water", "nhd:a", box(W0 + 0.02, S0 + 0.02, W0 + 0.03, S0 + 0.03), {})]
+    a = np.full((600, 600), 30, np.uint8)
+    b = a.copy()
+    na = burn_tile(a, TI, TJ, feats, AREA)
+    nb = burn_tile(b, TI, TJ, feats, AREA, np.zeros((600, 600), bool))
+    assert na == nb and np.array_equal(a, b)
+
+
+def test_buildings_alone_need_no_features_or_area():
+    bmask = np.zeros((600, 600), bool)
+    bmask[10:12, 20:23] = True
+    codes = np.full((600, 600), 10, np.uint8)
+    assert burn_tile(codes, TI, TJ, [], None, bmask) == 6
+    assert (codes == 230).sum() == 6

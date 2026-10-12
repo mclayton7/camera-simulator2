@@ -29,6 +29,7 @@ import shapely
 from . import __version__, datum, ndvi_fit
 from . import balance as colour_balance
 from . import sea_level as sea_level_mod
+from .buildings import BUILDINGS_RULES_VERSION
 from .cache import Cache
 from .config import LAYERS, TILING, ScenePlan, layer_settings
 from .context import BuildContext, WorkerState, class_rasters, coverage, reference_footprints, to_asset
@@ -494,29 +495,37 @@ def _cut_landcover(
     feats: list | None = None,
     area: tuple | None = None,
     credits: list[str] | None = None,
+    footprints: str | None = None,
 ) -> tuple[dict, float]:
     """Runs in its own process, so its peak RSS isn't the main process's lifetime peak (fetch, planning). With `feats`
-    (REALISM R2), burns them into the tiles that meet `area` and writes the code legend and credits into index.json."""
-    if feats is None:
+    (REALISM R2), burns them into the tiles that meet `area`; with `footprints` (REALISM R3b, a footprints.save_raster
+    file), burns its >= 32-of-64 cells as 230 into every tile it covers. Either writes the code legend and credits into
+    index.json."""
+    if feats is None and footprints is None:
         index = landcover.fetch(bounds, out, reader=landcover.local_reader(paths), cut_by="camsim-scene")
         return index, peak_rss_mb()
     from PIL import Image
 
+    from . import footprints as F
     from .features import CODES, burn_tile
 
     index = landcover.fetch(
         bounds, out, reader=landcover.local_reader(paths), cut_by="camsim-scene", codes={}, credits=credits
     )
-    w, s, e, n = area
+    raster = F.load_raster(Path(footprints)) if footprints else {}
     present: set[int] = set()
     for t in index["tiles"]:
         i, j = t["lat_index"], t["lon_index"]
         tw, ts = j * landcover.TILE_DEG, i * landcover.TILE_DEG
-        if tw >= e or tw + landcover.TILE_DEG <= w or ts >= n or ts + landcover.TILE_DEG <= s:
+        in_area = area is not None and not (
+            tw >= area[2] or tw + landcover.TILE_DEG <= area[0] or ts >= area[3] or ts + landcover.TILE_DEG <= area[1]
+        )
+        burn = F.burn_cells(F.unpack(raster[(i, j)])) if (i, j) in raster else None
+        if not in_area and burn is None:
             continue
         path = out / t["file"]
         codes = np.array(Image.open(path), dtype=np.uint8)
-        if burn_tile(codes, i, j, feats, area):
+        if burn_tile(codes, i, j, (feats or []) if in_area else [], area if in_area else None, burn):
             landcover.write_tile(codes, path)
         present |= set(np.unique(codes).tolist()) & CODES.keys()
     index["codes"] = {str(c): CODES[c] for c in sorted(present)}
@@ -580,6 +589,13 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         shas += sorted(a.sha256 for sid in fs["sources"] for a in m.source(sid).assets)
         credits = [layer_credit(m.source(sid).attribution, m.source(sid).licence) for sid in fs["sources"]]
         shas += credits  # the layer's own notice is an output too
+    fp_path = None
+    if lc.get("buildings") and m.layers.get("buildings"):  # REALISM R3b: building footprints burned as 230
+        fp_path, fp_key = buildings_layer.footprint_raster(pkg, m, ctx)
+        brec = m.source(m.layers["buildings"]["priorities"][0])
+        bcredit = layer_credit(brec.attribution, brec.licence)
+        credits = (credits or []) + [bcredit]
+        shas += [m.layer_settings_hash("buildings"), brec.assets[0].sha256, BUILDINGS_RULES_VERSION, fp_key, bcredit]
     inputs = inputs_hash(m.layer_settings_hash("landcover"), __version__, *shas)
     marker, index_path = pkg / STATE_DIR / "landcover.json", out / "index.json"
     prev = json.loads(marker.read_text()) if marker.exists() else None
@@ -593,9 +609,11 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     else:
         shutil.rmtree(out, ignore_errors=True)
         bounds = tuple(lc["bounds"])
-        if fs:
-            feats = _load_features(m, ctx)  # in the main process: the cut's process needs no cache
-            index, st.peak_rss_mb = _run_isolated(_cut_landcover, bounds, out, paths, feats, tuple(fs["area"]), credits)
+        if fs or fp_path:
+            feats = _load_features(m, ctx) if fs else None  # in the main process: the cut's process needs no cache
+            area = tuple(fs["area"]) if fs else None
+            fp = str(fp_path) if fp_path else None
+            index, st.peak_rss_mb = _run_isolated(_cut_landcover, bounds, out, paths, feats, area, credits, fp)
         else:
             index, st.peak_rss_mb = _run_isolated(_cut_landcover, bounds, out, paths)
         atomic_write(marker, json.dumps({"inputs": inputs, "output": sha256_file(index_path)}).encode())
