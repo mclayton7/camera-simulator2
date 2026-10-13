@@ -221,11 +221,11 @@ git LFS) ships six types; `tree_broadleaf_a` stays first (index 0), so packages 
 
 | Type | Role | Source model | Height m | Crown radius m | Triangles near / far | sha256 |
 |---|---|---|---|---|---|---|
-| `tree_broadleaf_a` | tree | Quaternius Textured LowPoly Trees, `OBJ/Tree_7.obj`, leaves × 1.0, 0.75, 1.0, far crown 0.542, 0.514, 0.383 (calibrated) | 9 | 2.7 | 1,332 / 108 | `5f8b4257e285…` |
+| `tree_broadleaf_a` | tree | Quaternius Textured LowPoly Trees, `OBJ/Tree_7.obj`, leaves × 0.632, 0.53, 0.947, far crown 0.339, 0.43, 0.278 (calibrated) | 9 | 2.7 | 1,332 / 108 | `1e60df6770c1…` |
 | `tree_pine_a` | tree | Quaternius, `OBJ/Pine_4.obj` (crown base at 46 % of the height: the pack's only high-crowned pine) | 22 | 6.78 | 460 / 108 | `b71028685c37…` |
 | `tree_pine_b` | tree | Quaternius, `OBJ/Pine_5.obj` (slender, crown to the ground) | 16 | 4.04 | 664 / 108 | `2a28cc567588…` |
-| `shrub_chaparral` | shrub | procedural clump (`prepare_tree.py --procedural-shrub`, seed 11), base colour 0.216, 0.213, 0.137 (linear, calibrated) | 2 | 1 | 160 / – | `11d2629ecd3b…` |
-| `shrub_desert` | shrub | procedural clump (seed 12), base colour 0.245, 0.229, 0.164 (calibrated) | 1.4 | 0.7 | 160 / – | `7d326aedead3…` |
+| `shrub_chaparral` | shrub | procedural clump (`prepare_tree.py --procedural-shrub`, seed 11), base colour 0.316, 0.396, 0.248 (linear, calibrated) | 2 | 1 | 160 / – | `c39904dcfba2…` |
+| `shrub_desert` | shrub | procedural clump (seed 12), base colour 0.276, 0.341, 0.216 (calibrated) | 1.4 | 0.7 | 160 / – | `74f51f5d28d1…` |
 | `cactus_a` | shrub | Kenney, `cactus_tall.obj`, base colour 0.090, 0.141, 0.045 | 2.5 | 1.25 | 122 / – | `336b736fc6d1…` |
 
 Crown radius is measured from the foliage (p90 horizontal extent) by `prepare_tree.py`, except `tree_broadleaf_a`, kept
@@ -259,25 +259,23 @@ e.g. `pendleton-r4`) renders the riparian woodland from 120 m and 350 m once wit
 configuration: one library type at a time through a species mix file (`broadleaf`, `pine`, `chaparral`, `desert`),
 or far trees alone (`far_broadleaf`, `far_pine`: near radius 100 m). Vegetation pixels are where the frames differ;
 over them, the imagery's mean linear colour divided by the render's (the auto-exposure difference measured on the
-other pixels and divided out) is the factor the type's base colour needs. Results 2026-10-12 (M1 Pro, Pendleton
-imagery, NAIP 2022), rendered vs imagery under the plants, sRGB:
+other pixels and divided out) is the factor the type's base colour needs. The target is the **green subset**: the
+imagery pixels under the plants whose green leads red and blue (by 20 %), i.e. the canopy itself. The mean over all
+pixels under a plant also averages in the dry ground between plants (and WorldCover's tree cover takes in much dry
+chaparral: only 11–32 % of the pixels under far trees and 5–6 % under shrubs look green), so matching it made the
+plants tan. Results 2026-10-12 (M1 Pro, Pendleton imagery, NAIP 2022), sRGB:
 
-| Type | Before | After | Imagery | Notes |
+| Type | Before (merged R4) | Calibrated | Imagery, green subset | Factor (linear) |
 |---|---|---|---|---|
-| broadleaf (near) | 128, 160, 79 (lit tops) | 92, 97, 59 | 95, 96, 73 | leaf texture × 1.0, 0.75, 1.0; blue is capped by the factor's 1.0 limit |
-| broadleaf (far) | 43–56, 51–68, 37–43 | 85–93, 83–91, 72–76 | 99–102, 96, 81–85 | inside-out mesh fixed, crown colour 0.542, 0.514, 0.383 |
-| pine (near / far) | 60–67, 70–78, 39–45 / 29–30, 35–37, 27–29 | unchanged / 58–64, 71–79, 43 | – | no Pendleton truth for pines (tune on Eglin); far now matches near |
-| chaparral | 37–46, 42, 23–31 (Kenney) | 67, 63, 46 | 119, 109, 89 | half the log correction (below) |
-| desert bush | – | 77, 71, 55 | 121, 111, 90 | half the log correction |
+| broadleaf (near) | 128, 160, 79 (lit tops) | 70–73, 77–79, 53–56 | 71–76, 80–85, 55–60 | leaf texture × 0.632, 0.53, 0.947 |
+| broadleaf (far) | 43–56, 51–68, 37–43 (inside out) | 70–79, 76–87, 62–69 | 74–79, 80–88, 61–69 | crown 0.339, 0.43, 0.278 |
+| chaparral | 37–46, 42, 23–31 (Kenney) | 77, 81, 58 | 73, 78, 56 | 0.316, 0.396, 0.248 |
+| desert bush | – | 80, 81, 61 | 80, 85, 62 | 0.276, 0.341, 0.216 |
+| pine (near / far) | 60–67, 70–78, 39–45 / 29–30, 35–37, 27–29 | unchanged / 58–64, 71–79, 43 | – | no Pendleton truth (tune on Eglin); far now matches near |
 
-The imagery under a shrub is the mean over its footprint, gaps and bare soil included, so matching it fully would
-make shrubs soil-coloured blobs: shrubs take the square root of the measured ratio (half the correction in log terms),
-between a real shrub's dark olive and the dry ground around it. Trees in closed canopy match the imagery.
-
-Mean colour isn't hue: the far crowns and shrubs now match the imagery's brightness but read tan-olive, where the
-riparian corridor looks greener (the pixels under them mix canopy with dry chaparral, which WorldCover often calls
-tree cover). Before/after shots: `.cache/veg/check-colour/{oblique,truck}/` vs `.cache/veg/check-r7/`.
-- Poly Haven has no tree under 10k triangles (smallest `quiver_tree_02` 153,887 polys).
+Every calibrated type is within ~10 % of its target per channel. Shots: `.cache/veg/check-hue/{oblique,truck}/`;
+earlier passes in `.cache/veg/check-colour/` (mean-colour target) and `.cache/veg/check-r7/` (before). Sunlit shrubs
+read pale green up close (a nadir from tens of metres); at the sensor's usual 100+ m they blend with the hillside.
 
 ### Preparing a model
 
@@ -607,9 +605,8 @@ known cost, like the R4 footprint check's p95 overrun. Contact sheets: `.cache/b
   `SampleHeightMostDetailed` (finest tiles over the whole far disk: slow after low passes).
 - At the defaults the dense pass is +1.63 ms game p50 over vegetation off, 0.13 ms over the budget (accepted
   2026-10-12, "Bench (R4 deeper)").
-- Colours are calibrated on Pendleton imagery only (broadleaf, shrubs); pines have no Pendleton truth and keep their
-  texture colours until an Eglin package exists. Far crowns and shrubs read tan-olive rather than green (mean-colour
-  matching, "Colour calibration"); the 500 m shrub edge is still a hard cut.
+- Colours are calibrated on Pendleton imagery only (broadleaf, shrubs; "Colour calibration"); pines have no Pendleton
+  truth and keep their texture colours until an Eglin package exists. The 500 m shrub edge is still a hard cut.
 - Vegetation has no collision: CIGI LOS passes through it, DIS ignores it.
 - `/ready` does not wait for vegetation.
 - Leaf-on all year (NAIP is leaf-on too); no grass.

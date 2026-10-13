@@ -9,7 +9,9 @@ For each configuration (one library type at a time, through a species mix file o
 trees alone by shrinking the near radius to 100 m), CamSim renders the riparian woodland from 120 m and 350 m with
 vegetation on, and once with it off. Vegetation pixels are where the two frames differ; over them, the imagery's mean
 linear colour divided by the render's (after dividing out the auto-exposure difference, measured on the other pixels)
-is the factor that type's base colour needs. Prints one line per configuration and writes report.json; the new factors
+is the factor that type's base colour needs; ratio_green uses only the imagery pixels that look like vegetation (green
+leads red, and blue by 20 %: the canopy, not the dry ground between plants), which is the target the shipped colours
+use. Prints one line per configuration and writes report.json; the new factors
 go to prepare_tree.py (--base-color / --far-color). The ratio is linear in the base colour (fixed sun, fixed sensor),
 so one pass gets close and a second confirms.
 """
@@ -30,6 +32,10 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 MIN_PIXELS = 300
 DIFF_THRESHOLD = 60  # summed |on - off| over RGB (8-bit) for a pixel to count as vegetation
+MIN_GREEN_PIXELS = 100
+# An imagery pixel "looks like vegetation" when green leads red and clearly leads blue (linear): canopy, not dry ground.
+GREEN_OVER_RED = 1.0
+GREEN_OVER_BLUE = 1.2
 
 # name -> (mix {code: {type: weight}}, shrub_density {code: n}, extra env)
 CONFIGS: dict[str, tuple[dict, dict, dict]] = {
@@ -64,11 +70,23 @@ def colour_ratio(on: np.ndarray, off: np.ndarray, threshold: int = DIFF_THRESHOL
     rest = ~veg
     gain = (lon[rest].mean(0) / np.maximum(loff[rest].mean(0), 1e-6)) if rest.any() else np.ones(3)
     if n < MIN_PIXELS:
-        return {"n": n, "gain": gain.tolist(), "ratio": None}
+        return {"n": n, "gain": gain.tolist(), "ratio": None, "ratio_green": None, "green_fraction": 0.0}
     render = lon[veg].mean(0) / gain
     imagery = loff[veg].mean(0)
-    return {"n": n, "gain": gain.tolist(), "ratio": (imagery / np.maximum(render, 1e-6)).tolist(),
-            "render_srgb": _srgb8(render), "imagery_srgb": _srgb8(imagery)}
+    out = {"n": n, "gain": gain.tolist(), "ratio": (imagery / np.maximum(render, 1e-6)).tolist(),
+           "render_srgb": _srgb8(render), "imagery_srgb": _srgb8(imagery)}
+    # The green subset: the imagery pixels under the plants that show vegetation (the all-pixel mean also averages in the
+    # dry ground between plants, and WorldCover's tree cover takes in much dry chaparral).
+    g = loff[..., 1]
+    green = veg & (g > loff[..., 0] * GREEN_OVER_RED) & (g > loff[..., 2] * GREEN_OVER_BLUE)
+    out["green_fraction"] = float(green.sum() / n)
+    if green.sum() >= MIN_GREEN_PIXELS:
+        target = loff[green].mean(0)
+        out["ratio_green"] = (target / np.maximum(render, 1e-6)).tolist()
+        out["imagery_green_srgb"] = _srgb8(target)
+    else:
+        out["ratio_green"] = None
+    return out
 
 
 def new_factor(old: list[float], ratio: list[float]) -> list[float]:
@@ -77,13 +95,15 @@ def new_factor(old: list[float], ratio: list[float]) -> list[float]:
 
 
 def _combine(results: list[dict]) -> dict:
-    """Pixel-weighted mean ratio over the poses that had an answer."""
+    """Pixel-weighted mean ratios (all pixels; green subset) over the poses that had an answer."""
+    def wmean(key: str):
+        ok = [r for r in results if r.get(key) is not None]
+        if not ok:
+            return None
+        w = np.array([r["n"] * (r["green_fraction"] if key == "ratio_green" else 1.0) for r in ok], float)
+        return ((np.array([r[key] for r in ok]) * w[:, None]).sum(0) / w.sum()).tolist()
     ok = [r for r in results if r["ratio"] is not None]
-    if not ok:
-        return {"n": 0, "ratio": None}
-    w = np.array([r["n"] for r in ok], float)
-    ratio = (np.array([r["ratio"] for r in ok]) * w[:, None]).sum(0) / w.sum()
-    return {"n": int(w.sum()), "ratio": ratio.tolist(), "poses": ok}
+    return {"n": sum(r["n"] for r in ok), "ratio": wmean("ratio"), "ratio_green": wmean("ratio_green"), "poses": ok}
 
 
 def run(scene: Path, out: Path, names: list[str]) -> dict:
@@ -121,8 +141,9 @@ def run(scene: Path, out: Path, names: list[str]) -> dict:
                | {"pose": p} for p in poses]
         report[name] = _combine(per)
         r = report[name]
-        print(f"{name:14} n={r['n']:7}  ratio (imagery/render, linear) "
-              f"{'n/a' if r['ratio'] is None else [round(x, 3) for x in r['ratio']]}", flush=True)
+        fmt = lambda v: "n/a" if v is None else [round(x, 3) for x in v]  # noqa: E731
+        print(f"{name:14} n={r['n']:7}  ratio (imagery/render, linear) all {fmt(r['ratio'])}  green {fmt(r['ratio_green'])}",
+              flush=True)
     (out / "report.json").write_text(json.dumps(report, indent=2))
     return report
 

@@ -30,3 +30,25 @@ def test_too_few_vegetation_pixels_is_no_answer():
 
 def test_new_factor_scales_the_old_one_and_clamps():
     assert cc.new_factor([0.5, 0.5, 0.5], [0.4, 1.2, 3.0]) == pytest.approx([0.2, 0.6, 1.0])
+
+
+def test_green_target_uses_only_the_imagery_pixels_that_look_like_vegetation():
+    bg, soil, canopy, veg = (np.array([0.20, 0.18, 0.12]), np.array([0.25, 0.21, 0.15]), np.array([0.06, 0.09, 0.04]),
+                             np.array([0.45, 0.45, 0.03]))   # far from both, so every plant pixel counts
+    off = np.tile(_srgb(bg), (100, 100, 1))
+    off[40:60, 40:50] = _srgb(soil)      # half the plant's pixels show dry ground in the imagery...
+    off[40:60, 50:60] = _srgb(canopy)    # ...half show green canopy
+    on = off.copy()
+    on[40:60, 40:60] = _srgb(veg)
+    r = cc.colour_ratio(on.round().astype(np.uint8), off.round().astype(np.uint8))
+    assert r["green_fraction"] == pytest.approx(0.5, abs=0.02)
+    assert r["ratio_green"] == pytest.approx((canopy / veg).tolist(), rel=0.03)
+    assert r["ratio"] == pytest.approx(((soil + canopy) / 2 / veg).tolist(), rel=0.03)   # the all-pixel ratio is kept
+
+
+def test_no_green_pixels_is_no_green_answer():
+    off = np.tile(_srgb(np.array([0.25, 0.21, 0.15])), (60, 60, 1))
+    on = off.copy()
+    on[10:50, 10:50] = _srgb(np.array([0.45, 0.45, 0.03]))
+    r = cc.colour_ratio(on.round().astype(np.uint8), off.round().astype(np.uint8))
+    assert r["ratio"] is not None and r["ratio_green"] is None

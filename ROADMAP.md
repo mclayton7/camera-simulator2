@@ -1919,8 +1919,8 @@ whole far disk: +2.5 ms p95, +500 MiB in later passes); canopy texels without CH
 - [ ] **Follow-up: R4 visual review** (user). Done 2026-10-12: every procedural far mesh was inside out (3–10× too dark,
   fixed in `prepare_tree.py`); shrubs are solid procedural clumps (Kenney's fans were hollow rings from above);
   broadleaf, far broadleaf and shrub colours calibrated against the imagery (`calibrate_colours.py`, `docs/vegetation.md`
-  "Colour calibration"). Open: far crowns and shrubs read tan-olive rather than green (mean-colour matching); pines
-  wait for Eglin imagery; the 500 m shrub edge is a hard cut. Shots: `.cache/veg/check-colour/`.
+  "Colour calibration": the target is the green imagery under each plant; every calibrated type within ~10 %). Open:
+  pines wait for Eglin imagery; the 500 m shrub edge is a hard cut; the user's look at `.cache/veg/check-hue/`.
 - [ ] **Follow-up: R4 deeper on Linux/Vulkan** (`FOR_LINUX.md` section 6) and on the operational sites' packages
   (Eglin, Pax River, Yuma mixes in `docs/vegetation.md` "Site mixes").
 - [ ] **Follow-up: dense-pass game p50** at the R4 deeper defaults is +0.13 ms over budget (trees alone +1.21 ms).

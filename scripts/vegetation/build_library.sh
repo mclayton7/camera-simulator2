@@ -10,12 +10,12 @@ QURL=https://quaternius.itch.io/textured-lowpoly-trees
 PROC="procedural (scripts/vegetation/prepare_tree.py --procedural-shrub)"
 PT=(uv run --with pillow python scripts/vegetation/prepare_tree.py)
 
-# Calibrated colours (linear; calibrate_colours.py on pendleton-r4, 2026-10-12).
-BROADLEAF_LEAVES=${BROADLEAF_LEAVES:-1.0,0.75,1.0}
-BROADLEAF_FAR=${BROADLEAF_FAR:-0.542,0.514,0.383}
+# Calibrated colours (linear; calibrate_colours.py ratio_green on pendleton-r4, 2026-10-12).
+BROADLEAF_LEAVES=${BROADLEAF_LEAVES:-0.632,0.53,0.947}
+BROADLEAF_FAR=${BROADLEAF_FAR:-0.339,0.43,0.278}
 PINE_FAR=${PINE_FAR:-}
-CHAPARRAL=${CHAPARRAL:-0.216,0.213,0.137}
-DESERT=${DESERT:-0.245,0.229,0.164}
+CHAPARRAL=${CHAPARRAL:-0.316,0.396,0.248}
+DESERT=${DESERT:-0.276,0.341,0.216}
 
 far() { [ -n "$1" ] && echo "--far-color $1" || true; }
 "${PT[@]}" "$Q/OBJ/Tree_7.obj" --name tree_broadleaf_a --height-m 9.0 --crown-radius-m 2.7 --max-tris 10000 \
