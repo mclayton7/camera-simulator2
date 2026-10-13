@@ -7,7 +7,10 @@ the bench orbit (scenario._orbit over San Francisco, 3 km, phases staggered 13 s
 (nvidia-smi), host CPU (/proc/stat), container memory (docker stats) and the encoder each instance opened.
 
 usage: uv run --with numpy scripts/bench/scale_bench.py IMAGE OUT N [N ...] [--warm-s 45] [--measure-s 90] [--ir]
+                                                   [--path orbit|dense] [--env K=V ...] [--mount SPEC ...]
   e.g. uv run --with numpy scripts/bench/scale_bench.py camsim:latest .cache/scale 1 2 3 4 5 6
+  A scene package (REALISM R3/R4): --path dense --mount /mnt/pkg:/data/scene/pkg:ro --env CAMSIM_SCENE_DIR=/data/scene/pkg
+  (`dense` shuttles along the Pendleton dense_pass line, out and back, instead of the San Francisco orbit).
 Results: OUT/summary.txt (one line per N) and OUT/n<N>[_ir]/result.json, per-container logs alongside.
 Containers are named camsim-scale-<i> (removed afterwards); volumes camsim-scale-data-<i> keep their tile caches.
 """
@@ -42,16 +45,31 @@ def ports(i: int) -> dict[str, int]:
     }
 
 
-class Host(threading.Thread):
-    """30 Hz CIGI host frames for one instance: the bench orbit, phase-shifted per instance."""
+# One leg of the dense shuttle: the bench's 90 s dense_pass (9 km at 100 m/s), then back along it
+DENSE_LEG_S = 90.0
 
-    def __init__(self, i: int, ir: bool):
+
+def dense_shuttle(t: float) -> scenario.Pose:
+    """The Pendleton dense_pass line flown out and back (turning round at each end), looking along the track."""
+    s = t % (2.0 * DENSE_LEG_S)
+    if s <= DENSE_LEG_S:
+        return scenario._dense_pass(s)
+    pose = scenario._dense_pass(2.0 * DENSE_LEG_S - s)
+    return dataclasses.replace(pose, yaw=(pose.yaw + 180.0) % 360.0)
+
+
+class Host(threading.Thread):
+    """30 Hz CIGI host frames for one instance: the bench orbit (or the dense shuttle), phase-shifted per instance."""
+
+    def __init__(self, i: int, ir: bool, path: str = "orbit"):
         super().__init__(daemon=True)
         self.i, self.ir = i, ir
         self.port = ports(i)["cigi"]
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.orbit = scenario._orbit(
-            scenario.BASE_LAT, scenario.BASE_LON, 3000.0, 2000.0, 120.0
+        self.orbit = (
+            dense_shuttle
+            if path == "dense"
+            else scenario._orbit(scenario.BASE_LAT, scenario.BASE_LON, 3000.0, 2000.0, 120.0)
         )
         self.stop = threading.Event()
 
@@ -112,8 +130,69 @@ def rows(path: Path) -> list[dict]:
     return out
 
 
+def parse_env(items: list[str]) -> dict[str, str]:
+    env = {}
+    for item in items:
+        if "=" not in item:
+            raise SystemExit(f"--env {item!r}: want KEY=VALUE")
+        k, v = item.split("=", 1)
+        env[k] = v
+    return env
+
+
+def docker_cmd(image: str, idir: Path, i: int, ir: bool, env: dict[str, str], mounts: list[str]) -> list[str]:
+    """`docker run` for instance i: its ports, frame stats into idir, its own tile-cache volume; `env` overrides the
+    defaults and `mounts` are extra -v specs (e.g. a scene package)."""
+    p = ports(i)
+    full = {
+        "CAMSIM_CIGI_PORT": p["cigi"],
+        "CAMSIM_CIGI_RESPONSE_PORT": p["resp"],
+        "CAMSIM_HEALTH_HTTP_PORT": p["health"],
+        "CAMSIM_MULTICAST_ADDR": "127.0.0.1",
+        "CAMSIM_MULTICAST_PORT": p["stream"],
+        "CAMSIM_FRAME_STATS_PATH": "/bench/frames.jsonl",
+        "CAMSIM_DIS_ENABLED": "0",
+    }
+    if ir:
+        full["CAMSIM_IR_PRESET"] = "mwir_cooled"
+    full.update(env)
+    cmd = [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        f"camsim-scale-{i}",
+        "--init",
+        "--network",
+        "host",
+        "--shm-size",
+        "1g",
+        "-v",
+        f"{idir}:/bench",
+        "-v",
+        f"camsim-scale-data-{i}:/var/lib/camsim",
+        "-v",
+        "camsim-bench-cache:/home/camsim/.cache",
+        "--gpus",
+        "all",
+    ]
+    for spec in mounts:
+        cmd += ["-v", spec]
+    for k, v in full.items():
+        cmd += ["-e", f"{k}={v}"]
+    return [*cmd, image]
+
+
 def run_n(
-    image: str, out: Path, n: int, warm_s: float, measure_s: float, ir: bool
+    image: str,
+    out: Path,
+    n: int,
+    warm_s: float,
+    measure_s: float,
+    ir: bool,
+    env: dict[str, str] | None = None,
+    mounts: list[str] | None = None,
+    path: str = "orbit",
 ) -> dict:
     d = out / f"n{n}{'_ir' if ir else ''}"
     subprocess.run(["rm", "-rf", str(d)], check=False)
@@ -125,44 +204,12 @@ def run_n(
         idir = d / f"i{i}"
         idir.mkdir(parents=True)
         idir.chmod(0o777)
-        p = ports(i)
-        env = {
-            "CAMSIM_CIGI_PORT": p["cigi"],
-            "CAMSIM_CIGI_RESPONSE_PORT": p["resp"],
-            "CAMSIM_HEALTH_HTTP_PORT": p["health"],
-            "CAMSIM_MULTICAST_ADDR": "127.0.0.1",
-            "CAMSIM_MULTICAST_PORT": p["stream"],
-            "CAMSIM_FRAME_STATS_PATH": "/bench/frames.jsonl",
-            "CAMSIM_DIS_ENABLED": "0",
-        }
-        if ir:
-            env["CAMSIM_IR_PRESET"] = "mwir_cooled"
-        cmd = [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            names[i],
-            "--init",
-            "--network",
-            "host",
-            "--shm-size",
-            "1g",
-            "-v",
-            f"{idir}:/bench",
-            "-v",
-            f"camsim-scale-data-{i}:/var/lib/camsim",
-            "-v",
-            "camsim-bench-cache:/home/camsim/.cache",
-            "--gpus",
-            "all",
-        ]
-        for k, v in env.items():
-            cmd += ["-e", f"{k}={v}"]
-        h = Host(i, ir)
+        h = Host(i, ir, path)
         h.start()
         hosts.append(h)
-        subprocess.run([*cmd, image], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(
+            docker_cmd(image, idir, i, ir, env or {}, mounts or []), check=True, stdout=subprocess.DEVNULL
+        )
     t_launch = time.time()
     ready = {}
     deadline = time.time() + 900
@@ -182,7 +229,7 @@ def run_n(
         if len(alive) < n:
             break
         time.sleep(2)
-    result: dict = {"n": n, "ir": ir, "ready_s": ready}
+    result: dict = {"n": n, "ir": ir, "path": path, "env": env or {}, "ready_s": ready}
     if len(ready) < n:
         result["error"] = f"only {len(ready)}/{n} ready"
     else:
@@ -310,10 +357,16 @@ def main() -> int:
     ap.add_argument("--warm-s", type=float, default=45.0)
     ap.add_argument("--measure-s", type=float, default=90.0)
     ap.add_argument("--ir", action="store_true")
+    ap.add_argument("--path", choices=["orbit", "dense"], default="orbit",
+                    help="orbit: San Francisco, 3 km; dense: the Pendleton dense_pass line out and back")
+    ap.add_argument("--env", action="append", default=[], metavar="K=V", help="extra CamSim environment (repeatable)")
+    ap.add_argument("--mount", action="append", default=[], metavar="SPEC",
+                    help="extra docker -v spec, e.g. a scene package (repeatable)")
     a = ap.parse_args()
+    env = parse_env(a.env)
     a.out.mkdir(parents=True, exist_ok=True)
     for n in a.ns:
-        r = run_n(a.image, a.out, n, a.warm_s, a.measure_s, a.ir)
+        r = run_n(a.image, a.out, n, a.warm_s, a.measure_s, a.ir, env, a.mount, a.path)
         line = summary(r)
         print(line, flush=True)
         with open(a.out / "summary.txt", "a") as f:
