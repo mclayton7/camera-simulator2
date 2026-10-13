@@ -64,7 +64,9 @@ from bench import scenario  # noqa: E402
 from bench.compare import ssim  # noqa: E402
 
 SHOT = "nadir_3km.png"  # the one --smoke shot; named explicitly, never by glob order (each shot is saved twice, with and without _sensor)
-EDITOR_LOG = Path.home() / "Library/Logs/CamSimTest/CamSimTest.log"
+# UE on macOS logs to ~/Library/Logs/<Project>; elsewhere to the project Saved/Logs (scripts/run.sh)
+EDITOR_LOG = (Path.home() / "Library/Logs/CamSimTest/CamSimTest.log" if sys.platform == "darwin"
+              else REPO / "unreal_project/CamSimTest/Saved/Logs/CamSimTest.log")
 # Santa Margarita River riparian woodland (MCAS Camp Pendleton). The pose sits on code 10; yaw 45 looks NE over the
 # densest woodland (33.31-33.33 N, -117.345..-117.335), which a north-facing camera misses.
 RIPARIAN = (33.307, -117.354)
