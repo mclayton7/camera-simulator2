@@ -90,3 +90,108 @@ def test_crown_radius_is_the_p90_foliage_extent():
     r = P.crown_radius(doc, binary)
     assert 1.4 < r < 2.0                                  # cone of base radius 2: p90 of the radii
     assert P.crown_radius(*_mesh_doc([("Bark", [(0, 0, 0), (0, 1, 0), (1, 0, 0)], False)])) is None
+
+
+def _top_coverage(doc, binary, size=200):
+    """Fraction of the inner 60 % (radius) of a top-down silhouette that geometry covers, and the triangles."""
+    import struct
+
+    from PIL import Image, ImageDraw
+    tris = []
+    for m in doc["meshes"]:
+        for p in m["primitives"]:
+            v = P.read_positions(doc, binary, p["attributes"]["POSITION"])
+            acc = doc["accessors"][p["indices"]]
+            bv = doc["bufferViews"][acc["bufferView"]]
+            idx = struct.unpack_from(f"<{acc['count']}H", binary, bv.get("byteOffset", 0) + acc.get("byteOffset", 0))
+            tris += [[v[i] for i in idx[t:t + 3]] for t in range(0, len(idx), 3)]
+    xs = [p[0] for t in tris for p in t]
+    zs = [p[2] for t in tris for p in t]
+    x0, z0, span = min(xs), min(zs), max(max(xs) - min(xs), max(zs) - min(zs))
+    im = Image.new("L", (size, size), 0)
+    d = ImageDraw.Draw(im)
+    sc = (size - 1) / span
+    for t in tris:
+        d.polygon([((p[0] - x0) * sc, (p[2] - z0) * sc) for p in t], fill=255)
+    cx, cz, r = (-x0) * sc, (-z0) * sc, 0.6 * (size / 2) * min(max(xs) - min(xs), max(zs) - min(zs)) / span
+    inner = [(i, j) for i in range(size) for j in range(size) if (i - cx) ** 2 + (j - cz) ** 2 < r * r]
+    return sum(im.getpixel(q) > 0 for q in inner) / len(inner), tris
+
+
+def test_procedural_shrub_is_a_solid_clump():
+    doc, binary = P.procedural_shrub(height_m=2.0, radius_m=1.0, colour=(0.05, 0.06, 0.03), seed=7)
+    assert P.triangle_count(doc) <= 200
+    lo, hi = P.y_extent(doc)
+    assert lo == pytest.approx(0.0, abs=1e-6) and hi == pytest.approx(2.0, abs=1e-6)    # library contract: base at 0, --height-m tall (placement sinks shrubs)
+    cover, tris = _top_coverage(doc, binary)
+    assert cover >= 0.97                                     # no hole from above (the Kenney fan covered 59 %)
+    xs = [p[0] for t in tris for p in t]
+    assert 1.5 <= max(xs) - min(xs) <= 2.6                   # about 2 x radius across
+    m = doc["materials"]
+    assert len(m) == 1 and m[0]["name"] == "shrub" and "alphaMode" not in m[0]
+    assert m[0]["pbrMetallicRoughness"]["baseColorFactor"][:3] == pytest.approx([0.05, 0.06, 0.03])
+    assert P.procedural_shrub(2.0, 1.0, (0.05, 0.06, 0.03), seed=7)[1] == binary   # deterministic
+    assert P.procedural_shrub(2.0, 1.0, (0.05, 0.06, 0.03), seed=8)[1] != binary   # the seed varies the outline
+
+
+def test_far_colour_overrides_the_mean():
+    trunk = [(x, y, z) for y in (0.0, 3.0) for x in (-0.2, 0.2) for z in (-0.2, 0.2)]
+    doc, binary = _mesh_doc([("Leaves", _cone_points(), True), ("Bark", trunk, False)])
+    fdoc, _ = P.far_mesh(doc, binary, crown_colour=(0.03, 0.04, 0.02))
+    assert fdoc["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][:3] == pytest.approx([0.03, 0.04, 0.02])
+
+
+def test_cli_procedural_shrub(tmp_path, capsys):
+    rc = P.main(["--procedural-shrub", "--name", "shrub_x", "--height-m", "2.0", "--crown-radius-m", "1.1", "--seed", "3",
+                 "--base-color", "shrub=0.05,0.06,0.03", "--licence", "CC0-1.0", "--source-url", "procedural",
+                 "--role", "shrub", "--out", str(tmp_path)])
+    assert rc == 0
+    e = __import__("json").loads(capsys.readouterr().out)
+    assert e["name"] == "shrub_x" and e["role"] == "shrub" and e["crown_radius_m"] == 1.1 and "far_gltf" not in e
+    doc, _ = P.read_glb(tmp_path / "shrub_x.glb")
+    assert P.y_extent(doc)[1] == pytest.approx(2.0, abs=1e-6)
+    assert doc["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][:3] == pytest.approx([0.05, 0.06, 0.03])
+    with pytest.raises(SystemExit):   # a tree can't be procedural
+        P.main(["--procedural-shrub", "--name", "t", "--height-m", "2", "--licence", "CC0-1.0", "--source-url", "p",
+                "--out", str(tmp_path)])
+
+
+def _faces(doc, binary):
+    """(centroid, CCW geometric normal, vertex normal mean) per triangle of the first primitive."""
+    import struct
+    p = doc["meshes"][0]["primitives"][0]
+    v = P.read_positions(doc, binary, p["attributes"]["POSITION"])
+    nm = P.read_positions(doc, binary, p["attributes"]["NORMAL"])
+    acc = doc["accessors"][p["indices"]]
+    bv = doc["bufferViews"][acc["bufferView"]]
+    idx = struct.unpack_from(f"<{acc['count']}H", binary, bv.get("byteOffset", 0) + acc.get("byteOffset", 0))
+    out = []
+    for t in range(0, len(idx), 3):
+        a, b, c = (v[i] for i in idx[t:t + 3])
+        u = [b[i] - a[i] for i in range(3)]
+        w = [c[i] - a[i] for i in range(3)]
+        n = (u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0])
+        vn = [sum(nm[i][k] for i in idx[t:t + 3]) / 3 for k in range(3)]
+        out.append(([(a[k] + b[k] + c[k]) / 3 for k in range(3)], n, vn))
+    return out
+
+
+def test_far_crown_faces_and_normals_point_outward():
+    # glTF front faces are CCW; an inside-out crown shows its back faces lit from inside (rendered ~5-10x too dark).
+    doc, binary = _mesh_doc([("Leaves", _cone_points(), True), ("Bark", [(0, 0, 0), (0, 3, 0), (0.1, 0, 0)], False)])
+    fdoc, fbin = P.far_mesh(doc, binary)
+    faces = _faces(fdoc, fbin)
+    lo, hi = min(m[1] for m, _, _ in faces), max(m[1] for m, _, _ in faces)
+    centre = (0.0, 0.5 * (lo + hi), 0.0)                               # the cone is centred on the Y axis
+    for m, n, vn in faces:
+        assert sum(n[k] * (m[k] - centre[k]) for k in range(3)) > 0      # away from the crown's centre (cap included)
+        assert vn[0] * n[0] + vn[1] * n[1] + vn[2] * n[2] > 0           # vertex normals agree with the winding
+
+
+def test_procedural_shrub_faces_up_and_out():
+    doc, binary = P.procedural_shrub(2.0, 1.0, (0.05, 0.06, 0.03), seed=7)
+    faces = _faces(doc, binary)
+    tilt = [n[1] / math.sqrt(sum(x * x for x in n)) for _, n, _ in faces]
+    assert sum(t >= -0.3 for t in tilt) >= 0.95 * len(faces)            # domes look up or sideways (jitter overhangs a little)
+    assert sum(tilt) / len(tilt) > 0.15                                 # ~0.3 here; inside out they look down (~-0.3)
+    assert all(vn[0] * n[0] + vn[1] * n[1] + vn[2] * n[2] > 0 for _, n, vn in faces)

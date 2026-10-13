@@ -221,16 +221,18 @@ git LFS) ships six types; `tree_broadleaf_a` stays first (index 0), so packages 
 
 | Type | Role | Source model | Height m | Crown radius m | Triangles near / far | sha256 |
 |---|---|---|---|---|---|---|
-| `tree_broadleaf_a` | tree | Quaternius Textured LowPoly Trees, `OBJ/Tree_7.obj` | 9 | 2.7 | 1,332 / 108 | `f49350f8d9fa…` |
+| `tree_broadleaf_a` | tree | Quaternius Textured LowPoly Trees, `OBJ/Tree_7.obj`, leaves × 1.0, 0.75, 1.0, far crown 0.542, 0.514, 0.383 (calibrated) | 9 | 2.7 | 1,332 / 108 | `5f8b4257e285…` |
 | `tree_pine_a` | tree | Quaternius, `OBJ/Pine_4.obj` (crown base at 46 % of the height: the pack's only high-crowned pine) | 22 | 6.78 | 460 / 108 | `b71028685c37…` |
 | `tree_pine_b` | tree | Quaternius, `OBJ/Pine_5.obj` (slender, crown to the ground) | 16 | 4.04 | 664 / 108 | `2a28cc567588…` |
-| `shrub_chaparral` | shrub | Kenney Nature Kit 2.1, `plant_bushLarge.obj`, base colour 0.061, 0.080, 0.026 (linear; dark olive) | 2 | 1 | 60 / – | `18ccac5e1014…` |
-| `shrub_desert` | shrub | Kenney, `plant_bush.obj`, base colour 0.155, 0.162, 0.080 (grey olive) | 1.4 | 0.7 | 32 / – | `21e82385fffa…` |
+| `shrub_chaparral` | shrub | procedural clump (`prepare_tree.py --procedural-shrub`, seed 11), base colour 0.216, 0.213, 0.137 (linear, calibrated) | 2 | 1 | 160 / – | `11d2629ecd3b…` |
+| `shrub_desert` | shrub | procedural clump (seed 12), base colour 0.245, 0.229, 0.164 (calibrated) | 1.4 | 0.7 | 160 / – | `7d326aedead3…` |
 | `cactus_a` | shrub | Kenney, `cactus_tall.obj`, base colour 0.090, 0.141, 0.045 | 2.5 | 1.25 | 122 / – | `336b736fc6d1…` |
 
 Crown radius is measured from the foliage (p90 horizontal extent) by `prepare_tree.py`, except `tree_broadleaf_a`, kept
-at R4's 2.7 m; it turns canopy cover into a tree density. Kenney shrubs have no alpha-masked foliage, so theirs is the
-0.5 × height default (shrub density comes from the mix, not the canopy).
+at R4's 2.7 m; it turns canopy cover into a tree density. Shrubs give theirs directly (shrub density comes from the
+mix, not the canopy). `scripts/vegetation/build_library.sh OUT` rebuilds every mesh but the cactus from its source
+(Quaternius models, procedural shrubs) with the calibrated colours, reproducibly; `install_entries.py` merges the
+printed entries into `library.json` by name.
 
 | Source | Licence (checked 2026-10-11) |
 |---|---|
@@ -239,13 +241,42 @@ at R4's 2.7 m; it turns canopy cover into a tree density. Kenney shrubs have no 
 
 - **Far meshes** (`*_far.glb`, trees only) are procedural (`prepare_tree.py` `far_mesh`): a lathe crown whose six ring
   radii follow the foliage's height profile (round for the broadleaf, conical for the pines) plus a hexagonal trunk,
-  untextured, coloured with the model's mean leaf and bark colours: 108 triangles. Leaf-card trees don't simplify below
-  ~600 triangles with gltfpack (each card is its own island), and at 1–4 km a tree is a few pixels.
-- **Shrubs are stylised.** Kenney's bushes are low-poly leaf fans recoloured to chaparral / desert greys; they read as
-  green clumps from the sensor's usual 100+ m but not up close. Better CC0 candidates: Quaternius "Ultimate Nature Pack"
-  (`Bush_1`, `Bush_2`, `Cactus_1`–`5`; Google Drive folder linked from https://quaternius.com/packs/ultimatenature.html,
-  rate-limited when fetched by script on 2026-10-11) and the free tier of the "Stylized Nature MegaKit" (itch.io).
-  Swap one in with `prepare_tree.py --role shrub` and the same `name`.
+  untextured, coloured with the model's mean leaf and bark colours or `--far-color` (calibrated): 108 triangles.
+  Leaf-card trees don't simplify below ~600 triangles with gltfpack (each card is its own island), and at 1–4 km a tree
+  is a few pixels. Until 2026-10-12 every far mesh was **inside out** (a winding flip in the builder): the camera saw
+  the crowns' back faces lit from inside, 3–10× too dark, which was most of the "far trees darker than near" finding.
+- **Shrubs are procedural** (`prepare_tree.py --procedural-shrub`): a central low dome and three smaller ones around it,
+  ring radii jittered ±12 % by the seed, one untextured material, 160 triangles, solid from above. They replaced
+  Kenney's leaf fans, whose large bush covered only 59 % of its centre seen from above: hollow hexagonal rings in a
+  nadir view. Better CC0 meshes remain an option: Quaternius "Ultimate Nature Pack" (`Bush_1`, `Bush_2`; Google Drive,
+  rate-limited when fetched by script on 2026-10-11 and 2026-10-12). Swap one in with `prepare_tree.py --role shrub`
+  and the same `name`, then recalibrate its colour.
+
+### Colour calibration
+
+`scripts/vegetation/calibrate_colours.py --scene PKG --out DIR [--configs ...]` (a package without its own mix,
+e.g. `pendleton-r4`) renders the riparian woodland from 120 m and 350 m once with vegetation off and once per
+configuration: one library type at a time through a species mix file (`broadleaf`, `pine`, `chaparral`, `desert`),
+or far trees alone (`far_broadleaf`, `far_pine`: near radius 100 m). Vegetation pixels are where the frames differ;
+over them, the imagery's mean linear colour divided by the render's (the auto-exposure difference measured on the
+other pixels and divided out) is the factor the type's base colour needs. Results 2026-10-12 (M1 Pro, Pendleton
+imagery, NAIP 2022), rendered vs imagery under the plants, sRGB:
+
+| Type | Before | After | Imagery | Notes |
+|---|---|---|---|---|
+| broadleaf (near) | 128, 160, 79 (lit tops) | 92, 97, 59 | 95, 96, 73 | leaf texture × 1.0, 0.75, 1.0; blue is capped by the factor's 1.0 limit |
+| broadleaf (far) | 43–56, 51–68, 37–43 | 85–93, 83–91, 72–76 | 99–102, 96, 81–85 | inside-out mesh fixed, crown colour 0.542, 0.514, 0.383 |
+| pine (near / far) | 60–67, 70–78, 39–45 / 29–30, 35–37, 27–29 | unchanged / 58–64, 71–79, 43 | – | no Pendleton truth for pines (tune on Eglin); far now matches near |
+| chaparral | 37–46, 42, 23–31 (Kenney) | 67, 63, 46 | 119, 109, 89 | half the log correction (below) |
+| desert bush | – | 77, 71, 55 | 121, 111, 90 | half the log correction |
+
+The imagery under a shrub is the mean over its footprint, gaps and bare soil included, so matching it fully would
+make shrubs soil-coloured blobs: shrubs take the square root of the measured ratio (half the correction in log terms),
+between a real shrub's dark olive and the dry ground around it. Trees in closed canopy match the imagery.
+
+Mean colour isn't hue: the far crowns and shrubs now match the imagery's brightness but read tan-olive, where the
+riparian corridor looks greener (the pixels under them mix canopy with dry chaparral, which WorldCover often calls
+tree cover). Before/after shots: `.cache/veg/check-colour/{oblique,truck}/` vs `.cache/veg/check-r7/`.
 - Poly Haven has no tree under 10k triangles (smallest `quiver_tree_02` 153,887 polys).
 
 ### Preparing a model
@@ -576,7 +607,9 @@ known cost, like the R4 footprint check's p95 overrun. Contact sheets: `.cache/b
   `SampleHeightMostDetailed` (finest tiles over the whole far disk: slow after low passes).
 - At the defaults the dense pass is +1.63 ms game p50 over vegetation off, 0.13 ms over the budget (accepted
   2026-10-12, "Bench (R4 deeper)").
-- Visual review items (open): far-tier trees render darker than near ones, `shrub_chaparral` looks very dark.
+- Colours are calibrated on Pendleton imagery only (broadleaf, shrubs); pines have no Pendleton truth and keep their
+  texture colours until an Eglin package exists. Far crowns and shrubs read tan-olive rather than green (mean-colour
+  matching, "Colour calibration"); the 500 m shrub edge is still a hard cut.
 - Vegetation has no collision: CIGI LOS passes through it, DIS ignores it.
 - `/ready` does not wait for vegetation.
 - Leaf-on all year (NAIP is leaf-on too); no grass.

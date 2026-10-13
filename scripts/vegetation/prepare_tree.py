@@ -222,11 +222,12 @@ def crown_radius(doc: dict, binary: bytes) -> float | None:
     return _p90([math.hypot(p[0] - cx, p[2] - cz) for p in foliage])
 
 
-def far_mesh(doc: dict, binary: bytes) -> tuple[dict, bytes]:
+def far_mesh(doc: dict, binary: bytes, crown_colour: tuple[float, float, float] | None = None) -> tuple[dict, bytes]:
     """A procedural far-tier mesh (~110 triangles): the crown as a lathe surface whose ring radii are the p90 horizontal
     extent of the foliage vertices around each height, closed at the bottom with an apex on top, plus a hexagonal trunk
     from the model's base into the crown. Materials are untextured, coloured with the mean colour of the foliage and of
-    the rest. Node translations are applied (gltfpack output has no rotations/scales). Deterministic."""
+    the rest (crown_colour, linear, replaces the foliage mean: calibrated against the imagery, docs/vegetation.md). Node
+    translations are applied (gltfpack output has no rotations/scales). Deterministic."""
     foliage, other, fol_mats, other_mats = _foliage_points(doc, binary)
     if not foliage:
         raise SystemExit("far mesh: no foliage (alpha-masked) material to take the crown from")
@@ -272,10 +273,54 @@ def far_mesh(doc: dict, binary: bytes) -> tuple[dict, bytes]:
     for s in range(FAR_TRUNK_SIDES):
         a0, a1 = 2 * s, 2 * ((s + 1) % FAR_TRUNK_SIDES)
         trunk_i += [a0, a0 + 1, a1, a1, a0 + 1, a1 + 1]
-    crown_col = [sum(c) / len(fol_mats) for c in zip(*(_mean_colour(doc, binary, m) for m in fol_mats))]
+    crown_col = (list(crown_colour) if crown_colour is not None
+                 else [sum(c) / len(fol_mats) for c in zip(*(_mean_colour(doc, binary, m) for m in fol_mats))])
     trunk_col = ([sum(c) / len(other_mats) for c in zip(*(_mean_colour(doc, binary, m) for m in other_mats))]
                  if other_mats else [0.08, 0.06, 0.04])
     return _build_far_doc([(crown_v, crown_i, crown_col, "far_crown"), (trunk_v, trunk_i, trunk_col, "far_trunk")])
+
+
+SHRUB_RINGS = 3       # per lobe: rings from the base up, then an apex
+SHRUB_SEGMENTS = 8
+
+
+def procedural_shrub(height_m: float, radius_m: float, colour: tuple[float, float, float], seed: int) -> tuple[dict, bytes]:
+    """A solid shrub clump (REALISM R4): a central low dome and three smaller ones around it, each a lathe dome with its
+    ring radii jittered by +-12 % (random.Random(seed)), one untextured material "shrub" in colour (linear), the top at
+    height_m, about 2 x radius_m across, ~160 triangles. Solid from above (the Kenney leaf fans were hollow rings seen
+    from the air) and deterministic."""
+    import random
+
+    rnd = random.Random(seed)
+    lobes = [(0.0, 0.0, 0.62 * radius_m, height_m)]
+    a0 = rnd.uniform(0.0, 2.0 * math.pi)
+    for k in range(3):
+        a = a0 + 2.0 * math.pi * k / 3 + rnd.uniform(-0.35, 0.35)
+        d = radius_m * rnd.uniform(0.42, 0.52)
+        lobes.append((d * math.cos(a), d * math.sin(a), radius_m * rnd.uniform(0.45, 0.55), height_m * rnd.uniform(0.6, 0.85)))
+    v, idx = [], []
+    S = SHRUB_SEGMENTS
+    for cx, cz, r, h in lobes:
+        base = len(v)
+        for k in range(SHRUB_RINGS):
+            phi = 0.5 * math.pi * k / SHRUB_RINGS
+            y = h * math.sin(phi)   # base at 0 (library contract); placement sinks shrubs (ShrubSinkM)
+            for s_ in range(S):
+                a = 2.0 * math.pi * s_ / S
+                rr = r * math.cos(phi) * rnd.uniform(0.88, 1.12)
+                v.append((cx + rr * math.cos(a), y, cz + rr * math.sin(a)))
+        apex = len(v)
+        v.append((cx, h, cz))
+        for k in range(SHRUB_RINGS - 1):
+            for s_ in range(S):
+                a0_, a1_ = base + k * S + s_, base + k * S + (s_ + 1) % S
+                idx += [a0_, a0_ + S, a1_, a1_, a0_ + S, a1_ + S]
+        top = base + (SHRUB_RINGS - 1) * S
+        for s_ in range(S):
+            idx += [top + s_, apex, top + (s_ + 1) % S]
+    doc, binary = _build_far_doc([(v, idx, list(colour), "shrub")])
+    doc["asset"]["generator"] = "camsim prepare_tree.py procedural_shrub"
+    return doc, binary
 
 
 def _normals(v: list, idx: list) -> list:
@@ -309,8 +354,8 @@ def _build_far_doc(parts: list) -> tuple[dict, bytes]:
         return len(doc["bufferViews"]) - 1
 
     for v, idx, col, name in parts:
-        # Winding: the lathe/prism above is built clockwise seen from outside in a Y-up frame; flip to glTF's CCW.
-        idx = [i for t in range(0, len(idx), 3) for i in (idx[t], idx[t + 2], idx[t + 1])]
+        # Winding: the lathe, prism and domes are built counter-clockwise seen from outside (glTF front faces), so the
+        # normals below point out. (A flip here once turned every far mesh inside out: rendered 3-10x too dark.)
         nrm = _normals(v, idx)
         pv = add_view(b"".join(struct.pack("<3f", *p) for p in v), 34962)
         doc["accessors"].append({"bufferView": pv, "componentType": 5126, "count": len(v), "type": "VEC3",
@@ -405,9 +450,9 @@ def bind_obj_textures(src: Path, textures: list[str], work: Path) -> Path:
     return obj
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("src", type=Path)
+    ap.add_argument("src", type=Path, nargs="?", help="the model (not with --procedural-shrub)")
     ap.add_argument("--name", required=True)
     ap.add_argument("--height-m", type=float, required=True)
     ap.add_argument("--max-tris", type=int, default=10_000)
@@ -420,9 +465,18 @@ def main() -> int:
     ap.add_argument("--crown-radius-m", type=float, default=None,
                     help="default: measured (p90 foliage extent); without foliage 0.3 x height (tree) / 0.5 x height (shrub)")
     ap.add_argument("--far-tris", type=int, default=150, help="far-tier mesh triangle budget (trees only; 0 = none)")
-    a = ap.parse_args()
+    ap.add_argument("--far-color", default=None, metavar="R,G,B", help="far crown colour (linear); default: the foliage mean")
+    ap.add_argument("--procedural-shrub", action="store_true",
+                    help="no SRC: a solid procedural shrub clump (material 'shrub'; --crown-radius-m, --seed, --base-color)")
+    ap.add_argument("--seed", type=int, default=1, help="--procedural-shrub outline seed")
+    a = ap.parse_args(argv)
     if a.licence != "CC0-1.0":
         raise SystemExit("the vegetation library ships CC0-1.0 assets only")
+    if a.procedural_shrub:
+        return _procedural_main(a)
+    if a.src is None:
+        raise SystemExit("SRC is required (or --procedural-shrub)")
+    far_colour = _parse_rgb("--far-color", a.far_color) if a.far_color else None
     if a.texture and a.src.suffix.lower() != ".obj":
         raise SystemExit("--texture applies to OBJ sources only")
     with tempfile.TemporaryDirectory() as td:
@@ -466,7 +520,7 @@ def main() -> int:
             raise SystemExit(
                 f"{tris} triangles after simplification > {a.max_tris}; try -sa or another model"
             )
-        far_doc = far_mesh(doc, binary) if a.role == "tree" and a.far_tris > 0 else None
+        far_doc = far_mesh(doc, binary, far_colour) if a.role == "tree" and a.far_tris > 0 else None
         crown = a.crown_radius_m
         if crown is None and (r := crown_radius(doc, binary)) is not None:
             lo, hi = y_extent(doc)
@@ -487,6 +541,39 @@ def main() -> int:
             far = (far_dst.name, hashlib.sha256(far_dst.read_bytes()).hexdigest(), ftris)
     sha = hashlib.sha256(dst.read_bytes()).hexdigest()
     print(json.dumps(library_entry(a.name, a.role, a.height_m, crown, a.licence, a.source_url, sha, tris, far), indent=2))
+    return 0
+
+
+def _parse_rgb(flag: str, spec: str) -> tuple[float, float, float]:
+    try:
+        vals = [float(x) for x in spec.split(",")]
+    except ValueError:
+        vals = []
+    if len(vals) != 3 or not all(0.0 <= x <= 1.0 for x in vals):
+        raise SystemExit(f"{flag} {spec!r}: expected R,G,B with each in [0, 1]")
+    return vals[0], vals[1], vals[2]
+
+
+def _procedural_main(a: argparse.Namespace) -> int:
+    """--procedural-shrub: write <out>/<name>.glb (procedural_shrub) and print its library entry."""
+    if a.role != "shrub":
+        raise SystemExit("--procedural-shrub makes shrubs only (--role shrub)")
+    radius = a.crown_radius_m if a.crown_radius_m is not None else 0.5 * a.height_m
+    colour = (0.05, 0.06, 0.03)
+    for spec in a.base_color:
+        name, _, rgb = spec.partition("=")
+        if name != "shrub":
+            raise SystemExit(f"--base-color: no material named {name!r} (have ['shrub'])")
+        colour = _parse_rgb("--base-color", rgb)
+    doc, binary = procedural_shrub(a.height_m, radius, colour, a.seed)
+    tris = triangle_count(doc)
+    if tris > a.max_tris:
+        raise SystemExit(f"{tris} triangles > {a.max_tris}")
+    a.out.mkdir(parents=True, exist_ok=True)
+    dst = a.out / f"{a.name}.glb"
+    write_glb(dst, doc, binary)
+    sha = hashlib.sha256(dst.read_bytes()).hexdigest()
+    print(json.dumps(library_entry(a.name, "shrub", a.height_m, round(radius, 2), a.licence, a.source_url, sha, tris, None), indent=2))
     return 0
 
 
