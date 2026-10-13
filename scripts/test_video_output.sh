@@ -74,17 +74,17 @@ ffprobe \
     -show_streams \
     -show_format \
     -print_format json \
-    2>&1 | tee /tmp/camsim_probe.json
+    2>&1 | tee "${TMPDIR:-/tmp}/camsim_probe.json"
 
 echo ""
 
 # Extract key fields for a quick summary
 if command -v uv &>/dev/null; then
     uv run - << 'EOF'
-import json, sys
+import json, os, sys
 
 try:
-    data = json.load(open("/tmp/camsim_probe.json"))
+    data = json.load(open(os.path.join(os.environ.get("TMPDIR", "/tmp"), "camsim_probe.json")))
 except Exception as e:
     print(f"[WARN] Could not parse probe JSON: {e}")
     sys.exit(0)

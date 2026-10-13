@@ -1835,6 +1835,14 @@ didn't rebuild them) broke the editor link with `R_X86_64_PC32 … recompile wit
 and rerun `build_thirdparty.sh`); `thermal_check.py`, `ocean_check.py` and `gt_occlusion_check.py` read only the macOS
 log path, so on Linux the run log wasn't copied (now platform-dependent).
 
+Linux regression check after R2–R4 (2026-10-13, same box and driver, head c501693): **no regressions.** NullRHI
+automation 597/597 (532 + 65 with warnings, 0 failed; the editor exits 1 on the same CesiumRuntime `LogClass: Error`);
+`CamSim.GPU.*` 26/26 on Vulkan; `ci_validate.sh --native` pass (ready 22 s, 147/147 KLV packets conform); scene tooling
+592 passed, 3 skipped, 1 xfailed; `thermal_check.py --band both` 33/33 gates; `ocean_check.py --cigi` 28/28 (boat − sea
+mean −0.12…0.00 m, HOT diff ≤ 0.33 m, frame median 33.3 ms, 0 frames > 66 ms). Found on the way: the scene tests keep
+~4.2 GB under pytest's temp dir (last three runs), which filled this box's separate 4 GB `/tmp` volume and broke the
+next run with `ENOSPC`; point `TMPDIR` at a larger disk (`test_matrix.sh` and `test_video_output.sh` now honour it).
+
 **R2 (vector features) implemented and measured on macOS 2026-10-10** (`docs/scene-packages.md`, "Vector features" and
 "Measured"; spec `docs/superpowers/specs/2026-10-10-r2-vector-features-design.md`): OSM roads / paved areas (200 asphalt
 or unknown, 201 concrete), rail (210) and NHD HR inland water (220) burned into a package's `landcover/` with `[features]`

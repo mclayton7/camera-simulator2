@@ -86,7 +86,7 @@ run_native_profile() {
     fi
 
     local run_log
-    run_log="$(mktemp /tmp/camsim_matrix_run.XXXXXX.log)"
+    run_log="$(mktemp "${TMPDIR:-/tmp}"/camsim_matrix_run.XXXXXX.log)"
     set +e
     "${SCRIPT_DIR}/run.sh" "${build_flag[@]}" --mode editor --local "${run_args[@]}" >"${run_log}" 2>&1
     local run_status=$?
@@ -129,7 +129,7 @@ run_native_profile() {
 
     if [[ "${SKIP_CIGI_RESP}" -eq 0 ]]; then
         echo "==> [${platform_label}] waiting for CIGI response heartbeat"
-        run_checked "[${platform_label}] startup heartbeat" "/tmp/camsim_matrix_startup_resp.log" \
+        run_checked "[${platform_label}] startup heartbeat" "${TMPDIR:-/tmp}/camsim_matrix_startup_resp.log" \
         uv run "${SCRIPT_DIR}/check_cigi_responses.py" \
             --host 0.0.0.0 \
             --port "${CIGI_RESP_PORT}" \
@@ -138,7 +138,7 @@ run_native_profile() {
     fi
 
     echo "==> [${platform_label}] sending CIGI control traffic"
-    run_checked "[${platform_label}] CIGI sender" "/tmp/camsim_matrix_send.log" \
+    run_checked "[${platform_label}] CIGI sender" "${TMPDIR:-/tmp}/camsim_matrix_send.log" \
     uv run "${SCRIPT_DIR}/send_cigi_test.py" \
         --host "${CIGI_HOST}" \
         --port "${CIGI_PORT}" \
@@ -147,7 +147,7 @@ run_native_profile() {
 
     if [[ "${SKIP_VIDEO}" -eq 0 ]]; then
         echo "==> [${platform_label}] probing video stream"
-        run_checked "[${platform_label}] Video probe" "/tmp/camsim_matrix_probe.log" \
+        run_checked "[${platform_label}] Video probe" "${TMPDIR:-/tmp}/camsim_matrix_probe.log" \
         "${SCRIPT_DIR}/test_video_output.sh" \
             --addr "${VIDEO_ADDR}" \
             --port "${VIDEO_PORT}" \
@@ -156,7 +156,7 @@ run_native_profile() {
 
     if [[ "${SKIP_KLV}" -eq 0 ]]; then
         echo "==> [${platform_label}] validating KLV stream"
-        run_checked "[${platform_label}] KLV validator" "/tmp/camsim_matrix_klv.log" \
+        run_checked "[${platform_label}] KLV validator" "${TMPDIR:-/tmp}/camsim_matrix_klv.log" \
         node "${SCRIPT_DIR}/klv_conformance/check.js" stream \
             "udp://${VIDEO_ADDR}:${VIDEO_PORT}" \
             --duration-sec "${PROBE_DURATION}" \
@@ -165,7 +165,7 @@ run_native_profile() {
 
     if [[ "${SKIP_CIGI_RESP}" -eq 0 ]]; then
         echo "==> [${platform_label}] validating CIGI response heartbeat"
-        run_checked "[${platform_label}] CIGI response check" "/tmp/camsim_matrix_resp.log" \
+        run_checked "[${platform_label}] CIGI response check" "${TMPDIR:-/tmp}/camsim_matrix_resp.log" \
         uv run "${SCRIPT_DIR}/check_cigi_responses.py" \
             --host 0.0.0.0 \
             --port "${CIGI_RESP_PORT}" \
@@ -212,7 +212,7 @@ run_linux_container() {
 
     if [[ "${SKIP_CIGI_RESP}" -eq 0 ]]; then
         echo "==> [linux-container] waiting for CIGI response heartbeat"
-        run_checked "[linux-container] startup heartbeat" "/tmp/camsim_matrix_startup_resp_container.log" \
+        run_checked "[linux-container] startup heartbeat" "${TMPDIR:-/tmp}/camsim_matrix_startup_resp_container.log" \
         uv run "${SCRIPT_DIR}/check_cigi_responses.py" \
             --host 0.0.0.0 \
             --port "${CIGI_RESP_PORT}" \
@@ -221,7 +221,7 @@ run_linux_container() {
     fi
 
     echo "==> [linux-container] sending CIGI control traffic"
-    run_checked "[linux-container] CIGI sender" "/tmp/camsim_matrix_send_container.log" \
+    run_checked "[linux-container] CIGI sender" "${TMPDIR:-/tmp}/camsim_matrix_send_container.log" \
     uv run "${SCRIPT_DIR}/send_cigi_test.py" \
         --host "${CIGI_HOST}" \
         --port "${CIGI_PORT}" \
@@ -230,7 +230,7 @@ run_linux_container() {
 
     if [[ "${SKIP_VIDEO}" -eq 0 ]]; then
         echo "==> [linux-container] probing video stream"
-        run_checked "[linux-container] Video probe" "/tmp/camsim_matrix_probe_container.log" \
+        run_checked "[linux-container] Video probe" "${TMPDIR:-/tmp}/camsim_matrix_probe_container.log" \
         "${SCRIPT_DIR}/test_video_output.sh" \
             --addr "${VIDEO_ADDR}" \
             --port "${VIDEO_PORT}" \
@@ -239,7 +239,7 @@ run_linux_container() {
 
     if [[ "${SKIP_KLV}" -eq 0 ]]; then
         echo "==> [linux-container] validating KLV stream"
-        run_checked "[linux-container] KLV validator" "/tmp/camsim_matrix_klv_container.log" \
+        run_checked "[linux-container] KLV validator" "${TMPDIR:-/tmp}/camsim_matrix_klv_container.log" \
         node "${SCRIPT_DIR}/klv_conformance/check.js" stream \
             "udp://${VIDEO_ADDR}:${VIDEO_PORT}" \
             --duration-sec "${PROBE_DURATION}" \
@@ -248,7 +248,7 @@ run_linux_container() {
 
     if [[ "${SKIP_CIGI_RESP}" -eq 0 ]]; then
         echo "==> [linux-container] validating CIGI response heartbeat"
-        run_checked "[linux-container] CIGI response check" "/tmp/camsim_matrix_resp_container.log" \
+        run_checked "[linux-container] CIGI response check" "${TMPDIR:-/tmp}/camsim_matrix_resp_container.log" \
         uv run "${SCRIPT_DIR}/check_cigi_responses.py" \
             --host 0.0.0.0 \
             --port "${CIGI_RESP_PORT}" \
