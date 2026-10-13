@@ -18,9 +18,12 @@ mkdir -p "$CACHE" "$OUT"
 DIGEST=$(docker image inspect --format '{{.Id}}' "$IMAGE")
 # A TTY only when both streams are terminals: with -t docker merges stderr into stdout,
 # which would break `--json-progress 2> file`. ${TTY[@]+...} keeps bash 3.2 + set -u happy.
+# HOME=/tmp: the `-u` user has no passwd entry, so HOME would be `/`, and DuckDB (Overture buildings) installs
+# its httpfs extension under $HOME/.duckdb on first use.
 TTY=()
 [[ -t 1 && -t 2 ]] && TTY=(-t)
 exec docker run --rm ${TTY[@]+"${TTY[@]}"} -u "$(id -u):$(id -g)" \
   -v "$REPO:/work:ro" -v "$CACHE:/cache" -v "$OUT:/out" -w /work \
+  -e HOME=/tmp \
   -e CAMSIM_SCENE_IMAGE_DIGEST="$DIGEST" -e CAMSIM_SCENE_GIT_COMMIT="$(git -C "$REPO" rev-parse HEAD)" \
   "$IMAGE" "$@"

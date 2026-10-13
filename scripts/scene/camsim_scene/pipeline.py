@@ -306,11 +306,14 @@ def make_context(pkg: Path, m: Manifest, cache: Cache) -> BuildContext:
 
 _STATE: WorkerState | None = None
 _MARKERS: Markers | None = None
+# GDAL's block cache defaults to 5 % of RAM; the buildings layer and the land-cover cut run outside the pool, so the
+# main process takes the same cap (a caller's GDAL_CACHEMAX wins)
+GDAL_CACHEMAX_MB = "256"
 
 
 def init_worker(ctx: BuildContext) -> None:
     global _STATE, _MARKERS
-    os.environ.setdefault("GDAL_CACHEMAX", "256")
+    os.environ.setdefault("GDAL_CACHEMAX", GDAL_CACHEMAX_MB)
     _STATE = WorkerState(ctx)
     _MARKERS = Markers(_STATE.pkg)
 
@@ -782,6 +785,7 @@ def build_scene(
     """Fetch what's missing, then build. `locked`: the caller already holds the package's build lock."""
     pkg = Path(pkg)
     jobs = jobs or os.cpu_count() or 1
+    os.environ.setdefault("GDAL_CACHEMAX", GDAL_CACHEMAX_MB)  # before any GDAL read (fetch, planning, buildings)
     started = _utc_now()
     with _lock(pkg, locked):  # before the fetch too: a second build must not rewrite manifest.json
         m = Manifest.load(pkg / "manifest.json")

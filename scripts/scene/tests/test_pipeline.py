@@ -1,5 +1,6 @@
 import io
 import json
+import os
 
 import numpy as np
 import pytest
@@ -447,3 +448,17 @@ def test_buildings_source_needs_no_footprint():
     asset = AssetRecord(id="buildings-x", url="overture://x", group="overture_buildings")
     rec = SourceRecord("overture_buildings", "overture_buildings", "O", "x", "ODbL-1.0", "", {"release": "x"}, [asset])
     assert not _needs_footprints(SimpleNamespace(sources=[rec]))
+
+
+def test_build_caps_the_gdal_cache_in_the_main_process(tmp_path, monkeypatch):
+    # The buildings layer runs in the main process: without a cap GDAL's block cache is 5 % of RAM (3.1 GB on a 62 GB
+    # host), which put a Pendleton build at 4.2 GB peak RSS on Linux vs 1.0 GB with the workers' 256 MB.
+    monkeypatch.delenv("GDAL_CACHEMAX", raising=False)
+    build_synthetic(tmp_path)
+    assert os.environ["GDAL_CACHEMAX"] == pipeline.GDAL_CACHEMAX_MB
+
+
+def test_build_keeps_a_gdal_cache_set_by_the_caller(tmp_path, monkeypatch):
+    monkeypatch.setenv("GDAL_CACHEMAX", "64")
+    build_synthetic(tmp_path)
+    assert os.environ["GDAL_CACHEMAX"] == "64"
