@@ -157,8 +157,11 @@ Full suite: 209 tests pass (macOS, UE 5.8.3, FFmpeg 8.1.3); misb.js KLV check pa
   CI runner (`/opt/UE`) needs UE 5.8 installed, then `scripts/repo_setup.sh` and
   `scripts/build_thirdparty.sh` (FFmpeg 8 + fresh Linux libs) re-run before the UE5 jobs go green.
   `repo_setup.sh` writes Cesium into `/opt/UE/Engine/Plugins/Marketplace`, so run it as a user who
-  can write there (or with sudo). Not yet verified on Linux: that packaging (`BuildCookRun`) uses
-  the prebuilt `UnrealGame` libs and doesn't rebuild Cesium.
+  can write there (or with sudo). ~~Not yet verified on Linux: that packaging (`BuildCookRun`) uses
+  the prebuilt `UnrealGame` libs and doesn't rebuild Cesium.~~ **Verified 2026-10-13** (`package_for_docker.sh` on the
+  RTX 5080 box): UBT compiled only CamSim's sources and linked the release zip's precompiled
+  `Intermediate/Build/Linux/x64/UnrealGame/Development/CesiumRuntime/Module.CesiumRuntime.*.cpp.o` (dated 2026-08-31,
+  `CesiumRuntime.precompiled`); no Cesium `.cpp` was compiled.
 - *(2026-09-30)* First Linux workstation brought up: UE 5.8.3 at `/opt/UnrealEngine-5.8.3`
   (`/opt/UE` symlink), Cesium installed into the engine, ThirdParty rebuilt, headless suite and
   `ci_validate.sh --native` pass. Linux receivers need `net.core.rmem_max` raised (see 1.14);
@@ -1850,7 +1853,7 @@ or unknown, 201 concrete), rail (210) and NHD HR inland water (220) burned into 
 201 18,473 / 210 12,828 / 220 40,507, land cover 136 s cold; rebuild and features-off identical; `verify --deep` clean;
 road registration median 2.0 m, p90 10.0 m (2-D windowed correlation; the spec's profile method measured vegetation);
 CIGI 200 on I-5, 220 on Lake O'Neill, 80 offshore, 30 in open country; gates (a)–(q) pass, ThermalCS 0.421 ms at 1080p and unchanged in the bench (same-session IR pair r1c/r2, p95 within 0.002 ms);
-UE 494/494, GPU 26/26. Open on Linux: not run (macOS only; nothing in `FOR_LINUX.md` for R2 yet). **Open: gate (r) fails** on the pose picked by a data rule (dark asphalt, fix round 1: I-5 NB in
+UE 494/494, GPU 26/26. ~~Open on Linux: not run (macOS only; nothing in `FOR_LINUX.md` for R2 yet).~~ Linux 2026-10-13: `pendleton-r2` built in the container (land cover 140 s), and gate (r) passes on the R3b package on Vulkan (+7.55 night / +26.82 noon DN, `thermal_check.py --runs roofs,roads`). **Open: gate (r) fails** on the pose picked by a data rule (dark asphalt, fix round 1: I-5 NB in
 San Clemente, way 487165554): MWIR −1.2 / −25.3 DN and LWIR +13.3 / −10.8 DN at 02:00 / noon (dry verge refined to
 `bare_soil`, nearly as warm as asphalt, on a sunward bank). The first pose (I-5 SB, OSM asphalt but light NAIP pavement)
 fails at noon too (−40.1 / −19.4 DN; `k_fast` 0: +21.6 DN), and of two diagnostic poses CA 76 passes every row, Avenida
@@ -1944,7 +1947,7 @@ whole far disk: +2.5 ms p95, +500 MiB in later passes); canopy texels without CH
 
 **R3b user-visible changes:** the built-in thermal classes went 15 to 16 (`building_roof`), so user class slots went 17 to 16: a config that used all 17 now fails validation.
 
-- [ ] **Follow-up: profile/cap buildings-layer build RSS** (GDAL cache, plan and raster held together) before building the operational sites: the layer peaked at 1,988 MB of the 2,048 MB `--max-worker-rss-mb` limit on Pendleton at `roof_texel_m` 0.5 (1,588 MB at 1.0; R3 1,630), so a larger site may exceed it (raise the flag meanwhile).
+- [x] **Follow-up: profile/cap buildings-layer build RSS** (**done 2026-10-13**: the main process had no GDAL cache cap; with the workers' 256 MB the Pendleton build peaks at 1.0 GB on Linux, was 4.2 GB; `docs/scene-packages.md`, "R3 and R3b on Linux") (GDAL cache, plan and raster held together) before building the operational sites: the layer peaked at 1,988 MB of the 2,048 MB `--max-worker-rss-mb` limit on Pendleton at `roof_texel_m` 0.5 (1,588 MB at 1.0; R3 1,630), so a larger site may exceed it (raise the flag meanwhile).
 
 **R3b buildings look implemented and measured on macOS 2026-10-11** (`docs/scene-packages.md`, "Footprint mask,
 land-cover burn and roof atlas (R3b)" and "Measured", "R3b buildings look"; spec
@@ -1961,8 +1964,20 @@ inside footprints, r2 cell hashes unchanged; MWIR roof − grass +38.7 DN at noo
 +782 MiB, pass; full run game p95 ≤ +1.57 ms, 30 fps, 0 dropped, but **memory +1,243 MiB over the whole run, over the
 +1,024 MiB budget** at `roof_texel_m` 0.5 (the atlases add +383 MiB in `dense_pass`); the contingency rebuild at
 1.0 m peaks at +971 MiB (one run each). **User decision 2026-10-11:** keep 0.5 m (realism first) and accept the memory overrun; for multi-instance runs, roll features back per package (build a variant with `roof_texel_m = 1.0` or `roof_textures = false`; only the buildings tiles change). Open: the user's visual
-review (roof fit, NAIP lean), Linux/Vulkan (`FOR_LINUX.md` §5). No editor work: Cesium's default material samples the
+review (roof fit, NAIP lean), ~~Linux/Vulkan (`FOR_LINUX.md` §5)~~ (**done 2026-10-13**, below). No editor work: Cesium's default material samples the
 embedded roof texture.
+
+**R3/R3b on Linux/Vulkan, 2026-10-13** (RTX 5080 16 GB, driver 595.99.02; `docs/scene-packages.md`, "R3 and R3b on Linux"):
+`pendleton-r4` built in the reference container from `pendleton-r2` (R2 features, also first built on this box): 82,260
+buildings, 1,765 tiles, 368.3 MB, 307,606 cells burned to 230, `hashes.txt` 471,243 lines (all as the Mac), rebuild
+identical, `verify --deep` clean (mask PNG bytes differ from the Mac's native build). Spawn, CIGI (roof 230 / 94.67 m,
+LOS 230 at 30.0 m) and MWIR roofs (+40.8 DN, 2.1 K below air) pass. Buildings sweep pass (SSE 64 +0.46 ms game p50,
++618 MiB). **Fail: both on +1.84 ms game p50** in the combined sweep (budget +1.5; Mac +1.16), and +2.21 / +1.70 ms in
+the full bench's dense_pass / long_range; memory over the whole run +675 MiB (pass; Mac +1,243). **4 instances don't fit
+with 0.5 m roof atlases** (21 dropped frames, 15.8 of 16 GB VRAM, GPU 8.9 ms); buildings off or roof textures off hold
+30 fps at 4. Found on the way: the buildings layer runs in the main build process, where GDAL's cache took 5 % of RAM
+(4.2 GB peak RSS on this 62 GB box, exit 2), now capped at the workers' 256 MB (1.0 GB, output identical); the build
+container's `HOME` was `/`, so DuckDB couldn't fetch Overture (`build.sh` sets `HOME=/tmp`).
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

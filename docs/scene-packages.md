@@ -1201,6 +1201,54 @@ later Pendleton sessions, including the same pose sequence three times (building
 unknown; a crashed run leaves `CrashReportClient` holding port 8080, so the next launch can't bind its health port.
 
 
+### R3 and R3b on Linux (2026-10-13)
+
+Reference box: Core Ultra 9 285K, RTX 5080 (16 GB), driver 595.99.02, Vulkan SM6, UE 5.8.3, head `538eb5b`. Packages built
+in the reference container (`scripts/scene/build.sh`, `-j 16`) from a copy of the box's `pendleton-r1c`: `pendleton-r2`
+(R2 features, the toml without `[buildings]`; land cover 140 s), then `pendleton-r4` (`examples/pendleton.toml`,
+`--replan`: land cover with the 230 burn, buildings with mask and roof atlases), and `pendleton-r4-noroof`
+(`roof_textures = false`). Outputs under `.cache/linux-5/` (untracked).
+
+| Check | Result |
+|---|---|
+| Package | **Pass.** Overture snapshot 82,283 footprints, 82,260 kept (23 dropped small); 1,765 tiles; all 82,260 roofs textured at 0.5 m; buildings layer 368.3 MB (Mac 368.2), built in 141 s; mask 56 tiles + `index.json`; land cover **307,606 cells burned to 230 in 54 tiles** (Mac: the same); `hashes.txt` 471,243 lines (Mac: the same). `verify --deep` all `ok` (3 min 14 s), incl. `buildings_tileset`, `buildings_heights`, `buildings_roofs`, `buildings_mask`. A second clean build: `hashes.txt` identical. Not compared file by file with the Mac's `hashes.txt` (not on this box); the mask totals 3,151,675 bytes vs the Mac's 3,081,704, so the mask PNGs at least differ in bytes (the Mac built natively, this box in the container: different Pillow / zlib); the GLBs are expected to differ (JPEG atlases) |
+| Build memory | **Found and fixed.** The first build exited 2: peak RSS 4,247 MB over the 2,048 MB limit (Mac 1,988). Sampled from `/proc`, the 4.2 GB was real and in the main process (workers ≤ 363 MB): the buildings layer runs there, where GDAL's block cache had its default of 5 % of RAM (3.1 GB on this 62 GB box); pool workers already capped it at 256 MB. `build_scene` now applies the same cap (a caller's `GDAL_CACHEMAX` wins): peak 1,027 MB sampled / 1,154 MB `ru_maxrss`, exit 0, `hashes.txt` identical, buildings 146 s. The no-roof build peaks at 714 MB. Also fixed: in the container DuckDB could not install `httpfs` (the `-u` user's `HOME` was `/`), so the Overture fetch failed; `build.sh` sets `HOME=/tmp` |
+| Spawn | **Pass** (native, `CAMSIM_SCENE_DIR`, offline): `buildings tileset 'CamSimBuildings' … SSE=64.0 culledSSE=64 cacheMB=512 … physicsMeshes=1`, `cached 2 tileset actor(s)`, no `LogCesium` error; ready 14 s. In Docker (`camsim:linux-r4`, the package bind-mounted `:ro`) the same lines |
+| CIGI | **Pass**, as the Mac's table (sensor 300 m above, noon): warehouse `010048df…` roof **230**, HOT 94.67 m; 5 m west 50, 88.46 m; commercial `9cc2e6cd…` roof **230**, 91.27 m; 5 m west 50, 86.12 m; LOS from 30 m west of the warehouse wall at 90.75 m due east: **230**, range 30.0 m, hit 90.75 m |
+| Infrared | **Pass** (`thermal_check.py --band mwir --runs roofs,roads --scene pendleton-r4`): (s) noon roof − grass **+40.78 DN** (Mac +38.74); (s_air) 02:00 `building_roof` 282.1 K vs air 284.2 K, **2.1 K** below (Mac: the same); (r) night +7.55, noon +26.82 DN (thresholds 2.0 / 6.0) |
+| Sweep, buildings | **Pass** (`sweep.py --axis buildings=off,on --axis buildings_sse=16,64 --axis buildings_physics=on --repeat 2`, `dense_pass`, 720p EO; VRAM = `nvidia-smi` `memory.used`, the whole GPU). All-off: game 3.23–3.25 ms p50, GPU 2.73 ms, 4,844–4,988 MiB. SSE 16: +0.64 / +1.40 ms game p50 / p95, +0.22 ms GPU, +932 MiB. **SSE 64 (default): +0.46 / +0.84 ms, +0.11 ms GPU, +618 MiB.** 30 fps, 0 dropped in every run |
+| Sweep, combined | **Both on: FAIL, game p50 +1.84 ms** over the +1.5 ms budget (`--axis buildings=off,on --axis trees=off,on --repeat 2`; package without a species mix, so trees are the built-in default). All-off 3.24–3.26 ms p50. Trees: +1.40 / +1.86 ms, +0.27 ms GPU, +18 MiB, pass. Buildings: +0.44 / +0.74 ms, +0.12 ms GPU, +763 MiB, pass. Both: +1.84 / +2.45 ms, +0.37 ms GPU, +777 MiB. 30 fps, 0 dropped in every run. The Mac's both-on row was +1.16 ms p50 (pass); on Metal the game thread has more headroom over this box's 3.2 ms base, and trees cost more here (+1.40 vs the Mac's trees-only row) |
+| Full bench | **Memory pass, game p50 over in two phases** (`run_bench.py --site pendleton --gpu-mem`, both on vs both off, one run each; table below). Every phase 30 fps, 0 dropped. Memory over the whole run **+675 MiB** (5,935 vs 5,260 MiB; Mac +1,243, over budget) |
+| Instances | **Roof atlases at 0.5 m don't fit 4 instances on 16 GB** (`scale_bench.py camsim:linux-r4 … 1 2 4 --path dense`, the package mounted; table below). With buildings off or roof textures off, 4 instances hold 30 fps with 0 dropped |
+
+Full bench, both on / both off (Mac, buildings only: "R3 buildings slice" above):
+
+| Phase | Game p50, ms | Game p95 | GPU p50 | Wall p95 | VRAM max, MiB |
+|---|---|---|---|---|---|
+| orbit | 3.11 / 2.54 | 6.99 / 6.45 | 2.81 / 2.75 | 34.5 / 34.5 | 5,606 / 4,844 |
+| slew | 3.35 / 2.81 | 10.39 / 10.02 | 2.92 / 2.82 | 39.6 / 39.6 | 5,606 / 4,843 |
+| low_pass | 4.24 / 3.00 | 8.34 / 7.07 | 2.97 / 2.71 | 35.9 / 36.2 | 5,779 / 4,958 |
+| far_origin | 2.06 / 2.01 | 5.80 / 5.70 | 2.50 / 2.48 | 33.7 / 33.7 | 5,791 / 4,974 |
+| coast_pass | 4.19 / 3.36 | 10.77 / 9.92 | 2.98 / 2.82 | 36.3 / 36.4 | 5,838 / 5,259 |
+| dense_pass | 5.63 / 3.42 | 11.53 / 10.19 | 3.12 / 2.75 | 36.2 / 36.5 | 5,935 / 5,260 |
+| long_range | 5.37 / 3.67 | 11.33 / 10.29 | 2.79 / 2.65 | 36.2 / 36.4 | 5,829 / 5,216 |
+
+Game p50 is over +1.5 ms in dense_pass (+2.21) and long_range (+1.70), within elsewhere (low_pass +1.24); p95 within
++3.0 ms in every phase.
+
+Instances (`scale_bench.py`, Docker, each instance shuttling along the `dense_pass` line, 45 s warm-up, 90 s
+measured; VRAM is the whole GPU, 16,303 MiB):
+
+| N | Buildings off | Buildings on, roof atlases 0.5 m | Buildings on, no roof textures |
+|---|---|---|---|
+| 1 | 30.00 fps, 0 dropped, 3,885 MiB, GPU 3.06 ms | 30.00, 0, 4,600 MiB, 3.15 ms | 30.00, 0, 3,973 MiB, 3.14 ms |
+| 2 | 30.00, 0, 7,443 MiB, 3.07 ms | 30.00, 0, 8,927 MiB, 3.15 ms | 30.00, 0, 7,610 MiB, 3.78 ms |
+| 4 | 30.00, 0, 14,900 MiB, 4.03 ms, GPU busy 46 % | **28.68 fps min, 21 dropped**, 15,833 MiB, **8.90 ms**, GPU busy 67 % (p95 83 %), wall p99 43.1 ms | 30.00, 0, 15,269 MiB, 3.47 ms, GPU busy 44 % |
+
+The roof atlases cost ~630 MiB of VRAM per instance; at 4 they leave under 500 MiB free and the GPU time per frame
+more than doubles. For four instances on a 16 GB card, use a `roof_textures = false` or `roof_texel_m = 1.0` variant
+(the user's 2026-10-11 rule for multi-instance runs); one or two instances run the 0.5 m default comfortably.
+
 ### R3/R4 bench check and combined cost (2026-10-11, macOS)
 
 Same machine and method as the R3 sweep above (M1 Pro / Metal, 720p EO, `dense_pass`, 2 repeats per row, medians). The
