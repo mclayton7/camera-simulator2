@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
+import shapely
 from PIL import Image
 
 from . import sea_level
@@ -94,6 +95,23 @@ def present_tiles(pkg: Path, layer: str, ext: str) -> dict[int, np.ndarray]:
                 if f.name.endswith(f".{ext}") and f.name[: -len(ext) - 1].isdigit():
                     keys.append((int(xdir.name) << 32) | int(f.name[: -len(ext) - 1]))
     return {z: np.unique(np.asarray(k, np.int64)) for z, k in sorted(out.items())}
+
+
+def _check_detail(m: Manifest) -> Check:
+    """REALISM R5: the detail section's hash matches its polygons, and every scoped source's footprints lie inside
+    their scope."""
+    from . import detail as D
+
+    problems = []
+    if D.polygons_sha256(m.detail["polygons"]) != m.detail["sha256"]:
+        problems.append("detail.sha256 does not match its polygons")
+    for sid, scope in D.scopes(m).items():
+        tol = scope.buffer(1e-6)
+        for a in m.source(sid).assets:
+            wkt = a.metadata.get("footprint")
+            if a.role == "data" and wkt and not tol.covers(shapely.from_wkt(wkt)):
+                problems.append(f"{sid}/{a.id}: footprint outside its detail scope")
+    return Check("detail", not problems, _summary(problems))
 
 
 def _check_hashes(pkg: Path, m: Manifest) -> Check:
@@ -552,6 +570,8 @@ def verify(
         _guard("licences", _check_licences, m),
         _guard("attribution", _check_attribution, pkg, m),
     ]
+    if m.detail:
+        checks.append(_guard("detail", _check_detail, m))
     if m.layers.get("vegetation"):
         checks.append(_guard("vegetation_mix", _check_vegetation_mix, pkg, m))
     if m.layers.get("canopy"):

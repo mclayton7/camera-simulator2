@@ -122,3 +122,26 @@ def test_scoped_source_stops_at_its_scope_inside_a_straddling_leaf(tmp_path):
     h = q.heights()
     assert h[lon < 10.14].min() > 150  # hi_dem inside the polygon
     assert h[lon > 10.152].max() < 150  # the base east of the polygon's edge (+ the 30 m feather)
+
+
+def test_verify_detail_ok_and_tampered(tmp_path):
+    from camsim_scene.verify import verify
+
+    pkg = built(tmp_path)
+    rep = verify(pkg)
+    assert {c["name"]: c["ok"] for c in rep["checks"]}["detail"] is True
+    m = Manifest.load(pkg / "manifest.json")
+    m.detail["polygons"][0]["wkt"] = "POLYGON ((10 10, 10.2 10, 10.2 10.2, 10 10.2, 10 10))"
+    m.source("hi_rgb").assets[0].metadata["footprint"] = "POLYGON ((10 10, 10.6 10, 10.6 10.6, 10 10.6, 10 10))"
+    m.write(pkg / "manifest.json")
+    det = next(c for c in verify(pkg)["checks"] if c["name"] == "detail")
+    assert not det["ok"] and "sha256" in det["detail"] and "hi_rgb" in det["detail"]
+
+
+def test_verify_has_no_detail_check_without_detail(tmp_path):
+    from fake_sources import build_synthetic
+
+    from camsim_scene.verify import verify
+
+    pkg, _, _ = build_synthetic(tmp_path)
+    assert "detail" not in {c["name"] for c in verify(pkg)["checks"]}
