@@ -73,6 +73,15 @@ class LayerStats:
 
 
 def peak_rss_mb() -> float:
+    """This process's own peak RSS. On Linux VmHWM, not ru_maxrss: ru_maxrss survives exec, so a spawned worker would
+    report the main process's peak at spawn time."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) / 1024.0
+    except OSError:
+        pass
     r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return r / 1024.0 if sys.platform.startswith("linux") else r / (1024.0 * 1024.0)
 

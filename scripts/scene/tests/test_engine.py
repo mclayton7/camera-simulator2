@@ -126,3 +126,25 @@ def test_stats_count_no_file_for_an_empty_tile():
     st = LayerStats()
     st.add(engine.TileResult("ndvi", 0, 0, 0, False, 0, engine.EMPTY, 0.0, 1, 1.0))
     assert st.tiles == 1 and st.files == 0
+
+
+def _child_peak_after_parent_grew() -> tuple[float, float]:
+    """(parent peak, spawned child's own reported peak) after the parent touched ~300 MB."""
+    import multiprocessing
+
+    big = bytearray(300 * 1024 * 1024)
+    big[::4096] = b"\x01" * len(big[::4096])
+    parent = engine.peak_rss_mb()
+    with multiprocessing.get_context("spawn").Pool(1) as p:
+        child = p.apply(engine.peak_rss_mb)
+    del big
+    return parent, child
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/status"), reason="Linux /proc only")
+def test_spawned_worker_peak_rss_is_its_own_not_the_parents():
+    # ru_maxrss survives exec: a spawned worker reported the main process's peak at spawn time
+    # (socal-r5: every terrain/imagery worker "peaked" at the main process's 12 GB)
+    parent, child = _child_peak_after_parent_grew()
+    assert parent > 300
+    assert child < parent - 200
