@@ -116,7 +116,11 @@ def class_rasters(m: Manifest, asset_paths: dict) -> tuple[list, list[str]]:
 
 
 def coverage(m: Manifest, layer: str, use_bbox: bool = False) -> Coverage:
-    """Footprints of a layer's data assets, each with its source's zoom limit (discovery bboxes before fetch)."""
+    """Footprints of a layer's data assets, each with its source's zoom limit (discovery bboxes before fetch, clipped
+    to their detail scope for scoped sources; fetch stores footprints already clipped)."""
+    from . import detail as D
+
+    scope_of = D.scopes(m) if use_bbox else {}
     cov = Coverage()
     for sid in m.layers[layer]["priorities"]:
         rec = m.source(sid)
@@ -126,6 +130,8 @@ def coverage(m: Manifest, layer: str, use_bbox: bool = False) -> Coverage:
             continue
         for a in rec.assets:
             geom = _footprint(a, use_bbox) if a.role == "data" else None
+            if geom is not None and sid in scope_of:
+                geom = D.clip(geom, scope_of[sid])
             if geom is not None:
                 cov.add(geom, src.max_zoom)
     return cov

@@ -31,6 +31,7 @@ from . import balance as colour_balance
 from . import sea_level as sea_level_mod
 from .buildings import BUILDINGS_RULES_VERSION
 from .cache import Cache
+from . import detail as D
 from .config import LAYERS, TILING, ScenePlan, layer_settings
 from .context import BuildContext, WorkerState, class_rasters, coverage, reference_footprints, to_asset
 from .engine import (
@@ -126,10 +127,18 @@ def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bo
     records, datums = [], set()
     if sea:
         datums.add(sea["geoid"])  # the station's NAVD88 geoid grid is pinned and hashed with the rest
+    regions = plan.regions()
+    scoped = D.scoped_map(layer_settings(plan))
+    scope_geoms = {k: D.scope_geometry(regions, k) for k in set(scoped.values())}
     for sid, (adapter, src) in built.items():
-        assets = src.discover(Area(plan.area(src.area_kind)))
-        if not assets:
-            log.warning("%s: no assets in %s", sid, plan.area(src.area_kind))
+        if sid in scoped:  # REALISM R5: a scoped source is discovered per detail polygon only
+            assets = D.discover_in(src, scope_geoms[scoped[sid]])
+            if not assets:
+                log.warning("%s: no assets in the %s polygons", sid, scoped[sid])
+        else:
+            assets = src.discover(Area(plan.area(src.area_kind)))
+            if not assets:
+                log.warning("%s: no assets in %s", sid, plan.area(src.area_kind))
         if assets and getattr(src, "vertical_from_msl", False):
             if sea is None:
                 raise PlanError(
@@ -157,7 +166,7 @@ def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bo
         name=plan.name,
         bbox=list(plan.bbox),
         seed=plan.seed,
-        regions=[r.to_dict() for r in plan.regions()],
+        regions=[r.to_dict() for r in regions],
         tiling=TILING,
         layers=layer_settings(plan),
         datum=datum.manifest_section(datums),
@@ -279,6 +288,7 @@ def fetch_scene(pkg: Path, cache: Cache, locked: bool = False) -> Manifest:
 
 def _fetch(pkg: Path, cache: Cache) -> Manifest:
     m = Manifest.load(pkg / "manifest.json")
+    scope_of = D.scopes(m)
     for rec in m.sources:
         for src, a, path in _cached_assets(rec, cache):
             if (
@@ -288,6 +298,10 @@ def _fetch(pkg: Path, cache: Cache) -> Manifest:
                 and "footprint" not in a.metadata
             ):
                 fp = footprint_lonlat(src.open(path, to_asset(a)))
+                if fp is not None and rec.id in scope_of:  # REALISM R5: a scoped asset ends at its scope
+                    fp = D.clip(fp, scope_of[rec.id])
+                    if fp is None:
+                        log.warning("%s/%s lies outside its detail scope; it is ignored", rec.id, a.id)
                 a.metadata["footprint"] = None if fp is None else shapely.to_wkt(fp, rounding_precision=7)
                 if fp is None:
                     log.warning("%s/%s holds no data; it is ignored", rec.id, a.id)
