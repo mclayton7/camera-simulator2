@@ -1985,9 +1985,10 @@ buildings, 1,765 tiles, 368.3 MB, 307,606 cells burned to 230, `hashes.txt` 471,
 identical, `verify --deep` clean (mask PNG bytes differ from the Mac's native build). Spawn, CIGI (roof 230 / 94.67 m,
 LOS 230 at 30.0 m) and MWIR roofs (+40.8 DN, 2.1 K below air) pass. Buildings sweep pass (SSE 64 +0.46 ms game p50,
 +618 MiB). **Fail: both on +1.84 ms game p50** in the combined sweep (budget +1.5; Mac +1.16), and +2.21 / +1.70 ms in
-the full bench's dense_pass / long_range; memory over the whole run +675 MiB (pass; Mac +1,243). **4 instances don't fit
-with 0.5 m roof atlases** (21 dropped frames, 15.8 of 16 GB VRAM, GPU 8.9 ms); buildings off or roof textures off hold
-30 fps at 4. Found on the way: the buildings layer runs in the main build process, where GDAL's cache took 5 % of RAM
+the full bench's dense_pass / long_range; memory over the whole run +675 MiB (pass; Mac +1,243). **4 instances with 0.5 m roof atlases
+are on the VRAM edge** (this run: 21 dropped frames, 15.8 of 16 GB VRAM, GPU 8.9 ms; the R4-on-Linux run the same day,
+roof atlases plus vegetation, held 30 fps with 0 dropped at the same 15.8 GB: treat 4 as unsafe); buildings off or roof
+textures off hold 30 fps at 4 with ~1 GB free. Found on the way: the buildings layer runs in the main build process, where GDAL's cache took 5 % of RAM
 (4.2 GB peak RSS on this 62 GB box, exit 2), now capped at the workers' 256 MB (1.0 GB, output identical); the build
 container's `HOME` was `/`, so DuckDB couldn't fetch Overture (`build.sh` sets `HOME=/tmp`).
 
