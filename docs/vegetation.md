@@ -583,6 +583,104 @@ The shrub-radius sweep (300 / 500 / 1000 m, with the ring, before the last two f
 +0.13 ms over the game p50 budget with them (p95, GPU and memory pass; `long_range` passes everything); accepted as a
 known cost, like the R4 footprint check's p95 overrun. Contact sheets: `.cache/bench-r7veg/{far,dense}/sweep_sheet.png`.
 
+## R4 on Linux (2026-10-13)
+
+Reference box: Core Ultra 9 285K, RTX 5080 (16 GB), driver 595.99.02, Vulkan SM6, UE 5.8.3, head `44519b6`, native
+editor build. `pendleton-r5veg` built in the reference container from the box's `pendleton-r4` (`--replan`, the
+Pendleton `[vegetation]` table of "Site mixes" and `[canopy] enabled = true`): 72 canopy tiles (10.9 MB, 4 CHMv2 tiles
+fetched), everything else skipped; `verify`: `canopy` and `vegetation_mix` ok. Assets: `CamSim.Vegetation.Library.*`
+8/8, incl. `ShippedMeshesLoad`. Outputs under `.cache/linux-6/` (untracked).
+
+Baselines, made on this box because the Mac's are not here: the off-switch pair is two `run_bench.py --smoke --site
+pendleton` runs on `pendleton-r2` with `CAMSIM_VEGETATION_ENABLED=0` (current build: the gate compares an off run with
+off runs, so a pre-slice build is not needed); the `r4_identity` baseline is a run of the **R4-era code**
+(`947d04e`, the last commit before R4 deeper, built in a separate worktree) — its own `vegetation_check.py --stages
+approach` on `pendleton-r2`, which passed its gates there (8,992 trees in 472 cells, determinism 113 common cells, 0
+mismatches) and dumped 330 cells. Found on the way: `vegetation_check.py` read only the macOS editor log, so it could
+not run on Linux (fixed, the same switch as `ocean_check.py`).
+
+**Every gate passes** (`vegetation_check.py --stages approach,off,gt,truck,oblique,footprints,r4_identity,long_range`,
+`.cache/linux-6/check-r5/report.json`), with the **same counts as the Mac's run** ("Measured: species, canopy, shrubs,
+far tier" above), so the scatter, species draw, canopy acceptance and far-tier selection are platform-independent:
+
+| Gate | Linux / Vulkan (Mac where it differs) |
+|---|---|
+| placement | 18,290 trees and 70,478 shrubs in 920 cells; 0 off their mix, 0 trees without canopy |
+| species | code 30 shrubs 19,962 / 20,219 (p 0.20), code 20 9,289 / 2,276 (p 0.39); 0 strays |
+| canopy | 104 cells, median \|error\| 7.9 pp (mean −9.3 pp) |
+| far_determinism | 269 far blocks, 0 mismatches; 12,832 far trees, 0 missing from their near cells |
+| handoff | 9,934 events (Mac 9,942), 1,586 destroys (Mac 1,587), 0 gaps |
+| grounding | north and south n = 200, max dz 0.000 m |
+| determinism | 158 common cells, 0 mismatches |
+| origin_shift | SSIM 0.973 / 0.984 vs floor 0.980 − 0.01; 191 / 201 cells respawned (Mac 191 / 202), 0 hash changes |
+| off_switch | no `Vegetation:` line; `nadir_3km` SSIM 0.9784 / 0.9784 vs the pair's 0.9797. Here a trees-on run scores 0.887 and would fail, so on this box the gate has power (on the Mac a trees-on run passed it) |
+| gt | `gt_occlusion_check.py` exit 0 |
+| footprints | 12,803 trees, 0 probe hits, 0 trunks inside a footprint; 82 within the 2 m clearance (info) |
+| r4_identity | 198 cells against the R4-era build's dump: **0 mismatches** |
+| long_range | game p95 +1.62 ms (budget 3.0; Mac +1.06), 0 dropped; 5,549 far trees drawn in the view, 1,686 past it |
+
+Truck under trees (reported): visibility median 0.18, as on the Mac. Cell hashes were not compared line by line with
+the Mac's dumps (not on this box); the identical counts in every gate, and `r4_identity` against an R4-era build run here,
+are the cross-platform evidence, with `CamSim.Vegetation.Scatter.R4Identity`'s golden hashes passing in the NullRHI suite.
+
+### Bench on Linux
+
+`scripts/bench/sweep.py` as on the Mac ("Bench (R4 deeper)"), 2026-10-13, head `44519b6`, `pendleton-r5veg`, EO, 2
+repeats per row, buildings on (SSE 64) in every row, increase of the row median over the buildings-on / trees-off row.
+Every row: 0 dropped, ≥ 29.9 fps. Memory (`nvidia-smi`, whole process) moves by up to 270 MiB between repeats of one
+row here, so differences under ~150 MiB are noise. Outputs: `.cache/linux-6/sweep-{far,shrubs}/`.
+
+Far tier, `long_range` phase (trees-off row 3.92 / 6.63 ms, GPU 2.66 ms):
+
+| far_radius_m | game p50 | game p95 | GPU p50 | memory MiB | budget | Mac game p50 |
+|---|---|---|---|---|---|---|
+| 0 (off) | +0.29 | +0.68 | +0.04 | −57 | pass | +0.38 |
+| 2000 | +0.56 | +0.72 | +0.06 | −51 | pass | +0.58 |
+| **4000** | **+0.96** | **+1.17** | **+0.16** | **+23** | **pass** | **+0.91** |
+| 6000 | +1.60 | +1.93 | +0.25 | +92 | FAIL: game p50 by 0.10 ms | +1.43 |
+
+The game-thread cost of the far tier matches the Mac's within 0.2 ms (it is CPU work: block planning, height traces,
+HISM updates), so the 4000 m default holds on both. The GPU cost is ~0.2 ms here against the Mac's +2.2 ms (±1.5 ms
+noise there): the RTX 5080 draws the 108-triangle far meshes for free. 6000 m tips over the p50 budget here, as it
+nearly did on the Mac.
+
+Dense pass (`--axis trees=off,on --axis shrubs=off,on --axis shrub_radius=300,500,1000 --phase dense_pass`; trees-off
+row 3.67 / 6.68 ms, GPU 2.84 ms). The three shrubs-off rows differ only in the unused radius and agree within 0.03 ms
+(p50), so they are shown once:
+
+| shrubs | game p50 | game p95 | GPU p50 | memory MiB | budget | Mac game p50 / p95 |
+|---|---|---|---|---|---|---|
+| off | +1.33 | +3.01 | +0.43 | +96 | FAIL: game p95 by 0.01 ms | +1.21 / +1.68 |
+| on, 300 m | +1.55 | +3.15 | +0.44 | +33 | FAIL: p50 by 0.05, p95 by 0.15 ms | +1.64 / – |
+| **on, 500 m (default)** | **+1.83** | **+3.57** | **+0.44** | **+96** | **FAIL: p50 by 0.33, p95 by 0.57 ms** | **+1.63 / +2.22** |
+| on, 1000 m | +2.51 | +3.61 | +0.58 | +116 | FAIL: p50 by 1.01, p95 by 0.61 ms | +2.22 / – |
+
+At the defaults the dense pass is 0.33 ms over the game p50 budget here (Mac: 0.13 ms, accepted 2026-10-12), and
+also over the p95 budget, which the Mac passed. The p95 excess is already in the trees-only row (+3.01 vs the Mac's
++1.68), so it comes with the near trees' streaming on the game thread, not with shrubs; not profiled further here. GPU and memory are far inside the budget. Not loosened: recorded as a Linux result for the
+dense-pass follow-up in `ROADMAP.md`.
+
+Capacity (`scale_bench.py camsim:linux-r4 OUT 1 2 4 --path dense`, the package mounted read-only, Docker image
+`camsim:linux-r4` (C++ as `main` `c501693`, `camsim-vegetation-2` library); 45 s warm-up, 90 s measured per N; outputs
+`.cache/linux-6/scale-*`):
+
+| setting | N | min fps | dropped | wall p99 max ms | GPU busy | VRAM MiB | GPU ms p50 | game ms p50 |
+|---|---|---|---|---|---|---|---|---|
+| buildings on, vegetation on (defaults) | 1 | 30.00 | 0 | 37.1 | 11 % | 4,496 | 3.39 | 3.94 |
+| | 2 | 30.00 | 0 | 37.5 | 22 % | 8,924 | 3.41 | 4.02 |
+| | 4 | 30.00 | 0 | 38.3 | 74 % | 15,823 | 14.71 | 4.08 |
+| buildings on, vegetation off | 1 | 30.00 | 0 | 34.9 | 10 % | 4,489 | 2.89 | 2.75 |
+| | 4 | 30.00 | 0 | 35.0 | 44 % | 15,825 | 3.33 | 2.82 |
+| buildings off, vegetation on | 1 | 30.00 | 0 | 37.4 | 10 % | 3,897 | 3.29 | 3.57 |
+| | 4 | 30.00 | 0 | 38.3 | 45 % | 14,924 | 3.56 | 3.62 |
+
+**Four instances hold 30 fps with 0 dropped in every setting**, vegetation included. With buildings and vegetation both on,
+four instances fill the card (15.8 of 16.3 GB) and GPU time per frame rises to 14.7 ms (contention: the single-instance
+cost is 3.4 ms). That is the edge: the same VRAM figure with R3b roof atlases and no vegetation dropped 21 frames in
+`docs/capacity-linux-rtx5080.md`'s run of 2026-10-13, so four instances with buildings are VRAM-bound with no margin,
+and run-to-run luck decides whether a frame slips. Vegetation adds ~1 ms game p50 per instance; its VRAM does not show in the whole-card figure, because each instance's
+tile caches grow into whatever is free.
+
 ## Known limits
 
 - Without a buildings layer, trees stand inside building footprints wherever WorldCover calls the canopy tree

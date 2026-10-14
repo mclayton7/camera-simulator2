@@ -1927,14 +1927,26 @@ whole far disk: +2.5 ms p95, +500 MiB in later passes); canopy texels without CH
 2026-10-12:** defaults shrubs 500 m, far 4000 m, keep 0.35; the dense pass is +1.63 ms game p50, 0.13 ms over budget
 (accepted). UE 597 (GPU 26 skipped under NullRHI). No editor work.
 
+**R4 deeper on Linux/Vulkan, 2026-10-13** (RTX 5080 16 GB, driver 595.99.02; [`docs/vegetation.md`](docs/vegetation.md)
+"R4 on Linux"): `pendleton-r5veg` built in the reference container (72 canopy tiles; `verify` ok); `vegetation_check.py`
+passes every gate with the same counts as the Mac (18,290 trees, 70,478 shrubs, 920 cells; species, canopy 7.9 pp,
+269 far blocks, 0 handoff gaps, grounding 0.000 m, footprints 0 probe hits), `r4_identity` 0 mismatches in 198 cells
+against an R4-era build (`947d04e`) run on the box, long range +1.62 ms game p95. `vegetation_check.py` read only the
+macOS editor log (fixed). Sweeps: far tier 4000 m +0.96 ms game p50 / +0.16 ms GPU in `long_range`, a pass (6000 m fails
+p50 by 0.10 ms); dense pass at the defaults **fails** game p50 by 0.33 ms and p95 by 0.57 ms (follow-up below).
+`scale_bench.py --path dense`: 4 instances hold 30 fps, 0 dropped, with vegetation on, off, and on without buildings;
+buildings + vegetation at 4 fill 15.8 of 16.3 GB.
+
 - [ ] **Follow-up: R4 visual review** (user). Done 2026-10-12: every procedural far mesh was inside out (3–10× too dark,
   fixed in `prepare_tree.py`); shrubs are solid procedural clumps (Kenney's fans were hollow rings from above);
   broadleaf, far broadleaf and shrub colours calibrated against the imagery (`calibrate_colours.py`, `docs/vegetation.md`
   "Colour calibration": the target is the green imagery under each plant; every calibrated type within ~10 %). Open:
   pines wait for Eglin imagery; the 500 m shrub edge is a hard cut; the user's look at `.cache/veg/check-hue/`.
-- [ ] **Follow-up: R4 deeper on Linux/Vulkan** (`FOR_LINUX.md` section 6) and on the operational sites' packages
-  (Eglin, Pax River, Yuma mixes in `docs/vegetation.md` "Site mixes").
-- [ ] **Follow-up: dense-pass game p50** at the R4 deeper defaults is +0.13 ms over budget (trees alone +1.21 ms).
+- [ ] **Follow-up: R4 deeper** ~~on Linux/Vulkan (`FOR_LINUX.md` section 6)~~ **Done 2026-10-13** (below) and on the
+  operational sites' packages (Eglin, Pax River, Yuma mixes in `docs/vegetation.md` "Site mixes").
+- [ ] **Follow-up: dense-pass game p50** at the R4 deeper defaults is +0.13 ms over budget (trees alone +1.21 ms). On
+  Linux/Vulkan (2026-10-13) +0.33 ms over p50 and +0.57 ms over p95 (+1.83 / +3.57 ms; trees alone +1.33 / +3.01 ms),
+  where the Mac passed p95.
 - [ ] **Follow-up: R4 deeper minors from the final review:** reserve an in-flight slot for far blocks that hold near cells
   (starvation in low fast flight); skip the far tier when the library has no far meshes; a mix code whose names are all
   unknown falls back to the default mix instead of going bare; far trees on R3 packages (runtime building check) ignore

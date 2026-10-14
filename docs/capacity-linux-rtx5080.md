@@ -56,7 +56,10 @@ The NVENC encoder itself stayed at 1-6 % busy; each container used 1.2-1.8 GB of
 - **With a scene package's buildings (REALISM R3b), 4 instances need a variant without 0.5 m roof atlases** (2026-10-13,
   Pendleton `dense_pass`, `scale_bench.py --path dense`): the atlases add ~630 MiB per instance, and 4 with them used 15.8 of
   16 GB, dropped 21 frames and doubled the GPU time; buildings with `roof_textures = false` (or buildings off) held 30 fps
-  at 4 with ~1 GB free. `docs/scene-packages.md`, "R3 and R3b on Linux".
+  at 4 with ~1 GB free. `docs/scene-packages.md`, "R3 and R3b on Linux". A later run the same day (`pendleton-r5veg`: the same
+  roof atlases plus R4 vegetation) held 30 fps at 4 with 0 dropped at the same 15.8 GB, GPU time 14.7 ms: 4 with roof
+  atlases sits on the VRAM edge, where one run slips frames and the next does not, so treat it as unsafe
+  (`docs/vegetation.md`, "Bench on Linux").
 - **VRAM is the budget: ~3.3 GB per instance** at 720p. CPU (9 % of the machine at 4 instances), system RAM (62 GiB) and NVENC are
   far from their limits. GeForce drivers also cap concurrent NVENC sessions (8 on this driver), which only matters past 8 instances.
 - **More instances need less VRAM per instance.** The GPU is only ~45 % busy at 4, so compute is not the next wall. Each instance
