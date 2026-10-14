@@ -129,3 +129,14 @@ def test_socal_example_parses():
     plan = load_scene(ex)
     assert plan.profile == "preview" and plan.detail["scoped"] == {"terrain": ["dep3_1m"], "imagery": ["naip_pc"]}
     assert [r.name for r in plan.regions()][-2:] == ["detail:pendleton", "detail_margin:pendleton"]
+
+
+def test_ndvi_settings_carry_the_scope(tmp_path):
+    s = {
+        "name": "x",
+        "bbox": [10.0, 10.0, 10.5, 10.5],
+        "profile": "preview",
+        "detail": {"file": str(geojson(tmp_path))},
+    }
+    ls = layer_settings(parse_scene(s))
+    assert ls["ndvi"]["scoped"] == {"naip_pc": "detail_margin"}  # a changed scope must re-key NDVI tiles too

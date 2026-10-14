@@ -56,7 +56,7 @@ profile = "sim"                            # the profile inside the polygons; on
 - **Priorities:** without `[detail]`, nothing changes: the planned manifest of every existing toml is byte-identical
   (gate 1). With `[detail]`, the default priorities are the detail profile's (`sim`) lists. They already end in the
   `preview` sources, which fill outside the polygons. `[priorities]` overrides still apply. Profile-derived switches (`ndvi`) also default from the detail profile (`sim`: on);
-  NDVI is built only where NAIP is (section 2).
+  NDVI covers the ring from Sentinel-2 and takes NAIP's values only where NAIP is (section 2; corrected after review).
 - **Zooms:** the `bbox` region takes `profile`'s zooms (`preview`: terrain 14, imagery 13); the detail regions take
   the detail profile's (`sim`: terrain 16, imagery 17). `[zoom.detail]` overrides the latter, as `[zoom.bbox]` does
   the former.
@@ -96,8 +96,10 @@ the box profile's is *scoped*: today `dep3_1m` (terrain) and `naip_pc` (imagery)
 - **Unscoped per-area sources** keep their area kinds over the whole box: Overture (`bbox`), OSM and NHD
   (`margin`), CHMv2 (`bbox`), WorldCover (`ring`).
 
-**NDVI** follows its sources' coverage (`_ndvi_area` intersects the ring with it), so it exists only where NAIP is,
-with no change.
+**NDVI** follows its sources' coverage (`_ndvi_area` intersects the ring with it): Sentinel-2 over the whole ring and
+box, NAIP (fitted onto Sentinel-2) only inside its scope. A `preview` box with `[detail]` therefore gains a whole-box
+NDVI layer, because `ndvi` defaults from the detail profile (corrected after the final review; set `ndvi = false` to
+skip it). `layers.ndvi.scoped` carries the imagery scope so a changed scope re-keys NDVI tiles.
 
 ## 3. Layers
 

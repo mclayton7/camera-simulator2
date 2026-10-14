@@ -691,6 +691,10 @@ def layer_settings(plan: ScenePlan) -> dict:
         out["terrain"]["tidal_mask"] = {**TIDAL_MASK, "sources": masked, "topobathy": topo}
     ndvi = ndvi_settings(plan)
     if ndvi is not None:
+        if plan.detail:  # REALISM R5: NDVI leaves sample the scoped imagery sources, so the scope keys them too
+            from .detail import MARGIN
+
+            ndvi["scoped"] = {s: MARGIN for s in plan.detail["scoped"]["imagery"] if s in ndvi["priorities"]}
         out["ndvi"] = ndvi
     fs = features_settings(plan)
     if fs is not None:

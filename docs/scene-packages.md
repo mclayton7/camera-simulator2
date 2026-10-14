@@ -665,8 +665,9 @@ Camp Pendleton, the Pendleton bbox as the one polygon).
   imagery) are limited to the polygons: terrain sources to `detail:`, imagery sources to `detail_margin:`.
   `[detail] scoped` names them explicitly. They are discovered once per polygon, their footprints are clipped to
   the scope at `fetch`, and every tile job ignores their samples outside it, so NAIP's feather and colour match
-  (Imagery edge) and the terrain feather work at the polygon edges as they do at the bbox edge. NDVI exists only
-  where NAIP is.
+  (Imagery edge) and the terrain feather work at the polygon edges as they do at the bbox edge.
+- **NDVI** defaults on (from the detail profile) and covers the whole ring from Sentinel-2, with NAIP's values (fitted
+  onto Sentinel-2) inside the polygons; set `ndvi = false` to skip the whole-box layer.
 - **Whole box:** land cover with the R2 burns and building footprints (230), the buildings tileset and mask, canopy
   and the vegetation mix cover the bbox as usual. Roof atlases need a ≤ 2 m source, so roofs outside the NAIP scope
   are flat grey.
