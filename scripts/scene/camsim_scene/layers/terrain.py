@@ -13,6 +13,7 @@ from itertools import groupby
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
+from .. import detail as D
 from .. import qmesh
 from ..config import FEATHER_M
 from ..config import TERRAIN_GRID as GRID
@@ -144,6 +145,9 @@ def sample_group(
         slon, slat = e.transform.to_source_geographic(lon, lat)
         px, py = project(e.raster, slon, slat)
         vals, ok = e.raster.sample(px, py, target_m)
+        clip = getattr(e, "clip", None)
+        if clip is not None:  # REALISM R5: a scoped source never supplies a height outside its scope
+            ok = ok & D.inside(clip, lon, lat)
         take = ok & need
         if not take.any():
             continue

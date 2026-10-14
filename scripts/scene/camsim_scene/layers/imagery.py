@@ -15,6 +15,7 @@ import shapely
 from PIL import Image
 from scipy.ndimage import distance_transform_edt, map_coordinates
 
+from .. import detail as D
 from ..config import TILE_PX
 from ..sources.base import M_PER_DEG, project, to_uint8
 from ..tiling import Bounds, tile_bounds, tile_size_deg
@@ -66,6 +67,9 @@ def sample_entries(entries, lon: np.ndarray, lat: np.ndarray, target_m: float):
         slon, slat = e.transform.to_source_geographic(lon, lat)
         px, py = project(e.raster, slon, slat)
         v, good = e.raster.sample(px, py, target_m)
+        clip = getattr(e, "clip", None)
+        if clip is not None:  # REALISM R5: a scoped source never supplies a sample outside its scope
+            good = good & D.inside(clip, lon, lat)
         take = good & ~ok
         if take.any():
             vals[:, take] = v[:nb][:, take]

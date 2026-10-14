@@ -53,6 +53,7 @@ class Entry:
     limit: int
     raster: SourceRaster
     transform: DatumTransform
+    clip: object = None  # REALISM R5: the source's detail scope (prepared); samples outside it are no data
 
 
 def lattice_spacing_deg(lon, lat) -> float:
@@ -157,6 +158,11 @@ class WorkerState:
         self.grid_paths = {k: Path(v) for k, v in ctx.grid_paths.items()}
         self.settings = {layer: self.manifest.layer_settings_hash(layer) for layer in self.manifest.layers}
         self._transforms: dict[tuple, DatumTransform] = {}
+        from . import detail as D
+
+        self.scopes = D.scopes(self.manifest)
+        for g in self.scopes.values():
+            shapely.prepare(g)
         self.index = {layer: self._index(layer) for layer in ("terrain", "imagery")}
         self.tidal: TidalMask | None = None
         self.terrain_extra: list[str] = []  # hashes the mask and sea level add to every terrain tile's inputs
@@ -246,7 +252,13 @@ class WorkerState:
                 order = (p, group_rank[a.group], a.group, a.rank, a.id)
                 entries.append(
                     Entry(
-                        qid, a.sha256, order, src.max_zoom, raster, self._transform(raster.datum, raster.vertical_asset)
+                        qid,
+                        a.sha256,
+                        order,
+                        src.max_zoom,
+                        raster,
+                        self._transform(raster.datum, raster.vertical_asset),
+                        self.scopes.get(sid),
                     )
                 )
                 geoms.append(geom)

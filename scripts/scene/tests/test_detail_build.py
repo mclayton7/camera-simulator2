@@ -76,3 +76,49 @@ def test_deep_tiles_only_inside_the_scopes(tmp_path):
                 x, y = int(k) >> 32, int(k) & 0xFFFFFFFF
                 parent_box = shapely.box(*tile_bounds(z - 1, x // 2, y // 2))
                 assert parent_box.intersects(scope), (layer, z, x, y)
+
+
+def built(tmp_path):
+    pkg = planned(tmp_path)
+    build_scene(pkg, Cache(tmp_path / "cache"), jobs=1)
+    return pkg
+
+
+def test_no_scoped_pixel_outside_the_scope(tmp_path):
+    pkg = built(tmp_path)
+    for x, y in OUTSIDE_Z9:
+        img = np.asarray(Image.open(pkg / f"imagery/9/{x}/{y}.jpg").convert("RGB"))
+        assert img[..., 0].max() < 120, (x, y)  # hi_rgb red is 200/250; the global base is 40
+        h = qmesh.decode((pkg / f"terrain/9/{x}/{y}.terrain").read_bytes()).heights()
+        assert h.max() < 150, (x, y)  # hi_dem is ~185-225 m; the base is ~108 m here
+    assert not (pkg / "imagery/10/1082/568.jpg").exists()  # inside x541/y284: never expanded
+
+
+def test_inside_the_polygon_uses_the_scoped_sources(tmp_path):
+    pkg = built(tmp_path)
+    # z11 tile x=2162, y=1138: lon [10.0195, 10.1074] x lat [10.0195, 10.1074] -> inside the polygon
+    img = np.asarray(Image.open(pkg / "imagery/11/2162/1138.jpg").convert("RGB"))
+    assert np.median(img[..., 0]) > 180
+
+
+def test_rebuild_is_identical(tmp_path):
+    a = built(tmp_path)
+    before = (a / "hashes.txt").read_bytes()
+    build_scene(a, Cache(tmp_path / "cache"), jobs=2)
+    assert (a / "hashes.txt").read_bytes() == before
+
+
+def test_scoped_source_stops_at_its_scope_inside_a_straddling_leaf(tmp_path):
+    pkg = built(tmp_path)
+    m = Manifest.load(pkg / "manifest.json")
+    margin_e = D.scope_geometry(m.region_objs(), D.MARGIN).bounds[2]  # 10.15 + 3 km ~ 10.177
+    w, s, e, n = tile_bounds(11, 2163, 1138)  # lon [10.1074, 10.1953]: crosses the margin's east edge
+    img = np.asarray(Image.open(pkg / "imagery/11/2163/1138.jpg").convert("RGB")).astype(int)
+    col = int(np.ceil((margin_e + 0.002 - w) / (e - w) * img.shape[1]))
+    assert np.median(img[:, :100, 0]) > 180  # hi_rgb inside the margin
+    assert img[:, col:, 0].max() < 120  # the base east of it, not hi_rgb (its raster reaches 10.6)
+    q = qmesh.decode((pkg / "terrain/11/2163/1138.terrain").read_bytes())
+    lon, _ = q.lonlat((w, s, e, n))
+    h = q.heights()
+    assert h[lon < 10.14].min() > 150  # hi_dem inside the polygon
+    assert h[lon > 10.152].max() < 150  # the base east of the polygon's edge (+ the 30 m feather)
