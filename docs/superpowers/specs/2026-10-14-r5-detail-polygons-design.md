@@ -41,7 +41,8 @@ file = "socal-detail.geojson"              # FeatureCollection of Polygon / Mult
 profile = "sim"                            # the profile inside the polygons; only "sim" is accepted
 ```
 
-- `[detail]` keys: `file` (required; relative to the toml's directory), `profile` (default and only value `"sim"`).
+- `[detail]` keys: `file` (required; relative to the toml's directory), `profile` (default and only value `"sim"`),
+  `scoped` (optional, section 2).
   `[detail]` with `profile = "sim"` at the top level is a `ConfigError` (nothing to tier).
 - **Validation** (`plan` fails with `ConfigError`, naming the feature): every feature has a unique `name` property
   matching `NAME_RE`; geometry is Polygon or MultiPolygon, valid (`shapely.is_valid`), non-empty, inside the bbox
@@ -76,9 +77,12 @@ the tile expansion needs no change.
 the box profile's is *scoped*: today `dep3_1m` (terrain) and `naip_pc` (imagery). NOAA topobathy, `dep3_13`,
 `wc_s2`, ETOPO and BMNG are in both and stay unscoped.
 
-- **Scope polygon:** `dep3_1m` (area kind `bbox`) → the union of the `detail` polygons; `naip_pc` (area kind
-  `margin`) → the union of the `detail_margin` polygons. The rule is by area kind: `bbox` → detail, `margin` →
-  detail margin.
+- **Scope polygon:** by layer, so plan-time settings are computed from the config alone: a scoped terrain source
+  (`dep3_1m`) → the union of the `detail` polygons; a scoped imagery source (`naip_pc`) → the union of the
+  `detail_margin` polygons (the same split as today's `bbox` / `margin` areas of these two sources). The manifest's
+  `layers.terrain.scoped` / `layers.imagery.scoped` map each scoped source to its kind (present only with
+  `[detail]`). `[detail.scoped]` (`terrain = [...]`, `imagery = [...]`) overrides the default rule for sources outside
+  the built-in profiles (test sources, custom adapters); each listed id must be in that layer's priorities.
 - **Discovery:** a scoped source's `discover` runs once per polygon (on its scope polygon's bounds) and the assets
   are merged by id, so one polygon in each corner of the box does not discover NAIP over the whole box.
 - **Clipped footprints:** when `fetch` computes a scoped asset's footprint, it intersects it with the scope polygon
@@ -131,8 +135,11 @@ the Linux box from the same fetch cache as the Pendleton packages.
    byte-identical to the one planned before the change (pytest); the scene test suite passes.
 2. **Identity inside the polygon:** z17 imagery leaves inside NAIP's interior (the polygon shrunk by the 200 m
    feather plus `FOOTPRINT_SLOP_M`) and z16 terrain leaves whose tile plus feather margin lies inside the polygon
-   are byte-identical to `pendleton-r5veg`'s (`hashes.txt`). Leaves in the edge band are counted and reported, not
-   gated: the balance grid covers a larger ring here, so its offsets may differ there.
+   are byte-identical to `pendleton-r5veg`'s (`hashes.txt`), compared over the polygon shrunk by 1 km. Exception,
+   listed in the report: imagery leaves with WorldCover water (code 80 or 220 in the package's land cover) within
+   1 km, where NAIP is clipped off the water and the colour-matched Sentinel-2 shows; the balance fit's samples and
+   grid differ between the two packages, so those pixels may differ. Terrain leaves have no exception.
+   `tools/detail_check.py` runs gates 2 and 3.
 3. **Scope:** no `naip_pc` or `dep3_1m` asset footprint outside its scope polygon; no imagery tile deeper than z13
    outside `detail_margin` and no terrain tile deeper than z14 outside `detail` (from the manifest and
    `hashes.txt`).
