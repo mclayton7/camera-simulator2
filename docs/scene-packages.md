@@ -1511,3 +1511,37 @@ Findings from the build:
 - `SourceRaster.sample` logs `RuntimeWarning: invalid value encountered in multiply` once per build (also on
   Pendleton): points outside a source CRS's valid area come in as `inf`; they are masked as invalid and the next
   source answers.
+
+Gates 5 (offline), 6 and 7 (RTX 5080, driver 595.99.02, Vulkan; CamSim `camsim:linux-r4` for the renders, the native
+editor build for the bench):
+
+| Gate | Result |
+|---|---|
+| 5: offline | **Pass**: `render_check.py --docker camsim:linux-r4 --offline` (`--network none`), both shot sets: no network line, no gate timeout, ready in 13 / 11 s |
+| 6: render | Every shot `terrain_ready` (`--shots detail`: `edge_inland`, `edge_coast`, `outside_high`, `outside_low`; the R0 set: 11 shots). PNGs in `.cache/linux-r5/render/` and `render-r0/`, crops in `.cache/linux-r5/edges/`. No seam at the polygon edges in the crops or the shots; outside the polygon the box is Sentinel-2 10 m (soft at low altitude, `outside_low`) with flat grey roofs, and `outside_low` shows a faint straight horizontal break across its left half. **Visual review by the user: open** |
+| 7: bench | **FAIL: game thread +3.6 to +3.9 ms p50** against `pendleton-r5veg` in every phase but `far_origin` (`run_bench.py --site pendleton --gpu-mem`, one run each; table below). GPU time unchanged, VRAM +430 to +790 MiB, 30 fps and 0 dropped everywhere. The cause is the buildings tileset beyond the polygon (below) |
+
+| Phase | Game p50, ms (pendleton-r5veg / socal-r5) | Game p95 | GPU p50 | VRAM max, MiB |
+|---|---|---|---|---|
+| orbit | 3.2 / 6.8 | 7.0 / 12.4 | 2.8 / 2.8 | 5,483 / 6,009 |
+| slew | 3.3 / 7.1 | 10.5 / 14.2 | 2.9 / 2.9 | 5,467 / 5,900 |
+| low_pass | 4.1 / 7.8 | 8.2 / 12.3 | 3.0 / 3.0 | 5,614 / 6,055 |
+| far_origin | 2.1 / 2.2 | 5.9 / 6.4 | 2.5 / 2.5 | 5,628 / 6,077 |
+| coast_pass | 4.2 / 7.9 | 10.6 / 14.9 | 3.0 / 3.0 | 5,684 / 6,442 |
+| dense_pass | 6.1 / 10.0 | 11.9 / 16.0 | 3.3 / 3.3 | 5,792 / 6,583 |
+| long_range | 5.5 / 9.4 | 11.7 / 15.8 | 2.8 / 2.9 | 5,690 / 6,523 |
+
+Attribution (`--phases orbit,dense_pass`, one run each), game p50 in ms, pendleton-r5veg / socal-r5:
+
+| Setting | orbit | dense_pass |
+|---|---|---|
+| All on | 3.15 / 6.82 | 6.09 / 9.97 |
+| Buildings off (`CAMSIM_SCENE_BUILDINGS_ENABLED=0`) | 2.81 / 2.85 | 5.05 / 5.59 |
+| Vegetation off (`CAMSIM_VEGETATION_ENABLED=0`) | 2.93 / 6.56 | 3.75 / 7.52 |
+
+With buildings off the two packages cost the same (+0.5 ms in `dense_pass` from vegetation now growing beyond the
+old bbox); with vegetation off the gap stays. Pendleton's package had buildings only inside its bbox; socal-r5 has
+the 5.7 M buildings of the whole box, and from the bench's altitudes the suburbs around Pendleton put many more
+buildings tiles in view. Cesium's game-thread cost tracks the rendered tile count (CLAUDE.md, "One terrain tileset").
+Options: buildings only inside the polygons (or a `[detail]` margin), a coarser screen-space error for buildings
+outside them, or accepting the cost (30 fps held, 0 dropped, game thread ≤ 10 ms p50 of the 33 ms frame).

@@ -144,7 +144,7 @@ service):
 imagery, WorldCover + roads/water rasters), `sim` (+ NAIP imagery, footprint buildings,
 vegetation), `high` (+ 3DEP 1 m terrain, LiDAR building and canopy heights, dense
 vegetation and clutter). Same bbox, same pipeline, different manifest. One package can mix profiles
-per tile (R5).
+by area (R5 detail polygons).
 
 ### Large areas
 
@@ -199,8 +199,8 @@ five ways.
      are pure cost);
    - feature tileset SSE settings need a long-range bench (R3).
 5. **Detail follows the mission.** `high` across 40,000 km² is neither needed nor affordable.
-   Corridor-tiered profiles (R5) are what keep a large package buildable, so R5's corridor logic
-   moves up into R0's tooling.
+   Mixed profiles per package are what keep a large package buildable: R5 built them as detail polygons
+   (2026-10-14; corridors deferred).
 
 ### What needs the editor, and what doesn't
 
@@ -494,20 +494,24 @@ collision.
   (Megascans/Fab licences generally aren't). Either ship a permissive set or make the asset pack a
   user-supplied mount with a documented manifest.
 
-### R5 Mission-aware generation (and cache warming, online mode only)
+### R5 Detail polygons (built 2026-10-14)
 
-- Input: a CIGI recording (`scripts/capture_cigi_stream.py`), a waypoint file, or a corridor.
-  Output: the footprint corridor (camera FOV over terrain over time, plus a margin) fed to R0's
-  per-tile profiles: `high` inside the corridor, `sim` near it, `preview`/stream-only beyond. Several
-  missions can share one package (corridors are unioned).
-- Offline runs need no warming: the package is local and covers the globe (principle 8). And
-  warming can't be the offline answer anyway: Cesium ion's terms (§2.2.2, 2025-08) forbid storing
-  Cesium World Terrain or Bing for offline use, and Bing can't be licensed offline at all. Offline
-  CWT would need Cesium ion Self-Hosted plus a data licence (a sales conversation). For online runs
-  without a package, warming needs `MaxCacheItems` raised (4,096 items today). Low priority.
-- **Gates:** a replayed mission over a corridor-tiered package runs with networking blocked and
-  identical output to the same package fully at `high` inside the corridor. Package size for a
-  corridor vs the full bbox (report it; no target yet).
+- **Built:** a `[detail]` table names GeoJSON polygons built at `sim` inside a box built at `preview`, so a
+  ~200 km × 200 km area stays buildable (`docs/scene-packages.md`, "Detail polygons (R5)"; spec
+  `docs/superpowers/specs/2026-10-14-r5-detail-polygons-design.md`). The sources only the detail profile has
+  (`dep3_1m`, `naip_pc`) are discovered per polygon and clipped to it at fetch and in every tile job, so the R1 imagery
+  edge and the terrain feather work at polygon edges as at the bbox edge. Land cover with the R2 burns, buildings,
+  canopy, the species mix and NDVI cover the whole box; roof atlases only where NAIP is.
+- **Deferred (user, 2026-10-14):** corridors from a CIGI recording, waypoints or routes; the `high` profile; cache
+  warming for online runs (offline runs need none, and Cesium ion's terms forbid storing CWT or Bing for offline use).
+- **Gates, `socal-r5` on the Linux box (2026-10-14):** 200 km box (39,664 km²) at `preview` with the 1,289 km²
+  Pendleton polygon at `sim`. Scope (no deep tile or scoped footprint outside the polygons) and identity (3,652
+  terrain and 51,443 imagery leaves inside the polygon byte-identical to a full-`sim` Pendleton build) pass;
+  `verify --deep`, rebuild and resume pass; imagery balance and NDVI seams as R1 (cell bias 2 DN, NDVI seam 0.000);
+  offline render passes. Terrain + imagery + NDVI scene tiles 3.4 GB against ~59 GB for the box all at `sim`.
+  **Fails:** the build's peak RSS (buildings for 5.7 M footprints in the main process, 15.8 GB, limit 2 GB), and the
+  bench: game thread +3.6 to +3.9 ms p50 from the buildings tileset beyond the polygon (GPU unchanged, 30 fps,
+  0 dropped). The user's visual review of the renders is open.
 
 ### R6 Realism validation
 

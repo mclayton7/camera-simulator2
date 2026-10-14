@@ -1992,6 +1992,32 @@ textures off hold 30 fps at 4 with ~1 GB free. Found on the way: the buildings l
 (4.2 GB peak RSS on this 62 GB box, exit 2), now capped at the workers' 256 MB (1.0 GB, output identical); the build
 container's `HOME` was `/`, so DuckDB couldn't fetch Overture (`build.sh` sets `HOME=/tmp`).
 
+**R5 detail polygons implemented 2026-10-14** (`REALISM.md` R5; `docs/scene-packages.md`, "Detail polygons (R5)" and
+"Measured", "R5 detail polygons"; spec `docs/superpowers/specs/2026-10-14-r5-detail-polygons-design.md`): `[detail]`
+GeoJSON polygons built at `sim` inside a `preview` box; `dep3_1m` and NAIP discovered and clipped per polygon; land
+cover, buildings, canopy, the species mix and NDVI over the whole box. Corridors, routes, `high` and cache warming
+deferred (user, 2026-10-14). **Measured on the Linux box** (Core Ultra 9 285K, RTX 5080, driver 595.99.02, Vulkan) with
+`examples/socal-r5.toml` (200 km box, 39,664 km², the Pendleton polygon at `sim`): build 2 h 22 min, package 21 GB,
+of which buildings 15.6 GB (5.74 M); terrain + imagery + NDVI scene tiles 3.4 GB vs ~59 GB for the box all at `sim`.
+Scope, identity with a full-`sim` Pendleton (3,652 terrain + 51,443 imagery leaves byte-identical), `verify --deep`,
+rebuild, resume, imagery balance (2 DN), NDVI seam (0.000) and the offline render pass. Scene tooling tests 656 passed.
+**Two fails, recorded:**
+
+- [ ] **Build memory at 200 km:** the buildings layer holds every building in the main process: 15.8 GB peak for
+  5.74 M buildings (limit 2,048 MB; the land-cover burn process 4.5 GB). Stream the buildings plan and tiles per tile
+  (and the footprint raster per land-cover tile).
+- [ ] **Bench, game thread +3.6 to +3.9 ms p50** vs `pendleton-r5veg` in every phase but `far_origin`: the buildings
+  tileset beyond the polygon (buildings off: equal; vegetation off: the gap stays). GPU unchanged, 30 fps, 0 dropped.
+  Decide: buildings only inside the polygons (or a margin), a coarser SSE for buildings outside them, or accept.
+- [ ] **User visual review** of the R5 renders (`.cache/linux-r5/render/`, `render-r0/`, `edges/`), including a faint
+  straight horizontal break in `outside_low`.
+
+Fixed on the way (each with a failing test first): per-worker peak RSS now reads `VmHWM` (`ru_maxrss` survives `exec`,
+so spawned workers reported the main process's peak; the R1 `-j 1` RSS follow-up above is the in-process half of the
+same accounting); quantized-mesh header heights round outward again under NumPy 2 (a 2 µm `terrain_edges` fail; new
+builds re-encode most terrain headers, so they are not byte-identical to older packages); TNM error bodies (HTTP 200,
+no items, 2 of 6 calls) are retried, then an error, instead of planning `dep3_1m` with no assets.
+
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer
 need it: CamSim configures or destroys them at world init, before they load.

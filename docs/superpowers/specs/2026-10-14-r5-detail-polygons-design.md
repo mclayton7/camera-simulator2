@@ -34,7 +34,7 @@ coast, growing with area). No runtime (CamSim C++) change.
 
 ```toml
 name = "socal"
-bbox = [-118.51, 32.46, -116.35, 34.25]   # the whole area, built at `profile`
+bbox = [-118.51, 32.65, -116.35, 34.44]   # the whole area, built at `profile`
 profile = "preview"
 [detail]                                   # REALISM R5
 file = "socal-detail.geojson"              # FeatureCollection of Polygon / MultiPolygon, EPSG:4326 lon/lat
@@ -126,8 +126,9 @@ skip it). `layers.ndvi.scoped` carries the imagery scope so a changed scope re-k
 
 ## 4. Gates
 
-Test package `socal-r5`: `bbox = [-118.51, 32.46, -116.35, 34.25]` (200 km × 200 km centred on Camp Pendleton: Long
-Beach to La Jolla, Orange County, northern San Diego, western Riverside), `profile = "preview"`, one polygon
+Test package `socal-r5`: `bbox = [-118.51, 32.65, -116.35, 34.44]` (200 km × 200 km around Camp Pendleton: Long
+Beach to La Jolla, Orange County, northern San Diego, western Riverside; 0.19° north of centred, as built, so the OSM
+margin stays inside the Geofabrik `socal` extract), `profile = "preview"`, one polygon
 `pendleton` = the Pendleton bbox `[-117.62, 33.19, -117.24, 33.52]`; every other setting as
 `pendleton-r5veg.toml` (features, buildings with 0.5 m roof atlases, canopy, the Pendleton vegetation mix, sea level
 La Jolla, NAIP 2022, `allow = ["ODbL-1.0"]`, Overture release `2026-09-23.1`). Built in the reference container on
