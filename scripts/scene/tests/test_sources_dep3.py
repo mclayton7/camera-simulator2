@@ -88,3 +88,28 @@ def test_dep3_13_as_of_before_every_copy_warns(caplog):
     with caplog.at_level(logging.WARNING):
         assert src.discover(AREA) == []
     assert "n34w118" in caplog.text
+
+
+TNM_ERROR = {
+    "error": "Expecting value: line 1 column 1 (char 0)",
+    "toastMessage": "Expecting value",
+    "toastType": "warning",
+}
+
+
+def test_tnm_retries_an_error_body_instead_of_reading_it_as_no_products():
+    # TNM answers HTTP 200 with an error body (2 of 6 calls, 2026-10-14): a socal-r5 replan lost all 12 dep3_1m assets
+    from camsim_scene.sources.tnm import tnm_products
+
+    answers = iter([TNM_ERROR, TNM_ERROR, {"total": 1, "items": [{"title": "a"}]}])
+    http, slept = FakeHttp({TNM_PRODUCTS: lambda params: next(answers)}), []
+    assert tnm_products(http, AREA.bounds, "d", sleep=slept.append) == [{"title": "a"}]
+    assert len(slept) == 2
+
+
+def test_tnm_persistent_error_body_raises():
+    from camsim_scene.sources.tnm import tnm_products
+
+    http = FakeHttp({TNM_PRODUCTS: lambda params: TNM_ERROR})
+    with pytest.raises(HttpError, match="Expecting value"):
+        tnm_products(http, AREA.bounds, "d", sleep=lambda s: None)
