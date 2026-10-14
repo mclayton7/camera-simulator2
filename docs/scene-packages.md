@@ -1461,3 +1461,53 @@ Shots for the visual review (pending the user):
   `.cache/r3b/veg/footprints/pose1.png`).
 - MWIR day and night roofs: `.cache/r3b/thermal-pendleton/shots/mwir_roofs_{noon,night}_roof.png` and the masks in
   `.cache/r3b/thermal-pendleton/overlays/mwir_roofs_{noon,night}_roof.png`.
+
+### R5 detail polygons (2026-10-14, Linux)
+
+Reference box (Core Ultra 9 285K, 24 cores, 62 GB), the reference container (`scripts/scene/build.sh`, `-j 16`).
+`examples/socal-r5.toml`: the 200 km box `[-118.51, 32.65, -116.35, 34.44]` (39,664 km²) at `preview` with the
+Pendleton bbox (1,289 km²) as the one `sim` polygon; R2 features, buildings, canopy and the species mix over the whole
+box. Reference for gate 3: `pendleton-r5veg` (`examples/pendleton-r5veg.toml`, the same polygon as a `sim` bbox).
+Outputs under `.cache/linux-r5/` (untracked).
+
+| Gate | Result |
+|---|---|
+| Plan | 169 assets, cache 30.6 GB (+45 of unknown size); estimate terrain 232,294 / imagery 288,906 / land cover 6,408 / NDVI 18,910 tiles, ~7.0 GB without buildings. `naip_pc` 44 and `dep3_1m` 12 assets, the same as Pendleton: the scope holds. OSM from the Geofabrik `socal` extract (0.67 GB) |
+| Build | **Package complete, exit 2: peak RSS over the 2,048 MB limit** (below). 2 h 22 min, fetch included. Terrain 221,530 tiles, 2.07 GB, 539 s; imagery 286,358, 2.26 GB, 546 s; NDVI 16,257, 0.53 GB; land cover 6,408, 118 MB, **2,798 s**; canopy 1,584, 233 MB, 56 s; buildings **5,737,615 kept** of 5,792,715 (55,100 small), 57,585 tiles, **15.6 GB, 3,257 s**, 143,238 roofs textured (the polygon's NAIP), 5,594,377 flat. Package 21 GB (26 GB with `.state`, which `pack` leaves out) |
+| 4: imagery balance | **Pass**: held-out cell bias median 2 / 2 / 2 DN (limit 5; before the fit 33 / 26 / 26), p90 6 / 5 / 5; NDVI fit held-out bias 0.0007 (mae 0.068); `ndvi_check` and `water_check` exit 0 (NDVI seam bias 0.000; water within ~1 DN of the source at z10–z17) |
+| 2: scope | **Pass**: no tile deeper than the box's zooms outside the scopes, no scoped footprint outside its scope |
+| 3: identity | **Pass**: inside the polygon shrunk by 1 km, 3,652 terrain leaves (z16) and 51,443 imagery leaves (z17) byte-identical to `pendleton-r5veg`; 449 imagery leaves near water exempt |
+| 5: verify | **Pass** after two fixes (below): `verify --deep` all `ok`, incl. `detail` and `terrain_edges` (10 min 45 s); scene z9+ p50 0.003 m, p99 0.061 m over 1,777,184 vertices |
+| 5: rebuild, resume | **Pass**: `imagery/17` (75,880 tiles) deleted and rebuilt with `--replan`: only those tiles built (210,478 skipped), byte-identical to before; a further build built nothing |
+
+Against a full-`sim` box, scaled from `pendleton-r5veg`'s scene zooms (z9+) by 39,664 / 1,289; the whole-globe z0–z8
+(174,762 terrain + 174,762 imagery tiles, 1.5 GB) is the same in both:
+
+| Layer (z9+) | socal-r5 | Full `sim`, estimated |
+|---|---|---|
+| Terrain | 46,768 tiles, 1.35 GB | 247,000 tiles, 8.0 GB |
+| Imagery | 111,596 tiles, 1.48 GB | 3,150,000 tiles, 42.9 GB |
+| NDVI | 16,152 tiles, 0.53 GB | 216,000 tiles, 7.8 GB |
+| Together | **174,516 tiles, 3.4 GB** | **3,600,000 tiles, 59 GB** (17× the bytes) |
+
+Findings from the build:
+
+- **Buildings at 200 km don't fit the memory limit.** The buildings layer plans and writes in the main process with
+  every building in memory: 5.74 M buildings took the main process to 15.8 GB (sampled from `/proc`; ~12 GB already
+  after planning). The land-cover process, which burns the 3.0 GB footprint raster, peaked at 4.5 GB. Tile workers
+  stayed under 1.1 GB. The limit is unchanged; streaming the buildings layer per tile is ROADMAP work. The buildings
+  tileset is also three quarters of the package (2.7 KB per building, flat roofs).
+- **Fixed: per-worker peak RSS was the main process's.** `ru_maxrss` survives `exec`, so every spawned tile worker
+  reported the main process's peak at spawn time (all of terrain, imagery and NDVI "peaked" at 12,114 MB). `build.json`
+  now reads `VmHWM`: 606 / 743 / 1,043 MB for terrain / imagery / NDVI on the rebuild.
+- **Fixed: quantized-mesh header heights rounded to nearest.** Under NumPy 2, `np.float32(x) <= x` compares in
+  float32, so a tile's min / max height could sit half a float32 ulp inside its lowest / highest vertex (2 µm at
+  38 m; `terrain_edges` caught it on two flat sea tiles). New builds re-encode most terrain headers, so they are not
+  byte-identical to packages built before the fix; both packages here were rebuilt with it.
+- **Fixed: TNM error bodies.** tnmaccess sometimes answers HTTP 200 with an error body and no items (2 of 6 calls on
+  2026-10-14); the planner read that as no products, and a `--replan` planned `dep3_1m` with 0 assets (no 1 m
+  terrain in the polygon) with only a warning. Now retried, then an error.
+- `dep3_1m` skips the `San_Diego_CA_2014_LiDAR` project (geoid GEOID12A unknown), as for Pendleton.
+- `SourceRaster.sample` logs `RuntimeWarning: invalid value encountered in multiply` once per build (also on
+  Pendleton): points outside a source CRS's valid area come in as `inf`; they are masked as invalid and the next
+  source answers.
