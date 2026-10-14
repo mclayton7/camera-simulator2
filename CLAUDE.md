@@ -48,7 +48,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `uv run --project hitl --with pytest pytest hitl/tests` | IG host tests |
 | `uv run --project scripts/scene camsim-scene plan\|fetch\|build\|verify\|pack\|attribution PKG` | Scene packages (REALISM R0): bbox → whole-globe terrain + imagery + land cover, optional buildings, CHMv2 canopy (`[canopy]`) and species mix (`[vegetation]`) (`docs/scene-packages.md`) |
 | `scripts/scene/build.sh [--build-image] <args>` | Same, in the pinned build container (reference for byte-identical builds) |
-| `uv run --project scripts/scene --with pytest pytest scripts/scene/tests` | Scene tooling tests (no network; `--network` adds live API checks) |
+| `uv run --project scripts/scene pytest scripts/scene/tests -n auto` | Scene tooling tests, in parallel (no network; `--network` adds live API checks) |
 | `hitl/xplane_plugin/` (`fetch_sdk.sh`, CMake, ctest) | CamSimTruth X-Plane 11 plugin: read-only truth datagram (`hitl/PROTOCOL.md`) |
 
 ## Documentation
@@ -120,20 +120,22 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 ## Testing
 
+While iterating, run the narrowest check that covers the change: [`docs/testing.md`](docs/testing.md) maps each kind of change to a subset (`RunTests CamSim.<Group>`, `run_gpu_tests.sh CamSim.GPU.<Group>`, the acceptance scripts' `--runs` / `--stages` / `--phases`); full suites before a merge.
+
 - **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (597 tests across 99 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`; counted as `IMPLEMENT_SIMPLE_AUTOMATION_TEST(` lines under `Source/CamSimTest/Tests/`, with `grep -rE 'IMPLEMENT_[A-Z_]*AUTOMATION_TEST\(' Tests | wc -l`, files by `grep -rl`, GPU by the `CamSim.GPU.` names)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
-    "$UE_BIN" unreal_project/CamSimTest/CamSimTest.uproject \
+    "$UE_BIN" "$PWD/unreal_project/CamSimTest/CamSimTest.uproject" \
       -ExecCmds="Automation RunTests CamSim+Quit" \
       -TestExit="Automation Test Queue Empty" \
-      -ReportExportPath=.cache/automation-report \
+      -ReportExportPath="$PWD/.cache/automation-report" \
       -unattended -nullrhi -nosound -nosplash -log -stdout -FullStdOutLogOutput
     ```
-    `NullRHI` keeps it under 10 s end-to-end (no shader compile, no display). JSON results land at `.cache/automation-report/index.json` (UTF-8 BOM — read with `encoding="utf-8-sig"`).
+    `NullRHI` keeps it to ~80 s end-to-end on the Linux box (no shader compile, no display): 6 s editor start, 27 s in the tests, the rest per-test controller overhead, so a filtered run scales with its test count. Paths must be absolute (run from the repo root): UE resolves a relative `.uproject` against the engine directory and exits with "Failed to open descriptor file". JSON results land at `.cache/automation-report/index.json` (UTF-8 BOM — read with `encoding="utf-8-sig"`).
   - Filter narrower: replace `CamSim` in `RunTests` with e.g. `CamSim.Sensor` or a single test path.
 - **GPU tests** (`CamSim.GPU.*`, real RHI; skipped under NullRHI): `scripts/run_gpu_tests.sh [filter]` (Metal on macOS, Vulkan + Xvfb on Linux; first run compiles shaders). Read GPU results back with `FRHIGPUTextureReadback`, never `ReadLinearColorPixels`: Vulkan asserts on R32F ("Unsupported format")
-- **Scene packages** (REALISM R0, `docs/scene-packages.md`): `uv run --project scripts/scene --with pytest pytest scripts/scene/tests` (no network; `--network` adds the live API checks); gate-5 render/height/registration tools in `scripts/scene/tools/`
+- **Scene packages** (REALISM R0, `docs/scene-packages.md`): `uv run --project scripts/scene pytest scripts/scene/tests -n auto` (pytest-xdist; no network; `--network` adds the live API checks); gate-5 render/height/registration tools in `scripts/scene/tools/`
 - **KLV conformance**: `node scripts/klv_conformance/check.js` (misb.js; run `npm ci` in that directory first)
 - **Python validation**: `scripts/test_video_output.sh`
 - **Integration**: `scripts/ci_validate.sh` (Docker headless + health wait + ffprobe + KLV check)

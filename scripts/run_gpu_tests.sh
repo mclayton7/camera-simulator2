@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # GPU automation tests (CamSim.GPU.*) on the real RHI (Metal on macOS, Vulkan on Linux).
 # NullRHI runs skip them. First run compiles the global shaders (minutes).
+#   scripts/run_gpu_tests.sh [FILTER]   FILTER: a test path prefix (default CamSim.GPU), e.g. CamSim.GPU.Thermal
 set -euo pipefail
+if [[ "${1:-}" == -* ]]; then  # not a filter: --help would otherwise launch the editor with no matching test
+  sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+fi
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 RHI_ARGS=()
 XVFB_PID=""
