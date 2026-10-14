@@ -1,0 +1,335 @@
+{
+  "layers": {
+    "buildings": {
+      "format": "3d-tiles-1.1",
+      "geometric_error": {
+        "13": 60.0,
+        "14": 20.0,
+        "15": 6.0,
+        "root": 200.0
+      },
+      "leaf_zoom": 15,
+      "mask": {
+        "cell_factor": 8,
+        "rules": "1",
+        "tile_px": 4800
+      },
+      "min_area_m2": 10.0,
+      "priorities": [
+        "overture_buildings"
+      ],
+      "release": "2026-09-23.1",
+      "roof": {
+        "gutter_px": 2,
+        "jpeg_quality": 85,
+        "max_source_m": 2.0,
+        "sampler": "imagery sources in priority order + colour match; no NAIP feather or water fade",
+        "texel_steps_m": [
+          0.5,
+          0.75,
+          1.0,
+          1.5,
+          2.0
+        ]
+      },
+      "roof_texel_m": 0.5,
+      "roof_texture_max_px": 2048,
+      "roof_textures": true,
+      "rules": "2",
+      "tiers": {
+        "13": 2000.0,
+        "14": 300.0
+      }
+    },
+    "canopy": {
+      "bounds": [
+        -117.62,
+        33.19,
+        -117.24,
+        33.52
+      ],
+      "format": "camsim-canopy-1",
+      "height_stat": "p90 nearest-rank",
+      "min_height_m": 3,
+      "priorities": [
+        "chmv2"
+      ],
+      "tile_deg": 0.05
+    },
+    "imagery": {
+      "balance": {
+        "cell_km": 2.0,
+        "decay_km": 10.0,
+        "exclude_classes": [
+          0,
+          80
+        ],
+        "feather_m": 200.0,
+        "fit_step_m": 10.0,
+        "median_filter": 3,
+        "min_cell_samples": 500,
+        "naip_water_buffer_m": 200.0,
+        "quantiles": 257,
+        "reference": "naip_pc",
+        "target": "wc_s2",
+        "water_fade_m": 100.0
+      },
+      "format": "jpeg",
+      "jpeg_quality": 85,
+      "margin_km": 3.0,
+      "priorities": [
+        "naip_pc",
+        "wc_s2",
+        "bmng"
+      ],
+      "subsampling": "4:2:0",
+      "tile_px": 256
+    },
+    "landcover": {
+      "bounds": [
+        -118.70895060068557,
+        32.29168882500898,
+        -116.15104939931443,
+        34.41831117499102
+      ],
+      "buildings": {
+        "cell_factor": 8,
+        "code": 230,
+        "min_cells": 32,
+        "priority": [
+          "worldcover",
+          "water",
+          "paved_area",
+          "building",
+          "rail",
+          "road"
+        ],
+        "rules": "1"
+      },
+      "features": {
+        "area": [
+          -117.65233532437502,
+          33.163050664750266,
+          -117.20766467562498,
+          33.546949335249735
+        ],
+        "paved_areas": true,
+        "rail": true,
+        "road_classes": [
+          "motorway",
+          "trunk",
+          "primary",
+          "secondary",
+          "tertiary",
+          "unclassified",
+          "residential"
+        ],
+        "roads": true,
+        "rules": "1",
+        "sources": [
+          "nhd_hr",
+          "osm_geofabrik"
+        ],
+        "water": true
+      },
+      "priorities": [
+        "worldcover"
+      ],
+      "tile_deg": 0.05
+    },
+    "ndvi": {
+      "cell_km": 2.0,
+      "decay_km": 10.0,
+      "encoding": "L8: 0 nodata, 1 + floor((ndvi + 1) * 127 + 0.5)",
+      "exclude_classes": [
+        0,
+        80
+      ],
+      "feather_m": 200.0,
+      "fit_step_m": 10.0,
+      "format": "png",
+      "max_zoom": 15,
+      "median_filter": 3,
+      "min_cell_samples": 500,
+      "min_samples": 500,
+      "naip_water_buffer_m": 200.0,
+      "priorities": [
+        "naip_pc",
+        "wc_s2"
+      ],
+      "reference": "naip_pc",
+      "target": "wc_s2",
+      "tile_px": 256
+    },
+    "terrain": {
+      "extensions": [
+        "octvertexnormals"
+      ],
+      "feather_m": 30.0,
+      "format": "quantized-mesh-1.0",
+      "grid": 257,
+      "gzip_level": 9,
+      "max_error": "max(0.1, 0.25 * 77067 / 2^z) m",
+      "priorities": [
+        "dep3_1m",
+        "dep3_13",
+        "noaa_sd13",
+        "noaa_crm_socal",
+        "etopo2022"
+      ],
+      "tidal_mask": {
+        "class": 80,
+        "classes_source": "worldcover",
+        "max_navd88_m": 1.5,
+        "sources": [
+          "dep3_1m",
+          "dep3_13"
+        ],
+        "topobathy": [
+          "noaa_sd13",
+          "noaa_crm_socal"
+        ]
+      }
+    },
+    "vegetation": {
+      "mix": {
+        "10": {
+          "shrub_chaparral": 1.0,
+          "tree_broadleaf_a": 1.0
+        },
+        "20": {
+          "shrub_chaparral": 0.8,
+          "shrub_desert": 0.2
+        },
+        "30": {
+          "shrub_chaparral": 0.5,
+          "shrub_desert": 0.5,
+          "tree_broadleaf_a": 0.05
+        }
+      },
+      "shrub_density": {
+        "10": 4.0,
+        "20": 8.0,
+        "30": 1.0
+      }
+    }
+  },
+  "regions": [
+    {
+      "max_zoom": {
+        "imagery": 8,
+        "terrain": 8
+      },
+      "name": "globe",
+      "polygon": [
+        [
+          -180.0,
+          -90.0
+        ],
+        [
+          180.0,
+          -90.0
+        ],
+        [
+          180.0,
+          90.0
+        ],
+        [
+          -180.0,
+          90.0
+        ],
+        [
+          -180.0,
+          -90.0
+        ]
+      ]
+    },
+    {
+      "max_zoom": {
+        "imagery": 10,
+        "terrain": 10
+      },
+      "name": "ring",
+      "polygon": [
+        [
+          -118.70895060068557,
+          32.29168882500898
+        ],
+        [
+          -116.15104939931443,
+          32.29168882500898
+        ],
+        [
+          -116.15104939931443,
+          34.41831117499102
+        ],
+        [
+          -118.70895060068557,
+          34.41831117499102
+        ],
+        [
+          -118.70895060068557,
+          32.29168882500898
+        ]
+      ]
+    },
+    {
+      "max_zoom": {
+        "imagery": 17,
+        "terrain": 10
+      },
+      "name": "margin",
+      "polygon": [
+        [
+          -117.65233532437502,
+          33.163050664750266
+        ],
+        [
+          -117.20766467562498,
+          33.163050664750266
+        ],
+        [
+          -117.20766467562498,
+          33.546949335249735
+        ],
+        [
+          -117.65233532437502,
+          33.546949335249735
+        ],
+        [
+          -117.65233532437502,
+          33.163050664750266
+        ]
+      ]
+    },
+    {
+      "max_zoom": {
+        "imagery": 17,
+        "terrain": 16
+      },
+      "name": "bbox",
+      "polygon": [
+        [
+          -117.62,
+          33.19
+        ],
+        [
+          -117.24,
+          33.19
+        ],
+        [
+          -117.24,
+          33.52
+        ],
+        [
+          -117.62,
+          33.52
+        ],
+        [
+          -117.62,
+          33.19
+        ]
+      ]
+    }
+  ]
+}
