@@ -128,3 +128,24 @@ def test_tilemapresource_names_png_tiles():
     tf = ET.fromstring(xml).find("TileFormat")
     assert tf.get("mime-type") == "image/png" and tf.get("extension") == "png"
     assert 'mime-type="image/jpeg"' in tms.tilemapresource_xml("t", 3, (0.0, 0.0, 1.0, 1.0))
+
+
+def test_region_from_polygon_keeps_holes_and_round_trips():
+    import shapely
+
+    from camsim_scene.tiling import Region
+
+    g = shapely.Polygon([(0, 0), (4, 0), (4, 4), (0, 4)], [[(1, 1), (2, 1), (2, 2), (1, 2)]])
+    r = Region.from_polygon("detail:a", g, {"terrain": 5})
+    assert r.geometry().equals(g)
+    d = r.to_dict()
+    assert d["holes"] == [[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0], [1.0, 1.0]]]
+    assert Region.from_dict(d).geometry().equals(g)
+
+
+def test_region_without_holes_serialises_as_before():
+    from camsim_scene.tiling import Region
+
+    r = Region.from_bounds("bbox", (0.0, 0.0, 1.0, 1.0), {"imagery": 3})
+    assert set(r.to_dict()) == {"name", "polygon", "max_zoom"}
+    assert Region.from_dict(r.to_dict()).holes == []

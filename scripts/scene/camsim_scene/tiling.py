@@ -46,31 +46,46 @@ def tile_boxes(z: int, keys: np.ndarray) -> np.ndarray:
 
 @dataclass
 class Region:
-    """A lon/lat polygon with a maximum zoom per layer. A tile takes the highest limit of the regions it overlaps."""
+    """A lon/lat polygon (optionally with holes) with a maximum zoom per layer. A tile takes the highest limit of the
+    regions it overlaps."""
 
     name: str
     polygon: list[tuple[float, float]]
     max_zoom: dict[str, int]
+    holes: list[list[tuple[float, float]]] = field(default_factory=list)
 
     @classmethod
     def from_bounds(cls, name: str, b: Bounds, max_zoom: dict[str, int]) -> Region:
         w, s, e, n = (float(v) for v in b)
         return cls(name, [(w, s), (e, s), (e, n), (w, n), (w, s)], dict(max_zoom))
 
+    @classmethod
+    def from_polygon(cls, name: str, geom: shapely.Polygon, max_zoom: dict[str, int]) -> Region:
+        def ring(r):
+            return [(float(a), float(b)) for a, b in r.coords]
+
+        return cls(name, ring(geom.exterior), dict(max_zoom), [ring(h) for h in geom.interiors])
+
     def geometry(self) -> shapely.Polygon:
-        return shapely.Polygon(self.polygon)
+        return shapely.Polygon(self.polygon, self.holes or None)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name,
             "polygon": [[float(a), float(b)] for a, b in self.polygon],
             "max_zoom": {k: int(v) for k, v in sorted(self.max_zoom.items())},
         }
+        if self.holes:  # regions without holes keep their exact manifest form
+            d["holes"] = [[[float(a), float(b)] for a, b in h] for h in self.holes]
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> Region:
         return cls(
-            d["name"], [(float(a), float(b)) for a, b in d["polygon"]], {k: int(v) for k, v in d["max_zoom"].items()}
+            d["name"],
+            [(float(a), float(b)) for a, b in d["polygon"]],
+            {k: int(v) for k, v in d["max_zoom"].items()},
+            [[(float(a), float(b)) for a, b in h] for h in d.get("holes", [])],
         )
 
 
