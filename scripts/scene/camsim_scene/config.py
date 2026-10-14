@@ -58,6 +58,7 @@ KEYS = {
     "zoom",
     "ndvi",
     "ndvi_max_zoom",
+    "detail",
     "sea_level",
     "features",
     "buildings",
@@ -192,6 +193,7 @@ class ScenePlan:
     features: dict = field(default_factory=dict)
     buildings: dict = field(default_factory=dict)
     vegetation: dict = field(default_factory=dict)
+    detail: dict = field(default_factory=dict)  # REALISM R5: {} or {"profile", "polygons", "scoped"}
 
     def ring_bounds(self) -> Bounds:
         return ring_bounds(self.bbox, self.ring_km)
@@ -206,12 +208,19 @@ class ScenePlan:
 
     def regions(self) -> list[Region]:
         margin_zoom = {"terrain": self.zoom["ring"]["terrain"], "imagery": self.zoom["bbox"]["imagery"]}
-        return [
+        out = [
             Region.from_bounds("globe", GLOBE, self.zoom["globe"]),
             Region.from_bounds("ring", self.ring_bounds(), self.zoom["ring"]),
             Region.from_bounds("margin", self.area("margin"), margin_zoom),
             Region.from_bounds("bbox", self.bbox, self.zoom["bbox"]),
         ]
+        if self.detail:
+            from . import detail as D
+
+            dz = self.zoom["detail"]
+            mz = {"terrain": self.zoom["ring"]["terrain"], "imagery": dz["imagery"]}
+            out += D.regions(self.detail["polygons"], dz, mz, self.imagery_margin_km)
+        return out
 
     def source_ids(self) -> list[str]:
         out: list[str] = []
@@ -229,6 +238,8 @@ def _int(data: dict, key: str, default: int, lo: int, hi: int) -> int:
 
 BUILDINGS_KEYS = ("enabled", "release", "min_area_m2", "roof_textures", "roof_texel_m", "roof_texture_max_px")
 ROOF_MAX_PX = (256, 512, 1024, 2048, 4096, 8192)
+DETAIL_KEYS = ("file", "profile", "scoped")
+DETAIL_PROFILES = ("sim",)
 
 
 def _parse_buildings(data) -> dict:
@@ -410,7 +421,60 @@ def _parse_features(data) -> dict:
     return out
 
 
-def parse_scene(data: dict) -> ScenePlan:
+def _parse_detail(data: dict, base: Path | None, bbox: Bounds, profile: str) -> dict:
+    """[detail] (REALISM R5) -> {"profile", "polygons", "scoped_given"?}; {} when absent."""
+    from . import detail as D
+
+    if "detail" not in data:
+        return {}
+    d = data["detail"]
+    if not isinstance(d, dict) or set(d) - set(DETAIL_KEYS):
+        raise ConfigError(f"detail must be a table with keys from {DETAIL_KEYS}")
+    dp = d.get("profile", "sim")
+    if dp not in DETAIL_PROFILES:
+        raise ConfigError(f"detail.profile must be one of {DETAIL_PROFILES}, got {dp!r}")
+    if profile == dp:
+        raise ConfigError(
+            f'[detail] needs a coarser box profile ("preview"): profile is already "{dp}", nothing to tier'
+        )
+    f = d.get("file")
+    if not isinstance(f, str) or not f:
+        raise ConfigError("detail.file must name a GeoJSON file")
+    path = Path(f) if base is None or Path(f).is_absolute() else Path(base) / f
+    out = {"profile": dp, "polygons": D.load_polygons(path, bbox)}
+    if "scoped" in d:
+        out["scoped_given"] = d["scoped"]
+    return out
+
+
+def _detail_scoped(given, prio: dict, box_profile: str, detail_profile: str) -> dict:
+    """Per tiled layer, the sources limited to the polygons: the given lists, else the sources in the detail
+    profile's priorities and not in the box profile's."""
+    if given is None:
+        out = {
+            layer: [
+                s
+                for s in prio[layer]
+                if s in PROFILES[detail_profile]["priorities"][layer]
+                and s not in PROFILES[box_profile]["priorities"][layer]
+            ]
+            for layer in TILED_LAYERS
+        }
+    else:
+        if not isinstance(given, dict) or set(given) - set(TILED_LAYERS):
+            raise ConfigError(f"detail.scoped must be a table with keys from {TILED_LAYERS}")
+        out = {}
+        for layer in TILED_LAYERS:
+            ids = given.get(layer, [])
+            if not isinstance(ids, list) or not all(isinstance(i, str) and i in prio[layer] for i in ids):
+                raise ConfigError(f"detail.scoped.{layer} must list source ids from priorities.{layer}")
+            out[layer] = list(ids)
+    if not any(out.values()):
+        raise ConfigError("detail.scoped: no source is limited to the polygons (nothing to tier)")
+    return out
+
+
+def parse_scene(data: dict, base: Path | None = None) -> ScenePlan:
     unknown = set(data) - KEYS
     if unknown:
         raise ConfigError(f"unknown key(s) in scene: {sorted(unknown)}")
@@ -421,6 +485,8 @@ def parse_scene(data: dict) -> ScenePlan:
     profile = data.get("profile", "sim")
     if profile not in PROFILES:
         raise ConfigError(f"profile must be one of {sorted(PROFILES)}, got {profile!r}")
+    detail = _parse_detail(data, base, bbox, profile)
+    prio_profile = detail.get("profile", profile)  # with [detail], defaults come from the detail profile
     ring_km = float(data.get("ring_km", 100.0))
     if not 0.0 <= ring_km <= 1000.0:
         raise ConfigError(f"ring_km must be in [0, 1000], got {ring_km}")
@@ -444,13 +510,13 @@ def parse_scene(data: dict) -> ScenePlan:
             f"naip_water_buffer_m must be 0 (off) or in [{lo:g}, {MAX_WATER_BUFFER_M:g}], got {buffer_m!r}"
         )
     ndvi_given = "ndvi" in data
-    ndvi = data.get("ndvi", PROFILES[profile]["ndvi"])
+    ndvi = data.get("ndvi", PROFILES[prio_profile]["ndvi"])
     if not isinstance(ndvi, bool):
         raise ConfigError(f"ndvi must be true or false, got {ndvi!r}")
     ndvi_max_zoom = _int(data, "ndvi_max_zoom", NDVI_MAX_ZOOM, 10, 17)
     quality = _int(data, "jpeg_quality", 85, 1, 95)
     seed = _int(data, "seed", 0, 0, 2**31 - 1)
-    prio = {k: list(v) for k, v in PROFILES[profile]["priorities"].items()}
+    prio = {k: list(v) for k, v in PROFILES[prio_profile]["priorities"].items()}
     if "features" in data.get("priorities", {}):
         raise ConfigError("priorities.features is derived from [features]; set the flags instead")
     if "buildings" in data.get("priorities", {}):
@@ -471,6 +537,8 @@ def parse_scene(data: dict) -> ScenePlan:
     vegetation = _parse_vegetation(data)
     prio["canopy"] = ["chmv2"] if _parse_canopy(data) else []
     prio["buildings"] = ["overture_buildings"] if buildings.get("enabled") else []
+    if detail:
+        detail["scoped"] = _detail_scoped(detail.pop("scoped_given", None), prio, profile, detail["profile"])
     if ndvi and ndvi_given and not any(s in prio["imagery"] for s in (NDVI_REFERENCE, NDVI_TARGET)):
         raise ConfigError("ndvi = true needs naip_pc or wc_s2 in priorities.imagery")
     options = {k: dict(v) for k, v in DEFAULT_SOURCE_OPTIONS.items()}
@@ -486,6 +554,8 @@ def parse_scene(data: dict) -> ScenePlan:
         "ring": dict(RING_ZOOM),
         "bbox": dict(PROFILES[profile]["bbox_zoom"]),
     }
+    if detail:
+        zoom["detail"] = dict(PROFILES[detail["profile"]]["bbox_zoom"])
     for region, z in data.get("zoom", {}).items():
         if region not in zoom or not isinstance(z, dict):
             raise ConfigError(f"zoom.{region}: unknown region (one of {sorted(zoom)})")
@@ -528,6 +598,7 @@ def parse_scene(data: dict) -> ScenePlan:
         features=features,
         buildings=buildings,
         vegetation=vegetation,
+        detail=detail,
     )
 
 
@@ -536,7 +607,7 @@ def load_scene(path: Path) -> ScenePlan:
         data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path}: {e}") from e
-    return parse_scene(data)
+    return parse_scene(data, base=Path(path).parent)
 
 
 def balance_settings(plan: ScenePlan) -> dict | None:
@@ -608,6 +679,11 @@ def layer_settings(plan: ScenePlan) -> dict:
         },
         "landcover": {"priorities": plan.priorities["landcover"], "bounds": list(plan.ring_bounds()), "tile_deg": 0.05},
     }
+    if plan.detail:  # REALISM R5: present only with [detail], so other manifests keep their exact form
+        from .detail import DETAIL, MARGIN
+
+        out["terrain"]["scoped"] = {s: DETAIL for s in plan.detail["scoped"]["terrain"]}
+        out["imagery"]["scoped"] = {s: MARGIN for s in plan.detail["scoped"]["imagery"]}
     t = plan.priorities["terrain"]
     masked = [s for s in TIDAL_MASK["sources"] if s in t]
     topo = [s for s in TIDAL_MASK["topobathy"] if s in t]

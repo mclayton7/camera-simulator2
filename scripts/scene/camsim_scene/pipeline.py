@@ -95,6 +95,14 @@ def _lock(pkg: Path, locked: bool):
 # ---------------------------------------------------------------- plan
 
 
+def _detail_section(plan: ScenePlan) -> dict | None:
+    if not plan.detail:
+        return None
+    from . import detail as D
+
+    return D.section(plan.detail["polygons"], plan.detail["profile"])
+
+
 def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bool = False) -> Manifest:
     """Discover every source's assets and write manifest.json (under the build lock: a running build refuses)."""
     http = http or Http()
@@ -157,6 +165,7 @@ def plan_scene(plan: ScenePlan, pkg: Path, http=None, out=sys.stderr, locked: bo
         licence_allow=allow,
         tool=TOOL,
         sea_level=sea,
+        detail=_detail_section(plan),
     )
     with _lock(pkg, locked):
         m.write(Path(pkg) / "manifest.json")

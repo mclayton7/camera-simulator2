@@ -61,11 +61,14 @@ class Manifest:
     schema_version: int = SCHEMA_VERSION
     hashes_sha256: str | None = None
     sea_level: dict | None = None  # NOAA CO-OPS station datums (sea_level.py); absent in packages without one
+    detail: dict | None = None  # REALISM R5 detail polygons (detail.section); absent in packages without [detail]
 
     def to_dict(self) -> dict:
         d = asdict(self)
         if d["sea_level"] is None:
             del d["sea_level"]  # packages planned without a station keep their exact manifest.json
+        if d["detail"] is None:
+            del d["detail"]
         return d
 
     @classmethod
