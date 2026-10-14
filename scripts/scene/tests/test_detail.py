@@ -139,3 +139,40 @@ def test_inside_mask():
     lon = np.array([[0.5, 1.5], [1.0, -0.1]])
     lat = np.array([[0.5, 0.5], [0.5, 0.5]])
     assert D.inside(scope, lon, lat).tolist() == [[True, False], [True, False]]
+
+
+def test_discover_in_merges_ranks_consistently_across_parts():
+    """Adapter order newest first: B > Y > A. Part 1 sees [Y, A], part 2 sees [B, Y'] (another tile of project Y).
+    Per-call ranks would give B and Y both rank 0 (a tie broken by name); the merged ranks must keep B < Y < A."""
+    calls = {
+        (0.0, 0.0, 1.0, 1.0): [("y1", "Y"), ("a1", "A")],
+        (2.0, 2.0, 3.0, 3.0): [("b1", "B"), ("y2", "Y")],
+    }
+
+    class Src:
+        version = ""
+
+        def discover(self, area):
+            out = [Asset(i, i, group=g, rank=r) for r, (i, g) in enumerate(calls[tuple(area.bounds)])]
+            self.version = {"y1": "2025-06-01", "b1": "2024-01-01"}[out[0].id]  # the newest comes first
+            return out
+
+    src = Src()
+    scope = shapely.union_all([shapely.box(0, 0, 1, 1), shapely.box(2, 2, 3, 3)])
+    got = {a.id: a.rank for a in D.discover_in(src, scope)}
+    assert got["b1"] < got["y1"] < got["a1"] and got["b1"] < got["y2"]
+    assert sorted(got.values()) == [0, 1, 2, 3]
+    group_rank = {}
+    for a in D.discover_in(src, scope):
+        group_rank[a.group] = min(group_rank.get(a.group, a.rank), a.rank)
+    assert group_rank["B"] < group_rank["Y"] < group_rank["A"]
+    assert src.version == "2025-06-01"  # the newest over all calls, not the last call's (2024-01-01)
+
+
+def test_discover_in_single_part_keeps_the_adapters_ranks():
+    class Src:
+        def discover(self, area):
+            return [Asset(i, i, group=g, rank=r) for r, (i, g) in enumerate([("p1", "P"), ("p2", "P"), ("q1", "Q")])]
+
+    got = [(a.id, a.rank) for a in D.discover_in(Src(), shapely.box(0, 0, 1, 1))]
+    assert got == [("p1", 0), ("p2", 1), ("q1", 2)]

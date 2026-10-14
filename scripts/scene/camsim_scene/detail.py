@@ -143,21 +143,79 @@ def clip(geom, scope):
     return None if g.is_empty else g
 
 
+def _topo(seqs: list[list[str]], first: dict[str, int]) -> list[str] | None:
+    """Keys in an order that keeps every sequence's order, ties by first[key]; None when the sequences contradict."""
+    import heapq
+    from itertools import pairwise
+
+    after: dict[str, set] = {k: set() for k in first}
+    indeg = dict.fromkeys(first, 0)
+    for seq in seqs:
+        for u, v in pairwise(seq):
+            if u != v and v not in after[u]:
+                after[u].add(v)
+                indeg[v] += 1
+    heap = [(first[k], k) for k, d in indeg.items() if d == 0]
+    heapq.heapify(heap)
+    out = []
+    while heap:
+        _, k = heapq.heappop(heap)
+        out.append(k)
+        for v in after[k]:
+            indeg[v] -= 1
+            if indeg[v] == 0:
+                heapq.heappush(heap, (first[v], v))
+    return out if len(out) == len(first) else None
+
+
+def _merge_orders(calls: list[list]) -> list:
+    """Assets of several discover() calls in one order that keeps every call's order (each call ranks its assets
+    0..n-1 in the adapter's priority order): merge groups first (a project's priority shows through any of its
+    tiles), then assets within a group. Keys that never share a call keep first-seen order: they only meet where no
+    call's bounds reach, outside the scope. Contradicting calls fall back to first-seen order with a warning."""
+    import logging
+
+    ranked = [sorted(c, key=lambda x: x.rank) for c in calls]
+    first: dict[str, int] = {}
+    gfirst: dict[str, int] = {}
+    by_id: dict = {}
+    for call in ranked:
+        for a in call:
+            if a.id not in first:
+                first[a.id] = len(first)
+                by_id[a.id] = a
+            gfirst.setdefault(a.group, len(gfirst))
+    groups = _topo([[a.group for a in c] for c in ranked], gfirst)
+    assets = _topo([[a.id for a in c] for c in ranked], first)
+    if groups is None or assets is None:
+        logging.getLogger(__name__).warning(
+            "detail: the adapter's asset order differs between polygons; using first-seen order"
+        )
+        return sorted(by_id.values(), key=lambda a: first[a.id])
+    gpos = {g: i for i, g in enumerate(groups)}
+    apos = {k: i for i, k in enumerate(assets)}
+    return sorted(by_id.values(), key=lambda a: (gpos[a.group], apos[a.id]))
+
+
 def discover_in(src, scope) -> list:
-    """src.discover() once per part of scope (on its bounds), merged by asset id in first-seen order; assets whose
-    metadata bbox misses the scope are dropped."""
+    """src.discover() once per part of scope (on its bounds); the calls' assets merged into one order consistent with
+    each call's ranks and renumbered 0..n-1, as one discover() over everything would rank them; assets whose metadata
+    bbox misses the scope are dropped. src.version becomes the largest version any call reported."""
     from .sources.base import Area
 
-    out, seen = [], set()
+    calls, versions = [], []
     for part in sorted(shapely.get_parts(scope).tolist(), key=lambda g: g.bounds):
-        for a in src.discover(Area(tuple(float(v) for v in part.bounds))):
-            if a.id in seen:
-                continue
-            bb = a.metadata.get("bbox")
-            if bb is not None and not shapely.intersects(shapely.box(*bb), scope):
-                continue
-            seen.add(a.id)
-            out.append(a)
+        calls.append(src.discover(Area(tuple(float(v) for v in part.bounds))))
+        versions.append(str(getattr(src, "version", "") or ""))
+    if any(versions):
+        src.version = max(versions)
+    out = []
+    for a in _merge_orders(calls):
+        bb = a.metadata.get("bbox")
+        if bb is not None and not shapely.intersects(shapely.box(*bb), scope):
+            continue
+        a.rank = len(out)
+        out.append(a)
     return out
 
 
