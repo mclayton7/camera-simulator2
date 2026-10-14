@@ -120,3 +120,12 @@ def test_changed_polygons_need_replan(tmp_path):
     geojson(tmp_path, coords=[[x + 0.05, y] for x, y in SQUARE])
     m = Manifest.load(tmp_path / "pkg/manifest.json")
     assert "regions" in plan_differences(parse_scene(s), m)
+
+
+def test_socal_example_parses():
+    from pathlib import Path
+
+    ex = Path(__file__).resolve().parents[1] / "examples" / "socal-r5.toml"
+    plan = load_scene(ex)
+    assert plan.profile == "preview" and plan.detail["scoped"] == {"terrain": ["dep3_1m"], "imagery": ["naip_pc"]}
+    assert [r.name for r in plan.regions()][-2:] == ["detail:pendleton", "detail_margin:pendleton"]

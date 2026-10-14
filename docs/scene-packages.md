@@ -59,6 +59,8 @@ addressing (`scheme: tms`, `y_origin: south`).
 | `ring` | bbox + `ring_km` (default 100) on every side | z9–10 | z9–10 |
 | `margin` | bbox + `imagery_margin_km` (default 3) on every side | ring's (z10) | the bbox's (z17 on NAIP) |
 | `bbox` | the scene's bbox | to the source limit: z16 on 3DEP 1 m, z14 on 1/3″, z8 on ETOPO (`preview`: 14) | z17 on NAIP, z13 on WC S2, z8 on Blue Marble (`preview`: 13) |
+| `detail:<name>` | a `[detail]` polygon (R5) | the detail profile's (16) | the detail profile's (17) |
+| `detail_margin:<name>` | the polygon + `imagery_margin_km` | ring's (z10) | the detail profile's (17) |
 
 NAIP is discovered over the margin, so its edge sits outside the bbox wherever NAIP exists there.
 
@@ -166,9 +168,14 @@ station = "9410230"                         # NOAA CO-OPS station id with a NAVD
 [sources.naip_pc]                           # per-source options; `adapter` picks a non-default class ("module:Class")
 year = "2022"
 
-[zoom.bbox]                                 # optional zoom overrides per region (globe | ring | bbox), [0, 22]
+[zoom.bbox]                                 # optional zoom overrides per region (globe | ring | bbox | detail), [0, 22]
 imagery = 17
 terrain = 16
+
+[detail]                                    # optional (REALISM R5): GeoJSON polygons built at `profile` here inside a coarser box (Detail polygons (R5))
+file = "areas.geojson"                      # FeatureCollection of named Polygon / MultiPolygon features, lon/lat; relative to this file
+profile = "sim"                             # the profile inside the polygons ("sim" only); the box's `profile` must be "preview"
+scoped = { terrain = ["dep3_1m"], imagery = ["naip_pc"] }  # optional: sources limited to the polygons (default: in the detail profile, not the box's)
 ```
 
 Unknown keys are errors. **Profiles** (Decision 3):
@@ -638,6 +645,36 @@ shrub_density.30 = 1.0
   code renormalised), and with `scene.offline: true` CamSim exits 1.
 - Without a mix, CamSim's built-in default applies: code 10 → `tree_broadleaf_a` (R4's trees bit for bit), 20 and 30 →
   `shrub_chaparral` at 6 and 1 per 100 m².
+
+## Detail polygons (R5)
+
+A `[detail]` table builds named polygons at `sim` inside a box built at `preview`, so a ~200 km × 200 km area stays
+buildable: NAIP and 3DEP 1 m are fetched and built only for the polygons (spec
+`docs/superpowers/specs/2026-10-14-r5-detail-polygons-design.md`). Example: `examples/socal-r5.toml` (200 km around
+Camp Pendleton, the Pendleton bbox as the one polygon).
+
+- **The file:** a GeoJSON FeatureCollection; each feature has a unique `properties.name` (`[a-z0-9][a-z0-9_-]{0,63}`)
+  and a valid Polygon or MultiPolygon in lon/lat (a `crs` other than EPSG:4326 / CRS84 is an error) inside the bbox.
+  `plan` snaps coordinates to 1e-7°, normalises the rings, sorts by name and copies the polygons into the manifest
+  (`detail`: profile, polygons as WKT, sha256). Builds and `verify` read the manifest only; edit the file and re-plan
+  with `--replan` (`build --config` without it refuses: the regions differ).
+- **Regions:** per polygon (per part of a MultiPolygon, named `<name>/<i>`), `detail:<name>` at the detail profile's
+  zooms and `detail_margin:<name>` (grown by `imagery_margin_km`) at its imagery zoom, as `bbox` and `margin` are for
+  the box. The box keeps `preview`'s zooms (14 / 13). Defaults (priorities, `ndvi`) come from the detail profile.
+- **Scoped sources:** sources in the detail profile but not in the box's (`dep3_1m` for terrain, `naip_pc` for
+  imagery) are limited to the polygons: terrain sources to `detail:`, imagery sources to `detail_margin:`.
+  `[detail] scoped` names them explicitly. They are discovered once per polygon, their footprints are clipped to
+  the scope at `fetch`, and every tile job ignores their samples outside it, so NAIP's feather and colour match
+  (Imagery edge) and the terrain feather work at the polygon edges as they do at the bbox edge. NDVI exists only
+  where NAIP is.
+- **Whole box:** land cover with the R2 burns and building footprints (230), the buildings tileset and mask, canopy
+  and the vegetation mix cover the bbox as usual. Roof atlases need a ≤ 2 m source, so roofs outside the NAIP scope
+  are flat grey.
+- **`verify`** adds a `detail` check: the hash matches the polygons, and every scoped footprint lies in its scope.
+- **Gate tools:** `tools/detail_check.py PKG --reference REF` (no tile deeper than the box's zooms outside the scopes;
+  leaves inside the polygon shrunk by 1 km byte-identical to a full-`sim` package of the same area, imagery leaves near
+  water exempt and listed), `tools/edge_shots.py --crop NAME:Z:W:S:E:N` (imagery crops at a polygon's edge) and
+  `tools/render_check.py --shots detail` (CamSim shots across the Pendleton polygon's edges and outside it).
 
 ## Sea level (R1)
 

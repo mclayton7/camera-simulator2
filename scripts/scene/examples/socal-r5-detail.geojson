@@ -1,0 +1,13 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {"name": "pendleton"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-117.62, 33.19], [-117.24, 33.19], [-117.24, 33.52], [-117.62, 33.52], [-117.62, 33.19]]]
+      }
+    }
+  ]
+}

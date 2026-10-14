@@ -46,7 +46,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/run_gpu_tests.sh`     | `CamSim.GPU.*` automation tests on the real RHI (Metal / Vulkan) |
 | `uv run --project hitl python -m camsim_hitl --config <file>.toml` | HITL IG host: X-Plane truth + PX4 gimbal/camera (MAVLink) → CIGI (`hitl/README.md`, design `HITL.md`) |
 | `uv run --project hitl --with pytest pytest hitl/tests` | IG host tests |
-| `uv run --project scripts/scene camsim-scene plan\|fetch\|build\|verify\|pack\|attribution PKG` | Scene packages (REALISM R0): bbox → whole-globe terrain + imagery + land cover, optional buildings, CHMv2 canopy (`[canopy]`) and species mix (`[vegetation]`) (`docs/scene-packages.md`) |
+| `uv run --project scripts/scene camsim-scene plan\|fetch\|build\|verify\|pack\|attribution PKG` | Scene packages (REALISM R0): bbox → whole-globe terrain + imagery + land cover, optional buildings, CHMv2 canopy (`[canopy]`) and species mix (`[vegetation]`); `[detail]` polygons at `sim` inside a `preview` box (REALISM R5) (`docs/scene-packages.md`) |
 | `scripts/scene/build.sh [--build-image] <args>` | Same, in the pinned build container (reference for byte-identical builds) |
 | `uv run --project scripts/scene pytest scripts/scene/tests -n auto` | Scene tooling tests, in parallel (no network; `--network` adds live API checks) |
 | `hitl/xplane_plugin/` (`fetch_sdk.sh`, CMake, ctest) | CamSimTruth X-Plane 11 plugin: read-only truth datagram (`hitl/PROTOCOL.md`) |
