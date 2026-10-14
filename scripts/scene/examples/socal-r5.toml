@@ -1,7 +1,7 @@
 # REALISM R5 gate package: 200 km x 200 km around Camp Pendleton at preview, the Pendleton bbox at sim (detail polygon);
 # every other setting as pendleton-r5veg.toml
 name = "socal-r5"
-bbox = [-118.51, 32.46, -116.35, 34.25]  # W S E N
+bbox = [-118.51, 32.65, -116.35, 34.44]  # W S E N; south edge 21 km north of centred so the margin stays inside Geofabrik socal (else: North America, 19.5 GB)
 profile = "preview"
 seed = 0
 ring_km = 100
