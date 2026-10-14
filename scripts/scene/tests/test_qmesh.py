@@ -147,3 +147,11 @@ def test_index_codes_that_overflow_their_type_raise(monkeypatch):
     monkeypatch.setattr(qmesh, "hwm_encode", lambda flat: np.full(len(flat), 70000, np.int64))
     with pytest.raises(ValueError, match="index"):
         qmesh.encode(lon, lat, h, tris, B16)
+
+
+def test_header_bounds_round_outward_under_numpy2_promotion():
+    # np.float32(x) <= x compares in float32 under NumPy 2 (NEP 50), so the bounds rounded to nearest:
+    # socal-r5 z14 5640/11174 stored min -38.1332321 above its lowest vertex -38.1332339
+    x = -38.13323386665434
+    assert qmesh._f32_down(x) <= x < qmesh._f32_down(x) + 4e-6
+    assert qmesh._f32_up(-x) >= -x > qmesh._f32_up(-x) - 4e-6

@@ -108,13 +108,13 @@ def _quantize(v: np.ndarray, lo: float, hi: float) -> np.ndarray:
 
 
 def _f32_down(x: float) -> float:
-    f = np.float32(x)
-    return float(f if f <= x else np.nextafter(f, np.float32(-np.inf)))
+    f = np.float32(x)  # compared as float64: NumPy 2 would compare float32 <= Python float in float32
+    return float(f if float(f) <= x else np.nextafter(f, np.float32(-np.inf)))
 
 
 def _f32_up(x: float) -> float:
     f = np.float32(x)
-    return float(f if f >= x else np.nextafter(f, np.float32(np.inf)))
+    return float(f if float(f) >= x else np.nextafter(f, np.float32(np.inf)))
 
 
 def horizon_occlusion_point(points: np.ndarray, center: np.ndarray) -> np.ndarray:
