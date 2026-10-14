@@ -62,14 +62,32 @@ def labelled(img: Image.Image, text: str, width: int = 1600) -> Image.Image:
     return out
 
 
+def parse_crops(specs: list[str]) -> dict:
+    """--crop NAME:Z:W:S:E:N values -> CROPS-shaped dict; the built-in Pendleton crops when none are given."""
+    if not specs:
+        return CROPS
+    out = {}
+    for c in specs:
+        name, z, *box = c.split(":")
+        out[name] = (int(z), *(float(v) for v in box))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out", type=Path)
     ap.add_argument("pkg", type=Path)
     ap.add_argument("--before", type=Path)
+    ap.add_argument(
+        "--crop",
+        action="append",
+        default=[],
+        metavar="NAME:Z:W:S:E:N",
+        help="crop instead of the built-in Pendleton ones (repeatable), e.g. ne:14:-117.30:33.46:-117.18:33.56",
+    )
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
-    for name, (z, *box) in CROPS.items():
+    for name, (z, *box) in parse_crops(a.crop).items():
         after = labelled(mosaic(a.pkg, z, *box), f"{name} z{z} -- {a.pkg.name}")
         if a.before:
             before = labelled(mosaic(a.before, z, *box), f"{name} z{z} -- {a.before.name}")

@@ -47,6 +47,12 @@ SHOTS = {
     "coast_low": P(lat=33.300, lon=-117.470, alt=300, yaw=225, gimbal_pitch=-15, fov_h=50),
     "coast_waves": P(lat=33.300, lon=-117.470, alt=300, yaw=225, gimbal_pitch=-15, fov_h=50),
 }
+DETAIL_SHOTS = {  # REALISM R5 on socal-r5 (examples/socal-r5.toml): the pendleton polygon's edges and the box beyond
+    "edge_inland": P(lat=33.450, lon=-117.275, alt=800, yaw=90, gimbal_pitch=-15, fov_h=50),  # east edge, looking out
+    "edge_coast": P(lat=33.205, lon=-117.360, alt=800, yaw=150, gimbal_pitch=-15, fov_h=50),  # south edge, shore
+    "outside_high": P(lat=33.650, lon=-117.750, alt=6000, yaw=0, gimbal_pitch=-12, fov_h=60),  # Irvine, preview only
+    "outside_low": P(lat=33.650, lon=-117.750, alt=500, yaw=0, gimbal_pitch=-20, fov_h=50),
+}
 # Ocean state has no CIGI control for Beaufort (ocean_check.py sets it by CAMSIM_OCEAN_BEAUFORT too), so these
 # shots run in a second CamSim session with that env set.
 BEAUFORT_SHOTS = {"coast_waves": "5"}
@@ -58,6 +64,17 @@ def gate_timeout_lines(log: Path) -> list[str]:
     if not log.exists():
         return []
     return [ln for ln in log.read_text(errors="replace").splitlines() if GATE_TIMEOUT_TEXT in ln]
+
+
+def shot_plan(which: str) -> tuple[dict, dict[str, list[str]]]:
+    """(shots for the main session, {Beaufort: shot names} for the extra sessions). `detail` (REALISM R5) has no
+    Beaufort session."""
+    if which == "detail":
+        return dict(DETAIL_SHOTS), {}
+    groups: dict[str, list[str]] = {}
+    for n, b in BEAUFORT_SHOTS.items():
+        groups.setdefault(b, []).append(n)
+    return {n: p for n, p in SHOTS.items() if n not in BEAUFORT_SHOTS}, groups
 
 
 def fly(host, shots: dict, out: Path, res: dict) -> None:
@@ -80,6 +97,7 @@ def main() -> int:
     ap.add_argument("pkg", type=Path, nargs="?")
     ap.add_argument("--offline", action="store_true")
     ap.add_argument("--docker", metavar="IMAGE")
+    ap.add_argument("--shots", choices=["r0", "detail"], default="r0", help="detail: REALISM R5 polygon-edge shots")
     a = ap.parse_args()
     if a.mode == "package" and not a.pkg:
         ap.error("package mode needs PKG")
@@ -89,10 +107,11 @@ def main() -> int:
     rb.wait_port_free(int(rb.HEALTH.rsplit(":", 1)[1]))  # camsim() waits too; ready_s must not count the wait
     t0 = time.time()
     env = env_for(a.mode, a.pkg and a.pkg.resolve())
-    main_shots = {n: p for n, p in SHOTS.items() if n not in BEAUFORT_SHOTS}
+    main_shots, beaufort_groups = shot_plan(a.shots)
+    every = {**SHOTS, **DETAIL_SHOTS}
     netlines: list[str] = []
     timeouts: list[str] = []
-    with camsim(env, SHOTS["nadir_2km"], a.offline, a.docker) as host:
+    with camsim(env, next(iter(main_shots.values())), a.offline, a.docker) as host:
         res["ready_s"] = round(time.time() - t0)
         fly(host, main_shots, a.out, res)
         metrics = (rb.http_text("/metrics") or "").splitlines()
@@ -100,8 +119,8 @@ def main() -> int:
     # each session's launch replaces the log, so collect before the next one starts
     netlines += network_lines(log)
     timeouts += gate_timeout_lines(log)
-    for beaufort in sorted(set(BEAUFORT_SHOTS.values())):
-        shots = {n: SHOTS[n] for n, b in BEAUFORT_SHOTS.items() if b == beaufort}
+    for beaufort in sorted(beaufort_groups):
+        shots = {n: every[n] for n in beaufort_groups[beaufort]}
         with camsim(
             dict(env, CAMSIM_OCEAN_BEAUFORT=beaufort), next(iter(shots.values())), a.offline, a.docker
         ) as host:
@@ -114,7 +133,8 @@ def main() -> int:
     if a.offline and res["network_lines"]:
         print("FAIL: offline run logged network use:", *res["network_lines"], sep="\n  ")
         return 1
-    not_ready = [n for n in SHOTS if not res.get(n, {}).get("terrain_ready")]
+    flown = [*main_shots, *(n for g in beaufort_groups.values() for n in g)]
+    not_ready = [n for n in flown if not res.get(n, {}).get("terrain_ready")]
     if res["gate_timeouts"] or not_ready:
         print("FAIL: terrain gate timeouts:", len(res["gate_timeouts"]), "; shots not ready:", not_ready)
         return 1
