@@ -493,6 +493,24 @@ They are starting values for the SSE sweep: changing them (or any rule above) is
 `scene.buildings.maximum_screen_space_error` is not. Each tile's bounding volume is a `region` from its buildings' real
 extents.
 
+**Draw distance outside detail polygons (REALISM R5).** In a package with `[detail]` polygons, every z13 node whose
+region misses all `detail_margin:*` regions sits under content-less z12 → z9 ancestors (no transform, region = union of
+their children) with geometric error 150 m (`buildings.OUTSIDE_GEOMETRIC_ERROR`). Cesium refines them only within
+about 2 km of the camera at the default SSE 64, so the box's buildings outside the polygons cost game-thread time only
+near the camera; inside the margins the tree is the one above. A package without `[detail]` keeps the plain tree, byte
+for byte. Measured on `socal-r5` (R5 detail polygons below).
+
+**Build by chunk.** The layer never holds the whole snapshot (spec
+[`superpowers/specs/2026-10-14-buildings-chunked-design.md`](superpowers/specs/2026-10-14-buildings-chunked-design.md)).
+A building's chunk is the z12 tile (0.0439°, ~4.9 × 4.1 km at 33° N) of its cleaned centroid, so every z13–z15 tile
+and every height group lies in one chunk. The snapshot is staged in the worker pool (100,000 rows per task) and
+written as one Parquet sorted by chunk (`.state/buildings/partition/`, a DuckDB `POSITIONAL JOIN` at 500 MB / 2
+threads); then each chunk is planned (`.state/buildings/plan/<cx>_<cy>.pkl`, resumable chunk by chunk), rasterised
+(OR-merged into `.state/buildings-footprints/`, one `.npy` per land-cover tile) and written as GLBs in the pool. The
+main process writes `tileset.json` from per-tile summaries. The output is byte-identical to the whole-box build
+(`pendleton-r5veg` rebuilt: `hashes.txt` identical). `verify --deep` replans chunk by chunk and never reads the build's
+plan.
+
 **GLB layout.** Per tile: positions float32 in a local ENU frame at the tile's centre, glTF y-up (the 3D Tiles
 y-up to z-up convention), so the tile's `transform` = inverse(parent's world transform) x ENU-to-ECEF at that centre
 (transforms compose down the tree). One feature id per building per vertex (`EXT_mesh_features`, `_FEATURE_ID_0`), and an
@@ -1492,7 +1510,7 @@ Against a full-`sim` box, scaled from `pendleton-r5veg`'s scene zooms (z9+) by 3
 
 Findings from the build:
 
-- **Buildings at 200 km don't fit the memory limit.** The buildings layer plans and writes in the main process with
+- **Buildings at 200 km don't fit the memory limit** (fixed 2026-10-15: built by chunk, below). The buildings layer plans and writes in the main process with
   every building in memory: 5.74 M buildings took the main process to 15.8 GB (sampled from `/proc`; ~12 GB already
   after planning). The land-cover process, which burns the 3.0 GB footprint raster, peaked at 4.5 GB. Tile workers
   stayed under 1.1 GB. The limit is unchanged; streaming the buildings layer per tile is ROADMAP work. The buildings
@@ -1519,7 +1537,7 @@ editor build for the bench):
 |---|---|
 | 5: offline | **Pass**: `render_check.py --docker camsim:linux-r4 --offline` (`--network none`), both shot sets: no network line, no gate timeout, ready in 13 / 11 s |
 | 6: render | Every shot `terrain_ready` (`--shots detail`: `edge_inland`, `edge_coast`, `outside_high`, `outside_low`; the R0 set: 11 shots). PNGs in `.cache/linux-r5/render/` and `render-r0/`, crops in `.cache/linux-r5/edges/`. No seam at the polygon edges in the crops or the shots; outside the polygon the box is Sentinel-2 10 m (soft at low altitude, `outside_low`) with flat grey roofs, and `outside_low` shows a faint straight horizontal break across its left half. **Visual review by the user: open** |
-| 7: bench | **FAIL: game thread +3.6 to +3.9 ms p50** against `pendleton-r5veg` in every phase but `far_origin` (`run_bench.py --site pendleton --gpu-mem`, one run each; table below). GPU time unchanged, VRAM +430 to +790 MiB, 30 fps and 0 dropped everywhere. The cause is the buildings tileset beyond the polygon (below) |
+| 7: bench | **FAIL (fixed 2026-10-15, below): game thread +3.6 to +3.9 ms p50** against `pendleton-r5veg` in every phase but `far_origin` (`run_bench.py --site pendleton --gpu-mem`, one run each; table below). GPU time unchanged, VRAM +430 to +790 MiB, 30 fps and 0 dropped everywhere. The cause is the buildings tileset beyond the polygon (below) |
 
 | Phase | Game p50, ms (pendleton-r5veg / socal-r5) | Game p95 | GPU p50 | VRAM max, MiB |
 |---|---|---|---|---|
@@ -1545,3 +1563,25 @@ the 5.7 M buildings of the whole box, and from the bench's altitudes the suburbs
 buildings tiles in view. Cesium's game-thread cost tracks the rendered tile count (CLAUDE.md, "One terrain tileset").
 Options: buildings only inside the polygons (or a `[detail]` margin), a coarser screen-space error for buildings
 outside them, or accepting the cost (30 fps held, 0 dropped, game thread ≤ 10 ms p50 of the 33 ms frame).
+
+### R5 follow-up: buildings by chunk and the outside draw distance (2026-10-15, Linux)
+
+RTX 5080, driver 595.99.02, Vulkan; native editor build for the bench; build in `camsim-scene:r0` rebuilt from branch
+`buildings-chunked`.
+
+Spike (2026-10-14, `--phases orbit,dense_pass`, one run each, game p50 ms orbit / dense): as built 6.81 / 9.74;
+buildings SSE 256 6.82 / 9.65; no buildings physics meshes 6.22 / 9.02; tileset pruned to the polygon + 2 km
+3.23 / 6.12; content-less z9–z12 ancestors over every z13 node at geometric error 1400 / 400 / 150: 7.98 / 10.85,
+7.92 / 10.85, 3.10 / 6.23. The cost was the buildings tiles near the camera in the suburbs around the polygon (every
+z13 tile was a child of the always-refined root), not their detail. Error 150 everywhere dropped the camp's 3D
+buildings inside the polygon in `slant_10km` (~10 km), so the cut-off applies only outside the margins; the user
+accepted ~2 km there.
+
+| Check | Result |
+|---|---|
+| `pendleton-r5veg` buildings + land cover rebuilt | **Pass**: `hashes.txt` identical; buildings 33 s, peak 672 MB; land cover 109 s, 456 MB |
+| `socal-r5` buildings + land cover rebuilt | Only `features/buildings/tileset.json` changed (the draw distance). **Buildings: 528 s (was 3,257 s), peak 837 MB (was 15.8 GB)**. Partition 18 s, 776 MB; densest chunk (41,910 buildings): plan 273 MB, raster 354 MB, GLBs 319 MB |
+| `socal-r5` build gate | **FAIL, now land cover: 2,494 MB** (2,412 s). The main process loads the R2 OSM / NHD features for the whole box (592,951 records: 1,814 MB) and pickles them to the cut process (2,405 MB). It was always there, behind the buildings' 15.8 GB; the build now charges each layer the main process's peak during that layer (`VmHWM` reset between layers) and names it |
+| `verify --deep -j 16` | **Pass** both: `pendleton-r5veg` 193 s, `socal-r5` 653 s |
+| Gate 7 bench (full, against `pendleton-r5veg`) | **Pass**: game p50 orbit 3.25 / 3.15, dense_pass 6.36 / 6.09 (within 0.3 ms); every phase within +0.5 ms (long_range 5.94 / 5.46, the largest). GPU unchanged, VRAM within ±130 MiB, 30 fps, 0 dropped |
+| `slant_10km` | The camp inside the polygon keeps its 3D buildings (`.cache/linux-r5/camp_compare.png`: before / after / error 150 everywhere) |

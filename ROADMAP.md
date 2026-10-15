@@ -2003,12 +2003,20 @@ Scope, identity with a full-`sim` Pendleton (3,652 terrain + 51,443 imagery leav
 rebuild, resume, imagery balance (2 DN), NDVI seam (0.000) and the offline render pass. Scene tooling tests 656 passed.
 **Two fails, recorded:**
 
-- [ ] **Build memory at 200 km:** the buildings layer holds every building in the main process: 15.8 GB peak for
+- [x] ~~**Build memory at 200 km:** the buildings layer holds every building in the main process: 15.8 GB peak for
   5.74 M buildings (limit 2,048 MB; the land-cover burn process 4.5 GB). Stream the buildings plan and tiles per tile
-  (and the footprint raster per land-cover tile).
-- [ ] **Bench, game thread +3.6 to +3.9 ms p50** vs `pendleton-r5veg` in every phase but `far_origin`: the buildings
+  (and the footprint raster per land-cover tile).~~ **Done 2026-10-15** (Linux): built by z12 chunk in the pool
+  (`docs/scene-packages.md` "R5 follow-up"): buildings 837 MB peak, 528 s (was 3,257 s), byte-identical output
+  (`pendleton-r5veg` `hashes.txt` identical). Each layer is now charged the main process's own peak during it.
+- [ ] **Build memory: land cover's R2 features at 200 km.** With buildings fixed, `socal-r5` still exits 2: land cover
+  2,494 MB. The main process loads the OSM / NHD feature records for the whole box (592,951: 1,814 MB) and pickles them
+  to the cut process (2,405 MB). Read and burn them per land-cover tile (or per chunk) instead.
+- [x] ~~**Bench, game thread +3.6 to +3.9 ms p50** vs `pendleton-r5veg` in every phase but `far_origin`: the buildings
   tileset beyond the polygon (buildings off: equal; vegetation off: the gap stays). GPU unchanged, 30 fps, 0 dropped.
-  Decide: buildings only inside the polygons (or a margin), a coarser SSE for buildings outside them, or accept.
+  Decide: buildings only inside the polygons (or a margin), a coarser SSE for buildings outside them, or accept.~~
+  **Done 2026-10-15** (Linux): the user chose a ~2 km draw distance outside the detail margins (z13 nodes there under
+  content-less ancestors, geometric error 150). Full bench vs `pendleton-r5veg`: orbit 3.25 / 3.15, dense_pass
+  6.36 / 6.09 ms p50, every phase within +0.5 ms; the camp inside the polygon keeps its 3D buildings at ~10 km.
 - [ ] **User visual review** of the R5 renders (`.cache/linux-r5/render/`, `render-r0/`, `edges/`), including a faint
   straight horizontal break in `outside_low`.
 

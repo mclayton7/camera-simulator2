@@ -512,6 +512,10 @@ collision.
   **Fails:** the build's peak RSS (buildings for 5.7 M footprints in the main process, 15.8 GB, limit 2 GB), and the
   bench: game thread +3.6 to +3.9 ms p50 from the buildings tileset beyond the polygon (GPU unchanged, 30 fps,
   0 dropped). The user's visual review of the renders is open.
+- **Follow-up (2026-10-15):** buildings are built by z12 chunk in the worker pool (socal-r5: 837 MB peak, 528 s, was
+  15.8 GB, 3,257 s; output byte-identical), and outside the detail margins they draw within ~2 km of the camera
+  (content-less ancestors at geometric error 150): the bench is back within 0.3 ms of `pendleton-r5veg` (orbit 3.25 /
+  3.15, dense_pass 6.36 / 6.09 ms). The build's remaining RSS fail is land cover's R2 feature load (2,494 MB).
 
 ### R6 Realism validation
 
