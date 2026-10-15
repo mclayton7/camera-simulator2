@@ -378,7 +378,8 @@ def test_bridges_settings_and_landcover_flag():
     assert plan.bridges == {"enabled": True}
     ls = layer_settings(plan)
     assert ls["bridges"]["min_clearance_m"] == 2.0 and ls["bridges"]["source"] == "osm_geofabrik"
-    assert ls["bridges"]["geometric_error"] == 60.0 and ls["bridges"]["tile_zoom"] == 13
+    assert ls["bridges"]["geometric_error"] == {"root": 100000.0, "group": 700.0, "tile": 0.0}
+    assert ls["bridges"]["tile_zoom"] == 13 and ls["bridges"]["group_zoom"] == 10
     assert ls["landcover"]["features"]["bridges"] is True
 
 

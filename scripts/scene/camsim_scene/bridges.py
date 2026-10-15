@@ -4,6 +4,16 @@ piers -> 3D Tiles 1.1 under features/bridges/."""
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+
+import numpy as np
+import shapely
+from shapely.geometry import LineString, Polygon
+
+from . import geodesy, gltf
+from .features import Feature, width_m
+
 BRIDGES_RULES_VERSION = "1"  # bump on any change to selection, heights or geometry (it is in the layer settings hash)
 MIN_CLEARANCE_M = 2.0  # a deck never higher than this above the terrain is not built (the terrain carries the road)
 DECK_THICKNESS_M = 1.5
@@ -16,17 +26,11 @@ PIER_ACROSS_FRACTION = 0.6
 PIER_SINK_M = 0.5
 STATION_MAX_M = 10.0
 PROFILE_STEP_M = 5.0
-TILE_ZOOM = 13
-GEOMETRIC_ERROR = 60.0
+TILE_ZOOM = 13  # content tiles, by deck midpoint
+GROUP_ZOOM = 10  # content-less groups (~35 km at 33 N): a group's decks load when the camera is within ~10 km of it
+GROUP_GEOMETRIC_ERROR = 700.0  # 700 * 1080 / (2 tan 30 deg * 64) ~ 10 km at SSE 64, 1080p, 60 deg FOV
+ROOT_GEOMETRIC_ERROR = 100000.0  # the root always refines: the groups decide
 
-
-import math
-from dataclasses import dataclass
-
-import numpy as np
-from shapely.geometry import LineString
-
-from .features import Feature, width_m
 
 NODE_DIGITS = 9  # OSM shared nodes give identical coordinates; 1e-9 deg is ~0.1 mm
 
@@ -201,10 +205,7 @@ def plan_decks(features: list[Feature], heights_fn, min_clearance_m: float = MIN
 
 
 # --- geometry (spec 1.3) ---------------------------------------------------------------------------------------------
-import shapely  # noqa: E402
-from shapely.geometry import Polygon  # noqa: E402
 
-from . import geodesy, gltf  # noqa: E402
 
 MIN_STEP_M = 0.05  # consecutive points closer than this are one station
 MAX_MITRE = 2.0

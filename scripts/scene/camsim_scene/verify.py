@@ -365,6 +365,51 @@ def _check_buildings_tileset(pkg: Path) -> Check:
     return Check("buildings_tileset", not missing, _summary([f"missing {u}" for u in missing]))
 
 
+def _check_bridges_tileset(pkg: Path) -> Check:
+    from .layers.bridges import OUT, walk_tileset
+
+    root = pkg / OUT
+    missing = [u for u, _ in walk_tileset(json.loads((root / "tileset.json").read_text())) if not (root / u).is_file()]
+    return Check("bridges_tileset", not missing, _summary([f"missing {u}" for u in missing]))
+
+
+def _check_bridges_heights(pkg: Path, m: Manifest, st) -> Check:
+    """Every GLB deck against a fresh plan from the features and the terrain: the driving surface's lowest and highest
+    points are the deck's two ends (the deck is linear), within ROOF_TOL_M; no deck missing or unexpected."""
+    from . import geodesy
+    from .gltf import decode_feature_glb
+    from .layers import bridges as layer
+    from .pipeline import _load_features
+
+    root = pkg / layer.OUT
+    decks, _, _ = layer.plan(m, st.ctx, _load_features(m, st.ctx), st)
+    by_id = {d.source_id: d for d in decks}
+    problems, seen = [], set()
+    for uri, mat in layer.walk_tileset(json.loads((root / "tileset.json").read_text())):
+        t = decode_feature_glb((root / uri).read_bytes())
+        p = t["positions"].astype(np.float64)
+        enu = np.stack([p[:, 0], -p[:, 2], p[:, 1]], axis=1)
+        _, _, h = geodesy.ecef_to_geodetic((mat[:3, :3] @ enu.T).T + mat[:3, 3])
+        top = np.concatenate([t["indices"].get(k, np.zeros(0, np.uint32)) for k in (0, 2)])
+        for f, sid in enumerate(t["columns"]["source_id"]):
+            d = by_id.get(sid)
+            if d is None:
+                problems.append(f"{uri}: unexpected {sid}")
+                continue
+            seen.add(sid)
+            if layer.tile_key(d) != tuple(int(v) for v in uri[: -len(".glb")].split("/")):
+                problems.append(f"{sid}: in {uri}, expected {layer.tile_key(d)}")
+            ht = h[top[t["feature_ids"][top] == f]]
+            if not len(ht):
+                problems.append(f"{sid}: no driving surface")
+                continue
+            lo, hi = sorted((d.h0, d.h1))
+            if abs(float(ht.min()) - lo) > ROOF_TOL_M or abs(float(ht.max()) - hi) > ROOF_TOL_M:
+                problems.append(f"{sid}: deck {ht.min():.3f}..{ht.max():.3f} m, expected {lo:.3f}..{hi:.3f} m")
+    problems += [f"missing {sid}" for sid in sorted(set(by_id) - seen)]
+    return Check("bridges_heights", not problems, _summary(problems))
+
+
 def _check_buildings_heights(pkg: Path, m: Manifest, st, jobs: int = 1) -> Check:
     """Every GLB building against a fresh plan, chunk by chunk (never the build's plan pickles). The .state/ partition
     is reused when its key matches (it only regroups the snapshot's rows), else the snapshot is partitioned into a
@@ -568,6 +613,8 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
     if m.layers.get("buildings") and (pkg / "features" / "buildings" / "tileset.json").exists():
         checks.append(_guard("buildings_heights", _check_buildings_heights, pkg, m, st, jobs))
         checks.append(_guard("buildings_roofs", _check_buildings_roofs, pkg, m))
+    if m.layers.get("bridges") and (pkg / "features" / "bridges" / "tileset.json").exists():
+        checks.append(_guard("bridges_heights", _check_bridges_heights, pkg, m, st))
     mask_index = pkg / "features" / "buildings" / "mask" / "index.json"
     if (m.layers.get("buildings") and m.layers["landcover"].get("buildings") and mask_index.exists()
             and (pkg / "landcover" / "index.json").exists()):
@@ -595,6 +642,8 @@ def verify(
         checks.append(_guard("canopy", _check_canopy, pkg))
     if (pkg / "features" / "buildings" / "tileset.json").exists():  # absent when no building was kept
         checks.append(_guard("buildings_tileset", _check_buildings_tileset, pkg))
+    if (pkg / "features" / "bridges" / "tileset.json").exists():  # absent when no deck was kept
+        checks.append(_guard("bridges_tileset", _check_bridges_tileset, pkg))
     if not deep:
         checks.append(_guard("sea_level", _check_sea_level, pkg, m, None))
     if {z: k for z, k in present_tiles(pkg, "ndvi", "png").items() if len(k)}:

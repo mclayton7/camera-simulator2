@@ -48,6 +48,7 @@ from .engine import (
     tile_path,
 )
 from .fsutil import atomic_write, normalise_modes, sha256_file
+from .layers import bridges as bridges_layer
 from .layers import buildings as buildings_layer
 from .layers import canopy as canopy_layer
 from .layers import imagery, landcover, ndvi, terrain
@@ -574,21 +575,27 @@ def _read_features(fs: dict, assets: list[tuple[str, str]]) -> list:
     return out
 
 
-def _load_features(m: Manifest, ctx: BuildContext) -> list:
-    """Every feature record of the manifest's feature sources, from the cached extract when the context has a cache (a
-    derived file per asset hashes + rules version + feature settings: the 600 MB PBF is read once)."""
+def features_key(m: Manifest) -> str:
+    """The derived-features cache key: tool version, feature rules, the feature settings and every extract's sha256."""
     from .features import RULES_VERSION
 
     fs = m.layers["landcover"]["features"]
-    assets, shas = [], []
+    shas = [f"{sid}/{a.id}:{a.sha256}" for sid in fs["sources"] for a in m.source(sid).assets]
+    return inputs_hash(__version__, RULES_VERSION, canonical_json(fs), *shas)
+
+
+def _load_features(m: Manifest, ctx: BuildContext) -> list:
+    """Every feature record of the manifest's feature sources, from the cached extract when the context has a cache (a
+    derived file per asset hashes + rules version + feature settings: the 600 MB PBF is read once)."""
+    fs = m.layers["landcover"]["features"]
+    assets = []
     for sid in fs["sources"]:
         rec = m.source(sid)
         for a in rec.assets:
             assets.append((sid, ctx.asset_paths[f"{rec.id}/{a.id}"]))
-            shas.append(f"{sid}/{a.id}:{a.sha256}")
     cached = None
     if ctx.cache_root:
-        key = inputs_hash(__version__, RULES_VERSION, canonical_json(fs), *shas)
+        key = features_key(m)
         cached = Cache(Path(ctx.cache_root)).derived_path(key, ".features.pkl")
         if cached.is_file():
             try:
@@ -863,6 +870,11 @@ def build_scene(
         bstats = charge(buildings_layer.build(pkg, m, ctx, jobs))
         if m.layers.get("buildings"):
             stats["buildings"] = bstats
+        has_bridges = bool(m.layers.get("bridges"))
+        brstats = charge(bridges_layer.build(  # REALISM R3 bridges, from R2's OSM extract
+            pkg, m, ctx, lambda: _load_features(m, ctx), features_key(m) if has_bridges else ""))
+        if has_bridges:
+            stats["bridges"] = brstats
         vegmix.write(pkg, m)  # REALISM R4: the species mix (or a stale one removed)
         atomic_write(pkg / "ATTRIBUTION.txt", attribution_text(m).encode())
         normalise_modes(pkg, skip=(STATE_DIR,))
@@ -889,6 +901,8 @@ def build_scene(
         }
         if m.layers.get("buildings"):
             info["buildings"] = buildings_layer.plan_stats(pkg)
+        if m.layers.get("bridges"):
+            info["bridges"] = bridges_layer.plan_stats(pkg)
         atomic_write(pkg / "build.json", (json.dumps(info, indent=2, sort_keys=True) + "\n").encode())
     peaks = {name: s.peak_rss_mb for name, s in stats.items()}
     peaks["planning (main process, before the layers)"] = planning_peak

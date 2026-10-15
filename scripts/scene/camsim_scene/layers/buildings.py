@@ -311,7 +311,9 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext, jobs: int = 1) -> LayerStat
     st, out = LayerStats(), Path(pkg) / OUT
     s = m.layers.get("buildings")
     if not s:
-        shutil.rmtree(Path(pkg) / "features", ignore_errors=True)
+        shutil.rmtree(out, ignore_errors=True)  # only features/buildings: features/bridges is another layer's
+        if (Path(pkg) / "features").is_dir() and not any((Path(pkg) / "features").iterdir()):
+            (Path(pkg) / "features").rmdir()
         for name in (MARKER, *LEGACY_STATE):
             (Path(pkg) / STATE_DIR / name).unlink(missing_ok=True)
         shutil.rmtree(Path(pkg) / STATE_DIR / RASTER_DIR, ignore_errors=True)

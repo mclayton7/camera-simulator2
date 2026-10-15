@@ -397,7 +397,8 @@ def bridges_settings(plan: ScenePlan) -> dict | None:
         "parapet": [BR.PARAPET_W_M, BR.PARAPET_H_M],
         "pier_spacing_m": BR.PIER_SPACING_M,
         "tile_zoom": BR.TILE_ZOOM,
-        "geometric_error": BR.GEOMETRIC_ERROR,
+        "group_zoom": BR.GROUP_ZOOM,
+        "geometric_error": {"root": BR.ROOT_GEOMETRIC_ERROR, "group": BR.GROUP_GEOMETRIC_ERROR, "tile": 0.0},
         "format": "3d-tiles-1.1",
     }
 
