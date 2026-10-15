@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Math/QuatRotationTranslationMatrix.h"
 
 class APlayerController;
 struct FPostProcessSettings;
@@ -34,6 +35,14 @@ namespace CamSimRender
 	 * camera cut requested this frame.
 	 */
 	void RefreshPlayerView(APlayerController* PC, float DeltaSeconds);
+
+	/**
+	 * The view rotation for a sensor orientation, through the rotation matrix (atan2 of its axes). Not
+	 * FQuat::Rotator(): its gimbal-lock branch snaps any pitch within ~0.08 deg of +-90 to exactly +-90, so a nadir
+	 * sensor away from the georeference origin (local vertical off UE's Z by distance / R: 0.026 deg at 2.9 km)
+	 * rendered along UE's Z: 0.14 m off on the ground from 300 m (REALISM R6 geo-registration).
+	 */
+	inline FRotator ViewRotationFromQuat(const FQuat& Q) { return FQuatRotationMatrix(Q).Rotator(); }
 
 	/**
 	 * Motion blur explicitly off. Left alone, UE's default (on, amount 0.5)

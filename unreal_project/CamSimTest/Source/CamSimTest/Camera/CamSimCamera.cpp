@@ -280,6 +280,15 @@ void ACamSimCamera::RecordFrameStats()
 	LastStatsWallSec = NowSec;
 }
 
+void ACamSimCamera::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
+{
+	Super::CalcCamera(DeltaTime, OutResult);
+	// UCameraComponent::GetCameraView takes GetComponentRotation(), FQuat::Rotator(), which snaps a pitch within ~0.08 deg
+	// of -90 to -90: a nadir view away from the georeference origin then renders along UE's -Z instead of its local
+	// vertical (REALISM R6: 0.14 m on the ground from 300 m, 2.9 km from the origin).
+	if (SensorCamera) OutResult.Rotation = CamSimRender::ViewRotationFromQuat(SensorCamera->GetComponentQuat());
+}
+
 void ACamSimCamera::ApplyPrimaryView()
 {
 	// SceneCapture holds pose (via attachment), FOV and post-process; mirror them.

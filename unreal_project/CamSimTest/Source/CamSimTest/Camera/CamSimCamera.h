@@ -49,6 +49,8 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
+	/** The primary view: the sensor camera's, with its rotation kept exact near nadir (CamSimRender::ViewRotationFromQuat). */
+	virtual void CalcCamera(float DeltaTime, struct FMinimalViewInfo& OutResult) override;
 
 	/** Capture a frame now with the current telemetry (normally done by Tick). */
 	void CaptureAndEncode();

@@ -472,7 +472,7 @@ TArray<FEntityAnnotationData> UCamSimCaptureComponent::BuildGroundTruthSnapshot(
 	const FCamSimConfig& Cfg = Subsystem->GetConfig();
 	FViewProjectionData ViewProj;
 	ViewProj.ViewProjectionMatrix = FEntityProjection::BuildViewProjectionMatrix(
-		Sensor->GetComponentLocation(), Sensor->GetComponentRotation(), Sensor->FOVAngle,
+		Sensor->GetComponentLocation(), CamSimRender::ViewRotationFromQuat(Sensor->GetComponentQuat()), Sensor->FOVAngle,
 		Cfg.CaptureWidth, Cfg.CaptureHeight);
 	ViewProj.ImageWidth  = Cfg.CaptureWidth;
 	ViewProj.ImageHeight = Cfg.CaptureHeight;

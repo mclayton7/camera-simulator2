@@ -341,3 +341,31 @@ bool FRenderMotionBlurTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("amount 0"), PP.MotionBlurAmount, 0.0f);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderViewRotationNearNadirTest, "CamSim.Render.ViewRotationKeepsNearNadirTilt",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FRenderViewRotationNearNadirTest::RunTest(const FString& Parameters)
+{
+	// REALISM R6 geo-registration: a nadir sensor 2.9 km from the georeference origin looks down its local vertical,
+	// 0.026 deg off UE's -Z. FQuat::Rotator() snaps any pitch within ~0.08 deg of -90 to exactly -90 (its gimbal-lock
+	// branch), which rendered the view along -Z: 0.137 m off on the ground from 300 m. The view rotation must keep it.
+	for (const double TiltDeg : {0.0263, 0.001, 0.07, 0.5})
+	{
+		for (const double YawDeg : {0.0, 30.0, 250.0})
+		{
+			const FQuat Nadir = FRotator(-90.0, YawDeg, 0.0).Quaternion();
+			const FQuat Q = FQuat(FVector(0.6, 0.8, 0.0), FMath::DegreesToRadians(TiltDeg)) * Nadir;
+			const FQuat R = CamSimRender::ViewRotationFromQuat(Q).Quaternion();
+			// Axis differences (radians for small angles; AngularDistance's acos has a ~2e-6 deg floor). UE's rotator <->
+			// quaternion conversions use the float pi: ~2e-8 is their floor (6 um at 300 m); the bug was 4.6e-4.
+			const double Err = FMath::Max3((R.GetAxisX() - Q.GetAxisX()).Size(), (R.GetAxisY() - Q.GetAxisY()).Size(),
+				(R.GetAxisZ() - Q.GetAxisZ()).Size());
+			TestTrue(*FString::Printf(TEXT("tilt %.4f yaw %.0f: view axes within 1e-7 (%.3g)"), TiltDeg, YawDeg, Err),
+				Err < 1e-7);
+		}
+	}
+	const FQuat Oblique = FRotator(-45.0, 120.0, 3.0).Quaternion();
+	TestTrue(TEXT("oblique unchanged"),
+		(CamSimRender::ViewRotationFromQuat(Oblique).Quaternion().GetAxisX() - Oblique.GetAxisX()).Size() < 1e-7);
+	return true;
+}
