@@ -198,3 +198,19 @@ def test_glb_round_trips_and_is_deterministic():
     assert t["columns"]["source_id"] == ["osm:w1", "osm:w2"] and t["columns"]["kind"] == ["road", "rail"]
     assert t["columns"]["max_clearance_m"] == pytest.approx([20.0, 20.0])
     assert t["copyright"] == "(c) OSM" and set(t["indices"]) == {0, 1, 2}  # asphalt top, ballast top, concrete
+
+
+def test_local_heights_batches_by_cell_and_keeps_values():
+    from camsim_scene.bridges import local_heights
+
+    calls = []
+
+    def hf(lon, lat):
+        calls.append((float(np.ptp(lon)), float(np.ptp(lat))))
+        return np.asarray(lon) * 10 + np.asarray(lat)
+
+    lon = np.array([-117.01, -117.011, -116.52, -116.521, -117.0105])
+    lat = np.array([33.01, 33.011, 33.41, 33.411, 33.01])
+    got = local_heights(hf, cell_deg=0.05)(lon, lat)
+    assert got == pytest.approx(lon * 10 + lat)
+    assert len(calls) == 2 and all(dx < 0.05 and dy < 0.05 for dx, dy in calls)

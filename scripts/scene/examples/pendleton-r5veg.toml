@@ -37,5 +37,3 @@ mix.30 = { shrub_chaparral = 0.5, shrub_desert = 0.5, tree_broadleaf_a = 0.05 }
 shrub_density.10 = 4.0
 shrub_density.20 = 8.0
 shrub_density.30 = 1.0
-
-[bridges]                  # REALISM R3 bridges: OSM bridge ways -> features/bridges/ (decks, piers); needs [features]

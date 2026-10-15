@@ -120,7 +120,7 @@ def plan_stats(pkg: Path) -> dict | None:
 def plan(m: Manifest, ctx: BuildContext, features: list, wst: WorkerState | None = None):
     """(decks, stats, heights_fn) from R2's features and the package's terrain."""
     wst = wst or WorkerState(ctx)
-    hf = buildings_layer.heights_fn(wst, m)
+    hf = BR.local_heights(buildings_layer.heights_fn(wst, m))
     decks, stats = BR.plan_decks(features, hf, float(m.layers["bridges"]["min_clearance_m"]))
     return decks, stats, hf
 

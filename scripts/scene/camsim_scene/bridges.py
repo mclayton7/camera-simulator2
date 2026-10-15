@@ -117,6 +117,24 @@ def _samples(line: LineString, step_m: float) -> tuple[np.ndarray, np.ndarray, n
     return lon, lat, s
 
 
+def local_heights(heights_fn, cell_deg: float = 0.05):
+    """heights_fn, called once per cell_deg x cell_deg cell of the points instead of once for all of them: the
+    terrain sampler opens every source tile under a call's bounding box, so one call over a whole package's bridge ends
+    would read the terrain of the whole box (1.6 GB at Pendleton)."""
+
+    def fn(lon, lat):
+        lon, lat = np.asarray(lon, np.float64), np.asarray(lat, np.float64)
+        out = np.full(lon.shape, np.nan)
+        cells = np.stack([np.floor(lon / cell_deg), np.floor(lat / cell_deg)], axis=-1).reshape(-1, 2)
+        flat_lon, flat_lat, flat_out = lon.reshape(-1), lat.reshape(-1), out.reshape(-1)
+        for c in np.unique(cells, axis=0):
+            m = (cells == c).all(axis=1)
+            flat_out[m] = np.asarray(heights_fn(flat_lon[m], flat_lat[m]), np.float64)
+        return out
+
+    return fn
+
+
 def plan_decks(features: list[Feature], heights_fn, min_clearance_m: float = MIN_CLEARANCE_M) -> tuple[list[Deck], dict]:
     """Deck heights over the bridge graph (spec 1.2): per kind, way end points are nodes; degree-1 nodes are grounded
     at the bare-earth terrain (heights_fn: lon, lat arrays -> ellipsoid m, NaN = no data); every free node takes the
