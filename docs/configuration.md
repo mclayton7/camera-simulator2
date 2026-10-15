@@ -620,15 +620,17 @@ to asset paths and flags:
 Entity type IDs are defined by the host simulation. CamSim does not reserve any
 specific IDs -- the mapping is entirely user-configured.
 
-The shipped config defines three glTF types (models under `entities/`; the
+The shipped config defines five glTF types (models under `entities/`; the
 truck and boat directories each carry a `LICENSE.md` with the source and the
-CC BY 4.0 attribution):
+CC BY 4.0 attribution; the marker plate is generated and CC0):
 
 | ID | Model | `class_name` | Size (L x W, after `scale`) | DIS mapping |
 |----|-------|--------------|-----------------------------|-------------|
 | `1001` | F-16C (`f16/f16-c_falcon.glb`) | -- | -- | `1:2:225:2:0:0:0` |
 | `2001` | Ural-4320 6x6 cargo truck (`truck/ural_4320.glb`) | `truck` | 7.57 x 3.06 m | `1:1:225:7:0:0:0` (and any land platform via the `kind:domain` fallback) |
 | `3001` | Mako 655 rigid-hull inflatable (`boat/mako_655.glb`) | `boat` | 6.54 x 2.63 m | `1:3:225:7:0:0:0` (and any surface platform via the `kind:domain` fallback) |
+| `9001` | Geo-registration marker plate (`marker/plate.glb`, `scripts/georeg/make_marker.py`), origin at the bottom-face centre | `georeg_marker` | 2 x 2 m, 5 cm thick | -- (CIGI only; `scripts/georeg_check.py`, REALISM R6) |
+| `9002` | The same plate at `scale: 5` | `georeg_marker` | 10 x 10 m, 25 cm thick | -- (CIGI only) |
 
 `CamSim.GPU.Entity.ModelFacing` checks that `2001` and `3001`, after their
 `rotation` and `scale`, are longest along UE +X and match `half_length_m` /

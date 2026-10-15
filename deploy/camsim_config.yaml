@@ -830,6 +830,26 @@ entity_types:
     # ROADMAP 4C: outboard motor at the stern (origin on the water surface)
     thermal_parts:
       - { kind: engine, shape: ellipsoid, centre_m: [-3.3, 0, -0.75], half_m: [0.4, 0.35, 0.5], falloff_m: 0.2, delta_k: 25 }
+  # REALISM R6 geo-registration markers (scripts/georeg_check.py): a 2 m x 2 m x 5 cm plate, origin at the centre
+  # of its bottom face (entities/marker/LICENSE.md, CC0); 9002 is the same plate at 10 m for the 5 km views.
+  "9001":
+    mesh: marker/plate.glb
+    skeletal: false
+    class_name: georeg_marker
+    scale: 1.0
+    rotation:
+      pitch: 0.0
+      yaw: 0.0
+      roll: 0.0
+  "9002":
+    mesh: marker/plate.glb
+    skeletal: false
+    class_name: georeg_marker
+    scale: 5.0
+    rotation:
+      pitch: 0.0
+      yaw: 0.0
+      roll: 0.0
   # Example animated character entity (Phase 22D).
   # Requires skeletal mesh + Animation Blueprint assets in UE editor (see TODO.md).
   # "1010":
