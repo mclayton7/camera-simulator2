@@ -154,7 +154,7 @@ def _tiles(blds):
     by = {}
     for b in blds:
         by.setdefault(b.tile, []).append(b)
-    return {k: (v, B.tile_origin(*k, v)) for k, v in by.items()}
+    return {k: B.tile_summary(k, v) for k, v in by.items()}
 
 
 def test_tileset_tree_tiers_errors_and_transforms():
@@ -172,7 +172,7 @@ def test_tileset_tree_tiers_errors_and_transforms():
     [z15] = z14["children"]
     assert z15["geometricError"] == 6.0 and z15["content"]["uri"].startswith("15/")
     walked = dict(B.walk_tileset(doc))
-    for (z, x, y), (bl, origin) in _tiles(blds).items():
+    for (z, x, y), (region, origin) in _tiles(blds).items():
         assert np.allclose(walked[f"{z}/{x}/{y}.glb"], geodesy.enu_to_ecef_matrix(*origin), atol=1e-3, rtol=0)
 
 
@@ -193,3 +193,58 @@ def test_tile_region_contains_straddling_building():
     for parent in (doc["root"], doc["root"]["children"][0]):
         pr = parent["boundingVolume"]["region"]
         assert pr[0] <= rw and pr[2] >= re and pr[4] <= lo and pr[5] >= hi
+
+
+def test_stage_matches_plan_and_reports_drops():
+    good = B.Footprint("g", box_lonlat(10.0, 10.0, 20, 20), None, None, "")
+    small = B.Footprint("s", box_lonlat(10.0, 10.0, 2, 2), None, None, "")
+    line = B.Footprint("l", shapely.LineString([(10, 10), (10.001, 10)]), None, None, "")
+    parts, cx, cy, area = B.stage(good, 10.0)
+    assert len(parts) == 1 and abs(cx - 10.0) < 1e-9 and abs(cy - 10.0) < 1e-9 and 390 < area < 410
+    assert B.stage(small, 10.0) == "small" and B.stage(line, 10.0) == "invalid"
+    assert B.chunk_of(cx, cy) == B.tile_of(cx, cy, B.CHUNK_ZOOM)
+
+
+def test_building_tiles_nest_in_their_chunk():
+    for lon, lat in ((10.0, 10.0), (-117.4, 33.3), (0.0219, -0.0001)):
+        cx, cy = B.chunk_of(lon, lat)
+        for z in (13, 14, 15):
+            x, y = B.tile_of(lon, lat, z)
+            assert (x >> (z - B.CHUNK_ZOOM), y >> (z - B.CHUNK_ZOOM)) == (cx, cy)
+
+
+def _two_far_tiles():
+    a = B.Footprint("osm:a", box_lonlat(10.0, 10.0, 50, 50), 20.0, None, "")  # z13
+    b = B.Footprint("osm:b", box_lonlat(10.5, 10.5, 50, 50), 20.0, None, "")  # z13, ~70 km away
+    small = B.Footprint("osm:c", box_lonlat(10.5005, 10.5005, 10, 10), 5.0, None, "")  # z15 under b's z13
+    blds, _ = B.plan_buildings([a, b, small], flat(0.0), 10.0)
+    return blds
+
+
+def test_tileset_without_near_only_is_unchanged_by_the_argument():
+    tiles = _tiles(_two_far_tiles())
+    assert B.tileset_json(tiles) == B.tileset_json(tiles, near_only=None)
+    assert all(c["geometricError"] == 60.0 for c in B.tileset_json(tiles)["root"]["children"])
+
+
+def test_tileset_outside_nodes_sit_under_contentless_ancestors():
+    tiles = _tiles(_two_far_tiles())
+    lon_a = np.radians(10.25)  # a (lon 10.0) is inside, b (lon 10.5) outside
+    doc = B.tileset_json(tiles, near_only=lambda r: r[0] > lon_a)
+    root = doc["root"]
+    assert root["geometricError"] == 200.0 and doc["geometricError"] == 200.0
+    inside = [c for c in root["children"] if c["geometricError"] == 60.0]
+    outer = [c for c in root["children"] if c["geometricError"] == B.OUTSIDE_GEOMETRIC_ERROR]
+    assert len(inside) == 1 and inside[0]["content"]["uri"].startswith("13/") and len(outer) == 1
+    node, depth = outer[0], 0
+    while node["geometricError"] == B.OUTSIDE_GEOMETRIC_ERROR:
+        assert "content" not in node and "transform" not in node and len(node["children"]) == 1
+        node, depth = node["children"][0], depth + 1
+    assert depth == 4 and node["content"]["uri"].startswith("13/")  # z9, z10, z11, z12 ancestors
+    plain = sorted(B.walk_tileset(B.tileset_json(tiles)), key=lambda t: t[0])
+    grouped = sorted(B.walk_tileset(doc), key=lambda t: t[0])
+    assert [u for u, _ in plain] == [u for u, _ in grouped]
+    assert all(np.array_equal(m1, m2) for (_, m1), (_, m2) in zip(plain, grouped))
+    r = outer[0]["boundingVolume"]["region"]
+    child = node["boundingVolume"]["region"]
+    assert r[0] <= child[0] and r[2] >= child[2] and r[4] <= child[4] and r[5] >= child[5]

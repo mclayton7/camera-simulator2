@@ -209,11 +209,12 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     for b in blds:
         by.setdefault(b.tile, []).append(b)
     # tiles only exist for keys with at least one building: write_glb rejects empty meshes
-    tiles = {k: (v, B.tile_origin(*k, v)) for k, v in sorted(by.items())}
+    groups = dict(sorted(by.items()))
+    tiles = {k: B.tile_summary(k, v) for k, v in groups.items()}
     sampler = ImageryRoofSampler(wst) if roof is not None else None
     roof_stats: dict = {}
-    for (z, x, y), (bl, origin) in tiles.items():
-        mesh, table = B.tile_mesh(bl, origin, roof, sampler, roof_stats)
+    for (z, x, y), bl in groups.items():
+        mesh, table = B.tile_mesh(bl, tiles[(z, x, y)][1], roof, sampler, roof_stats)
         p = out / str(z) / str(x) / f"{y}.glb"
         p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(p, write_glb(mesh, table, credit.replace("\n", " ")))

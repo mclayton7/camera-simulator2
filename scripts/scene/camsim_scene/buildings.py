@@ -21,6 +21,8 @@ BUILDINGS_RULES_VERSION = "2"
 DEFAULT_RELEASE = "2026-09-23.1"
 TIER_MIN_AREA_M2 = {13: 2000.0, 14: 300.0}  # else LEAF_ZOOM
 LEAF_ZOOM = 15
+CHUNK_ZOOM = 12  # build chunk (z12 tile, ~4.9 x 4.1 km at 33 N): every z13-z15 building tile nests in one
+OUTSIDE_GEOMETRIC_ERROR = 150.0  # ancestors of z13 nodes outside the detail margins: ~2 km draw distance at SSE 64
 GEOMETRIC_ERROR = {"root": 200.0, 13: 60.0, 14: 20.0, 15: 6.0}
 
 M_PER_DEG = 111320.0
@@ -134,24 +136,37 @@ def _ground_points(parts) -> np.ndarray:
     return np.concatenate(pts)
 
 
+def stage(fp: Footprint, min_area_m2: float):
+    """"invalid", "small", or (parts, centroid lon, centroid lat, area m2): the per-footprint half of plan_buildings,
+    shared with the chunk partition so a building's chunk is the chunk of the centroid it is planned with."""
+    if (
+        fp.geometry is None
+        or fp.geometry.is_empty
+        or fp.geometry.geom_type not in ("Polygon", "MultiPolygon", "GeometryCollection")
+    ):
+        return "invalid"
+    parts = clean(fp.geometry, min_area_m2)
+    if not parts:
+        return "small"
+    c = shapely.MultiPolygon(parts).centroid
+    return parts, c.x, c.y, sum(_area_m2(p, c.y) for p in parts)
+
+
+def chunk_of(cx: float, cy: float) -> tuple[int, int]:
+    return tile_of(cx, cy, CHUNK_ZOOM)
+
+
 def plan_buildings(footprints, heights_fn, min_area_m2: float) -> tuple[list[Building], dict]:
     stats = {"input": len(footprints), "kept": 0, "dropped_small": 0, "dropped_invalid": 0, "dropped_no_height": 0}
     staged = []
     for fp in footprints:
-        if (
-            fp.geometry is None
-            or fp.geometry.is_empty
-            or fp.geometry.geom_type not in ("Polygon", "MultiPolygon", "GeometryCollection")
-        ):
+        s = stage(fp, min_area_m2)
+        if s == "invalid":
             stats["dropped_invalid"] += 1
-            continue
-        parts = clean(fp.geometry, min_area_m2)
-        if not parts:
+        elif s == "small":
             stats["dropped_small"] += 1
-            continue
-        c = shapely.MultiPolygon(parts).centroid
-        area = sum(_area_m2(p, c.y) for p in parts)
-        staged.append((fp, parts, c.x, c.y, area))
+        else:
+            staged.append((fp, *s))
     groups: dict[tuple[int, int], list] = {}
     for item in staged:
         groups.setdefault(tile_of(item[2], item[3], LEAF_ZOOM), []).append(item)
@@ -298,6 +313,11 @@ def tile_origin(z: int, x: int, y: int, blds: list[Building]) -> tuple[float, fl
     return (w + e) / 2.0, (s + n) / 2.0, round((lo + hi) / 2.0, 3)
 
 
+def tile_summary(key: tuple[int, int, int], blds: list[Building]) -> tuple[list[float], tuple[float, float, float]]:
+    """What tileset_json needs of a content tile: its bounding region (radians, m) and ENU origin."""
+    return _region(blds), tile_origin(*key, blds)
+
+
 def _region(blds: list[Building]) -> list[float]:
     w = min(p.bounds[0] for b in blds for p in b.parts)
     s = min(p.bounds[1] for b in blds for p in b.parts)
@@ -328,9 +348,11 @@ def _rigid_inverse(m: np.ndarray) -> np.ndarray:
     return out
 
 
-def tileset_json(tiles: dict) -> dict:
-    """tiles: (z, x, y) -> (buildings, ENU origin). Every ancestor of a content tile down from z13 exists in the tree
-    (content-less when it holds no building of its own tier)."""
+def tileset_json(tiles: dict, near_only=None) -> dict:
+    """tiles: (z, x, y) -> (region, ENU origin) (tile_summary). Every ancestor of a content tile down from z13 exists
+    in the tree (content-less when it holds no building of its own tier). near_only(region) true: that z13 node is
+    outside every detail margin and is grouped under content-less z12..z9 ancestors with OUTSIDE_GEOMETRIC_ERROR (no
+    transform, so the kept nodes' relative transforms are unchanged), so Cesium skips it beyond ~2 km."""
     from . import __version__
 
     keys = set(tiles)
@@ -349,12 +371,12 @@ def tileset_json(tiles: dict) -> dict:
         out: dict = {"geometricError": GEOMETRIC_ERROR[z]}
         regions = []
         if key in tiles:
-            blds, origin = tiles[key]
+            region, origin = tiles[key]
             own = geodesy.enu_to_ecef_matrix(*origin)
             out["transform"] = geodesy.matrix_to_column_major(_rigid_inverse(parent_abs) @ own)
             out["content"] = {"uri": f"{z}/{x}/{y}.glb"}
             kids_abs = own
-            regions.append(_region(blds))
+            regions.append(region)
         kids = [node(k, kids_abs) for k in children(z, x, y)]
         regions += [k["boundingVolume"]["region"] for k in kids]
         out["boundingVolume"] = {"region": _union(regions)}
@@ -362,7 +384,26 @@ def tileset_json(tiles: dict) -> dict:
             out["children"] = kids
         return out
 
-    top = [node(k, np.eye(4)) for k in sorted(k for k in nodes if k[0] == min(TIER_MIN_AREA_M2))]
+    z0 = min(TIER_MIN_AREA_M2)
+    keys13 = sorted(k for k in nodes if k[0] == z0)
+    top = [node(k, np.eye(4)) for k in keys13]
+    if near_only is not None:
+        kept, groups = [], {}
+        for k, t in zip(keys13, top):
+            if near_only(t["boundingVolume"]["region"]):
+                groups[(k[1], k[2])] = t
+            else:
+                kept.append(t)
+        for _ in range(4):  # z12 .. z9
+            up: dict = {}
+            for (x, y), t in sorted(groups.items()):
+                up.setdefault((x // 2, y // 2), []).append(t)
+            groups = {
+                k: {"boundingVolume": {"region": _union([c["boundingVolume"]["region"] for c in v])},
+                    "geometricError": OUTSIDE_GEOMETRIC_ERROR, "children": v}
+                for k, v in up.items()
+            }
+        top = kept + [groups[k] for k in sorted(groups)]
     root = {
         "boundingVolume": {"region": _union([t["boundingVolume"]["region"] for t in top])},
         "geometricError": GEOMETRIC_ERROR["root"],
