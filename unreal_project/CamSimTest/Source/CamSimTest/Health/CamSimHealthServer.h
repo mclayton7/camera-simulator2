@@ -6,6 +6,8 @@
 #include "HttpResultCallback.h"
 #include "HttpRouteHandle.h"
 #include "Containers/Ticker.h"
+#include "HttpRequestHandler.h"
+#include "HttpServerRequest.h"
 
 class IHttpRouter;
 
@@ -54,6 +56,12 @@ struct FCamSimHealthServer
 	 */
 	void BindSnapshotRoute(const FString& Path, TFunction<void(FHttpResultCallback)> Handler);
 
+	/**
+	 * Bind a route (any verbs) on this port, now if listening, else once the bind succeeds; kept across a
+	 * Stop()/Start() of the same server. Used by the control API (ROADMAP 2.4). Handlers run on the game thread.
+	 */
+	void BindRoute(const FString& Path, EHttpServerRequestVerbs Verbs, FHttpRequestHandler Handler);
+
 	/** Stop the HTTP server (and any pending bind retry). */
 	void Stop();
 
@@ -83,6 +91,8 @@ private:
 	double LastTickTimeSec = 0.0;
 	int32 ListenPort = 0;
 	TMap<FString, TFunction<void(FHttpResultCallback)>> SnapshotHandlers;   // path -> handler, bound once listening
+	struct FExtraRoute { FString Path; EHttpServerRequestVerbs Verbs; FHttpRequestHandler Handler; };
+	TArray<FExtraRoute> ExtraRoutes;   // BindRoute(), bound once listening
 	FTSTicker::FDelegateHandle RetryHandle;
 	double BindFailedSinceSec = 0.0;
 	bool bReportedStillBusy = false;

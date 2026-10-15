@@ -34,7 +34,9 @@ public:
 	uint16 GetTypeId(uint16 Id) const;
 
 	/** A camera or entity command was applied in this GFrameCounter frame (the capture gate waits for a quiet frame). */
-	void NoteCommand(uint64 FrameCounter) { LastCommandFrame = FrameCounter; bAnyCommand = true; }
+	void NoteCommand(uint64 FrameCounter) { LastCommandFrame = FrameCounter; bAnyCommand = true; ++CommandSerial; }
+	/** Bumped by every command: a change since the last look means "a command was applied". */
+	uint64 GetCommandSerial() const { return CommandSerial; }
 	bool WasCommandedThisFrame(uint64 FrameCounter) const { return bAnyCommand && LastCommandFrame == FrameCounter; }
 
 	static FEntityKey KeyFor(uint16 Id) { return FEntityKey(EHostSource::ControlApi, Id); }
@@ -52,4 +54,5 @@ private:
 	TArray<FComponentCommand> PendingComponents;
 	uint64 LastCommandFrame = 0;
 	bool bAnyCommand = false;
+	uint64 CommandSerial = 0;
 };

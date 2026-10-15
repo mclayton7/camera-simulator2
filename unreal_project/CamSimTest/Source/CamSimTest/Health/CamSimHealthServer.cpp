@@ -169,6 +169,19 @@ void FCamSimHealthServer::BindRoutes()
 	{
 		BindSnapshotHandler(Pair.Key);
 	}
+	for (const FExtraRoute& R : ExtraRoutes)
+	{
+		RouteHandles.Add(Router->BindRoute(FHttpPath(R.Path), R.Verbs, R.Handler));
+	}
+}
+
+void FCamSimHealthServer::BindRoute(const FString& Path, EHttpServerRequestVerbs Verbs, FHttpRequestHandler Handler)
+{
+	ExtraRoutes.Add({ Path, Verbs, Handler });
+	if (Router)
+	{
+		RouteHandles.Add(Router->BindRoute(FHttpPath(Path), Verbs, Handler));
+	}
 }
 
 void FCamSimHealthServer::BindSnapshotHandler(const FString& Path)

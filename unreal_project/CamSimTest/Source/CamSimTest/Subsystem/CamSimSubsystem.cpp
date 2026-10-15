@@ -25,6 +25,12 @@
 #include "Health/CamSimHealthServer.h"
 #include "Health/CamSimSnapshotService.h"
 #include "Control/ControlApiAdapter.h"
+#include "Control/ControlApiJson.h"
+#include "Control/ControlApiService.h"
+#include "Environment/CamSimEnvironment.h"
+#include "Camera/CamSimSensorComponent.h"
+#include "EngineUtils.h"
+#include "IImageWrapperModule.h"
 #include "Subsystem/EncoderWatchdog.h"
 #include "Time/SimClock.h"
 #include "Ocean/OceanSurface.h"         // FOceanSurface (ROADMAP 2.6)
@@ -78,6 +84,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCamSimSnapshotService>  SnapshotService;  // ROADMAP 3A, null unless enabled
 	TUniquePtr<FCamSimSnapshotService>  SensorSnapshotService;  // ROADMAP 3B, null unless enabled
 	TUniquePtr<FControlApiAdapter>      ControlApiAdapter;      // ROADMAP 2.4, null unless control_api.enabled
+	TUniquePtr<FControlApiService>      ControlApi;             // ROADMAP 2.4, its /api/v1 routes
 
 	// Ocean surface (ROADMAP 2.6); null when ocean.enabled is off or the EGM96 grid is missing.
 	TUniquePtr<FOceanSurface> Ocean;
@@ -137,6 +144,8 @@ struct UCamSimSubsystem::FSubsystemImpl
 		// TUniquePtr destructors handle null checks automatically.
 		if (HealthServer) { HealthServer->Stop(); }
 		HealthServer.Reset();
+		ControlApi.Reset();       // after the server (answers a capture in flight with 503)
+		ControlApiAdapter.Reset();
 		SnapshotService.Reset();  // after the server: no handler can reach it now
 		SensorSnapshotService.Reset();
 		Vegetation.Reset();   // destroys the cell actors
@@ -278,6 +287,89 @@ void UCamSimSubsystem::RegisterCamera(ACamSimCamera* Camera)
 ACamSimCamera* UCamSimSubsystem::GetCamera() const
 {
 	return Camera_.Get();
+}
+
+bool UCamSimSubsystem::IsVegetationIdle() const
+{
+	return !Impl || !Impl->Vegetation || Impl->Vegetation->IsIdle();
+}
+
+void UCamSimSubsystem::StartControlApi()
+{
+	// PNG encoding for captures runs on task threads: load ImageWrapper here, on the game thread.
+	FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+	Impl->ControlApiAdapter = MakeUnique<FControlApiAdapter>();
+
+	FControlApiHooks H;
+	H.HasCamera = [this] { return GetCamera() != nullptr; };
+	H.ApplyCamera = [this](const FControlCameraCommand& Cmd) { if (ACamSimCamera* Cam = GetCamera()) Cam->ApplyControlCamera(Cmd); };
+	H.SetCameraSuppressed = [this](bool b) { if (ACamSimCamera* Cam = GetCamera()) Cam->SetHostCameraSuppressed(b); };
+	H.CameraJson = [this]() -> FString
+	{
+		const ACamSimCamera* Cam = GetCamera();
+		if (!Cam) return TEXT("{}");
+		const FCamSimTelemetry& T = Cam->GetTelemetry();
+		return FString::Printf(
+			TEXT("{\"lat\":%.9f,\"lon\":%.9f,\"alt\":%.4f,\"heading\":%.4f,\"pitch\":%.4f,\"roll\":%.4f,")
+			TEXT("\"gimbal\":{\"yaw\":%.4f,\"pitch\":%.4f,\"roll\":%.4f},\"hfov_deg\":%.4f,\"vfov_deg\":%.4f,")
+			TEXT("\"sensor\":{\"mode\":\"%s\",\"polarity\":\"%s\"},\"camera_owned\":%s}"),
+			T.Latitude, T.Longitude, T.Altitude, T.Yaw, T.Pitch, T.Roll, T.GimbalYaw, T.GimbalPitch, T.GimbalRoll,
+			T.HFovDeg, T.VFovDeg, T.SensorMode == 1 ? TEXT("ir") : TEXT("eo"),
+			T.SensorPolarity == 1 ? TEXT("black_hot") : TEXT("white_hot"),
+			Cam->IsHostCameraSuppressed() ? TEXT("true") : TEXT("false"));
+	};
+	H.SceneState = [this]() -> FControlCaptureInputs
+	{
+		FControlCaptureInputs In;
+		if (const ACamSimCamera* Cam = GetCamera())
+		{
+			In.bTerrainReady = Cam->IsTerrainReady();
+			In.MinLoadProgressPct = Cam->GetMinLoadProgressPct();
+			In.FramesCaptured = Cam->GetFramesCaptured();
+		}
+		In.bVegetationIdle = IsVegetationIdle();
+		return In;
+	};
+	H.RequestCaptureFrame = [this](TSharedRef<FControlCaptureJob, ESPMode::ThreadSafe> Job) { if (ACamSimCamera* Cam = GetCamera()) Cam->RequestCaptureFrame(Job); };
+	auto FindEnvironment = [this]() -> ACamSimEnvironment*
+	{
+		UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+		if (!World) return nullptr;
+		TActorIterator<ACamSimEnvironment> It(World);
+		return It ? *It : nullptr;
+	};
+	H.ApplyAtmosphere = [FindEnvironment](const FAtmosphereCommand& A) { ACamSimEnvironment* E = FindEnvironment(); if (E) E->ApplyAtmosphereCommand(A); return E != nullptr; };
+	H.ApplyWeather = [FindEnvironment](const FWeatherCommand& W) { ACamSimEnvironment* E = FindEnvironment(); if (E) E->ApplyWeatherCommand(W); return E != nullptr; };
+	H.ApplySea = [this](float Beaufort, float DirDeg)
+	{
+		if (!GetOceanSurface()) return false;
+		FCamSimConfig::FOceanConfig O = Config.Ocean;
+		if (Beaufort >= 0.0f) O.Beaufort = Beaufort;
+		if (DirDeg >= 0.0f) O.WaveDirectionDeg = DirDeg;
+		ApplyOceanConfig(O);
+		return true;
+	};
+	H.EntityPose = [this](const FEntityKey& Key, CamSimFrames::FGeoPose& Out) { return GetEntityGeoPose(Key, Out); };
+	H.StatusFields = [this]() -> FString
+	{
+		const ACamSimCamera* Cam = GetCamera();
+		const bool bEncoder = Impl->VideoEncoder && Impl->VideoEncoder->IsOpen();
+		const bool bFirst = Impl->VideoEncoder && Impl->VideoEncoder->GetSuccessfulFrameCount() > 0;
+		const bool bTerrain = Cam && Cam->IsTerrainReady();
+		const bool bReady = bEncoder && bSensorGraphAvailable && bFirst && bTerrain && Impl->ControlApi && Impl->ControlApi->OwnsCamera();
+		const UCamSimSensorComponent* Sensor = Cam ? Cam->GetSensorComp() : nullptr;
+		return FString::Printf(
+			TEXT("\"ready\":%s,\"sensor_graph\":%s,\"terrain_ready\":%s,\"frame\":%llu,\"load_progress_pct\":%.1f,")
+			TEXT("\"vegetation_idle\":%s,\"sensor_mode\":\"%s\",\"ground_truth\":{\"masks\":%s,\"depth\":%s}"),
+			bReady ? TEXT("true") : TEXT("false"), bSensorGraphAvailable ? TEXT("true") : TEXT("false"),
+			bTerrain ? TEXT("true") : TEXT("false"), Cam ? Cam->GetFramesCaptured() : 0ull,
+			Cam ? Cam->GetMinLoadProgressPct() : -1.0f, IsVegetationIdle() ? TEXT("true") : TEXT("false"),
+			Sensor && Sensor->GetMode() == ESensorMode::IR ? TEXT("ir") : TEXT("eo"),
+			bGroundTruthMaskAvailable ? TEXT("true") : TEXT("false"), bGroundTruthDepthAvailable ? TEXT("true") : TEXT("false"));
+	};
+
+	Impl->ControlApi = MakeUnique<FControlApiService>(*Impl->ControlApiAdapter, MoveTemp(H), Config.ControlApi);
+	Impl->ControlApi->Bind(*Impl->HealthServer);
 }
 
 bool UCamSimSubsystem::GetEntityGeoPose(const FEntityKey& Key, CamSimFrames::FGeoPose& OutPose) const
@@ -605,8 +697,9 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->IsOpen(); },
 			// IsSensorGraphReady: the GPU sensor graph produces every frame; without it /ready stays 503
 			[this]() { return bSensorGraphAvailable; },
-			// IsCigiReady
-			[ImplPtr]() { return ImplPtr->CigiReceiver && ImplPtr->CigiReceiver->GetReceivedPacketCount() > 0; },
+			// IsCigiReady: a CIGI host, or the control API driving the camera instead (ROADMAP 2.4)
+			[ImplPtr]() { return (ImplPtr->CigiReceiver && ImplPtr->CigiReceiver->GetReceivedPacketCount() > 0)
+				|| (ImplPtr->ControlApi && ImplPtr->ControlApi->OwnsCamera()); },
 			// HasFirstFrame
 			[ImplPtr]() { return ImplPtr->VideoEncoder && ImplPtr->VideoEncoder->GetSuccessfulFrameCount() > 0; },
 			// IsTerrainReady
@@ -723,6 +816,19 @@ void UCamSimSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			Impl->SensorSnapshotService = MakeUnique<FCamSimSnapshotService>();
 			FCamSimSnapshotService* SensorSnap = Impl->SensorSnapshotService.Get();
 			Impl->HealthServer->BindSnapshotRoute(TEXT("/snapshot/sensor"), [SensorSnap](FHttpResultCallback OnComplete) { SensorSnap->Request(MoveTemp(OnComplete)); });
+		}
+	}
+
+	// ROADMAP 2.4: control API on the health port
+	if (Config.ControlApi.bEnabled)
+	{
+		if (!Impl->HealthServer)
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("UCamSimSubsystem: control_api.enabled needs operational.health_http_enabled; the control API is off"));
+		}
+		else
+		{
+			StartControlApi();
 		}
 	}
 
@@ -968,6 +1074,10 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 	if (Impl->SensorSnapshotService)
 	{
 		Impl->SensorSnapshotService->Tick(FPlatformTime::Seconds());
+	}
+	if (Impl->ControlApi)
+	{
+		Impl->ControlApi->Tick(FPlatformTime::Seconds());   // before the camera captures this frame
 	}
 
 	// The camera didn't send last frame's datagram (it didn't tick): send it now.

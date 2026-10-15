@@ -90,6 +90,8 @@ public:
 	FPipelineLatencyTracker* GetLatencyTracker() const;
 	/** Control API entities (ROADMAP 2.4); nullptr unless control_api.enabled. Game thread. */
 	FControlApiAdapter*    GetControlApiAdapter() const;
+	/** No vegetation cell or block in flight (true when vegetation is off). Game thread. */
+	bool IsVegetationIdle() const;
 
 	/** The sea (ROADMAP 2.6); nullptr when ocean.enabled is off or the EGM96 grid is missing. */
 	FOceanSurface*       GetOceanSurface();
@@ -179,6 +181,9 @@ public:
 	ACesium3DTileset* GetTerrainTileset() const;
 
 private:
+	/** ROADMAP 2.4: create the control API adapter and service and bind /api/v1 (health server running). */
+	void StartControlApi();
+
 	FCamSimConfig    Config;
 	bool             bSensorGraphAvailable = false;
 	bool             bGroundTruthMaskAvailable = false;
