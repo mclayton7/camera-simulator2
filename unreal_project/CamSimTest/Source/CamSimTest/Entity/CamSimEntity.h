@@ -8,6 +8,7 @@
 #include "Geospatial/CigiFrames.h"
 #include "Entity/SurfaceClamp.h"
 #include "Thermal/EntityThermal.h"
+#include "Time/SimDelta.h"
 // StreamableManager gives us the complete FStreamableHandle type — needed so
 // the UHT-generated CamSimEntity.gen.cpp can destruct TSharedPtr<FStreamableHandle>.
 #include "Engine/StreamableManager.h"
@@ -223,6 +224,8 @@ private:
 	// Strobe state
 	bool  bStrobeEnabled = false;
 	float StrobeAccum    = 0.0f;
+	/** Dead-reckoning step: the clock's steps in lockstep, else the engine delta (ROADMAP 2.4). */
+	FSimDelta DrDelta;
 
 	// Damage state (0=intact, 1=damaged, 2=destroyed)
 	uint8 DamageState = 0;

@@ -175,7 +175,7 @@ void ACamSimCamera::Tick(float DeltaTime)
 	ApplyHostPlatformState();
 	Platform.FollowAttachParent();
 
-	ApplyCigiViewState(DeltaTime);
+	ApplyCigiViewState(static_cast<float>(GimbalDelta.Next(DeltaTime)));
 
 	Streaming.UpdateLevelOfDetail(SceneCapture->FOVAngle, Cfg, Subsystem->GetCachedTilesets());
 

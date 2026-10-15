@@ -708,7 +708,7 @@ void ACamSimEntity::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	UpdateDeadReckoning(DeltaTime);
+	UpdateDeadReckoning(static_cast<float>(DrDelta.Next(DeltaTime)));
 
 	// A water entity with no motion model still rides the waves (ROADMAP 2.6).
 	if (SurfaceMode == ESurfaceMode::Water && !DR.bHasMotion && !bAttached && LastCommitTimeSec >= 0.0)

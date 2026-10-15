@@ -9,6 +9,7 @@
 #include "Camera/CamSimStreamingController.h"
 #include "Camera/CamSimTelemetryAssembler.h"
 #include "Camera/CamSimFrameStats.h"
+#include "Time/SimDelta.h"
 #include "CIGI/CigiPacketTypes.h"            // FCigiCameraFrame
 #include "CamSimCamera.generated.h"
 
@@ -155,6 +156,8 @@ private:
 	FCigiCameraFrame HostFrame;
 	/** GFrameCounter of the last ApplyHostPlatformState run. */
 	uint64 HostStateFrame = MAX_uint64;
+	/** Gimbal slew step: the clock's steps in lockstep, else the engine delta (ROADMAP 2.4). */
+	FSimDelta GimbalDelta;
 	void EmitHeartbeatIfDue();
 	/** Append this tick's render stats (ROADMAP 3A). */
 	void RecordFrameStats();

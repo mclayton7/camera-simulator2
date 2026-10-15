@@ -20,6 +20,7 @@
 #include "Ocean/OceanSurface.h"
 #include "Subsystem/CamSimSubsystem.h"
 #include "Time/SimClock.h"
+#include "Time/SimDelta.h"
 #include "Sensor/SensorOptics.h"
 #include "Thermal/ThermalFrameSources.h"
 #include "CesiumGeoreference.h"
@@ -368,7 +369,8 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	In.Mode         = static_cast<ESensorGraphMode>(FMath::Clamp(static_cast<int32>(Mode), 0, 1));
 	In.bBlackHot    = Polarity != 0;
 	In.bCameraCut   = bCameraCut;
-	In.DeltaSimSec  = Dt;
+	// Lockstep: frame time, so the exposure adapts while a capture settles on a stepped clock (ROADMAP 2.4).
+	In.DeltaSimSec  = CamSimTime::SensorStepSeconds(FSimClock::Get().IsLockstep(), Dt, Cfg.FrameRate);
 	In.NewHistogram = bHasHist ? &Hist : nullptr;
 	In.Serial       = ++ParamsSerial;
 	In.FixedNoiseFrame = CVarCamSimFixedNoiseFrame.GetValueOnGameThread();
