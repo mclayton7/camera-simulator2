@@ -25,7 +25,7 @@ from .cache import CacheError
 from .config import TERRAIN_GRID as GRID
 from .fsutil import atomic_write, sha256_file
 from .licences import LicenceError, attribution_text, check_allowed
-from .manifest import Manifest, package_files
+from .manifest import STATE_DIR, Manifest, package_files
 from .net import HttpError
 from .qmesh import QMAX, decode
 from .sources.base import M_PER_DEG
@@ -365,33 +365,50 @@ def _check_buildings_tileset(pkg: Path) -> Check:
     return Check("buildings_tileset", not missing, _summary([f"missing {u}" for u in missing]))
 
 
-def _check_buildings_heights(pkg: Path, m: Manifest, st) -> Check:
-    from . import geodesy
-    from .buildings import walk_tileset
-    from .gltf import decode_tile
-    from .layers.buildings import OUT, plan_from_manifest
+def _check_buildings_heights(pkg: Path, m: Manifest, st, jobs: int = 1) -> Check:
+    """Every GLB building against a fresh plan, chunk by chunk (never the build's plan pickles). The .state/ partition
+    is reused when its key matches (it only regroups the snapshot's rows), else the snapshot is partitioned into a
+    temporary directory."""
+    import tempfile
 
-    want, _ = plan_from_manifest(m, st.ctx, st)
-    by_id = {b.source_id: b for b in want}
+    from . import buildings_chunks as C
+    from . import geodesy
+    from .buildings import CHUNK_ZOOM, walk_tileset
+    from .gltf import decode_tile
+    from .layers import buildings as layer
+    from .layers.buildings import OUT
+
     root = pkg / OUT
-    seen, problems = set(), []
+    by_chunk: dict = {}
     for uri, mat in walk_tileset(json.loads((root / "tileset.json").read_text())):
         z, x, y = (int(v) for v in uri[: -len(".glb")].split("/"))
-        t = decode_tile((root / uri).read_bytes())
-        enu = np.stack([t.positions[:, 0], -t.positions[:, 2], t.positions[:, 1]], axis=1).astype(np.float64)
-        _, _, h = geodesy.ecef_to_geodetic((mat[:3, :3] @ enu.T).T + mat[:3, 3])
-        for f, sid in enumerate(t.table.source_ids):
-            b = by_id.get(sid)
-            if b is None:
-                problems.append(f"{uri}: unexpected {sid}")
-                continue
-            seen.add(sid)
-            if b.tile != (z, x, y):
-                problems.append(f"{sid}: in {uri}, expected {b.tile}")
-            roof = float(h[t.feature_ids == f].max())
-            if abs(roof - b.roof_m) > ROOF_TOL_M:
-                problems.append(f"{sid}: roof {roof:.3f} m, expected {b.roof_m:.3f} m")
-    problems += [f"missing {sid}" for sid in sorted(set(by_id) - seen)]
+        by_chunk.setdefault((x >> (z - CHUNK_ZOOM), y >> (z - CHUNK_ZOOM)), []).append((uri, (z, x, y), mat))
+    problems: list[str] = []
+    state_part = pkg / STATE_DIR / "buildings" / "partition"
+    prev = C.read_partition(state_part)
+    with tempfile.TemporaryDirectory() as tmp:
+        part_dir = state_part if prev and prev["inputs"] == layer.partition_inputs(m) else Path(tmp) / "partition"
+        chunks = [tuple(c) for c in layer.ensure_partition(pkg, m, st.ctx, jobs, out_dir=part_dir)["chunks"]]
+        for c in sorted(set(chunks) | set(by_chunk)):
+            want = layer.plan_chunk(st, m, C.read_chunk(part_dir, *c))[0] if c in chunks else []
+            by_id = {b.source_id: b for b in want}
+            seen = set()
+            for uri, key, mat in by_chunk.get(c, []):
+                t = decode_tile((root / uri).read_bytes())
+                enu = np.stack([t.positions[:, 0], -t.positions[:, 2], t.positions[:, 1]], axis=1).astype(np.float64)
+                _, _, h = geodesy.ecef_to_geodetic((mat[:3, :3] @ enu.T).T + mat[:3, 3])
+                for f, sid in enumerate(t.table.source_ids):
+                    b = by_id.get(sid)
+                    if b is None:
+                        problems.append(f"{uri}: unexpected {sid}")
+                        continue
+                    seen.add(sid)
+                    if b.tile != key:
+                        problems.append(f"{sid}: in {uri}, expected {b.tile}")
+                    roof = float(h[t.feature_ids == f].max())
+                    if abs(roof - b.roof_m) > ROOF_TOL_M:
+                        problems.append(f"{sid}: roof {roof:.3f} m, expected {b.roof_m:.3f} m")
+            problems += [f"missing {sid}" for sid in sorted(set(by_id) - seen)]
     return Check("buildings_heights", not problems, _summary(problems))
 
 
@@ -549,7 +566,7 @@ def _deep(pkg: Path, m: Manifest, cache, all_tiles: bool, jobs: int) -> tuple[li
     if (pkg / "landcover" / "index.json").exists():  # every tile: they are few (0.05 deg each) and small
         checks.append(_guard("landcover_codes", _check_landcover_codes, pkg / "landcover"))
     if m.layers.get("buildings") and (pkg / "features" / "buildings" / "tileset.json").exists():
-        checks.append(_guard("buildings_heights", _check_buildings_heights, pkg, m, st))
+        checks.append(_guard("buildings_heights", _check_buildings_heights, pkg, m, st, jobs))
         checks.append(_guard("buildings_roofs", _check_buildings_roofs, pkg, m))
     mask_index = pkg / "features" / "buildings" / "mask" / "index.json"
     if (m.layers.get("buildings") and m.layers["landcover"].get("buildings") and mask_index.exists()

@@ -147,3 +147,34 @@ def test_roof_texel_change_rebuilds_tiles_not_the_mask(tmp_path, monkeypatch):
     assert all(before[k] != after[k] for k in glbs)  # every tile here has a textured roof
     assert all(before[k] == after[k] for k in burn)  # mask and land cover byte-identical
     assert info["buildings"]["roofs"]["tiles_by_texel_m"] == {"1": len(glbs)}
+
+
+def test_deep_plans_chunk_by_chunk(tmp_path, monkeypatch):
+    from test_buildings_layer import EDGE_ROWS
+
+    from camsim_scene import buildings as B
+
+    pkg, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, EDGE_ROWS))
+    chunks = json.loads((pkg / ".state/buildings/partition/partition.json").read_text())["chunks"]
+    calls = []
+    real = B.plan_buildings
+    monkeypatch.setattr(B, "plan_buildings", lambda fps, *a, **k: (calls.append(len(fps)), real(fps, *a, **k))[1])
+    assert _checks(verify(pkg, cache, deep=True))["buildings_heights"]["ok"]
+    assert len(chunks) >= 2 and len(calls) == len(chunks)
+
+
+def test_deep_passes_without_state(tmp_path):
+    pkg, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, ROWS))
+    shutil.rmtree(pkg / ".state")
+    c = _checks(verify(pkg, cache, deep=True))
+    assert c["buildings_heights"]["ok"], c["buildings_heights"]
+    assert not (pkg / ".state" / "buildings").exists()  # verify partitions in a temporary directory
+
+
+def test_deep_never_reads_the_build_plan(tmp_path, monkeypatch):
+    from camsim_scene.layers import buildings as layer
+
+    pkg, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, ROWS))
+    monkeypatch.setattr(layer, "load_chunk_plan", lambda *a: (_ for _ in ()).throw(AssertionError("read plan")))
+    assert _checks(verify(pkg, cache, deep=True))["buildings_heights"]["ok"]
+

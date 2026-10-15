@@ -1,8 +1,11 @@
-"""Buildings layer build (REALISM R3, R3b): snapshot -> plan_buildings (heights from the package's own bare-earth
-terrain sources, the same height path verify --deep uses) -> one GLB per tile + tileset.json under features/buildings/,
-plus the footprint mask (features/buildings/mask/) from the shared footprint raster. The plan and the raster are cached
-under .state/ by their inputs, so the land-cover burn and this layer read the same buildings and plan them once.
-Rebuilt as a whole (Pendleton ~82k buildings) and skipped when its inputs hash is unchanged."""
+"""Buildings layer build (REALISM R3, R3b; by chunk since 2026-10-14, spec
+docs/superpowers/specs/2026-10-14-buildings-chunked-design.md): the snapshot is partitioned into z12 chunks
+(buildings_chunks), each chunk planned (plan_buildings, heights from the package's own bare-earth terrain sources, the
+same height path verify --deep uses), rasterised and written as GLBs in the worker pool, so no process holds more than
+one chunk. The main process writes tileset.json from per-tile summaries and the footprint mask
+(features/buildings/mask/) from the OR-merged footprint raster. Partition, chunk plans and raster are cached under
+.state/ by their inputs, so the land-cover burn and this layer share them; the layer is skipped when its inputs hash is
+unchanged."""
 
 from __future__ import annotations
 
@@ -93,14 +96,6 @@ class ImageryRoofSampler:
             if m.any():
                 res[m] = self._native(e)
         return rgb, ok, res
-
-
-def plan_from_manifest(m: Manifest, ctx: BuildContext, st: WorkerState | None = None):
-    s = m.layers["buildings"]
-    rec = m.source(s["priorities"][0])
-    snapshot = Path(ctx.asset_paths[f"{rec.id}/{rec.assets[0].id}"])
-    st = st or WorkerState(ctx)
-    return B.plan_buildings(B.read_snapshot(snapshot), heights_fn(st, m), float(s["min_area_m2"]))
 
 
 def footprint_inputs(m: Manifest, wst: WorkerState) -> str:
