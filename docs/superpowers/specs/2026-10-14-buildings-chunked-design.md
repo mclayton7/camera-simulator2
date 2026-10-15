@@ -1,4 +1,4 @@
-# Buildings layer by chunk (REALISM R5 follow-up): design
+# Buildings layer by chunk, and draw distance outside detail polygons (REALISM R5 follow-up): design
 
 Date: 2026-10-14. Status: approved in chat (2026-10-14), written for review.
 
@@ -20,8 +20,11 @@ The gate stays at 2048 MB. The layer must fit under it at any box size.
 
 - Every process that touches buildings holds one **chunk** at a time: peak RSS per process well under 2048 MB on
   `socal-r5` (target: under 1 GB).
-- **Package bytes do not change.** GLBs, `tileset.json`, `features/buildings/mask/`, `landcover/` and therefore
-  `hashes.txt` are byte-identical to the current code's output for the same manifest. No rules version bump.
+- **Package bytes do not change** except `tileset.json` of a package with `[detail]` polygons (section 4.6). GLBs,
+  `features/buildings/mask/` and `landcover/` are byte-identical to the current code's output for the same manifest,
+  and so is `tileset.json` of a package without `[detail]`. `BUILDINGS_RULES_VERSION` is not bumped.
+- **Bench (gate 7 of R5):** buildings outside the detail polygons are drawn only near the camera (section 4.6), so
+  `socal-r5`'s game thread is back to `pendleton-r5veg`'s.
 - The buildings work runs in the build's worker pool (`engine.run_pool`, `jobs` workers), so the layer gets faster
   too.
 
@@ -92,6 +95,26 @@ the build's plan pickles. It reuses the `.state/` partition when its marker matc
 snapshot's rows), else partitions into a temporary directory.
 Every planned building must be in its expected tile, and every GLB building must be planned in some chunk, as now.
 
+### 4.6 Draw distance outside the detail polygons (bench fix)
+
+Measured 2026-10-14 on `socal-r5` (`--phases orbit,dense_pass`, game p50, orbit / dense): as built 6.81 / 9.74 ms;
+buildings SSE 256: 6.82 / 9.65; no physics meshes: 6.22 / 9.02; tileset pruned to the polygon + 2 km: 3.23 / 6.12;
+content-less z9–z12 ancestors over every z13 node with geometric error 1400 / 400 / 150: 7.98 / 10.85, 7.92 / 10.85,
+3.10 / 6.23; `pendleton-r5veg` 3.15 / 6.09. GPU time unchanged throughout. The cost is the building tiles near the
+camera in the towns around the polygon (every z13 tile is a child of the always-refined root, so all are selected).
+Ancestors at 150 everywhere removed the camp's 3D buildings inside the polygon in `slant_10km` (about 10 km away), so
+the cut-off applies only outside. The user accepted about 2 km as the draw distance outside the polygons (2026-10-14).
+
+`B.tileset_json(tiles, near_only=None)`: `near_only(region) -> bool` says whether a z13 node (its bounding region in
+radians) is outside every `detail_margin:*` region of the manifest. Nodes for which it is false stay children of the
+root exactly as now. Nodes for which it is true are grouped under content-less z12 → z9 ancestors (no transform, so
+the kept nodes' relative transforms are unchanged; region = union of the children), each with geometric error
+`OUTSIDE_GEOMETRIC_ERROR = 150`, which are children of the root. The root's geometric error stays 200. A manifest
+without `[detail]` passes `near_only=None`: the tileset is byte-identical to today's.
+
+The buildings layer inputs hash gains `TILESET_RULES_VERSION = "1"` (in `layers/buildings.py`; not in the land-cover
+inputs), so packages rebuild their tileset once; GLBs come out identical.
+
 ## 5. Memory and time accounting
 
 - The layer's `LayerStats.peak_rss_mb` is the max over the workers and the main process (as the raster layers do), so
@@ -119,7 +142,13 @@ regenerated when a layer needs them.
   (no RSS gate failure); per-layer peak RSS and wall time recorded in `docs/scene-packages.md` and ROADMAP.
 - **`verify --deep`** on both packages: ok, with its peak RSS recorded.
 
+- **Draw distance:** unit test: without `near_only` the tileset is byte-identical to the current code; with it, nodes
+  inside a margin region stay root children, outside ones sit under z12…z9 ancestors with error 150 and no transform,
+  and `walk_tileset` returns the same (uri, matrix) pairs either way.
+- **Bench on `socal-r5`:** `run_bench.py --site pendleton --phases orbit,dense_pass` game p50 within 0.3 ms of
+  `pendleton-r5veg` (3.15 / 6.09 ms); full bench recorded against R5 gate 7. Reference shots: the camp in
+  `slant_10km` keeps its 3D buildings (inside the polygon).
+
 ## 8. Out of scope
 
-- The bench cost of the buildings tileset (separate spike, 2026-10-14).
 - Main-process RSS from other layers (terrain / imagery planning); the gate measures them as now.
