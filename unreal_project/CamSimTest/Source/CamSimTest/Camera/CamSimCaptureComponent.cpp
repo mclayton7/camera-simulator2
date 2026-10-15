@@ -859,6 +859,7 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 			CaptureJob->TimestampUs    = Telemetry.TimestampUs;
 			CaptureJob->Width          = IdSize.X;
 			CaptureJob->Height         = IdSize.Y;
+			CaptureJob->SensorMode     = Telemetry.SensorMode;
 			CaptureJob->DepthFarPlaneM = Collector ? Collector->GetDepthFarPlaneM() : 0.0f;
 			AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
 				[CaptureJob, Nv12Copy = Nv12, DepthCopy = CaptureJob->bWantDepth ? Depth : TArray<float>(), IdSize]()

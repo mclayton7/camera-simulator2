@@ -17,6 +17,7 @@ struct FControlCaptureJob
 	uint64 TimestampUs  = 0;
 	int32  Width        = 0;
 	int32  Height       = 0;
+	uint8  SensorMode   = 0;      // 0 EO, 1 IR (the frame's telemetry)
 	float  DepthFarPlaneM = 0.0f;
 	FString Record;              // the frame's camsim_coco.jsonl record; "" without ground truth
 	TArray64<uint8> Png;         // sensor output

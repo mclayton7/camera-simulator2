@@ -289,7 +289,7 @@ bool FRoutesCaptureTest::RunTest(const FString& Parameters)
 				// A second capture while one is in flight. (Answered synchronously, inside this pump.)
 				SecondCode = Hn.Call(TEXT("POST"), TEXT("/api/v1/capture"), TEXT("{}")).Code;
 				FControlCaptureJob& J = *Hn.World.Job;
-				J.FrameIdx = 77; J.TimestampUs = 5; J.Width = 4; J.Height = 2;
+				J.FrameIdx = 77; J.TimestampUs = 5; J.Width = 4; J.Height = 2; J.SensorMode = 1;
 				J.Record = TEXT("{\"frame_id\":77,\"annotations\":[]}");
 				J.Png = { 1, 2, 3 };
 				J.DepthPng = { 4, 5 };
@@ -302,6 +302,7 @@ bool FRoutesCaptureTest::RunTest(const FString& Parameters)
 	const TSharedPtr<FJsonObject> J = R.Json();
 	if (!TestTrue(TEXT("json"), J.IsValid())) { AddInfo(R.Body.Left(300)); return false; }
 	TestEqual(TEXT("frame id"), J->GetIntegerField(TEXT("frame_id")), 77);
+	TestEqual(TEXT("sensor mode"), J->GetStringField(TEXT("sensor_mode")), FString(TEXT("ir")));
 	TestEqual(TEXT("png b64"), J->GetStringField(TEXT("image_png_b64")), FBase64::Encode(TArray<uint8>{ 1, 2, 3 }));
 	TestEqual(TEXT("depth b64"), J->GetStringField(TEXT("depth_png_b64")), FBase64::Encode(TArray<uint8>{ 4, 5 }));
 	const TSharedPtr<FJsonObject>* Ann = nullptr;

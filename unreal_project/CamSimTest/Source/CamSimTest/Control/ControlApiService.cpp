@@ -394,8 +394,9 @@ void FControlApiService::Tick(double NowSec)
 	}
 	FString Body;
 	Body.Reserve(static_cast<int32>(J.Png.Num() * 4 / 3 + J.DepthPng.Num() * 4 / 3 + J.Record.Len() + 512));
-	Body += FString::Printf(TEXT("{\"frame_id\":%llu,\"timestamp_us\":%llu,\"utc\":\"%s\",\"width\":%d,\"height\":%d,"),
-		J.FrameIdx, J.TimestampUs, *UtcIso(FSimClock::FromMicros(J.TimestampUs)), J.Width, J.Height);
+	Body += FString::Printf(TEXT("{\"frame_id\":%llu,\"timestamp_us\":%llu,\"utc\":\"%s\",\"width\":%d,\"height\":%d,\"sensor_mode\":\"%s\","),
+		J.FrameIdx, J.TimestampUs, *UtcIso(FSimClock::FromMicros(J.TimestampUs)), J.Width, J.Height,
+		J.SensorMode == 1 ? TEXT("ir") : TEXT("eo"));
 	Body += TEXT("\"image_png_b64\":\"");
 	Body += FBase64::Encode(J.Png.GetData(), static_cast<uint32>(J.Png.Num()));
 	Body += TEXT("\",");
