@@ -21,6 +21,9 @@
 #include "Subsystem/CamSimSubsystem.h"
 #include "Time/SimClock.h"
 #include "Time/SimDelta.h"
+#include "Control/ControlCaptureJob.h"
+#include "Control/CapturePng.h"
+#include "GroundTruth/FDepthMapWriter.h"
 #include "Sensor/SensorOptics.h"
 #include "Thermal/ThermalFrameSources.h"
 #include "CesiumGeoreference.h"
@@ -526,7 +529,10 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	// ring, so this must not be shared collector state (ROADMAP: ground truth
 	// per-frame snapshots).
 	// Only frames the collector annotates (same FrameIdx and interval) get a snapshot and IDs.
-	const bool bAnnotated = (FrameIdx % static_cast<uint64>(IdIntervalFrames)) == 0;
+	// A control API capture frame is always annotated (ROADMAP 2.4).
+	S.CaptureJob = MoveTemp(PendingCaptureJob);
+	PendingCaptureJob.Reset();
+	const bool bAnnotated = S.CaptureJob.IsValid() || (FrameIdx % static_cast<uint64>(IdIntervalFrames)) == 0;
 	S.Entities = (Subsystem && bAnnotated) ? BuildGroundTruthSnapshot() : TArray<FEntityAnnotationData>();
 	const uint32 Gen = ++NextGeneration;
 	S.Telemetry = Telemetry;
@@ -595,6 +601,13 @@ void UCamSimCaptureComponent::Poll()
 					TEXT("or ShowFlag.PostProcessing 0) the graph never runs. Re-enable it."),
 					ConsecutiveGpuFailures);
 			}
+			if (S.CaptureJob)
+			{
+				S.CaptureJob->FrameIdx = FrameIdx;
+				S.CaptureJob->Error = TEXT("readback failed");
+				S.CaptureJob->bDone.Store(true, EMemoryOrder::SequentiallyConsistent);
+				S.CaptureJob.Reset();
+			}
 			S.Nv12.Reset();
 			S.Depth.Reset();
 			S.Entities.Reset();
@@ -619,7 +632,8 @@ void UCamSimCaptureComponent::Poll()
 
 		bSensorBusy = true;
 		SubmitFrameToEncoder(MoveTemp(S.Nv12), S.Telemetry, FrameIdx, MoveTemp(S.Depth), MoveTemp(S.Entities),
-			MoveTemp(S.InstanceIds));
+			MoveTemp(S.InstanceIds), MoveTemp(S.CaptureJob));
+		S.CaptureJob.Reset();
 		S.Nv12.Reset();
 		S.Depth.Reset();
 		S.Entities.Reset();
@@ -770,10 +784,16 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 
 void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	TArray<uint8> Nv12Data, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres,
-	TArray<FEntityAnnotationData> Entities, TArray<uint32> InstanceIds)
+	TArray<FEntityAnnotationData> Entities, TArray<uint32> InstanceIds,
+	TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> CaptureJob)
 {
 	if (!EncoderThread)
 	{
+		if (CaptureJob)
+		{
+			CaptureJob->Error = TEXT("no encoder thread");
+			CaptureJob->bDone.Store(true, EMemoryOrder::SequentiallyConsistent);
+		}
 		bSensorBusy = false;
 		return;
 	}
@@ -789,7 +809,7 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
 		[this, EncThread, Collector, LT,
 		 Nv12 = MoveTemp(Nv12Data), Telemetry, FrameIdx, Depth = MoveTemp(DepthMetres),
-		 Entities = MoveTemp(Entities), IdSize, InstanceIds = MoveTemp(InstanceIds)]() mutable
+		 Entities = MoveTemp(Entities), IdSize, InstanceIds = MoveTemp(InstanceIds), CaptureJob]() mutable
 	{
 		SCOPE_CYCLE_COUNTER(STAT_CamSimEncode);
 		// SensorStart/End bracket this background stage (latency tracking, 28G).
@@ -801,16 +821,20 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 			// The frame's instance-ID image when it was read back (measured boxes and
 			// masks); otherwise the collector writes projected boxes.
 			FInstanceIdImage Ids{ IdSize.X, IdSize.Y, MoveTemp(InstanceIds) };
-			Collector->WriteAnnotationFrame(MoveTemp(Entities), Ids.Words.Num() ? &Ids : nullptr, Telemetry, FrameIdx);
+			const FString Record = Collector->WriteAnnotationFrame(MoveTemp(Entities), Ids.Words.Num() ? &Ids : nullptr,
+				Telemetry, FrameIdx, /*bForce=*/CaptureJob.IsValid());
+			if (CaptureJob) CaptureJob->Record = Record;
 			if (Depth.Num() > 0)
 			{
 				// Its own task: PNG-compressing a real depth map must not hold up the next capture.
 				if (++DepthWritesInFlight <= MaxDepthWritesInFlight)
 				{
+					// A capture frame's depth file is written too (bForce); the job keeps Depth for its PNG below.
+					TArray<float> DepthForFile = CaptureJob ? Depth : MoveTemp(Depth);
 					AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-						[this, Collector, IdSize, FrameIdx, Depth = MoveTemp(Depth)]()
+						[this, Collector, IdSize, FrameIdx, Depth = MoveTemp(DepthForFile), bForce = CaptureJob.IsValid()]()
 					{
-						Collector->WriteDepthFrame(Depth, IdSize.X, IdSize.Y, FrameIdx);
+						Collector->WriteDepthFrame(Depth, IdSize.X, IdSize.Y, FrameIdx, bForce);
 						--DepthWritesInFlight;
 					});
 				}
@@ -827,6 +851,27 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 			}
 		}
 		if (LT) LT->Mark(EPipelineStage::SensorEnd);
+
+		// Control API capture (ROADMAP 2.4): PNG-encode a copy in its own task, so it never holds bSensorBusy.
+		if (CaptureJob)
+		{
+			CaptureJob->FrameIdx       = FrameIdx;
+			CaptureJob->TimestampUs    = Telemetry.TimestampUs;
+			CaptureJob->Width          = IdSize.X;
+			CaptureJob->Height         = IdSize.Y;
+			CaptureJob->DepthFarPlaneM = Collector ? Collector->GetDepthFarPlaneM() : 0.0f;
+			AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
+				[CaptureJob, Nv12Copy = Nv12, DepthCopy = CaptureJob->bWantDepth ? Depth : TArray<float>(), IdSize]()
+			{
+				CaptureJob->Png = CamSimControl::EncodeNv12Png(Nv12Copy, IdSize.X, IdSize.Y);
+				if (CaptureJob->Png.IsEmpty()) CaptureJob->Error = TEXT("PNG encoding failed");
+				if (DepthCopy.Num() > 0 && CaptureJob->DepthFarPlaneM > 0.0f)
+				{
+					CaptureJob->DepthPng = FDepthMapWriter::EncodeDepthPng(DepthCopy, IdSize.X, IdSize.Y, CaptureJob->DepthFarPlaneM);
+				}
+				CaptureJob->bDone.Store(true, EMemoryOrder::SequentiallyConsistent);
+			});
+		}
 
 		FProcessedFrame Frame;
 		Frame.Frame.Nv12   = MoveTemp(Nv12);

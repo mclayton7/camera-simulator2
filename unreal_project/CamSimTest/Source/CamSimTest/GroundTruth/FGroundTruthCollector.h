@@ -21,11 +21,11 @@ struct FCamSimTelemetry;
  *   The game thread builds each frame's entity snapshot into that frame's
  *   readback-ring slot; the background task passes it here. No state is
  *   shared between frames.
- *   WriteAnnotationFrame()     — called on background task thread (inside EncodeFrame)
- *   WriteDepthFrame()          — called on background task thread (after color task)
+ *   WriteAnnotationFrame()     — background task (UCamSimCaptureComponent::SubmitFrameToEncoder)
+ *   WriteDepthFrame()          — its own background task (at most MaxDepthWritesInFlight)
  *
- * Both task-thread calls are serialised by bEncoderBusy in ACamSimCamera,
- * so no additional locking is needed.
+ * Annotation writes are serialised by bSensorBusy in UCamSimCaptureComponent;
+ * depth writes touch only their own file.
  */
 class FGroundTruthCollector
 {
@@ -42,15 +42,17 @@ public:
 
 	/**
 	 * Write annotation records for the current frame.
-	 * Called on background task thread inside FMultiViewFrameSink::EncodeFrame().
+	 * Called on the background task thread (UCamSimCaptureComponent::SubmitFrameToEncoder).
+	 * bForce (a control API capture frame, ROADMAP 2.4) annotates it whatever the interval and
+	 * returns its record (the camsim_coco.jsonl line without the newline); otherwise returns "".
 	 * Entities is this frame's own snapshot (built on the game thread into the
 	 * readback-ring slot at capture time); no state is retained across calls.
 	 * Ids (optional): the frame's output-space instance-ID image. When valid and the
 	 * size of the capture, boxes/masks are measured from it; otherwise (null, invalid
 	 * or wrong size) the projected boxes are written (mask_source "projection").
 	 */
-	void WriteAnnotationFrame(TArray<FEntityAnnotationData> Entities, const FInstanceIdImage* Ids,
-	                          const FCamSimTelemetry& Telemetry, uint64 FrameIdx);
+	FString WriteAnnotationFrame(TArray<FEntityAnnotationData> Entities, const FInstanceIdImage* Ids,
+	                             const FCamSimTelemetry& Telemetry, uint64 FrameIdx, bool bForce = false);
 
 	/** Projection-only form (no ID image): boxes come from the entity snapshot. */
 	void WriteAnnotationFrame(const TArray<FEntityAnnotationData>& Entities,
@@ -64,7 +66,10 @@ public:
 	 * Called on background task thread after color readback dispatch.
 	 */
 	void WriteDepthFrame(const TArray<float>& DepthMetres,
-	                     int32 Width, int32 Height, uint64 FrameIdx);
+	                     int32 Width, int32 Height, uint64 FrameIdx, bool bForce = false);
+
+	/** Depth quantization ceiling (ml_training.depth_far_plane_m). */
+	float GetDepthFarPlaneM() const { return DepthFarPlaneM; }
 
 private:
 	const FCamSimConfig& Config;
@@ -75,6 +80,7 @@ private:
 	int32 MinVisiblePixels = 1;
 	bool  bSegmentation = false;
 	FIntPoint CaptureSize = FIntPoint::ZeroValue;
+	float DepthFarPlaneM = 5000.0f;
 
 	TArray<TUniquePtr<IAnnotationWriter>> Writers;
 	TUniquePtr<FDepthMapWriter>           DepthWriter;

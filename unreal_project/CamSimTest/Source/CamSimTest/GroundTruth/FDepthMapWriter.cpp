@@ -33,27 +33,7 @@ void FDepthMapWriter::WriteDepthFrame(
 {
 	if (!bIsOpen || !ImageWrapperModule || DepthMetres.Num() != Width * Height) return;
 
-	// Quantize float metres → uint16
-	TArray<uint16> Pixels16;
-	Pixels16.SetNumUninitialized(Width * Height);
-	const float Scale = 65535.0f / DepthFarPlaneM;
-	for (int32 i = 0; i < Width * Height; ++i)
-	{
-		const float Clamped = FMath::Clamp(DepthMetres[i], 0.0f, DepthFarPlaneM);
-		Pixels16[i] = static_cast<uint16>(FMath::RoundToInt(Clamped * Scale));
-	}
-
-	TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule->CreateImageWrapper(EImageFormat::PNG);
-	if (!Wrapper)
-	{
-		UE_LOG(LogCamSim, Warning, TEXT("FDepthMapWriter: failed to create PNG image wrapper"));
-		return;
-	}
-
-	Wrapper->SetRaw(Pixels16.GetData(), Pixels16.Num() * sizeof(uint16),
-	                Width, Height, ERGBFormat::Gray, 16);
-
-	TArray64<uint8> PngData = Wrapper->GetCompressed(0);
+	const TArray64<uint8> PngData = EncodeDepthPng(DepthMetres, Width, Height, DepthFarPlaneM);
 	if (PngData.IsEmpty())
 	{
 		UE_LOG(LogCamSim, Warning, TEXT("FDepthMapWriter: PNG compression failed for frame %llu"),
@@ -69,6 +49,33 @@ void FDepthMapWriter::WriteDepthFrame(
 		UE_LOG(LogCamSim, Warning,
 			TEXT("FDepthMapWriter: failed to write %s"), *FilePath);
 	}
+}
+
+TArray64<uint8> FDepthMapWriter::EncodeDepthPng(const TArray<float>& DepthMetres, int32 Width, int32 Height, float FarPlaneM)
+{
+	if (Width <= 0 || Height <= 0 || DepthMetres.Num() != Width * Height) return {};
+	// Loaded on the game thread by Open() or the control API before any task-thread call.
+	IImageWrapperModule* Module = FModuleManager::GetModulePtr<IImageWrapperModule>(TEXT("ImageWrapper"));
+	if (!Module && IsInGameThread()) Module = &FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+	if (!Module) return {};
+
+	// Quantize float metres → uint16
+	const float Far = FMath::Max(FarPlaneM, 1.0f);
+	TArray<uint16> Pixels16;
+	Pixels16.SetNumUninitialized(Width * Height);
+	const float Scale = 65535.0f / Far;
+	for (int32 i = 0; i < Width * Height; ++i)
+	{
+		const float Clamped = FMath::Clamp(DepthMetres[i], 0.0f, Far);
+		Pixels16[i] = static_cast<uint16>(FMath::RoundToInt(Clamped * Scale));
+	}
+
+	TSharedPtr<IImageWrapper> Wrapper = Module->CreateImageWrapper(EImageFormat::PNG);
+	if (!Wrapper || !Wrapper->SetRaw(Pixels16.GetData(), Pixels16.Num() * sizeof(uint16), Width, Height, ERGBFormat::Gray, 16))
+	{
+		return {};
+	}
+	return Wrapper->GetCompressed(0);
 }
 
 void FDepthMapWriter::Close()

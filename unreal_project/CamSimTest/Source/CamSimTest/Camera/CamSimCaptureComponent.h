@@ -30,6 +30,7 @@ class FCamSimSnapshotService;
 struct FPipelineLatencyTracker;
 struct FCamSimConfig;
 struct FEntityWaterPlane;
+struct FControlCaptureJob;
 
 /**
  * Forward-declared deleter so the component can hold a
@@ -147,6 +148,13 @@ public:
 	/** Frames dropped because the encoder thread's queue was full. */
 	uint64 GetDroppedFrameCount() const;
 	uint64 GetFramesCaptured() const { return FrameIndex; }
+
+	/**
+	 * Control API (ROADMAP 2.4): the next captured frame is annotated whatever ml_training's interval, its depth is
+	 * read back if available, and the job is filled on the task thread (record, PNG, depth PNG) and marked done.
+	 * One job at a time; a second replaces a pending (not yet captured) one. Game thread.
+	 */
+	void RequestCaptureFrame(TSharedRef<FControlCaptureJob, ESPMode::ThreadSafe> Job) { PendingCaptureJob = Job; }
 	bool   IsSensorBusy() const { return bSensorBusy; }
 	bool   IsReadbackInFlight() const { return Ring.NumInFlight() > 0; }
 	int32  GetReadbacksInFlight() const { return Ring.NumInFlight(); }
@@ -166,7 +174,8 @@ private:
 	/** Offer a delivered frame to a snapshot service (NV12 converted to BGRA). */
 	void OfferSnapshot(FCamSimSnapshotService& Snap, const FSlot& S) const;
 	void SubmitFrameToEncoder(TArray<uint8> Nv12, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres,
-	                          TArray<FEntityAnnotationData> Entities, TArray<uint32> InstanceIds);
+	                          TArray<FEntityAnnotationData> Entities, TArray<uint32> InstanceIds,
+	                          TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> CaptureJob);
 
 	UPROPERTY(Transient)
 	TObjectPtr<USceneCaptureComponent2D> Sensor;
@@ -321,6 +330,7 @@ private:
 		TArray<uint32>   InstanceIds;             // render writes → game reads after Complete (empty = none)
 		bool             bWantIds = false;        // game thread at capture; captured by value into the poll
 		bool             bWantDepth = false;      // ditto, for the depth map
+		TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> CaptureJob;   // control API capture frame (game thread)
 		// Reset by the game thread at capture, advanced by the render thread's polls.
 		TAtomic<uint8>   ReadyStreak      { 0 };  // "N consecutive Ready polls before consuming"
 		TAtomic<uint32>  PollAttempts     { 0 };  // past MaxReadbackPolls the slot fails
@@ -330,6 +340,9 @@ private:
 	static constexpr uint32 MaxReadbackPolls = 60;  // ~2 s at 30 Hz
 
 	uint32 NextGeneration = 0;  // game thread
+
+	/** Control API: tags the next Capture() (game thread). */
+	TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> PendingCaptureJob;
 
 	/** Frame counter for PTS calculation. */
 	uint64 FrameIndex = 0;

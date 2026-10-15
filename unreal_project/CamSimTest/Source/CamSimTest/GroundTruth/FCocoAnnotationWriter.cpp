@@ -40,13 +40,9 @@ bool FCocoAnnotationWriter::Open(const FString& OutputDir)
 	return true;
 }
 
-void FCocoAnnotationWriter::WriteFrame(
-    const TArray<FEntityAnnotationData>& Entities,
-    const FCamSimTelemetry& Telemetry,
-    uint64 FrameIdx)
+FString FCocoAnnotationWriter::BuildFrameRecord(const TArray<FEntityAnnotationData>& Entities,
+	const FCamSimTelemetry& Telemetry, uint64 FrameIdx, int32 ImageWidth, int32 ImageHeight)
 {
-	if (!bIsOpen || !FileHandle) return;
-
 	// Use a compact manual JSON build to avoid JSON library overhead on the hot path.
 	FString Line;
 	Line.Reserve(512);
@@ -131,7 +127,18 @@ void FCocoAnnotationWriter::WriteFrame(
 		}
 		Line += TEXT("}");
 	}
-	Line += TEXT("]}\n");
+	Line += TEXT("]}");
+	return Line;
+}
+
+void FCocoAnnotationWriter::WriteFrame(
+    const TArray<FEntityAnnotationData>& Entities,
+    const FCamSimTelemetry& Telemetry,
+    uint64 FrameIdx)
+{
+	if (!bIsOpen || !FileHandle) return;
+
+	const FString Line = BuildFrameRecord(Entities, Telemetry, FrameIdx, ImageWidth, ImageHeight) + TEXT("\n");
 
 	// Write as UTF-8 bytes directly to the persistent handle.
 	FTCHARToUTF8 Utf8(*Line);

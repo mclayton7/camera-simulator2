@@ -83,6 +83,12 @@ public:
 	/** False while frames are held waiting for terrain tiles to load. */
 	bool IsTerrainReady() const { return Streaming.IsTerrainReady(); }
 
+	/** Lowest tileset load progress (0-100) this frame; < 0 = none. */
+	float GetMinLoadProgressPct() const { return Streaming.GetMinLoadProgressPct(); }
+
+	/** Control API (ROADMAP 2.4): tag the next captured frame (UCamSimCaptureComponent::RequestCaptureFrame). */
+	void RequestCaptureFrame(TSharedRef<FControlCaptureJob, ESPMode::ThreadSafe> Job) { CaptureComp->RequestCaptureFrame(Job); }
+
 	/** Current platform geodetic pose (orientation in local NEU). */
 	bool GetPlatformGeoPose(CamSimFrames::FGeoPose& OutPose) const { return Platform.GetPose(OutPose); }
 

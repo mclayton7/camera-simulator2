@@ -32,6 +32,7 @@ bool FGroundTruthCollector::Open()
 	MinVisiblePixels = Config.MLTraining.MinVisiblePixels;
 	bSegmentation = Config.MLTraining.bSegmentation;
 	CaptureSize = FIntPoint(Config.CaptureWidth, Config.CaptureHeight);
+	DepthFarPlaneM = FMath::Max(Config.MLTraining.DepthFarPlaneM, 1.0f);
 
 	// Resolve output directory
 	FString OutputDir = Config.MLTraining.OutputDir;
@@ -89,12 +90,12 @@ void FGroundTruthCollector::Close()
 	bEnabled = false;
 }
 
-void FGroundTruthCollector::WriteAnnotationFrame(
+FString FGroundTruthCollector::WriteAnnotationFrame(
     TArray<FEntityAnnotationData> Entities, const FInstanceIdImage* Ids,
-    const FCamSimTelemetry& Telemetry, uint64 FrameIdx)
+    const FCamSimTelemetry& Telemetry, uint64 FrameIdx, bool bForce)
 {
-	if (!bIsOpen || !bEnabled || Writers.IsEmpty()) return;
-	if ((FrameIdx % static_cast<uint64>(AnnotationIntervalFrames)) != 0) return;
+	if (!bIsOpen || !bEnabled) return FString();
+	if (!bForce && (Writers.IsEmpty() || (FrameIdx % static_cast<uint64>(AnnotationIntervalFrames)) != 0)) return FString();
 
 	// Measure from the rendered ID image; the size check guards an ID image of another size.
 	if (Ids && Ids->IsValid() && Ids->Width == CaptureSize.X && Ids->Height == CaptureSize.Y)
@@ -110,13 +111,15 @@ void FGroundTruthCollector::WriteAnnotationFrame(
 		if (W && W->IsOpen())
 			W->WriteFrame(Entities, Telemetry, FrameIdx);
 	}
+	return bForce ? FCocoAnnotationWriter::BuildFrameRecord(Entities, Telemetry, FrameIdx, CaptureSize.X, CaptureSize.Y)
+	              : FString();
 }
 
 void FGroundTruthCollector::WriteDepthFrame(
-    const TArray<float>& DepthMetres, int32 Width, int32 Height, uint64 FrameIdx)
+    const TArray<float>& DepthMetres, int32 Width, int32 Height, uint64 FrameIdx, bool bForce)
 {
 	if (!bIsOpen || !bEnabled || !DepthWriter || !DepthWriter->IsOpen()) return;
-	if ((FrameIdx % static_cast<uint64>(AnnotationIntervalFrames)) != 0) return;
+	if (!bForce && (FrameIdx % static_cast<uint64>(AnnotationIntervalFrames)) != 0) return;
 
 	DepthWriter->WriteDepthFrame(DepthMetres, Width, Height, FrameIdx);
 }

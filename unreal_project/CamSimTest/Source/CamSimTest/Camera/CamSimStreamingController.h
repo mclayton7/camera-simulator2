@@ -52,6 +52,9 @@ public:
 
 	bool IsTerrainReady() const { return TerrainGate.IsReady(); }
 
+	/** Lowest tileset load progress (0-100) at the last UpdateTerrainGate; < 0 = no tilesets or not run yet. */
+	float GetMinLoadProgressPct() const { return LastMinLoadProgressPct; }
+
 	/** Log per-tileset load progress and memory (heartbeat). */
 	static void LogTilesetStats(const FTilesets& Tilesets);
 
@@ -71,4 +74,5 @@ private:
 	double GatePrevLat      = 0.0;
 	double GatePrevLon      = 0.0;
 	bool   bHasGatePosition = false;
+	float  LastMinLoadProgressPct = -1.0f;
 };

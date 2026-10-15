@@ -34,6 +34,13 @@ public:
 	virtual void Close() override;
 	virtual bool IsOpen() const override { return bIsOpen; }
 
+	/**
+	 * One frame's record: the camsim_coco.jsonl line without its newline (the control API returns it with each
+	 * capture, ROADMAP 2.4). Entities are already filtered to the visible ones; ImageWidth/Height give the RLE size.
+	 */
+	static FString BuildFrameRecord(const TArray<FEntityAnnotationData>& Entities, const FCamSimTelemetry& Telemetry,
+		uint64 FrameIdx, int32 ImageWidth, int32 ImageHeight);
+
 	/** Image size for segmentation.size; call before Open(). */
 	void SetImageSize(int32 InWidth, int32 InHeight) { ImageWidth = InWidth; ImageHeight = InHeight; }
 

@@ -115,6 +115,7 @@ bool FCamSimStreamingController::UpdateTerrainGate(double Lat, double Lon, const
 		}
 	}
 
+	LastMinLoadProgressPct = MinProgressPct;
 	const double MovedM = bHasGatePosition ? FGroundSpeedEstimator::DistanceM(GatePrevLat, GatePrevLon, Lat, Lon) : 0.0;
 	GatePrevLat = Lat;
 	GatePrevLon = Lon;

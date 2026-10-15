@@ -28,6 +28,14 @@ public:
 	void WriteDepthFrame(const TArray<float>& DepthMetres,
 	                     int32 Width, int32 Height, uint64 FrameIdx);
 
+	/**
+	 * The 16-bit PNG this writer stores for a frame (0 m → 0, FarPlaneM → 65535, beyond clamped). Empty on a size
+	 * mismatch or failure. Any thread once ImageWrapper is loaded (Open() or the control API load it).
+	 */
+	static TArray64<uint8> EncodeDepthPng(const TArray<float>& DepthMetres, int32 Width, int32 Height, float FarPlaneM);
+
+	float GetDepthFarPlaneM() const { return DepthFarPlaneM; }
+
 	void  Close();
 	bool  IsOpen() const { return bIsOpen; }
 
