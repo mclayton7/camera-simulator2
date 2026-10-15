@@ -14,7 +14,7 @@ from shapely.geometry import LineString, Polygon
 from . import geodesy, gltf
 from .features import Feature, width_m
 
-BRIDGES_RULES_VERSION = "1"  # bump on any change to selection, heights or geometry (it is in the layer settings hash)
+BRIDGES_RULES_VERSION = "2"  # 2: grounded ends move out to the embankment top (APPROACH_SEARCH_M)  # bump on any change to selection, heights or geometry (it is in the layer settings hash)
 MIN_CLEARANCE_M = 2.0  # a deck never higher than this above the terrain is not built (the terrain carries the road)
 DECK_THICKNESS_M = 1.5
 PARAPET_W_M, PARAPET_H_M = 0.3, 1.0
@@ -25,6 +25,12 @@ PIER_ALONG_M = 1.2
 PIER_ACROSS_FRACTION = 0.6
 PIER_SINK_M = 0.5
 STATION_MAX_M = 10.0
+# 3DEP's bridge removal cuts past the OSM end node: the bare earth dips 3-5 m in the last 10-15 m before it and the
+# embankment top is 15-30 m out (Pendleton, 2026-10-15). A grounded end takes the highest terrain within this far out
+# along the way's end direction, and the deck is extended straight out to the first point within APPROACH_TOL_M of it.
+APPROACH_SEARCH_M = 30.0
+APPROACH_STEP_M = 2.5
+APPROACH_TOL_M = 0.25
 PROFILE_STEP_M = 5.0
 TILE_ZOOM = 13  # content tiles, by deck midpoint
 GROUP_ZOOM = 10  # content-less groups (~35 km at 33 N): a group's decks load when the camera is within ~10 km of it
@@ -135,6 +141,71 @@ def local_heights(heights_fn, cell_deg: float = 0.05):
     return fn
 
 
+def _outward(line: LineString, end: int) -> np.ndarray | None:
+    """Unit metric direction leaving the way at end 0 (first point) or 1 (last point); None for a degenerate way."""
+    c0 = line.coords[0]
+    p = metric(line, c0[1], c0[0])
+    if end == 1:
+        p = p[::-1]
+    for q in p[1:]:
+        v = p[0] - q
+        n = np.linalg.norm(v)
+        if n >= MIN_STEP_M:
+            return v / n
+    return None
+
+
+def _ground(ways, ends, grounded: set, heights_fn) -> tuple[dict, dict]:
+    """Height of every grounded node and how far ((source_id, end) -> m) its way extends to reach the embankment."""
+    probes = []  # (node, way id, end, lon array, lat array)
+    for w in ways:
+        for end, node in enumerate(ends[w.source_id]):
+            if node not in grounded:
+                continue
+            u = _outward(w.geom, end)
+            c = w.geom.coords[-1 if end else 0]
+            ks = np.arange(0.0, APPROACH_SEARCH_M + 1e-9, APPROACH_STEP_M)
+            if u is None:
+                ks = ks[:1]
+                u = np.zeros(2)
+            sx, sy = _scale(c[1])
+            probes.append((node, w.source_id, end, ks, c[0] + ks * u[0] / sx, c[1] + ks * u[1] / sy))
+    gh, ext = {}, {}
+    if not probes:
+        return gh, ext
+    h = np.asarray(heights_fn(np.concatenate([p[4] for p in probes]), np.concatenate([p[5] for p in probes])), float)
+    i = 0
+    for node, sid, end, ks, _, _ in probes:
+        hs = h[i : i + len(ks)]
+        i += len(ks)
+        if not math.isfinite(hs[0]) or not np.isfinite(hs).any():
+            gh[node] = math.nan
+            continue
+        top = float(np.nanmax(hs))
+        k = int(np.argmax(np.nan_to_num(hs, nan=-np.inf) >= top - APPROACH_TOL_M))
+        gh[node] = float(hs[k])
+        if ks[k] > 0:
+            ext[(sid, end)] = float(ks[k])
+    return gh, ext
+
+
+def _extended(line: LineString, ext0: float, ext1: float) -> LineString:
+    """The way extended straight out by ext0 m before its first point and ext1 m past its last."""
+    if ext0 <= 0 and ext1 <= 0:
+        return line
+    coords = list(line.coords)
+    c0 = coords[0]
+    sx, sy = _scale(c0[1])
+    for end, e in ((0, ext0), (1, ext1)):
+        if e <= 0:
+            continue
+        u = _outward(line, end)
+        c = coords[-1 if end else 0]
+        q = (c[0] + e * u[0] / sx, c[1] + e * u[1] / sy)
+        coords = [q, *coords] if end == 0 else [*coords, q]
+    return LineString(coords)
+
+
 def plan_decks(features: list[Feature], heights_fn, min_clearance_m: float = MIN_CLEARANCE_M) -> tuple[list[Deck], dict]:
     """Deck heights over the bridge graph (spec 1.2): per kind, way end points are nodes; degree-1 nodes are grounded
     at the bare-earth terrain (heights_fn: lon, lat arrays -> ellipsoid m, NaN = no data); every free node takes the
@@ -151,10 +222,7 @@ def plan_decks(features: list[Feature], heights_fn, min_clearance_m: float = MIN
         degree[a] = degree.get(a, 0) + 1
         degree[b] = degree.get(b, 0) + 1
     grounded = sorted(k for k, n in degree.items() if n == 1)
-    gh = {}
-    if grounded:
-        h = np.asarray(heights_fn(np.array([k[1][0] for k in grounded]), np.array([k[1][1] for k in grounded])), float)
-        gh = dict(zip(grounded, h.tolist()))
+    gh, ext = _ground(ways, ends, set(grounded), heights_fn)
     bad = {k for k, v in gh.items() if not math.isfinite(v)}
     live = []
     for w in ways:
@@ -208,8 +276,9 @@ def plan_decks(features: list[Feature], heights_fn, min_clearance_m: float = MIN
     out = []
     for w in sorted(solved, key=lambda w: w.source_id):
         a, b = ends[w.source_id]
-        d = Deck(w.source_id, w.kind, w.geom, width_m(w), node_h[a], node_h[b], lengths[w.source_id], 0.0)
-        lon, lat, s = _samples(w.geom, PROFILE_STEP_M)
+        line = _extended(w.geom, ext.get((w.source_id, 0), 0.0), ext.get((w.source_id, 1), 0.0))
+        d = Deck(w.source_id, w.kind, line, width_m(w), node_h[a], node_h[b], length_m(line), 0.0)
+        lon, lat, s = _samples(line, PROFILE_STEP_M)
         terr = np.asarray(heights_fn(lon, lat), float)
         top = np.array([deck_height(d, x) for x in s])
         clear = top - terr

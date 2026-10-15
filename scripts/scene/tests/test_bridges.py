@@ -90,7 +90,8 @@ def test_road_and_rail_are_separate_graphs():
     rail = Feature("rail", "osm:w2", LineString([ll(150, 0), ll(300, 0)]), {"railway": "rail", "bridge": "yes"})
     decks, _ = plan_decks([r, rail], valley, min_clearance_m=-math.inf)  # keep both: this test is about grounding
     d = by_id(decks)
-    assert d["osm:w1"].h1 == pytest.approx(valley_at(150), abs=1e-6)  # degree 1 in its own (road) graph: grounded
+    end = d["osm:w1"].line.coords[-1]  # degree 1 in its own (road) graph: grounded (at the terrain where it ends)
+    assert d["osm:w1"].h1 == pytest.approx(float(valley(np.array(end[0]), np.array(end[1]))), abs=1e-6)
 
 
 def test_select_keeps_bridges_only():
@@ -214,3 +215,29 @@ def test_local_heights_batches_by_cell_and_keeps_values():
     got = local_heights(hf, cell_deg=0.05)(lon, lat)
     assert got == pytest.approx(lon * 10 + lat)
     assert len(calls) == 2 and all(dx < 0.05 and dy < 0.05 for dx, dy in calls)
+
+
+def embankment(lon, lat):
+    """A 200 m deck from x 0 to 200: the bare-earth DEM dips to 96 m at the OSM end nodes (the bridge removal cut past
+    them) and rises to the 100 m embankment 12 m outside them; a 70 m valley in between."""
+    x = (np.asarray(lon) - LON0) * KX
+    out = np.maximum(-x, x - 200.0)  # metres outside the deck (negative inside)
+    ramp = np.clip(96.0 + 4.0 * out / 12.0, 96.0, 100.0)
+    inside = 70.0 + 26.0 * np.clip(np.minimum(x, 200.0 - x) / 30.0, 0.0, 1.0) * (out > -30)
+    return np.where(out >= 0, ramp, np.minimum(inside, 96.0 - 0.0 * x))
+
+
+def test_grounded_end_meets_the_embankment_not_the_dip():
+    decks, _ = plan_decks([road("w1", [(0, 0), (200, 0)])], embankment)
+    (d,) = decks
+    assert d.h0 == pytest.approx(100.0, abs=0.05) and d.h1 == pytest.approx(100.0, abs=0.05)
+    x = [(c[0] - LON0) * KX for c in d.line.coords]
+    assert x[0] == pytest.approx(-12.0, abs=2.6) and x[-1] == pytest.approx(212.0, abs=2.6)  # extended to the plateau
+    assert d.length_m == pytest.approx(x[-1] - x[0], abs=0.05)
+
+
+def test_flat_approach_is_not_extended():
+    decks, _ = plan_decks([road("w1", [(0, 0), (300, 0)])], valley)
+    (d,) = decks
+    x = [(c[0] - LON0) * KX for c in d.line.coords]
+    assert x[0] > -2.6 and x[-1] < 302.6
