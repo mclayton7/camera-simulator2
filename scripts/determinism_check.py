@@ -7,9 +7,10 @@ section 2): the same package, pins and CIGI input give the same frames.
 
 Two launches (a, b) fly the same six poses in the same order: camp_nadir, trees_oblique, slant_5km, coast_waves (EO)
 and camp_nadir_ir, trees_oblique_ir (MWIR). Pins: the sim clock frozen (CAMSIM_SIM_TIME_RATE=0, and the host sends
-the same date and time every frame) and the sensor's temporal noise keyed to one frame
-(`-ExecCmds=camsim.Sensor.FixedNoiseFrame 0`). Each pose's CIGI datagram is a pure function of the pose but for the
-IG Control's frame counter and wall-clock timestamp; its SHA-256 with those zeroed is in the report, so both runs provably got the same input.
+the same date and time every frame), the sensor's temporal noise keyed to one frame (camsim.Sensor.FixedNoiseFrame 0)
+and UE's temporal sequences frozen (r.Test.FreezeTemporalSequences 1: TSR jitter and the view frame index; Development
+builds only). Each pose's CIGI datagram is a pure function of the pose but for the IG Control's frame counter and
+wall-clock timestamp; its SHA-256 with those zeroed is in the report, so both runs provably got the same input.
 Per pose, after /ready terrain: a /snapshot every second until three in a row have the same pixel hash (SHA-256 of
 the decoded RGB), up to 90 s; that settled frame is kept (OUT/<run>/<pose>.png).
 Gates: S1 every pose settles within 90 s in both runs; S2 run a's settled hash equals run b's for every pose. On a
@@ -38,7 +39,9 @@ from bench import scenario  # noqa: E402
 
 SETTLE_MAX_S = 90.0
 SETTLE_NEED = 3
-EXEC_CMDS = "-ExecCmds=camsim.Sensor.FixedNoiseFrame 0"
+# The sensor's temporal noise (CamSim) and the view's temporal sequences (UE, Development builds: TSR jitter, the view
+# frame index Lumen's and shadows' stochastic sampling is keyed to) pinned to one frame
+EXEC_CMDS = "-ExecCmds=camsim.Sensor.FixedNoiseFrame 0,r.Test.FreezeTemporalSequences 1"
 
 
 @dataclass(frozen=True)
@@ -73,19 +76,23 @@ def datagram_digest(pose: scenario.Pose) -> str:
 
 def settle(fetch: Callable[[], np.ndarray | None], max_s: float = SETTLE_MAX_S, need: int = SETTLE_NEED,
            now: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> dict:
-    """Fetch a frame a second until `need` in a row have the same pixel hash, or max_s passes."""
-    t0, run, last, n, img = now(), 0, None, 0, None
+    """Fetch a frame a second until `need` in a row have the same pixel hash, or max_s passes. `last_change` is the
+    difference between the last two frames fetched (how far from still the view is when it gives up)."""
+    t0, run, last, n, img, prev = now(), 0, None, 0, None, None
     while True:
         frame = fetch()
         if frame is not None:
             n += 1
             h = pixel_hash(frame)
             run = run + 1 if h == last else 1
-            last, img = h, frame
+            last, prev, img = h, img, frame
             if run >= need:
-                return {"settled": True, "hash": h, "image": img, "frames": n, "seconds": now() - t0}
+                return {"settled": True, "hash": h, "image": img, "frames": n, "seconds": now() - t0,
+                        "last_change": diff_stats(prev, img)}
         if now() - t0 >= max_s:
-            return {"settled": False, "hash": last, "image": img, "frames": n, "seconds": now() - t0}
+            change = diff_stats(prev, img) if prev is not None and prev.shape == img.shape else None
+            return {"settled": False, "hash": last, "image": img, "frames": n, "seconds": now() - t0,
+                    "last_change": change}
         sleep(1.0)
 
 
@@ -168,7 +175,9 @@ def run_once(label: str, pkg: Path, out: Path) -> dict:
             time.sleep(1.0)
             rb.wait_terrain(180)
             r = settle(fetch)
-            print(f"[determinism]   settled {r['settled']} in {r['seconds']:.0f} s ({r['frames']} frames)", flush=True)
+            lc = r["last_change"] or {}
+            print(f"[determinism]   settled {r['settled']} in {r['seconds']:.0f} s ({r['frames']} frames); last two "
+                  f"frames differ in {lc.get('pixels')} px, max {lc.get('max')} DN", flush=True)
             if r["image"] is not None:
                 _png(r["image"], out / label / f"{p.name}.png")
             res[p.name] = {k: v for k, v in r.items() if k != "image"}

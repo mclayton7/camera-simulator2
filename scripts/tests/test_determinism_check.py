@@ -108,3 +108,17 @@ def test_snapshot_fetcher_returns_none_on_a_failed_request():
         raise OSError("connection refused")
 
     assert dc.snapshot_fetcher("http://127.0.0.1:8080", opener)() is None
+
+
+def test_settle_reports_how_much_the_last_two_frames_differ():
+    c = Clock()
+    n = iter(range(10**6))
+
+    def fetch():
+        img = np.zeros((4, 4, 3), np.uint8)
+        img[0, 0] = next(n) % 3  # one pixel flickers by up to 2 DN
+        return img
+
+    r = dc.settle(fetch, max_s=10, need=3, now=c.now, sleep=c.sleep)
+    assert not r["settled"]
+    assert r["last_change"] == {"equal": False, "pixels": 1, "max": 1, "bbox": [0, 0, 1, 1]}
