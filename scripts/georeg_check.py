@@ -15,9 +15,11 @@ pixels, but the stencil is rendered under TSR's per-frame sub-pixel jitter, so t
   (a) the ST 0601 pinhole camera (Tags 13/14/75, 5/6/7 or 90/91, 18/19/20, 16/17);
   (b) (a) with the lens model (k1, k2 of the run; equal to (a) with the shipped presets);
   (c) the four corner points (Tags 82-89) as a homography, as a video player draws the footprint.
+Also (a') the camera of the commanded CIGI pose (no KLV in the loop: separates KLV quantisation from render error).
 Gates: G1 (a) <= 1 px on every view; G2 (c) <= 1 px on the flat views and the corner view (a four-corner homography
 assumes a plane: relief and the 5 km footprint's curvature move points by more by construction, so it is reported
-there only). The report gives the error in metres on the ground and the KLV quantisation budget (px per tag LSB).
+there only); G3 every KLV corner point (82-89) and the frame centre (23/24) lies on the commanded camera's ray through
+its image point (frame corner / centre) within 1 px, on every view. The report gives the error in metres on the ground and the KLV quantisation budget (px per tag LSB).
 Runs: main (the ten views), distorted (flat/nadir and flat/corner with k1 = -0.2, informational: KLV corners are
 pinhole, ROADMAP 3B.3), orbit (a 30 s orbit at 1 km and 45 deg around the flat marker; per-frame error of (a) with KLV
 matched to COCO by Tag 2 = timestamp_us, and the lag in frames that minimises it; informational).
@@ -27,6 +29,7 @@ CamSim. Writes OUT/report.json and OUT/overlays/. Exit 0 when G1 and G2 pass, 1 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 import os
@@ -160,6 +163,17 @@ def evaluate(view: View, place: dict, frames: list[dict], klv: list[dict], k1: f
         hx, hy = g.projected_centroid(lambda la, lo, h: hom(la, lo), foot)
         fx, fy = g.projected_centroid(cam.project, foot)
         pred["c"] = (hx + pred["a"][0] - fx, hy + pred["a"][1] - fy)
+    if place.get("camera"):
+        # (a') the commanded CIGI pose, no KLV in the loop: separates KLV quantisation from render error; and G3:
+        # each KLV corner point and the frame centre must lie on that camera's ray through its image point
+        cmd = g.Camera.from_klv(pose_tags(scenario.Pose(**place["camera"]), width, height), width, height)
+        pred["cmd"] = g.projected_centroid(cmd.project, corners)
+        rays = {}
+        for k, (px, py) in zip((82, 84, 86, 88, 23),
+                               ((0, 0), (width, 0), (width, height), (0, height), (width / 2, height / 2))):
+            if k in tags and k + 1 in tags:
+                rays[str(k)] = ray_residual(cmd, tags[k], tags[k + 1], px, py, place["h"])
+        out["corner_ray_px"] = rays
     centre = tuple(sum(c[i] for c in corners) / 4 for i in range(3))
     gx, gy = cam.ground_pixel_size(*centre)
     out.update(measured=[mx, my], predicted={k: list(v) for k, v in pred.items()},
@@ -170,14 +184,39 @@ def evaluate(view: View, place: dict, frames: list[dict], klv: list[dict], k1: f
     return out
 
 
+def ray_residual(cam: g.Camera, lat: float, lon: float, px: float, py: float, near_h: float) -> float:
+    """Pixel distance from (px, py) to the image of the vertical line through (lat, lon), for heights from 500 m below
+    near_h to just under the camera: 0 when the point lies on the camera's ray through (px, py) at some height."""
+    def d(h: float) -> float:
+        try:
+            x, y = cam.project(lat, lon, h)
+        except ValueError:
+            return math.inf
+        return math.hypot(x - px, y - py)
+
+    hs = g.np.arange(near_h - 500.0, cam.h - 1.0, 1.0)
+    best = min(hs, key=d)
+    lo, hi = best - 1.0, best + 1.0
+    for _ in range(60):  # golden section on the bracket
+        m1, m2 = hi - 0.618 * (hi - lo), lo + 0.618 * (hi - lo)
+        if d(m1) < d(m2):
+            hi = m2
+        else:
+            lo = m1
+    return d(0.5 * (lo + hi))
+
+
 def gates(results: list[dict]) -> dict:
     def gate(views_in, key):
         failed = [r["view"] for r in results if views_in(r["view"])
                   and ("error" in r or r["error_px"].get(key, math.inf) > GATE_PX)]
         return {"pass": not failed, "failed": failed}
 
+    g3 = [r["view"] for r in results if "error" in r or not r.get("corner_ray_px")
+          or max(r["corner_ray_px"].values()) > GATE_PX]
     return {"G1": gate(lambda v: True, "a"),
-            "G2": gate(lambda v: v.startswith("flat/"), "c")}
+            "G2": gate(lambda v: v.startswith("flat/"), "c"),
+            "G3": {"pass": not g3, "failed": g3}}
 
 
 # --- CamSim session -------------------------------------------------------------------------------------------------
@@ -278,14 +317,16 @@ def run_views(label: str, pkg: Path, vs: list[View], out: Path, k1: float, confi
                     rb.wait_terrain(180)
                     rid += 1
                     h0 = _hot(responses, oc, host, rid, v.site["lat"], v.site["lon"])["hot"]
-                    host.pose = camera_pose(v, h0)
+                    pose = camera_pose(v, h0)
+                    host.pose = pose
                     time.sleep(1.0)
                     rb.wait_terrain(180)
                     rid += 1
                     hot = _hot(responses, oc, host, rid, v.site["lat"], v.site["lon"])
                     place = {"lat": v.site["lat"], "lon": v.site["lon"], "h": hot["hot"],
                              "normal_az": hot.get("normal_az", 0.0), "normal_el": hot.get("normal_el", 90.0),
-                             "material": hot.get("material"), "heading": v.site["heading_deg"], "k1": k1}
+                             "material": hot.get("material"), "heading": v.site["heading_deg"], "k1": k1, "h0": h0,
+                             "camera": dataclasses.asdict(pose)}
                     marker.place(v.marker_type, place)
                     (vdir / "placement.json").write_text(json.dumps(place, indent=1) + "\n")
                     time.sleep(SETTLE_S)
@@ -445,15 +486,18 @@ def evaluate_run(out: Path, label: str, vs: list[View]) -> list[dict]:
 
 
 def print_table(label: str, res: list[dict]) -> None:
-    print(f"\n{label}: view | frames | err (a) px / m | (b) px | (c) px / m | ground px m | max budget px")
+    print(f"\n{label}: view | frames | (a) px / m | (a') cmd px | (b) px | (c) px / m | corner rays max px | "
+          "ground px m | max budget px")
     for r in res:
         if "error" in r:
             print(f"  {r['view']:<14} ERROR {r['error']}")
             continue
         e, em = r["error_px"], r["error_m"]
         c = f"{e['c']:.2f} / {em['c']:.2f}" if "c" in e else "--"
-        print(f"  {r['view']:<14} {r['frames']:>4} | {e['a']:.2f} / {em['a']:.2f} | {e['b']:.2f} | {c} | "
-              f"{r['ground_px_m'][0]:.3f} x {r['ground_px_m'][1]:.3f} | {max(r['budget_px'].values()):.2f}")
+        cmd = f"{e['cmd']:.2f}" if "cmd" in e else "--"
+        rays = f"{max(r['corner_ray_px'].values()):.2f}" if r.get("corner_ray_px") else "--"
+        print(f"  {r['view']:<14} {r['frames']:>4} | {e['a']:.2f} / {em['a']:.2f} | {cmd} | {e['b']:.2f} | {c} | "
+              f"{rays} | {r['ground_px_m'][0]:.3f} x {r['ground_px_m'][1]:.3f} | {max(r['budget_px'].values()):.2f}")
 
 
 def main() -> int:

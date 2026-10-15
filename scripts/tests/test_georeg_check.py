@@ -1,5 +1,6 @@
 """Unit tests for scripts/georeg_check.py (REALISM R6 geo-registration runner): view geometry, evaluation, gates."""
 
+import dataclasses
 import math
 
 import georeg_check as gc
@@ -51,7 +52,7 @@ def _synthetic(view, k1=0.0):
         tags[k], tags[k + 1] = cam.unproject(px, py, 20.0)
     tags[23], tags[24] = cam.unproject(W / 2, H / 2, 20.0)
     place = {"lat": SITE["lat"], "lon": SITE["lon"], "h": 20.0, "normal_az": 0.0, "normal_el": 90.0,
-             "heading": view.site["heading_deg"]}
+             "heading": view.site["heading_deg"], "camera": dataclasses.asdict(pose)}
     corners = gc.marker_corners(view, place)
     quad = [cam.project_distorted(*c, k1, 0.0) for c in corners]
     # Point-sample the projected (convex) quad at each pixel centre plus a per-frame sub-pixel jitter (8 x 8 offsets),
@@ -104,6 +105,8 @@ def test_gates_apply_g2_to_flat_and_corner_only():
            {"view": "flat/corner", "error_px": {"a": 0.9, "b": 0.9, "c": 1.2}},
            {"view": "slope/slant", "error": "marker not seen (3 clean frames, need 30)"}]
     gates = gc.gates(res)
+    # results without corner_ray_px have no G3 data: they fail it
+    assert gates["G3"] == {"pass": False, "failed": ["flat/nadir", "roof/oblique", "flat/corner", "slope/slant"]}
     assert gates["G1"] == {"pass": False, "failed": ["slope/slant"]}
     assert gates["G2"] == {"pass": False, "failed": ["flat/corner"]}
 
@@ -120,3 +123,21 @@ def test_with_lens_distortion_b_matches_and_a_misses_at_the_corner():
     frames, klv, place = _synthetic(view, k1=-0.2)
     r = gc.evaluate(view, place, frames, klv, k1=-0.2, k2=0.0)
     assert r["error_px"]["b"] < 0.1 and r["error_px"]["a"] > 2.0, r["error_px"]
+
+
+def test_commanded_pose_prediction_and_corner_rays():
+    view = next(v for v in gc.views([SITE]) if v.name == "flat/oblique")
+    frames, klv, place = _synthetic(view)
+    r = gc.evaluate(view, place, frames, klv, k1=0.0, k2=0.0)
+    assert r["error_px"]["cmd"] < 0.1
+    assert max(r["corner_ray_px"].values()) < 0.05, r["corner_ray_px"]
+
+
+def test_a_corner_off_its_ray_fails_g3():
+    view = next(v for v in gc.views([SITE]) if v.name == "flat/oblique")
+    frames, klv, place = _synthetic(view)
+    for p in klv:
+        p["tags"][83] += 0.0001  # ~9 m east: off the upper-left ray
+    r = gc.evaluate(view, place, frames, klv, k1=0.0, k2=0.0)
+    assert r["corner_ray_px"]["82"] > 5
+    assert gc.gates([r])["G3"] == {"pass": False, "failed": ["flat/oblique"]}
