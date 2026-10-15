@@ -46,6 +46,12 @@ SETTLE_NEED = 3
 EXEC_CMDS = "-ExecCmds=camsim.Sensor.FixedNoiseFrame 0,r.Test.FreezeTemporalSequences 1"
 
 
+def exec_cmds(clouds_off: bool) -> str:
+    """The UE pins; clouds_off adds r.VolumetricCloud 0: the level's cloud material scrolls on UE engine time, and its
+    drift (and its reflection on the sea) is most of what moves on a frozen clock (2026-10-15 probe)."""
+    return EXEC_CMDS + (",r.VolumetricCloud 0" if clouds_off else "")
+
+
 @dataclass(frozen=True)
 class NamedPose:
     name: str
@@ -175,7 +181,7 @@ def snapshot_fetcher(health: str, opener: Callable | None = None) -> Callable[[]
     return fetch
 
 
-def run_once(label: str, pkg: Path, out: Path, env_extra: dict | None = None) -> dict:
+def run_once(label: str, pkg: Path, out: Path, env_extra: dict | None = None, clouds_off: bool = False) -> dict:
     sys.path.insert(0, str(REPO / "scripts" / "scene" / "tools"))
     import camsim_session as cs
 
@@ -187,7 +193,7 @@ def run_once(label: str, pkg: Path, out: Path, env_extra: dict | None = None) ->
            "CAMSIM_MULTICAST_ADDR": "127.0.0.1"}
     env.update(env_extra or {})
     res = {}
-    with cs.camsim(env, POSES[0].pose, extra_args=[EXEC_CMDS]) as host:
+    with cs.camsim(env, POSES[0].pose, extra_args=[exec_cmds(clouds_off)]) as host:
         for p in POSES:
             print(f"[determinism] {label} {p.name}", flush=True)
             host.pose = p.pose
@@ -251,6 +257,8 @@ def main() -> int:
     ap.add_argument("--auto-exposure", action="store_true",
                     help="keep the sensor AE / IR AGC on (by default they are manual: with the clock frozen they hold "
                          "their first snap, FSensorController::Smoothing)")
+    ap.add_argument("--clouds-off", action="store_true",
+                    help="diagnostic: r.VolumetricCloud 0 (the level's clouds drift on UE engine time, not the sim clock)")
     a = ap.parse_args()
     runs_file = a.out / "runs.json"
     if a.check_only:
@@ -265,14 +273,15 @@ def main() -> int:
         override = contextlib.nullcontext({}) if a.auto_exposure else cs.config_override(manual_exposure_config(src))
         try:
             with override as cfg_env:
-                runs = {label: run_once(label, a.scene.resolve(), a.out, cfg_env) for label in ("a", "b")}
+                runs = {label: run_once(label, a.scene.resolve(), a.out, cfg_env, a.clouds_off) for label in ("a", "b")}
         except RuntimeError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
         a.out.mkdir(parents=True, exist_ok=True)
         runs_file.write_text(json.dumps(runs, indent=1) + "\n")
     report = evaluate(a.out, runs)
-    report.update(scene=a.scene.name, date=time.strftime("%Y-%m-%d"), manual_exposure=not a.auto_exposure)
+    report.update(scene=a.scene.name, date=time.strftime("%Y-%m-%d"), manual_exposure=not a.auto_exposure,
+                  clouds_off=a.clouds_off)
     if a.against:
         report["against"] = {"other": str(a.against), "poses": against(a.out, a.against)}
     (a.out / "report.json").write_text(json.dumps(report, indent=1) + "\n")

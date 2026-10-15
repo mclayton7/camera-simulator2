@@ -135,3 +135,12 @@ def test_manual_exposure_config_turns_off_ae_and_agc():
     cfg = yaml.safe_load(out)
     modes = cfg["sensor_modes"]
     assert modes["eo"]["exposure"]["auto"] is False and modes["ir"]["thermal_exposure"]["auto"] is False
+
+
+def test_exec_cmds_pins_and_optional_clouds_off():
+    import determinism_check as dc
+
+    base = dc.exec_cmds(clouds_off=False)
+    assert base == "-ExecCmds=camsim.Sensor.FixedNoiseFrame 0,r.Test.FreezeTemporalSequences 1"
+    off = dc.exec_cmds(clouds_off=True)
+    assert off.startswith(base) and off.endswith(",r.VolumetricCloud 0")
