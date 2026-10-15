@@ -80,7 +80,7 @@ camsim/
       Subsystem/                   # UGameInstanceSubsystem lifecycle owner
       GameMode/                    # Minimal game mode, no pawn
       Vegetation/                  # REALISM R4: global cell grid, hash scatter (species mix per code, CHMv2 canopy, shrubs), library v2, near cells + far blocks (tier planner, no-gap handoff), HISM actors; R3b building footprint mask (FVegetationBuildingMask)
-      Tests/                       # UE5 Automation tests (607 tests across 100 files)
+      Tests/                       # UE5 Automation tests (608 tests across 100 files)
     Source/CamSimShaders/          # PostConfigInit module: /CamSim shader dir, GPU sensor RDG graph, SensorFrameParams/SensorHash
     Shaders/Private/               # CamSimSensor.usf + CamSimSensorCommon.ush (virtual path /CamSim)
     Source/ThirdParty/
@@ -126,7 +126,7 @@ Four threads: CIGI Receiver, Game, Render, Task (encoding). Communication via lo
 
 While iterating, run the narrowest check that covers the change: [`docs/testing.md`](docs/testing.md) maps each kind of change to a subset (`RunTests CamSim.<Group>`, `run_gpu_tests.sh CamSim.GPU.<Group>`, the acceptance scripts' `--runs` / `--stages` / `--phases`); full suites before a merge.
 
-- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (607 tests across 100 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`; counted as `IMPLEMENT_SIMPLE_AUTOMATION_TEST(` lines under `Source/CamSimTest/Tests/`, with `grep -rE 'IMPLEMENT_[A-Z_]*AUTOMATION_TEST\(' Tests | wc -l`, files by `grep -rl`, GPU by the `CamSim.GPU.` names)
+- **C++ tests**: UE5 Automation framework in `Source/CamSimTest/Tests/` (608 tests across 100 files, 26 of them `CamSim.GPU.*` and skipped under NullRHI; all under `CamSim.*`; counted as `IMPLEMENT_SIMPLE_AUTOMATION_TEST(` lines under `Source/CamSimTest/Tests/`, with `grep -rE 'IMPLEMENT_[A-Z_]*AUTOMATION_TEST\(' Tests | wc -l`, files by `grep -rl`, GPU by the `CamSim.GPU.` names)
   - Run in editor: `Ctrl+Alt+F11` or `Automation` console command
   - Run headlessly (any host with UE5.8 installed):
     ```bash
