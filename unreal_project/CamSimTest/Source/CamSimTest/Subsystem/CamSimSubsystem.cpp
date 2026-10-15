@@ -24,6 +24,7 @@
 #include "Diagnostics/PipelineLatencyTracker.h"
 #include "Health/CamSimHealthServer.h"
 #include "Health/CamSimSnapshotService.h"
+#include "Control/ControlApiAdapter.h"
 #include "Subsystem/EncoderWatchdog.h"
 #include "Time/SimClock.h"
 #include "Ocean/OceanSurface.h"         // FOceanSurface (ROADMAP 2.6)
@@ -76,6 +77,7 @@ struct UCamSimSubsystem::FSubsystemImpl
 	TUniquePtr<FCamSimHealthServer>     HealthServer;
 	TUniquePtr<FCamSimSnapshotService>  SnapshotService;  // ROADMAP 3A, null unless enabled
 	TUniquePtr<FCamSimSnapshotService>  SensorSnapshotService;  // ROADMAP 3B, null unless enabled
+	TUniquePtr<FControlApiAdapter>      ControlApiAdapter;      // ROADMAP 2.4, null unless control_api.enabled
 
 	// Ocean surface (ROADMAP 2.6); null when ocean.enabled is off or the EGM96 grid is missing.
 	TUniquePtr<FOceanSurface> Ocean;
@@ -218,6 +220,11 @@ FGroundTruthCollector* UCamSimSubsystem::GetGroundTruthCollector() const
 FCamSimSnapshotService* UCamSimSubsystem::GetSnapshotService() const
 {
 	return Impl ? Impl->SnapshotService.Get() : nullptr;
+}
+
+FControlApiAdapter* UCamSimSubsystem::GetControlApiAdapter() const
+{
+	return Impl ? Impl->ControlApiAdapter.Get() : nullptr;
 }
 
 FCamSimSnapshotService* UCamSimSubsystem::GetSensorSnapshotService() const

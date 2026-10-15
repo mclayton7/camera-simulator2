@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Entity/CamSimEntityManager.h"
+#include "Control/ControlApiAdapter.h"
 #include "Entity/CamSimEntity.h"
 #include "Camera/CamSimCamera.h"
 #include "Entity/EntityTypeTable.h"
@@ -79,6 +80,10 @@ void FCamSimEntityManager::Tick(float DeltaTime)
 	if (FDisEntityAdapter* DisAdapter = Subsystem ? Subsystem->GetDisAdapter() : nullptr)
 	{
 		DisAdapter->Poll(*this);
+	}
+	if (FControlApiAdapter* ApiAdapter = Subsystem ? Subsystem->GetControlApiAdapter() : nullptr)
+	{
+		ApiAdapter->Poll(*this);   // ROADMAP 2.4
 	}
 
 	if (Camera) Camera->ApplyHostPlatformState();

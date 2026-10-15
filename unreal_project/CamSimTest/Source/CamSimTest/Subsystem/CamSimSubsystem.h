@@ -22,6 +22,7 @@ class FGroundTruthCollector;
 class FCamSimSnapshotService;
 class FDisReceiver;
 class FDisEntityAdapter;
+class FControlApiAdapter;
 class FOceanSurface;
 class FLandCoverCodeLookup;
 class ACamSimCamera;
@@ -87,6 +88,8 @@ public:
 	FDisReceiver*          GetDisReceiver()     const;
 	FDisEntityAdapter*     GetDisAdapter()      const;
 	FPipelineLatencyTracker* GetLatencyTracker() const;
+	/** Control API entities (ROADMAP 2.4); nullptr unless control_api.enabled. Game thread. */
+	FControlApiAdapter*    GetControlApiAdapter() const;
 
 	/** The sea (ROADMAP 2.6); nullptr when ocean.enabled is off or the EGM96 grid is missing. */
 	FOceanSurface*       GetOceanSurface();
