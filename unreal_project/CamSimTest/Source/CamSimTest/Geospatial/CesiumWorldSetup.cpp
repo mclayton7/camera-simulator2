@@ -33,6 +33,7 @@ UCesiumIonServer* SetUpCesiumWorld(UWorld* World, const FCamSimConfig& Cfg)
 	ApplyCesiumTilesetTuning(World, Cfg);
 	UCesiumIonServer* Server = ::ApplyCesiumBackendConfig(World, Cfg.CesiumBackend);   // declared at global scope
 	SpawnBuildingsTileset(World, Cfg);   // after the destroy loop, which would remove it (REALISM R3)
+	SpawnBridgesTileset(World, Cfg);     // REALISM R3 bridges
 	return Server;
 }
 

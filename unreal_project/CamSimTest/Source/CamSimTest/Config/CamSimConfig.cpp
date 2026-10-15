@@ -854,6 +854,14 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				YamlInt   (Bd, "maximum_cached_bytes_mb",    Cfg.Scene.BuildingsMaximumCachedBytesMB);
 				YamlBool  (Bd, "create_physics_meshes",      Cfg.Scene.bBuildingsCreatePhysicsMeshes);
 			}
+			if (YamlHas(Sc, "bridges"))
+			{
+				ryml::ConstNodeRef Br = Sc["bridges"];
+				YamlBool  (Br, "enabled",                    Cfg.Scene.bBridgesEnabled);
+				YamlDouble(Br, "maximum_screen_space_error", Cfg.Scene.BridgesMaximumScreenSpaceError);
+				YamlInt   (Br, "maximum_cached_bytes_mb",    Cfg.Scene.BridgesMaximumCachedBytesMB);
+				YamlBool  (Br, "create_physics_meshes",      Cfg.Scene.bBridgesCreatePhysicsMeshes);
+			}
 		}
 
 		// Phase 21: DIS protocol config
@@ -1188,6 +1196,13 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 		TEXT("CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB"), Cfg.Scene.BuildingsMaximumCachedBytesMB);
 	Cfg.Scene.bBuildingsCreatePhysicsMeshes = GetEnvBool(
 		TEXT("CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES"), Cfg.Scene.bBuildingsCreatePhysicsMeshes);
+	Cfg.Scene.bBridgesEnabled = GetEnvBool(TEXT("CAMSIM_SCENE_BRIDGES_ENABLED"), Cfg.Scene.bBridgesEnabled);
+	Cfg.Scene.BridgesMaximumScreenSpaceError = GetEnvDouble(
+		TEXT("CAMSIM_SCENE_BRIDGES_MAXIMUM_SCREEN_SPACE_ERROR"), Cfg.Scene.BridgesMaximumScreenSpaceError);
+	Cfg.Scene.BridgesMaximumCachedBytesMB = GetEnvInt(
+		TEXT("CAMSIM_SCENE_BRIDGES_MAXIMUM_CACHED_BYTES_MB"), Cfg.Scene.BridgesMaximumCachedBytesMB);
+	Cfg.Scene.bBridgesCreatePhysicsMeshes = GetEnvBool(
+		TEXT("CAMSIM_SCENE_BRIDGES_CREATE_PHYSICS_MESHES"), Cfg.Scene.bBridgesCreatePhysicsMeshes);
 	Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError      = GetEnvDouble(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_SSE"),      Cfg.CesiumBackend.Imagery.MaximumScreenSpaceError);
 	Cfg.CesiumBackend.Imagery.MaximumTextureSize          = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TEXTURE_SIZE"), Cfg.CesiumBackend.Imagery.MaximumTextureSize);
 	Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads = GetEnvInt(TEXT("CAMSIM_CESIUM_IMAGERY_MAX_TILE_LOADS"),  Cfg.CesiumBackend.Imagery.MaximumSimultaneousTileLoads);
@@ -1660,6 +1675,12 @@ TArray<FString> FCamSimConfig::Validate() const
 	if (!(Scene.BuildingsMaximumCachedBytesMB >= 1 && Scene.BuildingsMaximumCachedBytesMB <= 65536))
 		Errors.Add(FString::Printf(TEXT("scene.buildings.maximum_cached_bytes_mb=%d out of range [1, 65536]"),
 			Scene.BuildingsMaximumCachedBytesMB));
+	if (!(Scene.BridgesMaximumScreenSpaceError > 0.0 && Scene.BridgesMaximumScreenSpaceError <= 1024.0))
+		Errors.Add(FString::Printf(TEXT("scene.bridges.maximum_screen_space_error=%.3f out of range (0, 1024]"),
+			Scene.BridgesMaximumScreenSpaceError));
+	if (!(Scene.BridgesMaximumCachedBytesMB >= 1 && Scene.BridgesMaximumCachedBytesMB <= 65536))
+		Errors.Add(FString::Printf(TEXT("scene.bridges.maximum_cached_bytes_mb=%d out of range [1, 65536]"),
+			Scene.BridgesMaximumCachedBytesMB));
 
 	Errors.Append(Scene.ResolveErrors);
 	Errors.Append(CamSimScene::ValidateSources(*this));

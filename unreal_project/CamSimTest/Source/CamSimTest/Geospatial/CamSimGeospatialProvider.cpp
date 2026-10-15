@@ -38,11 +38,11 @@ ACesium3DTileset* PickTerrainTileset(TConstArrayView<ACesium3DTileset*> Tilesets
 			return T;
 		}
 	}
-	// No tagged terrain: the only non-buildings tileset, never the buildings one.
+	// No tagged terrain: the only tileset that is not a package feature tileset (buildings, bridges).
 	ACesium3DTileset* Only = nullptr;
 	for (ACesium3DTileset* T : Tilesets)
 	{
-		if (!T || IsBuildingsActor(T))
+		if (!T || IsFeatureTilesetActor(T))
 		{
 			continue;
 		}

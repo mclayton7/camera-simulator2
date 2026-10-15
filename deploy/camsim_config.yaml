@@ -706,6 +706,11 @@ scene:
     maximum_screen_space_error: 64    # CAMSIM_SCENE_BUILDINGS_MAXIMUM_SCREEN_SPACE_ERROR; chosen 2026-10-11 from the combined sweep (the only both-on setting inside the budget)
     create_physics_meshes: true       # CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES (CIGI LOS/HAT/HOT hit buildings)
     maximum_cached_bytes_mb: 512      # CAMSIM_SCENE_BUILDINGS_MAXIMUM_CACHED_BYTES_MB, [1, 65536]: the buildings' own tile cache (the terrain keeps maximum_cached_bytes_mb)
+  bridges:                            # REALISM R3 bridges: the package's features/bridges/ (no-op without one)
+    enabled: true                     # CAMSIM_SCENE_BRIDGES_ENABLED
+    maximum_screen_space_error: 64    # CAMSIM_SCENE_BRIDGES_MAXIMUM_SCREEN_SPACE_ERROR, (0, 1024]
+    create_physics_meshes: true       # CAMSIM_SCENE_BRIDGES_CREATE_PHYSICS_MESHES (CIGI hits and the DIS clamp need it)
+    maximum_cached_bytes_mb: 128      # CAMSIM_SCENE_BRIDGES_MAXIMUM_CACHED_BYTES_MB, [1, 65536]: the bridges' own tile cache
 
 # --- Security Metadata (MISB ST 0102) ---
 # Embedded in every KLV packet as ST 0601 Tag 48.

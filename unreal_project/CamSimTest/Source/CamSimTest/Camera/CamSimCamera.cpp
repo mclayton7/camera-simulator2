@@ -267,7 +267,7 @@ void ACamSimCamera::RecordFrameStats()
 		if (ACesium3DTileset* T = Weak.Get())
 		{
 			MinLoad = FMath::Min(MinLoad, T->GetLoadProgress());  // already 0-100
-			if (!CamSim::Geospatial::IsBuildingsActor(T))
+			if (!CamSim::Geospatial::IsFeatureTilesetActor(T))
 			{
 				Sse = T->GetMaximumScreenSpaceError();
 			}

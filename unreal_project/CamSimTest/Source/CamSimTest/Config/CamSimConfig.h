@@ -470,6 +470,17 @@ struct FCamSimConfig
 		int32  BuildingsMaximumCachedBytesMB = 512;
 		// Collision for the buildings tileset (CIGI LOS/HAT/HOT). Env: CAMSIM_SCENE_BUILDINGS_CREATE_PHYSICS_MESHES
 		bool   bBuildingsCreatePhysicsMeshes = true;
+		// REALISM R3 bridges: decks from <dir>/features/bridges/tileset.json, one more Cesium tileset spawned after
+		// the buildings. CIGI LOS/HAT/HOT hit it (material = the land-cover code under the hit: the burned road);
+		// DIS ground vehicles drive onto it from its approaches (deck ceiling). Env: CAMSIM_SCENE_BRIDGES_ENABLED
+		bool   bBridgesEnabled = true;
+		// Cesium MaximumScreenSpaceError of the bridges tileset. Env: CAMSIM_SCENE_BRIDGES_MAXIMUM_SCREEN_SPACE_ERROR
+		double BridgesMaximumScreenSpaceError = 64.0;
+		// Cesium MaximumCachedBytes of the bridges tileset, MB, in [1, 65536].
+		// Env: CAMSIM_SCENE_BRIDGES_MAXIMUM_CACHED_BYTES_MB
+		int32  BridgesMaximumCachedBytesMB = 128;
+		// Collision for the bridges tileset (CIGI and the DIS clamp need it). Env: CAMSIM_SCENE_BRIDGES_CREATE_PHYSICS_MESHES
+		bool   bBridgesCreatePhysicsMeshes = true;
 
 		// Filled by CamSimScene::ResolvePackage at load (not config keys).
 		FString PackageName;
@@ -482,6 +493,8 @@ struct FCamSimConfig
 		FString SeaLevelStation;
 		// file:/// URL of <dir>/features/buildings/tileset.json; empty when the package has none (ResolvePackage).
 		FString BuildingsUrl;
+		// file:/// URL of <dir>/features/bridges/tileset.json; empty when the package has none (ResolvePackage).
+		FString BridgesUrl;
 		// Absolute features/buildings/mask/ of the package when it has index.json (REALISM R3b; the tree scatter reads it).
 		FString BuildingsMaskDir;
 		// <dir>/vegetation/mix.json when the package has one (REALISM R4: the species mix per land-cover code).

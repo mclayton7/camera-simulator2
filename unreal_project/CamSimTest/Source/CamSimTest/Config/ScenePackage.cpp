@@ -93,6 +93,7 @@ void ResolvePackage(FCamSimConfig& Cfg)
 	Scene.SeaLevelOffsetM = 0.0;
 	Scene.SeaLevelStation.Reset();
 	Scene.BuildingsUrl.Reset();
+	Scene.BridgesUrl.Reset();
 	Scene.BuildingsMaskDir.Reset();
 	Scene.VegetationMixPath.Reset();
 	Scene.CanopyDir.Reset();
@@ -177,6 +178,11 @@ void ResolvePackage(FCamSimConfig& Cfg)
 	if (FPaths::FileExists(BuildingsFile))
 	{
 		Scene.BuildingsUrl = PathToFileUrl(BuildingsFile);
+	}
+	const FString BridgesFile = Dir / TEXT("features/bridges/tileset.json");
+	if (FPaths::FileExists(BridgesFile))
+	{
+		Scene.BridgesUrl = PathToFileUrl(BridgesFile);
 	}
 	if (FPaths::FileExists(Dir / TEXT("features/buildings/mask/index.json")))
 	{
@@ -272,12 +278,21 @@ TArray<FString> ValidateSources(const FCamSimConfig& Cfg)
 	{
 		CheckLocal(TEXT("features/buildings/tileset.json"), Cfg.Scene.BuildingsUrl);
 	}
+	if (ShouldSpawnBridges(Cfg))
+	{
+		CheckLocal(TEXT("features/bridges/tileset.json"), Cfg.Scene.BridgesUrl);
+	}
 	return Errors;
 }
 
 bool ShouldSpawnBuildings(const FCamSimConfig& Cfg)
 {
 	return Cfg.Scene.bBuildingsEnabled && !Cfg.Scene.BuildingsUrl.IsEmpty();
+}
+
+bool ShouldSpawnBridges(const FCamSimConfig& Cfg)
+{
+	return Cfg.Scene.bBridgesEnabled && !Cfg.Scene.BridgesUrl.IsEmpty();
 }
 
 bool ShouldExitOnConfigErrors(const FCamSimConfig& Cfg, bool bIsEditor)

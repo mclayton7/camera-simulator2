@@ -167,9 +167,9 @@ void FCamSimStreamingController::SetCulledScreenSpaceError(const FTilesets& Tile
 	{
 		if (ACesium3DTileset* T = Weak.Get())
 		{
-			// The buildings tileset never refines off-screen tiles finer than its own SSE.
+			// A feature tileset (buildings, bridges) never refines off-screen tiles finer than its own SSE.
 			T->CulledScreenSpaceError = CamSim::Geospatial::ResolveTilesetCulledScreenSpaceError(
-				Sse, CamSim::Geospatial::IsBuildingsActor(T), T->MaximumScreenSpaceError);
+				Sse, CamSim::Geospatial::IsFeatureTilesetActor(T), T->MaximumScreenSpaceError);
 		}
 	}
 }

@@ -31,6 +31,8 @@ namespace CamSimScene
 
 	/** Whether SetUpCesiumWorld spawns the package's buildings tileset (REALISM R3). */
 	bool ShouldSpawnBuildings(const FCamSimConfig& Cfg);
+	/** scene.bridges.enabled and the package has features/bridges/tileset.json (REALISM R3 bridges). */
+	bool ShouldSpawnBridges(const FCamSimConfig& Cfg);
 
 	/**
 	 * Apply scene.dir to Cfg: each layer the package has (terrain/layer.json,
