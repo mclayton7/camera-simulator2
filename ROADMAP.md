@@ -2020,6 +2020,42 @@ rebuild, resume, imagery balance (2 DN), NDVI seam (0.000) and the offline rende
 - [ ] **User visual review** of the R5 renders (`.cache/linux-r5/render/`, `render-r0/`, `edges/`), including a faint
   straight horizontal break in `outside_low`.
 
+**R6 realism validation, checks 1 and 2 (2026-10-15, Linux, RTX 5080; `docs/realism-validation.md`).** Appearance and
+sim-to-real stay open: they wait on the choice of a real UAV EO/IR dataset (REALISM open question 3).
+
+- [x] ~~**Geo-registration check**~~ **Done 2026-10-15:** `scripts/georeg_check.py`.
+  - **Method:** marker plates (entity types 9001/9002) at a flat, a slope and a roof site, seen from ten views; mask
+    centroid vs predictions from the KLV.
+  - **G1 PASS:** the KLV pinhole camera is within 0.63 px; the commanded pose within 0.35 px; the gap is Tag 75/5
+    quantisation.
+  - **G3 PASS:** every KLV corner and frame-centre point lies on the camera's ray (≤ 0.03 px).
+  - **G2 FAIL, as specified:** a homography through the four corner points is 1.97 px off at 45° and 13 px at 10° over
+    the flat site's footprint, because of its relief. A footprint drawn from Tags 82–89 carries this error.
+  - **Pan:** the KLV is in step with the pixels (best lag 0, 0.72 px median).
+- [x] ~~**Datum check**~~ **Done 2026-10-15:** `scripts/scene/tools/datum_check.py`, against 34 NGS marks and 11 CORS
+  stations. GEOID18 step within 4.19 mm (D1), NAD83(2011) → ITRF2014 within 0.95 mm (D2).
+- [x] ~~**Near-nadir view tilt**~~ **Fixed 2026-10-15**, found by G1.
+  - **Cause:** `FQuat::Rotator()` snapped any pitch within ~0.08° of −90° to exactly −90°, so a nadir view rendered
+    along UE's −Z instead of its local vertical.
+  - **Size:** 0.14 m on the ground from 300 m at 2.9 km from the georeference origin; about 1.4 m from 1 km up at
+    9 km.
+  - **Fix:** `CamSimRender::ViewRotationFromQuat` in `ACamSimCamera::CalcCamera` and in the ground-truth projection.
+- [ ] **Determinism: settled stills are not pixel-identical** (`scripts/determinism_check.py`: S1 and S2 fail on all
+  six poses). With every pin (clock, sensor noise, UE temporal sequences, manual exposure), runs differ by 0.11–0.38 DN
+  on average and 99% of pixels are within 2–9 DN; IR on vegetation differs by 3.8 DN.
+  - **Lumen's surface-cache refresh:** no deterministic freeze in UE 5.8. Options: a settle-then-freeze sequence, or
+    lockstep rendering.
+  - **Ocean ripples on UE's engine time** (`M_Ocean` `TimeS`): to be deterministic under the same CIGI input they would
+    need the sim clock. Decide (recommended: the sim clock, with the ripples pausing when the clock is paused).
+  - **IR on vegetation:** varies 250,000 px per frame with the AGC off; source not yet isolated.
+  - **Sensor AE / AGC under a frozen clock:** they hold their first snap (`FSensorController::Smoothing` on a zero
+    sim-time step), so a paused sim keeps its startup exposure. Decide whether exposure should follow frame time.
+- [ ] **Cross-GPU threshold:** run `determinism_check.py --against` between the Mac and this box, and set the SSIM
+  limit.
+- [ ] **Minor:** the KLV attitude is built with `Pose.Neu.Rotator()` (`CamSimPlatformRig.cpp`), so within 0.08° of local
+  nadir the heading/roll split snaps (pointing unaffected).
+
+
 Fixed on the way (each with a failing test first): per-worker peak RSS now reads `VmHWM` (`ru_maxrss` survives `exec`,
 so spawned workers reported the main process's peak; the R1 `-j 1` RSS follow-up above is the in-process half of the
 same accounting); quantized-mesh header heights round outward again under NumPy 2 (a 2 µm `terrain_edges` fail; new

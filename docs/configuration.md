@@ -12,7 +12,8 @@ they contain special YAML characters.
 for all three deployment modes. `run.sh` copies it into the UE project
 directory before launch; the Docker image bakes it into the project directory
 (`/opt/camsim/CamSimTest/camsim_config.yaml`, mount over it to override). Edit only `deploy/camsim_config.yaml`; the project-dir copy
-is generated and is listed in `.gitignore`.
+is generated and is listed in `.gitignore`. `run.sh` copies `CAMSIM_CONFIG_SRC` instead when it is set (another YAML;
+the R6 checks use it for a lens `k1` and for manual exposure).
 
 **Unknown keys:** a key that no setting reads (a typo such as `cigi_prot`, or a
 removed setting) is logged at load as

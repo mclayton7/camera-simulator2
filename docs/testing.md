@@ -34,6 +34,9 @@ dominate a development loop. Narrow them:
 | Ground truth (masks, boxes, depth) | `gt_occlusion_check.py OUT` | `--runs NAME`; `--check-only` |
 | Vegetation streaming, scatter, far tier | `vegetation_check.py … --stages approach,off,gt,truck,oblique,footprints,r4_identity,long_range` (~40 min) | `--stages approach` (placement, species, canopy, determinism, grounding, handoff); `--stages long_range` for the far tier; `--stages footprints` for the building mask. The gates of stages not run are kept from the last `report.json` |
 | Anything on the video / KLV path | `scripts/ci_validate.sh --native` (~2 min) | the same; it is already the short end-to-end check |
+| KLV geometry (sensor pose, FOV, frame centre, corners), camera rig, entity placement | `georeg_check.py --scene PKG --out OUT` (R6, `docs/realism-validation.md`) | `--runs main --views flat/nadir,flat/corner` (one launch, two views); `--check-only` re-evaluates a finished run without launching |
+| Datum pipelines (`camsim_scene/datum.py`, GEOID18) | `scripts/scene/tools/datum_check.py PKG` (seconds, no CamSim) | the same |
+| Anything that could make frames vary run to run (sensor noise, streaming, vegetation, TSR) | `determinism_check.py --scene PKG --out OUT` (two launches, six poses) | `--check-only` re-compares a finished pair |
 | Render cost | `run_bench.py --site pendleton` (all phases) | `--phases dense_pass --shots dense_oblique`, or `--smoke` (one shot, no measured phase). A sweep row is ~5.5 min, of which the 210 s warm-up is fixed |
 
 Before merging, run the full NullRHI and GPU suites and the full acceptance script of every subsystem touched.

@@ -529,6 +529,18 @@ collision.
 - **Sim-to-real (the metric that matters):** train a detector on CamSim data from profiles
   `preview`, `sim` and `high`, test on a fixed real dataset. Each realism phase should move this
   number. If it doesn't, the phase's effort goes elsewhere.
+- **Progress (2026-10-15, Linux, RTX 5080; `docs/realism-validation.md`):** geo-registration and determinism are built
+  (`scripts/georeg_check.py`, `scripts/scene/tools/datum_check.py`, `scripts/determinism_check.py`). Appearance and
+  sim-to-real wait on the dataset (open question 3).
+  - **Geo-registration:**
+    - Pixels match the KLV pinhole camera within 0.63 px on ten views (G1), and the KLV corners lie on the camera's rays
+      (G3, ≤ 0.03 px).
+    - The four-corner footprint misses by 2–13 px over relief (G2, a property of four-corner footprints).
+    - The metadata is in step with the pixels (pan: best lag 0).
+    - The datum conversion matches NGS within 4.2 mm (GEOID18) and 1 mm (ITRF2014).
+    - Fixed on the way: near-nadir views rendered along UE's vertical (0.14 m off at 2.9 km from the origin).
+  - **Determinism:** settled stills are not pixel-identical. Runs differ by 0.11–0.38 DN on average (3.8 DN for IR on
+    vegetation); the causes are Lumen's surface cache, ocean ripples on engine time, and IR on vegetation.
 
 ---
 
