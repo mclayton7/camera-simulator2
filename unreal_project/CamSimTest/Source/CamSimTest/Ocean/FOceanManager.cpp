@@ -50,6 +50,9 @@ namespace CamSimOcean
 		UKismetMaterialLibrary::SetVectorParameterValue(World, Mpc, TEXT("AxisN"), V3(AxisN));
 		UKismetMaterialLibrary::SetVectorParameterValue(World, Mpc, TEXT("AxisE"), V3(AxisE));
 		UKismetMaterialLibrary::SetVectorParameterValue(World, Mpc, TEXT("AxisU"), V3(AxisU));
+		// Ripple phases on the sim clock, wrapped in double (R6 determinism: frozen with the clock, equal across runs).
+		UKismetMaterialLibrary::SetVectorParameterValue(World, Mpc, TEXT("RipplePhase"),
+			FLinearColor(float(W.RipplePhase(0)), float(W.RipplePhase(1)), float(W.RipplePhase(2)), 0.f));
 		const double Clarity = Ocean.GetClarity();
 		UKismetMaterialLibrary::SetVectorParameterValue(World, Mpc, TEXT("Water"),
 			FLinearColor(float(FMath::Lerp(2.0, 0.5, Clarity)), float(FMath::Lerp(2.0, 0.7, Clarity)), 0.3f, 0.f));

@@ -89,6 +89,16 @@ FVector2D FOceanWaves::TravelDir(int32 i) const
 	return D;
 }
 
+double FOceanWaves::RippleAngularFrequency(int32 i)
+{
+	return FMath::Sqrt(9.80665 * 2.0 * PI / RippleLambdaM[i]);
+}
+
+double FOceanWaves::RipplePhase(int32 i) const
+{
+	return Wrap2Pi(-Wrap2Pi(RippleAngularFrequency(i) * TimeS));
+}
+
 double FOceanWaves::Phase(int32 i) const
 {
 	return Wrap2Pi(Wrap2Pi(Waves[i].PhaseRad) - Wrap2Pi(AngularFrequency(i) * TimeS));

@@ -31,6 +31,7 @@ MPC_VECTORS = [
     ("ComponentToAnchor", (0, 0, 0, 0)),
     ("AxisN", (0, 0, 0, 0)), ("AxisE", (0, 0, 0, 0)), ("AxisU", (0, 0, 1, 0)),
     ("Water", (1, 1, 0.3, 0)),   # (absorption scale, scattering scale, ripple strength, 0)
+    ("RipplePhase", (0, 0, 0, 0)),  # the three ripples' phases, -w t on the sim clock (FOceanWaves::RipplePhase)
 ]
 
 COMMON_PRELUDE = (
@@ -45,15 +46,15 @@ WPO_CODE = COMMON_PRELUDE + (
 # Per pixel: the normal and roughness fade each wave (and the ripples) by the pixel footprint,
 # not by the vertex cell size, so waves the grid can't displace still shade the surface.
 NORMAL_CODE = COMMON_PRELUDE + (
-    "float3 Nn = CamSimOceanPixelNormal(P, TimeS, Water.z, W, D);\n"
+    "float3 Nn = CamSimOceanPixelNormal(P, RipplePhase, Water.z, W, D);\n"
     "return normalize(AxisN * Nn.x + AxisE * Nn.y + AxisU * Nn.z);\n"
 )
 ROUGHNESS_CODE = COMMON_PRELUDE + (
-    "return CamSimOceanRoughness(P, TimeS, Water.z, W, D);\n"
+    "return CamSimOceanRoughness(P, Water.z, W, D);\n"
 )
 CUSTOM_INPUTS = ["LocalPos", "CellM", "ToAnchor", "AxisN", "AxisE", "AxisU",
                  "W0", "W1", "W2", "W3", "D0", "D1", "D2", "D3"]
-PIXEL_INPUTS = [n for n in CUSTOM_INPUTS if n != "CellM"] + ["TimeS", "Water"]
+PIXEL_INPUTS = [n for n in CUSTOM_INPUTS if n != "CellM"] + ["RipplePhase", "Water"]
 
 MEL = unreal.MaterialEditingLibrary
 EAL = unreal.EditorAssetLibrary
@@ -144,7 +145,8 @@ def make_material(mpc):
     for name, _ in MPC_VECTORS:
         n = g.node(unreal.MaterialExpressionCollectionParameter, x=-1400, collection=mpc, parameter_name=name)
         mpc_nodes[name] = n
-    rgb = {n: g.mask(mpc_nodes[n], r=True, g=True, b=True) for n in ("ComponentToAnchor", "AxisN", "AxisE", "AxisU")}
+    rgb = {n: g.mask(mpc_nodes[n], r=True, g=True, b=True)
+           for n in ("ComponentToAnchor", "AxisN", "AxisE", "AxisU", "RipplePhase")}
 
     local_pos = g.node(unreal.MaterialExpressionLocalPosition,
                        included_offsets=unreal.PositionIncludedOffsets.EXCLUDE_OFFSETS)
@@ -156,8 +158,8 @@ def make_material(mpc):
     for i in range(4):
         sources["W%d" % i] = mpc_nodes["Wave%d" % i]
         sources["D%d" % i] = mpc_nodes["Dir%d" % i]
-    # Ripple clock (visual only): engine time, not the sim clock the waves use.
-    sources["TimeS"] = g.node(unreal.MaterialExpressionTime)
+    # Ripple phases from the MPC: the sim clock, as the waves (REALISM R6 determinism; no engine Time node).
+    sources["RipplePhase"] = rgb["RipplePhase"]
     sources["Water"] = mpc_nodes["Water"]
 
     def custom(desc, code, pin_names=CUSTOM_INPUTS, out=unreal.CustomMaterialOutputType.CMOT_FLOAT3):

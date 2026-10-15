@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Ocean/OceanWaves.h"
 #include "Ocean/FBeaufortTable.h"
 #include "Geospatial/EcefFrames.h"
@@ -161,5 +163,54 @@ bool FOceanWavesTimeTest::RunTest(const FString& Parameters)
 	W.SetTime(1.7e9 + 1.0);
 	const double Expected = FMath::Fmod(P0 - W.AngularFrequency(0) + 4.0 * PI, 2.0 * PI);
 	TestEqual(TEXT("1 s later: phase - w"), W.Phase(0), Expected, 1e-5);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanWavesRipplePhaseTest, "CamSim.Ocean.Waves.RipplePhase",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanWavesRipplePhaseTest::RunTest(const FString& Parameters)
+{
+	FOceanWaves W;
+	for (int32 i = 0; i < FOceanWaves::NumRipples; ++i)
+	{
+		const double K = 2.0 * PI / FOceanWaves::RippleLambdaM[i];
+		const double Omega = FMath::Sqrt(9.80665 * K);
+		TestEqual(*FString::Printf(TEXT("ripple %d: omega"), i), FOceanWaves::RippleAngularFrequency(i), Omega, 1e-12);
+		W.SetTime(0.0);
+		TestEqual(*FString::Printf(TEXT("ripple %d: t = 0"), i), W.RipplePhase(i), 0.0, 1e-12);
+		W.SetTime(1.25);
+		const double A = W.RipplePhase(i);
+		TestTrue(*FString::Printf(TEXT("ripple %d: in [0, 2 pi)"), i), A >= 0.0 && A < 2.0 * PI);
+		TestEqual(*FString::Printf(TEXT("ripple %d: -w t wrapped"), i), A,
+			FMath::Fmod(FMath::Fmod(-Omega * 1.25, 2.0 * PI) + 2.0 * PI, 2.0 * PI), 1e-9);
+		W.SetTime(1.25 + 2.0 * PI / Omega);
+		TestEqual(*FString::Printf(TEXT("ripple %d: periodic"), i), W.RipplePhase(i), A, 1e-9);
+		W.SetTime(1.0e7);
+		const double Far = W.RipplePhase(i);
+		TestTrue(*FString::Printf(TEXT("ripple %d: finite at 1e7 s"), i), FMath::IsFinite(Far) && Far >= 0.0 && Far < 2.0 * PI);
+		TestEqual(*FString::Printf(TEXT("ripple %d: unchanged without a clock step"), i), W.RipplePhase(i), Far);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOceanRippleConstantsMatchShaderTest, "CamSim.Ocean.RippleConstantsMatchShader",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FOceanRippleConstantsMatchShaderTest::RunTest(const FString& Parameters)
+{
+	FString Ush;
+	const FString Path = FPaths::Combine(FPaths::ProjectDir(), TEXT("Shaders/Private/CamSimOcean.ush"));
+	if (!TestTrue(TEXT("read CamSimOcean.ush"), FFileHelper::LoadFileToString(Ush, *Path))) return false;
+	const int32 At = Ush.Find(TEXT("CamSimRippleLambda[3] = {"));
+	if (!TestTrue(TEXT("CamSimRippleLambda declared"), At != INDEX_NONE)) return false;
+	const int32 Open = Ush.Find(TEXT("{"), ESearchCase::CaseSensitive, ESearchDir::FromStart, At);
+	const int32 Close = Ush.Find(TEXT("}"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Open);
+	TArray<FString> Parts;
+	Ush.Mid(Open + 1, Close - Open - 1).ParseIntoArray(Parts, TEXT(","));
+	if (!TestEqual(TEXT("three ripples"), Parts.Num(), FOceanWaves::NumRipples)) return false;
+	for (int32 i = 0; i < Parts.Num(); ++i)
+	{
+		TestEqual(*FString::Printf(TEXT("lambda %d"), i), FCString::Atod(*Parts[i].TrimStartAndEnd()),
+			FOceanWaves::RippleLambdaM[i], 1e-9);
+	}
 	return true;
 }

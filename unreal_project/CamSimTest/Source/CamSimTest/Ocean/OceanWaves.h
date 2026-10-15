@@ -56,6 +56,13 @@ public:
 	double    Phase(int32 i) const;              // PhaseRad - w t, wrapped to [0, 2 pi)
 	double    Amplitude(int32 i) const { return Waves[i].HeightM * 0.5; }
 
+	// The drawn sea's short ripples (visual only; CamSimOcean.ush CamSimRippleLambda, held equal by
+	// CamSim.Ocean.RippleConstantsMatchShader). Their phase runs on the sim clock like the waves' (R6 determinism).
+	static constexpr int32  NumRipples = 3;
+	static constexpr double RippleLambdaM[NumRipples] = { 0.6, 1.3, 2.7 };
+	static double RippleAngularFrequency(int32 i);   // sqrt(g k), k = 2 pi / lambda
+	double    RipplePhase(int32 i) const;             // -w t, wrapped to [0, 2 pi) in double (MPC_Ocean RipplePhase)
+
 	FVector2D PlaneCoords(double Lat, double Lon, double AltM) const;
 	FVector   Displacement(double N, double E) const;      // (dN, dE, dZ) at a parameter point
 	double    HeightAtPlane(double N, double E) const;     // at the point the surface lands on (N, E)
