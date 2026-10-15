@@ -36,13 +36,16 @@ def node_key(pt) -> tuple:
     return (round(pt[0], NODE_DIGITS), round(pt[1], NODE_DIGITS))
 
 
-def degrees(features) -> dict:
-    """Bridge-graph degree of each way end (per kind, as plan_decks): 1 = grounded."""
+def grounded(features) -> dict:
+    """(source_id, end 0 | 1) -> whether that OSM way end is grounded (degree 1 in its kind's bridge graph, as
+    plan_decks). Keyed by way, not by point: a deck's line is extended past a grounded end (to the embankment)."""
     deg: dict = {}
-    for f in select(features):
+    sel = select(features)
+    for f in sel:
         for p in (f.geom.coords[0], f.geom.coords[-1]):
-            deg[node_key(p)] = deg.get(node_key(p), 0) + 1
-    return deg
+            k = (f.kind, node_key(p))
+            deg[k] = deg.get(k, 0) + 1
+    return {(f.source_id, e): deg[(f.kind, node_key(f.geom.coords[-1 if e else 0]))] == 1 for f in sel for e in (0, 1)}
 
 
 def pick(decks: list[Deck], n: int) -> list[Deck]:
@@ -72,11 +75,11 @@ def midspan(d: Deck) -> tuple[float, float, float]:
     return lat, lon, deck_height(d, d.length_m / 2.0)
 
 
-def grounded_ends(d: Deck, deg: dict, beyond_m: float = 5.0) -> list[dict]:
+def grounded_ends(d: Deck, ground: dict, beyond_m: float = 5.0) -> list[dict]:
     out = []
-    for end, s, out_s, h in ((d.line.coords[0], 0.0, -beyond_m, d.h0),
-                             (d.line.coords[-1], d.length_m, d.length_m + beyond_m, d.h1)):
-        if deg.get(node_key(end), 0) == 1:
+    for e, end, s, out_s, h in ((0, d.line.coords[0], 0.0, -beyond_m, d.h0),
+                                (1, d.line.coords[-1], d.length_m, d.length_m + beyond_m, d.h1)):
+        if ground.get((d.source_id, e)):
             out.append({"end": (end[1], end[0]), "beyond": _at(d.line, out_s), "h": h, "s": s})
     return out
 
@@ -206,7 +209,7 @@ def _hot(responses, oc, host, rid: int, lat: float, lon: float) -> dict:
 
 def run_hot(pkg: Path, decks: list[Deck], feats, out: Path, n: int = 10) -> dict:
     cs, oc, _ = _modules()
-    deg = degrees(feats)
+    deg = grounded(feats)
     chosen = pick(decks, n)
     responses = oc.Responses()
     res = []

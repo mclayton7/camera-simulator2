@@ -38,7 +38,7 @@ def test_midspan_is_halfway_at_the_mean_height():
 
 def test_grounded_ends_step_outward():
     d = deck("osm:w1", [(0, 0), (200, 0)])
-    ends = bc.grounded_ends(d, {bc.node_key(d.line.coords[0]): 1, bc.node_key(d.line.coords[-1]): 2})
+    ends = bc.grounded_ends(d, {("osm:w1", 0): True, ("osm:w1", 1): False})
     assert len(ends) == 1
     e = ends[0]
     assert e["h"] == pytest.approx(100.0)
@@ -94,3 +94,10 @@ def test_find_underpass_ignores_roads_meeting_the_deck_end():
     approach = Feature("road", "osm:w7", LineString([ll(200, 0), ll(400, 0)]), {"highway": "primary"})
     side = Feature("road", "osm:w6", LineString([ll(195, -50), ll(195, 50)]), {"highway": "primary"})
     assert bc.find_underpass([d], [approach, side]) is None
+
+
+def test_grounded_by_the_osm_way_ends_not_the_extended_deck_line():
+    f = Feature("road", "osm:w1", LineString([ll(0, 0), ll(200, 0)]), {"highway": "primary", "bridge": "yes"})
+    g = Feature("road", "osm:w2", LineString([ll(200, 0), ll(300, 50)]), {"highway": "primary", "bridge": "yes"})
+    assert bc.grounded(([f, g])) == {("osm:w1", 0): True, ("osm:w1", 1): False, ("osm:w2", 0): False,
+                                     ("osm:w2", 1): True}
