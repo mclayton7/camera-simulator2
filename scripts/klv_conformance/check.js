@@ -24,6 +24,11 @@
 //       out.ts, byte for byte. Use this rather than `ffmpeg -c copy`, whose
 //       remux can damage KLV (see mpegts.js).
 //
+//   node check.js decode <file.ts|klv.bin> <out.jsonl>
+//       Writes every ST 0601 packet as one JSON line, {"tags": {"<tag>": value}},
+//       values as misb.js decodes them (Tags 90/91 from the raw bytes, as above).
+//       Read by scripts/georeg_check.py (REALISM R6).
+//
 // Exit code 0 = conformant, 1 = failures, 2 = usage / IO error.
 
 'use strict'
@@ -338,6 +343,30 @@ async function checkStream(path, maxAgeSec, minPackets, durationSec, expectPosit
 	return count
 }
 
+// Every ST 0601 packet in buf as {tags: {key: value}} (the checksum, Tag 1, left out). A packet misb.js can't parse
+// is skipped with a message on stderr.
+function decodePackets(buf) {
+	const out = []
+	let pos = buf.indexOf(ST0601_KEY)
+	while (pos !== -1) {
+		const ber = berLength(buf, pos + 16)
+		const end = ber ? pos + 16 + ber.header + ber.length : -1
+		if (!ber || end > buf.length) break
+		try {
+			const tags = {}
+			for (const v of parseQuietly(buf.subarray(pos, end)).values) {
+				if (v.key === 1) continue
+				tags[v.key] = FULL_ANGLE_TAGS.has(v.key) ? decodeFullAngle(v.packet) : v.value
+			}
+			out.push({ tags })
+		} catch (e) {
+			console.error(`packet @${pos}: st0601.parse threw ${e.message}`)
+		}
+		pos = buf.indexOf(ST0601_KEY, end)
+	}
+	return out
+}
+
 async function main() {
 	const [mode, path, ...rest] = process.argv.slice(2)
 	const optStr = name => {
@@ -350,11 +379,23 @@ async function main() {
 		console.error('--expect-position takes LAT,LON,ALT')
 		process.exit(2)
 	}
-	if (!path || !['packets', 'stream', 'capture'].includes(mode) || (mode === 'capture' && !rest[0])) {
+	if (!path || !['packets', 'stream', 'capture', 'decode'].includes(mode) || (['capture', 'decode'].includes(mode) && !rest[0])) {
 		console.error('usage: check.js packets <packets.jsonl>')
 		console.error('       check.js stream <file.ts|klv.bin|udp://addr:port> [--max-age-sec N] [--min-packets N] [--duration-sec N] [--expect-position LAT,LON,ALT]')
 		console.error('       check.js capture <udp://addr:port> <out.ts> [--duration-sec N]')
+		console.error('       check.js decode <file.ts|klv.bin> <out.jsonl>')
 		process.exit(2)
+	}
+	if (mode === 'decode') {
+		try {
+			const packets = decodePackets(await extractKlv(path, 0))
+			fs.writeFileSync(rest[0], packets.map(p => JSON.stringify(p)).join('\n') + (packets.length ? '\n' : ''))
+			console.log(`Decoded ${packets.length} ST 0601 packet(s) from ${path}`)
+		} catch (e) {
+			console.error(`error: ${e.message}`)
+			process.exit(2)
+		}
+		return
 	}
 	if (mode === 'capture') {
 		try {
@@ -384,4 +425,5 @@ async function main() {
 	console.log(`OK: ${count} packet(s) conform to misb.js ${version}`)
 }
 
-main()
+module.exports = { decodePackets }
+if (require.main === module) main()
