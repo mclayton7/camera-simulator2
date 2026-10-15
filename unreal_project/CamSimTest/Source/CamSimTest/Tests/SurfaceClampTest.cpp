@@ -153,7 +153,7 @@ namespace
 	public:
 		TArray<double> Surfaces = { 100.0 };
 		mutable TArray<TPair<double, double>> Spans;
-		virtual TOptional<double> TraceHeight(double, double, double Top, double Bottom) const override
+		virtual TOptional<double> TraceHeight(double, double, double Top, double Bottom, double) const override
 		{
 			Spans.Add({ Top, Bottom });
 			TOptional<double> Best;
@@ -258,7 +258,7 @@ namespace
 	struct FStubProbe final : ISurfaceProbe
 	{
 		TOptional<double> Height;
-		TOptional<double> TraceHeight(double, double, double, double) const override { return Height; }
+		TOptional<double> TraceHeight(double, double, double, double, double) const override { return Height; }
 	};
 }
 
@@ -600,5 +600,76 @@ bool FSurfaceProbeIgnoresBuildingsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("found"), CamSim::Geospatial::FindBuildingsTileset(World) == B);
 	const FCollisionQueryParams P = CamSimSurface::MakeProbeQueryParams(B);
 	TestTrue(TEXT("buildings ignored"), P.GetIgnoredSourceObjects().Contains(B->GetUniqueID()));
+	return true;
+}
+
+namespace
+{
+	/** Terrain at TerrainM and a bridge deck at DeckM over the whole footprint: a deck counts only at or below the
+	 *  trace's deck ceiling, as FCesiumSurfaceProbe's two traces do. Records each trace's ceiling. */
+	class FDeckProbe final : public ISurfaceProbe
+	{
+	public:
+		double TerrainM = 0.0;
+		double DeckM = 8.0;
+		mutable TArray<double> Ceilings;
+		virtual TOptional<double> TraceHeight(double, double, double Top, double Bottom, double Ceiling) const override
+		{
+			Ceilings.Add(Ceiling);
+			TOptional<double> Best;
+			if (TerrainM <= Top && TerrainM >= Bottom) Best = TerrainM;
+			if (DeckM <= FMath::Min(Top, Ceiling) && DeckM >= Bottom && (!Best.IsSet() || DeckM > *Best)) Best = DeckM;
+			return Best;
+		}
+	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampDeckCeilingTest, "CamSim.Entity.SurfaceClamp.DeckCeiling",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampDeckCeilingTest::RunTest(const FString& Parameters)
+{
+	{
+		FClampState S;
+		TestTrue(TEXT("ground, first placement: no ceiling"), DeckCeiling(ESurfaceMode::Ground, S) > 1e30);
+		S.bHasSurface = true;
+		S.Height = 5.0;
+		TestEqual(TEXT("ground: last surface + step-up"), DeckCeiling(ESurfaceMode::Ground, S), 5.0 + DeckStepUpM);
+		TestTrue(TEXT("water: never a deck"), DeckCeiling(ESurfaceMode::Water, S) < -1e30);
+		TestTrue(TEXT("water first placement: never a deck"), DeckCeiling(ESurfaceMode::Water, FClampState()) < -1e30);
+	}
+	FDeckProbe Probe;
+	{
+		// A truck on the road under the deck stays on the road: the deck (8 m) is above 0 + 3 m.
+		FClampState S;
+		S.bHasSurface = true;
+		S.Height = 0.0;
+		const CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, S);
+		TestEqual(TEXT("under the deck: on the road"), P.Alt, 0.0, 1e-9);
+	}
+	{
+		// A truck coming up the approach (7.5 m) drives onto the deck.
+		FClampState S;
+		S.bHasSurface = true;
+		S.Height = 7.5;
+		CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.0, Probe, S);
+		for (int32 i = 0; i < 50; ++i) P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, S);
+		TestEqual(TEXT("on the approach: onto the deck"), P.Alt, 8.0, 1e-3);
+	}
+	{
+		// First placement takes the topmost surface (documented: a vehicle spawned under a deck lands on it).
+		FClampState S;
+		const CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.0, Probe, S);
+		TestEqual(TEXT("first placement: topmost"), P.Alt, 8.0, 1e-9);
+	}
+	{
+		// A boat under a bridge stays on the water.
+		FDeckProbe Water;
+		Water.TerrainM = -10.0;
+		Water.Ceilings.Reset();
+		FClampState S;
+		const CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Water, Sender(30.0, 0.0), 5.0, 1.0, 0.0, Water, S);
+		TestEqual(TEXT("boat: the water, not the deck"), P.Alt, -10.0, 1e-9);
+		TestTrue(TEXT("boat traces have no deck"), Water.Ceilings.Num() > 0 && Water.Ceilings[0] < -1e30);
+	}
 	return true;
 }

@@ -1087,7 +1087,8 @@ void UCamSimSubsystem::Tick(float DeltaTime)
 			// Tiers are planned by 3D distance (HISM culls are 3D): the camera's height above the terrain below it (one
 			// trace every 15 ticks; the last hit is kept), the terrain under the frame centre until a trace has hit.
 			TOptional<double> Nadir;
-			if (Impl->FrameCntr % 15 == 0) Nadir = Impl->VegetationProbe->TraceHeight(T.Latitude, T.Longitude, T.Altitude + 10.0, T.Altitude - 20000.0);
+			if (Impl->FrameCntr % 15 == 0) Nadir = Impl->VegetationProbe->TraceHeight(T.Latitude, T.Longitude, T.Altitude + 10.0, T.Altitude - 20000.0,
+				CamSimSurface::NoDecks);
 			Impl->bVegetationNadirKnown |= Nadir.IsSet();
 			const TOptional<double> Centre = (!Impl->bVegetationNadirKnown && T.SlantRangeM > 0.0) ? TOptional<double>(T.FrameCenterElev) : TOptional<double>();
 			const double HeightM = CamSimVegetation::HeightAboveGround(T.Altitude, Nadir, Centre, Impl->VegetationGroundM);

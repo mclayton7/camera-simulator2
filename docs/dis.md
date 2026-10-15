@@ -147,6 +147,16 @@ domain is the domain of their target, and life forms.
   sender position jumps more than 100 m. Height changes under 5 m ease in with a 0.2 s time
   constant (tile refinement); larger ones snap. A second commit in the same frame (a PDU after
   the dead-reckoned tick) does not bypass the ease.
+- **Bridge decks** (REALISM R3 bridges, a scene package with `features/bridges/`): a ground
+  vehicle drives onto a deck from its approach but is never lifted onto one above it. Each
+  trace counts a deck only at or below a ceiling: the last surface height + 3 m
+  (`DeckStepUpM`; US clearance under a bridge is at least 4.9 m, plus the 1.5 m slab). The deck
+  starts at the approach road's height, so a truck on the approach reaches it within the step;
+  a truck on the road under the bridge never does. The first placement has no ceiling: a
+  vehicle spawned under a deck lands on it. Boats never take a deck. With a bridges tileset
+  each trace is two line traces (terrain alone, then terrain and decks from the ceiling down;
+  the higher hit wins); without one, one trace as before. The buildings tileset is ignored
+  either way.
 - The traces need `create_physics_meshes: true` (the default). With it off, CamSim logs one
   warning at the first surface trace, ground vehicles use the sender's altitude and boats
   EGM96 sea level.

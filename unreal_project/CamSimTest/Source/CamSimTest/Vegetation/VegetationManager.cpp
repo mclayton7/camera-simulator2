@@ -704,7 +704,7 @@ namespace CamSimVegetation
 		{
 			TSharedRef<FCesiumSurfaceProbe> Probe = MakeShared<FCesiumSurfaceProbe>(World, Geo, true);
 			TSharedRef<FRetryingTraceSampler> Sampler = MakeShared<FRetryingTraceSampler>(
-				[Probe](double La, double Lo) { return Probe->TraceHeight(La, Lo, FarTraceTopM, FarTraceBottomM); });
+				[Probe](double La, double Lo) { return Probe->TraceHeight(La, Lo, FarTraceTopM, FarTraceBottomM, CamSimSurface::NoDecks); });
 			TWeakPtr<FRetryingTraceSampler> WeakSampler = Sampler;
 			FTSTicker::GetCoreTicker().AddTicker(TEXT("CamSimVegetationFarHeights"), 0.0f, [WeakSampler](float)
 			{
@@ -817,7 +817,7 @@ namespace CamSimVegetation
 			{
 				const FTreeInstance& T = Kv.Value.Instances[K];
 				const double H = Kv.Value.HeightsM[K];
-				const TOptional<double> G = Probe.TraceHeight(T.LatDeg, T.LonDeg, H + 50.0, H - 50.0);
+				const TOptional<double> G = Probe.TraceHeight(T.LatDeg, T.LonDeg, H + 50.0, H - 50.0, CamSimSurface::NoDecks);
 				if (G.IsSet()) Dz.Add(FMath::Abs(G.GetValue() - H));
 			}
 			if (Dz.Num() >= 200) break;

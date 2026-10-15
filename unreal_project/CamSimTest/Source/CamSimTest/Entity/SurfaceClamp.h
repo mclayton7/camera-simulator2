@@ -21,7 +21,10 @@ namespace CamSimSurface
 	constexpr double EaseTimeConstantSec = 0.2;    // hides tile refinement shifts
 	constexpr double SnapThresholdM      = 5.0;    // first hit, teleports
 	constexpr double ResetJumpM          = 100.0;  // horizontal jump that restarts placement
-	constexpr double LakeMarginM         = 2.0;    // a tile surface this far above sea level is inland water; below it the boat is at sea
+	constexpr double LakeMarginM         = 2.0;
+	// REALISM R3 bridges: a ground vehicle takes a deck at most this far above its last surface (a deck it drives
+	// onto from the approach); a deck higher than that is above it (US minimum clearance under a bridge is 4.9 m).
+	constexpr double DeckStepUpM         = 3.0;    // a tile surface this far above sea level is inland water; below it the boat is at sea
 
 	struct FClampState
 	{
