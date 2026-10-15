@@ -207,3 +207,44 @@ def test_stale_chunk_plan_is_replanned_alone(tmp_path, monkeypatch):
     before = (pkg / "hashes.txt").read_bytes()
     build_scene(pkg, cache, jobs=1)
     assert len(calls) == 1 and (pkg / "hashes.txt").read_bytes() == before
+
+
+def test_chunked_glbs_and_tileset_equal_the_whole_box(tmp_path):
+    from camsim_scene.manifest import canonical_json
+
+    pkg, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, EDGE_ROWS))
+    blds, _, _ = _whole_box(pkg, cache)
+    by = {}
+    for b in blds:
+        by.setdefault(b.tile, []).append(b)
+    tiles = {k: B.tile_summary(k, v) for k, v in sorted(by.items())}
+    assert (pkg / "features/buildings/tileset.json").read_text() == canonical_json(B.tileset_json(tiles))
+    for (z, x, y), bl in by.items():
+        mesh, table = B.tile_mesh(bl, tiles[(z, x, y)][1])
+        got = gltf.decode_tile((pkg / "features/buildings" / f"{z}/{x}/{y}.glb").read_bytes())
+        assert got.table.source_ids == table.source_ids and np.array_equal(got.positions, mesh.positions)
+
+
+def test_near_only_from_detail_margins():
+    from types import SimpleNamespace
+
+    from camsim_scene.layers import buildings as layer
+
+    box = [[10, 10], [11, 10], [11, 11], [10, 11], [10, 10]]
+    small = [[10, 10], [10.1, 10], [10.1, 10.1], [10, 10.1], [10, 10]]
+    assert layer.near_only_fn(SimpleNamespace(regions=[{"name": "bbox", "polygon": box}])) is None
+    fn = layer.near_only_fn(SimpleNamespace(regions=[{"name": "bbox", "polygon": box},
+                                                     {"name": "detail_margin:a", "polygon": small}]))
+    inside = [np.radians(v) for v in (10.05, 10.05, 10.06, 10.06)] + [0.0, 10.0]
+    outside = [np.radians(v) for v in (10.5, 10.5, 10.6, 10.6)] + [0.0, 10.0]
+    assert fn(inside) is False and fn(outside) is True
+
+
+def test_build_in_the_pool_equals_inline(tmp_path):
+    a, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, EDGE_ROWS), name="a")
+    b = tmp_path / "b"
+    b.mkdir()
+    (b / "manifest.json").write_bytes((a / "manifest.json").read_bytes())
+    info = build_scene(b, cache, jobs=2)
+    assert (a / "hashes.txt").read_bytes() == (b / "hashes.txt").read_bytes()
+    assert info["layers"]["buildings"]["peak_rss_mb"] > 0

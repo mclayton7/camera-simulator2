@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import pickle
 import shutil
 import time
 from pathlib import Path
 
 import numpy as np
+import shapely
 
 from .. import __version__
 from .. import buildings as B
@@ -40,6 +42,7 @@ RASTER_DIR = "buildings-footprints"  # footprints.save_raster directory
 # the pre-chunk whole-box plan and single-file raster
 LEGACY_STATE = ("buildings-footprints.json", "buildings-footprints.npz", "buildings-plan.json", "buildings-plan.pkl")
 _W: WorkerState | None = None  # the pool worker's state (init_worker)
+TILESET_RULES_VERSION = "1"  # 1: z13 nodes outside the detail margins under ancestors (B.OUTSIDE_GEOMETRIC_ERROR)
 
 
 def terrain_zoom(m: Manifest) -> int:
@@ -263,6 +266,47 @@ def _mask_intact(pkg: Path, sha: str) -> bool:
     return all((index.parent / t["file"]).is_file() for t in json.loads(index.read_text())["tiles"])
 
 
+def near_only_fn(m: Manifest):
+    """near_only for B.tileset_json: a z13 node whose region misses every detail_margin:* region (REALISM R5) is drawn
+    only near the camera. None without detail polygons: the tileset is the plain R3 tree."""
+    margins = [shapely.Polygon(r["polygon"], r.get("holes") or None) for r in m.regions
+               if r["name"].startswith("detail_margin:")]
+    if not margins:
+        return None
+    union = shapely.union_all(margins)
+
+    def near_only(region) -> bool:
+        w, s, e, n = (math.degrees(v) for v in region[:4])
+        return not union.intersects(shapely.box(w, s, e, n))
+
+    return near_only
+
+
+def _glb_one(item) -> list[dict]:
+    """One chunk's GLBs (every tile of a chunk's buildings lies in that chunk) and their tileset summaries."""
+    pkg, cx, cy, credit = item
+    st = _W
+    s = st.manifest.layers["buildings"]
+    roof = RoofOptions.from_settings(s) if s.get("roof_textures") else None
+    sampler = ImageryRoofSampler(st) if roof is not None else None
+    by: dict = {}
+    for b in load_chunk_plan(pkg, cx, cy):
+        by.setdefault(b.tile, []).append(b)
+    out, tiles, roofs = Path(pkg) / OUT, {}, {}
+    for key, bl in sorted(by.items()):  # tiles only exist for keys with a building: write_glb rejects empty meshes
+        tiles[key] = B.tile_summary(key, bl)
+        mesh, table = B.tile_mesh(bl, tiles[key][1], roof, sampler, roofs)
+        z, x, y = key
+        p = out / str(z) / str(x) / f"{y}.glb"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(p, write_glb(mesh, table, credit))
+    return [{"tiles": tiles, "roofs": roofs, "rss_mb": peak_rss_mb()}]
+
+
+def glb_batch(batch) -> list[dict]:
+    return [r for it in batch for r in _glb_one(it)]
+
+
 def plan_stats(pkg: Path) -> dict | None:
     marker = Path(pkg) / STATE_DIR / MARKER
     return json.loads(marker.read_text())["stats"] if marker.exists() else None
@@ -283,7 +327,7 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext, jobs: int = 1) -> LayerStat
     wst = WorkerState(ctx)
     credit = layer_credit(rec.attribution, rec.licence, layer="buildings")
     inputs = inputs_hash(m.layer_settings_hash("buildings"), __version__, rec.assets[0].sha256, credit,
-                         footprint_inputs(m, wst))
+                         footprint_inputs(m, wst), TILESET_RULES_VERSION)
     roof = RoofOptions.from_settings(s) if s.get("roof_textures") else None
     if roof is not None:  # roof pixels come from the imagery sources and the colour match: both are inputs
         img_shas = [a.sha256 for sid in m.layers["imagery"]["priorities"] for a in m.source(sid).assets]
@@ -306,27 +350,33 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext, jobs: int = 1) -> LayerStat
             return st
     shutil.rmtree(out, ignore_errors=True)
     chunks, stats, peak = plan_chunks(pkg, m, ctx, jobs, wst)
-    blds = [b for c in chunks for b in load_chunk_plan(pkg, *c)]
-    by: dict[tuple[int, int, int], list] = {}
-    for b in blds:
-        by.setdefault(b.tile, []).append(b)
-    # tiles only exist for keys with at least one building: write_glb rejects empty meshes
-    groups = dict(sorted(by.items()))
-    tiles = {k: B.tile_summary(k, v) for k, v in groups.items()}
-    sampler = ImageryRoofSampler(wst) if roof is not None else None
+    tiles: dict = {}
     roof_stats: dict = {}
-    for (z, x, y), bl in groups.items():
-        mesh, table = B.tile_mesh(bl, tiles[(z, x, y)][1], roof, sampler, roof_stats)
-        p = out / str(z) / str(x) / f"{y}.glb"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(p, write_glb(mesh, table, credit.replace("\n", " ")))
+
+    def on_result(r):
+        nonlocal peak
+        tiles.update(r["tiles"])
+        for k, v in r["roofs"].items():
+            if k == "tiles_by_texel_m":
+                by = roof_stats.setdefault(k, {})
+                for t, n in v.items():
+                    by[t] = by.get(t, 0) + n
+            else:
+                roof_stats[k] = roof_stats.get(k, 0) + v
+        peak = max(peak, r["rss_mb"])
+
+    flat = credit.replace("\n", " ")
+    run_pool(glb_batch, [[[(str(pkg), *c, flat)] for c in chunks]], jobs, init_worker, (ctx,), on_result)
+    tiles = dict(sorted(tiles.items()))
+    if "tiles_by_texel_m" in roof_stats:
+        roof_stats["tiles_by_texel_m"] = dict(sorted(roof_stats["tiles_by_texel_m"].items()))
     if roof is not None:  # stats is the cached plan's dict: copy it, never mutate it
         stats = {**stats, "roofs": {"textured": 0, "flat_coarse": 0, "flat_overflow": 0, "tiles_by_texel_m": {},
                                     **roof_stats}}
     output = mask_sha = ""  # no tileset and no mask when nothing survived planning
     if tiles:
         out.mkdir(parents=True, exist_ok=True)
-        atomic_write(ts_path, canonical_json(B.tileset_json(tiles)).encode())
+        atomic_write(ts_path, canonical_json(B.tileset_json(tiles, near_only_fn(m))).encode())
         output = sha256_file(ts_path)
         if s.get("mask"):  # R3b; an R3 manifest (no "mask" settings) builds exactly as before
             raster_path, _, raster_peak = footprint_raster(pkg, m, ctx, wst, jobs)

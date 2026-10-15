@@ -145,3 +145,28 @@ def test_verify_has_no_detail_check_without_detail(tmp_path):
 
     pkg, _, _ = build_synthetic(tmp_path)
     assert "detail" not in {c["name"] for c in verify(pkg)["checks"]}
+
+
+def test_detail_package_tileset_groups_outside_buildings(tmp_path):
+    from overture_fixture import box_lonlat, write_overture_parquet
+
+    from camsim_scene import buildings as B
+
+    scene = detail_scene(tmp_path)
+    pq = write_overture_parquet(tmp_path / "src" / "overture.parquet", [
+        {"id": "in", "geom": box_lonlat(10.05, 10.05, 60, 50), "height": 9.0},  # inside the polygon
+        {"id": "out", "geom": box_lonlat(10.4, 10.4, 60, 50), "height": 9.0},  # ~25 km outside its margin
+    ])
+    scene["allow"] = ["ODbL-1.0"]
+    scene["buildings"] = {}
+    scene["sources"]["overture_buildings"] = {"parquet": str(pq)}
+    pkg = tmp_path / "pkg"
+    plan_scene(parse_scene(scene), pkg, http=FakeHttp({}), out=io.StringIO())
+    build_scene(pkg, Cache(tmp_path / "cache"), jobs=1)
+    doc = json.loads((pkg / "features/buildings/tileset.json").read_text())
+    kids = doc["root"]["children"]
+    assert sorted(c["geometricError"] for c in kids) == [60.0, B.OUTSIDE_GEOMETRIC_ERROR]
+    [inner] = [c for c in kids if c["geometricError"] == 60.0]
+    assert inner["content"]["uri"].startswith("13/")
+    lon = np.degrees(inner["boundingVolume"]["region"][0])
+    assert 10.0 < lon < 10.1  # the building inside the polygon stays a child of the root
