@@ -1,0 +1,41 @@
+{
+ "package": "pendleton-r5veg",
+ "sites": [
+  {
+   "name": "flat",
+   "kind": "flat",
+   "lat": 33.3072917,
+   "lon": -117.344625,
+   "heading_deg": 30.0,
+   "slope_deg": 0.33,
+   "relief_m": 0.037,
+   "why": "15 x 15 land-cover cells (~135 m) all paved (200/201)"
+  },
+  {
+   "name": "slope",
+   "kind": "slope",
+   "lat": 33.3987917,
+   "lon": -117.528375,
+   "heading_deg": 120.0,
+   "slope_deg": 15.22,
+   "aspect_deg": 218.6,
+   "relief_m": 0.13,
+   "why": "7 x 7 cells grass/bare (30/60), no tree cell (10) in 11 x 11"
+  },
+  {
+   "name": "roof",
+   "kind": "roof",
+   "lat": 33.2888041,
+   "lon": -117.3630834,
+   "heading_deg": 250.0,
+   "id": "0011dee8-38af-4e1e-9f97-f2a9462db7d2",
+   "height_m": 8.409375190734863,
+   "sides_m": [
+    65.5,
+    139.9
+   ],
+   "fill": 1.0,
+   "area_m2": 9166
+  }
+ ]
+}
