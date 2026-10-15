@@ -158,13 +158,12 @@ def test_evaluate_pan_finds_a_one_frame_klv_lag(tmp_path):
     view = next(v for v in gc.views([SITE]) if v.name == "flat/oblique")
     place = {"lat": SITE["lat"], "lon": SITE["lon"], "h": 20.0, "normal_az": 0.0, "normal_el": 90.0,
              "heading": SITE["heading_deg"]}
-    corners = gc.marker_corners(view, place)
+    box = gc.marker_box(view, place)
     frames, klv = [], []
     poses = [gc.pan_pose(SITE, 20.0, i / 30.0) for i in range(40)]
     for i, pose in enumerate(poses):
         cam = g.Camera.from_klv(gc.pose_tags(pose, W, H), W, H)
-        quad = [cam.project(*c) for c in corners]
-        cx, cy = g.projected_centroid(lambda *c: c[:2], [(x, y, 0) for x, y in quad])
+        cx, cy = g.silhouette_centroid(cam.project, box)
         m = np.zeros((H, W), bool)
         m[round(cy) - 3 : round(cy) + 3, round(cx) - 3 : round(cx) + 3] = True  # a 6 x 6 blob at the true centroid
         ann = {"category": {"name": "georeg_marker"}, "visibility": 1.0, "segmentation": _rle(m)}

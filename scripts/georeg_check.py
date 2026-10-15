@@ -414,7 +414,7 @@ def evaluate_pan(vdir: Path) -> dict:
     klv = sorted((json.loads(line)["tags"] for line in (vdir / "klv.jsonl").read_text().splitlines() if line.strip()),
                  key=lambda t: t["2"])
     by_ts = {int(t["2"]): i for i, t in enumerate(klv)}
-    corners = marker_corners(View("flat/pan", {"heading_deg": place["heading"]}, 45.0, 1000.0, 10.0, 9001), place)
+    box = marker_box(View("flat/pan", {"heading_deg": place["heading"]}, 45.0, 1000.0, 10.0, 9001), place)
     out: dict = {"frames": len(frames), "klv_packets": len(klv), "lags": {}}
     meas, speeds = [], []
     for f in frames:
@@ -433,7 +433,7 @@ def evaluate_pan(vdir: Path) -> dict:
         for i, (mx, my), (h, w) in meas:
             if 0 <= i + lag < len(klv):
                 cam = g.Camera.from_klv({int(k): v for k, v in klv[i + lag].items()}, w, h)
-                px, py = g.projected_centroid(cam.project, corners)
+                px, py = g.silhouette_centroid(cam.project, box)
                 errs.append(math.hypot(px - mx, py - my))
         if errs:
             errs.sort()
