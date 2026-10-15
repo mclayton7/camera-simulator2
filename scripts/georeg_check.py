@@ -18,8 +18,9 @@ pixels, but the stencil is rendered under TSR's per-frame sub-pixel jitter, so t
 Also (a') the camera of the commanded CIGI pose (no KLV in the loop: separates KLV quantisation from render error).
 Gates: G1 (a) <= 1 px on every view; G2 (c) <= 1 px on the flat views and the corner view (a four-corner homography
 assumes a plane: relief and the 5 km footprint's curvature move points by more by construction, so it is reported
-there only); G3 every KLV corner point (82-89) and the frame centre (23/24) lies on the commanded camera's ray through
-its image point (frame corner / centre) within 1 px, on every view. The report gives the error in metres on the ground and the KLV quantisation budget (px per tag LSB).
+there only); G3 every KLV corner point (82-89) and the frame centre (23/24), at the rendered surface height there (CIGI
+HOT after the capture), projects through the commanded camera onto its image corner / centre within 1 px, on every view
+(bearing and range along the ray). The report gives the error in metres on the ground and the KLV quantisation budget (px per tag LSB).
 Runs: main (the ten views), distorted (flat/nadir and flat/corner with k1 = -0.2, informational: KLV corners are
 pinhole, ROADMAP 3B.3), pan (the flat/oblique camera with the gimbal yaw swept +-3 deg over 6 s for 20 s, the marker
 crossing the frame at up to ~13 px per frame; per-frame error of (a) with KLV matched to COCO by Tag 2 = timestamp_us,
@@ -184,12 +185,17 @@ def evaluate(view: View, place: dict, frames: list[dict], klv: list[dict], k1: f
         # each KLV corner point and the frame centre must lie on that camera's ray through its image point
         cmd = g.Camera.from_klv(pose_tags(scenario.Pose(**place["camera"]), width, height), width, height)
         pred["cmd"] = g.silhouette_centroid(cmd.project, box)
-        rays = {}
-        for k, (px, py) in zip((82, 84, 86, 88, 23),
-                               ((0, 0), (width, 0), (width, height), (0, height), (width / 2, height / 2))):
-            if k in tags and k + 1 in tags:
-                rays[str(k)] = ray_residual(cmd, tags[k], tags[k + 1], px, py, place["h"])
-        out["corner_ray_px"] = rays
+        if place.get("corner_hot"):
+            # G3: each KLV corner (and the frame centre) at the rendered surface height there (CIGI HOT) must project
+            # through the commanded camera onto its image corner: bearing and range along the ray both count
+            rays = {}
+            for k, (px, py) in zip((82, 84, 86, 88, 23),
+                                   ((0, 0), (width, 0), (width, height), (0, height), (width / 2, height / 2))):
+                h = place["corner_hot"].get(str(k))
+                if k in tags and k + 1 in tags and h is not None:
+                    x, y = cmd.project(tags[k], tags[k + 1], h)
+                    rays[str(k)] = math.hypot(x - px, y - py)
+            out["corner_ray_px"] = rays
     centre = tuple(sum(c[i] for c in corners) / 4 for i in range(3))
     gx, gy = cam.ground_pixel_size(*centre)
     out.update(measured=[mx, my], predicted={k: list(v) for k, v in pred.items()},
@@ -198,28 +204,6 @@ def evaluate(view: View, place: dict, frames: list[dict], klv: list[dict], k1: f
                ground_px_m=[gx, gy], budget_px=g.quantisation_budget(tags, width, height, centre),
                size=[width, height])
     return out
-
-
-def ray_residual(cam: g.Camera, lat: float, lon: float, px: float, py: float, near_h: float) -> float:
-    """Pixel distance from (px, py) to the image of the vertical line through (lat, lon), for heights from 500 m below
-    near_h to just under the camera: 0 when the point lies on the camera's ray through (px, py) at some height."""
-    def d(h: float) -> float:
-        try:
-            x, y = cam.project(lat, lon, h)
-        except ValueError:
-            return math.inf
-        return math.hypot(x - px, y - py)
-
-    hs = g.np.arange(near_h - 500.0, cam.h - 1.0, 1.0)
-    best = min(hs, key=d)
-    lo, hi = best - 1.0, best + 1.0
-    for _ in range(60):  # golden section on the bracket
-        m1, m2 = hi - 0.618 * (hi - lo), lo + 0.618 * (hi - lo)
-        if d(m1) < d(m2):
-            hi = m2
-        else:
-            lo = m1
-    return d(0.5 * (lo + hi))
 
 
 def gates(results: list[dict]) -> dict:
@@ -347,6 +331,17 @@ def run_views(label: str, pkg: Path, vs: list[View], out: Path, k1: float, confi
                     (vdir / "placement.json").write_text(json.dumps(place, indent=1) + "\n")
                     time.sleep(SETTLE_S)
                     _capture(vdir, coco, rb)
+                    place["corner_hot"] = {}
+                    try:
+                        tags = _static_tags([json.loads(x) for x in (vdir / "klv.jsonl").read_text().splitlines()
+                                             if x.strip()])
+                    except ValueError:
+                        tags = {}  # KLV not static: evaluate() reports it; G3 has no heights and fails
+                    for k in (82, 84, 86, 88, 23):
+                        if k in tags and k + 1 in tags:
+                            rid += 1
+                            place["corner_hot"][str(k)] = _hot(responses, oc, host, rid, tags[k], tags[k + 1])["hot"]
+                    (vdir / "placement.json").write_text(json.dumps(place, indent=1) + "\n")
             finally:
                 marker.stop.set()
     finally:

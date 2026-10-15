@@ -53,7 +53,8 @@ def _synthetic(view, k1=0.0):
         tags[k], tags[k + 1] = cam.unproject(px, py, 20.0)
     tags[23], tags[24] = cam.unproject(W / 2, H / 2, 20.0)
     place = {"lat": SITE["lat"], "lon": SITE["lon"], "h": 20.0, "normal_az": 0.0, "normal_el": 90.0,
-             "heading": view.site["heading_deg"], "camera": dataclasses.asdict(pose)}
+             "heading": view.site["heading_deg"], "camera": dataclasses.asdict(pose),
+             "corner_hot": {k: 20.0 for k in ("82", "84", "86", "88", "23")}}
     # The mask is the silhouette of the whole box (top face and the visible side faces), as CamSim's stencil is
     quad = g.convex_hull([cam.project_distorted(*c, k1, 0.0) for c in gc.marker_box(view, place)])
     # Point-sample the projected (convex) quad at each pixel centre plus a per-frame sub-pixel jitter (8 x 8 offsets),
@@ -177,3 +178,25 @@ def test_evaluate_pan_finds_a_one_frame_klv_lag(tmp_path):
     r = gc.evaluate_pan(tmp_path)
     assert r["best_lag"] == 1
     assert r["lags"][1]["median_px"] < 1.0 < r["lags"][0]["median_px"]
+
+
+def test_g3_catches_a_corner_at_the_wrong_range_along_its_own_ray():
+    # The KLV corner on the right bearing but where the ray meets a surface 150 m too low: a bearing-only check
+    # passes it; the surface height at the corner (HOT) must not
+    view = next(v for v in gc.views([SITE]) if v.name == "flat/oblique")
+    frames, klv, place = _synthetic(view)
+    cam = g.Camera.from_klv(gc.pose_tags(gc.scenario.Pose(**place["camera"]), W, H), W, H)
+    lat, lon = cam.unproject(0, 0, 20.0 - 150.0)
+    for p in klv:
+        p["tags"][82], p["tags"][83] = lat, lon
+    r = gc.evaluate(view, place, frames, klv, k1=0.0, k2=0.0)
+    assert r["corner_ray_px"]["82"] > 5
+    assert gc.gates([r])["G3"]["failed"] == ["flat/oblique"]
+
+
+def test_g3_needs_the_corner_heights():
+    view = next(v for v in gc.views([SITE]) if v.name == "flat/oblique")
+    frames, klv, place = _synthetic(view)
+    del place["corner_hot"]
+    r = gc.evaluate(view, place, frames, klv, k1=0.0, k2=0.0)
+    assert gc.gates([r])["G3"]["failed"] == ["flat/oblique"]
