@@ -471,6 +471,7 @@ def main() -> int:
     main_views = [v for v in all_views if not a.views or v.name in a.views.split(",")]
     dist_views = [v for v in all_views if v.name in ("flat/nadir", "flat/corner")]
     pkg = a.scene.resolve()
+    a.out = a.out.resolve()  # CAMSIM_ML_OUTPUT_DIR: CamSim resolves a relative path against its binary directory
     try:
         if not a.check_only:
             if "main" in runs:
