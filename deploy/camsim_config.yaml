@@ -764,6 +764,23 @@ operational:
   # Empty = disabled. Env: CAMSIM_FRAME_STATS_PATH
   frame_stats_path: ""
 
+# --- Control API (ROADMAP 2.4, docs/control-api.md) ---
+# HTTP/JSON under /api/v1 on the health port: set up a scene, pose the camera,
+# step a lockstep clock and capture a frame with its ground truth (ML datasets).
+# Off by default: it moves the camera for anyone who can reach the health port.
+control_api:
+  # Env: CAMSIM_CONTROL_API_ENABLED
+  enabled: false
+  # A capture waits for every tileset at or above this load progress (%).
+  # Env: CAMSIM_CONTROL_API_SETTLE_LOAD_PCT
+  settle_load_pct: 99.9
+  # Rendered frames after the scene settled, before the capture frame (TSR, AE).
+  # Env: CAMSIM_CONTROL_API_SETTLE_FRAMES
+  default_settle_frames: 30
+  # A capture that never settles answers 503 after this many seconds.
+  # Env: CAMSIM_CONTROL_API_CAPTURE_TIMEOUT_S
+  capture_timeout_s: 120
+
 # --- Render path (ROADMAP 3A) ---
 # The sensor is always the primary view (the game viewport's view: TSR, one
 # scene render per frame). Since 3B.2 this is the only render path.

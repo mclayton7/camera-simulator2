@@ -597,6 +597,16 @@ struct FCamSimConfig
 	};
 	FOperationalConfig Operational;
 
+	/** ROADMAP 2.4: HTTP/JSON control API under /api/v1 on the health port (docs/control-api.md). */
+	struct FControlApiConfig
+	{
+		bool  bEnabled            = false;   // CAMSIM_CONTROL_API_ENABLED; needs operational.health_http_enabled
+		float SettleLoadPct       = 99.9f;   // capture waits for every tileset at or above this load progress [0, 100]
+		int32 DefaultSettleFrames = 30;      // rendered frames after the scene settled, before the capture frame [0, 600]
+		float CaptureTimeoutSec   = 120.0f;  // a capture that never settles answers 503 after this [1, 3600]
+	};
+	FControlApiConfig ControlApi;
+
 	// ROADMAP 3A — render path
 	struct FRenderConfig
 	{

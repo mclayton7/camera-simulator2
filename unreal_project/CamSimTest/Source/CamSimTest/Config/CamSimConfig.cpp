@@ -941,6 +941,16 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlString(OpNode, "frame_stats_path",          Cfg.Operational.FrameStatsPath);
 		}
 
+		// ROADMAP 2.4: control API
+		if (YamlHas(Root, "control_api"))
+		{
+			ryml::ConstNodeRef CaNode = Root["control_api"];
+			YamlBool (CaNode, "enabled",               Cfg.ControlApi.bEnabled);
+			YamlFloat(CaNode, "settle_load_pct",       Cfg.ControlApi.SettleLoadPct);
+			YamlInt  (CaNode, "default_settle_frames", Cfg.ControlApi.DefaultSettleFrames);
+			YamlFloat(CaNode, "capture_timeout_s",     Cfg.ControlApi.CaptureTimeoutSec);
+		}
+
 		// ROADMAP 3A: render path
 		if (YamlHas(Root, "render"))
 		{
@@ -1285,6 +1295,15 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.Operational.HealthHttpPort        = GetEnvInt (TEXT("CAMSIM_HEALTH_HTTP_PORT"),      Cfg.Operational.HealthHttpPort);
 	Cfg.Operational.bSnapshotEndpointEnabled = GetEnvBool(TEXT("CAMSIM_SNAPSHOT_ENDPOINT_ENABLED"), Cfg.Operational.bSnapshotEndpointEnabled);
 	Cfg.Operational.FrameStatsPath           = GetEnv    (TEXT("CAMSIM_FRAME_STATS_PATH"),          Cfg.Operational.FrameStatsPath);
+
+	// ROADMAP 2.4: control API (clamped here, after YAML and env)
+	Cfg.ControlApi.bEnabled            = GetEnvBool (TEXT("CAMSIM_CONTROL_API_ENABLED"),           Cfg.ControlApi.bEnabled);
+	Cfg.ControlApi.SettleLoadPct       = GetEnvFloat(TEXT("CAMSIM_CONTROL_API_SETTLE_LOAD_PCT"),   Cfg.ControlApi.SettleLoadPct);
+	Cfg.ControlApi.DefaultSettleFrames = GetEnvInt  (TEXT("CAMSIM_CONTROL_API_SETTLE_FRAMES"),     Cfg.ControlApi.DefaultSettleFrames);
+	Cfg.ControlApi.CaptureTimeoutSec   = GetEnvFloat(TEXT("CAMSIM_CONTROL_API_CAPTURE_TIMEOUT_S"), Cfg.ControlApi.CaptureTimeoutSec);
+	Cfg.ControlApi.SettleLoadPct       = FMath::Clamp(Cfg.ControlApi.SettleLoadPct, 0.0f, 100.0f);
+	Cfg.ControlApi.DefaultSettleFrames = FMath::Clamp(Cfg.ControlApi.DefaultSettleFrames, 0, 600);
+	Cfg.ControlApi.CaptureTimeoutSec   = FMath::Clamp(Cfg.ControlApi.CaptureTimeoutSec, 1.0f, 3600.0f);
 	// A relative path means the directory CamSim was launched from; UE would
 	// otherwise resolve it against the engine's Binaries directory.
 	if (!Cfg.Operational.FrameStatsPath.IsEmpty() && FPaths::IsRelative(Cfg.Operational.FrameStatsPath))

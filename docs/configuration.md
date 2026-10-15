@@ -660,6 +660,18 @@ entity_types:
     skeletal: false
 ```
 
+### Control API (`control_api:`, ROADMAP 2.4)
+
+HTTP/JSON under `/api/v1` on the health port (`operational.health_http_port`); guide: `docs/control-api.md`. Needs
+`operational.health_http_enabled`. Off by default: it moves the camera for anyone who can reach the port.
+
+| Field | Type | Default | Env var | Description |
+|-------|------|---------|---------|-------------|
+| `control_api.enabled` | bool | `false` | `CAMSIM_CONTROL_API_ENABLED` | Bind the `/api/v1` routes. |
+| `control_api.settle_load_pct` | float | `99.9` | `CAMSIM_CONTROL_API_SETTLE_LOAD_PCT` | A capture waits until every tileset's load progress is at least this (%). Clamped to [0, 100]. |
+| `control_api.default_settle_frames` | int | `30` | `CAMSIM_CONTROL_API_SETTLE_FRAMES` | Rendered frames after the scene settled before the capture frame (TSR history, exposure); a request's `settle_frames` overrides it. Clamped to [0, 600]. |
+| `control_api.capture_timeout_s` | float | `120` | `CAMSIM_CONTROL_API_CAPTURE_TIMEOUT_S` | A capture that hasn't settled by then answers 503 with what it was waiting for. Clamped to [1, 3600]. |
+
 ## Environment Variable Quick Reference
 
 ```bash
