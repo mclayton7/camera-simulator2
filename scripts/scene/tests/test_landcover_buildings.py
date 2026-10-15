@@ -28,7 +28,7 @@ def _with_buildings(tmp_path, monkeypatch, features=None, key="k1"):
 
     def fake_raster(pkg_, m_, ctx_, wst=None, jobs=1):
         state["calls"] += 1
-        return rdir, state["key"]
+        return rdir, state["key"], 0.0
 
     monkeypatch.setattr(pipeline.buildings_layer, "footprint_raster", fake_raster)
     return pkg, m, build, state

@@ -600,7 +600,7 @@ def _load_features(m: Manifest, ctx: BuildContext) -> list:
     return feats
 
 
-def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
+def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext, jobs: int = 1) -> LayerStats:
     st, out = LayerStats(), pkg / "landcover"
     lc = m.layers["landcover"]
     prio = lc["priorities"]
@@ -617,9 +617,9 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         shas += sorted(a.sha256 for sid in fs["sources"] for a in m.source(sid).assets)
         credits = [layer_credit(m.source(sid).attribution, m.source(sid).licence) for sid in fs["sources"]]
         shas += credits  # the layer's own notice is an output too
-    fp_path = None
+    fp_path, fp_peak = None, 0.0
     if lc.get("buildings") and m.layers.get("buildings"):  # REALISM R3b: building footprints burned as 230
-        fp_path, fp_key = buildings_layer.footprint_raster(pkg, m, ctx)
+        fp_path, fp_key, fp_peak = buildings_layer.footprint_raster(pkg, m, ctx, jobs=jobs)
         brec = m.source(m.layers["buildings"]["priorities"][0])
         bcredit = layer_credit(brec.attribution, brec.licence)
         credits = (credits or []) + [bcredit]
@@ -647,6 +647,7 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         atomic_write(marker, json.dumps({"inputs": inputs, "output": sha256_file(index_path)}).encode())
         st.built = len(index["tiles"])
     st.tiles = len(index["tiles"])
+    st.peak_rss_mb = max(st.peak_rss_mb, fp_peak)  # the chunk workers that planned and rasterised the buildings
     files = [p for p in out.iterdir() if p.is_file()]  # the PNGs + index.json + ATTRIBUTION.txt
     st.files, st.bytes = len(files), sum(p.stat().st_size for p in files)
     st.seconds = round(time.monotonic() - t0, 3)
@@ -835,11 +836,11 @@ def build_scene(
         ndvi_stats = _build_ndvi(pkg, m, ctx, iplan, jobs, json_progress)
         if ndvi_stats is not None:
             stats["ndvi"] = ndvi_stats
-        stats["landcover"] = _build_landcover(pkg, m, ctx)
+        stats["landcover"] = _build_landcover(pkg, m, ctx, jobs)
         cstats = canopy_layer.build(pkg, m, ctx, jobs)
         if m.layers.get("canopy"):
             stats["canopy"] = cstats
-        bstats = buildings_layer.build(pkg, m, ctx)
+        bstats = buildings_layer.build(pkg, m, ctx, jobs)
         if m.layers.get("buildings"):
             stats["buildings"] = bstats
         vegmix.write(pkg, m)  # REALISM R4: the species mix (or a stale one removed)

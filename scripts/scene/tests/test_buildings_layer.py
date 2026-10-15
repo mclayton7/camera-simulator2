@@ -132,3 +132,78 @@ def test_coarse_imagery_keeps_every_roof_flat(tmp_path):
         t = gltf.decode_tile(glb.read_bytes())
         assert t.texture is None and t.extras == {"roof_texel_m": None}
     assert info["buildings"]["roofs"]["flat_coarse"] == 3 and info["buildings"]["roofs"]["textured"] == 0
+
+
+from test_buildings_chunks import _edge_lon  # noqa: E402
+
+EDGE_ROWS = [
+    *ROWS,
+    {"id": "e1", "geom": box_lonlat(_edge_lon() - 3e-5, 10.2, 30, 20), "height": 7.0},
+    {"id": "e2", "geom": box_lonlat(_edge_lon() + 3e-5, 10.2, 30, 20)},
+    {"id": "e3", "geom": box_lonlat(10.2499, 10.2, 40, 40)},  # straddles the 10.25 land-cover tile edge
+]
+
+
+def _whole_box(pkg, cache):
+    """Reference: the pre-chunk path (one plan of the whole snapshot)."""
+    from camsim_scene import footprints as F
+    from camsim_scene.context import WorkerState
+    from camsim_scene.layers import buildings as layer
+    from camsim_scene.pipeline import make_context
+
+    m = Manifest.load(pkg / "manifest.json")
+    ctx = make_context(pkg, m, cache)
+    st = WorkerState(ctx)
+    rec = m.source(m.layers["buildings"]["priorities"][0])
+    blds, stats = B.plan_buildings(B.read_snapshot(ctx.asset_paths[f"{rec.id}/{rec.assets[0].id}"]),
+                                   layer.heights_fn(st, m), float(m.layers["buildings"]["min_area_m2"]))
+    return blds, stats, F.raster_tiles(blds)
+
+
+def test_chunked_plan_and_raster_equal_the_whole_box(tmp_path):
+    from camsim_scene import footprints as F
+    from camsim_scene.layers import buildings as layer
+    from camsim_scene.manifest import STATE_DIR
+
+    pkg, cache, info = build_synthetic(tmp_path, _scene(tmp_path, EDGE_ROWS))
+    blds, stats, raster = _whole_box(pkg, cache)
+    chunks = json.loads((pkg / STATE_DIR / "buildings" / "partition" / "partition.json").read_text())["chunks"]
+    assert len(chunks) >= 2
+    got = sorted((b for c in chunks for b in layer.load_chunk_plan(pkg, *c)), key=lambda b: b.source_id)
+
+    def rec(b):
+        return b.source_id, b.tile, b.base_m, b.roof_m, [p.wkb for p in b.parts]
+
+    assert [rec(b) for b in got] == [rec(b) for b in blds]
+    assert {k: v for k, v in info["buildings"].items() if k != "roofs"} == stats
+    fr = F.FootprintRaster(pkg / STATE_DIR / "buildings-footprints")
+    assert fr.keys() == list(raster) and all(np.array_equal(fr.get(*k), raster[k]) for k in raster)
+
+
+def test_partition_without_marker_is_redone(tmp_path):
+    from camsim_scene.manifest import STATE_DIR
+
+    pkg, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, EDGE_ROWS))
+    before = (pkg / "hashes.txt").read_bytes()
+    (pkg / STATE_DIR / "buildings" / "partition" / "partition.json").unlink()
+    (pkg / STATE_DIR / "buildings-footprints" / "index.json").unlink()
+    (pkg / STATE_DIR / "landcover.json").unlink(missing_ok=True)  # force the land-cover cut, when it burns
+    build_scene(pkg, cache, jobs=1)
+    assert (pkg / "hashes.txt").read_bytes() == before
+
+
+def test_stale_chunk_plan_is_replanned_alone(tmp_path, monkeypatch):
+    from camsim_scene.manifest import STATE_DIR
+
+    pkg, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, EDGE_ROWS))
+    plan_dir = pkg / STATE_DIR / "buildings" / "plan"
+    victim = sorted(plan_dir.glob("*.json"))[0]
+    victim.write_text(json.dumps({"inputs": "stale"}))
+    (pkg / STATE_DIR / "buildings-footprints" / "index.json").unlink()
+    (pkg / STATE_DIR / "buildings.json").unlink()  # the layer rebuilds (its marker is gone) and needs every chunk
+    calls = []
+    real = B.plan_buildings
+    monkeypatch.setattr(B, "plan_buildings", lambda fps, *a, **k: (calls.append(1), real(fps, *a, **k))[1])
+    before = (pkg / "hashes.txt").read_bytes()
+    build_scene(pkg, cache, jobs=1)
+    assert len(calls) == 1 and (pkg / "hashes.txt").read_bytes() == before

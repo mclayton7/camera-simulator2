@@ -122,9 +122,10 @@ def test_layer_writes_mask_tiles_and_index(tmp_path):
     assert "features/buildings/mask/index.json" in hashes and "features/buildings/mask/+10.20_+10.20.png" in hashes
 
 
-def test_plan_runs_once_per_build(tmp_path, monkeypatch):
+def test_each_chunk_is_planned_once_per_build(tmp_path, monkeypatch):
     calls = []
     real = B.plan_buildings
-    monkeypatch.setattr(B, "plan_buildings", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    monkeypatch.setattr(B, "plan_buildings", lambda fps, *a, **k: (calls.append(len(fps)), real(fps, *a, **k))[1])
     build_synthetic(tmp_path, _scene(tmp_path, ROWS))
-    assert len(calls) == 1  # the GLBs and the footprint raster share one cached plan
+    chunks = {B.chunk_of(*B.stage(B.Footprint(r["id"], r["geom"], None, None, ""), 10.0)[1:3]) for r in ROWS}
+    assert len(calls) == len(chunks) and sum(calls) == len(ROWS)  # the GLBs and the raster share the chunk plans
