@@ -1,6 +1,7 @@
 """Unit tests for scripts/georeg_check.py (REALISM R6 geo-registration runner): view geometry, evaluation, gates."""
 
 import dataclasses
+import json
 import math
 
 import georeg_check as gc
@@ -141,3 +142,36 @@ def test_a_corner_off_its_ray_fails_g3():
     r = gc.evaluate(view, place, frames, klv, k1=0.0, k2=0.0)
     assert r["corner_ray_px"]["82"] > 5
     assert gc.gates([r])["G3"] == {"pass": False, "failed": ["flat/oblique"]}
+
+
+def test_pan_poses_sweep_the_gimbal_about_the_oblique_view():
+    base = gc.camera_pose(next(v for v in gc.views([SITE]) if v.name == "flat/oblique"), 20.0)
+    assert gc.pan_pose(SITE, 20.0, 0.0) == base
+    p = gc.pan_pose(SITE, 20.0, gc.PAN_PERIOD_S / 4)
+    assert p.gimbal_yaw == pytest.approx(gc.PAN_AMP_DEG) and (p.lat, p.lon, p.alt) == (base.lat, base.lon, base.alt)
+
+
+def test_evaluate_pan_finds_a_one_frame_klv_lag(tmp_path):
+    view = next(v for v in gc.views([SITE]) if v.name == "flat/oblique")
+    place = {"lat": SITE["lat"], "lon": SITE["lon"], "h": 20.0, "normal_az": 0.0, "normal_el": 90.0,
+             "heading": SITE["heading_deg"]}
+    corners = gc.marker_corners(view, place)
+    frames, klv = [], []
+    poses = [gc.pan_pose(SITE, 20.0, i / 30.0) for i in range(40)]
+    for i, pose in enumerate(poses):
+        cam = g.Camera.from_klv(gc.pose_tags(pose, W, H), W, H)
+        quad = [cam.project(*c) for c in corners]
+        cx, cy = g.projected_centroid(lambda *c: c[:2], [(x, y, 0) for x, y in quad])
+        m = np.zeros((H, W), bool)
+        m[round(cy) - 3 : round(cy) + 3, round(cx) - 3 : round(cx) + 3] = True  # a 6 x 6 blob at the true centroid
+        ann = {"category": {"name": "georeg_marker"}, "visibility": 1.0, "segmentation": _rle(m)}
+        frames.append({"frame_id": i, "timestamp_us": 1000 + i, "annotations": [ann]})
+        # The KLV stamped with frame i carries frame i - 1's pose (one frame late)
+        klv.append({"tags": {**{str(k): v for k, v in gc.pose_tags(poses[max(0, i - 1)], W, H).items()},
+                             "2": 1000 + i}})
+    (tmp_path / "placement.json").write_text(json.dumps(place))
+    (tmp_path / "coco.jsonl").write_text("".join(json.dumps(f) + "\n" for f in frames))
+    (tmp_path / "klv.jsonl").write_text("".join(json.dumps(p) + "\n" for p in klv))
+    r = gc.evaluate_pan(tmp_path)
+    assert r["best_lag"] == 1
+    assert r["lags"][1]["median_px"] < 1.0 < r["lags"][0]["median_px"]

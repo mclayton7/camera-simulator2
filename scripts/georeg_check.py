@@ -3,7 +3,7 @@
 what CamSim draws is where its KLV says it is.
 
     TMPDIR=/opt/mac/tmp uv run --project scripts/scene --with pycocotools python scripts/georeg_check.py \\
-        --scene .cache/scene-packages/pendleton-r5veg --out OUT [--runs main,distorted,orbit] [--check-only]
+        --scene .cache/scene-packages/pendleton-r5veg --out OUT [--runs main,distorted,pan] [--check-only]
 
 A 2 m marker plate (entity type 9001; 9002 is the 10 m plate for the 5 km views) is placed over CIGI at each site of
 scripts/georeg/sites_pendleton.json, on the rendered surface (CIGI HOT, tilted to its normal), and seen from ten views
@@ -21,8 +21,9 @@ assumes a plane: relief and the 5 km footprint's curvature move points by more b
 there only); G3 every KLV corner point (82-89) and the frame centre (23/24) lies on the commanded camera's ray through
 its image point (frame corner / centre) within 1 px, on every view. The report gives the error in metres on the ground and the KLV quantisation budget (px per tag LSB).
 Runs: main (the ten views), distorted (flat/nadir and flat/corner with k1 = -0.2, informational: KLV corners are
-pinhole, ROADMAP 3B.3), orbit (a 30 s orbit at 1 km and 45 deg around the flat marker; per-frame error of (a) with KLV
-matched to COCO by Tag 2 = timestamp_us, and the lag in frames that minimises it; informational).
+pinhole, ROADMAP 3B.3), pan (the flat/oblique camera with the gimbal yaw swept +-3 deg over 6 s for 20 s, the marker
+crossing the frame at up to ~13 px per frame; per-frame error of (a) with KLV matched to COCO by Tag 2 = timestamp_us,
+at lags -3..3 frames: the best lag says whether metadata and pixels are in step; informational).
 OUT/<run>/<view>/ keeps placement.json, coco.jsonl, klv.jsonl and shot.png, so --check-only re-evaluates without
 CamSim. Writes OUT/report.json and OUT/overlays/. Exit 0 when G1 and G2 pass, 1 on a gate failure, 2 on an error."""
 
@@ -59,6 +60,9 @@ GATE_PX = 1.0
 CAPTURE_S = 3.0
 SETTLE_S = 10.0
 DISTORTED_K1 = -0.2
+PAN_AMP_DEG = 3.0
+PAN_PERIOD_S = 6.0
+PAN_CAPTURE_S = 20.0
 ASPECT = 9 / 16  # capture height / width of the shipped config (1920 x 1080; 1280 x 720 alike)
 
 
@@ -103,7 +107,7 @@ def camera_pose(view: View, marker_h: float, aspect: float = ASPECT) -> scenario
 
 
 def pose_tags(pose: scenario.Pose, width: int, height: int) -> dict:
-    """The KLV tags a pose would produce (for tests and the orbit's expected values)."""
+    """The KLV tags a pose would produce (tests, and the commanded camera (a'))."""
     return {13: pose.lat, 14: pose.lon, 75: pose.alt, 5: pose.yaw % 360.0, 6: pose.pitch, 7: pose.roll,
             18: pose.gimbal_yaw % 360.0, 19: pose.gimbal_pitch, 20: 0.0, 16: pose.fov_h,
             17: vfov(pose.fov_h, height / width)}
@@ -337,50 +341,53 @@ def run_views(label: str, pkg: Path, vs: list[View], out: Path, k1: float, confi
         responses.stop.set()
 
 
-def run_orbit(pkg: Path, site: dict, out: Path) -> None:
+def pan_pose(site: dict, marker_h: float, t: float) -> scenario.Pose:
+    """The pan run's pose at time t: the flat/oblique camera (45 deg, 1 km) with the gimbal yaw swept
+    PAN_AMP_DEG sin(2 pi t / PAN_PERIOD_S), so the marker crosses the frame at up to ~13 px per frame."""
+    base = camera_pose(View("flat/pan", site, 45.0, 1000.0, 10.0, 9001), marker_h)
+    return dataclasses.replace(base, gimbal_yaw=PAN_AMP_DEG * math.sin(2 * math.pi * t / PAN_PERIOD_S))
+
+
+def run_pan(pkg: Path, site: dict, out: Path) -> None:
     cs, oc, ter = _session_modules()
     rb = cs.rb
-    run_dir = out / "orbit"
-    vdir = run_dir / "flat_orbit"
+    run_dir = out / "pan"
+    vdir = run_dir / "flat_pan"
     vdir.mkdir(parents=True, exist_ok=True)
     coco = run_dir / "ml" / "camsim_coco.jsonl"
     env = {**cs.env_for("package", pkg), "CAMSIM_ML_ENABLED": "1", "CAMSIM_ML_OUTPUT_DIR": str(run_dir / "ml"),
            "CAMSIM_ML_DEPTH_ENABLED": "0", "CAMSIM_ML_INTERVAL_FRAMES": "1", "CAMSIM_DIS_ENABLED": "0",
            "CAMSIM_MULTICAST_ADDR": "127.0.0.1"}
-
-    def view_at(t: float) -> View:
-        return View("flat/orbit", {**site, "heading_deg": (site["heading_deg"] + 12.0 * t) % 360.0}, 45.0, 1000.0,
-                    10.0, 9001)
-
     responses = oc.Responses()
     try:
-        with cs.camsim(env, camera_pose(view_at(0), 0.0)) as host:
+        with cs.camsim(env, pan_pose(site, 0.0, 0.0)) as host:
             marker = Marker(host, oc, ter)
             try:
                 rb.wait_terrain(180)
-                hot = _hot(responses, oc, host, 900, site["lat"], site["lon"])
+                h0 = _hot(responses, oc, host, 900, site["lat"], site["lon"])["hot"]
+                host.pose = pan_pose(site, h0, 0.0)
+                time.sleep(1.0)
+                rb.wait_terrain(180)
+                hot = _hot(responses, oc, host, 901, site["lat"], site["lon"])
                 place = {"lat": site["lat"], "lon": site["lon"], "h": hot["hot"],
                          "normal_az": hot.get("normal_az", 0.0), "normal_el": hot.get("normal_el", 90.0),
-                         "heading": site["heading_deg"], "k1": 0.0}
+                         "heading": site["heading_deg"], "k1": 0.0, "h0": h0}
                 marker.place(9001, place)
                 (vdir / "placement.json").write_text(json.dumps(place, indent=1) + "\n")
-                host.pose = camera_pose(view_at(0), place["h"])
-                rb.wait_terrain(180)
                 time.sleep(SETTLE_S)
                 stop = threading.Event()
 
                 def fly() -> None:
                     t0 = time.monotonic()
                     while not stop.is_set():
-                        host.pose = camera_pose(view_at(time.monotonic() - t0), place["h"])
-                        time.sleep(1 / 60)
+                        host.pose = pan_pose(site, h0, time.monotonic() - t0)
+                        time.sleep(1 / 120)
 
-                th = threading.Thread(target=fly, daemon=True)
-                th.start()
+                threading.Thread(target=fly, daemon=True).start()
                 start = coco.stat().st_size if coco.exists() else 0
                 ts = vdir / "klv.ts"
                 subprocess.run(["node", str(CHECK_JS), "capture", "udp://127.0.0.1:5004", str(ts), "--duration-sec",
-                                "30"], check=True, stdout=subprocess.DEVNULL)
+                                str(PAN_CAPTURE_S)], check=True, stdout=subprocess.DEVNULL)
                 stop.set()
                 time.sleep(0.5)
                 frames, _ = _coco_lines(coco, start)
@@ -394,34 +401,35 @@ def run_orbit(pkg: Path, site: dict, out: Path) -> None:
         responses.stop.set()
 
 
-def evaluate_orbit(vdir: Path) -> dict:
-    """Per-frame error of (a), KLV matched to COCO frames by Tag 2 = timestamp_us, at lags -3..3 frames."""
+def evaluate_pan(vdir: Path) -> dict:
+    """Per-frame error of (a) with the KLV packet stamped with frame i + lag (Tag 2 = timestamp_us), lag -3..3: the
+    lag with the smallest median is where metadata and pixels line up (0 = in step)."""
     place = json.loads((vdir / "placement.json").read_text())
     frames = [json.loads(line) for line in (vdir / "coco.jsonl").read_text().splitlines() if line.strip()]
     klv = sorted((json.loads(line)["tags"] for line in (vdir / "klv.jsonl").read_text().splitlines() if line.strip()),
                  key=lambda t: t["2"])
     by_ts = {int(t["2"]): i for i, t in enumerate(klv)}
-    view = View("flat/orbit", {"heading_deg": place["heading"]}, 45.0, 1000.0, 10.0, 9001)
-    corners = marker_corners(view, place)
-    out = {"frames": len(frames), "klv_packets": len(klv), "matched": 0, "lags": {}}
+    corners = marker_corners(View("flat/pan", {"heading_deg": place["heading"]}, 45.0, 1000.0, 10.0, 9001), place)
+    out: dict = {"frames": len(frames), "klv_packets": len(klv), "lags": {}}
+    meas, speeds = [], []
+    for f in frames:
+        anns = [a for a in f["annotations"] if a.get("category", {}).get("name") == "georeg_marker"
+                and "segmentation" in a and a.get("visibility", 0) >= MIN_VISIBILITY
+                and not g.mask_touches_edge(a["segmentation"])]
+        i = by_ts.get(int(f["timestamp_us"]))
+        if anns and i is not None:
+            meas.append((i, g.mask_centroid(anns[0]["segmentation"]), anns[0]["segmentation"]["size"]))
+    for (_, a, _), (_, b, _) in zip(meas, meas[1:]):
+        speeds.append(math.hypot(b[0] - a[0], b[1] - a[1]))
+    out["matched"] = len(meas)
+    out["max_speed_px_per_frame"] = max(speeds) if speeds else 0.0
     for lag in range(-3, 4):
         errs = []
-        for f in frames:
-            i = by_ts.get(int(f["timestamp_us"]))
-            if i is None or not 0 <= i + lag < len(klv):
-                continue
-            anns = [a for a in f["annotations"] if a.get("category", {}).get("name") == "georeg_marker"
-                    and "segmentation" in a and a.get("visibility", 0) >= MIN_VISIBILITY
-                    and not g.mask_touches_edge(a["segmentation"])]
-            if not anns:
-                continue
-            h, w = anns[0]["segmentation"]["size"]
-            cam = g.Camera.from_klv({int(k): v for k, v in klv[i + lag].items()}, w, h)
-            px, py = g.projected_centroid(cam.project, corners)
-            mx, my = g.mask_centroid(anns[0]["segmentation"])
-            errs.append(math.hypot(px - mx, py - my))
-        if lag == 0:
-            out["matched"] = len(errs)
+        for i, (mx, my), (h, w) in meas:
+            if 0 <= i + lag < len(klv):
+                cam = g.Camera.from_klv({int(k): v for k, v in klv[i + lag].items()}, w, h)
+                px, py = g.projected_centroid(cam.project, corners)
+                errs.append(math.hypot(px - mx, py - my))
         if errs:
             errs.sort()
             out["lags"][lag] = {"median_px": statistics.median(errs), "p95_px": errs[int(0.95 * (len(errs) - 1))],
@@ -505,7 +513,7 @@ def main() -> int:
     ap.add_argument("--scene", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--sites", type=Path, default=SITES)
-    ap.add_argument("--runs", default="main,distorted,orbit")
+    ap.add_argument("--runs", default="main,distorted,pan")
     ap.add_argument("--views", help="comma-separated view names (main run), e.g. flat/nadir,flat/corner")
     ap.add_argument("--check-only", action="store_true", help="re-evaluate OUT without launching CamSim")
     a = ap.parse_args()
@@ -526,8 +534,8 @@ def main() -> int:
                     run_views("distorted", pkg, dist_views, a.out, DISTORTED_K1, cfg)
                 finally:
                     cfg.unlink()
-            if "orbit" in runs:
-                run_orbit(pkg, next(s for s in sites if s["kind"] == "flat"), a.out)
+            if "pan" in runs:
+                run_pan(pkg, next(s for s in sites if s["kind"] == "flat"), a.out)
     except (RuntimeError, subprocess.CalledProcessError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -541,9 +549,11 @@ def main() -> int:
         res = evaluate_run(a.out, "distorted", dist_views)
         report["runs"]["distorted"] = res
         print_table(f"distorted (k1 = {DISTORTED_K1}, informational)", res)
-    if "orbit" in runs and (a.out / "orbit" / "flat_orbit" / "klv.jsonl").exists():
-        report["runs"]["orbit"] = evaluate_orbit(a.out / "orbit" / "flat_orbit")
-        print("\norbit (informational):", json.dumps(report["runs"]["orbit"]))
+    if "pan" in runs and (a.out / "pan" / "flat_pan" / "klv.jsonl").exists():
+        p = report["runs"]["pan"] = evaluate_pan(a.out / "pan" / "flat_pan")
+        print(f"\npan (informational): {p['matched']} frames matched, marker up to {p['max_speed_px_per_frame']:.1f} "
+              f"px/frame; best KLV lag {p.get('best_lag')} frames; median / p95 px by lag: "
+              + ", ".join(f"{k}: {v['median_px']:.2f} / {v['p95_px']:.2f}" for k, v in p["lags"].items()))
     (a.out / "report.json").write_text(json.dumps(report, indent=1, default=str) + "\n")
     if "gates" in report:
         for k, v in report["gates"].items():
