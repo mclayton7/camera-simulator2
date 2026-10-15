@@ -101,3 +101,19 @@ def test_partition_in_the_pool_equals_inline(tmp_path):
     for c in one["chunks"]:
         a = [(f.source_id, f.geometry.wkb) for f in C.read_chunk(tmp_path / "one", *c)]
         assert a == [(f.source_id, f.geometry.wkb) for f in C.read_chunk(tmp_path / "two", *c)]
+
+
+def test_partition_in_another_format_or_without_its_file_is_redone(tmp_path):
+    import json
+
+    snap = _snapshot(tmp_path, _rows())
+    first = C.partition(snap, 10.0, tmp_path / "part", "k", jobs=1)
+    marker = tmp_path / "part" / C.PARTITION_MARKER
+    old = {k: v for k, v in json.loads(marker.read_text()).items() if k != "format"}  # a pre-format marker
+    marker.write_text(json.dumps(old))
+    (tmp_path / "part" / C.CHUNKS_FILE).unlink()
+    assert C.partition(snap, 10.0, tmp_path / "part", "k", jobs=1)["chunks"] == first["chunks"]
+    assert (tmp_path / "part" / C.CHUNKS_FILE).exists()
+    (tmp_path / "part" / C.CHUNKS_FILE).unlink()  # same format, file lost
+    C.partition(snap, 10.0, tmp_path / "part", "k", jobs=1)
+    assert (tmp_path / "part" / C.CHUNKS_FILE).exists()

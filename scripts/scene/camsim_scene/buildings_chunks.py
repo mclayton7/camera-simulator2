@@ -20,6 +20,7 @@ from .fsutil import atomic_write
 RANGE_ROWS = 100_000
 PARTITION_MARKER = "partition.json"
 CHUNKS_FILE = "chunks.parquet"
+PARTITION_FORMAT = 2  # 2: one CHUNKS_FILE sorted by (cx, cy, row); 1 (unmarked) was a PARTITION_BY directory
 DUCKDB_SETTINGS = ("memory_limit = '500MB'", "threads = 2")  # socal-r5: 683 MB peak RSS, 6 s
 COLS = "id, geometry, height, num_floors, class"
 
@@ -94,14 +95,25 @@ def read_partition(out_dir: Path) -> dict | None:
     return json.loads(p.read_text()) if p.exists() else None
 
 
+def usable_partition(out_dir: Path, key: str) -> dict | None:
+    """The marker of a complete partition for `key` in this format under out_dir, else None."""
+    prev = read_partition(out_dir)
+    if (
+        prev and prev["inputs"] == key and prev.get("format") == PARTITION_FORMAT
+        and (not prev["chunks"] or (Path(out_dir) / CHUNKS_FILE).is_file())
+    ):
+        return prev
+    return None
+
+
 def partition(
     snapshot: Path, min_area_m2: float, out_dir: Path, key: str, jobs: int, range_rows: int = RANGE_ROWS
 ) -> dict:
     """Partition the snapshot under out_dir (CHUNKS_FILE), unless out_dir already holds a complete
     partition for `key`. Returns the marker: inputs, counts (input, dropped_invalid, dropped_small), chunks, peak RSS."""
     out_dir = Path(out_dir)
-    prev = read_partition(out_dir)
-    if prev and prev["inputs"] == key:
+    prev = usable_partition(out_dir, key)
+    if prev:
         return prev
     shutil.rmtree(out_dir, ignore_errors=True)
     keys_dir, tmp = out_dir / "keys", out_dir / "duckdb-tmp"
@@ -142,7 +154,7 @@ def partition(
         peak = max(peak, peak_rss_mb())
     shutil.rmtree(keys_dir, ignore_errors=True)
     shutil.rmtree(tmp, ignore_errors=True)
-    marker = {"inputs": key, "counts": counts, "chunks": [list(c) for c in sorted(chunks)], "peak_rss_mb": peak}
+    marker = {"inputs": key, "format": PARTITION_FORMAT, "counts": counts, "chunks": [list(c) for c in sorted(chunks)], "peak_rss_mb": peak}
     atomic_write(out_dir / PARTITION_MARKER, json.dumps(marker).encode())
     return json.loads(json.dumps(marker))
 

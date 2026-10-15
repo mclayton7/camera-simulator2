@@ -178,3 +178,12 @@ def test_deep_never_reads_the_build_plan(tmp_path, monkeypatch):
     monkeypatch.setattr(layer, "load_chunk_plan", lambda *a: (_ for _ in ()).throw(AssertionError("read plan")))
     assert _checks(verify(pkg, cache, deep=True))["buildings_heights"]["ok"]
 
+
+
+def test_deep_does_not_rewrite_a_stale_state_partition(tmp_path):
+    pkg, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, ROWS))
+    marker = pkg / ".state/buildings/partition/partition.json"
+    old = {k: v for k, v in json.loads(marker.read_text()).items() if k != "format"}
+    marker.write_text(json.dumps(old))
+    assert _checks(verify(pkg, cache, deep=True))["buildings_heights"]["ok"]
+    assert "format" not in json.loads(marker.read_text())  # partitioned in a temporary directory instead

@@ -385,9 +385,9 @@ def _check_buildings_heights(pkg: Path, m: Manifest, st, jobs: int = 1) -> Check
         by_chunk.setdefault((x >> (z - CHUNK_ZOOM), y >> (z - CHUNK_ZOOM)), []).append((uri, (z, x, y), mat))
     problems: list[str] = []
     state_part = pkg / STATE_DIR / "buildings" / "partition"
-    prev = C.read_partition(state_part)
+    reusable = C.usable_partition(state_part, layer.partition_inputs(m)) is not None
     with tempfile.TemporaryDirectory() as tmp:
-        part_dir = state_part if prev and prev["inputs"] == layer.partition_inputs(m) else Path(tmp) / "partition"
+        part_dir = state_part if reusable else Path(tmp) / "partition"
         chunks = [tuple(c) for c in layer.ensure_partition(pkg, m, st.ctx, jobs, out_dir=part_dir)["chunks"]]
         for c in sorted(set(chunks) | set(by_chunk)):
             want = layer.plan_chunk(st, m, C.read_chunk(part_dir, *c))[0] if c in chunks else []
