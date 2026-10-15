@@ -3,13 +3,15 @@
 section 2): the same package, pins and CIGI input give the same frames.
 
     TMPDIR=/opt/mac/tmp uv run --project scripts/scene python scripts/determinism_check.py \\
-        --scene .cache/scene-packages/pendleton-r5veg --out OUT [--against OTHER_OUT] [--check-only]
+        --scene .cache/scene-packages/pendleton-r5veg --out OUT [--against OTHER_OUT] [--check-only] [--auto-exposure]
 
 Two launches (a, b) fly the same six poses in the same order: camp_nadir, trees_oblique, slant_5km, coast_waves (EO)
 and camp_nadir_ir, trees_oblique_ir (MWIR). Pins: the sim clock frozen (CAMSIM_SIM_TIME_RATE=0, and the host sends
 the same date and time every frame), the sensor's temporal noise keyed to one frame (camsim.Sensor.FixedNoiseFrame 0)
 and UE's temporal sequences frozen (r.Test.FreezeTemporalSequences 1: TSR jitter and the view frame index; Development
-builds only). Each pose's CIGI datagram is a pure function of the pose but for the IG Control's frame counter and
+builds only), and the sensor's feedback loops off (EO exposure manual at MANUAL_EO_GAIN_EV, IR AGC off, thermal
+exposure manual; a temporary config through run.sh's CAMSIM_CONFIG_SRC): with the clock frozen the AE and AGC would hold
+their first snap (FSensorController::Smoothing holds on a zero sim-time step). Each pose's CIGI datagram is a pure function of the pose but for the IG Control's frame counter and
 wall-clock timestamp; its SHA-256 with those zeroed is in the report, so both runs provably got the same input.
 Per pose, after /ready terrain: a /snapshot every second until three in a row have the same pixel hash (SHA-256 of
 the decoded RGB), up to 90 s; that settled frame is kept (OUT/<run>/<pose>.png).
@@ -248,15 +250,16 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--against", type=Path)
     ap.add_argument("--check-only", action="store_true")
-    ap.add_argument("--manual-exposure", action="store_true",
-                    help="EO exposure manual, IR AGC off, thermal exposure manual (the sensor's feedback loops off)")
+    ap.add_argument("--auto-exposure", action="store_true",
+                    help="keep the sensor AE / IR AGC on (by default they are manual: with the clock frozen they hold "
+                         "their first snap, FSensorController::Smoothing)")
     a = ap.parse_args()
     runs_file = a.out / "runs.json"
     if a.check_only:
         runs = json.loads(runs_file.read_text())
     else:
         cfg = None
-        if a.manual_exposure:
+        if not a.auto_exposure:
             cfg = Path(tempfile.mkstemp(prefix="determinism-config-", suffix=".yaml")[1])
             cfg.write_text(manual_exposure_config((REPO / "deploy" / "camsim_config.yaml").read_text()))
         try:
@@ -270,7 +273,7 @@ def main() -> int:
         a.out.mkdir(parents=True, exist_ok=True)
         runs_file.write_text(json.dumps(runs, indent=1) + "\n")
     report = evaluate(a.out, runs)
-    report.update(scene=a.scene.name, date=time.strftime("%Y-%m-%d"), manual_exposure=a.manual_exposure)
+    report.update(scene=a.scene.name, date=time.strftime("%Y-%m-%d"), manual_exposure=not a.auto_exposure)
     if a.against:
         report["against"] = {"other": str(a.against), "poses": against(a.out, a.against)}
     (a.out / "report.json").write_text(json.dumps(report, indent=1) + "\n")
