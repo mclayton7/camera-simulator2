@@ -2082,7 +2082,8 @@ decks with the road's material, DIS ground vehicles drive onto decks from their 
 deck ceiling). On `pendleton-bridges` (Linux): 185 decks from 203 ways; B2 mid-span HOT within 0.007 m of the deck,
 B4 a DIS truck over a 230 m deck both ways within 0.013 m (steps ≤ 0.075 m), B5 a truck under a deck stays on the
 road; **B3 fails at 4 of 18 ends** (0.51–0.92 m between the deck end and 5 m out on the approach: two ends at an
-at-grade junction keep part of 3DEP's bridge-removal dip, two are rendered-terrain TIN error). Bench B7 below.
+at-grade junction keep part of 3DEP's bridge-removal dip, two are rendered-terrain TIN error). Bench (B7): +0.12 ms
+game p50 on `dense_pass`, +0.08 ms on `coast_pass`, GPU unchanged, 30 fps, 0 dropped.
 - [ ] **Bridges: visual review** of `.cache/r3/bridges/shots/` (EO + MWIR, oblique and nadir) — the user.
 - [ ] **Bridges B3 at junctions:** an end whose extension is stopped by an at-grade junction keeps part of the
   bare-earth dip (up to 0.9 m at Pendleton). Option: follow the approach way (and its junction) instead of extending

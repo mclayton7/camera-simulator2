@@ -1646,7 +1646,7 @@ incrementally from a copy: land cover rebuilt with the bridge burn, 142 s, every
 | B4 drive over | **Pass**: a DIS truck along I-5 at Vista Hermosa (230 m deck) both ways at 10 m/s, COCO `geo.alt_m` every frame: mid-span within **0.013 m** of the deck top, largest frame-to-frame step **0.075 m** |
 | B5 drive under | **Pass**: a truck on Old River Road under Mission Avenue stays on the road, its highest point 6.7 m below the deck |
 | B6 boat | Not run live: the boat path never takes a deck (deck ceiling −∞, `CamSim.Entity.SurfaceClamp.DeckCeiling`) |
-| B7 bench | B7_PENDING |
+| B7 bench | **Pass**: `run_bench.py --site pendleton --phases dense_pass,coast_pass`, bridges off / on, two runs each (buildings, trees and everything else at defaults): game p50 `dense_pass` 6.03, 6.04 → 6.13, 6.18 ms (**+0.12 ms**), `coast_pass` 4.23, 4.21 → 4.27, 4.33 ms (**+0.08 ms**); GPU p50 unchanged (3.20 / 2.87 ms); 30 fps, 0 dropped in every run; GPU memory max within run-to-run spread (5,584–5,894 MiB) |
 | B8 shots | `.cache/r3/bridges/shots/`: EO + MWIR, oblique and nadir, of the three highest decks, for the user's review |
 
 How the gates moved the design (each a rules version): **rules 1** grounded a deck end at the bare earth under the OSM
