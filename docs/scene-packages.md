@@ -622,7 +622,8 @@ drops to the valley floor in the render, in CIGI HAT/HOT and for DIS vehicles. `
 
 - **Which ways:** R2's roads (its `road_classes`) and rail (`rail`, `light_rail`) tagged `bridge` (any value but `no`),
   not tunnels, `covered=yes` or `layer < 0`.
-- **Heights:** approach embankments are ground, so the bare-earth terrain at a bridge's ends is the road's height. Way
+- **Heights:** approach embankments are ground, so the bare-earth terrain at a bridge's ends is the road's height. Bridge
+  ways are first split where another bridge way joins them mid-way (pieces `<id>/<k>`). Way
   ends that meet no other bridge way are *grounded* at the terrain there (the same exact-offset sampler the buildings
   and `verify --deep` use, WGS-84 ellipsoid); ends where bridge ways join (a ramp on a viaduct) take the
   1/length-weighted mean of their neighbours (one linear solve per connected network). Height is linear along each
@@ -1641,7 +1642,7 @@ incrementally from a copy: land cover rebuilt with the bridge burn, 142 s, every
 | | Result |
 |---|---|
 | Layer | 203 OSM bridge ways → **185 decks** (18 dropped low, 0 ungrounded, 0 without height) in 50 z13 tiles, 4.4 MB; 2 s, 612 MB peak (heights per 0.05° cell; one whole-box call read 1,615 MB) |
-| B1 build | 3d-tiles-validator clean (synthetic tileset); `verify --deep` passes (`bridges_tileset`, `bridges_heights`; rules 1 build); rebuild byte-identical; a package without `[bridges]` byte-identical (scene tests) |
+| B1 build | On the final (rules 4) package: 3d-tiles-validator 0 errors, 0 warnings; `verify --deep` passes (`bridges_tileset`, `bridges_heights` and every other check); rebuild byte-identical; a package without `[bridges]` byte-identical (scene tests). Rules 4 split no way at Pendleton, so its decks equal the rules-3 build the gates below ran on |
 | B2 deck | **Pass**: CIGI HOT at mid-span of the 10 highest decks (clearance 19.9–26.2 m) within **0.007 m** of the built deck top, material 201 (9) / 200 (1) |
 | B3 ends | **Fail** at 4 of 18 grounded ends (> 0.5 m): HOT at the end vs 5 m out on the approach, 0.01–0.92 m (median 0.28). Two ends (0.66, 0.92 m) are at an at-grade junction 8 m past the bridge (Avenida Vista Hermosa / Avenue Costa Azul): the extension stops short of the crossing road, so the end keeps part of 3DEP's bridge-removal dip. Two (0.51, 0.56 m) match the DEM within 0.1–0.2 m and differ from the *rendered* terrain mesh (TIN error ≤ 0.6 m at z15) |
 | B4 drive over | **Pass**: a DIS truck along I-5 at Vista Hermosa (230 m deck) both ways at 10 m/s, COCO `geo.alt_m` every frame: mid-span within **0.013 m** of the deck top, largest frame-to-frame step **0.075 m** |
@@ -1655,4 +1656,6 @@ end node, and B3 found approaches 0.7–1.4 m *above* the deck at 9 of 20 ends: 
 so the bare earth dips 3–5 m in the last 10–15 m and the embankment top is 15–30 m out. **Rules 2** grounds the end on
 the embankment (the highest terrain within 30 m out, deck extended straight to it). **Rules 3** stops an extension
 short of another road or rail it would cross (half its width + 1 m), so a deck never covers an at-grade junction.
+**Rules 4** (final review) splits a bridge way where another bridge way joins it mid-way (OSM often merges a ramp at a
+node inside an unsplit viaduct way, which rules 1–3 grounded on the valley floor) and drops degenerate ways.
 Drive-over steps went from 0.37 m (rules 1) to 0.075 m.
