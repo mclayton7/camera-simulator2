@@ -97,7 +97,8 @@ def test_partition_in_the_pool_equals_inline(tmp_path):
     snap = _snapshot(tmp_path, _rows())
     one = C.partition(snap, 10.0, tmp_path / "one", "k", jobs=1, range_rows=2)
     two = C.partition(snap, 10.0, tmp_path / "two", "k", jobs=2, range_rows=2)
-    assert {k: v for k, v in one.items() if k != "peak_rss_mb"} == {k: v for k, v in two.items() if k != "peak_rss_mb"}
+    same = {"inputs", "format", "counts", "chunks"}  # not the per-run id and peak RSS
+    assert {k: one[k] for k in same} == {k: two[k] for k in same}
     for c in one["chunks"]:
         a = [(f.source_id, f.geometry.wkb) for f in C.read_chunk(tmp_path / "one", *c)]
         assert a == [(f.source_id, f.geometry.wkb) for f in C.read_chunk(tmp_path / "two", *c)]
@@ -117,3 +118,11 @@ def test_partition_in_another_format_or_without_its_file_is_redone(tmp_path):
     (tmp_path / "part" / C.CHUNKS_FILE).unlink()  # same format, file lost
     C.partition(snap, 10.0, tmp_path / "part", "k", jobs=1)
     assert (tmp_path / "part" / C.CHUNKS_FILE).exists()
+
+
+def test_partition_copy_runs_in_its_own_process(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(C, "_isolated", lambda fn, *a: (calls.append(fn), fn(*a))[1])
+    snap = _snapshot(tmp_path, _rows())
+    C.partition(snap, 10.0, tmp_path / "part", "k", jobs=1)
+    assert calls == [C.copy_chunks] and (tmp_path / "part" / C.CHUNKS_FILE).exists()

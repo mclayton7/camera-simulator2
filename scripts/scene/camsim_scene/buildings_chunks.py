@@ -8,7 +8,10 @@ DuckDB's memory limit on socal-r5's 5.8 M rows)."""
 from __future__ import annotations
 
 import json
+import multiprocessing
 import shutil
+import uuid
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import shapely
@@ -136,27 +139,43 @@ def partition(
 
     run_pool(keys_batch, [[[it] for it in items]], jobs, _noop, (), on_result)
     if chunks:
-        con = _connect()
-        try:
-            for setting in DUCKDB_SETTINGS:
-                con.execute(f"SET {setting}")
-            con.execute(f"SET temp_directory = {_q(tmp)}")
-            con.execute(
-                f"COPY (SELECT s.file_row_number AS row, s.id, s.geometry, s.height, s.num_floors, s.class, k.cx, k.cy "
-                f"FROM read_parquet({_q(snapshot)}, file_row_number = true) s POSITIONAL JOIN "
-                f"read_csv({_q(keys_dir / '*.csv')}, header = false, auto_detect = false, delim = ',', "
-                "columns = {'cx': 'INTEGER', 'cy': 'INTEGER'}) k "
-                "WHERE k.cx IS NOT NULL ORDER BY k.cx, k.cy, s.file_row_number) "
-                f"TO {_q(out_dir / CHUNKS_FILE)} (FORMAT parquet, ROW_GROUP_SIZE 20000)"
-            )
-        finally:
-            con.close()
-        peak = max(peak, peak_rss_mb())
+        peak = max(peak, _isolated(copy_chunks, str(snapshot), str(keys_dir), str(out_dir / CHUNKS_FILE), str(tmp)))
     shutil.rmtree(keys_dir, ignore_errors=True)
     shutil.rmtree(tmp, ignore_errors=True)
-    marker = {"inputs": key, "format": PARTITION_FORMAT, "counts": counts, "chunks": [list(c) for c in sorted(chunks)], "peak_rss_mb": peak}
+    # id: new on every partition, so chunk plans of an earlier partition are never reused (layers/buildings.py)
+    marker = {
+        "inputs": key, "format": PARTITION_FORMAT, "id": uuid.uuid4().hex, "counts": counts,
+        "chunks": [list(c) for c in sorted(chunks)], "peak_rss_mb": peak,
+    }
     atomic_write(out_dir / PARTITION_MARKER, json.dumps(marker).encode())
     return json.loads(json.dumps(marker))
+
+
+def _isolated(fn, *args):
+    """fn(*args) in a fresh spawned process, so its memory is its own (spec section 5)."""
+    with ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn")) as ex:
+        return ex.submit(fn, *args).result()
+
+
+def copy_chunks(snapshot: str, keys_dir: str, out_file: str, tmp: str) -> float:
+    """The snapshot's kept rows, POSITIONAL JOIN the key lines, sorted by (cx, cy, row) into out_file. Returns the
+    process's peak RSS (MB)."""
+    con = _connect()
+    try:
+        for setting in DUCKDB_SETTINGS:
+            con.execute(f"SET {setting}")
+        con.execute(f"SET temp_directory = {_q(tmp)}")
+        con.execute(
+            f"COPY (SELECT s.file_row_number AS row, s.id, s.geometry, s.height, s.num_floors, s.class, k.cx, k.cy "
+            f"FROM read_parquet({_q(snapshot)}, file_row_number = true) s POSITIONAL JOIN "
+            f"read_csv({_q(Path(keys_dir) / '*.csv')}, header = false, auto_detect = false, delim = ',', "
+            "columns = {'cx': 'INTEGER', 'cy': 'INTEGER'}) k "
+            "WHERE k.cx IS NOT NULL ORDER BY k.cx, k.cy, s.file_row_number) "
+            f"TO {_q(out_file)} (FORMAT parquet, ROW_GROUP_SIZE 20000)"
+        )
+    finally:
+        con.close()
+    return peak_rss_mb()
 
 
 def read_chunk(out_dir: Path, cx: int, cy: int) -> list[B.Footprint]:

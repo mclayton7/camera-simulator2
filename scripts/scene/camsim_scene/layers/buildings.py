@@ -183,7 +183,7 @@ def plan_chunks(pkg: Path, m: Manifest, ctx: BuildContext, jobs: int, wst: Worke
             p.unlink()
     todo, recs, peak = [], {}, part["peak_rss_mb"]
     for c in chunks:
-        key = inputs_hash(base, _chunk_name(*c))
+        key = inputs_hash(base, part.get("id", ""), _chunk_name(*c))  # this partition's chunk (spec 4.2)
         mk, pk = d / f"{_chunk_name(*c)}.json", d / f"{_chunk_name(*c)}.pkl"
         rec = json.loads(mk.read_text()) if mk.exists() else None
         if rec and rec.get("inputs") == key and pk.exists():

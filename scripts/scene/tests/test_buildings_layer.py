@@ -248,3 +248,17 @@ def test_build_in_the_pool_equals_inline(tmp_path):
     info = build_scene(b, cache, jobs=2)
     assert (a / "hashes.txt").read_bytes() == (b / "hashes.txt").read_bytes()
     assert info["layers"]["buildings"]["peak_rss_mb"] > 0
+
+
+def test_a_new_partition_invalidates_every_chunk_plan(tmp_path, monkeypatch):
+    from camsim_scene.manifest import STATE_DIR
+
+    pkg, cache, _ = build_synthetic(tmp_path, _scene(tmp_path, EDGE_ROWS))
+    n = len(list((pkg / STATE_DIR / "buildings" / "plan").glob("*.pkl")))
+    (pkg / STATE_DIR / "buildings" / "partition" / "partition.json").unlink()  # repartitioned (e.g. new rules)
+    (pkg / STATE_DIR / "buildings.json").unlink()
+    calls = []
+    real = B.plan_buildings
+    monkeypatch.setattr(B, "plan_buildings", lambda fps, *a, **k: (calls.append(1), real(fps, *a, **k))[1])
+    build_scene(pkg, cache, jobs=1)
+    assert n >= 2 and len(calls) == n  # plans of the old partition are never reused
