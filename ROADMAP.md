@@ -567,7 +567,8 @@ Findings from the live runs:
   so the sea covers them (Fisherman's Wharf). Same fix as inland below-sea-level land
   (water-mask clip).
 - **The Golden Gate Bridge draws as a flat slab at the waterline**: CWT has no bridge, only the
-  deck imagery draped down to the water; with the ocean it reads as a low causeway.
+  deck imagery draped down to the water; with the ocean it reads as a low causeway. Scene packages fix this for
+  OSM bridges (REALISM R3 bridges, 2026-10-15: decks, piers, CIGI/DIS-solid); the towers and cables are not modelled.
 - Beaches show a saw-toothed waterline where the sea plane cuts the coarse terrain triangles
   (shallows shots); no shimmer was seen.
 - The seabed shows through near the shore as lighter water (Single Layer Water absorption).
@@ -2043,12 +2044,22 @@ sim-to-real stay open: they wait on the choice of a real UAV EO/IR dataset (REAL
   - **Fix:** `CamSimRender::ViewRotationFromQuat` in `ACamSimCamera::CalcCamera` and in the ground-truth projection.
 - [ ] **Determinism: settled stills are not pixel-identical** (`scripts/determinism_check.py`: S1 and S2 fail on all
   six poses). With every pin (clock, sensor noise, UE temporal sequences, manual exposure), runs differ by 0.11–0.38 DN
-  on average and 99% of pixels are within 2–9 DN; IR on vegetation differs by 3.8 DN.
+  on average and 99% of pixels are within 2–9 DN; IR on vegetation differs by 3.8 DN. **Update 2026-10-15:** most of
+  that is the volumetric clouds (next item); with `--clouds-off` the runs differ by 0.005–0.05 DN (0.27 on IR over
+  trees), a few thousand pixels per pose (`docs/realism-validation.md`, "Follow-up").
+  - [ ] **Volumetric clouds on UE's engine time:** the level's `VolumetricCloud` material scrolls on engine time, and
+    its drift (and its reflection on the sea) was ~300,000 px a second at `coast_waves` on a frozen clock (51 px with
+    `r.VolumetricCloud 0`). Decide: drive the cloud offset from the sim clock (a generated cloud material, like
+    `M_Ocean`, with a wind offset parameter fed from `FSimClock`; recommended), or keep it and pin it off in
+    `determinism_check.py` (`--clouds-off` exists as a diagnostic).
   - **Lumen's surface-cache refresh:** no deterministic freeze in UE 5.8. Options: a settle-then-freeze sequence, or
-    lockstep rendering.
-  - **Ocean ripples on UE's engine time** (`M_Ocean` `TimeS`): to be deterministic under the same CIGI input they would
-    need the sim clock. Decide (recommended: the sim clock, with the ripples pausing when the clock is paused).
-  - **IR on vegetation:** varies 250,000 px per frame with the AGC off; source not yet isolated.
+    lockstep rendering. With the clouds off this is what is left (shadowed and indirectly lit areas).
+  - ~~**Ocean ripples on UE's engine time**~~ **Done 2026-10-15** (the user's choice of the recommended option): the
+    ripple phases run on the sim clock (`FOceanWaves::RipplePhase` → `MPC_Ocean.RipplePhase`, wrapped in double), so
+    they freeze with the clock and pause with the sim. With the clouds off, `coast_waves` changes in 51 px a second on
+    a frozen clock.
+  - **IR on vegetation:** 3.8 DN across runs with the clouds on, 0.27 DN with them off (cloud shadows and sky on the
+    solar term); the rest not isolated.
   - **Sensor AE / AGC under a frozen clock:** they hold their first snap (`FSensorController::Smoothing` on a zero
     sim-time step), so a paused sim keeps its startup exposure. Decide whether exposure should follow frame time.
 - [ ] **Cross-GPU threshold:** run `determinism_check.py --against` between the Mac and this box, and set the SSIM
@@ -2062,6 +2073,20 @@ so spawned workers reported the main process's peak; the R1 `-j 1` RSS follow-up
 same accounting); quantized-mesh header heights round outward again under NumPy 2 (a 2 µm `terrain_edges` fail; new
 builds re-encode most terrain headers, so they are not byte-identical to older packages); TNM error bodies (HTTP 200,
 no items, 2 of 6 calls) are retried, then an error, instead of planning `dep3_1m` with no assets.
+
+**R3 bridges implemented 2026-10-15** (`REALISM.md` R3; `docs/scene-packages.md`, "Bridges (R3)"; spec
+`docs/superpowers/specs/2026-10-15-bridges-ripples-design.md`): `[bridges]` builds `features/bridges/` decks from R2's OSM
+bridge ways (ends grounded on the embankment top, a harmonic solve where bridge ways join, swept deck + parapets +
+piers), burns bridge ways into land cover, and CamSim spawns a second feature tileset (`scene.bridges.*`): CIGI hits
+decks with the road's material, DIS ground vehicles drive onto decks from their approaches but never from below (a
+deck ceiling). On `pendleton-bridges` (Linux): 185 decks from 203 ways; B2 mid-span HOT within 0.007 m of the deck,
+B4 a DIS truck over a 230 m deck both ways within 0.013 m (steps ≤ 0.075 m), B5 a truck under a deck stays on the
+road; **B3 fails at 4 of 18 ends** (0.51–0.92 m between the deck end and 5 m out on the approach: two ends at an
+at-grade junction keep part of 3DEP's bridge-removal dip, two are rendered-terrain TIN error). Bench B7 below.
+- [ ] **Bridges: visual review** of `.cache/r3/bridges/shots/` (EO + MWIR, oblique and nadir) — the user.
+- [ ] **Bridges B3 at junctions:** an end whose extension is stopped by an at-grade junction keeps part of the
+  bare-earth dip (up to 0.9 m at Pendleton). Option: follow the approach way (and its junction) instead of extending
+  straight out, or ramp the deck end down to the terrain at the junction edge. Open.
 
 **Optional cleanup (editor):** remove the ion-backed actors from `Main.umap` (terrain ion 1 with its Bing
 overlay ion 2, and OSM Buildings ion 96188; the last is already listed under 3B). Offline runs no longer

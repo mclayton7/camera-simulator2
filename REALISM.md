@@ -398,7 +398,7 @@ macOS graphics footprint) and passed at SSE 64 with physics (+272 MiB): **defaul
 sweep (then the only both-on setting inside the budget)**. The user raised the memory budget to +1024 MiB (whole run) the same day; every sweep row passes it, and SSE 64 stays the default. With trees and the footprint check on, buildings SSE 64 is at +3.61 ms game p95 (limit 3.0), an overrun the user accepted. **Open:** footprint
 IoU (gate 2: needs ~30 human-traced NAIP outlines); visual review of the EO shots (pending the user); Linux/Vulkan
 (`FOR_LINUX.md`, task 5). **Deferred to the R3 deepening pass:** gabled/hipped roofs, facade/roof materials (human editor
-work, below), bridges, LiDAR nDSM heights, thermal class from the per-feature metadata, building semantic class in ground
+work, below), ~~bridges~~ (done 2026-10-15, below), LiDAR nDSM heights, thermal class from the per-feature metadata, building semantic class in ground
 truth.
 
 **R3b (2026-10-11, macOS):** footprint mask (trees), land-cover burn 230 (`building_roof` in IR, CIGI terrain), roof
@@ -409,6 +409,15 @@ byte-identical; trees 0 on the mask and 0 trunks inside footprints, with both fe
 burned terrain and on roofs. Memory over a whole run is +1,243 MiB at 0.5 m, over the +1,024 MiB budget; +971 MiB at
 `roof_texel_m = 1.0` (one run each). **User decision 2026-10-11:** keep 0.5 m (realism first) and accept the memory overrun; for multi-instance runs, roll features back per package (build a variant with `roof_texel_m = 1.0` or `roof_textures = false`; only the buildings tiles change). Open: visual review, Linux/Vulkan.
 Deferred: lean correction, wall textures, pitched roofs, KTX2.
+
+**Bridges (2026-10-15, Linux;** `docs/scene-packages.md` "Bridges (R3)", spec
+`docs/superpowers/specs/2026-10-15-bridges-ripples-design.md`**):** `[bridges]` turns R2's OSM bridge ways into
+`features/bridges/` (3D Tiles 1.1): deck ends grounded on the embankment top (3DEP's bridge removal leaves a 3–5 m dip
+at the OSM end node), joined ways solved harmonically, a swept deck with parapets and piers; bridge ways burn into
+land cover (IR and CIGI read road). At runtime a second feature tileset; CIGI HOT on a deck is the deck (within
+0.007 m, road material) and a DIS truck drives over a deck from its approach (within 0.013 m) but stays on the road
+under one (deck ceiling). Pendleton: 185 decks. Gate B3 (deck end vs approach ≤ 0.5 m) fails at 4 of 18 ends
+(junctions and rendered-terrain error); open: visual review.
 
 - Footprints: Overture (OSM + Microsoft footprints merged, ODbL; snapshot it, releases are deleted
   after 60 days), or Microsoft's Global ML footprints directly (CDLA Permissive 2.0, some with
@@ -540,7 +549,9 @@ collision.
     - The datum conversion matches NGS within 4.2 mm (GEOID18) and 1 mm (ITRF2014).
     - Fixed on the way: near-nadir views rendered along UE's vertical (0.14 m off at 2.9 km from the origin).
   - **Determinism:** settled stills are not pixel-identical. Runs differ by 0.11–0.38 DN on average (3.8 DN for IR on
-    vegetation); the causes are Lumen's surface cache, ocean ripples on engine time, and IR on vegetation.
+    vegetation). Later the same day: the ripples now run on the sim clock, and most of the difference turned out to be
+    the level's volumetric clouds (UE engine time): with them off, runs differ by 0.005–0.05 DN (0.27 on IR over
+    trees), what is left being Lumen's surface cache.
 
 ---
 

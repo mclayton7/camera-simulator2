@@ -157,6 +157,9 @@ roof_textures = true                        # REALISM R3b: per-tile roof atlas f
 roof_texel_m = 0.5                          # [0.25, 2.0]: atlas texel in metres; steps up 0.75 / 1.0 / 1.5 / 2.0 when a tile's roofs do not fit
 roof_texture_max_px = 2048                  # 256 .. 8192, a power of two: largest atlas side
 
+[bridges]                                   # optional: OSM bridge decks -> features/bridges/ (Bridges (R3)); needs [features] roads or rail
+enabled = true                              # false = as if the table were absent
+
 [priorities]                                # optional; defaults from the profile
 terrain = ["dep3_1m", "dep3_13", "noaa_sd13", "noaa_crm_socal", "etopo2022"]
 imagery = ["naip_pc", "wc_s2", "bmng"]
@@ -608,6 +611,49 @@ coloured and roofs flat (no pitch); no wall textures, no KTX2 / Basis compressio
 Build memory headroom (R3b): the buildings layer peaked at 1,988 MB of the 2,048 MB `--max-worker-rss-mb` limit on Pendleton at
 `roof_texel_m` 0.5 (1,588 MB at 1.0; R3 was 1,630). A larger site may exceed the limit; raise it with
 `camsim-scene build ... --max-worker-rss-mb N` (MB per worker, default 2048, `scripts/scene/camsim_scene/cli.py`) or lower `roof_texel_m`.
+
+## Bridges (R3)
+
+The terrain is bare earth: 3DEP removes bridge decks, so without this layer a road or railway over a river or valley
+drops to the valley floor in the render, in CIGI HAT/HOT and for DIS vehicles. `[bridges]` (spec
+`docs/superpowers/specs/2026-10-15-bridges-ripples-design.md`) builds decks from the same OSM extract as
+[Vector features (R2)](#vector-features-r2), so it needs `[features]` with `roads` or `rail` (and `"ODbL-1.0"` in
+`allow`; the layer's glTF copyright carries the ODbL notice).
+
+- **Which ways:** R2's roads (its `road_classes`) and rail (`rail`, `light_rail`) tagged `bridge` (any value but `no`),
+  not tunnels, `covered=yes` or `layer < 0`.
+- **Heights:** approach embankments are ground, so the bare-earth terrain at a bridge's ends is the road's height. Way
+  ends that meet no other bridge way are *grounded* at the terrain there (the same exact-offset sampler the buildings
+  and `verify --deep` use, WGS-84 ellipsoid); ends where bridge ways join (a ramp on a viaduct) take the
+  1/length-weighted mean of their neighbours (one linear solve per connected network). Height is linear along each
+  way. A way never more than 2 m above the terrain (sampled every 5 m) is dropped as *low*: the terrain already
+  carries it (culverts, small creek crossings). A network with no grounded end is dropped (`dropped_ungrounded`).
+- **Geometry:** one cross-section swept along the densified centreline (stations every ≤ 10 m, mitred joins capped
+  at 2×): a 1.5 m deck slab, the way's R2 width (`width` tag, else lanes × 3.5 m + shoulder; rail 4 m per track), a
+  0.3 × 1.0 m parapet on each side, end caps. Piers (1.2 m along × 0.6 of the width) every 30 m, centred, at least 10 m
+  from the ends, where the deck bottom is at least 3 m above the terrain, down to 0.5 m below it. Colours: asphalt
+  driving surface (ballast on rail), concrete everything else. No imagery texture: NAIP is orthorectified to bare
+  earth, so a deck's image is displaced by metres.
+- **Tiles:** `features/bridges/tileset.json` (3D Tiles 1.1, ADD): root (geometric error 100000, always refined) →
+  content-less z10 groups (geometric error 700: a group's decks draw within ~10 km of it at SSE 64, 1080p, 60° FOV) →
+  one GLB per z13 tile holding the decks whose midpoint is in it (geometric error 0, own ENU transform).
+  `EXT_structural_metadata` class `bridge` (schema `camsim_bridges`): `source_id` (OSM way), `kind` (`road` / `rail`),
+  `max_clearance_m`.
+- **Land cover:** with `[bridges]`, bridge ways are burned into land cover like other roads and rail (200 / 201 / 210;
+  R2 skips them otherwise), so thermal IR reads the deck as road, not the river under it, CIGI reports the road code
+  on a deck, and no trees grow through it. Known limit: the strip *under* a deck reads as road too (seen only
+  obliquely under the deck).
+- **Build:** in the main process after the buildings (hundreds of ways; Pendleton: 2 s, 602 MB peak), heights read
+  per 0.05° cell; skipped when its inputs (settings, features cache key, terrain, credit) are unchanged. Stats in
+  `build.json` `bridges` (`input`, `kept`, `dropped_low`, `dropped_ungrounded`, `dropped_no_height`). Without
+  `[bridges]` every layer is byte-identical to a package built before the layer existed.
+- **verify:** `bridges_tileset` (every GLB the tileset names exists); `--deep` adds `bridges_heights` (each deck's
+  driving surface spans its re-planned end heights within 0.01 m, every deck present, in its tile).
+- **Runtime:** `scene.bridges.*` (`docs/configuration.md`): one more tagged tileset (`CamSimBridges`); DIS ground
+  vehicles drive onto decks from their approaches but are never lifted onto one above them (`docs/dis.md`, "Bridge
+  decks"). Acceptance: `scripts/scene/tools/bridges_check.py` (below, "R3 bridges").
+
+Not covered: bridge types and structure (truss, arch, suspension towers), bridges missing from OSM, tunnels.
 
 ## Canopy (R4)
 
@@ -1585,3 +1631,27 @@ accepted ~2 km there.
 | `verify --deep -j 16` | **Pass** both: `pendleton-r5veg` 193 s, `socal-r5` 653 s |
 | Gate 7 bench (full, against `pendleton-r5veg`) | **Pass**: game p50 orbit 3.25 / 3.15, dense_pass 6.36 / 6.09 (within 0.3 ms); every phase within +0.5 ms (long_range 5.94 / 5.46, the largest). GPU unchanged, VRAM within ±130 MiB, 30 fps, 0 dropped |
 | `slant_10km` | The camp inside the polygon keeps its 3D buildings (`.cache/linux-r5/camp_compare.png`: before / after / error 150 everywhere) |
+
+### R3 bridges (2026-10-15, Linux)
+
+`pendleton-bridges` = `pendleton-r5veg` + `[bridges]` (`scripts/scene/examples/pendleton-bridges.toml`; built
+incrementally from a copy: land cover rebuilt with the bridge burn, 142 s, everything else skipped). Linux, RTX 5080.
+
+| | Result |
+|---|---|
+| Layer | 203 OSM bridge ways → **185 decks** (18 dropped low, 0 ungrounded, 0 without height) in 50 z13 tiles, 4.4 MB; 2 s, 612 MB peak (heights per 0.05° cell; one whole-box call read 1,615 MB) |
+| B1 build | 3d-tiles-validator clean (synthetic tileset); `verify --deep` passes (`bridges_tileset`, `bridges_heights`; rules 1 build); rebuild byte-identical; a package without `[bridges]` byte-identical (scene tests) |
+| B2 deck | **Pass**: CIGI HOT at mid-span of the 10 highest decks (clearance 19.9–26.2 m) within **0.007 m** of the built deck top, material 201 (9) / 200 (1) |
+| B3 ends | **Fail** at 4 of 18 grounded ends (> 0.5 m): HOT at the end vs 5 m out on the approach, 0.01–0.92 m (median 0.28). Two ends (0.66, 0.92 m) are at an at-grade junction 8 m past the bridge (Avenida Vista Hermosa / Avenue Costa Azul): the extension stops short of the crossing road, so the end keeps part of 3DEP's bridge-removal dip. Two (0.51, 0.56 m) match the DEM within 0.1–0.2 m and differ from the *rendered* terrain mesh (TIN error ≤ 0.6 m at z15) |
+| B4 drive over | **Pass**: a DIS truck along I-5 at Vista Hermosa (230 m deck) both ways at 10 m/s, COCO `geo.alt_m` every frame: mid-span within **0.013 m** of the deck top, largest frame-to-frame step **0.075 m** |
+| B5 drive under | **Pass**: a truck on Old River Road under Mission Avenue stays on the road, its highest point 6.7 m below the deck |
+| B6 boat | Not run live: the boat path never takes a deck (deck ceiling −∞, `CamSim.Entity.SurfaceClamp.DeckCeiling`) |
+| B7 bench | B7_PENDING |
+| B8 shots | `.cache/r3/bridges/shots/`: EO + MWIR, oblique and nadir, of the three highest decks, for the user's review |
+
+How the gates moved the design (each a rules version): **rules 1** grounded a deck end at the bare earth under the OSM
+end node, and B3 found approaches 0.7–1.4 m *above* the deck at 9 of 20 ends: 3DEP's bridge removal cuts past the node,
+so the bare earth dips 3–5 m in the last 10–15 m and the embankment top is 15–30 m out. **Rules 2** grounds the end on
+the embankment (the highest terrain within 30 m out, deck extended straight to it). **Rules 3** stops an extension
+short of another road or rail it would cross (half its width + 1 m), so a deck never covers an at-grade junction.
+Drive-over steps went from 0.37 m (rules 1) to 0.075 m.

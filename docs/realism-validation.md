@@ -118,7 +118,8 @@ row have the same pixel hash, for at most 90 s.
 - **S2:** the settled frames of run a and run b are pixel-identical.
 
 `--against` compares the settled frames with another machine's (SSIM on luma, mean |diff|). It is informational until
-a cross-GPU threshold is set.
+a cross-GPU threshold is set. `--clouds-off` (diagnostic) adds `r.VolumetricCloud 0`: the level's volumetric clouds
+drift on UE engine time, not the sim clock (see the results).
 
 ## Results (2026-10-15, Linux, RTX 5080, `pendleton-r5veg`)
 
@@ -207,10 +208,38 @@ The input is the same in both runs by construction: each pose's CIGI datagram is
    1–10 DN per frame after 120 s. UE's switches either stop the cache (wrong lighting) or loop a subset of it; neither
    is deterministic.
 4. **Ocean ripples on UE's engine time** (`M_Ocean`'s `TimeS`, deliberately visual-only), not the sim clock:
-   `coast_waves` changes in about 300,000 px per frame with the clock frozen.
+   `coast_waves` changes in about 300,000 px per frame with the clock frozen. *Corrected below (later the same day):
+   most of that was the volumetric clouds and their reflection on the sea; the ripples now run on the sim clock.*
 5. **The sensor AE and IR AGC.** With auto exposure, the frozen-clock runs held their first snap: `camp_nadir`
    averaged 248 of 255, and the two runs differed by a uniform 2–5 DN. Manual exposure removes this.
 6. **IR on vegetation (`trees_oblique_ir`), not isolated:** 250,000 px change per frame with the AGC off, and the runs
    differ by 3.8 DN on average.
 
 With the auto-exposure run (`--auto-exposure`, same pins), S1 and S2 also fail, with the exposure differences above.
+
+#### Follow-up: ripples on the sim clock, and the clouds (2026-10-15, later)
+
+The ripples now run on the sim clock (`FOceanWaves::RipplePhase` → `MPC_Ocean.RipplePhase`; `CamSim.Ocean.Waves.RipplePhase`).
+Re-run with the same pins (`.cache/r6/determinism-ripples`), the cross-run differences did **not** drop (camp_nadir 0.41,
+trees_oblique 0.56, slant_5km 0.69, coast_waves 3.77, camp_nadir_ir 1.15, trees_oblique_ir 5.76 DN mean): the frames at
+`coast_waves` still changed in ~300,000 px a second on a frozen clock. A probe of consecutive frames there (clock
+frozen, all pins) found the cause: **the level's volumetric clouds**, whose material scrolls on UE engine time, and their
+reflection on the sea (the moving bright patches on the water are the cloud blobs). With `r.VolumetricCloud 0` the same
+probe changed in **51 px** a second: the ripples are frozen with the clock.
+
+`determinism_check.py --clouds-off` (`.cache/r6/determinism-noclouds`, all other pins as above). **S1 and S2 still FAIL**,
+but the cross-run differences drop 10–100×:
+
+| Pose | Clouds on: mean \|diff\| / p99 / > 8 DN | Clouds off: mean \|diff\| / p99 / > 8 DN | Clouds off: pixels differing, max |
+|---|---|---|---|
+| camp_nadir | 0.43 / 3 / 0.03 % | **0.049** / 2 / 0.02 % | 21,966 px, 109 |
+| trees_oblique | 0.22 / 2 / 0.01 % | **0.016** / 0 / 0 % | 7,958 px, 59 |
+| slant_5km | 0.20 / 2 / 0.02 % | **0.013** / 0 / 0 % | 6,462 px, 41 |
+| coast_waves | 0.49 / 3 / 0.04 % | **0.005** / 0 / 0 % | 1,999 px, 23 |
+| camp_nadir_ir | 0.38 / 9 / 1.03 % | **0.013** / 0 / 0.02 % | 5,457 px, 94 |
+| trees_oblique_ir | 3.83 / 60 / 10.4 % | **0.27** / 6 / 0.71 % | 28,217 px, 105 |
+
+(Clouds-on columns: the first run, `.cache/r6/determinism`; the pixel and max columns there count any difference.)
+So the clouds were most of sources 4 and 6 above, and much of 3: what is left is a few thousand pixels per pose,
+mostly in shadow and on vegetation (Lumen's surface cache, source 3), and 0.27 DN on IR over trees.
+
