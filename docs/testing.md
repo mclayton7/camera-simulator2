@@ -12,8 +12,8 @@ Times measured 2026-10-13 on the Linux reference box (Core Ultra 9 285K, RTX 508
 |---|---|---|
 | C++, NullRHI (599 tests) | ~80 s: 6 s editor start, 27 s inside the tests, ~45 s of the automation controller's per-test overhead | `RunTests CamSim.<Group>` in the command from `CLAUDE.md`, e.g. `CamSim.Vegetation` (84 tests: 20 s end-to-end), `CamSim.Thermal` (141), `CamSim.Sensor.Physics`, or one test's full path: the time scales with the test count |
 | C++, GPU (`CamSim.GPU.*`, 26) | a few minutes | `scripts/run_gpu_tests.sh CamSim.GPU.Thermal` (groups: `Sensor`, `Thermal`, `GroundTruth`, `Entity`, `LandCover`, `Ocean`) |
-| Python, `scripts/tests` (285) | ~1 s | `-k <name>` |
-| Python, scene tooling (691) | 37 s with `-n auto` (24 cores; 141 s serial) | one module: `uv run --project scripts/scene pytest scripts/scene/tests/test_buildings_layer.py`; the parallel floor is the slowest test (~20 s, `test_ndvi_check.py`) |
+| Python, `scripts/tests` (289) | ~1 s | `-k <name>` |
+| Python, scene tooling (693) | 37 s with `-n auto` (24 cores; 141 s serial) | one module: `uv run --project scripts/scene pytest scripts/scene/tests/test_buildings_layer.py`; the parallel floor is the slowest test (~20 s, `test_ndvi_check.py`) |
 
 A NullRHI run exits 1 even when every test passes (CesiumRuntime's `LogClass: Error` at startup): judge it by
 `failed` in the report's `index.json`, as CI does.

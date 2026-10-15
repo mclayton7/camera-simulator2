@@ -31,7 +31,9 @@ Each site is seen from three views: nadir at 300 m (FOV 20°), 45° at 1 km (FOV
 
 **Measurement.** For each view, the check records 3 s of KLV (`check.js capture`, then `check.js decode`) and COCO
 masks.
-- **Measured pixel:** the mask centroid, averaged over the clean frames. A clean frame has visibility ≥ 0.95 and its
+- **Measured pixel:** the mask centroid, averaged over the clean frames. The mask is the plate's silhouette: its top
+  face and its visible side faces. Every prediction below is therefore the centroid of the projected box's silhouette,
+  not of its top face; that difference is 0.37 px at 10°. A clean frame has visibility ≥ 0.95 and its
   mask doesn't touch the frame edge; at least 30 are needed.
 - **Why the mean:** one binary mask is quantised to whole pixels, about 0.3 px of error on a 10 px plate. The stencil is
   rendered under TSR's sub-pixel jitter, which changes every frame, so the mean converges on the true centroid.
@@ -51,11 +53,12 @@ ST 0601 definitions:
 
 **Gates.**
 - **G1:** (a) within 1 px on every view.
-- **G2:** (c) within 1 px on the flat views and the corner view. A four-corner homography assumes a plane, so on the
-  slope, roof and 5 km views (c) is reported but not gated.
-- **G3:** every KLV corner point (Tags 82–89) and the frame centre (Tags 23/24) lies on the commanded camera's ray
-  through its image point, within 1 px, on every view. This is the property CamSim controls; G2 also depends on the
-  footprint's relief.
+- **G2:** (c) within 1 px on the flat site's four views (nadir, oblique, 5 km and corner). A four-corner homography
+  assumes a plane, so on the slope and roof views (c) is reported but not gated.
+- **G3:** every KLV corner point (Tags 82–89) and the frame centre (Tags 23/24) is checked on every view. Placed at the
+  rendered surface height there (a CIGI HOT request after the capture), it must project through the commanded camera
+  onto its image corner or centre within 1 px. That tests both the bearing and the range along the ray: the property
+  CamSim controls. G2 also depends on the footprint's relief.
 
 The report gives each error in metres on the ground. It also gives the **KLV quantisation budget**: how far one least
 significant bit of each tag moves the point, in pixels.
@@ -125,34 +128,35 @@ a cross-GPU threshold is set.
 
 | View | Clean frames | (a) KLV px / m | (a′) commanded px | (c) corners px / m | Corner rays px | Ground px (m) | Budget px |
 |---|---|---|---|---|---|---|---|
-| flat/nadir | 111 | 0.06 / 0.01 | 0.07 | 0.05 / 0.00 | 0.02 | 0.083 | 0.10 |
-| flat/oblique | 111 | 0.62 / 0.12 | 0.11 | **1.97** / 0.29 | 0.02 | 0.137 × 0.193 | 1.57 |
-| flat/slant | 111 | 0.63 / 0.99 | 0.32 | **13.17** / 13.07 | 0.01 | 0.341 × 1.969 | 1.38 |
-| slope/nadir | 111 | 0.09 / 0.01 | 0.10 | 0.08 / 0.01 | 0.03 | 0.083 | 0.10 |
-| slope/oblique | 111 | 0.55 / 0.11 | 0.13 | 41.10 / 5.62 (info) | 0.02 | 0.137 × 0.193 | 1.57 |
-| slope/slant | 112 | 0.56 / 1.10 | 0.35 | 53.23 / 55.41 (info) | 0.01 | 0.341 × 1.969 | 1.38 |
-| roof/nadir | 111 | 0.05 / 0.00 | 0.06 | 0.06 / 0.00 | 0.01 | 0.083 | 0.10 |
-| roof/oblique | 112 | 0.27 / 0.04 | 0.11 | 40.25 / 7.78 (info) | 0.01 | 0.137 × 0.193 | 1.57 |
-| roof/slant | 112 | 0.60 / 0.32 | 0.31 | 35.83 / 23.46 (info) | 0.01 | 0.341 × 1.968 | 1.38 |
-| flat/corner | 111 | 0.10 / 0.01 | 0.07 | 0.05 / 0.00 | 0.03 | 0.082 | 0.53 |
+| flat/nadir | 111 | 0.06 / 0.00 | 0.06 | 0.04 / 0.00 | 0.06 | 0.083 | 0.10 |
+| flat/oblique | 111 | 0.75 / 0.14 | 0.04 | **1.94** / 0.28 | 0.04 | 0.137 × 0.193 | 1.57 |
+| flat/slant | 112 | 0.41 / 0.29 | 0.07 | **12.99** / 12.39 | 0.01 | 0.341 × 1.969 | 1.38 |
+| slope/nadir | 111 | 0.03 / 0.00 | 0.04 | 0.02 / 0.00 | 0.04 | 0.083 | 0.10 |
+| slope/oblique | 111 | 0.67 / 0.13 | 0.04 | 41.04 / 5.61 (info) | 0.03 | 0.137 × 0.193 | 1.57 |
+| slope/slant | 112 | 0.21 / 0.41 | 0.02 | 53.13 / 54.75 (info) | 0.01 | 0.341 × 1.969 | 1.38 |
+| roof/nadir | 111 | 0.05 / 0.00 | 0.07 | 0.06 / 0.01 | 0.03 | 0.083 | 0.10 |
+| roof/oblique | 112 | 0.36 / 0.06 | 0.05 | 40.39 / 7.81 (info) | 0.04 | 0.137 × 0.193 | 1.57 |
+| roof/slant | 113 | 0.76 / 0.98 | 0.06 | 35.93 / 24.08 (info) | 0.02 | 0.341 × 1.968 | 1.38 |
+| flat/corner | 111 | 0.06 / 0.00 | 0.04 | 0.08 / 0.01 | 0.05 | 0.082 | 0.53 |
 
-- **Pixels are where the KLV says (G1).** The worst error is 0.63 px. On the oblique and 5 km views, (a) is 0.3–0.6 px
-  while (a′) is 0.1–0.35 px. The difference is KLV quantisation: Tag 75 (ellipsoid height) has a 0.30 m step, which is
-  up to 1.57 px at 45° from 1 km; Tag 5 (heading) has a 0.0055° step, up to 1.38 px at 5 km. The renderer matches the
-  CIGI pose to 0.1–0.35 px.
-- **Corner and frame-centre tags are right (G3, ≤ 0.03 px).** Every one lies on the commanded camera's ray through its
-  image point.
-- **G2 fails on `flat/oblique` (1.97 px) and `flat/slant` (13.2 px), a property of four-corner footprints.** The site
+- **Pixels are where the KLV says (G1).** The worst error is 0.76 px. The commanded-pose camera (a′) is within 0.07 px
+  on every view, so the renderer matches the CIGI pose to 0.07 px. The rest of (a)'s error is KLV quantisation:
+  Tag 75 (ellipsoid height) has a 0.30 m step, up to 1.57 px at 45° from 1 km; Tag 5 (heading) has a 0.0055° step, up
+  to 1.38 px at 5 km. (A first evaluation predicted the top face only and read a further 0.1–0.35 px as render error.
+  The mask includes the visible side faces; the final review caught it.)
+- **Corner and frame-centre tags are right (G3, ≤ 0.06 px).** At the rendered surface height there, every one projects
+  through the commanded camera onto its image corner or centre, so both bearing and range are right.
+- **G2 fails on `flat/oblique` (1.94 px) and `flat/slant` (13.0 px), a property of four-corner footprints.** The site
   is flat, but the 1 km and 5 km footprints are not. Their corner points land on terrain 1–14 m apart in height (the
   rays are right, G3), and a homography assumes one plane. At 45°, 0.5 m of relief is about 2 px. A video player drawing
   a footprint, or projecting a point, from Tags 82–89 alone carries this error. On the slope, roof and 5 km views it is
   tens of pixels (informational).
-- **Distorted run (`k1 = -0.2`, informational).** `flat/corner`: (b) 0.29 px, but (a) 2.34 px and (c) 2.22 px. KLV
+- **Distorted run (`k1 = -0.2`, informational).** `flat/corner`: (b) 0.25 px, but (a) 2.29 px and (c) 2.17 px. KLV
   corners and the ST 0601 camera are pinhole, and the image is not (ROADMAP 3B.3). At the frame centre all three agree
   (0.06 px).
 - **Pan: metadata in step with pixels.** 596 frames, with the marker moving up to 11 px per frame. Error of (a) by
-  KLV-to-frame lag (median / p95 px): −3: 19.75 / 28.85, −2: 13.09 / 19.31, −1: 6.51 / 9.83, **0: 0.72 / 1.09**,
-  +1: 6.46 / 9.79, +2: 13.16 / 19.31, +3: 19.94 / 28.88. The best lag is 0: each KLV packet describes the pose of the
+  KLV-to-frame lag (median / p95 px): −3: 19.75 / 28.85, −2: 13.10 / 19.31, −1: 6.52 / 9.84, **0: 0.83 / 1.22**,
+  +1: 6.48 / 9.80, +2: 13.17 / 19.32, +3: 19.94 / 28.89. The best lag is 0: each KLV packet describes the pose of the
   frame it is stamped with.
 
 **Bug found and fixed: near-nadir views rendered along UE's vertical.** In the first full run `flat/corner` failed G1 at
@@ -191,8 +195,8 @@ pixel-identical: no pose stops changing within 90 s, and the two runs differ by 
 | camp_nadir_ir | 52,461 / 52,507 px | 0.38 DN | 11.6 % | 9 DN | 71 |
 | trees_oblique_ir | 250,671 / 250,143 px | 3.83 DN | 34.4 % | 60 DN | 105 |
 
-Every pose's CIGI datagram digest is identical across the runs (`report.json`). The variation comes from these
-sources, each measured on the way:
+The input is the same in both runs by construction: each pose's CIGI datagram is a pure function of the fixed pose list
+(its digest is in `report.json`). The variation comes from these sources, each measured on the way:
 
 1. **Sensor temporal noise**, keyed to the frame serial: 34,000 px per frame at `camp_nadir`. It is removed by
    `camsim.Sensor.FixedNoiseFrame`, a new test-only CVar.

@@ -2026,12 +2026,13 @@ sim-to-real stay open: they wait on the choice of a real UAV EO/IR dataset (REAL
 - [x] ~~**Geo-registration check**~~ **Done 2026-10-15:** `scripts/georeg_check.py`.
   - **Method:** marker plates (entity types 9001/9002) at a flat, a slope and a roof site, seen from ten views; mask
     centroid vs predictions from the KLV.
-  - **G1 PASS:** the KLV pinhole camera is within 0.63 px; the commanded pose within 0.35 px; the gap is Tag 75/5
+  - **G1 PASS:** the KLV pinhole camera is within 0.76 px and the commanded pose within 0.07 px; the gap is Tag 75/5
     quantisation.
-  - **G3 PASS:** every KLV corner and frame-centre point lies on the camera's ray (≤ 0.03 px).
-  - **G2 FAIL, as specified:** a homography through the four corner points is 1.97 px off at 45° and 13 px at 10° over
+  - **G3 PASS:** every KLV corner and frame-centre point, at the rendered surface height, projects onto its image
+    point (≤ 0.06 px).
+  - **G2 FAIL, as specified:** a homography through the four corner points is 1.94 px off at 45° and 13 px at 10° over
     the flat site's footprint, because of its relief. A footprint drawn from Tags 82–89 carries this error.
-  - **Pan:** the KLV is in step with the pixels (best lag 0, 0.72 px median).
+  - **Pan:** the KLV is in step with the pixels (best lag 0, 0.83 px median).
 - [x] ~~**Datum check**~~ **Done 2026-10-15:** `scripts/scene/tools/datum_check.py`, against 34 NGS marks and 11 CORS
   stations. GEOID18 step within 4.19 mm (D1), NAD83(2011) → ITRF2014 within 0.95 mm (D2).
 - [x] ~~**Near-nadir view tilt**~~ **Fixed 2026-10-15**, found by G1.

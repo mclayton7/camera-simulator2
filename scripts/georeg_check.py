@@ -11,14 +11,15 @@ scripts/georeg/sites_pendleton.json, on the rendered surface (CIGI HOT, tilted t
 view, 3 s of KLV (check.js capture + decode) and COCO masks: the measured pixel is the mask centroid, the mean over the
 clean frames (visibility >= 0.95, not touching the frame edge, >= 30 needed): one binary mask is quantised to its
 pixels, but the stencil is rendered under TSR's per-frame sub-pixel jitter, so the mean converges on the area centroid; the predictions come from the KLV alone
-(scripts/georeg_lib.py):
+(scripts/georeg_lib.py), each the centroid of the plate's projected silhouette (its top and visible side faces, as the
+mask is):
   (a) the ST 0601 pinhole camera (Tags 13/14/75, 5/6/7 or 90/91, 18/19/20, 16/17);
   (b) (a) with the lens model (k1, k2 of the run; equal to (a) with the shipped presets);
   (c) the four corner points (Tags 82-89) as a homography, as a video player draws the footprint.
 Also (a') the camera of the commanded CIGI pose (no KLV in the loop: separates KLV quantisation from render error).
-Gates: G1 (a) <= 1 px on every view; G2 (c) <= 1 px on the flat views and the corner view (a four-corner homography
-assumes a plane: relief and the 5 km footprint's curvature move points by more by construction, so it is reported
-there only); G3 every KLV corner point (82-89) and the frame centre (23/24), at the rendered surface height there (CIGI
+Gates: G1 (a) <= 1 px on every view; G2 (c) <= 1 px on the flat site's four views (nadir, oblique, slant, corner);
+on the slope and roof views it is reported only (a four-corner homography assumes a plane, and the slope and the roof
+are not on the footprint's plane by construction); G3 every KLV corner point (82-89) and the frame centre (23/24), at the rendered surface height there (CIGI
 HOT after the capture), projects through the commanded camera onto its image corner / centre within 1 px, on every view
 (bearing and range along the ray). The report gives the error in metres on the ground and the KLV quantisation budget (px per tag LSB).
 Runs: main (the ten views), distorted (flat/nadir and flat/corner with k1 = -0.2, informational: KLV corners are
@@ -26,7 +27,7 @@ pinhole, ROADMAP 3B.3), pan (the flat/oblique camera with the gimbal yaw swept +
 crossing the frame at up to ~13 px per frame; per-frame error of (a) with KLV matched to COCO by Tag 2 = timestamp_us,
 at lags -3..3 frames: the best lag says whether metadata and pixels are in step; informational).
 OUT/<run>/<view>/ keeps placement.json, coco.jsonl, klv.jsonl and shot.png, so --check-only re-evaluates without
-CamSim. Writes OUT/report.json and OUT/overlays/. Exit 0 when G1 and G2 pass, 1 on a gate failure, 2 on an error."""
+CamSim. Writes OUT/report.json and OUT/overlays/. Exit 0 when G1, G2 and G3 pass, 1 on a gate failure, 2 on an error."""
 
 from __future__ import annotations
 

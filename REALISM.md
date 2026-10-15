@@ -533,8 +533,8 @@ collision.
   (`scripts/georeg_check.py`, `scripts/scene/tools/datum_check.py`, `scripts/determinism_check.py`). Appearance and
   sim-to-real wait on the dataset (open question 3).
   - **Geo-registration:**
-    - Pixels match the KLV pinhole camera within 0.63 px on ten views (G1), and the KLV corners lie on the camera's rays
-      (G3, ≤ 0.03 px).
+    - Pixels match the KLV pinhole camera within 0.76 px on ten views, and the commanded pose within 0.07 px (G1). The KLV
+      corners are right in bearing and range (G3, ≤ 0.06 px).
     - The four-corner footprint misses by 2–13 px over relief (G2, a property of four-corner footprints).
     - The metadata is in step with the pixels (pan: best lag 0).
     - The datum conversion matches NGS within 4.2 mm (GEOID18) and 1 mm (ITRF2014).
