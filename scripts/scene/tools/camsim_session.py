@@ -126,9 +126,10 @@ def _docker_session(image: str, env: dict[str, str], offline: bool) -> Iterator[
 
 
 @contextlib.contextmanager
-def camsim(env: dict[str, str], pose: Pose, offline: bool = False, docker: str | None = None) -> Iterator[rb.Host]:
-    """Start the CIGI host at `pose`, launch CamSim headless with `env`, wait for /ready and yield the host
-    (set `host.pose` to fly). `offline`: natively (macOS) CamSim runs under sandbox-exec with ports 80/443
+def camsim(env: dict[str, str], pose: Pose, offline: bool = False, docker: str | None = None,
+           extra_args: list[str] | tuple[str, ...] = ()) -> Iterator[rb.Host]:
+    """Start the CIGI host at `pose`, launch CamSim headless with `env` (and `extra_args` for UE, native only, e.g.
+    -ExecCmds=...), wait for /ready and yield the host (set `host.pose` to fly). `offline`: natively (macOS) CamSim runs under sandbox-exec with ports 80/443
     blocked; with `docker` (an image) the container has --network none. Either sets CAMSIM_SCENE_OFFLINE=1."""
     # Linux keeps the last run's :8080 in TIME_WAIT for 60 s, and /ready stays unreachable until CamSim's bind
     # retry gets through: back-to-back sessions read ~60 s too slow without this
@@ -141,7 +142,7 @@ def camsim(env: dict[str, str], pose: Pose, offline: bool = False, docker: str |
             with _docker_session(docker, env, offline):
                 yield host
             return
-        cmd = [str(REPO / "scripts" / "run.sh"), "--headless", "--local", "--detach"]
+        cmd = [str(REPO / "scripts" / "run.sh"), "--headless", "--local", "--detach", *extra_args]
         if offline:
             if sys.platform != "darwin":
                 sys.exit("--offline needs macOS (sandbox-exec) or --docker IMAGE (--network none)")
