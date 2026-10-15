@@ -15,8 +15,9 @@ from . import geodesy, gltf
 from .features import Feature, width_m
 
 # Bump on any change to selection, heights or geometry (it is in the layer settings hash). 2: grounded ends move out to
-# the embankment top (APPROACH_SEARCH_M); 3: an extension stops short of another road or rail (CROSSING_CLEAR_M).
-BRIDGES_RULES_VERSION = "3"
+# the embankment top (APPROACH_SEARCH_M); 3: an extension stops short of another road or rail (CROSSING_CLEAR_M);
+# 4: bridge ways split where another bridge way joins mid-way; degenerate ways dropped.
+BRIDGES_RULES_VERSION = "4"
 MIN_CLEARANCE_M = 2.0  # a deck never higher than this above the terrain is not built (the terrain carries the road)
 DECK_THICKNESS_M = 1.5
 PARAPET_W_M, PARAPET_H_M = 0.3, 1.0
@@ -239,13 +240,40 @@ def _extended(line: LineString, ext0: float, ext1: float) -> LineString:
     return LineString(coords)
 
 
+def split_at_junctions(ways: list[Feature]) -> list[Feature]:
+    """Split each bridge way at every interior vertex another bridge way of its kind ends at or passes through (OSM
+    merges a link at a node in the middle of a bridge way without splitting it), so that junction is a graph node.
+    Pieces of a split way are named <source_id>/<k>; an unsplit way keeps its id."""
+    count: dict = {}
+    for w in ways:
+        for p in {_key(c) for c in w.geom.coords}:
+            count[(w.kind, p)] = count.get((w.kind, p), 0) + 1
+    ends = {(w.kind, _key(c)) for w in ways for c in (w.geom.coords[0], w.geom.coords[-1])}
+    out = []
+    for w in ways:
+        coords = list(w.geom.coords)
+        cuts = [i for i in range(1, len(coords) - 1)
+                if (w.kind, _key(coords[i])) in ends or count.get((w.kind, _key(coords[i])), 0) > 1]
+        if not cuts:
+            out.append(w)
+            continue
+        bounds = [0, *cuts, len(coords) - 1]
+        for k, (a, b) in enumerate(zip(bounds, bounds[1:])):
+            out.append(Feature(w.kind, f"{w.source_id}/{k}", LineString(coords[a : b + 1]), w.tags))
+    return sorted(out, key=lambda f: f.source_id)
+
+
 def plan_decks(features: list[Feature], heights_fn, min_clearance_m: float = MIN_CLEARANCE_M) -> tuple[list[Deck], dict]:
     """Deck heights over the bridge graph (spec 1.2): per kind, way end points are nodes; degree-1 nodes are grounded
     at the bare-earth terrain (heights_fn: lon, lat arrays -> ellipsoid m, NaN = no data); every free node takes the
     1/length-weighted mean of its neighbours (one linear solve per connected component). Height is linear in arc
     length along a way. Ways never more than min_clearance_m above the terrain are dropped (the terrain carries them)."""
     ways = select(features)
-    stats = {"input": len(ways), "kept": 0, "dropped_low": 0, "dropped_ungrounded": 0, "dropped_no_height": 0}
+    stats = {"input": len(ways), "kept": 0, "dropped_low": 0, "dropped_ungrounded": 0, "dropped_no_height": 0,
+             "dropped_degenerate": 0}
+    live0 = [w for w in ways if length_m(w.geom) >= MIN_STEP_M]  # all points within 5 cm: no deck to draw
+    stats["dropped_degenerate"] = len(ways) - len(live0)
+    ways = split_at_junctions(live0)
     if not ways:
         return [], stats
     lengths = {w.source_id: length_m(w.geom) for w in ways}

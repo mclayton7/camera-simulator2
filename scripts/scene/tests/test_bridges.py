@@ -261,3 +261,25 @@ def test_the_approach_way_does_not_block_its_own_extension():
     decks, _ = plan_decks([br, approach], embankment)
     x1 = (decks[0].line.coords[-1][0] - LON0) * KX
     assert x1 == pytest.approx(212.0, abs=2.6)
+
+
+def test_ramp_joining_an_unsplit_viaduct_mid_way_is_not_grounded():
+    # OSM often merges a link at a node in the middle of a bridge way without splitting it
+    ws = [road("w1", [(0, 0), (150, 0), (300, 0)]), road("w3", [(150, 0), (150, 200)])]
+    decks, _ = plan_decks(ws, valley, min_clearance_m=-math.inf)
+    d = by_id(decks)
+    assert set(d) == {"osm:w1/0", "osm:w1/1", "osm:w3"}  # the viaduct is split at the junction
+    hb = d["osm:w3"].h0
+    assert hb > valley_at(150) + 10  # solved from the grounded ends, not the valley floor
+    assert d["osm:w1/0"].h1 == pytest.approx(hb) and d["osm:w1/1"].h0 == pytest.approx(hb)
+
+
+def test_unsplit_way_keeps_its_id():
+    decks, _ = plan_decks([road("w1", [(0, 0), (150, 0), (300, 0)])], valley)
+    assert [x.source_id for x in decks] == ["osm:w1"]
+
+
+def test_degenerate_way_is_dropped_not_kept_without_geometry():
+    ws = [road("w1", [(0, 0), (0.01, 0)]), road("w2", [(0, 50), (300, 50)])]
+    decks, st = plan_decks(ws, valley, min_clearance_m=-math.inf)
+    assert [x.source_id for x in decks] == ["osm:w2"] and st["dropped_degenerate"] == 1

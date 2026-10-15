@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 from shapely.geometry import LineString, Point
 
-from camsim_scene.bridges import Deck, _scale, deck_height, metric, select
+from camsim_scene.bridges import Deck, _scale, deck_height, metric, select, split_at_junctions
 
 B2_TOL_M, B3_TOL_M, B4_TOL_M, B4_STEP_M, B5_BELOW_M = 0.10, 0.5, 0.3, 0.3, 3.0
 ROAD_CODES = {200, 201, 210}
@@ -40,7 +40,7 @@ def grounded(features) -> dict:
     """(source_id, end 0 | 1) -> whether that OSM way end is grounded (degree 1 in its kind's bridge graph, as
     plan_decks). Keyed by way, not by point: a deck's line is extended past a grounded end (to the embankment)."""
     deg: dict = {}
-    sel = select(features)
+    sel = split_at_junctions(select(features))  # the ways plan_decks plans (pieces named <id>/<k>)
     for f in sel:
         for p in (f.geom.coords[0], f.geom.coords[-1]):
             k = (f.kind, node_key(p))
@@ -135,6 +135,7 @@ def find_underpass(decks: list[Deck], features) -> dict | None:
     roads = [f for f in features if f.kind == "road" and f.tags.get("bridge", "no") == "no"
              and f.tags.get("tunnel", "no") == "no" and f.geom.geom_type == "LineString"]
     osm = {f.source_id: f.geom for f in features}
+    osm.update({f.source_id: f.geom for f in split_at_junctions(select(features))})
     for d in pick(decks, len(decks)):
         if d.max_clearance_m < 6.0:
             break
