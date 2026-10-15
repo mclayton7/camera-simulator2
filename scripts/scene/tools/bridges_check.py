@@ -134,15 +134,20 @@ def find_underpass(decks: list[Deck], features) -> dict | None:
     (highest clearance first)."""
     roads = [f for f in features if f.kind == "road" and f.tags.get("bridge", "no") == "no"
              and f.tags.get("tunnel", "no") == "no" and f.geom.geom_type == "LineString"]
+    osm = {f.source_id: f.geom for f in features}
     for d in pick(decks, len(decks)):
         if d.max_clearance_m < 6.0:
             break
+        way = osm.get(d.source_id, d.line)  # the OSM way: the deck's line may extend past its ends
+        ends = {node_key(way.coords[0]), node_key(way.coords[-1])}
         for r in sorted(roads, key=lambda r: r.source_id):
-            x = d.line.intersection(r.geom)
+            if node_key(r.geom.coords[0]) in ends or node_key(r.geom.coords[-1]) in ends:
+                continue  # the bridge's own approach
+            x = way.intersection(r.geom)
             if x.is_empty or x.geom_type != "Point":
                 continue
-            s = along(d.line, x.y, x.x)
-            if s < UNDERPASS_END_M or s > d.length_m - UNDERPASS_END_M:  # an approach meeting the deck at its end
+            s = along(way, x.y, x.x)
+            if s < UNDERPASS_END_M or s > _length_m(way) - UNDERPASS_END_M:  # at the abutment, not under the span
                 continue
             return {"deck": d.source_id, "road": r.source_id, "crossing": (x.y, x.x),
                     "deck_top": deck_height(d, along(d.line, x.y, x.x)), "road_line": list(r.geom.coords)}

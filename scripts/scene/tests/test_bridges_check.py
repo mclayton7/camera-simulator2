@@ -101,3 +101,12 @@ def test_grounded_by_the_osm_way_ends_not_the_extended_deck_line():
     g = Feature("road", "osm:w2", LineString([ll(200, 0), ll(300, 50)]), {"highway": "primary", "bridge": "yes"})
     assert bc.grounded(([f, g])) == {("osm:w1", 0): True, ("osm:w1", 1): False, ("osm:w2", 0): False,
                                      ("osm:w2", 1): True}
+
+
+def test_find_underpass_ignores_the_approach_even_on_an_extended_deck():
+    osm = Feature("road", "osm:w1", LineString([ll(0, 0), ll(200, 0)]), {"highway": "primary", "bridge": "yes"})
+    d = deck("osm:w1", [(-25, 0), (225, 0)], clear=20)  # extended 25 m past both OSM ends
+    approach = Feature("road", "osm:w7", LineString([ll(-100, 30), ll(0, 0)]), {"highway": "primary"})
+    assert bc.find_underpass([d], [osm, approach]) is None
+    under = Feature("road", "osm:w9", LineString([ll(100, -100), ll(100, 100)]), {"highway": "primary"})
+    assert bc.find_underpass([d], [osm, approach, under])["road"] == "osm:w9"
