@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Camera/CamSimSensorComponent.h"
+#include "Sim/Commands.h"
 #include "CamSimTest.h"
 #include "CIGI/CigiPacketTypes.h"
 #include "Config/CamSimConfig.h"
@@ -95,4 +96,17 @@ float UCamSimSensorComponent::ApplySensorControl(const FCigiSensorControl& Senso
 	}
 
 	return AppliedFov;
+}
+
+void UCamSimSensorComponent::ApplySensor(const FSensorCommand& Cmd)
+{
+	const bool bChanged = bSensorOn != Cmd.bOn || CurrentSensorMode != Cmd.Waveband || SensorPolarity != Cmd.Polarity;
+	bSensorOn         = Cmd.bOn;
+	CurrentSensorMode = Cmd.Waveband;
+	SensorPolarity    = Cmd.Polarity;
+	if (bChanged)
+	{
+		UE_LOG(LogCamSim, Log, TEXT("UCamSimSensorComponent: control API -> mode=%u on=%d polarity=%u"),
+			static_cast<uint8>(CurrentSensorMode), bSensorOn ? 1 : 0, SensorPolarity);
+	}
 }

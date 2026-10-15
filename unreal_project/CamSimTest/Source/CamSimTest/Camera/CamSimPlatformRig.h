@@ -46,6 +46,12 @@ public:
 	 */
 	void UpdateFirstPersonView(uint16 ViewControlEntityId);
 
+	/**
+	 * Place the platform at a canonical pose (control API, ROADMAP 2.4). Detaches it from any CIGI attach parent.
+	 * TimeSec feeds the ground-speed estimate.
+	 */
+	void SetPlatformPose(const CamSimFrames::FGeoPose& Pose, double TimeSec);
+
 	/** Current platform pose (orientation in local NEU). */
 	bool GetPose(CamSimFrames::FGeoPose& OutPose) const;
 

@@ -10,6 +10,7 @@
 #include "Camera/CamSimTelemetryAssembler.h"
 #include "Camera/CamSimFrameStats.h"
 #include "Time/SimDelta.h"
+#include "Control/ControlApiTypes.h"
 #include "CIGI/CigiPacketTypes.h"            // FCigiCameraFrame
 #include "CamSimCamera.generated.h"
 
@@ -93,6 +94,19 @@ public:
 	/** Sensor component (for the Sensor Extended Response, opcode 107). */
 	UCamSimSensorComponent* GetSensorComp() const { return SensorComp; }
 
+	/** Horizontal FOV limits shared by CIGI View Definition and the control API (degrees). */
+	static float ClampHFov(float HFovDeg) { return FMath::Clamp(HFovDeg, 1.0f, 179.0f); }
+
+	/** Control API (ROADMAP 2.4): platform pose, FOV, gimbal and sensor, applied now. Game thread. */
+	void ApplyControlCamera(const FControlCameraCommand& Cmd);
+
+	/**
+	 * While set (the control API owns the camera), CIGI camera-entity frames (pose, view, sensor, gimbal) are
+	 * drained and dropped. CIGI and DIS entities are unaffected.
+	 */
+	void SetHostCameraSuppressed(bool bSuppressed) { bHostCameraSuppressed = bSuppressed; }
+	bool IsHostCameraSuppressed() const { return bHostCameraSuppressed; }
+
 	/** Phase 28G: set the pipeline latency tracker (owned by subsystem, nullable). */
 	void SetLatencyTracker(FPipelineLatencyTracker* Tracker);
 
@@ -158,6 +172,7 @@ private:
 	uint64 HostStateFrame = MAX_uint64;
 	/** Gimbal slew step: the clock's steps in lockstep, else the engine delta (ROADMAP 2.4). */
 	FSimDelta GimbalDelta;
+	bool bHostCameraSuppressed = false;
 	void EmitHeartbeatIfDue();
 	/** Append this tick's render stats (ROADMAP 3A). */
 	void RecordFrameStats();

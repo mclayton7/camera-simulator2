@@ -9,6 +9,7 @@
 struct FCamSimConfig;
 struct FCigiViewControl;
 struct FCigiArtPartControl;
+struct FViewCommand;
 
 /**
  * UCamSimGimbalComponent
@@ -65,6 +66,12 @@ public:
 	/** Continue slewing toward the last ArtPart target (ticks with no new packet). */
 	void AdvanceSlew(float DeltaTime, const FCamSimConfig& Config);
 
+	/**
+	 * Canonical view command (control API, ROADMAP 2.4): Snap = View Control semantics (unwind, clamp, cancel
+	 * any slew); Slew = new slew target, advanced by DeltaTime now and on later ticks. None: no change.
+	 */
+	void ApplyView(const FViewCommand& View, float DeltaTime, const FCamSimConfig& Config);
+
 	/** Returns the current gimbal orientation as a Rotator (Pitch, Yaw, Roll). */
 	FRotator GetGimbalRelativeRotation() const
 	{
@@ -82,6 +89,8 @@ public:
 	FVector GetLastViewControlOffset() const { return LastViewControlOffset; }
 
 private:
+	/** Snap the enabled axes: unwind yaw/roll, clamp to the envelope, cancel any slew. */
+	void SnapAngles(bool bYawEn, float Yaw, bool bPitchEn, float Pitch, bool bRollEn, float Roll, const FCamSimConfig& Config);
 	uint16  LastViewControlEntityId = 0;
 	FVector LastViewControlOffset   = FVector::ZeroVector;
 	/** Current gimbal orientation relative to platform body frame (degrees).

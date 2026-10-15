@@ -354,6 +354,11 @@ void ACamSimCamera::ApplyHostPlatformState()
 		bGotFrame = true;
 	}
 	if (!bGotFrame) return;
+	if (bHostCameraSuppressed)
+	{
+		HostFrame.Reset();   // the control API owns the camera (ROADMAP 2.4)
+		return;
+	}
 
 	if (HostFrame.bHasPose)
 	{
@@ -378,7 +383,7 @@ void ACamSimCamera::ApplyCigiViewState(float DeltaTime)
 	// so an explicit FOV wins when both arrive in the same host frame.
 	for (const FCigiViewDefinition& ViewDef : HostFrame.ViewDefinitions)
 	{
-		const float NewHFov = FMath::Clamp(ViewDef.HFovDeg(), 1.0f, 179.0f);
+		const float NewHFov = ClampHFov(ViewDef.HFovDeg());
 		if (NewHFov != SceneCapture->FOVAngle)
 		{
 			SceneCapture->FOVAngle = NewHFov;
@@ -393,6 +398,32 @@ void ACamSimCamera::ApplyCigiViewState(float DeltaTime)
 	Platform.UpdateFirstPersonView(GimbalComp->GetLastViewControlEntityId());
 	SceneCapture->SetRelativeRotation(GimbalComp->GetGimbalRelativeRotation());
 	Telemetry.SetGimbal(GimbalComp->GetGimbalYaw(), GimbalComp->GetGimbalPitch(), GimbalComp->GetGimbalRoll());
+}
+
+// -------------------------------------------------------------------------
+// Control API camera (ROADMAP 2.4)
+// -------------------------------------------------------------------------
+
+void ACamSimCamera::ApplyControlCamera(const FControlCameraCommand& Cmd)
+{
+	if (!Subsystem) return;
+	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+	if (Cmd.Pose)
+	{
+		Platform.SetPlatformPose(*Cmd.Pose, FPlatformTime::Seconds());
+	}
+	if (Cmd.Sensor)
+	{
+		SensorComp->ApplySensor(*Cmd.Sensor);
+		Telemetry.SetSensor(static_cast<uint8>(SensorComp->GetMode()), SensorComp->GetPolarity());
+	}
+	if (Cmd.View)
+	{
+		if (Cmd.View->HFovDeg) SceneCapture->FOVAngle = ClampHFov(*Cmd.View->HFovDeg);
+		GimbalComp->ApplyView(*Cmd.View, 0.0f, Cfg);
+		SceneCapture->SetRelativeRotation(GimbalComp->GetGimbalRelativeRotation());
+		Telemetry.SetGimbal(GimbalComp->GetGimbalYaw(), GimbalComp->GetGimbalPitch(), GimbalComp->GetGimbalRoll());
+	}
 }
 
 // -------------------------------------------------------------------------

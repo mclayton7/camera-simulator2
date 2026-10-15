@@ -400,6 +400,58 @@ void ACamSimEnvironment::ApplySun(const FDateTime& Utc)
 }
 
 // -------------------------------------------------------------------------
+// Canonical commands (control API, ROADMAP 2.4)
+// -------------------------------------------------------------------------
+
+FCigiAtmosphereState ACamSimEnvironment::ToAtmosphereState(const FAtmosphereCommand& A)
+{
+	FCigiAtmosphereState S;
+	S.bAtmosEn    = A.bEnabled;
+	S.Humidity    = A.HumidityPct;
+	S.AirTemp     = A.AirTempC;
+	S.Visibility  = A.VisibilityM;
+	S.HorizWindSp = A.HorizWindMps;
+	S.VertWindSp  = A.VertWindMps;
+	S.WindDir     = A.WindDirDeg;
+	S.BaroPress   = A.BaroPressureMb;
+	return S;
+}
+
+FCigiWeatherState ACamSimEnvironment::ToWeatherState(const FWeatherCommand& W)
+{
+	FCigiWeatherState S;
+	S.RegionId      = W.RegionId;
+	S.LayerId       = W.LayerId;
+	S.Severity      = W.Severity;
+	S.bWeatherEn    = W.bEnabled;
+	S.CloudType     = W.CloudType;
+	S.Scope         = static_cast<uint8>(W.Scope);   // Global 0, Regional 1, Entity 2 (CIGI's order)
+	S.Coverage      = W.CoveragePct;
+	S.BaseElev      = W.BaseElevM;
+	S.Thickness     = W.ThicknessM;
+	S.Transition    = W.TransitionM;
+	S.VisibilityRng = W.VisibilityM;
+	S.HorizWindSp   = W.HorizWindMps;
+	S.VertWindSp    = W.VertWindMps;
+	S.WindDir       = W.WindDirDeg;
+	return S;
+}
+
+void ACamSimEnvironment::ApplyAtmosphereCommand(const FAtmosphereCommand& A)
+{
+	CurrentAtmosphere = ToAtmosphereState(A);
+	bReceivedAtmosphere = true;
+	ApplyAtmosphere();
+}
+
+void ACamSimEnvironment::ApplyWeatherCommand(const FWeatherCommand& W)
+{
+	CurrentWeather = ToWeatherState(W);
+	bReceivedWeather = true;
+	ApplyWeather();
+}
+
+// -------------------------------------------------------------------------
 // ApplyAtmosphere — fog/visibility
 // -------------------------------------------------------------------------
 

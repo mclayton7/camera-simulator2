@@ -4,6 +4,7 @@
 #include "CamSimTest.h"
 #include "CIGI/CigiPacketTypes.h"
 #include "Config/CamSimConfig.h"
+#include "Sim/Commands.h"
 
 UCamSimGimbalComponent::UCamSimGimbalComponent()
 {
@@ -59,22 +60,7 @@ void UCamSimGimbalComponent::TickGimbal(float DeltaTime, TConstArrayView<FCigiVi
 
 void UCamSimGimbalComponent::ApplyViewControl(const FCigiViewControl& ViewCtrl, const FCamSimConfig& Config)
 {
-	// CIGI 3.3 sends View Control yaw as 0-360: unwind before the clamp, or
-	// 270 (look left) would clamp to 180 (look back). HITL.md gap 1.
-	if (ViewCtrl.bYawEn)   GimbalYaw   = FMath::UnwindDegrees(ViewCtrl.Yaw);
-	if (ViewCtrl.bPitchEn) GimbalPitch = ViewCtrl.Pitch;
-	if (ViewCtrl.bRollEn)  GimbalRoll  = FMath::UnwindDegrees(ViewCtrl.Roll);
-
-	// Clamp to physical envelope so a CIGI host can't drive the gimbal outside
-	// the sensor's mechanical limits. ArtPart already did this; ViewControl now
-	// matches.
-	GimbalPitch = FMath::Clamp(GimbalPitch, Config.GimbalPitchMin, Config.GimbalPitchMax);
-	GimbalYaw   = FMath::Clamp(GimbalYaw,   Config.GimbalYawMin,   Config.GimbalYawMax);
-
-	// A snap replaces any ArtPart slew in progress.
-	SlewTargetYaw   = GimbalYaw;
-	SlewTargetPitch = GimbalPitch;
-	SlewTargetRoll  = GimbalRoll;
+	SnapAngles(ViewCtrl.bYawEn, ViewCtrl.Yaw, ViewCtrl.bPitchEn, ViewCtrl.Pitch, ViewCtrl.bRollEn, ViewCtrl.Roll, Config);
 
 	// Phase 22G: Capture FPS view activation from ViewControl EntityId
 	if (ViewCtrl.EntityId != 0)
@@ -94,6 +80,44 @@ void UCamSimGimbalComponent::ApplyViewControl(const FCigiViewControl& ViewCtrl, 
 	UE_LOG(LogCamSim, Verbose,
 		TEXT("UCamSimGimbalComponent: ViewCtrl -> yaw=%.1f pitch=%.1f roll=%.1f entity=%u"),
 		GimbalYaw, GimbalPitch, GimbalRoll, ViewCtrl.EntityId);
+}
+
+void UCamSimGimbalComponent::SnapAngles(bool bYawEn, float Yaw, bool bPitchEn, float Pitch, bool bRollEn, float Roll,
+	const FCamSimConfig& Config)
+{
+	// CIGI 3.3 sends View Control yaw as 0-360: unwind before the clamp, or
+	// 270 (look left) would clamp to 180 (look back). HITL.md gap 1.
+	if (bYawEn)   GimbalYaw   = FMath::UnwindDegrees(Yaw);
+	if (bPitchEn) GimbalPitch = Pitch;
+	if (bRollEn)  GimbalRoll  = FMath::UnwindDegrees(Roll);
+
+	// Clamp to physical envelope so a host can't drive the gimbal outside
+	// the sensor's mechanical limits (ArtPart slews clamp the same way).
+	GimbalPitch = FMath::Clamp(GimbalPitch, Config.GimbalPitchMin, Config.GimbalPitchMax);
+	GimbalYaw   = FMath::Clamp(GimbalYaw,   Config.GimbalYawMin,   Config.GimbalYawMax);
+
+	// A snap replaces any ArtPart slew in progress.
+	SlewTargetYaw   = GimbalYaw;
+	SlewTargetPitch = GimbalPitch;
+	SlewTargetRoll  = GimbalRoll;
+}
+
+void UCamSimGimbalComponent::ApplyView(const FViewCommand& View, float DeltaTime, const FCamSimConfig& Config)
+{
+	switch (View.Gimbal)
+	{
+	case FViewCommand::EGimbal::Snap:
+		SnapAngles(View.bYawEn, View.Yaw, View.bPitchEn, View.Pitch, View.bRollEn, View.Roll, Config);
+		break;
+	case FViewCommand::EGimbal::Slew:
+		if (View.bYawEn)   SlewTargetYaw   = FMath::UnwindDegrees(View.Yaw);
+		if (View.bPitchEn) SlewTargetPitch = View.Pitch;
+		if (View.bRollEn)  SlewTargetRoll  = FMath::UnwindDegrees(View.Roll);
+		AdvanceSlew(DeltaTime, Config);
+		break;
+	case FViewCommand::EGimbal::None:
+		break;
+	}
 }
 
 // -------------------------------------------------------------------------

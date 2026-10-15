@@ -10,6 +10,7 @@
 class USceneCaptureComponent2D;
 struct FCamSimConfig;
 struct FCigiSensorControl;
+struct FSensorCommand;
 
 /**
  * UCamSimSensorComponent
@@ -52,6 +53,12 @@ public:
 	 */
 	float ApplySensorControl(const FCigiSensorControl& Sensor, const FCamSimConfig& Config,
 	                         USceneCaptureComponent2D* SceneCapture);
+
+	/**
+	 * Canonical sensor command (control API, ROADMAP 2.4): on/off, waveband and polarity. Its Zoom is not used: the
+	 * control API sets the FOV directly (FViewCommand). Logs on change.
+	 */
+	void ApplySensor(const FSensorCommand& Cmd);
 
 	bool        IsOn()       const { return bSensorOn; }
 	uint8       GetPolarity() const { return SensorPolarity; }

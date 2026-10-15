@@ -7,6 +7,7 @@
 #include "CIGI/CigiPacketTypes.h"
 #include "Config/CamSimConfig.h"
 #include "Ocean/FOceanManager.h"
+#include "Sim/Commands.h"
 #include "CamSimEnvironment.generated.h"
 
 class ADirectionalLight;
@@ -73,6 +74,15 @@ public:
 	static void FoldAtmosphere(FAtmosphericSnapshot& S, const FCigiAtmosphereState& A);
 	/** CIGI Weather Control (global) → snapshot cloud cover (coverage % / 100, clamped; non-finite → 0). */
 	static void FoldWeather(FAtmosphericSnapshot& S, const FCigiWeatherState& W);
+
+	/** Canonical atmosphere/weather commands → the CIGI state the fog and cloud code reads (field for field). */
+	static FCigiAtmosphereState ToAtmosphereState(const FAtmosphereCommand& A);
+	static FCigiWeatherState    ToWeatherState(const FWeatherCommand& W);
+
+	/** Control API (ROADMAP 2.4): apply as a CIGI Atmosphere Control would. Game thread. */
+	void ApplyAtmosphereCommand(const FAtmosphereCommand& A);
+	/** Control API (ROADMAP 2.4): one global weather layer, as a CIGI Weather Control with Region ID 0 would. Game thread. */
+	void ApplyWeatherCommand(const FWeatherCommand& W);
 
 	/** Thread-safe snapshot (written on game thread, read by ACamSimCamera same game thread). */
 	FAtmosphericSnapshot GetAtmosphericSnapshot() const { return CachedAtmosSnapshot; }

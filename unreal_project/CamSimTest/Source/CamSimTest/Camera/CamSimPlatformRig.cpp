@@ -81,6 +81,13 @@ void FCamSimPlatformRig::ApplyHostEntityState(const FCigiEntityState& State)
 	}
 }
 
+void FCamSimPlatformRig::SetPlatformPose(const CamSimFrames::FGeoPose& Pose, double TimeSec)
+{
+	if (!Anchor) return;
+	bAttached = false;
+	ApplyPose(Pose, TimeSec);
+}
+
 void FCamSimPlatformRig::FollowAttachParent()
 {
 	if (AttachFollowFrame == GFrameCounter) return;
