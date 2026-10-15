@@ -14,7 +14,9 @@ from shapely.geometry import LineString, Polygon
 from . import geodesy, gltf
 from .features import Feature, width_m
 
-BRIDGES_RULES_VERSION = "2"  # 2: grounded ends move out to the embankment top (APPROACH_SEARCH_M)  # bump on any change to selection, heights or geometry (it is in the layer settings hash)
+# Bump on any change to selection, heights or geometry (it is in the layer settings hash). 2: grounded ends move out to
+# the embankment top (APPROACH_SEARCH_M); 3: an extension stops short of another road or rail (CROSSING_CLEAR_M).
+BRIDGES_RULES_VERSION = "3"
 MIN_CLEARANCE_M = 2.0  # a deck never higher than this above the terrain is not built (the terrain carries the road)
 DECK_THICKNESS_M = 1.5
 PARAPET_W_M, PARAPET_H_M = 0.3, 1.0
@@ -31,6 +33,7 @@ STATION_MAX_M = 10.0
 APPROACH_SEARCH_M = 30.0
 APPROACH_STEP_M = 2.5
 APPROACH_TOL_M = 0.25
+CROSSING_CLEAR_M = 1.0  # an extension stops this far short of the edge of another road or rail it would cross
 PROFILE_STEP_M = 5.0
 TILE_ZOOM = 13  # content tiles, by deck midpoint
 GROUP_ZOOM = 10  # content-less groups (~35 km at 33 N): a group's decks load when the camera is within ~10 km of it
@@ -155,8 +158,36 @@ def _outward(line: LineString, end: int) -> np.ndarray | None:
     return None
 
 
-def _ground(ways, ends, grounded: set, heights_fn) -> tuple[dict, dict]:
-    """Height of every grounded node and how far ((source_id, end) -> m) its way extends to reach the embankment."""
+def _crossing_limit(c, u, sx: float, sy: float, others, tree) -> float:
+    """How far out from the way end c (lon, lat) along u (unit east, north) the deck may extend: APPROACH_SEARCH_M, or
+    short of the first other road / rail it would cross (an underpass at the abutment), by its half width +
+    CROSSING_CLEAR_M. A line that starts or ends at c (the approach) does not count."""
+    if tree is None:
+        return APPROACH_SEARCH_M
+    far = (c[0] + APPROACH_SEARCH_M * u[0] / sx, c[1] + APPROACH_SEARCH_M * u[1] / sy)
+    seg = LineString([c, far])
+    limit = APPROACH_SEARCH_M
+    for i in tree.query(seg):
+        f = others[int(i)]
+        if _key(f.geom.coords[0]) == _key(c) or _key(f.geom.coords[-1]) == _key(c):
+            continue
+        x = seg.intersection(f.geom)
+        if x.is_empty:
+            continue
+        for q in shapely.get_parts(x):
+            for qx, qy in np.asarray(q.coords)[:, :2]:
+                dist = math.hypot((qx - c[0]) * sx, (qy - c[1]) * sy)
+                limit = min(limit, dist - width_m(f) / 2.0 - CROSSING_CLEAR_M)
+    return limit
+
+
+def _ground(ways, ends, grounded: set, heights_fn, others=()) -> tuple[dict, dict]:
+    """Height of every grounded node and how far ((source_id, end) -> m) its way extends to reach the embankment.
+    others: the non-bridge roads and rail an extension must not cover."""
+    from shapely.strtree import STRtree
+
+    others = list(others)
+    tree = STRtree([f.geom for f in others]) if others else None
     probes = []  # (node, way id, end, lon array, lat array)
     for w in ways:
         for end, node in enumerate(ends[w.source_id]):
@@ -165,10 +196,12 @@ def _ground(ways, ends, grounded: set, heights_fn) -> tuple[dict, dict]:
             u = _outward(w.geom, end)
             c = w.geom.coords[-1 if end else 0]
             ks = np.arange(0.0, APPROACH_SEARCH_M + 1e-9, APPROACH_STEP_M)
+            sx, sy = _scale(c[1])
             if u is None:
                 ks = ks[:1]
                 u = np.zeros(2)
-            sx, sy = _scale(c[1])
+            else:
+                ks = ks[ks <= max(0.0, _crossing_limit(c, u, sx, sy, others, tree)) + 1e-9]
             probes.append((node, w.source_id, end, ks, c[0] + ks * u[0] / sx, c[1] + ks * u[1] / sy))
     gh, ext = {}, {}
     if not probes:
@@ -222,7 +255,9 @@ def plan_decks(features: list[Feature], heights_fn, min_clearance_m: float = MIN
         degree[a] = degree.get(a, 0) + 1
         degree[b] = degree.get(b, 0) + 1
     grounded = sorted(k for k, n in degree.items() if n == 1)
-    gh, ext = _ground(ways, ends, set(grounded), heights_fn)
+    others = [f for f in features if f.kind in ("road", "rail") and f.geom.geom_type == "LineString"
+              and f.tags.get("bridge", "no") == "no" and f.tags.get("tunnel", "no") == "no"]
+    gh, ext = _ground(ways, ends, set(grounded), heights_fn, others)
     bad = {k for k, v in gh.items() if not math.isfinite(v)}
     live = []
     for w in ways:

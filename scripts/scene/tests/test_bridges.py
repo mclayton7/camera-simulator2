@@ -241,3 +241,23 @@ def test_flat_approach_is_not_extended():
     (d,) = decks
     x = [(c[0] - LON0) * KX for c in d.line.coords]
     assert x[0] > -2.6 and x[-1] < 302.6
+
+
+def test_extension_stops_short_of_a_road_crossing_outside_the_end():
+    br = road("w1", [(0, 0), (200, 0)])
+    under = Feature("road", "osm:w9", LineString([ll(-8, -50), ll(-8, 50)]), {"highway": "secondary", "lanes": "2"})
+    decks, _ = plan_decks([br, under], embankment)
+    (d,) = decks
+    x0 = (d.line.coords[0][0] - LON0) * KX
+    half = (2 * 3.5 + 1.0) / 2.0
+    assert x0 >= -8.0 + half + 1.0 - 1e-6  # stops before the road's edge + 1 m
+    x1 = (d.line.coords[-1][0] - LON0) * KX
+    assert x1 == pytest.approx(212.0, abs=2.6)  # the other end is unaffected
+
+
+def test_the_approach_way_does_not_block_its_own_extension():
+    br = road("w1", [(0, 0), (200, 0)])
+    approach = Feature("road", "osm:w8", LineString([ll(200, 0), ll(400, 0)]), {"highway": "primary"})
+    decks, _ = plan_decks([br, approach], embankment)
+    x1 = (decks[0].line.coords[-1][0] - LON0) * KX
+    assert x1 == pytest.approx(212.0, abs=2.6)
