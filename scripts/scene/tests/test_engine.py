@@ -148,3 +148,13 @@ def test_spawned_worker_peak_rss_is_its_own_not_the_parents():
     parent, child = _child_peak_after_parent_grew()
     assert parent > 300
     assert child < parent - 200
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/clear_refs"), reason="Linux only")
+def test_reset_peak_rss_starts_a_new_high_water_mark():
+    a = bytearray(200 * 2**20)
+    a[::4096] = b"x" * len(a[::4096])  # touch every page
+    before = engine.peak_rss_mb()
+    del a
+    assert engine.reset_peak_rss() is True
+    assert engine.peak_rss_mb() < before - 150

@@ -462,3 +462,27 @@ def test_build_keeps_a_gdal_cache_set_by_the_caller(tmp_path, monkeypatch):
     monkeypatch.setenv("GDAL_CACHEMAX", "64")
     build_synthetic(tmp_path)
     assert os.environ["GDAL_CACHEMAX"] == "64"
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/clear_refs"), reason="Linux only")
+def test_main_process_peak_is_charged_to_the_layer_that_made_it(tmp_path, monkeypatch):
+    from camsim_scene import pipeline
+    from camsim_scene.cache import Cache
+
+    real = pipeline._build_landcover
+
+    def heavy(*a, **k):
+        b = bytearray(300 * 2**20)
+        b[::4096] = b"x" * len(b[::4096])  # 300 MB resident in the main process, freed before returning
+        del b
+        return real(*a, **k)
+
+    monkeypatch.setattr(pipeline, "_build_landcover", heavy)
+    scene = synthetic_scene(tmp_path / "src")
+    pkg = tmp_path / "pkg"
+    plan_scene(parse_scene(scene), pkg, http=FakeHttp({}), out=io.StringIO())
+    with pytest.raises(BuildError, match=r"landcover"):
+        build_scene(pkg, Cache(tmp_path / "cache"), jobs=1, max_worker_rss_mb=250.0)
+    layers = json.loads((pkg / "build.json").read_text())["layers"]
+    assert layers["landcover"]["peak_rss_mb"] >= 300
+    assert layers["terrain"]["peak_rss_mb"] < 300  # terrain ran before: the land-cover peak isn't charged to it

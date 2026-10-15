@@ -42,6 +42,7 @@ from .engine import (
     inputs_hash,
     peak_rss_mb,
     remove_stale,
+    reset_peak_rss,
     run_pool,
     run_tile,
     tile_path,
@@ -821,26 +822,41 @@ def build_scene(
         iplan = plan_tiles(m.region_objs(), "imagery", coverage(m, "imagery"))
         bal_report = _fit_balance(pkg, m, ctx)  # before any worker starts: they load balance.json
         ndvi_report = _fit_ndvi(pkg, m, ctx)  # before any worker starts: they load fit.json
+        main = {"reset": False}
+
+        def charge(st: LayerStats | None) -> LayerStats | None:
+            """The main process's own peak since the previous charge goes to this layer (its workers report theirs),
+            then a new high-water mark starts (Linux), so each layer is charged what it held, not the build's past."""
+            here = peak_rss_mb()
+            if st is not None and main["reset"]:
+                st.peak_rss_mb = max(st.peak_rss_mb, here)
+            main["reset"] = reset_peak_rss()
+            return st
+
+        planning_peak = peak_rss_mb()  # fetch, tile planning, colour and NDVI fits: before any layer
+        charge(None)
         stats = {
-            "terrain": _run_layer(
+            "terrain": charge(_run_layer(
                 ctx, "terrain", tplan, [_chunks(_terrain_items(tplan))], terrain_batch, jobs, json_progress
-            )
+            ))
         }
         lj = layer_json(m.name, available_ranges(tplan), _credits(m, "terrain"))
         atomic_write(pkg / "terrain" / "layer.json", canonical_json(lj).encode())
-        stats["imagery"] = _run_layer(ctx, "imagery", iplan, _imagery_phases(iplan), imagery_batch, jobs, json_progress)
+        stats["imagery"] = charge(
+            _run_layer(ctx, "imagery", iplan, _imagery_phases(iplan), imagery_batch, jobs, json_progress)
+        )
         atomic_write(
             pkg / "imagery" / "tilemapresource.xml",
             tilemapresource_xml(m.name, iplan.max_zoom, plan_bounds(iplan)).encode(),
         )
-        ndvi_stats = _build_ndvi(pkg, m, ctx, iplan, jobs, json_progress)
+        ndvi_stats = charge(_build_ndvi(pkg, m, ctx, iplan, jobs, json_progress))
         if ndvi_stats is not None:
             stats["ndvi"] = ndvi_stats
-        stats["landcover"] = _build_landcover(pkg, m, ctx, jobs)
-        cstats = canopy_layer.build(pkg, m, ctx, jobs)
+        stats["landcover"] = charge(_build_landcover(pkg, m, ctx, jobs))
+        cstats = charge(canopy_layer.build(pkg, m, ctx, jobs))
         if m.layers.get("canopy"):
             stats["canopy"] = cstats
-        bstats = buildings_layer.build(pkg, m, ctx, jobs)
+        bstats = charge(buildings_layer.build(pkg, m, ctx, jobs))
         if m.layers.get("buildings"):
             stats["buildings"] = bstats
         vegmix.write(pkg, m)  # REALISM R4: the species mix (or a stale one removed)
@@ -865,13 +881,17 @@ def build_scene(
             "layers": {k: v.to_dict() for k, v in stats.items()},
             "balance": bal_report,
             "ndvi": ndvi_report,
+            "planning_peak_rss_mb": round(planning_peak, 1),
         }
         if m.layers.get("buildings"):
             info["buildings"] = buildings_layer.plan_stats(pkg)
         atomic_write(pkg / "build.json", (json.dumps(info, indent=2, sort_keys=True) + "\n").encode())
-    peak = max(s.peak_rss_mb for s in stats.values())
+    peaks = {name: s.peak_rss_mb for name, s in stats.items()}
+    peaks["planning (main process, before the layers)"] = planning_peak
+    where, peak = max(peaks.items(), key=lambda kv: kv[1])
     if peak > max_worker_rss_mb:
         raise BuildError(
-            f"peak worker RSS {peak:.0f} MB exceeds {max_worker_rss_mb:.0f} MB (the package is complete; see build.json)"
+            f"peak RSS {peak:.0f} MB in {where} exceeds {max_worker_rss_mb:.0f} MB (the package is complete; see "
+            "build.json)"
         )
     return info

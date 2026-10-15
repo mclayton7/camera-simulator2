@@ -86,6 +86,17 @@ def peak_rss_mb() -> float:
     return r / 1024.0 if sys.platform.startswith("linux") else r / (1024.0 * 1024.0)
 
 
+def reset_peak_rss() -> bool:
+    """Start a new VmHWM for this process (Linux: "5" to /proc/self/clear_refs), so the next peak_rss_mb() covers only
+    what ran since. False where that isn't possible (macOS): peak_rss_mb() stays the lifetime peak."""
+    try:
+        with open("/proc/self/clear_refs", "w") as f:
+            f.write("5")
+        return True
+    except OSError:
+        return False
+
+
 def inputs_hash(*parts: str) -> str:
     return sha256_bytes("\n".join(parts).encode())
 
