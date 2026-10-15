@@ -250,7 +250,8 @@ fi
 # Config file — copy deploy/camsim_config.yaml into the project directory
 # so FCamSimConfig::Load() finds it via FPaths::ProjectDir()
 # -------------------------------------------------------------------------
-CONFIG_SRC="${REPO_ROOT}/deploy/camsim_config.yaml"
+# CAMSIM_CONFIG_SRC: another YAML to copy instead (scripts/georeg_check.py's distorted run sets a lens k1)
+CONFIG_SRC="${CAMSIM_CONFIG_SRC:-${REPO_ROOT}/deploy/camsim_config.yaml}"
 CONFIG_DST="${REPO_ROOT}/unreal_project/CamSimTest/camsim_config.yaml"
 if [ -f "${CONFIG_SRC}" ]; then
     cp -f "${CONFIG_SRC}" "${CONFIG_DST}"
