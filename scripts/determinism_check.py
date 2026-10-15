@@ -27,7 +27,6 @@ import hashlib
 import io
 import json
 import sys
-import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -176,7 +175,7 @@ def snapshot_fetcher(health: str, opener: Callable | None = None) -> Callable[[]
     return fetch
 
 
-def run_once(label: str, pkg: Path, out: Path, config_src: Path | None = None) -> dict:
+def run_once(label: str, pkg: Path, out: Path, env_extra: dict | None = None) -> dict:
     sys.path.insert(0, str(REPO / "scripts" / "scene" / "tools"))
     import camsim_session as cs
 
@@ -186,8 +185,7 @@ def run_once(label: str, pkg: Path, out: Path, config_src: Path | None = None) -
 
     env = {**cs.env_for("package", pkg), "CAMSIM_SIM_TIME_RATE": "0", "CAMSIM_DIS_ENABLED": "0",
            "CAMSIM_MULTICAST_ADDR": "127.0.0.1"}
-    if config_src:
-        env["CAMSIM_CONFIG_SRC"] = str(config_src)
+    env.update(env_extra or {})
     res = {}
     with cs.camsim(env, POSES[0].pose, extra_args=[EXEC_CMDS]) as host:
         for p in POSES:
@@ -258,18 +256,19 @@ def main() -> int:
     if a.check_only:
         runs = json.loads(runs_file.read_text())
     else:
-        cfg = None
-        if not a.auto_exposure:
-            cfg = Path(tempfile.mkstemp(prefix="determinism-config-", suffix=".yaml")[1])
-            cfg.write_text(manual_exposure_config((REPO / "deploy" / "camsim_config.yaml").read_text()))
+        sys.path.insert(0, str(REPO / "scripts" / "scene" / "tools"))
+        import contextlib
+
+        import camsim_session as cs
+
+        src = (REPO / "deploy" / "camsim_config.yaml").read_text()
+        override = contextlib.nullcontext({}) if a.auto_exposure else cs.config_override(manual_exposure_config(src))
         try:
-            runs = {label: run_once(label, a.scene.resolve(), a.out, cfg) for label in ("a", "b")}
+            with override as cfg_env:
+                runs = {label: run_once(label, a.scene.resolve(), a.out, cfg_env) for label in ("a", "b")}
         except RuntimeError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
-        finally:
-            if cfg:
-                cfg.unlink()
         a.out.mkdir(parents=True, exist_ok=True)
         runs_file.write_text(json.dumps(runs, indent=1) + "\n")
     report = evaluate(a.out, runs)

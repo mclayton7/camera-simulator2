@@ -38,6 +38,26 @@ NATIVE_LOG = (
 DOCKER_LOG = REPO / ".cache" / "camsim-scene-docker.log"
 
 
+DEPLOY_CONFIG = REPO / "deploy" / "camsim_config.yaml"
+PROJECT_CONFIG = REPO / "unreal_project" / "CamSimTest" / "camsim_config.yaml"
+
+
+@contextlib.contextmanager
+def config_override(text: str, deploy: Path = DEPLOY_CONFIG, project: Path = PROJECT_CONFIG) -> Iterator[dict]:
+    """A temporary config YAML for run.sh (yields {"CAMSIM_CONFIG_SRC": path} to merge into the launch env). run.sh
+    copies it over the project's camsim_config.yaml, which UE reads without run.sh too (headless tests, the editor), so
+    on exit the deploy config is copied back and the temporary file removed."""
+    fd, name = tempfile.mkstemp(prefix="camsim-config-", suffix=".yaml")
+    os.close(fd)
+    path = Path(name)
+    path.write_text(text)
+    try:
+        yield {"CAMSIM_CONFIG_SRC": str(path)}
+    finally:
+        path.unlink(missing_ok=True)
+        project.write_bytes(Path(deploy).read_bytes())
+
+
 def log_path(docker: str | None = None) -> Path:
     return DOCKER_LOG if docker else NATIVE_LOG
 

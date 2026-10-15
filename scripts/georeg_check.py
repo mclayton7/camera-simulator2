@@ -38,7 +38,6 @@ import os
 import statistics
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -292,7 +291,7 @@ def _capture(rdir: Path, coco: Path, rb) -> None:
     ts.unlink()
 
 
-def run_views(label: str, pkg: Path, vs: list[View], out: Path, k1: float, config_src: Path | None) -> None:
+def run_views(label: str, pkg: Path, vs: list[View], out: Path, k1: float, env_extra: dict | None = None) -> None:
     cs, oc, ter = _session_modules()
     rb = cs.rb
     run_dir = out / label
@@ -300,8 +299,7 @@ def run_views(label: str, pkg: Path, vs: list[View], out: Path, k1: float, confi
     env = {**cs.env_for("package", pkg), "CAMSIM_ML_ENABLED": "1", "CAMSIM_ML_OUTPUT_DIR": str(run_dir / "ml"),
            "CAMSIM_ML_DEPTH_ENABLED": "0", "CAMSIM_ML_INTERVAL_FRAMES": "1", "CAMSIM_DIS_ENABLED": "0",
            "CAMSIM_MULTICAST_ADDR": "127.0.0.1"}
-    if config_src:
-        env["CAMSIM_CONFIG_SRC"] = str(config_src)
+    env.update(env_extra or {})
     responses = oc.Responses()
     rid = 200
     try:
@@ -472,15 +470,13 @@ def overlay(vdir: Path, r: dict, dest: Path) -> None:
     crop.save(dest)
 
 
-def distorted_config(k1: float) -> Path:
+def distorted_config(k1: float) -> str:
     """deploy/camsim_config.yaml with the EO mode's optics.k1 set (the first commented optics block)."""
     src = (REPO / "deploy" / "camsim_config.yaml").read_text()
     anchor = "    # optics:                      # 1080p industrial CMOS (eo_hd_cmos preset values)\n"
     if anchor not in src:
         raise SystemExit("deploy/camsim_config.yaml: the EO optics block moved; update distorted_config()")
-    f = Path(tempfile.mkstemp(prefix="georeg-config-", suffix=".yaml")[1])
-    f.write_text(src.replace(anchor, f"    optics:\n      k1: {k1}\n", 1))
-    return f
+    return src.replace(anchor, f"    optics:\n      k1: {k1}\n", 1)
 
 
 def evaluate_run(out: Path, label: str, vs: list[View]) -> list[dict]:
@@ -534,13 +530,11 @@ def main() -> int:
     try:
         if not a.check_only:
             if "main" in runs:
-                run_views("main", pkg, main_views, a.out, 0.0, None)
+                run_views("main", pkg, main_views, a.out, 0.0)
             if "distorted" in runs:
-                cfg = distorted_config(DISTORTED_K1)
-                try:
-                    run_views("distorted", pkg, dist_views, a.out, DISTORTED_K1, cfg)
-                finally:
-                    cfg.unlink()
+                cs, _, _ = _session_modules()
+                with cs.config_override(distorted_config(DISTORTED_K1)) as cfg_env:
+                    run_views("distorted", pkg, dist_views, a.out, DISTORTED_K1, cfg_env)
             if "pan" in runs:
                 run_pan(pkg, next(s for s in sites if s["kind"] == "flat"), a.out)
     except (RuntimeError, subprocess.CalledProcessError) as e:

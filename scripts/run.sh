@@ -250,7 +250,12 @@ fi
 # Config file — copy deploy/camsim_config.yaml into the project directory
 # so FCamSimConfig::Load() finds it via FPaths::ProjectDir()
 # -------------------------------------------------------------------------
-# CAMSIM_CONFIG_SRC: another YAML to copy instead (scripts/georeg_check.py's distorted run sets a lens k1)
+# CAMSIM_CONFIG_SRC: another YAML to copy instead (the R6 checks, through camsim_session.config_override, which copies
+# deploy's back afterwards). A missing file is an error: falling through would run the last copied config.
+if [ -n "${CAMSIM_CONFIG_SRC:-}" ] && [ ! -f "${CAMSIM_CONFIG_SRC}" ]; then
+    echo "[ERROR] CAMSIM_CONFIG_SRC=${CAMSIM_CONFIG_SRC} is not a file" >&2
+    exit 1
+fi
 CONFIG_SRC="${CAMSIM_CONFIG_SRC:-${REPO_ROOT}/deploy/camsim_config.yaml}"
 CONFIG_DST="${REPO_ROOT}/unreal_project/CamSimTest/camsim_config.yaml"
 if [ -f "${CONFIG_SRC}" ]; then
