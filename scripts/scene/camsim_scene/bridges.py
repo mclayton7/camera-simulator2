@@ -37,8 +37,10 @@ APPROACH_TOL_M = 0.25
 CROSSING_CLEAR_M = 1.0  # an extension stops this far short of the edge of another road or rail it would cross
 PROFILE_STEP_M = 5.0
 TILE_ZOOM = 13  # content tiles, by deck midpoint
-GROUP_ZOOM = 10  # content-less groups (~35 km at 33 N): a group's decks load when the camera is within ~10 km of it
-GROUP_GEOMETRIC_ERROR = 700.0  # 700 * 1080 / (2 tan 30 deg * 64) ~ 10 km at SSE 64, 1080p, 60 deg FOV
+GROUP_ZOOM = 10  # content-less groups (~35 km at 33 N): a group's decks load when the camera is within ~12 km of it
+# Cesium's SSE uses the viewport height and the vertical FOV: 700 * 720 / (2 * tan(30 deg) * 9/16 * 64) ~ 12 km at
+# SSE 64, 720p (CamSim's default), 60 deg horizontal FOV (~18 km at 1080p)
+GROUP_GEOMETRIC_ERROR = 700.0
 ROOT_GEOMETRIC_ERROR = 100000.0  # the root always refines: the groups decide
 
 

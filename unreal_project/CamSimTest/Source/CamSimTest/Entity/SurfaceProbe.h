@@ -54,8 +54,9 @@ namespace CamSimSurface
 	 *  ignored, so ground vehicles clamp to terrain; IgnoredBridges too for the terrain-only trace. */
 	FCollisionQueryParams MakeProbeQueryParams(const AActor* IgnoredBuildings, const AActor* IgnoredBridges = nullptr);
 
-	/** The highest bridge deck a trace may take (ISurfaceProbe): Water never (-inf); Ground the last surface +
-	 *  DeckStepUpM once placed, any deck (+inf) for the first placement (REALISM R3 bridges). */
+	/** The highest bridge deck a trace may take (ISurfaceProbe): Water never (-inf); Ground the last surface (or the
+	 *  height it fell from, FClampState::FellFromM) + DeckStepUpM once placed, any deck (+inf) for the first placement
+	 *  (REALISM R3 bridges). */
 	double DeckCeiling(ESurfaceMode Mode, const FClampState& State);
 
 	/** Trace the surface for Mode and clamp the sender's pose (None returns it unchanged). */

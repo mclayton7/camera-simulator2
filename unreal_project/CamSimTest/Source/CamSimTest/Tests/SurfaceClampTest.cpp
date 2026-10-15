@@ -673,3 +673,35 @@ bool FSurfaceClampDeckCeilingTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSurfaceClampDeckReloadTest, "CamSim.Entity.SurfaceClamp.DeckReloadLiftsBack",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSurfaceClampDeckReloadTest::RunTest(const FString& Parameters)
+{
+	// A truck on a deck (12 m over the valley) whose tile is evicted falls to the valley; when the deck streams back
+	// in, the truck is lifted back onto it (it fell from there), and a truck that only ever drove under it is not.
+	FDeckProbe Probe;
+	Probe.DeckM = 12.0;
+	FClampState S;
+	S.bHasSurface = true;
+	S.Height = 12.0;
+	CamSimFrames::FGeoPose P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, S);
+	TestEqual(TEXT("on the deck"), P.Alt, 12.0, 1e-3);
+	Probe.DeckM = -1000.0;   // evicted: only the valley answers
+	P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, S);
+	TestEqual(TEXT("fell to the valley"), P.Alt, 0.0, 1e-3);
+	TestEqual(TEXT("remembers where it fell from"), S.FellFromM, 12.0, 1e-9);
+	TestEqual(TEXT("ceiling covers the old deck"), DeckCeiling(ESurfaceMode::Ground, S), 12.0 + DeckStepUpM, 1e-9);
+	Probe.DeckM = 12.0;      // streamed back in
+	P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, S);
+	TestEqual(TEXT("lifted back onto the deck"), P.Alt, 12.0, 1e-3);
+	TestFalse(TEXT("cleared once back up"), FMath::IsFinite(S.FellFromM));
+
+	FClampState Under;
+	Under.bHasSurface = true;
+	Under.Height = 0.0;
+	for (int32 i = 0; i < 20; ++i) P = PlaceOnSurface(ESurfaceMode::Ground, Sender(30.0, 0.0), 5.0, 1.0, 0.1, Probe, Under);
+	TestEqual(TEXT("never on it: stays under"), P.Alt, 0.0, 1e-9);
+	TestFalse(TEXT("no fall recorded"), FMath::IsFinite(Under.FellFromM));
+	return true;
+}

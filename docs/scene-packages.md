@@ -635,7 +635,8 @@ drops to the valley floor in the render, in CIGI HAT/HOT and for DIS vehicles. `
   driving surface (ballast on rail), concrete everything else. No imagery texture: NAIP is orthorectified to bare
   earth, so a deck's image is displaced by metres.
 - **Tiles:** `features/bridges/tileset.json` (3D Tiles 1.1, ADD): root (geometric error 100000, always refined) →
-  content-less z10 groups (geometric error 700: a group's decks draw within ~10 km of it at SSE 64, 1080p, 60° FOV) →
+  content-less z10 groups (geometric error 700: a group's decks draw within ~12 km of it at SSE 64, 720p, 60° horizontal
+  FOV; ~18 km at 1080p) →
   one GLB per z13 tile holding the decks whose midpoint is in it (geometric error 0, own ENU transform).
   `EXT_structural_metadata` class `bridge` (schema `camsim_bridges`): `source_id` (OSM way), `kind` (`road` / `rail`),
   `max_clearance_m`.

@@ -83,7 +83,9 @@ namespace CamSimSurface
 	double DeckCeiling(ESurfaceMode Mode, const FClampState& State)
 	{
 		if (Mode != ESurfaceMode::Ground) return -TNumericLimits<double>::Max();
-		return State.bHasSurface ? State.Height + DeckStepUpM : TNumericLimits<double>::Max();
+		if (!State.bHasSurface) return TNumericLimits<double>::Max();
+		const double From = FMath::IsFinite(State.FellFromM) ? FMath::Max(State.Height, State.FellFromM) : State.Height;
+		return From + DeckStepUpM;
 	}
 
 	CamSimFrames::FGeoPose PlaceOnSurface(ESurfaceMode Mode, const CamSimFrames::FGeoPose& Sender,

@@ -79,6 +79,14 @@ namespace CamSimSurface
 
 		const double Target = Sum / Count;
 		const bool bFirst = !State.bHasSurface;
+		if (!bFirst && Target < State.Height - DeckStepUpM)
+		{
+			State.FellFromM = FMath::IsFinite(State.FellFromM) ? FMath::Max(State.FellFromM, State.Height) : State.Height;
+		}
+		else if (FMath::IsFinite(State.FellFromM) && Target >= State.FellFromM - DeckStepUpM)
+		{
+			State.FellFromM = std::numeric_limits<double>::quiet_NaN();   // back up where it fell from
+		}
 		State.Height = bFirst ? Target : Ease(State.Height, Target, DtSec, /*bSnap=*/true);
 
 		if (Count == 4 && HalfLengthM > 0.0 && HalfBeamM > 0.0)

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Geospatial/CigiFrames.h"
+#include <limits>
 
 class FOceanSurface;
 
@@ -21,10 +22,10 @@ namespace CamSimSurface
 	constexpr double EaseTimeConstantSec = 0.2;    // hides tile refinement shifts
 	constexpr double SnapThresholdM      = 5.0;    // first hit, teleports
 	constexpr double ResetJumpM          = 100.0;  // horizontal jump that restarts placement
-	constexpr double LakeMarginM         = 2.0;
+	constexpr double LakeMarginM         = 2.0;    // a tile surface this far above sea level is inland water; below it the boat is at sea
 	// REALISM R3 bridges: a ground vehicle takes a deck at most this far above its last surface (a deck it drives
 	// onto from the approach); a deck higher than that is above it (US minimum clearance under a bridge is 4.9 m).
-	constexpr double DeckStepUpM         = 3.0;    // a tile surface this far above sea level is inland water; below it the boat is at sea
+	constexpr double DeckStepUpM         = 3.0;
 
 	struct FClampState
 	{
@@ -32,6 +33,10 @@ namespace CamSimSurface
 		double Height      = 0.0;
 		double PitchDeg    = 0.0;
 		double RollDeg     = 0.0;
+		// REALISM R3 bridges: the height a ground vehicle dropped from when its surface fell by more than DeckStepUpM
+		// (a deck tile streamed out under it); the deck ceiling covers it until the vehicle is back up (a reloaded
+		// deck lifts it back). NaN: no such drop.
+		double FellFromM   = std::numeric_limits<double>::quiet_NaN();
 	};
 
 	/** The sea for surface vessels (ROADMAP 2.6). Ocean == nullptr: 2.5 behaviour exactly. */

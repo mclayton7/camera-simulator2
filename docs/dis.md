@@ -153,7 +153,9 @@ domain is the domain of their target, and life forms.
   (`DeckStepUpM`; US clearance under a bridge is at least 4.9 m, plus the 1.5 m slab). The deck
   starts at the approach road's height, so a truck on the approach reaches it within the step;
   a truck on the road under the bridge never does. The first placement has no ceiling: a
-  vehicle spawned under a deck lands on it. Boats never take a deck. With a bridges tileset
+  vehicle spawned under a deck lands on it. If a deck's tile streams out under a vehicle and it drops more than 3 m,
+  the clamp remembers the height it fell from (`FellFromM`), so the reloaded deck lifts it back; the memory clears
+  once it is back up or the clamp restarts. Boats never take a deck. With a bridges tileset
   each trace is two line traces (terrain alone, then terrain and decks from the ceiling down;
   the higher hit wins); without one, one trace as before. The buildings tileset is ignored
   either way.

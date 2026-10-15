@@ -2079,7 +2079,8 @@ no items, 2 of 6 calls) are retried, then an error, instead of planning `dep3_1m
 bridge ways (ends grounded on the embankment top, a harmonic solve where bridge ways join, swept deck + parapets +
 piers), burns bridge ways into land cover, and CamSim spawns a second feature tileset (`scene.bridges.*`): CIGI hits
 decks with the road's material, DIS ground vehicles drive onto decks from their approaches but never from below (a
-deck ceiling). On `pendleton-bridges` (Linux): 185 decks from 203 ways; B2 mid-span HOT within 0.007 m of the deck,
+deck ceiling; a vehicle that dropped off a deck whose tile streamed out is lifted back when it reloads). On
+`pendleton-bridges` (Linux): 185 decks from 203 ways; B2 mid-span HOT within 0.007 m of the deck,
 B4 a DIS truck over a 230 m deck both ways within 0.013 m (steps ≤ 0.075 m), B5 a truck under a deck stays on the
 road; **B3 fails at 4 of 18 ends** (0.51–0.92 m between the deck end and 5 m out on the approach: two ends at an
 at-grade junction keep part of 3DEP's bridge-removal dip, two are rendered-terrain TIN error). Bench (B7): +0.12 ms
