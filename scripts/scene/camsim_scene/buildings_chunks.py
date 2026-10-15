@@ -1,6 +1,9 @@
 """Building snapshot partition (spec docs/superpowers/specs/2026-10-14-buildings-chunked-design.md section 4.1): every
-kept row goes to the z12 chunk (buildings.CHUNK_ZOOM) of the centroid it is planned with (buildings.stage), one
-Parquet file per chunk, so planning, rasterising and GLB writing hold one chunk at a time."""
+kept row goes to the z12 chunk (buildings.CHUNK_ZOOM) of the centroid it is planned with (buildings.stage), so
+planning, rasterising and GLB writing hold one chunk at a time. The chunks are one Parquet file sorted by (cx, cy, row)
+in small row groups: a chunk read is a filtered scan that skips the other row groups. It is written by a POSITIONAL
+JOIN of the snapshot with one key line per snapshot row (a hash join, or PARTITION_BY into ~1,400 files, ran out of
+DuckDB's memory limit on socal-r5's 5.8 M rows)."""
 
 from __future__ import annotations
 
@@ -16,6 +19,8 @@ from .fsutil import atomic_write
 
 RANGE_ROWS = 100_000
 PARTITION_MARKER = "partition.json"
+CHUNKS_FILE = "chunks.parquet"
+DUCKDB_SETTINGS = ("memory_limit = '500MB'", "threads = 2")  # socal-r5: 683 MB peak RSS, 6 s
 COLS = "id, geometry, height, num_floors, class"
 
 
@@ -42,7 +47,8 @@ def _already_kept(con, snapshot: str, start: int, sid: str) -> bool:
 
 
 def partition_keys(item) -> list[dict]:
-    """Rows [start, stop) of the snapshot -> keys_dir/<start>.csv (row,cx,cy of every kept row) and the counts."""
+    """Rows [start, stop) of the snapshot -> keys_dir/<start, zero-padded>.csv: one "cx,cy" line per row, "," for a row
+    that is not kept (the files in name order line up with the snapshot's rows), and the counts."""
     snapshot, start, stop, min_area_m2, keys_dir = item
     con = _connect()
     try:
@@ -56,20 +62,22 @@ def partition_keys(item) -> list[dict]:
         con.close()
     counts = {"input": 0, "dropped_invalid": 0, "dropped_small": 0}
     lines, chunks = [], set()
-    for row, sid, wkb, height, floors, cls in rows:
+    for _row, sid, wkb, height, floors, cls in rows:
         if wkb is None or sid == last:  # read_snapshot: rows without geometry skipped, the first row of an id kept
+            lines.append(",\n")
             continue
         last = sid
         counts["input"] += 1
         s = B.stage(B.Footprint(sid, shapely.from_wkb(bytes(wkb)), height, floors, cls or ""), min_area_m2)
         if isinstance(s, str):
             counts[f"dropped_{s}"] += 1
+            lines.append(",\n")
             continue
         cx, cy = B.chunk_of(s[1], s[2])
         chunks.add((cx, cy))
-        lines.append(f"{row},{cx},{cy}\n")
-    if lines:  # DuckDB's read_csv rejects an empty file
-        atomic_write(Path(keys_dir) / f"{start}.csv", "".join(lines).encode())
+        lines.append(f"{cx},{cy}\n")
+    assert len(lines) == len(rows) == stop - start
+    atomic_write(Path(keys_dir) / f"{start:012d}.csv", "".join(lines).encode())
     return [{**counts, "chunks": sorted(chunks), "rss_mb": peak_rss_mb()}]
 
 
@@ -89,14 +97,14 @@ def read_partition(out_dir: Path) -> dict | None:
 def partition(
     snapshot: Path, min_area_m2: float, out_dir: Path, key: str, jobs: int, range_rows: int = RANGE_ROWS
 ) -> dict:
-    """Partition the snapshot under out_dir (chunks/cx=<x>/cy=<y>/*.parquet), unless out_dir already holds a complete
+    """Partition the snapshot under out_dir (CHUNKS_FILE), unless out_dir already holds a complete
     partition for `key`. Returns the marker: inputs, counts (input, dropped_invalid, dropped_small), chunks, peak RSS."""
     out_dir = Path(out_dir)
     prev = read_partition(out_dir)
     if prev and prev["inputs"] == key:
         return prev
     shutil.rmtree(out_dir, ignore_errors=True)
-    keys_dir, chunk_dir, tmp = out_dir / "keys", out_dir / "chunks", out_dir / "duckdb-tmp"
+    keys_dir, tmp = out_dir / "keys", out_dir / "duckdb-tmp"
     keys_dir.mkdir(parents=True)
     con = _connect()
     try:
@@ -118,14 +126,16 @@ def partition(
     if chunks:
         con = _connect()
         try:
-            con.execute("SET memory_limit = '1GB'")
+            for setting in DUCKDB_SETTINGS:
+                con.execute(f"SET {setting}")
             con.execute(f"SET temp_directory = {_q(tmp)}")
             con.execute(
                 f"COPY (SELECT s.file_row_number AS row, s.id, s.geometry, s.height, s.num_floors, s.class, k.cx, k.cy "
-                f"FROM read_parquet({_q(snapshot)}, file_row_number = true) s "
-                f"JOIN read_csv({_q(keys_dir / '*.csv')}, header = false, auto_detect = false, delim = ',', "
-                "columns = {'row': 'BIGINT', 'cx': 'INTEGER', 'cy': 'INTEGER'}) k ON s.file_row_number = k.row) "
-                f"TO {_q(chunk_dir)} (FORMAT parquet, PARTITION_BY (cx, cy))"
+                f"FROM read_parquet({_q(snapshot)}, file_row_number = true) s POSITIONAL JOIN "
+                f"read_csv({_q(keys_dir / '*.csv')}, header = false, auto_detect = false, delim = ',', "
+                "columns = {'cx': 'INTEGER', 'cy': 'INTEGER'}) k "
+                "WHERE k.cx IS NOT NULL ORDER BY k.cx, k.cy, s.file_row_number) "
+                f"TO {_q(out_dir / CHUNKS_FILE)} (FORMAT parquet, ROW_GROUP_SIZE 20000)"
             )
         finally:
             con.close()
@@ -139,10 +149,12 @@ def partition(
 
 def read_chunk(out_dir: Path, cx: int, cy: int) -> list[B.Footprint]:
     """One chunk's footprints, in snapshot row order."""
-    files = Path(out_dir) / "chunks" / f"cx={cx}" / f"cy={cy}" / "*.parquet"
     con = _connect()
     try:
-        rows = con.execute(f"SELECT {COLS} FROM read_parquet({_q(files)}) ORDER BY row").fetchall()
+        rows = con.execute(
+            f"SELECT {COLS} FROM read_parquet({_q(Path(out_dir) / CHUNKS_FILE)}) WHERE cx = ? AND cy = ? ORDER BY row",
+            [cx, cy],
+        ).fetchall()
     finally:
         con.close()
     return [B.Footprint(sid, shapely.from_wkb(bytes(wkb)), h, f, c or "") for sid, wkb, h, f, c in rows]
