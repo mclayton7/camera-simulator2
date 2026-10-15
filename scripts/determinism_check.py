@@ -129,23 +129,34 @@ def _load(path: Path) -> np.ndarray:
     return np.asarray(Image.open(path).convert("RGB"))
 
 
-def run_once(label: str, pkg: Path, out: Path) -> dict:
-    sys.path.insert(0, str(REPO / "scripts" / "scene" / "tools"))
-    import camsim_session as cs
+def snapshot_fetcher(health: str, opener: Callable | None = None) -> Callable[[], np.ndarray | None]:
+    """A fetch for settle(): GET <health>/snapshot (health includes the scheme, as run_bench.HEALTH) decoded to RGB, or
+    None when the request fails or answers non-200 (no frame within 5 s)."""
     import urllib.request
 
-    rb = cs.rb
+    open_url = opener or urllib.request.urlopen
 
     def fetch() -> np.ndarray | None:
+        from PIL import Image
+
         try:
-            with urllib.request.urlopen(f"http://{rb.HEALTH}/snapshot", timeout=10) as r:
+            with open_url(f"{health}/snapshot", timeout=10) as r:
                 if r.status != 200:
                     return None
-                from PIL import Image
-
                 return np.asarray(Image.open(io.BytesIO(r.read())).convert("RGB"))
         except OSError:
             return None
+
+    return fetch
+
+
+def run_once(label: str, pkg: Path, out: Path) -> dict:
+    sys.path.insert(0, str(REPO / "scripts" / "scene" / "tools"))
+    import camsim_session as cs
+
+    rb = cs.rb
+
+    fetch = snapshot_fetcher(rb.HEALTH)
 
     env = {**cs.env_for("package", pkg), "CAMSIM_SIM_TIME_RATE": "0", "CAMSIM_DIS_ENABLED": "0",
            "CAMSIM_MULTICAST_ADDR": "127.0.0.1"}
@@ -157,6 +168,7 @@ def run_once(label: str, pkg: Path, out: Path) -> dict:
             time.sleep(1.0)
             rb.wait_terrain(180)
             r = settle(fetch)
+            print(f"[determinism]   settled {r['settled']} in {r['seconds']:.0f} s ({r['frames']} frames)", flush=True)
             if r["image"] is not None:
                 _png(r["image"], out / label / f"{p.name}.png")
             res[p.name] = {k: v for k, v in r.items() if k != "image"}

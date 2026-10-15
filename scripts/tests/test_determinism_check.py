@@ -75,3 +75,36 @@ def test_ssim_is_one_for_identical_and_lower_for_noise():
     assert dc.ssim(a, a) == 1.0
     b = np.clip(a.astype(int) + rng.integers(-120, 120, a.shape), 0, 255).astype(np.uint8)
     assert dc.ssim(a, b) < 0.95
+
+
+def test_snapshot_fetcher_requests_the_health_base_plus_snapshot():
+    import io
+
+    from PIL import Image
+
+    png = io.BytesIO()
+    Image.fromarray(np.zeros((2, 3, 3), np.uint8)).save(png, format="PNG")
+    seen = []
+
+    class Resp(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def opener(url, timeout):
+        seen.append(url)
+        return Resp(png.getvalue())
+
+    img = dc.snapshot_fetcher("http://127.0.0.1:8080", opener)()
+    assert seen == ["http://127.0.0.1:8080/snapshot"] and img.shape == (2, 3, 3)
+
+
+def test_snapshot_fetcher_returns_none_on_a_failed_request():
+    def opener(url, timeout):
+        raise OSError("connection refused")
+
+    assert dc.snapshot_fetcher("http://127.0.0.1:8080", opener)() is None
