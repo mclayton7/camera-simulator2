@@ -579,3 +579,31 @@ bool FSensorThermalAgcClipTest::RunTest(const FString& Parameters)
 	TestTrue(*FString::Printf(TEXT("ground below the truck (%.3f)"), Ground), Ground < Truck - 0.5f);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorFixedNoiseFrameTest, "CamSim.Sensor.Controller.FixedNoiseFrame",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorFixedNoiseFrameTest::RunTest(const FString& Parameters)
+{
+	// R6 determinism: camsim.Sensor.FixedNoiseFrame pins the frame the temporal noise is keyed to; off (-1), the
+	// frame index is the params serial, as before.
+	const FSensorHistogram H = Flat(12.0f, 1);
+	{
+		FSensorController C;
+		FSensorControllerInput I = In(&H, 1);
+		TestEqual(TEXT("off: frame index = serial 1"), C.Update(I, EoCfg()).FrameIndex, 1u);
+		I.Serial = 2;
+		TestEqual(TEXT("off: frame index = serial 2"), C.Update(I, EoCfg()).FrameIndex, 2u);
+	}
+	{
+		FSensorController C;
+		FSensorControllerInput I = In(&H, 1);
+		I.FixedNoiseFrame = 7;
+		const FSensorFrameParams P1 = C.Update(I, EoCfg());
+		I.Serial = 2;
+		const FSensorFrameParams P2 = C.Update(I, EoCfg());
+		TestEqual(TEXT("pinned: frame index 7 at serial 1"), P1.FrameIndex, 7u);
+		TestEqual(TEXT("pinned: frame index 7 at serial 2"), P2.FrameIndex, 7u);
+		TestEqual(TEXT("pinned: serial still advances"), P2.Serial, 2u);
+	}
+	return true;
+}

@@ -159,7 +159,7 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	P.bBlackHot     = In.bBlackHot ? 1u : 0u;
 	P.SignalWeights = Cfg.SignalWeights;
 	P.Serial        = In.Serial;
-	P.FrameIndex    = In.Serial;
+	P.FrameIndex    = In.FixedNoiseFrame >= 0 ? static_cast<uint32>(In.FixedNoiseFrame) : In.Serial;
 	P.Seed          = ModeSeed(In.Mode, Cfg.Seed);
 
 	const FSensorDetectorConfig& D = Cfg.Detector;

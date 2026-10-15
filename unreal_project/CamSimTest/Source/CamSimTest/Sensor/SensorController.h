@@ -18,6 +18,9 @@ struct FSensorControllerInput
 	/** ROADMAP 4A: IR mode with the thermal radiance input (signal = L / B(300 K)). The AE uses ThermalExposure and its
 	 *  own state; the AGC interpolates percentiles, keeps a margin and is capped at AGCMaxDisplayGain. */
 	bool                    bRadianceInput = false;
+	/** REALISM R6 determinism (camsim.Sensor.FixedNoiseFrame): >= 0 keys the temporal noise to this frame instead of
+	 *  Serial, so a still view renders the same noise every frame. -1 (default): FrameIndex = Serial. */
+	int64                   FixedNoiseFrame = -1;
 };
 
 class FSensorController

@@ -42,6 +42,10 @@ DECLARE_CYCLE_STAT(TEXT("Encode Latency"), STAT_CamSimEncode, STATGROUP_CamSim)
 static TAutoConsoleVariable<int32> CVarCamSimThermalLog(TEXT("camsim.Thermal.Log"), 0,
 	TEXT("1: log the thermal frame parameters once a second while IR runs thermal"), ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarCamSimFixedNoiseFrame(TEXT("camsim.Sensor.FixedNoiseFrame"), -1,
+	TEXT("Test only (REALISM R6 determinism): >= 0 keys the sensor's temporal noise to this frame index instead of the ")
+	TEXT("frame serial, so a still view renders identical frames; -1 (default) off"), ECVF_Default);
+
 // Out-of-line so the header can forward-declare FEncoderThread: every TU that
 // destroys the TUniquePtr (including UHT's .gen.cpp) only emits a call here.
 void FEncoderThreadDeleter::operator()(FEncoderThread* Ptr) const
@@ -367,6 +371,7 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	In.DeltaSimSec  = Dt;
 	In.NewHistogram = bHasHist ? &Hist : nullptr;
 	In.Serial       = ++ParamsSerial;
+	In.FixedNoiseFrame = CVarCamSimFixedNoiseFrame.GetValueOnGameThread();
 	// One detector integration per rendered frame. The controller copies the
 	// mode's seed and detector config into the params (DarkE = DarkCurrentEs /
 	// FrameRateHz, AdcMax = 2^bits - 1, FrameIndex = Serial).
