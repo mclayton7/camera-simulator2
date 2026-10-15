@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -60,6 +61,22 @@ POSES = [
     NamedPose("camp_nadir_ir", scenario.Pose(**{**_CAMP.__dict__, "sensor_id": 1})),
     NamedPose("trees_oblique_ir", scenario.Pose(**{**_TREES.__dict__, "sensor_id": 1})),
 ]
+
+
+MANUAL_EO_GAIN_EV = -14  # mid of the calibrated daylight AE gains (-13.4 ... -14.9, deploy/camsim_config.yaml)
+
+
+def manual_exposure_config(src: str) -> str:
+    """deploy/camsim_config.yaml with the sensor's feedback loops off: EO exposure manual (MANUAL_EO_GAIN_EV), IR AGC
+    off and the thermal exposure manual (its default manual_gain_ev). Isolates the render's own variation."""
+    edits = [("      manual_gain_ev: -12\n  ir:", f"      manual_gain_ev: {MANUAL_EO_GAIN_EV}\n      auto: false\n  ir:"),
+             ("    agc_enabled: true\n", "    agc_enabled: false\n"),
+             ("      manual_gain_ev: -1\n# NVG", "      manual_gain_ev: -1\n      auto: false\n# NVG")]
+    for old, new in edits:
+        if src.count(old) != 1:
+            raise SystemExit(f"deploy/camsim_config.yaml changed: update manual_exposure_config ({old!r})")
+        src = src.replace(old, new)
+    return src
 
 
 def pixel_hash(img: np.ndarray) -> str:
@@ -157,7 +174,7 @@ def snapshot_fetcher(health: str, opener: Callable | None = None) -> Callable[[]
     return fetch
 
 
-def run_once(label: str, pkg: Path, out: Path) -> dict:
+def run_once(label: str, pkg: Path, out: Path, config_src: Path | None = None) -> dict:
     sys.path.insert(0, str(REPO / "scripts" / "scene" / "tools"))
     import camsim_session as cs
 
@@ -167,6 +184,8 @@ def run_once(label: str, pkg: Path, out: Path) -> dict:
 
     env = {**cs.env_for("package", pkg), "CAMSIM_SIM_TIME_RATE": "0", "CAMSIM_DIS_ENABLED": "0",
            "CAMSIM_MULTICAST_ADDR": "127.0.0.1"}
+    if config_src:
+        env["CAMSIM_CONFIG_SRC"] = str(config_src)
     res = {}
     with cs.camsim(env, POSES[0].pose, extra_args=[EXEC_CMDS]) as host:
         for p in POSES:
@@ -229,20 +248,29 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--against", type=Path)
     ap.add_argument("--check-only", action="store_true")
+    ap.add_argument("--manual-exposure", action="store_true",
+                    help="EO exposure manual, IR AGC off, thermal exposure manual (the sensor's feedback loops off)")
     a = ap.parse_args()
     runs_file = a.out / "runs.json"
     if a.check_only:
         runs = json.loads(runs_file.read_text())
     else:
+        cfg = None
+        if a.manual_exposure:
+            cfg = Path(tempfile.mkstemp(prefix="determinism-config-", suffix=".yaml")[1])
+            cfg.write_text(manual_exposure_config((REPO / "deploy" / "camsim_config.yaml").read_text()))
         try:
-            runs = {label: run_once(label, a.scene.resolve(), a.out) for label in ("a", "b")}
+            runs = {label: run_once(label, a.scene.resolve(), a.out, cfg) for label in ("a", "b")}
         except RuntimeError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
+        finally:
+            if cfg:
+                cfg.unlink()
         a.out.mkdir(parents=True, exist_ok=True)
         runs_file.write_text(json.dumps(runs, indent=1) + "\n")
     report = evaluate(a.out, runs)
-    report.update(scene=a.scene.name, date=time.strftime("%Y-%m-%d"))
+    report.update(scene=a.scene.name, date=time.strftime("%Y-%m-%d"), manual_exposure=a.manual_exposure)
     if a.against:
         report["against"] = {"other": str(a.against), "poses": against(a.out, a.against)}
     (a.out / "report.json").write_text(json.dumps(report, indent=1) + "\n")

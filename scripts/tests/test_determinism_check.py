@@ -4,6 +4,7 @@ import dataclasses
 
 import determinism_check as dc
 import numpy as np
+import pytest
 
 
 class Clock:
@@ -122,3 +123,15 @@ def test_settle_reports_how_much_the_last_two_frames_differ():
     r = dc.settle(fetch, max_s=10, need=3, now=c.now, sleep=c.sleep)
     assert not r["settled"]
     assert r["last_change"] == {"equal": False, "pixels": 1, "max": 1, "bbox": [0, 0, 1, 1]}
+
+
+def test_manual_exposure_config_turns_off_ae_and_agc():
+    src = (dc.REPO / "deploy" / "camsim_config.yaml").read_text()
+    out = dc.manual_exposure_config(src)
+    assert "      manual_gain_ev: -14\n      auto: false\n  ir:" in out
+    assert "    agc_enabled: false\n" in out and "    agc_enabled: true\n" not in out
+    assert "      manual_gain_ev: -1\n      auto: false\n# NVG" in out
+    yaml = pytest.importorskip("yaml")
+    cfg = yaml.safe_load(out)
+    modes = cfg["sensor_modes"]
+    assert modes["eo"]["exposure"]["auto"] is False and modes["ir"]["thermal_exposure"]["auto"] is False
