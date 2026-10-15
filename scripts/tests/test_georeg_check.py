@@ -54,15 +54,16 @@ def _synthetic(view, k1=0.0):
     tags[23], tags[24] = cam.unproject(W / 2, H / 2, 20.0)
     place = {"lat": SITE["lat"], "lon": SITE["lon"], "h": 20.0, "normal_az": 0.0, "normal_el": 90.0,
              "heading": view.site["heading_deg"], "camera": dataclasses.asdict(pose)}
-    corners = gc.marker_corners(view, place)
-    quad = [cam.project_distorted(*c, k1, 0.0) for c in corners]
+    # The mask is the silhouette of the whole box (top face and the visible side faces), as CamSim's stencil is
+    quad = g.convex_hull([cam.project_distorted(*c, k1, 0.0) for c in gc.marker_box(view, place)])
     # Point-sample the projected (convex) quad at each pixel centre plus a per-frame sub-pixel jitter (8 x 8 offsets),
     # as CamSim's stencil is sampled under TSR's jitter: the mean centroid over the frames is the area centroid.
     r0, c0 = int(min(q[1] for q in quad)) - 2, int(min(q[0] for q in quad)) - 2
     r1, c1 = int(max(q[1] for q in quad)) + 3, int(max(q[0] for q in quad)) + 3
     gy, gx = np.mgrid[r0:r1, c0:c1]
-    sign = np.sign(sum((quad[i][0] - quad[i - 1][0]) * (quad[(i + 1) % 4][1] - quad[i][1])
-                       - (quad[i][1] - quad[i - 1][1]) * (quad[(i + 1) % 4][0] - quad[i][0]) for i in range(4)))
+    k = len(quad)
+    sign = np.sign(sum((quad[i][0] - quad[i - 1][0]) * (quad[(i + 1) % k][1] - quad[i][1])
+                       - (quad[i][1] - quad[i - 1][1]) * (quad[(i + 1) % k][0] - quad[i][0]) for i in range(k)))
     frames = []
     for i, (ox, oy) in enumerate((ox, oy) for ox in np.arange(8) / 8 + 1 / 16 for oy in np.arange(8) / 8 + 1 / 16):
         px, py = gx + ox, gy + oy
@@ -77,12 +78,13 @@ def _synthetic(view, k1=0.0):
     return frames, [{"tags": dict(tags)} for _ in range(10)], place
 
 
-@pytest.mark.parametrize("name", ["flat/nadir", "flat/oblique", "flat/corner"])
+@pytest.mark.parametrize("name", ["flat/nadir", "flat/oblique", "flat/slant", "flat/corner"])
 def test_evaluate_on_a_perfect_render_is_within_a_tenth_of_a_pixel(name):
     view = next(v for v in gc.views([SITE]) if v.name == name)
     frames, klv, place = _synthetic(view)
     r = gc.evaluate(view, place, frames, klv, k1=0.0, k2=0.0)
-    assert r["error_px"]["a"] < 0.1 and r["error_px"]["c"] < 0.1, r
+    # (c) over the 5 km footprint: the homography is a plane, the ellipsoid is not (~0.12 px of curvature)
+    assert r["error_px"]["a"] < 0.1 and r["error_px"]["c"] < (0.2 if name == "flat/slant" else 0.1), r
     assert r["frames"] == 64
 
 

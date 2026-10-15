@@ -133,3 +133,11 @@ def test_nadir_ground_pixel_size():
     cam = g.Camera.from_klv(tags(), W, H)
     gsd = 300 * 2 * math.tan(math.radians(10)) / W
     assert cam.ground_pixel_size(LAT, LON, GROUND) == pytest.approx((gsd, gsd), rel=1e-3)
+
+
+def test_convex_hull_drops_interior_points_and_keeps_order():
+    pts = [(0, 0), (2, 0), (1, 1), (2, 2), (0, 2), (1, 0.5)]
+    hull = g.convex_hull(pts)
+    assert sorted(hull) == [(0, 0), (0, 2), (2, 0), (2, 2)] and len(hull) == 4
+    a = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(hull, hull[1:] + hull[:1]))
+    assert a != 0

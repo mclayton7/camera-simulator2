@@ -120,6 +120,15 @@ def marker_corners(view: View, place: dict, top: bool = True) -> list[tuple[floa
                            thick if top else 0.0, place["heading"], place["normal_az"], place["normal_el"])
 
 
+def marker_box(view: View, place: dict) -> list[tuple[float, float, float]]:
+    """The plate's eight corners (bottom face at the lifted placement height, top face `thick` above it)."""
+    half, thick = PLATE[view.marker_type]
+    args = (half, place["heading"], place["normal_az"], place["normal_el"])
+    bottom = g.plate_corners(place["lat"], place["lon"], place["h"] + LIFT_M, args[0], 0.0, *args[1:])
+    top = g.plate_corners(place["lat"], place["lon"], place["h"] + LIFT_M, args[0], thick, *args[1:])
+    return bottom + top
+
+
 def _static_tags(klv: list[dict]) -> dict:
     tags: dict[int, list[float]] = {}
     for p in klv:
@@ -156,12 +165,15 @@ def evaluate(view: View, place: dict, frames: list[dict], klv: list[dict], k1: f
     height, width = size
     mx, my = statistics.fmean(c[0] for c in cents), statistics.fmean(c[1] for c in cents)
     cam = g.Camera.from_klv(tags, width, height)
+    # The mask is the plate's silhouette (its top and its visible side faces): predict the centroid of the projected
+    # box, not of the top face (0.37 px apart at 10 deg depression for the 10 m plate)
+    box = marker_box(view, place)
     corners = marker_corners(view, place)
-    pred = {"a": g.projected_centroid(cam.project, corners),
-            "b": g.projected_centroid(lambda la, lo, h: cam.project_distorted(la, lo, h, k1, k2), corners)}
+    pred = {"a": g.silhouette_centroid(cam.project, box),
+            "b": g.silhouette_centroid(lambda la, lo, h: cam.project_distorted(la, lo, h, k1, k2), box)}
     if all(k in tags for k in (23, 24, 82, 83, 84, 85, 86, 87, 88, 89)):
-        # The corner homography maps the ground: map the plate's footprint, then add the parallax of its top face
-        # (6 cm up) as camera (a) sees it, so (c) measures the corner tags and not the plate's thickness
+        # The corner homography maps the ground: map the plate's footprint, then add the parallax of its silhouette
+        # (box above the footprint) as camera (a) sees it, so (c) measures the corner tags and not the plate's height
         hom = g.corner_homography(tags, width, height)
         foot = marker_corners(view, place, top=False)
         hx, hy = g.projected_centroid(lambda la, lo, h: hom(la, lo), foot)
@@ -171,7 +183,7 @@ def evaluate(view: View, place: dict, frames: list[dict], klv: list[dict], k1: f
         # (a') the commanded CIGI pose, no KLV in the loop: separates KLV quantisation from render error; and G3:
         # each KLV corner point and the frame centre must lie on that camera's ray through its image point
         cmd = g.Camera.from_klv(pose_tags(scenario.Pose(**place["camera"]), width, height), width, height)
-        pred["cmd"] = g.projected_centroid(cmd.project, corners)
+        pred["cmd"] = g.silhouette_centroid(cmd.project, box)
         rays = {}
         for k, (px, py) in zip((82, 84, 86, 88, 23),
                                ((0, 0), (width, 0), (width, height), (0, height), (width / 2, height / 2))):
