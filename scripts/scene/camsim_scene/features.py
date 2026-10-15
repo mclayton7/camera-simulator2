@@ -2,7 +2,8 @@
 features-design.md, sections 1, 3, 4). Each feature becomes a polygon in a local metric frame per tile (equirectangular
 about the tile centre), at least one cell (9.2767 m) wide, rasterised with the centre-sample rule in priority order
 (water < paved areas < buildings (R3b, from the footprint raster) < rail < roads; later wins) and sorted by source id within a priority, so output is deterministic.
-Bridges, tunnels and underground features are skipped (no deck geometry before R3)."""
+Bridges, tunnels and underground features are skipped; with [bridges] (decks drawn) bridge ways burn like other ways
+(burnable_with_bridges)."""
 
 from __future__ import annotations
 
@@ -62,6 +63,19 @@ def _skipped(t: dict) -> bool:
         return float(t.get("layer", "0")) < 0
     except ValueError:
         return False
+
+
+def burnable_with_bridges(feats: list[Feature]) -> list[Feature]:
+    """With [bridges] (the package draws decks), bridge ways burn like other roads and rail: the same features with the
+    bridge tag cleared. Tunnels, covered and underground ways stay skipped."""
+    out = []
+    for f in feats:
+        if f.kind in ("road", "rail") and f.tags.get("bridge", "no") != "no":
+            t = {**f.tags, "bridge": "no"}
+            out.append(Feature(f.kind, f.source_id, f.geom, t))
+        else:
+            out.append(f)
+    return out
 
 
 def width_m(f: Feature) -> float:

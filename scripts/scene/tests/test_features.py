@@ -205,3 +205,16 @@ def test_buildings_alone_need_no_features_or_area():
     codes = np.full((600, 600), 10, np.uint8)
     assert burn_tile(codes, TI, TJ, [], None, bmask) == 6
     assert (codes == 230).sum() == 6
+
+
+def test_bridges_on_burns_bridge_ways_but_not_tunnels():
+    from camsim_scene.features import burnable_with_bridges
+
+    br = road({"bridge": "yes"}, [(W0 + 0.025, S0 + 0.01), (W0 + 0.025, S0 + 0.04)], sid="osm:w3")
+    tun = road({"tunnel": "yes", "bridge": "yes"}, [(W0 + 0.03, S0 + 0.01), (W0 + 0.03, S0 + 0.04)], sid="osm:w4")
+    out = burnable_with_bridges([br, tun])
+    assert [code_for(f) for f in out] == [200, None]
+    assert br.tags["bridge"] == "yes"  # the input is not mutated
+    codes = np.full((600, 600), 30, np.uint8)
+    burn_tile(codes, TI, TJ, out, AREA)
+    assert codes[250, 300] == 200  # where the bridge crosses

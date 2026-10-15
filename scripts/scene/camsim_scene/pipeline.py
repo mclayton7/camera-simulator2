@@ -640,6 +640,10 @@ def _build_landcover(pkg: Path, m: Manifest, ctx: BuildContext, jobs: int = 1) -
         bounds = tuple(lc["bounds"])
         if fs or fp_path:
             feats = _load_features(m, ctx) if fs else None  # in the main process: the cut's process needs no cache
+            if feats is not None and fs.get("bridges"):  # REALISM R3 bridges: decks are drawn, so their ways burn
+                from .features import burnable_with_bridges
+
+                feats = burnable_with_bridges(feats)
             area = tuple(fs["area"]) if fs else None
             fp = str(fp_path) if fp_path else None
             index, st.peak_rss_mb = _run_isolated(_cut_landcover, bounds, out, paths, feats, area, credits, fp)

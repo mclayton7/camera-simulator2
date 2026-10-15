@@ -62,6 +62,7 @@ KEYS = {
     "sea_level",
     "features",
     "buildings",
+    "bridges",
     "vegetation",
     "canopy",
 }
@@ -192,6 +193,7 @@ class ScenePlan:
     sea_level_station: str | None = None
     features: dict = field(default_factory=dict)
     buildings: dict = field(default_factory=dict)
+    bridges: dict = field(default_factory=dict)  # REALISM R3 bridges: {} or {"enabled": bool}
     vegetation: dict = field(default_factory=dict)
     detail: dict = field(default_factory=dict)  # REALISM R5: {} or {"profile", "polygons", "scoped"}
 
@@ -238,6 +240,7 @@ def _int(data: dict, key: str, default: int, lo: int, hi: int) -> int:
 
 BUILDINGS_KEYS = ("enabled", "release", "min_area_m2", "roof_textures", "roof_texel_m", "roof_texture_max_px")
 ROOF_MAX_PX = (256, 512, 1024, 2048, 4096, 8192)
+BRIDGES_KEYS = ("enabled",)
 DETAIL_KEYS = ("file", "profile", "scoped")
 DETAIL_PROFILES = ("sim",)
 
@@ -273,6 +276,22 @@ def _parse_buildings(data) -> dict:
         raise ConfigError(f"buildings.roof_texture_max_px must be one of {list(ROOF_MAX_PX)}, got {max_px!r}")
     return {"enabled": enabled, "release": release, "min_area_m2": float(area), "roof_textures": tex,
             "roof_texel_m": float(texel), "roof_texture_max_px": max_px}
+
+
+def _parse_bridges(data) -> dict:
+    """[bridges] (REALISM R3 bridges) -> {"enabled": bool}; {} when absent."""
+    if "bridges" not in data:
+        return {}
+    b = data["bridges"]
+    if not isinstance(b, dict):
+        raise ConfigError("bridges must be a table")
+    unknown = set(b) - set(BRIDGES_KEYS)
+    if unknown:
+        raise ConfigError(f"unknown key(s) in bridges: {sorted(unknown)}")
+    enabled = b.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"bridges.enabled must be true or false, got {enabled!r}")
+    return {"enabled": enabled}
 
 
 VEGETATION_KEYS = ("mix", "shrub_density")
@@ -361,6 +380,25 @@ def canopy_settings(plan: ScenePlan) -> dict | None:
         "min_height_m": MIN_HEIGHT_M,
         "height_stat": "p90 nearest-rank",
         "format": FORMAT,
+    }
+
+
+def bridges_settings(plan: ScenePlan) -> dict | None:
+    """The bridges layer's settings (REALISM R3 bridges), or None when the layer is off."""
+    from . import bridges as BR
+
+    if not plan.bridges.get("enabled"):
+        return None
+    return {
+        "source": "osm_geofabrik",
+        "rules": BR.BRIDGES_RULES_VERSION,
+        "min_clearance_m": BR.MIN_CLEARANCE_M,
+        "deck_thickness_m": BR.DECK_THICKNESS_M,
+        "parapet": [BR.PARAPET_W_M, BR.PARAPET_H_M],
+        "pier_spacing_m": BR.PIER_SPACING_M,
+        "tile_zoom": BR.TILE_ZOOM,
+        "geometric_error": BR.GEOMETRIC_ERROR,
+        "format": "3d-tiles-1.1",
     }
 
 
@@ -534,6 +572,9 @@ def parse_scene(data: dict, base: Path | None = None) -> ScenePlan:
         ["osm_geofabrik"] if any(features[k] for k in OSM_FLAGS) else []
     )
     buildings = _parse_buildings(data)
+    bridges = _parse_bridges(data)
+    if bridges.get("enabled") and not (features["roads"] or features["rail"]):
+        raise ConfigError("bridges needs [features] with roads or rail (the decks come from its OSM extract)")
     vegetation = _parse_vegetation(data)
     prio["canopy"] = ["chmv2"] if _parse_canopy(data) else []
     prio["buildings"] = ["overture_buildings"] if buildings.get("enabled") else []
@@ -597,6 +638,7 @@ def parse_scene(data: dict, base: Path | None = None) -> ScenePlan:
         sea_level_station=station,
         features=features,
         buildings=buildings,
+        bridges=bridges,
         vegetation=vegetation,
         detail=detail,
     )
@@ -699,6 +741,10 @@ def layer_settings(plan: ScenePlan) -> dict:
     fs = features_settings(plan)
     if fs is not None:
         out["landcover"]["features"] = fs
+    brs = bridges_settings(plan)
+    if brs is not None:  # fs is set: [bridges] needs OSM features
+        out["bridges"] = brs
+        out["landcover"]["features"]["bridges"] = True  # bridge ways are burned like other roads and rail
     vs = vegetation_settings(plan)
     if vs is not None:
         out["vegetation"] = vs

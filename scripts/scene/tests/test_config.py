@@ -366,3 +366,32 @@ def test_landcover_settings_with_buildings_carry_the_burn_rule():
     lb = layer_settings(plan)["landcover"]["buildings"]
     assert lb["code"] == 230 and lb["cell_factor"] == 8 and lb["min_cells"] == 32 and lb["rules"] == "1"
     assert lb["priority"] == ["worldcover", "water", "paved_area", "building", "rail", "road"]
+
+
+def test_bridges_needs_osm_features():
+    with pytest.raises(ConfigError, match=r"bridges needs \[features\]"):
+        parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "bridges": {}})
+
+
+def test_bridges_settings_and_landcover_flag():
+    plan = parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "features": {"roads": True}, "bridges": {}})
+    assert plan.bridges == {"enabled": True}
+    ls = layer_settings(plan)
+    assert ls["bridges"]["min_clearance_m"] == 2.0 and ls["bridges"]["source"] == "osm_geofabrik"
+    assert ls["bridges"]["geometric_error"] == 60.0 and ls["bridges"]["tile_zoom"] == 13
+    assert ls["landcover"]["features"]["bridges"] is True
+
+
+def test_no_bridges_table_leaves_settings_unchanged():
+    plan = parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "features": {"roads": True}})
+    ls = layer_settings(plan)
+    assert "bridges" not in ls and "bridges" not in ls["landcover"]["features"]
+    off = layer_settings(parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "features": {"roads": True},
+                                      "bridges": {"enabled": False}}))
+    assert off == ls
+
+
+@pytest.mark.parametrize("bad", [{"enabled": "yes"}, {"width": 3}, []])
+def test_bridges_section_rejects_bad_values(bad):
+    with pytest.raises(ConfigError, match="bridges"):
+        parse_scene({**BUILDINGS_TOML, "allow": ["ODbL-1.0"], "features": {"roads": True}, "bridges": bad})
