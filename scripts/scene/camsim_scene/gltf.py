@@ -289,3 +289,91 @@ def decode_tile(data: bytes) -> DecodedTile:
         bytes(_view(doc, bin_, images[0]["bufferView"])) if images else None,
         doc.get("extras"),
     )
+
+
+def write_feature_glb(positions, normals, feature_ids, groups, materials, schema: dict, class_name: str,
+                      columns: dict, copyright: str) -> bytes:
+    """A generic feature GLB (REALISM R3 bridges): one mesh, one primitive per (material index, indices) group with
+    indices (empty groups left out), flat-colour materials (RGBA), one EXT_structural_metadata property table of
+    `columns` (name -> ("string", list[str]) | ("float32", array)). Deterministic bytes, as write_glb."""
+    if len(positions) == 0 or not any(len(i) for _, i in groups):
+        raise ValueError("feature mesh has no vertices or indices")
+    b = _Bin()
+    acc: list[dict] = []
+
+    def accessor(arr: np.ndarray, ctype: int, atype: str, target: int, minmax: bool = False) -> int:
+        a = {"bufferView": b.add(np.ascontiguousarray(arr).tobytes(), target), "componentType": ctype,
+             "count": int(arr.shape[0]), "type": atype}
+        if minmax:
+            a["min"] = [float(v) for v in arr.min(axis=0)]
+            a["max"] = [float(v) for v in arr.max(axis=0)]
+        acc.append(a)
+        return len(acc) - 1
+
+    n = len(next(iter(columns.values()))[1])
+    attrs = {
+        "POSITION": accessor(np.asarray(positions, "<f4"), FLOAT, "VEC3", ARRAY_BUFFER, minmax=True),
+        "NORMAL": accessor(np.asarray(normals, "<f4"), FLOAT, "VEC3", ARRAY_BUFFER),
+        "_FEATURE_ID_0": accessor(np.asarray(feature_ids, "<f4"), FLOAT, "SCALAR", ARRAY_BUFFER),
+    }
+    ext = {"EXT_mesh_features": {"featureIds": [{"featureCount": n, "attribute": 0, "propertyTable": 0}]}}
+    prims = []
+    for mat, idx in groups:
+        if len(idx):
+            ia = accessor(np.asarray(idx, "<u4"), UINT, "SCALAR", ELEMENT_ARRAY_BUFFER)
+            prims.append({"attributes": dict(attrs), "indices": ia, "material": mat, "mode": 4, "extensions": ext})
+    props = {}
+    for name in sorted(columns):
+        kind, vals = columns[name]
+        if len(vals) != n:
+            raise ValueError(f"column {name} has {len(vals)} values, expected {n}")
+        if kind == "string":
+            v, o = _strings(b, list(vals))
+            props[name] = {"values": v, "stringOffsets": o, "stringOffsetType": "UINT32"}
+        else:
+            props[name] = {"values": b.add(np.asarray(vals, "<f4").tobytes())}
+    doc = {
+        "asset": {"version": "2.0", "generator": "camsim-scene", "copyright": copyright},
+        "extensionsUsed": ["EXT_mesh_features", "EXT_structural_metadata"],
+        "extensions": {"EXT_structural_metadata": {
+            "schema": schema, "propertyTables": [{"class": class_name, "count": n, "properties": props}]}},
+        "materials": [{"pbrMetallicRoughness": {"baseColorFactor": list(c), "metallicFactor": 0.0,
+                                                "roughnessFactor": 0.9}} for c in materials],
+        "meshes": [{"primitives": prims}],
+        "nodes": [{"mesh": 0}],
+        "scenes": [{"nodes": [0]}],
+        "scene": 0,
+        "accessors": acc,
+        "bufferViews": b.views,
+        "buffers": [{"byteLength": len(b.data) + (-len(b.data) % 4)}],
+    }
+    js = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    js += b" " * (-len(js) % 4)
+    bin_ = bytes(b.data) + b"\0" * (-len(b.data) % 4)
+    total = 12 + 8 + len(js) + 8 + len(bin_)
+    return (struct.pack("<III", GLB_MAGIC, 2, total) + struct.pack("<II", len(js), CHUNK_JSON) + js
+            + struct.pack("<II", len(bin_), CHUNK_BIN) + bin_)
+
+
+def decode_feature_glb(data: bytes) -> dict:
+    """write_feature_glb's output back: positions, normals, feature_ids, indices {material: array}, columns, copyright."""
+    doc, bin_ = read_glb(data)
+    prims = doc["meshes"][0]["primitives"]
+    attrs = prims[0]["attributes"]
+    t = doc["extensions"]["EXT_structural_metadata"]
+    schema_props = t["schema"]["classes"][t["propertyTables"][0]["class"]]["properties"]
+    cols = {}
+    for name, prop in t["propertyTables"][0]["properties"].items():
+        if schema_props[name]["type"] == "STRING":
+            cols[name] = _decode_strings(doc, bin_, prop)
+        else:
+            cols[name] = np.frombuffer(_view(doc, bin_, prop["values"]), "<f4").tolist()
+    return {
+        "positions": _accessor(doc, bin_, attrs["POSITION"]).copy(),
+        "normals": _accessor(doc, bin_, attrs["NORMAL"]).copy(),
+        "feature_ids": _accessor(doc, bin_, attrs["_FEATURE_ID_0"]).copy(),
+        "indices": {p["material"]: _accessor(doc, bin_, p["indices"]).copy() for p in prims},
+        "columns": cols,
+        "copyright": doc["asset"].get("copyright", ""),
+        "materials": [m["pbrMetallicRoughness"]["baseColorFactor"] for m in doc["materials"]],
+    }
