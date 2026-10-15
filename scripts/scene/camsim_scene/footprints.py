@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -94,12 +95,58 @@ def mask_index_bytes(written: list[tuple[int, int]]) -> bytes:
     return (json.dumps(mask_index(written), indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def save_raster(raster: dict[tuple[int, int], np.ndarray], path: Path) -> None:
+RASTER_INDEX = "index.json"
+
+
+def _tile_path(out_dir: Path, ij: tuple[int, int]) -> Path:
+    return Path(out_dir) / f"{ij[0]}_{ij[1]}.npy"
+
+
+def _npy_bytes(packed: np.ndarray) -> bytes:
     buf = io.BytesIO()
-    np.savez(buf, **{f"{i}_{j}": a for (i, j), a in sorted(raster.items())})
-    atomic_write(Path(path), buf.getvalue())
+    np.save(buf, np.ascontiguousarray(packed, np.uint8))
+    return buf.getvalue()
 
 
-def load_raster(path: Path) -> dict[tuple[int, int], np.ndarray]:
-    with np.load(Path(path)) as z:
-        return {tuple(int(v) for v in k.split("_")): z[k] for k in sorted(z.files, key=lambda k: tuple(map(int, k.split("_"))))}
+def or_tile(out_dir: Path, ij: tuple[int, int], packed: np.ndarray) -> None:
+    """OR one tile's packed rows into out_dir (binary union: the result does not depend on the order)."""
+    p = _tile_path(out_dir, ij)
+    if p.exists():
+        packed = np.bitwise_or(np.load(p), packed)
+    atomic_write(p, _npy_bytes(packed))
+
+
+def write_raster_index(out_dir: Path, key: str) -> None:
+    """Written last: the directory is complete for `key` only when the index names it."""
+    tiles = sorted(tuple(int(v) for v in p.stem.split("_")) for p in Path(out_dir).glob("*.npy"))
+    atomic_write(Path(out_dir) / RASTER_INDEX, json.dumps({"inputs": key, "tiles": tiles}).encode())
+
+
+def raster_key(out_dir: Path) -> str | None:
+    p = Path(out_dir) / RASTER_INDEX
+    return json.loads(p.read_text())["inputs"] if p.exists() else None
+
+
+def save_raster(raster: dict[tuple[int, int], np.ndarray], out_dir: Path, key: str) -> None:
+    """A whole raster (raster_tiles) as a directory: one <i>_<j>.npy of packed rows per tile, then index.json."""
+    out_dir = Path(out_dir)
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+    for ij, packed in sorted(raster.items()):
+        atomic_write(_tile_path(out_dir, ij), _npy_bytes(packed))
+    write_raster_index(out_dir, key)
+
+
+class FootprintRaster:
+    """A footprint raster directory (index.json + <i>_<j>.npy packed rows), read one tile at a time."""
+
+    def __init__(self, out_dir: Path):
+        self.dir = Path(out_dir)
+        self._keys = [tuple(k) for k in json.loads((self.dir / RASTER_INDEX).read_text())["tiles"]]
+        self._set = set(self._keys)
+
+    def keys(self) -> list[tuple[int, int]]:
+        return list(self._keys)
+
+    def get(self, i: int, j: int) -> np.ndarray | None:
+        return np.load(_tile_path(self.dir, (i, j))) if (i, j) in self._set else None

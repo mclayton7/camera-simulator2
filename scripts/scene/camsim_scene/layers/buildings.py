@@ -35,7 +35,8 @@ OUT = Path("features") / "buildings"
 MASK = OUT / "mask"
 MARKER = "buildings.json"
 PLAN_MARKER, PLAN_FILE = "buildings-plan.json", "buildings-plan.pkl"
-RASTER_MARKER, RASTER_FILE = "buildings-footprints.json", "buildings-footprints.npz"
+RASTER_DIR = "buildings-footprints"  # footprints.save_raster directory
+LEGACY_STATE = ("buildings-footprints.json", "buildings-footprints.npz")  # the pre-chunk single-file raster
 
 
 def terrain_zoom(m: Manifest) -> int:
@@ -131,26 +132,28 @@ def plan_cached(pkg: Path, m: Manifest, ctx: BuildContext, wst: WorkerState | No
     return out
 
 
-def footprint_raster(pkg: Path, m: Manifest, ctx: BuildContext, wst: WorkerState | None = None) -> tuple[Path, str]:
-    """The cached footprint raster file of the kept buildings (footprints.save_raster) and its inputs key."""
+def footprint_raster(pkg: Path, m: Manifest, ctx: BuildContext, wst: WorkerState | None = None,
+                     jobs: int = 1) -> tuple[Path, str]:
+    """The cached footprint raster directory of the kept buildings (footprints.save_raster) and its inputs key."""
     wst = wst or WorkerState(ctx)
     key = inputs_hash(footprint_inputs(m, wst), F.MASK_RULES_VERSION)
-    path = Path(pkg) / STATE_DIR / RASTER_FILE
-    if _cache_hit(pkg, RASTER_MARKER, RASTER_FILE, key) is None:
+    out = Path(pkg) / STATE_DIR / RASTER_DIR
+    for name in LEGACY_STATE:
+        (Path(pkg) / STATE_DIR / name).unlink(missing_ok=True)
+    if F.raster_key(out) != key:
         blds, _ = plan_cached(pkg, m, ctx, wst)
-        F.save_raster(F.raster_tiles(blds), path)
-        atomic_write(Path(pkg) / STATE_DIR / RASTER_MARKER, json.dumps({"inputs": key}).encode())
-    return path, key
+        F.save_raster(F.raster_tiles(blds), out, key)
+    return out, key
 
 
-def write_mask(pkg: Path, raster: dict) -> str:
+def write_mask(pkg: Path, raster: F.FootprintRaster) -> str:
     """features/buildings/mask/: one 1-bit PNG per raster tile + index.json; returns the index's sha256 ("" = none)."""
-    written = sorted(raster)
+    written = raster.keys()
     if not written:
         return ""
     d = Path(pkg) / MASK
     for i, j in written:
-        F.write_mask_tile(raster[(i, j)], d / tile_filename(i, j))
+        F.write_mask_tile(raster.get(i, j), d / tile_filename(i, j))
     atomic_write(d / "index.json", F.mask_index_bytes(written))
     return sha256_file(d / "index.json")
 
@@ -174,8 +177,9 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
     s = m.layers.get("buildings")
     if not s:
         shutil.rmtree(Path(pkg) / "features", ignore_errors=True)
-        for name in (MARKER, PLAN_MARKER, PLAN_FILE, RASTER_MARKER, RASTER_FILE):
+        for name in (MARKER, PLAN_MARKER, PLAN_FILE, *LEGACY_STATE):
             (Path(pkg) / STATE_DIR / name).unlink(missing_ok=True)
+        shutil.rmtree(Path(pkg) / STATE_DIR / RASTER_DIR, ignore_errors=True)
         return st
     t0 = time.monotonic()
     rec = m.source(s["priorities"][0])
@@ -228,7 +232,7 @@ def build(pkg: Path, m: Manifest, ctx: BuildContext) -> LayerStats:
         output = sha256_file(ts_path)
         if s.get("mask"):  # R3b; an R3 manifest (no "mask" settings) builds exactly as before
             raster_path, _ = footprint_raster(pkg, m, ctx, wst)
-            mask_sha = write_mask(pkg, F.load_raster(raster_path))
+            mask_sha = write_mask(pkg, F.FootprintRaster(raster_path))
     atomic_write(marker, json.dumps({"inputs": inputs, "output": output, "mask": mask_sha, "stats": stats}).encode())
     files = [p for p in out.rglob("*") if p.is_file()]
     st.tiles = st.built = len(tiles)

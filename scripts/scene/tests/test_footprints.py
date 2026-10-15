@@ -83,13 +83,28 @@ def test_mask_png_is_one_bit_and_round_trips(tmp_path):
     assert F.mask_png(np.packbits(m, axis=1)) == p.read_bytes()  # deterministic bytes
 
 
-def test_raster_file_round_trip(tmp_path):
+def test_raster_dir_round_trip(tmp_path):
     r = F.raster_tiles([_bld("a", shapely.Polygon(_ring(1.25, 1.25, 3.25, 3.25)))])
-    F.save_raster(r, tmp_path / "r.npz")
-    back = F.load_raster(tmp_path / "r.npz")
-    assert list(back) == list(r) and np.array_equal(back[(I0, J0)], r[(I0, J0)])
-    F.save_raster({}, tmp_path / "e.npz")
-    assert F.load_raster(tmp_path / "e.npz") == {}
+    F.save_raster(r, tmp_path / "r", "k1")
+    back = F.FootprintRaster(tmp_path / "r")
+    assert back.keys() == list(r) and np.array_equal(back.get(I0, J0), r[(I0, J0)])
+    assert back.get(I0 + 1, J0) is None and F.raster_key(tmp_path / "r") == "k1"
+    F.save_raster({}, tmp_path / "e", "k2")
+    assert F.FootprintRaster(tmp_path / "e").keys() == [] and F.raster_key(tmp_path / "e") == "k2"
+    assert F.raster_key(tmp_path / "missing") is None
+
+
+def test_or_tile_merge_is_order_independent(tmp_path):
+    pa = shapely.Polygon(_ring(1.25, 1.25, 3.25, 3.25))
+    pb = shapely.Polygon(_ring(2.25, 2.25, 6.25, 6.25))
+    a = F.raster_tiles([_bld("a", pa)])[(I0, J0)]
+    b = F.raster_tiles([_bld("b", pb)])[(I0, J0)]
+    whole = F.raster_tiles([_bld("a", pa), _bld("b", pb)])[(I0, J0)]
+    for name, order in (("ab", (a, b)), ("ba", (b, a))):
+        for packed in order:
+            F.or_tile(tmp_path / name, (I0, J0), packed)
+        F.write_raster_index(tmp_path / name, "k")
+        assert np.array_equal(F.FootprintRaster(tmp_path / name).get(I0, J0), whole)
 
 
 def test_layer_writes_mask_tiles_and_index(tmp_path):

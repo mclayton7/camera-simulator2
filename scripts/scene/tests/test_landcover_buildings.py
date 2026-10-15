@@ -22,13 +22,13 @@ def _with_buildings(tmp_path, monkeypatch, features=None, key="k1"):
     m.layers["landcover"]["buildings"] = {"code": 230, "cell_factor": 8, "min_cells": 32, "rules": F.MASK_RULES_VERSION}
     mask = np.zeros((F.MASK_PX, F.MASK_PX), bool)
     mask[800:1600, 800:1600] = True  # land-cover cells 100..199 of tile (200, 200)
-    npz = tmp_path / "fp.npz"
-    F.save_raster({(200, 200): np.packbits(mask, axis=1)}, npz)
+    rdir = tmp_path / "fp"
+    F.save_raster({(200, 200): np.packbits(mask, axis=1)}, rdir, "k")
     state = {"key": key, "calls": 0}
 
-    def fake_raster(pkg_, m_, ctx_, wst=None):
+    def fake_raster(pkg_, m_, ctx_, wst=None, jobs=1):
         state["calls"] += 1
-        return npz, state["key"]
+        return rdir, state["key"]
 
     monkeypatch.setattr(pipeline.buildings_layer, "footprint_raster", fake_raster)
     return pkg, m, build, state

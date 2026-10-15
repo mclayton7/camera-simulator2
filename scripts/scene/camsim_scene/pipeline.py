@@ -526,7 +526,7 @@ def _cut_landcover(
 ) -> tuple[dict, float]:
     """Runs in its own process, so its peak RSS isn't the main process's lifetime peak (fetch, planning). With `feats`
     (REALISM R2), burns them into the tiles that meet `area`; with `footprints` (REALISM R3b, a footprints.save_raster
-    file), burns its >= 32-of-64 cells as 230 into every tile it covers. Either writes the code legend and credits into
+    directory), burns its >= 32-of-64 cells as 230 into every tile it covers. Either writes the code legend and credits into
     index.json."""
     if feats is None and footprints is None:
         index = landcover.fetch(bounds, out, reader=landcover.local_reader(paths), cut_by="camsim-scene")
@@ -539,7 +539,7 @@ def _cut_landcover(
     index = landcover.fetch(
         bounds, out, reader=landcover.local_reader(paths), cut_by="camsim-scene", codes={}, credits=credits
     )
-    raster = F.load_raster(Path(footprints)) if footprints else {}
+    raster = F.FootprintRaster(Path(footprints)) if footprints else None
     present: set[int] = set()
     for t in index["tiles"]:
         i, j = t["lat_index"], t["lon_index"]
@@ -547,7 +547,8 @@ def _cut_landcover(
         in_area = area is not None and not (
             tw >= area[2] or tw + landcover.TILE_DEG <= area[0] or ts >= area[3] or ts + landcover.TILE_DEG <= area[1]
         )
-        burn = F.burn_cells(F.unpack(raster[(i, j)])) if (i, j) in raster else None
+        packed = raster.get(i, j) if raster is not None else None
+        burn = F.burn_cells(F.unpack(packed)) if packed is not None else None
         if not in_area and burn is None:
             continue
         path = out / t["file"]
