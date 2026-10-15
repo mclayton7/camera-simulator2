@@ -87,3 +87,10 @@ def test_track_along_extends_past_both_ends():
     xs = [(lon - LON0) * KX for _, lon, _ in pts]
     assert xs[0] == pytest.approx(-50.0, abs=0.05) and xs[-1] == pytest.approx(250.0, abs=0.05)
     assert all(math.isclose(h, 90.0, abs_tol=0.5) for *_, h in pts)  # heading east
+
+
+def test_find_underpass_ignores_roads_meeting_the_deck_end():
+    d = deck("osm:w1", [(0, 0), (200, 0)], clear=20)
+    approach = Feature("road", "osm:w7", LineString([ll(200, 0), ll(400, 0)]), {"highway": "primary"})
+    side = Feature("road", "osm:w6", LineString([ll(195, -50), ll(195, 50)]), {"highway": "primary"})
+    assert bc.find_underpass([d], [approach, side]) is None

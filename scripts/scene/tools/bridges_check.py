@@ -29,6 +29,7 @@ B2_TOL_M, B3_TOL_M, B4_TOL_M, B4_STEP_M, B5_BELOW_M = 0.10, 0.5, 0.3, 0.3, 3.0
 ROAD_CODES = {200, 201, 210}
 NODE_DIGITS = 9
 TRUCK_ID = 7
+UNDERPASS_END_M = 15.0  # a road crossing a deck closer than this to its end is its approach, not an underpass
 
 
 def node_key(pt) -> tuple:
@@ -126,7 +127,8 @@ def evaluate_under(alts: list[float], deck_top: float) -> dict:
 
 
 def find_underpass(decks: list[Deck], features) -> dict | None:
-    """A non-bridge road crossing a kept deck where the deck is >= 6 m above its crossing (highest clearance first)."""
+    """A non-bridge road crossing a kept deck at least UNDERPASS_END_M inside it, on a deck with >= 6 m clearance
+    (highest clearance first)."""
     roads = [f for f in features if f.kind == "road" and f.tags.get("bridge", "no") == "no"
              and f.tags.get("tunnel", "no") == "no" and f.geom.geom_type == "LineString"]
     for d in pick(decks, len(decks)):
@@ -135,6 +137,9 @@ def find_underpass(decks: list[Deck], features) -> dict | None:
         for r in sorted(roads, key=lambda r: r.source_id):
             x = d.line.intersection(r.geom)
             if x.is_empty or x.geom_type != "Point":
+                continue
+            s = along(d.line, x.y, x.x)
+            if s < UNDERPASS_END_M or s > d.length_m - UNDERPASS_END_M:  # an approach meeting the deck at its end
                 continue
             return {"deck": d.source_id, "road": r.source_id, "crossing": (x.y, x.x),
                     "deck_top": deck_height(d, along(d.line, x.y, x.x)), "road_line": list(r.geom.coords)}
