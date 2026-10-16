@@ -1,0 +1,39 @@
+// Copyright CamSim Contributors. All Rights Reserved.
+// Night sky terms for M_SkyDome (ROADMAP 6A), included by its Custom nodes (scripts/sky/make_sky_material.py).
+// Mirrors Environment/NightIllumination.cpp expression for expression: CamSimSkyAirMass =
+// FNightIllumination::KastenYoungAirMass, CamSimSkyTransmittance = FNightIllumination::Transmittance
+// (horizon cut-off -0.5 deg, K = k_V 0.172 from MPC_Sky Floor.z), CamSimMoonDisc = FMoonDisc::Shade
+// (u toward the sun, z toward the viewer) x the disc luminance scale. Change both together.
+#pragma once
+
+// Kasten-Young relative air mass at elevation asin(SinEl); 40 at or below -0.5 deg.
+float CamSimSkyAirMass(float SinEl)
+{
+	float ElDeg = degrees(asin(clamp(SinEl, -1.0, 1.0)));
+	if (ElDeg <= -0.5) return 40.0;
+	return 1.0 / (SinEl + 0.50572 * pow(ElDeg + 6.07995, -1.6364));
+}
+
+// Atmospheric transmittance 10^(-0.4 K X) along a direction of sine elevation SinEl; 0 below -0.5 deg.
+float CamSimSkyTransmittance(float SinEl, float K)
+{
+	float ElDeg = degrees(asin(clamp(SinEl, -1.0, 1.0)));
+	if (ElDeg < -0.5) return 0.0;
+	return pow(10.0, -0.4 * K * CamSimSkyAirMass(SinEl));
+}
+
+// Moon disc luminance along view dir V: 0 outside the disc; Lambert sphere lit from SunDir (mirrors FMoonDisc::Shade:
+// with S = (sin a, 0, cos a) for phase angle a, N.S = u sin a + n_z cos a).
+float CamSimMoonDisc(float3 V, float3 MoonDir, float3 SunDir, float AngRadius, float LumScale)
+{
+	float CosD = dot(V, MoonDir);
+	if (CosD < cos(AngRadius)) return 0.0;
+	float3 Right = normalize(SunDir - dot(SunDir, MoonDir) * MoonDir + 1e-6);   // toward the sun, in the disc plane
+	float3 Up = cross(MoonDir, Right);
+	float2 UV = float2(dot(V, Right), dot(V, Up)) / sin(AngRadius);
+	float R2 = dot(UV, UV);
+	if (R2 > 1.0) return 0.0;
+	float3 N = float3(UV, sqrt(1.0 - R2));                                  // z toward the viewer
+	float3 S = float3(dot(SunDir, Right), 0.0, -dot(SunDir, MoonDir));      // sun seen from the moon, same frame
+	return LumScale * max(dot(N, normalize(S)), 0.0);
+}
