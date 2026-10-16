@@ -51,6 +51,10 @@ FControlCaptureGate::EState FControlCaptureGate::Update(const FControlCaptureInp
 	{
 		Reason = TEXT("vegetation");
 	}
+	else if (!In.bLandCoverSettled)
+	{
+		Reason = TEXT("land cover");
+	}
 	else if (In.bCommandThisTick)
 	{
 		Reason = TEXT("camera or entity command");

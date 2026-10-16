@@ -150,3 +150,28 @@ bool FCaptureGateReasonTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("settling progress"), G.PendingReason(), FString(TEXT("settling 12/30")));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGateLandCoverTest,
+	"CamSim.ControlApi.CaptureGate.WaitsForLandCover",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FCaptureGateLandCoverTest::RunTest(const FString& Parameters)
+{
+	// ROADMAP 4D review: a capture right after a launch or a long move must not return a class image whose terrain is
+	// all unlabeled because the land-cover window is still building.
+	FControlCaptureGate G;
+	G.Begin(0.0, 0, 60.0, 99.9f);
+	FControlCaptureInputs In = Settled(0.0, 10);
+	In.bLandCoverSettled = false;
+	TestEqual(TEXT("window building: waiting"), G.Update(In), EState::Waiting);
+	TestTrue(TEXT("reason names land cover"), G.PendingReason().Contains(TEXT("land cover")));
+	In.bLandCoverSettled = true;
+	TestEqual(TEXT("window settled: fire"), G.Update(In), EState::Fire);
+
+	using CamSimControl::IsLandCoverSettled;
+	TestTrue(TEXT("land cover off: nothing to wait for"), IsLandCoverSettled(false, true, 0, false));
+	TestTrue(TEXT("semantic impossible: nothing to wait for"), IsLandCoverSettled(true, false, 0, true));
+	TestFalse(TEXT("no build yet (first EO tick)"), IsLandCoverSettled(true, true, 0, false));
+	TestFalse(TEXT("build in flight (launch, re-centre)"), IsLandCoverSettled(true, true, 3, true));
+	TestTrue(TEXT("built (with or without data)"), IsLandCoverSettled(true, true, 3, false));
+	return true;
+}

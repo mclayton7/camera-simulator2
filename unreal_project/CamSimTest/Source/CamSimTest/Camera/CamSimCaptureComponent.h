@@ -155,6 +155,9 @@ public:
 	 * One job at a time; a second replaces a pending (not yet captured) one. Game thread.
 	 */
 	void RequestCaptureFrame(TSharedRef<FControlCaptureJob, ESPMode::ThreadSafe> Job) { PendingCaptureJob = Job; }
+
+	/** ROADMAP 4D: the land-cover window the class image reads is built for the current view (CamSimControl::IsLandCoverSettled). */
+	bool IsSemanticLandCoverSettled() const;
 	bool   IsSensorBusy() const { return bSensorBusy; }
 	bool   IsReadbackInFlight() const { return Ring.NumInFlight() > 0; }
 	int32  GetReadbacksInFlight() const { return Ring.NumInFlight(); }

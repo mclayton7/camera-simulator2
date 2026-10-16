@@ -357,6 +357,7 @@ void FControlApiService::Tick(double NowSec)
 		FControlCaptureInputs In = Hooks.SceneState();
 		In.NowSec = NowSec;
 		In.bCommandThisTick = bCommand;
+		if (!bCaptureWantSemantic) In.bLandCoverSettled = true;   // only the class image reads the land-cover window
 		switch (Gate.Update(In))
 		{
 		case FControlCaptureGate::EState::Fire:

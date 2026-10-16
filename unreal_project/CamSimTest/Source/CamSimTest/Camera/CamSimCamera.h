@@ -83,6 +83,9 @@ public:
 	/** False while frames are held waiting for terrain tiles to load. */
 	bool IsTerrainReady() const { return Streaming.IsTerrainReady(); }
 
+	/** ROADMAP 4D: the land-cover window for the class image is settled (UCamSimCaptureComponent::IsSemanticLandCoverSettled). */
+	bool IsSemanticLandCoverSettled() const { return CaptureComp->IsSemanticLandCoverSettled(); }
+
 	/** Lowest tileset load progress (0-100) this frame; < 0 = none. */
 	float GetMinLoadProgressPct() const { return Streaming.GetMinLoadProgressPct(); }
 

@@ -69,7 +69,8 @@ time in lockstep, so a capture is exposed for its own view.
 ### Capture
 
 A capture waits until, on one tick: the terrain gate is open, every tileset is loaded to `settle_load_pct`, vegetation
-streaming is idle, and no API command was applied; then `settle_frames` more rendered frames (any command restarts
+streaming is idle, the land-cover window is built for the view (when the semantic image is wanted), and no API command
+was applied; then `settle_frames` more rendered frames (any command restarts
 the count). The next frame is the **capture frame**: annotated, its depth read back, and returned:
 
 ```json

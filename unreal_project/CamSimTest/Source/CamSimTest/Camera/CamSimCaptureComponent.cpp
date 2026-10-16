@@ -22,6 +22,7 @@
 #include "Time/SimClock.h"
 #include "Time/SimDelta.h"
 #include "Control/ControlCaptureJob.h"
+#include "Control/ControlCaptureGate.h"
 #include "GroundTruth/SemanticClasses.h"
 #include "GroundTruth/SemanticFrame.h"
 #include "GroundTruth/FGroundTruthCollector.h"
@@ -614,6 +615,12 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 		Ext->PushRequest_RenderThread(Req, Nv12Readback, IdReadback, Grabbed, IdGrabbed, DepthReadback, DepthGrabbed,
 			SemanticReadback, SemanticGrabbed);
 	});
+}
+
+bool UCamSimCaptureComponent::IsSemanticLandCoverSettled() const
+{
+	const bool bEnabled = Subsystem && Subsystem->GetConfig().Thermal.LandCover.bEnabled;
+	return CamSimControl::IsLandCoverSettled(bEnabled, bSemanticPossible, LandCover.GetBuildsStarted(), LandCover.IsBuildInFlight());
 }
 
 TSharedPtr<const FSemanticFrameParams, ESPMode::ThreadSafe> UCamSimCaptureComponent::BuildSemanticParams(

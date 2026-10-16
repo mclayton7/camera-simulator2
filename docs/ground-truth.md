@@ -166,9 +166,14 @@ CPU reference; `CamSim.GPU.GroundTruth.Semantic.MatchesCpu` holds the shader to 
 Limits: terrain classes are at the land-cover resolution (a 6 m road burned into 10 m cells labels those cells, not its
 edges); trees and building walls in oblique views take the class of the cell under them (vegetation and the
 buildings/bridges tilesets are not tagged per pixel: giving them custom depth would occlude entities in the custom-depth
-buffer and break the visible/amodal masks); without land cover (`thermal.land_cover.enabled: false`, no package data)
-terrain is `unlabeled` while sky, water (sea band) and entities still work; under TSR, up to ~0.5 render texel off, as
-the masks.
+buffer and break the visible/amodal masks); without land cover (`thermal.land_cover.enabled: false`, no package data,
+beyond the window) terrain is `unlabeled` while sky, water and entities still work — but there the sea band alone
+decides water, so low coastal land within the band of sea level (0.5 m + the wave amplitude: ~3.5 m at Beaufort 6)
+is labelled `water`; a land-cover cell coded 80 is `water` at any height (a pier deck or cliff face over it); control
+API captures wait for the land-cover window to be built for the view, `ml_training.semantic` files don't (the first
+frames after a launch or a long move can have unlabeled terrain); labels are offset toward the window centre by about
+h·d/R (camera height h, distance d from the window centre; ~4 m at 5 km up and 5 km out), as the thermal lookup; under
+TSR, up to ~0.5 render texel off, as the masks.
 
 ## Configuration
 

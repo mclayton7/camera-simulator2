@@ -326,6 +326,7 @@ void UCamSimSubsystem::StartControlApi()
 			In.bTerrainReady = Cam->IsTerrainReady();
 			In.MinLoadProgressPct = Cam->GetMinLoadProgressPct();
 			In.FramesCaptured = Cam->GetFramesCaptured();
+			In.bLandCoverSettled = Cam->IsSemanticLandCoverSettled();
 		}
 		In.bVegetationIdle = IsVegetationIdle();
 		return In;
