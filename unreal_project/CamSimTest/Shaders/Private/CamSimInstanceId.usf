@@ -7,6 +7,9 @@
 // camera and a boat (above the water at the boat) still occlude it.
 // Depth (WRITE_DEPTH): the same source texel's scene depth as linear view-space depth in metres, i.e. what
 // ml_training.depth_map writes, lens-distorted and FOV-matched with the image and the masks (no second render).
+// Semantic classes (WRITE_SEMANTIC, ROADMAP 4D): the same source texel's class: sky (scene device Z <= 0), a visible
+// entity with a class (stencil -> class table), the sea band on a 0/80 land-cover code, else the class of the nearest
+// land-cover texel under the texel's scene point. CamSimSemanticRef::ClassifyTexel is the CPU mirror: change both.
 // Known limitation: under TSR the depth/stencil are jittered at render resolution while the output colour is not,
 // so labels can be misregistered by up to ~0.5 render texel.
 
@@ -33,6 +36,23 @@ RWStructuredBuffer<uint> OutIds;  // pixel 2k in the low 16 bits of word k
 #if WRITE_DEPTH
 float4 InvDeviceZToWorldZ;        // FSceneView::InvDeviceZToWorldZTransform (as ConvertFromDeviceZ)
 RWStructuredBuffer<float> OutDepth;  // one float per output pixel, row-major: view depth in metres, 0 = no source sample
+#endif
+#if WRITE_SEMANTIC
+uint4    CodeClassPacked[16];      // land-cover code c -> class: byte (c & 3) of component (c >> 2) & 3 of entry c >> 4
+uint4    StencilClassPacked[16];   // stencil s -> entity class, same layout (0: no entity)
+uint     SemLandCover;             // a window of SemTexels^2 is bound
+float3   SemEast;                  // unit East/North at the window centre (translated world directions)
+float3   SemNorth;
+float2   SemCamOffsetM;            // camera (E, N) from the window centre, m
+float    SemTexelM;
+uint     SemTexels;
+uint     SemSea;                   // ThermalCS's sea band
+float3   SemUp;
+float    SemCamHeightCm;
+float    SemSeaRadiusCm;
+float    SemWaterBandCm;
+Texture2D<uint> LandCover;         // window codes, row 0 = north (a 1x1 zero texture when SemLandCover == 0)
+RWStructuredBuffer<uint> OutSemantic;   // two pixels per word as OutIds: class in the low 8 bits of each half
 #endif
 
 void DepthRect(out int2 Min, out int2 Size)
@@ -106,6 +126,66 @@ float ViewDepthMetres(float DeviceZ)
 }
 #endif
 
+#if WRITE_SEMANTIC
+uint SemPackedByte(uint4 Entry, uint Code) { return (Entry[(Code >> 2u) & 3u] >> ((Code & 3u) * 8u)) & 0xFFu; }
+bool SemIsNonFinite(float V) { return (asuint(V) & 0x7fffffffu) >= 0x7f800000u; }
+
+/** CamSimSemanticRef::NearestLandCoverTexel. */
+bool SemNearestTexel(float3 Pw, out int2 L)
+{
+	L = int2(0, 0);
+	if (SemLandCover == 0u || SemTexels == 0u) return false;
+	const float E = dot(Pw, SemEast) / 100.0 + SemCamOffsetM.x;
+	const float N = dot(Pw, SemNorth) / 100.0 + SemCamOffsetM.y;
+	const float Half = float(SemTexels) * 0.5;
+	const float X = E / SemTexelM + Half - 0.5;
+	const float Y = Half - N / SemTexelM - 0.5;
+	if (SemIsNonFinite(X) || SemIsNonFinite(Y)) return false;   // bit test first (Metal fast-math)
+	const float Rx = floor(X + 0.5);
+	const float Ry = floor(Y + 0.5);
+	const float MaxI = float(SemTexels) - 1.0;
+	if (Rx < 0.0 || Rx > MaxI || Ry < 0.0 || Ry > MaxI) return false;
+	L = int2(int(Rx), int(Ry));
+	return true;
+}
+
+/** CamSimSemanticRef::ClassifyTexel for depth texel T. */
+uint ClassifyTexel(int2 T)
+{
+	const float SceneZ = SceneDepth.Load(int3(T, 0));
+	if (!(SceneZ > 0.0)) return 1u;   // sky
+	const uint S = CustomStencil.Load(int3(T, 0)) STENCIL_COMPONENT_SWIZZLE & 0xFF;
+	if (S != 0u)
+	{
+		const float CustomZ = CustomDepth.Load(int3(T, 0));
+		const uint EntityClass = SemPackedByte(StencilClassPacked[S >> 4u], S);
+		if (CustomZ >= SceneZ * (1.0 - 1e-4) && EntityClass != 0u) return EntityClass;
+	}
+	int2 Min, Size;
+	DepthRect(Min, Size);
+	const float2 Uv = (float2(T - Min) + 0.5) / float2(Size);
+	const float4 H = mul(float4(Uv.x * 2.0 - 1.0, 1.0 - Uv.y * 2.0, SceneZ, 1.0), ClipToTranslatedWorld);
+	const float3 Pw = H.xyz / H.w;
+	int2 L;
+	const uint Code = SemNearestTexel(Pw, L) ? (LandCover.Load(int3(L, 0)) & 0xFFu) : 0u;
+	if (SemSea != 0u && (Code == 0u || Code == 80u))
+	{
+		const float Vert = dot(Pw, SemUp);
+		const float D2 = max(dot(Pw, Pw) - Vert * Vert, 0.0);
+		const float Height = SemCamHeightCm + Vert + D2 / (2.0 * SemSeaRadiusCm);
+		if (Height < SemWaterBandCm) return 2u;   // water
+	}
+	return SemPackedByte(CodeClassPacked[Code >> 4u], Code);
+}
+
+/** The class of output pixel P (0 outside the distorted source). */
+uint SemanticAt(int2 P)
+{
+	int2 T;
+	return SourceTexel(P, T) ? ClassifyTexel(T) : 0u;
+}
+#endif
+
 /** Ids (and depth) for output pixel P. */
 uint PixelId(int2 P)
 {
@@ -124,4 +204,7 @@ void InstanceIdCS(uint3 Id : SV_DispatchThreadID)
 	if (Pair.x * 2 >= OutputSize.x || Pair.y >= OutputSize.y) return;
 	const int2 P0 = int2(Pair.x * 2, Pair.y);
 	OutIds[Pair.y * (OutputSize.x / 2) + Pair.x] = PixelId(P0) | (PixelId(P0 + int2(1, 0)) << 16);
+#if WRITE_SEMANTIC
+	OutSemantic[Pair.y * (OutputSize.x / 2) + Pair.x] = SemanticAt(P0) | (SemanticAt(P0 + int2(1, 0)) << 16);
+#endif
 }

@@ -6,6 +6,7 @@
 #include "RenderGraphDefinitions.h"
 #include "SensorFrameParams.h"
 #include "Containers/StaticArray.h"
+#include "SemanticFrameParams.h"
 
 class FRHIUniformBuffer;
 
@@ -31,6 +32,12 @@ struct FInstanceIdInputs
 	FMatrix44f ClipToTranslatedWorld = FMatrix44f::Identity;
 	/** Depth output (ml_training.depth_map): FSceneView::InvDeviceZToWorldZTransform of the depth textures' view. */
 	FVector4f InvDeviceZToWorldZ = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
+	/**
+	 * Semantic output (ROADMAP 4D): per-frame params (ClipToTranslatedWorld above must then be set) and the land-cover
+	 * window (R8_UINT, LandCoverTexels^2; null: terrain unlabeled, whatever Semantic->bLandCover says).
+	 */
+	const FSemanticFrameParams* Semantic = nullptr;
+	FRDGTextureRef LandCover = nullptr;
 };
 
 /**
@@ -45,4 +52,5 @@ CAMSIMSHADERS_API bool IsInstanceIdPassSupported(FString& OutWhy);
  * depth in metres (sky/far: 1e7; outside the distorted source: 0), the ML depth map without a second render.
  */
 CAMSIMSHADERS_API FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInputs& In,
-	const FSensorFrameParams& Params, FRDGBufferRef* OutDepth = nullptr);
+	const FSensorFrameParams& Params, FRDGBufferRef* OutDepth = nullptr, FRDGBufferRef* OutSemantic = nullptr);
+/** With OutSemantic (and In.Semantic): one uint32 per two output pixels, the class in the low 8 bits of each half. */

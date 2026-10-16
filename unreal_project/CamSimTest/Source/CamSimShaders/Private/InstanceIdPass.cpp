@@ -27,6 +27,22 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCamSimInstanceIdParameters, )
 	SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, OutIds)
 	SHADER_PARAMETER(FVector4f, InvDeviceZToWorldZ)                       // WRITE_DEPTH only
 	SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<float>, OutDepth)  // WRITE_DEPTH only
+	// WRITE_SEMANTIC only (ROADMAP 4D)
+	SHADER_PARAMETER_ARRAY(FUintVector4, CodeClassPacked, [16])
+	SHADER_PARAMETER_ARRAY(FUintVector4, StencilClassPacked, [16])
+	SHADER_PARAMETER(uint32, SemLandCover)
+	SHADER_PARAMETER(FVector3f, SemEast)
+	SHADER_PARAMETER(FVector3f, SemNorth)
+	SHADER_PARAMETER(FVector2f, SemCamOffsetM)
+	SHADER_PARAMETER(float, SemTexelM)
+	SHADER_PARAMETER(uint32, SemTexels)
+	SHADER_PARAMETER(uint32, SemSea)
+	SHADER_PARAMETER(FVector3f, SemUp)
+	SHADER_PARAMETER(float, SemCamHeightCm)
+	SHADER_PARAMETER(float, SemSeaRadiusCm)
+	SHADER_PARAMETER(float, SemWaterBandCm)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, LandCover)
+	SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, OutSemantic)
 END_SHADER_PARAMETER_STRUCT()
 
 /** Output-space visible/amodal stencil ids, resampled through the sensor's lens distortion. */
@@ -39,7 +55,8 @@ public:
 
 	class FUseViewRect : SHADER_PERMUTATION_BOOL("USE_VIEW_RECT");
 	class FWriteDepth : SHADER_PERMUTATION_BOOL("WRITE_DEPTH");
-	using FPermutationDomain = TShaderPermutationDomain<FUseViewRect, FWriteDepth>;
+	class FWriteSemantic : SHADER_PERMUTATION_BOOL("WRITE_SEMANTIC");
+	using FPermutationDomain = TShaderPermutationDomain<FUseViewRect, FWriteDepth, FWriteSemantic>;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
@@ -80,7 +97,7 @@ bool IsInstanceIdPassSupported(FString& OutWhy)
 }
 
 FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInputs& In, const FSensorFrameParams& P,
-	FRDGBufferRef* OutDepth)
+	FRDGBufferRef* OutDepth, FRDGBufferRef* OutSemantic)
 {
 	const FIntPoint Out = In.OutputSize;
 	check(In.SceneDepth && In.CustomDepth && In.CustomStencil);
@@ -117,11 +134,54 @@ FRDGBufferRef AddInstanceIdPass(FRDGBuilder& GraphBuilder, const FInstanceIdInpu
 		Pass->OutDepth           = GraphBuilder.CreateUAV(*OutDepth);
 	}
 
+	const bool bSemantic = OutSemantic && In.Semantic;
+	if (bSemantic)
+	{
+		const FSemanticFrameParams& S = *In.Semantic;
+		auto Pack = [](const uint8 (&Bytes)[256], FUintVector4 (&Out)[16])
+		{
+			for (int32 E = 0; E < 16; ++E)
+			{
+				for (int32 C = 0; C < 4; ++C)
+				{
+					uint32 W = 0;
+					for (int32 B = 0; B < 4; ++B) W |= static_cast<uint32>(Bytes[E * 16 + C * 4 + B]) << (B * 8);
+					Out[E][C] = W;
+				}
+			}
+		};
+		FUintVector4 CodePacked[16], StencilPacked[16];
+		Pack(S.CodeClass, CodePacked);
+		Pack(S.StencilClass, StencilPacked);
+		for (int32 E = 0; E < 16; ++E) { Pass->CodeClassPacked[E] = CodePacked[E]; Pass->StencilClassPacked[E] = StencilPacked[E]; }
+		const bool bWindow = S.bLandCover != 0u && In.LandCover && S.LandCoverTexels > 0
+			&& In.LandCover->Desc.Extent == FIntPoint(static_cast<int32>(S.LandCoverTexels), static_cast<int32>(S.LandCoverTexels));
+		Pass->SemLandCover  = bWindow ? 1u : 0u;
+		Pass->SemEast       = S.LandCoverEast;
+		Pass->SemNorth      = S.LandCoverNorth;
+		Pass->SemCamOffsetM = S.LandCoverCamOffsetM;
+		Pass->SemTexelM     = S.LandCoverTexelM;
+		Pass->SemTexels     = S.LandCoverTexels;
+		Pass->SemSea        = S.bSea;
+		Pass->SemUp         = S.Up;
+		Pass->SemCamHeightCm = S.CamHeightCm;
+		Pass->SemSeaRadiusCm = S.SeaRadiusCm;
+		Pass->SemWaterBandCm = S.WaterBandCm;
+		Pass->LandCover = bWindow ? In.LandCover
+			: GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1, 1), PF_R8_UINT, FClearValueBinding::Black,
+				TexCreate_ShaderResource | TexCreate_UAV), TEXT("CamSimSemanticNoLandCover"));
+		if (!bWindow) AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(Pass->LandCover), 0u);
+		*OutSemantic = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), Out.X * Out.Y / 2),
+			TEXT("CamSimSemanticClasses"));
+		Pass->OutSemantic = GraphBuilder.CreateUAV(*OutSemantic);
+	}
+
 	FCamSimInstanceIdCS::FPermutationDomain Perm;
 	Perm.Set<FCamSimInstanceIdCS::FUseViewRect>(bUseView);
 	Perm.Set<FCamSimInstanceIdCS::FWriteDepth>(OutDepth != nullptr);
+	Perm.Set<FCamSimInstanceIdCS::FWriteSemantic>(bSemantic);
 	TShaderMapRef<FCamSimInstanceIdCS> Shader(GetGlobalShaderMap(GMaxRHIFeatureLevel), Perm);
-	FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("CamSimInstanceIds%s %dx%d", OutDepth ? TEXT("+Depth") : TEXT(""), Out.X, Out.Y), Shader, Pass,
+	FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("CamSimInstanceIds%s%s %dx%d", OutDepth ? TEXT("+Depth") : TEXT(""), bSemantic ? TEXT("+Semantic") : TEXT(""), Out.X, Out.Y), Shader, Pass,
 		FComputeShaderUtils::GetGroupCount(FIntPoint(Out.X / 2, Out.Y), FIntPoint(8, 8)));
 	return Ids;
 }

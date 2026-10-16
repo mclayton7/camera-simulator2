@@ -9,6 +9,7 @@
 #include "RenderGraphUtils.h"
 #include "RenderingThread.h"
 #include "InstanceIdPass.h"
+#include "SemanticFrameParams.h"
 #include "SensorFrameParams.h"
 #include "Sensor/SensorOptics.h"
 
@@ -76,7 +77,8 @@ namespace
 	 *  With OutDepth, also the depth output (metres per output pixel) for InvDeviceZToWorldZ. */
 	TArray<uint32> RunInstanceIdOnGpu(const FIdTextures& Tex, FIntRect Rect, FIntPoint OutSize, const FSensorFrameParams& P,
 		const FWaterCut& Water = FWaterCut(), TArray<float>* OutDepth = nullptr,
-		FVector4f InvDeviceZToWorldZ = FVector4f(0.0f, 0.0f, 0.0f, 0.0f))
+		FVector4f InvDeviceZToWorldZ = FVector4f(0.0f, 0.0f, 0.0f, 0.0f),
+		const FSemanticFrameParams* Semantic = nullptr, const TArray<uint8>* LandCoverCodes = nullptr, TArray<uint32>* OutSemantic = nullptr)
 	{
 		TArray<uint32> Result;
 		ENQUEUE_RENDER_COMMAND(CamSimInstanceIdGpuTest)([&](FRHICommandListImmediate& RHICmdList)
@@ -87,6 +89,16 @@ namespace
 
 			FRHIGPUBufferReadback Rb(TEXT("CamSimTestInstanceIds"));
 			FRHIGPUBufferReadback DepthRb(TEXT("CamSimTestDepth"));
+			FRHIGPUBufferReadback SemRb(TEXT("CamSimTestSemantic"));
+			FTextureRHIRef LcTex;
+			if (Semantic && LandCoverCodes && Semantic->LandCoverTexels > 0)
+			{
+				const int32 N = static_cast<int32>(Semantic->LandCoverTexels);
+				const FRHITextureCreateDesc LcDesc = FRHITextureCreateDesc::Create2D(TEXT("CamSimTestLandCover"), N, N, PF_R8_UINT)
+					.SetFlags(ETextureCreateFlags::ShaderResource).SetInitialState(ERHIAccess::SRVMask);
+				LcTex = RHICmdList.CreateTexture(LcDesc);
+				RHICmdList.UpdateTexture2D(LcTex, 0, FUpdateTextureRegion2D(0, 0, 0, 0, N, N), N, LandCoverCodes->GetData());
+			}
 			const uint32 Bytes = static_cast<uint32>(OutSize.X * OutSize.Y / 2) * sizeof(uint32);
 			const uint32 DepthBytes = static_cast<uint32>(OutSize.X * OutSize.Y) * sizeof(float);
 			{
@@ -102,8 +114,12 @@ namespace
 				In.WaterPlanes = Water.Planes;
 				In.ClipToTranslatedWorld = Water.ClipToTranslatedWorld;
 				In.InvDeviceZToWorldZ = InvDeviceZToWorldZ;
+				In.Semantic = Semantic;
+				if (LcTex) In.LandCover = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(LcTex, TEXT("CamSimTestLandCover")));
 				FRDGBufferRef Depth = nullptr;
-				const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, In, P, OutDepth ? &Depth : nullptr);
+				FRDGBufferRef Sem = nullptr;
+				const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, In, P, OutDepth ? &Depth : nullptr, OutSemantic ? &Sem : nullptr);
+				if (OutSemantic) AddEnqueueCopyPass(GraphBuilder, &SemRb, Sem, Bytes);
 				AddEnqueueCopyPass(GraphBuilder, &Rb, Ids, Bytes);
 				if (OutDepth) AddEnqueueCopyPass(GraphBuilder, &DepthRb, Depth, DepthBytes);
 				GraphBuilder.Execute();
@@ -113,6 +129,12 @@ namespace
 			Result.SetNumUninitialized(Bytes / sizeof(uint32));
 			FMemory::Memcpy(Result.GetData(), Rb.Lock(Bytes), Bytes);
 			Rb.Unlock();
+			if (OutSemantic && SemRb.IsReady())
+			{
+				OutSemantic->SetNumUninitialized(Bytes / sizeof(uint32));
+				FMemory::Memcpy(OutSemantic->GetData(), SemRb.Lock(Bytes), Bytes);
+				SemRb.Unlock();
+			}
 			if (OutDepth && DepthRb.IsReady())
 			{
 				OutDepth->SetNumUninitialized(OutSize.X * OutSize.Y);
@@ -411,5 +433,122 @@ bool FInstanceIdDepthTest::RunTest(const FString& Parameters)
 	}
 	TestNearlyEqual(TEXT("entity texel"), Depth[2 * W + 3], NearCm / 0.5f * 0.01f, 1e-5f);
 	TestEqual(TEXT("sky maps to the far value"), Depth[0], 1.0e7f);
+	return true;
+}
+
+// ROADMAP 4D: WRITE_SEMANTIC. A camera at the translated-world origin looking along +X; scene depths spread the hit
+// points over a 16 x 16 window of 1 m land-cover texels holding every class's codes; a sky band, visible and hidden
+// entities, and the sea band on the lower rows; lens distortion on. Every output pixel's class must equal
+// CamSimSemanticRef::ClassifyTexel of its source texel (pixels within 1e-3 texel of a texel or band boundary, where
+// GPU and CPU float rounding may differ, are counted, not compared).
+#include "GroundTruth/SemanticClasses.h"
+#include "GroundTruth/SemanticReference.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSemanticGpuMatchesCpuTest, "CamSim.GPU.GroundTruth.Semantic.MatchesCpu",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSemanticGpuMatchesCpuTest::RunTest(const FString& Parameters)
+{
+	if (SkipWithoutGpu(*this)) return true;
+	constexpr int32 W = 64, H = 48, LcN = 16;
+	const double HalfFov = FMath::DegreesToRadians(30.0), MinZ = 10.0;
+	const FMatrix UeToView(FPlane(0, 0, 1, 0), FPlane(1, 0, 0, 0), FPlane(0, 1, 0, 0), FPlane(0, 0, 0, 1));
+	const FMatrix44f ClipToWorld = FMatrix44f((UeToView * FReversedZPerspectiveMatrix(HalfFov, double(W), double(H), MinZ)).Inverse());
+
+	FIdTextures Tex(W, H, 0.0f);
+	for (int32 Y = 0; Y < H; ++Y)
+	{
+		for (int32 X = 0; X < W; ++X)
+		{
+			const int32 I = Y * W + X;
+			const float DistCm = 200.0f + 37.0f * static_cast<float>((X * 7 + Y * 3) % 29);   // 2 m .. 12.4 m ahead
+			Tex.SceneDepth[I] = Y < 3 ? 0.0f : static_cast<float>(MinZ) / DistCm;            // rows 0-2: sky
+		}
+	}
+	for (int32 X = 10; X < 20; ++X) for (int32 Y = 10; Y < 16; ++Y)
+	{
+		const int32 I = Y * W + X;
+		Tex.Tag(X, Y, X < 15 ? 3 : 4, Tex.SceneDepth[I], X < 15 ? Tex.SceneDepth[I] : Tex.SceneDepth[I] * 2.0f);   // 4: hidden
+	}
+	TArray<uint8> Codes;
+	const uint8 Cycle[] = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100, 200, 201, 210, 220, 230, 17 };
+	for (int32 I = 0; I < LcN * LcN; ++I) Codes.Add(Cycle[(I * 5) % UE_ARRAY_COUNT(Cycle)]);
+
+	FSemanticFrameParams Sem;
+	Sem.bLandCover = 1;
+	Sem.LandCoverWindowId = 1;
+	Sem.LandCoverEast = FVector3f(1, 0, 0);
+	Sem.LandCoverNorth = FVector3f(0, 1, 0);
+	Sem.LandCoverCamOffsetM = FVector2f(-7.0f, 0.0f);
+	Sem.LandCoverTexelM = 1.0f;
+	Sem.LandCoverTexels = LcN;
+	Sem.bSea = 1;
+	Sem.Up = FVector3f(0, 0, 1);
+	Sem.CamHeightCm = 100.0f;
+	Sem.SeaRadiusCm = 6.371e8f;
+	Sem.WaterBandCm = 50.0f;
+	const TStaticArray<uint8, 256> Lut = CamSimSemantic::BuildCodeLut();
+	for (int32 I = 0; I < 256; ++I) Sem.CodeClass[I] = Lut[I];
+	Sem.StencilClass[3] = CamSimSemantic::Vehicle;
+	Sem.StencilClass[4] = CamSimSemantic::Vessel;
+
+	FSensorFrameParams P;
+	P.FocalPx = CamSimOptics::FocalPx(W, 60.0f);
+	P.K1 = -0.1f;
+	FWaterCut Cut;   // off; carries ClipToTranslatedWorld
+	Cut.ClipToTranslatedWorld = ClipToWorld;
+	TArray<uint32> Classes;
+	const TArray<uint32> Ids = RunInstanceIdOnGpu(Tex, FIntRect(0, 0, W, H), FIntPoint(W, H), P, Cut, nullptr,
+		FVector4f(0.0f, 0.0f, 0.0f, 0.0f), &Sem, &Codes, &Classes);
+	if (!TestEqual(TEXT("ids still written"), Ids.Num(), W * H / 2) || !TestEqual(TEXT("semantic buffer size"), Classes.Num(), W * H / 2)) return true;
+
+	const float F = P.FocalPx, HalfW = 0.5f * W, HalfH = 0.5f * H;
+	int32 Compared = 0, Boundary = 0, Mismatches = 0;
+	TMap<uint8, int32> Seen;
+	for (int32 Py = 0; Py < H; ++Py)
+	{
+		for (int32 Px = 0; Px < W; ++Px)
+		{
+			const float Xd = (Px + 0.5f - HalfW) / F, Yd = (Py + 0.5f - HalfH) / F;
+			const float Rd = FMath::Sqrt(Xd * Xd + Yd * Yd);
+			float S = 1.0f;
+			if (Rd > 0.0f) { float Ru; CamSimOptics::UndistortRadius(Rd, P.K1, P.K2, Ru); S = Ru / Rd; }
+			const float Sx = (Xd * S * F + HalfW) - 0.5f, Sy = (Yd * S * F + HalfH) - 0.5f;
+			uint8 Want = 0;
+			bool bNear = false;
+			if (Sx >= -0.5f && Sx <= W - 0.5f && Sy >= -0.5f && Sy <= H - 0.5f)
+			{
+				const int32 Tx = FMath::Clamp(FMath::FloorToInt32(Sx + 0.5f), 0, W - 1);
+				const int32 Ty = FMath::Clamp(FMath::FloorToInt32(Sy + 0.5f), 0, H - 1);
+				const int32 I = Ty * W + Tx;
+				const float SceneZ = Tex.SceneDepth[I];
+				const FVector4f Hc = ClipToWorld.TransformFVector4(FVector4f(((Tx + 0.5f) / W) * 2.0f - 1.0f, 1.0f - ((Ty + 0.5f) / H) * 2.0f, SceneZ, 1.0f));
+				const FVector3f Pw(Hc.X / Hc.W, Hc.Y / Hc.W, Hc.Z / Hc.W);
+				Want = CamSimSemanticRef::ClassifyTexel(Sem, SceneZ, Tex.CustomDepth[I], Tex.Stencil[I], Pw,
+					[&Codes](int32 X, int32 Y) { return Codes[Y * LcN + X]; });
+				if (SceneZ > 0.0f)
+				{
+					const float E = Pw.X / 100.0f + Sem.LandCoverCamOffsetM.X, N = Pw.Y / 100.0f;
+					const float Lx = E + LcN * 0.5f - 0.5f + 0.5f, Ly = LcN * 0.5f - N - 0.5f + 0.5f;
+					const float Height = Sem.CamHeightCm + Pw.Z + (Pw.X * Pw.X + Pw.Y * Pw.Y) / (2.0f * Sem.SeaRadiusCm);
+					bNear = FMath::Abs(Lx - FMath::RoundToFloat(Lx)) < 1e-3f || FMath::Abs(Ly - FMath::RoundToFloat(Ly)) < 1e-3f
+						|| FMath::Abs(Height - Sem.WaterBandCm) < 0.5f;
+				}
+			}
+			const uint32 Word = Classes[(Py * W + Px) / 2];
+			const uint8 Got = static_cast<uint8>(((Px % 2 == 0) ? Word : (Word >> 16)) & 0xFFu);
+			if (bNear) { ++Boundary; continue; }
+			++Compared;
+			Seen.FindOrAdd(Want)++;
+			if (Got != Want && ++Mismatches <= 20)
+			{
+				AddError(FString::Printf(TEXT("pixel (%d, %d): GPU class %u, CPU %u"), Px, Py, Got, Want));
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d pixels compared, %d at a boundary, %d distinct classes, %d mismatches"), Compared, Boundary, Seen.Num(), Mismatches));
+	TestEqual(TEXT("mismatches"), Mismatches, 0);
+	TestTrue(TEXT("sky, entities, water and several land classes exercised"), Seen.Contains(CamSimSemantic::Sky)
+		&& Seen.Contains(CamSimSemantic::Vehicle) && Seen.Contains(CamSimSemantic::Water) && Seen.Num() >= 8);
+	TestTrue(TEXT("boundary exclusions are rare"), Boundary < W * H / 20);
 	return true;
 }
