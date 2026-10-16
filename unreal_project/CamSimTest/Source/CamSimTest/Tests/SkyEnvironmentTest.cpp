@@ -17,6 +17,8 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
+#include "Time/SimClock.h"
+#include "Misc/ScopeExit.h"
 
 namespace
 {
@@ -64,6 +66,11 @@ bool FSkyEnvironmentWiringTest::RunTest(const FString&)
 	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
 	FWorldContext& Context = GEngine->CreateNewWorldContext(EWorldType::Game);
 	Context.SetCurrentWorld(World);
+	ON_SCOPE_EXIT
+	{
+		GEngine->DestroyWorldContext(World);
+		World->DestroyWorld(false);
+	};
 	ACesiumGeoreference* Geo = ACesiumGeoreference::GetDefaultGeoreference(World);
 	if (!TestNotNull(TEXT("georeference"), Geo)) return false;
 	Geo->SetOriginLongitudeLatitudeHeight(FVector(PendletonLon, PendletonLat, 0.0));   // longitude first
@@ -102,7 +109,7 @@ bool FSkyEnvironmentWiringTest::RunTest(const FString&)
 
 	TArray<UDirectionalLightComponent*> Moons = MoonLights(World);
 	TestEqual(TEXT("exactly one atmosphere light at index 1"), Moons.Num(), 1);
-	if (Moons.Num() != 1) { GEngine->DestroyWorldContext(World); World->DestroyWorld(false); return false; }
+	if (Moons.Num() != 1) return false;
 	UDirectionalLightComponent* Moon = Moons[0];
 	TestTrue(TEXT("moon light is an atmosphere light"), Moon->IsUsedAsAtmosphereSunLight());
 	TestFalse(TEXT("moon light casts no shadows on clouds"), static_cast<bool>(Moon->bCastShadowsOnClouds));
@@ -162,8 +169,89 @@ bool FSkyEnvironmentWiringTest::RunTest(const FString&)
 	TestTrue(TEXT("new moon: MPC MoonDir follows the jump"),
 		AngleDeg(Xyz(MpcVector(World, TEXT("MoonDir"))), FSkyDomeDriver::EnuToWorldDir(EsuToUnreal, E3.MoonEnu)) < 0.01);
 
-	GEngine->DestroyWorldContext(World);
-	World->DestroyWorld(false);
+	// 5. CIGI Sun Enable off: the sun light goes dark (enables re-applied; the test clock keeps the global one untouched).
+	{
+		FSimClock Clock;
+		FCigiCelestialState Cel;   // CIGI defaults: sun and moon on
+		Cel.Year = 2026; Cel.Month = 10; Cel.Day = 26; Cel.Hour = 19; Cel.Minute = 0;
+		Env->ApplyCelestialControlForTest(Cel, Clock);
+		Env->ApplySkyForTest(Noon);
+		TestTrue(TEXT("sun enabled: lit"), Sun->Intensity > 100000.0f);
+		Cel.bSunEn = false;
+		Env->ApplyCelestialControlForTest(Cel, Clock);
+		Env->ApplySkyForTest(Noon);
+		TestEqual(TEXT("CIGI Sun Enable off: sun intensity 0"), Sun->Intensity, 0.0f);
+	}
+	return true;
+}
+
+// Controller ruling (Task 8 review): a Celestial Sphere Control that only changes an enable must not rewind the running
+// clock to the packet's hh:mm; a date/time change still sets it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSkyCelestialClockTest, "CamSim.Environment.Sky.EnableChangeKeepsClock",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSkyCelestialClockTest::RunTest(const FString&)
+{
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	FWorldContext& Context = GEngine->CreateNewWorldContext(EWorldType::Game);
+	Context.SetCurrentWorld(World);
+	ON_SCOPE_EXIT
+	{
+		GEngine->DestroyWorldContext(World);
+		World->DestroyWorld(false);
+	};
+	ACamSimEnvironment* Env = World->SpawnActor<ACamSimEnvironment>();
+	if (!TestNotNull(TEXT("environment"), Env)) return false;
+
+	double MonoSec = 1000.0;
+	FSimClock Clock;
+	Clock.SetMonotonicSource([&MonoSec] { return MonoSec; });
+	FCigiCelestialState Cel;
+	Cel.Year = 2026; Cel.Month = 10; Cel.Day = 26; Cel.Hour = 7; Cel.Minute = 0;
+	Cel.bDateVld = true; Cel.bEphemerisEn = true;   // continuous: rate 1 without a subsystem
+	Env->ApplyCelestialControlForTest(Cel, Clock);
+	TestTrue(FString::Printf(TEXT("%s: %s vs %s"), TEXT("packet sets the clock"), *(Clock.NowUtc()).ToIso8601(), *(FDateTime(2026, 10, 26, 7, 0)).ToIso8601()), (Clock.NowUtc()) == (FDateTime(2026, 10, 26, 7, 0)));
+	MonoSec += 600.0;
+	const FDateTime Advanced = Clock.NowUtc();
+	TestTrue(FString::Printf(TEXT("%s: %s vs %s"), TEXT("clock runs 10 min"), *(Advanced).ToIso8601(), *(FDateTime(2026, 10, 26, 7, 10)).ToIso8601()), (Advanced) == (FDateTime(2026, 10, 26, 7, 10)));
+
+	Cel.bStarEn = !Cel.bStarEn;
+	Env->ApplyCelestialControlForTest(Cel, Clock);
+	TestTrue(FString::Printf(TEXT("%s: %s vs %s"), TEXT("star-enable-only packet leaves the clock"), *(Clock.NowUtc()).ToIso8601(), *(Advanced).ToIso8601()), (Clock.NowUtc()) == (Advanced));
+	Cel.StarInt = 0.3f; Cel.bMoonEn = false;
+	Env->ApplyCelestialControlForTest(Cel, Clock);
+	TestTrue(FString::Printf(TEXT("%s: %s vs %s"), TEXT("intensity/moon-only packet leaves the clock"), *(Clock.NowUtc()).ToIso8601(), *(Advanced).ToIso8601()), (Clock.NowUtc()) == (Advanced));
+
+	Cel.Minute = 30;
+	Env->ApplyCelestialControlForTest(Cel, Clock);
+	TestTrue(FString::Printf(TEXT("%s: %s vs %s"), TEXT("a time change still sets the clock"), *(Clock.NowUtc()).ToIso8601(), *(FDateTime(2026, 10, 26, 7, 30)).ToIso8601()), (Clock.NowUtc()) == (FDateTime(2026, 10, 26, 7, 30)));
+	return true;
+}
+
+// IAU 1976 precession (Meeus ch. 21) vs skyfield: Polaris J2000 (RA 37.954, Dec 89.264) on 2026-10-16 00:00 UTC, mean
+// equator and equinox of date from skyfield.precessionlib.compute_precession (IAU 2006): RA 46.761274, Dec 89.374499
+// (Meeus formulas in Python: RA 46.761768, Dec 89.374506, 0.03 arcsec apart; the J2000 → date shift is 0.152 deg).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSkyPrecessionTest, "CamSim.Environment.Sky.Precession",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSkyPrecessionTest::RunTest(const FString&)
+{
+	auto Eq = [](double RaDeg, double DecDeg)
+	{
+		const double Ra = FMath::DegreesToRadians(RaDeg), Dec = FMath::DegreesToRadians(DecDeg);
+		return FVector(FMath::Cos(Dec) * FMath::Cos(Ra), FMath::Cos(Dec) * FMath::Sin(Ra), FMath::Sin(Dec));
+	};
+	const double T = FSkyDomeDriver::CenturiesSinceJ2000(FDateTime(2026, 10, 16, 0, 0));
+	TestTrue(FString::Printf(TEXT("T = %.10f"), T), FMath::IsNearlyEqual(T, 0.2678850103, 1e-9));
+	FVector P[3];
+	FSkyDomeDriver::PrecessionJ2000ToDate(T, P);
+	const FVector J2000 = Eq(37.954, 89.264);
+	const FVector Date(P[0] | J2000, P[1] | J2000, P[2] | J2000);
+	const double Err = AngleDeg(Date, Eq(46.761274, 89.374499));
+	TestTrue(FString::Printf(TEXT("Polaris of date within 0.005 deg of skyfield (%.6f deg)"), Err), Err < 0.005);
+	TestTrue(TEXT("precession is not the identity (0.152 deg)"), FMath::Abs(AngleDeg(Date, J2000) - 0.152) < 0.002);
+	FVector P0[3];
+	FSkyDomeDriver::PrecessionJ2000ToDate(0.0, P0);
+	TestTrue(TEXT("T = 0: identity"), P0[0].Equals(FVector(1, 0, 0), 1e-15) && P0[1].Equals(FVector(0, 1, 0), 1e-15)
+		&& P0[2].Equals(FVector(0, 0, 1), 1e-15));
 	return true;
 }
 
@@ -192,7 +280,7 @@ bool FSkySiderealRotationTest::RunTest(const FString&)
 		for (const FCase& C : Cases)
 		{
 			FVector Rows[3];
-			FSkyDomeDriver::SkyRotationRows(M, C.Lat, C.Last, Rows);
+			FSkyDomeDriver::SkyRotationRows(M, C.Lat, C.Last, 0.0, Rows);   // J2000 = date: the sidereal part alone
 			// Rows are orthonormal, so world = transpose(rows) * equatorial.
 			auto ToWorld = [&](const FVector& Q) { return Rows[0] * Q.X + Rows[1] * Q.Y + Rows[2] * Q.Z; };
 			TestTrue(TEXT("rows orthonormal"), FMath::IsNearlyEqual(Rows[0].Size(), 1.0, 1e-9) && FMath::IsNearlyEqual(Rows[1].Size(), 1.0, 1e-9)
@@ -210,6 +298,22 @@ bool FSkySiderealRotationTest::RunTest(const FString&)
 			const FVector EastStar = ToWorld(Eq(C.Last + 90.0, 0.0));
 			TestTrue(FString::Printf(TEXT("lat %.1f LAST %.1f: RA = LAST + 90, Dec 0 due east on the horizon"), C.Lat, C.Last),
 				(EastStar | EastW) > 1.0 - 1e-9);
+
+			// 2026: the rows end in J2000 (the star texture): the J2000 vector of the of-date point (RA LAST, Dec lat) is at
+			// the zenith, while the unprecessed one is off by the precession shift there (up to ~0.36 deg; ~0 near the
+			// ecliptic pole, RA 270 Dec 66.6, which precession circles).
+			const double T = FSkyDomeDriver::CenturiesSinceJ2000(FDateTime(2026, 10, 16, 0, 0));
+			FVector Rows26[3], P[3];
+			FSkyDomeDriver::SkyRotationRows(M, C.Lat, C.Last, T, Rows26);
+			FSkyDomeDriver::PrecessionJ2000ToDate(T, P);
+			const FVector ZenDate = Eq(C.Last, C.Lat);
+			const FVector ZenJ2000 = P[0] * ZenDate.X + P[1] * ZenDate.Y + P[2] * ZenDate.Z;   // transpose: date → J2000
+			auto ToWorld26 = [&](const FVector& Q) { return Rows26[0] * Q.X + Rows26[1] * Q.Y + Rows26[2] * Q.Z; };
+			TestTrue(FString::Printf(TEXT("lat %.1f LAST %.1f 2026: precessed zenith"), C.Lat, C.Last), (ToWorld26(ZenJ2000) | UpW) > 1.0 - 1e-9);
+			const double Shift = AngleDeg(ZenDate, ZenJ2000);
+			const double Off = AngleDeg(ToWorld26(ZenDate), UpW);
+			TestTrue(FString::Printf(TEXT("lat %.1f LAST %.1f 2026: unprecessed off by the shift (%.4f vs %.4f deg)"), C.Lat, C.Last, Off, Shift),
+				FMath::Abs(Off - Shift) < 1e-5);
 		}
 	}
 	return true;

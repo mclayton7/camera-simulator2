@@ -147,7 +147,7 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 	}
 	if (bGotCelestial)
 	{
-		ApplyCelestialControl(CelState);
+		ApplyCelestialControl(CelState, FSimClock::Get());
 	}
 
 	// The sun and moon follow the sim clock; they move ~0.004-0.01 deg/s, so once a
@@ -269,17 +269,26 @@ FVector2D ACamSimEnvironment::ComputeSunPosition(
 // ApplyCelestialControl — CIGI Celestial Sphere Control → sim clock
 // -------------------------------------------------------------------------
 
-void ACamSimEnvironment::ApplyCelestialControl(const FCigiCelestialState& Cel)
+void ACamSimEnvironment::ApplyCelestialControl(const FCigiCelestialState& Cel, FSimClock& Clock)
 {
 	// Hosts may send the packet every frame: only a change moves the clock,
-	// otherwise time would stick at hh:mm:00.
-	if (!IsCelestialChange(bReceivedCelestial ? &LastCelestial : nullptr, Cel)) return;
+	// otherwise time would stick at hh:mm:00. An enable / star intensity change
+	// alone only re-applies the sky (ROADMAP 6A): it must not rewind the clock.
+	const FCigiCelestialState* Prev = bReceivedCelestial ? &LastCelestial : nullptr;
+	if (!IsCelestialChange(Prev, Cel)) return;
+	const bool bClockChange = IsCelestialClockChange(Prev, Cel);
 	LastCelestial = Cel;
 	bReceivedCelestial = true;
+	LastSunMicros = 0;  // re-apply the sky (date/time and enables) on this tick
+	if (!bClockChange)
+	{
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimEnvironment: Celestial Sphere Control -> sun %d moon %d stars %d (intensity %.2f)"),
+			Cel.bSunEn ? 1 : 0, Cel.bMoonEn ? 1 : 0, Cel.bStarEn ? 1 : 0, Cel.StarInt);
+		return;
+	}
 
 	// ICD 4.1.9: Hour/Minute/Date override the IG's date and time only when
 	// Date/Time Valid is set; Ephemeris Model Enable = continuous time of day.
-	FSimClock& Clock = FSimClock::Get();
 	if (Cel.bDateVld)
 	{
 		if (FDateTime::Validate(Cel.Year, Cel.Month, Cel.Day, Cel.Hour, Cel.Minute, 0, 0))
@@ -292,11 +301,18 @@ void ACamSimEnvironment::ApplyCelestialControl(const FCigiCelestialState& Cel)
 				Cel.Month, Cel.Day, Cel.Year, Cel.Hour, Cel.Minute);
 		}
 	}
-	Clock.SetRate(Cel.bEphemerisEn ? Subsystem->GetConfig().SimTimeRate : 0.0);
+	Clock.SetRate(Cel.bEphemerisEn ? (Subsystem ? Subsystem->GetConfig().SimTimeRate : 1.0) : 0.0);
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimEnvironment: Celestial Sphere Control -> sim time %s, %s"),
 		*Clock.NowUtc().ToIso8601(), Cel.bEphemerisEn ? TEXT("continuous") : TEXT("static"));
+}
 
-	LastSunMicros = 0;  // re-apply the sky (date/time and enables) on this tick
+bool ACamSimEnvironment::IsCelestialClockChange(const FCigiCelestialState* Prev, const FCigiCelestialState& Next)
+{
+	if (!Prev) return true;
+	const FCigiCelestialState& P = *Prev;
+	return Next.Hour != P.Hour || Next.Minute != P.Minute
+		|| Next.Day != P.Day || Next.Month != P.Month || Next.Year != P.Year
+		|| Next.bDateVld != P.bDateVld || Next.bEphemerisEn != P.bEphemerisEn;
 }
 
 bool ACamSimEnvironment::IsCelestialChange(const FCigiCelestialState* Prev, const FCigiCelestialState& Next)
@@ -304,9 +320,7 @@ bool ACamSimEnvironment::IsCelestialChange(const FCigiCelestialState* Prev, cons
 	if (!Prev) return true;
 	const FCigiCelestialState& P = *Prev;
 	const bool bSameStarInt = (P.StarInt == Next.StarInt) || (FMath::IsNaN(P.StarInt) && FMath::IsNaN(Next.StarInt));
-	return Next.Hour != P.Hour || Next.Minute != P.Minute
-		|| Next.Day != P.Day || Next.Month != P.Month || Next.Year != P.Year
-		|| Next.bDateVld != P.bDateVld || Next.bEphemerisEn != P.bEphemerisEn
+	return IsCelestialClockChange(Prev, Next)
 		|| Next.bSunEn != P.bSunEn || Next.bMoonEn != P.bMoonEn || Next.bStarEn != P.bStarEn
 		|| !bSameStarInt;
 }
@@ -433,6 +447,7 @@ void ACamSimEnvironment::ApplySky(const FDateTime& Utc)
 	double Lat = 0.0, Lon = 0.0, AltM = 0.0;
 	GetObserver(Lat, Lon, AltM);
 	LastEphem = FEphemeris::Compute(Utc, Lat, Lon, AltM);
+	LastSkyCenturiesJ2000 = FSkyDomeDriver::CenturiesSinceJ2000(Utc);
 	SunElevationDeg = static_cast<float>(LastEphem.SunElDeg);
 
 	UE_LOG(LogCamSim, Verbose, TEXT("ACamSimEnvironment: sim time %s  sun elev=%.1f az=%.1f  moon elev=%.1f az=%.1f"),
@@ -511,7 +526,7 @@ void ACamSimEnvironment::ApplySkyFrame()
 			SunLightComp->SetWorldRotation(FRotationMatrix::MakeFromX(-SunDir).ToQuat());
 		}
 	}
-	SkyDome.Update(LastEphem, LastIllum, LastEnables, EsuToUnreal, CameraWorld, Lat);
+	SkyDome.Update(LastEphem, LastIllum, LastEnables, EsuToUnreal, CameraWorld, Lat, LastSkyCenturiesJ2000);
 }
 
 void ACamSimEnvironment::UpdateCachedExposureBand()

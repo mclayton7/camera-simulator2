@@ -310,7 +310,7 @@ bool FCigiEnvironmentPacketsTest::RunTest(const FString& Parameters)
 			CelState.Hour, CelState.Minute),
 			CelState.Month == 3 && CelState.Day == 1 && CelState.Year == 2025 && CelState.Hour == 6 && CelState.Minute == 30);
 		TestTrue(TEXT("date valid, ephemeris off"), CelState.bDateVld && !CelState.bEphemerisEn);
-		TestEqual(TEXT("star intensity"), CelState.StarInt, 40.0f);
+		TestEqual(TEXT("star intensity: 40 % on the wire -> 0.4"), CelState.StarInt, 0.4f);
 	}
 	if (TestTrue(TEXT("Atmosphere received"), bAtm))
 	{

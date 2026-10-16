@@ -37,9 +37,10 @@ struct CAMSIMTEST_API FSkyDomeDriver
 	/** Spawns the dome component on Owner, loads the material, MPC and stars. Safe to call once. */
 	void Init(AActor* Owner, const FCamSimConfig::FCelestialConfig& Cfg);
 
-	/** Writes MPC_Sky and moves the dome to the camera. EsuToUnreal = Cesium's East-South-Up → UE at the camera. */
+	/** Writes MPC_Sky and moves the dome to the camera. EsuToUnreal = Cesium's East-South-Up → UE at the camera;
+	 *  CenturiesJ2000 = Julian centuries since J2000.0 of the sky's time (precession of the J2000 star texture). */
 	void Update(const FEphemerisResult& E, const FNightIlluminationResult& I, const FCelestialEnables& En,
-		const FMatrix& EsuToUnreal, const FVector& CameraWorld, double LatDeg);
+		const FMatrix& EsuToUnreal, const FVector& CameraWorld, double LatDeg, double CenturiesJ2000);
 
 	bool HasStars() const { return bHasStars; }
 	bool IsInitialized() const { return Dome != nullptr; }
@@ -50,11 +51,17 @@ struct CAMSIMTEST_API FSkyDomeDriver
 	/** ENU (E, N, U) → unit UE world direction through Cesium's East-South-Up matrix. */
 	static FVector EnuToWorldDir(const FMatrix& EsuToUnreal, const FVector3d& Enu);
 	/**
-	 * Rows of the UE world → equatorial rotation (x toward RA 0, y toward RA 90 deg, z the north celestial pole) at latitude
-	 * LatDeg and local sidereal time LastDeg: world → ENU (the ESU frame, South negated) → equatorial with the zenith at
-	 * (RA LAST, Dec latitude). MPC_Sky SkyRot0..2.
+	 * Rows of the UE world → J2000 equatorial rotation (x toward RA 0, y toward RA 90 deg, z the north celestial pole; the
+	 * star texture's frame) at latitude LatDeg, local sidereal time LastDeg and CenturiesJ2000: world → ENU (the ESU frame,
+	 * South negated) → equatorial of date with the zenith at (RA LAST, Dec latitude) → J2000 (inverse precession).
+	 * MPC_Sky SkyRot0..2.
 	 */
-	static void SkyRotationRows(const FMatrix& EsuToUnreal, double LatDeg, double LastDeg, FVector OutRows[3]);
+	static void SkyRotationRows(const FMatrix& EsuToUnreal, double LatDeg, double LastDeg, double CenturiesJ2000, FVector OutRows[3]);
+	/** IAU 1976 precession (Meeus, Astronomical Algorithms ch. 21: zeta, z, theta in T = Julian centuries since J2000.0):
+	 *  OutP (rows) maps a J2000 mean equatorial unit vector to the mean equator and equinox of date. */
+	static void PrecessionJ2000ToDate(double CenturiesJ2000, FVector OutP[3]);
+	/** Julian centuries since J2000.0 (JD 2451545.0) of a UTC instant (UT for TT: 70 s is 1e-4 arcsec of precession). */
+	static double CenturiesSinceJ2000(const FDateTime& Utc);
 
 private:
 	UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent>         Dome;

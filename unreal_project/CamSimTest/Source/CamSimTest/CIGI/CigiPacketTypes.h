@@ -189,7 +189,7 @@ struct FCigiCelestialState
 	uint8  Day        = 21;    // 1-31
 	uint16 Year       = 2024;
 
-	float  StarInt    = 0.0f;  // Star field intensity (0.0 - 1.0)
+	float  StarInt    = 0.0f;  // Star field intensity 0.0 - 1.0 (the wire carries percent 0-100; CigiReceiver divides by 100)
 
 	bool   bEphemerisEn = true;   // Enable ephemeris model
 	bool   bSunEn       = true;   // Enable sun

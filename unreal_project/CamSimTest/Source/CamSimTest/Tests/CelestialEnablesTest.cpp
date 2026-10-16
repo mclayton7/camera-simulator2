@@ -60,6 +60,22 @@ bool FCelestialChangeTest::RunTest(const FString&)
 	TestTrue(TEXT("moon enable"), Changed([](FCigiCelestialState& S) { S.bMoonEn = !S.bMoonEn; }));
 	TestTrue(TEXT("star enable"), Changed([](FCigiCelestialState& S) { S.bStarEn = !S.bStarEn; }));
 	TestTrue(TEXT("star intensity"), Changed([](FCigiCelestialState& S) { S.StarInt = 0.5f; }));
+	// Only date/time, Date Valid and Ephemeris move the clock; enables and intensity only re-apply the sky.
+	auto ClockChanged = [&](TFunctionRef<void(FCigiCelestialState&)> Edit)
+	{
+		FCigiCelestialState B = A;
+		Edit(B);
+		return ACamSimEnvironment::IsCelestialClockChange(&A, B);
+	};
+	TestTrue(TEXT("first packet moves the clock"), ACamSimEnvironment::IsCelestialClockChange(nullptr, A));
+	TestTrue(TEXT("clock: minute"),     ClockChanged([](FCigiCelestialState& S) { S.Minute = 7; }));
+	TestTrue(TEXT("clock: day"),        ClockChanged([](FCigiCelestialState& S) { S.Day = 9; }));
+	TestTrue(TEXT("clock: date valid"), ClockChanged([](FCigiCelestialState& S) { S.bDateVld = !S.bDateVld; }));
+	TestTrue(TEXT("clock: ephemeris"),  ClockChanged([](FCigiCelestialState& S) { S.bEphemerisEn = !S.bEphemerisEn; }));
+	TestFalse(TEXT("clock: sun enable is not"),     ClockChanged([](FCigiCelestialState& S) { S.bSunEn = !S.bSunEn; }));
+	TestFalse(TEXT("clock: moon enable is not"),    ClockChanged([](FCigiCelestialState& S) { S.bMoonEn = !S.bMoonEn; }));
+	TestFalse(TEXT("clock: star enable is not"),    ClockChanged([](FCigiCelestialState& S) { S.bStarEn = !S.bStarEn; }));
+	TestFalse(TEXT("clock: star intensity is not"), ClockChanged([](FCigiCelestialState& S) { S.StarInt = 0.5f; }));
 	{
 		FCigiCelestialState N1 = A, N2 = A;
 		N1.StarInt = NAN; N2.StarInt = NAN;

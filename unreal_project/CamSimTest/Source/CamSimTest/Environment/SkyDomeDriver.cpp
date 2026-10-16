@@ -42,7 +42,40 @@ FVector FSkyDomeDriver::EnuToWorldDir(const FMatrix& EsuToUnreal, const FVector3
 	return EsuToUnreal.TransformVector(FVector(Enu.X, -Enu.Y, Enu.Z)).GetSafeNormal();
 }
 
-void FSkyDomeDriver::SkyRotationRows(const FMatrix& EsuToUnreal, double LatDeg, double LastDeg, FVector OutRows[3])
+double FSkyDomeDriver::CenturiesSinceJ2000(const FDateTime& Utc)
+{
+	return (FEphemeris::JulianDayUtc(Utc) - 2451545.0) / 36525.0;
+}
+
+void FSkyDomeDriver::PrecessionJ2000ToDate(double T, FVector OutP[3])
+{
+	// Meeus (21.2): zeta, z, theta in arcseconds for a J2000.0 starting epoch.
+	const double ArcsecToRad = UE_DOUBLE_PI / (180.0 * 3600.0);
+	const double Zeta  = (2306.2181 * T + 0.30188 * T * T + 0.017998 * T * T * T) * ArcsecToRad;
+	const double Z     = (2306.2181 * T + 1.09468 * T * T + 0.018203 * T * T * T) * ArcsecToRad;
+	const double Theta = (2004.3109 * T - 0.42665 * T * T - 0.041833 * T * T * T) * ArcsecToRad;
+	// (21.4) as rotations: v_date = Rz(z) · R(theta) · Rz(zeta) · v_J2000, Rz(a) adding a to the right ascension and
+	// R(theta) = [[cos, 0, -sin], [0, 1, 0], [sin, 0, cos]] (A, B, C of Meeus).
+	auto Rz = [](double A) { const double C = FMath::Cos(A), S = FMath::Sin(A); return FMatrix(FPlane(C, -S, 0, 0), FPlane(S, C, 0, 0), FPlane(0, 0, 1, 0), FPlane(0, 0, 0, 1)); };
+	const double Ct = FMath::Cos(Theta), St = FMath::Sin(Theta);
+	const FMatrix Rt(FPlane(Ct, 0, -St, 0), FPlane(0, 1, 0, 0), FPlane(St, 0, Ct, 0), FPlane(0, 0, 0, 1));
+	// FMatrix rows written as above are math rows; compose M = Rz(z) · Rt · Rz(zeta) with row-major products.
+	auto Mul = [](const FMatrix& A, const FMatrix& B)
+	{
+		FMatrix R = FMatrix::Identity;
+		for (int32 i = 0; i < 3; ++i)
+			for (int32 j = 0; j < 3; ++j)
+				R.M[i][j] = A.M[i][0] * B.M[0][j] + A.M[i][1] * B.M[1][j] + A.M[i][2] * B.M[2][j];
+		return R;
+	};
+	const FMatrix P = Mul(Mul(Rz(Z), Rt), Rz(Zeta));
+	for (int32 i = 0; i < 3; ++i)
+	{
+		OutP[i] = FVector(P.M[i][0], P.M[i][1], P.M[i][2]);
+	}
+}
+
+void FSkyDomeDriver::SkyRotationRows(const FMatrix& EsuToUnreal, double LatDeg, double LastDeg, double CenturiesJ2000, FVector OutRows[3])
 {
 	// World → ENU: the components of a world direction along East, North, Up.
 	const FVector EastW  = EnuToWorldDir(EsuToUnreal, FVector3d(1, 0, 0));
@@ -56,9 +89,17 @@ void FSkyDomeDriver::SkyRotationRows(const FMatrix& EsuToUnreal, double LatDeg, 
 	const FVector EastEq(-SinT, CosT, 0.0);
 	const FVector NorthEq(-SinP * CosT, -SinP * SinT, CosP);
 	const FVector ZenEq(CosP * CosT, CosP * SinT, SinP);
+	FVector DateRows[3];   // world → equatorial of date
 	for (int32 i = 0; i < 3; ++i)
 	{
-		OutRows[i] = EastEq[i] * EastW + NorthEq[i] * NorthW + ZenEq[i] * UpW;
+		DateRows[i] = EastEq[i] * EastW + NorthEq[i] * NorthW + ZenEq[i] * UpW;
+	}
+	// Of date → J2000 is the transpose of the precession: J2000 row i = sum_k P[k][i] · date row k.
+	FVector P[3];
+	PrecessionJ2000ToDate(CenturiesJ2000, P);
+	for (int32 i = 0; i < 3; ++i)
+	{
+		OutRows[i] = P[0][i] * DateRows[0] + P[1][i] * DateRows[1] + P[2][i] * DateRows[2];
 	}
 }
 
@@ -132,7 +173,7 @@ void FSkyDomeDriver::SetVector(UWorld* World, const TCHAR* Name, const FLinearCo
 }
 
 void FSkyDomeDriver::Update(const FEphemerisResult& E, const FNightIlluminationResult& I, const FCelestialEnables& En,
-	const FMatrix& EsuToUnreal, const FVector& CameraWorld, double LatDeg)
+	const FMatrix& EsuToUnreal, const FVector& CameraWorld, double LatDeg, double CenturiesJ2000)
 {
 	if (!Dome || !Mpc) return;
 	UWorld* World = Dome->GetWorld();
@@ -151,7 +192,7 @@ void FSkyDomeDriver::Update(const FEphemerisResult& E, const FNightIlluminationR
 	const double LumScale = (bMoon && Omega > 0.0) ? I.MoonToaLux / Omega / FMoonDisc::MeanShading(E.MoonPhaseAngleDeg) : 0.0;
 
 	FVector Rows[3];
-	SkyRotationRows(EsuToUnreal, LatDeg, E.LocalSiderealDeg, Rows);
+	SkyRotationRows(EsuToUnreal, LatDeg, E.LocalSiderealDeg, CenturiesJ2000, Rows);
 
 	SetVector(World, TEXT("MoonDir"), FLinearColor(MoonDir.X, MoonDir.Y, MoonDir.Z, 0.0f));
 	SetVector(World, TEXT("SunDir"), FLinearColor(SunDir.X, SunDir.Y, SunDir.Z, 0.0f));

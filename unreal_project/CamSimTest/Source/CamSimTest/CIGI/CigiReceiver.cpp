@@ -507,7 +507,7 @@ static void PreParseEnvPackets(const uint8* Buf, int32 Len, FCigiReceiver* Recei
 			State.Month        = static_cast<uint8>(Date / 1000000);
 			State.Day          = static_cast<uint8>((Date / 10000) % 100);
 			State.Year         = static_cast<uint16>(Date % 10000);
-			State.StarInt      = R.F32(P + 12);
+			State.StarInt      = R.F32(P + 12) / 100.0f;   // ICD 4.1.9: percent; FCigiCelestialState holds 0..1
 			Receiver->CelestialQueue.Enqueue(State);
 		}
 		else if (PktId == CIGI_ATMOS_CTRL_PACKET_ID_V3 && PktSize >= 32)

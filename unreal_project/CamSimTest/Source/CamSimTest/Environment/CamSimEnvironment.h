@@ -23,6 +23,7 @@ class AVolumetricCloud;
 class ACesiumSunSky;
 class UCamSimSubsystem;
 class ACamSimCamera;
+class FSimClock;
 
 /**
  * ACamSimEnvironment
@@ -103,11 +104,16 @@ public:
 	 * packet every frame; only a change moves the clock and re-applies the sky.
 	 */
 	static bool IsCelestialChange(const FCigiCelestialState* Prev, const FCigiCelestialState& Next);
+	/** The part of IsCelestialChange that moves the sim clock: date/time, Date Valid, Ephemeris Enable. An enable or
+	 *  intensity change alone only re-applies the sky (it must not rewind the clock to the packet's hh:mm). */
+	static bool IsCelestialClockChange(const FCigiCelestialState* Prev, const FCigiCelestialState& Next);
 
 #if WITH_DEV_AUTOMATION_TESTS
 	/** Test hook (CamSim.Environment.Sky.*): sets the sky up if BeginPlay didn't (no subsystem in a test world) and applies
 	 *  it for Utc at the georeference origin. */
 	void ApplySkyForTest(const FDateTime& Utc);
+	/** Test hook: a Celestial Sphere Control against Clock (sim time rate 1 without a subsystem). */
+	void ApplyCelestialControlForTest(const FCigiCelestialState& Cel, FSimClock& Clock) { ApplyCelestialControl(Cel, Clock); }
 #endif
 
 private:
@@ -128,6 +134,7 @@ private:
 	FEphemerisResult LastEphem;
 	FNightIlluminationResult LastIllum;
 	FCelestialEnables LastEnables;
+	double LastSkyCenturiesJ2000 = 0.0;   // the last ApplySky's time (star precession)
 	bool bSkySetUp = false;
 	bool bSkyApplied = false;
 
@@ -155,8 +162,8 @@ private:
 	// Ocean (ROADMAP 2.6)
 	FOceanManager OceanManager;
 
-	/** CIGI Celestial Sphere Control → sim clock date/time and rate. */
-	void ApplyCelestialControl(const FCigiCelestialState& Cel);
+	/** CIGI Celestial Sphere Control → sim clock date/time and rate (on a clock change) and the celestial enables. */
+	void ApplyCelestialControl(const FCigiCelestialState& Cel, FSimClock& Clock);
 	/** Lights and moon for a UTC time (ROADMAP 6A): ephemeris, illumination, light intensities and visibility. The
 	 *  directions and MPC_Sky follow in ApplySkyFrame (every tick). */
 	void ApplySky(const FDateTime& Utc);
