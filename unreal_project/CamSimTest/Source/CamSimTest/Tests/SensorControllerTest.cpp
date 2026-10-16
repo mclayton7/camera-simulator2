@@ -65,6 +65,36 @@ bool FSensorAeNightTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ROADMAP 6A: UE's pre-exposure follows the AE's uncapped target, so a night scene (gain at its cap) still sits near
+// target grey in UE's pre-exposed fp16 / R11G11B10 buffers and TSR history, which otherwise quantize and hold stale light
+// after the scene darkens (night_check.py N2). By day (AE inside its limits) it is the sensor gain exactly.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorSceneExposureTest, "CamSim.Sensor.Controller.SceneExposureFollowsUncappedTarget",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorSceneExposureTest::RunTest(const FString& Parameters)
+{
+	{
+		FSensorController C;
+		const FSensorHistogram H = Flat(12.0f, 1);   // daylight: inside the limits
+		C.Update(In(&H, 1), EoCfg());
+		TestEqual(TEXT("day: scene exposure = sensor gain"), C.GetSceneExposureEv(), C.GetGainEv());
+	}
+	{
+		FSensorController C;
+		const float SceneLog2 = FSensorHistogram::BinCentreLog2(FSensorHistogram::BinOf(FMath::Exp2(-10.0f)));
+		const FSensorHistogram H = Flat(-10.0f, 1);  // night: the gain is capped at -6, the target ~7.5 EV above it
+		C.Update(In(&H, 1), EoCfg());
+		TestEqual(TEXT("night: gain capped"), C.GetGainEv(), -6.0f, 1e-4f);
+		TestEqual(TEXT("night: scene exposed to target grey"), C.GetSceneExposureEv(), FMath::Log2(0.18f) - SceneLog2, 1e-3f);
+	}
+	{
+		FSensorController C;
+		const FSensorHistogram H = Flat(-15.9f, 1);  // darker than the boost allows
+		C.Update(In(&H, 1), EoCfg());
+		TestEqual(TEXT("boost capped"), C.GetSceneExposureEv(), C.GetGainEv() + FSensorController::MaxSceneExposureBoostEv, 1e-4f);
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorAeSaturatedTest, "CamSim.Sensor.Controller.SaturatedHistogramHitsMinGain",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorAeSaturatedTest::RunTest(const FString& Parameters)

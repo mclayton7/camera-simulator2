@@ -465,10 +465,11 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	FMemory::Memcpy(Params.PsfTaps, O.PsfTaps, sizeof(Params.PsfTaps));
 	Params.NumPsfTaps         = O.NumPsfTaps;
 
-	// Keep UE's pre-exposure near the sensor gain so scene colour stays in fp16 range. Thermal: the sensor gain acts on
-	// radiance, not on scene colour, so UE's exposure is fixed (ThermalCS only reads colour for the solar term and
-	// divides PreExposure back out).
-	Sensor->PostProcessSettings.AutoExposureBias = bThermal ? ThermalUeExposureEv : SensorController.GetGainEv() + UeExposureOffsetEv;
+	// Keep UE's pre-exposure near the AE's target so scene colour stays in fp16 range: the sensor gain by day, the
+	// uncapped target at night (6A: a capped gain left night scene colour at fp16's floor, where TSR history held stale
+	// light). Thermal: the sensor gain acts on radiance, not on scene colour, so UE's exposure is fixed (ThermalCS only
+	// reads colour for the solar term and divides PreExposure back out).
+	Sensor->PostProcessSettings.AutoExposureBias = bThermal ? ThermalUeExposureEv : SensorController.GetSceneExposureEv() + UeExposureOffsetEv;
 	// Thermal radiance through TSR needs RGBA16F output/history (R11G11B10 quantizes it far above the detector NETD).
 	ThermalTsrAlpha.Update(bThermal, FThermalTsrAlpha::FindCVar());
 

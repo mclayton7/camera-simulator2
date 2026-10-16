@@ -40,6 +40,15 @@ public:
 	 *  (* DisplayGain in IR AGC, i.e. the AGC stretch on absolute signal). */
 	float  GetGainEv() const          { return LastEmittedGainEv; }
 	float  GetLastMedianLog2() const  { return LastMedianLog2; }
+	/** UE's pre-exposure for the scene buffers (AutoExposureBias, EV; ROADMAP 6A): the AE's target without the photon /
+	 *  analog cap, at most MaxSceneExposureBoostEv above the emitted gain. Equal to GetGainEv() while the AE is inside its
+	 *  limits (daylight); at night, with the gain capped, it keeps scene colour near target grey, so UE's pre-exposed fp16 /
+	 *  R11G11B10 buffers and TSR history do not quantize (they held stale moonlight after the moon set). The sensor graph
+	 *  divides PreExposure back out, so the image does not depend on it. IR AGC: the emitted gain. */
+	float  GetSceneExposureEv() const { return LastSceneExposureEv; }
+	/** Cap on the scene exposure above the sensor gain: anything that overflows fp16 (65504) after the boost is past the
+	 *  sensor's clip anyway (2^15 < 65504). */
+	static constexpr float MaxSceneExposureBoostEv = 15.0f;
 	uint32 GetStaleEpisodes() const   { return StaleEpisodes; }
 	/** Integration time (ms) of the photon gain emitted last tick on a radiometric mode (ROADMAP 9.4); 0 otherwise. */
 	float  GetIntegrationMs() const   { return LastIntegrationMs; }
@@ -75,6 +84,9 @@ private:
 	 *  disturbs this one's converged exposure. */
 	float  GainEvByMode[3] = { -12.0f, -12.0f, RadianceSeedGainEv };
 	float  LastEmittedGainEv = -12.0f; // log2 of the gain actually emitted last tick
+	/** Per slot: the AE target before the gain cap (smoothed like GainEvByMode), for GetSceneExposureEv. */
+	float  SceneEvByMode[3] = { -12.0f, -12.0f, RadianceSeedGainEv };
+	float  LastSceneExposureEv = -12.0f;
 	float  IrLoLog2        = 0.0f;
 	float  IrHiLog2        = 1.0f;
 	float  LastMedianLog2  = 0.0f;

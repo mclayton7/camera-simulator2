@@ -105,9 +105,13 @@ void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeCon
 	{
 		return;  // empty histogram: keep the current gain
 	}
-	Target = FMath::Clamp(Target, E.MinGainEv, TotalGainCapEv(Cfg, E));
+	const float Cap = TotalGainCapEv(Cfg, E);
+	const float A = Smoothing(In.DeltaSimSec, E.LagFrames, bSnap);
+	float& SceneEv = SceneEvByMode[SlotOf(In)];
+	SceneEv += (FMath::Clamp(Target, E.MinGainEv, Cap + MaxSceneExposureBoostEv) - SceneEv) * A;
+	Target = FMath::Clamp(Target, E.MinGainEv, Cap);
 	float& GainEv = GainEvByMode[SlotOf(In)];
-	GainEv += (Target - GainEv) * Smoothing(In.DeltaSimSec, E.LagFrames, bSnap);
+	GainEv += (Target - GainEv) * A;
 }
 
 void FSensorController::UpdateIrAgc(const FSensorHistogram& H, const FSensorModeConfig& Cfg,
@@ -232,10 +236,12 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 			P.DisplayOffset = -LoN * P.DisplayGain;
 		}
 		LastEmittedGainEv = FMath::Log2(N * P.DisplayGain);
+		LastSceneExposureEv = LastEmittedGainEv;
 	}
 	else
 	{
 		LastEmittedGainEv = TotalEv;
+		LastSceneExposureEv = FMath::Clamp(SceneEvByMode[Slot], TotalEv, TotalEv + MaxSceneExposureBoostEv);
 	}
 	return P;
 }
