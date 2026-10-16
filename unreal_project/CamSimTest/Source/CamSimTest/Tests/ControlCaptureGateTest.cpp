@@ -26,11 +26,9 @@ namespace
 	}
 }
 
-#define CAPTURE_GATE_TEST(Class, Name) \
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(Class, "CamSim.ControlApi.CaptureGate." Name, \
-		EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-CAPTURE_GATE_TEST(FCaptureGateFiresTest, "FiresAfterSettleFrames")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGateFiresTest,
+	"CamSim.ControlApi.CaptureGate.FiresAfterSettleFrames",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FCaptureGateFiresTest::RunTest(const FString& Parameters)
 {
 	FControlCaptureGate G;
@@ -54,7 +52,9 @@ bool FCaptureGateFiresTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CAPTURE_GATE_TEST(FCaptureGateTilesTest, "WaitsForTiles")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGateTilesTest,
+	"CamSim.ControlApi.CaptureGate.WaitsForTiles",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FCaptureGateTilesTest::RunTest(const FString& Parameters)
 {
 	FControlCaptureGate G;
@@ -68,7 +68,9 @@ bool FCaptureGateTilesTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CAPTURE_GATE_TEST(FCaptureGateTerrainVegTest, "WaitsForTerrainAndVegetation")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGateTerrainVegTest,
+	"CamSim.ControlApi.CaptureGate.WaitsForTerrainAndVegetation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FCaptureGateTerrainVegTest::RunTest(const FString& Parameters)
 {
 	FControlCaptureGate G;
@@ -86,7 +88,9 @@ bool FCaptureGateTerrainVegTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CAPTURE_GATE_TEST(FCaptureGateCommandTest, "ResetsOnCommand")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGateCommandTest,
+	"CamSim.ControlApi.CaptureGate.ResetsOnCommand",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FCaptureGateCommandTest::RunTest(const FString& Parameters)
 {
 	FControlCaptureGate G;
@@ -105,7 +109,9 @@ bool FCaptureGateCommandTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CAPTURE_GATE_TEST(FCaptureGateZeroTest, "ZeroSettleFiresImmediately")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGateZeroTest,
+	"CamSim.ControlApi.CaptureGate.ZeroSettleFiresImmediately",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FCaptureGateZeroTest::RunTest(const FString& Parameters)
 {
 	FControlCaptureGate G;
@@ -114,7 +120,9 @@ bool FCaptureGateZeroTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CAPTURE_GATE_TEST(FCaptureGateTimeoutTest, "TimesOutOnce")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGateTimeoutTest,
+	"CamSim.ControlApi.CaptureGate.TimesOutOnce",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FCaptureGateTimeoutTest::RunTest(const FString& Parameters)
 {
 	FControlCaptureGate G;
@@ -130,7 +138,9 @@ bool FCaptureGateTimeoutTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CAPTURE_GATE_TEST(FCaptureGateReasonTest, "ReasonText")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGateReasonTest,
+	"CamSim.ControlApi.CaptureGate.ReasonText",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FCaptureGateReasonTest::RunTest(const FString& Parameters)
 {
 	FControlCaptureGate G;
@@ -140,5 +150,3 @@ bool FCaptureGateReasonTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("settling progress"), G.PendingReason(), FString(TEXT("settling 12/30")));
 	return true;
 }
-
-#undef CAPTURE_GATE_TEST

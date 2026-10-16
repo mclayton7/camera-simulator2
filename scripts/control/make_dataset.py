@@ -36,7 +36,8 @@ def parse_types(text: str) -> list[EntitySpec]:
 
 def generate(client: Client, out: Path, count: int, seed: int, site: tuple[float, float], ground_alt: float,
              modes: list[str], types: list[EntitySpec], categories: dict[int, str], settle_frames: int | None = None,
-             log: Callable[[str], None] = print) -> Path:
+             warmup_frames: int = 0, log: Callable[[str], None] = print) -> Path:
+    """warmup_frames > 0: one discarded capture of sample 0's first view before the first sample."""
     writer = DatasetWriter(out, categories)
     client.set_clock(lockstep=True)
     for i in range(count):
@@ -47,6 +48,9 @@ def generate(client: Client, out: Path, count: int, seed: int, site: tuple[float
             client.put_entity(n, **e)
         client.set_environment(**s.environment)
         client.set_clock(utc=s.utc)
+        if i == 0 and warmup_frames > 0 and modes:
+            client.set_camera(**s.camera, sensor={"mode": modes[0]})
+            client.capture(settle_frames=warmup_frames)
         for mode in modes:
             client.set_camera(**s.camera, sensor={"mode": mode})
             cap = client.capture(settle_frames=settle_frames)
@@ -69,6 +73,7 @@ def main() -> int:
     ap.add_argument("--types", default="2001:ground", help="TYPE[:SURFACE],... (surface none|ground|water)")
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="camsim_config.yaml for category names")
     ap.add_argument("--settle-frames", type=int, default=None)
+    ap.add_argument("--warmup-frames", type=int, default=0, help="one discarded capture of this many settle frames first")
     ap.add_argument("--base", default="http://127.0.0.1:8080")
     args = ap.parse_args()
 
@@ -77,7 +82,7 @@ def main() -> int:
     client.wait_ready()
     path = generate(client, args.out, args.count, args.seed, (lat, lon), args.ground_alt,
                     [m.strip() for m in args.modes.split(",")], parse_types(args.types),
-                    load_categories(args.config), args.settle_frames)
+                    load_categories(args.config), args.settle_frames, args.warmup_frames)
     print(f"dataset: {path}")
     return 0
 

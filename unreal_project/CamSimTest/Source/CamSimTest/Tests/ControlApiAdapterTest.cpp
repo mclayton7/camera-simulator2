@@ -36,11 +36,9 @@ namespace
 	}
 }
 
-#define ADAPTER_TEST(Class, Name) \
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(Class, "CamSim.ControlApi.Adapter." Name, \
-		EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-ADAPTER_TEST(FAdapterNewEntityTest, "NewEntityNeedsTypeAndPose")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAdapterNewEntityTest,
+	"CamSim.ControlApi.Adapter.NewEntityNeedsTypeAndPose",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FAdapterNewEntityTest::RunTest(const FString& Parameters)
 {
 	FControlApiAdapter A;
@@ -54,7 +52,9 @@ bool FAdapterNewEntityTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ADAPTER_TEST(FAdapterResubmitTest, "ResubmitsEveryPoll")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAdapterResubmitTest,
+	"CamSim.ControlApi.Adapter.ResubmitsEveryPoll",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FAdapterResubmitTest::RunTest(const FString& Parameters)
 {
 	FControlApiAdapter A;
@@ -75,7 +75,9 @@ bool FAdapterResubmitTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ADAPTER_TEST(FAdapterPartialTest, "PartialUpdateKeepsState")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAdapterPartialTest,
+	"CamSim.ControlApi.Adapter.PartialUpdateKeepsState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FAdapterPartialTest::RunTest(const FString& Parameters)
 {
 	FControlApiAdapter A;
@@ -95,7 +97,9 @@ bool FAdapterPartialTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ADAPTER_TEST(FAdapterRemoveTest, "RemoveSubmitsOnce")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAdapterRemoveTest,
+	"CamSim.ControlApi.Adapter.RemoveSubmitsOnce",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FAdapterRemoveTest::RunTest(const FString& Parameters)
 {
 	FControlApiAdapter A;
@@ -121,7 +125,9 @@ bool FAdapterRemoveTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ADAPTER_TEST(FAdapterComponentsTest, "ComponentsOnce")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAdapterComponentsTest,
+	"CamSim.ControlApi.Adapter.ComponentsOnce",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FAdapterComponentsTest::RunTest(const FString& Parameters)
 {
 	FControlApiAdapter A;
@@ -140,7 +146,9 @@ bool FAdapterComponentsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ADAPTER_TEST(FAdapterCommandFrameTest, "CommandFrame")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAdapterCommandFrameTest,
+	"CamSim.ControlApi.Adapter.CommandFrame",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FAdapterCommandFrameTest::RunTest(const FString& Parameters)
 {
 	FControlApiAdapter A;
@@ -153,5 +161,3 @@ bool FAdapterCommandFrameTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("a put notes the current frame"), A.WasCommandedThisFrame(GFrameCounter));
 	return true;
 }
-
-#undef ADAPTER_TEST

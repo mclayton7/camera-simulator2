@@ -419,7 +419,13 @@ void ACamSimCamera::ApplyControlCamera(const FControlCameraCommand& Cmd)
 	}
 	if (Cmd.View)
 	{
-		if (Cmd.View->HFovDeg) SceneCapture->FOVAngle = ClampHFov(*Cmd.View->HFovDeg);
+		if (Cmd.View->HFovDeg)
+		{
+			SceneCapture->FOVAngle = ClampHFov(*Cmd.View->HFovDeg);
+			// Now, not at the next tick: the API answers with the camera state it just set.
+			Telemetry.SetFieldOfView(SceneCapture->FOVAngle,
+				CamSimTelemetry::VerticalFovDeg(SceneCapture->FOVAngle, Cfg.CaptureWidth, Cfg.CaptureHeight));
+		}
 		GimbalComp->ApplyView(*Cmd.View, 0.0f, Cfg);
 		SceneCapture->SetRelativeRotation(GimbalComp->GetGimbalRelativeRotation());
 		Telemetry.SetGimbal(GimbalComp->GetGimbalYaw(), GimbalComp->GetGimbalPitch(), GimbalComp->GetGimbalRoll());

@@ -173,11 +173,9 @@ namespace
 	};
 }
 
-#define ROUTES_TEST(Class, Name) \
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(Class, "CamSim.ControlApi.Routes." Name, \
-		EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-ROUTES_TEST(FRoutesStatusTest, "StatusShape")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRoutesStatusTest,
+	"CamSim.ControlApi.Routes.StatusShape",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FRoutesStatusTest::RunTest(const FString& Parameters)
 {
 	FHarness H;
@@ -194,7 +192,9 @@ bool FRoutesStatusTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ROUTES_TEST(FRoutesClockTest, "ClockLockstepAndStep")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRoutesClockTest,
+	"CamSim.ControlApi.Routes.ClockLockstepAndStep",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FRoutesClockTest::RunTest(const FString& Parameters)
 {
 	FHarness H;
@@ -213,7 +213,9 @@ bool FRoutesClockTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ROUTES_TEST(FRoutesEntityTest, "EntityCrud")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRoutesEntityTest,
+	"CamSim.ControlApi.Routes.EntityCrud",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FRoutesEntityTest::RunTest(const FString& Parameters)
 {
 	FHarness H;
@@ -234,7 +236,9 @@ bool FRoutesEntityTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ROUTES_TEST(FRoutesCameraTest, "CameraOwnership")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRoutesCameraTest,
+	"CamSim.ControlApi.Routes.CameraOwnership",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FRoutesCameraTest::RunTest(const FString& Parameters)
 {
 	FHarness H;
@@ -256,7 +260,9 @@ bool FRoutesCameraTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ROUTES_TEST(FRoutesEnvironmentTest, "Environment")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRoutesEnvironmentTest,
+	"CamSim.ControlApi.Routes.Environment",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FRoutesEnvironmentTest::RunTest(const FString& Parameters)
 {
 	FHarness H;
@@ -269,7 +275,9 @@ bool FRoutesEnvironmentTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ROUTES_TEST(FRoutesCaptureTest, "CaptureRoundTrip")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRoutesCaptureTest,
+	"CamSim.ControlApi.Routes.CaptureRoundTrip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FRoutesCaptureTest::RunTest(const FString& Parameters)
 {
 	FHarness H;
@@ -312,7 +320,9 @@ bool FRoutesCaptureTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ROUTES_TEST(FRoutesCaptureTimeoutTest, "CaptureTimesOut")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRoutesCaptureTimeoutTest,
+	"CamSim.ControlApi.Routes.CaptureTimesOut",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FRoutesCaptureTimeoutTest::RunTest(const FString& Parameters)
 {
 	FHarness H;
@@ -326,7 +336,9 @@ bool FRoutesCaptureTimeoutTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ROUTES_TEST(FRoutesBadJsonTest, "BadJson400")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRoutesBadJsonTest,
+	"CamSim.ControlApi.Routes.BadJson400",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FRoutesBadJsonTest::RunTest(const FString& Parameters)
 {
 	FHarness H;
@@ -337,7 +349,9 @@ bool FRoutesBadJsonTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-ROUTES_TEST(FRoutesReadyTest, "ReadyCountsApiOwnership")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRoutesReadyTest,
+	"CamSim.ControlApi.Routes.ReadyCountsApiOwnership",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FRoutesReadyTest::RunTest(const FString& Parameters)
 {
 	// Real HTTP on a port of its own, with listener address reuse as SnapshotEndpointTest sets it: UE restarts every
@@ -390,5 +404,3 @@ bool FRoutesReadyTest::RunTest(const FString& Parameters)
 	Server.Stop();
 	return true;
 }
-
-#undef ROUTES_TEST

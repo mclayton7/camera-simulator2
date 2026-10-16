@@ -34,17 +34,26 @@ class FakeClient:
 def test_generate(tmp_path: Path):
     c = FakeClient()
     path = make_dataset.generate(c, tmp_path, 2, 7, (33.0, -117.0), 20.0, ["eo", "ir"], [EntitySpec(2001, "ground")],
-                                 {2001: "truck"}, log=lambda s: None)
+                                 {2001: "truck"}, warmup_frames=450, log=lambda s: None)
     names = [n for n, _, _ in c.calls]
     assert names[0] == "set_clock" and c.calls[0][2] == {"lockstep": True}
-    assert names.count("capture") == 4
+    assert names.count("capture") == 5  # a discarded warm-up capture, then 2 samples x 2 modes
+    warm = [kw for n, _, kw in c.calls if n == "capture"][0]
+    assert warm == {"settle_frames": 450}
     assert names.count("clear_entities") == 2
     cams = [kw for n, _, kw in c.calls if n == "set_camera"]
-    assert [k["sensor"]["mode"] for k in cams] == ["eo", "ir", "eo", "ir"]
+    assert [k["sensor"]["mode"] for k in cams] == ["eo", "eo", "ir", "eo", "ir"]
     coco = json.loads(path.read_text())
     assert [i["file_name"] for i in coco["images"]] == ["images/000000_eo.png", "images/000000_ir.png",
                                                         "images/000001_eo.png", "images/000001_ir.png"]
     assert len(coco["annotations"]) == 4
+
+
+def test_no_warmup_by_default(tmp_path: Path):
+    c = FakeClient()
+    make_dataset.generate(c, tmp_path, 1, 7, (33.0, -117.0), 20.0, ["eo"], [EntitySpec(2001, "ground")], {},
+                          log=lambda s: None)
+    assert [n for n, _, _ in c.calls].count("capture") == 1
 
 
 def test_parse_types():

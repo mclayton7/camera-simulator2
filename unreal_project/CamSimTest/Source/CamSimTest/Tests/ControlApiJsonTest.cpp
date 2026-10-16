@@ -30,11 +30,9 @@ namespace
 	}
 }
 
-#define CONTROL_JSON_TEST(Class, Name) \
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(Class, "CamSim.ControlApi.Json." Name, \
-		EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-CONTROL_JSON_TEST(FControlJsonCameraFullTest, "CameraFull")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonCameraFullTest,
+	"CamSim.ControlApi.Json.CameraFull",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonCameraFullTest::RunTest(const FString& Parameters)
 {
 	const auto R = ParseCamera(TEXT(R"({"lat":33.3,"lon":-117.4,"alt":900,"heading":30,"pitch":0,"roll":0,
@@ -61,7 +59,9 @@ bool FControlJsonCameraFullTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonCameraEmptyTest, "CameraEmptyBody")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonCameraEmptyTest,
+	"CamSim.ControlApi.Json.CameraEmptyBody",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonCameraEmptyTest::RunTest(const FString& Parameters)
 {
 	const auto R = ParseCamera(TEXT(""));
@@ -75,7 +75,9 @@ bool FControlJsonCameraEmptyTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonCameraPartialTest, "CameraPartialPosition")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonCameraPartialTest,
+	"CamSim.ControlApi.Json.CameraPartialPosition",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonCameraPartialTest::RunTest(const FString& Parameters)
 {
 	ExpectError(*this, ParseCamera(TEXT(R"({"lat":1,"lon":2})")), TEXT("lat, lon and alt go together"));
@@ -83,7 +85,9 @@ bool FControlJsonCameraPartialTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonCameraBadValuesTest, "CameraBadValues")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonCameraBadValuesTest,
+	"CamSim.ControlApi.Json.CameraBadValues",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonCameraBadValuesTest::RunTest(const FString& Parameters)
 {
 	ExpectError(*this, ParseCamera(TEXT(R"({"hfov_deg":"x"})")), TEXT("number"));
@@ -100,7 +104,9 @@ bool FControlJsonCameraBadValuesTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonUnknownFieldTest, "UnknownField")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonUnknownFieldTest,
+	"CamSim.ControlApi.Json.UnknownField",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonUnknownFieldTest::RunTest(const FString& Parameters)
 {
 	ExpectError(*this, ParseCamera(TEXT(R"({"hdg":3})")), TEXT("unknown field \"hdg\""));
@@ -109,7 +115,9 @@ bool FControlJsonUnknownFieldTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonEntityTest, "EntityFull")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonEntityTest,
+	"CamSim.ControlApi.Json.EntityFull",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonEntityTest::RunTest(const FString& Parameters)
 {
 	const auto R = ParseEntity(7, TEXT(R"({"type_id":2001,"lat":33.3,"lon":-117.3,"alt":40,"heading":90,
@@ -131,7 +139,9 @@ bool FControlJsonEntityTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonEntityDefaultsTest, "EntityDefaultsHpr")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonEntityDefaultsTest,
+	"CamSim.ControlApi.Json.EntityDefaultsHpr",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonEntityDefaultsTest::RunTest(const FString& Parameters)
 {
 	const auto R = ParseEntity(1, TEXT(R"({"lat":1,"lon":2,"alt":3})"));
@@ -145,7 +155,9 @@ bool FControlJsonEntityDefaultsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonEntityBadTest, "EntityBadValues")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonEntityBadTest,
+	"CamSim.ControlApi.Json.EntityBadValues",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonEntityBadTest::RunTest(const FString& Parameters)
 {
 	ExpectError(*this, ParseEntity(0, TEXT("{}")), TEXT("entity id"));
@@ -157,7 +169,9 @@ bool FControlJsonEntityBadTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonClockTest, "ClockIso")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonClockTest,
+	"CamSim.ControlApi.Json.ClockIso",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonClockTest::RunTest(const FString& Parameters)
 {
 	const auto R = ParseClock(TEXT(R"({"lockstep":true,"utc":"2026-07-01T19:30:00Z","rate":2})"));
@@ -170,7 +184,9 @@ bool FControlJsonClockTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonStepTest, "StepRange")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonStepTest,
+	"CamSim.ControlApi.Json.StepRange",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonStepTest::RunTest(const FString& Parameters)
 {
 	const auto R = ParseStep(TEXT(R"({"seconds":0.5})"));
@@ -182,7 +198,9 @@ bool FControlJsonStepTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonEnvironmentTest, "Environment")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonEnvironmentTest,
+	"CamSim.ControlApi.Json.Environment",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonEnvironmentTest::RunTest(const FString& Parameters)
 {
 	const auto R = ParseEnvironment(TEXT(R"({"atmosphere":{"visibility_m":20000,"humidity_pct":40,"air_temp_c":22,
@@ -212,7 +230,9 @@ bool FControlJsonEnvironmentTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonCaptureTest, "Capture")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonCaptureTest,
+	"CamSim.ControlApi.Json.Capture",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonCaptureTest::RunTest(const FString& Parameters)
 {
 	const auto Empty = ParseCapture(TEXT(""));
@@ -236,7 +256,9 @@ bool FControlJsonCaptureTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-CONTROL_JSON_TEST(FControlJsonErrorEscapeTest, "ErrorJsonEscapes")
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlJsonErrorEscapeTest,
+	"CamSim.ControlApi.Json.ErrorJsonEscapes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FControlJsonErrorEscapeTest::RunTest(const FString& Parameters)
 {
 	const FString Msg = TEXT("bad \"quote\" and \\ backslash\nline");
@@ -246,5 +268,3 @@ bool FControlJsonErrorEscapeTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("utc iso"), UtcIso(FDateTime(2026, 10, 15, 18, 0, 0, 250)), FString(TEXT("2026-10-15T18:00:00.250Z")));
 	return true;
 }
-
-#undef CONTROL_JSON_TEST
