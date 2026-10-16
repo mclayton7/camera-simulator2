@@ -34,6 +34,8 @@ struct FSensorOpticsConfig
 	float ExtraBlurPx        = 0.0f;
 	float VignettingExponent = 4.0f;
 	float K1 = 0.0f, K2 = 0.0f;
+	/** Lens transmission [0,1] for the radiometric EO path (ROADMAP 6A). 0 = not radiometric. */
+	float Transmission       = 0.0f;
 
 	bool operator==(const FSensorOpticsConfig&) const = default;
 };
@@ -58,6 +60,11 @@ struct FSensorDetectorConfig
 	int32 AdcBits        = 12;
 	float HotPixelFraction  = 1e-5f;
 	float DeadPixelFraction = 1e-5f;
+
+	/** Radiometric EO path (ROADMAP 6A). Qe in [0,1]; 0 = not radiometric (calibrated gain, IR). */
+	float Qe               = 0.0f;
+	float IntegrationMaxMs = 33.3f;   // longest integration time
+	float IntegrationMinUs = 10.0f;   // shortest integration time
 
 	/** Spectral band (micrometres) of the thermal radiance integral (ROADMAP 4A). The preset sets it. */
 	float BandLoUm          = 0.4f;

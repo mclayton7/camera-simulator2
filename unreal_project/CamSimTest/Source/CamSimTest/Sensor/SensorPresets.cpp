@@ -16,6 +16,7 @@ bool CamSimSensorPresets::Apply(const FString& Name, FSensorModeConfig& InOut)
 		InOut.Optics.PixelPitchUm       = 2.9f;
 		InOut.Optics.WavelengthUm       = 0.55f;
 		InOut.Optics.VignettingExponent = 4.0f;
+		InOut.Optics.Transmission       = 0.9f;
 
 		InOut.Detector = FSensorDetectorConfig();
 		InOut.Detector.Type              = ESensorDetectorType::Photon;
@@ -30,6 +31,9 @@ bool CamSimSensorPresets::Apply(const FString& Name, FSensorModeConfig& InOut)
 		InOut.Detector.DeadPixelFraction = 1e-5f;
 		InOut.Detector.BandLoUm          = 0.4f;
 		InOut.Detector.BandHiUm          = 0.7f;
+		InOut.Detector.Qe                = 0.6f;
+		InOut.Detector.IntegrationMaxMs  = 33.3f;
+		InOut.Detector.IntegrationMinUs  = 10.0f;
 		return true;
 	}
 

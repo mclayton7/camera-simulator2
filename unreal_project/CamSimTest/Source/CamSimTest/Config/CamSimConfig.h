@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Sensor/SensorTypes.h"         // ESensorMode, sensor config structs
+#include "Environment/CachedExposureBand.h"  // FCachedExposureBandConfig (6A)
 #include "Thermal/ThermalTypes.h"        // FThermalMaterialSpec
 #include "Thermal/EntityThermalTypes.h"  // FEntityThermalSettings (ROADMAP 4C)
 
@@ -342,6 +343,17 @@ struct FCamSimConfig
 		FString MaterialPath      = TEXT("/Game/Ocean/M_Ocean");
 	};
 	FOceanConfig Ocean;
+
+	/** Night sky (ROADMAP 6A, docs/configuration.md "Night sky"). yaml: environment.celestial. */
+	struct FCelestialConfig
+	{
+		bool    bMoonEnabled  = true;
+		bool    bStarsDefault = true;       // stars until the host's first Celestial Sphere Control
+		float   NightFloorLux = 0.002f;     // CAMSIM_NIGHT_FLOOR_LUX
+		FString StarCatalog;                // empty = FStarField::DefaultPath()
+		FCachedExposureBandConfig CachedExposure;
+	};
+	FCelestialConfig Celestial;
 
 		/** Thermal radiance for IR (ROADMAP 4A, docs/thermal.md). */
 	struct FThermalConfig

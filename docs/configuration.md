@@ -484,6 +484,10 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 | `detector.adc_bits` | int | ADC resolution in bits. Must be in `[8, 16]`. |
 | `detector.hot_pixel_fraction`, `detector.dead_pixel_fraction` | float | Defect pixel fractions. Must be in `[0, 0.01]`. |
 | `detector.band_lo_um`, `detector.band_hi_um` | float | Thermal radiance band in µm (ROADMAP 4A); `0 < lo < hi ≤ 30`. |
+| `optics.transmission` | float | Lens transmission in `[0, 1]` for the radiometric EO path (ROADMAP 6A). `eo_hd_cmos` sets 0.9; 0 = calibrated gain (IR). |
+| `detector.qe` | float | Quantum efficiency in `[0, 1]` (6A). `eo_hd_cmos` sets 0.6; 0 = calibrated gain (IR). |
+| `detector.integration_max_ms` | float | Longest integration time in ms, `> 0` (6A). Default 33.3 (`eo_hd_cmos` sets it). |
+| `detector.integration_min_us` | float | Shortest integration time in µs, `> 0` and below `integration_max_ms` (6A). Default 10 (`eo_hd_cmos` sets it). |
 
 **Validation errors:** unknown `preset` or `detector.type`; `full_well_e <= 0`; `adc_bits` outside `[8, 16]`; negative
 noise parameters or `f_number <= 0`; `pixel_pitch_um` / `wavelength_um <= 0` or `extra_blur_px < 0`;
@@ -970,6 +974,23 @@ ocean:
 | `ocean.max_radius_km` | `CAMSIM_OCEAN_MAX_RADIUS_KM` | `400.0` | Horizon cap for the ocean mesh; must be finite and > 0. |
 | `ocean.water_temperature_c` | `CAMSIM_OCEAN_WATER_TEMPERATURE_C` | `15.0` | Initial water temperature for the thermal water class (ROADMAP 4A); CIGI Maritime Surface Conditions overrides it. Startup only. `[-2, 40]`. |
 | `ocean.material` | *(none — set via YAML only)* | `/Game/Ocean/M_Ocean` | Ocean material asset path. **Startup only.** |
+
+## Night sky (6A) (`environment.celestial:`)
+
+Moon, stars and night illumination (ROADMAP 6A). Radiometric sensor fields
+(`optics.transmission`, `detector.qe`, `integration_max_ms`, `integration_min_us`)
+are in the Sensor Modes section.
+
+| Key | Env var | Default | Description |
+|---|---|---|---|
+| `environment.celestial.moon_enabled` | *(YAML only)* | `true` | Draw the moon and add its illumination. |
+| `environment.celestial.stars_default` | *(YAML only)* | `true` | Stars on until the host's first Celestial Sphere Control packet. |
+| `environment.celestial.night_floor_lux` | `CAMSIM_NIGHT_FLOOR_LUX` | `0.002` | Starlight plus airglow on a clear moonless sky, lux. Must be finite and `>= 0`. |
+| `environment.celestial.star_catalog` | *(YAML only)* | `""` | Star catalog path; empty uses `Content/NonUFS/Sky/bsc5.dat` (Yale BSC5). |
+| `environment.celestial.cached_exposure.day_ev` | *(YAML only)* | `8` | Lumen cached-lighting pre-exposure EV in the day band; in `[-16, 16]`. |
+| `environment.celestial.cached_exposure.night_ev` | *(YAML only)* | `-6` | Same, night band; in `[-16, 16]` and `< day_ev`. |
+| `environment.celestial.cached_exposure.switch_median_log2` | *(YAML only)* | `0` | EO scene median (log2 cd/m²) at which the band switches. |
+| `environment.celestial.cached_exposure.hysteresis_ev` | *(YAML only)* | `2` | Hysteresis around the switch, EV; `>= 0`. |
 
 ## Vegetation (`vegetation:`)
 

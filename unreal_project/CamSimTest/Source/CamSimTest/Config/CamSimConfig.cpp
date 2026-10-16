@@ -478,6 +478,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 					YamlFloat(ONode, "vignetting_exponent", MC.Optics.VignettingExponent);
 					YamlFloat(ONode, "k1",                  MC.Optics.K1);
 					YamlFloat(ONode, "k2",                  MC.Optics.K2);
+					YamlFloat(ONode, "transmission",        MC.Optics.Transmission);
 				}
 				if (YamlHas(ModeNode, "detector"))
 				{
@@ -506,6 +507,9 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 					YamlFloat(DNode, "dead_pixel_fraction",  MC.Detector.DeadPixelFraction);
 					YamlFloat(DNode, "band_lo_um",           MC.Detector.BandLoUm);
 					YamlFloat(DNode, "band_hi_um",           MC.Detector.BandHiUm);
+					YamlFloat(DNode, "qe",                   MC.Detector.Qe);
+					YamlFloat(DNode, "integration_max_ms",   MC.Detector.IntegrationMaxMs);
+					YamlFloat(DNode, "integration_min_us",   MC.Detector.IntegrationMinUs);
 				}
 			};
 
@@ -678,6 +682,28 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlFloat (O, "max_radius_km",       Cfg.Ocean.MaxRadiusKm);
 			YamlFloat (O, "water_temperature_c", Cfg.Ocean.WaterTemperatureC);
 			YamlString(O, "material",            Cfg.Ocean.MaterialPath);
+		}
+
+		// Night sky (ROADMAP 6A)
+		if (YamlHas(Root, "environment"))
+		{
+			ryml::ConstNodeRef EnvNode = Root["environment"];
+			if (YamlHas(EnvNode, "celestial"))
+			{
+				ryml::ConstNodeRef C = EnvNode["celestial"];
+				YamlBool  (C, "moon_enabled",    Cfg.Celestial.bMoonEnabled);
+				YamlBool  (C, "stars_default",   Cfg.Celestial.bStarsDefault);
+				YamlFloat (C, "night_floor_lux", Cfg.Celestial.NightFloorLux);
+				YamlString(C, "star_catalog",    Cfg.Celestial.StarCatalog);
+				if (YamlHas(C, "cached_exposure"))
+				{
+					ryml::ConstNodeRef X = C["cached_exposure"];
+					YamlFloat(X, "day_ev",             Cfg.Celestial.CachedExposure.DayEv);
+					YamlFloat(X, "night_ev",           Cfg.Celestial.CachedExposure.NightEv);
+					YamlFloat(X, "switch_median_log2", Cfg.Celestial.CachedExposure.SwitchMedianLog2);
+					YamlFloat(X, "hysteresis_ev",      Cfg.Celestial.CachedExposure.HysteresisEv);
+				}
+			}
 		}
 
 		if (YamlHas(Root, "vegetation"))
@@ -1140,6 +1166,9 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.CaptureWidth  = GetEnvInt(TEXT("CAMSIM_CAPTURE_WIDTH"),  Cfg.CaptureWidth);
 	Cfg.CaptureHeight = GetEnvInt(TEXT("CAMSIM_CAPTURE_HEIGHT"), Cfg.CaptureHeight);
 	Cfg.Ocean.WaterTemperatureC = GetEnvFloat(TEXT("CAMSIM_OCEAN_WATER_TEMPERATURE_C"), Cfg.Ocean.WaterTemperatureC);
+
+	// Night sky (ROADMAP 6A)
+	Cfg.Celestial.NightFloorLux = GetEnvFloat(TEXT("CAMSIM_NIGHT_FLOOR_LUX"), Cfg.Celestial.NightFloorLux);
 	Cfg.Vegetation.bEnabled     = GetEnvBool (TEXT("CAMSIM_VEGETATION_ENABLED"),       Cfg.Vegetation.bEnabled);
 	Cfg.Vegetation.LibraryDir   = GetEnv     (TEXT("CAMSIM_VEGETATION_LIBRARY_DIR"),   Cfg.Vegetation.LibraryDir);
 	Cfg.Vegetation.RadiusM      = GetEnvFloat(TEXT("CAMSIM_VEGETATION_RADIUS_M"),      Cfg.Vegetation.RadiusM);
@@ -1437,6 +1466,23 @@ TArray<FString> FCamSimConfig::Validate() const
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.f_number=%.2f must be > 0"), ModeId, M.Optics.FNumber));
 		}
+		if (!(M.Optics.Transmission >= 0.0f && M.Optics.Transmission <= 1.0f))
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.transmission=%.3f out of range [0, 1]"), ModeId, M.Optics.Transmission));
+		}
+		if (!(M.Detector.Qe >= 0.0f && M.Detector.Qe <= 1.0f))
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.qe=%.3f out of range [0, 1]"), ModeId, M.Detector.Qe));
+		}
+		if (!(M.Detector.IntegrationMaxMs > 0.0f))
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.integration_max_ms=%.3f must be > 0"), ModeId, M.Detector.IntegrationMaxMs));
+		}
+		if (!(M.Detector.IntegrationMinUs > 0.0f && M.Detector.IntegrationMinUs / 1000.0f < M.Detector.IntegrationMaxMs))
+		{
+			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.integration_min_us=%.3f must be > 0 and below integration_max_ms (%.3f ms)"),
+				ModeId, M.Detector.IntegrationMinUs, M.Detector.IntegrationMaxMs));
+		}
 		if (!(FMath::Abs(M.Optics.K1) <= 1.0f))
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].optics.k1=%.3f must be in [-1, 1]"), ModeId, M.Optics.K1));
@@ -1500,6 +1546,24 @@ TArray<FString> FCamSimConfig::Validate() const
 		if (!(M.Detector.DeadPixelFraction >= 0.0f && M.Detector.DeadPixelFraction <= 0.01f))
 		{
 			Errors.Add(FString::Printf(TEXT("sensor_modes[%d].detector.dead_pixel_fraction=%.5f out of range [0, 0.01]"), ModeId, M.Detector.DeadPixelFraction));
+		}
+	}
+
+	// Night sky (ROADMAP 6A); written !(in range) so NaN fails
+	if (!(Celestial.NightFloorLux >= 0.0f && FMath::IsFinite(Celestial.NightFloorLux)))
+	{
+		Errors.Add(FString::Printf(TEXT("environment.celestial.night_floor_lux=%g must be finite and >= 0"), Celestial.NightFloorLux));
+	}
+	{
+		const FCachedExposureBandConfig& X = Celestial.CachedExposure;
+		if (!(X.DayEv >= -16.0f && X.DayEv <= 16.0f) || !(X.NightEv >= -16.0f && X.NightEv <= 16.0f) || !(X.NightEv < X.DayEv))
+		{
+			Errors.Add(FString::Printf(TEXT("environment.celestial.cached_exposure: day_ev (%g) and night_ev (%g) must be in [-16, 16] with night_ev < day_ev"),
+				X.DayEv, X.NightEv));
+		}
+		if (!(X.HysteresisEv >= 0.0f))
+		{
+			Errors.Add(FString::Printf(TEXT("environment.celestial.cached_exposure.hysteresis_ev=%g must be >= 0"), X.HysteresisEv));
 		}
 	}
 

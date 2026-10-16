@@ -577,6 +577,19 @@ ocean:
   water_temperature_c: 15.0              # CAMSIM_OCEAN_WATER_TEMPERATURE_C — initial; CIGI Maritime Surface overrides
   material: "/Game/Ocean/M_Ocean"        # startup only
 
+# Night sky (ROADMAP 6A, docs/configuration.md "Night sky (6A)")
+environment:
+  celestial:            # docs/night.md
+    moon_enabled: true
+    stars_default: true       # stars until the host's first Celestial Sphere Control
+    night_floor_lux: 0.002    # starlight + airglow, clear moonless sky. Env: CAMSIM_NIGHT_FLOOR_LUX
+    star_catalog: ""          # "" = Content/NonUFS/Sky/bsc5.dat (Yale BSC5)
+    cached_exposure:          # r.EyeAdaptation.CachedLightingPreExposure bands (Lumen cache at night)
+      day_ev: 8
+      night_ev: -6
+      switch_median_log2: 0   # EO scene median, log2 cd/m²
+      hysteresis_ev: 2
+
 # --- Vegetation scatter (REALISM R4 slice, docs/vegetation.md) ---
 # CC0 trees and shrubs scattered around the camera from the land cover and the package's species mix, deterministic per
 # 100 m cell (docs/vegetation.md). Needs land cover (thermal.land_cover.dir or a scene package) and Content/NonUFS/Vegetation (git lfs pull).
