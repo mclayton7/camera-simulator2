@@ -9,6 +9,11 @@
 #include "CamSimTest.h"
 
 #include "Misc/Paths.h"
+#include "IImageWrapperModule.h"
+#include "IImageWrapper.h"
+#include "Modules/ModuleManager.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
 #include "HAL/PlatformProcess.h"
 
 FGroundTruthCollector::FGroundTruthCollector(const FCamSimConfig& InConfig)
@@ -33,6 +38,7 @@ bool FGroundTruthCollector::Open()
 	bSegmentation = Config.MLTraining.bSegmentation;
 	CaptureSize = FIntPoint(Config.CaptureWidth, Config.CaptureHeight);
 	DepthFarPlaneM = FMath::Max(Config.MLTraining.DepthFarPlaneM, 1.0f);
+	bSemanticFiles = Config.MLTraining.bSemantic;
 
 	// Resolve output directory
 	FString OutputDir = Config.MLTraining.OutputDir;
@@ -71,6 +77,13 @@ bool FGroundTruthCollector::Open()
 		}
 	}
 
+	if (bSemanticFiles)
+	{
+		SemanticDir = FPaths::Combine(OutputDir, TEXT("semantic"));
+		IFileManager::Get().MakeDirectory(*SemanticDir, /*Tree=*/true);
+		// PNG encoding runs on task threads: load ImageWrapper here, on the game thread.
+		FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+	}
 	bIsOpen = true;
 	UE_LOG(LogCamSim, Log,
 		TEXT("FGroundTruthCollector: opened — depth=%d bbox=%d coco=%d interval=%d"),
@@ -122,4 +135,39 @@ void FGroundTruthCollector::WriteDepthFrame(
 	if (!bForce && (FrameIdx % static_cast<uint64>(AnnotationIntervalFrames)) != 0) return;
 
 	DepthWriter->WriteDepthFrame(DepthMetres, Width, Height, FrameIdx);
+}
+
+void FGroundTruthCollector::WriteSemanticFrame(const TArray<uint32>& Pairs, int32 Width, int32 Height, uint64 FrameIdx, bool bForce)
+{
+	if (!bIsOpen || !bEnabled || !bSemanticFiles || SemanticDir.IsEmpty()) return;
+	if (!bForce && (FrameIdx % static_cast<uint64>(AnnotationIntervalFrames)) != 0) return;
+	const TArray64<uint8> Png = EncodeSemanticPng(Pairs, Width, Height);
+	if (Png.IsEmpty())
+	{
+		UE_LOG(LogCamSim, Warning, TEXT("GroundTruth: semantic PNG failed for frame %llu"), (unsigned long long)FrameIdx);
+		return;
+	}
+	const FString Path = FPaths::Combine(SemanticDir, FString::Printf(TEXT("semantic_%08llu.png"), (unsigned long long)FrameIdx));
+	if (!FFileHelper::SaveArrayToFile(Png, *Path))
+	{
+		UE_LOG(LogCamSim, Warning, TEXT("GroundTruth: failed to write %s"), *Path);
+	}
+}
+
+TArray64<uint8> FGroundTruthCollector::EncodeSemanticPng(const TArray<uint32>& Pairs, int32 Width, int32 Height)
+{
+	if (Width <= 0 || Height <= 0 || Width % 2 != 0 || Pairs.Num() != Width * Height / 2) return {};
+	IImageWrapperModule* Module = FModuleManager::GetModulePtr<IImageWrapperModule>(TEXT("ImageWrapper"));
+	if (!Module && IsInGameThread()) Module = &FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+	if (!Module) return {};
+	TArray<uint8> Gray;
+	Gray.SetNumUninitialized(Width * Height);
+	for (int32 I = 0; I < Pairs.Num(); ++I)
+	{
+		Gray[2 * I]     = static_cast<uint8>(Pairs[I] & 0xFFu);
+		Gray[2 * I + 1] = static_cast<uint8>((Pairs[I] >> 16) & 0xFFu);
+	}
+	TSharedPtr<IImageWrapper> Png = Module->CreateImageWrapper(EImageFormat::PNG);
+	if (!Png || !Png->SetRaw(Gray.GetData(), Gray.Num(), Width, Height, ERGBFormat::Gray, 8)) return {};
+	return Png->GetCompressed(0);
 }

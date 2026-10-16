@@ -43,11 +43,13 @@ bool FCamSimFrameGrabExtension::IsActiveThisFrame_Internal(const FSceneViewExten
 
 void FCamSimFrameGrabExtension::PushRequest_RenderThread(const FFrameGrabRequest& R,
 	FRHIGPUBufferReadback* Nv12Readback, FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* GrabbedGeneration,
-	TAtomic<uint32>* IdGrabbedGeneration, FRHIGPUBufferReadback* DepthReadback, TAtomic<uint32>* DepthGrabbedGeneration)
+	TAtomic<uint32>* IdGrabbedGeneration, FRHIGPUBufferReadback* DepthReadback, TAtomic<uint32>* DepthGrabbedGeneration,
+	FRHIGPUBufferReadback* SemanticReadback, TAtomic<uint32>* SemanticGrabbedGeneration)
 {
 	check(IsInRenderingThread());
 	TargetsBySlot.Add(R.TargetIndex,
-		{ Nv12Readback, GrabbedGeneration, IdReadback, IdGrabbedGeneration, DepthReadback, DepthGrabbedGeneration });
+		{ Nv12Readback, GrabbedGeneration, IdReadback, IdGrabbedGeneration, DepthReadback, DepthGrabbedGeneration,
+		  SemanticReadback, SemanticGrabbedGeneration });
 	Requests.Push(R);
 }
 
@@ -56,7 +58,8 @@ void FCamSimFrameGrabExtension::AddGroundTruthReadback_RenderThread(FRDGBuilder&
 {
 	const bool bIds   = Req.bInstanceIds && T.IdReadback && T.IdGrabbed;
 	const bool bDepth = Req.bDepth && T.DepthReadback && T.DepthGrabbed;
-	if (!bIds && !bDepth) return;
+	const bool bSemantic = Req.bSemantic && Req.Semantic.IsValid() && T.SemanticReadback && T.SemanticGrabbed;
+	if (!bIds && !bDepth && !bSemantic) return;
 	const uint32 Gen = Req.Generation;
 	// The deferred renderer's scene textures (depth, custom depth, custom stencil)
 	// ride in the post-process inputs' scene-texture uniform buffer.
@@ -97,8 +100,22 @@ void FCamSimFrameGrabExtension::AddGroundTruthReadback_RenderThread(FRDGBuilder&
 	}
 	// ML depth map from the same scene depth and texel mapping (no second scene render).
 	Ii.InvDeviceZToWorldZ = View.InvDeviceZToWorldZTransform;
+	// ROADMAP 4D: semantic classes from the same texels; the land-cover window only if it is the one the params were
+	// built against (a re-centre in between leaves terrain unlabeled for this frame rather than mislabelled).
+	if (bSemantic)
+	{
+		Ii.Semantic = Req.Semantic.Get();
+		Ii.ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetInvTranslatedViewProjectionMatrix());
+		const FLandCoverGpuWindow* Win = Req.SemanticLandCover.Get();
+		if (Win && CamSimLandCover::ShouldBindWindow(Req.Semantic->bLandCover, Req.Semantic->LandCoverWindowId, Win->Id,
+			Win->Texture.IsValid()))
+		{
+			Ii.LandCover = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Win->Texture, TEXT("CamSimSemanticLandCover")));
+		}
+	}
 	FRDGBufferRef Depth = nullptr;
-	const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, Ii, Params, bDepth ? &Depth : nullptr);
+	FRDGBufferRef Semantic = nullptr;
+	const FRDGBufferRef Ids = AddInstanceIdPass(GraphBuilder, Ii, Params, bDepth ? &Depth : nullptr, bSemantic ? &Semantic : nullptr);
 
 	if (bIds)
 	{
@@ -122,6 +139,18 @@ void FCamSimFrameGrabExtension::AddGroundTruthReadback_RenderThread(FRDGBuilder&
 		{
 			DepthReadback->EnqueueCopy(RHICmdList, Depth->GetRHI(), DepthBytes);
 			DepthGrabbed->Store(Gen, EMemoryOrder::SequentiallyConsistent);
+		});
+	}
+	if (bSemantic && Semantic)
+	{
+		FRHIGPUBufferReadback* SemReadback = T.SemanticReadback;
+		TAtomic<uint32>* SemGrabbed = T.SemanticGrabbed;
+		const uint32 SemBytes = static_cast<uint32>(CaptureSize.X * CaptureSize.Y * 2);   // two pixels per uint32
+		AddReadbackBufferPass(GraphBuilder, RDG_EVENT_NAME("CamSimSemanticReadback"), Semantic,
+			[SemReadback, Semantic, SemBytes, SemGrabbed, Gen](FRHICommandListImmediate& RHICmdList)
+		{
+			SemReadback->EnqueueCopy(RHICmdList, Semantic->GetRHI(), SemBytes);
+			SemGrabbed->Store(Gen, EMemoryOrder::SequentiallyConsistent);
 		});
 	}
 }

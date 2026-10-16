@@ -75,7 +75,8 @@ public:
 	 */
 	void PushRequest_RenderThread(const FFrameGrabRequest& R, FRHIGPUBufferReadback* Nv12Readback,
 		FRHIGPUBufferReadback* IdReadback, TAtomic<uint32>* GrabbedGeneration, TAtomic<uint32>* IdGrabbedGeneration,
-		FRHIGPUBufferReadback* DepthReadback = nullptr, TAtomic<uint32>* DepthGrabbedGeneration = nullptr);
+		FRHIGPUBufferReadback* DepthReadback = nullptr, TAtomic<uint32>* DepthGrabbedGeneration = nullptr,
+		FRHIGPUBufferReadback* SemanticReadback = nullptr, TAtomic<uint32>* SemanticGrabbedGeneration = nullptr);
 
 	/**
 	 * Any thread (ROADMAP 4A): the render thread gave thermal up for the session (ThermalCS's inputs missing at BeforeDOF,
@@ -111,6 +112,8 @@ private:
 		TAtomic<uint32>*        IdGrabbed         = nullptr;
 		FRHIGPUBufferReadback*  DepthReadback     = nullptr;   // ML depth map (optional)
 		TAtomic<uint32>*        DepthGrabbed      = nullptr;
+		FRHIGPUBufferReadback*  SemanticReadback  = nullptr;   // semantic class image (optional, ROADMAP 4D)
+		TAtomic<uint32>*        SemanticGrabbed   = nullptr;
 	};
 
 	TAtomic<FViewport*>    GameViewport { nullptr };

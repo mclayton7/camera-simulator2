@@ -266,6 +266,7 @@ struct FCamSimConfig
 		float   DepthFarPlaneM           = 5000.0f;
 		int32   MinVisiblePixels         = 1;      // ml_training.min_visible_pixels (>= 1)
 		bool    bSegmentation            = true;   // ml_training.segmentation: COCO RLE modal mask
+		bool    bSemantic                = false;  // ml_training.semantic: 8-bit class image per annotated frame (ROADMAP 4D)
 	};
 	FMLTrainingConfig MLTraining;
 

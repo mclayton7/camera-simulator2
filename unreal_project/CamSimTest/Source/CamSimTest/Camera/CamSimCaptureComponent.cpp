@@ -22,6 +22,11 @@
 #include "Time/SimClock.h"
 #include "Time/SimDelta.h"
 #include "Control/ControlCaptureJob.h"
+#include "GroundTruth/SemanticClasses.h"
+#include "GroundTruth/SemanticFrame.h"
+#include "GroundTruth/FGroundTruthCollector.h"
+#include "Ocean/OceanSurface.h"
+#include "Thermal/ThermalFrameSources.h"
 #include "Control/CapturePng.h"
 #include "GroundTruth/FDepthMapWriter.h"
 #include "Sensor/SensorOptics.h"
@@ -121,6 +126,20 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 	for (TAtomic<uint32>& Gen : GrabbedGeneration) { Gen.Store(0); }
 	for (TAtomic<uint32>& Gen : IdGrabbedGeneration) { Gen.Store(0); }
 	for (TAtomic<uint32>& Gen : DepthGrabbedGeneration) { Gen.Store(0); }
+	for (TAtomic<uint32>& Gen : SemanticGrabbedGeneration) { Gen.Store(0); }
+	// ROADMAP 4D: semantic class image readbacks, when anything can ask for it (files or the control API).
+	SemanticReadbackPool.Reset();
+	bSemanticPossible = bSensorGraph && Subsystem->IsGroundTruthMaskAvailable()
+		&& (Cfg.MLTraining.bSemantic || Cfg.ControlApi.bEnabled);
+	if (bSemanticPossible)
+	{
+		for (int32 Idx = 0; Idx < FReadbackRing::NumSlots; ++Idx)
+		{
+			SemanticReadbackPool.Add(MakeUnique<FRHIGPUBufferReadback>(*FString::Printf(TEXT("CamSimSemanticReadback_%d"), Idx)));
+		}
+		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: ground truth — semantic class image available (files: %d)"),
+			Cfg.MLTraining.bSemantic ? 1 : 0);
+	}
 	if (bSensorGraph && !EnsureGrabExtension())
 	{
 		UE_LOG(LogCamSim, Log, TEXT("ACamSimCamera: primary view — game viewport not created yet; grabbing starts when it is"));
@@ -365,6 +384,17 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 				T.bLandCover != 0u ? T.LandCoverWindowId : 0u, T.LandCoverWarpAmpM, T.LandCoverWarpCellM, T.LandCoverAnchorM.X, T.LandCoverAnchorM.Y);
 		}
 	}
+	// ROADMAP 4D: the semantic class image also needs the land-cover window in EO.
+	if (!bThermal && bSemanticPossible && Cfg.Thermal.LandCover.bEnabled)
+	{
+		FLandCoverWindow::FSettings LS;
+		LS.Dir              = Cfg.Thermal.LandCover.Dir;
+		LS.Texels           = Cfg.Thermal.LandCover.WindowTexels;
+		LS.RecentreFraction = Cfg.Thermal.LandCover.RecentreFraction;
+		LandCover.Configure(LS);
+		LandCover.Update(ThermalLat, ThermalLon);
+		for (const FString& W : LandCover.TakeWarnings()) { UE_LOG(LogCamSim, Warning, TEXT("Land cover (semantic): %s"), *W); }
+	}
 	bThermalActiveLastTick = bThermal;
 	if (!bThermal) LandCoverWindowIdLastTick = 0u;
 
@@ -538,6 +568,11 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	S.Telemetry = Telemetry;
 	S.bWantIds = bAnnotated && IdReadbackPool.IsValidIndex(Slot) && IdReadbackPool[Slot];
 	S.bWantDepth = bAnnotated && DepthReadbackPool.IsValidIndex(Slot) && DepthReadbackPool[Slot];
+	// ROADMAP 4D: the class image for ml_training.semantic frames on the interval, or a capture job that wants it.
+	const bool bSemanticFrame = (Subsystem && Subsystem->GetConfig().MLTraining.bSemantic && (FrameIdx % static_cast<uint64>(IdIntervalFrames)) == 0)
+		|| (S.CaptureJob.IsValid() && S.CaptureJob->bWantSemantic);
+	S.bWantSemantic = bSemanticPossible && bSemanticFrame && SemanticReadbackPool.IsValidIndex(Slot) && SemanticReadbackPool[Slot];
+	S.Semantic.Reset();
 	S.InstanceIds.Reset();
 	S.ReadyStreak     .Store(0, EMemoryOrder::Relaxed);
 	S.PollAttempts    .Store(0, EMemoryOrder::Relaxed);
@@ -555,21 +590,62 @@ void UCamSimCaptureComponent::Capture(const FCamSimTelemetry& Telemetry)
 	FRHIGPUBufferReadback* IdReadback = S.bWantIds ? IdReadbackPool[Slot].Get() : nullptr;
 	FRHIGPUBufferReadback* DepthReadback = S.bWantDepth ? DepthReadbackPool[Slot].Get() : nullptr;
 	TAtomic<uint32>* DepthGrabbed = &DepthGrabbedGeneration[Slot];
+	FRHIGPUBufferReadback* SemanticReadback = S.bWantSemantic ? SemanticReadbackPool[Slot].Get() : nullptr;
+	TAtomic<uint32>* SemanticGrabbed = &SemanticGrabbedGeneration[Slot];
 	FFrameGrabRequest Req;
 	Req.FrameIndex   = FrameIdx;
 	Req.Generation   = Gen;
 	Req.TargetIndex  = Slot;
 	Req.bInstanceIds = S.bWantIds;
 	Req.bDepth       = S.bWantDepth;
+	Req.bSemantic    = S.bWantSemantic;
+	if (S.bWantSemantic)
+	{
+		Req.Semantic = BuildSemanticParams(S.Entities);
+		Req.SemanticLandCover = LandCover.GetCurrentGpu();
+	}
 	// Per-entity water planes for the submerged-hull cut, at this frame's sea state (game thread, doubles).
 	if (S.bWantIds) Req.WaterPlanes = ComputeWaterPlanes(S.Entities);
 	ENQUEUE_RENDER_COMMAND(CamSimRequestGrab)(
-		[Ext, Nv12Readback, IdReadback, Req, Grabbed, IdGrabbed, DepthReadback, DepthGrabbed]
+		[Ext, Nv12Readback, IdReadback, Req, Grabbed, IdGrabbed, DepthReadback, DepthGrabbed, SemanticReadback, SemanticGrabbed]
 		(FRHICommandListImmediate&)
 	{
 		if (!Ext) return;
-		Ext->PushRequest_RenderThread(Req, Nv12Readback, IdReadback, Grabbed, IdGrabbed, DepthReadback, DepthGrabbed);
+		Ext->PushRequest_RenderThread(Req, Nv12Readback, IdReadback, Grabbed, IdGrabbed, DepthReadback, DepthGrabbed,
+			SemanticReadback, SemanticGrabbed);
 	});
+}
+
+TSharedPtr<const FSemanticFrameParams, ESPMode::ThreadSafe> UCamSimCaptureComponent::BuildSemanticParams(
+	const TArray<FEntityAnnotationData>& Entities) const
+{
+	const FCamSimConfig& Cfg = Subsystem->GetConfig();
+	FSemanticBuildInputs In;
+	const TSharedPtr<const FLandCoverWindowData, ESPMode::ThreadSafe> Window = Cfg.Thermal.LandCover.bEnabled ? LandCover.GetCurrent() : nullptr;
+	if (Window.IsValid() && ThermalGeoreference.IsValid())
+	{
+		FVector East = FVector::ZeroVector, North = FVector::ZeroVector, CentreUp = FVector::ZeroVector;
+		CamSimThermal::LandCoverAxesWorld(*ThermalGeoreference.Get(), Window->Spec.CentreLatDeg, Window->Spec.CentreLonDeg,
+			East, North, &CentreUp);
+		if (CamSimThermal::AreLandCoverAxesValid(East, North, CentreUp))
+		{
+			In.Window = Window.Get();
+			In.EastWorld = East;
+			In.NorthWorld = North;
+		}
+	}
+	In.UpWorld = ThermalUp;
+	In.CamLatDeg = ThermalLat;
+	In.CamLonDeg = ThermalLon;
+	In.CamAltHaeM = ThermalAlt;
+	if (const FOceanSurface* Ocean = Subsystem->GetOceanSurface())
+	{
+		In.SeaLevelHaeM = Ocean->SeaLevelM(ThermalLat, ThermalLon);
+		In.MaxWaveAmplitudeM = CamSimThermal::MaxWaveAmplitudeM(Ocean->GetWaves());
+	}
+	const FEntityTypeTable& Types = Subsystem->GetEntityTypeTable();
+	In.StencilClass = CamSimSemantic::BuildStencilClassTable(Entities, [&Types](uint16 Type) { return Types.SemanticClassOf(Type); });
+	return MakeShared<const FSemanticFrameParams, ESPMode::ThreadSafe>(CamSimSemantic::BuildFrameParams(In));
 }
 
 // -------------------------------------------------------------------------
@@ -610,6 +686,7 @@ void UCamSimCaptureComponent::Poll()
 			}
 			S.Nv12.Reset();
 			S.Depth.Reset();
+			S.Semantic.Reset();
 			S.Entities.Reset();
 			S.InstanceIds.Reset();
 			Ring.Release(Slot);
@@ -632,10 +709,11 @@ void UCamSimCaptureComponent::Poll()
 
 		bSensorBusy = true;
 		SubmitFrameToEncoder(MoveTemp(S.Nv12), S.Telemetry, FrameIdx, MoveTemp(S.Depth), MoveTemp(S.Entities),
-			MoveTemp(S.InstanceIds), MoveTemp(S.CaptureJob));
+			MoveTemp(S.InstanceIds), MoveTemp(S.CaptureJob), MoveTemp(S.Semantic));
 		S.CaptureJob.Reset();
 		S.Nv12.Reset();
 		S.Depth.Reset();
+		S.Semantic.Reset();
 		S.Entities.Reset();
 		S.InstanceIds.Reset();
 		Ring.Release(Slot);
@@ -693,10 +771,13 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 	FRHIGPUBufferReadback* DepthReadback = (S.bWantDepth && DepthReadbackPool.IsValidIndex(Slot)) ? DepthReadbackPool[Slot].Get() : nullptr;
 	TAtomic<uint32>* DepthGrabbed = &DepthGrabbedGeneration[Slot];
 	const int32  DepthPixels    = GpuSensorSize.X * GpuSensorSize.Y;
+	// Semantic classes (ROADMAP 4D): two pixels per uint32, like the IDs.
+	FRHIGPUBufferReadback* SemReadback = (S.bWantSemantic && SemanticReadbackPool.IsValidIndex(Slot)) ? SemanticReadbackPool[Slot].Get() : nullptr;
+	TAtomic<uint32>* SemGrabbed = &SemanticGrabbedGeneration[Slot];
 
 	ENQUEUE_RENDER_COMMAND(CamSimPollReadback)(
 		[RingPtr, &S, Slot, Nv12Readback, Nv12Bytes, ReadyPollsRequired,
-		 CaptureGen, Grabbed, IdReadback, IdGrabbed, IdBytes, DepthReadback, DepthGrabbed, DepthPixels]
+		 CaptureGen, Grabbed, IdReadback, IdGrabbed, IdBytes, DepthReadback, DepthGrabbed, DepthPixels, SemReadback, SemGrabbed]
 		(FRHICommandListImmediate&)
 	{
 		// Stale poll: the slot was delivered (and maybe reused) since it was enqueued.
@@ -710,14 +791,17 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 			Grabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen,
 			// The ID copy (issued before the NV12 one) is waited for only if it was
 			// really issued for this capture; a pass that couldn't run never blocks.
-			[Nv12Readback, IdReadback, IdGrabbed, DepthReadback, DepthGrabbed, CaptureGen]()
+			[Nv12Readback, IdReadback, IdGrabbed, DepthReadback, DepthGrabbed, SemReadback, SemGrabbed, CaptureGen]()
 			{
 				if (!Nv12Readback || !Nv12Readback->IsReady()) return false;
 				const bool bWaitIds = CamSimReadback::ShouldWaitForIds(IdReadback != nullptr,
 					IdGrabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen);
 				const bool bWaitDepth = CamSimReadback::ShouldWaitForIds(DepthReadback != nullptr,
 					DepthGrabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen);
-				return (!bWaitIds || IdReadback->IsReady()) && (!bWaitDepth || DepthReadback->IsReady());
+				const bool bWaitSem = CamSimReadback::ShouldWaitForIds(SemReadback != nullptr,
+					SemGrabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen);
+				return (!bWaitIds || IdReadback->IsReady()) && (!bWaitDepth || DepthReadback->IsReady())
+					&& (!bWaitSem || SemReadback->IsReady());
 			},
 			Attempt, MaxReadbackPolls);
 		if (Decision == CamSimReadback::EPollDecision::TimedOut)
@@ -773,6 +857,18 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 			}
 		}
 
+		// Semantic classes: present only when their copy was issued for this capture.
+		S.Semantic.Reset();
+		if (CamSimReadback::ShouldWaitForIds(SemReadback != nullptr, SemGrabbed->Load(EMemoryOrder::SequentiallyConsistent), CaptureGen))
+		{
+			if (const void* Raw = SemReadback->Lock(IdBytes))  // null: do NOT Unlock
+			{
+				S.Semantic.SetNumUninitialized(IdBytes / sizeof(uint32));
+				FMemory::Memcpy(S.Semantic.GetData(), Raw, IdBytes);
+				SemReadback->Unlock();
+			}
+		}
+
 		// SeqCst: the slot's arrays are visible once the game thread sees Complete.
 		RingPtr->MarkComplete(Slot);
 	});
@@ -785,7 +881,7 @@ void UCamSimCaptureComponent::EnqueuePoll(int32 Slot)
 void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	TArray<uint8> Nv12Data, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres,
 	TArray<FEntityAnnotationData> Entities, TArray<uint32> InstanceIds,
-	TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> CaptureJob)
+	TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> CaptureJob, TArray<uint32> SemanticPairs)
 {
 	if (!EncoderThread)
 	{
@@ -809,7 +905,8 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
 		[this, EncThread, Collector, LT,
 		 Nv12 = MoveTemp(Nv12Data), Telemetry, FrameIdx, Depth = MoveTemp(DepthMetres),
-		 Entities = MoveTemp(Entities), IdSize, InstanceIds = MoveTemp(InstanceIds), CaptureJob]() mutable
+		 Entities = MoveTemp(Entities), IdSize, InstanceIds = MoveTemp(InstanceIds), CaptureJob,
+		 SemanticPairs = MoveTemp(SemanticPairs)]() mutable
 	{
 		SCOPE_CYCLE_COUNTER(STAT_CamSimEncode);
 		// SensorStart/End bracket this background stage (latency tracking, 28G).
@@ -852,6 +949,16 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 		}
 		if (LT) LT->Mark(EPipelineStage::SensorEnd);
 
+		// ROADMAP 4D: the semantic class image file (ml_training.semantic), in its own task like depth.
+		if (Collector && SemanticPairs.Num() > 0 && Collector->IsOpen())
+		{
+			AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
+				[Collector, IdSize, FrameIdx, Pairs = SemanticPairs, bForce = CaptureJob.IsValid()]()
+			{
+				Collector->WriteSemanticFrame(Pairs, IdSize.X, IdSize.Y, FrameIdx, bForce);
+			});
+		}
+
 		// Control API capture (ROADMAP 2.4): PNG-encode a copy in its own task, so it never holds bSensorBusy.
 		if (CaptureJob)
 		{
@@ -862,13 +969,18 @@ void UCamSimCaptureComponent::SubmitFrameToEncoder(
 			CaptureJob->SensorMode     = Telemetry.SensorMode;
 			CaptureJob->DepthFarPlaneM = Collector ? Collector->GetDepthFarPlaneM() : 0.0f;
 			AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-				[CaptureJob, Nv12Copy = Nv12, DepthCopy = CaptureJob->bWantDepth ? Depth : TArray<float>(), IdSize]()
+				[CaptureJob, Nv12Copy = Nv12, DepthCopy = CaptureJob->bWantDepth ? Depth : TArray<float>(), IdSize,
+				 SemCopy = CaptureJob->bWantSemantic ? SemanticPairs : TArray<uint32>()]()
 			{
 				CaptureJob->Png = CamSimControl::EncodeNv12Png(Nv12Copy, IdSize.X, IdSize.Y);
 				if (CaptureJob->Png.IsEmpty()) CaptureJob->Error = TEXT("PNG encoding failed");
 				if (DepthCopy.Num() > 0 && CaptureJob->DepthFarPlaneM > 0.0f)
 				{
 					CaptureJob->DepthPng = FDepthMapWriter::EncodeDepthPng(DepthCopy, IdSize.X, IdSize.Y, CaptureJob->DepthFarPlaneM);
+				}
+				if (SemCopy.Num() > 0)
+				{
+					CaptureJob->SemanticPng = FGroundTruthCollector::EncodeSemanticPng(SemCopy, IdSize.X, IdSize.Y);
 				}
 				CaptureJob->bDone.Store(true, EMemoryOrder::SequentiallyConsistent);
 			});

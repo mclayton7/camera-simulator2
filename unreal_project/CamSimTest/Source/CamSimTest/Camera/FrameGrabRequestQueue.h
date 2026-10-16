@@ -4,6 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "GroundTruth/SeaSurfacePlane.h"
+#include "SemanticFrameParams.h"
+
+struct FLandCoverGpuWindow;
 
 /** One frame the game thread wants copied out of the game viewport (ROADMAP 3A). */
 struct FFrameGrabRequest
@@ -16,6 +19,10 @@ struct FFrameGrabRequest
 	/** With bInstanceIds: per tagged entity, the water plane (UE world, doubles) below which its hidden silhouette
 	 *  is cut (submerged hull); empty = no cut. */
 	TArray<FEntityWaterPlane> WaterPlanes;
+	/** ROADMAP 4D: also write and read back the semantic class image, from these params and land-cover window. */
+	bool bSemantic = false;
+	TSharedPtr<const FSemanticFrameParams, ESPMode::ThreadSafe> Semantic;
+	TSharedPtr<const FLandCoverGpuWindow, ESPMode::ThreadSafe> SemanticLandCover;   // the window Semantic was built against
 };
 
 /**

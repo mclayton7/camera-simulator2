@@ -175,7 +175,9 @@ private:
 	void OfferSnapshot(FCamSimSnapshotService& Snap, const FSlot& S) const;
 	void SubmitFrameToEncoder(TArray<uint8> Nv12, FCamSimTelemetry Telemetry, uint64 FrameIdx, TArray<float> DepthMetres,
 	                          TArray<FEntityAnnotationData> Entities, TArray<uint32> InstanceIds,
-	                          TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> CaptureJob);
+	                          TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> CaptureJob, TArray<uint32> SemanticPairs);
+	/** ROADMAP 4D: this frame's semantic params (land-cover window geometry, sea band, stencil classes). Game thread. */
+	TSharedPtr<const struct FSemanticFrameParams, ESPMode::ThreadSafe> BuildSemanticParams(const TArray<FEntityAnnotationData>& Entities) const;
 
 	UPROPERTY(Transient)
 	TObjectPtr<USceneCaptureComponent2D> Sensor;
@@ -213,6 +215,10 @@ private:
 	 * Empty = no depth requested.
 	 */
 	TArray<TUniquePtr<FRHIGPUBufferReadback>> DepthReadbackPool;
+	/** ROADMAP 4D: semantic class readbacks (two pixels per uint32), when semantic output is possible this session. */
+	TArray<TUniquePtr<FRHIGPUBufferReadback>> SemanticReadbackPool;
+	/** Semantic output possible: InstanceIdCS available and ml_training.semantic or the control API on (fixed at init). */
+	bool bSemanticPossible = false;
 	/** Collector's annotation interval (fixed at Initialize, as the collector's): IDs and depth only on annotated frames. */
 	int32 IdIntervalFrames = 1;
 	FSensorController   SensorController;
@@ -281,6 +287,8 @@ private:
 	TAtomic<uint32> IdGrabbedGeneration[FReadbackRing::NumSlots];
 	/** Per slot: the generation whose depth copy was issued (as IdGrabbedGeneration). */
 	TAtomic<uint32> DepthGrabbedGeneration[FReadbackRing::NumSlots];
+	/** Per slot: the generation whose semantic copy was issued (ROADMAP 4D). */
+	TAtomic<uint32> SemanticGrabbedGeneration[FReadbackRing::NumSlots];
 
 	/** Persistent encoder thread — drains processed frames from an SPSC queue. */
 	TUniquePtr<FEncoderThread, FEncoderThreadDeleter> EncoderThread;
@@ -330,6 +338,8 @@ private:
 		TArray<uint32>   InstanceIds;             // render writes → game reads after Complete (empty = none)
 		bool             bWantIds = false;        // game thread at capture; captured by value into the poll
 		bool             bWantDepth = false;      // ditto, for the depth map
+		bool             bWantSemantic = false;   // ditto, for the semantic class image (ROADMAP 4D)
+		TArray<uint32>   Semantic;                // render writes -> game reads after Complete (two pixels per word)
 		TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> CaptureJob;   // control API capture frame (game thread)
 		// Reset by the game thread at capture, advanced by the render thread's polls.
 		TAtomic<uint8>   ReadyStreak      { 0 };  // "N consecutive Ready polls before consuming"

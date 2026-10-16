@@ -555,6 +555,7 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 			YamlBool  (MLNode, "enabled",                  Cfg.MLTraining.bEnabled);
 			YamlString(MLNode, "output_dir",               Cfg.MLTraining.OutputDir);
 			YamlBool  (MLNode, "depth_map",                Cfg.MLTraining.bDepthMap);
+			YamlBool  (MLNode, "semantic",                 Cfg.MLTraining.bSemantic);
 			YamlBool  (MLNode, "bounding_boxes",           Cfg.MLTraining.bBoundingBoxes);
 			YamlBool  (MLNode, "coco_export",              Cfg.MLTraining.bCocoExport);
 			YamlFloat (MLNode, "depth_far_plane_m",        Cfg.MLTraining.DepthFarPlaneM);
@@ -1040,6 +1041,7 @@ void FCamSimConfig::ApplyEnvOverrides(FCamSimConfig& Cfg)
 	Cfg.MLTraining.bEnabled = GetEnvInt(TEXT("CAMSIM_ML_ENABLED"), Cfg.MLTraining.bEnabled ? 1 : 0) != 0;
 	Cfg.MLTraining.OutputDir = GetEnv(TEXT("CAMSIM_ML_OUTPUT_DIR"), Cfg.MLTraining.OutputDir);
 	Cfg.MLTraining.bDepthMap = GetEnvInt(TEXT("CAMSIM_ML_DEPTH_ENABLED"), Cfg.MLTraining.bDepthMap ? 1 : 0) != 0;
+	Cfg.MLTraining.bSemantic = GetEnvBool(TEXT("CAMSIM_ML_SEMANTIC_ENABLED"), Cfg.MLTraining.bSemantic);
 	Cfg.MLTraining.bBoundingBoxes = GetEnvInt(TEXT("CAMSIM_ML_BBOX_ENABLED"), Cfg.MLTraining.bBoundingBoxes ? 1 : 0) != 0;
 	Cfg.MLTraining.bCocoExport = GetEnvInt(TEXT("CAMSIM_ML_COCO_ENABLED"), Cfg.MLTraining.bCocoExport ? 1 : 0) != 0;
 	Cfg.MLTraining.AnnotationIntervalFrames = FMath::Max(1, GetEnvInt(TEXT("CAMSIM_ML_INTERVAL_FRAMES"), Cfg.MLTraining.AnnotationIntervalFrames));

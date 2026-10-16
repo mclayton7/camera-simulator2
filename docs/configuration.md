@@ -545,6 +545,7 @@ Per-frame ground truth for ML/ATR training (COCO JSONL, 16-bit depth).
 | `ml_training.min_visible_pixels` | int | `1` | `CAMSIM_ML_MIN_VISIBLE_PIXELS` | Drop annotations with fewer visible (unoccluded, in-frame) pixels than this. Fully hidden vehicles are never labelled. Clamped to >= 1. |
 | `ml_training.segmentation` | bool | `true` | `CAMSIM_ML_SEGMENTATION_ENABLED` | COCO RLE `segmentation` (modal mask) per annotation; the bulk of each line. |
 | `ml_training.annotation_interval_frames` | int | `1` | `CAMSIM_ML_INTERVAL_FRAMES` | Write every N frames. |
+| `ml_training.semantic` | bool | `false` | `CAMSIM_ML_SEMANTIC_ENABLED` | 8-bit semantic class image per annotated frame, `<output_dir>/semantic/semantic_NNNNNNNN.png` (class ids in `docs/ground-truth.md`, ROADMAP 4D). The control API returns it with each capture whatever this says. |
 | `ml_training.depth_far_plane_m` | float | `5000` | `CAMSIM_ML_DEPTH_FAR_PLANE_M` | Depth quantization ceiling (0 m -> 0, far -> 65535). |
 
 ### Entity Runtime Scale Controls (Phase C3)

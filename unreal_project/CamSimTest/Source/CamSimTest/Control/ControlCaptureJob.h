@@ -12,6 +12,7 @@
 struct FControlCaptureJob
 {
 	bool bWantDepth = true;
+	bool bWantSemantic = true;   // ROADMAP 4D
 
 	uint64 FrameIdx     = 0;
 	uint64 TimestampUs  = 0;
@@ -22,6 +23,7 @@ struct FControlCaptureJob
 	FString Record;              // the frame's camsim_coco.jsonl record; "" without ground truth
 	TArray64<uint8> Png;         // sensor output
 	TArray64<uint8> DepthPng;    // 16-bit grey (metres * 65535 / far); empty without depth
+	TArray64<uint8> SemanticPng; // 8-bit grey class ids (ROADMAP 4D); empty without semantic output
 	FString Error;
 
 	TAtomic<bool> bDone { false };

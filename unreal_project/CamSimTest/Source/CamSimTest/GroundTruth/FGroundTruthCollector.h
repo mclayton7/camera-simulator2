@@ -68,6 +68,16 @@ public:
 	void WriteDepthFrame(const TArray<float>& DepthMetres,
 	                     int32 Width, int32 Height, uint64 FrameIdx, bool bForce = false);
 
+	/**
+	 * ROADMAP 4D: write the frame's semantic class image (<out>/semantic/semantic_NNNNNNNN.png, 8-bit grey class ids)
+	 * when ml_training.semantic is on and the frame is on the interval (or bForce). Pairs: two pixels per word, the
+	 * class in the low 8 bits of each 16-bit half. Its own task thread call (as depth).
+	 */
+	void WriteSemanticFrame(const TArray<uint32>& Pairs, int32 Width, int32 Height, uint64 FrameIdx, bool bForce = false);
+
+	/** The 8-bit grey PNG of a class-pair buffer; empty on a size mismatch. Any thread once ImageWrapper is loaded. */
+	static TArray64<uint8> EncodeSemanticPng(const TArray<uint32>& Pairs, int32 Width, int32 Height);
+
 	/** Depth quantization ceiling (ml_training.depth_far_plane_m). */
 	float GetDepthFarPlaneM() const { return DepthFarPlaneM; }
 
@@ -81,6 +91,8 @@ private:
 	bool  bSegmentation = false;
 	FIntPoint CaptureSize = FIntPoint::ZeroValue;
 	float DepthFarPlaneM = 5000.0f;
+	bool  bSemanticFiles = false;
+	FString SemanticDir;
 
 	TArray<TUniquePtr<IAnnotationWriter>> Writers;
 	TUniquePtr<FDepthMapWriter>           DepthWriter;
