@@ -33,6 +33,7 @@ class Capture:
     depth_far_plane_m: float
     record: dict | None  # the frame's camsim_coco.jsonl record (None without ground truth)
     settle: dict
+    semantic_png: bytes | None = None  # 8-bit class ids (camsim_control.semantic.CLASSES); None without
 
 
 def _clean(fields: dict[str, Any]) -> dict[str, Any]:
@@ -104,16 +105,18 @@ class Client:
         return self._call("PUT", "/api/v1/environment", _clean(fields))
 
     # --- capture ---
-    def capture(self, *, settle_frames: int | None = None, timeout_s: float | None = None, depth: bool = True) -> Capture:
-        body = _clean({"settle_frames": settle_frames, "timeout_s": timeout_s, "depth": depth})
+    def capture(self, *, settle_frames: int | None = None, timeout_s: float | None = None, depth: bool = True,
+                semantic: bool = True) -> Capture:
+        body = _clean({"settle_frames": settle_frames, "timeout_s": timeout_s, "depth": depth, "semantic": semantic})
         r = self._call("POST", "/api/v1/capture", body, timeout=(timeout_s or 120.0) + 30.0)
         depth_b64 = r.get("depth_png_b64")
+        sem_b64 = r.get("semantic_png_b64")
         return Capture(
             frame_id=r["frame_id"], utc=r["utc"], timestamp_us=r["timestamp_us"], width=r["width"],
             height=r["height"], sensor_mode=r.get("sensor_mode", ""), png=base64.b64decode(r["image_png_b64"]),
             depth_png=base64.b64decode(depth_b64) if depth_b64 else None,
             depth_far_plane_m=float(r.get("depth_far_plane_m", 0.0)), record=r.get("annotation"),
-            settle=r.get("settle", {}))
+            settle=r.get("settle", {}), semantic_png=base64.b64decode(sem_b64) if sem_b64 else None)
 
     def wait_ready(self, timeout_s: float = 900.0, poll_s: float = 2.0) -> None:
         """Until the API answers and the camera exists (GET /camera stops answering 503)."""

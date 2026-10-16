@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from camsim_control.client import Capture
+from camsim_control.semantic import CLASSES
 
 _EXTRA_KEYS = ("entity_id", "source", "source_id", "mask_source", "visibility", "bbox_amodal", "obb", "obb_amodal",
                "truncated", "truncation", "box3d", "geo")
@@ -36,6 +37,7 @@ class DatasetWriter:
         self.out = Path(out_dir)
         (self.out / "images").mkdir(parents=True, exist_ok=True)
         (self.out / "depth").mkdir(parents=True, exist_ok=True)
+        (self.out / "semantic").mkdir(parents=True, exist_ok=True)
         self.categories = dict(categories)
         self.images: list[dict] = []
         self.annotations: list[dict] = []
@@ -49,6 +51,9 @@ class DatasetWriter:
             (self.out / "depth" / f"{name}.png").write_bytes(cap.depth_png)
             camsim["depth_file"] = f"depth/{name}.png"
             camsim["depth_far_plane_m"] = cap.depth_far_plane_m
+        if cap.semantic_png:
+            (self.out / "semantic" / f"{name}.png").write_bytes(cap.semantic_png)
+            camsim["semantic_file"] = f"semantic/{name}.png"
         if cap.record and "platform" in cap.record:
             camsim["platform"] = cap.record["platform"]
         camsim.update(extra or {})
@@ -68,6 +73,7 @@ class DatasetWriter:
     def close(self) -> Path:
         path = self.out / "annotations.json"
         cats = [{"id": i, "name": n} for i, n in sorted(self.categories.items())]
-        path.write_text(json.dumps({"images": self.images, "annotations": self.annotations, "categories": cats},
-                                   indent=1))
+        semantic = [{"id": i, "name": n} for i, n in sorted(CLASSES.items())]
+        path.write_text(json.dumps({"images": self.images, "annotations": self.annotations, "categories": cats,
+                                    "camsim_semantic_classes": semantic}, indent=1))
         return path

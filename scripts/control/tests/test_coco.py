@@ -23,10 +23,10 @@ RECORD = {
 }
 
 
-def _cap(record=RECORD, depth=b"depth") -> Capture:
+def _cap(record=RECORD, depth=b"depth", semantic=b"sem") -> Capture:
     return Capture(frame_id=42, utc="2026-06-15T18:00:00.000Z", timestamp_us=1234567, width=640, height=360,
                    sensor_mode="eo", png=b"png", depth_png=depth, depth_far_plane_m=5000.0, record=record,
-                   settle={"frames_waited": 30})
+                   settle={"frames_waited": 30}, semantic_png=semantic)
 
 
 def test_writes_coco(tmp_path: Path):
@@ -37,11 +37,15 @@ def test_writes_coco(tmp_path: Path):
     assert img_id == 1
     assert (tmp_path / "images" / "000000_eo.png").read_bytes() == b"png"
     assert (tmp_path / "depth" / "000000_eo.png").read_bytes() == b"depth"
+    assert (tmp_path / "semantic" / "000000_eo.png").read_bytes() == b"sem"
+    assert coco["camsim_semantic_classes"][0] == {"id": 0, "name": "unlabeled"}
+    assert {"id": 20, "name": "vehicle"} in coco["camsim_semantic_classes"]
     assert coco["categories"] == [{"id": 2001, "name": "truck"}, {"id": 3001, "name": "boat"}]
     img = coco["images"][0]
     assert img == {"id": 1, "file_name": "images/000000_eo.png", "width": 640, "height": 360,
                    "camsim": {"frame_id": 42, "timestamp_us": 1234567, "utc": "2026-06-15T18:00:00.000Z",
                               "sensor_mode": "eo", "depth_file": "depth/000000_eo.png", "depth_far_plane_m": 5000.0,
+                              "semantic_file": "semantic/000000_eo.png",
                               "platform": RECORD["platform"], "seed": 7}}
     a, b = coco["annotations"]
     assert (a["id"], a["image_id"], a["category_id"], a["bbox"], a["area"], a["iscrowd"]) == (1, 1, 2001, [10.0, 20.0, 30.0, 30.0], 700.0, 0)
@@ -53,10 +57,11 @@ def test_writes_coco(tmp_path: Path):
 
 def test_no_record_no_depth(tmp_path: Path):
     w = DatasetWriter(tmp_path, {})
-    w.add("x", _cap(record=None, depth=None))
+    w.add("x", _cap(record=None, depth=None, semantic=None))
     coco = json.loads(w.close().read_text())
     assert coco["annotations"] == []
     assert "depth_file" not in coco["images"][0]["camsim"]
+    assert "semantic_file" not in coco["images"][0]["camsim"]
 
 
 def test_unknown_category_added_from_record(tmp_path: Path):

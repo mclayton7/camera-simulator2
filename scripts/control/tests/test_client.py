@@ -38,6 +38,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._reply(200, {
                 "frame_id": 12, "timestamp_us": 5, "utc": "2026-06-15T18:00:00.000Z", "width": 4, "height": 2,
                 "image_png_b64": base64.b64encode(PNG).decode(), "depth_png_b64": base64.b64encode(b"d").decode(),
+                "semantic_png_b64": base64.b64encode(b"s").decode(), "sensor_mode": "ir",
                 "depth_far_plane_m": 5000, "annotation": {"frame_id": 12, "annotations": []},
                 "settle": {"frames_waited": 30, "wall_ms": 1000}})
         if self.path == "/api/v1/status":
@@ -89,10 +90,12 @@ def test_error_raises_api_error(server):
 
 def test_capture_decodes(server):
     cap = Client(server).capture(settle_frames=5)
-    assert _Handler.calls[-1][2] == {"settle_frames": 5, "depth": True}
+    assert _Handler.calls[-1][2] == {"settle_frames": 5, "depth": True, "semantic": True}
     assert cap.frame_id == 12
     assert cap.png == PNG
     assert cap.depth_png == b"d"
+    assert cap.semantic_png == b"s"
+    assert cap.sensor_mode == "ir"
     assert cap.record == {"frame_id": 12, "annotations": []}
     assert cap.settle["frames_waited"] == 30
 
