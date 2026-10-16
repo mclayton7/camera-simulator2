@@ -231,6 +231,24 @@ bool FSkyCelestialClockTest::RunTest(const FString&)
 // IAU 1976 precession (Meeus ch. 21) vs skyfield: Polaris J2000 (RA 37.954, Dec 89.264) on 2026-10-16 00:00 UTC, mean
 // equator and equinox of date from skyfield.precessionlib.compute_precession (IAU 2006): RA 46.761274, Dec 89.374499
 // (Meeus formulas in Python: RA 46.761768, Dec 89.374506, 0.03 arcsec apart; the J2000 → date shift is 0.152 deg).
+// The ephemeris (LAST, moon az/el) is per observer: a camera that moves while the clock stands still (lockstep, a static
+// CIGI time) must re-apply the sky, else the stars and moon keep the previous place's sky (night_check.py N4: 3 deg off
+// after a launch at the config start point).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSkyReapplyTest, "CamSim.Environment.Sky.ReapplyOnTimeOrObserverMove",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSkyReapplyTest::RunTest(const FString&)
+{
+	const uint64 T0 = 1'000'000'000;
+	TestTrue(TEXT("first tick"), ACamSimEnvironment::ShouldReapplySky(T0, 0, 33.3, -117.3, 0.0, 0.0));
+	TestFalse(TEXT("same time, same place"), ACamSimEnvironment::ShouldReapplySky(T0 + 500'000, T0, 33.3, -117.3, 33.3, -117.3));
+	TestTrue(TEXT("a sim second later"), ACamSimEnvironment::ShouldReapplySky(T0 + 1'000'000, T0, 33.3, -117.3, 33.3, -117.3));
+	TestTrue(TEXT("clock went back"), ACamSimEnvironment::ShouldReapplySky(T0 - 1, T0, 33.3, -117.3, 33.3, -117.3));
+	TestFalse(TEXT("moved 500 m"), ACamSimEnvironment::ShouldReapplySky(T0, T0, 33.3045, -117.3, 33.3, -117.3));
+	TestTrue(TEXT("moved 2 km north, clock frozen"), ACamSimEnvironment::ShouldReapplySky(T0, T0, 33.318, -117.3, 33.3, -117.3));
+	TestTrue(TEXT("moved 3 deg east, clock frozen"), ACamSimEnvironment::ShouldReapplySky(T0, T0, 33.3, -114.3, 33.3, -117.3));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSkyPrecessionTest, "CamSim.Environment.Sky.Precession",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSkyPrecessionTest::RunTest(const FString&)

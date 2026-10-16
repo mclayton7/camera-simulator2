@@ -107,6 +107,13 @@ public:
 	/** The part of IsCelestialChange that moves the sim clock: date/time, Date Valid, Ephemeris Enable. An enable or
 	 *  intensity change alone only re-applies the sky (it must not rewind the clock to the packet's hh:mm). */
 	static bool IsCelestialClockChange(const FCigiCelestialState* Prev, const FCigiCelestialState& Next);
+	/** Whether the tick re-applies the sky (ephemeris, lights, illumination): never applied (Last 0), the sim clock moved
+	 *  back or by a second or more, or the observer (camera) moved more than SkyObserverMoveM since the last apply. The
+	 *  ephemeris is per observer (LAST, moon parallax), and the clock can stand still while the camera moves (lockstep,
+	 *  a static CIGI time). */
+	static bool ShouldReapplySky(uint64 NowMicros, uint64 LastMicros, double Lat, double Lon, double LastLat, double LastLon);
+	/** 1 km: 0.01 deg of local sidereal time at the equator. */
+	static constexpr double SkyObserverMoveM = 1000.0;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	/** Test hook (CamSim.Environment.Sky.*): sets the sky up if BeginPlay didn't (no subsystem in a test world) and applies
@@ -152,6 +159,7 @@ private:
 
 	float SunElevationDeg  = 0.0f;   // current
 	uint64 LastSunMicros   = 0;      // sim time the sun was last applied (0 = now)
+	double LastSkyLat = 0.0, LastSkyLon = 0.0;   // the observer of the last sky apply
 
 	// Cached atmospheric snapshot (Phase 18) — updated each time atmosphere/weather changes
 	FAtmosphericSnapshot CachedAtmosSnapshot;

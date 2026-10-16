@@ -151,12 +151,17 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 	}
 
 	// The sun and moon follow the sim clock; they move ~0.004-0.01 deg/s, so once a
-	// sim second is plenty (and catches clock jumps immediately).
+	// sim second is plenty (and catches clock jumps immediately). The ephemeris is per observer, so a camera move
+	// re-applies it too (the clock may stand still: lockstep, a static CIGI time).
 	const uint64 NowMicros = FSimClock::Get().NowMicros();
-	if (LastSunMicros == 0 || NowMicros < LastSunMicros || NowMicros - LastSunMicros >= 1'000'000)
+	double ObsLat = 0.0, ObsLon = 0.0, ObsAltM = 0.0;
+	GetObserver(ObsLat, ObsLon, ObsAltM);
+	if (ShouldReapplySky(NowMicros, LastSunMicros, ObsLat, ObsLon, LastSkyLat, LastSkyLon))
 	{
 		ApplySky(FSimClock::FromMicros(NowMicros));
 		LastSunMicros = NowMicros;
+		LastSkyLat = ObsLat;
+		LastSkyLon = ObsLon;
 	}
 	// Every tick: directions in the current UE frame, the dome at the camera, the cached-lighting band (ROADMAP 6A).
 	ApplySkyFrame();
@@ -313,6 +318,17 @@ bool ACamSimEnvironment::IsCelestialClockChange(const FCigiCelestialState* Prev,
 	return Next.Hour != P.Hour || Next.Minute != P.Minute
 		|| Next.Day != P.Day || Next.Month != P.Month || Next.Year != P.Year
 		|| Next.bDateVld != P.bDateVld || Next.bEphemerisEn != P.bEphemerisEn;
+}
+
+bool ACamSimEnvironment::ShouldReapplySky(uint64 NowMicros, uint64 LastMicros, double Lat, double Lon, double LastLat, double LastLon)
+{
+	if (LastMicros == 0 || NowMicros < LastMicros || NowMicros - LastMicros >= 1'000'000) return true;
+	if (!FMath::IsFinite(Lat) || !FMath::IsFinite(Lon)) return false;
+	// Equirectangular distance on a 6371 km sphere: plenty for a 1 km threshold.
+	const double DLat = FMath::DegreesToRadians(Lat - LastLat);
+	const double DLon = FMath::DegreesToRadians(FMath::Fmod(Lon - LastLon + 540.0, 360.0) - 180.0)
+		* FMath::Cos(FMath::DegreesToRadians(0.5 * (Lat + LastLat)));
+	return 6371000.0 * FMath::Sqrt(DLat * DLat + DLon * DLon) > SkyObserverMoveM;
 }
 
 bool ACamSimEnvironment::IsCelestialChange(const FCigiCelestialState* Prev, const FCigiCelestialState& Next)
