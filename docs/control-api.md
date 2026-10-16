@@ -28,11 +28,13 @@ scripts/run.sh --headless --local
 
 ## Routes
 
-All bodies are JSON. Partial updates: top-level fields and the camera's `gimbal` axes and `sensor` fields you omit
-keep their value; but each `environment` sub-object (`atmosphere`, `clouds`, `sea`) replaces its whole group, with
-omitted fields at their defaults (e.g. `{"clouds": {"base_m": 3000}}` means coverage 0, clouds off). Errors: `{"error": "..."}` with 400 (bad request: unknown field, wrong type, out of range),
-404 (unknown entity), 409 (wrong state) or 503 (no camera yet, capture timed out). Heights are **WGS-84 ellipsoid**
-metres; heading/pitch/roll are CIGI's (degrees, heading from true north). Omitted fields keep their value.
+All bodies are JSON. Errors: `{"error": "..."}` with 400 (bad request: unknown field, wrong type, out of range), 404
+(unknown entity), 409 (wrong state) or 503 (no camera yet, capture timed out). Heights are **WGS-84 ellipsoid**
+metres; heading/pitch/roll are CIGI's (degrees, heading from true north).
+
+Partial updates: omitted top-level fields, `gimbal` axes and `sensor` fields keep their value. Each `environment`
+sub-object (`atmosphere`, `clouds`, `sea`) replaces its whole group, with omitted fields at their defaults:
+`{"clouds": {"base_m": 3000}}` means coverage 0, clouds off.
 
 | Route | What |
 |---|---|
