@@ -46,6 +46,11 @@ bool FSimDeltaLockstepTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("consumed"), D.Next(1.0 / 30.0), 0.0);
 	Clock.SetUtc(FDateTime(2020, 1, 1));
 	TestEqual(TEXT("a backward jump is 0, never negative"), D.Next(1.0 / 30.0), 0.0);
+	Clock.SetUtc(FDateTime(2020, 1, 1, 6, 0, 0));
+	TestEqual(TEXT("a forward time-of-day jump is 0 too: only Step() integrates (6 h of DR in one tick otherwise)"),
+		D.Next(1.0 / 30.0), 0.0);
+	Clock.Step(0.5);
+	TestTrue(TEXT("steps after the jump integrate"), FMath::IsNearlyEqual(D.Next(1.0 / 30.0), 0.5, 1e-6));
 	return true;
 }
 

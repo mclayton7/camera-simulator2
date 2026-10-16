@@ -53,9 +53,13 @@ bool FControlJsonCameraFullTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("gimbal pitch"), C.View->Pitch, -45.0f);
 	TestEqual(TEXT("hfov"), C.View->HFovDeg.Get(0.f), 20.0f);
 	TestTrue(TEXT("sensor"), C.Sensor.IsSet());
-	TestEqual(TEXT("ir"), C.Sensor->Waveband, ESensorMode::IR);
-	TestEqual(TEXT("black hot"), C.Sensor->Polarity, static_cast<uint8>(1));
-	TestTrue(TEXT("on by default"), C.Sensor->bOn);
+	TestEqual(TEXT("ir"), C.Sensor->Mode.Get(ESensorMode::EO), ESensorMode::IR);
+	TestEqual(TEXT("black hot"), C.Sensor->Polarity.Get(0), static_cast<uint8>(1));
+	TestFalse(TEXT("on not given: unset (keeps the current state)"), C.Sensor->bOn.IsSet());
+
+	const auto P = ParseCamera(TEXT(R"({"sensor":{"polarity":"black_hot"}})"));
+	TestTrue(TEXT("polarity-only parsed"), P.HasValue());
+	if (P.HasValue()) TestFalse(TEXT("polarity only: mode unset"), P.GetValue().Sensor->Mode.IsSet());
 	return true;
 }
 

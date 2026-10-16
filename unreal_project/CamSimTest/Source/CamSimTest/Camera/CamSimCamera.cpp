@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Camera/CamSimCamera.h"
+#include "Control/ControlApiJson.h"
 #include "Camera/CamSimGimbalComponent.h"
 #include "Camera/CamSimSensorComponent.h"
 #include "CamSimTest.h"
@@ -395,7 +396,8 @@ void ACamSimCamera::ApplyCigiViewState(float DeltaTime)
 	// naming an entity starts the first-person view (Phase 22G).
 	GimbalComp->TickGimbal(DeltaTime, HostFrame.ViewControls, HostFrame.ArtParts, Cfg);
 	HostFrame.Reset();
-	Platform.UpdateFirstPersonView(GimbalComp->GetLastViewControlEntityId());
+	// A CIGI View Control's first-person view would move an API-owned camera (ROADMAP 2.4): not while suppressed.
+	if (!bHostCameraSuppressed) Platform.UpdateFirstPersonView(GimbalComp->GetLastViewControlEntityId());
 	SceneCapture->SetRelativeRotation(GimbalComp->GetGimbalRelativeRotation());
 	Telemetry.SetGimbal(GimbalComp->GetGimbalYaw(), GimbalComp->GetGimbalPitch(), GimbalComp->GetGimbalRoll());
 }
@@ -414,7 +416,8 @@ void ACamSimCamera::ApplyControlCamera(const FControlCameraCommand& Cmd)
 	}
 	if (Cmd.Sensor)
 	{
-		SensorComp->ApplySensor(*Cmd.Sensor);
+		SensorComp->ApplySensor(CamSimControl::MergeSensor(*Cmd.Sensor, SensorComp->IsOn(), SensorComp->GetMode(),
+			SensorComp->GetPolarity()));
 		Telemetry.SetSensor(static_cast<uint8>(SensorComp->GetMode()), SensorComp->GetPolarity());
 	}
 	if (Cmd.View)

@@ -85,6 +85,13 @@ void FSimClock::SetUtc(const FDateTime& Utc)
 	FScopeLock ScopeLock(&Lock);
 	AnchorMicros = ToMicros(Utc);
 	AnchorMono   = MonotonicNow();
+	++Epoch;
+}
+
+uint64 FSimClock::GetEpoch() const
+{
+	FScopeLock ScopeLock(&Lock);
+	return Epoch;
 }
 
 void FSimClock::SetRate(double InRate)

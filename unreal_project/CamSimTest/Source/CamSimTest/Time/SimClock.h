@@ -44,8 +44,11 @@ public:
 	 */
 	bool Start(const FString& StartDatetime, float StartHourUtc, double InRate);
 
-	/** Jump to a UTC date and time; time keeps advancing from there at the current rate. */
+	/** Jump to a UTC date and time; time keeps advancing from there at the current rate. Starts a new epoch. */
 	void SetUtc(const FDateTime& Utc);
+
+	/** Bumped by every SetUtc/Start jump: integrations (FSimDelta) don't integrate across a jump. */
+	uint64 GetEpoch() const;
 
 	/** 1 = real time, 0 = frozen, >1 faster than real time. Negative values are treated as 0. */
 	void SetRate(double InRate);
@@ -75,4 +78,5 @@ private:
 	double AnchorMono   = 0.0;
 	double Rate         = 1.0;
 	bool   bLockstep    = false;
+	uint64 Epoch        = 0;
 };

@@ -68,6 +68,10 @@ namespace CamSimControl
 	/** An empty body takes the defaults. */
 	CAMSIMTEST_API TParsed<FCaptureRequest>       ParseCapture(const FString& Body);
 
+	/** A sensor request merged with the sensor's current state (unset fields keep it). */
+	CAMSIMTEST_API FSensorCommand MergeSensor(const FControlSensorRequest& Req, bool bCurrentOn, ESensorMode CurrentMode,
+		uint8 CurrentPolarity);
+
 	/** {"error":"<Message>"}, escaped. */
 	CAMSIMTEST_API FString ErrorJson(const FString& Message);
 	/** ISO 8601 UTC with milliseconds, e.g. 2026-10-15T18:00:00.250Z. */

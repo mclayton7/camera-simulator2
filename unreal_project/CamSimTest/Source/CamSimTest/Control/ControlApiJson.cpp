@@ -278,10 +278,10 @@ TParsed<FControlCameraCommand> ParseCamera(const FString& Body)
 	if (const TSharedPtr<FJsonObject> Sensor = R.Object(TEXT("sensor")))
 	{
 		FFieldReader S(Sensor, TEXT("sensor."), Error);
-		FSensorCommand Cmd;
-		Cmd.bOn = S.Bool(TEXT("on")).Get(true);
-		Cmd.Waveband = S.Enum(TEXT("mode"), { TEXT("eo"), TEXT("ir") }).Get(0) == 1 ? ESensorMode::IR : ESensorMode::EO;
-		Cmd.Polarity = static_cast<uint8>(S.Enum(TEXT("polarity"), { TEXT("white_hot"), TEXT("black_hot") }).Get(0));
+		FControlSensorRequest Cmd;
+		Cmd.bOn = S.Bool(TEXT("on"));
+		if (const TOptional<int32> M = S.Enum(TEXT("mode"), { TEXT("eo"), TEXT("ir") })) Cmd.Mode = *M == 1 ? ESensorMode::IR : ESensorMode::EO;
+		if (const TOptional<int32> P = S.Enum(TEXT("polarity"), { TEXT("white_hot"), TEXT("black_hot") })) Cmd.Polarity = static_cast<uint8>(*P);
 		S.CheckUnknown();
 		Out.Sensor = Cmd;
 	}
@@ -390,6 +390,15 @@ TParsed<FCaptureRequest> ParseCapture(const FString& Body)
 	Out.bDepth = R.Bool(TEXT("depth")).Get(true);
 	R.CheckUnknown();
 	return Finish(Error, MoveTemp(Out));
+}
+
+FSensorCommand MergeSensor(const FControlSensorRequest& Req, bool bCurrentOn, ESensorMode CurrentMode, uint8 CurrentPolarity)
+{
+	FSensorCommand Out;
+	Out.bOn      = Req.bOn.Get(bCurrentOn);
+	Out.Waveband = Req.Mode.Get(CurrentMode);
+	Out.Polarity = Req.Polarity.Get(CurrentPolarity);
+	return Out;
 }
 
 FString ErrorJson(const FString& Message)

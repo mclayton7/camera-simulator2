@@ -83,8 +83,10 @@ void FCamSimPlatformRig::ApplyHostEntityState(const FCigiEntityState& State)
 
 void FCamSimPlatformRig::SetPlatformPose(const CamSimFrames::FGeoPose& Pose, double TimeSec)
 {
-	if (!Anchor) return;
 	bAttached = false;
+	FpsEntityId = 0;          // an explicit pose ends any first-person view (CIGI- or config-activated)
+	bFpsFromCigi = false;
+	if (!Anchor) return;
 	ApplyPose(Pose, TimeSec);
 }
 

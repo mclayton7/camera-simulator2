@@ -52,6 +52,9 @@ public:
 	 */
 	void SetPlatformPose(const CamSimFrames::FGeoPose& Pose, double TimeSec);
 
+	/** The entity the first-person view rides (0: none). */
+	uint16 GetFirstPersonEntityId() const { return FpsEntityId; }
+
 	/** Current platform pose (orientation in local NEU). */
 	bool GetPose(CamSimFrames::FGeoPose& OutPose) const;
 

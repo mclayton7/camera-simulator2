@@ -4,6 +4,8 @@
 #include "Misc/AutomationTest.h"
 #include "UObject/Package.h"
 #include "Camera/CamSimCamera.h"
+#include "Camera/CamSimPlatformRig.h"
+#include "Control/ControlApiJson.h"
 #include "Camera/CamSimGimbalComponent.h"
 #include "Camera/CamSimSensorComponent.h"
 #include "Config/CamSimConfig.h"
@@ -145,5 +147,42 @@ bool FControlConsumersHFovTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("low"), ACamSimCamera::ClampHFov(0.2f), 1.0f);
 	TestEqual(TEXT("high"), ACamSimCamera::ClampHFov(200.0f), 179.0f);
 	TestEqual(TEXT("in range"), ACamSimCamera::ClampHFov(20.0f), 20.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlConsumersFpsTest,
+	"CamSim.ControlApi.Consumers.PlatformPoseEndsFirstPersonView",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FControlConsumersFpsTest::RunTest(const FString& Parameters)
+{
+	FCamSimPlatformRig Rig;   // not initialized: state only, no globe anchor
+	Rig.UpdateFirstPersonView(7);
+	TestEqual(TEXT("CIGI View Control rides entity 7"), Rig.GetFirstPersonEntityId(), static_cast<uint16>(7));
+	CamSimFrames::FGeoPose Pose;
+	Pose.Lat = 33.0; Pose.Lon = -117.0; Pose.Alt = 500.0;
+	Rig.SetPlatformPose(Pose, 0.0);
+	TestEqual(TEXT("an API platform pose ends the first-person view"), Rig.GetFirstPersonEntityId(), static_cast<uint16>(0));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FControlConsumersSensorMergeTest,
+	"CamSim.ControlApi.Consumers.PartialSensorKeepsCurrentState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FControlConsumersSensorMergeTest::RunTest(const FString& Parameters)
+{
+	FControlSensorRequest Polarity;
+	Polarity.Polarity = 1;
+	const FSensorCommand A = CamSimControl::MergeSensor(Polarity, true, ESensorMode::IR, 0);
+	TestEqual(TEXT("polarity only: stays IR"), A.Waveband, ESensorMode::IR);
+	TestEqual(TEXT("black hot"), A.Polarity, static_cast<uint8>(1));
+	TestTrue(TEXT("stays on"), A.bOn);
+	FControlSensorRequest Mode;
+	Mode.Mode = ESensorMode::EO;
+	const FSensorCommand B = CamSimControl::MergeSensor(Mode, false, ESensorMode::IR, 1);
+	TestEqual(TEXT("mode only: EO"), B.Waveband, ESensorMode::EO);
+	TestEqual(TEXT("polarity kept"), B.Polarity, static_cast<uint8>(1));
+	TestFalse(TEXT("off kept"), B.bOn);
 	return true;
 }
