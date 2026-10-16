@@ -10,7 +10,7 @@ Times measured 2026-10-13 on the Linux reference box (Core Ultra 9 285K, RTX 508
 
 | Suite | Full run | Narrow run |
 |---|---|---|
-| C++, NullRHI (655 tests) | ~80 s: 6 s editor start, 27 s inside the tests, ~45 s of the automation controller's per-test overhead | `RunTests CamSim.<Group>` in the command from `CLAUDE.md`, e.g. `CamSim.Vegetation` (84 tests: 20 s end-to-end), `CamSim.Thermal` (141), `CamSim.Sensor.Physics`, or one test's full path: the time scales with the test count |
+| C++, NullRHI (657 tests) | ~80 s: 6 s editor start, 27 s inside the tests, ~45 s of the automation controller's per-test overhead | `RunTests CamSim.<Group>` in the command from `CLAUDE.md`, e.g. `CamSim.Vegetation` (84 tests: 20 s end-to-end), `CamSim.Thermal` (141), `CamSim.Sensor.Physics`, or one test's full path: the time scales with the test count |
 | C++, GPU (`CamSim.GPU.*`, 26) | a few minutes | `scripts/run_gpu_tests.sh CamSim.GPU.Thermal` (groups: `Sensor`, `Thermal`, `GroundTruth`, `Entity`, `LandCover`, `Ocean`) |
 | Python, `scripts/tests` (290) | ~1 s | `-k <name>` |
 | Python, control API client (`scripts/control`, 15) | ~3 s | `uv run --project scripts/control --with pytest pytest scripts/control/tests -k <name>` |

@@ -368,10 +368,10 @@ replaces ad-hoc batch-runner paths.
   - C4: the truck's clamped height matches CIGI HOT within 1 mm.
   - C5: a CIGI host 5 km away doesn't move the owned camera; it does after release.
   - C6: 24 images / 60 annotations load in pycocotools.
-  - C7: across two launches, boxes match to 0.00 px and mask IoU is 1.0000; images are 0.54 DN (EO) / 0.75 DN (IR)
-    apart on average, single images up to 2.9 DN.
+  - C7: across two launches, boxes match to 0.00 px and mask IoU is 1.0000; images are 0.55 DN (EO) / 0.71 DN (IR)
+    apart on average, single images up to 2.7 DN.
   - C8: 27 captures/min at 720p, including scene setup.
-- **Tests:** `CamSim.ControlApi.*` (44; routes in-process plus one over real HTTP) and `scripts/control/tests` (16).
+- **Tests:** `CamSim.ControlApi.*` (46; routes in-process plus one over real HTTP) and `scripts/control/tests` (16).
 - **Found on the way:**
   - A capture's HOT check must look at the entity: HOT and the clamp both trace loaded tiles, and 10 km away both read
     the coarse tiles about 1 m lower.
