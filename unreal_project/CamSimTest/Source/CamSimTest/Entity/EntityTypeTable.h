@@ -44,6 +44,8 @@ struct FEntityTypeEntry
 	bool    bAnimated         = false;   // use USkeletalMeshComponent + AnimInstance
 	FString AnimBlueprintPath;           // e.g. "/Game/Characters/ABP_Soldier.ABP_Soldier_C"
 	FString EntityCategory;              // "character" | "vehicle" | "" (auto)
+	// ROADMAP 4D — semantic class of this type's pixels (CamSimSemantic::EClass 20..25); 0 = from EntityCategory
+	uint8   SemanticClass = 0;
 
 	// ROADMAP 4A — thermal class for this type's pixels (FThermalMaterialTable name; empty = vehicle_paint)
 	// and a temperature offset in K (unset = +8 K for land/sea vehicles, 0 otherwise).
@@ -98,6 +100,9 @@ public:
 
 	/** Returns the entry for the given type ID, or nullptr if not found. */
 	const FEntityTypeEntry* FindEntry(uint16 TypeId) const;
+
+	/** ROADMAP 4D: the semantic class of a type's pixels (its semantic_class, else by entity_category; unknown type: other). */
+	uint8 SemanticClassOf(uint16 TypeId) const;
 
 	/** Retrieve or store a cached static mesh for the given type ID.
 	 *  Const because the cache is treated as memoisation of an otherwise

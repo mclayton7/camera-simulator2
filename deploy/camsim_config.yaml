@@ -806,6 +806,7 @@ render:
 entity_types:
   "1001":
     mesh: f16/f16-c_falcon.glb
+    semantic_class: aircraft         # ROADMAP 4D ground-truth class image
     skeletal: false
     scale: 1.0
     rotation:
@@ -817,6 +818,7 @@ entity_types:
   # glTF bow is +Z, which glTFRuntime maps to UE -X: yaw 180 turns it to +X.
   "2001":
     mesh: truck/ural_4320.glb
+    semantic_class: vehicle         # ROADMAP 4D ground-truth class image
     skeletal: false
     class_name: truck
     scale: 1.0
@@ -836,6 +838,7 @@ entity_types:
   # craft), CC BY 4.0 (entities/boat/LICENSE.md). Scale 1.19: real 6.55 m.
   "3001":
     mesh: boat/mako_655.glb
+    semantic_class: vessel         # ROADMAP 4D ground-truth class image
     skeletal: false
     class_name: boat
     scale: 1.19
@@ -856,6 +859,7 @@ entity_types:
   # of its bottom face (entities/marker/LICENSE.md, CC0); 9002 is the same plate at 10 m for the 5 km views.
   "9001":
     mesh: marker/plate.glb
+    semantic_class: marker         # ROADMAP 4D ground-truth class image
     skeletal: false
     class_name: georeg_marker
     scale: 1.0
@@ -865,6 +869,7 @@ entity_types:
       roll: 0.0
   "9002":
     mesh: marker/plate.glb
+    semantic_class: marker         # ROADMAP 4D ground-truth class image
     skeletal: false
     class_name: georeg_marker
     scale: 5.0

@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Entity/EntityTypeTable.h"
+#include "GroundTruth/SemanticClasses.h"
 #include "Entity/EntityMeshLoader.h"
 #include "Entity/EntityPaths.h"
 #include "Config/CamSimConfig.h"
@@ -290,6 +291,15 @@ void FEntityTypeTable::LoadFromYamlString(const FString& YamlContent)
 		YamlBool  (EntryNode, "animated",       Entry.bAnimated);
 		YamlString(EntryNode, "anim_blueprint", Entry.AnimBlueprintPath);
 		YamlString(EntryNode, "entity_category", Entry.EntityCategory);
+		// ROADMAP 4D: semantic class of the type's pixels
+		FString SemanticName;
+		if (YamlString(EntryNode, "semantic_class", SemanticName) && !SemanticName.IsEmpty()
+			&& !CamSimSemantic::ParseEntityClass(SemanticName, Entry.SemanticClass))
+		{
+			UE_LOG(LogCamSim, Warning, TEXT("EntityTypeTable: type %u: semantic_class \"%s\" is not one of vehicle, vessel, "
+				"aircraft, person, marker, other; using the default"), TypeId, *SemanticName);
+			Entry.SemanticClass = 0;
+		}
 
 		// ROADMAP 4A — thermal class + offset (the class name is resolved by FThermalFrameBuilder, which warns once on an unknown name)
 		YamlString(EntryNode, "thermal_material", Entry.ThermalMaterial);
@@ -361,6 +371,13 @@ void FEntityTypeTable::LoadFromYamlString(const FString& YamlContent)
 
 	UE_LOG(LogCamSim, Log, TEXT("EntityTypeTable: loaded %d entries (%d skipped by preflight)"),
 		TypeMap.Num(), SkippedEntries);
+}
+
+uint8 FEntityTypeTable::SemanticClassOf(uint16 TypeId) const
+{
+	const FEntityTypeEntry* E = FindEntry(TypeId);
+	if (!E) return CamSimSemantic::OtherEntity;
+	return E->SemanticClass != 0 ? E->SemanticClass : CamSimSemantic::DefaultEntityClass(E->EntityCategory);
 }
 
 const FEntityTypeEntry* FEntityTypeTable::FindEntry(uint16 TypeId) const
