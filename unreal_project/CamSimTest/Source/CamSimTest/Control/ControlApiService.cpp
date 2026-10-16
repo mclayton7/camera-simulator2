@@ -329,6 +329,7 @@ bool FControlApiService::HandleCapture(const FHttpServerRequest& Req, const FHtt
 	CaptureDone = Done;
 	CaptureJob.Reset();
 	bCaptureWantDepth = C.bDepth;
+	bCaptureWantSemantic = C.bSemantic;
 	CaptureBeginSec = Now;
 	CaptureFiredSec = 0.0;
 	Gate.Begin(Now, C.SettleFrames.Get(Cfg.DefaultSettleFrames), C.TimeoutSec.Get(Cfg.CaptureTimeoutSec), Cfg.SettleLoadPct);
@@ -363,6 +364,7 @@ void FControlApiService::Tick(double NowSec)
 			CaptureFramesWaited = Gate.FramesWaited();
 			CaptureJob = MakeShared<FControlCaptureJob, ESPMode::ThreadSafe>();
 			CaptureJob->bWantDepth = bCaptureWantDepth;
+			CaptureJob->bWantSemantic = bCaptureWantSemantic;
 			CaptureFiredSec = NowSec;
 			Hooks.RequestCaptureFrame(CaptureJob.ToSharedRef());
 			break;
@@ -393,7 +395,7 @@ void FControlApiService::Tick(double NowSec)
 		return;
 	}
 	FString Body;
-	Body.Reserve(static_cast<int32>(J.Png.Num() * 4 / 3 + J.DepthPng.Num() * 4 / 3 + J.Record.Len() + 512));
+	Body.Reserve(static_cast<int32>((J.Png.Num() + J.DepthPng.Num() + J.SemanticPng.Num()) * 4 / 3 + J.Record.Len() + 512));
 	Body += FString::Printf(TEXT("{\"frame_id\":%llu,\"timestamp_us\":%llu,\"utc\":\"%s\",\"width\":%d,\"height\":%d,\"sensor_mode\":\"%s\","),
 		J.FrameIdx, J.TimestampUs, *UtcIso(FSimClock::FromMicros(J.TimestampUs)), J.Width, J.Height,
 		J.SensorMode == 1 ? TEXT("ir") : TEXT("eo"));
@@ -405,6 +407,12 @@ void FControlApiService::Tick(double NowSec)
 		Body += TEXT("\"depth_png_b64\":\"");
 		Body += FBase64::Encode(J.DepthPng.GetData(), static_cast<uint32>(J.DepthPng.Num()));
 		Body += FString::Printf(TEXT("\",\"depth_far_plane_m\":%g,"), J.DepthFarPlaneM);
+	}
+	if (J.SemanticPng.Num() > 0)
+	{
+		Body += TEXT("\"semantic_png_b64\":\"");
+		Body += FBase64::Encode(J.SemanticPng.GetData(), static_cast<uint32>(J.SemanticPng.Num()));
+		Body += TEXT("\",");
 	}
 	Body += TEXT("\"annotation\":");
 	Body += J.Record.IsEmpty() ? FString(TEXT("null")) : J.Record;

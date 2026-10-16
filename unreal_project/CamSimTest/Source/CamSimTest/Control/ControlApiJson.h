@@ -56,6 +56,7 @@ namespace CamSimControl
 		TOptional<int32>  SettleFrames;   // [0, 600]; unset = control_api.default_settle_frames
 		TOptional<double> TimeoutSec;     // [1, 3600]; unset = control_api.capture_timeout_s
 		bool bDepth = true;
+		bool bSemantic = true;   // ROADMAP 4D class image
 	};
 
 	CAMSIMTEST_API TParsed<FClockRequest>         ParseClock(const FString& Body);

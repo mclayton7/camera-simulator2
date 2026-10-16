@@ -245,14 +245,16 @@ bool FControlJsonCaptureTest::RunTest(const FString& Parameters)
 	{
 		TestFalse(TEXT("default settle"), Empty.GetValue().SettleFrames.IsSet());
 		TestTrue(TEXT("depth by default"), Empty.GetValue().bDepth);
+		TestTrue(TEXT("semantic by default"), Empty.GetValue().bSemantic);
 	}
-	const auto R = ParseCapture(TEXT(R"({"settle_frames":5,"timeout_s":30,"depth":false})"));
+	const auto R = ParseCapture(TEXT(R"({"settle_frames":5,"timeout_s":30,"depth":false,"semantic":false})"));
 	TestTrue(TEXT("parsed"), R.HasValue());
 	if (R.HasValue())
 	{
 		TestEqual(TEXT("settle"), R.GetValue().SettleFrames.Get(-1), 5);
 		TestEqual(TEXT("timeout"), R.GetValue().TimeoutSec.Get(-1.0), 30.0);
 		TestFalse(TEXT("no depth"), R.GetValue().bDepth);
+		TestFalse(TEXT("no semantic"), R.GetValue().bSemantic);
 	}
 	ExpectError(*this, ParseCapture(TEXT(R"({"settle_frames":601})")), TEXT("settle_frames"));
 	ExpectError(*this, ParseCapture(TEXT(R"({"settle_frames":2.5})")), TEXT("settle_frames"));

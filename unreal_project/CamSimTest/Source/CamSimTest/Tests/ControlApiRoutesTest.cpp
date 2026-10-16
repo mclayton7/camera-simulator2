@@ -301,6 +301,7 @@ bool FRoutesCaptureTest::RunTest(const FString& Parameters)
 				J.Record = TEXT("{\"frame_id\":77,\"annotations\":[]}");
 				J.Png = { 1, 2, 3 };
 				J.DepthPng = { 4, 5 };
+				J.SemanticPng = { 6, 7, 8 };
 				J.DepthFarPlaneM = 5000.f;
 				J.bDone.Store(true, EMemoryOrder::SequentiallyConsistent);
 			}
@@ -313,6 +314,7 @@ bool FRoutesCaptureTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("sensor mode"), J->GetStringField(TEXT("sensor_mode")), FString(TEXT("ir")));
 	TestEqual(TEXT("png b64"), J->GetStringField(TEXT("image_png_b64")), FBase64::Encode(TArray<uint8>{ 1, 2, 3 }));
 	TestEqual(TEXT("depth b64"), J->GetStringField(TEXT("depth_png_b64")), FBase64::Encode(TArray<uint8>{ 4, 5 }));
+	TestEqual(TEXT("semantic b64"), J->GetStringField(TEXT("semantic_png_b64")), FBase64::Encode(TArray<uint8>{ 6, 7, 8 }));
 	const TSharedPtr<FJsonObject>* Ann = nullptr;
 	TestTrue(TEXT("annotation is the record"), J->TryGetObjectField(TEXT("annotation"), Ann) && (*Ann)->GetIntegerField(TEXT("frame_id")) == 77);
 	const TSharedPtr<FJsonObject>* Settle = nullptr;

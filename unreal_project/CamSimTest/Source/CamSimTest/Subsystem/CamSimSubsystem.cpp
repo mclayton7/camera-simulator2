@@ -360,12 +360,13 @@ void UCamSimSubsystem::StartControlApi()
 		const UCamSimSensorComponent* Sensor = Cam ? Cam->GetSensorComp() : nullptr;
 		return FString::Printf(
 			TEXT("\"ready\":%s,\"sensor_graph\":%s,\"terrain_ready\":%s,\"frame\":%llu,\"load_progress_pct\":%.1f,")
-			TEXT("\"vegetation_idle\":%s,\"sensor_mode\":\"%s\",\"ground_truth\":{\"masks\":%s,\"depth\":%s}"),
+			TEXT("\"vegetation_idle\":%s,\"sensor_mode\":\"%s\",\"ground_truth\":{\"masks\":%s,\"depth\":%s,\"semantic\":%s}"),
 			bReady ? TEXT("true") : TEXT("false"), bSensorGraphAvailable ? TEXT("true") : TEXT("false"),
 			bTerrain ? TEXT("true") : TEXT("false"), Cam ? Cam->GetFramesCaptured() : 0ull,
 			Cam ? Cam->GetMinLoadProgressPct() : -1.0f, IsVegetationIdle() ? TEXT("true") : TEXT("false"),
 			Sensor && Sensor->GetMode() == ESensorMode::IR ? TEXT("ir") : TEXT("eo"),
-			bGroundTruthMaskAvailable ? TEXT("true") : TEXT("false"), bGroundTruthDepthAvailable ? TEXT("true") : TEXT("false"));
+			bGroundTruthMaskAvailable ? TEXT("true") : TEXT("false"), bGroundTruthDepthAvailable ? TEXT("true") : TEXT("false"),
+			bGroundTruthMaskAvailable ? TEXT("true") : TEXT("false"));   // ROADMAP 4D: the semantic class image rides the same pass
 	};
 
 	Impl->ControlApi = MakeUnique<FControlApiService>(*Impl->ControlApiAdapter, MoveTemp(H), Config.ControlApi);

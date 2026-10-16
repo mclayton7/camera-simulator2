@@ -388,6 +388,7 @@ TParsed<FCaptureRequest> ParseCapture(const FString& Body)
 	if (const TOptional<int64> F = R.Integer(TEXT("settle_frames"), 0, 600)) Out.SettleFrames = static_cast<int32>(*F);
 	Out.TimeoutSec = R.Number(TEXT("timeout_s"), 1.0, 3600.0);
 	Out.bDepth = R.Bool(TEXT("depth")).Get(true);
+	Out.bSemantic = R.Bool(TEXT("semantic")).Get(true);
 	R.CheckUnknown();
 	return Finish(Error, MoveTemp(Out));
 }

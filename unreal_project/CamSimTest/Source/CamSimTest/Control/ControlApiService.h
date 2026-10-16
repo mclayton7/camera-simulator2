@@ -96,6 +96,7 @@ private:
 	FHttpResultCallback CaptureDone;
 	TSharedPtr<FControlCaptureJob, ESPMode::ThreadSafe> CaptureJob;
 	bool   bCaptureWantDepth = true;
+	bool   bCaptureWantSemantic = true;
 	double CaptureBeginSec = 0.0;
 	double CaptureFiredSec = 0.0;
 	int32  CaptureFramesWaited = 0;
