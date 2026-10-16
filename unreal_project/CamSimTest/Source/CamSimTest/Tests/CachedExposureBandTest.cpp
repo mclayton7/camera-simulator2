@@ -37,3 +37,25 @@ bool FCachedBandChatterTest::RunTest(const FString&)
 	TestFalse(TEXT("NaN median holds"), B.Update(NAN, true, C));
 	return true;
 }
+
+// A band switch re-encodes the real-time sky capture at the new cached pre-exposure; time-sliced, the old cubemap stayed a
+// dozen frames and Lumen's sky lighting dipped ~3 EV for ~1.5 s (night_check.py N5). The hold asks for whole-cubemap
+// captures (r.SkyLight.RealTimeReflectionCapture.TimeSlice 0) for FSkyRecaptureHold::Frames ticks after each switch.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSkyRecaptureHoldTest, "CamSim.Environment.CachedExposure.RecaptureHoldAfterSwitch",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSkyRecaptureHoldTest::RunTest(const FString&)
+{
+	FSkyRecaptureHold Hold;
+	TestFalse(TEXT("idle"), Hold.Tick(false));
+	TestTrue(TEXT("switch tick"), Hold.Tick(true));
+	int32 Held = 1;
+	while (Hold.Tick(false)) { ++Held; if (Held > 1000) break; }
+	TestEqual(TEXT("held for Frames ticks"), Held, FSkyRecaptureHold::Frames);
+	TestTrue(TEXT("a second switch re-arms"), Hold.Tick(true));
+	for (int32 I = 0; I < 5; ++I) Hold.Tick(false);
+	TestTrue(TEXT("another switch mid-hold restarts the count"), Hold.Tick(true));
+	int32 Again = 1;
+	while (Hold.Tick(false)) ++Again;
+	TestEqual(TEXT("full hold after the restart"), Again, FSkyRecaptureHold::Frames);
+	return true;
+}

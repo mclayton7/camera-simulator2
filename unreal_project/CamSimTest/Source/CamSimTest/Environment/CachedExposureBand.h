@@ -43,3 +43,26 @@ public:
 private:
 	bool bNight = false;
 };
+
+/**
+ * Whole-cubemap sky captures after a band switch (ROADMAP 6A). The real-time sky capture is time-sliced over about a dozen
+ * frames, and the cubemap it keeps meanwhile was encoded at the old cached pre-exposure (14 EV away), so Lumen's sky
+ * lighting dipped ~3 EV and snapped back ~1.5 s later. Pure; the environment sets
+ * r.SkyLight.RealTimeReflectionCapture.TimeSlice 0 while Tick returns true and restores the previous value after.
+ */
+class FSkyRecaptureHold
+{
+public:
+	static constexpr int32 Frames = 15;
+	/** Once per tick; bSwitched: the band changed this tick. True while the hold lasts (the switch tick included). */
+	bool Tick(bool bSwitched)
+	{
+		if (bSwitched) Left = Frames;
+		const bool bActive = Left > 0;
+		if (Left > 0) --Left;
+		return bActive;
+	}
+
+private:
+	int32 Left = 0;
+};

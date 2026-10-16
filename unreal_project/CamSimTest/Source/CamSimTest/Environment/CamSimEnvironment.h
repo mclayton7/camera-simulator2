@@ -137,6 +137,9 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UDirectionalLightComponent> MoonLight;   // atmosphere light index 1
 	UPROPERTY(Transient) FSkyDomeDriver SkyDome;
 	FCachedExposureBand Band;
+	FSkyRecaptureHold SkyRecaptureHold;
+	bool  bSkyRecaptureHeld = false;
+	int32 SavedSkyCaptureTimeSlice = 1;   // r.SkyLight.RealTimeReflectionCapture.TimeSlice before a hold
 	FCamSimConfig::FCelestialConfig CelestialCfg;   // copied at setup (defaults in a test world)
 	FEphemerisResult LastEphem;
 	FNightIlluminationResult LastIllum;

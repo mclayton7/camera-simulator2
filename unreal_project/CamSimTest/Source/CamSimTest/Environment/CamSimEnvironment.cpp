@@ -552,11 +552,24 @@ void ACamSimEnvironment::UpdateCachedExposureBand()
 	const FCachedExposureBandConfig& BandCfg = CelestialCfg.CachedExposure;
 	// Only EO medians of real frames: in IR the histogram is radiance, and while the terrain gate holds frames the first
 	// histograms are of an unloaded (black) scene (the smoke run flipped to night and back in the first 8 frames).
-	if (Band.Update(Cam->GetSceneMedianLog2(), Cam->IsSensorInEo() && Cam->IsTerrainReady(), BandCfg))
+	const bool bSwitched = Band.Update(Cam->GetSceneMedianLog2(), Cam->IsSensorInEo() && Cam->IsTerrainReady(), BandCfg);
+	if (bSwitched)
 	{
 		SetCachedLightingPreExposure(Band.CachedEv(BandCfg));
 		UE_LOG(LogCamSim, Log, TEXT("6A: cached lighting band → %s (%.0f EV), scene median 2^%.1f"),
 			Band.IsNight() ? TEXT("night") : TEXT("day"), Band.CachedEv(BandCfg), Cam->GetSceneMedianLog2());
+	}
+	// Re-encode the whole sky capture at the new pre-exposure at once (FSkyRecaptureHold): time-sliced, the old cubemap
+	// dimmed Lumen's sky lighting for ~1.5 s after a switch.
+	const bool bHold = SkyRecaptureHold.Tick(bSwitched);
+	if (bHold != bSkyRecaptureHeld)
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("r.SkyLight.RealTimeReflectionCapture.TimeSlice")))
+		{
+			if (bHold) SavedSkyCaptureTimeSlice = Var->GetInt();
+			Var->Set(bHold ? 0 : SavedSkyCaptureTimeSlice, ECVF_SetByCode);
+		}
+		bSkyRecaptureHeld = bHold;
 	}
 }
 
