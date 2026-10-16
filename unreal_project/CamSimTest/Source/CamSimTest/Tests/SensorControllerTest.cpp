@@ -95,6 +95,29 @@ bool FSensorSceneExposureTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ROADMAP 6A (night_check.py N8): the AE reads interpolated percentiles, so a slowly darkening scene moves the gain
+// continuously. With whole 1/8-EV bins the gain held while the median sat in one bin and then jumped 1/8 EV (a 3.6 DN
+// sawtooth in the dusk frame mean).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorAeSmoothMedianTest, "CamSim.Sensor.Controller.MedianInterpolatedWithinBin",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorAeSmoothMedianTest::RunTest(const FString& Parameters)
+{
+	auto GainFor = [](uint32 Lower, uint32 Upper)
+	{
+		FSensorHistogram H;
+		const int32 B = FSensorHistogram::BinOf(FMath::Exp2(8.0f));
+		H.Bins[B] = Lower; H.Bins[B + 1] = Upper; H.Serial = 1;
+		FSensorController C;
+		C.Update(In(&H, 1), EoCfg());
+		return C.GetGainEv();
+	};
+	// Median at bin + 0.5/0.6 vs bin + 0.5/0.55 of a 1/8-EV bin: 0.0095 EV apart (the same bin, so 0 with whole bins).
+	const float Diff = GainFor(6000, 4000) - GainFor(5500, 4500);
+	const float Expected = (0.5f / 0.55f - 0.5f / 0.6f) / FSensorHistogram::BinsPerStop;
+	TestEqual(TEXT("gain follows the median inside a bin"), Diff, Expected, 1e-4f);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorAeSaturatedTest, "CamSim.Sensor.Controller.SaturatedHistogramHitsMinGain",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorAeSaturatedTest::RunTest(const FString& Parameters)

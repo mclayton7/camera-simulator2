@@ -91,7 +91,9 @@ void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeCon
 	const FSensorExposureConfig E = ExposureOf(Cfg, In);
 	float Target = E.ManualGainEv;
 	float Median = 0.0f, High = 0.0f;
-	if (PercentileLog2(H, 0.5f, Median) && PercentileLog2(H, E.HighlightPercentile, High))
+	// Interpolated inside the 1/8-EV bins (ROADMAP 6A): whole bins held the gain and then stepped it 1/8 EV (a 3.6 DN
+	// sawtooth through dusk).
+	if (PercentileLog2Interp(H, 0.5f, Median) && PercentileLog2Interp(H, E.HighlightPercentile, High))
 	{
 		LastMedianLog2 = Median;
 		if (E.bAuto)
