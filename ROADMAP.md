@@ -246,9 +246,11 @@ scenario delta, and IR thermal drift/NUC use the time between frames' sim timest
 a frozen clock freezes drift). Test: `Phase23.ScenarioEngine.WaypointPauseUsesSimTime`.
 
 Still open for 2.1:
-- Lockstep needs a driver (the 2.4 control API) and must also gate the engine tick; other
+- ~~Lockstep needs a driver (the 2.4 control API) and must also gate the engine tick; other
   per-tick integrations (dead reckoning, gimbal slew) still use UE's `DeltaTime` rather than
-  sim time. (Ocean waves now run on sim time, 2.6; only the ocean's visual ripple normal
+  sim time.~~ **Done 2026-10-15 (2.4):** the control API drives lockstep; it gates sim time rather than the engine tick
+  (so streaming and TSR still converge), and dead reckoning and gimbal slews follow the clock's steps in lockstep
+  (`FSimDelta`). (Ocean waves now run on sim time, 2.6; only the ocean's visual ripple normal
   still uses engine time.) Consequence: a frozen clock (Celestial Sphere Control, Ephemeris
   Model Enable off) freezes the sea, boat heave and HOT while DR boats keep moving and the
   ripples keep animating (2.6 findings).
@@ -341,6 +343,50 @@ Progress:
 Set up a scene, spawn entities, randomize, step the clock, and capture frames plus ground
 truth. This becomes the main interface for ML dataset generation and batch runs, and
 replaces ad-hoc batch-runner paths.
+
+**Done 2026-10-15** (guide `docs/control-api.md`; spec `docs/superpowers/specs/2026-10-15-control-api-design.md`).
+- **HTTP/JSON, not gRPC:** `/api/v1` on the health port (`control_api.enabled`, off by default). gRPC would have meant
+  grpc + protobuf as ThirdParty builds for three platforms. Python client: `scripts/control/` (standard library only).
+- **Routes:** status; clock (lockstep, UTC, rate) and step; camera (pose, gimbal, FOV, EO/IR, polarity); API entities
+  (`EHostSource::ControlApi`, re-submitted every tick so ground clamps follow the tiles); environment (atmosphere, a
+  global cloud layer, sea state); capture.
+- **Canonical consumers:** `FViewCommand`, `FSensorCommand`, `FAtmosphereCommand` and `FWeatherCommand` now have
+  consumers (2.3). The CIGI path still uses its own code.
+- **Camera ownership:** the first `PUT /camera` drops CIGI camera-entity packets until `DELETE /camera`. `/ready` no
+  longer needs CIGI traffic when the API owns the camera.
+- **Lockstep** gates sim time, not the engine: tiles stream and TSR converges while the world is frozen. Dead reckoning
+  and gimbal slews follow the clock's steps (`FSimDelta`; engine time outside lockstep, unchanged), and the AE/AGC
+  steps on frame time in lockstep (the R6 "AE holds its first snap on a frozen clock" question, answered for lockstep).
+- **Capture:** waits for the terrain gate, tiles at 99.9 %, vegetation idle and a quiet command stream, then 30 frames.
+  It tags the next frame (annotated whatever the interval, depth read back) and returns PNG, 16-bit depth PNG and the
+  frame's `camsim_coco.jsonl` record inline. Image and labels are paired by construction.
+- `make_dataset.py`: a seeded COCO dataset; sample *i* depends only on `(seed, i)`.
+- **Acceptance** (`scripts/control_api_check.py`, Linux, RTX 5080, `pendleton-bridges`, 2026-10-15): all gates pass.
+  - C1: ready 4 s after the first camera pose, no CIGI.
+  - C2: the clock is still over 3 s of wall time; `step 10` moves the capture timestamp by exactly 10 000 000 µs.
+  - C3: a truck and a boat each come back with a rendered mask and a full-size depth PNG.
+  - C4: the truck's clamped height matches CIGI HOT within 1 mm.
+  - C5: a CIGI host 5 km away doesn't move the owned camera; it does after release.
+  - C6: 24 images / 60 annotations load in pycocotools.
+  - C7: across two launches, boxes match to 0.00 px and mask IoU is 1.0000; images are 0.54 DN (EO) / 0.75 DN (IR)
+    apart on average, single images up to 2.9 DN.
+  - C8: 27 captures/min at 720p, including scene setup.
+- **Tests:** `CamSim.ControlApi.*` (44; routes in-process plus one over real HTTP) and `scripts/control/tests` (16).
+- **Found on the way:**
+  - A capture's HOT check must look at the entity: HOT and the clamp both trace loaded tiles, and 10 km away both read
+    the coarse tiles about 1 m lower.
+  - `PUT /camera` answered with last tick's FOV; fixed.
+  - Health-server tests must enable listener address reuse, as `SnapshotEndpointTest` does: UE restarts every
+    registered listener on `Start()`.
+- **Open:**
+  - **Render-history dependence (R6):** the same view rendered after a different frame history differs by up to ~3 DN,
+    a global offset, even within one launch (the same two samples generated twice: 2.9 DN on sample 0's EO). TSR,
+    Lumen and exposure history are the suspects, not isolated. Two diagnoses were ruled out: the clouds (no change with
+    `r.VolumetricCloud 0`) and the sky-light recapture hysteresis (a lockstep recapture on any sun change made no
+    measurable difference, so it was not kept).
+  - HAT/HOT and LOS over the API.
+  - Per-entity motion (DR) commands.
+  - Moving the CIGI view/sensor/environment path onto the canonical consumers (2.3).
 
 ### 2.5 DIS-driven trucks and boats (done 2026-09-28)
 
@@ -2061,7 +2107,8 @@ sim-to-real stay open: they wait on the choice of a real UAV EO/IR dataset (REAL
   - **IR on vegetation:** 3.8 DN across runs with the clouds on, 0.27 DN with them off (cloud shadows and sky on the
     solar term); the rest not isolated.
   - **Sensor AE / AGC under a frozen clock:** they hold their first snap (`FSensorController::Smoothing` on a zero
-    sim-time step), so a paused sim keeps its startup exposure. Decide whether exposure should follow frame time.
+    sim-time step), so a paused sim keeps its startup exposure. Decide whether exposure should follow frame time. **Lockstep: answered 2026-10-15 (2.4):** in lockstep the AE/AGC step on frame time, so a capture is exposed for its
+    view; outside lockstep unchanged.
 - [ ] **Cross-GPU threshold:** run `determinism_check.py --against` between the Mac and this box, and set the SSIM
   limit.
 - [ ] **Minor:** the KLV attitude is built with `Pose.Neu.Rotator()` (`CamSimPlatformRig.cpp`), so within 0.08° of local
