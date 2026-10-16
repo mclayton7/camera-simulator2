@@ -328,6 +328,11 @@ void ACamSimCamera::UpdateCameraCut()
 	bHasPrevView  = true;
 }
 
+bool ACamSimCamera::IsSensorInEo() const
+{
+	return SensorComp && SensorComp->GetMode() == ESensorMode::EO;
+}
+
 void ACamSimCamera::CaptureAndEncode()
 {
 	// Snapshot (and UTC-stamp) the telemetry immediately before the capture.

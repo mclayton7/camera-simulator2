@@ -10,6 +10,7 @@ class FOceanWaves;
 struct FThermalFrameInputs;
 struct FLandCoverWindowData;
 class ACesiumGeoreference;
+class UDirectionalLightComponent;
 
 /**
  * The running world → FThermalFrameInputs (ROADMAP 4A): CIGI atmosphere/weather (via ACamSimEnvironment's snapshot),
@@ -49,6 +50,10 @@ namespace CamSimThermal
 	 *  (|E.Up|, |N.Up| <= 0.02; pass the Up at the window centre from LandCoverAxesWorld, since the camera's up fails beyond
 	 *  ~100 km) and with the East-South-Up handedness of the UE world (left-handed: Up . (East x North) < -0.99). A transposed or mirrored axis fails. */
 	CAMSIMTEST_API bool AreLandCoverAxesValid(const FVector& EastWorld, const FVector& NorthWorld, const FVector& UpWorld);
+
+	/** The atmosphere sun light in World: visible, used as the atmosphere sun, index 0 (the moon is index 1, ROADMAP 6A),
+	 *  brightest. Null when none. Game thread. */
+	CAMSIMTEST_API UDirectionalLightComponent* FindAtmosphereSunLight(UWorld* World);
 
 	/** World → FThermalFrameInputs (game thread). Fields it cannot read keep their defaults. */
 	CAMSIMTEST_API void GatherFrameInputs(UWorld* World, const UCamSimSubsystem& Subsystem, double CamLatDeg, double CamLonDeg,

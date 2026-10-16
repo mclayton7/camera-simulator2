@@ -8,12 +8,17 @@
 #include "Config/CamSimConfig.h"
 #include "Ocean/FOceanManager.h"
 #include "Sim/Commands.h"
+#include "Environment/CachedExposureBand.h"
+#include "Environment/CelestialEnables.h"
+#include "Environment/Ephemeris.h"
+#include "Environment/NightIllumination.h"
+#include "Environment/SkyDomeDriver.h"
 #include "CamSimEnvironment.generated.h"
 
 class ADirectionalLight;
-class ASkyLight;
-class ASkyAtmosphere;
 class AExponentialHeightFog;
+class ACesiumGeoreference;
+class UDirectionalLightComponent;
 class AVolumetricCloud;
 class ACesiumSunSky;
 class UCamSimSubsystem;
@@ -24,6 +29,11 @@ class ACamSimCamera;
  *
  * Drives UE5 environment actors (sun, sky, fog, clouds) from CIGI
  * Celestial Sphere Control, Atmosphere Control, and Weather Control packets.
+ *
+ * ROADMAP 6A (docs/superpowers/specs/2026-10-16-night-sky-6a-design.md): scene scale k = 1. The sun is CesiumSunSky's
+ * DirectionalLight at its top-of-atmosphere illuminance (atmosphere light 0); the moon is this actor's own directional
+ * light at atmosphere light index 1; the IsSky dome (FSkyDomeDriver) draws the atmosphere, discs, stars and night floor;
+ * the Lumen cached-lighting exposure follows FCachedExposureBand.
  *
  * Place one instance in the level or let ACamSimGameMode spawn it.
  */
@@ -38,7 +48,7 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 
-	/** Current sun elevation in degrees above horizon (Phase 16K). */
+	/** Current sun elevation in degrees above horizon (Phase 16K; ROADMAP 6A: the ephemeris sun, geometric). */
 	float GetSunElevationDeg() const { return SunElevationDeg; }
 
 	/**
@@ -87,14 +97,39 @@ public:
 	/** Thread-safe snapshot (written on game thread, read by ACamSimCamera same game thread). */
 	FAtmosphericSnapshot GetAtmosphericSnapshot() const { return CachedAtmosSnapshot; }
 
+	/**
+	 * Whether a Celestial Sphere Control differs from the last one applied (Prev null: none yet): date/time, Date Valid,
+	 * Ephemeris, Sun/Moon/Star Field Enable and Star Field Intensity (two NaN intensities are equal). Hosts may send the
+	 * packet every frame; only a change moves the clock and re-applies the sky.
+	 */
+	static bool IsCelestialChange(const FCigiCelestialState* Prev, const FCigiCelestialState& Next);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	/** Test hook (CamSim.Environment.Sky.*): sets the sky up if BeginPlay didn't (no subsystem in a test world) and applies
+	 *  it for Utc at the georeference origin. */
+	void ApplySkyForTest(const FDateTime& Utc);
+#endif
+
 private:
-	// Cached UE environment actors (found via TActorIterator in BeginPlay)
-	UPROPERTY(Transient) TObjectPtr<ADirectionalLight>    SunLight;
-	UPROPERTY(Transient) TObjectPtr<ASkyLight>            SkyLight;
-	UPROPERTY(Transient) TObjectPtr<ASkyAtmosphere>       SkyAtmosphere;
+	// Cached UE environment actors (found via TActorIterator in BeginPlay). The sun light, sky light and atmosphere are
+	// CesiumSunSky's components (ROADMAP 6A); FallbackSun only without a CesiumSunSky (test levels).
+	UPROPERTY(Transient) TObjectPtr<ADirectionalLight>     FallbackSun;
+	UPROPERTY(Transient) TObjectPtr<UDirectionalLightComponent> SunLightComp;
 	UPROPERTY(Transient) TObjectPtr<AExponentialHeightFog> HeightFog;
 	UPROPERTY(Transient) TObjectPtr<AVolumetricCloud>      CloudActor;
 	UPROPERTY(Transient) TObjectPtr<ACesiumSunSky>         CesiumSunSkyActor;
+	UPROPERTY(Transient) TObjectPtr<ACesiumGeoreference>   Georeference;
+
+	// ROADMAP 6A night sky
+	UPROPERTY(Transient) TObjectPtr<UDirectionalLightComponent> MoonLight;   // atmosphere light index 1
+	UPROPERTY(Transient) FSkyDomeDriver SkyDome;
+	FCachedExposureBand Band;
+	FCamSimConfig::FCelestialConfig CelestialCfg;   // copied at setup (defaults in a test world)
+	FEphemerisResult LastEphem;
+	FNightIlluminationResult LastIllum;
+	FCelestialEnables LastEnables;
+	bool bSkySetUp = false;
+	bool bSkyApplied = false;
 
 	UPROPERTY(Transient) TObjectPtr<UCamSimSubsystem> Subsystem;
 	UPROPERTY(Transient) TObjectPtr<ACamSimCamera>    CamSimCameraActor;
@@ -108,8 +143,6 @@ private:
 	bool bReceivedAtmosphere = false;
 	bool bReceivedWeather    = false;
 
-	// Previous sun elevation for sky-light recapture hysteresis
-	float PrevSunElevation = 0.0f;   // at the last sky-light recapture
 	float SunElevationDeg  = 0.0f;   // current
 	uint64 LastSunMicros   = 0;      // sim time the sun was last applied (0 = now)
 
@@ -124,8 +157,18 @@ private:
 
 	/** CIGI Celestial Sphere Control → sim clock date/time and rate. */
 	void ApplyCelestialControl(const FCigiCelestialState& Cel);
-	/** Sun position and lighting for a UTC time. */
-	void ApplySun(const FDateTime& Utc);
+	/** Lights and moon for a UTC time (ROADMAP 6A): ephemeris, illumination, light intensities and visibility. The
+	 *  directions and MPC_Sky follow in ApplySkyFrame (every tick). */
+	void ApplySky(const FDateTime& Utc);
+	/** Every tick: sun/moon/star directions in the current UE frame (origin shifts rotate it), moon light rotation, dome at the
+	 *  camera, MPC_Sky. Uses the last ApplySky's ephemeris. */
+	void ApplySkyFrame();
+	/** Finds CesiumSunSky's components (or a fallback sun), creates the moon light and the dome. Idempotent. */
+	void SetUpSky();
+	/** Lumen cached-lighting exposure band from the EO AE's scene median (every tick). */
+	void UpdateCachedExposureBand();
+	/** The observer: camera telemetry, else the configured start point, else the georeference origin. HAE metres. */
+	void GetObserver(double& OutLat, double& OutLon, double& OutAltM) const;
 	void ApplyAtmosphere();
 	void ApplyWeather();
 

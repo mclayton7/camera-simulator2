@@ -52,22 +52,28 @@ namespace
 			{
 				Environment = *It;
 			}
-			// Atmosphere sun light (ROADMAP 4A Task 1: CesiumSunSky's DirectionalLight, index 0): visible, used as the
-			// atmosphere sun, index 0, brightest.
-			UDirectionalLightComponent* Best = nullptr;
-			for (TObjectIterator<UDirectionalLightComponent> It; It; ++It)
-			{
-				if (It->GetWorld() != InWorld || !It->IsVisible() || !It->IsUsedAsAtmosphereSunLight()
-					|| It->GetAtmosphereSunLightIndex() != 0) continue;
-				if (!Best || It->Intensity > Best->Intensity) Best = *It;
-			}
-			Sun = Best;
+			Sun = CamSimThermal::FindAtmosphereSunLight(InWorld);
 			for (TObjectIterator<USkyAtmosphereComponent> It; It; ++It)
 			{
 				if (It->GetWorld() == InWorld) { Sky = *It; break; }
 			}
 		}
 	};
+}
+
+UDirectionalLightComponent* CamSimThermal::FindAtmosphereSunLight(UWorld* World)
+{
+	// Atmosphere sun light (ROADMAP 4A Task 1: CesiumSunSky's DirectionalLight, index 0): visible, used as the atmosphere
+	// sun, index 0, brightest. The 6A moon light is index 1 and never qualifies.
+	UDirectionalLightComponent* Best = nullptr;
+	if (!World) return Best;
+	for (TObjectIterator<UDirectionalLightComponent> It; It; ++It)
+	{
+		if (It->GetWorld() != World || !It->IsVisible() || !It->IsUsedAsAtmosphereSunLight()
+			|| It->GetAtmosphereSunLightIndex() != 0) continue;
+		if (!Best || It->Intensity > Best->Intensity) Best = *It;
+	}
+	return Best;
 }
 
 double CamSimThermal::SunIlluminanceLux(double IntensityLux, const FLinearColor& Color, const FLinearColor& Transmittance,

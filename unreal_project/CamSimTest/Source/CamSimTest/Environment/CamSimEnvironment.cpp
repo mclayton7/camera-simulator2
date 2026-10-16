@@ -8,9 +8,9 @@
 #include "Time/SimClock.h"
 #include "Hosts/CigiCommands.h"
 
+#include "CesiumGeoreference.h"
 #include "CesiumSunSky.h"
 #include "Engine/DirectionalLight.h"
-#include "Engine/SkyLight.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
@@ -19,7 +19,28 @@
 #include "Components/VolumetricCloudComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
 #include "Engine/GameInstance.h"
+#include "Environment/StarField.h"
 #include "EngineUtils.h"
+#include "HAL/IConsoleManager.h"
+
+namespace
+{
+	TAutoConsoleVariable<int32> CVarSkyLog(
+		TEXT("camsim.Sky.Log"),
+		0,
+		TEXT("ROADMAP 6A: 1 logs one LogCamSim line per sky apply (once per sim second and on clock/enable changes): ")
+		TEXT("'6A sky: utc=... sun_el=... sun_ground_lux=... moon_el=... moon_phase=... moon_illum=... moon_ground_lux=... ")
+		TEXT("floor_cdm2=... band=day|night stars=0|1' (scripts/night_check.py parses it)."),
+		ECVF_Default);
+
+	void SetCachedLightingPreExposure(float Ev)
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("r.EyeAdaptation.CachedLightingPreExposure")))
+		{
+			Var->Set(Ev, ECVF_SetByCode);
+		}
+	}
+}
 
 // -------------------------------------------------------------------------
 // Constructor
@@ -32,6 +53,9 @@ ACamSimEnvironment::ACamSimEnvironment()
 	// Same group as ACamSimCamera, which lists this actor as a tick
 	// prerequisite so environment changes reach the same frame's capture.
 	PrimaryActorTick.TickGroup = TG_PostUpdateWork;
+
+	// Root for the moon light and the sky dome (ROADMAP 6A).
+	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 }
 
 // -------------------------------------------------------------------------
@@ -54,19 +78,8 @@ void ACamSimEnvironment::BeginPlay()
 		return;
 	}
 
-	// Find existing environment actors placed in the level
-	if (TActorIterator<ADirectionalLight> It(GetWorld()); It)
-	{
-		SunLight = *It;
-	}
-	if (TActorIterator<ASkyLight> It(GetWorld()); It)
-	{
-		SkyLight = *It;
-	}
-	if (TActorIterator<ASkyAtmosphere> It(GetWorld()); It)
-	{
-		SkyAtmosphere = *It;
-	}
+	// Find existing environment actors placed in the level. The sun, sky light and atmosphere are CesiumSunSky's
+	// components (SetUpSky); Main.umap has no fog actor (the fog path is dead there, ROADMAP 8.6).
 	if (TActorIterator<AExponentialHeightFog> It(GetWorld()); It)
 	{
 		HeightFog = *It;
@@ -76,12 +89,6 @@ void ACamSimEnvironment::BeginPlay()
 	if (TActorIterator<AVolumetricCloud> It(GetWorld()); It)
 	{
 		CloudActor = *It;
-	}
-
-	// CesiumSunSky drives the directional light when present — preferred path
-	if (TActorIterator<ACesiumSunSky> It(GetWorld()); It)
-	{
-		CesiumSunSkyActor = *It;
 	}
 
 	// Phase 19 — cache camera reference for ocean plane tracking (avoid per-tick scan)
@@ -99,24 +106,20 @@ void ACamSimEnvironment::BeginPlay()
 		CachedAtmosSnapshot.AirTempCelsius = Subsystem->GetConfig().Thermal.AirTemperatureC;
 	}
 
-	// The sim clock is UTC: CesiumSunSky must not apply a zone or DST.
-	const FCamSimConfig& Cfg = Subsystem->GetConfig();
-	if (CesiumSunSkyActor)
-	{
-		CesiumSunSkyActor->TimeZone = 0.0;
-		CesiumSunSkyActor->UseDaylightSavingTime = false;
-	}
-	ApplySun(FSimClock::Get().NowUtc());
+	// ROADMAP 6A: sun, moon, dome; the cached-lighting band starts in the day band so it and the cvar agree.
+	CelestialCfg = Subsystem->GetConfig().Celestial;
+	SetUpSky();
+	SetCachedLightingPreExposure(Band.CachedEv(CelestialCfg.CachedExposure));
+	ApplySky(FSimClock::Get().NowUtc());
+	ApplySkyFrame();
 
-	const FString SunName     = SunLight           ? SunLight->GetName()           : TEXT("NONE");
-	const FString SkyName     = SkyLight           ? SkyLight->GetName()           : TEXT("NONE");
-	const FString AtmosName   = SkyAtmosphere      ? SkyAtmosphere->GetName()      : TEXT("NONE");
 	const FString FogName     = HeightFog          ? HeightFog->GetName()          : TEXT("NONE");
 	const FString CloudName   = CloudActor         ? CloudActor->GetName()         : TEXT("NONE");
 	const FString CesiumName  = CesiumSunSkyActor  ? CesiumSunSkyActor->GetName()  : TEXT("NONE");
+	const FString SunName     = SunLightComp       ? SunLightComp->GetOwner()->GetName() : TEXT("NONE");
 	UE_LOG(LogCamSim, Log,
-		TEXT("ACamSimEnvironment: CesiumSunSky=%s Sun=%s SkyLight=%s SkyAtmos=%s Fog=%s Cloud=%s  sim time %s"),
-		*CesiumName, *SunName, *SkyName, *AtmosName, *FogName, *CloudName, *FSimClock::Get().NowUtc().ToIso8601());
+		TEXT("ACamSimEnvironment: CesiumSunSky=%s Sun=%s Fog=%s Cloud=%s  sim time %s"),
+		*CesiumName, *SunName, *FogName, *CloudName, *FSimClock::Get().NowUtc().ToIso8601());
 
 	// Ocean (ROADMAP 2.6)
 	OceanManager.Init(GetWorld(), this, Subsystem);
@@ -147,14 +150,17 @@ void ACamSimEnvironment::Tick(float DeltaTime)
 		ApplyCelestialControl(CelState);
 	}
 
-	// The sun follows the sim clock; the sun moves ~0.004 deg/s, so once a
+	// The sun and moon follow the sim clock; they move ~0.004-0.01 deg/s, so once a
 	// sim second is plenty (and catches clock jumps immediately).
 	const uint64 NowMicros = FSimClock::Get().NowMicros();
 	if (LastSunMicros == 0 || NowMicros < LastSunMicros || NowMicros - LastSunMicros >= 1'000'000)
 	{
-		ApplySun(FSimClock::FromMicros(NowMicros));
+		ApplySky(FSimClock::FromMicros(NowMicros));
 		LastSunMicros = NowMicros;
 	}
+	// Every tick: directions in the current UE frame, the dome at the camera, the cached-lighting band (ROADMAP 6A).
+	ApplySkyFrame();
+	UpdateCachedExposureBand();
 
 	FCigiAtmosphereState AtmState;
 	bool bGotAtmos = false;
@@ -267,11 +273,7 @@ void ACamSimEnvironment::ApplyCelestialControl(const FCigiCelestialState& Cel)
 {
 	// Hosts may send the packet every frame: only a change moves the clock,
 	// otherwise time would stick at hh:mm:00.
-	const bool bChanged = !bReceivedCelestial
-		|| Cel.Hour != LastCelestial.Hour || Cel.Minute != LastCelestial.Minute
-		|| Cel.Day != LastCelestial.Day || Cel.Month != LastCelestial.Month || Cel.Year != LastCelestial.Year
-		|| Cel.bDateVld != LastCelestial.bDateVld || Cel.bEphemerisEn != LastCelestial.bEphemerisEn;
-	if (!bChanged) return;
+	if (!IsCelestialChange(bReceivedCelestial ? &LastCelestial : nullptr, Cel)) return;
 	LastCelestial = Cel;
 	bReceivedCelestial = true;
 
@@ -294,110 +296,247 @@ void ACamSimEnvironment::ApplyCelestialControl(const FCigiCelestialState& Cel)
 	UE_LOG(LogCamSim, Log, TEXT("ACamSimEnvironment: Celestial Sphere Control -> sim time %s, %s"),
 		*Clock.NowUtc().ToIso8601(), Cel.bEphemerisEn ? TEXT("continuous") : TEXT("static"));
 
-	LastSunMicros = 0;  // re-apply the sun on this tick
+	LastSunMicros = 0;  // re-apply the sky (date/time and enables) on this tick
+}
+
+bool ACamSimEnvironment::IsCelestialChange(const FCigiCelestialState* Prev, const FCigiCelestialState& Next)
+{
+	if (!Prev) return true;
+	const FCigiCelestialState& P = *Prev;
+	const bool bSameStarInt = (P.StarInt == Next.StarInt) || (FMath::IsNaN(P.StarInt) && FMath::IsNaN(Next.StarInt));
+	return Next.Hour != P.Hour || Next.Minute != P.Minute
+		|| Next.Day != P.Day || Next.Month != P.Month || Next.Year != P.Year
+		|| Next.bDateVld != P.bDateVld || Next.bEphemerisEn != P.bEphemerisEn
+		|| Next.bSunEn != P.bSunEn || Next.bMoonEn != P.bMoonEn || Next.bStarEn != P.bStarEn
+		|| !bSameStarInt;
 }
 
 // -------------------------------------------------------------------------
-// ApplySun — sun position and lighting for a UTC time
+// ROADMAP 6A — sun, moon, sky dome, cached-lighting band
 // -------------------------------------------------------------------------
 
-void ACamSimEnvironment::ApplySun(const FDateTime& Utc)
+void ACamSimEnvironment::SetUpSky()
+{
+	if (bSkySetUp) return;
+	bSkySetUp = true;
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	if (!CesiumSunSkyActor)
+	{
+		if (TActorIterator<ACesiumSunSky> It(World); It)
+		{
+			CesiumSunSkyActor = *It;
+		}
+	}
+	if (CesiumSunSkyActor)
+	{
+		// The sim clock is UTC: CesiumSunSky must not apply a zone or DST.
+		CesiumSunSkyActor->TimeZone = 0.0;
+		CesiumSunSkyActor->UseDaylightSavingTime = false;
+		SunLightComp = CesiumSunSkyActor->DirectionalLight;
+		// Spec finding 5: CesiumSunSky sets 90 (ground transmittance as if the light were at the zenith), so the sun never
+		// dimmed or reddened at sunset. −90 (the engine default): sun and moon follow their air mass and the planet.
+		if (USkyAtmosphereComponent* Atmos = CesiumSunSkyActor->SkyAtmosphere)
+		{
+			Atmos->SetTransmittanceMinLightElevationAngle(-90.0f);
+		}
+	}
+	else
+	{
+		// No CesiumSunSky (test levels): a level directional light, else a spawned one, as atmosphere light 0.
+		if (TActorIterator<ADirectionalLight> It(World); It)
+		{
+			FallbackSun = *It;
+		}
+		else
+		{
+			FActorSpawnParameters Params;
+			Params.Owner = this;
+			FallbackSun = World->SpawnActor<ADirectionalLight>(Params);
+		}
+		if (FallbackSun)
+		{
+			SunLightComp = Cast<UDirectionalLightComponent>(FallbackSun->GetLightComponent());
+		}
+		if (SunLightComp)
+		{
+			SunLightComp->SetMobility(EComponentMobility::Movable);
+			SunLightComp->SetAtmosphereSunLight(true);
+			SunLightComp->SetAtmosphereSunLightIndex(0);
+		}
+	}
+	if (!Georeference)
+	{
+		Georeference = ACesiumGeoreference::GetDefaultGeoreference(World);
+	}
+
+	// Moon: atmosphere light 1 (spec finding 3: bAtmosphereSunLight defaults to true, so the index must be set). The dome
+	// draws the moon disc with its phase, so the engine's uniform index-1 disc is zeroed.
+	if (!MoonLight)
+	{
+		MoonLight = NewObject<UDirectionalLightComponent>(this, TEXT("CamSimMoonLight"));
+		MoonLight->SetupAttachment(GetRootComponent());
+		MoonLight->SetMobility(EComponentMobility::Movable);
+		MoonLight->SetAtmosphereSunLight(true);
+		MoonLight->SetAtmosphereSunLightIndex(1);
+		MoonLight->ForwardShadingPriority = -1;
+		MoonLight->bCastShadowsOnClouds = false;   // unsupported at index 1
+		MoonLight->CloudScatteredLuminanceScale = FLinearColor::White;
+		MoonLight->LightSourceAngle = 0.52f;
+		MoonLight->AtmosphereSunDiskColorScale = FLinearColor::Black;
+		MoonLight->SetIntensity(0.0f);
+		MoonLight->SetCastShadows(false);
+		MoonLight->SetVisibility(false);
+		MoonLight->RegisterComponent();
+		AddInstanceComponent(MoonLight);
+	}
+
+	SkyDome.Init(this, CelestialCfg);
+
+	const FString Catalogue = CelestialCfg.StarCatalog.IsEmpty() ? FStarField::DefaultPath() : CelestialCfg.StarCatalog;
+	UE_LOG(LogCamSim, Log,
+		TEXT("6A sky: sun=%s moon light=atmosphere index 1, dome=%s, stars=%d texels (%s), catalogue %s, georeference=%s"),
+		SunLightComp ? *SunLightComp->GetReadableName() : TEXT("NONE"),
+		SkyDome.IsInitialized() ? TEXT("on") : TEXT("OFF"),
+		SkyDome.GetStarTexelCount(), SkyDome.HasStars() ? TEXT("loaded") : TEXT("none"), *Catalogue,
+		Georeference ? *Georeference->GetName() : TEXT("NONE"));
+}
+
+void ACamSimEnvironment::GetObserver(double& OutLat, double& OutLon, double& OutAltM) const
+{
+	const ACamSimCamera* Cam = CamSimCameraActor ? CamSimCameraActor.Get() : (Subsystem ? Subsystem->GetCamera() : nullptr);
+	if (Cam)
+	{
+		const FCamSimTelemetry& T = Cam->GetTelemetry();
+		OutLat = T.Latitude;
+		OutLon = T.Longitude;
+		OutAltM = T.Altitude;
+		return;
+	}
+	if (Subsystem)
+	{
+		OutLat = Subsystem->GetConfig().StartLatitude;
+		OutLon = Subsystem->GetConfig().StartLongitude;
+		OutAltM = 0.0;
+		return;
+	}
+	OutLat = Georeference ? Georeference->GetOriginLatitude() : 38.0;
+	OutLon = Georeference ? Georeference->GetOriginLongitude() : 0.0;
+	OutAltM = Georeference ? Georeference->GetOriginHeight() : 0.0;
+}
+
+void ACamSimEnvironment::ApplySky(const FDateTime& Utc)
 {
 	const double UtcHours = Utc.GetHour() + Utc.GetMinute() / 60.0 + Utc.GetSecond() / 3600.0;
 
-	// The approximate model below wants local solar time: shift by longitude.
-	double Latitude  = Subsystem ? Subsystem->GetConfig().StartLatitude  : 38.0;
-	double Longitude = Subsystem ? Subsystem->GetConfig().StartLongitude : 0.0;
-	if (const ACamSimCamera* Cam = Subsystem ? Subsystem->GetCamera() : nullptr)
-	{
-		const FCamSimTelemetry T = Cam->GetCurrentTelemetry();
-		Latitude  = T.Latitude;
-		Longitude = T.Longitude;
-	}
-	const float LocalSolarHour = static_cast<float>(FMath::Fmod(UtcHours + Longitude / 15.0 + 48.0, 24.0));
-	const int32 DayOfYear = Utc.GetDayOfYear();
+	double Lat = 0.0, Lon = 0.0, AltM = 0.0;
+	GetObserver(Lat, Lon, AltM);
+	LastEphem = FEphemeris::Compute(Utc, Lat, Lon, AltM);
+	SunElevationDeg = static_cast<float>(LastEphem.SunElDeg);
 
-	const FVector2D SunPos = ComputeSunPosition(LocalSolarHour, DayOfYear, Latitude);
-	const float SunElevation = SunPos.X;
-	const float SunAzimuth   = SunPos.Y;
-	SunElevationDeg = SunElevation;
+	UE_LOG(LogCamSim, Verbose, TEXT("ACamSimEnvironment: sim time %s  sun elev=%.1f az=%.1f  moon elev=%.1f az=%.1f"),
+		*Utc.ToIso8601(), LastEphem.SunElDeg, LastEphem.SunAzDeg, LastEphem.MoonElDeg, LastEphem.MoonAzDeg);
 
-	UE_LOG(LogCamSim, Verbose, TEXT("ACamSimEnvironment: sim time %s  sun elev=%.1f az=%.1f"),
-		*Utc.ToIso8601(), SunElevation, SunAzimuth);
-
-	// Drive CesiumSunSky's solar time — it owns the directional light rotation.
-	// Fall back to manual rotation only when no CesiumSunSky is in the level.
+	// CesiumSunSky owns the sun light's rotation (its own solar position at the georeference origin).
 	if (CesiumSunSkyActor)
 	{
-		// TimeZone is 0 and DST off (BeginPlay), so SolarTime is UTC.
+		// TimeZone is 0 and DST off (SetUpSky), so SolarTime is UTC.
 		CesiumSunSkyActor->SolarTime = FMath::Min(UtcHours, 23.9999);
 		CesiumSunSkyActor->Day   = Utc.GetDay();
 		CesiumSunSkyActor->Month = Utc.GetMonth();
 		CesiumSunSkyActor->Year  = Utc.GetYear();
 		CesiumSunSkyActor->UpdateSun();
 	}
-	else if (SunLight)
-	{
-		// Fallback: manual rotation when no CesiumSunSky actor exists in the level
-		FRotator SunRotation(-SunElevation, SunAzimuth, 0.0f);
-		SunLight->SetActorRotation(SunRotation);
-	}
 
-	// Intensity/colour tweaks on the directional light (applies in both paths)
-	if (SunLight)
-	{
-		UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(SunLight->GetLightComponent());
-		if (LightComp)
-		{
-			// Intensity based on elevation
-			if (SunElevation > 10.0f)
-			{
-				// Full daylight
-				LightComp->SetIntensity(10.0f);  // lux
-				LightComp->SetLightColor(FLinearColor(1.0f, 0.98f, 0.95f));
-			}
-			else if (SunElevation > 0.0f)
-			{
-				// Golden hour — warm orange, reduced intensity
-				const float T = SunElevation / 10.0f; // 0..1
-				LightComp->SetIntensity(FMath::Lerp(3.0f, 10.0f, T));
-				FLinearColor Warm = FLinearColor::LerpUsingHSV(
-					FLinearColor(1.0f, 0.6f, 0.3f),   // warm orange
-					FLinearColor(1.0f, 0.98f, 0.95f),  // neutral white
-					T);
-				LightComp->SetLightColor(Warm);
-			}
-			else if (SunElevation > -6.0f)
-			{
-				// Civil twilight — dim warm light
-				const float T = (SunElevation + 6.0f) / 6.0f; // 0..1
-				LightComp->SetIntensity(FMath::Lerp(0.1f, 3.0f, T));
-				LightComp->SetLightColor(FLinearColor(0.5f, 0.4f, 0.6f)); // dusky purple
-			}
-			else
-			{
-				// Night — very dim blue light (moonlight approximation)
-				LightComp->SetIntensity(0.02f);
-				LightComp->SetLightColor(FLinearColor(0.3f, 0.35f, 0.5f)); // cool blue
-			}
-		}
-	}
+	LastEnables = FCelestialEnables::From(CelestialCfg, bReceivedCelestial ? &LastCelestial : nullptr);
+	FNightIlluminationInput In;
+	In.Ephem = LastEphem;
+	In.CloudCover01 = CachedAtmosSnapshot.CloudCover01;
+	In.NightFloorLux = CelestialCfg.NightFloorLux;
+	In.bSunEnabled = LastEnables.bSun;
+	In.bMoonEnabled = LastEnables.bMoon;
+	LastIllum = FNightIllumination::Compute(In);
 
-	// Recapture sky light when sun elevation changes significantly
-	if (SkyLight)
+	// k = 1: light intensities are top-of-atmosphere lux; the atmosphere applies transmittance and colour.
+	if (SunLightComp)
 	{
-		const float ElevDelta = FMath::Abs(SunElevation - PrevSunElevation);
-		if (ElevDelta > 2.0f)
-		{
-			USkyLightComponent* SkyComp = SkyLight->GetLightComponent();
-			if (SkyComp)
-			{
-				SkyComp->RecaptureSky();
-			}
-			PrevSunElevation = SunElevation;
-		}
+		SunLightComp->SetIntensity(static_cast<float>(LastIllum.SunToaLux));
+		SunLightComp->SetLightColor(FLinearColor::White);
+	}
+	if (MoonLight)
+	{
+		const bool bMoonUp = LastIllum.MoonToaLux > 0.0 && LastEphem.MoonElDeg > -1.0;
+		MoonLight->SetIntensity(bMoonUp ? static_cast<float>(LastIllum.MoonToaLux) : 0.0f);
+		MoonLight->SetLightColor(LastIllum.MoonColor);
+		MoonLight->SetVisibility(bMoonUp);
+		// Shadows (VSM) only while the moon is the brighter light: no shadow cost by day.
+		MoonLight->SetCastShadows(bMoonUp && LastIllum.MoonGroundLux > LastIllum.SunGroundLux);
+	}
+	bSkyApplied = true;
+
+	if (CVarSkyLog.GetValueOnGameThread() == 1)
+	{
+		UE_LOG(LogCamSim, Log,
+			TEXT("6A sky: utc=%s sun_el=%.3f sun_ground_lux=%.4g moon_el=%.3f moon_phase=%.2f moon_illum=%.3f moon_ground_lux=%.4g floor_cdm2=%.4g band=%s stars=%d"),
+			*Utc.ToIso8601(), LastEphem.SunElDeg, LastIllum.SunGroundLux, LastEphem.MoonElDeg, LastEphem.MoonPhaseAngleDeg,
+			LastEphem.MoonIlluminatedFraction, LastIllum.MoonGroundLux, LastIllum.FloorRadianceCdM2,
+			Band.IsNight() ? TEXT("night") : TEXT("day"), (LastEnables.bStars && SkyDome.HasStars()) ? 1 : 0);
 	}
 }
+
+void ACamSimEnvironment::ApplySkyFrame()
+{
+	if (!bSkyApplied || !Georeference) return;
+	double Lat = 0.0, Lon = 0.0, AltM = 0.0;
+	GetObserver(Lat, Lon, AltM);
+	if (!FMath::IsFinite(Lat) || !FMath::IsFinite(Lon) || !FMath::IsFinite(AltM)) return;
+	const FVector CameraWorld = Georeference->TransformLongitudeLatitudeHeightPositionToUnreal(FVector(Lon, Lat, AltM));   // longitude first
+	const FMatrix EsuToUnreal = Georeference->ComputeEastSouthUpToUnrealTransformation(CameraWorld);
+
+	// Directional lights point from the source: forward = -direction to it (a rotation matrix, never FQuat::Rotator()).
+	if (MoonLight)
+	{
+		const FVector MoonDir = FSkyDomeDriver::EnuToWorldDir(EsuToUnreal, LastEphem.MoonEnu);
+		if (!MoonDir.IsNearlyZero())
+		{
+			MoonLight->SetWorldRotation(FRotationMatrix::MakeFromX(-MoonDir).ToQuat());
+		}
+	}
+	if (!CesiumSunSkyActor && SunLightComp)
+	{
+		const FVector SunDir = FSkyDomeDriver::EnuToWorldDir(EsuToUnreal, LastEphem.SunEnu);
+		if (!SunDir.IsNearlyZero())
+		{
+			SunLightComp->SetWorldRotation(FRotationMatrix::MakeFromX(-SunDir).ToQuat());
+		}
+	}
+	SkyDome.Update(LastEphem, LastIllum, LastEnables, EsuToUnreal, CameraWorld, Lat);
+}
+
+void ACamSimEnvironment::UpdateCachedExposureBand()
+{
+	const ACamSimCamera* Cam = CamSimCameraActor.Get();
+	if (!Cam) return;
+	const FCachedExposureBandConfig& BandCfg = CelestialCfg.CachedExposure;
+	// Only EO medians of real frames: in IR the histogram is radiance, and while the terrain gate holds frames the first
+	// histograms are of an unloaded (black) scene (the smoke run flipped to night and back in the first 8 frames).
+	if (Band.Update(Cam->GetSceneMedianLog2(), Cam->IsSensorInEo() && Cam->IsTerrainReady(), BandCfg))
+	{
+		SetCachedLightingPreExposure(Band.CachedEv(BandCfg));
+		UE_LOG(LogCamSim, Log, TEXT("6A: cached lighting band → %s (%.0f EV), scene median 2^%.1f"),
+			Band.IsNight() ? TEXT("night") : TEXT("day"), Band.CachedEv(BandCfg), Cam->GetSceneMedianLog2());
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+void ACamSimEnvironment::ApplySkyForTest(const FDateTime& Utc)
+{
+	SetUpSky();
+	ApplySky(Utc);
+	ApplySkyFrame();
+}
+#endif
 
 // -------------------------------------------------------------------------
 // Canonical commands (control API, ROADMAP 2.4)
@@ -540,11 +679,15 @@ void ACamSimEnvironment::ApplyWeather()
 				FogComp->SetFogDensity(0.00002f); // Clear day baseline
 			}
 		}
+		if (CachedAtmosSnapshot.CloudCover01 != 0.0f) LastSunMicros = 0;   // re-apply the sky's cloud factor (ROADMAP 6A)
 		CachedAtmosSnapshot.CloudCover01 = 0.0f;   // no weather: clear sky (ROADMAP 4A)
 		return;
 	}
 
+	const float PrevCloud = CachedAtmosSnapshot.CloudCover01;
 	FoldWeather(CachedAtmosSnapshot, CurrentWeather);
+	// A new cloud cover re-applies the moon and night floor on this tick (ROADMAP 6A), also with the sim clock frozen.
+	if (CachedAtmosSnapshot.CloudCover01 != PrevCloud) LastSunMicros = 0;
 	const float Coverage01 = FMath::Clamp(CurrentWeather.Coverage / 100.0f, 0.0f, 1.0f);
 
 	// Fallback: adjust fog to simulate overcast when no volumetric cloud actor exists
@@ -568,10 +711,10 @@ void ACamSimEnvironment::ApplyWeather()
 		}
 	}
 
-	// If SkyLight exists, reduce intensity with heavy overcast
-	if (SkyLight)
+	// Overcast dims CesiumSunSky's sky light (real-time capture)
+	if (CesiumSunSkyActor)
 	{
-		USkyLightComponent* SkyComp = SkyLight->GetLightComponent();
+		USkyLightComponent* SkyComp = CesiumSunSkyActor->SkyLight;
 		if (SkyComp)
 		{
 			// Reduce sky contribution under heavy cloud cover
@@ -633,9 +776,7 @@ void ACamSimEnvironment::ApplyWeather()
 
 void ACamSimEnvironment::SetCloudShadowsEnabled(bool bEnabled, float Strength)
 {
-	if (!SunLight) return;
-	UDirectionalLightComponent* LightComp =
-		Cast<UDirectionalLightComponent>(SunLight->GetLightComponent());
+	UDirectionalLightComponent* LightComp = SunLightComp;
 	if (!LightComp) return;
 	LightComp->bCastCloudShadows   = bEnabled;
 	LightComp->CloudShadowStrength = FMath::Clamp(Strength, 0.0f, 1.0f);

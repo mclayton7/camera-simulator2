@@ -100,6 +100,11 @@ public:
 	/** The current telemetry, without a copy (game thread). */
 	const FCamSimTelemetry& GetTelemetry() const { return Telemetry.Get(); }
 
+	/** ROADMAP 6A: the sensor AE's scene median (log2) of its last histogram (UCamSimCaptureComponent::GetSceneMedianLog2). */
+	float GetSceneMedianLog2() const { return CaptureComp->GetSceneMedianLog2(); }
+	/** ROADMAP 6A: the sensor is in EO, so GetSceneMedianLog2 is scene luminance (in IR it is radiance). */
+	bool IsSensorInEo() const;
+
 	/** Sensor component (for the Sensor Extended Response, opcode 107). */
 	UCamSimSensorComponent* GetSensorComp() const { return SensorComp; }
 
