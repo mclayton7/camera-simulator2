@@ -9,6 +9,7 @@
 #include "Sensor/SensorOptics.h"
 #include "Sensor/SensorPresets.h"
 #include "Sensor/SensorTypes.h"
+#include "Tests/SensorPhysicsHelpers.h"
 
 // Statistics of the CPU reference detector (ROADMAP 3B.2 Task 7) and optics (Task 8). Flat fields are large enough
 // that each tolerance is several standard errors of its estimator; statistics are in double.
@@ -29,34 +30,18 @@ namespace
 		return P;
 	}
 
-	TArray<float> Flat(int32 W, int32 H, float V) { TArray<float> A; A.Init(V, W * H); return A; }
+	using CamSimSensorPhysicsTest::Flat;
+	using CamSimSensorPhysicsTest::Detect;
+	using CamSimSensorPhysicsTest::Mean;
+	using CamSimSensorPhysicsTest::Var;
+	using CamSimSensorPhysicsTest::Combine;
 
-	TArray<float> Detect(float Signal, int32 W, int32 H, const FSensorFrameParams& P, uint32 Frame)
-	{
-		FSensorFrameParams Q = P; Q.FrameIndex = Frame;
-		return CamSimSensorRef::DetectImage(Flat(W, H, Signal), W, H, 1, Q);
-	}
-
-	double Mean(const TArray<double>& A) { double S = 0; for (double V : A) S += V; return S / A.Num(); }
-	double Var(const TArray<double>& A)
-	{
-		const double M = Mean(A); double S = 0;
-		for (double V : A) S += (V - M) * (V - M);
-		return S / (A.Num() - 1);
-	}
 	double Corr(const TArray<double>& A, const TArray<double>& B)
 	{
 		const double Ma = Mean(A), Mb = Mean(B);
 		double Sab = 0, Saa = 0, Sbb = 0;
 		for (int32 I = 0; I < A.Num(); ++I) { Sab += (A[I] - Ma) * (B[I] - Mb); Saa += (A[I] - Ma) * (A[I] - Ma); Sbb += (B[I] - Mb) * (B[I] - Mb); }
 		return Sab / FMath::Sqrt(Saa * Sbb);
-	}
-	/** Per-pixel combination of two DN images in double. */
-	template <typename F> TArray<double> Combine(const TArray<float>& A, const TArray<float>& B, F Fn)
-	{
-		TArray<double> R; R.SetNumUninitialized(A.Num());
-		for (int32 I = 0; I < A.Num(); ++I) R[I] = Fn((double)A[I], (double)B[I]);
-		return R;
 	}
 	/** Mean over frames [First, First + Count) of a flat field, per pixel. */
 	TArray<double> FrameAverage(float Signal, int32 W, int32 H, const FSensorFrameParams& P, uint32 First, uint32 Count)

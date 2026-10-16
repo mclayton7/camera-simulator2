@@ -2,6 +2,7 @@
 
 #include "Sensor/SensorController.h"
 #include "SensorHash.h"
+#include "Sensor/Radiometry.h"
 
 bool FSensorController::PercentileLog2(const FSensorHistogram& H, float P, float& OutLog2)
 {
@@ -67,9 +68,14 @@ int32 FSensorController::SlotOf(const FSensorControllerInput& In)
 	return In.bRadianceInput ? 2 : 1;
 }
 
-const FSensorExposureConfig& FSensorController::ExposureOf(const FSensorModeConfig& Cfg, const FSensorControllerInput& In)
+FSensorExposureConfig FSensorController::ExposureOf(const FSensorModeConfig& Cfg, const FSensorControllerInput& In)
 {
-	return SlotOf(In) == 2 ? Cfg.ThermalExposure : Cfg.Exposure;
+	return SlotOf(In) == 2 ? Cfg.ThermalExposure : CamSimRadiometry::EffectiveExposure(Cfg);
+}
+
+float FSensorController::TotalGainCapEv(const FSensorModeConfig& Cfg)
+{
+	return TotalGainCapEv(Cfg, CamSimRadiometry::EffectiveExposure(Cfg));
 }
 
 float FSensorController::TotalGainCapEv(const FSensorModeConfig& Cfg, const FSensorExposureConfig& E)
@@ -82,7 +88,7 @@ float FSensorController::TotalGainCapEv(const FSensorModeConfig& Cfg, const FSen
 void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeConfig& Cfg,
 	const FSensorControllerInput& In, bool bSnap)
 {
-	const FSensorExposureConfig& E = ExposureOf(Cfg, In);
+	const FSensorExposureConfig E = ExposureOf(Cfg, In);
 	float Target = E.ManualGainEv;
 	float Median = 0.0f, High = 0.0f;
 	if (PercentileLog2(H, 0.5f, Median) && PercentileLog2(H, E.HighlightPercentile, High))
@@ -168,10 +174,6 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	P.ReadNoiseE    = D.ReadNoiseE;
 	P.Prnu          = D.Prnu;
 	P.DsnuE         = D.DsnuE;
-	// Dark signal integrates over the frame time (1 / frame rate), not the AE's integration time: the
-	// photon gain is not yet radiometric (ROADMAP 3B.3). At preset values it is negligible either way
-	// (EO: 5 e/s / 30 Hz = 0.17 e against 2 e read noise; cooled MWIR 0).
-	P.DarkE         = D.DarkCurrentEs / (In.FrameRateHz > 0.0f ? In.FrameRateHz : 30.0f);
 	P.TemporalNoise = D.TemporalNoise;
 	P.PixelFpn      = D.PixelFpn;
 	P.ColumnFpn     = D.ColumnFpn;
@@ -183,12 +185,21 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	// Total AE gain, clamped against the CURRENT mode's config (the state may
 	// have converged under different limits), then split: the photon stage
 	// (integration time) first, analog gain only past its limit.
-	const FSensorExposureConfig& E = ExposureOf(Cfg, In);
+	const FSensorExposureConfig E = ExposureOf(Cfg, In);
 	const float TotalEv  = FMath::Clamp(GainEvByMode[Slot], E.MinGainEv, TotalGainCapEv(Cfg, E));
 	const float PhotonEv = FMath::Min(TotalEv, E.MaxPhotonGainEv);
 	const float AnalogEv = FMath::Max(TotalEv - PhotonEv, 0.0f);
 	P.PhotonGain = FMath::Exp2(PhotonEv);
 	P.AnalogGain = FMath::Exp2(AnalogEv);
+
+	// Dark signal integrates over the integration time: on a radiometric mode (ROADMAP 9.4) the photon gain is one
+	// (t_int = PhotonGain · FullWellE / R); otherwise over the frame time (1 / frame rate). The thermal slot's photon
+	// gain is a calibrated radiance gain, never an integration time. IntegrationSeconds is 0 when R is (a band
+	// with no photopic response), where EffectiveExposure kept the calibrated limits too.
+	const double IntegrationS = Slot != 2 ? CamSimRadiometry::IntegrationSeconds(Cfg, P.PhotonGain) : 0.0;
+	P.DarkE           = IntegrationS > 0.0 ? static_cast<float>(D.DarkCurrentEs * IntegrationS)
+	                                       : D.DarkCurrentEs / (In.FrameRateHz > 0.0f ? In.FrameRateHz : 30.0f);
+	LastIntegrationMs = static_cast<float>(IntegrationS * 1000.0);
 
 	if (bIrAgc)
 	{

@@ -277,6 +277,9 @@ bool FSensorPresetValidationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("vignetting exponent > 8"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      vignetting_exponent: 9\n")), TEXT("vignetting_exponent")));
 	TestTrue(TEXT("negative vignetting exponent"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      vignetting_exponent: -1\n")), TEXT("vignetting_exponent")));
 	TestFalse(TEXT("vignetting exponent 8 accepted"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    optics:\n      vignetting_exponent: 8\n")), TEXT("vignetting_exponent")));
+	// eo_hd_cmos is radiometric (ROADMAP 9.4): the loader warns that min_gain_ev is ignored there; the validator still
+	// range-checks the field (the calibrated fallback).
+	AddExpectedError(TEXT("is ignored on a radiometric mode"), EAutomationExpectedErrorFlags::Contains, 2);
 	TestTrue(TEXT("min_gain_ev below -40"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    exposure:\n      min_gain_ev: -200\n")), TEXT("min_gain_ev")));
 	TestFalse(TEXT("min_gain_ev -40 accepted"), Has(Errors(TEXT("sensor_modes:\n  eo:\n    exposure:\n      min_gain_ev: -40\n")), TEXT("min_gain_ev")));
 	TestEqual(TEXT("defaults valid"), FCamSimConfig().Validate().Num(), 0);

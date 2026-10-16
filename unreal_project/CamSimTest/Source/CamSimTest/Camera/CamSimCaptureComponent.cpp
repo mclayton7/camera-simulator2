@@ -52,6 +52,10 @@ DECLARE_CYCLE_STAT(TEXT("Encode Latency"), STAT_CamSimEncode, STATGROUP_CamSim)
 static TAutoConsoleVariable<int32> CVarCamSimThermalLog(TEXT("camsim.Thermal.Log"), 0,
 	TEXT("1: log the thermal frame parameters once a second while IR runs thermal"), ECVF_Default);
 
+// Diagnostics (ROADMAP 9.4): log the sensor AE state (gain, median, photon/analog split, EO integration time) once a second.
+static TAutoConsoleVariable<int32> CVarCamSimSensorAeLog(TEXT("camsim.Sensor.AeLog"), 0,
+	TEXT("1: log the sensor auto-exposure state (gain EV, median, photon/analog gain, integration time) once a second"), ECVF_Default);
+
 static TAutoConsoleVariable<int32> CVarCamSimFixedNoiseFrame(TEXT("camsim.Sensor.FixedNoiseFrame"), -1,
 	TEXT("Test only (REALISM R6 determinism): >= 0 keys the sensor's temporal noise to this frame index instead of the ")
 	TEXT("frame serial, so a still view renders identical frames; -1 (default) off"), ECVF_Default);
@@ -409,13 +413,20 @@ void UCamSimCaptureComponent::UpdateSensorParams(ESensorMode Mode, uint8 Polarit
 	In.Serial       = ++ParamsSerial;
 	In.FixedNoiseFrame = CVarCamSimFixedNoiseFrame.GetValueOnGameThread();
 	// One detector integration per rendered frame. The controller copies the
-	// mode's seed and detector config into the params (DarkE = DarkCurrentEs /
-	// FrameRateHz, AdcMax = 2^bits - 1, FrameIndex = Serial).
+	// mode's seed and detector config into the params (DarkE = DarkCurrentEs ·
+	// t_int on a radiometric mode, else / FrameRateHz; AdcMax = 2^bits - 1, FrameIndex = Serial).
 	In.FrameRateHz  = Cfg.FrameRate > 0.0f ? Cfg.FrameRate : 30.0f;
 	In.bRadianceInput = bThermal;   // thermal AE slot + capped AGC (ROADMAP 4A)
 	const uint32 StaleBefore = SensorController.GetStaleEpisodes();
 	FSensorFrameParams Params = SensorController.Update(In, MC);
 	if (SensorController.GetStaleEpisodes() != StaleBefore) FrameDropStats.SensorStatsStale++;
+	if (CVarCamSimSensorAeLog.GetValueOnGameThread() > 0 && (ParamsSerial % 30u) == 0u)
+	{
+		// t_int is the radiometric EO integration time (0 on a calibrated-gain mode, e.g. IR).
+		UE_LOG(LogCamSim, Log, TEXT("Sensor AE: mode=%d gainEv=%.2f medianLog2=%.2f photonGain=%.4g analogGain=%.2f t_int=%.3f ms"),
+			static_cast<int32>(Mode), SensorController.GetGainEv(), SensorController.GetLastMedianLog2(),
+			Params.PhotonGain, Params.AnalogGain, SensorController.GetIntegrationMs());
+	}
 	if (bThermal)
 	{
 		// The graph's input is the TSR-resolved RGBA16F scene colour holding (L, L, L, 1); the detector signal is L / B(300 K).

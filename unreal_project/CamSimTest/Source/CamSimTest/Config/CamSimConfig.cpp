@@ -6,6 +6,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Sensor/SensorOptics.h"
+#include "Sensor/Radiometry.h"
 #include "Sensor/SensorPresets.h"
 #include "Thermal/LandCoverClasses.h"
 #include "Thermal/ThermalMaterials.h"
@@ -270,7 +271,10 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 	{
 		FSensorModeConfig EoCfg;
 		// ROADMAP 3B.1 calibrated exposure (must match deploy/camsim_config.yaml;
-		// CamSim.Sensor.Config.PerModeExposureDefaults checks both).
+		// CamSim.Sensor.Config.PerModeExposureDefaults checks both). The eo_hd_cmos preset is
+		// radiometric (ROADMAP 9.4): its AE takes MinGainEv/MaxPhotonGainEv from the integration
+		// time range (CamSimRadiometry::EffectiveExposure); these two are the calibrated fallback for a
+		// non-radiometric EO (transmission or qe 0), and the yaml no longer sets them.
 		EoCfg.Exposure.MinGainEv           = -20.0f;
 		EoCfg.Exposure.MaxPhotonGainEv     = -12.5f;
 		EoCfg.Exposure.TargetGrey          = 0.18f;
@@ -440,19 +444,25 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 				YamlFloat(ModeNode, "signal_weight_r", MC.SignalWeights.X);
 				YamlFloat(ModeNode, "signal_weight_g", MC.SignalWeights.Y);
 				YamlFloat(ModeNode, "signal_weight_b", MC.SignalWeights.Z);
-				auto ParseExposure = [](ryml::ConstNodeRef ENode, FSensorExposureConfig& X)
+				// Returns which gain limits the block set (bMin, bMax): a radiometric mode ignores them (ROADMAP 9.4).
+				auto ParseExposure = [](ryml::ConstNodeRef ENode, FSensorExposureConfig& X, bool& bMin, bool& bMax)
 				{
 					YamlBool (ENode, "auto",                 X.bAuto);
-					YamlFloat(ENode, "min_gain_ev",          X.MinGainEv);
-					YamlFloat(ENode, "max_photon_gain_ev",   X.MaxPhotonGainEv);
+					bMin = YamlFloat(ENode, "min_gain_ev",        X.MinGainEv);
+					bMax = YamlFloat(ENode, "max_photon_gain_ev", X.MaxPhotonGainEv);
 					YamlFloat(ENode, "target_grey",          X.TargetGrey);
 					YamlFloat(ENode, "highlight_percentile", X.HighlightPercentile);
 					YamlInt  (ENode, "lag_frames",           X.LagFrames);
 					YamlFloat(ENode, "manual_gain_ev",       X.ManualGainEv);
 				};
-				if (YamlHas(ModeNode, "exposure")) ParseExposure(ModeNode["exposure"], MC.Exposure);
+				bool bExposureMinSet = false, bExposureMaxSet = false;
+				if (YamlHas(ModeNode, "exposure")) ParseExposure(ModeNode["exposure"], MC.Exposure, bExposureMinSet, bExposureMaxSet);
 				// ROADMAP 4A: thermal radiance AE + AGC cap
-				if (YamlHas(ModeNode, "thermal_exposure")) ParseExposure(ModeNode["thermal_exposure"], MC.ThermalExposure);
+				if (YamlHas(ModeNode, "thermal_exposure"))
+				{
+					bool bUnusedMin = false, bUnusedMax = false;
+					ParseExposure(ModeNode["thermal_exposure"], MC.ThermalExposure, bUnusedMin, bUnusedMax);
+				}
 				YamlFloat(ModeNode, "agc_max_display_gain", MC.AGCMaxDisplayGain);
 
 				// ---------------------------------------------------------------
@@ -510,6 +520,21 @@ FCamSimConfig FCamSimConfig::LoadFromYaml(const FString* YamlContent, const FStr
 					YamlFloat(DNode, "qe",                   MC.Detector.Qe);
 					YamlFloat(DNode, "integration_max_ms",   MC.Detector.IntegrationMaxMs);
 					YamlFloat(DNode, "integration_min_us",   MC.Detector.IntegrationMinUs);
+				}
+
+				// ROADMAP 9.4: a radiometric mode's photon-stage limits come from its integration time range.
+				if (CamSimRadiometry::IsRadiometric(MC))
+				{
+					const FString ModeName = RymlToFString(Key);
+					for (const TPair<bool, const TCHAR*> Set : { TPair<bool, const TCHAR*>(bExposureMinSet, TEXT("min_gain_ev")),
+						TPair<bool, const TCHAR*>(bExposureMaxSet, TEXT("max_photon_gain_ev")) })
+					{
+						if (Set.Key)
+						{
+							UE_LOG(LogCamSim, Warning, TEXT("sensor_modes.%s.exposure.%s is ignored on a radiometric mode (integration time sets it, docs/night.md)"),
+								*ModeName, Set.Value);
+						}
+					}
 				}
 			};
 

@@ -14,7 +14,7 @@ struct FSensorControllerInput
 	double                  DeltaSimSec = 0.0;
 	const FSensorHistogram* NewHistogram = nullptr;  // newest delivered this tick, or null
 	uint32                  Serial      = 0;          // this tick's params serial (monotonic)
-	float                   FrameRateHz = 30.0f;      // integration rate: DarkE = DarkCurrentEs / FrameRateHz
+	float                   FrameRateHz = 30.0f;      // non-radiometric modes: DarkE = DarkCurrentEs / FrameRateHz
 	/** ROADMAP 4A: IR mode with the thermal radiance input (signal = L / B(300 K)). The AE uses ThermalExposure and its
 	 *  own state; the AGC interpolates percentiles, keeps a margin and is capped at AGCMaxDisplayGain. */
 	bool                    bRadianceInput = false;
@@ -41,10 +41,12 @@ public:
 	float  GetGainEv() const          { return LastEmittedGainEv; }
 	float  GetLastMedianLog2() const  { return LastMedianLog2; }
 	uint32 GetStaleEpisodes() const   { return StaleEpisodes; }
+	/** Integration time (ms) of the photon gain emitted last tick on a radiometric mode (ROADMAP 9.4); 0 otherwise. */
+	float  GetIntegrationMs() const   { return LastIntegrationMs; }
 	/** Highest total gain (EV): E.MaxPhotonGainEv + the analog stage's MaxAnalogGainDb in EV (none for a microbolometer). */
 	static float TotalGainCapEv(const FSensorModeConfig& Cfg, const FSensorExposureConfig& E);
-	/** TotalGainCapEv(Cfg, Cfg.Exposure). */
-	static float TotalGainCapEv(const FSensorModeConfig& Cfg) { return TotalGainCapEv(Cfg, Cfg.Exposure); }
+	/** TotalGainCapEv(Cfg, CamSimRadiometry::EffectiveExposure(Cfg)): the EO / IR luminance-proxy AE's cap. */
+	static float TotalGainCapEv(const FSensorModeConfig& Cfg);
 	/** Hash seed of a mode's focal plane: ConfigSeed ^ Pcg(mode index + 1). EO and IR are different
 	 *  detectors, so the same config seed must not give them the same PRNU/DSNU/defect pattern; the
 	 *  same (mode, seed) always gives the same pattern. Derived here, on the CPU, so the reference
@@ -65,7 +67,9 @@ private:
 	uint32 SnapAfterSerial = 0;
 	/** AE state slot: 0 EO, 1 IR luminance proxy, 2 IR thermal radiance. */
 	static int32 SlotOf(const FSensorControllerInput& In);
-	static const FSensorExposureConfig& ExposureOf(const FSensorModeConfig& Cfg, const FSensorControllerInput& In);
+	/** The slot's AE limits: ThermalExposure in slot 2, else CamSimRadiometry::EffectiveExposure (the calibrated Exposure
+	 *  unless the mode is radiometric). */
+	static FSensorExposureConfig ExposureOf(const FSensorModeConfig& Cfg, const FSensorControllerInput& In);
 	int32  LastSlot        = 0;
 	/** AE loop state (total gain EV), one per slot: an excursion into another waveband or input never
 	 *  disturbs this one's converged exposure. */
@@ -74,6 +78,7 @@ private:
 	float  IrLoLog2        = 0.0f;
 	float  IrHiLog2        = 1.0f;
 	float  LastMedianLog2  = 0.0f;
+	float  LastIntegrationMs = 0.0f;
 	int32  TicksSinceHistogram = 0;
 	double PendingDeltaSimSec  = 0.0;  // sim time since the last histogram was consumed
 	uint32 StaleEpisodes   = 0;
