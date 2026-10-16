@@ -94,11 +94,17 @@ T(view dir) = 10^(−0.4 · 0.172 · X(el)), X = Kasten–Young air mass of the 
 
 ### Cached-lighting exposure bands
 
-`FCachedExposureBand` (pure) picks `r.EyeAdaptation.CachedLightingPreExposure` from the sensor's current view
-exposure EV (log2 1/PreExposure): day band `day_ev` (8; safe [−4, 16]) and night band `night_ev` (−6; safe [−18, 2]),
-switching to night below `switch_ev` (−1) and back above `switch_ev + hysteresis_ev` (2). Set by the game thread
-through `IConsoleVariable::Set` (read on the render thread). A switch resets Lumen's radiance cache; acceptance N5
-measures the transient. Thermal mode (fixed −12 EV UE exposure → view EV +12) is in the day band.
+Lumen's cached lighting and the sky capture store luminance × 2^−c in R11G11B10 (c =
+`r.EyeAdaptation.CachedLightingPreExposure`). With c = 8, night luminance (10⁻²–10⁻⁴ cd/m²) is stored at
+~10⁻⁴–10⁻⁶ and underflows, so sky-lit ground goes black. (The view exposure itself stays in UE's "safe range": the EO
+AE is at its gain cap at night. So the trigger is the scene's luminance, not the view EV.)
+
+`FCachedExposureBand` (pure) picks c from the EO AE's scene median (log2 cd/m², `FSensorController::GetLastMedianLog2`):
+day band `day_ev` (8) and night band `night_ev` (−6), switching to night when the median falls below
+`switch_median_log2` (0, ≈ 1 cd/m², late civil twilight) and back to day above `switch_median_log2 + hysteresis_ev`
+(2). Set by the game thread through `IConsoleVariable::Set` (read on the render thread). While the sensor is in IR the
+band holds (the histogram is radiance there). A switch resets Lumen's radiance cache; acceptance N5 measures the
+transient.
 
 ### Radiometric EO exposure (ROADMAP 9.4)
 
@@ -116,7 +122,9 @@ PhotonGain = R · t_int / FullWellE
 - The AE keeps choosing a total gain EV. The photon stage is now integration time:
   `max_photon_gain_ev = log2(R · t_max / FullWellE)`, `t_max = detector.integration_max_ms` (new, default the frame
   period, 33.3 ms), and `min_gain_ev = log2(R · t_min / FullWellE)`, `t_min = detector.integration_min_us` (new, 10 µs).
-  Past t_max the AE adds analog gain as before. For `eo_hd_cmos` this gives max ≈ −6.8 EV (today's calibrated −6).
+  Past t_max the AE adds analog gain as before. For `eo_hd_cmos` this gives max ≈ −6.8 EV against today's calibrated
+  −12.5: EO at dusk and night integrates up to ~5.7 EV longer before analog gain (intended; daylight, where the AE is
+  below the cap, is unchanged by construction: same target, same electrons at the median).
 - Dark signal integrates over t_int, not the frame period (the 3B.3 note in `SensorController.cpp`).
 - Telemetry: the integration time is logged with the AE state.
 - Applies when the mode's detector is `Photon` and its preset (or config) sets `transmission` and `qe`: the EO preset
@@ -156,7 +164,7 @@ PhotonGain = R · t_int / FullWellE
 - New keys (all in `docs/configuration.md`, env overrides only where marked):
   - `environment.celestial.moon_enabled` (true), `stars_default` (true), `night_floor_lux` (0.002,
     `CAMSIM_NIGHT_FLOOR_LUX`), `star_catalog` (path, default the shipped BSC5)
-  - `environment.celestial.cached_exposure.{day_ev, night_ev, switch_ev, hysteresis_ev}` (8, −6, −1, 2)
+  - `environment.celestial.cached_exposure.{day_ev, night_ev, switch_median_log2, hysteresis_ev}` (8, −6, 0, 2)
   - `sensor_modes.<mode>.optics.transmission`, `detector.{qe, integration_max_ms, integration_min_us}`
 
 ## Testing
@@ -175,18 +183,19 @@ Unit (NullRHI):
   keep passing.
 - `CamSim.CIGI.Celestial.*`: enables, star intensity, `stars_default` hand-over.
 
-GPU (`CamSim.GPU.*`, real RHI):
-- `CamSim.GPU.Sky.MoonDiscIlluminance`: the moon disc's integrated luminance × solid angle = the moon light's
-  transmitted illuminance within 5 %, at full and quarter phase.
-- `CamSim.GPU.Sensor.*` unchanged (shader unchanged).
+- `CamSim.Environment.MoonDisc.*`: the disc shading normaliser (computed on the CPU, passed through `MPC_Sky`)
+  makes the numerically integrated disc luminance × solid angle equal the input illuminance within 1 % at phase
+  angles 0°, 45°, 90°, 135°; the lit limb faces the sun.
+
+GPU: `CamSim.GPU.Sensor.*` unchanged (shader unchanged) and must still pass.
 
 Acceptance `scripts/night_check.py --scene PKG --out DIR [--runs ...]` (Pendleton package, Linux RTX 5080; the M1 Pro
 run is recorded as open if not done):
 
 | Gate | Check |
 | ---- | ----- |
-| N1 | Daytime unchanged: bench shots before/after, EO mean luma within ±3 DN, temporal noise within 10 % |
-| N2 | Full moon high vs new moon, same pose: AE total gain differs by the illuminance ratio ±1 EV; new-moon temporal noise within ±20 % of the photon model's prediction |
+| N1 | Daytime unchanged: bench day shots (AE below its cap) before/after, EO mean luma within ±3 DN, temporal noise within 10 % |
+| N2 | Full moon high vs new moon, same pose: the AE's scene median (log2) differs by log2 of the predicted ground illuminance ratio ±0.5 EV; temporal noise of Y on a flat patch within ±20 % of `CamSimSensorRef::Run` on a flat field at the logged median and gains |
 | N3 | Moon in view: disc centroid within 2 px of the ephemeris projection; lit limb toward the sun |
 | N4 | Stars at new moon visible (≥ 20 detections at the expected positions within 2 px); none by day |
 | N5 | Dusk band switch: consecutive-frame mean luma step ≤ 5 DN through the switch, settled ≤ 30 frames |
