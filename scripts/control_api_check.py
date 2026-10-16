@@ -74,10 +74,11 @@ def http_code(path: str) -> int:
 
 
 @contextlib.contextmanager
-def launch(out: Path, scene: Path | None, tag: str) -> Iterator[Client]:
+def launch(out: Path, scene: Path | None, tag: str, extra_env: dict[str, str] | None = None) -> Iterator[Client]:
     rb.wait_port_free(int(rb.HEALTH.rsplit(":", 1)[1]))
     env = dict(os.environ, CAMSIM_CONTROL_API_ENABLED="1", CAMSIM_ML_ENABLED="1", CAMSIM_ML_INTERVAL_FRAMES="100000",
                CAMSIM_ML_OUTPUT_DIR=str(out / f"ml-{tag}"))
+    env.update(extra_env or {})
     if scene:
         env["CAMSIM_SCENE_DIR"] = str(scene.resolve())
     subprocess.run([str(REPO / "scripts" / "run.sh"), "--headless", "--local", "--detach", EXEC_CMDS],
@@ -98,8 +99,8 @@ class Report:
         self.rows.append((gate, ok, detail))
         print(f"{gate}: {'PASS' if ok else ('INFO' if ok is None else 'FAIL')} - {detail}", flush=True)
 
-    def write(self, path: Path) -> bool:
-        lines = ["# Control API acceptance", "", "| Gate | Result | Detail |", "|---|---|---|"]
+    def write(self, path: Path, title: str = "Control API acceptance") -> bool:
+        lines = [f"# {title}", "", "| Gate | Result | Detail |", "|---|---|---|"]
         for g, ok, d in self.rows:
             lines.append(f"| {g} | {'PASS' if ok else ('info' if ok is None else '**FAIL**')} | {d} |")
         path.write_text("\n".join(lines) + "\n")

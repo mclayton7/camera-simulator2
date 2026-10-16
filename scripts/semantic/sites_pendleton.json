@@ -1,0 +1,33 @@
+{
+ "package": "pendleton-bridges",
+ "sites": [
+  {
+   "name": "flat",
+   "lat": 33.3072917,
+   "lon": -117.344625,
+   "expect": "road",
+   "why": "georeg flat site: 15 x 15 land-cover cells paved (200/201)"
+  },
+  {
+   "name": "roof",
+   "lat": 33.2888041,
+   "lon": -117.3630834,
+   "expect": "building",
+   "why": "georeg roof site: flat-roofed Overture building >= 20 x 20 m, burned 230"
+  },
+  {
+   "name": "sea",
+   "lat": 33.21,
+   "lon": -117.43,
+   "expect": "water",
+   "why": ">= 2 km offshore (hot_check SEA_POINTS)"
+  },
+  {
+   "name": "tree",
+   "lat": 33.307125,
+   "lon": -117.3409583,
+   "expect": "tree",
+   "why": "9x9 land-cover cells all WorldCover 10 (tree cover), nearest such patch to the flat site (0.3 km); scripts/semantic/find_tree_site.py"
+  }
+ ]
+}
