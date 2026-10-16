@@ -1765,6 +1765,33 @@ within 2 DN (n +95.6 / +69.6, p 35.5 → 5.7 / 26.7 → 1.8, q +153.6, b +23.0 /
 
 ---
 
+### 4D (part) Semantic class image (done 2026-10-16)
+
+Spec `docs/superpowers/specs/2026-10-16-semantic-ground-truth-design.md`; guide `docs/ground-truth.md` ("Semantic class
+image"). Every annotated frame can carry a per-pixel class image (sky, water, road, rail, building, built-up, tree, low
+vegetation, bare, snow/ice; vehicle, vessel, aircraft, person, marker, other entity), registered with the instance masks
+and depth by construction: a `WRITE_SEMANTIC` permutation of `InstanceIdCS` classifies the same source texel (sky by
+depth, visible entities through a stencil → class table from `entity_types.<id>.semantic_class`, ThermalCS's sea band on
+land-cover 0/80, else the nearest land-cover texel's class). The land-cover window is now also kept in EO when semantic
+output is possible. Outputs: `ml_training.semantic` files (`semantic/semantic_NNNNNNNN.png`), `semantic_png_b64` in every
+control API capture, `semantic/` + `camsim_semantic_classes` in `make_dataset.py` datasets.
+
+- **GPU = CPU:** `CamSim.GPU.GroundTruth.Semantic.MatchesCpu`, 2979 pixels on a synthetic scene with distortion, 12
+  classes, 0 mismatches (93 excluded within 1e-3 texel of a boundary).
+- **Acceptance** (`scripts/semantic_check.py`, Linux RTX 5080, `pendleton-bridges`, 2026-10-16), all pass:
+  - S3 terrain: road (flat site), building (roof site), tree (a 9 × 9 WorldCover tree patch) and water (2 km offshore)
+    each 100 % of the centre at nadir 300 m.
+  - S1 entities: a truck's and a boat's masks are 100 % `vehicle` / `vessel`, no entity-class pixel outside the masks.
+  - S2 sky: 86 773 sky pixels, all at the depth far plane.
+  - S4: EO and IR class images identical.
+  - S5: dataset files.
+  - S6 cost: +0.096 ms GPU per annotated frame at 720p (2.535 → 2.631 ms p50, every frame annotated).
+- **Limits:** terrain classes at the land-cover resolution (10 m); tree crowns and building walls take the class of the
+  cell under them (trees and the feature tilesets get no custom depth: it would occlude entities in the custom-depth
+  buffer); terrain beyond the land-cover window is `unlabeled` (seen on a distant island in the horizon view).
+- **Still open in 4D:** validation against published data; thermal shadow lag; per-instance labels for trees and
+  buildings.
+
 ## HITL support (Hooter rig, `HITL.md`; done 2026-10-01)
 
 CamSim side of the X-Plane 11 + PX4 hardware-in-the-loop rig (`HITL.md` gaps 1–12). The IG host,

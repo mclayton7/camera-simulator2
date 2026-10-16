@@ -45,7 +45,7 @@ sub-object (`atmosphere`, `clouds`, `sea`) replaces its whole group, with omitte
 | `PUT` / `DELETE /api/v1/entities/{id}` | id 1..65535: `{"type_id", "lat", "lon", "alt", "heading", "pitch", "roll", "surface": "none"\|"ground"\|"water", "hidden", "components": [{"class", "id", "state"}]}`; a new entity needs `type_id` and the position |
 | `GET` / `DELETE /api/v1/entities` | list (with the committed, clamped pose) / remove all API entities |
 | `PUT /api/v1/environment` | `{"atmosphere": {"visibility_m", "humidity_pct", "air_temp_c", "wind_mps", "wind_dir_deg", "pressure_mb", "enabled"}, "clouds": {"coverage_pct", "base_m", "thickness_m", "type"}, "sea": {"beaufort", "direction_deg"}}` |
-| `POST /api/v1/capture` | `{"settle_frames": 30, "timeout_s": 120, "depth": true}` (all optional) → the capture (below) |
+| `POST /api/v1/capture` | `{"settle_frames": 30, "timeout_s": 120, "depth": true, "semantic": true}` (all optional) → the capture (below) |
 
 Entity types are the `entity_types` of `camsim_config.yaml` (2001 truck, 3001 boat, …). Components are CIGI
 Component Control's: 10 damage, 11 power plant, 12 flaming (thermal state, `docs/thermal.md`).
@@ -75,6 +75,7 @@ the count). The next frame is the **capture frame**: annotated, its depth read b
 ```json
 {"frame_id": 220, "timestamp_us": 1781550000000000, "utc": "2026-06-15T19:00:00.000Z", "width": 1280, "height": 720,
  "sensor_mode": "eo", "image_png_b64": "...", "depth_png_b64": "...", "depth_far_plane_m": 5000,
+ "semantic_png_b64": "...",
  "annotation": {"frame_id": 220, "platform": {...}, "annotations": [{"source": "api", "source_id": "1",
    "category": {"id": 2001, "name": "truck"}, "bbox": [616, 654, 51, 40], "mask_source": "render",
    "segmentation": {"size": [720, 1280], "counts": "..."}, "obb": [...], "visibility": 1.0, ...}]},
@@ -82,7 +83,8 @@ the count). The next frame is the **capture frame**: annotated, its depth read b
 ```
 
 - The image is the sensor output (what is encoded, before compression), 8-bit PNG. The depth PNG is 16-bit:
-  metres × 65535 / `depth_far_plane_m`. `annotation` is exactly the frame's `camsim_coco.jsonl` record
+  metres × 65535 / `depth_far_plane_m`. The semantic PNG is 8-bit class ids (sky, water, road, building, tree, …,
+  vehicle, vessel; table and sources in `docs/ground-truth.md`, ROADMAP 4D). `annotation` is exactly the frame's `camsim_coco.jsonl` record
   (`docs/ground-truth.md` for the fields).
 - One capture at a time (409). A capture that doesn't settle within `timeout_s` answers 503 with what it was
   waiting for ("tiles 97.2%", "terrain", …).

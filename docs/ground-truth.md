@@ -129,6 +129,47 @@ for a in rec["annotations"]:
     print(a["category"]["name"], a["visibility"], a.get("truncation"), a["obb"])
 ```
 
+## Semantic class image (ROADMAP 4D)
+
+One class per output pixel, from the same source texel as the instance masks and the depth map (`InstanceIdCS`'s
+`WRITE_SEMANTIC` permutation, so the three are registered by construction): an 8-bit PNG of class ids,
+`<output_dir>/semantic/semantic_NNNNNNNN.png` with `ml_training.semantic: true`, and `semantic_png_b64` in every
+control API capture (`docs/control-api.md`).
+
+| Id | Class | From |
+|---|---|---|
+| 0 | `unlabeled` | no land-cover data (outside the window, land cover off, code 0), not sky/water/entity |
+| 1 | `sky` | scene depth at the far plane |
+| 2 | `water` | land cover 80 or 220, or the sea band (below) on a 0/80 cell |
+| 3 | `road` | land cover 200, 201 (OSM roads/paved areas, packages built with `[features]`) |
+| 4 | `rail` | 210 |
+| 5 | `building` | 230 (Overture footprints burned into land cover, `[buildings]`) |
+| 6 | `built_up` | 50 (WorldCover built-up) |
+| 7 | `tree` | 10 |
+| 8 | `low_vegetation` | 20, 30, 40, 90, 95, 100 |
+| 9 | `bare` | 60 |
+| 10 | `snow_ice` | 70 |
+| 20 | `vehicle` | entity, `entity_types.<id>.semantic_class: vehicle` |
+| 21 | `vessel` | entity |
+| 22 | `aircraft` | entity |
+| 23 | `person` | entity (also the default for `entity_category: character`) |
+| 24 | `marker` | entity |
+| 25 | `other_entity` | entity, `other` (the default) |
+
+How a pixel is classified, in order: sky; a **visible** entity with a class (its pixels are exactly the visible mask's;
+a hidden entity's pixels take the occluder's class); the **sea band** — ThermalCS's geometric test (height above sea
+level, EGM96 + package offset + tide, with Earth curvature, below 0.5 m + the wave amplitude) — on a land-cover code 0
+or 80; else the class of the **nearest land-cover texel** (10 m, no warp) under the pixel's scene point. The land-cover
+window is the thermal IR one, also kept up to date in EO when semantic output is possible. `CamSimSemanticRef` is the
+CPU reference; `CamSim.GPU.GroundTruth.Semantic.MatchesCpu` holds the shader to it.
+
+Limits: terrain classes are at the land-cover resolution (a 6 m road burned into 10 m cells labels those cells, not its
+edges); trees and building walls in oblique views take the class of the cell under them (vegetation and the
+buildings/bridges tilesets are not tagged per pixel: giving them custom depth would occlude entities in the custom-depth
+buffer and break the visible/amodal masks); without land cover (`thermal.land_cover.enabled: false`, no package data)
+terrain is `unlabeled` while sky, water (sea band) and entities still work; under TSR, up to ~0.5 render texel off, as
+the masks.
+
 ## Configuration
 
 | Key | Default | Env | Effect |
