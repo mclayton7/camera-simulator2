@@ -1789,6 +1789,12 @@ control API capture, `semantic/` + `camsim_semantic_classes` in `make_dataset.py
 - **Limits:** terrain classes at the land-cover resolution (10 m); tree crowns and building walls take the class of the
   cell under them (trees and the feature tilesets get no custom depth: it would occlude entities in the custom-depth
   buffer); terrain beyond the land-cover window is `unlabeled` (seen on a distant island in the horizon view).
+- **Final review fix:** a control API capture that wants the class image now also waits for the land-cover window
+  to be built for the view (after a launch or a move of more than ~5 km it used to return all-unlabeled terrain without
+  saying so); `ml_training.semantic` files don't wait. Deferred minors: the label offset of about h·d/R toward the
+  window centre (inherited from the thermal lookup, ~4 m at 5 km up and 5 km out); without a window the sea band alone
+  decides water (low coastal land can read as water); the GPU test doesn't cover the unbound-window path; Metal not
+  yet run.
 - **Still open in 4D:** validation against published data; thermal shadow lag; per-instance labels for trees and
   buildings.
 
