@@ -22,7 +22,7 @@ struct FNightIlluminationResult
 {
 	double SunToaLux  = 0;          // set on the sun light (atmosphere applies transmittance)
 	double MoonToaLux = 0;          // set on the moon light
-	double FloorRadianceCdM2 = 0;   // dome floor term = floor lux x cloud factor / pi
+	double FloorRadianceCdM2 = 0;   // dome floor term = floor lux x cloud factor / (pi x FloorTransmittanceMean)
 	double SunGroundLux  = 0;       // expected horizontal illuminance at the ground (tests, log, night_check)
 	double MoonGroundLux = 0;
 	FLinearColor MoonColor = FLinearColor::White;   // normalised (max channel 1)
@@ -35,6 +35,9 @@ namespace FNightIllumination
 	double Transmittance(double ElDeg);                  // 10^(-0.4 * 0.172 * X), 0 below el -0.5 deg
 	double MoonToaLux(double PhaseAngleDeg, double DistanceKm);   // Krisciunas & Schaefer 1991
 	double CloudFactor(double Cover01);                  // 1 - 0.75 * cover^3.4 (Kasten & Czeplak)
+	/** Cosine-weighted mean of Transmittance over the upper hemisphere (~0.755): the dome draws the floor as L * T(view
+	 *  elevation), so L = E / (pi * this) delivers E at the ground. */
+	double FloorTransmittanceMean();
 }
 
 namespace FMoonDisc

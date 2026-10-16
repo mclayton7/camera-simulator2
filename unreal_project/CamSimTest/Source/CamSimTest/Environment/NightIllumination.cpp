@@ -36,6 +36,24 @@ double FNightIllumination::MoonToaLux(double PhaseAngleDeg, double DistanceKm)
 	return FMath::Pow(10.0, -0.4 * Mag) * 10.764 * Ratio * Ratio;
 }
 
+double FNightIllumination::FloorTransmittanceMean()
+{
+	// Integral of T(el) sin(el) cos(el) d(el) over [0, 90] divided by that of sin(el) cos(el) (= 1/2); midpoint rule.
+	static const double Mean = []
+	{
+		constexpr int32 N = 4096;
+		double Sum = 0.0;
+		for (int32 I = 0; I < N; ++I)
+		{
+			const double El = (I + 0.5) / N * 90.0;
+			const double Rad = FMath::DegreesToRadians(El);
+			Sum += Transmittance(El) * FMath::Sin(Rad) * FMath::Cos(Rad);
+		}
+		return Sum * (UE_DOUBLE_PI / 2.0 / N) * 2.0;
+	}();
+	return Mean;
+}
+
 double FNightIllumination::CloudFactor(double Cover01)
 {
 	return 1.0 - 0.75 * FMath::Pow(FMath::Clamp(Cover01, 0.0, 1.0), 3.4);
@@ -60,7 +78,8 @@ FNightIlluminationResult FNightIllumination::Compute(const FNightIlluminationInp
 		R.MoonGroundLux = R.MoonToaLux * Transmittance(E.MoonElDeg)
 			* FMath::Max(FMath::Sin(FMath::DegreesToRadians(E.MoonElDeg)), 0.0) * Cloud;
 	}
-	R.FloorRadianceCdM2 = In.NightFloorLux * Cloud / UE_DOUBLE_PI;
+	// The dome draws the floor attenuated by T(view elevation): normalise so it delivers NightFloorLux at the ground.
+	R.FloorRadianceCdM2 = In.NightFloorLux * Cloud / (UE_DOUBLE_PI * FloorTransmittanceMean());
 	R.MoonColor = FLinearColor(1.0f, 0.92f, 0.80f);   // ~4,100 K; lunar B-V = 0.92
 	return R;
 }

@@ -50,7 +50,8 @@ bool FNightIllumSunTest::RunTest(const FString&)
 	In.Ephem.SunElDeg = -20.0;
 	R = FNightIllumination::Compute(In);
 	TestEqual(TEXT("sun ground at -20"), R.SunGroundLux, 0.0);
-	TestTrue(TEXT("floor = 0.002/pi"), FMath::IsNearlyEqual(R.FloorRadianceCdM2, 0.002 / UE_DOUBLE_PI, 1e-9));
+	TestTrue(TEXT("floor = 0.002 / (pi <T>)"), FMath::IsNearlyEqual(R.FloorRadianceCdM2,
+		0.002 / (UE_DOUBLE_PI * FNightIllumination::FloorTransmittanceMean()), 1e-9));
 	In.CloudCover01 = 1.0;
 	TestTrue(TEXT("overcast dims floor"), FNightIllumination::Compute(In).FloorRadianceCdM2 < R.FloorRadianceCdM2 * 0.3);
 	In.bSunEnabled = false; In.Ephem.SunElDeg = 60.0;
@@ -84,5 +85,30 @@ bool FMoonDiscNormaliserTest::RunTest(const FString&)
 		TestTrue(FString::Printf(TEXT("lit limb α=%.0f"), Alpha), FMoonDisc::Shade(0.9, 0.0, Alpha) > FMoonDisc::Shade(-0.9, 0.0, Alpha) - 1e-12);
 	}
 	TestTrue(TEXT("full mean = 2/3"), FMath::IsNearlyEqual(FMoonDisc::MeanShading(0.0), 2.0 / 3.0, 1e-6));
+	return true;
+}
+
+// The dome draws the floor as L * T(view elevation) (M_SkyDome): its radiance is normalised so that the horizontal
+// illuminance it delivers at the ground is night_floor_lux, the value FNightIllumination's ground figures and
+// night_check.py N2 assume (it was 0.755 x that with L = E / pi).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNightIllumFloorDeliveredTest, "CamSim.Environment.Illumination.FloorDeliversNightFloorLux",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FNightIllumFloorDeliveredTest::RunTest(const FString&)
+{
+	FNightIlluminationInput In;
+	In.Ephem.SunElDeg = -40.0; In.Ephem.MoonElDeg = -40.0;
+	In.NightFloorLux = 0.002;
+	const double L = FNightIllumination::Compute(In).FloorRadianceCdM2;
+	// E = integral over the upper hemisphere of L T(el) sin(el) dOmega, dOmega = cos(el) d(el) d(az)
+	double E = 0.0;
+	const int32 N = 20000;
+	for (int32 I = 0; I < N; ++I)
+	{
+		const double El = (I + 0.5) / N * 90.0;
+		const double Rad = FMath::DegreesToRadians(El);
+		E += L * FNightIllumination::Transmittance(El) * FMath::Sin(Rad) * FMath::Cos(Rad) * (UE_DOUBLE_PI / 2.0 / N) * 2.0 * UE_DOUBLE_PI;
+	}
+	AddInfo(FString::Printf(TEXT("floor radiance %.4g cd/m2 delivers %.5f lux (mean T %.4f)"), L, E, FNightIllumination::FloorTransmittanceMean()));
+	TestTrue(TEXT("ground illuminance = night_floor_lux within 0.5 %"), FMath::Abs(E / 0.002 - 1.0) < 0.005);
 	return true;
 }

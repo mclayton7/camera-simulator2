@@ -131,7 +131,8 @@ bool FSkyEnvironmentWiringTest::RunTest(const FString&)
 	TestTrue(FString::Printf(TEXT("MPC moon luminance scale %.6g vs %.6g"), MoonParams.G, Scale),
 		FMath::IsNearlyEqual(static_cast<double>(MoonParams.G), Scale, 1e-5 * Scale));
 	const FLinearColor Floor = MpcVector(World, TEXT("Floor"));
-	TestTrue(TEXT("MPC floor radiance = 0.002 lux / pi"), FMath::IsNearlyEqual(static_cast<double>(Floor.R), 0.002 / UE_DOUBLE_PI, 1e-9));
+	const double FloorL = 0.002 / (UE_DOUBLE_PI * FNightIllumination::FloorTransmittanceMean());
+	TestTrue(TEXT("MPC floor radiance = 0.002 lux / (pi <T>)"), FMath::IsNearlyEqual(static_cast<double>(Floor.R), FloorL, 1e-6 * FloorL));
 	TestEqual(TEXT("MPC stars on before a packet (stars_default)"), Floor.G, 1.0f);
 	TestTrue(TEXT("MPC extinction k_V"), FMath::IsNearlyEqual(Floor.B, 0.172f, 1e-6f));
 	const FVector UpWorld = FSkyDomeDriver::EnuToWorldDir(EsuToUnreal, FVector3d(0, 0, 1));
