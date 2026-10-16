@@ -17,10 +17,10 @@ Guiding rules:
    (entity-relative coordinates, frame counters, timestamps, checksums). One wrong field breaks interoperability.
 2. **Keep pixels on the GPU.** CPU-side image processing is a reference for tests, not a product path.
 3. **One source of truth** for time, coordinate frames, and entity state.
-4. **Nothing is "done" until CI proves it.** No `|| true` on validation steps.
+4. **Nothing is "done" until a test or acceptance check proves it.** No `|| true` on validation steps.
 5. **No new feature phases until Milestones 0–4 land.** Waived for the realism track (2026-10-09). Milestones 0–4 have
-   landed except 3C, 3D and the rest of 4D (below). Milestones 6–10 are planned, not started; each needs the same
-   waiver (or 3C/3D/4D closed) before it starts.
+   landed except the rest of 4D (below). CI tasks were dropped on 2026-10-16 (3D, the CI runners and jobs) and 3C was
+   deferred to 11.6. Waived for Milestone 6 (2026-10-16); Milestones 7–10 need the same waiver (or 4D closed).
 
 ---
 
@@ -103,6 +103,7 @@ Human: `/Game/Effects` Niagara/volume assets (then add `/Game/Effects` to `Direc
 | 11.3 | **Cesium clipping polygons** (`CesiumCartographicPolygon` + `CesiumPolygonRasterOverlay`, or `CesiumTileExcluder`): fix piers and below-sea-level land that flood under the ocean (2.6 carry-over; HAT/HOT there returns sea level). |
 | 11.4 | **`CesiumFeaturesMetadataComponent`** on the buildings tileset: per-building class and ID from its `EXT_structural_metadata` (`camsim_buildings`) for per-instance building labels (4D) and per-building thermal materials (a 4B non-goal until now). |
 | 11.5 | **Nanite for entity meshes**; **Nanite Foliage** stays a watch item (experimental since 5.7), not a replacement for the HISM vegetation. |
+| 11.6 | **3C GPU-texture encode** (deferred 2026-10-16): UE `AVCodecs` (experimental in 5.8) NVENC/VideoToolbox from GPU textures, FFmpeg for TS/KLV muxing only; a second encode path beside the readback (libx264 and ground truth keep it). Spike first: does `AVCodecs` work on Vulkan + NVENC and Metal + VideoToolbox? Take it up only if readback or encode shows up as a cost. |
 
 Considered and not reopened: land cover as a Cesium raster overlay (4B chose the camera-centred window sampled in
 `ThermalCS`); Mesh Terrain (5.8, experimental; terrain comes from Cesium); Movie Render Graph (offline rendering).
@@ -132,12 +133,9 @@ Considered and not reopened: land cover as a Cesium raster overlay (4B chose the
 
 ### GPU pipeline and performance (Milestone 3 remainder)
 
-- **3C GPU-texture encode:** UE `AVCodecs` NVENC/VideoToolbox from GPU textures; FFmpeg for TS/KLV muxing only.
-- **3D CI performance gate:** the bench as a tracked CI threshold.
 - Mode-switch AE transients (3B.3): skip histograms with `Serial < SnapAfterSerial` while a snap is pending; seed a
   mode's first entry.
-- Before Linux CI: NullRHI tests read the machine-local `unreal_project/CamSimTest/camsim_config.yaml` (make them
-  self-contained); GPU tests for a NaN bloom texel and for non-same-size + bloom + blur partial thread groups.
+- GPU tests for a NaN bloom texel and for non-same-size + bloom + blur partial thread groups.
 - Config NaN checks: `highlight_percentile`, the AGC percentiles and `max_photon_gain_ev` use range checks a NaN passes.
 - `scripts/check_cigi_responses.py` / `capture_cigi_stream.py` need Python ≥ 3.10 (`TimeoutError`): declare it.
 - **Yosemite snap coarseness** since Cesium's LOD crossfade went off (re-enabling costs 8–12 ms game thread): a user
@@ -202,10 +200,8 @@ Considered and not reopened: land cover as a Cesium raster overlay (4B chose the
   `M_Ocean`); Lumen's surface-cache refresh has no deterministic freeze; set the cross-GPU SSIM limit with
   `determinism_check.py --against`.
 
-### Operations and CI
+### Operations
 
-- The `docker-build` / `docker-release` CI jobs haven't run on a runner (needs nvidia-container-toolkit,
-  `docs/ci-runner-setup.md`); the Linux CI runner is deferred (macOS is the reference platform).
 - macOS: `run.sh` copies the config into a staged `.app` (not checked).
 - HITL: CamSimTruth mac/Windows builds unverified; the on-rig checks in `hitl/README.md`.
 
