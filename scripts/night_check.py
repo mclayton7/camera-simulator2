@@ -9,8 +9,9 @@ Gates (each writes OUT/<gate>.json with its measured values, threshold and pass/
               median (log2) differs by log2(predicted ground illuminance ratio) +-0.5 EV; flat-patch temporal noise of Y
               within +-20 % of a Monte Carlo mirror of CamSimSensorRef::Run at the logged gains
   N3 moon     moon in view, 2 deg FOV, camera on the ephemeris moon (full and gibbous): the > 50 %-of-max centroid within
-              2 px of the expected one (ephemeris projection + Lambert disc through the display curve); the brighter half
-              of the disc toward the projected sun
+              2 px of the expected one (the disc model: albedo map x lunar-Lambert, IAU orientation, through the display
+              curve); the brighter half of the disc toward the projected sun; full moon: limb / centre > 0.7 (not a
+              Lambert ball) and maria contrast (std / mean inside 0.6 R) > 0.15
   N4 stars    new moon, el 60 deg toward Ursa Major, 40 deg FOV, long integration (detector.integration_max_ms 2000):
               >= 20 detections (> 5 sigma) within 2 px of BSC5 stars projected with skyfield; at noon, same view: 0
   N5 dusk     clock at 60x through sunset: consecutive-frame mean luma step <= 5 DN through the band switch, settled
@@ -40,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import json
 import math
 import os
@@ -60,6 +62,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "scripts" / "control"))
 sys.path.insert(0, str(REPO / "scripts" / "sky"))
 import ephemeris as eph  # noqa: E402
+import moon_surface as msurf  # noqa: E402
 import numpy as np  # noqa: E402
 from bench import run_bench as rb  # noqa: E402
 from camsim_control.client import Client  # noqa: E402
@@ -168,7 +171,7 @@ def launch(run_dir: Path, scene: Path, config_text: str | None = None, exec_cmds
 LOG_LINE = re.compile(r"^\[(\d{4})\.(\d\d)\.(\d\d)-(\d\d)\.(\d\d)\.(\d\d):(\d{3})\]\[\s*\d+\](.*)$")
 AE_RE = re.compile(r"Sensor AE: mode=(\d+) gainEv=(\S+) medianLog2=(\S+) photonGain=(\S+) analogGain=(\S+) t_int=(\S+) ms")
 SKY_RE = re.compile(r"6A sky: utc=(\S+) sun_el=(\S+) sun_ground_lux=(\S+) moon_el=(\S+) moon_phase=(\S+) "
-                    r"moon_illum=(\S+) moon_ground_lux=(\S+) floor_cdm2=(\S+) band=(\w+) stars=(\d+)")
+                    r"moon_illum=(\S+) moon_ground_lux=(\S+) floor_cdm2=(\S+) band=(\w+) stars=(\d+)(?: moon_az=(\S+))?")
 BAND_RE = re.compile(r"6A: cached lighting band \S+ (\w+) \((\S+) EV\), scene median 2\^(\S+)")
 
 
@@ -194,7 +197,7 @@ def read_log(path: Path) -> dict[str, list[dict]]:
             out["sky"].append({"wall": wall, "utc": s[1], "sun_el": float(s[2]), "sun_ground_lux": float(s[3]),
                                "moon_el": float(s[4]), "moon_phase": float(s[5]), "moon_illum": float(s[6]),
                                "moon_ground_lux": float(s[7]), "floor_cdm2": float(s[8]), "band": s[9],
-                               "stars": int(s[10])})
+                               "stars": int(s[10]), "moon_az": float(s[11]) if s[11] else None})
         elif b := BAND_RE.search(rest):
             out["band"].append({"wall": wall, "band": b[1], "ev": float(b[2]), "median_log2": float(b[3])})
     return out
@@ -688,10 +691,20 @@ def eval_n3(out: Path) -> dict:
     vals, ok, details = {}, True, []
     for name, view in run["views"].items():
         cam, utc = view["camera"], parse_utc(view["utc"])
-        e = eph.compute(utc, cam["lat"], cam["lon"], cam["alt"])
-        sky = [x for x in log["sky"] if parse_utc(x["utc"]) == utc]
+        e_py = eph.compute(utc, cam["lat"], cam["lon"], cam["alt"])
+        cap = run["captures"][name]
+        sky = [x for x in log["sky"] if parse_utc(x["utc"]) == utc and x["wall"] <= cap["wall1"]]
+        # The model uses the moon direction CamSim drew (camsim.Sky.Log, 1e-5 deg): the Python mirror of FEphemeris
+        # differs from it by up to ~0.003 deg (2 px at 2 deg FOV); the ephemeris itself is held to JPL by the C++ tests.
+        e = e_py
+        if sky and sky[-1].get("moon_az") is not None:
+            e = dataclasses.replace(e_py, moon_az=sky[-1]["moon_az"], moon_el=sky[-1]["moon_el"])
+        py_vs_drawn = math.degrees(math.acos(min(1.0, float(np.dot(eph.az_el_to_enu(e.moon_az, e.moon_el),
+                                                                   eph.az_el_to_enu(e_py.moon_az, e_py.moon_el))))))
         y = (luma(load_rgb(d / f"{name}_a.png")) + luma(load_rgb(d / f"{name}_b.png"))) / 2.0
         moon = np.array([eph.az_el_to_enu(e.moon_az, e.moon_el)])
+        mpx, mpy, _ = project(np.array([eph.az_el_to_enu(e_py.moon_az, e_py.moon_el)]), cam["heading"], cam["pitch"],
+                              cam["hfov_deg"])
         sun = np.array(eph.az_el_to_enu(e.sun_az, e.sun_el))
         mx, my, _ = project(moon, cam["heading"], cam["pitch"], cam["hfov_deg"])
         # The sun's side of the disc in the image: the sun direction's component across the line of sight
@@ -703,16 +716,21 @@ def eval_n3(out: Path) -> dict:
         f_px = (W / 2.0) / math.tan(math.radians(cam["hfov_deg"]) / 2.0)
         radius_px = f_px * math.tan(math.asin(1737.4 / e.moon_km))
         cx, cy, npx = thresholded_centroid(y)
-        # Expected: the model disc at the ephemeris projection through the display, k fitted to this frame
+        # Expected: the model disc (FMoonDisc::Radiance) through the display, k fitted to this frame
+        rad = moon_model(cam, utc, e)
         best = None
         for k in np.exp(np.linspace(math.log(0.05), math.log(500.0), 120)):
-            mdl = model_disc_full(radius_px, sun_img, e.moon_phase_angle, float(k), (float(mx[0]), float(my[0])))
+            mdl = display_model(rad, float(k))
             sse = float(np.mean((mdl - y) ** 2))
             if best is None or sse < best[0]:
                 best = (sse, float(k), mdl)
         _, k_fit, mdl = best
         ex, ey, _ = thresholded_centroid(mdl)
-        off = math.hypot(cx - ex, cy - ey)
+        off_centroid = math.hypot(cx - ex, cy - ey)
+        # The disc's displacement from the model: least-squares image registration (with an albedo map the > 50 %
+        # region is patchy, so its centroid swings with small level differences; it is reported, not gated).
+        reg = register_shift(y, mdl, (float(mx[0]), float(my[0])), radius_px)
+        off = math.hypot(*reg["shift"])
         # Brighter half: sum of Y - background over each half of the disc split across the sun direction
         yy, xx = np.mgrid[0:H, 0:W].astype(np.float64)
         dxx, dyy = xx - mx[0], yy - my[0]
@@ -728,12 +746,22 @@ def eval_n3(out: Path) -> dict:
         vals[name] = {"moon_az": e.moon_az, "moon_el": e.moon_el, "phase_angle": e.moon_phase_angle,
                       "logged_moon_el": sky[-1]["moon_el"] if sky else None, "projected": [float(mx[0]), float(my[0])],
                       "radius_px": radius_px, "sun_img": sun_img.tolist(), "centroid": [cx, cy], "pixels": npx,
-                      "expected_centroid": [ex, ey], "offset_px": off, "offset_from_projection_px":
-                      math.hypot(cx - mx[0], cy - my[0]), "k_fit": k_fit, "half_toward_sun": toward,
+                      "expected_centroid": [ex, ey], "centroid_offset_px": off_centroid, "registration": reg,
+                      "offset_px": off, "offset_from_projection_px": math.hypot(cx - mpx[0], cy - mpy[0]),
+                      "drawn_vs_python_moon_deg": py_vs_drawn, "drawn_moon_az_el": [e.moon_az, e.moon_el], "k_fit": k_fit, "half_toward_sun": toward,
                       "half_away": away, "lit_limb_toward_sun": lit_ok, "lit_gated": gate_lit}
-        details.append(f"{name}: centroid {off:.2f} px from expected ({math.hypot(cx - mx[0], cy - my[0]):.2f} px from the "
-                       f"ephemeris projection; phase {e.moon_phase_angle:.1f}); bright half {'toward' if lit_ok else 'AWAY from'} "
+        details.append(f"{name}: disc {off:.2f} px from the model (registration; residual {reg['rms_dn']:.1f} DN rms; > 50 % "
+                       f"centroid {off_centroid:.2f} px from the model's, {math.hypot(cx - mpx[0], cy - mpy[0]):.2f} px from the "
+                       f"Python ephemeris projection, drawn moon {py_vs_drawn * 3600:.1f}\" from it; phase {e.moon_phase_angle:.1f}); bright half {'toward' if lit_ok else 'AWAY from'} "
                        f"the sun ({toward / max(away, 1e-9):.2f}x){'' if gate_lit else ' (info)'}")
+        if name == "moon_full":
+            sf = full_moon_surface_check(y, rad, cam, utc, e, (float(mx[0]), float(my[0])), radius_px)
+            vals[name]["surface"] = sf
+            ok &= sf["pass"]
+            details.append(f"moon_full surface: limb / centre {sf['limb_centre']:.2f} (> {N3_LIMB_CENTRE_MIN}; model "
+                           f"{sf['model']['limb_centre']:.2f}, a Lambert ball {sf['lambert']['limb_centre']:.2f}), maria "
+                           f"std / mean {sf['contrast']:.3f} (> {N3_CONTRAST_MIN}; model {sf['model']['contrast']:.3f}, "
+                           f"uniform albedo {sf['uniform']['contrast']:.3f}), {sf['clipped_frac']:.1%} of the disc clipped")
     if "wide" in run:
         w = wide_moon_check(d, run["wide"])
         vals["moon_wide"] = w
@@ -744,9 +772,11 @@ def eval_n3(out: Path) -> dict:
     else:
         ok = False
         details.append("no moon_wide capture")
-    return gate(out, "N3", ok, vals, "centroid <= 2 px from the modelled lit-area centroid (raw offset from the ephemeris "
-                "projection reported); gibbous: brighter half toward the sun; wide night view: moon disc not black "
-                "(min Y >= 100 inside 0.7 R) and no dark halo (ring 1.3-2.5 R mean >= sky median - 1 DN)",
+    return gate(out, "N3", ok, vals, "disc within 2 px of the model (least-squares registration of the frame on the "
+                "modelled disc; the > 50 % centroid offsets and the raw offset from the ephemeris projection reported); gibbous: brighter half toward the sun; full moon: limb (0.80-0.95 R) / centre "
+                f"(< 0.5 R) linear signal > {N3_LIMB_CENTRE_MIN} and std / mean inside 0.6 R > {N3_CONTRAST_MIN}; wide "
+                "night view: moon disc not black (min Y >= 100 inside 0.7 R) and no dark halo (ring 1.3-2.5 R mean >= "
+                "sky median - 1 DN)",
                 "; ".join(details))
 
 
@@ -774,15 +804,105 @@ def wide_moon_check(d: Path, view: dict) -> dict:
     return out
 
 
-def model_disc_full(radius_px: float, sun_img: np.ndarray, phase: float, k: float, centre: tuple[float, float]) -> np.ndarray:
+# Full-moon surface (defect 1): a Lambert ball has limb / centre 0.47 at night_check's full moon (lunar-Lambert: ~1 x the
+# albedo pattern); inside 0.6 R a Lambert ball's std / mean is ~0.06 and a uniform lunar-Lambert disc's ~0.01, the
+# shipped albedo map's ~0.3 (both reported by the gate): 0.15 sits between them.
+N3_LIMB_CENTRE_MIN = 0.7
+N3_CONTRAST_MIN = 0.15
+_ALBEDO: list = []
+
+
+def albedo_map() -> np.ndarray | None:
+    if not _ALBEDO:
+        _ALBEDO.append(msurf.load_albedo())
+    return _ALBEDO[0]
+
+
+def view_dirs(cam: dict) -> np.ndarray:
+    """(H, W, 3) unit ENU view direction of each pixel centre (the inverse of project())."""
+    fwd, right, up = camera_basis(cam["heading"], cam["pitch"])
+    f = (W / 2.0) / math.tan(math.radians(cam["hfov_deg"]) / 2.0)
+    xs = (np.arange(W) - (W - 1) / 2.0) / f
+    ys = ((H - 1) / 2.0 - np.arange(H)) / f
+    d = fwd + xs[None, :, None] * right + ys[:, None, None] * up
+    return d / np.linalg.norm(d, axis=-1, keepdims=True)
+
+
+def moon_model(cam: dict, utc: datetime, e, lam_l: float | None = None, albedo: bool = True) -> np.ndarray:
+    """Relative disc radiance per pixel (max 1) as M_SkyDome draws it: CamSimMoonDisc with the IAU orientation, the albedo
+    map and L(phase) (lam_l / albedo=False give the comparators: 0 = a Lambert ball, uniform albedo)."""
+    jd = eph.julian_day(utc)
+    days = msurf.days_tt(jd, eph.delta_t_seconds(utc.year, utc.month))
+    m = msurf.j2000_to_enu(cam["lat"], e.last_deg, (jd - 2451545.0) / 36525.0)
+    axes = (m @ msurf.iau_axes_j2000(days).T).T
+    moon = np.array(eph.az_el_to_enu(e.moon_az, e.moon_el))
+    sun = np.array(eph.az_el_to_enu(e.sun_az, e.sun_el))
+    lam = msurf.lunar_lambert_l(e.moon_phase_angle) if lam_l is None else lam_l
+    rad = msurf.disc_radiance(view_dirs(cam), moon, sun, math.asin(1737.4 / e.moon_km), lam, axes,
+                              albedo_map() if albedo else None)
+    return rad / max(float(rad.max()), 1e-12)
+
+
+def register_shift(y: np.ndarray, mdl: np.ndarray, centre: tuple[float, float], radius_px: float,
+                   search: int = 6) -> dict:
+    """Sub-pixel (dx, dy) that moves the model onto the frame (least squares over a box around the disc; integer search
+    +- search px, then a parabola through the minimum on each axis), and the residual rms at that integer shift."""
+    r = int(radius_px * 1.3) + search
+    x0, y0 = int(round(centre[0])), int(round(centre[1]))
+    ys, xs = slice(max(y0 - r, 0), min(y0 + r, H)), slice(max(x0 - r, 0), min(x0 + r, W))
+    target = y[ys, xs]
+    sse = np.full((2 * search + 1, 2 * search + 1), np.inf)
+    for j, dy in enumerate(range(-search, search + 1)):
+        for i, dx in enumerate(range(-search, search + 1)):
+            sse[j, i] = float(np.mean((np.roll(mdl, (dy, dx), axis=(0, 1))[ys, xs] - target) ** 2))
+    j, i = np.unravel_index(int(np.argmin(sse)), sse.shape)
+
+    def vertex(a: float, b: float, c: float) -> float:
+        den = a - 2 * b + c
+        return 0.0 if den <= 0 else 0.5 * (a - c) / den
+
+    fx = vertex(sse[j, i - 1], sse[j, i], sse[j, i + 1]) if 0 < i < 2 * search else 0.0
+    fy = vertex(sse[j - 1, i], sse[j, i], sse[j + 1, i]) if 0 < j < 2 * search else 0.0
+    return {"shift": [float(i - search + fx), float(j - search + fy)], "rms_dn": float(math.sqrt(sse[j, i])),
+            "rms_dn_unshifted": float(math.sqrt(sse[search, search])), "at_search_edge": bool(i in (0, 2 * search) or j in (0, 2 * search))}
+
+
+def display_model(rad: np.ndarray, k: float) -> np.ndarray:
+    return 16.0 + 219.0 * oetf709(knee(np.clip(k * rad, 0.0, 1.0), EO["knee"]))
+
+
+def inverse_display(y: np.ndarray) -> np.ndarray:
+    """Luma code value -> linear signal (relative), inverting the BT.709 OETF and the sensor knee."""
+    v = np.clip((y - 16.0) / 219.0, 0.0, 1.0)
+    lin = np.where(v < 0.081, v / 4.5, np.power((v + 0.099) / 1.099, 1.0 / 0.45))
+    k = EO["knee"]
+    arg = np.clip(1.0 - (lin - k) * (1.0 - math.exp(-1.0)) / (1.0 - k), 1e-6, None)
+    return np.where(lin <= k, lin, k - (1.0 - k) * np.log(arg))
+
+
+def surface_metrics(lin: np.ndarray, centre: tuple[float, float], radius_px: float) -> dict:
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float64)
-    dx, dy = (xx - centre[0]) / radius_px, (yy - centre[1]) / radius_px
-    u = dx * sun_img[0] + dy * sun_img[1]
-    v = -dx * sun_img[1] + dy * sun_img[0]
-    r2 = u * u + v * v
-    a = math.radians(phase)
-    shade = np.where(r2 <= 1.0, np.maximum(u * math.sin(a) + np.sqrt(np.maximum(1.0 - r2, 0.0)) * math.cos(a), 0.0), 0.0)
-    return 16.0 + 219.0 * oetf709(knee(np.clip(k * shade, 0.0, 1.0), EO["knee"]))
+    r = np.hypot(xx - centre[0], yy - centre[1]) / radius_px
+    core, limb, inner = lin[r < 0.5], lin[(r >= 0.80) & (r <= 0.95)], lin[r < 0.6]
+    return {"limb_centre": float(limb.mean() / max(core.mean(), 1e-12)),
+            "contrast": float(inner.std() / max(inner.mean(), 1e-12))}
+
+
+def full_moon_surface_check(y: np.ndarray, rad: np.ndarray, cam: dict, utc: datetime, e, centre: tuple[float, float],
+                            radius_px: float) -> dict:
+    """Defect 1: the full moon is nearly uniform to the limb and shows maria. Measured on the frame's linear signal, with
+    the same metrics on the model (expected) and on a uniform lunar-Lambert disc and a Lambert ball (comparators)."""
+    bg = float(np.median(y))
+    lin = np.clip(inverse_display(y) - float(inverse_display(np.array(bg))), 0.0, None)
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float64)
+    disc = np.hypot(xx - centre[0], yy - centre[1]) <= 0.95 * radius_px
+    out = surface_metrics(lin, centre, radius_px)
+    out.update(model=surface_metrics(rad, centre, radius_px),
+               uniform=surface_metrics(moon_model(cam, utc, e, albedo=False), centre, radius_px),
+               lambert=surface_metrics(moon_model(cam, utc, e, lam_l=0.0, albedo=False), centre, radius_px),
+               clipped_frac=float((y[disc] >= 234.0).mean()), has_albedo_map=albedo_map() is not None)
+    out["pass"] = bool(out["limb_centre"] > N3_LIMB_CENTRE_MIN and out["contrast"] > N3_CONTRAST_MIN)
+    return out
 
 
 def bsc5_stars(path: Path) -> np.ndarray:

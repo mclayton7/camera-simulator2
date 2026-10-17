@@ -254,10 +254,22 @@ def illumination(ep: Ephem, cloud01: float = 0.0, night_floor_lux: float = 0.002
 
 # --- FMoonDisc ---
 
+def moon_lunar_lambert_l(phase_angle: float) -> float:
+    """FMoonDisc::LunarLambertL: McEwen (1996) L(alpha) = 1 - 0.019 a + 2.42e-4 a^2 - 1.46e-6 a^3 (degrees), in [0, 1]."""
+    a = abs(phase_angle)
+    return min(max(1.0 - 0.019 * a + 2.42e-4 * a * a - 1.46e-6 * a ** 3, 0.0), 1.0)
+
+
 def moon_shade(u: float, v: float, phase_angle: float) -> float:
-    """Lambert shading of the disc point (u, v) in [-1, 1]^2, u toward the sun's side (FMoonDisc::Shade)."""
+    """Lunar-Lambert shading of the disc point (u, v) in [-1, 1]^2, u toward the sun's side, uniform albedo
+    (FMoonDisc::Shade): 2 L mu0 / (mu0 + mu) + (1 - L) mu0."""
     r2 = u * u + v * v
     if r2 > 1.0:
         return 0.0
     a = math.radians(phase_angle)
-    return max(u * math.sin(a) + math.sqrt(1.0 - r2) * math.cos(a), 0.0)
+    mu = math.sqrt(1.0 - r2)
+    mu0 = u * math.sin(a) + mu * math.cos(a)
+    if mu0 <= 0.0:
+        return 0.0
+    lam = moon_lunar_lambert_l(phase_angle)
+    return 2.0 * lam * mu0 / (mu0 + mu) + (1.0 - lam) * mu0

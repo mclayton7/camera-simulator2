@@ -999,7 +999,7 @@ Diagnostic console variables (`-ExecCmds=` or the console; off by default):
 
 | CVar | Logs |
 |---|---|
-| `camsim.Sky.Log 1` | every sky apply (once per sim second, a clock jump, a camera move over 1 km): `6A sky: utc=… sun_el=… sun_ground_lux=… moon_el=… moon_phase=… moon_illum=… moon_ground_lux=… floor_cdm2=… band=day\|night stars=0\|1` |
+| `camsim.Sky.Log 1` | every sky apply (once per sim second, a clock jump, a camera move over 1 km): `6A sky: utc=… sun_el=… sun_ground_lux=… moon_el=… moon_phase=… moon_illum=… moon_ground_lux=… floor_cdm2=… band=day\|night stars=0\|1 moon_az=…` (moon az/el to 1e-5°) |
 | `camsim.Sensor.AeLog 1` | the sensor AE once a second: `Sensor AE: mode=… gainEv=… medianLog2=… photonGain=… analogGain=… t_int=… ms` (`t_int` 0 on a calibrated mode) |
 
 ## Vegetation (`vegetation:`)

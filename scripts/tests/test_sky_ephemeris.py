@@ -54,3 +54,11 @@ def test_moon_shade_lit_limb_faces_the_sun():
     assert eph.moon_shade(0.9, 0.0, 90.0) > 0.5
     assert eph.moon_shade(-0.9, 0.0, 90.0) == 0.0
     assert eph.moon_shade(0.0, 0.0, 0.0) == pytest.approx(1.0)
+
+
+def test_full_moon_is_nearly_uniform_to_the_limb():
+    # lunar-Lambert (FMoonDisc::Shade): L(0) = 1 is Lommel-Seeliger, exactly uniform on the full disc
+    assert eph.moon_lunar_lambert_l(0.0) == 1.0
+    assert eph.moon_lunar_lambert_l(30.0) == pytest.approx(0.60838, abs=1e-5)
+    assert eph.moon_shade(0.0, 0.95, 0.0) / eph.moon_shade(0.0, 0.0, 0.0) == pytest.approx(1.0)
+    assert eph.moon_shade(0.95, 0.0, 5.0) / eph.moon_shade(0.0, 0.0, 5.0) > 0.75
