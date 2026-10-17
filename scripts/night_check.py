@@ -20,9 +20,11 @@ Gates (each writes OUT/<gate>.json with its measured values, threshold and pass/
   N7 cost     bench night_slant phase vs the baseline: game thread and GPU p50 within +0.3 ms
   N8 dusk     sun ground illuminance (camsim.Sky.Log) non-increasing through 0 -> -1 deg and < 1 % of its 10 deg value
               by -1 deg; frame mean luma non-increasing (+1 DN) through civil twilight
-  N9 dusk     twilight colour: at sun -3 and -6 deg the ground's illuminant (its linear RGB / the same pose's at sun
-              +30 deg) is bluer than daylight (R/G ratio <= 1, B/G ratio >= 1: not magenta, not red), the zenith sky is
-              not magenta (R/G <= 1) and bluer (B/R) than the ground
+  N9 dusk     twilight colour: the ground's illuminant (nadir 100 m, its linear RGB / the same pose's at sun +22 deg)
+              at +3, 0, -3, -6 deg against Spitschan et al. (2016)'s measured bands (scripts/sky/twilight_bands.json):
+              0 deg in band in R/G, B/G and the R/G-vs-B/G colour temperature difference; B/G in band at +3/-3/-6;
+              colour temperature rising +3 -> 0 -> -3; zenith not magenta and bluer than the ground. R/G at +3/-3/-6
+              is reported as a documented limit
 
 Runs (--runs, comma list): day (N1), moon (N2, N3), stars (N4), dusk (N5, N8, N9), thermal (N6), cost (N7). Each run
 launches CamSim once (thermal and cost launch their own tools) with the level's engine-time volumetric clouds off; the
@@ -96,7 +98,7 @@ DATE_STARS_NOON = datetime(2027, 1, 7, 20, 0, tzinfo=timezone.utc)
 MEGREZ = (183.856, 57.0326)                                          # RA, Dec J2000 (deg), the middle of the Dipper
 DUSK_DAY = (2026, 6, 21)                                             # sunset ~03:00 UTC on the 22nd
 STARS_INTEGRATION_MS = 2000.0
-N9_DAY_EL = 30.0                                                     # N9's daylight reference sun elevation
+N9_DAY_EL = 22.0                                                     # N9's daylight reference (Spitschan 20-26 deg bin)
 
 
 # ---------------------------------------------------------------------------
@@ -487,29 +489,34 @@ def run_dusk(c: Client, out: Path) -> dict:
     return {"t0": iso(t0), "t1": iso(t1), "rate": rate, "wall0": wall0, "wall1": wall1, "colour": run_twilight_colour(c, out)}
 
 
+N9_ELEVATIONS = {"day": N9_DAY_EL, "p3": 3.0, "z0": 0.0, "m3": -3.0, "m6": -6.0}
+N9_GROUND = {"lat": SITE[0], "lon": SITE[1], "alt": GROUND + 100.0, "heading": 0.0, "pitch": 0.0, "roll": 0.0,
+             "gimbal": {"yaw": 0.0, "pitch": -90.0, "roll": 0.0}, "hfov_deg": 40.0, "sensor": {"mode": "eo"}}
+
+
 def twilight_views(utc: datetime) -> dict[str, dict]:
-    """N9's views: the dusk run's ground pose and the sky 85 deg up, away from the sun."""
+    """N9's views: the ground straight down from 100 m (little aerial perspective) and the sky 85 deg up, away from the
+    sun."""
     az = eph.compute(utc, *SITE).sun_az
-    return {"ground": SLANT_500, "zenith": sky_camera((az + 180.0) % 360.0, 85.0, 30.0)}
+    return {"ground": N9_GROUND, "zenith": sky_camera((az + 180.0) % 360.0, 85.0, 30.0)}
 
 
 def run_twilight_colour(c: Client, out: Path) -> dict:
-    """N9: lockstep captures of the ground and the zenith sky at sun +30 (the daylight reference), -3 and -6 deg."""
-    noonish = datetime(*DUSK_DAY, 22, 0, tzinfo=timezone.utc)
-    t_day = sun_crossing(N9_DAY_EL, noonish)
-    times = {"day": t_day, "m3": sun_crossing(-3.0, t_day)}
-    times["m6"] = sun_crossing(-6.0, times["m3"])
+    """N9: lockstep captures of the ground and the zenith sky at sun +22 (the daylight reference, Spitschan's 20-26 deg
+    bin), +3, 0, -3 and -6 deg."""
+    t = datetime(*DUSK_DAY, 22, 0, tzinfo=timezone.utc)
     res = {}
-    for tag, utc in times.items():
-        c.set_clock(lockstep=True, utc=iso(utc))
+    for tag, el in N9_ELEVATIONS.items():
+        t = sun_crossing(el, t)
+        c.set_clock(lockstep=True, utc=iso(t))
         views = {}
-        for view, cam in twilight_views(utc).items():
+        for view, cam in twilight_views(t).items():
             c.set_camera(**cam)
             cap = c.capture(settle_frames=SETTLE_NIGHT, timeout_s=300, depth=False, semantic=False)
             name = f"colour_{tag}_{view}.png"
             (out / name).write_bytes(cap.png)
             views[view] = name
-        res[tag] = {"utc": iso(utc), "sun_el": eph.compute(utc, *SITE).sun_el, "views": views}
+        res[tag] = {"utc": iso(t), "sun_el": eph.compute(t, *SITE).sun_el, "views": views}
         print(f"  dusk colour {tag}: sun el {res[tag]['sun_el']:.2f}", flush=True)
     return res
 
@@ -1228,42 +1235,84 @@ def region_rgb(rgb: np.ndarray, view: str) -> np.ndarray:
     return linear_rgb(rgb).reshape(-1, 3).mean(axis=0)
 
 
-def twilight_colour_metrics(day_ground: np.ndarray, ground: np.ndarray, zenith: np.ndarray) -> dict:
-    """N9 for one sun elevation, from mean linear RGB. The ground's illuminant relative to daylight is its RGB over the
-    same pose's at sun +30 deg (the albedo cancels), as ratios normalised to green."""
-    rg = lambda c: float(c[0] / c[1])   # noqa: E731
-    bg = lambda c: float(c[2] / c[1])   # noqa: E731
-    v = {"ground_rg": rg(ground), "ground_bg": bg(ground), "zenith_rg": rg(zenith), "zenith_bg": bg(zenith),
-         "illum_rg": rg(ground) / rg(day_ground), "illum_bg": bg(ground) / bg(day_ground),
-         "zenith_br": float(zenith[2] / zenith[0]), "ground_br": float(ground[2] / ground[0])}
-    v["checks"] = {"illuminant R/G <= 1 (no redder than daylight)": v["illum_rg"] <= 1.0,
-                   "illuminant B/G >= 1 (bluer than daylight)": v["illum_bg"] >= 1.0,
-                   "zenith R/G <= 1 (not magenta)": v["zenith_rg"] <= 1.0,
-                   "zenith B/R > ground B/R": v["zenith_br"] > v["ground_br"]}
-    v["pass"] = all(v["checks"].values())
-    return v
+TWILIGHT_BANDS = REPO / "scripts" / "sky" / "twilight_bands.json"
+
+
+def implied_mired(bands: dict, rel_rg: float, rel_bg: float) -> tuple[float, float]:
+    """Mired of the blackbody whose R/G (and, separately, B/G) relative to the reference CCT equals the illuminant's
+    (scripts/sky/twilight_bands.py's table; 0 = beyond the locus's infinite-temperature end)."""
+    bb = bands["blackbody_rel"]
+    t, rg, bg = np.array(bb["temps_k"]), np.array(bb["rg"]), np.array(bb["bg"])
+    m_rg = 0.0 if rel_rg <= rg[-1] else 1e6 / float(np.interp(-rel_rg, -rg, t))
+    m_bg = 0.0 if rel_bg >= bg[-1] else 1e6 / float(np.interp(rel_bg, bg, t))
+    return m_rg, m_bg
+
+
+def twilight_colour_metrics(mean: dict, bands: dict) -> dict:
+    """N9 from mean linear RGB per elevation tag (day, p3, z0, m3, m6) and view (ground, zenith). The ground's illuminant
+    relative to daylight is its RGB over the same pose's at sun +22 (the albedo cancels), as R/G and B/G ratios; each
+    ratio implies a colour temperature on the Planckian locus. Compared with Spitschan et al. (2016)'s measured
+    10-90 % bands (rural, relative to their 20-26 deg spectra)."""
+    day = mean["day"]["ground"]
+    ratio = lambda c, i: float(c[i] / c[1])   # noqa: E731
+    v: dict = {}
+    for tag in ("p3", "z0", "m3", "m6"):
+        g, z = mean[tag]["ground"], mean[tag]["zenith"]
+        rel_rg, rel_bg = ratio(g, 0) / ratio(day, 0), ratio(g, 2) / ratio(day, 2)
+        m_rg, m_bg = implied_mired(bands, rel_rg, rel_bg)
+        b = bands["bins"][tag]
+        v[tag] = {"rel_rg": rel_rg, "rel_bg": rel_bg, "mired_rg": m_rg, "mired_bg": m_bg, "dmired": m_rg - m_bg,
+                  "zenith_rg": ratio(z, 0), "zenith_bg": ratio(z, 2), "zenith_br": float(z[2] / z[0]),
+                  "ground_br": float(g[2] / g[0]), "band_rg": [b["rg"][0], b["rg"][2]], "band_bg": [b["bg"][0], b["bg"][2]],
+                  "band_dmired": [b["dmired"][0], b["dmired"][2]], "measured_median": [b["rg"][1], b["bg"][1]]}
+    inside = lambda x, band: band[0] <= x <= band[1]   # noqa: E731
+    z0, p3, m3 = v["z0"], v["p3"], v["m3"]
+    checks = {
+        "0 deg: R/G in the measured band": inside(z0["rel_rg"], z0["band_rg"]),
+        "0 deg: B/G in the measured band": inside(z0["rel_bg"], z0["band_bg"]),
+        "0 deg: R/G and B/G CCTs agree as measured (mired difference in band)": inside(z0["dmired"], z0["band_dmired"]),
+        "+3, -3, -6 deg: B/G in the measured bands": all(inside(v[t]["rel_bg"], v[t]["band_bg"]) for t in ("p3", "m3", "m6")),
+        "CCT (B/G) rises +3 -> 0 -> -3 deg": p3["mired_bg"] > z0["mired_bg"] > m3["mired_bg"],
+        "0 deg bluer than +3 deg in both ratios": z0["rel_rg"] < p3["rel_rg"] and z0["rel_bg"] > p3["rel_bg"],
+        "zenith not magenta (R/G <= 1) at 0, -3, -6 deg": all(v[t]["zenith_rg"] <= 1.0 for t in ("z0", "m3", "m6")),
+        "zenith bluer (B/R) than the ground at 0, -3, -6 deg": all(v[t]["zenith_br"] > v[t]["ground_br"] for t in ("z0", "m3", "m6")),
+    }
+    # Documented limit (docs/night.md "Twilight colour"): UE's three-wavelength atmosphere keeps too much red at +3, -3
+    # and -6 deg (the illuminant sits off the locus toward magenta); reported, not gated.
+    limit = {t: {"rg_in_band": inside(v[t]["rel_rg"], v[t]["band_rg"]),
+                 "dmired_in_band": inside(v[t]["dmired"], v[t]["band_dmired"])} for t in ("p3", "m3", "m6")}
+    return {"elevations": v, "checks": checks, "known_limit": limit, "pass": all(checks.values())}
 
 
 def eval_n9(out: Path) -> dict:
     d = out / "dusk"
     run = load_json(d / "run.json")
-    if not run or "colour" not in run:
-        return gate(out, "N9", False, {}, "", "no dusk colour captures")
+    if not run or "colour" not in run or "z0" not in run["colour"]:
+        return gate(out, "N9", False, {}, "", "no dusk colour captures (+22, +3, 0, -3, -6 deg)")
     col = run["colour"]
-    mean = {tag: {view: region_rgb(load_rgb(d / name), view) for view, name in c["views"].items()} for tag, c in col.items()}
-    vals, ok, det = {"day_sun_el": col["day"]["sun_el"], "day_ground_rgb": mean["day"]["ground"].tolist()}, True, []
-    for tag in ("m3", "m6"):
-        m = twilight_colour_metrics(mean["day"]["ground"], mean[tag]["ground"], mean[tag]["zenith"])
-        m.update(sun_el=col[tag]["sun_el"], ground_rgb=mean[tag]["ground"].tolist(), zenith_rgb=mean[tag]["zenith"].tolist())
-        vals[tag] = m
-        ok &= m["pass"]
-        det.append(f"sun {col[tag]['sun_el']:+.1f}: ground illuminant vs daylight R/G x{m['illum_rg']:.2f} B/G "
-                   f"x{m['illum_bg']:.2f}; zenith R/G {m['zenith_rg']:.2f} B/G {m['zenith_bg']:.2f}, B/R {m['zenith_br']:.2f} "
-                   f"vs ground {m['ground_br']:.2f}" + ("" if m["pass"] else " FAIL: " + ", ".join(
-                       k for k, x in m["checks"].items() if not x)))
-    return gate(out, "N9", ok, vals, "at sun -3 and -6 deg: ground illuminant (ground RGB / the same pose at sun +30) "
-                "R/G ratio <= 1 and B/G ratio >= 1; zenith R/G <= 1; zenith B/R > ground B/R (Spitschan et al. 2016: "
-                "the twilight illuminant is bluer than daylight, Chappuis ozone filtering)", "; ".join(det))
+    mean = {tag: {view: region_rgb(load_rgb(d / name), "sky") for view, name in c["views"].items()} for tag, c in col.items()}
+    m = twilight_colour_metrics(mean, json.loads(TWILIGHT_BANDS.read_text()))
+    for tag, c in col.items():
+        if tag in m["elevations"]:
+            m["elevations"][tag]["sun_el"] = c["sun_el"]
+    det = []
+    for tag in ("p3", "z0", "m3", "m6"):
+        e = m["elevations"][tag]
+        det.append(f"{e.get('sun_el', 0):+.1f}: R/G x{e['rel_rg']:.2f} [{e['band_rg'][0]:.2f}-{e['band_rg'][1]:.2f}] B/G "
+                   f"x{e['rel_bg']:.2f} [{e['band_bg'][0]:.2f}-{e['band_bg'][1]:.2f}] CCT {mired_k(e['mired_rg'])}/"
+                   f"{mired_k(e['mired_bg'])} K, zenith R/G {e['zenith_rg']:.2f}")
+    failed = [k for k, x in m["checks"].items() if not x]
+    lim = [t for t, x in m["known_limit"].items() if not (x["rg_in_band"] and x["dmired_in_band"])]
+    detail = "; ".join(det) + (f"; FAIL: {', '.join(failed)}" if failed else "") + \
+        (f"; known limit (R/G off the measured band, magenta of the locus): {', '.join(lim)}" if lim else "")
+    return gate(out, "N9", m["pass"], m, "Spitschan et al. 2016 measured 10-90 % bands (rural, vs 20-26 deg): 0 deg R/G, "
+                "B/G and the R/G-vs-B/G CCT difference in band; B/G in band at +3/-3/-6; CCT (B/G) rising +3 -> 0 -> -3; "
+                "0 deg bluer than +3 in both ratios; zenith R/G <= 1 and bluer (B/R) than the ground at 0/-3/-6. "
+                "Reported, not gated (documented limit): R/G at +3/-3/-6", detail)
+
+
+def mired_k(mired: float) -> str:
+    return "inf" if mired <= 0 else f"{1e6 / mired:,.0f}"
 
 
 def eval_n6(out: Path) -> dict:

@@ -30,17 +30,36 @@ def test_this_invocation_wins_over_an_older_json(tmp_path):
     assert gates["N2"]["detail"] == "new" and gates["N2"]["pass"] is True
 
 
-def test_twilight_colour_flags_magenta_and_passes_blue():
+def _twilight(ratios, zen_rg=0.3):
+    """mean dict for twilight_colour_metrics from illuminant ratios (R/G, B/G) vs a grey daylight ground."""
     np = pytest.importorskip("numpy")
-    day = np.array([0.40, 0.36, 0.27])   # warm ground in daylight
-    # 6A before the ozone fix (measured at sun -3): magenta ground and zenith
-    bad = nc.twilight_colour_metrics(day, np.array([0.30, 0.15, 0.24]), np.array([0.26, 0.15, 0.34]))
-    assert not bad["pass"] and not bad["checks"]["zenith R/G <= 1 (not magenta)"]
-    assert bad["illum_rg"] > 1.0 and bad["illum_bg"] > 1.0
-    good = nc.twilight_colour_metrics(day, np.array([0.13, 0.14, 0.17]), np.array([0.10, 0.125, 0.28]))
+    mean = {"day": {"ground": np.array([1.0, 1.0, 1.0]), "zenith": np.array([0.5, 1.0, 1.6])}}
+    for tag, (rg, bg) in ratios.items():
+        mean[tag] = {"ground": np.array([rg, 1.0, bg]), "zenith": np.array([zen_rg, 1.0, 3.0])}
+    return mean
+
+
+def test_twilight_n9_passes_the_measured_medians_and_flags_magenta():
+    bands = json.loads(nc.TWILIGHT_BANDS.read_text())
+    med = {t: (b["rg"][1], b["bg"][1]) for t, b in bands["bins"].items()}
+    good = nc.twilight_colour_metrics(_twilight(med), bands)
     assert good["pass"], good["checks"]
-    red = nc.twilight_colour_metrics(day, np.array([0.30, 0.20, 0.10]), np.array([0.10, 0.125, 0.28]))
-    assert not red["pass"]
+    # 6A with UE's default ozone, measured at sun -3: the illuminant x1.61 R/G, x1.93 B/G (magenta)
+    magenta = dict(med, z0=(1.03, 1.44), m3=(1.61, 1.93))
+    bad = nc.twilight_colour_metrics(_twilight(magenta, zen_rg=1.6), bands)
+    assert not bad["pass"]
+    assert not bad["checks"]["zenith not magenta (R/G <= 1) at 0, -3, -6 deg"]
+    # warmer at 0 than at +3 (non-monotonic) fails
+    warm0 = dict(med, z0=(0.9, 1.2))
+    assert not nc.twilight_colour_metrics(_twilight(warm0), bands)["checks"]["0 deg bluer than +3 deg in both ratios"]
+
+
+def test_implied_mired_round_trips_the_blackbody_table():
+    bands = json.loads(nc.TWILIGHT_BANDS.read_text())
+    bb = bands["blackbody_rel"]
+    i = 300
+    m_rg, m_bg = nc.implied_mired(bands, bb["rg"][i], bb["bg"][i])
+    assert m_rg == pytest.approx(1e6 / bb["temps_k"][i], rel=1e-3) and m_bg == pytest.approx(1e6 / bb["temps_k"][i], rel=1e-3)
 
 
 def test_linear_rgb_inverts_the_bt709_oetf():
