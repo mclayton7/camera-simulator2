@@ -19,11 +19,14 @@ Gates (each writes OUT/<gate>.json with its measured values, threshold and pass/
   N7 cost     bench night_slant phase vs the baseline: game thread and GPU p50 within +0.3 ms
   N8 dusk     sun ground illuminance (camsim.Sky.Log) non-increasing through 0 -> -1 deg and < 1 % of its 10 deg value
               by -1 deg; frame mean luma non-increasing (+1 DN) through civil twilight
+  N9 dusk     twilight colour: at sun -3 and -6 deg the ground's illuminant (its linear RGB / the same pose's at sun
+              +30 deg) is bluer than daylight (R/G ratio <= 1, B/G ratio >= 1: not magenta, not red), the zenith sky is
+              not magenta (R/G <= 1) and bluer (B/R) than the ground
 
-Runs (--runs, comma list): day (N1), moon (N2, N3), stars (N4), dusk (N5, N8), thermal (N6), cost (N7). Each run
+Runs (--runs, comma list): day (N1), moon (N2, N3), stars (N4), dusk (N5, N8, N9), thermal (N6), cost (N7). Each run
 launches CamSim once (thermal and cost launch their own tools) with the level's engine-time volumetric clouds off; the
 day run also freezes TSR jitter (as its baseline was taken), the night runs don't (see EXEC_CMDS). The sensor's temporal
-noise is never pinned (N1/N2 measure it). summary.md always lists N1-N8: gates not evaluated by this invocation come from
+noise is never pinned (N1/N2 measure it). summary.md always lists N1-N9: gates not evaluated by this invocation come from
 OUT/N*.json left by earlier ones (with their time and commit).
 
     uv run --project scripts/control --with numpy --with pillow --with scipy --with skyfield \\
@@ -90,6 +93,7 @@ DATE_STARS_NOON = datetime(2027, 1, 7, 20, 0, tzinfo=timezone.utc)
 MEGREZ = (183.856, 57.0326)                                          # RA, Dec J2000 (deg), the middle of the Dipper
 DUSK_DAY = (2026, 6, 21)                                             # sunset ~03:00 UTC on the 22nd
 STARS_INTEGRATION_MS = 2000.0
+N9_DAY_EL = 30.0                                                     # N9's daylight reference sun elevation
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +480,35 @@ def run_dusk(c: Client, out: Path) -> dict:
     c.set_clock(lockstep=True)
     end = c.capture(settle_frames=SETTLE_NIGHT, timeout_s=300, depth=False, semantic=False)
     (out / "dusk_end.png").write_bytes(end.png)
-    return {"t0": iso(t0), "t1": iso(t1), "rate": rate, "wall0": wall0, "wall1": time.time()}
+    wall1 = time.time()
+    return {"t0": iso(t0), "t1": iso(t1), "rate": rate, "wall0": wall0, "wall1": wall1, "colour": run_twilight_colour(c, out)}
+
+
+def twilight_views(utc: datetime) -> dict[str, dict]:
+    """N9's views: the dusk run's ground pose and the sky 85 deg up, away from the sun."""
+    az = eph.compute(utc, *SITE).sun_az
+    return {"ground": SLANT_500, "zenith": sky_camera((az + 180.0) % 360.0, 85.0, 30.0)}
+
+
+def run_twilight_colour(c: Client, out: Path) -> dict:
+    """N9: lockstep captures of the ground and the zenith sky at sun +30 (the daylight reference), -3 and -6 deg."""
+    noonish = datetime(*DUSK_DAY, 22, 0, tzinfo=timezone.utc)
+    t_day = sun_crossing(N9_DAY_EL, noonish)
+    times = {"day": t_day, "m3": sun_crossing(-3.0, t_day)}
+    times["m6"] = sun_crossing(-6.0, times["m3"])
+    res = {}
+    for tag, utc in times.items():
+        c.set_clock(lockstep=True, utc=iso(utc))
+        views = {}
+        for view, cam in twilight_views(utc).items():
+            c.set_camera(**cam)
+            cap = c.capture(settle_frames=SETTLE_NIGHT, timeout_s=300, depth=False, semantic=False)
+            name = f"colour_{tag}_{view}.png"
+            (out / name).write_bytes(cap.png)
+            views[view] = name
+        res[tag] = {"utc": iso(utc), "sun_el": eph.compute(utc, *SITE).sun_el, "views": views}
+        print(f"  dusk colour {tag}: sun el {res[tag]['sun_el']:.2f}", flush=True)
+    return res
 
 
 def run_thermal(scene: Path, out: Path) -> dict:
@@ -517,12 +549,12 @@ def gate(out: Path, name: str, passed: bool | None, values: dict, threshold: str
     return g
 
 
-GATE_NAMES = [f"N{i}" for i in range(1, 9)]
+GATE_NAMES = [f"N{i}" for i in range(1, 10)]
 
 
 def merged_gates(out: Path, evaluated: list[dict]) -> list[dict]:
     """This invocation's gates plus every other OUT/N*.json from earlier invocations (runs split over several calls), so
-    summary.md always covers N1-N8; a gate with no JSON yet is listed as not run."""
+    summary.md always covers N1-N9; a gate with no JSON yet is listed as not run."""
     by_name = {g["gate"]: g for g in evaluated}
     for name in GATE_NAMES:
         if name not in by_name:
@@ -1059,6 +1091,59 @@ def save_dusk_frames(d: Path, fr: list[dict], switches: list[dict]) -> None:
                         f"select=eq(n\\,{idx})", "-fps_mode", "passthrough", "-frames:v", "1", str(dest)], check=False)
 
 
+def linear_rgb(rgb: np.ndarray) -> np.ndarray:
+    """Scene-linear RGB (relative) of capture PNG pixels: the BT.709 OETF inverted (the knee above 0.8 ignored: N9's
+    regions sit below it)."""
+    v = np.clip(rgb / 255.0, 0.0, 1.0)
+    return np.where(v < 0.081, v / 4.5, np.power((v + 0.099) / 1.099, 1.0 / 0.45))
+
+
+def region_rgb(rgb: np.ndarray, view: str) -> np.ndarray:
+    """Mean linear RGB of N9's region: the ground pose's lower two thirds (central three quarters), the whole sky view."""
+    h, w = rgb.shape[:2]
+    if view == "ground":
+        rgb = rgb[h // 3:, w // 8:w - w // 8]
+    return linear_rgb(rgb).reshape(-1, 3).mean(axis=0)
+
+
+def twilight_colour_metrics(day_ground: np.ndarray, ground: np.ndarray, zenith: np.ndarray) -> dict:
+    """N9 for one sun elevation, from mean linear RGB. The ground's illuminant relative to daylight is its RGB over the
+    same pose's at sun +30 deg (the albedo cancels), as ratios normalised to green."""
+    rg = lambda c: float(c[0] / c[1])   # noqa: E731
+    bg = lambda c: float(c[2] / c[1])   # noqa: E731
+    v = {"ground_rg": rg(ground), "ground_bg": bg(ground), "zenith_rg": rg(zenith), "zenith_bg": bg(zenith),
+         "illum_rg": rg(ground) / rg(day_ground), "illum_bg": bg(ground) / bg(day_ground),
+         "zenith_br": float(zenith[2] / zenith[0]), "ground_br": float(ground[2] / ground[0])}
+    v["checks"] = {"illuminant R/G <= 1 (no redder than daylight)": v["illum_rg"] <= 1.0,
+                   "illuminant B/G >= 1 (bluer than daylight)": v["illum_bg"] >= 1.0,
+                   "zenith R/G <= 1 (not magenta)": v["zenith_rg"] <= 1.0,
+                   "zenith B/R > ground B/R": v["zenith_br"] > v["ground_br"]}
+    v["pass"] = all(v["checks"].values())
+    return v
+
+
+def eval_n9(out: Path) -> dict:
+    d = out / "dusk"
+    run = load_json(d / "run.json")
+    if not run or "colour" not in run:
+        return gate(out, "N9", False, {}, "", "no dusk colour captures")
+    col = run["colour"]
+    mean = {tag: {view: region_rgb(load_rgb(d / name), view) for view, name in c["views"].items()} for tag, c in col.items()}
+    vals, ok, det = {"day_sun_el": col["day"]["sun_el"], "day_ground_rgb": mean["day"]["ground"].tolist()}, True, []
+    for tag in ("m3", "m6"):
+        m = twilight_colour_metrics(mean["day"]["ground"], mean[tag]["ground"], mean[tag]["zenith"])
+        m.update(sun_el=col[tag]["sun_el"], ground_rgb=mean[tag]["ground"].tolist(), zenith_rgb=mean[tag]["zenith"].tolist())
+        vals[tag] = m
+        ok &= m["pass"]
+        det.append(f"sun {col[tag]['sun_el']:+.1f}: ground illuminant vs daylight R/G x{m['illum_rg']:.2f} B/G "
+                   f"x{m['illum_bg']:.2f}; zenith R/G {m['zenith_rg']:.2f} B/G {m['zenith_bg']:.2f}, B/R {m['zenith_br']:.2f} "
+                   f"vs ground {m['ground_br']:.2f}" + ("" if m["pass"] else " FAIL: " + ", ".join(
+                       k for k, x in m["checks"].items() if not x)))
+    return gate(out, "N9", ok, vals, "at sun -3 and -6 deg: ground illuminant (ground RGB / the same pose at sun +30) "
+                "R/G ratio <= 1 and B/G ratio >= 1; zenith R/G <= 1; zenith B/R > ground B/R (Spitschan et al. 2016: "
+                "the twilight illuminant is bluer than daylight, Chappuis ozone filtering)", "; ".join(det))
+
+
 def eval_n6(out: Path) -> dict:
     r = load_json(out / "thermal_run.json")
     if not r:
@@ -1143,7 +1228,7 @@ def main() -> int:
     if "stars" in runs:
         gates.append(eval_n4(out))
     if "dusk" in runs:
-        gates += list(eval_n5_n8(out))
+        gates += list(eval_n5_n8(out)) + [eval_n9(out)]
     if "thermal" in runs:
         gates.append(eval_n6(out))
     if "cost" in runs:
