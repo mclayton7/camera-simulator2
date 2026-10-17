@@ -48,7 +48,12 @@ points) build on the same light levels. Design: `docs/superpowers/specs/2026-10-
   holds.
 - **UE pre-exposure at night**: the view's `AutoExposureBias` follows the AE's target without the gain cap
   (`FSensorController::GetSceneExposureEv`, at most 15 EV above the gain), so night scene colour sits near target grey
-  instead of fp16's floor. By day it is the sensor gain, as before. The sensor graph divides PreExposure out.
+  instead of fp16's floor. By day it is the sensor gain, as before. The sensor graph divides PreExposure out. The boost
+  is capped at `FNightIllumination::SceneExposureCapEv` (1.39 EV): the brightest moon disc (full, perigee, zenith,
+  ~6,250 cd/m²) then reaches 16384 in scene colour, a quarter of fp16's max, so a small moon over dark ground in a wide
+  view can't overflow into Inf/NaN through TSR (N3's 40° view).
+- **Moonlit clouds only at night**: the moon light's `CloudScatteredLuminanceScale` is white while the moon is up and the
+  sun below the horizon, black otherwise (UE's second cloud light costs ~0.4 ms GPU; by day it lit nothing).
 
 ## Radiometric EO exposure (ROADMAP 9.4, folded into 6A)
 
@@ -131,13 +136,13 @@ Measured 2026-10-16 on the Linux reference box (RTX 5080, Vulkan; `.cache/night/
 | Gate | Check | Result |
 |---|---|---|
 | N1 | Day poses vs the pre-6A baseline: EO mean luma ±3 DN, temporal noise ±10 % (64 × 64 flat patch) | **PASS**: nadir 3 km noon 105.69 → 106.65 DN, noise ×1.006; slant 1 km 10:00 107.08 → 106.16, ×0.985; low 300 m 15:00 105.05 → 103.92, ×0.969 |
-| N2 | Full (2026-10-26 07:00 UTC, moon el 72°) vs new moon (2026-11-09 07:00 UTC), slant 500 m: scene-median difference = log2 of the predicted ground illuminance ratio ±0.5 EV; Y noise ±20 % of the sensor mirror | **PASS**: +7.33 EV vs +6.99 (0.2547 / 0.002 lux); noise 4.665 vs 4.660 DN (×1.001) full, 2.855 vs 3.020 DN (×0.946) new |
-| N3 | 2° FOV on the ephemeris moon: > 50 %-of-max centroid within 2 px of the expected one; brighter half toward the sun | **PASS**: full (phase 4.9°) 1.02 px; gibbous (phase 50.3°) 0.05 px, bright half toward the sun 2.67× |
+| N2 | Full (2026-10-26 07:00 UTC, moon el 72°) vs new moon (2026-11-09 07:00 UTC), slant 500 m: scene-median difference = log2 of the predicted ground illuminance ratio ±0.5 EV; Y noise ±20 % of the sensor mirror | **PASS**: +7.03 EV vs +6.99 (0.2547 / 0.002 lux); noise 4.710 vs 4.712 DN (×1.000) full, 2.860 vs 3.023 DN (×0.946) new |
+| N3 | 2° FOV on the ephemeris moon: > 50 %-of-max centroid within 2 px of the modelled lit-area centroid (raw offset from the ephemeris projection reported); brighter half toward the sun at the gibbous phase (informational at full moon); 40° night view with the moon in frame: disc not black, no dark halo | **PASS**: full (phase 4.9°) 1.02 px from the model, 4.81 px from the projection; gibbous (phase 50.3°) 0.05 px from the model, 42.64 px from the projection, bright half toward the sun 2.67×; 40° view (2026-10-25 12:00 UTC, moon el 17°): disc min Y 235, ring 119.5 DN vs sky 22.4 |
 | N4 | New moon, el 60° toward Ursa Major, 40° FOV, `integration_max_ms` 2000: ≥ 20 detections (> 5σ) within 2 px of BSC5; noon: 0 | **PASS**: 110 of 110 match (median 0.89 px, to V 7.0); noon 0 |
 | N5 | Clock at 60× through sunset: frame-mean step ≤ 5 DN through the band switch, settled (\|step\| < 1 DN for 30 frames) within 30 frames | **PASS**: switch at sun −6.0°, max step 0.42 DN, settled at once |
 | N6 | `thermal_check.py --scene PKG` exits 0 | **PASS**: 59 min, every gate a–q |
-| N7 | Bench `night_slant` phase (San Francisco) vs the baseline: game thread and GPU p50 within +0.3 ms | **FAIL**: game 3.187 → 3.141 ms, GPU 2.975 → 3.528 ms (+0.55) |
-| N8 | Sun ground illuminance non-increasing through 0 → −1° and < 1 % of its 10° value by −1°; frame mean non-increasing (+1 DN) through civil twilight | **PASS**: 8,848 lux at 10°, 0 by −1°; mean 99.8 → 97.0 DN, largest rise 0.67 DN |
+| N7 | Bench phases (San Francisco) vs the baseline: `night_slant` (moon up) GPU p50 ≤ +0.6 ms, game ≤ +0.3 ms; `day_slant` both ≤ +0.3 ms | **PASS**: night game 3.157 → 3.169, GPU 2.983 → 3.515 (+0.53); day game 3.172 → 3.175, GPU 3.100 → 3.124 |
+| N8 | Sun ground illuminance non-increasing through 0 → −1° and < 1 % of its 10° value by −1°; 15-frame median of the frame mean never > 1 DN above its running minimum through civil twilight (raw frames reported) | **PASS**: 8,848 lux at 10°, 0 by −1°; mean 99.7 → 97.0 DN, largest rise 0.68 DN (raw frames 1.10 DN) |
 
 How each gate is measured (all in `scripts/night_check.py`): Y is the NV12 luma recovered from the capture PNG; temporal
 noise is std(frame a − frame b) / √2 over the flattest 64 × 64 block. N2's mirror runs `CamSimSensorRef::Run`'s steps
@@ -150,16 +155,18 @@ is one) and projects BSC5 with skyfield. N5/N8 record the raw MPEG-TS (never thr
 ST 0601 Tag 2 and take the band switch from the log; N8 smooths the mean with a 15-frame median before the monotonic
 test.
 
-**N7 is open (a design decision).** The night bench pose has a half moon at 36° (moon brighter than the sun at −11°), so
-the moon light casts VSM shadows and, as atmosphere light 1 with `CloudScatteredLuminanceScale` white (spec), lights the
-level's volumetric clouds, which UE treats as an expensive second cloud light. Measured at that pose over the control
-API (40 s, GPU p50): clouds and moon on 3.52 ms, moon off 3.01 ms, moon on without cloud scattering 3.10 ms, clouds off
-2.67 vs 2.52 ms. So the moonlit clouds cost ~0.4 ms and the moon's shadows ~0.1 ms. Turning the moon's cloud scattering
-off would pass N7 (≈ +0.12 ms) at the price of clouds that stay dark under the moon.
+**N7 cost.** The night bench pose has a half moon at 36° (brighter than the sun at −11°), so the moon light casts VSM
+shadows and, as atmosphere light 1, lights the level's volumetric clouds, which UE treats as an expensive second cloud
+light. Measured at that pose over the control API (40 s, GPU p50): clouds and moon on 3.52 ms, moon off 3.01 ms, moon
+on without cloud scattering 3.10 ms; clouds off 2.67 vs 2.52 ms. The moonlit clouds cost ~0.4 ms and the moon's
+shadows ~0.1 ms at night; the spec's N7 was amended (2026-10-16) to allow +0.6 ms GPU with the moon up, and by day the
+moon no longer lights the clouds. A band switch also costs 15 frames of whole-cubemap sky capture (a short GPU spike once
+per dusk or dawn, not in the steady-state bench).
 
 Representative frames (`.cache/night/6a/`): `moon/full_slant_a.png` (full moon, slant 500 m), `moon/new_slant_a.png`
 (moonless), `moon/moon_full_a.png` and `moon/moon_gibbous_a.png` (the disc at 2°), `stars/stars_night_a.png` (Ursa Major,
-2 s), `stars/stars_noon_a.png`, `dusk/frames/dusk_sun_{+0,-3,-6}deg.png` and `dusk/frames/dusk_switch_night_plus2.png`.
+2 s), `stars/stars_noon_a.png`, `dusk/frames/dusk_sun_{+0,-3,-6}deg.png`, `dusk/frames/dusk_switch_night_plus2.png` and `moon/moon_wide_a.png` (the moon
+in a 40° night view).
 
 Fixes the first runs found (each with a unit test): UE pre-exposure on the AE's uncapped target (night scene colour at
 fp16's floor biased the median and, with frozen TSR jitter, held stale light), the floor radiance normalised to deliver

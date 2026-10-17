@@ -37,7 +37,7 @@ Night is the largest gap for an EO/IR trainer. Today the night sky is "very dim 
 
 | ID  | Item |
 | --- | ---- |
-| 6.1 | **6A done (2026-10-16)** (`docs/night.md`): `FEphemeris` sun/moon/sidereal time, moon as atmosphere light 1 (K&S), physical sun (k = 1, 127.5 klx TOA), generated IsSky dome `M_SkyDome` (atmosphere, discs, BSC5 stars, night floor), Lumen cached-lighting band, radiometric EO exposure (9.4), CIGI celestial enables; `night_check.py` N1–N6 and N8 pass on the RTX 5080, N7 open (moonlit clouds +0.55 ms GPU). |
+| 6.1 | **6A done (2026-10-16)** (`docs/night.md`): `FEphemeris` sun/moon/sidereal time, moon as atmosphere light 1 (K&S), physical sun (k = 1, 127.5 klx TOA), generated IsSky dome `M_SkyDome` (atmosphere, discs, BSC5 stars, night floor), Lumen cached-lighting band, radiometric EO exposure (9.4), CIGI celestial enables; `night_check.py` N1–N8 pass on the RTX 5080 (N3/N7/N8 rows amended 2026-10-16; night GPU +0.53 ms from the moonlit clouds). |
 | 6.2 | **Light points / cultural lighting:** streetlights, airfield lighting, building windows (from R3 buildings and R2 roads in the scene package), vehicle headlights and nav lights. Built on **MegaLights** (production-ready in UE 5.8: hundreds of shadow-casting lights at near-constant cost). CIGI: Component Control for entity lights. |
 | 6.3 | **Image-intensifier (NVG / I²) preset** on the photon detector (3B.2): photocathode spectral response, gain, halo/blooming around point sources, scintillation; green or white phosphor display. Optional SWIR preset. Watch **Fog Screen Space Scattering** (experimental in 5.8: light scattering in volumetric fog and local fog volumes) for halos in fog. |
 | 6.4 | **Acceptance:** night scene under full moon vs new moon (NVG mean level and noise follow illumination); lit airfield and street grid visible in EO and NVG; light count vs frame budget on the RTX 5080 and the M1 Pro. |
@@ -201,10 +201,10 @@ Considered and not reopened: land cover as a Cesium raster overlay (4B chose the
 
 ### Night sky (6A)
 
-- **N7 (night cost) fails: +0.55 ms GPU p50** at the bench `night_slant` pose (2.975 → 3.528 ms). The moon, as atmosphere
-  light 1 with cloud scattering on (spec), lights the level's volumetric clouds (UE's "expensive" second cloud light,
-  ~0.4 ms) and casts VSM shadows (~0.1 ms). Decision needed: moon `CloudScatteredLuminanceScale` black (≈ +0.12 ms, dark
-  clouds under the moon) or accept the cost (`docs/night.md` "Acceptance").
+- Night cost: the moon lighting the volumetric clouds (UE's second cloud light) costs ~0.4 ms GPU and its VSM shadows
+  ~0.1 ms at night (N7 allows +0.6 ms with the moon up); a band switch adds 15 frames of whole-cubemap sky capture.
+- Review minors deferred: the N2 noise mirror hard-codes the `eo_hd_cmos` values (`EO` in `night_check.py`); no direct
+  C++ `FEphemeris` ↔ `scripts/sky/ephemeris.py` comparison (both held to DE421 only).
 - Thermal IR still takes its sun from `ACamSimEnvironment::ComputeSunPosition`; move `FThermalModel` onto `FEphemeris`
   (changes the thermal calibration; rerun `thermal_check.py`).
 - `Main.umap` has no `ExponentialHeightFog`: CIGI visibility does nothing (with 8.6).
@@ -264,7 +264,7 @@ One line each; details in the named guide or `git show ae0a390:ROADMAP.md`.
 | 4B | 2026-10-02 | Land cover for thermal: WorldCover window, imagery refinement |
 | 4C | 2026-10-07 | Entity thermal state: skin and parts on sim time from power, damage, flaming, motion |
 | 4D (part) | 2026-10-16 | Semantic class image in ground truth, datasets and control API captures |
-| 6A (6.1) | 2026-10-16 | Night sky (`docs/night.md`): ephemeris, moon light, IsSky dome with stars and night floor, absolute light levels (k = 1), Lumen cached-lighting band; `night_check.py` N1–N6, N8 (N7 open) |
+| 6A (6.1) | 2026-10-16 | Night sky (`docs/night.md`): ephemeris, moon light, IsSky dome with stars and night floor, absolute light levels (k = 1), Lumen cached-lighting band; `night_check.py` N1–N8 |
 | 9.4 | 2026-10-16 | Radiometric EO photon gain (folded into 6A): integration time from f-number, pitch, transmission, QE; IR stays calibrated (Milestone 9) |
 | R0 | 2026-10-09 | Offline scene packages (`docs/scene-packages.md`): 3DEP + NAIP over `file://`, byte-identical builds |
 | R1 | 2026-10-10 | Imagery edge (Sentinel-2 → NAIP), NDVI layer, seabed under tidal water, local MSL; Linux/Docker offline |

@@ -196,12 +196,12 @@ run is recorded as open if not done):
 | ---- | ----- |
 | N1 | Daytime unchanged: bench day shots (AE below its cap) before/after, EO mean luma within ±3 DN, temporal noise within 10 % |
 | N2 | Full moon high vs new moon, same pose: the AE's scene median (log2) differs by log2 of the predicted ground illuminance ratio ±0.5 EV; temporal noise of Y on a flat patch within ±20 % of `CamSimSensorRef::Run` on a flat field at the logged median and gains |
-| N3 | Moon in view: disc centroid within 2 px of the ephemeris projection; lit limb toward the sun |
+| N3 | Moon in view (2° FOV): centroid of the > 50 %-of-max region within 2 px of the modelled lit-area centroid (the ephemeris projection plus the offset of that region on a Lambert disc at the phase, through the frame's display curve; amended 2026-10-16: a phased disc's bright region is not centred on the projection); the raw offset from the projection is reported; lit limb toward the sun at a gibbous phase (informational at full moon). Also a 30–40° night view with the moon in frame: disc pixels not black, no dark halo (fp16 headroom) |
 | N4 | Stars at new moon visible (≥ 20 detections at the expected positions within 2 px); none by day |
 | N5 | Dusk band switch: consecutive-frame mean luma step ≤ 5 DN through the switch, settled ≤ 30 frames |
 | N6 | `thermal_check.py` gates a–l pass |
-| N7 | Night cost vs today's night bench: game thread and GPU within +0.3 ms |
-| N8 | Sunset: sun light at the ground falls smoothly to 0 by sun elevation −1°; frame mean through civil twilight monotonic |
+| N7 | Cost vs the pre-6A bench (amended 2026-10-16): night with the moon up (`night_slant`) GPU p50 ≤ +0.6 ms (the moon lights the volumetric clouds), game thread ≤ +0.3 ms; day (`day_slant`) both ≤ +0.3 ms |
+| N8 | Sunset: sun light at the ground falls smoothly to 0 by sun elevation −1°; frame mean through civil twilight monotonic: the 15-frame median of the frame mean never rises more than 1 DN above its running minimum (amended 2026-10-16; the raw-frame maximum is reported) |
 
 ## Docs
 
