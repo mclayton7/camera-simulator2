@@ -44,6 +44,7 @@
 #include "PixelFormat.h"
 #include "Async/Async.h"
 #include "HAL/IConsoleManager.h"
+#include "Environment/NightIllumination.h"
 
 DECLARE_STATS_GROUP(TEXT("CamSim"), STATGROUP_CamSim, STATCAT_Advanced)
 DECLARE_CYCLE_STAT(TEXT("Encode Latency"), STAT_CamSimEncode, STATGROUP_CamSim)
@@ -83,6 +84,8 @@ void UCamSimCaptureComponent::Initialize(USceneCaptureComponent2D* InSensor, UCa
 	Subsystem = InSubsystem;
 
 	Sensor->FOVAngle = Cfg.HFovDeg;
+	// ROADMAP 6A: UE's night pre-exposure stops where the brightest moon disc reaches 16384 in scene colour.
+	SensorController.SetSceneExposureCapEv(static_cast<float>(FNightIllumination::SceneExposureCapEv()));
 
 	// ROADMAP 3B: the GPU sensor graph is the only sensor path. The subsystem
 	// decides once whether it can run (and logs why not); without it no frames

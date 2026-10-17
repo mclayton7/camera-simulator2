@@ -112,3 +112,41 @@ bool FNightIllumFloorDeliveredTest::RunTest(const FString&)
 	TestTrue(TEXT("ground illuminance = night_floor_lux within 0.5 %"), FMath::Abs(E / 0.002 - 1.0) < 0.005);
 	return true;
 }
+
+// The scene-exposure cap: the brightest moon disc (full, at perigee, at the zenith) times 2^cap is 16384 (1/4 of fp16's
+// max), and no phase, distance or elevation gives a brighter disc than MaxMoonDiscLuminanceCdM2.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNightIllumExposureCapTest, "CamSim.Environment.Illumination.SceneExposureCapKeepsMoonInFp16",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FNightIllumExposureCapTest::RunTest(const FString&)
+{
+	const double LMax = FNightIllumination::MaxMoonDiscLuminanceCdM2();
+	const double Cap = FNightIllumination::SceneExposureCapEv();
+	AddInfo(FString::Printf(TEXT("max moon disc %.0f cd/m2, cap %.2f EV"), LMax, Cap));
+	TestTrue(TEXT("disc x 2^cap = 16384"), FMath::IsNearlyEqual(LMax * FMath::Pow(2.0, Cap), 16384.0, 1.0));
+	TestTrue(TEXT("a few thousand cd/m2"), LMax > 4000.0 && LMax < 12000.0);
+	// The dome's peak: LumScale = TOA / Omega / MeanShading(alpha), times shade <= 1 and T(el).
+	for (double Alpha : {0.0, 5.0, 30.0, 90.0})
+	{
+		for (double Km : {356500.0, 384400.0, 406700.0})
+		{
+			const double R = FMath::Asin(1737.4 / Km);
+			const double Omega = 2.0 * UE_DOUBLE_PI * (1.0 - FMath::Cos(R));
+			const double Peak = FNightIllumination::MoonToaLux(Alpha, Km) / Omega / FMoonDisc::MeanShading(Alpha)
+				* FNightIllumination::Transmittance(90.0);
+			TestTrue(FString::Printf(TEXT("alpha %.0f, %.0f km: %.0f <= max"), Alpha, Km, Peak), Peak <= LMax * 1.0001);
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMoonCloudScatterTest, "CamSim.Environment.Sky.MoonLightsCloudsOnlyAtNight",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FMoonCloudScatterTest::RunTest(const FString&)
+{
+	// UE treats a second atmosphere light on the clouds as expensive (~0.4 ms on the night bench): only while it matters.
+	TestEqual(TEXT("night, moon up: white"), FNightIllumination::MoonCloudScatterScale(-12.0, true), FLinearColor::White);
+	TestEqual(TEXT("day: black"), FNightIllumination::MoonCloudScatterScale(20.0, true), FLinearColor::Black);
+	TestEqual(TEXT("sun just up: black"), FNightIllumination::MoonCloudScatterScale(0.5, true), FLinearColor::Black);
+	TestEqual(TEXT("moon down: black"), FNightIllumination::MoonCloudScatterScale(-30.0, false), FLinearColor::Black);
+	return true;
+}

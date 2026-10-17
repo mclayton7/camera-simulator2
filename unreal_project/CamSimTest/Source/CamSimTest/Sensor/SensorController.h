@@ -49,6 +49,9 @@ public:
 	/** Cap on the scene exposure above the sensor gain: anything that overflows fp16 (65504) after the boost is past the
 	 *  sensor's clip anyway (2^15 < 65504). */
 	static constexpr float MaxSceneExposureBoostEv = 15.0f;
+	/** Upper bound on GetSceneExposureEv (never below the emitted gain): the capture component sets
+	 *  FNightIllumination::SceneExposureCapEv, so the brightest sky content (the moon disc) stays within fp16. */
+	void SetSceneExposureCapEv(float CapEv) { SceneExposureCapEv = CapEv; }
 	uint32 GetStaleEpisodes() const   { return StaleEpisodes; }
 	/** Integration time (ms) of the photon gain emitted last tick on a radiometric mode (ROADMAP 9.4); 0 otherwise. */
 	float  GetIntegrationMs() const   { return LastIntegrationMs; }
@@ -87,6 +90,7 @@ private:
 	/** Per slot: the AE target before the gain cap (smoothed like GainEvByMode), for GetSceneExposureEv. */
 	float  SceneEvByMode[3] = { -12.0f, -12.0f, RadianceSeedGainEv };
 	float  LastSceneExposureEv = -12.0f;
+	float  SceneExposureCapEv = TNumericLimits<float>::Max();
 	float  IrLoLog2        = 0.0f;
 	float  IrHiLog2        = 1.0f;
 	float  LastMedianLog2  = 0.0f;

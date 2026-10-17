@@ -118,6 +118,36 @@ bool FSensorAeSmoothMedianTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ROADMAP 6A review: the night boost is capped (SetSceneExposureCapEv) so the brightest sky content (the moon disc) stays
+// within fp16 in scene colour; the cap never pulls the pre-exposure below the sensor gain.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorSceneExposureCapTest, "CamSim.Sensor.Controller.SceneExposureCapped",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorSceneExposureCapTest::RunTest(const FString& Parameters)
+{
+	{
+		FSensorController C;
+		C.SetSceneExposureCapEv(1.0f);
+		const FSensorHistogram H = Flat(-10.0f, 1);   // night: target ~7.5 EV
+		C.Update(In(&H, 1), EoCfg());
+		TestEqual(TEXT("night boost stops at the cap"), C.GetSceneExposureEv(), 1.0f, 1e-4f);
+	}
+	{
+		FSensorController C;
+		C.SetSceneExposureCapEv(-10.0f);              // a cap below the gain
+		const FSensorHistogram H = Flat(-10.0f, 1);
+		C.Update(In(&H, 1), EoCfg());
+		TestEqual(TEXT("never below the sensor gain"), C.GetSceneExposureEv(), C.GetGainEv());
+	}
+	{
+		FSensorController C;
+		C.SetSceneExposureCapEv(1.0f);
+		const FSensorHistogram H = Flat(12.0f, 1);    // day: the gain, cap irrelevant
+		C.Update(In(&H, 1), EoCfg());
+		TestEqual(TEXT("day unchanged"), C.GetSceneExposureEv(), C.GetGainEv());
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorAeSaturatedTest, "CamSim.Sensor.Controller.SaturatedHistogramHitsMinGain",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FSensorAeSaturatedTest::RunTest(const FString& Parameters)

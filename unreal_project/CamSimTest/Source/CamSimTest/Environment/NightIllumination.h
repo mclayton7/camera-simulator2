@@ -38,6 +38,14 @@ namespace FNightIllumination
 	/** Cosine-weighted mean of Transmittance over the upper hemisphere (~0.755): the dome draws the floor as L * T(view
 	 *  elevation), so L = E / (pi * this) delivers E at the ground. */
 	double FloorTransmittanceMean();
+	/** The brightest moon-disc luminance the dome can draw (full moon at perigee, Lambert peak, zenith transmittance),
+	 *  cd/m2: the brightest sky content at night. */
+	double MaxMoonDiscLuminanceCdM2();
+	/** Cap on UE's pre-exposure (EV) so MaxMoonDiscLuminanceCdM2 stays at 16384 (1/4 of fp16's max) in scene colour. */
+	double SceneExposureCapEv();
+	/** The moon light's CloudScatteredLuminanceScale: white while the moon is up and the sun below the horizon, else
+	 *  black (UE's second cloud light is expensive). */
+	FLinearColor MoonCloudScatterScale(double SunElDeg, bool bMoonUp);
 }
 
 namespace FMoonDisc

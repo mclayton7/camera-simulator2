@@ -54,6 +54,26 @@ double FNightIllumination::FloorTransmittanceMean()
 	return Mean;
 }
 
+double FNightIllumination::MaxMoonDiscLuminanceCdM2()
+{
+	constexpr double PerigeeKm = 356000.0;   // the closest a full moon gets (356,375 km in 1912-2100)
+	constexpr double MoonRadiusKm = 1737.4;
+	const double R = FMath::Asin(MoonRadiusKm / PerigeeKm);
+	const double Omega = 2.0 * UE_DOUBLE_PI * (1.0 - FMath::Cos(R));
+	// FSkyDomeDriver: disc luminance = TOA / Omega / MeanShading(alpha) x shade (<= 1) x T(view); the largest at alpha 0.
+	return MoonToaLux(0.0, PerigeeKm) / Omega / FMoonDisc::MeanShading(0.0) * Transmittance(90.0);
+}
+
+double FNightIllumination::SceneExposureCapEv()
+{
+	return FMath::Log2(16384.0 / MaxMoonDiscLuminanceCdM2());
+}
+
+FLinearColor FNightIllumination::MoonCloudScatterScale(double SunElDeg, bool bMoonUp)
+{
+	return (bMoonUp && SunElDeg < 0.0) ? FLinearColor::White : FLinearColor::Black;
+}
+
 double FNightIllumination::CloudFactor(double Cover01)
 {
 	return 1.0 - 0.75 * FMath::Pow(FMath::Clamp(Cover01, 0.0, 1.0), 3.4);

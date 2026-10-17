@@ -243,7 +243,8 @@ FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, c
 	else
 	{
 		LastEmittedGainEv = TotalEv;
-		LastSceneExposureEv = FMath::Clamp(SceneEvByMode[Slot], TotalEv, TotalEv + MaxSceneExposureBoostEv);
+		LastSceneExposureEv = FMath::Clamp(SceneEvByMode[Slot], TotalEv,
+			FMath::Max(TotalEv, FMath::Min(TotalEv + MaxSceneExposureBoostEv, SceneExposureCapEv)));
 	}
 	return P;
 }
