@@ -66,7 +66,31 @@ namespace FMoonDisc
 	/** The disc-plane basis the shader builds (CamSimMoonRight): Right toward the sun (any perpendicular when the sun is
 	 *  on the line of sight), Up = MoonDir x Right. */
 	CAMSIMTEST_API void DiscBasis(const FMoonDiscFrame& Frame, FVector3d& OutRight, FVector3d& OutUp);
-	/** Bound on max(Radiance) / MeanRadiance for the shipped map at any phase and libration (the brightest crater
-	 *  rays over a disc mean of ~0.4): FNightIllumination::MaxMoonDiscLuminanceCdM2 uses it. */
+	/** Bound on max(Radiance) / MeanRadiance for the shipped map at full moon (the brightest crater rays over a disc
+	 *  mean of ~0.4; CamSim.Environment.MoonSurface.PeakToMeanBound checks phase 0 at five librations: 2.54).
+	 *  FNightIllumination::MaxMoonDiscLuminanceCdM2 multiplies it by the full-moon K&S illuminance, which bounds every
+	 *  phase: past full the peak-to-mean ratio grows more slowly than K&S falls (the illumination cap test). */
 	constexpr double MaxPeakToMean = 2.75;
 }
+
+/**
+ * The dome's normaliser, recomputed only when the disc's geometry has moved: the phase angle, the sub-observer or the
+ * sub-solar selenographic point by more than ToleranceDeg (~0.1 % of the mean). The mean is invariant to a rotation of
+ * the whole frame (the camera moving, UE's world axes), so only these three matter. At 60x sim time it recomputes about
+ * once per 6 wall seconds (the phase moves 12 deg a day); at 1x a few times an hour.
+ */
+struct CAMSIMTEST_API FMoonNormaliserCache
+{
+	static constexpr double ToleranceDeg = 0.05;
+	/** The disc mean for Frame (MeanRadiance), cached; OutRecomputed says whether this call computed it. */
+	double Get(const FMoonDiscFrame& Frame, const FMoonAlbedoMap& Map, bool* OutRecomputed = nullptr);
+	int32 GetRecomputeCount() const { return Recomputes; }
+	double GetTotalComputeMs() const { return TotalMs; }
+
+private:
+	bool bValid = false;
+	double Mean = 1.0, PhaseDeg = 0.0;
+	FVector3d SubObserver = FVector3d::ZeroVector, SubSolar = FVector3d::ZeroVector;   // body-frame unit vectors
+	int32 Recomputes = 0;
+	double TotalMs = 0.0;
+};

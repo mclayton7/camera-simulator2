@@ -173,7 +173,7 @@ def launch(run_dir: Path, scene: Path, config_text: str | None = None, exec_cmds
 LOG_LINE = re.compile(r"^\[(\d{4})\.(\d\d)\.(\d\d)-(\d\d)\.(\d\d)\.(\d\d):(\d{3})\]\[\s*\d+\](.*)$")
 AE_RE = re.compile(r"Sensor AE: mode=(\d+) gainEv=(\S+) medianLog2=(\S+) photonGain=(\S+) analogGain=(\S+) t_int=(\S+) ms")
 SKY_RE = re.compile(r"6A sky: utc=(\S+) sun_el=(\S+) sun_ground_lux=(\S+) moon_el=(\S+) moon_phase=(\S+) "
-                    r"moon_illum=(\S+) moon_ground_lux=(\S+) floor_cdm2=(\S+) band=(\w+) stars=(\d+)(?: moon_az=(\S+))?")
+                    r"moon_illum=(\S+) moon_ground_lux=(\S+) floor_cdm2=(\S+) band=(\w+) stars=(\d+)(?: moon_az=(\S+))?(?: moon_norm=(\d+)/(\S+)ms)?")
 BAND_RE = re.compile(r"6A: cached lighting band \S+ (\w+) \((\S+) EV\), scene median 2\^(\S+)")
 
 
@@ -199,7 +199,8 @@ def read_log(path: Path) -> dict[str, list[dict]]:
             out["sky"].append({"wall": wall, "utc": s[1], "sun_el": float(s[2]), "sun_ground_lux": float(s[3]),
                                "moon_el": float(s[4]), "moon_phase": float(s[5]), "moon_illum": float(s[6]),
                                "moon_ground_lux": float(s[7]), "floor_cdm2": float(s[8]), "band": s[9],
-                               "stars": int(s[10]), "moon_az": float(s[11]) if s[11] else None})
+                               "stars": int(s[10]), "moon_az": float(s[11]) if s[11] else None,
+                               "moon_norm_n": int(s[12]) if s[12] else None, "moon_norm_ms": float(s[13]) if s[13] else None})
         elif b := BAND_RE.search(rest):
             out["band"].append({"wall": wall, "band": b[1], "ev": float(b[2]), "median_log2": float(b[3])})
     return out

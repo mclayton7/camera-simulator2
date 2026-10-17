@@ -7,6 +7,7 @@
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "HAL/PlatformTime.h"
 
 // ---------------------------------------------------------------------------
 // Albedo map
@@ -176,25 +177,69 @@ void FMoonDisc::DiscBasis(const FMoonDiscFrame& F, FVector3d& OutRight, FVector3
 	OutUp = F.MoonDir.Cross(OutRight);
 }
 
+namespace
+{
+	/** Radiance with the disc basis already built (MeanRadiance's inner loop). */
+	double RadianceInBasis(const FMoonDiscFrame& F, const FMoonAlbedoMap& Map, const FVector3d& Right, const FVector3d& Up,
+		double U, double V)
+	{
+		const double R2 = U * U + V * V;
+		if (R2 > 1.0)
+		{
+			return 0.0;
+		}
+		const double Nz = FMath::Sqrt(1.0 - R2);
+		const FVector3d N = U * Right + V * Up - Nz * F.MoonDir;
+		const double Shade = FMoonDisc::Photometric(N.Dot(F.SunDir), Nz, F.L);
+		if (Shade <= 0.0)
+		{
+			return 0.0;
+		}
+		const double Lon = FMath::Atan2(N.Dot(F.Axes[1]), N.Dot(F.Axes[0]));
+		const double Lat = FMath::Asin(FMath::Clamp(N.Dot(F.Axes[2]), -1.0, 1.0));
+		return Map.Sample(Lon, Lat) * Shade;
+	}
+
+	FVector3d ToBody(const FMoonDiscFrame& F, const FVector3d& V)
+	{
+		return FVector3d(V.Dot(F.Axes[0]), V.Dot(F.Axes[1]), V.Dot(F.Axes[2])).GetSafeNormal();
+	}
+
+	double AngleDeg(const FVector3d& A, const FVector3d& B)
+	{
+		return FMath::RadiansToDegrees(FMath::Atan2(A.Cross(B).Length(), A.Dot(B)));
+	}
+}
+
 double FMoonDisc::Radiance(const FMoonDiscFrame& F, const FMoonAlbedoMap& Map, double U, double V)
 {
-	const double R2 = U * U + V * V;
-	if (R2 > 1.0)
-	{
-		return 0.0;
-	}
 	FVector3d Right, Up;
 	DiscBasis(F, Right, Up);
-	const double Nz = FMath::Sqrt(1.0 - R2);
-	const FVector3d N = U * Right + V * Up - Nz * F.MoonDir;
-	const double Shade = Photometric(N.Dot(F.SunDir), Nz, F.L);
-	if (Shade <= 0.0)
+	return RadianceInBasis(F, Map, Right, Up, U, V);
+}
+
+double FMoonNormaliserCache::Get(const FMoonDiscFrame& F, const FMoonAlbedoMap& Map, bool* OutRecomputed)
+{
+	const FVector3d Obs = ToBody(F, -F.MoonDir), Sol = ToBody(F, F.SunDir);
+	const double Phase = AngleDeg(F.SunDir, -F.MoonDir);
+	const bool bMoved = !bValid || FMath::Abs(Phase - PhaseDeg) > ToleranceDeg || AngleDeg(Obs, SubObserver) > ToleranceDeg
+		|| AngleDeg(Sol, SubSolar) > ToleranceDeg;
+	if (bMoved)
 	{
-		return 0.0;
+		const double T0 = FPlatformTime::Seconds();
+		Mean = FMoonDisc::MeanRadiance(F, Map);
+		TotalMs += (FPlatformTime::Seconds() - T0) * 1000.0;
+		++Recomputes;
+		PhaseDeg = Phase;
+		SubObserver = Obs;
+		SubSolar = Sol;
+		bValid = true;
 	}
-	const double Lon = FMath::Atan2(N.Dot(F.Axes[1]), N.Dot(F.Axes[0]));
-	const double Lat = FMath::Asin(FMath::Clamp(N.Dot(F.Axes[2]), -1.0, 1.0));
-	return Map.Sample(Lon, Lat) * Shade;
+	if (OutRecomputed)
+	{
+		*OutRecomputed = bMoved;
+	}
+	return Mean;
 }
 
 double FMoonDisc::MeanRadiance(const FMoonDiscFrame& F, const FMoonAlbedoMap& Map, int32 N)
@@ -205,6 +250,8 @@ double FMoonDisc::MeanRadiance(const FMoonDiscFrame& F, const FMoonAlbedoMap& Ma
 		N = CosPhase < FMath::Cos(FMath::DegreesToRadians(100.0)) ? 256 : 128;
 	}
 	N = FMath::Max(N, 4);
+	FVector3d Right, Up;
+	DiscBasis(F, Right, Up);
 	double Sum = 0.0;
 	int32 Count = 0;
 	for (int32 J = 0; J < N; ++J)
@@ -213,7 +260,7 @@ double FMoonDisc::MeanRadiance(const FMoonDiscFrame& F, const FMoonAlbedoMap& Ma
 		{
 			const double U = -1.0 + 2.0 * (I + 0.5) / N, V = -1.0 + 2.0 * (J + 0.5) / N;
 			if (U * U + V * V > 1.0) continue;
-			Sum += Radiance(F, Map, U, V);
+			Sum += RadianceInBasis(F, Map, Right, Up, U, V);
 			++Count;
 		}
 	}

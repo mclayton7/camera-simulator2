@@ -56,6 +56,8 @@ struct CAMSIMTEST_API FSkyDomeDriver
 	static double DaysTtFromCenturiesUt(double CenturiesJ2000);
 	/** The albedo map the disc and its normalisation use (empty: uniform disc). */
 	const FMoonAlbedoMap& GetMoonAlbedo() const { return MoonAlbedo; }
+	/** Normaliser recomputes so far and their total cost (camsim.Sky.Log). */
+	const FMoonNormaliserCache& GetMoonNormaliser() const { return MoonNormaliser; }
 
 	/** ENU (E, N, U) → unit UE world direction through Cesium's East-South-Up matrix. */
 	static FVector EnuToWorldDir(const FMatrix& EsuToUnreal, const FVector3d& Enu);
@@ -80,11 +82,9 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTexture2D>                   MoonTexture;
 
 	FMoonAlbedoMap MoonAlbedo;
-	/** FMoonDisc::MeanRadiance is ~0.3 ms (16k-65k disc samples; it cost the bench +0.3 ms game thread per frame): computed when the ephemeris inputs change (a sky apply,
-	 *  once per sim second at most) and the moon is up (below the horizon the disc isn't drawn), not per frame. The
-	 *  mean is invariant to the ENU → world rotation. */
-	FVector3d CachedMoonEnu = FVector3d::ZeroVector, CachedSunEnu = FVector3d::ZeroVector;
-	double CachedCenturies = TNumericLimits<double>::Max(), CachedLastDeg = 0.0, CachedMeanRadiance = 1.0;
+	/** The disc normaliser: recomputed only when the phase, sub-observer or sub-solar point moved > 0.05 deg. */
+	FMoonNormaliserCache MoonNormaliser;
+	double LastMoonMean = 1.0;
 
 	bool  bHasStars = false;
 	bool  bWarnedMpc = false;

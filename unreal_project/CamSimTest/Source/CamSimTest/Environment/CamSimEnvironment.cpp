@@ -30,7 +30,7 @@ namespace
 		0,
 		TEXT("ROADMAP 6A: 1 logs one LogCamSim line per sky apply (once per sim second and on clock/enable changes): ")
 		TEXT("'6A sky: utc=... sun_el=... sun_ground_lux=... moon_el=... moon_phase=... moon_illum=... moon_ground_lux=... ")
-		TEXT("floor_cdm2=... band=day|night stars=0|1 moon_az=...' (scripts/night_check.py parses it; moon az/el to 1e-5 deg for N3)."),
+		TEXT("floor_cdm2=... band=day|night stars=0|1 moon_az=... moon_norm=recomputes/total ms' (scripts/night_check.py parses it; moon az/el to 1e-5 deg for N3)."),
 		ECVF_Default);
 
 	void SetCachedLightingPreExposure(float Ev)
@@ -537,10 +537,11 @@ void ACamSimEnvironment::ApplySky(const FDateTime& Utc)
 	if (CVarSkyLog.GetValueOnGameThread() == 1)
 	{
 		UE_LOG(LogCamSim, Log,
-			TEXT("6A sky: utc=%s sun_el=%.3f sun_ground_lux=%.4g moon_el=%.5f moon_phase=%.2f moon_illum=%.3f moon_ground_lux=%.4g floor_cdm2=%.4g band=%s stars=%d moon_az=%.5f"),
+			TEXT("6A sky: utc=%s sun_el=%.3f sun_ground_lux=%.4g moon_el=%.5f moon_phase=%.2f moon_illum=%.3f moon_ground_lux=%.4g floor_cdm2=%.4g band=%s stars=%d moon_az=%.5f moon_norm=%d/%.1fms"),
 			*Utc.ToIso8601(), LastEphem.SunElDeg, LastIllum.SunGroundLux, LastEphem.MoonElDeg, LastEphem.MoonPhaseAngleDeg,
 			LastEphem.MoonIlluminatedFraction, LastIllum.MoonGroundLux, LastIllum.FloorRadianceCdM2,
-			Band.IsNight() ? TEXT("night") : TEXT("day"), (LastEnables.bStars && SkyDome.HasStars()) ? 1 : 0, LastEphem.MoonAzDeg);
+			Band.IsNight() ? TEXT("night") : TEXT("day"), (LastEnables.bStars && SkyDome.HasStars()) ? 1 : 0, LastEphem.MoonAzDeg,
+			SkyDome.GetMoonNormaliser().GetRecomputeCount(), SkyDome.GetMoonNormaliser().GetTotalComputeMs());
 	}
 }
 

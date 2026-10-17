@@ -184,3 +184,40 @@ bool FMoonDiscMariaTest::RunTest(const FString&)
 		Map.Sample(FMath::DegreesToRadians(59.0), FMath::DegreesToRadians(17.0)) < 0.6 * Map.Sample(FMath::DegreesToRadians(20.0), FMath::DegreesToRadians(-20.0)));
 	return true;
 }
+
+// The normaliser cache (fix round): recomputes only when the phase, sub-observer or sub-solar point moves by more than
+// FMoonNormaliserCache::ToleranceDeg, never for a rotation of the whole frame (the camera moving); its mean is the
+// fresh one when it does.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMoonNormaliserCacheTest, "CamSim.Environment.MoonSurface.NormaliserCache",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FMoonNormaliserCacheTest::RunTest(const FString&)
+{
+	const FMoonAlbedoMap Map = ShippedOrSynthetic(*this);
+	FMoonNormaliserCache Cache;
+	bool bRe = false;
+	const FMoonDiscFrame F0 = TestFrame(40.0, 2.0, -1.0);
+	const double M0 = Cache.Get(F0, Map, &bRe);
+	TestTrue(TEXT("first call computes"), bRe);
+	TestTrue(TEXT("first mean = MeanRadiance"), FMath::IsNearlyEqual(M0, FMoonDisc::MeanRadiance(F0, Map), 1e-12));
+	Cache.Get(F0, Map, &bRe);
+	TestFalse(TEXT("same frame: cached"), bRe);
+	// A rotation of everything (camera / UE axes): invariant.
+	FMoonDiscFrame Rot = F0;
+	const FQuat4d Q(FVector3d(0.3, -0.5, 0.8).GetSafeNormal(), 1.1);
+	Rot.MoonDir = Q.RotateVector(F0.MoonDir); Rot.SunDir = Q.RotateVector(F0.SunDir);
+	for (int32 K = 0; K < 3; ++K) Rot.Axes[K] = Q.RotateVector(F0.Axes[K]);
+	Cache.Get(Rot, Map, &bRe);
+	TestFalse(TEXT("whole-frame rotation: cached"), bRe);
+	Cache.Get(TestFrame(40.02, 2.0, -1.0), Map, &bRe);
+	TestFalse(TEXT("phase +0.02 deg: cached"), bRe);
+	Cache.Get(TestFrame(40.1, 2.0, -1.0), Map, &bRe);
+	TestTrue(TEXT("phase +0.1 deg: recomputed"), bRe);
+	Cache.Get(TestFrame(40.1, 2.1, -1.0), Map, &bRe);
+	TestTrue(TEXT("libration +0.1 deg: recomputed"), bRe);
+	TestEqual(TEXT("three recomputes"), Cache.GetRecomputeCount(), 3);
+	AddInfo(FString::Printf(TEXT("MeanRadiance %.3f ms per recompute (phase 40, 128^2 grid)"), Cache.GetTotalComputeMs() / Cache.GetRecomputeCount()));
+	// Holding the mean within the tolerance: 0.05 deg of phase moves it < 0.2 %.
+	const double A = FMoonDisc::MeanRadiance(TestFrame(90.0), Map, 300), B = FMoonDisc::MeanRadiance(TestFrame(90.05), Map, 300);
+	TestTrue(FString::Printf(TEXT("0.05 deg of phase at quarter changes the mean by %.3f %%"), 100.0 * FMath::Abs(B / A - 1.0)), FMath::Abs(B / A - 1.0) < 0.002);
+	return true;
+}
