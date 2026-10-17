@@ -987,8 +987,8 @@ are in the Sensor Modes section.
 | `environment.celestial.star_catalog` | *(YAML only)* | `""` | Star catalog path; empty uses `Content/NonUFS/Sky/bsc5.dat` (Yale BSC5). |
 | `environment.celestial.cached_exposure.day_ev` | *(YAML only)* | `8` | Lumen cached-lighting pre-exposure EV in the day band; in `[-16, 16]`. |
 | `environment.celestial.cached_exposure.night_ev` | *(YAML only)* | `-6` | Same, night band; in `[-16, 16]` and `< day_ev`. |
-| `environment.celestial.cached_exposure.switch_median_log2` | *(YAML only)* | `0` | EO scene median (log2 cd/m²) at which the band switches. |
-| `environment.celestial.cached_exposure.hysteresis_ev` | *(YAML only)* | `2` | Hysteresis around the switch, EV; `>= 0`. |
+| `environment.celestial.cached_exposure.switch_median_log2` | *(YAML only)* | `0` | EO scene median (log2 cd/m²) at which the band switches; must be finite. |
+| `environment.celestial.cached_exposure.hysteresis_ev` | *(YAML only)* | `2` | Hysteresis around the switch, EV; finite and `>= 0`. |
 
 `night_floor_lux` is the horizontal illuminance the floor delivers on the ground: the dome draws it attenuated by the
 view elevation's transmittance, so its radiance is `night_floor_lux / (π × 0.755)` (the `floor_cdm2` of the log line).

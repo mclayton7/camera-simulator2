@@ -80,5 +80,12 @@ bool FCelestialConfigValidateTest::RunTest(const FString&)
 	TArray<FString> Errors = Cfg.Validate();
 	TestTrue(TEXT("negative floor rejected"), Errors.ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("night_floor_lux")); }));
 	TestTrue(TEXT("night_ev out of [-16, 16] or >= day_ev rejected"), Errors.ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("cached_exposure")); }));
+	FCamSimConfig Good;
+	TestFalse(TEXT("defaults: no switch_median_log2 error"), Good.Validate().ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("switch_median_log2")); }));
+	Good.Celestial.CachedExposure.SwitchMedianLog2 = NAN;
+	TestTrue(TEXT("NaN switch_median_log2 rejected"), Good.Validate().ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("switch_median_log2")); }));
+	Good.Celestial.CachedExposure.SwitchMedianLog2 = 0.0f;
+	Good.Celestial.CachedExposure.HysteresisEv = INFINITY;
+	TestTrue(TEXT("infinite hysteresis_ev rejected"), Good.Validate().ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("hysteresis_ev")); }));
 	return true;
 }

@@ -1586,9 +1586,14 @@ TArray<FString> FCamSimConfig::Validate() const
 			Errors.Add(FString::Printf(TEXT("environment.celestial.cached_exposure: day_ev (%g) and night_ev (%g) must be in [-16, 16] with night_ev < day_ev"),
 				X.DayEv, X.NightEv));
 		}
-		if (!(X.HysteresisEv >= 0.0f))
+		if (!(X.HysteresisEv >= 0.0f && FMath::IsFinite(X.HysteresisEv)))
 		{
-			Errors.Add(FString::Printf(TEXT("environment.celestial.cached_exposure.hysteresis_ev=%g must be >= 0"), X.HysteresisEv));
+			Errors.Add(FString::Printf(TEXT("environment.celestial.cached_exposure.hysteresis_ev=%g must be finite and >= 0"), X.HysteresisEv));
+		}
+		// NaN would never compare true, so the band would stay in day and night ground would go black (Lumen underflow).
+		if (!FMath::IsFinite(X.SwitchMedianLog2))
+		{
+			Errors.Add(FString::Printf(TEXT("environment.celestial.cached_exposure.switch_median_log2=%g must be finite"), X.SwitchMedianLog2));
 		}
 	}
 
