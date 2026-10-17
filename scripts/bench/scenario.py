@@ -211,9 +211,11 @@ def _slant(site: Site) -> Pose:
 
 
 def build_opt_in_phases(site: Site = SITES["sf"]) -> list[Phase]:
-    """Measured phases flown only when named (`run_bench.py --phases night_slant`): not in the default bench."""
+    """Measured phases flown only when named (`run_bench.py --phases night_slant,day_slant`; ROADMAP 6A cost gate N7):
+    the ~10 km slant at night and at noon (the Pose default, 12:00 PDT 21 June). Not in the default bench."""
     night = replace(_slant(site), **NIGHT_UTC)
-    return [Phase("night_slant", 60.0, lambda t: night)]
+    day = _slant(site)
+    return [Phase("night_slant", 60.0, lambda t: night), Phase("day_slant", 60.0, lambda t: day)]
 
 
 def build_shots(smoke: bool = False, site: Site = SITES["sf"]) -> list[Shot]:

@@ -70,7 +70,9 @@ W, H = 1280, 720                  # deploy/camsim_config.yaml capture size
 # (full -> new moon, night -> noon in lockstep: a mottled noon sky). The day run keeps it, as its baseline was taken.
 EXEC_CMDS = "-ExecCmds=camsim.Sky.Log 1,camsim.Sensor.AeLog 1,r.VolumetricCloud 0"
 DAY_EXEC_CMDS = EXEC_CMDS + ",r.Test.FreezeTemporalSequences 1"
-LOG = REPO / "unreal_project/CamSimTest/Saved/Logs/CamSimTest.log"
+# UE's log: ~/Library/Logs/<Project> on macOS, the project's Saved/Logs elsewhere (scripts/run.sh)
+LOG = (Path.home() / "Library/Logs/CamSimTest/CamSimTest.log" if sys.platform == "darwin"
+       else REPO / "unreal_project/CamSimTest/Saved/Logs/CamSimTest.log")
 STREAM_PORT = rb.STREAM_PORT
 SETTLE_DAY, SETTLE_NIGHT = 60, 120
 
@@ -80,6 +82,8 @@ EO = {"full_well": 10000.0, "read": 2.0, "prnu": 0.01, "dsnu": 1.0, "dark_es": 5
 DATE_FULL = datetime(2026, 10, 26, 7, 0, tzinfo=timezone.utc)
 DATE_NEW = datetime(2026, 11, 9, 7, 0, tzinfo=timezone.utc)
 DATE_GIBBOUS = datetime(2026, 10, 22, 4, 30, tzinfo=timezone.utc)   # phase angle ~50 deg, moon el ~48, sun el -42
+DATE_WIDE = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)        # moon el ~17, phase ~10 deg, sun -26
+WIDE_HFOV, WIDE_PITCH_BELOW_MOON = 40.0, 10.0                        # the moon near the top, dark ground at the bottom
 DATE_STARS = datetime(2027, 1, 7, 11, 0, tzinfo=timezone.utc)       # new moon, sun -48, Megrez at el ~59 az ~31
 DATE_STARS_NOON = datetime(2027, 1, 7, 20, 0, tzinfo=timezone.utc)
 MEGREZ = (183.856, 57.0326)                                          # RA, Dec J2000 (deg), the middle of the Dipper
@@ -379,7 +383,16 @@ def run_moon(c: Client, out: Path) -> dict:
         caps[name] = capture_pair(c, out, name, SETTLE_NIGHT)
         views[name] = {"camera": cam, "utc": iso(utc)}
         print(f"  moon {name}: az {e.moon_az:.3f} el {e.moon_el:.3f} phase {e.moon_phase_angle:.1f}", flush=True)
-    return {"captures": caps, "views": views}
+    # A small, near-full moon in a wide night view over dark ground: the AE's target (and UE's pre-exposure) is set by
+    # the ground, so this is where scene colour would overflow fp16 on the disc.
+    cam = sky_camera(0.0, 0.0, WIDE_HFOV)
+    e = eph.compute(DATE_WIDE, cam["lat"], cam["lon"], cam["alt"])
+    cam.update(heading=e.moon_az, pitch=e.moon_el - WIDE_PITCH_BELOW_MOON)
+    c.set_clock(lockstep=True, utc=iso(DATE_WIDE))
+    c.set_camera(**cam)
+    caps["moon_wide"] = capture_pair(c, out, "moon_wide", SETTLE_NIGHT)
+    print(f"  moon moon_wide: el {e.moon_el:.2f} phase {e.moon_phase_angle:.1f}", flush=True)
+    return {"captures": caps, "views": views, "wide": {"camera": cam, "utc": iso(DATE_WIDE)}}
 
 
 def run_stars(c: Client, out: Path) -> dict:
@@ -478,7 +491,7 @@ def run_cost(out: Path) -> dict:
     if dest.exists():
         shutil.rmtree(dest)
     cmd = ["uv", "run", "--with", "numpy", "--with", "pillow", "python", str(REPO / "scripts/bench/run_bench.py"),
-           "--label", "night-cost", "--phases", "night_slant", "--shots", "night_slant", "--out", str(dest)]
+           "--label", "night-cost", "--phases", "night_slant,day_slant", "--shots", "night_slant", "--out", str(dest)]
     r = subprocess.run(cmd, cwd=REPO, check=False)
     return {"cmd": cmd, "returncode": r.returncode}
 
@@ -502,7 +515,7 @@ def gains_at(log: dict, cap: dict) -> dict | None:
 
 def eval_n1(out: Path, base: Path | None) -> dict:
     if base is None or not (base / "day").exists():
-        return gate(out, "N1", None, {}, "+-3 DN mean, +-10 % noise", "no --baseline day run: not evaluated")
+        return gate(out, "N1", False, {}, "+-3 DN mean, +-10 % noise", "no --baseline day run: cannot evaluate")
     rows, ok = {}, True
     for name in DAY_POSES:
         cur = [luma(load_rgb(out / "day" / f"{name}_{s}.png")) for s in "ab"]
@@ -653,8 +666,44 @@ def eval_n3(out: Path) -> dict:
         details.append(f"{name}: centroid {off:.2f} px from expected ({math.hypot(cx - mx[0], cy - my[0]):.2f} px from the "
                        f"ephemeris projection; phase {e.moon_phase_angle:.1f}); bright half {'toward' if lit_ok else 'AWAY from'} "
                        f"the sun ({toward / max(away, 1e-9):.2f}x){'' if gate_lit else ' (info)'}")
-    return gate(out, "N3", ok, vals, "centroid <= 2 px from expected; gibbous: brighter half toward the sun",
+    if "wide" in run:
+        w = wide_moon_check(d, run["wide"])
+        vals["moon_wide"] = w
+        ok &= w["pass"]
+        details.append(f"moon_wide ({WIDE_HFOV:.0f} deg FOV): disc min Y {w['disc_min_y']:.1f} (>= 100), ring mean "
+                       f"{w['ring_mean_y']:.2f} vs sky {w['sky_median_y']:.2f} DN (no dark halo), scene exposure "
+                       f"{w['scene_exposure_note']}")
+    else:
+        ok = False
+        details.append("no moon_wide capture")
+    return gate(out, "N3", ok, vals, "centroid <= 2 px from the modelled lit-area centroid (raw offset from the ephemeris "
+                "projection reported); gibbous: brighter half toward the sun; wide night view: moon disc not black "
+                "(min Y >= 100 inside 0.7 R) and no dark halo (ring 1.3-2.5 R mean >= sky median - 1 DN)",
                 "; ".join(details))
+
+
+def wide_moon_check(d: Path, view: dict) -> dict:
+    """The moon in a 40 deg night view: inf/NaN scene colour on the disc reaches the sensor as 0 (black) through TSR."""
+    cam, utc = view["camera"], parse_utc(view["utc"])
+    e = eph.compute(utc, cam["lat"], cam["lon"], cam["alt"])
+    mx, my, _ = project(np.array([eph.az_el_to_enu(e.moon_az, e.moon_el)]), cam["heading"], cam["pitch"], cam["hfov_deg"])
+    f_px = (W / 2.0) / math.tan(math.radians(cam["hfov_deg"]) / 2.0)
+    r = f_px * math.tan(math.asin(1737.4 / e.moon_km))
+    y = (luma(load_rgb(d / "moon_wide_a.png")) + luma(load_rgb(d / "moon_wide_b.png"))) / 2.0
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float64)
+    dist = np.hypot(xx - mx[0], yy - my[0])
+    disc = y[dist <= 0.7 * r]
+    ring = y[(dist >= 1.3 * r) & (dist <= 2.5 * r)]
+    sky = y[(dist >= 6 * r) & (dist <= 20 * r) & (yy < my[0] + 6 * r)]
+    log = read_log(d / "camsim.log")
+    ae = [a for a in log["ae"] if a["mode"] == 0]
+    out = {"projected": [float(mx[0]), float(my[0])], "radius_px": r, "disc_px": int(disc.size),
+           "disc_min_y": float(disc.min()) if disc.size else -1.0, "disc_mean_y": float(disc.mean()) if disc.size else -1.0,
+           "ring_mean_y": float(ring.mean()) if ring.size else -1.0, "sky_median_y": float(np.median(sky)) if sky.size else -1.0,
+           "scene_exposure_note": f"AE median 2^{ae[-1]['median_log2']:.2f}" if ae else "no AE line"}
+    out["pass"] = bool(disc.size and ring.size and sky.size and out["disc_min_y"] >= 100.0
+                       and out["ring_mean_y"] >= out["sky_median_y"] - 1.0)
+    return out
 
 
 def model_disc_full(radius_px: float, sun_img: np.ndarray, phase: float, k: float, centre: tuple[float, float]) -> np.ndarray:
@@ -938,11 +987,14 @@ def eval_n5_n8(out: Path) -> tuple[dict, dict]:
         run_min = np.minimum.accumulate(s)
         excess = s - run_min
         worst = int(np.argmax(excess))
+        raw = y[civil] - np.minimum.accumulate(y[civil])   # reported, not gated (spec N8: the 15-frame median)
         ok8 &= float(excess[worst]) <= 1.0
         vals8.update(civil_frames=int(civil.sum()), y_start=float(s[0]), y_end=float(s[-1]),
-                     max_rise_dn=float(excess[worst]), max_rise_sun_el=float(el[civil][worst]))
+                     max_rise_dn=float(excess[worst]), max_rise_sun_el=float(el[civil][worst]),
+                     raw_max_rise_dn=float(raw.max()))
         det8.append(f"mean luma through civil twilight {s[0]:.1f} -> {s[-1]:.1f} DN over {int(civil.sum())} frames, max rise "
-                    f"above the running minimum {excess[worst]:.2f} DN (at sun el {el[civil][worst]:.2f})")
+                    f"above the running minimum {excess[worst]:.2f} DN (15-frame median; raw frames {raw.max():.2f}) "
+                    f"(at sun el {el[civil][worst]:.2f})")
     else:
         ok8 = False
         det8.append("too few frames in civil twilight")
@@ -979,19 +1031,30 @@ def eval_n6(out: Path) -> dict:
                 f"exit {r['returncode']} after {r['minutes']:.0f} min; report {out / 'thermal' / 'report.md'}")
 
 
+# Spec N7 (amended 2026-10-16): night with the moon up GPU <= +0.6 ms (the moon lights the volumetric clouds, UE's
+# second cloud light) and game thread <= +0.3 ms; day <= +0.3 ms on both.
+N7_LIMITS = {"night_slant": {"game_ms_p50": 0.3, "gpu_ms_p50": 0.6}, "day_slant": {"game_ms_p50": 0.3, "gpu_ms_p50": 0.3}}
+
+
 def eval_n7(out: Path, base: Path | None) -> dict:
     cur = load_json(out / "cost" / "results.json")
     old = load_json(base / "cost" / "results.json") if base else None
     if not cur or not old:
-        return gate(out, "N7", None if not old else False, {}, "+0.3 ms", "missing results.json (baseline or current)")
-    a, b = old["phases"].get("night_slant", {}), cur["phases"].get("night_slant", {})
-    vals = {m: {"before": a.get(m), "after": b.get(m)} for m in ("game_ms_p50", "gpu_ms_p50", "wall_ms_p50", "render_ms_p50")}
-    ok = all(a.get(m) is not None and b.get(m) is not None and b[m] - a[m] <= 0.3 for m in ("game_ms_p50", "gpu_ms_p50"))
+        return gate(out, "N7", False, {}, str(N7_LIMITS), "missing results.json (baseline or current): cannot evaluate")
+    vals, ok, det = {}, True, []
+    for phase, limits in N7_LIMITS.items():
+        a, b = old["phases"].get(phase, {}), cur["phases"].get(phase, {})
+        for m, lim in limits.items():
+            before, after = a.get(m), b.get(m)
+            good = before is not None and after is not None and after - before <= lim
+            ok &= good
+            vals[f"{phase}.{m}"] = {"before": before, "after": after, "limit": lim, "pass": good}
+            det.append(f"{phase} {m} {before} -> {after} (+{lim})" if before is not None and after is not None
+                       else f"{phase} {m} missing")
     table = subprocess.run([sys.executable, str(REPO / "scripts/bench/compare.py"), str(base / "cost"), str(out / "cost")],
                            capture_output=True, text=True, check=False).stdout
     (out / "cost" / "compare.md").write_text(table)
-    det = ", ".join(f"{m} {v['before']} -> {v['after']}" for m, v in vals.items())
-    return gate(out, "N7", ok, vals, "game_ms_p50 and gpu_ms_p50 after - before <= 0.3 ms", det)
+    return gate(out, "N7", ok, vals, "per phase and metric: " + str(N7_LIMITS), ", ".join(det))
 
 
 # ---------------------------------------------------------------------------

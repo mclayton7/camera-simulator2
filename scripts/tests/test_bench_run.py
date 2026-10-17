@@ -155,6 +155,10 @@ def test_filter_phases_flies_opt_in_phases_only_when_named():
     assert [p.name for p in out] == ["warmup", "night_slant"]
     night = out[1].pose_at(30.0)
     assert (night.utc_hour, night.utc_minute, night.day) == (4, 40, 22)
+    both = run_bench.filter_phases(phases, ["night_slant", "day_slant"], True, opt_in)
+    assert [p.name for p in both] == ["night_slant", "day_slant"]
+    day = both[1].pose_at(0.0)
+    assert (day.utc_hour, day.day) == (19, 21) and day.lat == night.lat
 
 
 def test_filter_phases_rejects_unknown_names_with_the_valid_list():
