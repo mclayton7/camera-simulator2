@@ -78,10 +78,19 @@ SkyAtmosphereViewLuminance
 T(view dir) = 10^(−0.4 · 0.172 · X(el)), X = Kasten–Young air mass of the view elevation, computed in the material
 (no engine node gives transmittance along an arbitrary direction); 0 below the horizon.
 
-- **Moon disc:** inside the moon's angular radius, a Lambert-lit sphere lit from the ephemeris sun direction. Its mean
-  over the disc is normalised so the disc's integrated luminance × solid angle equals the transmitted moon
-  illuminance (`SkyAtmosphereLightIlluminance(1)`); the engine's own index-1 disc is zeroed
-  (`AtmosphereSunDiskColorScale` black) so nothing is counted twice. Earthshine is ignored.
+- **Moon disc** (amended 2026-10-17, defect review: the Lambert ball darkened to the limb and had no maria): inside the
+  moon's angular radius, the lunar-Lambert law (McEwen 1991/1996: 2L μ₀/(μ₀ + μ) + (1 − L) μ₀, L(α) a cubic in the
+  phase angle, L = 1 at full moon = Lommel–Seeliger, uniform to the limb) lit from the ephemeris sun, times an albedo
+  map (NASA SVS CGI Moon Kit, from the LROC WAC Hapke-normalised mosaic; public domain; 1024 × 512 8-bit linear,
+  git LFS) at the point's selenographic coordinates from the IAU rotation model (Archinal et al. 2011, optical +
+  physical libration). Its albedo-weighted mean over the disc (numerical, CPU mirror of the shader) is normalised so
+  the disc's integrated luminance × solid angle equals the moon's TOA illuminance (the dome applies T along the
+  view); the engine's own index-1 disc is zeroed (`AtmosphereSunDiskColorScale` black) so nothing is counted twice.
+  Earthshine is ignored.
+- **Ozone** (added 2026-10-17, defect review: twilight was magenta): CesiumSunSky's atmosphere keeps UE's ozone tent
+  but with the linear-sRGB band integral of the Chappuis cross section (R 2.46, G 1.77, B 0 · 10⁻³ km⁻¹;
+  `scripts/sky/ozone_rgb.py`) instead of UE's 680/550/440 nm samples (0.65, 1.881, 0.085), which put the Chappuis peak
+  in green and filtered the twilight sky magenta.
 - **Stars:** the Yale Bright Star Catalogue (BSC5, public domain, ~9,100 stars to V ≈ 6.5) ships as
   `Content/NonUFS/Sky/bsc5.dat` (git LFS). At startup `FStarField` bins it into an equirectangular RGBA16F texture in
   the equatorial frame (4096 × 2048, created at runtime as a transient `UTexture2D`, no editor asset): each star's
@@ -185,7 +194,10 @@ Unit (NullRHI):
 
 - `CamSim.Environment.MoonDisc.*`: the disc shading normaliser (computed on the CPU, passed through `MPC_Sky`)
   makes the numerically integrated disc luminance × solid angle equal the input illuminance within 1 % at phase
-  angles 0°, 45°, 90°, 135°; the lit limb faces the sun.
+  angles 0°, 45°, 90°, 135°; the lit limb faces the sun; full-moon limb / centre > 0.75 (lunar-Lambert).
+- `CamSim.Environment.MoonSurface.*` (2026-10-17): albedo PGM parsing and sampling, IAU orientation vs Meeus ex. 53.a,
+  the albedo-weighted normaliser within 1 % (phases 0–135°, three librations), the peak-to-mean bound, maria contrast.
+- `CamSim.Environment.Illumination.OzoneIsSrgbBandIntegral` (2026-10-17).
 
 GPU: `CamSim.GPU.Sensor.*` unchanged (shader unchanged) and must still pass.
 
@@ -196,12 +208,13 @@ run is recorded as open if not done):
 | ---- | ----- |
 | N1 | Daytime unchanged: bench day shots (AE below its cap) before/after, EO mean luma within ±3 DN, temporal noise within 10 % |
 | N2 | Full moon high vs new moon, same pose: the AE's scene median (log2) differs by log2 of the predicted ground illuminance ratio ±0.5 EV; temporal noise of Y on a flat patch within ±20 % of `CamSimSensorRef::Run` on a flat field at the logged median and gains |
-| N3 | Moon in view (2° FOV): centroid of the > 50 %-of-max region within 2 px of the modelled lit-area centroid (the ephemeris projection plus the offset of that region on a Lambert disc at the phase, through the frame's display curve; amended 2026-10-16: a phased disc's bright region is not centred on the projection); the raw offset from the projection is reported; lit limb toward the sun at a gibbous phase (informational at full moon). Also a 30–40° night view with the moon in frame: disc pixels not black, no dark halo (fp16 headroom) |
+| N3 | Moon in view (2° FOV): the disc within 2 px of the modelled disc (amended 2026-10-17: least-squares registration of the frame on the model — albedo map × lunar-Lambert, IAU orientation, at the moon direction CamSim drew, through the frame's display curve; with maria the > 50 % region is patchy, so its centroid offset is reported, not gated; amended 2026-10-16: a phased disc's bright region is not centred on the projection); the raw offset from the projection is reported; lit limb toward the sun at a gibbous phase (informational at full moon); full moon (2026-10-17): limb (0.80–0.95 R) / centre (< 0.5 R) linear signal > 0.7 (a Lambert ball: 0.50) and std / mean inside 0.6 R > 0.15 (maria; uniform albedo ~0.02, the map ~0.35). Also a 30–40° night view with the moon in frame: disc pixels not black, no dark halo (fp16 headroom) |
 | N4 | Stars at new moon visible (≥ 20 detections at the expected positions within 2 px); none by day |
 | N5 | Dusk band switch: consecutive-frame mean luma step ≤ 5 DN through the switch, settled ≤ 30 frames |
 | N6 | `thermal_check.py` gates a–l pass |
 | N7 | Cost vs the pre-6A bench (amended 2026-10-16): night with the moon up (`night_slant`) GPU p50 ≤ +0.6 ms (the moon lights the volumetric clouds), game thread ≤ +0.3 ms; day (`day_slant`) both ≤ +0.3 ms |
 | N8 | Sunset: sun light at the ground falls smoothly to 0 by sun elevation −1°; frame mean through civil twilight monotonic: the 15-frame median of the frame mean never rises more than 1 DN above its running minimum (amended 2026-10-16; the raw-frame maximum is reported) |
+| N9 | Twilight colour (added 2026-10-17): at sun −3° and −6°, the ground's illuminant (its linear RGB over the same pose's at sun +30°, so the albedo cancels) is bluer than daylight: R/G ratio ≤ 1 and B/G ratio ≥ 1 (not magenta, not red; Spitschan et al. 2016: the illuminant grows bluer through civil and nautical twilight, Chappuis ozone filtering); the zenith sky is not magenta (R/G ≤ 1) and bluer (B/R) than the ground |
 
 ## Docs
 
