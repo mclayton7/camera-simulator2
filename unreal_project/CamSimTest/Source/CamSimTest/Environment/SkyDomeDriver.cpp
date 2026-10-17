@@ -275,7 +275,16 @@ void FSkyDomeDriver::Update(const FEphemerisResult& E, const FNightIlluminationR
 	const double Omega = 2.0 * UE_DOUBLE_PI * (1.0 - FMath::Cos(Radius));
 	const bool bMoon = En.bMoon && I.MoonToaLux > 0.0;
 	const FMoonDiscFrame Frame = MoonFrame(E, EsuToUnreal, Rows, DaysTtFromCenturiesUt(CenturiesJ2000));
-	const double LumScale = (bMoon && Omega > 0.0) ? I.MoonToaLux / (Omega * FMoonDisc::MeanRadiance(Frame, MoonAlbedo)) : 0.0;
+	if (bMoon && E.MoonElDeg > -2.0 && (E.MoonEnu != CachedMoonEnu || E.SunEnu != CachedSunEnu
+		|| CenturiesJ2000 != CachedCenturies || E.LocalSiderealDeg != CachedLastDeg))   // the ephemeris is the key, not the camera
+	{
+		CachedMeanRadiance = FMoonDisc::MeanRadiance(Frame, MoonAlbedo);
+		CachedMoonEnu = E.MoonEnu;
+		CachedSunEnu = E.SunEnu;
+		CachedCenturies = CenturiesJ2000;
+		CachedLastDeg = E.LocalSiderealDeg;
+	}
+	const double LumScale = (bMoon && Omega > 0.0) ? I.MoonToaLux / (Omega * CachedMeanRadiance) : 0.0;
 
 	SetVector(World, TEXT("MoonDir"), FLinearColor(MoonDir.X, MoonDir.Y, MoonDir.Z, 0.0f));
 	SetVector(World, TEXT("SunDir"), FLinearColor(SunDir.X, SunDir.Y, SunDir.Z, 0.0f));

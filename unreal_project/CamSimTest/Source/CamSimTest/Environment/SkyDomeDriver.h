@@ -80,6 +80,11 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTexture2D>                   MoonTexture;
 
 	FMoonAlbedoMap MoonAlbedo;
+	/** FMoonDisc::MeanRadiance is ~0.3 ms (16k-65k disc samples; it cost the bench +0.3 ms game thread per frame): computed when the ephemeris inputs change (a sky apply,
+	 *  once per sim second at most) and the moon is up (below the horizon the disc isn't drawn), not per frame. The
+	 *  mean is invariant to the ENU → world rotation. */
+	FVector3d CachedMoonEnu = FVector3d::ZeroVector, CachedSunEnu = FVector3d::ZeroVector;
+	double CachedCenturies = TNumericLimits<double>::Max(), CachedLastDeg = 0.0, CachedMeanRadiance = 1.0;
 
 	bool  bHasStars = false;
 	bool  bWarnedMpc = false;
