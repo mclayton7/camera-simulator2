@@ -12,6 +12,7 @@
 #include "CesiumSunSky.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
+#include "Components/SkyLightComponent.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "Materials/MaterialParameterCollectionInstance.h"
 #include "Engine/Engine.h"
@@ -159,6 +160,8 @@ bool FSkyEnvironmentWiringTest::RunTest(const FString&)
 		TestTrue(FString::Printf(TEXT("ozone absorption %s = %s per km"), *Got.ToString(), *Want.ToString()),
 			FMath::IsNearlyEqual(Got.R, Want.R, 1e-7f) && FMath::IsNearlyEqual(Got.G, Want.G, 1e-7f) && FMath::IsNearlyEqual(Got.B, Want.B, 1e-7f));
 		TestTrue(TEXT("ozone tent unchanged (25 km, 15 km)"), A->OtherTentDistribution.TipAltitude == 25.0f && A->OtherTentDistribution.Width == 15.0f);
+		TestTrue(TEXT("sky light lower hemisphere black (twilight ground not lit by the capture's planet surface)"),
+			SunSky->SkyLight && SunSky->SkyLight->bLowerHemisphereIsBlack);
 	}
 	TestTrue(TEXT("thermal sun lookup returns CesiumSunSky's light, not the moon"),
 		CamSimThermal::FindAtmosphereSunLight(World) == Sun);

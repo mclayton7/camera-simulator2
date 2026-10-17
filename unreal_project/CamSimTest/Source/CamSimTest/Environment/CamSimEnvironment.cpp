@@ -381,6 +381,16 @@ void ACamSimEnvironment::SetUpSky()
 			Atmos->SetOtherAbsorptionScale(Ozone.G);
 			Atmos->SetOtherAbsorption(FLinearColor(Ozone.R / Ozone.G, 1.0f, Ozone.B / Ozone.G));
 		}
+		// The sky light's lower hemisphere black (UE's default; Cesium sets false): the real-time capture's lower half is
+		// SkyAtmosphere's planet surface lit by the reddened sun, which reached the ground through Lumen's distant
+		// lighting and the sky light's SH, and turned the twilight ground view-dependently red (nadir 100 m, sun -6:
+		// illuminant R/G x1.35 vs x1.05). A horizontal surface sees no lower hemisphere; terrain bounce is Lumen's.
+		if (USkyLightComponent* SkyL = CesiumSunSkyActor->SkyLight)
+		{
+			SkyL->bLowerHemisphereIsBlack = true;
+			SkyL->SetLowerHemisphereColor(FLinearColor::Black);
+			SkyL->MarkRenderStateDirty();
+		}
 	}
 	else
 	{
