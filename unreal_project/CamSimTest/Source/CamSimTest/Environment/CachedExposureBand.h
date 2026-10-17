@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "HAL/IConsoleManager.h"
 
 /** Thresholds for the Lumen cached-lighting exposure band (ROADMAP 6A). */
 struct FCachedExposureBandConfig
@@ -65,4 +66,37 @@ public:
 
 private:
 	int32 Left = 0;
+};
+
+/** FSkyRecaptureHold wired to r.SkyLight.RealTimeReflectionCapture.TimeSlice: 0 while held, the value it found restored
+ *  when the hold ends or on Release (EndPlay mid-hold). Game thread. */
+struct FSkyRecaptureHoldState
+{
+	void Tick(bool bSwitched)
+	{
+		const bool bHold = Hold.Tick(bSwitched);
+		if (bHold == bHeld) return;
+		if (IConsoleVariable* Var = Find())
+		{
+			if (bHold) Saved = Var->GetInt();
+			Var->Set(bHold ? 0 : Saved, ECVF_SetByCode);
+		}
+		bHeld = bHold;
+	}
+	void Release()
+	{
+		if (!bHeld) return;
+		if (IConsoleVariable* Var = Find()) Var->Set(Saved, ECVF_SetByCode);
+		bHeld = false;
+		Hold = FSkyRecaptureHold();
+	}
+
+private:
+	static IConsoleVariable* Find()
+	{
+		return IConsoleManager::Get().FindConsoleVariable(TEXT("r.SkyLight.RealTimeReflectionCapture.TimeSlice"));
+	}
+	FSkyRecaptureHold Hold;
+	bool  bHeld = false;
+	int32 Saved = 1;
 };

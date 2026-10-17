@@ -125,6 +125,12 @@ void ACamSimEnvironment::BeginPlay()
 	OceanManager.Init(GetWorld(), this, Subsystem);
 }
 
+void ACamSimEnvironment::EndPlay(const EEndPlayReason::Type Reason)
+{
+	SkyRecaptureHold.Release();   // never leave the sky capture un-time-sliced after a switch mid-hold
+	Super::EndPlay(Reason);
+}
+
 // -------------------------------------------------------------------------
 // Tick — drain CIGI queues, apply latest state
 // -------------------------------------------------------------------------
@@ -412,7 +418,7 @@ void ACamSimEnvironment::SetUpSky()
 		MoonLight->SetAtmosphereSunLightIndex(1);
 		MoonLight->ForwardShadingPriority = -1;
 		MoonLight->bCastShadowsOnClouds = false;   // unsupported at index 1
-		MoonLight->CloudScatteredLuminanceScale = FLinearColor::White;
+		MoonLight->CloudScatteredLuminanceScale = FLinearColor::Black;   // ApplySky: white only at night (MoonCloudScatterScale)
 		MoonLight->LightSourceAngle = 0.52f;
 		MoonLight->AtmosphereSunDiskColorScale = FLinearColor::Black;
 		MoonLight->SetIntensity(0.0f);
@@ -501,6 +507,14 @@ void ACamSimEnvironment::ApplySky(const FDateTime& Utc)
 		MoonLight->SetIntensity(bMoonUp ? static_cast<float>(LastIllum.MoonToaLux) : 0.0f);
 		MoonLight->SetLightColor(LastIllum.MoonColor);
 		MoonLight->SetVisibility(bMoonUp);
+		// The moon on the volumetric clouds is UE's expensive second cloud light (~0.4 ms on the night bench): only while
+		// the sun is down (a no-op unless it changes: CloudScatteredLuminanceScale is a render-state property).
+		const FLinearColor CloudScale = FNightIllumination::MoonCloudScatterScale(LastEphem.SunElDeg, bMoonUp);
+		if (!MoonLight->CloudScatteredLuminanceScale.Equals(CloudScale))
+		{
+			MoonLight->CloudScatteredLuminanceScale = CloudScale;
+			MoonLight->MarkRenderStateDirty();
+		}
 		// Shadows (VSM) only while the moon is the brighter light: no shadow cost by day.
 		MoonLight->SetCastShadows(bMoonUp && LastIllum.MoonGroundLux > LastIllum.SunGroundLux);
 	}
@@ -561,16 +575,7 @@ void ACamSimEnvironment::UpdateCachedExposureBand()
 	}
 	// Re-encode the whole sky capture at the new pre-exposure at once (FSkyRecaptureHold): time-sliced, the old cubemap
 	// dimmed Lumen's sky lighting for ~1.5 s after a switch.
-	const bool bHold = SkyRecaptureHold.Tick(bSwitched);
-	if (bHold != bSkyRecaptureHeld)
-	{
-		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("r.SkyLight.RealTimeReflectionCapture.TimeSlice")))
-		{
-			if (bHold) SavedSkyCaptureTimeSlice = Var->GetInt();
-			Var->Set(bHold ? 0 : SavedSkyCaptureTimeSlice, ECVF_SetByCode);
-		}
-		bSkyRecaptureHeld = bHold;
-	}
+	SkyRecaptureHold.Tick(bSwitched);
 }
 
 #if WITH_DEV_AUTOMATION_TESTS

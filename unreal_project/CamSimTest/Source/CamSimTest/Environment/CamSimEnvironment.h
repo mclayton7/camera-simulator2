@@ -47,6 +47,7 @@ public:
 	ACamSimEnvironment();
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 	virtual void Tick(float DeltaTime) override;
 
 	/** Current sun elevation in degrees above horizon (Phase 16K; ROADMAP 6A: the ephemeris sun, geometric). */
@@ -137,9 +138,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UDirectionalLightComponent> MoonLight;   // atmosphere light index 1
 	UPROPERTY(Transient) FSkyDomeDriver SkyDome;
 	FCachedExposureBand Band;
-	FSkyRecaptureHold SkyRecaptureHold;
-	bool  bSkyRecaptureHeld = false;
-	int32 SavedSkyCaptureTimeSlice = 1;   // r.SkyLight.RealTimeReflectionCapture.TimeSlice before a hold
+	FSkyRecaptureHoldState SkyRecaptureHold;
 	FCamSimConfig::FCelestialConfig CelestialCfg;   // copied at setup (defaults in a test world)
 	FEphemerisResult LastEphem;
 	FNightIlluminationResult LastIllum;
