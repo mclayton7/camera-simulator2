@@ -1113,6 +1113,8 @@ def eval_n5_n8(out: Path) -> tuple[dict, dict]:
     # Band switches: the sim time of the sky line just before each band line (same or previous tick)
     switches = []
     for b in log["band"]:
+        if not (run["wall0"] <= b["wall"] <= run["wall1"]):
+            continue  # before the recording, or N9's lockstep captures after it (their sim times overlap the recording's)
         prior = [s for s in log["sky"] if s["wall"] <= b["wall"]]
         if not prior or not len(us):
             continue
