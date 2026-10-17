@@ -135,8 +135,9 @@ visibility does nothing with `Main.umap` (no `ExponentialHeightFog`; ROADMAP 8.6
 ## Acceptance
 
 `scripts/night_check.py --scene PKG --out DIR [--runs day,moon,stars,dusk,thermal,cost] [--baseline DIR]` (gates
-N1–N8, spec table). Each gate writes `DIR/<gate>.json` (measured values, threshold, pass/fail) and the run a
-`summary.md`. The baseline is the same script's `--runs day,cost` on the pre-6A commit `59c3ff6` (a worktree built with
+N1–N8, spec table). Each gate writes `DIR/<gate>.json` (measured values, threshold, pass/fail, UTC time and commit)
+and every invocation rewrites `summary.md` with all eight gates: this invocation's plus the `N*.json` earlier ones
+left in `DIR` (marked "earlier invocation"), so runs can be split over several calls. The baseline is the same script's `--runs day,cost` on the pre-6A commit `59c3ff6` (a worktree built with
 its own `scripts/run.sh --build-only`; copy `night_check.py`, `scripts/sky/ephemeris.py` and the bench's
 `scenario.py` / `run_bench.py` into it first).
 

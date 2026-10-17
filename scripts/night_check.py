@@ -23,7 +23,8 @@ Gates (each writes OUT/<gate>.json with its measured values, threshold and pass/
 Runs (--runs, comma list): day (N1), moon (N2, N3), stars (N4), dusk (N5, N8), thermal (N6), cost (N7). Each run
 launches CamSim once (thermal and cost launch their own tools) with the level's engine-time volumetric clouds off; the
 day run also freezes TSR jitter (as its baseline was taken), the night runs don't (see EXEC_CMDS). The sensor's temporal
-noise is never pinned (N1/N2 measure it).
+noise is never pinned (N1/N2 measure it). summary.md always lists N1-N8: gates not evaluated by this invocation come from
+OUT/N*.json left by earlier ones (with their time and commit).
 
     uv run --project scripts/control --with numpy --with pillow --with scipy --with skyfield \\
         python scripts/night_check.py --scene .cache/scene-packages/pendleton-r4 --out .cache/night/6a \\
@@ -501,10 +502,45 @@ def run_cost(out: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def git_head() -> str:
+    try:
+        return subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                              check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
 def gate(out: Path, name: str, passed: bool | None, values: dict, threshold: str, detail: str = "") -> dict:
-    g = {"gate": name, "pass": passed, "threshold": threshold, "detail": detail, "values": values}
+    g = {"gate": name, "pass": passed, "threshold": threshold, "detail": detail, "values": values,
+         "evaluated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "commit": git_head()}
     save_json(out / f"{name}.json", g)
     return g
+
+
+GATE_NAMES = [f"N{i}" for i in range(1, 9)]
+
+
+def merged_gates(out: Path, evaluated: list[dict]) -> list[dict]:
+    """This invocation's gates plus every other OUT/N*.json from earlier invocations (runs split over several calls), so
+    summary.md always covers N1-N8; a gate with no JSON yet is listed as not run."""
+    by_name = {g["gate"]: g for g in evaluated}
+    for name in GATE_NAMES:
+        if name not in by_name:
+            prev = load_json(out / f"{name}.json")
+            by_name[name] = prev if prev else {"gate": name, "pass": None, "detail": "not run"}
+    return [by_name[n] for n in GATE_NAMES] + [g for n, g in sorted(by_name.items()) if n not in GATE_NAMES]
+
+
+def summary_markdown(gates: list[dict], evaluated: set[str]) -> str:
+    lines = ["| Gate | Result | Evaluated | Detail |", "|---|---|---|---|"]
+    for g in gates:
+        res = "PASS" if g["pass"] else ("n/a" if g["pass"] is None else "FAIL")
+        when = g.get("evaluated_utc", "")
+        when = f"{when} @ {g['commit']}" if g.get("commit") else when
+        if g["gate"] not in evaluated and g.get("detail") != "not run":
+            when += " (earlier invocation)"
+        lines.append(f"| {g['gate']} | {res} | {when} | {g['detail']} |")
+    return "\n".join(lines) + "\n"
 
 
 def gains_at(log: dict, cap: dict) -> dict | None:
@@ -1113,12 +1149,11 @@ def main() -> int:
     if "cost" in runs:
         gates.append(eval_n7(out, base))
     gates.sort(key=lambda g: g["gate"])
-    lines = ["| Gate | Result | Detail |", "|---|---|---|"]
     for g in gates:
         res = "PASS" if g["pass"] else ("n/a" if g["pass"] is None else "FAIL")
-        lines.append(f"| {g['gate']} | {res} | {g['detail']} |")
         print(f"{g['gate']}: {res} - {g['detail']}")
-    (out / "summary.md").write_text("\n".join(lines) + "\n")
+    # Merged with the gate JSONs of earlier invocations (runs split over several calls): one complete summary.
+    (out / "summary.md").write_text(summary_markdown(merged_gates(out, gates), {g["gate"] for g in gates}))
     print(f"summary: {out / 'summary.md'}")
     return 1 if any(g["pass"] is False for g in gates) else 0
 
