@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["pillow"]
+# ///
 """Gimbal-snap test: how long the view stays coarse after an instant 90-degree slew.
 
 Run against a CamSim already started with frame stats and /snapshot on (e.g. the

@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["numpy", "pillow", "pycocotools"]
+# ///
 """Acceptance check: render-measured ground truth for the DIS truck and boat (ROADMAP 2.7).
 
 Usage: scripts/gt_occlusion_check.py OUTDIR [--runs main,crest,calm,mloff] [--check-only]

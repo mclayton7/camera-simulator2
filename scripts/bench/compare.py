@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["numpy", "pillow"]
+# ///
 """Compare two bench runs; print a markdown table and shot SSIM (ROADMAP 3A).
 
 Usage: uv run --with numpy --with pillow python scripts/bench/compare.py BASELINE_DIR CURRENT_DIR

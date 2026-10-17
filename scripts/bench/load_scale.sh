@@ -30,7 +30,7 @@ point() {  # label count [docker -e args...]
     -v "$PWD/$d:/bench" -v camsim-bench-data:/var/lib/camsim -v camsim-bench-cache:/home/camsim/.cache \
     "${CONFIG_ARGS[@]}" -e CAMSIM_MULTICAST_ADDR=127.0.0.1 -e CAMSIM_FRAME_STATS_PATH=/bench/frames.jsonl \
     -e CAMSIM_TRACK_PIPELINE_LATENCY=1 "$@" "$IMAGE" >/dev/null
-  python3 scripts/stress_entity_rendering.py --count "$count" --entity-type 1001 \
+  uv run scripts/stress_entity_rendering.py --count "$count" --entity-type 1001 \
     --duration 400 --rate 30 > "$d/stress.log" 2>&1 &
   local sp=$!
   for _ in $(seq 1 120); do curl -sf -m2 "localhost:$PORT/ready" >/dev/null && break; sleep 2; done
@@ -50,4 +50,4 @@ point n250 250
 point n500 500
 point n500-ml 500 -e CAMSIM_ML_ENABLED=1 -e CAMSIM_ML_OUTPUT_DIR=/bench/ml
 point n500-ml-nodepth 500 -e CAMSIM_ML_ENABLED=1 -e CAMSIM_ML_OUTPUT_DIR=/bench/ml -e CAMSIM_ML_DEPTH_ENABLED=0
-python3 scripts/bench/load_report.py "$OUT"
+uv run scripts/bench/load_report.py "$OUT"

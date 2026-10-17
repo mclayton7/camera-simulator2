@@ -1,9 +1,7 @@
-#!/usr/bin/env -S uv run
+#!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.9"
-# dependencies = [
-#   "websockets",
-# ]
+# requires-python = ">=3.12"
+# dependencies = ["websockets"]
 # ///
 """
 cigi_web_ui.py — Interactive CIGI 3.3 web control panel for CamSim.

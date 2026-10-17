@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["numpy", "pillow"]
+# ///
 """Realism vs cost sweep for buildings and trees (REALISM R3/R4 bench,
 docs/superpowers/specs/2026-10-10-r3r4-realism-cost-bench-design.md).
 

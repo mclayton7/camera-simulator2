@@ -1,6 +1,11 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Summarise scripts/bench/load_scale.sh output: per point, thread times, fps, drops, latency, COCO count.
 
-Usage: python3 scripts/bench/load_report.py [OUT]   (default .cache/bench/load)
+Usage: uv run scripts/bench/load_report.py [OUT]   (default .cache/bench/load)
 """
 
 import json

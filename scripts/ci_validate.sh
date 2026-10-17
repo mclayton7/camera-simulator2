@@ -18,7 +18,7 @@
 # Readiness = HTTP GET /ready on the health port.
 # Stream = udp://127.0.0.1:5004 (unicast, no multicast route needed).
 #
-# Requirements: ffmpeg, ffprobe, curl, perl, python3, node + npm; docker for --docker.
+# Requirements: ffmpeg, ffprobe, curl, perl, uv, node + npm; docker for --docker.
 #
 # Usage:
 #   ./scripts/ci_validate.sh --native
@@ -118,7 +118,7 @@ else
 fi
 
 echo "==> Starting scripted CIGI host (heading sweep at ${HOST_LAT}, ${HOST_LON}, ${HOST_ALT} m)..."
-python3 "${SCRIPT_DIR}/send_cigi_test.py" --sweep --port "${CAMSIM_CIGI_PORT:-8888}" \
+uv run "${SCRIPT_DIR}/send_cigi_test.py" --sweep --port "${CAMSIM_CIGI_PORT:-8888}" \
     --lat "${HOST_LAT}" --lon "${HOST_LON}" --alt "${HOST_ALT}" \
     >"${WORK_DIR}/cigi_host.log" 2>&1 &
 CIGI_PID=$!

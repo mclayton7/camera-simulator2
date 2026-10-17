@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["pillow"]
+# ///
 # Copyright CamSim Contributors. All Rights Reserved.
 """Prepare a CC0 tree or shrub model for the vegetation library (REALISM R4, docs/vegetation.md).
 

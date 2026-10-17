@@ -32,7 +32,7 @@ scripts/run.sh --build-only
 "$UE_BIN" unreal_project/CamSimTest/CamSimTest.uproject \
   -ExecCmds="Automation RunTests CamSim+Quit" -TestExit="Automation Test Queue Empty" \
   -ReportExportPath=.cache/automation-report -unattended -nullrhi -nosound -nosplash -log -stdout -FullStdOutLogOutput
-python3 scripts/parse_automation_report.py .cache/automation-report/index.json
+uv run scripts/parse_automation_report.py .cache/automation-report/index.json
 scripts/run_gpu_tests.sh               # all CamSim.GPU.* on Vulkan
 scripts/ci_validate.sh --native
 uv run --project scripts/scene --with pytest pytest scripts/scene/tests

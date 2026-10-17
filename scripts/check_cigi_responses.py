@@ -1,4 +1,8 @@
-#!/usr/bin/env -S uv run
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """
 check_cigi_responses.py - verify CamSim IG->Host CIGI response traffic.
 

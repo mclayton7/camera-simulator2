@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """make_egm96_dac.py — build the EGM96 geoid grid CamSim uses for MSL altitudes.
 
 Downloads NGA's 15-arcminute EGM96 geoid grid (public domain) and writes it in
@@ -12,7 +16,7 @@ of 1441 values in metres, including a duplicate 360E column), so this script
 converts it. The output is checked into git; re-run only to regenerate it.
 
 Usage:
-    python3 scripts/make_egm96_dac.py [--grd WW15MGH.GRD] [--out PATH]
+    uv run scripts/make_egm96_dac.py [--grd WW15MGH.GRD] [--out PATH]
 """
 
 import argparse

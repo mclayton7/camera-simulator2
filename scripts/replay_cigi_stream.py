@@ -1,4 +1,8 @@
-#!/usr/bin/env -S uv run
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """
 replay_cigi_stream.py — deterministic replay of JSONL CIGI captures.
 

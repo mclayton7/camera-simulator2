@@ -1,8 +1,12 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 # Copyright CamSim Contributors. All Rights Reserved.
 """Replace library.json entries (by name) with the JSON objects prepare_tree.py printed (REALISM R4; build_library.sh).
 
-  python3 scripts/vegetation/install_entries.py LIBRARY_JSON ENTRIES_TXT
+  uv run scripts/vegetation/install_entries.py LIBRARY_JSON ENTRIES_TXT
 """
 import json
 import sys

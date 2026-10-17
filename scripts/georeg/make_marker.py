@@ -1,10 +1,14 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Write entities/marker/plate.glb: the REALISM R6 geo-registration marker (scripts/georeg_check.py).
 
 A 2 m x 2 m x 0.05 m box, glTF Y-up, origin at the centre of its bottom face, flat normals, one orange material.
 Entity types 9001 (scale 1) and 9002 (scale 5) in deploy/camsim_config.yaml use it. Deterministic bytes; CC0.
 
-    python3 scripts/georeg/make_marker.py [OUT]   (default entities/marker/plate.glb)
+    uv run scripts/georeg/make_marker.py [OUT]   (default entities/marker/plate.glb)
 """
 
 from __future__ import annotations

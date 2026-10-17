@@ -1,5 +1,6 @@
+#!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.12"
 # dependencies = ["numpy", "pillow"]
 # ///
 """Thermal IR acceptance check (ROADMAP 4A, 4B gates i-m, 4C gates n-q, REALISM R2 gate r): MWIR / LWIR at noon and

@@ -1,9 +1,7 @@
-#!/usr/bin/env -S uv run
+#!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.9"
-# dependencies = [
-#   "pygltflib",
-# ]
+# requires-python = ">=3.12"
+# dependencies = ["pygltflib"]
 # ///
 """Convert a split glTF (scene.gltf + scene.bin) to a self-contained .glb.
 

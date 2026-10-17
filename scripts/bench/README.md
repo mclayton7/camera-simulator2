@@ -108,7 +108,7 @@ Run-to-run noise on the M1 Pro is recorded in ROADMAP 3A.
 
 ```bash
 CONFIG=my_1080p.yaml scripts/bench/load_scale.sh [OUT]   # ~15 min
-python3 scripts/bench/load_report.py [OUT]
+uv run scripts/bench/load_report.py [OUT]
 ```
 
 Runs the Docker image at ~0, 100, 250 and 500 CIGI entities

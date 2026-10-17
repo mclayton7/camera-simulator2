@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Send DIS Entity State PDUs for a scripted truck and boat (CamSim DIS test sender).
 
 Usage:

@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["numpy", "pillow"]
+# ///
 """Ocean acceptance check: a DIS boat on the sea at several sea states (ROADMAP 2.6).
 
 Usage: scripts/ocean_check.py OUTDIR [--beaufort 0,3,6] [--cigi]

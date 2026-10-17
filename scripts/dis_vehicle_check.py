@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["numpy", "pillow"]
+# ///
 """End-to-end check: DIS truck + boat -> video + COCO ground truth (macOS, local build).
 
 Usage: scripts/dis_vehicle_check.py OUTDIR

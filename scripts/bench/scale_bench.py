@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Multi-instance capacity probe: N CamSim containers at once on one GPU host (docs/capacity-linux-rtx5080.md).
 
 Each instance gets its own CIGI / response / health / stream ports and Cesium cache volume, and a 30 Hz CIGI host flying

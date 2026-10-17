@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Parse a UE5 Automation Test report (`index.json`) for CI consumption.
 
 Reads the JSON written by `UnrealEditor ... -ReportExportPath=<dir>`, prints a
