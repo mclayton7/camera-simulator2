@@ -151,18 +151,18 @@ Poses are at the R6 flat site (33.3073, −117.3446, Camp Pendleton package `pen
 bench's `night_slant` phase (San Francisco, Cesium ion). One launch per run, about 25 minutes without `thermal`
 (`thermal_check.py` adds about an hour).
 
-Measured 2026-10-16 on the Linux reference box (RTX 5080, Vulkan; `.cache/night/6a`, baseline `.cache/night/base`):
+Measured 2026-10-17 at `ade85a0` (after the final review fixes) on the Linux reference box (RTX 5080, Vulkan; one full run, `.cache/night/6a`, baseline `.cache/night/base`):
 
 | Gate | Check | Result |
 |---|---|---|
-| N1 | Day poses vs the pre-6A baseline: EO mean luma ±3 DN, temporal noise ±10 % (64 × 64 flat patch) | **PASS**: nadir 3 km noon 105.69 → 106.65 DN, noise ×1.006; slant 1 km 10:00 107.08 → 106.16, ×0.985; low 300 m 15:00 105.05 → 103.92, ×0.969 |
-| N2 | Full (2026-10-26 07:00 UTC, moon el 72°) vs new moon (2026-11-09 07:00 UTC), slant 500 m: scene-median difference = log2 of the predicted ground illuminance ratio ±0.5 EV; Y noise ±20 % of the sensor mirror | **PASS**: +7.03 EV vs +6.99 (0.2547 / 0.002 lux); noise 4.710 vs 4.712 DN (×1.000) full, 2.860 vs 3.023 DN (×0.946) new |
-| N3 | 2° FOV on the ephemeris moon: > 50 %-of-max centroid within 2 px of the modelled lit-area centroid (raw offset from the ephemeris projection reported); brighter half toward the sun at the gibbous phase (informational at full moon); 40° night view with the moon in frame: disc not black, no dark halo | **PASS**: full (phase 4.9°) 1.02 px from the model, 4.81 px from the projection; gibbous (phase 50.3°) 0.05 px from the model, 42.64 px from the projection, bright half toward the sun 2.67×; 40° view (2026-10-25 12:00 UTC, moon el 17°): disc min Y 235, ring 119.5 DN vs sky 22.4 |
-| N4 | New moon, el 60° toward Ursa Major, 40° FOV, `integration_max_ms` 2000: ≥ 20 detections (> 5σ) within 2 px of BSC5; noon: 0 | **PASS**: 110 of 110 match (median 0.89 px, to V 7.0); noon 0 |
-| N5 | Clock at 60× through sunset: frame-mean step ≤ 5 DN through the band switch, settled (\|step\| < 1 DN for 30 frames) within 30 frames | **PASS**: switch at sun −6.0°, max step 0.42 DN, settled at once |
-| N6 | `thermal_check.py --scene PKG` exits 0 | **PASS**: 59 min, every gate a–q |
-| N7 | Bench phases (San Francisco) vs the baseline: `night_slant` (moon up) GPU p50 ≤ +0.6 ms, game ≤ +0.3 ms; `day_slant` both ≤ +0.3 ms | **PASS**: night game 3.157 → 3.169, GPU 2.983 → 3.515 (+0.53); day game 3.172 → 3.175, GPU 3.100 → 3.124 |
-| N8 | Sun ground illuminance non-increasing through 0 → −1° and < 1 % of its 10° value by −1°; 15-frame median of the frame mean never > 1 DN above its running minimum through civil twilight (raw frames reported) | **PASS**: 8,848 lux at 10°, 0 by −1°; mean 99.7 → 97.0 DN, largest rise 0.68 DN (raw frames 1.10 DN) |
+| N1 | Day poses vs the pre-6A baseline: EO mean luma ±3 DN, temporal noise ±10 % (64 × 64 flat patch) | **PASS**: nadir 3 km noon 105.69 → 106.65 DN, noise ×1.008; slant 1 km 10:00 107.08 → 106.16, ×0.983; low 300 m 15:00 105.05 → 103.94, ×0.990 |
+| N2 | Full (2026-10-26 07:00 UTC, moon el 72°) vs new moon (2026-11-09 07:00 UTC), slant 500 m: scene-median difference = log2 of the predicted ground illuminance ratio ±0.5 EV; Y noise ±20 % of the sensor mirror | **PASS**: +6.90 EV vs +6.99 (0.2547 / 0.002 lux; the moon disc no longer adds light through the sky capture); noise 4.479 vs 4.474 DN (×1.001) full, 2.860 vs 3.022 DN (×0.946) new |
+| N3 | 2° FOV on the ephemeris moon: > 50 %-of-max centroid within 2 px of the modelled lit-area centroid (raw offset from the ephemeris projection reported); brighter half toward the sun at the gibbous phase (informational at full moon); 40° night view with the moon in frame: disc not black, no dark halo | **PASS**: full (phase 4.9°) 1.02 px from the model, 4.81 px from the projection; gibbous (phase 50.3°) 0.04 px from the model, 42.65 px from the projection, bright half toward the sun 2.67×; 40° view (2026-10-25 12:00 UTC, moon el 17°): disc min Y 235, ring 119.2 DN vs sky 22.4 |
+| N4 | New moon, el 60° toward Ursa Major, 40° FOV, `integration_max_ms` 2000: ≥ 20 detections (> 5σ) within 2 px of BSC5; noon: 0 | **PASS**: 122 of 122 match (median 0.92 px, to V 7.0); noon 0 |
+| N5 | Clock at 60× through sunset: frame-mean step ≤ 5 DN through the band switch, settled (\|step\| < 1 DN for 30 frames) within 30 frames | **PASS**: switch at sun −6.0°, max step 0.44 DN, settled at once |
+| N6 | `thermal_check.py --scene PKG` exits 0 | **PASS**: 60 min, every gate a–q; no cached-lighting band switch on the noon IR → EO returns (2 per IR run before the I1 fix) |
+| N7 | Bench phases (San Francisco) vs the baseline: `night_slant` (moon up) GPU p50 ≤ +0.6 ms, game ≤ +0.3 ms; `day_slant` both ≤ +0.3 ms | **PASS**: night game 3.157 → 3.161, GPU 2.983 → 3.529 (+0.55); day game 3.172 → 3.118, GPU 3.100 → 3.130 |
+| N8 | Sun ground illuminance non-increasing through 0 → −1° and < 1 % of its 10° value by −1°; 15-frame median of the frame mean never > 1 DN above its running minimum through civil twilight (raw frames reported) | **PASS**: 8,848 lux at 10°, 0 by −1°; mean 99.7 → 97.2 DN, largest rise 0.73 DN (raw frames 1.21 DN) |
 
 How each gate is measured (all in `scripts/night_check.py`): Y is the NV12 luma recovered from the capture PNG; temporal
 noise is std(frame a − frame b) / √2 over the flattest 64 × 64 block. N2's mirror runs `CamSimSensorRef::Run`'s steps
