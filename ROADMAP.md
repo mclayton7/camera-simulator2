@@ -213,7 +213,14 @@ Considered and not reopened: land cover as a Cesium raster overlay (4B chose the
 - Metal: `M_SkyDome` not compiled or run on the M1 Pro; the M1 Pro run of `night_check.py` is open.
 - Memory: the star texture keeps a 64 MB CPU copy and 64 MB of VRAM, and `FStarField::Bin` allocates a ~200 MB
   transient accumulator at startup (capacity is VRAM-bound).
-- After an IR → EO switch the cached-lighting band can read a stale median for a frame or two.
+- UE's pre-exposure cap (`FNightIllumination::SceneExposureCapEv`, 1.39 EV) is a constant sized for the brightest full
+  moon: with the moon down the dark-scene boost is ~7.6 EV below the AE target and new-moon deep shadows sit near 2^−13
+  in scene colour again. Gate it on the moon actually in view / up (needs a fresh N3 + N4 run).
+- Control API: `FControlCaptureGate` doesn't wait for a band switch + the sky recapture hold + Lumen re-convergence, so a
+  capture right after a day → night time jump can be mid-transition (default datasets are 07–17 h: latent).
+- After an IR → EO switch the AE slot still consumes the one or two in-flight IR histograms (rendered before the
+  switch) without a snap; the cached-lighting band ignores them (6A final review I1).
+- No lunar eclipse model (K&S brightness through totality).
 - `r.Test.FreezeTemporalSequences 1` (the R6 determinism pin) makes TSR hold stale light indefinitely after a large
   lighting jump in lockstep (full → new moon kept the median 5 EV high; night → noon left a mottled sky):
   `determinism_check.py` / `control_api_check.py` captures after such jumps are suspect.

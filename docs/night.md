@@ -73,7 +73,7 @@ PhotonGain = R · t_int / FullWellE
 ```
 
 `eo_hd_cmos`: N = 4, pixel pitch 2.9 µm, τ = 0.9, QE = 0.6, photons per lumen of a 5,800 K source over 0.4–0.7 µm
-≈ 1.2·10¹⁶ (computed at load), full well 10,000 e: **R ≈ 2,440 e/s per cd/m²**. The AE's photon stage spans
+≈ 1.09·10¹⁶ (computed at load), full well 10,000 e: **R ≈ 2,440 e/s per cd/m²**. The AE's photon stage spans
 t_int = `integration_min_us` 10 µs … `integration_max_ms` 33.3 ms, i.e. −18.6 … **−6.94 EV**; past t_max it adds analog
 gain up to 30 dB (total cap −1.96 EV). The old calibrated EO cap was −12.5 EV, so dusk and night now integrate up to
 5.6 EV longer before analog gain; daylight (AE below the cap) is unchanged by construction (N1). Dark signal integrates
@@ -115,12 +115,20 @@ visibility does nothing with `Main.umap` (no `ExponentialHeightFog`; ROADMAP 8.6
 - A star is one texel (≈ 5′): ~2.8 px at 40° FOV, a small square at narrow FOVs; no scintillation.
 - No earthshine on the dark limb, no planets, no Milky Way as an extended source; opposition surge only as K&S.
 - Exponential height fog's inscattering uses light 0 only (and Main.umap has no fog actor).
-- Thermal IR still takes its sun from `ACamSimEnvironment::ComputeSunPosition` (`FThermalModel`), not `FEphemeris`
-  (a follow-up: it changes the thermal calibration).
+- Thermal IR's class model (`FThermalModel`) still takes its sun from `ACamSimEnvironment::ComputeSunPosition`, not
+  `FEphemeris` (a follow-up: it changes the thermal calibration). The rest of thermal's sun is 6A's: the solar input's
+  gate and the telemetry / KLV sun elevation (`GetSunElevationDeg`) come from `FEphemeris`, and the per-pixel solar
+  term reads the 127.5 klx TOA sun light through UE's transmittance, which now includes the slant path (N6 passes;
+  `docs/thermal.md`).
+- No lunar eclipse: the moon keeps its K&S brightness through totality. The dome's moon frame relies on a `+1e-6` when
+  the sun and moon directions are parallel (eclipse or exact conjunction): no NaN, but the terminator orientation there
+  is arbitrary.
+- UE's pre-exposure cap (`SceneExposureCapEv`, 1.39 EV) is a constant set for the brightest full moon: with the moon
+  down the dark-scene boost is ~7.6 EV less than the AE target, so new-moon deep shadows sit near 2^−13 in scene colour
+  again (ROADMAP 6A open items).
 - `M_SkyDome` has not been compiled or run on Metal yet; the M1 Pro run of `night_check.py` is open.
 - The star texture keeps a 64 MB CPU copy and 64 MB of VRAM, and `FStarField::Bin` allocates a ~200 MB transient
   accumulator at startup (capacity is VRAM-bound: `docs/capacity-linux-rtx5080.md`).
-- After an IR → EO switch the band can read a stale median for a frame or two.
 - `r.Test.FreezeTemporalSequences 1` (the R6 determinism pin) makes TSR hold stale light after a large lighting jump
   (full → new moon, night → noon in lockstep): `night_check.py` leaves it off for its night runs.
 

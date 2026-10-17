@@ -22,7 +22,7 @@ namespace CamSimRadiometry
 	bool IsRadiometric(const FSensorModeConfig& M);
 
 	/** Photons per lumen of a 5800 K blackbody over [BandLoUm, BandHiUm] µm (1 nm Planck sum; CIE photopic V(λ)
-	 *  approximated by a Gaussian). ≈ 1.2e16 for 0.4–0.7 µm; 0 for a band with no photopic response. Cached per band:
+	 *  approximated by a Gaussian). ≈ 1.09e16 for 0.4–0.7 µm; 0 for a band with no photopic response. Cached per band:
 	 *  game thread only. */
 	double PhotonsPerLumen(float BandLoUm, float BandHiUm);
 
