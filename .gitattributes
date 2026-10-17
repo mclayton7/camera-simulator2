@@ -4,3 +4,4 @@
 unreal_project/CamSimTest/Content/NonUFS/LandCover/*.png filter=lfs diff=lfs merge=lfs -text
 scripts/bench/shots/**/*.png filter=lfs diff=lfs merge=lfs -text
 unreal_project/CamSimTest/Content/NonUFS/Sky/*.dat filter=lfs diff=lfs merge=lfs -text
+unreal_project/CamSimTest/Content/NonUFS/Sky/*.pgm filter=lfs diff=lfs merge=lfs -text
