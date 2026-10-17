@@ -221,3 +221,64 @@ bool FMoonNormaliserCacheTest::RunTest(const FString&)
 	TestTrue(FString::Printf(TEXT("0.05 deg of phase at quarter changes the mean by %.3f %%"), 100.0 * FMath::Abs(B / A - 1.0)), FMath::Abs(B / A - 1.0) < 0.002);
 	return true;
 }
+
+// Orientation (fix round): a mirrored or rotated albedo map, or a sign error in W, must fail. Selenographic east
+// (Mare Crisium) faces celestial west (IAU 1961 convention: Crisium on the western side of the sky), and the map's
+// known pairs are dark/bright at mirrored longitudes (Mare Humorum 24S 39W vs 24S 39E, Mare Smythii 1N 87E vs 1N 87W,
+// Aristarchus 23.7N 47.4W vs mirrored) and latitudes (Mare Serenitatis 28N 17E vs 28S 17E).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMoonOrientationSkyTest, "CamSim.Environment.MoonSurface.OrientationOnSky",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FMoonOrientationSkyTest::RunTest(const FString&)
+{
+	// Meeus ex. 53.a geometry: the moon's direction in J2000 and the IAU axes.
+	const double D = 2448724.5 - 2451545.0;
+	const double Ra = FMath::DegreesToRadians(134.688470), Dec = FMath::DegreesToRadians(13.768368);
+	FVector P[3];
+	FSkyDomeDriver::PrecessionJ2000ToDate(D / 36525.0, P);
+	const FVector3d Date(FMath::Cos(Dec) * FMath::Cos(Ra), FMath::Cos(Dec) * FMath::Sin(Ra), FMath::Sin(Dec));
+	const FVector3d Moon(P[0].X * Date.X + P[1].X * Date.Y + P[2].X * Date.Z, P[0].Y * Date.X + P[1].Y * Date.Y + P[2].Y * Date.Z,
+		P[0].Z * Date.X + P[1].Z * Date.Y + P[2].Z * Date.Z);
+	FVector3d Axes[3];
+	FMoonOrientation::IauAxesJ2000(D, Axes);
+	const double RaJ = FMath::Atan2(Moon.Y, Moon.X), DecJ = FMath::Asin(Moon.Z);
+	const FVector3d East(-FMath::Sin(RaJ), FMath::Cos(RaJ), 0.0);
+	const FVector3d North(-FMath::Sin(DecJ) * FMath::Cos(RaJ), -FMath::Sin(DecJ) * FMath::Sin(RaJ), FMath::Cos(DecJ));
+	auto Normal = [&Axes](double LatDeg, double LonDeg)
+	{
+		const double La = FMath::DegreesToRadians(LatDeg), Lo = FMath::DegreesToRadians(LonDeg);
+		return Axes[0] * (FMath::Cos(La) * FMath::Cos(Lo)) + Axes[1] * (FMath::Cos(La) * FMath::Sin(Lo)) + Axes[2] * FMath::Sin(La);
+	};
+	TestTrue(TEXT("Mare Crisium (17N 59E) on the celestial-west side of the disc"), Normal(17.0, 59.0).Dot(East) < -0.3);
+	TestTrue(TEXT("Grimaldi (5S 68W) on the celestial-east side"), Normal(-5.2, -68.6).Dot(East) > 0.3);
+	TestTrue(TEXT("Mare Frigoris (56N) toward celestial north"), Normal(56.0, 0.0).Dot(North) > 0.5);
+	TestTrue(TEXT("both face the observer"), Normal(17.0, 59.0).Dot(-Moon) > 0.0 && Normal(-5.2, -68.6).Dot(-Moon) > 0.0);
+
+	// End to end through the disc model (full moon, uniform lunar-Lambert = 1): the disc point that shows Crisium has
+	// Crisium's albedo, the mirrored disc point does not.
+	const FMoonAlbedoMap Map = FMoonAlbedoMap::Load(FMoonAlbedoMap::DefaultPath());
+	if (Map.IsEmpty())
+	{
+		AddWarning(TEXT("moon_albedo.pgm not loaded (git lfs pull): map pairs skipped"));
+		return true;
+	}
+	auto A = [&Map](double LatDeg, double LonDeg) { return Map.Sample(FMath::DegreesToRadians(LonDeg), FMath::DegreesToRadians(LatDeg)); };
+	TestTrue(TEXT("Humorum dark, its mirrored longitude bright"), A(-24.0, -39.0) < 0.6 * A(-24.0, 39.0));
+	TestTrue(TEXT("Smythii dark, its mirrored longitude bright"), A(1.3, 87.0) < 0.6 * A(1.3, -87.0));
+	TestTrue(TEXT("Aristarchus bright, its mirrored longitude darker"), A(23.7, -47.4) > 1.5 * A(23.7, 47.4));
+	TestTrue(TEXT("Serenitatis dark, its mirrored latitude bright"), A(28.0, 17.0) < 0.6 * A(-28.0, 17.0));
+	FMoonDiscFrame F;
+	F.MoonDir = Moon;
+	F.SunDir = (-Moon + 0.02 * East).GetSafeNormal();   // nearly full, lit from celestial east
+	F.Axes[0] = Axes[0]; F.Axes[1] = Axes[1]; F.Axes[2] = Axes[2];
+	F.L = 1.0;
+	FVector3d Right, Up;
+	FMoonDisc::DiscBasis(F, Right, Up);
+	const FVector3d Nh = Normal(-24.0, -39.0);   // Humorum
+	const double U = Nh.Dot(Right), V = Nh.Dot(Up);
+	const double Here = FMoonDisc::Radiance(F, Map, U, V), Mirror = FMoonDisc::Radiance(F, Map, -U, V);
+	const double Shade = FMoonDisc::Photometric(Nh.Dot(F.SunDir), FMath::Sqrt(FMath::Max(1.0 - U * U - V * V, 0.0)), 1.0);
+	TestTrue(FString::Printf(TEXT("disc point of Humorum shows its albedo (%.3f vs %.3f)"), Here / Shade, A(-24.0, -39.0)),
+		FMath::IsNearlyEqual(Here / Shade, A(-24.0, -39.0), 0.01));
+	TestTrue(TEXT("the disc's mirrored point is brighter (a flipped map would swap them)"), Mirror > 1.3 * Here);
+	return true;
+}
