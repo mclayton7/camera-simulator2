@@ -127,7 +127,15 @@ bool FSkyEnvironmentWiringTest::RunTest(const FString&)
 	TestTrue(TEXT("MPC moon angular radius ~0.26 deg"), FMath::IsNearlyEqual(FMath::RadiansToDegrees(MoonParams.R), 0.26f, 0.02f));
 	const double Radius = FMath::Asin(FSkyDomeDriver::MoonRadiusKm / E1.MoonDistanceKm);
 	const double Omega = 2.0 * UE_DOUBLE_PI * (1.0 - FMath::Cos(Radius));
-	const double Scale = I1.MoonToaLux / Omega / FMoonDisc::MeanShading(E1.MoonPhaseAngleDeg);
+	FVector Rows[3];
+	FSkyDomeDriver::SkyRotationRows(EsuToUnreal, PendletonLat, E1.LocalSiderealDeg, FSkyDomeDriver::CenturiesSinceJ2000(FullMoonNight), Rows);
+	const FMoonDiscFrame Frame = FSkyDomeDriver::MoonFrame(E1, EsuToUnreal, Rows,
+		FSkyDomeDriver::DaysTtFromCenturiesUt(FSkyDomeDriver::CenturiesSinceJ2000(FullMoonNight)));
+	const double Scale = I1.MoonToaLux / (Omega * FMoonDisc::MeanRadiance(Frame, FMoonAlbedoMap::Load(FMoonAlbedoMap::DefaultPath())));
+	TestTrue(FString::Printf(TEXT("MPC moon L = L(phase) %.4f"), MoonParams.B),
+		FMath::IsNearlyEqual(static_cast<double>(MoonParams.B), FMoonDisc::LunarLambertL(E1.MoonPhaseAngleDeg), 1e-6));
+	TestTrue(TEXT("MPC moon north pole axis"), AngleDeg(Xyz(MpcVector(World, TEXT("MoonAxisZ"))), FVector(Frame.Axes[2])) < 0.01);
+	TestTrue(TEXT("MPC moon prime meridian axis"), AngleDeg(Xyz(MpcVector(World, TEXT("MoonAxisX"))), FVector(Frame.Axes[0])) < 0.01);
 	TestTrue(FString::Printf(TEXT("MPC moon luminance scale %.6g vs %.6g"), MoonParams.G, Scale),
 		FMath::IsNearlyEqual(static_cast<double>(MoonParams.G), Scale, 1e-5 * Scale));
 	const FLinearColor Floor = MpcVector(World, TEXT("Floor"));

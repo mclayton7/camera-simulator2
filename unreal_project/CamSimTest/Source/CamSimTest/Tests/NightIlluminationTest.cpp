@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Environment/NightIllumination.h"
+#include "Environment/MoonSurface.h"
 
 namespace
 {
@@ -92,7 +93,40 @@ bool FMoonDiscNormaliserTest::RunTest(const FString&)
 		// The lit limb is on the sun's side (+u).
 		TestTrue(FString::Printf(TEXT("lit limb α=%.0f"), Alpha), FMoonDisc::Shade(0.9, 0.0, Alpha) > FMoonDisc::Shade(-0.9, 0.0, Alpha) - 1e-12);
 	}
-	TestTrue(TEXT("full mean = 2/3"), FMath::IsNearlyEqual(FMoonDisc::MeanShading(0.0), 2.0 / 3.0, 1e-6));
+	TestTrue(TEXT("full moon: lunar-Lambert with L = 1 is uniform, mean 1"), FMath::IsNearlyEqual(FMoonDisc::MeanShading(0.0), 1.0, 1e-3));
+	return true;
+}
+
+// Defect 1 (docs/night.md "Moon disc"): the full moon is nearly uniform to the limb (regolith photometry), not a Lambert
+// ball; the terminator is on the sun's side; L(alpha) is McEwen's polynomial.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMoonDiscLunarLambertTest, "CamSim.Environment.MoonDisc.LunarLambert",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FMoonDiscLunarLambertTest::RunTest(const FString&)
+{
+	TestTrue(TEXT("L(0) = 1"), FMath::IsNearlyEqual(FMoonDisc::LunarLambertL(0.0), 1.0, 1e-12));
+	TestTrue(TEXT("L(30) = 1 - 0.57 + 0.2178 - 0.03942"), FMath::IsNearlyEqual(FMoonDisc::LunarLambertL(30.0), 0.60838, 1e-5));
+	double Prev = 1.0;
+	for (double A = 5.0; A <= 180.0; A += 5.0)
+	{
+		const double L = FMoonDisc::LunarLambertL(A);
+		TestTrue(FString::Printf(TEXT("L(%.0f) %.3f in [0, 1], non-increasing"), A, L), L >= 0.0 && L <= 1.0 && L <= Prev + 1e-12);
+		Prev = L;
+	}
+	for (double Alpha : { 0.0, 5.0 })
+	{
+		const double Centre = FMoonDisc::Shade(0.0, 0.0, Alpha);
+		for (const FVector2d P : { FVector2d(0.0, 0.95), FVector2d(0.0, -0.95), FVector2d(0.95, 0.0), FVector2d(-0.95, 0.0) })
+		{
+			const double Ratio = FMoonDisc::Shade(P.X, P.Y, Alpha) / Centre;
+			// alpha 0: exactly 1 (Lommel-Seeliger); alpha 5 (night_check's full moon): >= 0.79 at the anti-sun limb.
+			TestTrue(FString::Printf(TEXT("alpha %.0f: limb (%.2f, %.2f) / centre %.3f > 0.75 (Lambert: 0.31)"), Alpha, P.X, P.Y, Ratio), Ratio > 0.75);
+		}
+	}
+	// Terminator on the sun's side: at quadrature the anti-sun half is dark, the sun half lit; gibbous lit limb > far limb.
+	TestEqual(TEXT("quarter: anti-sun side dark"), FMoonDisc::Shade(-0.5, 0.0, 90.0), 0.0);
+	TestTrue(TEXT("quarter: sun side lit"), FMoonDisc::Shade(0.5, 0.0, 90.0) > 0.1);
+	TestTrue(TEXT("gibbous: sun limb brighter"), FMoonDisc::Shade(0.9, 0.0, 50.0) > FMoonDisc::Shade(-0.9, 0.0, 50.0));
+	TestEqual(TEXT("unlit: mu0 <= 0"), FMoonDisc::Photometric(-0.1, 0.5, 0.5), 0.0);
 	return true;
 }
 
@@ -132,14 +166,14 @@ bool FNightIllumExposureCapTest::RunTest(const FString&)
 	AddInfo(FString::Printf(TEXT("max moon disc %.0f cd/m2, cap %.2f EV"), LMax, Cap));
 	TestTrue(TEXT("disc x 2^cap = 16384"), FMath::IsNearlyEqual(LMax * FMath::Pow(2.0, Cap), 16384.0, 1.0));
 	TestTrue(TEXT("a few thousand cd/m2"), LMax > 4000.0 && LMax < 12000.0);
-	// The dome's peak: LumScale = TOA / Omega / MeanShading(alpha), times shade <= 1 and T(el).
+	// The dome's peak: LumScale = TOA / (Omega x MeanRadiance), times Radiance <= MaxPeakToMean x MeanRadiance, and T(el).
 	for (double Alpha : {0.0, 5.0, 30.0, 90.0})
 	{
 		for (double Km : {356500.0, 384400.0, 406700.0})
 		{
 			const double R = FMath::Asin(1737.4 / Km);
 			const double Omega = 2.0 * UE_DOUBLE_PI * (1.0 - FMath::Cos(R));
-			const double Peak = FNightIllumination::MoonToaLux(Alpha, Km) / Omega / FMoonDisc::MeanShading(Alpha)
+			const double Peak = FNightIllumination::MoonToaLux(Alpha, Km) / Omega * FMoonDisc::MaxPeakToMean
 				* FNightIllumination::Transmittance(90.0);
 			TestTrue(FString::Printf(TEXT("alpha %.0f, %.0f km: %.0f <= max"), Alpha, Km, Peak), Peak <= LMax * 1.0001);
 		}

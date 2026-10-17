@@ -9,7 +9,8 @@ M_SkyDome: Surface / Unlit / Opaque / Is Sky / two-sided, for a camera-following
 Emissive, in cd/m² (V = view direction = -CameraVectorWS, T = transmittance along V, CamSimSky.ush):
     SkyAtmosphereViewLuminance
   + SkyAtmosphereLightDiskLuminance(0)                       (sun disc)
-  + T * ( CamSimMoonDisc(V, MoonDir, SunDir, r, scale) * enabled * (1 - RenderingReflectionCaptureMask)
+  + T * ( CamSimMoonDisc(V, MoonDir, SunDir, r, scale, L, body axes, MoonTex) * enabled
+          * (1 - RenderingReflectionCaptureMask)   (lunar-Lambert x albedo map, the MoonTex mip from ddx/ddy of V)
           + StarTex(equatorial UV of SkyRot * V) * Floor.y    (point sampled: a star stays one texel)
           + Floor.x )                                         (night floor, white)
 One Custom node ("NightSky") computes T once for the three night terms. The moon disc is left out of the real-time sky
@@ -18,9 +19,9 @@ already lights the scene, so a captured disc would add its light a second time t
 changed as the 0.5 deg disc drifted across the capture's ~0.7 deg texels. The floor stays in the capture: it is meant to
 light the ground.
 The moon disc and air mass come from Shaders/Private/CamSimSky.ush (virtual path /CamSim/Private/CamSimSky.ush),
-which mirrors FNightIllumination / FMoonDisc (Environment/NightIllumination.cpp).
+which mirrors FNightIllumination (Environment/NightIllumination.cpp) and FMoonDisc::Radiance (MoonSurface.cpp).
 
-MPC parameter names and the StarTex texture parameter are read by FSkyDomeDriver; don't rename them.
+MPC parameter names and the StarTex / MoonTex texture parameters are read by FSkyDomeDriver; don't rename them.
 """
 
 import unreal
@@ -30,6 +31,7 @@ MPC_NAME = "MPC_Sky"
 MAT_NAME = "M_SkyDome"
 INCLUDE = "/CamSim/Private/CamSimSky.ush"
 STAR_TEX_PARAM = "StarTex"
+MOON_TEX_PARAM = "MoonTex"
 # A linear (non-sRGB) engine texture, required as the default of a LinearColor texture parameter. The driver
 # replaces it with the star field; until then Floor.y = 0 keeps the star term at 0.
 STAR_TEX_DEFAULT = "/Engine/EngineMaterials/BaseFlattenLinearColor"
@@ -38,20 +40,28 @@ STAR_TEX_DEFAULT = "/Engine/EngineMaterials/BaseFlattenLinearColor"
 MPC_VECTORS = [
     ("MoonDir", (0, 0, 1, 0)),        # xyz unit, UE world
     ("SunDir", (0, 0, -1, 0)),        # xyz unit, UE world
-    ("MoonParams", (0, 0, 0, 0)),     # (angular radius rad, disc luminance scale cd/m², phase angle rad, enabled 0/1)
+    ("MoonParams", (0, 0, 1, 0)),     # (angular radius rad, disc luminance scale cd/m², lunar-Lambert L, enabled 0/1)
     ("SkyRot0", (1, 0, 0, 0)),        # rows of the UE-world -> equatorial rotation
     ("SkyRot1", (0, 1, 0, 0)),
     ("SkyRot2", (0, 0, 1, 0)),
     ("Floor", (0, 0, 0.172, 0)),      # (floor radiance cd/m², star scale, k_V, 0)
     ("UpWorld", (0, 0, 1, 0)),        # local up at the camera
+    ("MoonAxisX", (1, 0, 0, 0)),      # moon body axes in UE world (IAU): toward (lon 0, lat 0), lon 90 E, north pole
+    ("MoonAxisY", (0, 1, 0, 0)),
+    ("MoonAxisZ", (0, 0, 1, 0)),
 ]
 
 # Equirectangular (RA, Dec) lookup matching FStarField: x = RA from 0 at the left, y = Dec +90 at the top.
 # Load (not Sample): point sampling with no mips whatever the texture's filter, and no derivative seam at RA 0.
+# The moon albedo's LOD comes from the view-direction derivatives, taken before any branch.
 NIGHT_CODE = (
     "float SinEl = dot(V, UpWorld); float T = CamSimSkyTransmittance(SinEl, Floor.z);\n"
     "float NotInCapture = 1.0 - ResolvedView.RenderingReflectionCaptureMask;\n"
-    "float Moon = CamSimMoonDisc(V, MoonDir, SunDir, MoonParams.x, MoonParams.y) * MoonParams.w * NotInCapture;\n"
+    "float PixAng = max(length(ddx(V)), length(ddy(V)));\n"
+    "uint MW, MH; MoonTex.GetDimensions(MW, MH);\n"
+    "float MoonLod = CamSimMoonLod(PixAng, MoonParams.x, float(MW));\n"
+    "float Moon = CamSimMoonDisc(V, MoonDir, SunDir, MoonParams.x, MoonParams.y, MoonParams.z, MoonAxisX, MoonAxisY,"
+    " MoonAxisZ, MoonTex, MoonTexSampler, MoonLod) * MoonParams.w * NotInCapture;\n"
     "float3 Q = float3(dot(SkyRot0.xyz, V), dot(SkyRot1.xyz, V), dot(SkyRot2.xyz, V));\n"
     "float Ra = atan2(Q.y, Q.x); float Dec = asin(clamp(Q.z, -1, 1));\n"
     "float2 UV = float2(frac(Ra / (2 * PI)), 0.5 - Dec / PI);\n"
@@ -147,7 +157,8 @@ def make_material(mpc):
     for name, _ in MPC_VECTORS:
         mpc_nodes[name] = g.node(unreal.MaterialExpressionCollectionParameter, x=-1400,
                                  collection=mpc, parameter_name=name)
-    sources = {n: g.mask(mpc_nodes[n], r=True, g=True, b=True) for n in ("MoonDir", "SunDir", "UpWorld")}
+    sources = {n: g.mask(mpc_nodes[n], r=True, g=True, b=True)
+               for n in ("MoonDir", "SunDir", "UpWorld", "MoonAxisX", "MoonAxisY", "MoonAxisZ")}
     for n in ("MoonParams", "SkyRot0", "SkyRot1", "SkyRot2", "Floor"):
         sources[n] = mpc_nodes[n]
 
@@ -164,6 +175,11 @@ def make_material(mpc):
         raise RuntimeError("%s missing or sRGB (a LinearColor parameter needs a linear default)" % STAR_TEX_DEFAULT)
     star_tex.set_editor_property("texture", default_tex)
     sources[STAR_TEX_PARAM] = star_tex
+    moon_tex = g.node(unreal.MaterialExpressionTextureObjectParameter, x=-1000,
+                      parameter_name=MOON_TEX_PARAM,
+                      sampler_type=unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
+    moon_tex.set_editor_property("texture", default_tex)
+    sources[MOON_TEX_PARAM] = moon_tex
 
     def custom(desc, code, pin_names, out=unreal.CustomMaterialOutputType.CMOT_FLOAT3):
         inputs = []
@@ -185,7 +201,8 @@ def make_material(mpc):
     atmosphere = g.node(unreal.MaterialExpressionSkyAtmosphereViewLuminance, x=-600)
     sun_disc = g.node(unreal.MaterialExpressionSkyAtmosphereLightDiskLuminance, x=-600, light_index=0)
     night = custom("NightSky", NIGHT_CODE,
-                   common + ["MoonDir", "SunDir", "MoonParams", "SkyRot0", "SkyRot1", "SkyRot2", STAR_TEX_PARAM])
+                   common + ["MoonDir", "SunDir", "MoonParams", "SkyRot0", "SkyRot1", "SkyRot2", STAR_TEX_PARAM,
+                             "MoonAxisX", "MoonAxisY", "MoonAxisZ", MOON_TEX_PARAM])
 
     emissive = g.add(g.add(atmosphere, sun_disc), night)
     g.to_property(emissive, unreal.MaterialProperty.MP_EMISSIVE_COLOR)
@@ -209,8 +226,8 @@ def main():
     log("settings: %s" % {k: str(mat.get_editor_property(k)) for k in expect})
     log("expression count: %d" % MEL.get_num_material_expressions(mat))
     tex_params = [str(n) for n in MEL.get_texture_parameter_names(mat)]
-    if tex_params != [STAR_TEX_PARAM]:
-        raise RuntimeError("texture parameters %s != [%s]" % (tex_params, STAR_TEX_PARAM))
+    if sorted(tex_params) != sorted([STAR_TEX_PARAM, MOON_TEX_PARAM]):
+        raise RuntimeError("texture parameters %s != [%s, %s]" % (tex_params, STAR_TEX_PARAM, MOON_TEX_PARAM))
     log("texture parameters: %s" % tex_params)
     stats = MEL.get_statistics(mat)
     log("statistics: %s" % stats)

@@ -35,6 +35,55 @@ namespace
 		Tex->UpdateResource();
 		return Tex;
 	}
+
+	/** Transient linear BGRA8 grey texture of the moon albedo with a box-filtered mip chain (M_SkyDome samples it at an
+	 *  explicit LOD); longitude wraps, latitude clamps. A 1 x 1 white texture for an empty map. */
+	UTexture2D* MakeMoonTexture(const FMoonAlbedoMap& Map)
+	{
+		const int32 W = Map.IsEmpty() ? 1 : Map.Width, H = Map.IsEmpty() ? 1 : Map.Height;
+		UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8, TEXT("CamSimMoonAlbedo"));
+		if (!Tex) return nullptr;
+		TArray<uint8> Level = Map.IsEmpty() ? TArray<uint8>({ 255 }) : Map.Texels;
+		int32 Lw = W, Lh = H;
+		FTexturePlatformData* Pd = Tex->GetPlatformData();
+		for (int32 Mip = 0;; ++Mip)
+		{
+			FTexture2DMipMap* MipMap = Mip == 0 ? &Pd->Mips[0] : new FTexture2DMipMap(Lw, Lh, 1);
+			if (Mip > 0) Pd->Mips.Add(MipMap);
+			MipMap->BulkData.Lock(LOCK_READ_WRITE);
+			uint8* Dest = static_cast<uint8*>(MipMap->BulkData.Realloc(static_cast<int64>(Lw) * Lh * 4));
+			for (int32 I = 0; I < Lw * Lh; ++I)
+			{
+				Dest[4 * I + 0] = Dest[4 * I + 1] = Dest[4 * I + 2] = Level[I];
+				Dest[4 * I + 3] = 255;
+			}
+			MipMap->BulkData.Unlock();
+			if (Lw == 1 && Lh == 1) break;
+			const int32 Nw = FMath::Max(Lw / 2, 1), Nh = FMath::Max(Lh / 2, 1);
+			TArray<uint8> Next;
+			Next.SetNumUninitialized(Nw * Nh);
+			for (int32 Y = 0; Y < Nh; ++Y)
+			{
+				for (int32 X = 0; X < Nw; ++X)
+				{
+					const int32 X0 = FMath::Min(2 * X, Lw - 1), X1 = FMath::Min(2 * X + 1, Lw - 1);
+					const int32 Y0 = FMath::Min(2 * Y, Lh - 1), Y1 = FMath::Min(2 * Y + 1, Lh - 1);
+					const int32 Sum = Level[Y0 * Lw + X0] + Level[Y0 * Lw + X1] + Level[Y1 * Lw + X0] + Level[Y1 * Lw + X1];
+					Next[Y * Nw + X] = static_cast<uint8>((Sum + 2) / 4);
+				}
+			}
+			Level = MoveTemp(Next);
+			Lw = Nw;
+			Lh = Nh;
+		}
+		Tex->SRGB = false;
+		Tex->Filter = TF_Trilinear;
+		Tex->AddressX = TA_Wrap;
+		Tex->AddressY = TA_Clamp;
+		Tex->NeverStream = true;
+		Tex->UpdateResource();
+		return Tex;
+	}
 }
 
 FVector FSkyDomeDriver::EnuToWorldDir(const FMatrix& EsuToUnreal, const FVector3d& Enu)
@@ -103,6 +152,31 @@ void FSkyDomeDriver::SkyRotationRows(const FMatrix& EsuToUnreal, double LatDeg, 
 	}
 }
 
+double FSkyDomeDriver::DaysTtFromCenturiesUt(double CenturiesJ2000)
+{
+	const double Days = CenturiesJ2000 * 36525.0;
+	const double Year = 2000.0 + Days / 365.25;
+	const int32 Y = FMath::FloorToInt32(Year);
+	const int32 M = FMath::Clamp(1 + FMath::FloorToInt32((Year - Y) * 12.0), 1, 12);
+	return Days + FEphemeris::DeltaTSeconds(Y, M) / 86400.0;
+}
+
+FMoonDiscFrame FSkyDomeDriver::MoonFrame(const FEphemerisResult& E, const FMatrix& EsuToUnreal, const FVector Rows[3], double DaysTt)
+{
+	FMoonDiscFrame F;
+	F.MoonDir = EnuToWorldDir(EsuToUnreal, E.MoonEnu);
+	F.SunDir = EnuToWorldDir(EsuToUnreal, E.SunEnu);
+	FVector3d AxesJ2000[3];
+	FMoonOrientation::IauAxesJ2000(DaysTt, AxesJ2000);
+	for (int32 K = 0; K < 3; ++K)
+	{
+		// Rows map world → J2000 (orthonormal), so a J2000 vector a is Σ_i a_i Rows[i] in world.
+		F.Axes[K] = (AxesJ2000[K].X * Rows[0] + AxesJ2000[K].Y * Rows[1] + AxesJ2000[K].Z * Rows[2]).GetSafeNormal();
+	}
+	F.L = FMoonDisc::LunarLambertL(E.MoonPhaseAngleDeg);
+	return F;
+}
+
 void FSkyDomeDriver::Init(AActor* Owner, const FCamSimConfig::FCelestialConfig& Cfg)
 {
 	if (Dome || !Owner) return;
@@ -158,6 +232,13 @@ void FSkyDomeDriver::Init(AActor* Owner, const FCamSimConfig::FCelestialConfig& 
 	}
 	Material->SetTextureParameterValue(TEXT("StarTex"), StarTexture);
 
+	MoonAlbedo = FMoonAlbedoMap::Load(FMoonAlbedoMap::DefaultPath());
+	MoonTexture = MakeMoonTexture(MoonAlbedo);
+	if (MoonTexture)
+	{
+		Material->SetTextureParameterValue(TEXT("MoonTex"), MoonTexture);
+	}
+
 	Dome->RegisterComponent();
 	Owner->AddInstanceComponent(Dome);
 }
@@ -184,20 +265,25 @@ void FSkyDomeDriver::Update(const FEphemerisResult& E, const FNightIlluminationR
 	const FVector SunDir  = EnuToWorldDir(EsuToUnreal, E.SunEnu);
 	const FVector UpWorld = EnuToWorldDir(EsuToUnreal, FVector3d(0, 0, 1));
 
-	// Moon disc: angular radius r, solid angle Ω = 2π(1 − cos r); luminance scale so that the shaded disc integrates to the
-	// moon's top-of-atmosphere illuminance (the material applies the transmittance along the view direction).
+	FVector Rows[3];
+	SkyRotationRows(EsuToUnreal, LatDeg, E.LocalSiderealDeg, CenturiesJ2000, Rows);
+
+	// Moon disc: angular radius r, solid angle Ω = 2π(1 − cos r); luminance scale so that the disc (albedo × lunar-Lambert,
+	// the IAU orientation) integrates to the moon's top-of-atmosphere illuminance (the material applies the transmittance
+	// along the view direction).
 	const double Radius = FMath::Asin(FMath::Clamp(MoonRadiusKm / FMath::Max(E.MoonDistanceKm, MoonRadiusKm), 0.0, 1.0));
 	const double Omega = 2.0 * UE_DOUBLE_PI * (1.0 - FMath::Cos(Radius));
 	const bool bMoon = En.bMoon && I.MoonToaLux > 0.0;
-	const double LumScale = (bMoon && Omega > 0.0) ? I.MoonToaLux / Omega / FMoonDisc::MeanShading(E.MoonPhaseAngleDeg) : 0.0;
-
-	FVector Rows[3];
-	SkyRotationRows(EsuToUnreal, LatDeg, E.LocalSiderealDeg, CenturiesJ2000, Rows);
+	const FMoonDiscFrame Frame = MoonFrame(E, EsuToUnreal, Rows, DaysTtFromCenturiesUt(CenturiesJ2000));
+	const double LumScale = (bMoon && Omega > 0.0) ? I.MoonToaLux / (Omega * FMoonDisc::MeanRadiance(Frame, MoonAlbedo)) : 0.0;
 
 	SetVector(World, TEXT("MoonDir"), FLinearColor(MoonDir.X, MoonDir.Y, MoonDir.Z, 0.0f));
 	SetVector(World, TEXT("SunDir"), FLinearColor(SunDir.X, SunDir.Y, SunDir.Z, 0.0f));
 	SetVector(World, TEXT("MoonParams"), FLinearColor(static_cast<float>(Radius), static_cast<float>(LumScale),
-		static_cast<float>(FMath::DegreesToRadians(E.MoonPhaseAngleDeg)), bMoon ? 1.0f : 0.0f));
+		static_cast<float>(Frame.L), bMoon ? 1.0f : 0.0f));
+	SetVector(World, TEXT("MoonAxisX"), FLinearColor(Frame.Axes[0].X, Frame.Axes[0].Y, Frame.Axes[0].Z, 0.0f));
+	SetVector(World, TEXT("MoonAxisY"), FLinearColor(Frame.Axes[1].X, Frame.Axes[1].Y, Frame.Axes[1].Z, 0.0f));
+	SetVector(World, TEXT("MoonAxisZ"), FLinearColor(Frame.Axes[2].X, Frame.Axes[2].Y, Frame.Axes[2].Z, 0.0f));
 	SetVector(World, TEXT("SkyRot0"), FLinearColor(Rows[0].X, Rows[0].Y, Rows[0].Z, 0.0f));
 	SetVector(World, TEXT("SkyRot1"), FLinearColor(Rows[1].X, Rows[1].Y, Rows[1].Z, 0.0f));
 	SetVector(World, TEXT("SkyRot2"), FLinearColor(Rows[2].X, Rows[2].Y, Rows[2].Z, 0.0f));

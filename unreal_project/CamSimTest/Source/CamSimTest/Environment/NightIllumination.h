@@ -39,7 +39,8 @@ namespace FNightIllumination
 	/** Cosine-weighted mean of Transmittance over the upper hemisphere (~0.755): the dome draws the floor as L * T(view
 	 *  elevation), so L = E / (pi * this) delivers E at the ground. */
 	double FloorTransmittanceMean();
-	/** The brightest moon-disc luminance the dome can draw (full moon at perigee, Lambert peak, zenith transmittance),
+	/** The brightest moon-disc luminance the dome can draw (full moon at perigee, the brightest albedo x lunar-Lambert
+	 *  point: FMoonDisc::MaxPeakToMean x the disc mean, zenith transmittance),
 	 *  cd/m2: the brightest sky content at night. */
 	double MaxMoonDiscLuminanceCdM2();
 	/** Cap on UE's pre-exposure (EV) so MaxMoonDiscLuminanceCdM2 stays at 16384 (1/4 of fp16's max) in scene colour. */
@@ -57,10 +58,18 @@ namespace FNightIllumination
 
 namespace FMoonDisc
 {
-	/** Mean over the moon's projected disc of the Lambert shading max(n.s, 0), s = sun direction seen from the moon,
-	 *  for a phase angle alpha (0 = full). The dome divides the disc luminance by it so the disc integrates to the
-	 *  input illuminance: L(p) = E / Omega * shade(p) / MeanShading(alpha). */
-	double MeanShading(double PhaseAngleDeg);
-	/** Lambert shading of the disc point (u, v) in [-1, 1]^2 (u toward the sun's side, v up), 0 outside. */
+	/**
+	 * Lunar-Lambert weight L(alpha) (McEwen 1991, Icarus 92, 298; polynomial of McEwen 1996, LPSC XXVII, 841, alpha in
+	 * degrees): 1 + A alpha + B alpha^2 + C alpha^3, A = -0.019, B = 2.42e-4, C = -1.46e-6, clamped to [0, 1]. 1 at full
+	 * moon (pure Lommel-Seeliger), falling with phase toward Lambert.
+	 */
+	double LunarLambertL(double PhaseAngleDeg);
+	/** Lunar-Lambert reflectance (relative): 2 L mu0 / (mu0 + mu) + (1 - L) mu0 for mu0 = cos(incidence) > 0, else 0. */
+	double Photometric(double Mu0, double Mu, double L);
+	/** Lunar-Lambert shading of the disc point (u, v) in [-1, 1]^2 (u toward the sun's side, v up), uniform albedo, sun
+	 *  at s = (sin alpha, 0, cos alpha) in the (u, v, toward-viewer) frame; 0 outside the disc or unlit. */
 	double Shade(double U, double V, double PhaseAngleDeg);
+	/** Mean of Shade over the projected disc (numerical, 1 at full moon). The dome normalises with the albedo-weighted
+	 *  FMoonDisc::MeanRadiance (MoonSurface.h); this is its uniform-albedo case (tests, docs). */
+	double MeanShading(double PhaseAngleDeg);
 }

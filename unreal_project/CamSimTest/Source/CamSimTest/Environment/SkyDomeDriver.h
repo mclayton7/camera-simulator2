@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Config/CamSimConfig.h"
+#include "Environment/MoonSurface.h"
 #include "SkyDomeDriver.generated.h"
 
 class AActor;
@@ -48,6 +49,14 @@ struct CAMSIMTEST_API FSkyDomeDriver
 	int32 GetStarTexelCount() const { return StarTexelCount; }
 	UStaticMeshComponent* GetDome() const { return Dome; }
 
+	/** The moon disc's geometry in UE world (M_SkyDome's frame): moon and sun directions, the IAU body axes (J2000 → world
+	 *  through SkyRotationRows), L(phase). DaysTt = days since J2000.0 TT. */
+	static FMoonDiscFrame MoonFrame(const FEphemerisResult& E, const FMatrix& EsuToUnreal, const FVector Rows[3], double DaysTt);
+	/** Days since J2000.0 TT of the instant CenturiesJ2000 (UT) describes: + ΔT. */
+	static double DaysTtFromCenturiesUt(double CenturiesJ2000);
+	/** The albedo map the disc and its normalisation use (empty: uniform disc). */
+	const FMoonAlbedoMap& GetMoonAlbedo() const { return MoonAlbedo; }
+
 	/** ENU (E, N, U) → unit UE world direction through Cesium's East-South-Up matrix. */
 	static FVector EnuToWorldDir(const FMatrix& EsuToUnreal, const FVector3d& Enu);
 	/**
@@ -68,6 +77,9 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic>     Material;
 	UPROPERTY(Transient) TObjectPtr<UMaterialParameterCollection> Mpc;
 	UPROPERTY(Transient) TObjectPtr<UTexture2D>                   StarTexture;
+	UPROPERTY(Transient) TObjectPtr<UTexture2D>                   MoonTexture;
+
+	FMoonAlbedoMap MoonAlbedo;
 
 	bool  bHasStars = false;
 	bool  bWarnedMpc = false;

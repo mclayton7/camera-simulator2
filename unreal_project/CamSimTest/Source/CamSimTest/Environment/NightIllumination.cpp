@@ -1,6 +1,7 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Environment/NightIllumination.h"
+#include "Environment/MoonSurface.h"
 
 namespace
 {
@@ -60,8 +61,9 @@ double FNightIllumination::MaxMoonDiscLuminanceCdM2()
 	constexpr double MoonRadiusKm = 1737.4;
 	const double R = FMath::Asin(MoonRadiusKm / PerigeeKm);
 	const double Omega = 2.0 * UE_DOUBLE_PI * (1.0 - FMath::Cos(R));
-	// FSkyDomeDriver: disc luminance = TOA / Omega / MeanShading(alpha) x shade (<= 1) x T(view); the largest at alpha 0.
-	return MoonToaLux(0.0, PerigeeKm) / Omega / FMoonDisc::MeanShading(0.0) * Transmittance(90.0);
+	// FSkyDomeDriver: disc luminance = TOA / (Omega x MeanRadiance) x Radiance x T(view); Radiance / MeanRadiance is at
+	// most FMoonDisc::MaxPeakToMean (the brightest rays over the albedo-weighted mean); the largest at alpha 0.
+	return MoonToaLux(0.0, PerigeeKm) / Omega * FMoonDisc::MaxPeakToMean * Transmittance(90.0);
 }
 
 double FNightIllumination::SceneExposureCapEv()
@@ -111,6 +113,21 @@ FNightIlluminationResult FNightIllumination::Compute(const FNightIlluminationInp
 	return R;
 }
 
+double FMoonDisc::LunarLambertL(double PhaseAngleDeg)
+{
+	const double A = FMath::Abs(PhaseAngleDeg);
+	return FMath::Clamp(1.0 - 0.019 * A + 2.42e-4 * A * A - 1.46e-6 * A * A * A, 0.0, 1.0);
+}
+
+double FMoonDisc::Photometric(double Mu0, double Mu, double L)
+{
+	if (Mu0 <= 0.0)
+	{
+		return 0.0;
+	}
+	return 2.0 * L * Mu0 / (Mu0 + FMath::Max(Mu, 0.0)) + (1.0 - L) * Mu0;
+}
+
 double FMoonDisc::Shade(double U, double V, double PhaseAngleDeg)
 {
 	const double R2 = U * U + V * V;
@@ -120,12 +137,23 @@ double FMoonDisc::Shade(double U, double V, double PhaseAngleDeg)
 	}
 	const double Alpha = FMath::DegreesToRadians(PhaseAngleDeg);
 	const double Nz = FMath::Sqrt(1.0 - R2);
-	return FMath::Max(U * FMath::Sin(Alpha) + Nz * FMath::Cos(Alpha), 0.0);
+	return Photometric(U * FMath::Sin(Alpha) + Nz * FMath::Cos(Alpha), Nz, LunarLambertL(PhaseAngleDeg));
 }
 
 double FMoonDisc::MeanShading(double PhaseAngleDeg)
 {
-	const double Alpha = FMath::DegreesToRadians(FMath::Clamp(PhaseAngleDeg, 0.0, 180.0));
-	const double Mean = (2.0 / 3.0) * (FMath::Sin(Alpha) + (UE_DOUBLE_PI - Alpha) * FMath::Cos(Alpha)) / UE_DOUBLE_PI;
-	return FMath::Max(Mean, 1e-6);
+	constexpr int32 N = 200;
+	double Sum = 0.0;
+	int32 Count = 0;
+	for (int32 J = 0; J < N; ++J)
+	{
+		for (int32 I = 0; I < N; ++I)
+		{
+			const double U = -1.0 + 2.0 * (I + 0.5) / N, V = -1.0 + 2.0 * (J + 0.5) / N;
+			if (U * U + V * V > 1.0) continue;
+			Sum += Shade(U, V, PhaseAngleDeg);
+			++Count;
+		}
+	}
+	return FMath::Max(Sum / FMath::Max(Count, 1), 1e-6);
 }
