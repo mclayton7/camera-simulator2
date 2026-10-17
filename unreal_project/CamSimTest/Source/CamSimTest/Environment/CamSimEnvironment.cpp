@@ -376,6 +376,10 @@ void ACamSimEnvironment::SetUpSky()
 		if (USkyAtmosphereComponent* Atmos = CesiumSunSkyActor->SkyAtmosphere)
 		{
 			Atmos->SetTransmittanceMinLightElevationAngle(-90.0f);
+			// Ozone as a linear-sRGB band integral, not UE's 680/550/440 nm samples: blue twilight, not magenta.
+			const FLinearColor Ozone = FNightIllumination::OzoneAbsorptionPerKm();
+			Atmos->SetOtherAbsorptionScale(Ozone.G);
+			Atmos->SetOtherAbsorption(FLinearColor(Ozone.R / Ozone.G, 1.0f, Ozone.B / Ozone.G));
 		}
 	}
 	else

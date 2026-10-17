@@ -158,3 +158,16 @@ bool FMoonCloudScatterTest::RunTest(const FString&)
 	TestEqual(TEXT("moon down: black"), FNightIllumination::MoonCloudScatterScale(-30.0, false), FLinearColor::Black);
 	return true;
 }
+
+// Twilight colour (docs/night.md): ozone integrated over the sRGB channels absorbs red most (the Chappuis peak, ~600 nm,
+// sits in the red channel), green next, blue ~0, with the column of UE's default at 550 nm (scripts/sky/ozone_rgb.py).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNightIllumOzoneTest, "CamSim.Environment.Illumination.OzoneIsSrgbBandIntegral",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FNightIllumOzoneTest::RunTest(const FString&)
+{
+	const FLinearColor O = FNightIllumination::OzoneAbsorptionPerKm();
+	TestTrue(TEXT("red absorbed most, then green, blue ~0"), O.R > O.G && O.G > O.B && O.B >= 0.0f && O.B < 1e-4f);
+	TestTrue(FString::Printf(TEXT("R/G %.3f ~ 1.39"), O.R / O.G), FMath::IsNearlyEqual(O.R / O.G, 1.39f, 0.01f));
+	TestTrue(TEXT("green within 10 % of UE's 550 nm value (same column)"), FMath::Abs(O.G / 0.001881f - 1.0f) < 0.10f);
+	return true;
+}

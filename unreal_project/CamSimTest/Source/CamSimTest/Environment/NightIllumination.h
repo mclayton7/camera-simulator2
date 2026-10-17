@@ -47,6 +47,12 @@ namespace FNightIllumination
 	/** The moon light's CloudScatteredLuminanceScale: white while the moon is up and the sun below the horizon, else
 	 *  black (UE's second cloud light is expensive). */
 	FLinearColor MoonCloudScatterScale(double SunElDeg, bool bMoonUp);
+	/** Ozone (Chappuis band) absorption per km at the peak of SkyAtmosphere's "other absorption" tent (25 km, 15 km half
+	 *  width), integrated over the linear sRGB channels (scripts/sky/ozone_rgb.py): R 2.46e-3, G 1.77e-3, B 0. UE's
+	 *  default (0.65e-3, 1.881e-3, 0.085e-3) samples the cross section at 680/550/440 nm, which puts the Chappuis peak
+	 *  (~600 nm) in green: over twilight's long ozone paths it filtered the sky and the ground under it magenta
+	 *  (docs/night.md "Twilight colour"). */
+	FLinearColor OzoneAbsorptionPerKm();
 }
 
 namespace FMoonDisc

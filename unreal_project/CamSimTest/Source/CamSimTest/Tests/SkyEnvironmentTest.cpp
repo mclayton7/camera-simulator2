@@ -143,6 +143,15 @@ bool FSkyEnvironmentWiringTest::RunTest(const FString&)
 		FMath::IsNearlyEqual(static_cast<double>(Sun->Intensity), I1.SunToaLux, 1e-6 * I1.SunToaLux));
 	TestEqual(TEXT("sun transmittance follows its elevation (spec finding 5)"),
 		SunSky->SkyAtmosphere->TransmittanceMinLightElevationAngle, -90.0f);
+	{
+		// Twilight colour: ozone as the linear-sRGB band integral (red absorbed most), not UE's 680/550/440 nm samples.
+		const USkyAtmosphereComponent* A = SunSky->SkyAtmosphere;
+		const FLinearColor Want = FNightIllumination::OzoneAbsorptionPerKm();
+		const FLinearColor Got = A->OtherAbsorption * A->OtherAbsorptionScale;
+		TestTrue(FString::Printf(TEXT("ozone absorption %s = %s per km"), *Got.ToString(), *Want.ToString()),
+			FMath::IsNearlyEqual(Got.R, Want.R, 1e-7f) && FMath::IsNearlyEqual(Got.G, Want.G, 1e-7f) && FMath::IsNearlyEqual(Got.B, Want.B, 1e-7f));
+		TestTrue(TEXT("ozone tent unchanged (25 km, 15 km)"), A->OtherTentDistribution.TipAltitude == 25.0f && A->OtherTentDistribution.Width == 15.0f);
+	}
 	TestTrue(TEXT("thermal sun lookup returns CesiumSunSky's light, not the moon"),
 		CamSimThermal::FindAtmosphereSunLight(World) == Sun);
 	TestTrue(FString::Printf(TEXT("GetSunElevationDeg %.3f = ephemeris %.3f"), Env->GetSunElevationDeg(), E1.SunElDeg),

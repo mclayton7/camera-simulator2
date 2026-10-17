@@ -74,6 +74,11 @@ FLinearColor FNightIllumination::MoonCloudScatterScale(double SunElDeg, bool bMo
 	return (bMoonUp && SunElDeg < 0.0) ? FLinearColor::White : FLinearColor::Black;
 }
 
+FLinearColor FNightIllumination::OzoneAbsorptionPerKm()
+{
+	return FLinearColor(0.00246016f, 0.00177045f, 0.0f);
+}
+
 double FNightIllumination::CloudFactor(double Cover01)
 {
 	return 1.0 - 0.75 * FMath::Pow(FMath::Clamp(Cover01, 0.0, 1.0), 3.4);
