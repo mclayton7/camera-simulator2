@@ -34,6 +34,14 @@ bool FNightIllumMoonLevelsTest::RunTest(const FString&)
 	const FNightIlluminationResult Below = FNightIllumination::Compute(MoonAt(0.0, -5.0));
 	TestEqual(TEXT("below horizon ground"), Below.MoonGroundLux, 0.0);
 	TestTrue(TEXT("perigee brighter"), FNightIllumination::MoonToaLux(0.0, 357000.0) > FNightIllumination::MoonToaLux(0.0, 406000.0) * 1.25);
+	TestEqual(TEXT("clear: the moon light is the TOA value"), Full.MoonLightLux, Full.MoonToaLux);
+	// Overcast (final review I3): the moon light and its ground illuminance carry the floor's cloud factor (0.25 at 100 %).
+	FNightIlluminationInput Overcast = MoonAt(0.0, 90.0);
+	Overcast.CloudCover01 = 1.0;
+	const FNightIlluminationResult Dim = FNightIllumination::Compute(Overcast);
+	TestTrue(TEXT("overcast moon light x 0.25"), FMath::IsNearlyEqual(Dim.MoonLightLux, Full.MoonToaLux * 0.25, 1e-12));
+	TestTrue(TEXT("overcast moon ground x 0.25"), FMath::IsNearlyEqual(Dim.MoonGroundLux, Full.MoonGroundLux * 0.25, 1e-12));
+	TestEqual(TEXT("overcast: TOA (disc) unchanged"), Dim.MoonToaLux, Full.MoonToaLux);
 	return true;
 }
 

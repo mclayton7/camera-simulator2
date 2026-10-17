@@ -20,7 +20,10 @@ points) build on the same light levels. Design: `docs/superpowers/specs/2026-10-
   more than 1 km (the clock can stand still: lockstep, a static CIGI time).
 - **Illumination** (`FNightIllumination`): TOA sun and moon, Kasten–Young air mass with V-band extinction k = 0.172 for
   the expected ground illuminance (log line and tests), the floor radiance, Kasten & Czeplak cloud factor from CIGI
-  Weather Control (dims the floor and the moon). `scripts/sky/ephemeris.py` mirrors both for the acceptance script.
+  Weather Control (`1 − 0.75 × cover^3.4`, 0.25 at 100 %). It dims the floor and the moon light by the same factor: the
+  moon light's intensity is `MoonToaLux × cloud factor` (`MoonLightLux`) and the moon casts no cloud shadows, so an
+  overcast moonlit night is uniformly darker, not patchy. The dome's moon disc keeps its TOA luminance (the volumetric
+  clouds, when drawn, cover it). `scripts/sky/ephemeris.py` mirrors both for the acceptance script.
 - **Units: k = 1.** Scene colour / PreExposure is luminance in cd/m² and light intensities are lux. CesiumSunSky's
   `SkyAtmosphere->TransmittanceMinLightElevationAngle` is set back to −90 (Cesium sets 90, so the ground transmittance
   was computed as if the sun were at the zenith): sun and moon dim and redden with air mass and go dark below the

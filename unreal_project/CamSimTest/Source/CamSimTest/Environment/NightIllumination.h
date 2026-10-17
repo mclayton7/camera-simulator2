@@ -21,7 +21,8 @@ struct FNightIlluminationInput
 struct FNightIlluminationResult
 {
 	double SunToaLux  = 0;          // set on the sun light (atmosphere applies transmittance)
-	double MoonToaLux = 0;          // set on the moon light
+	double MoonToaLux = 0;          // top of atmosphere (the dome's disc luminance)
+	double MoonLightLux = 0;        // set on the moon light: MoonToaLux x the cloud factor (the moon casts no cloud shadows)
 	double FloorRadianceCdM2 = 0;   // dome floor term = floor lux x cloud factor / (pi x FloorTransmittanceMean)
 	double SunGroundLux  = 0;       // expected horizontal illuminance at the ground (tests, log, night_check)
 	double MoonGroundLux = 0;

@@ -95,6 +95,8 @@ FNightIlluminationResult FNightIllumination::Compute(const FNightIlluminationInp
 	if (In.bMoonEnabled)
 	{
 		R.MoonToaLux = MoonToaLux(E.MoonPhaseAngleDeg, E.MoonDistanceKm);
+		// Overcast dims the moon by the floor's factor: the moon light has no cloud shadows (a second cloud shadow map).
+		R.MoonLightLux = R.MoonToaLux * Cloud;
 		R.MoonGroundLux = R.MoonToaLux * Transmittance(E.MoonElDeg)
 			* FMath::Max(FMath::Sin(FMath::DegreesToRadians(E.MoonElDeg)), 0.0) * Cloud;
 	}

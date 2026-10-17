@@ -504,7 +504,7 @@ void ACamSimEnvironment::ApplySky(const FDateTime& Utc)
 	if (MoonLight)
 	{
 		const bool bMoonUp = LastIllum.MoonToaLux > 0.0 && LastEphem.MoonElDeg > -1.0;
-		MoonLight->SetIntensity(bMoonUp ? static_cast<float>(LastIllum.MoonToaLux) : 0.0f);
+		MoonLight->SetIntensity(bMoonUp ? static_cast<float>(LastIllum.MoonLightLux) : 0.0f);
 		MoonLight->SetLightColor(LastIllum.MoonColor);
 		MoonLight->SetVisibility(bMoonUp);
 		// The moon on the volumetric clouds is UE's expensive second cloud light (~0.4 ms on the night bench): only while

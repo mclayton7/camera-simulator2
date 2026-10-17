@@ -148,6 +148,29 @@ bool FSkyEnvironmentWiringTest::RunTest(const FString&)
 	TestTrue(FString::Printf(TEXT("GetSunElevationDeg %.3f = ephemeris %.3f"), Env->GetSunElevationDeg(), E1.SunElDeg),
 		FMath::IsNearlyEqual(Env->GetSunElevationDeg(), static_cast<float>(E1.SunElDeg), 1e-3f));
 
+	// 2b. Overcast (final review I3, ruling): the moon light is dimmed by the floor's cloud factor (no moon cloud shadows),
+	// so an overcast full-moon night is darker on the ground, as the log and night_check predict.
+	{
+		FWeatherCommand W;
+		W.bEnabled = true;
+		W.CoveragePct = 100.0f;
+		Env->ApplyWeatherCommand(W);
+		Env->ApplySkyForTest(FullMoonNight);
+		const double Cloud = FNightIllumination::CloudFactor(1.0);
+		TestTrue(FString::Printf(TEXT("overcast: cloud factor 0.25 (%.4f)"), Cloud), FMath::IsNearlyEqual(Cloud, 0.25, 1e-9));
+		TestTrue(FString::Printf(TEXT("overcast: moon intensity %.6g == MoonToaLux x 0.25 %.6g"), Moon->Intensity, I1.MoonToaLux * Cloud),
+			FMath::IsNearlyEqual(static_cast<double>(Moon->Intensity), I1.MoonToaLux * Cloud, 1e-6 * I1.MoonToaLux));
+		TestTrue(TEXT("overcast: moon light still visible"), Moon->IsVisible());
+		const FLinearColor FloorOvercast = MpcVector(World, TEXT("Floor"));
+		TestTrue(TEXT("overcast: floor dimmed by the same factor"),
+			FMath::IsNearlyEqual(static_cast<double>(FloorOvercast.R), FloorL * Cloud, 1e-6 * FloorL));
+		W.bEnabled = false;
+		Env->ApplyWeatherCommand(W);
+		Env->ApplySkyForTest(FullMoonNight);
+		TestTrue(TEXT("clear again: moon intensity back to MoonToaLux"),
+			FMath::IsNearlyEqual(static_cast<double>(Moon->Intensity), I1.MoonToaLux, 1e-6 * I1.MoonToaLux));
+	}
+
 	// 3. Local noon the same day: the moon is below the horizon.
 	const FDateTime Noon(2026, 10, 26, 19, 0);
 	Env->ApplySkyForTest(Noon);
