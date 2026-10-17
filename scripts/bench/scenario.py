@@ -202,20 +202,30 @@ def build_phases(smoke: bool = False, site: Site = SITES["sf"]) -> list[Phase]:
     return phases
 
 
+# ~21:40 PDT 22 June, sun ~10 deg below the horizon: the night_slant shot's pose (ROADMAP 6A cost gate N7)
+NIGHT_UTC = {"utc_hour": 4, "utc_minute": 40, "day": 22}
+
+
+def _slant(site: Site) -> Pose:
+    return Pose(site.lat - 0.06, site.lon, 3000.0, yaw=0.0, gimbal_pitch=-17.0)  # ~10 km slant
+
+
+def build_opt_in_phases(site: Site = SITES["sf"]) -> list[Phase]:
+    """Measured phases flown only when named (`run_bench.py --phases night_slant`): not in the default bench."""
+    night = replace(_slant(site), **NIGHT_UTC)
+    return [Phase("night_slant", 60.0, lambda t: night)]
+
+
 def build_shots(smoke: bool = False, site: Site = SITES["sf"]) -> list[Shot]:
     far_lon = site.lon + 3.41
     nadir = Pose(site.lat, site.lon, 3000.0, gimbal_pitch=-90.0)
     if smoke:
         return [Shot("nadir_3km", nadir)]
-    slant = Pose(
-        site.lat - 0.06, site.lon, 3000.0, yaw=0.0, gimbal_pitch=-17.0
-    )  # ~10 km slant
+    slant = _slant(site)
     horizon = Pose(site.lat, site.lon, 1500.0, yaw=270.0, gimbal_pitch=-2.0)
     low_oblique = Pose(site.lat, site.lon - 0.03, 400.0, yaw=90.0, gimbal_pitch=-12.0)
     far_slant = replace(slant, lon=far_lon)
-    night = replace(
-        slant, utc_hour=4, utc_minute=40, day=22
-    )  # ~21:40 PDT, sun ~10 deg below the horizon
+    night = replace(slant, **NIGHT_UTC)
     shots = [
         Shot("nadir_3km", nadir),
         Shot("slant_10km", slant),

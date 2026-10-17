@@ -10,9 +10,9 @@ Times measured 2026-10-13 on the Linux reference box (Core Ultra 9 285K, RTX 508
 
 | Suite | Full run | Narrow run |
 |---|---|---|
-| C++, NullRHI (674 tests) | ~80 s: 6 s editor start, 27 s inside the tests, ~45 s of the automation controller's per-test overhead | `RunTests CamSim.<Group>` in the command from `CLAUDE.md`, e.g. `CamSim.Vegetation` (84 tests: 20 s end-to-end), `CamSim.Thermal` (141), `CamSim.Sensor.Physics`, or one test's full path: the time scales with the test count |
+| C++, NullRHI (705 tests) | ~80 s: 6 s editor start, 27 s inside the tests, ~45 s of the automation controller's per-test overhead | `RunTests CamSim.<Group>` in the command from `CLAUDE.md`, e.g. `CamSim.Vegetation` (84 tests: 20 s end-to-end), `CamSim.Thermal` (141), `CamSim.Sensor.Physics`, or one test's full path: the time scales with the test count |
 | C++, GPU (`CamSim.GPU.*`, 27) | a few minutes | `scripts/run_gpu_tests.sh CamSim.GPU.Thermal` (groups: `Sensor`, `Thermal`, `GroundTruth`, `Entity`, `LandCover`, `Ocean`) |
-| Python, `scripts/tests` (290) | ~1 s | `-k <name>` |
+| Python, `scripts/tests` (300) | ~1 s | `-k <name>` |
 | Python, control API client (`scripts/control`, 17) | ~3 s | `uv run --project scripts/control --with pytest pytest scripts/control/tests -k <name>` |
 | Python, scene tooling (748) | 37 s with `-n auto` (24 cores; 141 s serial) | one module: `uv run --project scripts/scene pytest scripts/scene/tests/test_buildings_layer.py`; the parallel floor is the slowest test (~20 s, `test_ndvi_check.py`) |
 
@@ -37,6 +37,7 @@ dominate a development loop. Narrow them:
 | Anything on the video / KLV path | `scripts/ci_validate.sh --native` (~2 min) | the same; it is already the short end-to-end check |
 | KLV geometry (sensor pose, FOV, frame centre, corners), camera rig, entity placement | `georeg_check.py --scene PKG --out OUT` (R6, `docs/realism-validation.md`) | `--runs main --views flat/nadir,flat/corner` (one launch, two views); `--check-only` re-evaluates a finished run without launching |
 | Bridge decks (`camsim_scene/bridges.py`, the bridges layer, the DIS deck ceiling) | `scripts/scene/tools/bridges_check.py --scene PKG --out OUT` (three launches) | `--runs hot` (one launch: B2, B3); the scene tests `test_bridges*.py`; `RunTests CamSim.Entity.SurfaceClamp+CamSim.Scene.Bridges` |
+| Night sky, ephemeris, illumination, sky dome, cached-lighting band, radiometric EO AE | `night_check.py --scene PKG --out OUT --baseline BASE` (6A, `docs/night.md`; ~25 min without `thermal`) | `--runs moon` (N2, N3: one launch), `--runs dusk` (N5, N8), `--runs stars` (N4); `--check-only` re-evaluates; `RunTests CamSim.Environment+CamSim.Sensor` |
 | Datum pipelines (`camsim_scene/datum.py`, GEOID18) | `scripts/scene/tools/datum_check.py PKG` (seconds, no CamSim) | the same |
 | Anything that could make frames vary run to run (sensor noise, streaming, vegetation, TSR) | `determinism_check.py --scene PKG --out OUT` (two launches, six poses) | `--check-only` re-compares a finished pair |
 | Control API (`Control/`, capture tagging, lockstep sim delta, `scripts/control/`) | `control_api_check.py --scene PKG --out OUT` (two launches, gates C1–C8, ~15 min) | `RunTests CamSim.ControlApi` (NullRHI, routes in-process); `--runs main` (one launch: C1–C6, C8) |

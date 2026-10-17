@@ -148,6 +148,15 @@ def test_filter_phases_none_means_all_and_skip_warmup_drops_it():
     ]
 
 
+def test_filter_phases_flies_opt_in_phases_only_when_named():
+    phases, opt_in = scenario.build_phases(), scenario.build_opt_in_phases()
+    assert run_bench.filter_phases(phases, None, False, opt_in) == phases
+    out = run_bench.filter_phases(phases, ["night_slant"], False, opt_in)
+    assert [p.name for p in out] == ["warmup", "night_slant"]
+    night = out[1].pose_at(30.0)
+    assert (night.utc_hour, night.utc_minute, night.day) == (4, 40, 22)
+
+
 def test_filter_phases_rejects_unknown_names_with_the_valid_list():
     with pytest.raises(SystemExit, match="unknown phase 'dense_pas'.*orbit"):
         run_bench.filter_phases(scenario.build_phases(), ["dense_pas"], False)

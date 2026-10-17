@@ -258,11 +258,15 @@ def _csv_list(text: str) -> list[str]:
 
 
 def filter_phases(
-    phases: list[scenario.Phase], names: list[str] | None, skip_warmup: bool
+    phases: list[scenario.Phase],
+    names: list[str] | None,
+    skip_warmup: bool,
+    opt_in: Sequence[scenario.Phase] = (),
 ) -> list[scenario.Phase]:
     """The phases to fly: every phase, or the warm-up plus the named measured
-    phases, in scenario order. An unknown name ends the run before CamSim starts."""
-    valid = [p.name for p in phases if p.measured]
+    phases, in scenario order; `opt_in` phases (e.g. night_slant) only when named,
+    after the others. An unknown name ends the run before CamSim starts."""
+    valid = [p.name for p in phases if p.measured] + [p.name for p in opt_in]
     for n in names or []:
         if n not in valid:
             sys.exit(f"unknown phase '{n}' (valid: {', '.join(valid)})")
@@ -273,6 +277,7 @@ def filter_phases(
                 out.append(p)
         elif names is None or p.name in names:
             out.append(p)
+    out.extend(p for p in opt_in if names is not None and p.name in names)
     return out
 
 
@@ -470,7 +475,10 @@ def main() -> int:
     args = build_parser().parse_args()
     site = scenario.SITES[args.site]
     phases = filter_phases(
-        scenario.build_phases(smoke=args.smoke, site=site), args.phases, args.skip_warmup
+        scenario.build_phases(smoke=args.smoke, site=site),
+        args.phases,
+        args.skip_warmup,
+        scenario.build_opt_in_phases(site),
     )
     shots = filter_shots(scenario.build_shots(smoke=args.smoke, site=site), args.shots)
 

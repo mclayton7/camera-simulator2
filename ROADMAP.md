@@ -37,7 +37,7 @@ Night is the largest gap for an EO/IR trainer. Today the night sky is "very dim 
 
 | ID  | Item |
 | --- | ---- |
-| 6.1 | **Ephemeris:** moon position and phase from `FSimClock` (a second directional light, illuminance from phase and elevation), star field and night-sky radiance. The moon drives NVG-level illumination. |
+| 6.1 | **6A done (2026-10-16)** (`docs/night.md`): `FEphemeris` sun/moon/sidereal time, moon as atmosphere light 1 (K&S), physical sun (k = 1, 127.5 klx TOA), generated IsSky dome `M_SkyDome` (atmosphere, discs, BSC5 stars, night floor), Lumen cached-lighting band, radiometric EO exposure (9.4), CIGI celestial enables; `night_check.py` N1–N6 and N8 pass on the RTX 5080, N7 open (moonlit clouds +0.55 ms GPU). |
 | 6.2 | **Light points / cultural lighting:** streetlights, airfield lighting, building windows (from R3 buildings and R2 roads in the scene package), vehicle headlights and nav lights. Built on **MegaLights** (production-ready in UE 5.8: hundreds of shadow-casting lights at near-constant cost). CIGI: Component Control for entity lights. |
 | 6.3 | **Image-intensifier (NVG / I²) preset** on the photon detector (3B.2): photocathode spectral response, gain, halo/blooming around point sources, scintillation; green or white phosphor display. Optional SWIR preset. Watch **Fog Screen Space Scattering** (experimental in 5.8: light scattering in volumetric fog and local fog volumes) for halos in fog. |
 | 6.4 | **Acceptance:** night scene under full moon vs new moon (NVG mean level and noise follow illumination); lit airfield and street grid visible in EO and NVG; light count vs frame budget on the RTX 5080 and the M1 Pro. |
@@ -81,7 +81,6 @@ Human: `/Game/Effects` Niagara/volume assets (then add `/Game/Effects` to `Direc
 | 9.1 | **Simulated video tracker:** point/area track on a selected entity or ground point, driving the gimbal and the KLV track gate (Tags 43/44, already conformant). |
 | 9.2 | **Laser designator / rangefinder:** spot visible in the sensor band, range from LOS; consumes `DisEntityAdapter::GetDesignatorSpot` (state exists, no consumer since 3B.2). |
 | 9.3 | **Motion blur and rolling shutter from the integration time**, inside `SensorCS` and its CPU reference (not UE's motion blur, which stays off). Real platform imagery at 30 fps has both; detectors trained without them suffer for it. |
-| 9.4 | **Radiometric photon gain** (3B.3): `f_number`, pixel pitch, QE and integration time set exposure, instead of `max_photon_gain_ev` as a per-mode calibration. |
 | 9.5 | **Distortion-aware KLV corners** (3B.3): Tags 82–89 are pinhole when `optics.k1`/`k2` ≠ 0. |
 
 ### Milestone 10: Interoperability
@@ -200,6 +199,26 @@ Considered and not reopened: land cover as a Cesium raster overlay (4B chose the
   `M_Ocean`); Lumen's surface-cache refresh has no deterministic freeze; set the cross-GPU SSIM limit with
   `determinism_check.py --against`.
 
+### Night sky (6A)
+
+- **N7 (night cost) fails: +0.55 ms GPU p50** at the bench `night_slant` pose (2.975 → 3.528 ms). The moon, as atmosphere
+  light 1 with cloud scattering on (spec), lights the level's volumetric clouds (UE's "expensive" second cloud light,
+  ~0.4 ms) and casts VSM shadows (~0.1 ms). Decision needed: moon `CloudScatteredLuminanceScale` black (≈ +0.12 ms, dark
+  clouds under the moon) or accept the cost (`docs/night.md` "Acceptance").
+- Thermal IR still takes its sun from `ACamSimEnvironment::ComputeSunPosition`; move `FThermalModel` onto `FEphemeris`
+  (changes the thermal calibration; rerun `thermal_check.py`).
+- `Main.umap` has no `ExponentialHeightFog`: CIGI visibility does nothing (with 8.6).
+- 6C light points: MegaLights needs hardware ray tracing (`r.RayTracing=False`; the M1 Pro has none): find another
+  approach (or HW RT, 11.1).
+- Metal: `M_SkyDome` not compiled or run on the M1 Pro; the M1 Pro run of `night_check.py` is open.
+- Memory: the star texture keeps a 64 MB CPU copy and 64 MB of VRAM, and `FStarField::Bin` allocates a ~200 MB
+  transient accumulator at startup (capacity is VRAM-bound).
+- After an IR → EO switch the cached-lighting band can read a stale median for a frame or two.
+- `r.Test.FreezeTemporalSequences 1` (the R6 determinism pin) makes TSR hold stale light indefinitely after a large
+  lighting jump in lockstep (full → new moon kept the median 5 EV high; night → noon left a mottled sky):
+  `determinism_check.py` / `control_api_check.py` captures after such jumps are suspect.
+- The sky dome's stars are one texel (≈ 5′); no earthshine, planets or Milky Way.
+
 ### Operations
 
 - macOS: `run.sh` copies the config into a staged `.app` (not checked).
@@ -245,6 +264,8 @@ One line each; details in the named guide or `git show ae0a390:ROADMAP.md`.
 | 4B | 2026-10-02 | Land cover for thermal: WorldCover window, imagery refinement |
 | 4C | 2026-10-07 | Entity thermal state: skin and parts on sim time from power, damage, flaming, motion |
 | 4D (part) | 2026-10-16 | Semantic class image in ground truth, datasets and control API captures |
+| 6A (6.1) | 2026-10-16 | Night sky (`docs/night.md`): ephemeris, moon light, IsSky dome with stars and night floor, absolute light levels (k = 1), Lumen cached-lighting band; `night_check.py` N1–N6, N8 (N7 open) |
+| 9.4 | 2026-10-16 | Radiometric EO photon gain (folded into 6A): integration time from f-number, pitch, transmission, QE; IR stays calibrated (Milestone 9) |
 | R0 | 2026-10-09 | Offline scene packages (`docs/scene-packages.md`): 3DEP + NAIP over `file://`, byte-identical builds |
 | R1 | 2026-10-10 | Imagery edge (Sentinel-2 → NAIP), NDVI layer, seabed under tidal water, local MSL; Linux/Docker offline |
 | R2 | 2026-10-10 | OSM roads/rail and NHD water burned into land cover; CIGI material codes |

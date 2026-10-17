@@ -99,9 +99,7 @@ sensor_modes:
   eo:
     preset: eo_hd_cmos
     seed: 1
-    exposure:
-      min_gain_ev: -20
-      max_photon_gain_ev: -12.5
+    exposure:                 # radiometric (6A): the gain limits come from detector.integration_*
       target_grey: 0.18
       highlight_percentile: 0.99
       lag_frames: 2
@@ -408,13 +406,13 @@ were also removed in 3B.2; see "Removed in 3B.2" below.)
 `CAMSIM_IR_PRESET` re-applies the named preset to the IR mode after the yaml is read (dropping yaml `optics:`/`detector:` overrides); an unknown name is a validation error.
 
 
-**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point (full well, i.e. ADC full scale, which displays as white), then clamps the total gain to `[min_gain_ev, max_photon_gain_ev + detector.max_analog_gain_db/20·log2(10)]` (ROADMAP 3B.2). The total is split photon-first: the photon stage (integration time) takes gain up to `max_photon_gain_ev`, and only the remainder is analog gain, applied after the detector noise (so it amplifies noise too). A microbolometer has no analog stage. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_photon_gain_ev` (mean luma 26 in 3B.1, photon gain only). Re-measured with the full 3B.2 model and unchanged defaults (ROADMAP 3B.2, 720p): daylight EO mean luma 106–118 with ≤ 0.1% of pixels luma-clipped, dawn/dusk 104/91, `night_slant` 34 — analog gain lifts it past the photon clamp, so its temporal noise is 1.83 DN against 1.13 DN in daylight. The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99).
+**`sensor_modes.<mode>.exposure`** (ROADMAP 3B, GPU sensor path). No env overrides — per-mode only. The sensor AE exposes the scene histogram's median to `target_grey`, but never lets the `highlight_percentile` pixel pass the clip point (full well, i.e. ADC full scale, which displays as white), then clamps the total gain to `[min_gain_ev, max_photon_gain_ev + detector.max_analog_gain_db/20·log2(10)]` (ROADMAP 3B.2). The total is split photon-first: the photon stage (integration time) takes gain up to `max_photon_gain_ev`, and only the remainder is analog gain, applied after the detector noise (so it amplifies noise too). A microbolometer has no analog stage. Defaults were calibrated on the bench shots on 2026-09-27 (M1 Pro, San Francisco; ROADMAP 3B.1): daylight scene medians are 2^10.9–2^12.4 and expose inside the limits (EO mean luma 105–114, < 0.1% clipped); `night_slant` (median 2^6.6) clamps at EO's `max_photon_gain_ev` (mean luma 26 in 3B.1, photon gain only). Re-measured with the full 3B.2 model and unchanged defaults (ROADMAP 3B.2, 720p): daylight EO mean luma 106–118 with ≤ 0.1% of pixels luma-clipped, dawn/dusk 104/91, `night_slant` 34 — analog gain lifts it past the photon clamp, so its temporal noise is 1.83 DN against 1.13 DN in daylight. The same per-mode values are FCamSimConfig's built-in defaults (used when the yaml has no `exposure:` block; `CamSim.Sensor.Config.PerModeExposureDefaults`/`…CanonicalConfig` keep code and yaml in step); a bare `FSensorExposureConfig` holds neutral values (−20/−6, 0.18, 0.99). **Since 6A the EO mode is radiometric** (ROADMAP 9.4, `docs/night.md`): `eo_hd_cmos` sets `optics.transmission` and `detector.qe`, so its photon-stage limits come from the integration time, `min_gain_ev = log2(R · integration_min_us / full_well_e)` ≈ −18.6 and `max_photon_gain_ev = log2(R · integration_max_ms / full_well_e)` ≈ −6.94 (R ≈ 2,440 e/s per cd/m²), with up to 30 dB of analog gain past it (total cap ≈ −1.96 EV); the calibrated −12.5 above applies only to a photon mode without transmission/QE. On a radiometric mode `exposure.min_gain_ev` / `max_photon_gain_ev` log one warning and are ignored. The AE reads its median and highlight percentiles interpolated inside the 1/8-EV histogram bins. `camsim.Sensor.AeLog 1` logs the AE state (gain EV, scene median, photon/analog gain, integration time) once a second.
 
 | Field | Type | EO default | IR default | Description |
 |-------|------|------------|------------|-------------|
 | `exposure.auto` | bool | `true` | `true` | Auto-exposure on; `false` uses `manual_gain_ev`. |
-| `exposure.min_gain_ev` | float | `-20.0` | `-20.0` | Lowest gain the simulated camera can select, log2 of the multiplier applied to absolute scene-linear values (higher = brighter). Must be `>= -40`. |
-| `exposure.max_photon_gain_ev` | float | `-12.5` | `-6.0` | Highest photon-stage gain (longest integration) the simulated camera can select (renamed from `max_gain_ev` in 3B.2). Past it, the AE adds analog gain up to `detector.max_analog_gain_db`. This is the mode's sensitivity calibration: it is not yet derived from `optics.f_number`, `pixel_pitch_um`, QE or integration time (radiometric photon gain is ROADMAP 3B.3). |
+| `exposure.min_gain_ev` | float | `-20.0` (radiometric EO: from `integration_min_us`, ≈ −18.6) | `-20.0` | Lowest gain the simulated camera can select, log2 of the multiplier applied to absolute scene-linear values (higher = brighter). Must be `>= -40`. Ignored with a warning on a radiometric mode. |
+| `exposure.max_photon_gain_ev` | float | `-12.5` (radiometric EO: from `integration_max_ms`, ≈ −6.94) | `-6.0` | Highest photon-stage gain (longest integration) the simulated camera can select (renamed from `max_gain_ev` in 3B.2). Past it, the AE adds analog gain up to `detector.max_analog_gain_db`. A calibration only for a mode without radiometric optics: on a radiometric mode (`optics.transmission` and `detector.qe` > 0, the EO preset) it is derived from `optics.f_number`, `pixel_pitch_um`, `transmission`, `detector.qe` and `integration_max_ms` (ROADMAP 9.4, 6A), and setting it logs a warning and is ignored. |
 | `exposure.target_grey` | float | `0.18` | `0.18` | Linear value the histogram median is exposed to. |
 | `exposure.highlight_percentile` | float | `0.99` | `0.99` | This percentile of the histogram is kept below clipping. |
 | `exposure.lag_frames` | int | `2` | `2` | Convergence time constant in frames at 30 Hz (sim time); `0` = instant. |
@@ -492,7 +490,7 @@ Presets (`Sensor/SensorPresets.h`, `CamSimSensorPresets::Apply`):
 **Validation errors:** unknown `preset` or `detector.type`; `full_well_e <= 0`; `adc_bits` outside `[8, 16]`; negative
 noise parameters or `f_number <= 0`; `pixel_pitch_um` / `wavelength_um <= 0` or `extra_blur_px < 0`;
 `vignetting_exponent` outside `[0, 8]`; `exposure.min_gain_ev < -40`;
-defect fractions outside `[0, 0.01]`; `band_lo_um`/`band_hi_um` not satisfying `0 < lo < hi <= 30`; `agc_max_display_gain < 1`; `thermal_exposure` like `exposure`; `|k1|` or `|k2| > 1` (a NaN fails every range check); a distortion that "does not converge out
+defect fractions outside `[0, 0.01]`; `optics.transmission` or `detector.qe` outside `[0, 1]`; `detector.integration_max_ms <= 0`; `detector.integration_min_us <= 0` or not below `integration_max_ms`; `band_lo_um`/`band_hi_um` not satisfying `0 < lo < hi <= 30`; `agc_max_display_gain < 1`; `thermal_exposure` like `exposure`; `|k1|` or `|k2| > 1` (a NaN fails every range check); a distortion that "does not converge out
 to the frame corner": the sensor inverts `k1`/`k2` with a fixed 3-step Newton recurrence (CPU and
 GPU alike), checked at 64 distorted radii from the centre to the corner of the
 `capture_width × capture_height` frame at `hfov_deg` (e.g. `k1: -1.0` fails at 60°, `-0.3` passes).
@@ -991,6 +989,18 @@ are in the Sensor Modes section.
 | `environment.celestial.cached_exposure.night_ev` | *(YAML only)* | `-6` | Same, night band; in `[-16, 16]` and `< day_ev`. |
 | `environment.celestial.cached_exposure.switch_median_log2` | *(YAML only)* | `0` | EO scene median (log2 cd/m²) at which the band switches. |
 | `environment.celestial.cached_exposure.hysteresis_ev` | *(YAML only)* | `2` | Hysteresis around the switch, EV; `>= 0`. |
+
+`night_floor_lux` is the horizontal illuminance the floor delivers on the ground: the dome draws it attenuated by the
+view elevation's transmittance, so its radiance is `night_floor_lux / (π × 0.755)` (the `floor_cdm2` of the log line).
+For 15 frames after a band switch the real-time sky capture runs whole-cubemap
+(`r.SkyLight.RealTimeReflectionCapture.TimeSlice 0`, the previous value restored after; `docs/night.md`).
+
+Diagnostic console variables (`-ExecCmds=` or the console; off by default):
+
+| CVar | Logs |
+|---|---|
+| `camsim.Sky.Log 1` | every sky apply (once per sim second, a clock jump, a camera move over 1 km): `6A sky: utc=… sun_el=… sun_ground_lux=… moon_el=… moon_phase=… moon_illum=… moon_ground_lux=… floor_cdm2=… band=day\|night stars=0\|1` |
+| `camsim.Sensor.AeLog 1` | the sensor AE once a second: `Sensor AE: mode=… gainEv=… medianLog2=… photonGain=… analogGain=… t_int=… ms` (`t_int` 0 on a calibrated mode) |
 
 ## Vegetation (`vegetation:`)
 

@@ -451,7 +451,7 @@ sensor_modes:
     # (daylight gain -13.4…-14.9, mean luma 105–114, <0.1% clipped).
     # ROADMAP 9.4 (6A): eo_hd_cmos is radiometric (optics.transmission, detector.qe), so the photon
     # gain is the integration time: its limits come from detector.integration_min_us / _max_ms
-    # (≈ -18.5 … -6.8 EV), not min_gain_ev / max_photon_gain_ev (ignored with a warning here).
+    # (≈ -18.6 … -6.94 EV), not min_gain_ev / max_photon_gain_ev (ignored with a warning here).
     # Past t_max the AE adds analog gain up to detector.max_analog_gain_db (3B.2).
     exposure:
       target_grey: 0.18
