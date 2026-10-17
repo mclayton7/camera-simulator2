@@ -36,12 +36,12 @@ namespace
 		return Tex;
 	}
 
-	/** Transient linear BGRA8 grey texture of the moon albedo with a box-filtered mip chain (M_SkyDome samples it at an
-	 *  explicit LOD); longitude wraps, latitude clamps. A 1 x 1 white texture for an empty map. */
+	/** Transient linear G8 texture of the moon albedo with a box-filtered mip chain (M_SkyDome samples it at an explicit
+	 *  LOD, reading .r); longitude wraps, latitude clamps. A 1 x 1 white texture for an empty map. */
 	UTexture2D* MakeMoonTexture(const FMoonAlbedoMap& Map)
 	{
 		const int32 W = Map.IsEmpty() ? 1 : Map.Width, H = Map.IsEmpty() ? 1 : Map.Height;
-		UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8, TEXT("CamSimMoonAlbedo"));
+		UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_G8, TEXT("CamSimMoonAlbedo"));
 		if (!Tex) return nullptr;
 		TArray<uint8> Level = Map.IsEmpty() ? TArray<uint8>({ 255 }) : Map.Texels;
 		int32 Lw = W, Lh = H;
@@ -51,12 +51,8 @@ namespace
 			FTexture2DMipMap* MipMap = Mip == 0 ? &Pd->Mips[0] : new FTexture2DMipMap(Lw, Lh, 1);
 			if (Mip > 0) Pd->Mips.Add(MipMap);
 			MipMap->BulkData.Lock(LOCK_READ_WRITE);
-			uint8* Dest = static_cast<uint8*>(MipMap->BulkData.Realloc(static_cast<int64>(Lw) * Lh * 4));
-			for (int32 I = 0; I < Lw * Lh; ++I)
-			{
-				Dest[4 * I + 0] = Dest[4 * I + 1] = Dest[4 * I + 2] = Level[I];
-				Dest[4 * I + 3] = 255;
-			}
+			uint8* Dest = static_cast<uint8*>(MipMap->BulkData.Realloc(static_cast<int64>(Lw) * Lh));
+			FMemory::Memcpy(Dest, Level.GetData(), static_cast<SIZE_T>(Lw) * Lh);
 			MipMap->BulkData.Unlock();
 			if (Lw == 1 && Lh == 1) break;
 			const int32 Nw = FMath::Max(Lw / 2, 1), Nh = FMath::Max(Lh / 2, 1);

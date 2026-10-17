@@ -34,7 +34,7 @@ float3 CamSimMoonRight(float3 MoonDir, float3 SunDir)
 // Moon disc luminance along view dir V: 0 outside the disc. Mirrors FMoonDisc::Radiance (Environment/MoonSurface.cpp):
 // the disc point's surface normal N = u Right + v Up + nz (-MoonDir) (u toward the sun in the disc plane), lunar-Lambert
 // reflectance 2 L mu0 / (mu0 + mu) + (1 - L) mu0 (McEwen; L = MoonParams.z, mu0 = N.SunDir, mu = nz) times the albedo
-// map at N's selenographic coordinates (body axes AxisX/Y/Z from the IAU rotation model), sampled at LOD.
+// map at N's selenographic coordinates (body axes AxisX/Y/Z from the IAU rotation model), sampled at LOD (G8: .r).
 float CamSimMoonDisc(float3 V, float3 MoonDir, float3 SunDir, float AngRadius, float LumScale, float L,
 	float3 AxisX, float3 AxisY, float3 AxisZ, Texture2D AlbedoTex, SamplerState AlbedoSampler, float Lod)
 {
@@ -53,7 +53,7 @@ float CamSimMoonDisc(float3 V, float3 MoonDir, float3 SunDir, float AngRadius, f
 	float Lon = atan2(dot(N, AxisY), dot(N, AxisX));
 	float Lat = asin(clamp(dot(N, AxisZ), -1.0, 1.0));
 	float2 T = float2(Lon / (2.0 * PI) + 0.5, 0.5 - Lat / PI);
-	return LumScale * AlbedoTex.SampleLevel(AlbedoSampler, T, Lod).g * Shade;
+	return LumScale * AlbedoTex.SampleLevel(AlbedoSampler, T, Lod).r * Shade;
 }
 
 // Mip level for the albedo map: the view's pixel footprint (radians, from the view-direction derivatives, taken outside
