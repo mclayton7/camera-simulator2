@@ -564,14 +564,17 @@ void ACamSimEnvironment::UpdateCachedExposureBand()
 	const ACamSimCamera* Cam = CamSimCameraActor.Get();
 	if (!Cam) return;
 	const FCachedExposureBandConfig& BandCfg = CelestialCfg.CachedExposure;
-	// Only EO medians of real frames: in IR the histogram is radiance, and while the terrain gate holds frames the first
-	// histograms are of an unloaded (black) scene (the smoke run flipped to night and back in the first 8 frames).
-	const bool bSwitched = Band.Update(Cam->GetSceneMedianLog2(), Cam->IsSensorInEo() && Cam->IsTerrainReady(), BandCfg);
+	// Only EO medians of real frames: in IR the histogram is radiance, after IR -> EO the controller's last median is still
+	// the IR one until an EO frame comes back (it flipped the band to night and back in daylight), and while the terrain
+	// gate holds frames the first histograms are of an unloaded (black) scene (the smoke run flipped in the first 8 frames).
+	float Median = 0.0f;
+	const bool bEoMedian = Cam->GetEoSceneMedianLog2(Median);
+	const bool bSwitched = Band.Update(Median, bEoMedian && Cam->IsSensorInEo() && Cam->IsTerrainReady(), BandCfg);
 	if (bSwitched)
 	{
 		SetCachedLightingPreExposure(Band.CachedEv(BandCfg));
 		UE_LOG(LogCamSim, Log, TEXT("6A: cached lighting band → %s (%.0f EV), scene median 2^%.1f"),
-			Band.IsNight() ? TEXT("night") : TEXT("day"), Band.CachedEv(BandCfg), Cam->GetSceneMedianLog2());
+			Band.IsNight() ? TEXT("night") : TEXT("day"), Band.CachedEv(BandCfg), Median);
 	}
 	// Re-encode the whole sky capture at the new pre-exposure at once (FSkyRecaptureHold): time-sliced, the old cubemap
 	// dimmed Lumen's sky lighting for ~1.5 s after a switch.

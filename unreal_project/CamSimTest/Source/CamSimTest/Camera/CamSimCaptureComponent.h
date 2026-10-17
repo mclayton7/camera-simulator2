@@ -140,6 +140,8 @@ public:
 	float GetSensorGainEv() const { return SensorController.GetGainEv(); }
 	/** Median scene signal (log2) of the last histogram the controller used. */
 	float GetSceneMedianLog2() const { return SensorController.GetLastMedianLog2(); }
+	/** ROADMAP 6A: FSensorController::GetEoMedianLog2 (an EO median rendered after the switch to EO, else false). */
+	bool GetEoSceneMedianLog2(float& OutLog2) const { return SensorController.GetEoMedianLog2(OutLog2); }
 
 	void SetLatencyTracker(FPipelineLatencyTracker* Tracker);
 

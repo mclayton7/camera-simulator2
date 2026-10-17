@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Sensor/SensorController.h"
+#include "Environment/CachedExposureBand.h"
 
 namespace
 {
@@ -688,5 +689,60 @@ bool FSensorFixedNoiseFrameTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("pinned: frame index 7 at serial 2"), P2.FrameIndex, 7u);
 		TestEqual(TEXT("pinned: serial still advances"), P2.Serial, 2u);
 	}
+	return true;
+}
+
+// ROADMAP 6A (final review I1): the cached-lighting band reads only an EO median produced after the switch to EO. One
+// median shared by every slot let the thermal radiance median (log2 ~ -0.3 at noon) through on the IR -> EO tick, so the
+// band flipped to night and back in daylight (Lumen surface cache dropped, a whole-cubemap sky capture at -6 EV).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSensorEoMedianAfterSwitchTest, "CamSim.Sensor.Controller.EoMedianOnlyAfterSwitch",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSensorEoMedianAfterSwitchTest::RunTest(const FString& Parameters)
+{
+	FSensorController C;
+	FSensorModeConfig Cfg = ThermalCfg();
+	Cfg.Exposure.LagFrames = 0;
+	const FCachedExposureBandConfig BandCfg;
+	FCachedExposureBand Band;
+	auto FeedBand = [&]()
+	{
+		float M = 0.0f;
+		const bool bValid = C.GetEoMedianLog2(M);
+		return Band.Update(M, bValid, BandCfg);
+	};
+
+	const FSensorHistogram Day = Flat(9.0f, 1);   // EO daylight: median 2^9 cd/m2
+	FSensorControllerInput EoIn = In(&Day, 1);
+	C.Update(EoIn, Cfg);
+	float M = 0.0f;
+	TestTrue(TEXT("EO median valid in EO"), C.GetEoMedianLog2(M));
+	TestEqual(TEXT("EO median"), M, FSensorHistogram::BinCentreLog2(FSensorHistogram::BinOf(FMath::Exp2(9.0f))), 1e-3f);
+	TestFalse(TEXT("day stays day"), FeedBand());
+
+	// Thermal IR at noon: the radiance median sits just below 1 (log2 ~ -0.3).
+	const FSensorHistogram Ir = Flat(-0.3f, 2);
+	C.Update(Radiance(&Ir, 2), Cfg);
+	C.Update(Radiance(&Ir, 3), Cfg);
+	TestFalse(TEXT("no EO median while in IR"), C.GetEoMedianLog2(M));
+	TestFalse(TEXT("IR holds the band"), FeedBand());
+
+	// Back to EO: no histogram yet, then a late IR histogram (rendered before the switch) arrives.
+	FSensorControllerInput Back = In(nullptr, 4);
+	C.Update(Back, Cfg);
+	TestFalse(TEXT("no EO median before an EO histogram"), C.GetEoMedianLog2(M));
+	TestFalse(TEXT("switch tick: band holds"), FeedBand());
+	TestFalse(TEXT("still day"), Band.IsNight());
+	const FSensorHistogram LateIr = Flat(-0.3f, 3);
+	C.Update(In(&LateIr, 5), Cfg);
+	TestFalse(TEXT("a pre-switch histogram is not an EO median"), C.GetEoMedianLog2(M));
+	TestFalse(TEXT("late IR histogram: band holds"), FeedBand());
+	TestFalse(TEXT("still day after the late histogram"), Band.IsNight());
+
+	// The first EO histogram rendered after the switch is the median again.
+	const FSensorHistogram Day2 = Flat(9.0f, 4);
+	C.Update(In(&Day2, 6), Cfg);
+	TestTrue(TEXT("post-switch EO median valid"), C.GetEoMedianLog2(M));
+	TestFalse(TEXT("day stays day"), FeedBand());
+	TestFalse(TEXT("never switched"), Band.IsNight());
 	return true;
 }

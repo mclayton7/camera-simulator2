@@ -40,6 +40,15 @@ public:
 	 *  (* DisplayGain in IR AGC, i.e. the AGC stretch on absolute signal). */
 	float  GetGainEv() const          { return LastEmittedGainEv; }
 	float  GetLastMedianLog2() const  { return LastMedianLog2; }
+	/** ROADMAP 6A: the EO AE's scene median (log2) for the cached-lighting band. False unless the controller is in the EO
+	 *  slot and has consumed an EO histogram rendered after it entered that slot: after IR -> EO, GetLastMedianLog2 is
+	 *  still the IR median (thermal radiance, log2 ~ -0.3 at noon), which flipped the band to night in daylight. */
+	bool   GetEoMedianLog2(float& OutLog2) const
+	{
+		if (LastSlot != 0 || !bEoMedianFresh) return false;
+		OutLog2 = EoMedianLog2;
+		return true;
+	}
 	/** UE's pre-exposure for the scene buffers (AutoExposureBias, EV; ROADMAP 6A): the AE's target without the photon /
 	 *  analog cap, at most MaxSceneExposureBoostEv above the emitted gain. Equal to GetGainEv() while the AE is inside its
 	 *  limits (daylight); at night, with the gain capped, it keeps scene colour near target grey, so UE's pre-exposed fp16 /
@@ -94,6 +103,10 @@ private:
 	float  IrLoLog2        = 0.0f;
 	float  IrHiLog2        = 1.0f;
 	float  LastMedianLog2  = 0.0f;
+	/** GetEoMedianLog2: the EO slot's median of a histogram rendered at or after EoSinceSerial (the serial it entered EO). */
+	float  EoMedianLog2    = 0.0f;
+	bool   bEoMedianFresh  = false;
+	uint32 EoSinceSerial   = 0;
 	float  LastIntegrationMs = 0.0f;
 	int32  TicksSinceHistogram = 0;
 	double PendingDeltaSimSec  = 0.0;  // sim time since the last histogram was consumed

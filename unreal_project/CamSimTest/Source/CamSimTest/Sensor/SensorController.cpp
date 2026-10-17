@@ -96,6 +96,11 @@ void FSensorController::UpdateAe(const FSensorHistogram& H, const FSensorModeCon
 	if (PercentileLog2Interp(H, 0.5f, Median) && PercentileLog2Interp(H, E.HighlightPercentile, High))
 	{
 		LastMedianLog2 = Median;
+		if (SlotOf(In) == 0 && H.Serial >= EoSinceSerial)
+		{
+			EoMedianLog2 = Median;
+			bEoMedianFresh = true;
+		}
 		if (E.bAuto)
 		{
 			const float ToGrey = FMath::Log2(FMath::Max(E.TargetGrey, 1e-6f)) - Median;
@@ -134,6 +139,11 @@ void FSensorController::UpdateIrAgc(const FSensorHistogram& H, const FSensorMode
 FSensorFrameParams FSensorController::Update(const FSensorControllerInput& In, const FSensorModeConfig& Cfg)
 {
 	const int32 Slot = SlotOf(In);
+	if (Slot != LastSlot)
+	{
+		bEoMedianFresh = false;
+		EoSinceSerial = In.Serial;
+	}
 	if (Slot != LastSlot || In.bCameraCut)
 	{
 		bSnapPending = true;
