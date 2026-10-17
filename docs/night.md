@@ -36,7 +36,11 @@ points) build on the same light levels. Design: `docs/superpowers/specs/2026-10-
   never hand-edited): any IsSky mesh replaces the atmosphere in UE's real-time sky capture, so the dome draws the
   atmosphere itself (`SkyAtmosphereViewLuminance`) plus the sun disc, the moon disc (Lambert-lit from the ephemeris
   sun, normalised so the disc integrates to the moon's illuminance), the stars (point-sampled, rotated by local
-  sidereal time, latitude and J2000 precession) and the floor; stars and floor are attenuated by T(view elevation).
+  sidereal time, latitude and J2000 precession) and the floor; moon disc, stars and floor are attenuated by T(view
+  elevation), computed once in one Custom node. The moon disc is left out of the real-time sky capture (UE's
+  `RenderingReflectionCaptureMask`, as its own sun disc is): the moon directional light already lights the scene, and a
+  captured 0.5° disc would add up to ~80 % of its light again through the sky light, depending on where it fell on the
+  capture's ~0.7° texels.
   The floor radiance is `night_floor_lux / (π × 0.755)`, 0.755 being the cosine-weighted mean of T over the sky, so it
   delivers `night_floor_lux` on a horizontal surface.
 - **Lumen cached-lighting band**: Lumen's surface cache and the sky capture store luminance × 2^−c in R11G11B10

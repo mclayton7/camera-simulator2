@@ -1,5 +1,5 @@
 // Copyright CamSim Contributors. All Rights Reserved.
-// Night sky terms for M_SkyDome (ROADMAP 6A), included by its Custom nodes (scripts/sky/make_sky_material.py).
+// Night sky terms for M_SkyDome (ROADMAP 6A), included by its NightSky Custom node (scripts/sky/make_sky_material.py).
 // Mirrors Environment/NightIllumination.cpp expression for expression: CamSimSkyAirMass =
 // FNightIllumination::KastenYoungAirMass, CamSimSkyTransmittance = FNightIllumination::Transmittance
 // (horizon cut-off -0.5 deg, K = k_V 0.172 from MPC_Sky Floor.z), CamSimMoonDisc = FMoonDisc::Shade

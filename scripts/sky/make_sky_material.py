@@ -9,9 +9,14 @@ M_SkyDome: Surface / Unlit / Opaque / Is Sky / two-sided, for a camera-following
 Emissive, in cd/m² (V = view direction = -CameraVectorWS, T = transmittance along V, CamSimSky.ush):
     SkyAtmosphereViewLuminance
   + SkyAtmosphereLightDiskLuminance(0)                       (sun disc)
-  + CamSimMoonDisc(V, MoonDir, SunDir, r, scale) * enabled * T
-  + StarTex(equatorial UV of SkyRot * V) * Floor.y * T        (point sampled: a star stays one texel)
-  + Floor.x * T                                               (night floor, white)
+  + T * ( CamSimMoonDisc(V, MoonDir, SunDir, r, scale) * enabled * (1 - RenderingReflectionCaptureMask)
+          + StarTex(equatorial UV of SkyRot * V) * Floor.y    (point sampled: a star stays one texel)
+          + Floor.x )                                         (night floor, white)
+One Custom node ("NightSky") computes T once for the three night terms. The moon disc is left out of the real-time sky
+capture (RenderingReflectionCaptureMask, as UE's own SkyAtmosphereLightDiskLuminance does): the moon directional light
+already lights the scene, so a captured disc would add its light a second time through the sky light, by an amount that
+changed as the 0.5 deg disc drifted across the capture's ~0.7 deg texels. The floor stays in the capture: it is meant to
+light the ground.
 The moon disc and air mass come from Shaders/Private/CamSimSky.ush (virtual path /CamSim/Private/CamSimSky.ush),
 which mirrors FNightIllumination / FMoonDisc (Environment/NightIllumination.cpp).
 
@@ -41,21 +46,20 @@ MPC_VECTORS = [
     ("UpWorld", (0, 0, 1, 0)),        # local up at the camera
 ]
 
-V_PRELUDE = "float SinEl = dot(V, UpWorld); float T = CamSimSkyTransmittance(SinEl, Floor.z);\n"
-MOON_CODE = V_PRELUDE + (
-    "return CamSimMoonDisc(V, MoonDir, SunDir, MoonParams.x, MoonParams.y) * MoonParams.w * T;\n"
-)
 # Equirectangular (RA, Dec) lookup matching FStarField: x = RA from 0 at the left, y = Dec +90 at the top.
 # Load (not Sample): point sampling with no mips whatever the texture's filter, and no derivative seam at RA 0.
-STARS_CODE = V_PRELUDE + (
+NIGHT_CODE = (
+    "float SinEl = dot(V, UpWorld); float T = CamSimSkyTransmittance(SinEl, Floor.z);\n"
+    "float NotInCapture = 1.0 - ResolvedView.RenderingReflectionCaptureMask;\n"
+    "float Moon = CamSimMoonDisc(V, MoonDir, SunDir, MoonParams.x, MoonParams.y) * MoonParams.w * NotInCapture;\n"
     "float3 Q = float3(dot(SkyRot0.xyz, V), dot(SkyRot1.xyz, V), dot(SkyRot2.xyz, V));\n"
     "float Ra = atan2(Q.y, Q.x); float Dec = asin(clamp(Q.z, -1, 1));\n"
     "float2 UV = float2(frac(Ra / (2 * PI)), 0.5 - Dec / PI);\n"
     "uint W, H; StarTex.GetDimensions(W, H);\n"
     "int2 Texel = min(int2(UV * float2(W, H)), int2(W, H) - 1);\n"
-    "return StarTex.Load(int3(Texel, 0)).rgb * Floor.y * T;\n"
+    "float3 Stars = StarTex.Load(int3(Texel, 0)).rgb * Floor.y;\n"
+    "return (Moon + Stars + Floor.x) * T;\n"
 )
-FLOOR_CODE = V_PRELUDE + "return Floor.x * T;\n"
 
 MEL = unreal.MaterialEditingLibrary
 EAL = unreal.EditorAssetLibrary
@@ -180,11 +184,10 @@ def make_material(mpc):
     common = ["V", "UpWorld", "Floor"]
     atmosphere = g.node(unreal.MaterialExpressionSkyAtmosphereViewLuminance, x=-600)
     sun_disc = g.node(unreal.MaterialExpressionSkyAtmosphereLightDiskLuminance, x=-600, light_index=0)
-    moon = custom("MoonDisc", MOON_CODE, common + ["MoonDir", "SunDir", "MoonParams"])
-    stars = custom("Stars", STARS_CODE, common + ["SkyRot0", "SkyRot1", "SkyRot2", STAR_TEX_PARAM])
-    floor = custom("Floor", FLOOR_CODE, common, unreal.CustomMaterialOutputType.CMOT_FLOAT1)
+    night = custom("NightSky", NIGHT_CODE,
+                   common + ["MoonDir", "SunDir", "MoonParams", "SkyRot0", "SkyRot1", "SkyRot2", STAR_TEX_PARAM])
 
-    emissive = g.add(g.add(g.add(g.add(atmosphere, sun_disc), moon), stars), floor)
+    emissive = g.add(g.add(atmosphere, sun_disc), night)
     g.to_property(emissive, unreal.MaterialProperty.MP_EMISSIVE_COLOR)
 
     MEL.layout_material_expressions(mat)
