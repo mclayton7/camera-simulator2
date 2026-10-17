@@ -8,7 +8,7 @@ A hand-off for an agent working on the Linux reference box. Everything here is s
 
 - Read `CLAUDE.md` first (gotchas, commands, test invocations). Background for task 1:
   `docs/scene-packages.md` ("Packing and mounting", "Using a package in CamSim", "Measured"); for tasks 2–4:
-  `docs/docker.md` and `docs/ci-runner-setup.md`.
+  `docs/docker.md`.
 - The box: Ubuntu 24.04, Core Ultra 9 285K (24 cores, 62 GB), RTX 5080, driver 595.91, Vulkan SM6, NVENC,
   UE 5.8.3 at `/opt/UnrealEngine-5.8.3` (`/opt/UE` symlink), Cesium in the engine, Docker + NVIDIA Container
   Toolkit. Check with `nvidia-smi`, `/opt/UE/Engine/Binaries/Linux/UnrealEditor -version` and
@@ -154,13 +154,9 @@ drops (`DirectoriesToAlwaysCook`, `camsim_config.yaml` lookup, Cesium ion token,
 `.cache/` (never `Saved/StagedBuilds/`: `run.sh` then switches to packaged mode, `CLAUDE.md` Docker section). Fix it
 or record what you found under 1.15.
 
-## 4. CI runner (deferred by the user: ask before starting)
+## 4. Packaging and test follow-ups
 
-`docs/ci-runner-setup.md`. The box isn't registered as the `camsim-ue5` runner, so the `unit-tests`,
-`integration-test`, `docker-build` and `docker-release` jobs have never run. Registration needs a token from
-the GitHub UI and flipping `CAMSIM_UE5_RUNNER_AVAILABLE`, which are the human's call.
-
-Can be done without the runner:
+The GitHub Actions CI was removed (2026-10-17); these are local checks.
 
 - **Packaging uses the prebuilt Cesium** (open since Milestone 0): in the `package_for_docker.sh` output, check
   that UBT links `CesiumRuntime` from the engine's `Marketplace` plugin binaries and compiles no Cesium source
