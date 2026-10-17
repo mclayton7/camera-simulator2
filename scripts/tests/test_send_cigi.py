@@ -122,3 +122,21 @@ def _ids(d):
         ids.append(d[i])
         i += d[i + 1]
     return ids
+
+
+def test_pack_celestial_control_enables_stars_by_default():
+    # ROADMAP 6A: CamSim's stars follow the host after its first Celestial Sphere Control, so the reference host
+    # enables the star field at 100 % unless told otherwise.
+    pkt = sc.pack_celestial_control(hour=7, minute=30, month=10, day=26, year=2026)
+    assert len(pkt) == 16 and pkt[0] == 9 and pkt[1] == 16
+    assert (pkt[2], pkt[3]) == (7, 30)
+    assert pkt[4] == 0x1F  # ephemeris | sun | moon | star field | date valid
+    assert struct.unpack(">I", pkt[8:12])[0] == 10_26_2026
+    assert struct.unpack(">f", pkt[12:16])[0] == 100.0
+
+
+def test_pack_celestial_control_stars_off():
+    pkt = sc.pack_celestial_control(star_en=False, star_intensity=0.0)
+    assert pkt[4] & 0x08 == 0
+    assert pkt[4] & 0x07 == 0x07
+    assert struct.unpack(">f", pkt[12:16])[0] == 0.0

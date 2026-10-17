@@ -383,9 +383,14 @@ def pack_celestial_control(
     ephemeris_en: bool = True,
     sun_en: bool = True,
     moon_en: bool = True,
+    star_en: bool = True,
+    star_intensity: float = 100.0,
 ) -> bytes:
     """
     Celestial Sphere Control packet — Packet ID 9, Size 16 bytes (CIGI 3.3).
+
+    Defaults enable everything a night test needs (ROADMAP 6A): sun, moon and the star field at 100 %. CamSim's stars
+    follow the host after its first Celestial Sphere Control, so a packet with Star Field Enable 0 turns them off.
 
     Byte layout (CIGI 3.3 ICD §4.1.9):
       0     uint8   Packet ID (0x09)
@@ -405,6 +410,8 @@ def pack_celestial_control(
         flags |= 0x02
     if moon_en:
         flags |= 0x04
+    if star_en:
+        flags |= 0x08
     flags |= 0x10  # Date Valid
 
     return struct.pack(
@@ -415,7 +422,7 @@ def pack_celestial_control(
         minute & 0xFF,
         flags,
         month * 1_000_000 + day * 10_000 + year,
-        0.0,  # Star field intensity
+        float(star_intensity),  # Star Field Intensity, percent
     )
 
 
@@ -890,6 +897,14 @@ def main():
         help="Time of day as HHMM (e.g. 0600 for sunrise)",
     )
     ap.add_argument(
+        "--stars",
+        type=float,
+        default=100.0,
+        metavar="PCT",
+        help="Star Field Intensity in percent sent with --time / --time-sweep (default 100; 0 sends Star Field "
+        "Enable off). Sun and moon are always enabled",
+    )
+    ap.add_argument(
         "--visibility",
         type=float,
         default=None,
@@ -1004,6 +1019,9 @@ def main():
         celestial_base = {"hour": hh, "minute": mm}
     elif args.time_sweep:
         celestial_base = {"hour": 0, "minute": 0}
+    if celestial_base is not None:
+        celestial_base["star_en"] = args.stars > 0.0
+        celestial_base["star_intensity"] = max(args.stars, 0.0)
 
     atmosphere_base: dict | None = None
     if args.visibility is not None:

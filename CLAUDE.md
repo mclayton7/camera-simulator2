@@ -23,7 +23,7 @@ Synthetic sensor simulator: CIGI 3.3 UDP → Cesium/UE5 render → H.264 MPEG-TS
 | `scripts/build_thirdparty.sh`  | Build CCL + FFmpeg static libs (cached in .build_tmp/)        |
 | `scripts/run.sh`               | Launch UE5 in game mode (supports --build, --headless, --log) |
 | `scripts/run.sh --build`       | Build + launch                                                |
-| `scripts/send_cigi_test.py`    | Send CIGI 3.3 test packets (--sweep, --circle; `--hat-extended` / `--los-extended` print material codes) |
+| `scripts/send_cigi_test.py`    | Send CIGI 3.3 test packets (--sweep, --circle; `--hat-extended` / `--los-extended` print material codes; `--time HHMM` sends sun, moon and stars on, `--stars PCT` sets the star field, 0 = off) |
 | `scripts/send_dis_test.py` | Send DIS Entity State PDUs: scripted truck + boat (`both`, `truck-loop`, `boat-circle`; 4C thermal states `truck-park`, `truck-parked`, `truck-destroyed` set appearance bits) |
 | `scripts/dis_vehicle_check.py` | End-to-end DIS vehicle check (shots + COCO labels) |
 | `scripts/ocean_check.py` | Ocean acceptance: DIS boat at Beaufort 0/3/6 (+ `--cigi` Wave Control): COCO, boat altitude vs sea level, HOT, frame times, shots |

@@ -104,7 +104,11 @@ moon_illum=… moon_ground_lux=… floor_cdm2=… band=… stars=…`); `camsim.
 Celestial Sphere Control: Sun / Moon / Star Field Enable zero that source (light and disc); Star Field Intensity is a
 percent (100 = physical); Ephemeris Model Enable keeps driving the clock's rate; an enable- or intensity-only change
 re-applies the sky without moving the clock. Until the first packet, `stars_default` (true) decides the stars (CIGI's
-own default is off). CIGI visibility does nothing with `Main.umap` (no `ExponentialHeightFog`; ROADMAP 8.6).
+own default is off). `scripts/send_cigi_test.py --time HHMM` sends Sun, Moon and Star Field Enable with Star Field
+Intensity 100 % by default (`--stars PCT`; `--stars 0` sends the star field off), so the reference host shows the 6A
+sky; the bench (`scripts/bench/scenario.py`) uses the same packet. The HITL host sends 100 % too. `scripts/cigi_web_ui.py`
+still sends the star field off (and packs the Date field at the wrong offset: a pre-existing bug, not 6A's). CIGI
+visibility does nothing with `Main.umap` (no `ExponentialHeightFog`; ROADMAP 8.6).
 
 ## Limits
 
