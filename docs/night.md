@@ -126,6 +126,8 @@ visibility does nothing with `Main.umap` (no `ExponentialHeightFog`; ROADMAP 8.6
 - UE's pre-exposure cap (`SceneExposureCapEv`, 1.39 EV) is a constant set for the brightest full moon: with the moon
   down the dark-scene boost is ~7.6 EV less than the AE target, so new-moon deep shadows sit near 2^−13 in scene colour
   again (ROADMAP 6A open items).
+- Overcast dims the moon light uniformly by the floor's cloud factor (0.25 at full cover), not by cloud shadows, so it
+  also dims the moonlit tops of the volumetric clouds seen from above; no gate images moonlit clouds.
 - `M_SkyDome` has not been compiled or run on Metal yet; the M1 Pro run of `night_check.py` is open.
 - The star texture keeps a 64 MB CPU copy and 64 MB of VRAM, and `FStarField::Bin` allocates a ~200 MB transient
   accumulator at startup (capacity is VRAM-bound: `docs/capacity-linux-rtx5080.md`).
