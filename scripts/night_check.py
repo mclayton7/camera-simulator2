@@ -726,19 +726,23 @@ def eval_n3(out: Path) -> dict:
         cx, cy, npx = thresholded_centroid(y)
         # Expected: the model disc (FMoonDisc::Radiance) through the display, k fitted to this frame
         rad = moon_model(cam, utc, e)
-        best = None
-        for k in np.exp(np.linspace(math.log(0.05), math.log(500.0), 120)):
-            mdl = display_model(rad, float(k))
-            sse = float(np.mean((mdl - y) ** 2))
-            if best is None or sse < best[0]:
-                best = (sse, float(k), mdl)
-        _, k_fit, mdl = best
+        k_fit, mdl = fit_display(rad, y)
         ex, ey, _ = thresholded_centroid(mdl)
         off_centroid = math.hypot(cx - ex, cy - ey)
         # The disc's displacement from the model: least-squares image registration (with an albedo map the > 50 %
         # region is patchy, so its centroid swings with small level differences; it is reported, not gated).
         reg = register_shift(y, mdl, (float(mx[0]), float(my[0])), radius_px)
         off = math.hypot(*reg["shift"])
+        # Orientation: the frame must fit the model far better than a longitude-mirrored map or the model rotated 180 deg
+        # about the line of sight (the limb/contrast checks are orientation-blind).
+        ctrl = {}
+        img = albedo_map()
+        if img is not None:
+            for cname, crad in (("mirrored", moon_model(cam, utc, e, albedo_img=img[:, ::-1])), ("rotated180", rotate_about(rad, (float(mx[0]), float(my[0]))))):
+                _, cm = fit_display(crad, y)
+                ctrl[cname] = register_shift(y, cm, (float(mx[0]), float(my[0])), radius_px)["rms_dn"]
+        orient_ok = (not ctrl) or reg["rms_dn"] < N3_RESIDUAL_RATIO * min(ctrl.values())
+        ok &= orient_ok
         # Brighter half: sum of Y - background over each half of the disc split across the sun direction
         yy, xx = np.mgrid[0:H, 0:W].astype(np.float64)
         dxx, dyy = xx - mx[0], yy - my[0]
@@ -757,7 +761,10 @@ def eval_n3(out: Path) -> dict:
                       "expected_centroid": [ex, ey], "centroid_offset_px": off_centroid, "registration": reg,
                       "offset_px": off, "offset_from_projection_px": math.hypot(cx - mpx[0], cy - mpy[0]),
                       "drawn_vs_python_moon_deg": py_vs_drawn, "drawn_moon_az_el": [e.moon_az, e.moon_el], "k_fit": k_fit, "half_toward_sun": toward,
-                      "half_away": away, "lit_limb_toward_sun": lit_ok, "lit_gated": gate_lit}
+                      "half_away": away, "lit_limb_toward_sun": lit_ok, "lit_gated": gate_lit,
+                      "control_rms_dn": ctrl, "orientation_ok": orient_ok}
+        details.append(f"{name}: residual {reg['rms_dn']:.1f} DN rms vs " + ", ".join(f"{k} {v:.1f}" for k, v in ctrl.items())
+                       + f" (< {N3_RESIDUAL_RATIO}x){'' if orient_ok else ' FAIL'}")
         details.append(f"{name}: disc {off:.2f} px from the model (registration; residual {reg['rms_dn']:.1f} DN rms; > 50 % "
                        f"centroid {off_centroid:.2f} px from the model's, {math.hypot(cx - mpx[0], cy - mpy[0]):.2f} px from the "
                        f"Python ephemeris projection, drawn moon {py_vs_drawn * 3600:.1f}\" from it; phase {e.moon_phase_angle:.1f}); bright half {'toward' if lit_ok else 'AWAY from'} "
@@ -781,7 +788,9 @@ def eval_n3(out: Path) -> dict:
         ok = False
         details.append("no moon_wide capture")
     return gate(out, "N3", ok, vals, "disc within 2 px of the model (least-squares registration of the frame on the "
-                "modelled disc; the > 50 % centroid offsets and the raw offset from the ephemeris projection reported); gibbous: brighter half toward the sun; full moon: limb (0.80-0.95 R) / centre "
+                f"modelled disc at the moon direction CamSim logged: the ephemeris itself is held to JPL by the C++ tests); "
+                f"registration residual < {N3_RESIDUAL_RATIO} x that of a longitude-mirrored map and of the model rotated "
+                "180 deg (orientation); the > 50 % centroid offsets and the raw offset from the ephemeris projection reported); gibbous: brighter half toward the sun; full moon: limb (0.80-0.95 R) / centre "
                 f"(< 0.5 R) linear signal > {N3_LIMB_CENTRE_MIN} and std / mean inside 0.6 R > {N3_CONTRAST_MIN}; wide "
                 "night view: moon disc not black (min Y >= 100 inside 0.7 R) and no dark halo (ring 1.3-2.5 R mean >= "
                 "sky median - 1 DN)",
@@ -817,6 +826,9 @@ def wide_moon_check(d: Path, view: dict) -> dict:
 # shipped albedo map's ~0.3 (both reported by the gate): 0.15 sits between them.
 N3_LIMB_CENTRE_MIN = 0.7
 N3_CONTRAST_MIN = 0.15
+# The frame's registration residual must be under half that of a longitude-mirrored map or the model rotated 180 deg
+# (measured at 0a9d26e: full 6.7 DN rms vs mirrored 24.3, rotated 29.9; gibbous 5.5 vs 19.2 and 82.3).
+N3_RESIDUAL_RATIO = 0.5
 _ALBEDO: list = []
 
 
@@ -836,7 +848,27 @@ def view_dirs(cam: dict) -> np.ndarray:
     return d / np.linalg.norm(d, axis=-1, keepdims=True)
 
 
-def moon_model(cam: dict, utc: datetime, e, lam_l: float | None = None, albedo: bool = True) -> np.ndarray:
+def fit_display(rad: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray]:
+    """The display-model scale k (log scan) that best fits frame y; returns (k, model luma)."""
+    best = None
+    for k in np.exp(np.linspace(math.log(0.05), math.log(500.0), 120)):
+        mdl = display_model(rad, float(k))
+        sse = float(np.mean((mdl - y) ** 2))
+        if best is None or sse < best[0]:
+            best = (sse, float(k), mdl)
+    return best[1], best[2]
+
+
+def rotate_about(img: np.ndarray, centre: tuple[float, float]) -> np.ndarray:
+    """img rotated 180 deg about centre (nearest pixel)."""
+    yy, xx = np.mgrid[0:H, 0:W]
+    sx = np.clip(np.rint(2 * centre[0] - xx).astype(int), 0, W - 1)
+    sy = np.clip(np.rint(2 * centre[1] - yy).astype(int), 0, H - 1)
+    return img[sy, sx]
+
+
+def moon_model(cam: dict, utc: datetime, e, lam_l: float | None = None, albedo: bool = True,
+               albedo_img: np.ndarray | None = None) -> np.ndarray:
     """Relative disc radiance per pixel (max 1) as M_SkyDome draws it: CamSimMoonDisc with the IAU orientation, the albedo
     map and L(phase) (lam_l / albedo=False give the comparators: 0 = a Lambert ball, uniform albedo)."""
     jd = eph.julian_day(utc)
@@ -847,7 +879,7 @@ def moon_model(cam: dict, utc: datetime, e, lam_l: float | None = None, albedo: 
     sun = np.array(eph.az_el_to_enu(e.sun_az, e.sun_el))
     lam = msurf.lunar_lambert_l(e.moon_phase_angle) if lam_l is None else lam_l
     rad = msurf.disc_radiance(view_dirs(cam), moon, sun, math.asin(1737.4 / e.moon_km), lam, axes,
-                              albedo_map() if albedo else None)
+                              (albedo_img if albedo_img is not None else albedo_map()) if albedo else None)
     return rad / max(float(rad.max()), 1e-12)
 
 
