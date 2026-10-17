@@ -179,6 +179,14 @@ bool FSkyEnvironmentWiringTest::RunTest(const FString&)
 	TestEqual(TEXT("moon below the horizon: intensity 0"), Moon->Intensity, 0.0f);
 	TestFalse(TEXT("moon below the horizon: hidden"), Moon->IsVisible());
 	TestTrue(TEXT("thermal sun lookup still the sun by day"), CamSimThermal::FindAtmosphereSunLight(World) == Sun);
+	// Spec "Units and lights → Sun direction": the engine sun (CesiumSunSky's own solar algorithm) and FEphemeris's sun
+	// (which shades the dome's moon and drives thermal / KLV) agree within 0.1 deg.
+	{
+		const FVector SunWorld = FSkyDomeDriver::EnuToWorldDir(EsuToUnreal, E2.SunEnu);
+		const double SunErr = AngleDeg(Sun->GetForwardVector(), -SunWorld);
+		TestTrue(FString::Printf(TEXT("precondition: sun up at noon (el %.2f)"), E2.SunElDeg), E2.SunElDeg > 20.0);
+		TestTrue(FString::Printf(TEXT("CesiumSunSky sun light vs FEphemeris sun: %.4f deg (< 0.1)"), SunErr), SunErr < 0.1);
+	}
 	TestFalse(TEXT("moon never casts shadows by day"), static_cast<bool>(Moon->CastShadows));
 
 	// 4. Clock jump back to night, two weeks on: new moon.
