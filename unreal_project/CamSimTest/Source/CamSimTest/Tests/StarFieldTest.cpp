@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
+#include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Environment/StarField.h"
@@ -44,6 +45,7 @@ bool FStarFieldMissingTest::RunTest(const FString&)
 	const FString Pointer = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("bsc5_pointer.dat"));
 	FFileHelper::SaveStringToFile(TEXT("version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 1\n"), *Pointer);
 	TestTrue(TEXT("LFS pointer -> empty"), FStarField::LoadDefault(Pointer, 64, 32).IsEmpty());
+	IFileManager::Get().Delete(*Pointer);
 	TArray<FStar> Stars; FString Err;
 	TArray<uint8> Short; Short.SetNumZeroed(10);
 	TestFalse(TEXT("short header"), FStarField::ParseBsc5(Short, Stars, Err));
