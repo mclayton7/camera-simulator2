@@ -1,21 +1,12 @@
 // Copyright CamSim Contributors. All Rights Reserved.
 
 #include "Sensor/Radiometry.h"
+#include "Thermal/BandRadiance.h"
 
-namespace
+namespace CamSimRadiometryDetail
 {
-	constexpr double PlanckH       = 6.62607015e-34;   // J s
-	constexpr double LightC        = 2.99792458e8;     // m / s
-	constexpr double BoltzmannK    = 1.380649e-23;     // J / K
 	constexpr double SourceTempK   = 5800.0;           // daylight / solar blackbody
 	constexpr double LumensPerWatt = 683.0;            // photopic peak efficacy
-
-	/** Planck spectral radiance B(λ, T) in W / (m² sr m); the overall scale cancels in photons / lumen. */
-	double Planck(double LambdaM, double TempK)
-	{
-		const double X = PlanckH * LightC / (LambdaM * BoltzmannK * TempK);
-		return 2.0 * PlanckH * LightC * LightC / (FMath::Pow(LambdaM, 5.0) * (FMath::Exp(X) - 1.0));
-	}
 
 	/** CIE 1931 photopic luminosity, Gaussian approximation. */
 	double Photopic(double LambdaUm) { return 1.019 * FMath::Exp(-285.4 * FMath::Square(LambdaUm - 0.559)); }
@@ -39,9 +30,10 @@ double CamSimRadiometry::PhotonsPerLumen(float BandLoUm, float BandHiUm)
 	{
 		const double LambdaUm = BandLoUm + (I + 0.5) * 1e-3;   // midpoint of each 1 nm step (Δλ cancels)
 		const double LambdaM  = LambdaUm * 1e-6;
-		const double B        = Planck(LambdaM, SourceTempK);
-		Photons += B * LambdaM / (PlanckH * LightC);
-		Lumens  += LumensPerWatt * B * Photopic(LambdaUm);
+		// Planck B(λ, T) in W / (m² sr m) (FBandRadiance's); the overall scale cancels in photons / lumen.
+		const double B        = FBandRadiance::SpectralRadiance(LambdaM, CamSimRadiometryDetail::SourceTempK);
+		Photons += B * LambdaM / (FBandRadiance::PlanckH * FBandRadiance::LightC);
+		Lumens  += CamSimRadiometryDetail::LumensPerWatt * B * CamSimRadiometryDetail::Photopic(LambdaUm);
 	}
 	const double Result = Lumens > 0.0 ? Photons / Lumens : 0.0;
 	Cache.Add(Key, Result);

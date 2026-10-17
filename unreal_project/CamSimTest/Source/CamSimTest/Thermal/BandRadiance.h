@@ -14,6 +14,11 @@
 class CAMSIMTEST_API FBandRadiance
 {
 public:
+	/** CODATA 2018 exact constants, shared with Sensor/Radiometry.cpp (one definition: a unity build may put both in one TU). */
+	static constexpr double PlanckH    = 6.62607015e-34;   // J s
+	static constexpr double LightC     = 2.99792458e8;     // m s^-1
+	static constexpr double BoltzmannK = 1.380649e-23;     // J K^-1
+
 	/** Simpson steps per LUT entry (smooth integrand over a narrow band: far below the LUT's interpolation error). */
 	static constexpr int32 LutSteps = 512;
 

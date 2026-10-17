@@ -3,17 +3,10 @@
 #include "Thermal/BandRadiance.h"
 #include <cmath>
 
-namespace
-{
-	constexpr double PlanckH = 6.62607015e-34;   // J s
-	constexpr double LightC  = 2.99792458e8;     // m s^-1
-	constexpr double BoltzK  = 1.380649e-23;     // J K^-1
-}
-
 double FBandRadiance::SpectralRadiance(double LambdaM, double TK)
 {
 	if (!(LambdaM > 0.0) || !(TK > 0.0)) return 0.0;
-	const double X = PlanckH * LightC / (LambdaM * BoltzK * TK);
+	const double X = PlanckH * LightC / (LambdaM * BoltzmannK * TK);
 	if (X > 700.0) return 0.0;
 	const double L5 = LambdaM * LambdaM * LambdaM * LambdaM * LambdaM;
 	return 2.0 * PlanckH * LightC * LightC / (L5 * std::expm1(X));
